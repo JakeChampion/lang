@@ -9684,7 +9684,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
 // or, when the word is an adrp or the add that carries its :lo12:, as that
 // symbol's page fixup;
 // \x04 defines the label whose id the next eight bytes hold; \x05 takes the
-// next word as a branch to the label id in its high four bytes.
+// next word as a branch to the label id in its high four bytes; \x06 is a
+// .cfi_* directive, its kind and register in the low four bytes and its
+// offset in the high four (cfi_record).
 pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
   let p: Arm64GasProg = arm64_gas_prog_new();
   // The CFI recorder is threaded as its own uniquely-held local and folded
@@ -9722,12 +9724,21 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
     if (pos < srcn) {
       mark = src[pos];
     }
-    if (mark == 1 || mark == 2 || mark == 4 || mark == 5) {
+    if (mark == 1 || mark == 2 || mark == 4 || mark == 5 || mark == 6) {
       let end: i32 = arm64_gas_line_end(src, pos + 1);
       if (section != 0 || wi + 8 > words.len()) {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("word record outside .text or past the words") };
       } else if (mark == 4) {
         a = arm64_asm_label_id(a, arm64_words_i32(words, wi));
+      } else if (mark == 6) {
+        // A .cfi_* directive: its kind and DWARF register in the low word,
+        // its offset in the high one (cfi_record).
+        let w0: i32 = arm64_words_i32(words, wi);
+        let cfi_bad_before: i32 = cfi.bad.len();
+        cfi = cfi_record(cfi, w0 & 255, w0 >> 8 & 255, arm64_words_i32(words, wi + 4), a.code.len());
+        if (cfi.bad.len() > cfi_bad_before) {
+          p = Arm64GasProg { ...p, unknown: p.unknown.append(cfi.bad[cfi.bad.len() - 1]) };
+        }
       } else {
         a = Arm64Asm { ...a, code: arm64_word_bytes(a.code, words, wi) };
         if (mark == 2) {
@@ -11564,6 +11575,82 @@ pub function cfi_directive(own s: CfiState, line: string, off: i32): CfiState {
   return cfi_reg_directive(s, d, ops, rest, off);
 }
 
+// cfi_record applies a directive an emitter handed over as a record instead
+// of text: `kind` 1 is .cfi_startproc, 2 .cfi_endproc, 3 .cfi_def_cfa_offset n,
+// 4 .cfi_def_cfa_register r, 5 .cfi_def_cfa r, n, 6 .cfi_offset r, n, 7
+// .cfi_remember_state and 8 .cfi_restore_state, with `r` the DWARF register
+// number. Each records what its text would have recorded.
+pub function cfi_record(own s: CfiState, kind: i32, r: i32, n: i32, off: i32): CfiState {
+  if (kind == 1) {
+    return cfi_proc_directive(s, ".cfi_startproc", [], off);
+  }
+  if (kind == 2) {
+    return cfi_proc_directive(s, ".cfi_endproc", [], off);
+  }
+  if (!s.open) {
+    return cfi_bad(s, "a cfi record outside .cfi_startproc/.cfi_endproc");
+  }
+  if (kind == 3) {
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_offset()], n));
+  }
+  if (kind == 4) {
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_register()], r));
+  }
+  if (kind == 5) {
+    return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_def_cfa()], r), n));
+  }
+  if (kind == 6) {
+    let reg: string = cfi_reg_label(s.profile, r);
+    return cfi_offset_rule(s, reg, r, n, off);
+  }
+  if (kind == 7) {
+    return cfi_add_rule(s, off, [cfi_op_remember_state()]);
+  }
+  if (kind == 8) {
+    return cfi_add_rule(s, off, [cfi_op_restore_state()]);
+  }
+  return cfi_bad(s, "a cfi record of an unknown kind");
+}
+
+// cfi_reg_label is the name the profile gives DWARF register `r`, for a
+// refusal's message; the number itself when it has none.
+function cfi_reg_label(p: CfiProfile, r: i32): string {
+  let i: i32 = 0;
+  while (i < p.reg_nums.len()) {
+    if (p.reg_nums[i] == r) {
+      return p.reg_names[i];
+    }
+    i = i + 1;
+  }
+  return cfi_uleb_text(r);
+}
+
+// cfi_uleb_text spells a non-negative register number in decimal.
+function cfi_uleb_text(v: i32): string {
+  if (v >= 10) {
+    return cfi_uleb_text(v / 10) + cfi_uleb_text(v % 10);
+  }
+  return slice_unchecked("0123456789", v, v + 1) + "";
+}
+
+// cfi_offset_rule records `.cfi_offset r, n`, register `r` (spelt `reg` in a
+// refusal) saved at CFA-relative offset `n`.
+function cfi_offset_rule(own s: CfiState, reg: string, r: i32, n: i32, off: i32): CfiState {
+  if (n % s.profile.data_align != 0) {
+    return cfi_bad(s, ".cfi_offset " + reg + ": offset not a multiple of the data alignment");
+  }
+  let f: i32 = n / s.profile.data_align;
+  // A positive CFA-relative offset needs the extended_sf form, which this
+  // module does not produce; refuse rather than unwind wrongly.
+  if (f < 0) {
+    return cfi_bad(s, ".cfi_offset " + reg + ": positive offset is not supported");
+  }
+  if (r < 64) {
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_offset() | r], f));
+  }
+  return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_offset_extended()], r), f));
+}
+
 // cfi_proc_directive opens or closes an FDE.
 function cfi_proc_directive(own s: CfiState, d: string, ops: string[], off: i32): CfiState {
   if (d == ".cfi_startproc") {
@@ -11624,20 +11711,7 @@ function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: stri
     if (ops.len() < 2 || !cfi_is_int(ops[1])) {
       return cfi_bad(s, d + " " + rest);
     }
-    let n: i32 = cfi_atoi(ops[1]);
-    if (n % s.profile.data_align != 0) {
-      return cfi_bad(s, d + " " + ops[0] + ": offset not a multiple of the data alignment");
-    }
-    let f: i32 = n / s.profile.data_align;
-    // A positive CFA-relative offset needs the extended_sf form, which
-    // this module does not produce; refuse rather than unwind wrongly.
-    if (f < 0) {
-      return cfi_bad(s, d + " " + ops[0] + ": positive offset is not supported");
-    }
-    if (r < 64) {
-      return cfi_add_rule(s, off, cfi_uleb([cfi_op_offset() | r], f));
-    }
-    return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_offset_extended()], r), f));
+    return cfi_offset_rule(s, ops[0], r, cfi_atoi(ops[1]), off);
   }
   if (d == ".cfi_register") {
     if (ops.len() < 2) {

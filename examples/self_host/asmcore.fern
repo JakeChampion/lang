@@ -8088,6 +8088,14 @@ pub function (s: EmitState) lab_ref(payload: i64, l: Lab): EmitState {
   return s.mark("\x05", "");
 }
 
+// cfi hands over a .cfi_* directive as the \x06 record: its kind and the
+// DWARF register in the low 32 bits, its offset in the high 32 (the
+// assemblers' cfi_record). The caller writes the text when records are off.
+pub function (s: EmitState) cfi(kind: i32, reg: i32, off: i32): EmitState {
+  buf_push_u64(s.recs, ((off as i64 & 4294967295i64) << 32 | (reg as i64) << 8 | kind as i64) as u64);
+  return s.mark("\x06", "");
+}
+
 pub function count_locals(body: ast.Stmt[]): i32 {
   let n: i32 = 0;
   let i: i32 = 0;
