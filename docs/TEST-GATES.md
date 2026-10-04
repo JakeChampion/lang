@@ -405,8 +405,9 @@ listener handed in through `LISTEN_FDS` is served. The scenarios are
 `TestSelfHostSupervisedServeWorkersServeSideBySide` pins two workers over
 one listener answering side by side and surviving one worker's death, and
 `TestSelfHostSupervisedServeHandlerStallsItsWorker` the converse on one
-worker: a request behind /slow waits for it, the pin
-#9857's multiplexing has to turn;
+worker: a request behind a /slow that computes for 1.5 s waits for it,
+since a park needs a wait and a busy handler has none (the waiting
+handler's case is `TestSelfHostServeHandlersOverlap` above);
 `TestSelfHostSupervisedServeOneWorkerPerCPU` counts the default worker set
 against the processing units, and
 `TestSelfHostSupervisedServeShutsDownAfterBurst` requires every one of four workers to exit on SIGTERM after a burst of

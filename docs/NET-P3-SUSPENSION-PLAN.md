@@ -1,11 +1,11 @@
 # Networking P3 — inferred suspension (plan)
 
-> Status: **in progress, 2026-10-04.** Phase P3 of #9851, tracked in #9857.
+> Status: **landed, 2026-10-04.** Phase P3 of #9851, tracked in #9857.
 > The decision it implements is #9856 (B): functions that reach a platform
 > wait are lowered to resumable state machines at the IR level, the surface
 > stays colorless, the worker's reactor drives them. This document says what
-> that costs, where each piece lives, and in what order it lands. §4 marks
-> the slices that have landed.
+> that cost, where each piece lives, and in what order it landed. §4 is the
+> record per slice; §5 holds the one question left open.
 
 ## 1. What P3 has to deliver
 
@@ -521,23 +521,30 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    `TestSelfHostServeStreamBodies` on x86-64 and arm64, and
    `TestServeStreamBodiesSequentialInterp` for the Go compiler's blocking
    fallback.
-10. **Docs and reference.** `ASYNC.md`, `STDLIB.md` (serve, platform,
-    async), the tutorial's handler section, `TEST-GATES.md` rows, and the
-    `docs/README.md` entry for this file flipped to [record].
+10. **Docs and reference. Landed.** `ASYNC.md` §8 (tasks, the
+    combinators, the sim, streamed bodies), `STDLIB.md`'s serve, platform
+    and async sections, the tutorial's handler page (what a waiting
+    handler costs a worker under each compiler), the `TEST-GATES.md` rows
+    for every gate above, and the `docs/README.md` entry for this file as
+    a record.
 
-## 5. Risks and open questions
+## 5. What was open, and what still is
 
-- **Transform cost.** Asyncify-style guards inflate transformed code; the
-  measurement in slice 2 decides whether the fetch client's wait path needs
-  narrowing (fewer functions between the handler and `__suspend`) before
-  slice 5 relies on it.
-- **Views in the stdlib's own wait path.** Slice 7's rule applies to the
-  stdlib first; the fetch client and the HTTP parser hold `[u8]` windows in
-  places that may now sit across a suspend. Slice 4 materialises them where
-  it finds them and records what it cost.
-- **The owner's call on native.** §3.6 keeps native on the blocking fallback.
-  If the multiplexing gates are wanted on Go-built binaries too, the
-  `internal/ir` port is argued on #4451 as its own slice.
+- **Transform cost.** Measured rather than narrowed: the hello server's
+  self-host emit grew 5.6% on x86-64, 10.3% on arm64 and 11.4% on wasm
+  across slice 9, most of it the stream readers joining the suspendable
+  set (`.github/perf-baseline-selfhost.txt`), and the
+  two-fetch handler costs about seven hello requests of a core's time
+  (`docs/benchmarks/net-twofetch-2026-10-04.md`). The fetch client's wait
+  path was left as it is; `perf.yml`'s instruction counts are where a
+  narrowing would show.
+- **Views in the stdlib's own wait path.** Withdrawn with slice 7 (§3.5): a
+  parked frame keeps what it holds, so nothing had to be materialised.
+- **The owner's call on native.** Still open. §3.6 keeps the Go compiler on
+  the blocking fallback, and `conformance/cases/tasks_agree_without_a_scheduler`
+  holds the two to one answer wherever a program does not multiplex. If the
+  multiplexing gates are wanted on Go-built binaries too, the `internal/ir`
+  port is argued on #4451 as its own slice.
 - **Interleaving per connection.** One task per connection at a time is the
-  simplest rule and matches HTTP/1.1 ordering; HTTP/2 (P6) will want several,
-  and the in-flight table is keyed to allow it.
+  rule that landed and matches HTTP/1.1 ordering; HTTP/2 (P6) will want
+  several, and the in-flight table is keyed to allow it.
