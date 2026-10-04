@@ -216,9 +216,14 @@ function ir_bin_asm(tag: i32, width: i32, d: string, r: string, t: string): stri
 // does (when_true) or its inverse. `cmp x0, x1` has already set the flags, so
 // the signed/unsigned split is the same one ir_bin_asm's cset family makes.
 function ir_cmp_cond(tag: i32, when_true: boolean): string {
+  return arm64_native.arm64_cond_name(ir_cmp_cc(tag, when_true));
+}
+
+// ir_cmp_cc is the condition code ir_cmp_cond spells. A code's negation is
+// the code with its low bit flipped.
+function ir_cmp_cc(tag: i32, when_true: boolean): i32 {
   // Tags 35 (eq) through 44 (ge_u), in order; any other tag reads as ge_u.
-  let direct: string[] = ["eq", "ne", "lt", "le", "gt", "ge", "lo", "ls", "hi", "hs"];
-  let neg: string[] = ["ne", "eq", "ge", "gt", "le", "lt", "hs", "hi", "ls", "lo"];
+  let direct: i32[] = [CC_EQ, CC_NE, CC_LT, CC_LE, CC_GT, CC_GE, CC_LO, CC_LS, CC_HI, CC_HS];
   let at: i32 = tag - 35;
   if (at < 0 || at > 9) {
     at = 9;
@@ -226,8 +231,29 @@ function ir_cmp_cond(tag: i32, when_true: boolean): string {
   if (when_true) {
     return direct[at];
   }
-  return neg[at];
+  return direct[at] ^ 1;
 }
+
+// The AArch64 condition codes the emitter branches on.
+const CC_EQ: i32 = 0;
+
+const CC_NE: i32 = 1;
+
+const CC_HS: i32 = 2;
+
+const CC_LO: i32 = 3;
+
+const CC_HI: i32 = 8;
+
+const CC_LS: i32 = 9;
+
+const CC_GE: i32 = 10;
+
+const CC_LT: i32 = 11;
+
+const CC_GT: i32 = 12;
+
+const CC_LE: i32 = 13;
 
 // shift_imm_asm is one shift of `a` by a known count into `d`, the mask folded
 // into the immediate at the operand's width; the count comes from the
@@ -1416,16 +1442,16 @@ function ssa_and_imm(s: asmcore.EmitState, d: string, n: string, imm: i64, text:
 }
 
 // ssa_trap_guard writes `b.<cond> 1f`, `b abort`, `1:` after a compare: the
-// trap the condition skips, through a label id when records are on and the
-// numeric local in text.
-function ssa_trap_guard(s: asmcore.EmitState, mnem: string, abort: string): asmcore.EmitState {
-  if (s.records() && arm64_native.arm64_rec_bcond(mnem) >= 0 && arm64_native.arm64_rec_label(abort)) {
+// trap condition code `cond` skips, through a label id when records are on
+// and the numeric local in text.
+function ssa_trap_guard(s: asmcore.EmitState, cond: i32, abort: string): asmcore.EmitState {
+  if (s.records() && arm64_native.arm64_rec_label(abort)) {
     let ln: asmcore.LabNew = asmcore.lab_new(s, "1");
-    s = ssa_bcond(ln.state, mnem, ln.lab);
+    s = ssa_bcond(ln.state, cond, ln.lab);
     s = s.branch(arm64_native.arm64_rec_b(false), abort);
     return s.lab_def(ln.lab);
   }
-  return s.write("    " + mnem + " 1f\n    b " + abort + "\n1:\n");
+  return s.write("    b." + arm64_native.arm64_cond_name(cond) + " 1f\n    b " + abort + "\n1:\n");
 }
 
 function ssa_slot_off(v: i32): i32 {
@@ -1602,15 +1628,13 @@ function ssa_b(s: asmcore.EmitState, l: asmcore.Lab): asmcore.EmitState {
   return s.write("    b " + l.name + "\n");
 }
 
-// ssa_bcond writes the conditional branch `mnem label`, mnem `b.lo` or `blo`.
-function ssa_bcond(s: asmcore.EmitState, mnem: string, l: asmcore.Lab): asmcore.EmitState {
+// ssa_bcond writes the conditional branch `b.<cond> label` on condition code
+// `cond`.
+function ssa_bcond(s: asmcore.EmitState, cond: i32, l: asmcore.Lab): asmcore.EmitState {
   if (s.records()) {
-    let w: i64 = arm64_native.arm64_rec_bcond(mnem);
-    if (w >= 0) {
-      return s.lab_ref(w, l);
-    }
+    return s.lab_ref(arm64_native.arm64_rec_bcond(cond), l);
   }
-  return s.write("    " + mnem + " " + l.name + "\n");
+  return s.write("    b." + arm64_native.arm64_cond_name(cond) + " " + l.name + "\n");
 }
 
 // ssa_cbz writes `cbz reg, label`, or nonzero `cbnz`.
@@ -2223,7 +2247,7 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = ssa_unscaled(s, true, "w5", base, 0 - 8);
     s = s.write(san_poison_check("w5", "w7", done.name + "us", s.rc_free_debug));
     s = ssa_cmp_imm(s, "w5", 1);
-    s = ssa_bcond(s, "bne", done);
+    s = ssa_bcond(s, CC_NE, done);
     s = ssa_mov_imm(s, "x6", "1");
     s = s.lab_def(done);
     s = ssa_mov_rr(s, d, "x6");
@@ -2246,7 +2270,7 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 function ssa_rc_guard(s: asmcore.EmitState, p: string, done: asmcore.Lab, strip: boolean): asmcore.EmitState {
   s = ssa_tbz(s, true, p, 0, done);
   s = ssa_cmp_floor(s, p);
-  s = ssa_bcond(s, "blo", done);
+  s = ssa_bcond(s, CC_LO, done);
   if (strip) {
     s = ssa_and_imm(s, "x7", p, 0 - 3i64, "0xfffffffffffffffd");
   }
@@ -2291,10 +2315,10 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
     s = ssa_tbz(s, true, p, 0, kept);
   }
   s = ssa_cmp_floor(s, p);
-  s = ssa_bcond(s, "blo", kept);
+  s = ssa_bcond(s, CC_LO, kept);
   s = ssa_unscaled(s, true, "w5", p, 0 - 8);
   s = ssa_cmp_imm(s, "w5", 1);
-  s = ssa_bcond(s, "bgt", dec);
+  s = ssa_bcond(s, CC_GT, dec);
   s = ssa_tbz(s, true, "w5", 31, kept);
   s = ssa_helper_call(ins, reg_of, s);
   s = ssa_b(s, done);
@@ -2383,10 +2407,10 @@ function ssa_release_entry(r: irtables.LowerResult, lp: string, s: asmcore.EmitS
   let kept: asmcore.Lab = kn.lab;
   let slow: asmcore.Lab = sn.lab;
   s = ssa_cmp_floor(s, "x0");
-  s = ssa_bcond(s, "blo", kept);
+  s = ssa_bcond(s, CC_LO, kept);
   s = ssa_unscaled(s, true, "w5", "x0", 0 - 8);
   s = ssa_cmp_imm(s, "w5", 1);
-  s = ssa_bcond(s, "bgt", dec);
+  s = ssa_bcond(s, CC_GT, dec);
   s = ssa_tbz(s, false, "w5", 31, slow);
   s = s.lab_def(kept);
   s = ssa_ret(ssa_mov_imm(s, "x0", "0"));
@@ -2431,7 +2455,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
       s = s.mark_heap();
       s = ssa_ldst0(s, true, "x6", a);
       s = ssa_cmp_rr(s, b, "x6");
-      s = ssa_trap_guard(s, "b.lo", "__fern_oob_abort");
+      s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
     }
     if (ins.str == "u8") {
       s = ssa_addsub_rr(s, false, "x5", a, b);
@@ -2447,7 +2471,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     if (ins.imm != 1) {
       s = ssa_ldst(s, true, "x6", a, 8);
       s = ssa_cmp_rr(s, b, "x6");
-      s = ssa_trap_guard(s, "b.lo", "__fern_oob_abort");
+      s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
     }
     s = ssa_ldst0(s, true, "x6", a);
     s = ssa_ldrb_reg(s, ssa_wreg(d), "x6", b);
@@ -2459,7 +2483,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (ins.imm != 1) {
     s = ssa_ldst0(s, true, "x7", a);
     s = ssa_cmp_rr(s, b, "x7");
-    s = ssa_trap_guard(s, "b.lo", "__fern_oob_abort");
+    s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
   }
   if (ins.str == "u8") {
     s = ssa_addsub_rr(s, false, "x5", a, b);
@@ -2510,7 +2534,7 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   s = ssa_ldst(s, true, "x6", a, 8);
   s = ssa_ldst(s, true, "x7", b, 8);
   s = ssa_cmp_rr(s, "x6", "x7");
-  s = ssa_bcond(s, "b.ne", neq);
+  s = ssa_bcond(s, CC_NE, neq);
   let lit_a: i32 = fr.lit0[ins.args[0]];
   let lit_b: i32 = fr.lit0[ins.args[1]];
   if (lit_b >= 0 || lit_a >= 0) {
@@ -2523,7 +2547,7 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
     s = ssa_ldst0(s, true, "x6", other);
     s = ssa_ldrb0(s, "w6", "x6");
     s = ssa_cmp_imm(s, "w6", lit);
-    s = ssa_bcond(s, "b.ne", neq);
+    s = ssa_bcond(s, CC_NE, neq);
   }
   s = ssa_parallel_moves([reg_of[ins.args[0]], reg_of[ins.args[1]]], [0, 1], s);
   s = ssa_bl_sym(s, "__fn___fern_str_eq.r");
@@ -2823,7 +2847,7 @@ function arr_push_inline(sym: string, l: string, unique: boolean, s: asmcore.Emi
   s = ssa_ldst0(s, true, "x2", "x0");
   s = ssa_unscaled(s, true, "x3", "x0", 0 - 16);
   s = ssa_cmp_rr(s, "x2", "x3");
-  s = ssa_bcond(s, "b.ge", sn.lab);
+  s = ssa_bcond(s, CC_GE, sn.lab);
   s = push_count_test(unique, sn.lab, on.lab, s);
   s = s.lab_def(on.lab);
   s = ssa_addsub_imm(s, false, "x2", "x2", 1);
@@ -2846,7 +2870,7 @@ function arr_push_inline_u8(sym: string, l: string, unique: boolean, s: asmcore.
   s = ssa_unscaled(s, true, "x3", "x0", 0 - 16);
   s = ssa_lsl(s, "x3", "x3", 3);
   s = ssa_cmp_rr(s, "x2", "x3");
-  s = ssa_bcond(s, "b.ge", sn.lab);
+  s = ssa_bcond(s, CC_GE, sn.lab);
   s = push_count_test(unique, sn.lab, on.lab, s);
   s = s.lab_def(on.lab);
   s = ssa_addsub_rr(s, false, "x3", "x0", "x2");
@@ -2867,7 +2891,7 @@ function push_count_test(unique: boolean, slow: asmcore.Lab, ok: asmcore.Lab, s:
   }
   s = ssa_unscaled(s, true, "w3", "x0", 0 - 8);
   s = ssa_cmp_imm(s, "w3", 1);
-  s = ssa_bcond(s, "b.eq", ok);
+  s = ssa_bcond(s, CC_EQ, ok);
   return ssa_tbz(s, false, "w3", 31, slow);
 }
 
@@ -2915,9 +2939,9 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
   s = ssa_load_abi_args(reg_of, ins.args, ["x0", "x1", "x2"], s);
   s = ssa_ldst(s, true, "x3", "x0", 8);
   s = ssa_cmp_rr(s, "x2", "x3");
-  s = ssa_trap_guard(s, "b.ls", "__fern_str_oob_abort");
+  s = ssa_trap_guard(s, CC_LS, "__fern_str_oob_abort");
   s = ssa_cmp_rr(s, "x1", "x2");
-  s = ssa_trap_guard(s, "b.ls", "__fern_str_oob_abort");
+  s = ssa_trap_guard(s, CC_LS, "__fern_str_oob_abort");
   s = ssa_addsub_rr(s, true, "x2", "x2", "x1");
   s = ssa_ldst0(s, true, "x3", "x0");
   s = ssa_addsub_rr(s, false, "x1", "x3", "x1");
@@ -3405,14 +3429,14 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
       return ssa_cbz(s, false, tr, tl);
     }
     if (fu.n > 0) {
-      return ssa_bcond(s, "b." + ir_cmp_cond(fu.tag, !fu.inverted), tl);
+      return ssa_bcond(s, ir_cmp_cc(fu.tag, !fu.inverted), tl);
     }
     return ssa_cbz(s, true, tr, tl);
   }
   if (fu.n > 0 && fu.tag == 0) {
     s = ssa_cbz(s, true, tr, fl);
   } else if (fu.n > 0) {
-    s = ssa_bcond(s, "b." + ir_cmp_cond(fu.tag, fu.inverted), fl);
+    s = ssa_bcond(s, ir_cmp_cc(fu.tag, fu.inverted), fl);
   } else {
     s = ssa_cbz(s, false, tr, fl);
   }
@@ -3462,9 +3486,9 @@ function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string,
   let jn: asmcore.LabNew = asmcore.lab_new(s, join);
   s = jn.state;
   s = ssa_tst_imm(s, p, 1i64, "1");
-  s = ssa_bcond(s, "b.ne", jn.lab);
+  s = ssa_bcond(s, CC_NE, jn.lab);
   s = ssa_cmp_floor(s, p);
-  s = ssa_bcond(s, "b.lo", jn.lab);
+  s = ssa_bcond(s, CC_LO, jn.lab);
   let base: string = p;
   if (!aligned) {
     s = ssa_and_imm(s, "x7", p, 0 - 3i64, "0xfffffffffffffffd");
