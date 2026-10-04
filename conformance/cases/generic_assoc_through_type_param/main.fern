@@ -1,0 +1,20 @@
+import "std/i32";
+
+// An associated call through a type parameter, `T.make(n)`, resolves when T
+// is instantiated with an applied generic struct.
+trait Make { function make(n: i32): Self; }
+
+struct Box[T] { v: i32 }
+
+impl[T] Make for Box[T] {
+    function make(n: i32): Self { return Box { v: n }; }
+}
+
+function build[T: Make](n: i32): T { return T.make(n); }
+
+function main(): i32 {
+    let b: Box[string] = build[Box[string]](5);
+    let c: Box[i32] = build[Box[i32]](6);
+    print((b.v + c.v).to_string());
+    return 0;
+}

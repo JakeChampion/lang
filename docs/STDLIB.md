@@ -1117,11 +1117,26 @@ serializer.
   body either way. `http_serialize_response_head(resp, keep_alive, framing)`
   is the head alone, the framing line (`Content-Length` or
   `Transfer-Encoding`) the caller's.
-- **Request body:** `HttpRequest.body` is the bytes as they came
-  (`req.body.data`, a `u8[]`); `(req).body_string(): Result[string,
-  BodyError]` is the body as text, `Err(NotUtf8)` when it is not well-formed
-  UTF-8, so a handler declared as `Result[HttpResponse, http.BodyError]`
-  reads `let text: string = req.body_string()?;`.
+- **A chunked body as it arrives:** `chunk_decoder(limits)` is a
+  `ChunkDecoder` at the start of a chunked body; `(d).feed(bytes)` answers
+  `ChunkData(next, data)` — the data decoded from this feed, a chunk's
+  passed on as it arrives, and the decoder to feed next — `ChunkEnd(data,
+  trailers, rest)` once the body is complete, `rest` the bytes past it, or
+  `ChunkRefused(status)`. Its rules are the parser's (the framing budget,
+  the body cap, the extensions, the trailer section), so a body fed in any
+  pieces answers what the parser answers for the whole; the serve loop's
+  streamed request bodies read through it.
+- **Request body:** `HttpRequest.body` is a `Stream` over the bytes as
+  they came, or over a source that pulls them as the handler reads
+  (`std/stream`); `(req).body_string(): Result[string, BodyError]` is the
+  whole body as text, `Err(NotUtf8)` when it is not well-formed UTF-8 and
+  `Err(EndedEarly(fault))` when a streamed body ended early (413 past the
+  cap, 408 stalled, 400 malformed or cut short), so a handler declared as
+  `Result[HttpResponse, http.BodyError]` reads `let text: string =
+  req.body_string()?;` and refuses either with the right status.
+  `(req).body_bytes()` is the whole body as it came; `(req).body_len()` its
+  length, the declared `Content-Length` for a streamed body (-1 when
+  chunked).
 - **Typed JSON body:** `body_json[T](req): Result[T, BodyError]` decodes the
   body as a `T: json.FromJson` and tells the failures apart:
   `UnsupportedMediaType(ct)` when the `Content-Type` is not
@@ -1549,7 +1564,8 @@ points that run a handler under it.
   data_rate_grace, response_min_data_rate, response_data_rate_grace,
   keep_alive_idle, keep_alive_requests, max_connections,
   max_connections_per_ip, max_in_flight, workers, shutdown_grace,
-  readiness_path, drain_deadline, limits, stop_with_parent }` (`config()` is
+  readiness_path, drain_deadline, limits, stop_with_parent, stream_bodies }`
+  (`config()` is
   128, one listener per port, the 10 s deadline, 240 bytes per second after
   5 s for a request body and the same for a response, 130 s, 1000, 1024, 100
   and 1024): the
@@ -1604,7 +1620,19 @@ points that run a handler under it.
   shutdown when the process's parent exits, as a SIGTERM would; each
   worker `supervise` forks has it set, so a supervisor
   killed outright (SIGKILL, a crash) takes its workers down rather than
-  leaving them serving as orphans.
+  leaving them serving as orphans. `stream_bodies` (false) starts a handler
+  on its request's header block rather than once the body has arrived
+  whole: the body is a `Stream` that pulls the bytes as the handler reads
+  them, parking the handler on the connection under the minimum data rate
+  while the loop serves other connections (docs/NET-P3-SUSPENSION-PLAN.md
+  §3.9). The body cap still holds (a declared length past it is refused 413
+  before the handler, a chunked body past it ends the stream with 413), a
+  body under the data rate ends it with 408, `Expect: 100-continue` is
+  answered when the handler first reads, so a handler that refuses never
+  invites the body, and a connection whose body the handler did not read
+  whole closes after the response. A `Stream` that ended early faults
+  (`(s).fault()`); `body_string()` reports it as `EndedEarly`. The stateful
+  loop (`run_with`) reads bodies whole either way.
   A listener it cannot bind is `serve: cannot listen on port PORT:`
   and the error's text on stderr, and the entry returns 98 (every
   entry, and a supervised worker that binds its own).
@@ -1883,11 +1911,16 @@ entries, and insertion-ordered iteration. Backs `HttpRequest`'s
 
 ### `std/stream`
 
-Byte-stream value backing `HttpRequest.body: Stream`. Phase 1 is an
-in-memory buffer-backed `Stream`.
+Byte-stream value backing `HttpRequest.body: Stream`: a `data: u8[]`
+buffer with a `pos` cursor, and for a body that arrives as it is read a
+`BodySource` the reads pull the next chunk from once the buffer is
+exhausted (docs/NET-P3-SUSPENSION-PLAN.md §3.9), so the whole is never
+held. `BodySource { next: () => Option[u8[]], fault: Cell[i32] }`:
+`next` answers None at the end and on every call after, `fault` why the
+stream ended early (an HTTP status, or `async.cancelled()`).
 
 - Constructors: `stream_from_bytes(bs)`, `stream_from_string(s)`,
-  `stream_empty()`.
+  `stream_empty()`, `stream_from_source(src)`.
 - Readers: `(s).read_byte()`, `(s).read_n(n)`, `(s).read_line()`,
   `(s).read_all()`, `(s).read_all_string()`. `read_line` reads an
   ill-formed sequence as U+FFFD, since its `None` means end of input.
@@ -1895,7 +1928,10 @@ in-memory buffer-backed `Stream`.
   bytes. It returns `Some(text)` for valid UTF-8 and `None` for malformed
   bytes, advancing the returned cursor to EOF either way. EOF yields
   `Some("")`. The original value and its bytes remain available.
-- Introspection: `(s).len()`, `(s).remaining()`, `(s).is_empty()`.
+- Introspection: `(s).len()`, `(s).remaining()`, `(s).is_empty()`
+  describe the buffer — the whole body of an in-memory Stream, the chunk
+  being read of a sourced one — and `(s).fault()` is a sourced stream's
+  fault, 0 until it ends early.
 
 ### `std/io_buffered`
 

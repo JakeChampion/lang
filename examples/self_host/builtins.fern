@@ -83,9 +83,17 @@ struct ProcessResult { stdout: string, stderr: string, exit_code: i32 }
 // field offsets, so it lives here.
 struct HeaderMap { names: string[], values: string[] }
 
+// BodySource — what a lazy Stream pulls from: `next` answers the next
+// chunk, None at the end and on every call after; `fault` is why the
+// stream ended early (an HTTP status, or async.cancelled()), 0 for one
+// that reached its end.
+struct BodySource { next: () => Option[u8[]], fault: Cell[i32] }
+
 // Stream — std/stream's byte-stream value, and the type of
-// HttpRequest.body (docs/PLATFORM-RESEARCH.md Rec §4).
-struct Stream { data: u8[], pos: i32 }
+// HttpRequest.body (docs/PLATFORM-RESEARCH.md Rec §4): a buffer and a
+// cursor, and a source the reads refill the buffer from once it is
+// exhausted, for a body that arrives as it is read.
+struct Stream { data: u8[], pos: i32, source: Option[BodySource] }
 
 struct HttpRequest { method: string, path: string, body: Stream, headers: HeaderMap, trailers: HeaderMap }
 

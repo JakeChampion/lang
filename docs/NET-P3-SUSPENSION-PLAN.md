@@ -292,10 +292,11 @@ test #9857 asks for, byte-identical on x86-64, arm64 and wasm.
 
 ### 3.9 Lazy streaming request bodies
 
-Today a handler starts only on a `Framed` request, the body read whole by
-the loop under the cap and the minimum data rate; `HttpRequest.body` is a
-`Stream { data, pos }` over that buffer. std/stream's own header named the
-next step: the same reader API over a source that pulls bytes on demand.
+Before this slice a handler started only on a `Framed` request, the body
+read whole by the loop under the cap and the minimum data rate;
+`HttpRequest.body` was a `Stream { data, pos }` over that buffer. std/stream's
+own header named the next step: the same reader API over a source that pulls
+bytes on demand.
 
 **The stream pulls.** `Stream` grows a third field, `source:
 Option[BodySource]`, and `BodySource { next: () => Option[u8[]], fault:
@@ -493,12 +494,15 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    is the scripted upstream plus scripted disconnect test, byte-identical
    on x86-64, arm64 and wasm through the self-host compiler, and
    `TestSimTasksFallback` the Go compiler's twin.
-9. **Lazy streaming request bodies (§3.9).** `HttpRequest.body` pulled
-   inside a handler parks on the connection's readability; the P1 "bodies
-   are read before the handler runs" restriction is lifted behind
+9. **Lazy streaming request bodies. Landed (§3.9).** `HttpRequest.body`
+   pulled inside a handler parks on the connection's readability; the P1
+   "bodies are read before the handler runs" restriction is lifted behind
    `serve.Config.stream_bodies`, the body cap and the minimum data rate
-   enforced by the pull. Three PRs: the lazy `Stream`, the incremental
-   chunked decoder, the loop with its gates.
+   enforced by the pull. Three PRs: the lazy `Stream` (#11421), the
+   incremental chunked decoder (#11422), the loop with its gates (#11426):
+   `TestSelfHostServeStreamBodies` on x86-64 and arm64, and
+   `TestServeStreamBodiesSequentialInterp` for the Go compiler's blocking
+   fallback.
 10. **Docs and reference.** `ASYNC.md`, `STDLIB.md` (serve, platform,
     async), the tutorial's handler section, `TEST-GATES.md` rows, and the
     `docs/README.md` entry for this file flipped to [record].
