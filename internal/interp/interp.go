@@ -1346,6 +1346,19 @@ func New() *Interp {
 	// not observe reclamation, exactly as with __heap_bump_bytes.
 	i.Builtins["__heap_mark"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	i.Builtins["__heap_release_to"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	// The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4) in the
+	// blocking fallback: no task is ever current, so std/async's suspend
+	// polls and task_start runs its entry to completion. A park is reached
+	// only with a current task, so it reports the no-task answer.
+	i.Builtins["__task_new"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(1), nil }}
+	i.Builtins["__task_free"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_cur"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	i.Builtins["__task_enter"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_leave"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	i.Builtins["__task_park"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
+	i.Builtins["__task_token"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	i.Builtins["__task_set_ready"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_set_cancelled"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
 	i.Builtins["f32_bits"] = &Builtin{Fn: builtinF32Bits}
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}
 	i.Builtins["f64_bits"] = &Builtin{Fn: builtinF64Bits}
