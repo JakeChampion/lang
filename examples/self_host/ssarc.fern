@@ -3040,10 +3040,10 @@ function frame(f: ssasem.Func): irtables.LowerResult {
   let di: i32 = 0;
   while (di < f.dbg_vals.len()) {
     let v: i32 = f.dbg_vals[di];
-    r = irtables.LowerResult {
-      ...r, dbg_slots: r.dbg_slots.append(v), dbg_names: r.dbg_names.append(f.dbg_names[di]),
-      dbg_types: r.dbg_types.append(typeinfo.spelling(f.values[v])),
-    };
+    let t: string = dbg_type(f, f.values[v], []);
+    if (t != "") {
+      r = irtables.LowerResult { ...r, dbg_slots: r.dbg_slots.append(v), dbg_names: r.dbg_names.append(f.dbg_names[di]), dbg_types: r.dbg_types.append(t) };
+    }
     di = di + 1;
   }
   let vi: i32 = 0;
@@ -3063,6 +3063,66 @@ function frame(f: ssasem.Func): irtables.LowerResult {
     vi = vi + 1;
   }
   return r;
+}
+
+// dbg_type is how a `-g` variable's type is described to the ELF writer, ""
+// for one it cannot describe. A scalar is its spelling. A struct is a pointer
+// to its box, `*Name@size{field:type:offset,...}`, each field in its 8-byte
+// slot after the shape word; fields that cannot be described are left out,
+// and a struct already being described (`open`) is named without its fields.
+function dbg_type(f: ssasem.Func, t: typeinfo.Type, open: string[]): string {
+  let s: string = typeinfo.spelling(t);
+  for scalar in ["i32", "i64", "u8", "u32", "u64", "usize", "isize", "f64", "f32", "boolean"] {
+    if (s == scalar) {
+      return s;
+    }
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    let at: i32 = semrecords.find(f.records, t);
+    if (at < 0) {
+      return "";
+    }
+    let name: string = dbg_type_name(s);
+    if (util.index_of_str(open, name) >= 0) {
+      return "*" + name;
+    }
+    return "*" + name + "@" + util.i32_to_string((f.records.list[at].fields.len() + 1) * 8) + "{" + dbg_members(f, f.records.list[at].fields, open.append(name)) + "}";
+  }
+  return "";
+}
+
+// dbg_members is a struct's describable fields as `field:type:offset`.
+function dbg_members(f: ssasem.Func, fields: semrecords.Field[], open: string[]): string {
+  let out: string = "";
+  let k: i32 = 0;
+  while (k < fields.len()) {
+    let ft: string = dbg_type(f, fields[k].ty, open);
+    if (ft != "") {
+      if (out != "") {
+        out = out + ",";
+      }
+      out = out + fields[k].name + ":" + ft + ":" + util.i32_to_string((k + 1) * 8);
+    }
+    k = k + 1;
+  }
+  return out;
+}
+
+// dbg_type_name is a type's spelling with the description's separators
+// replaced, so a generic's arguments cannot be read as structure.
+function dbg_type_name(s: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < s.len()) {
+    let c: u8 = s[i];
+    if (c == b'@' || c == b'{' || c == b'}' || c == b',' || c == b':' || c == b'|' || c == b'*') {
+      out = out + "_";
+    } else {
+      out = out + slice_unchecked(s, i, i + 1);
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 // The stack IR's name for each integer operator, the signed form where the

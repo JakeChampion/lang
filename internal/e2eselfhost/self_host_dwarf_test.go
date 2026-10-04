@@ -570,3 +570,135 @@ func TestSelfHostDWARFLocalVars(t *testing.T) {
 		}
 	}
 }
+
+const dwarfStructsSrc = `struct Point { x: i32, y: i32 }
+struct Person { name: string, age: i32, score: i32 }
+struct Rect { origin: Point, w: i32, h: i32 }
+@noinline function describe(p: Person): i32 { return p.age + p.score; }
+@noinline function area(r: Rect): i32 { return r.w * r.h; }
+function main(): i32 {
+    let pt: Point = Point { x: 7, y: 35 };
+    let p: Person = Person { name: "Ada", age: 36, score: 99 };
+    let r: Rect = Rect { origin: Point { x: 3, y: 4 }, w: 5, h: 6 };
+    return pt.x + pt.y + describe(p) + area(r) + r.origin.x;
+}
+`
+
+// dwarfVarStruct is the struct a pointer-typed variable of fn points at.
+func dwarfVarStruct(t *testing.T, path, fn, name string) *dwarf.StructType {
+	t.Helper()
+	f, err := goelf.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	d, err := f.DWARF()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := d.Reader()
+	cur := ""
+	for {
+		e, err := r.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e == nil {
+			break
+		}
+		if e.Tag == dwarf.TagSubprogram {
+			cur, _ = e.Val(dwarf.AttrName).(string)
+			continue
+		}
+		if n, _ := e.Val(dwarf.AttrName).(string); cur != fn || n != name || (e.Tag != dwarf.TagVariable && e.Tag != dwarf.TagFormalParameter) {
+			continue
+		}
+		off, ok := e.Val(dwarf.AttrType).(dwarf.Offset)
+		if !ok {
+			t.Fatalf("%s.%s has no DW_AT_type", fn, name)
+		}
+		ty, err := d.Type(off)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ptr, ok := ty.(*dwarf.PtrType)
+		if !ok {
+			t.Fatalf("%s.%s is a %T (%v), want a pointer to its box", fn, name, ty, ty)
+		}
+		st, ok := ptr.Type.(*dwarf.StructType)
+		if !ok {
+			t.Fatalf("%s.%s points to a %T, want a struct", fn, name, ptr.Type)
+		}
+		return st
+	}
+	t.Fatalf("no DIE for %s.%s", fn, name)
+	return nil
+}
+
+// checkDwarfStruct holds a struct DIE to its name, size and members, each
+// member given as name, offset and type.
+func checkDwarfStruct(t *testing.T, st *dwarf.StructType, name string, size int64, members [][3]string) {
+	t.Helper()
+	if st.StructName != name || st.ByteSize != size {
+		t.Errorf("struct %s of %d bytes, want %s of %d", st.StructName, st.ByteSize, name, size)
+	}
+	if len(st.Field) != len(members) {
+		t.Fatalf("%s has members %v, want %v", name, st.Field, members)
+	}
+	for i, m := range members {
+		f := st.Field[i]
+		if got := [3]string{f.Name, strconv.FormatInt(f.ByteOffset, 10), f.Type.String()}; got != m {
+			t.Errorf("%s member %d = %v, want %v", name, i, got, m)
+		}
+	}
+}
+
+// The self-host's answer to internal/e2e's TestDWARFStructVars,
+// TestDWARFMixedStructVars and TestDWARFNestedStructVars (#11410). A struct
+// variable holds a pointer to its box, whose word 0 is the shape and whose
+// field i is the 8-byte slot at (i+1)*8, so its type is a pointer to a struct
+// of that layout. A string field is left out and the fields after it keep
+// their offsets; a struct field is a pointer to its own box.
+func TestSelfHostDWARFStructVars(t *testing.T) {
+	cli := newStrictCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "structs.fern")
+	if err := os.WriteFile(src, []byte(dwarfStructsSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	point := [][3]string{{"x", "8", "i32"}, {"y", "16", "i32"}}
+	bins := map[string]string{}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			out := filepath.Join(dir, "structs-"+target)
+			cmd := runX86_64Bin(cli.runner, cli.bin, "-g", "-target", target, "-o", out, src, cli.stdlib)
+			if o, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("-g build: %v\n%s", err, o)
+			}
+			bins[target] = out
+			checkDwarfStruct(t, dwarfVarStruct(t, out, "main", "pt"), "Point", 24, point)
+			checkDwarfStruct(t, dwarfVarStruct(t, out, "describe", "p"), "Person", 32, [][3]string{{"age", "16", "i32"}, {"score", "24", "i32"}})
+			rect := dwarfVarStruct(t, out, "area", "r")
+			checkDwarfStruct(t, rect, "Rect", 32, [][3]string{{"origin", "8", "*struct Point"}, {"w", "16", "i32"}, {"h", "24", "i32"}})
+			if p, ok := rect.Field[0].Type.(*dwarf.PtrType); ok {
+				if st, ok := p.Type.(*dwarf.StructType); ok {
+					checkDwarfStruct(t, st, "Point", 24, point)
+				}
+			}
+		})
+	}
+
+	gdb, err := exec.LookPath("gdb")
+	if err != nil || runtime.GOARCH != "amd64" || bins["x86-64-linux"] == "" {
+		t.Skip("gdb on an amd64 host reads the x86-64 binary's structs; none here")
+	}
+	o, err := exec.Command(gdb, "-batch", "-ex", "break area", "-ex", "run", "-ex", "print *r", "-ex", "print *r.origin", bins["x86-64-linux"]).CombinedOutput()
+	if err != nil {
+		t.Fatalf("gdb: %v\n%s", err, o)
+	}
+	for _, want := range []string{"w = 5, h = 6}", "= {x = 3, y = 4}"} {
+		if !strings.Contains(string(o), want) {
+			t.Errorf("gdb did not read %q\n%s", want, o)
+		}
+	}
+}
