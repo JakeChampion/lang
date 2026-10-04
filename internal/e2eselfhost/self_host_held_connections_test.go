@@ -46,7 +46,7 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 		served bool
 	}{{"accepted", false}, {"kept", true}} {
 		t.Run(shape.name, func(t *testing.T) {
-			addr := startHeldConnectionsServer(t, driver, stdlib)
+			addr := startHeldConnectionsServer(t, driver, stdlib, e2eharness.HeldConnectionsServerSource)
 			per, first, second := e2eharness.MeasureHeldConnections(t, addr, shape.served)
 			t.Logf("%s connections: first batch of %d grew the heap by %d bytes, second by %d (%d per connection)",
 				shape.name, e2eharness.HeldConnectionsBatch, first, second, per)
@@ -56,11 +56,27 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 			}
 		})
 	}
+	// The P3 shape (docs/NET-P3-SUSPENSION-PLAN.md §4, slice 5): every held
+	// connection carries a request whose handler is parked on the upstream,
+	// so the growth is a suspended handler's — its flight, its saved frames
+	// and its fetch client's connection and buffers.
+	t.Run("suspended", func(t *testing.T) {
+		up := e2eharness.StartFetchUpstream(t)
+		e2eharness.SetFetchProxy(t, up)
+		addr := startHeldConnectionsServer(t, driver, stdlib, e2eharness.HeldSuspendedServerSource)
+		per, first, second := e2eharness.MeasureHeldSuspended(t, addr, up)
+		t.Logf("suspended handlers: first batch of %d grew the heap by %d bytes, second by %d (%d per handler)",
+			e2eharness.HeldConnectionsBatch, first, second, per)
+		if per >= e2eharness.HeldSuspendedBytesPerHandler {
+			t.Fatalf("holding %d more suspended handlers grew the heap by %d bytes per handler, want under %d",
+				e2eharness.HeldConnectionsBatch, per, e2eharness.HeldSuspendedBytesPerHandler)
+		}
+	})
 }
 
-// startHeldConnectionsServer compiles HeldConnectionsServerSource with the
-// self-host driver on a free port, starts it, and answers its address.
-func startHeldConnectionsServer(t *testing.T, driver, stdlib string) string {
+// startHeldConnectionsServer compiles the server source on a free port
+// with the self-host driver, starts it, and answers its address.
+func startHeldConnectionsServer(t *testing.T, driver, stdlib string, source func(port int) string) string {
 	t.Helper()
 	dir := t.TempDir()
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
@@ -71,7 +87,7 @@ func startHeldConnectionsServer(t *testing.T, driver, stdlib string) string {
 	probe.Close()
 
 	src := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(src, []byte(e2eharness.HeldConnectionsServerSource(port)), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(source(port)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "held")
