@@ -103,9 +103,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
       <td>The request body as text; <code>Err</code> when it is not UTF-8</td>
     </tr>
     <tr>
-      <td><code>req.body</code></td>
-      <td><code>Bytes</code></td>
-      <td>The request body as bytes, <code>req.body.data</code> for the <code>u8[]</code></td>
+      <td><code>req.body_bytes()</code></td>
+      <td><code>u8[]</code></td>
+      <td>The request body as bytes; <code>req.body</code> is the same body as a <code>Stream</code> to read in pieces</td>
     </tr>
     <tr>
       <td><code>req.body_len()</code></td>
@@ -241,11 +241,16 @@ off. Anything that must be shared across workers or outlive a crash
 belongs in a store the handler reaches through `plat`, not in the state.
 
 A worker is also the unit of concurrency. Each worker runs one handler at
-a time to completion, so a handler that blocks, sleeping or waiting on a
-slow upstream, holds every other connection on that worker until it
-returns. Add workers rather than connections to absorb slow handlers;
-multiplexing many waiting handlers on one worker is planned work
-([#9857](https://github.com/JakeChampion/lang/issues/9857)).
+a time, and what a handler that waits costs it depends on the compiler
+that built the server. Built by the self-host compiler, a handler that
+waits on `plat.http` or on a streaming request body parks: the worker
+serves its other connections while the upstream answers, thousands of
+them if need be, and the handler runs on from the wait with nothing
+written at the call site. Built by `fern`'s Go compiler, the same wait
+blocks, and the handler holds every other connection on its worker until
+it returns. Either way a handler that computes holds its worker, so add
+workers to absorb CPU-bound handlers. `docs/ASYNC.md` §8 has the
+details.
 
 A handler compiled for `wasm32-wasi-http` cannot take a state at all,
 because that world builds a fresh instance per request. An `init`
