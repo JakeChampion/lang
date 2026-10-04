@@ -13,6 +13,10 @@ Files: `hello.fern` (the Fern handler), `go-hello.go` (the Go server),
 `loadgen/` (the Go load generator: one connection per request by default,
 `-k` for keep-alive, `-c` concurrency, `-d` duration).
 
+`hello.fern` builds at 502fc5d4, the commit that added this snapshot. It does
+not build on later main, where the platform is the `platform.Platform` trait
+(#11340) and the server lives in `std/serve`.
+
 ```sh
 go build -o fern ./cmd/fern
 ./fern -target x86-64-linux -o hello docs/benchmarks/http-baseline-2026-09-20/hello.fern
