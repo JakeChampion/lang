@@ -83,17 +83,11 @@ function main(): i32 { return wrap(7); }`,
 //	identifier "skip"` — an internal error for an unsupported construct.
 func TestGenericFuncAsValueIsE040(t *testing.T) {
 	const decls = "function skip[T](s: i32, a: T): T { return a; }\n"
+	// A function type the value is wanted at instantiates a generic (see
+	// generic_fn_value_test.go); E040 is for a position with none.
 	bad := []string{
-		// Non-generic caller: argument position.
-		`function apply(a: i32, f: (i32, i32) => i32): i32 { return f(1, a); }
-function main(): i32 { return apply(7, skip); }`,
-		// Generic caller binding the same type-parameter name — the shape
-		// that reached monomorph.
-		`function inner[T](acc: T, f: (i32, T) => T): T { return f(1, acc); }
-function outer[T](acc: T): T { return inner(acc, skip); }
-function main(): i32 { return outer(7); }`,
-		// Value positions other than an argument.
 		`function main(): i32 { let f = skip; return 0; }`,
+		`function main(): i32 { let fs = [skip]; return 0; }`,
 	}
 	for _, body := range bad {
 		err := checkSource(t, decls+body)
