@@ -8588,6 +8588,7 @@ pub function fd_flags_func(): string {
   o = o + "    (local.set $buf (call $__fern_alloc (i32.const 24)))\n";
   o = o + "    (local.set $err (call $fd_fdstat_get (local.get $fd) (local.get $buf)))\n";
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
+  o = o + "      (call $__fern_raw_free (local.get $buf) (i32.const 24))\n";
   o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
   o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
   o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
@@ -8603,6 +8604,7 @@ pub function fd_flags_func(): string {
   o = o + "      (then (local.set $bits (i32.or (local.get $bits) (i32.const 2)))))\n";
   o = o + "    (if (i32.and (i32.load16_u (i32.add (local.get $buf) (i32.const 2))) (i32.const 1))\n";
   o = o + "      (then (local.set $bits (i32.or (local.get $bits) (i32.const 4)))))\n";
+  o = o + "    (call $__fern_raw_free (local.get $buf) (i32.const 24))\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 16)))\n";
   o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
   o = o + "    (i64.store (i32.add (local.get $res) (i32.const 8)) (i64.extend_i32_u (local.get $bits)))\n";
