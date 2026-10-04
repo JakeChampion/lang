@@ -2957,12 +2957,6 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"method-enum-recv-bound-result-len", "enum Box[T] { Full(T), Empty }\nfunction (b: Box[T]) get_or(d: T): T { match (b) { Full(x) => { return x; }, Empty => { return d; } } }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { let o: Box[string] = Full(\"vw\"); return o.get_or(\"\").len(); }\n"},
 		{"method-struct-recv-bound-arg-mismatch", "struct Hold[T] { v: T }\nfunction (h: Hold[T]) or_else(d: T): T { if (h.v == d) { return d; } return h.v; }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { let h: Hold[i32] = Hold { v: 3 }; return h.or_else(\"x\"); }\n"},
 		{"method-struct-recv-bound-result-len", "struct Hold[T] { v: T }\nfunction (h: Hold[T]) or_else(d: T): T { if (h.v == d) { return d; } return h.v; }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { let h: Hold[string] = Hold { v: \"ab\" }; return h.or_else(\"x\").len(); }\n"},
-		// A generic named as a value takes its type arguments from the
-		// function type it is wanted at; a position with none is E040.
-		{"fn-value-argument", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction measure[T: Shape](s: T): i32 { return s.area(); }\nfunction apply(f: (Sq) => i32, v: Sq): i32 { return f(v); }\nfunction main(): i32 { return apply(measure, Sq { s: 3 }); }\n"},
-		{"fn-value-let-and-generic-callee", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction measure[T: Shape](s: T): i32 { return s.area(); }\nfunction twice[A](f: (A) => i32, v: A): i32 { return f(v) * 2; }\nfunction main(): i32 { let g: (Sq) => i32 = measure; return g(Sq { s: 1 }) + twice(measure, Sq { s: 1 }); }\n"},
-		{"fn-value-bound-unmet", "trait Shape { function area(self: Self): i32; }\nfunction measure[T: Shape](s: T): i32 { return s.area(); }\nfunction apply_i(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 { return apply_i(measure, 3); }\n"},
-		{"fn-value-unannotated-let", "function ident[T](x: T): T { return x; }\nfunction main(): i32 { let f = ident; return 0; }\n"},
 		// A parameter typed by a trait is an anonymous generic; a trait
 		// anywhere else is still no type.
 		{"trait-param-generic", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction total(a: Shape, b: Shape): i32 { return a.area() + b.area(); }\nfunction main(): i32 { return total(Sq { s: 1 }, Sq { s: 2 }); }\n"},
@@ -2972,6 +2966,13 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"trait-param-beside-undeclared-type", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction total(a: Shape, b: Wibble): i32 { return a.area(); }\nfunction main(): i32 { return 0; }\n"},
 		{"generic-param-beside-undeclared-type", "function first[T](a: T, b: Wibble): T { return a; }\nfunction main(): i32 { return 0; }\n"},
 		{"trait-as-return-type", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction make(): Shape { return Sq { s: 1 }; }\nfunction main(): i32 { return 0; }\n"},
+
+		// A generic named as a value takes its type arguments from the
+		// function type it is wanted at; a position with none is E040.
+		{"fn-value-argument", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction measure[T: Shape](s: T): i32 { return s.area(); }\nfunction apply(f: (Sq) => i32, v: Sq): i32 { return f(v); }\nfunction main(): i32 { return apply(measure, Sq { s: 3 }); }\n"},
+		{"fn-value-let-and-generic-callee", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction measure[T: Shape](s: T): i32 { return s.area(); }\nfunction twice[A](f: (A) => i32, v: A): i32 { return f(v) * 2; }\nfunction main(): i32 { let g: (Sq) => i32 = measure; return g(Sq { s: 1 }) + twice(measure, Sq { s: 1 }); }\n"},
+		{"fn-value-bound-unmet", "trait Shape { function area(self: Self): i32; }\nfunction measure[T: Shape](s: T): i32 { return s.area(); }\nfunction apply_i(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 { return apply_i(measure, 3); }\n"},
+		{"fn-value-unannotated-let", "function ident[T](x: T): T { return x; }\nfunction main(): i32 { let f = ident; return 0; }\n"},
 		{"loop-string-byte-binding", `function f(text: string): i32 { let out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
 		{"loop-string-byte-mismatch", `function f(text: string): i32 { for ch in text { let wrong: string = ch; } return 0; }`},
 		{"loop-str-byte-binding", `function f(text: str): i32 { let out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},

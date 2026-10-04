@@ -155,21 +155,11 @@ pub function arm64_rec_addsub_reg(is_sub: boolean, sets: boolean, d: string, n: 
   return arm64_addsub_reg_word(is_sub, sets, n[0] == b'w', rd, rn, rm, 0, 0);
 }
 
-// arm64_rec_label reports whether a branch target can travel as a record:
-// a symbol name, never a numeric local (`1f`), which the text path resolves.
+// arm64_rec_label reports whether a branch target can travel as a record: a
+// symbol name the emitter composed itself, from its label prefix or through
+// sanitize_label, never a numeric local (`1f`), which the text path resolves.
 pub function arm64_rec_label(name: string): boolean {
-  if (name.len() == 0 || name[0] >= b'0' && name[0] <= b'9') {
-    return false;
-  }
-  let i: i32 = 0;
-  while (i < name.len()) {
-    let c: u8 = name[i];
-    if (c <= b' ' || c == b',' || c == b'/' || c == b';' || c == b'@' || c == b'#') {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
+  return name.len() > 0 && (name[0] < b'0' || name[0] > b'9');
 }
 
 // arm64_rec_b is `b` or, linking, `bl` with the displacement left for the

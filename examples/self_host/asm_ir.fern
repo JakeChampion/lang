@@ -20,6 +20,7 @@
 import "./lexer";
 import "./parser";
 import "./asmcore";
+import "./x86_native";
 import "./checker";
 import "./util";
 import "./ir";
@@ -6521,7 +6522,12 @@ function ssa_nsaved(): i32 {
 
 // A slot sits below the callee-saved registers' save area of `save` bytes.
 function ssa_slot(v: i32, save: i32): string {
-  return util.i32_to_string(0 - 8 * (v + 1) - save) + "(%rbp)";
+  return util.i32_to_string(ssa_slot_disp(v, save)) + "(%rbp)";
+}
+
+// ssa_slot_disp is a frame slot's displacement off %rbp.
+function ssa_slot_disp(v: i32, save: i32): i32 {
+  return 0 - 8 * (v + 1) - save;
 }
 
 // ssa_saved_regs is the callee-saved registers a function's allocation uses,
@@ -6576,13 +6582,221 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
     s = asmcore.EmitState { ...s, ssa_x0: v };
   }
   if (reg_of[v] < 0) {
-    return s.write("    movq " + ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save) + ", " + reg + "\n");
+    return ssa_mov_slot(s, true, reg, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save));
   }
   let home: string = ssa_reg(reg_of[v]);
   if (home == reg) {
     return s;
   }
-  return s.write("    movq " + home + ", " + reg + "\n");
+  return ssa_mov_rr(s, reg, home);
+}
+
+// ssa_label and ssa_branch write a label definition and a jump, conditional
+// jump or call to one. Both take a name the emitter composed itself, from
+// its label prefix or through sanitize_label, with nothing in it the text
+// path reads as more than a name; as records they skip that path's memo
+// lookup and comment and label scans, and are assembled as it would have.
+function ssa_label(s: asmcore.EmitState, name: string): asmcore.EmitState {
+  if (s.records()) {
+    return s.mark("\x02", name);
+  }
+  return s.write(name + ":\n");
+}
+
+function ssa_branch(s: asmcore.EmitState, mnem: string, name: string): asmcore.EmitState {
+  if (s.records()) {
+    return s.mark("\x03", mnem + " " + name);
+  }
+  return s.write("    " + mnem + " " + name + "\n");
+}
+
+// The instruction helpers below hand the assembler the encoded bytes when it
+// takes records, from the register numbers the names spell, and write the
+// text otherwise. ssa_xreg is a 64-bit register's number, -1 for a name it
+// does not know, which keeps that instruction text.
+function ssa_xreg(name: string): i32 {
+  if (name.len() >= 3 && name[1] == b'r' && name[2] >= b'0' && name[2] <= b'9') {
+    let n: i32 = name[2] as i32 - 48;
+    if (name.len() == 4) {
+      n = n * 10 + (name[3] as i32 - 48);
+    }
+    return n;
+  }
+  match (name) {
+    "%rax" => {
+      return 0;
+    },
+    "%rcx" => {
+      return 1;
+    },
+    "%rdx" => {
+      return 2;
+    },
+    "%rbx" => {
+      return 3;
+    },
+    "%rbp" => {
+      return 5;
+    },
+    "%rsi" => {
+      return 6;
+    },
+    "%rdi" => {
+      return 7;
+    },
+    _ => {
+      return 0 - 1;
+    }
+  }
+}
+
+// ssa_alu_text is the mnemonic of group-1 op `ext` at `size` bits.
+function ssa_alu_text(ext: i32, size: i32): string {
+  let base: string = "cmp";
+  if (ext == 0) {
+    base = "add";
+  } else if (ext == 1) {
+    base = "or";
+  } else if (ext == 4) {
+    base = "and";
+  } else if (ext == 5) {
+    base = "sub";
+  } else if (ext == 6) {
+    base = "xor";
+  }
+  if (size == 8) {
+    return base + "b";
+  }
+  if (size == 32) {
+    return base + "l";
+  }
+  return base + "q";
+}
+
+// ssa_mov_rr writes `movq src, dst`.
+function ssa_mov_rr(s: asmcore.EmitState, dst: string, src: string): asmcore.EmitState {
+  if (s.records()) {
+    let d: i32 = ssa_xreg(dst);
+    let r: i32 = ssa_xreg(src);
+    if (d >= 0 && r >= 0) {
+      return s.bytes(x86_native.x86_rec_mov_rr(64, d, r));
+    }
+  }
+  return s.write("    movq " + src + ", " + dst + "\n");
+}
+
+// ssa_mov_slot writes the load `movq disp(%rbp), reg` or the store `movq
+// reg, disp(%rbp)`.
+function ssa_mov_slot(s: asmcore.EmitState, load: boolean, reg: string, disp: i32): asmcore.EmitState {
+  if (s.records()) {
+    let r: i32 = ssa_xreg(reg);
+    if (r >= 0) {
+      return s.bytes(x86_native.x86_rec_mov_rm(64, load, r, 5, disp));
+    }
+  }
+  let slot: string = util.i32_to_string(disp) + "(%rbp)";
+  if (load) {
+    return s.write("    movq " + slot + ", " + reg + "\n");
+  }
+  return s.write("    movq " + reg + ", " + slot + "\n");
+}
+
+// ssa_alu_rr writes the group-1 op `ext` between two registers.
+function ssa_alu_rr(s: asmcore.EmitState, ext: i32, size: i32, src: string, dst: string): asmcore.EmitState {
+  if (s.records()) {
+    let r: i32 = ssa_xreg(src);
+    let d: i32 = ssa_xreg(dst);
+    if (r >= 0 && d >= 0) {
+      return s.bytes(x86_native.x86_rec_alu_rr(ext, size, r, d));
+    }
+  }
+  return s.write("    " + ssa_alu_text(ext, size) + " " + src + ", " + dst + "\n");
+}
+
+// ssa_alu_ir writes the group-1 op `ext` from an immediate into a register.
+function ssa_alu_ir(s: asmcore.EmitState, ext: i32, size: i32, imm: i64, dst: string): asmcore.EmitState {
+  if (s.records() && imm >= -2147483648i64 && imm <= 2147483647i64) {
+    let d: i32 = ssa_xreg(dst);
+    if (d >= 0) {
+      return s.bytes(x86_native.x86_rec_alu_ir(ext, size, imm as i32, d));
+    }
+  }
+  return s.write("    " + ssa_alu_text(ext, size) + " $" + util.i64_to_string(imm) + ", " + dst + "\n");
+}
+
+// ssa_alu_im writes the group-1 op `ext` from an immediate into memory at
+// `disp` off `base`.
+function ssa_alu_im(s: asmcore.EmitState, ext: i32, size: i32, imm: i32, base: string, disp: i32): asmcore.EmitState {
+  if (s.records()) {
+    let b: i32 = ssa_xreg(base);
+    if (b >= 0) {
+      return s.bytes(x86_native.x86_rec_alu_im(ext, size, imm, b, disp));
+    }
+  }
+  return s.write("    " + ssa_alu_text(ext, size) + " $" + util.i32_to_string(imm) + ", " + util.i32_to_string(disp) + "(" + base + ")\n");
+}
+
+// ssa_alu_rm writes the group-1 op `ext` between a register and memory at
+// `disp` off `base`; `load` reads the memory and writes the register.
+function ssa_alu_rm(s: asmcore.EmitState, ext: i32, size: i32, load: boolean, reg: string, base: string, disp: i32): asmcore.EmitState {
+  if (s.records()) {
+    let r: i32 = ssa_xreg(reg);
+    let b: i32 = ssa_xreg(base);
+    if (r >= 0 && b >= 0) {
+      return s.bytes(x86_native.x86_rec_alu_rm(ext, size, load, r, b, disp));
+    }
+  }
+  let mem: string = util.i32_to_string(disp) + "(" + base + ")";
+  if (load) {
+    return s.write("    " + ssa_alu_text(ext, size) + " " + mem + ", " + reg + "\n");
+  }
+  return s.write("    " + ssa_alu_text(ext, size) + " " + reg + ", " + mem + "\n");
+}
+
+// ssa_alu_rhs writes the group-1 op `ext` from value v, read as ssa_rhs
+// reads it, into the register `dst`.
+function ssa_alu_rhs(s: asmcore.EmitState, ext: i32, size: i32, fr: SsaFrame, reg_of: i32[], v: i32, dst: string): asmcore.EmitState {
+  if (fr.imm.is_imm[v]) {
+    return ssa_alu_ir(s, ext, size, fr.imm.value[v], dst);
+  }
+  if (reg_of[v] >= 0) {
+    return ssa_alu_rr(s, ext, size, ssa_reg(reg_of[v]), dst);
+  }
+  return ssa_alu_rm(s, ext, size, true, dst, "%rbp", ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save));
+}
+
+// ssa_cmp_floor compares a 64-bit register with the heap floor, 0x10000.
+function ssa_cmp_floor(s: asmcore.EmitState, reg: string): asmcore.EmitState {
+  if (s.records()) {
+    let r: i32 = ssa_xreg(reg);
+    if (r >= 0) {
+      return s.bytes(x86_native.x86_rec_alu_ir(7, 64, 65536, r));
+    }
+  }
+  return s.write("    cmpq $0x10000, " + reg + "\n");
+}
+
+// ssa_test_rr writes `testq a, b`.
+function ssa_test_rr(s: asmcore.EmitState, a: string, b: string): asmcore.EmitState {
+  if (s.records()) {
+    let ra: i32 = ssa_xreg(a);
+    let rb: i32 = ssa_xreg(b);
+    if (ra >= 0 && rb >= 0) {
+      return s.bytes(x86_native.x86_rec_test_rr(64, ra, rb));
+    }
+  }
+  return s.write("    testq " + a + ", " + b + "\n");
+}
+
+// ssa_test_bit writes `testb $imm, <reg's low byte>`.
+function ssa_test_bit(s: asmcore.EmitState, imm: i32, reg: string): asmcore.EmitState {
+  if (s.records()) {
+    let r: i32 = ssa_xreg(reg);
+    if (r >= 0) {
+      return s.bytes(x86_native.x86_rec_test_ir(8, imm, r));
+    }
+  }
+  return s.write("    testb $" + util.i32_to_string(imm) + ", " + ssa_r8(reg) + "\n");
 }
 
 // ssa_x0_forget marks %r11 as holding no tracked value: at a label, and
@@ -6599,13 +6813,13 @@ function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): as
     return s;
   }
   if (reg_of[v] < 0) {
-    return s.write("    movq " + reg + ", " + ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save) + "\n");
+    return ssa_mov_slot(s, false, reg, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save));
   }
   let home: string = ssa_reg(reg_of[v]);
   if (home == reg) {
     return s;
   }
-  return s.write("    movq " + reg + ", " + home + "\n");
+  return ssa_mov_rr(s, home, reg);
 }
 
 // ssa_dst is where an instruction this emitter selects itself writes its
@@ -6720,10 +6934,33 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
   s = ssa_load(reg_of, a, dh, s);
   if (ssa_shift_tag(tag)) {
     s = s.write(shift_imm_asm(tag, ins.imm, fr.imm.value[b], dh));
+  } else if (ssa_alu_ext(tag) >= 0) {
+    s = ssa_alu_rhs(s, ssa_alu_ext(tag), 64, fr, reg_of, b, dh);
   } else {
     s = s.write(ir_bin_asm(tag, ins.imm, dh, ssa_rhs(fr, reg_of, b, s.ssa_save)));
   }
   return ssa_store(reg_of, ins.result, dh, s);
+}
+
+// ssa_alu_ext is the group-1 /digit of a two-operand integer op, -1 for the
+// rest.
+function ssa_alu_ext(tag: i32): i32 {
+  if (tag == 21) {
+    return 0;
+  }
+  if (tag == 22) {
+    return 5;
+  }
+  if (tag == 28) {
+    return 4;
+  }
+  if (tag == 29) {
+    return 1;
+  }
+  if (tag == 30) {
+    return 6;
+  }
+  return 0 - 1;
 }
 
 // ssa_lea_operand is the address an add, or a subtract of a constant, computes
@@ -7211,32 +7448,46 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     done = lp + "rcuniq" + util.i32_to_string(ins.result);
   }
   let rc: string = "-8(" + p + ")";
-  let guard: string = "    testb $1, " + ssa_r8(p) + "\n    jnz " + done + "\n"
-    + "    cmpq $0x10000, " + p + "\n    jb " + done + "\n";
+  let rb: string = p;
   if (ins.imm != 4) {
-    guard = guard + "    movq " + p + ", %rdx\n    andq $-3, %rdx\n";
     rc = "-8(%rdx)";
+    rb = "%rdx";
   }
   if (ins.str == "__fern_rc_is_unique") {
     let d: string = ssa_dst(reg_of, ins.result);
-    s = s.write("    xorl %ecx, %ecx\n" + guard);
+    s = s.write("    xorl %ecx, %ecx\n");
+    s = ssa_rc_guard(s, p, done, ins.imm != 4);
     s = s.write(ssa_rc_is_one(rc, s.rc_free_debug));
     s = s.write("    jne " + done + "\n");
     s = s.write("    movl $1, %ecx\n" + done + ":\n");
     s = s.write("    movq %rcx, " + d + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
-  s = s.write(guard);
+  s = ssa_rc_guard(s, p, done, ins.imm != 4);
   if (s.rc_free_debug) {
     s = s.write("    movl " + rc + ", %ecx\n" + san_poison_check("%ecx"));
     s = s.write("    testl %ecx, %ecx\n    js " + done + "\n");
     s = s.write("    addl $1, %ecx\n    movl %ecx, " + rc + "\n");
   } else {
-    s = s.write("    cmpl $0, " + rc + "\n    js " + done + "\n    addl $1, " + rc + "\n");
+    s = ssa_branch(ssa_alu_im(s, 7, 32, 0, rb, 0 - 8), "js", done);
+    s = ssa_alu_im(s, 0, 32, 1, rb, 0 - 8);
   }
-  s = s.write(done + ":\n");
+  s = ssa_label(s, done);
   // rc_inc hands the pointer back; a result with no home stores nothing.
   return ssa_store(reg_of, ins.result, p, s);
+}
+
+// ssa_rc_guard jumps to `done` for a pointer with no count to touch: an inline
+// string's tag bit, or below the heap floor (every null). `strip` clears the
+// view bit into %rdx, the base the count is read through.
+function ssa_rc_guard(s: asmcore.EmitState, p: string, done: string, strip: boolean): asmcore.EmitState {
+  s = ssa_branch(ssa_test_bit(s, 1, p), "jnz", done);
+  s = ssa_branch(ssa_cmp_floor(s, p), "jb", done);
+  if (strip) {
+    s = ssa_mov_rr(s, "%rdx", p);
+    s = ssa_alu_ir(s, 4, 64, -3i64, "%rdx");
+  }
+  return s;
 }
 
 // ssa_helper_call calls a runtime helper through its register entry.
@@ -7251,7 +7502,7 @@ function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
     ha = ha + 1;
   }
   s = ssa_parallel_moves(hsrc, hdst, s);
-  s = s.write("    call " + ircore.ir_helper_symbol(ins.str) + ".r\n");
+  s = ssa_branch(s, "call", ircore.ir_helper_symbol(ins.str) + ".r");
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
@@ -7269,17 +7520,17 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
   let dec: string = lp + "rcdecd" + id;
   let kept: string = lp + "rcdeck" + id;
   let done: string = lp + "rcdece" + id;
-  let rc: string = "-8(" + p + ")";
   if (ins.str == "__fern_str_free") {
-    s = s.write("    testb $1, " + ssa_r8(p) + "\n    jnz " + kept + "\n");
+    s = ssa_branch(ssa_test_bit(s, 1, p), "jnz", kept);
   }
-  s = s.write("    cmpq $0x10000, " + p + "\n    jb " + kept + "\n");
-  s = s.write("    cmpl $1, " + rc + "\n    jg " + dec + "\n");
-  s = s.write("    cmpl $0, " + rc + "\n    js " + kept + "\n");
+  s = ssa_branch(ssa_cmp_floor(s, p), "jb", kept);
+  s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, 0 - 8), "jg", dec);
+  s = ssa_branch(ssa_alu_im(s, 7, 32, 0, p, 0 - 8), "js", kept);
   s = ssa_helper_call(ins, reg_of, s);
-  s = s.write("    jmp " + done + "\n" + dec + ":\n    subl $1, " + rc + "\n" + kept + ":\n");
+  s = ssa_label(ssa_branch(s, "jmp", done), dec);
+  s = ssa_label(ssa_alu_im(s, 5, 32, 1, p, 0 - 8), kept);
   s = ssa_store(reg_of, ins.result, p, s);
-  return s.write(done + ":\n");
+  return ssa_label(s, done);
 }
 
 // ssa_call emits one call as the stack machine leaves it: the arguments pushed
@@ -7316,9 +7567,9 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     i = i + 1;
   }
   if (helper) {
-    s = s.write("    call " + ircore.ir_helper_symbol(ins.str) + "\n");
+    s = ssa_branch(s, "call", ircore.ir_helper_symbol(ins.str));
   } else {
-    s = s.write("    call __fn_" + asmcore.sanitize_label(ins.str) + "\n");
+    s = ssa_branch(s, "call", "__fn_" + asmcore.sanitize_label(ins.str));
   }
   if (argc > 0) {
     s = s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n");
@@ -7339,7 +7590,7 @@ function ssa_reg_call_emit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState):
     a = a + 1;
   }
   s = ssa_parallel_moves(srcs, dsts, s);
-  return s.write("    call __fn_" + asmcore.sanitize_label(ins.str) + ".r\n");
+  return ssa_branch(s, "call", "__fn_" + asmcore.sanitize_label(ins.str) + ".r");
 }
 
 // Shared and static releases finish before allocating a frame. Keeping the
@@ -8466,10 +8717,17 @@ function ssa_move(src: i32, dst: i32, s: asmcore.EmitState): asmcore.EmitState {
   if (src == dst) {
     return s;
   }
-  if (src >= 0 || dst >= 0) {
-    return s.write("    movq " + ssa_loc(src, s) + ", " + ssa_loc(dst, s) + "\n");
+  if (src >= 0 && dst >= 0) {
+    return ssa_mov_rr(s, ssa_reg(dst), ssa_reg(src));
   }
-  return s.write("    movq " + ssa_loc(src, s) + ", %rcx\n    movq %rcx, " + ssa_loc(dst, s) + "\n");
+  if (src >= 0) {
+    return ssa_mov_slot(s, false, ssa_reg(src), ssa_slot_disp(ssa.spill_slot(dst), s.ssa_save));
+  }
+  if (dst >= 0) {
+    return ssa_mov_slot(s, true, ssa_reg(dst), ssa_slot_disp(ssa.spill_slot(src), s.ssa_save));
+  }
+  s = ssa_mov_slot(s, true, "%rcx", ssa_slot_disp(ssa.spill_slot(src), s.ssa_save));
+  return ssa_mov_slot(s, false, "%rcx", ssa_slot_disp(ssa.spill_slot(dst), s.ssa_save));
 }
 
 // ssa_loc spells a location: its register, or its frame slot.
@@ -8490,7 +8748,7 @@ function ssa_jump(lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore
   if (to == next) {
     return s;
   }
-  return s.write("    jmp " + lp + util.i32_to_string(to) + "\n");
+  return ssa_branch(s, "jmp", lp + util.i32_to_string(to));
 }
 
 // ssa_brif branches on a value, or on the flags a fused compare left (fu.n
@@ -8523,25 +8781,25 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   if (!stub && t.f == next && !ssa_has_phis(f, fr, t.t)) {
     let tl: string = lp + util.i32_to_string(t.t);
     if (fu.n > 0 && fu.tag == 0) {
-      return s.write("    testq " + tr + ", " + tr + "\n    jz " + tl + "\n");
+      return ssa_branch(ssa_test_rr(s, tr, tr), "jz", tl);
     }
     if (fu.n > 0) {
-      return s.write("    " + ir_cmp_jcc(fu.tag, !fu.inverted) + " " + tl + "\n");
+      return ssa_branch(s, ir_cmp_jcc(fu.tag, !fu.inverted), tl);
     }
-    return s.write("    testq " + tr + ", " + tr + "\n    jnz " + tl + "\n");
+    return ssa_branch(ssa_test_rr(s, tr, tr), "jnz", tl);
   }
   if (fu.n > 0 && fu.tag == 0) {
-    s = s.write("    testq " + tr + ", " + tr + "\n    jnz " + fl + "\n");
+    s = ssa_branch(ssa_test_rr(s, tr, tr), "jnz", fl);
   } else if (fu.n > 0) {
-    s = s.write("    " + ir_cmp_jcc(fu.tag, fu.inverted) + " " + fl + "\n");
+    s = ssa_branch(s, ir_cmp_jcc(fu.tag, fu.inverted), fl);
   } else {
-    s = s.write("    testq " + tr + ", " + tr + "\n    jz " + fl + "\n");
+    s = ssa_branch(ssa_test_rr(s, tr, tr), "jz", fl);
   }
   s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
   if (stub) {
-    s = s.write("    jmp " + lp + util.i32_to_string(t.t) + "\n");
+    s = ssa_branch(s, "jmp", lp + util.i32_to_string(t.t));
     s = ssa_x0_forget(s);
-    s = s.write(fl + ":\n");
+    s = ssa_label(s, fl);
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.f, s);
     return ssa_jump(lp, t.f, next, s);
   }
@@ -8561,13 +8819,20 @@ function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, 
   if (fu.unique) {
     return ssa_unique_flags(reg_of, fu.a, fu.aligned, join, s);
   }
-  let rhs: string = ssa_rhs(fr, reg_of, fu.b, s.ssa_save);
   let b_in_slot: boolean = !fr.imm.is_imm[fu.b] && reg_of[fu.b] < 0;
   if (reg_of[fu.a] < 0 && s.ssa_x0 != fu.a && !b_in_slot) {
-    return s.write("    cmpq " + rhs + ", " + ssa_slot(ssa.spill_slot(reg_of[fu.a]), s.ssa_save) + "\n");
+    let disp: i32 = ssa_slot_disp(ssa.spill_slot(reg_of[fu.a]), s.ssa_save);
+    if (fr.imm.is_imm[fu.b]) {
+      let v: i64 = fr.imm.value[fu.b];
+      if (v >= -2147483648i64 && v <= 2147483647i64) {
+        return ssa_alu_im(s, 7, 64, v as i32, "%rbp", disp);
+      }
+      return s.write("    cmpq $" + util.i64_to_string(v) + ", " + ssa_slot(ssa.spill_slot(reg_of[fu.a]), s.ssa_save) + "\n");
+    }
+    return ssa_alu_rm(s, 7, 64, false, ssa_reg(reg_of[fu.b]), "%rbp", disp);
   }
   s = ssa_read(reg_of, fu.a, "%r11", s);
-  return s.write("    cmpq " + rhs + ", " + ssa_src(reg_of, fu.a, "%r11") + "\n");
+  return ssa_alu_rhs(s, 7, 64, fr, reg_of, fu.b, ssa_src(reg_of, fu.a, "%r11"));
 }
 
 // ssa_unique_flags is ssa_rc_prim's uniqueness test as flags: ZF is set only
@@ -8577,7 +8842,8 @@ function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string,
   s = helper_call_needs("__fern_rc_is_unique", s);
   s = ssa_read(reg_of, v, "%r11", s);
   let p: string = ssa_src(reg_of, v, "%r11");
-  s = s.write("    testb $1, " + ssa_r8(p) + "\n    jnz " + join + "\n    cmpq $0x10000, " + p + "\n    jb " + join + "\n");
+  s = ssa_branch(ssa_test_bit(s, 1, p), "jnz", join);
+  s = ssa_branch(ssa_cmp_floor(s, p), "jb", join);
   let rc: string = "-8(" + p + ")";
   if (!aligned) {
     s = s.write("    movq " + p + ", %rdx\n    andq $-3, %rdx\n");
@@ -8819,7 +9085,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
       next = f.blocks[bi + 1].id;
     }
     s = ssa_x0_forget(s);
-    s = s.write(lp + util.i32_to_string(blk.id) + ":\n");
+    s = ssa_label(s, lp + util.i32_to_string(blk.id));
     let fu: SsaFuse = ssa_fuse(fr, blk);
     let ii: i32 = 0;
     while (ii < blk.insts.len() - fu.n) {
@@ -11101,7 +11367,7 @@ pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl
 // The prologue is ordered check-then-emit for the reason #4327 records: the
 // fused gate+emit used to return ahead of the type check, so every IR-eligible
 // module skipped it and an ill-typed one miscompiled silently.
-pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): string {
+pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub, recs: usize): string {
   if (!sub.checked) {
     let parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
     if (parse_errs.len() > 0) {
@@ -11124,7 +11390,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
     }
   }
   let lm: parser.Module = ircore.sub_lifted(sub, tm);
-  let g: string = emit_module_ir_gated_sub(lm, sub);
+  let g: string = emit_module_ir_gated_sub(lm, sub, recs);
   if (g != "") {
     return g;
   }
@@ -11138,7 +11404,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
 // ir_const_numeric_run's rebuilt copy of it. "" is an unambiguous
 // "ineligible" sentinel: an eligible module always emits at least
 // `.globl _start\n    .text\n…`, never the empty string.
-pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub): string {
+pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub, recs: usize): string {
   // A main-less module is admitted: the unit's `_start` exits 0 instead of
   // calling a __fn_main that does not exist (see its has_main branch).
   let g: ircore.Gated = ircore.gate_program(mod, sub);
@@ -11146,11 +11412,11 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub): stri
     return "";
   }
   // Every function eligible — emit from the cache (no second lowering).
-  return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower);
+  return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower, recs);
 }
 
 // `rt` lowers the runtime helpers this unit appends (asmcore.EmitState.rt_lower).
-pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], b: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[]): string {
+pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], b: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[], recs: usize): string {
   // Infer return types for unannotated functions so the IR path's
   // ret-type-keyed call tagging matches what module_with_builtins supplies.
   // (#4394 lever 3: `cache`, when non-empty, is the caller's pre-lowered
@@ -11162,7 +11428,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   let s: asmcore.EmitState = asmcore.new_state();
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
   // layout resolves and a `dyn` dispatch has an arm for every impl (#10891).
-  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt }, all_funcs);
+  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs }, all_funcs);
   // A unit never passes emit_module_or_error_sub's check, so the Display gate
   // runs here: a `print(xs)` nothing gives a `to_string` would otherwise hand
   // the string-only runtime helper a raw pointer (#9945).
