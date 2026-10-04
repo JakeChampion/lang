@@ -1142,6 +1142,8 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 // position taken from the substitution site, copying an array or tuple
 // deeply. Doing a fresh allocation lets the checker / IR pipeline
 // annotate each occurrence independently without aliasing surprises.
+// An array is marked Const: the copy is in the tree, not in memory, and
+// the IR may place every evaluation of it in one static array.
 func cloneLit(src ast.Expr, pos ast.Position) ast.Expr {
 	switch v := src.(type) {
 	case *ast.ArrayLit:
@@ -1149,7 +1151,7 @@ func cloneLit(src ast.Expr, pos ast.Position) ast.Expr {
 		for i, el := range v.Elems {
 			elems[i] = cloneLit(el, pos)
 		}
-		return &ast.ArrayLit{P: pos, Elems: elems, ElemType: v.ElemType}
+		return &ast.ArrayLit{P: pos, Elems: elems, ElemType: v.ElemType, Const: true}
 	case *ast.TupleLit:
 		elems := make([]ast.Expr, len(v.Elems))
 		for i, el := range v.Elems {

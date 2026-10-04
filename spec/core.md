@@ -73,6 +73,7 @@ throughout: every op may carry it, and only `line` is about it.
 | `const.func` | `— → i` | `I32` | Function-table index. |
 | `const.vtable` | `— → i` | `Str`, `Str2` | Address of the static vtable for the (Trait, Concrete) pair. `docs/DYN-TRAITS.md` §4.2.1. |
 | `enum.sentinel` | `— → i` | `I32` | Address of a shared static 4-byte cell holding the tag. Payloadless variants construct without allocating. |
+| `const.arr` | `— → i` | `I32`, `Str` | Data address of a shared static array of `I32` elements whose bytes are `Str`, under the immortal rc. A `const` array is read without allocating; a push or `with` copies it. |
 
 ### Conversions
 
