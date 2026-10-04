@@ -124,10 +124,17 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
 // missing body.
 function provided_audit(): i32 {
   let names: string[] = irverifyprovided.provided_names();
+  let task_runtime: parser.Module = parser.parse_module(lexer.tokenize(asmcore.rt_src_task("x86-64-linux")));
+  let task_names: string[] = [];
+  for fd in task_runtime.funcs {
+    task_names = task_names.append(fd.name);
+  }
   let bad: string[] = [];
   let i: i32 = 0;
   while (i < names.len()) {
-    if (!ircore.is_fern_helper(names[i])) {
+    // Task helpers use the user ABI. Check the actual runtime declarations:
+    // the ABI classifier's __fern_task_ prefix cannot prove a body exists.
+    if (!ircore.is_fern_helper(names[i]) && !util.has_str(task_names, names[i])) {
       bad = bad.append(names[i]);
     }
     i = i + 1;

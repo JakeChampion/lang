@@ -268,11 +268,27 @@ of P3.
 
 ### 3.8 The sim
 
-`SimPlatform.http` suspends on a virtual-time token, as `sim_fetch` already
-produces them. `sim.Sim` grows a task driver (`run_tasks`) that advances
-virtual time and resumes the task whose token is due, and a scripted
-disconnect at a virtual time is a `task_cancel`. That gives the deterministic
-cancellation test #9857 asks for, with the bytes pinned in the test.
+`SimPlatform.http` parks on a virtual-time token: every move of the sim's
+clock goes through `Sim.advance_to(to_ns)`, which under a task is a
+`wait_any` on the token `to_ns` in milliseconds (the sim's token encoding)
+with no bound, and `Sim.poll_ready` parks on its tokens as `RealDriver`'s
+does. `sim.run_tasks(drv, entries, cancel_at_ms)` is the task driver: it
+starts every entry as a task, moves the clock to the earliest moment any
+parked task is due — a pair's time, its bound's end, or its scheduled
+cancellation — and resumes that task with the pair's index or -1, or
+cancels it; a scripted disconnect is a `task_cancel` at a virtual time,
+winning a tie with the data it would have read. Ties between tasks are the
+seeded PRNG's, so a run is a function of the seed.
+
+The transport reports the cancellation rather than swallowing it:
+`Transport.read` answers `tcp.Recv` — `Chunk`, `Elapsed`, or `Abandoned`
+when the task's wait answered `cancelled()` — and `tcp_recv_deadline` is
+that primitive on a socket; `connect_race` leaves the race as
+`Interrupted` on a cancelled wait instead of spinning on it until the
+deadline. The client maps both to `FetchError.Cancelled`, so a handler's
+`plat.http` sees the disconnect as an error it can log, on the sim and on
+the host alike. `TestSelfHostSimTasks` is the deterministic cancellation
+test #9857 asks for, byte-identical on x86-64, arm64 and wasm.
 
 ## 4. Slices
 
@@ -363,9 +379,11 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    captures survive a park as the lowering stands, so no checker rule
    refuses them; `TestSelfHostTaskFrame` and `TestTaskFrameFallback` pin
    that instead of a code.
-8. **Sim parity.** `SimPlatform.http` suspends; `sim.run_tasks`; the scripted
-   upstream plus scripted disconnect test, byte-identical on x86-64, arm64
-   and wasm through the self-host compiler.
+8. **Sim parity. Landed (§3.8).** `Sim.advance_to` parks, `sim.run_tasks`
+   drives, `Transport.read` reports a cancelled task; `TestSelfHostSimTasks`
+   is the scripted upstream plus scripted disconnect test, byte-identical
+   on x86-64, arm64 and wasm through the self-host compiler, and
+   `TestSimTasksFallback` the Go compiler's twin.
 9. **Lazy streaming request bodies.** `BodyStream` pulled inside a handler
    suspends on the connection's readability; the P1 "bodies are read before
    the handler runs" restriction is lifted behind a `serve.Config` choice,

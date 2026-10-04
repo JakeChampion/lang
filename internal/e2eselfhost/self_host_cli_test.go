@@ -128,6 +128,19 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	// A match guard in an imported module calls that module's own function,
+	// so flatten has to mangle the guard as it does the arm's body.
+	t.Run("imported-match-guard", func(t *testing.T) {
+		proj := t.TempDir()
+		writeTree(t, proj, map[string]string{
+			"main.fern": "import \"./lib\";\nfunction main(): i32 { return lib.classify(Some(50)) * 10 + lib.classify(Some(3)); }\n",
+			"lib.fern":  "function big(n: i32): boolean { return n > 10; }\npub function classify(o: Option[i32]): i32 {\n  match (o) {\n    Some(n) when big(n) => { return 2; },\n    Some(_) => { return 1; },\n    None => { return 0; }\n  }\n}\n",
+		})
+		if _, code := runDriver(t, "-interp", filepath.Join(proj, "main.fern")); code != 21 {
+			t.Errorf("-interp exit = %d, want 21", code)
+		}
+	})
+
 	t.Run("nested-relative-import", func(t *testing.T) {
 		proj := t.TempDir()
 		files := map[string]string{

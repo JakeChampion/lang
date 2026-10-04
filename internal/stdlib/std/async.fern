@@ -144,7 +144,7 @@ impl Driver for RealDriver {
   // with_deadline inside a handler park the handler (§8 of ASYNC.md).
   function poll_ready(self: RealDriver, toks: i32[], timeout_ms: i32): i32 {
     if (__task_cur() != 0) {
-      return __park_tokens(toks, timeout_ms);
+      return park_tokens(toks, timeout_ms);
     }
     return poll(toks, timeout_ms);
   }
@@ -563,10 +563,11 @@ function run_task[T](t: Task[T], mode: i32): TaskStatus[T] {
   return Done(v);
 }
 
-// __park_tokens(toks, timeout_ms) parks on every token that is a
-// descriptor, readable, and maps the answer back to the token's index; a
-// token of -1 (the native timer slot) has no pair.
-function __park_tokens(toks: i32[], timeout_ms: i32): i32 {
+// park_tokens(toks, timeout_ms) — a driver's `poll_ready` under a task:
+// parks on every token that is a descriptor, readable, and maps the answer
+// back to the token's index; a token of -1 (the native timer slot) has no
+// pair. The answer is `cancelled()` in a cancelled task.
+pub function park_tokens(toks: i32[], timeout_ms: i32): i32 {
   let set: i32[] = [];
   let idxs: i32[] = [];
   let i: i32 = 0;
@@ -578,7 +579,9 @@ function __park_tokens(toks: i32[], timeout_ms: i32): i32 {
     }
     i = i + 1;
   }
-  let r: i32 = wait_any(set, timeout_ms);
+  // poll_ready calls this only with a current task. Park directly: the
+  // blocking wait_any fallback would also pull native reactors into wasm.
+  let r: i32 = __task_park(set, timeout_ms);
   if (r < 0) {
     return r;
   }

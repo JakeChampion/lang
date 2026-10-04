@@ -1,0 +1,62 @@
+struct Slot[T] { f: () => T }
+
+function start[T](entries: (() => T)[]): Slot[T][] {
+  let out: Slot[T][] = [];
+  for f in entries {
+    out = out.append(Slot { f: f });
+  }
+  return out;
+}
+
+function total[T](slots: Slot[T][]): i32 {
+  let n: i32 = 0;
+  for s in slots {
+    n = n + 1;
+  }
+  return n;
+}
+
+function first[T](entries: (() => T)[]): T {
+  let slots = start(entries);
+  let s: Slot[T] = slots[0];
+  let f: () => T = s.f;
+  assert(total(start(entries)) == entries.len());
+  return f();
+}
+
+function parameter(first: i32): i32 {
+  return first;
+}
+
+function local(): i32 {
+  let first: i32 = 3;
+  let read = () => first;
+  return read();
+}
+
+function pattern(value: Option[i32]): i32 {
+  match (value) {
+    Some(first) => {
+      return first;
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let entries: (() => i32)[] = [() => 41];
+  assert(first(entries) == 41);
+  assert(parameter(2) == 2);
+  assert(local() == 3);
+  assert(pattern(Some(4)) == 4);
+  // A later local shadows only subsequent reads. The earlier call still
+  // names the generic function and must specialize it.
+  let later: (() => i32)[] = [() => 5];
+  let before: i32 = first(later);
+  let first: i32 = 6;
+  assert(before + first == 11);
+  return 0;
+}

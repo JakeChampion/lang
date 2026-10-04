@@ -1264,7 +1264,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
       let arms: ast.MatchArm[] = [];
       let i: i32 = 0;
       while (i < m.arms.len()) {
-        arms = arms.append(ast.MatchArm { pattern: rewrite_pattern(m.arms[i].pattern, ctx), body: rewrite_block(m.arms[i].body, ctx), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, alt_cont: false });
+        arms = arms.append(ast.MatchArm { pattern: rewrite_pattern(m.arms[i].pattern, ctx), body: rewrite_block(m.arms[i].body, ctx), line: m.arms[i].line, col: m.arms[i].col, guard: rewrite_expr(m.arms[i].guard, ctx), has_guard: m.arms[i].has_guard, alt_cont: false });
         i = i + 1;
       }
       return ast.StmtMatch { ...m, scrutinee: rewrite_expr(m.scrutinee, ctx), arms: arms };

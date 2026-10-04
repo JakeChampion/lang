@@ -1681,9 +1681,10 @@ points that run a handler under it.
 
 ### `std/tcp`
 
-- `tcp_recv_deadline(fd, max, deadline): Option[u8[]]` —
-  recv bounded by a readability deadline: `Some(chunk)` in time
-  (empty chunk = EOF), `None` at the deadline. On interp (where
+- `tcp_recv_deadline(fd, max, deadline): Recv` —
+  recv bounded by a readability deadline: `Chunk(bytes)` in time
+  (empty = EOF), `Elapsed` at the deadline, `Abandoned` when the task
+  waiting was cancelled first (`async.cancelled()`). On interp (where
   `poll` is a stub) it degrades to a blocking recv.
 
 The raw socket primitives `tcp_listen` / `tcp_accept` /
@@ -1835,7 +1836,8 @@ answer is `Result[HttpResponse, FetchError]`.
   of the response; total runs from the start to the last byte read.
 - **Transport:** the dialled route reaches the network only through
   `trait Transport` (`now_ns`, `lookup`, `connect`, `write`, `read` under
-  a wait, `close`, and `idle`, its pool), and `send_on(tr, req, policy)` is
+  a wait answering `tcp.Recv`, `close`, and `idle`, its pool), and
+  `send_on(tr, req, policy)` is
   `send` over any transport under a `Policy { public_only, proxies }`.
   `sockets()` is the machine's (the system resolver, `dns.connect_race`,
   `tcp_recv_deadline`), which `send` and `plat.http` use; `std/sim_fetch`
@@ -2110,7 +2112,12 @@ let got = fetch.send_on(n, fetch.get("http://example.test/"), policy);
 
 Nothing waits: a read that would block moves the clock to when the
 scripted bytes arrive, or by the whole wait when none do, so each bound
-passes at its exact virtual time. `host(name, addrs)` names addresses (an
+passes at its exact virtual time. Every move is `Sim.advance_to`, a park
+under `sim.run_tasks(drv, entries, cancel_at_ms)`, which runs its entries
+as tasks in virtual time and cancels task `i` at `cancel_at_ms[i]` (-1 for
+never), a scripted disconnect; a task cancelled while it waits reads
+`Abandoned`, the client's `Cancelled` (`docs/ASYNC.md` §8).
+`host(name, addrs)` names addresses (an
 IP literal resolves to itself, anything else is `NoSuchName`);
 `listen(addr, port, connect_ms)` accepts after a delay, and an address
 with no listener refuses at once. A name's addresses are raced as
@@ -2140,7 +2147,8 @@ A `platform.Platform` over the simulation: a handler runs on it as it runs
 on the host, in virtual time. `sim_platform.new(d, n)` reads the clock and
 the seeded PRNG of the `sim.Sim` `d` (`now_ms`, `elapsed_ns`,
 `random_i32`), sends `plat.http` over the `sim_fetch.Net` `n` by the
-host's public-only route with the network's pool keeping the connection,
+host's public-only route with the network's pool keeping the connection
+(parking under `sim.run_tasks`, so handlers interleave in virtual time),
 and answers `env`, `config` and `secret` with what the test set
 (`env_set`, `config_set`, `secret_set`). Every call is recorded as a
 mock's: `calls()` and `reset()` read and clear the log, a secret logged by

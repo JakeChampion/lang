@@ -21,27 +21,49 @@ including the literal suffix left after Darwin's first closing bracket.
 
 ## Validation
 
-The October 4 snapshot includes main `dcc065645`. Its shared fixture checks
+The October 4 repair snapshot includes main `cac927ea8`. Its shared fixture checks
 all 256 byte values, nonzero-offset views, retained aliases, raw collating
 symbols, malformed UTF-8 class names, and agreement among all three APIs.
 Linux Go interpreter/native/WASI and primary native/WASM matrices pass,
 along with the full unit suite and all lint gates. Go and primary target
-groups take 1.203 and 28.373 seconds. GNU and primary comparisons for ls,
-dir, vdir, dircolors, cp, mv and install pass in 5.728 and 24.372 seconds.
+groups pass alongside suspension-frame, scheduler and WASM fetch regressions.
+GNU and primary comparisons for ls, dir, vdir, dircolors, cp, mv and install
+pass in 5.675 and 24.511 seconds.
 
 Darwin Go/interpreter/WASI and primary native/interpreter matcher groups
-pass in 2.623 and 37.497 seconds. The GNU listing/dircolors/install group
-passes in 13.881 seconds; all seven primary consumer comparisons pass in
-37.187 seconds. Actual reproduced stage-2 runs pass on Darwin, core WASM and
+pass in 3.020 and 15.553 seconds. The GNU listing/dircolors/install group
+passes in 13.870 seconds; all seven primary consumer comparisons pass in
+36.955 seconds. Actual reproduced stage-2 runs pass on Darwin, core WASM and
 the interpreter. Native allocations/frees are 4,805/4,805 and core WASM
-4,736/4,736, both with zero live bytes. All 5,520 Go/Fern files match the
-frozen validated source.
+4,736/4,736, both with zero live bytes.
 
-The fresh Darwin bootstrap explicitly uses the local compiler with SHA-256
-`89e577b9ef1315b819cbb198c3c49e8603558fcacd9d60cb40268b36b5c61d52`
-as `STAGE0`. Stages 1, 2 and 3 are identical at 13,128,225 bytes, SHA-256
-`11a977b65e7f17b6791feb06d9f8108f8df9f59bcfa2f6b4a91416f67a803d32`.
-The repository's pinned bootstrap remains a separate CI gate.
+Fresh Linux and Darwin bootstraps use the repository pin
+`stage0-20261001-c891ebc`. Linux stages 2 and 3 match at 12,913,600 bytes,
+SHA-256 `67898227c33521bf74c3657b1c45a406008bbf325d5a88ac319f0c5a552f164b`.
+Darwin stages 2 and 3 match at 13,144,785 bytes,
+SHA-256 `85a30d6664eb5f7ddb1848e9658f212b5b91e2cf0c01bfe8c9d2bc92e9d598b5`.
+Stage 1 differs on both hosts because the pin predates generator changes.
+The final audit-driver and regression-fixture edits leave the compiler's
+source closure unchanged; subsequent Darwin checks reuse that fixed point.
+Three pinned x86 driver sizes pass: path probe 4,312,128 bytes, checker
+2,538,272 bytes and compiler 11,468,216 bytes. CI checks all eleven drivers.
+
+Integration exposed three failures from current main. The provided-body
+inventory now lists all 17 emitted task helpers; its audit checks actual
+runtime declarations and rejects unknown names. Task-only parking calls
+`__task_park` directly, keeping the blocking native reactor fallback out of
+WASM fetch builds. Generic promotion now scans free identifiers, so a local
+`first` in `std/string` cannot erase the unrelated generic function `first`.
+The scope regression covers parameters, local captures, patterns and reads
+before a later shadow. It fails under the pre-fix compiler and passes on
+Darwin, core WASM and the Go interpreter, with zero unmatched x86 allocations.
+The verifier models all 12 regression bodies and resolves 28 calls; the
+original failing generic fixture resolves 1,913 calls in 948 bodies.
+
+The subsequent external branch merge `8984d08c1` adds main `0129e5d95`'s
+retired-backend test cleanup and documentation. It leaves the primary
+compiler and standard library unchanged. Both relocated map-rebinding
+regressions and the full Linux unit suite pass on the combined tree.
 
 The expanded Darwin GNU cp/mv comparison fails 11 subcases. An unchanged
 `dcc065645` snapshot reproduces exactly the same case set: sparse copying,
@@ -65,9 +87,9 @@ the platform at the rendering sites removes that overhead.
 
 | LS artifact | Before | After |
 | --- | ---: | ---: |
-| x86-64 Linux file | 461,696 bytes | 461,696 bytes |
+| x86-64 Linux file | 461,128 bytes | 461,128 bytes |
 | ARM64 Darwin file | 515,873 bytes | 515,873 bytes |
-| Darwin code | 402,728 bytes | 402,688 bytes |
+| Darwin code | 401,880 bytes | 401,840 bytes |
 | Darwin unwind | 33,860 bytes | 33,860 bytes |
 | Darwin data | 49,160 bytes | 49,160 bytes |
 
@@ -87,10 +109,10 @@ must fail on every iteration.
 
 | Workload | Before median | After median | Before range | After range |
 | --- | ---: | ---: | ---: | ---: |
-| Literal | 22.319 ms | 19.496 ms | 21.675-25.962 ms | 18.551-20.420 ms |
-| Star | 80.822 ms | 81.080 ms | 80.292-82.309 ms | 80.207-81.609 ms |
-| Classes | 107.545 ms | 79.766 ms | 107.133-109.355 ms | 79.279-81.607 ms |
-| Invalid class | 39.410 ms | 27.437 ms | 38.952-39.884 ms | 27.227-29.381 ms |
+| Literal | 23.016 ms | 19.700 ms | 22.610-23.686 ms | 19.459-20.503 ms |
+| Star | 83.011 ms | 83.967 ms | 82.441-84.453 ms | 83.148-88.428 ms |
+| Classes | 111.864 ms | 82.398 ms | 111.193-116.298 ms | 81.358-85.168 ms |
+| Invalid class | 41.353 ms | 28.009 ms | 41.128-43.223 ms | 27.639-28.893 ms |
 
 Literal, class and invalid-class ranges are disjoint. Star ranges overlap,
 so this run does not establish a star-matching speedup.
@@ -106,7 +128,7 @@ Both variants balance allocations and frees. The seven allocations cover
 the whole measured program, not each call. These workloads do not establish
 allocation-free behavior for every pattern shape.
 
-Both native benchmark files occupy 49,745 bytes. Code shrinks from 18,080
-to 16,900 bytes; unwind data grows from 3,156 to 3,660 bytes; data remains
+Both native benchmark files occupy 49,745 bytes. Code shrinks from 18,016
+to 16,836 bytes; unwind data grows from 3,156 to 3,660 bytes; data remains
 792 bytes. No size baseline changes. This prepares raw dircolors parsing;
 it does not complete that consumer or the remaining #5714 acceptance work.

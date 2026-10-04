@@ -5242,9 +5242,10 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
     // Drain the functions lifted by THIS iteration onto the worklist so their
     // OWN nested lambdas lift in a later round, then clear them (the counter
     // persists across iterations for unique `__lam_N` naming).
+    // A function lifted out of a body is in the module that wrote the body.
     let k: i32 = before;
     while (k < acc.funcs.len()) {
-      worklist = worklist.append(acc.funcs[k]);
+      worklist = worklist.append(parser.FuncDecl { ...acc.funcs[k], module: fd.module });
       k = k + 1;
     }
     acc = LiftAcc { funcs: [], counter: acc.counter };

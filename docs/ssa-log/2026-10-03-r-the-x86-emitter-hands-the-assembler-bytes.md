@@ -19,7 +19,8 @@ emitter has (`EmitState.recs`), and three marker lines carry what it knows
 without the assembler re-deriving it from text:
 
 - `\x01` takes the next record of the buffer: a length byte, then the
-  instruction's bytes. The assembler reads the record straight from the
+  instruction's bytes; since 2026-10-04-e consecutive records are one line, a
+  run. The assembler reads the record straight from the
   buffer by offset (`GK_BYTES`), in every relaxation round, and never caches
   or memoises it.
 - `\x02name` defines the label `name`.
