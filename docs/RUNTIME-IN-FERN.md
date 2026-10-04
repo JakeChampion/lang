@@ -362,12 +362,6 @@ How each backend reaches a helper:
   is emitted through `emitFunc` at the head of the runtime chain under
   `AsmFnName(name)` — `__fn___fern_utf8_valid` — which is the symbol the
   hand-asm calls.
-- **x86-64ssa / arm64ssa** — `referencedRuntimeHelpers` reports the Fern
-  helpers the module reaches (through `ir.CodegenAlias` and
-  `runtimeHelperDeps` as well), and each is lifted with
-  `ssa.LiftFromIRWith`, optimised, verified and emitted as a module function
-  under `fnLabel(name)`; the scan repeats until a lifted helper reaches
-  nothing new.
 - **wasmbin** — `injectFernHelpers` moves the helper out of the
   `runtimeHelperSpecs` set and into `prog.Funcs`, unexported, so `emitBody`
   lowers it and `funcIdx` resolves its name for the hand-built bodies; its

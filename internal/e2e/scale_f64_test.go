@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -131,22 +130,6 @@ function main(): i32 { return verdict(); }
 
 // The verdict printed, for the corpus runners that require exit 0 and hand
 // back stdout.
-const scaleF64PrintingSrc = scaleF64Body + `
-function main(): i32 {
-    write(verdict().to_string());
-    write("\n");
-    return 0;
-}
-`
-
-func scaleF64Verdict(t *testing.T, out string) {
-	t.Helper()
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if got := strings.TrimSpace(lines[len(lines)-1]); got != "42" {
-		t.Errorf("__scale_f64 verdict = %q, want 42 (see scaleF64Src for what each code means)\noutput:\n%s", got, out)
-	}
-}
-
 func TestInterpScaleF64(t *testing.T) {
 	if got := runInterpExit(t, scaleF64Src); got != 42 {
 		t.Errorf("__scale_f64 on interp = %d, want 42 (see scaleF64Src for what each code means)", got)
@@ -169,15 +152,4 @@ func TestWASMScaleF64(t *testing.T) {
 	if got := runWasm(t, scaleF64Src); got != 42 {
 		t.Errorf("__scale_f64 on wasm = %d, want 42 (see scaleF64Src for what each code means)", got)
 	}
-}
-
-// The `-backend ssa` legs, which §3.4 counts as backends seven and eight and
-// which an adoption forgets first, so they get the lowering and the coverage
-// with the other six rather than after.
-func TestArm64SSAScaleF64(t *testing.T) {
-	scaleF64Verdict(t, arm64SSACorpusRunner(t)(t, scaleF64PrintingSrc))
-}
-
-func TestX86_64SSAScaleF64(t *testing.T) {
-	scaleF64Verdict(t, x86_64SSACorpusRunner(t)(t, scaleF64PrintingSrc))
 }

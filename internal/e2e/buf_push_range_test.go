@@ -96,11 +96,3 @@ func TestWASMBufPushRangeCorpus(t *testing.T) {
 		return strings.Join(lines[:len(lines)-1], "\n")
 	})
 }
-
-func TestX86_64SSABufPushRangeCorpus(t *testing.T) {
-	runBufPushRangeCorpus(t, x86_64SSACorpusRunner(t))
-}
-
-func TestArm64SSABufPushRangeCorpus(t *testing.T) {
-	runBufPushRangeCorpus(t, arm64SSACorpusRunner(t))
-}

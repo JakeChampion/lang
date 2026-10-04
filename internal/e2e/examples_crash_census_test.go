@@ -44,10 +44,7 @@ func TestExamplesNoCrashX86_64(t *testing.T) {
 	// Built here, not in a worker: a first build that fails reports through t.
 	e2eharness.SelfHostCLI(t)
 	e2eharness.SelfHostStdlibRoot(t)
-	// The same corpus walk the arm64 differential uses, so the two agree
-	// on what "the examples corpus" means and a program added to one is
-	// added to both.
-	corpus := arm64SSADiffCorpus(t)
+	corpus := examplesCorpus(t)
 
 	var mu sync.Mutex
 	var crashed []string

@@ -2,8 +2,7 @@
 //
 // Every other oracle in this package drives the NATIVE compiler:
 // diff_oracle_test.go builds each generated program with x86_64.Emit /
-// arm64.Emit / wasmbin.Build, diff_oracle_ssa_test.go with the SSA
-// backends. The self-host compiler — the one that is meant to become
+// arm64.Emit / wasmbin.Build. The self-host compiler — the one that is meant to become
 // the product — was in none of those chains, so a green differential
 // run said the native backends agree and said nothing at all about
 // self-host lowering (#6138).
@@ -78,11 +77,9 @@ const selfHostDiffMinRunRatio = 0.85
 // where bugs get forgotten.
 const selfHostDiffKnownFile = "selfhost-diff-x86_64-known-divergences.txt"
 
-// selfHostDiffSeeds is this leg's corpus size — its own knob rather than the
-// native oracle's diffOracleSeeds, because a seed costs ~20x more here: a
-// ~1.3s self-host compile plus a link and a run, against a fraction of a
-// second for an in-process native Emit. Sweeping the native oracle's 2048
-// takes hours serially, which is a lane nobody would keep.
+// selfHostDiffSeeds is this leg's corpus size. A seed costs a ~1.3s self-host
+// compile plus a link and a run, so the 2048 seeds the in-process native
+// oracles swept would take hours serially, which is a lane nobody would keep.
 //
 // 512 is where the cost lands in the same range as the other differential
 // lanes once CI's four shards split it, and it is far past the point where

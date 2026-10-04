@@ -182,15 +182,3 @@ func TestWASMHandleTtyIsNotRefusedAtCheckTime(t *testing.T) {
 		}
 	}
 }
-
-// The handle forms (`r.termios_get()`, `r.window_size()`) under the arm64 SSA
-// backend, which emits its own. Both arm64 legs name their backend, for the
-// reason TestArm64SSATermios does: the SSA one is the target's default, so an
-// inherited leg would leave the stack machine's stubs unexercised.
-func TestArm64SSAHandleTty(t *testing.T) {
-	qemu := arm64QemuOrEmpty(t)
-	if qemu == "" {
-		t.Skip("qemu-aarch64 is not on PATH")
-	}
-	handleTtyRun(t, qemu, handleTtyCompile(t, "arm64-linux", "ssa"))
-}

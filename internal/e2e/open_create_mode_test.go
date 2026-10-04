@@ -50,7 +50,6 @@ func TestOpenHelpersCreateThroughTheUmask(t *testing.T) {
 	}{
 		{"x86-64", []string{"-target", "x86-64-linux"}, false},
 		{"arm64", []string{"-target", "arm64-linux"}, true},
-		{"arm64-ssa", []string{"-target", "arm64-linux", "-backend", "ssa"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runner, have := x86Qemu, haveX86

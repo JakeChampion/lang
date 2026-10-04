@@ -129,17 +129,6 @@ func TestArm64WindowSize(t *testing.T) {
 	})
 }
 
-// The arm64 SSA-direct backend writes its own helper, in its own frame
-// discipline, so it gets the probe rather than being taken on trust.
-func TestArm64SSAWindowSize(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	assertWindowSize(t, func(src string) func() *exec.Cmd {
-		bin := compileArm64SSA(t, fern, src, os.Environ())
-		return func() *exec.Cmd { return runArm64Bin(qemu, bin) }
-	})
-}
-
 func TestInterpWindowSize(t *testing.T) {
 	fern := buildLangBinForInterp(t)
 	n := 0

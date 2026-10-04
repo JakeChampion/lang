@@ -131,9 +131,7 @@ func corpusPrograms(t *testing.T, fn func(name string, cfg verifyConfig, ip *ir.
 // The two stages are different programs, and which one a gate wants is a
 // real choice. The gates above want the LOWERED form — they are about
 // lowering (TestCorpusLowersForVerification), about the shape a lowering
-// bug takes (TestIRVerifierCatchesLoweringDamage), or about an analysis
-// docs/SSA-CUTOVER-PLAN.md places before the optimiser
-// (TestSSALiftProvenanceIsTotal). A gate making a claim about what the
+// bug takes (TestIRVerifierCatchesLoweringDamage). A gate making a claim about what the
 // compiler EMITS wants this one: several instructions exist only after a
 // pass creates them — `rotr` from FuseRotates, `local.tee` from FuseTee,
 // `call_closure_direct` and `make_env` from Defunctionalise — and a tally

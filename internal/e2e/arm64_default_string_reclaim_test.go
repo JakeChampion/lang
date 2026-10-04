@@ -13,18 +13,9 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// The default arm64 emitter must reclaim a string local that was passed to a
-// user function, and the bar is that retention does NOT grow with the input.
-//
-// This measures the DEFAULT emitter, which is the stack machine, and holds it
-// to flat retention across two input sizes.
-//
-// The flip to -backend ssa (#9511) was reverted over retention that turned out
-// to be two separate faults. One is fixed: arm64ssa allocated a string at
-// len+9 and freed it at len+8, so on a class boundary the freelist stopped
-// recycling entirely (#9558). The other is open: arm64ssa still holds one
-// large read buffer the stack machine frees, which is what coreutils/uniq.fern
-// measures. Re-measure before trusting any comparison of the two emitters.
+// The arm64 emitter must reclaim a string local that was passed to a user
+// function, and the bar is that retention does NOT grow with the input: it is
+// held to flat retention across two input sizes.
 //
 // Measuring two input sizes rather than one absolute number is deliberate: the
 // absolute figure moves with allocator and stdlib changes, while "does it grow
@@ -111,14 +102,10 @@ func TestArm64DefaultReclaimsStringPassedToAFunction(t *testing.T) {
 	// bytes either way; one that does not holds 16x as much. Allow generous
 	// slack for per-process fixed overhead without allowing growth.
 	if large > small+4096 {
-		t.Errorf("the default arm64 emitter retains %d bytes at 50 rounds and %d at 800 — "+
+		t.Errorf("the arm64 emitter retains %d bytes at 50 rounds and %d at 800 — "+
 			"retention grows with the input, so a string passed to a user function is not "+
-			"being reclaimed.\n\n"+
-			"If this failed because the default moved to -backend ssa, the flip is not ready: "+
-			"the class-boundary freelist fault is fixed (#9558) but arm64ssa still retains a "+
-			"large read buffer the stack machine frees. Do not relax this bound to land the "+
-			"flip, and do not reach for the single-word string ABI as the explanation: "+
-			"x86-64 runs that ABI under its own default and is clean, which rules it out.",
+			"being reclaimed. Do not relax this bound, and do not reach for the single-word "+
+			"string ABI as the explanation: x86-64 runs that ABI and is clean, which rules it out.",
 			small, large)
 	}
 	if testing.Verbose() {

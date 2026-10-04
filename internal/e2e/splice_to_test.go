@@ -151,17 +151,6 @@ func TestX86_64SpliceTo(t *testing.T) {
 	spliceToCheckTree(t, dir)
 }
 
-// The x86-64 SSA backend emits its own helper, so it gets the probe too.
-func TestX86_64SSASpliceTo(t *testing.T) {
-	qemu := x86QemuOrEmpty(t)
-	bin := buildFernCLI(t)
-	dir := t.TempDir()
-	if code := runPathProbe(t, bin, qemu, dir, "splice", "ssa", spliceToSource(dir, true), ""); code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see spliceToSource)", code)
-	}
-	spliceToCheckTree(t, dir)
-}
-
 func TestArm64SpliceTo(t *testing.T) {
 	dir := t.TempDir()
 	out, code := compileAndRunArm64(t, spliceToSource(dir, true))
@@ -170,18 +159,6 @@ func TestArm64SpliceTo(t *testing.T) {
 	}
 	spliceToCheckTree(t, dir)
 	spliceToCheckStdout(t, out)
-}
-
-func TestArm64SSASpliceTo(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, spliceToSource(dir, true), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see spliceToSource)\n%s", code, stderr)
-	}
-	spliceToCheckTree(t, dir)
 }
 
 // The interpreter's stdio need not be a descriptor, so it refuses every call

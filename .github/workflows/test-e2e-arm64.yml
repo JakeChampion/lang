@@ -69,8 +69,6 @@ jobs:
           go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
       - name: go test (arm64 e2e, shard ${{ matrix.shard }}/${{ matrix.nshard }}, two workers)
         id: tests
-        env:
-          FERN_REQUIRE_ARM64_SSA_DIFF: "1"
         run: |
           set -euo pipefail
           mapfile -t MINE < <(

@@ -12,8 +12,8 @@
 // <= 1 ulp, where the Taylor kernels these replaced measure 3.2e10 ulp (sin),
 // 4.5e7 (exp) and 9844 (log) while their own comments claimed "a few ulp".
 //
-// The tables lived in five copies before this package — the native arm64,
-// arm64ssa, wasmbin and x86_64 backends, plus the three self-host emitters —
+// The tables lived in five copies before this package — the Go arm64,
+// arm64 SSA, wasmbin and x86_64 backends, plus the three self-host emitters —
 // which is the parallel-emit drift hazard CLAUDE.md warns about, and it has
 // already cost real accuracy once: #6313 exists because three copies still
 // carried the old math after two prior PRs fixed the others. The emit layers

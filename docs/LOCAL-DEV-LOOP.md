@@ -558,7 +558,7 @@ When editing inference / checker / `Ty` / `EmitState`, edit `asmcore.fern` once
 also provide `asmcore.fern`.
 
 **Two termios tests fail under qemu and pass on real arm64.**
-`TestArm64Termios` and `TestArm64SSATermios` exit 21 locally — a control byte
+`TestArm64Termios` exits 21 locally — a control byte
 written with `termios_set` does not read back through `termios_get` — while
 `TestX86_64Termios` runs the same program on the same pty and passes, and CI's
 arm64 lane, which runs natively, is green. It is qemu-user's ioctl emulation,

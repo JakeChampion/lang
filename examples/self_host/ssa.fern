@@ -3,9 +3,9 @@
 // on: the data model, the kind and terminator registries, the optimiser
 // passes and the register allocator. `ssa_lift.fern` builds an SFunc from a
 // lowered function's stack IR; `asm_arm64_ir.fern` and `asm_ir.fern` emit
-// it. The Go compiler's internal/ssa is the model.
+// it.
 //
-// Representation (mirrors internal/ssa/ssa.go, but pointer-free — values
+// Representation (pointer-free — values
 // and blocks are referenced by integer id / array index, matching the
 // self-host's value-semantics style):
 //   - an SSA Value is an i32 id; an instruction (SInst) DEFINES the value

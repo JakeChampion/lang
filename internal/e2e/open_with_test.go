@@ -144,18 +144,6 @@ func TestArm64OpenWith(t *testing.T) {
 	openWithCheckTree(t, dir)
 }
 
-func TestArm64SSAOpenWith(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, openWithSource(dir), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see openWithSource)\n%s", code, stderr)
-	}
-	openWithCheckTree(t, dir)
-}
-
 func TestInterpOpenWith(t *testing.T) {
 	dir := t.TempDir()
 	if code := runInterpExit(t, openWithSource(dir)); code != 0 {
