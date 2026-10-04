@@ -255,20 +255,40 @@ the program.
 
 ### 3.7 wasm
 
-The transform is target-agnostic, so wasm gets it with the others. Tokens are
-pollables, as `poll` already takes them; the serve loop on wasi:sockets drives
-tasks exactly as native does. The Preview 3 `waitable-set.wait` loop in
-`wasmbin/extern.go` stays stackful for now; once tasks exist, a callback-lifted
-guest that suspends across `waitable-set.wait` is a follow-up on
-`WASI-PREVIEW3-ASYNC-PLAN.md`, not part of P3.
+The transform is target-agnostic, so wasm gets it with the others, and the
+runtime it needs is `wasm_ir.task_funcs`: the WAT twin of `rt_src_task`,
+with the task table, the records and the save area in linear memory and the
+current task in a global. A wait set's descriptors are socket handles,
+subscribed for the wait as `wait_any` does; a park on a bound alone needs
+nothing. The serve loop on wasi:sockets drives tasks exactly as native does.
+The Preview 3 `waitable-set.wait` loop in `wasmbin/extern.go` stays stackful
+for now; once tasks exist, a callback-lifted guest that suspends across
+`waitable-set.wait` is a follow-up on `WASI-PREVIEW3-ASYNC-PLAN.md`, not part
+of P3.
 
 ### 3.8 The sim
 
-`SimPlatform.http` suspends on a virtual-time token, as `sim_fetch` already
-produces them. `sim.Sim` grows a task driver (`run_tasks`) that advances
-virtual time and resumes the task whose token is due, and a scripted
-disconnect at a virtual time is a `task_cancel`. That gives the deterministic
-cancellation test #9857 asks for, with the bytes pinned in the test.
+`SimPlatform.http` parks on a virtual-time token: every move of the sim's
+clock goes through `Sim.advance_to(to_ns)`, which under a task is a
+`wait_any` on the token `to_ns` in milliseconds (the sim's token encoding)
+with no bound, and `Sim.poll_ready` parks on its tokens as `RealDriver`'s
+does. `sim.run_tasks(drv, entries, cancel_at_ms)` is the task driver: it
+starts every entry as a task, moves the clock to the earliest moment any
+parked task is due — a pair's time, its bound's end, or its scheduled
+cancellation — and resumes that task with the pair's index or -1, or
+cancels it; a scripted disconnect is a `task_cancel` at a virtual time,
+winning a tie with the data it would have read. Ties between tasks are the
+seeded PRNG's, so a run is a function of the seed.
+
+The transport reports the cancellation rather than swallowing it:
+`Transport.read` answers `tcp.Recv` — `Chunk`, `Elapsed`, or `Abandoned`
+when the task's wait answered `cancelled()` — and `tcp_recv_deadline` is
+that primitive on a socket; `connect_race` leaves the race as
+`Interrupted` on a cancelled wait instead of spinning on it until the
+deadline. The client maps both to `FetchError.Cancelled`, so a handler's
+`plat.http` sees the disconnect as an error it can log, on the sim and on
+the host alike. `TestSelfHostSimTasks` is the deterministic cancellation
+test #9857 asks for, byte-identical on x86-64, arm64 and wasm.
 
 ## 4. Slices
 
@@ -290,11 +310,15 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    peepholes on the rows `semlower` marks. Gate: `TestSelfHostTaskScheduler`
    (a function three calls deep parks twice inside a loop and a branch, driven
    by hand, x86-64 and arm64) and `TestTaskSchedulerFallback` (the Go
-   compiler's blocking fallback). The Go compiler, the interp and wasm carry
+   compiler's blocking fallback). The Go compiler and the interp carry
    the primitives in the blocking fallback, so every stdlib module compiles
-   everywhere; the wasm runtime bodies that let a wasm task park are the next
-   slice's, and the classifier's indirect-call rule has no closure body
-   reaching a park yet to exercise it.
+   everywhere. wasm's runtime bodies (`wasm_ir.task_funcs`, the WAT twin of
+   `rt_src_task`, every word 8 bytes so a saved i64 or f64 keeps its width)
+   landed after slice 6: `TestSelfHostTaskPortable` parks the same program
+   on x86-64, arm64 and wasm, composed with `cmd/fern/wit`'s world so the
+   list-returning `wasi:io/poll poll` import lifts. The classifier's
+   indirect-call rule has no closure body reaching a park yet to exercise
+   it.
 3. **Native and interp fallback.** Done with slice 2 for the primitives; the
    differential rows follow with the first stdlib caller of `suspend`.
 4. **The client suspends. Landed.** `async.wait_any(set, timeout_ms)` is
@@ -355,9 +379,11 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    captures survive a park as the lowering stands, so no checker rule
    refuses them; `TestSelfHostTaskFrame` and `TestTaskFrameFallback` pin
    that instead of a code.
-8. **Sim parity.** `SimPlatform.http` suspends; `sim.run_tasks`; the scripted
-   upstream plus scripted disconnect test, byte-identical on x86-64, arm64
-   and wasm through the self-host compiler.
+8. **Sim parity. Landed (§3.8).** `Sim.advance_to` parks, `sim.run_tasks`
+   drives, `Transport.read` reports a cancelled task; `TestSelfHostSimTasks`
+   is the scripted upstream plus scripted disconnect test, byte-identical
+   on x86-64, arm64 and wasm through the self-host compiler, and
+   `TestSimTasksFallback` the Go compiler's twin.
 9. **Lazy streaming request bodies.** `BodyStream` pulled inside a handler
    suspends on the connection's readability; the P1 "bodies are read before
    the handler runs" restriction is lifted behind a `serve.Config` choice,

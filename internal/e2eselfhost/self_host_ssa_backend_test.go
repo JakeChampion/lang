@@ -38,6 +38,19 @@ type ssaBackendProgram struct {
 }
 
 var ssaBackendPrograms = []ssaBackendProgram{
+	// A type parameter named in a `defer` action, `T.default()`: the
+	// instantiation substitutes it there as in the body (#10404).
+	{name: "defer_type_param", src: `
+trait Mk { function make(): Self; function get(self: Self): i32; }
+struct W { v: i32 }
+impl Mk for W { function make(): W { return W { v: 41 }; } function get(self: W): i32 { return self.v; } }
+function f[T: Mk](y: T, x: i32): i32 {
+    let acc: i32 = 0;
+    defer { acc = acc + T.make().get(); }
+    return acc + x;
+}
+function main(): i32 { return f[W](W { v: 0 }, 1); }
+`},
 	// A `.with` on the array the previous one returned skips its uniqueness
 	// test, and a write to an index just read skips its bounds check (#11322).
 	// Each alias here must still see the array as it was, and a write past the

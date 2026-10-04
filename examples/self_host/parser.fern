@@ -13792,6 +13792,9 @@ function subst_stmts(stmts: ast.Stmt[], tparams: string[], cts: string[]): ast.S
         }
         out = out.append(ast.StmtMatch { ...m, scrutinee: subst_expr(m.scrutinee, tparams, cts), arms: arms });
       },
+      ast.StmtDefer(d) => {
+        out = out.append(ast.StmtDefer { ...d, action: subst_stmts([d.action], tparams, cts)[0] });
+      },
       _ => {
         out = out.append(st);
       }

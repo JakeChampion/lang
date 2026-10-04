@@ -13,8 +13,12 @@
 // no token table and `drop_token` is a no-op. Negative tokens are
 // never ready (mirroring poll(2), which ignores negative fds).
 //
-// Time advances ONLY inside `poll_ready` — a busy loop that never
-// waits is a hang in simulation exactly as in production.
+// Time advances ONLY inside a wait — `poll_ready`, `wait`, `advance_to` — a
+// busy loop that never waits is a hang in simulation exactly as in
+// production. Under `run_tasks` each wait is a park: the task hands the
+// driver its tokens, the driver moves the clock to the earliest due and
+// resumes that task, so tasks interleave in virtual time as handlers do
+// under the serve loop.
 import "core/int";
 import "std/async";
 import "std/rand";
@@ -159,7 +163,11 @@ impl async.Driver for Sim {
     // on a tie the token wins, matching with_deadline's timer-slot
     // convention (the deadline reads as the timer firing, ready ==
     // nfds, not a bare -1). Ties between equally-ready tokens are
-    // broken by the seeded PRNG.
+    // broken by the seeded PRNG. Under a task the wait is a park and
+    // `run_tasks` answers it by the same rules.
+    if (__task_cur() != 0) {
+      return async.park_tokens(toks, timeout_ms);
+    }
     if (toks.len() == 0) {
       return -1;
     }
@@ -288,6 +296,200 @@ impl async.Driver for Sim {
   function close(self: Sim): i32 {
     return 0;
   }
+}
+
+// advance_to(to_ns) — the clock moved forward to `to_ns`, never back: how
+// a scripted peer (std/sim_fetch) spends the time its answer takes. Under
+// a task the move is a park until then, so the other tasks `run_tasks`
+// drives run meanwhile; it answers false, the clock left where the driver
+// put it, when the task was cancelled instead.
+pub function (s: Sim) advance_to(to_ns: i64): boolean {
+  if (__task_cur() != 0) {
+    let set: i32[] = [(to_ns / 1000000) as i32, 1];
+    if (async.wait_any(set, 0 - 1) == async.cancelled()) {
+      return false;
+    }
+  }
+  if (to_ns > s.clock_ns.get()) {
+    s.clock_ns.set(to_ns);
+  }
+  return true;
+}
+
+// ---- Tasks in virtual time ------------------------------------------------
+//
+// run_tasks(drv, entries, cancel_at_ms) — every entry run as a task, all
+// together, until each is done or cancelled, in virtual time. A task that
+// parks (`advance_to`, `poll_ready`, any `async.wait_any`) hands the driver
+// its wait, whose pairs' descriptors are ready-at times in milliseconds
+// like every sim token; the driver moves the clock to the earliest moment
+// any task is due — a pair's time, its bound's end, or `cancel_at_ms[i]`,
+// the virtual time task `i` is cancelled at (-1 for never: a scripted
+// disconnect) — and resumes that task with the pair's index, -1 at its
+// bound, or cancels it, the cancellation winning a tie and `task_cancel`
+// running it on with every wait answering `async.cancelled()`. Ties
+// between tasks, and between a task's pairs, are broken by the seeded
+// PRNG, so a run is a function of the seed. A task whose wait nothing can
+// answer is cancelled rather than left to hang. Answers in entry order:
+// `Done(v)` or `Cancelled`, each task's record freed. With no task ever
+// current (the Go compiler, docs/ASYNC.md §8) each entry runs to its end
+// inside `task_start`, in order, and nothing is cancelled.
+pub function run_tasks[T](drv: Sim, entries: (() => T)[], cancel_at_ms: i32[]): async.TaskStatus[T][] {
+  let tasks: async.Task[T][] = [];
+  let out: async.TaskStatus[T][] = [];
+  for e in entries {
+    let t: async.Task[T] = async.task_new(e);
+    tasks = tasks.append(t);
+    out = out.append(__settled(t, async.task_start(t)));
+  }
+  let next: i32 = __next_due(drv, out, cancel_at_ms);
+  while (next >= 0) {
+    out = out.with(next, __run_due(drv, tasks[next], out[next], __cancel_ms(cancel_at_ms, next)));
+    next = __next_due(drv, out, cancel_at_ms);
+  }
+  return out;
+}
+
+// The task's record freed once it is done or cancelled; its status either way.
+function __settled[T](t: async.Task[T], st: async.TaskStatus[T]): async.TaskStatus[T] {
+  match (st) {
+    Suspended(w) => {},
+    Done(v) => {
+      async.task_free(t);
+    },
+    Cancelled => {
+      async.task_free(t);
+    }
+  }
+  return st;
+}
+
+function __cancel_ms(cancel_at_ms: i32[], i: i32): i32 {
+  if (i < cancel_at_ms.len()) {
+    return cancel_at_ms[i];
+  }
+  return 0 - 1;
+}
+
+function __now_ms(drv: Sim): i32 {
+  return (drv.clock_ns.get() / 1000000) as i32;
+}
+
+// The virtual millisecond the parked wait `w` is due at: the earliest of
+// its cancellation (`cancel_ms`, -1 for none), its pairs' ready-at times
+// and its bound's end, none earlier than `now_ms`; `now_ms` itself when
+// nothing can answer it.
+function __wait_due(w: async.Wait, now_ms: i32, cancel_ms: i32): i32 {
+  let due: i32 = cancel_ms;
+  if (w.timeout_ms >= 0 && (due < 0 || now_ms + w.timeout_ms < due)) {
+    due = now_ms + w.timeout_ms;
+  }
+  let i: i32 = 0;
+  while (i * 2 < w.set.len()) {
+    let at: i32 = w.set[i * 2];
+    if (at >= 0 && (due < 0 || at < due)) {
+      due = at;
+    }
+    i = i + 1;
+  }
+  if (due < now_ms) {
+    return now_ms;
+  }
+  return due;
+}
+
+// The pairs of `w` due at `due_ms`, as indices.
+function __due_pairs(w: async.Wait, now_ms: i32, due_ms: i32): i32[] {
+  let ties: i32[] = [];
+  let i: i32 = 0;
+  while (i * 2 < w.set.len()) {
+    let at: i32 = w.set[i * 2];
+    if (at >= 0 && at < now_ms) {
+      at = now_ms;
+    }
+    if (at == due_ms) {
+      ties = ties.append(i);
+    }
+    i = i + 1;
+  }
+  return ties;
+}
+
+// What the parked wait `w` is resumed with at `due_ms`: `async.cancelled()`
+// when its cancellation is due (or nothing can answer it), else the index
+// of a pair due now, else -1 at its bound.
+function __wait_word(drv: Sim, w: async.Wait, now_ms: i32, due_ms: i32, cancel_ms: i32): i32 {
+  if (cancel_ms >= 0 && cancel_ms <= due_ms) {
+    return async.cancelled();
+  }
+  let pairs: i32[] = __due_pairs(w, now_ms, due_ms);
+  if (pairs.len() == 1) {
+    return pairs[0];
+  }
+  if (pairs.len() > 1) {
+    return pairs[__roll(drv, pairs.len())];
+  }
+  if (w.timeout_ms >= 0 && now_ms + w.timeout_ms == due_ms) {
+    return 0 - 1;
+  }
+  return async.cancelled();
+}
+
+// The index of the parked task due first, -1 with none parked.
+function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at_ms: i32[]): i32 {
+  let now_ms: i32 = __now_ms(drv);
+  let best: i32 = 0;
+  let ties: i32[] = [];
+  let i: i32 = 0;
+  while (i < out.len()) {
+    match (out[i]) {
+      Suspended(w) => {
+        let due: i32 = __wait_due(w, now_ms, __cancel_ms(cancel_at_ms, i));
+        if (ties.len() == 0 || due < best) {
+          best = due;
+          ties = [i];
+        } else if (due == best) {
+          ties = ties.append(i);
+        }
+      },
+      Done(v) => {},
+      Cancelled => {}
+    }
+    i = i + 1;
+  }
+  if (ties.len() == 0) {
+    return 0 - 1;
+  }
+  if (ties.len() == 1) {
+    return ties[0];
+  }
+  return ties[__roll(drv, ties.len())];
+}
+
+// The parked task run on at its due: the clock moved there, the task
+// resumed with what its wait is answered, or cancelled.
+function __run_due[T](drv: Sim, t: async.Task[T], st: async.TaskStatus[T], cancel_ms: i32): async.TaskStatus[T] {
+  match (st) {
+    Suspended(w) => {
+      let now_ms: i32 = __now_ms(drv);
+      let due: i32 = __wait_due(w, now_ms, cancel_ms);
+      if (due > now_ms) {
+        drv.clock_ns.set(due as i64 * 1000000);
+      }
+      let word: i32 = __wait_word(drv, w, now_ms, due, cancel_ms);
+      if (word == async.cancelled()) {
+        return __settled(t, async.task_cancel(t));
+      }
+      return __settled(t, async.task_resume(t, word));
+    },
+    Done(v) => {
+      return st;
+    },
+    Cancelled => {
+      return st;
+    }
+  }
+  return st;
 }
 
 // __pend(tok, next) — a Pending resolving to `next` when `tok` fires.

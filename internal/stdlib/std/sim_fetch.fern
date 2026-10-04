@@ -7,7 +7,10 @@
 // test scripts, on the clock of a `sim.Sim`. Nothing waits: a read that
 // would block moves the clock to the moment the scripted bytes arrive, or
 // by the whole wait when nothing does, so a bound that passes passes at
-// its exact virtual time.
+// its exact virtual time. Under `sim.run_tasks` each move is a park
+// (`Sim.advance_to`), so the client's task interleaves with the others,
+// and a task cancelled while it waits reads `Abandoned`: the client's
+// `Cancelled`.
 //
 //   let d: sim.Sim = sim.new(1);
 //   let n: sim_fetch.Net = sim_fetch.net(d)
@@ -41,6 +44,7 @@ import "std/sim";
 import "std/fetch";
 import "std/net";
 import "std/dns";
+import "std/tcp";
 import "std/i64";
 import "core/int";
 
@@ -233,10 +237,14 @@ impl fetch.Transport for Net {
       return Err(net.ConnectionRefused);
     }
     if (best_ms > timeout_ms as i64) {
-      __advance(self, self.drv.clock_ns.get() + timeout_ms as i64 * 1000000);
+      if (!self.drv.advance_to(self.drv.clock_ns.get() + timeout_ms as i64 * 1000000)) {
+        return Err(net.Interrupted);
+      }
       return Err(net.TimedOut);
     }
-    __advance(self, self.drv.clock_ns.get() + best_ms * 1000000);
+    if (!self.drv.advance_to(self.drv.clock_ns.get() + best_ms * 1000000)) {
+      return Err(net.Interrupted);
+    }
     let id: i32 = self.next.get();
     self.next.set(id + 1);
     self.conns.set(self.conns.get() + __row(id, best, port, 0 - 1, 0, 0, 0, 1));
@@ -272,31 +280,30 @@ impl fetch.Transport for Net {
     __set_conn(self, conn, __row(conn, row[1], port, route, answer, 0, self.drv.clock_ns.get() + first_ms * 1000000, 1));
     return data.len();
   }
-  function read(self: Net, conn: i32, max: i32, wait_ms: i64): Option[u8[]] {
+  function read(self: Net, conn: i32, max: i32, wait_ms: i64): tcp.Recv {
     let row: string[] = __conn(self, conn);
     let now: i64 = self.drv.clock_ns.get();
     let deadline: i64 = now + wait_ms * 1000000;
     let route: i32 = __field(row, 3);
     if (row.len() == 0 || route == 0 - 1) {
-      __advance(self, deadline);
-      return None;
+      return __elapsed(self, deadline);
     }
     let a: Answer = __answer(self, route, __field(row, 4));
     let offset: i32 = __field(row, 5);
     if (offset >= a.bytes.len()) {
       if (a.close) {
         let none: u8[] = [];
-        return Some(none);
+        return tcp.Chunk(none);
       }
-      __advance(self, deadline);
-      return None;
+      return __elapsed(self, deadline);
     }
     let ready: i64 = __field64(row, 6);
     if (ready > deadline) {
-      __advance(self, deadline);
-      return None;
+      return __elapsed(self, deadline);
     }
-    __advance(self, ready);
+    if (!self.drv.advance_to(ready)) {
+      return tcp.Abandoned;
+    }
     let size: i32 = a.bytes.len() - offset;
     if (a.chunk > 0 && a.chunk < size) {
       size = a.chunk;
@@ -311,7 +318,7 @@ impl fetch.Transport for Net {
       k = k + 1;
     }
     __set_conn(self, conn, __row(conn, row[1], __field(row, 2), route, __field(row, 4), offset + size, self.drv.clock_ns.get() + a.chunk_ms * 1000000, 1));
-    return Some(out);
+    return tcp.Chunk(out);
   }
   function close(self: Net, conn: i32): i32 {
     let row: string[] = __conn(self, conn);
@@ -387,12 +394,13 @@ function __addrs_of(n: Net, host: string): net.IpAddr[] {
   return out;
 }
 
-// `__advance(n, to_ns)` — the clock moved forward to `to_ns`, never back.
-function __advance(n: Net, to_ns: i64): i32 {
-  if (to_ns > n.drv.clock_ns.get()) {
-    n.drv.clock_ns.set(to_ns);
+// `__elapsed(n, to_ns)` — a wait passed with nothing at `to_ns`, or
+// `Abandoned` when the task waiting was cancelled first.
+function __elapsed(n: Net, to_ns: i64): tcp.Recv {
+  if (!n.drv.advance_to(to_ns)) {
+    return tcp.Abandoned;
   }
-  return 0;
+  return tcp.Elapsed;
 }
 
 // `__target(data)` — the request target of the request line `data` starts

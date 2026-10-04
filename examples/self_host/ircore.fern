@@ -94,7 +94,7 @@ function is_array_type(t: string): boolean {
 }
 
 // is_task_runtime_fn reports whether a call_direct callee is one of the task
-// primitives' runtime functions (asmcore.rt_src_task, wasm_ir's stubs): Fern
+// primitives' runtime functions (asmcore.rt_src_task, wasm_ir's task_funcs):
 // bodies emitted under __fn_ and called with the user ABI, which is why they
 // are not is_fern_helper's stack-arg helpers.
 pub function is_task_runtime_fn(name: string): boolean {
