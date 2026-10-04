@@ -37,8 +37,11 @@ import "std/array";
 import "std/u64";
 import "std/i64";
 import "std/io_buffered";
+import "std/io";
+import "std/utf8";
 import "core/map";
 import "./lib/gnu";
+import "./lib/fnmatch";
 import "./lib/timefmt";
 import "std/tz";
 import "./lib/blocks";
@@ -185,7 +188,7 @@ function time_ctime(): i32 {
 // rounding UP). `suffix` is what a bare `-BK` prints after each number,
 // derived from the final divisor rather than echoed from the spec —
 // which is why `--inodes -BKiB` prints `B` and not `KiB`.
-pub struct Conf { all: boolean, apparent: boolean, block_size: u64, suffix: string, human: u64, total: boolean, deref: i32, max_depth: u64, inodes: boolean, count_links: boolean, separate_dirs: boolean, threshold: i64, has_threshold: boolean, time_kind: i32, time_format: timefmt.Format, zone: tz.Zone, excludes: string[], one_file_system: boolean, terminator: string }
+pub struct Conf { all: boolean, apparent: boolean, block_size: u64, suffix: string, human: u64, total: boolean, deref: i32, max_depth: u64, inodes: boolean, count_links: boolean, separate_dirs: boolean, threshold: i64, has_threshold: boolean, time_kind: i32, time_format: timefmt.Format, zone: tz.Zone, excludes: fnmatch.BytePattern[], one_file_system: boolean, terminator: string }
 
 function help_text(): string {
   let out: string = "";
@@ -232,176 +235,19 @@ function help_text(): string {
 }
 
 // ---- exclusion -------------------------------------------------------------
-// `fnmatch(pattern, text)` — POSIX fnmatch with NO flags, which is what
-// --exclude matches under: `*` and `?` CROSS `/`, a backslash escapes
-// the next character, and a bracket may be negated with `!` or `^`.
-function fnmatch(p: string, t: string): boolean {
-  return match_at(p, 0, t, 0);
-}
-
-function match_at(p: string, pi0: i32, t: string, ti0: i32): boolean {
-  let pi: i32 = pi0;
-  let ti: i32 = ti0;
-  while (pi < p.len()) {
-    let pc: i32 = p[pi] as i32;
-    if (pc == 42) {
-      let k: i32 = ti;
-      while (k <= t.len()) {
-        if (match_at(p, pi + 1, t, k)) {
-          return true;
-        }
-        k = k + 1;
-      }
-      return false;
-    }
-    if (ti >= t.len()) {
-      return false;
-    }
-    if (pc == 63) {
-      pi = pi + 1;
-      ti = ti + 1;
-      continue;
-    }
-    if (pc == 91) {
-      let r: (boolean, i32) = bracket(p, pi, t[ti] as i32);
-      if (r.1 >= 0) {
-        if (!r.0) {
-          return false;
-        }
-        pi = r.1;
-        ti = ti + 1;
-        continue;
-      }
-    }
-    // An unterminated `[` is a literal one.
-    if (pc == 92 && pi + 1 < p.len()) {
-      pi = pi + 1;
-      pc = p[pi] as i32;
-    }
-    if (pc != t[ti] as i32) {
-      return false;
-    }
-    pi = pi + 1;
-    ti = ti + 1;
-  }
-  return ti == t.len();
-}
-
-// One bracket expression against `ch`, returning (matched, the index
-// past the `]`), or a negative index when the bracket is never closed.
-function bracket(p: string, start: i32, ch: i32): (boolean, i32) {
-  let i: i32 = start + 1;
-  let negate: boolean = false;
-  if (i < p.len() && (p[i] as i32 == 33 || p[i] as i32 == 94)) {
-    negate = true;
-    i = i + 1;
-  }
-  let matched: boolean = false;
-  let first: boolean = true;
-  while (i < p.len()) {
-    if (p[i] as i32 == 93 && !first) {
-      if (negate) {
-        return (!matched, i + 1);
-      }
-      return (matched, i + 1);
-    }
-    first = false;
-    if (p[i] as i32 == 91 && i + 1 < p.len() && p[i + 1] as i32 == 58) {
-      let close: i32 = find_class_end(p, i + 2);
-      if (close > 0) {
-        if (in_class(slice_unchecked(p, i + 2, close) + "", ch)) {
-          matched = true;
-        }
-        i = close + 2;
-        continue;
-      }
-    }
-    let lo: i32 = p[i] as i32;
-    if (lo == 92 && i + 1 < p.len()) {
-      i = i + 1;
-      lo = p[i] as i32;
-    }
-    if (i + 2 < p.len() && p[i + 1] as i32 == 45 && p[i + 2] as i32 != 93) {
-      if (ch >= lo && ch <= p[i + 2] as i32) {
-        matched = true;
-      }
-      i = i + 3;
-      continue;
-    }
-    if (ch == lo) {
-      matched = true;
-    }
-    i = i + 1;
-  }
-  return (false, 0 - 1);
-}
-
-function find_class_end(p: string, from: i32): i32 {
-  let i: i32 = from;
-  while (i + 1 < p.len()) {
-    if (p[i] as i32 == 58 && p[i + 1] as i32 == 93) {
-      return i;
-    }
-    i = i + 1;
-  }
-  return 0 - 1;
-}
-
-function in_class(name: string, ch: i32): boolean {
-  let alpha: boolean = ch >= 65 && ch <= 90 || ch >= 97 && ch <= 122;
-  let digit: boolean = ch >= 48 && ch <= 57;
-  if (name == "alpha") {
-    return alpha;
-  }
-  if (name == "digit") {
-    return digit;
-  }
-  if (name == "alnum") {
-    return alpha || digit;
-  }
-  if (name == "upper") {
-    return ch >= 65 && ch <= 90;
-  }
-  if (name == "lower") {
-    return ch >= 97 && ch <= 122;
-  }
-  if (name == "space") {
-    return ch == 32 || ch >= 9 && ch <= 13;
-  }
-  if (name == "blank") {
-    return ch == 32 || ch == 9;
-  }
-  if (name == "print") {
-    return ch >= 32 && ch < 127;
-  }
-  if (name == "graph") {
-    return ch > 32 && ch < 127;
-  }
-  if (name == "cntrl") {
-    return ch < 32 || ch == 127;
-  }
-  if (name == "punct") {
-    return ch > 32 && ch < 127 && !alpha && !digit;
-  }
-  if (name == "xdigit") {
-    return blocks.hex_digit(ch) >= 0;
-  }
-  return false;
-}
-
 // `excluded(c, name)` — whether any --exclude pattern matches the name
 // as printed, or any suffix of it starting just after a `/`, which is
 // what makes `--exclude=sub` drop `a/sub`.
 function excluded(c: Conf, name: string): boolean {
   let i: i32 = 0;
   while (i < c.excludes.len()) {
-    if (fnmatch(c.excludes[i], name)) {
+    if (c.excludes[i].matches(name)) {
       return true;
     }
     let j: i32 = 0;
     while (j < name.len()) {
       if (name[j] as i32 == 47) {
-        if (fnmatch(c.excludes[i], slice_unchecked(name, j + 1, name.len()) + "")) {
+        if (c.excludes[i].matches(slice_unchecked(name, j + 1, name.len()) + "")) {
           return true;
         }
       }
@@ -599,11 +445,16 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
     if (excluded(c, display)) {
       continue;
     }
-    // The stat names the operand as TYPED, so a trailing slash resolves
-    // a symlink through the kernel exactly as it does for GNU.
+    // Darwin lstat can accept a trailing slash on a file symlink or leave
+    // a symlink loop unresolved. A final dot requires a real directory,
+    // preserving GNU's ENOTDIR/ELOOP result while keeping the displayed name.
+    let stat_name: string = arg;
+    if (target_os() == "darwin" && arg[arg.len() - 1] as i32 == 47) {
+      stat_name = arg + ".";
+    }
     let st: FileStat = zero_stat();
     let got: boolean = false;
-    match (lstat(arg)) {
+    match (lstat(stat_name)) {
       Ok(s) => {
         st = s;
         got = true;
@@ -851,7 +702,7 @@ function zero_stat(): FileStat {
 // `Slurp` — a whole file read in, or the failure that stopped it.
 // `at_open` separates a name that could not be OPENED from one that
 // could not be READ, which du words differently.
-struct Slurp { text: string, ok: boolean, at_open: boolean, err: Option[IoError] }
+struct Slurp { bytes: u8[], ok: boolean, at_open: boolean, err: Option[IoError] }
 
 // The whole of `path`, or stdin for `-`.
 function slurp(path: string): Slurp {
@@ -862,44 +713,29 @@ function slurp(path: string): Slurp {
         r = f;
       },
       Err(e) => {
-        return Slurp { text: "", ok: false, at_open: true, err: Some(e) };
+        return Slurp { bytes: [], ok: false, at_open: true, err: Some(e) };
       }
     }
   }
-  let chunks: string[] = [];
-  let text: string = "";
-  while (true) {
-    match (r.read_chunk(65536)) {
-      Ok(chunk) => {
-        if (chunk.len() == 0) {
-          break;
-        }
-        chunks = chunks.append(chunk);
-      },
-      Err(e) => {
-        if (path != "-") {
-          r.close();
-        }
-        return Slurp { text: "", ok: false, at_open: false, err: Some(e) };
-      }
-    }
-  }
+  let result: Result[u8[], IoError] = io.read_all_bytes(r);
   if (path != "-") {
     r.close();
   }
-  let i: i32 = 0;
-  while (i < chunks.len()) {
-    text = text + chunks[i];
-    i = i + 1;
+  match (result) {
+    Ok(bytes) => {
+      return Slurp { bytes: bytes, ok: true, at_open: false, err: None };
+    },
+    Err(e) => {
+      return Slurp { bytes: [], ok: false, at_open: false, err: Some(e) };
+    }
   }
-  return Slurp { text: text, ok: true, at_open: false, err: None };
 }
 
 // The patterns of a -X file: one per line, a trailing carriage return
 // stripped, the line cut at an embedded NUL, and an empty line ignored.
 // Leading and trailing SPACES are significant.
-function exclude_patterns(text: string): string[] {
-  let out: string[] = [];
+function exclude_patterns(text: u8[]): fnmatch.BytePattern[] {
+  let out: fnmatch.BytePattern[] = [];
   let start: i32 = 0;
   let i: i32 = 0;
   while (i <= text.len()) {
@@ -913,7 +749,7 @@ function exclude_patterns(text: string): string[] {
         j = j + 1;
       }
       if (j > start) {
-        out = out.append(slice_unchecked(text, start, j) + "");
+        out = out.append(fnmatch.BytePattern { data: text, lo: start, hi: j });
       }
       start = i + 1;
     }
@@ -924,21 +760,29 @@ function exclude_patterns(text: string): string[] {
 
 // The NUL-separated names of a --files0-from file. A trailing NUL is
 // optional; an empty name is reported with its ordinal and skipped.
-function files0_names(text: string): string[] {
+function files0_names(bytes: u8[], origin: string): Option[string[]] {
   let out: string[] = [];
   let start: i32 = 0;
-  let i: i32 = 0;
-  while (i < text.len()) {
-    if (text[i] as i32 == 0) {
-      out = out.append(slice_unchecked(text, start, i) + "");
-      start = i + 1;
+  let ordinal: i32 = 0;
+  while (start < bytes.len()) {
+    let end: i32 = __memchr_bytes(bytes, 0, start);
+    if (end < 0) {
+      end = bytes.len();
     }
-    i = i + 1;
+    ordinal = ordinal + 1;
+    // A filename is text only after its complete record has been validated.
+    match (utf8.from_bytes(array.slice(bytes, start, end))) {
+      Some(name) => {
+        out = out.append(name);
+      },
+      None => {
+        gnu.error(gnu.quotef(origin) + ":" + (ordinal as i64).to_string() + ": invalid UTF-8 file name");
+        return None;
+      }
+    }
+    start = end + 1;
   }
-  if (start < text.len()) {
-    out = out.append(slice_unchecked(text, start, text.len()) + "");
-  }
-  return out;
+  return Some(out);
 }
 
 // ---- option values ---------------------------------------------------------
@@ -1186,7 +1030,7 @@ pub function main(): i32 {
           style = m.value;
           have_style = true;
         } else if (m.id == opt_exclude()) {
-          c = Conf { ...c, excludes: c.excludes.append(m.value) };
+          c = Conf { ...c, excludes: c.excludes.append(fnmatch.BytePattern { data: m.value.bytes(), lo: 0, hi: m.value.len() }) };
         } else if (m.id == opt_exclude_from()) {
           c = Conf { ...c, excludes: read_exclude_file(c.excludes, m.value) };
         } else if (m.id == opt_one_file_system()) {
@@ -1262,7 +1106,14 @@ pub function main(): i32 {
     }
     list_name = files0;
     from_stdin = files0 == "-";
-    names = read_name_list(files0);
+    match (read_name_list(files0)) {
+      Some(list) => {
+        names = list;
+      },
+      None => {
+        return 1;
+      }
+    }
   } else if (operands.len() == 0) {
     names = [".".to_string()];
   }
@@ -1273,13 +1124,13 @@ pub function main(): i32 {
 // -X is read where it stands in the scan, not afterwards, which is what
 // lets `du -X - --files0-from=-` take the whole of stdin for the
 // patterns and leave the name list empty.
-function read_exclude_file(have: string[], path: string): string[] {
+function read_exclude_file(have: fnmatch.BytePattern[], path: string): fnmatch.BytePattern[] {
   let r: Slurp = slurp(path);
   if (!r.ok) {
     gnu.die_usage(gnu.quotef(path) + ": " + slurp_error(r), 1);
   }
-  let pats: string[] = exclude_patterns(r.text);
-  let out: string[] = have;
+  let pats: fnmatch.BytePattern[] = exclude_patterns(r.bytes);
+  let out: fnmatch.BytePattern[] = have;
   let i: i32 = 0;
   while (i < pats.len()) {
     out = out.append(pats[i]);
@@ -1298,7 +1149,7 @@ function slurp_error(r: Slurp): string {
   return "";
 }
 
-function read_name_list(path: string): string[] {
+function read_name_list(path: string): Option[string[]] {
   let r: Slurp = slurp(path);
   if (!r.ok) {
     if (r.at_open) {
@@ -1306,7 +1157,7 @@ function read_name_list(path: string): string[] {
     } else {
       gnu.error(gnu.quotef(path) + ": read error: " + slurp_error(r));
     }
-    exit(1);
+    return None;
   }
-  return files0_names(r.text);
+  return files0_names(r.bytes, path);
 }

@@ -28,6 +28,23 @@ impl ByteInput for string {
 
 struct BytesInput { data: [u8] }
 
+// Retain one raw input and its bounds for patterns matched many times.
+// The range owns its input, so callers may release the original array.
+pub struct BytePattern { data: u8[], lo: i32, hi: i32 }
+
+impl ByteInput for BytePattern {
+  function byte_count(self: BytePattern): i32 {
+    return self.hi - self.lo;
+  }
+  function byte_at(self: BytePattern, at: i32): u8 {
+    return self.data[self.lo + at];
+  }
+}
+
+pub function (pat: BytePattern) matches(text: string): boolean {
+  return fn_match(pat, 0, text, 0) > 0;
+}
+
 impl ByteInput for BytesInput {
   function byte_count(self: BytesInput): i32 {
     return self.data.len();
