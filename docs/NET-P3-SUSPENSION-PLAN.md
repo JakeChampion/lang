@@ -54,9 +54,14 @@ it.
 - `effects.Build` gives the call graph over the checked AST; `ambient.Enforce`
   (E080) already walks it every build, treating `platform.Platform` impl
   methods as leaves.
-- Known leak that P3 would turn into a per-connection one: `genEnumDropFn`
-  leaks closure payloads held in enum boxes, citing `Future.Pending`'s resume
-  closure. A dropped `race` loser's continuation env is never reclaimed.
+- A native-only leak: `genEnumDropFn` skips closure payloads held in enum
+  boxes, citing `Future.Pending`'s resume closure, and the match arm that
+  binds one takes no count on it, so every enum-held closure leaks its pair
+  and env on native whether it is matched or not (two blocks per value,
+  measured under `FERN_LEAKCHECK`). The self-host releases them (its
+  `enum_walk_payload_field` walk counts a closure payload at construction and
+  decs it on drop), so P3's self-host-built binaries are not affected; the
+  native fix is its own bugfix PR, not a P3 slice.
 - Native is frozen (`NATIVE-FREEZE.md`): `internal/` takes bugfixes, oracle
   needs and what the self-host sources need to bootstrap. New language
   mechanics land self-host first.
@@ -251,11 +256,12 @@ cancellation test #9857 asks for, with the bytes pinned in the test.
 Each slice is one PR with its gates; the self-host suites are primary
 throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
 
-1. **Groundwork.** Fix the enum-boxed closure payload leak (`genEnumDropFn`
-   and its self-host twin) with a leakcheck gate. `Host.http` registers its
-   sockets on `Host.reactor`. Add the blocking-handler conformance case to
-   the serve harness as the failing test P3 flips (a handler that sleeps
-   100 ms; a second connection's hello must answer within the sleep).
+1. **Groundwork.** The blocking-handler conformance case in the serve
+   harness: a one-worker server whose handler waits on `plat.http` to an
+   upstream that answers after 100 ms, and a second connection's hello
+   measured against it. It lands asserting the stall P1 documented (the
+   hello waits out the upstream), so the suite is green, and slice 5 flips
+   the assertion to the answer arriving inside the wait.
 2. **The primitive and the transform, self-host.** `__suspend`, `Task` and
    the three task builtins; the reachability classifier over
    `effects.Build`; the unwind/rewind pass on `ir.fern`. Gate: a program
@@ -267,8 +273,10 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
 3. **Native and interp fallback.** The four builtins classified in
    `internal/platforms`, `internal/caps` and both self-host mirrors; blocking
    lowering on native, interp and wasmbin; the differential rows.
-4. **The client suspends.** The fetch wait helper calls `__suspend`; DNS,
-   connect, send and receive waits go through it. Gates: `TestFetchClient`
+4. **The client suspends.** `fetch.Sockets` carries the reactor it registers
+   its sockets on, handed `Host.reactor` by `Host.http`, and the fetch wait
+   helper calls `__suspend`; DNS, connect, send and receive waits go through
+   it. Gates: `TestFetchClient`
    and its twin unchanged in output; the self-host serve twin shows one
    handler's `plat.http` wait overlapping another connection's request.
 5. **The serve loop drives tasks.** In-flight table, fd-to-task map,
