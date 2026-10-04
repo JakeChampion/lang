@@ -460,8 +460,9 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    slice-1 conformance case flipped to pass (`TestSelfHostServeHandlersOverlap`).
    The stateful loop (`run_with`) still runs its handler to completion:
    its state threads through the handler chain, so a parked handler would
-   hold it from every other request. A suspended handler costs the heap
-   about 12 KiB (`TestSelfHostHeldConnectionsHeapBoundX86_64`'s third
+   hold it from every other request. A connection with its handler parked
+   on an upstream costs the heap about 12 KiB, the connection's own ~0.6
+   KiB included (`TestSelfHostHeldConnectionsHeapBoundX86_64`'s third
    shape: 64 then 64 more connections, each with a handler parked on the
    fetch upstream, under a 16 KiB bound). The two-fetch handler at 4,096
    connections is `net-nightly`'s: `scripts/net-bench` loads
