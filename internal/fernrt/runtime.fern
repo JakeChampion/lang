@@ -1447,7 +1447,7 @@ function __fern_string_from_bytes_range(bytes: u8[], from: i32, end: i32): strin
   }
   let n: i32 = end - from;
   let out: u8[] = __alloc_u8(n);
-  let src: usize = (bytes as usize) + from as usize;
+  let src: usize = bytes as usize + from as usize;
   let dst: usize = out as usize;
   let i: i32 = 0;
   while (i < n) {
