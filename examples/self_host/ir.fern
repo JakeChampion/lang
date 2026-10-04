@@ -690,7 +690,7 @@ pub function op_raw_splice_pipe(): Op {
 // the task runtime keeps between calls: the current task's id, its record
 // table and that table's capacity (docs/NET-P3-SUSPENSION-PLAN.md §3.4).
 pub function op_raw_task_state(): Op {
-  return op0(366);
+  return op0(367);
 }
 
 // raw_cover: pops nothing → the address of __fern_cov_counters, the word
@@ -2093,6 +2093,13 @@ pub function op_fd_fdatasync(): Op {
 
 pub function op_fd_syncfs(): Op {
   return op0(301);
+}
+
+// `fd_drop_cache` pops [fd, offset, len] and pushes Option[IoError]:
+// posix_fadvise(2) with POSIX_FADV_DONTNEED over that range of the handle's
+// file. Backs `r.drop_cache(offset, len)` / `w.drop_cache(offset, len)`.
+pub function op_fd_drop_cache(): Op {
+  return op0(366);
 }
 
 // `fd_dup_onto` pops [fd, newfd] and pushes Option[IoError]: dup3(2) of the
@@ -4162,6 +4169,9 @@ function kind_id_len12_s(name: string): i32 {
 }
 
 function kind_id_len13(name: string): i32 {
+  if (name == "fd_drop_cache") {
+    return 366;
+  }
   if (name == "rmemchr_bytes") {
     return 360;
   }
@@ -4213,7 +4223,7 @@ function kind_id_len14(name: string): i32 {
     return 361;
   }
   if (name == "raw_task_state") {
-    return 366;
+    return 367;
   }
   if (name == "udp_send_bytes") {
     return 354;
@@ -5088,7 +5098,7 @@ function kind_name_4(id: i32): string {
   if (id == 287) {
     return "raw_cover";
   }
-  if (id == 366) {
+  if (id == 367) {
     return "raw_task_state";
   }
   if (id == 208) {
@@ -5316,6 +5326,9 @@ function kind_name_4(id: i32): string {
   if (id == 281) {
     return "writer_truncate";
   }
+  if (id == 366) {
+    return "fd_drop_cache";
+  }
   if (id == 282) {
     return "priority";
   }
@@ -5520,7 +5533,7 @@ function pops0(t: i32): boolean {
     || t == 207 || t == 211  // raw_environ, proc_fork
     || t == 331  // raw_splice_pipe
     || t == 287  // raw_cover
-    || t == 366  // raw_task_state
+    || t == 367  // raw_task_state
     || t == 216 || t == 217 || t == 218  // arr_push_shared_*, const_struct
     || t == 222  // map_hash_seed
     || t == 238 || t == 239 || t == 240  // geteuid, getegid, hostname
@@ -5648,7 +5661,8 @@ function pops3(t: i32): boolean {
     || t == 314  // set_window_size (fd, rows, cols)
     || t == 324  // scan_set (str, from, set)
     || t == 327  // count_runs (str, inside, set)
-    || t == 364 || t == 365;  // setxattr, lsetxattr (path, name, value)
+    || t == 364 || t == 365  // setxattr, lsetxattr (path, name, value)
+    || t == 366;  // fd_drop_cache (fd, offset, len)
 }
 
 // pops_buf is the operand count of one of the capacity-carrying string
@@ -8192,9 +8206,9 @@ pub function op_allocates(tag: i32): boolean {
     return true;
   }
   // fd_stat boxes the same pair; reader_seek, reader_splice and fd_flags
-  // box their Result[i64, IoError]; writer_truncate boxes its
-  // Option[IoError].
-  if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330) {
+  // box their Result[i64, IoError]; writer_truncate and fd_drop_cache box
+  // their Option[IoError].
+  if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330 || tag == 366) {
     return true;
   }
   // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr

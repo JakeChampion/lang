@@ -36,6 +36,7 @@ func TestSyscallNumbersMatchTheKernelTable(t *testing.T) {
 		// The adjacent pairs, which is what this is for.
 		{"fsync", sysFsync, syscall.SYS_FSYNC},
 		{"fdatasync", sysFdatasync, syscall.SYS_FDATASYNC},
+		{"fadvise64", sysFadvise64, syscall.SYS_FADVISE64},
 		{"sync", sysSync, syscall.SYS_SYNC},
 		{"lseek", sysLseek, syscall.SYS_LSEEK},
 		{"close", sysClose, syscall.SYS_CLOSE},

@@ -252,6 +252,10 @@ const (
 	sysFdatasync = 75
 	sysSync      = 162
 	sysSyncfs    = 306
+	// fadvise64(2), behind the handle `drop_cache` method, with
+	// POSIX_FADV_DONTNEED as its advice.
+	sysFadvise64      = 221
+	posixFadvDontneed = 4
 	// dup3(2), behind the handle `dup_onto` method. Linux/arm64 has no
 	// dup2 at all, so dup3 is the form both Linux architectures carry.
 	sysDup3 = 292
@@ -1173,6 +1177,13 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesFdSyncfs {
 		g.emitFdCallRuntime("__fern_fd_syncfs", "sfs", sysSyncfs, nil)
 	}
+	if g.usesFdDropCache {
+		// fadvise64(fd, offset, len, DONTNEED): the offset and length
+		// arrive in rsi and rdx, where the call wants them.
+		g.emitFdCallRuntime("__fern_fd_drop_cache", "fdc", sysFadvise64, func() {
+			g.emit(fmt.Sprintf("mov r10d, %d", posixFadvDontneed))
+		})
+	}
 	if g.usesFdDupOnto {
 		// dup3(own_fd, fd, 0). The destination is sign-extended rather
 		// than zero-extended so a negative one stays negative and
@@ -1791,6 +1802,7 @@ type generator struct {
 	usesWriterTruncate bool
 	usesFdSync         bool
 	usesFdDatasync     bool
+	usesFdDropCache    bool
 	usesFdSyncfs       bool
 	usesFdDupOnto      bool
 	usesSync           bool
@@ -2410,6 +2422,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "__method_Reader_syncfs", "__method_Writer_syncfs":
 		g.usesFdSyncfs = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Reader_drop_cache", "__method_Writer_drop_cache":
+		g.usesFdDropCache = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "__method_Reader_dup_onto", "__method_Writer_dup_onto":
@@ -4362,6 +4378,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_fd_fdatasync"
 		case "__method_Reader_syncfs", "__method_Writer_syncfs":
 			target = "__fern_fd_syncfs"
+		case "__method_Reader_drop_cache", "__method_Writer_drop_cache":
+			target = "__fern_fd_drop_cache"
 		case "__method_Reader_dup_onto", "__method_Writer_dup_onto":
 			target = "__fern_fd_dup_onto"
 		case "sync":
@@ -18806,7 +18824,7 @@ func (g *generator) emitFdStatRuntime() {
 // emitFdCallRuntime emits a helper that makes ONE syscall on a
 // Reader / Writer handle's descriptor and answers `Option[IoError]` —
 // the three write-back calls (`__fern_fd_fsync` / `__fern_fd_fdatasync`
-// / `__fern_fd_syncfs`) and `__fern_fd_dup_onto`. They differ only in
+// / `__fern_fd_syncfs`), `__fern_fd_drop_cache` and `__fern_fd_dup_onto`. They differ only in
 // the syscall number and in whether anything beyond the descriptor
 // needs setting up, which is what `prep` emits.
 //

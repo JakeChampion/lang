@@ -4074,6 +4074,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// rather than a mount — so it answers `Err(Unsupported)` there.
 	registerStructMethod("Reader", "syncfs", nil, optionIoErr)
 	registerStructMethod("Writer", "syncfs", nil, optionIoErr)
+	// drop_cache(offset, len) asks the kernel to drop the cached pages of
+	// that range of the handle's file: posix_fadvise(2) with
+	// POSIX_FADV_DONTNEED, len 0 meaning to the end. XNU has no fadvise, so
+	// arm64-darwin answers `Err(Unsupported)`; WASI's fd_advise /
+	// descriptor.advise carry the same advice and answer what the host does.
+	dropCacheArgs := []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}}
+	registerStructMethod("Reader", "drop_cache", dropCacheArgs, optionIoErr)
+	registerStructMethod("Writer", "drop_cache", dropCacheArgs, optionIoErr)
 	// sync(): void — `sync(2)`, which schedules write-back of every
 	// dirty buffer on the machine. It returns nothing and cannot fail
 	// on either Linux or Darwin, so there is no Result to unwrap.
