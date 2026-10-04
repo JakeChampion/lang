@@ -323,7 +323,7 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
   // writable and executable (required by W^X-enforcing loaders such as
   // Android's). The unwind images are rendered before the link because
   // the data address depends on their size; neither depends on the data.
-  let text_len: i32 = pa.code.len();
+  let text_len: i32 = pa.text.len();
   let tv: i64 = elf.elf_text_vaddr_wx() as i64;
   let hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
   let hv: i64 = elf.elf_eh_hdr_vaddr_wx(text_len) as i64;
@@ -345,23 +345,25 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
   if (eoff < 0) {
     eoff = 0;
   }
-  let bin: i32[] = elf.elf_image_wx_unwind(pa2.code, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
-  if (emit_syms) {
-    // `-g`, the W^X counterpart of the x86 path. Arm64Asm records no
-    // section per label — every label it holds is a .text label — so the
-    // section filter is -1 rather than 0.
-    let aend: i32 = pa2.code.len();
-    let nosec: i32[] = [];
-    bin = elf.elf_append_debug(
-      bin, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), pa2.code.len(),
-      elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
-      elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
-      elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
-      cu_name, getcwd(),
-      pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
-    );
+  let bin: u8[] = elf.elf_image_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
+  if (!emit_syms) {
+    return string_from_bytes_unchecked(bin);
   }
-  return string_from_bytes_unchecked(util.to_u8(bin));
+  // `-g`, the W^X counterpart of the x86 path. Arm64Asm records no section
+  // per label — every label it holds is a .text label — so the section
+  // filter is -1 rather than 0.
+  let aend: i32 = pa2.text.len();
+  let nosec: i32[] = [];
+  let wide: i32[] = elf.elf_append_debug(
+    elf.elf_cat_u8([], bin), elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), pa2.text.len(),
+    elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+    elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+    elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+    cu_name, getcwd(),
+    pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
+    arm64_native.arm64_debug_frame(p, elf.elf_text_vaddr_wx() as i64),
+  );
+  return string_from_bytes_unchecked(util.to_u8(wide));
 }
 
 // arm64_elf_binary_pie is arm64_elf_binary as a static position-independent
@@ -385,7 +387,7 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
   }
   let pa: arm64_native.Arm64Asm = p.asm;
   let tv: i64 = elf.elf_text_vaddr_pie() as i64;
-  let dv: i64 = elf.elf_data_vaddr_pie(pa.code.len()) as i64;
+  let dv: i64 = elf.elf_data_vaddr_pie(pa.text.len()) as i64;
   p = arm64_native.arm64_gas_link(p, tv, dv);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-android", "linker", p.unknown);
@@ -395,8 +397,7 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
   if (eoff < 0) {
     eoff = 0;
   }
-  let bin: i32[] = elf.elf_image_pie(pa2.code, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
-  return string_from_bytes_unchecked(util.to_u8(bin));
+  return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size));
 }
 
 // x86_elf_binary assembles x86-64 Linux GAS text into a runnable static ELF
@@ -456,6 +457,7 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
     elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     cu_name, getcwd(),
     a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
+    x86_native.x86_debug_frame(a, elf.elf_text_vaddr_x86() as i64),
   );
   return string_from_bytes_unchecked(util.to_u8(wide));
 }
@@ -664,7 +666,7 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
   if (p.unknown.len() > 0) {
     return arm64_refusals(target, "assembler", p.unknown);
   }
-  let text_len: i32 = p.asm.code.len();
+  let text_len: i32 = p.asm.text.len();
   let tv: i32 = elf.elf_text_off_so(true);
   let hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
   let hv: i32 = elf.elf_eh_hdr_off_so(true, text_len);
@@ -694,7 +696,7 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
     vals = vals.append(tv + sym_offs[k]);
     sizes = sizes.append(sym_sizes[k]);
   }
-  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), true, pa.code, hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), true, elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
@@ -3509,9 +3511,9 @@ function run(): i32 {
       // address, so rendering it once at the final length and again at
       // the final addresses is exact rather than a fixpoint.
       let deh_len: i32 = arm64_native.arm64_eh_frame_darwin_len(prog);
-      let tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), deh_len, prog.data.len(), prog.bss_size);
-      let ev: i64 = arm64_native.macho_eh_vaddr(pa.code.len(), deh_len, prog.data.len(), prog.bss_size);
-      let dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), deh_len, prog.data.len(), prog.bss_size);
+      let tv: i64 = arm64_native.macho_text_vaddr(pa.text.len(), deh_len, prog.data.len(), prog.bss_size);
+      let ev: i64 = arm64_native.macho_eh_vaddr(pa.text.len(), deh_len, prog.data.len(), prog.bss_size);
+      let dv: i64 = arm64_native.macho_data_vaddr(pa.text.len(), deh_len, prog.data.len(), prog.bss_size);
       let deh: i32[] = arm64_native.arm64_eh_frame_darwin(prog, tv, ev);
       util.arr_push_cliff_report("darwin:unwind", 0);
       prog = arm64_native.arm64_gas_link(prog, tv, dv);
@@ -3534,7 +3536,7 @@ function run(): i32 {
         dsym_names = pa2.lab_names;
         dsym_offs = pa2.lab_offs;
       }
-      out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable_binds(pa2.code, deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms, dsym_names, dsym_offs)));
+      out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable_binds(pa2.text, deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms, dsym_names, dsym_offs)));
       util.arr_push_cliff_report("darwin:image", 0);
     }
   } else if (target == "wasm32-wasi" && emit_text) {

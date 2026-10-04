@@ -8500,6 +8500,9 @@ function const_agg_shape(own s: EmitState, packed: string): ShapeRefOut {
   if (ir.const_struct_is_bytes(packed)) {
     return ShapeRefOut { state: s, label: "8" };
   }
+  if (ir.const_struct_is_option(packed)) {
+    return ShapeRefOut { state: s, label: "o" };
+  }
   if (!ir.const_struct_is_array(packed)) {
     return shape_ref(s, ir.const_struct_type(packed));
   }
@@ -10391,12 +10394,12 @@ pub function emit_str_box_data_from(s: EmitState, first: i32): EmitState {
 // never refcounted, and never reused in place. The cap word is still written so
 // nothing that reads a block's size off data-16 sees garbage, even though the
 // sentinel means no free path can reach it.
-// A packed block's kind: 1 an array of scalars, which holds no address (a
-// packed byte array among them, marked `8|`); 2 a record, whose first word is
-// its shape pointer; 3 a function value, a one-element array whose element is
-// the body's address.
+// A packed block's kind: 1 a block that holds no address — an array of
+// scalars, a packed byte array (marked `8|`) or a payloadless option box
+// (marked `o|`); 2 a record, whose first word is its shape pointer; 3 a
+// function value, a one-element array whose element is the body's address.
 pub function const_agg_kind(packed: string): i32 {
-  if (packed.len() >= 2 && packed[0] == b'8' && packed[1] == b'|') {
+  if (packed.len() >= 2 && (packed[0] == b'8' || packed[0] == b'o') && packed[1] == b'|') {
     return 1;
   }
   if (packed.len() >= 2 && packed[0] == b'0' && packed[1] == b'|') {
@@ -10443,6 +10446,12 @@ pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitSta
     let vals: string[] = ir.const_struct_values(e);
     if (shp == "8") {
       st = emit_const_bytes_block(st, i, vals);
+      i = i + 1;
+      continue;
+    }
+    // The [tag, payload] box `__fern_arr_box(2)` makes for an option.
+    if (shp == "o") {
+      st = st.write("    .quad 2\n    .quad -1\n" + const_agg_label(st, i) + ":\n    .quad " + vals[0] + "\n    .quad 0\n");
       i = i + 1;
       continue;
     }

@@ -852,12 +852,19 @@ function lambda_captures(lam: ast.ExprLambda, fd: parser.FuncDecl): string[] {
   return names;
 }
 
-// capture_tvar is the type variable an erased capture type names, else "".
+// capture_tvar spells a capture type built from an erased type variable — the
+// variable, or the cell box_wide_captures puts it in — and is "" otherwise.
 function capture_tvar(t: typeinfo.Type): string {
   if let typeinfo.TypeUnknown(u) = t {
     let tv: string = checker.typevar_reason_name(u.reason);
     if (parser.looks_type_var(tv)) {
       return tv;
+    }
+  }
+  if let typeinfo.TypeArray(a) = t {
+    let elem: string = capture_tvar(a.elem);
+    if (elem.len() > 0) {
+      return elem + "[]";
     }
   }
   return "";
@@ -1107,9 +1114,9 @@ struct HoistResult { func: parser.FuncDecl, ok: boolean }
 // same 32-bit slot as an i32, exactly like a `string[]` element (which also uses
 // the 32-bit arr_get path). An 8-byte SCALAR (i64 / u64 / f64), or a type
 // variable an instance may bind to one, needs a wide slot the box doesn't carry,
-// so those (and an unresolved "") decline.
+// so those (and an unresolved "") decline; box_wide_captures cells them first.
 function cap_slot_ok(t: string): boolean {
-  return t.len() > 0 && !is_wide_cap_type(t) && !parser.looks_type_var(t);
+  return t.len() > 0 && !is_wide_cap_type(t);
 }
 
 // make_clo_func builds the hoisted body of an escaping/inline closure: a top-
@@ -4042,8 +4049,11 @@ function ident_used_as_value_stmts(stmts: ast.Stmt[], name: string): boolean {
 // A function with no wide capture is returned unchanged, so every other
 // function stays byte-identical — including all of the self-host's own, which
 // contain no wide capture (they could not compile today if they did).
+// A type variable counts as wide: the lift runs once over the template, and an
+// instance may bind it to an 8-byte scalar. Its cell, spelled `0_T[]`, is
+// pointer-shaped and does not count: looks_type_var refuses the brackets.
 function is_wide_cap_type(t: string): boolean {
-  return t == "i64" || t == "u64" || t == "f64";
+  return t == "i64" || t == "u64" || t == "f64" || parser.looks_type_var(t);
 }
 
 // wcap_cell_name is the cell local for a wide capture. The `$` prefix cannot

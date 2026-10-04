@@ -74,13 +74,13 @@ func TestSelfHostArm64DarwinAssemblesRealRuntime(t *testing.T) {
 			sb.WriteString("    let pa: Arm64Asm = p.asm;\n")
 			// Same unwind orchestration as fern.fern's arm64-darwin path.
 			sb.WriteString("    let ehlen: i32 = arm64_eh_frame_darwin_len(p);\n")
-			sb.WriteString("    let tv: i64 = macho_text_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
-			sb.WriteString("    let ev: i64 = macho_eh_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
-			sb.WriteString("    let dv: i64 = macho_data_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
+			sb.WriteString("    let tv: i64 = macho_text_vaddr(pa.text.len(), ehlen, p.data.len(), p.bss_size);\n")
+			sb.WriteString("    let ev: i64 = macho_eh_vaddr(pa.text.len(), ehlen, p.data.len(), p.bss_size);\n")
+			sb.WriteString("    let dv: i64 = macho_data_vaddr(pa.text.len(), ehlen, p.data.len(), p.bss_size);\n")
 			sb.WriteString("    let eh: i32[] = arm64_eh_frame_darwin(p, tv, ev);\n")
 			sb.WriteString("    p = arm64_gas_link(p, tv, dv);\n")
 			sb.WriteString("    let pa2: Arm64Asm = p.asm;\n")
-			sb.WriteString("    let bin: i32[] = macho_executable(pa2.code, eh, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n")
+			sb.WriteString("    let bin: i32[] = macho_executable(pa2.text, eh, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n")
 			sb.WriteString("    write(string_from_bytes_unchecked(to_u8(bin)));\n    return 0;\n}\n")
 
 			wat := runCapture(t, gcc, runner, wrun, []byte(sb.String()))

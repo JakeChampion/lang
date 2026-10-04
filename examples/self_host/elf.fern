@@ -695,7 +695,7 @@ pub function elf_data_vaddr_wx_unwind(text_len: i32, hdr_len: i32, eh_len: i32):
 // measured from elf_base_vaddr()), so the page-aligned data offset is
 // congruent to its load address mod the page size — what the loader
 // requires.
-pub function elf_image_wx(text: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32): i32[] {
+pub function elf_image_wx(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32): u8[] {
   return elf_image_wx_unwind(text, [], [], data, machine, entry_off, bss);
 }
 
@@ -707,7 +707,7 @@ pub function elf_image_wx(text: i32[], data: i32[], machine: i32, entry_off: i32
 // dl_iterate_phdr and reads eh_frame_ptr out of the header's segment;
 // nothing scans for a section. Empty hdr/eh leave the slot as PT_NULL, which
 // the loader ignores, so .text sits at the same address either way.
-pub function elf_image_wx_unwind(text: i32[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32): i32[] {
+pub function elf_image_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32): u8[] {
   return elf_image_two_seg(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr(), 2, true);  // ET_EXEC
 }
 
@@ -720,7 +720,7 @@ pub function elf_image_wx_unwind(text: i32[], hdr: i32[], eh: i32[], data: i32[]
 // program header slot (PT_GNU_EH_FRAME, or PT_NULL without unwind data);
 // the PIE image keeps two. All vaddrs are base + offset, so the page-aligned
 // data offset stays congruent to its load address mod the page.
-function elf_image_two_seg(text: i32[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i32, e_type: i32, unwind_ph: boolean): i32[] {
+function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i32, e_type: i32, unwind_ph: boolean): u8[] {
   let nph: i32 = 2;
   if (unwind_ph) {
     nph = 3;
@@ -815,22 +815,22 @@ function elf_image_two_seg(text: i32[], hdr: i32[], eh: i32[], data: i32[], mach
   }
 
   // ---- body: .text, the unwind sections, then page padding, then the
-  // data blob ----
-  buf = elf_cat(buf, text);
+  // data blob, laid down in a byte builder so .text goes in as one range
+  // copy ----
+  let img: usize = buf_new(data_off + data.len());
+  elf_push_ints(img, buf);
+  buf_push_bytes_range(img, text, 0, text.len());
   if (has_unwind) {
-    while (buf.len() < hdr_off) {
-      buf = buf.append(0);
-    }
-    buf = elf_cat(buf, hdr);
-    while (buf.len() < eh_off) {
-      buf = buf.append(0);
-    }
-    buf = elf_cat(buf, eh);
+    elf_push_zeros(img, hdr_off - buf_len(img));
+    elf_push_ints(img, hdr);
+    elf_push_zeros(img, eh_off - buf_len(img));
+    elf_push_ints(img, eh);
   }
-  while (buf.len() < data_off) {
-    buf = buf.append(0);
-  }
-  return elf_cat(buf, data);
+  elf_push_zeros(img, data_off - buf_len(img));
+  elf_push_ints(img, data);
+  let out: u8[] = buf_take_bytes(img);
+  buf_free(img);
+  return out;
 }
 
 // elf_text_vaddr_pie is the .text vaddr for the position-independent
@@ -866,7 +866,7 @@ pub function elf_data_vaddr_pie(text_len: i32): i32 {
 // until then this is a tested container only (see TestSelfHostELF). The
 // native compiler's -target arm64-android (cmd/fern) is unaffected — it uses
 // 64-bit pointers + an mmap heap and runs at any base.
-pub function elf_image_pie(text: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32): i32[] {
+pub function elf_image_pie(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32): u8[] {
   return elf_image_two_seg(text, [], [], data, machine, entry_off, bss, 0, 3, false);  // base 0, ET_DYN
 }
 
@@ -874,7 +874,7 @@ pub function elf_image_pie(text: i32[], data: i32[], machine: i32, entry_off: i3
 // elf_static_executable_data: arm64 (EM_AARCH64), entry at the first
 // instruction, no .bss. Pair it with an assembler that page-aligns
 // .rodata (textVAddr = elf_text_vaddr_wx()).
-function elf_static_executable_data_wx(text: i32[], data: i32[]): i32[] {
+function elf_static_executable_data_wx(text: u8[], data: i32[]): u8[] {
   return elf_image_wx(text, data, elf_em_aarch64(), 0, 0);
 }
 
@@ -883,7 +883,7 @@ function elf_static_executable_data_wx(text: i32[], data: i32[]): i32[] {
 // explicit entry offset within .text plus a trailing zero-init .bss of
 // `bss` bytes in the R+W data segment (p_memsz = p_filesz + bss). This is
 // what asm.fern's mmap-free heap reservation lowers to under W^X.
-pub function elf_static_executable_bss_x86_wx_at(text: i32[], data: i32[], bss: i32, entry_off: i32): i32[] {
+pub function elf_static_executable_bss_x86_wx_at(text: u8[], data: i32[], bss: i32, entry_off: i32): u8[] {
   return elf_image_wx(text, data, elf_em_x86_64(), entry_off, bss);
 }
 
@@ -1243,9 +1243,10 @@ function elf_debug_line(text_vaddr: i32, text_len: i32, files: string[], loc_off
 // symbols (elf_debug_info), the line table (elf_debug_line) when the
 // assembler recorded `.loc` rows, and the section-header table that resolves
 // them: NULL, .text, .symtab, .strtab, .shstrtab, .debug_abbrev,
-// .debug_info and, with rows, .debug_line. `cu_name` and `comp_dir` are the
-// compilation unit's; `files` and the five `loc_*` arrays are the
-// assembler's `.file` table and rows.
+// .debug_info, with rows .debug_line, and with unwind data .debug_frame.
+// `cu_name` and `comp_dir` are the compilation unit's; `files` and the five
+// `loc_*` arrays are the assembler's `.file` table and rows; `frame` is the
+// rendered .debug_frame (cfi_debug_frame).
 //
 // `text_off` / `text_len` locate .text within the image, and `text_vaddr`
 // is the address it loads at — all three differ between the single-segment
@@ -1260,7 +1261,7 @@ function elf_debug_line(text_vaddr: i32, text_len: i32, files: string[], loc_off
 // section layer safe to land ahead of the `-g` flag: every existing caller
 // keeps a byte-identical image, and not by re-deriving one that ought to
 // match — by not touching it.
-pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[], cu_name: string, comp_dir: string, files: string[], loc_offs: i32[], loc_files: i32[], loc_lines: i32[], loc_cols: i32[], loc_flags: i32[]): i32[] {
+pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[], cu_name: string, comp_dir: string, files: string[], loc_offs: i32[], loc_files: i32[], loc_lines: i32[], loc_cols: i32[], loc_flags: i32[], frame: i32[]): i32[] {
   if (sym_names.len() == 0) {
     return img;
   }
@@ -1297,6 +1298,10 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
   let n_debug_line: i32 = shstrtab.len();
   if (lines) {
     shstrtab = elf_str_bytes(shstrtab, ".debug_line");
+  }
+  let n_debug_frame: i32 = shstrtab.len();
+  if (frame.len() > 0) {
+    shstrtab = elf_str_bytes(shstrtab, ".debug_frame");
   }
 
   let out: i32[] = elf_align8_buf(img);
@@ -1338,6 +1343,9 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
   }
   let dline_off: i32 = out.len();
   out = elf_cat(out, dline);
+  out = elf_align8_buf(out);
+  let frame_off: i32 = out.len();
+  out = elf_cat(out, frame);
 
   out = elf_align8_buf(out);
   let sh_off: i32 = out.len();
@@ -1360,7 +1368,11 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
   let nsh: i32 = 7;
   if (lines) {
     out = elf_shdr(out, n_debug_line, 1, zero64, zero64, dline_off as i64, dline.len() as i64, 0, 0, 1, zero64);
-    nsh = 8;
+    nsh = nsh + 1;
+  }
+  if (frame.len() > 0) {
+    out = elf_shdr(out, n_debug_frame, 1, zero64, zero64, frame_off as i64, frame.len() as i64, 0, 0, 8, zero64);
+    nsh = nsh + 1;
   }
 
   // Point the header at the table just written. e_shoff is 8 bytes at
@@ -1387,10 +1399,11 @@ pub function elf_wx_text_off(): i32 {
 }
 
 // elf_func_syms turns an assembler's parallel label tables into the symbol
-// arrays elf_append_debug wants, applying native's FuncSyms rule:
+// arrays elf_append_debug wants:
 //
-//   - a label with an empty name, or one starting with `.`, is INTERNAL —
-//     a branch target, not a function — and is left out;
+//   - a label with an empty name, or with a dot anywhere, is INTERNAL —
+//     a branch target, not a function — and is left out (native's FuncSyms
+//     drops only a leading dot; its emitters write no other dotted label);
 //   - `sec_filter` keeps only labels in one section (.text is 0 for the x86
 //     tables; pass -1 when the assembler records no section, as arm64's does
 //     not);
@@ -1448,18 +1461,29 @@ pub function elf_func_sym_sizes(lab_names: string[], lab_offs: i32[], lab_secs: 
   return out;
 }
 
+function elf_has_dot(s: string): boolean {
+  let i: i32 = 0;
+  while (i < s.len()) {
+    if (s[i] == b'.') {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
 // elf_func_sym_order returns the indices of the labels that become symbols,
-// sorted by offset then name. Insertion sort: a label table is small and
-// already close to offset-ordered, since labels are recorded as code is
-// emitted.
+// sorted by offset then name. A label with a dot anywhere is not a function:
+// `.L…` is local, and `f.r` (a function's register-ABI entry) or
+// `__fern_oob_abort.l0` is a label inside the function before it, which as a
+// symbol would end that function's extent there. Insertion sort: a label
+// table is small and already close to offset-ordered, since labels are
+// recorded as code is emitted.
 function elf_func_sym_order(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32): i32[] {
   let idx: i32[] = [];
   let i: i32 = 0;
   while (i < lab_names.len()) {
-    let keep: boolean = lab_names[i].len() > 0;
-    if (keep && slice_unchecked(lab_names[i], 0, 1) == ".") {
-      keep = false;
-    }
+    let keep: boolean = lab_names[i].len() > 0 && !elf_has_dot(lab_names[i]);
     if (keep && sec_filter >= 0) {
       if (i >= lab_secs.len() || lab_secs[i] != sec_filter) {
         keep = false;

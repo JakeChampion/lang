@@ -1721,9 +1721,9 @@ pub function op_str_split(): Op {
 // Built-in Option / Result ops. The value is a heap box [tag@0, payload@8]
 // (Some/Ok = tag 0, None/Err = tag 1) — distinct from user enums/structs, which
 // carry a shape pointer at offset 0. `opt_make` pops [payload] and builds the
-// box with `i32_imm` as the tag (Some/Ok=0, Err=1); `opt_none` builds a
-// payloadless box with tag 1; `opt_tag` pops [box] → the i32 tag at offset 0
-// (drives Some/None/Ok/Err discrimination in match).
+// box with `i32_imm` as the tag (Some/Ok=0, Err=1); a payloadless one is
+// op_const_option's static block; `opt_tag` pops [box] → the i32 tag at
+// offset 0 (drives Some/None/Ok/Err discrimination in match).
 pub function op_opt_make(tag: i32): Op {
   return Op { decl: 0 - 1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
@@ -1733,10 +1733,6 @@ pub function op_opt_make(tag: i32): Op {
 // payload slot to 8 bytes (matching the register backends, which already do).
 pub function op_opt_make_w(tag: i32, width: i32, is_i64: boolean): Op {
   return Op { decl: 0 - 1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
-}
-
-pub function op_opt_none(): Op {
-  return op0(121);
 }
 
 pub function op_opt_tag(): Op {
@@ -2743,6 +2739,17 @@ pub function op_const_bytes(values: string): Op {
   return op_const_struct("&bytes", 0, values);
 }
 
+// A payloadless Option or Result (None, or an Ok/Err of `void`) is the same
+// [tag, payload] box `opt_make` builds, as one immortal block per tag: no
+// field is read off None, and a void payload word is always zero.
+pub function op_const_option(tag: i32): Op {
+  return op_const_struct("&opt", 0, util.i32_to_string(tag));
+}
+
+pub function const_struct_is_option(packed: string): boolean {
+  return const_struct_type(packed) == "&opt";
+}
+
 pub function const_struct_is_bytes(packed: string): boolean {
   return const_struct_type(packed) == "&bytes";
 }
@@ -3034,6 +3041,12 @@ pub function op_return(): Op {
 // classifier below has to move with it, or it lands in the wrong emitter.
 pub function kind_count(): i32 {
   return 188;
+}
+
+// kind_retired is an id in 1..kind_count() whose op is gone (121, opt_none).
+// The number is not reused, so the dense ids around it keep their meaning.
+pub function kind_retired(id: i32): boolean {
+  return id == 121;
 }
 
 // kind_id maps an op-kind tag to its stable integer id (0 = KIND_INVALID for
@@ -3630,9 +3643,6 @@ function kind_id_len8(name: string): i32 {
   }
   if (c == b'o' && name == "opt_make") {
     return 120;
-  }
-  if (c == b'o' && name == "opt_none") {
-    return 121;
   }
   if (c == b'p' && name == "popcount") {
     return 221;
@@ -4904,9 +4914,6 @@ function kind_name_2(id: i32): string {
 }
 
 function kind_name_3(id: i32): string {
-  if (id == 121) {
-    return "opt_none";
-  }
   if (id == 122) {
     return "opt_tag";
   }
@@ -5691,7 +5698,6 @@ function pops0(t: i32): boolean {
     || t == 341  // reactor_new
     || t == 229  // heap_mark
     || t == 117 || t == 119  // strbuf_reset, strbuf_take
-    || t == 121  // opt_none
     || t == 147  // dyn_dispatch (args in locals)
     || t == 152 || t == 153 || t == 155 || t == 156 || t == 157  // block, loop, else, end, br
     || t == 180  // args
@@ -8116,9 +8122,6 @@ pub function render_op(o: Op): string {
   if (o.kind_tag == 120) {
     return "opt_make " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 121) {
-    return "opt_none";
-  }
   if (o.kind_tag == 122) {
     return "opt_tag";
   }
@@ -8283,7 +8286,7 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 138 || tag == 142 || tag == 198) {
     return true;
   }
-  if (tag == 120 || tag == 121) {
+  if (tag == 120) {
     return true;
   }
   if (tag == 124 || tag == 125) {

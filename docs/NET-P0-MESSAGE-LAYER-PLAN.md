@@ -99,7 +99,12 @@ up.
    client sent. The self-host parse fell from 48 to 42 on every target,
    and native's from 54 to 50 on x86-64.
 6. **A bodiless request carries no stream.** The empty body is one shared
-   value, not a stream built over zero bytes.
+   value, not a stream built over zero bytes. Its first part is in the
+   compiler: on the self-host a payloadless `Option` or `Result` (the
+   stream's `None` source, an `Ok(())`) is one static block per tag, as a
+   payloadless variant of a user enum already was, so the self-host parse fell
+   from 42 to 41. The empty byte copy is #11507, and a shared `Stream` needs
+   constant records with pointer fields.
 7. **The head serializes into the builder.** The status line and fields are
    pushed into the one builder the body goes into, with no intermediate
    `string`. Serialize fell from 13 to 4 on the self-host and to 6 on the Go

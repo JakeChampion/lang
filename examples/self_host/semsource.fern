@@ -6266,7 +6266,9 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
 // it. A closure body's contract takes its environment as parameter 0, and
 // closure_type spells the function value it presents; a body spelling a
 // different function value can never be in the box, so it is left out and the
-// run-time match never sees it.
+// run-time match never sees it. A body hoisted out of a generic is a template
+// the table holds once; the instance whose closure type is `t` is the one a box
+// of that type can carry, whichever frame built it.
 function env_rows(named: typeinfo.Type[], envs: ssasem.Contract[]): ssasem.EnvRow[] {
   let out: ssasem.EnvRow[] = [];
   for t in named {
@@ -6274,15 +6276,34 @@ function env_rows(named: typeinfo.Type[], envs: ssasem.Contract[]): ssasem.EnvRo
       continue;
     }
     for c in envs {
-      if (!semtypes.equal(ssasem.closure_type(c), t)) {
-        continue;
-      }
-      if (!has_env_row(out, t, c.params[0])) {
-        out = out.append(ssasem.EnvRow { fn_ty: t, env_ty: c.params[0] });
+      let env: typeinfo.Type = env_serving(c, t);
+      if (semtypes.is_env(env) && !has_env_row(out, t, env)) {
+        out = out.append(ssasem.EnvRow { fn_ty: t, env_ty: env });
       }
     }
   }
   return out;
+}
+
+// env_serving is the environment of `c` — or of its instance — that presents
+// the function value `t`, or an unchecked type when none does.
+function env_serving(c: ssasem.Contract, t: typeinfo.Type): typeinfo.Type {
+  if (semtypes.equal(ssasem.closure_type(c), t)) {
+    return c.params[0];
+  }
+  let vars: string[] = ssasem.contract_variables(c);
+  if (vars.len() == 0) {
+    return typeinfo.unchecked();
+  }
+  let b: ssasem.Binding = ssasem.bind_type(ssasem.unbound(), ssasem.closure_type(c), t);
+  if (!b.ok || !ssasem.binds_all(b, vars)) {
+    return typeinfo.unchecked();
+  }
+  let inst: ssasem.Contract = ssasem.instantiate_contract(c, b, vars);
+  if (!semtypes.equal(ssasem.closure_type(inst), t)) {
+    return typeinfo.unchecked();
+  }
+  return inst.params[0];
 }
 
 // The rows of every function type the schema table reaches, with the table

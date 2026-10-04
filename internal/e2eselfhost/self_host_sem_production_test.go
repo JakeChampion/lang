@@ -6973,13 +6973,22 @@ function main(): i32 {
     return count((x: i32): i32 => x) + count((s: string): i32 => s.len()) + count(strlen);
 }
 `},
-	// An instance of a lifted generic lambda that returns a call to another
-	// lifted lambda reads that callee's result under its own binding, not as
-	// the template's `T`.
 	// A lambda in a generic body that captures a value of the type variable,
-	// called in place and returned, each at a 32-bit, a 64-bit and a heap
-	// binding of T.
-	{name: "a-generic-lambda-capturing-a-type-variable", atLeast: 8, want: "31|", src: `
+	// called in place, returned, and held in an array or a record field, each
+	// at a 32-bit, a 64-bit and a heap binding of T. The held ones box the
+	// capture in a cell, which the box releases whichever frame drops it: the
+	// instance that built it, main, or a frame that only takes the record.
+	{name: "a-generic-lambda-capturing-a-type-variable", atLeast: 25, want: "63|", src: `
+struct Box[T] { f: (i32) => T }
+
+pub function boxed[T](seed: T): Box[T] {
+    return Box { f: (k: i32): T => seed };
+}
+
+function boxed_len(b: Box[string]): i32 {
+    return b.f(1).len();
+}
+
 pub function direct[T](seed: T): T {
     let g: (i32) => T = (k: i32): T => seed;
     return g(1);
@@ -6987,6 +6996,22 @@ pub function direct[T](seed: T): T {
 
 pub function returned[T](seed: T): (i32) => T {
     return (k: i32): T => seed;
+}
+
+pub function stored[T](seed: T): T {
+    let fs: ((i32) => T)[] = [(k: i32): T => seed];
+    return fs[0](1);
+}
+
+pub function made[T](seed: T): ((i32) => T)[] {
+    let fs: ((i32) => T)[] = [(k: i32): T => seed];
+    return fs;
+}
+
+pub function held[T](seed: T): T {
+    let f: (i32) => T = (k: i32): T => seed;
+    let fs: ((i32) => T)[] = [f];
+    return fs[0](1);
 }
 
 function bit(ok: boolean, b: i32): i32 {
@@ -6999,9 +7024,16 @@ function bit(ok: boolean, b: i32): i32 {
 function main(): i32 {
     let big: i64 = 5000000000;
     let r = bit(direct(7) == 7, 1) + bit(direct(big) == big, 2) + bit(direct("ab" + "c").len() == 3, 4);
-    return r + bit(returned(big)(1) == big, 8) + bit(returned("d" + "ef")(2).len() == 3, 16);
+    r = r + bit(returned(big)(1) == big, 8) + bit(returned("d" + "ef")(2).len() == 3, 16);
+    let kept: boolean = stored(7) == 7 && stored(big) == big && stored("g" + "h").len() == 2;
+    let away: boolean = made(7)[0](1) == 7 && made(big)[0](1) == big && made("l" + "m")[0](1).len() == 2;
+    let field: boolean = boxed(7).f(1) == 7 && boxed(big).f(1) == big && boxed_len(boxed("n" + "op")) == 3;
+    return r + bit(kept && away && field && held(7) == 7 && held(big) == big && held("i" + "jk").len() == 3, 32);
 }
 `},
+	// An instance of a lifted generic lambda that returns a call to another
+	// lifted lambda reads that callee's result under its own binding, not as
+	// the template's `T`.
 	{name: "a-lambda-inside-a-lifted-generic-lambda", atLeast: 9, want: "14|", src: `
 pub function make[T](seed: T): T {
     function outer(base: T): (T) => T {

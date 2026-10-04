@@ -4375,7 +4375,7 @@ func TestRunnerNdarrayExamplePasses(t *testing.T) {
 // static-table decode paths (#5627): the ASCII fast path, alternating
 // pair runs, large constant deltas, non-BMP mappings, and the U+FFFD
 // substitution for malformed input. Passing suite → exit 0; the TAP
-// plan line is `1..17`.
+// plan line is `1..18`.
 func TestRunnerUnicodeExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/unicode_test.fern")
@@ -4383,7 +4383,7 @@ func TestRunnerUnicodeExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/unicode", "1..17", "# pass 17", "# fail 0"} {
+	for _, w := range []string{"# Suite: std/unicode", "1..18", "# pass 18", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

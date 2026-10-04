@@ -81,13 +81,13 @@ func asmToMachoDriver(asm string) string {
 	// arm64-darwin path does it, so this covers that orchestration on real
 	// emitter output — the emitter writes `.cfi_*`, so eh is not empty.
 	b.WriteString("    let ehlen: i32 = arm64_eh_frame_darwin_len(p);\n")
-	b.WriteString("    let tv: i64 = macho_text_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
-	b.WriteString("    let ev: i64 = macho_eh_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
-	b.WriteString("    let dv: i64 = macho_data_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
+	b.WriteString("    let tv: i64 = macho_text_vaddr(pa.text.len(), ehlen, p.data.len(), p.bss_size);\n")
+	b.WriteString("    let ev: i64 = macho_eh_vaddr(pa.text.len(), ehlen, p.data.len(), p.bss_size);\n")
+	b.WriteString("    let dv: i64 = macho_data_vaddr(pa.text.len(), ehlen, p.data.len(), p.bss_size);\n")
 	b.WriteString("    let eh: i32[] = arm64_eh_frame_darwin(p, tv, ev);\n")
 	b.WriteString("    p = arm64_gas_link(p, tv, dv);\n")
 	b.WriteString("    let pa2: Arm64Asm = p.asm;\n")
-	b.WriteString("    let bin: i32[] = macho_executable(pa2.code, eh, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n")
+	b.WriteString("    let bin: i32[] = macho_executable(pa2.text, eh, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n")
 	b.WriteString("    write(string_from_bytes_unchecked(to_u8(bin)));\n")
 	b.WriteString("    return 0;\n}\n")
 	return b.String()

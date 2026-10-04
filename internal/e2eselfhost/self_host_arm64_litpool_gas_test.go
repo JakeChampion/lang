@@ -62,51 +62,51 @@ function main(): i32 {
     // ahead (imm19=2 -> 0x58000040 -> 40 00 00 58); the pool is 8-aligned
     // (one 4-byte pad) then the value 42 as a little-endian quad.
     let a: Arm64Asm = arm64_gas_assemble("ldr x0, =42\n.ltorg\n");
-    if (a.code.len() != 16) { return 1; }
-    if (a.code[0] != 64 || a.code[1] != 0 || a.code[2] != 0 || a.code[3] != 88) { return 2; }
-    if (a.code[4] != 0 || a.code[5] != 0 || a.code[6] != 0 || a.code[7] != 0) { return 3; }
-    if (a.code[8] != 42 || a.code[9] != 0 || a.code[10] != 0 || a.code[11] != 0) { return 4; }
-    if (a.code[12] != 0 || a.code[13] != 0 || a.code[14] != 0 || a.code[15] != 0) { return 5; }
+    if (a.text.len() != 16) { return 1; }
+    if (a.text[0] != 64 || a.text[1] != 0 || a.text[2] != 0 || a.text[3] != 88) { return 2; }
+    if (a.text[4] != 0 || a.text[5] != 0 || a.text[6] != 0 || a.text[7] != 0) { return 3; }
+    if (a.text[8] != 42 || a.text[9] != 0 || a.text[10] != 0 || a.text[11] != 0) { return 4; }
+    if (a.text[12] != 0 || a.text[13] != 0 || a.text[14] != 0 || a.text[15] != 0) { return 5; }
     // A pending literal flushes even without an explicit .ltorg (end of
     // program): ldr x9, =256 -> the value 256 little-endian at offset 8.
     let b: Arm64Asm = arm64_gas_assemble("ldr x9, =256\n");
-    if (b.code.len() != 16) { return 6; }
-    if (b.code[0] != 73 || b.code[3] != 88) { return 7; } // x9, LDR-literal (0x58000049)
-    if (b.code[8] != 0 || b.code[9] != 1 || b.code[10] != 0 || b.code[11] != 0) { return 8; } // 256 = 0x0100
+    if (b.text.len() != 16) { return 6; }
+    if (b.text[0] != 73 || b.text[3] != 88) { return 7; } // x9, LDR-literal (0x58000049)
+    if (b.text[8] != 0 || b.text[9] != 1 || b.text[10] != 0 || b.text[11] != 0) { return 8; } // 256 = 0x0100
     // str x0, [x29, #-8] -> stur (unscaled signed imm9) -> 0xF81F83A0 -> A0 83 1F F8
     let c: Arm64Asm = arm64_gas_assemble("str x0, [x29, #-8]");
-    if (c.code[0] != 160 || c.code[1] != 131 || c.code[2] != 31 || c.code[3] != 248) { return 9; }
+    if (c.text[0] != 160 || c.text[1] != 131 || c.text[2] != 31 || c.text[3] != 248) { return 9; }
     // ldr x0, [x29, #-8] -> ldur -> 0xF85F83A0 -> A0 83 5F F8
     let d: Arm64Asm = arm64_gas_assemble("ldr x0, [x29, #-8]");
-    if (d.code[0] != 160 || d.code[1] != 131 || d.code[2] != 95 || d.code[3] != 248) { return 10; }
+    if (d.text[0] != 160 || d.text[1] != 131 || d.text[2] != 95 || d.text[3] != 248) { return 10; }
     // positive 8-aligned offset still uses the scaled unsigned form:
     // str x0, [x29, #8] -> 0xF90007A0 -> A0 07 00 F9
     let e: Arm64Asm = arm64_gas_assemble("str x0, [x29, #8]");
-    if (e.code[0] != 160 || e.code[1] != 7 || e.code[2] != 0 || e.code[3] != 249) { return 11; }
+    if (e.text[0] != 160 || e.text[1] != 7 || e.text[2] != 0 || e.text[3] != 249) { return 11; }
     // register-offset (array indexing) ldr x0, [x0, x1, lsl #3] -> 0xF8617800
     let f: Arm64Asm = arm64_gas_assemble("ldr x0, [x0, x1, lsl #3]");
-    if (f.code[0] != 0 || f.code[1] != 120 || f.code[2] != 97 || f.code[3] != 248) { return 12; }
+    if (f.text[0] != 0 || f.text[1] != 120 || f.text[2] != 97 || f.text[3] != 248) { return 12; }
     // register-offset str x0, [x2, x3, lsl #3] -> 0xF8237840
     let g: Arm64Asm = arm64_gas_assemble("str x0, [x2, x3, lsl #3]");
-    if (g.code[0] != 64 || g.code[1] != 120 || g.code[2] != 35 || g.code[3] != 248) { return 13; }
+    if (g.text[0] != 64 || g.text[1] != 120 || g.text[2] != 35 || g.text[3] != 248) { return 13; }
     // register-offset, no shift: ldr x0, [x1, x2] -> 0xF8626820
     let h: Arm64Asm = arm64_gas_assemble("ldr x0, [x1, x2]");
-    if (h.code[0] != 32 || h.code[1] != 104 || h.code[2] != 98 || h.code[3] != 248) { return 14; }
+    if (h.text[0] != 32 || h.text[1] != 104 || h.text[2] != 98 || h.text[3] != 248) { return 14; }
     // post-index byte copy: ldrb w4, [x1], #1 -> 0x38401424
     let i: Arm64Asm = arm64_gas_assemble("ldrb w4, [x1], #1");
-    if (i.code[0] != 36 || i.code[1] != 20 || i.code[2] != 64 || i.code[3] != 56) { return 15; }
+    if (i.text[0] != 36 || i.text[1] != 20 || i.text[2] != 64 || i.text[3] != 56) { return 15; }
     // strb w4, [x2], #1 -> 0x38001444
     let j: Arm64Asm = arm64_gas_assemble("strb w4, [x2], #1");
-    if (j.code[0] != 68 || j.code[1] != 20 || j.code[2] != 0 || j.code[3] != 56) { return 16; }
+    if (j.text[0] != 68 || j.text[1] != 20 || j.text[2] != 0 || j.text[3] != 56) { return 16; }
     // SIMD&FP load: ldr d0, [x0] -> 0xFD400000
     let k: Arm64Asm = arm64_gas_assemble("ldr d0, [x0]");
-    if (k.code[0] != 0 || k.code[1] != 0 || k.code[2] != 64 || k.code[3] != 253) { return 17; }
+    if (k.text[0] != 0 || k.text[1] != 0 || k.text[2] != 64 || k.text[3] != 253) { return 17; }
     // ldr d0, [x0, #8] -> 0xFD400400
     let l: Arm64Asm = arm64_gas_assemble("ldr d0, [x0, #8]");
-    if (l.code[0] != 0 || l.code[1] != 4 || l.code[2] != 64 || l.code[3] != 253) { return 18; }
+    if (l.text[0] != 0 || l.text[1] != 4 || l.text[2] != 64 || l.text[3] != 253) { return 18; }
     // str d1, [x2, #16] -> 0xFD000841
     let m: Arm64Asm = arm64_gas_assemble("str d1, [x2, #16]");
-    if (m.code[0] != 65 || m.code[1] != 8 || m.code[2] != 0 || m.code[3] != 253) { return 19; }
+    if (m.text[0] != 65 || m.text[1] != 8 || m.text[2] != 0 || m.text[3] != 253) { return 19; }
     return 0;
 }
 `

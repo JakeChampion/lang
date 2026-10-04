@@ -709,6 +709,9 @@ pub function const_agg_block_bytes(packed: string): i32 {
   if (ir.const_struct_is_bytes(packed)) {
     return 16 + (ir.const_struct_values(packed).len() + 7) / 8 * 8;
   }
+  if (ir.const_struct_is_option(packed)) {
+    return 16;
+  }
   if (ir.const_struct_is_array(packed)) {
     return 16 + (ir.const_struct_values(packed).len() + 1) / 2 * 8;
   }
@@ -6959,12 +6962,6 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(o.i32_imm) + "\n    i32.store\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
-  } else if (o.kind_tag == 121) {  // opt_none
-    // Payloadless box with tag 1 (None), 8 bytes (no payload read on None).
-    parts = parts.append("    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
-    parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 1\n    i32.store\n");
-    parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const 0\n    i32.store\n");
-    parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
   } else if (o.kind_tag == 122) {  // opt_tag
     // pop box; tag is the i32 at offset 0.
     parts = parts.append("    i32.load\n");
@@ -12014,7 +12011,7 @@ pub function reader_close_func(): string {
 // optarrarr_free_func: the $__fern_optarrarr_free WAT body (#4365) — the
 // Option[<scalar-arr>][] reclaim, wasm sibling of the x86/arm64
 // __fn___fern_optarrarr_free bodies. Per element (an 8-byte rc-headered
-// [tag@0, payload@4] option box from opt_make/opt_none): a UNIQUELY-owned box
+// [tag@0, payload@4] option box from opt_make or op_const_option): a UNIQUELY-owned box
 // (rc@e-8 == 1) with tag 0 (Some/Ok) first decs its payload buffer, then the
 // box itself is $__fern_arr_dec'd (rc-guarded), then the outer buffer. Only
 // emitted when the module lowers a __fern_optarrarr_free call
@@ -13608,6 +13605,9 @@ function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab,
       // add, and the merged table is in hand here.
       body = body + le32_escape(1) + le32_escape(1)
         + le32_escape(util.index_of_str(fn_table, fnbody)) + le32_escape(0);
+    } else if (ir.const_struct_is_option(cv[i])) {
+      // The [tag@0, payload@4] box opt_make builds.
+      body = body + le32_escape(util.lit_to_i32(vals[0])) + le32_escape(0);
     } else if (ir.const_struct_is_bytes(cv[i])) {
       body = body + le32_escape(vals.len()) + le32_escape(vals.len());
       for v in vals {
