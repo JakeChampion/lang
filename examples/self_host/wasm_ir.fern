@@ -5577,7 +5577,7 @@ pub function wasm_poll_func(): string {
 // a verdict for a module the emitter does not judge — the same anti-drift rule
 // ir_route_precheck / ir_route_final rest on.
 pub function route_normalized(mod: parser.Module): parser.Module {
-  return lift_lambdas(ircore.script_normalized(mod));
+  return lift_lambdas(ircore.script_normalized(ircore.scale_f64_maps_module(mod)));
 }
 
 // lift_lambdas re-exports lift's lambda-lift pre-pass (closures slice 2a) so
