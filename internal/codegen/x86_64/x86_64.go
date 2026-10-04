@@ -252,6 +252,10 @@ const (
 	sysFdatasync = 75
 	sysSync      = 162
 	sysSyncfs    = 306
+	// fadvise64(2), behind the handle `drop_cache` method, with
+	// POSIX_FADV_DONTNEED as its advice.
+	sysFadvise64      = 221
+	posixFadvDontneed = 4
 	// dup3(2), behind the handle `dup_onto` method. Linux/arm64 has no
 	// dup2 at all, so dup3 is the form both Linux architectures carry.
 	sysDup3 = 292
@@ -1173,6 +1177,13 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesFdSyncfs {
 		g.emitFdCallRuntime("__fern_fd_syncfs", "sfs", sysSyncfs, nil)
 	}
+	if g.usesFdDropCache {
+		// fadvise64(fd, offset, len, DONTNEED): the offset and length
+		// arrive in rsi and rdx, where the call wants them.
+		g.emitFdCallRuntime("__fern_fd_drop_cache", "fdc", sysFadvise64, func() {
+			g.emit(fmt.Sprintf("mov r10d, %d", posixFadvDontneed))
+		})
+	}
 	if g.usesFdDupOnto {
 		// dup3(own_fd, fd, 0). The destination is sign-extended rather
 		// than zero-extended so a negative one stays negative and
@@ -1765,8 +1776,7 @@ type generator struct {
 	usesWriteFileExec  bool
 	usesWriteFileBytes bool
 	// usesRemoveDirAll pulls in the recursive `rm -rf` runtime
-	// (`__fern_remove_dir_all(path) → Option[IoError]`) — the
-	// x86-64 sibling of arm64-ssa's emitRemoveDirAllHelper. It's
+	// (`__fern_remove_dir_all(path) → Option[IoError]`). It's
 	// what std/test's TestRunner.finish() needs to clean up its
 	// temp dirs when a TAP program links through the native CLI.
 	usesRemoveDirAll bool
@@ -1792,6 +1802,7 @@ type generator struct {
 	usesWriterTruncate bool
 	usesFdSync         bool
 	usesFdDatasync     bool
+	usesFdDropCache    bool
 	usesFdSyncfs       bool
 	usesFdDupOnto      bool
 	usesSync           bool
@@ -2411,6 +2422,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "__method_Reader_syncfs", "__method_Writer_syncfs":
 		g.usesFdSyncfs = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Reader_drop_cache", "__method_Writer_drop_cache":
+		g.usesFdDropCache = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "__method_Reader_dup_onto", "__method_Writer_dup_onto":
@@ -4363,6 +4378,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_fd_fdatasync"
 		case "__method_Reader_syncfs", "__method_Writer_syncfs":
 			target = "__fern_fd_syncfs"
+		case "__method_Reader_drop_cache", "__method_Writer_drop_cache":
+			target = "__fern_fd_drop_cache"
 		case "__method_Reader_dup_onto", "__method_Writer_dup_onto":
 			target = "__fern_fd_dup_onto"
 		case "sync":
@@ -8203,11 +8220,8 @@ const (
 	sanLeakSuffix = " blocks"
 )
 
-// MsgArenaExhausted is the arena-exhaustion diagnostic. Exported so the x86-64
-// SSA backend's heap guard (internal/codegen/x86_64ssa) writes the identical
-// text: a program's abort output must not depend on which x86-64 emitter built
-// it. Must stay identical to the arm64 backend's entry, like every other
-// message in the table above.
+// MsgArenaExhausted is the arena-exhaustion diagnostic. Must stay identical
+// to the arm64 backend's entry, like every other message in the table above.
 const MsgArenaExhausted = "fern: out of memory (heap arena exhausted)\n"
 
 // ExitArenaExhausted is the status a Fern binary exits with when __fern_alloc's
@@ -10835,8 +10849,7 @@ func (g *generator) emitStrAppendRangeRuntime() {
 // mirroring arm64's d0/d1. All scratch is caller-saved under SysV.
 //
 // Written through w, one line per call, with fresh naming a module-unique
-// label for a prefix: the SSA backend (internal/codegen/x86_64ssa) emits the
-// same bundle for its own f64 helpers.
+// label for a prefix.
 func EmitFloatTranscendentals(w func(string, ...any), fresh func(prefix string) string) {
 	emit := func(s string) { w("\t%s", s) }
 	label := func(name string) { w("%s:", name) }
@@ -16841,9 +16854,7 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 
 // emitRemoveDirAllRuntime emits
 // `__fern_remove_dir_all(path) → Option[IoError]` — a recursive
-// `rm -rf`. It's the x86-64 sibling of arm64-ssa's
-// emitRemoveDirAllHelper: syscalls are inlined and the helper
-// self-recurses per directory entry, so it pulls in no separate
+// `rm -rf`: syscalls are inlined and the helper self-recurses per directory entry, so it pulls in no separate
 // read_dir/stat helpers. Pipeline:
 //
 //	openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0)
@@ -18813,7 +18824,7 @@ func (g *generator) emitFdStatRuntime() {
 // emitFdCallRuntime emits a helper that makes ONE syscall on a
 // Reader / Writer handle's descriptor and answers `Option[IoError]` —
 // the three write-back calls (`__fern_fd_fsync` / `__fern_fd_fdatasync`
-// / `__fern_fd_syncfs`) and `__fern_fd_dup_onto`. They differ only in
+// / `__fern_fd_syncfs`), `__fern_fd_drop_cache` and `__fern_fd_dup_onto`. They differ only in
 // the syscall number and in whether anything beyond the descriptor
 // needs setting up, which is what `prep` emits.
 //

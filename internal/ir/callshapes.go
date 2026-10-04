@@ -3,7 +3,7 @@
 // Both models of the operand stack need this answer, and neither can
 // derive it from the op alone: an argument's slot count depends on the
 // ABI, and a result's depends on the callee's return type, which lives
-// in the Program rather than at the call site. `internal/ssa`'s lift
+// in the Program rather than at the call site. The Go SSA lift
 // used the IR's ARGUMENT count for both, which is right only when every
 // argument is one word and every callee returns exactly one.
 //

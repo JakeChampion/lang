@@ -221,14 +221,6 @@ func TestWASMBufPushMapped(t *testing.T) {
 	})
 }
 
-func TestX86_64SSABufPushMapped(t *testing.T) {
-	runBufPushMappedCorpus(t, "buf_push_mapped", x86_64SSACorpusRunner(t))
-}
-
-func TestArm64SSABufPushMapped(t *testing.T) {
-	runBufPushMappedCorpus(t, "buf_push_mapped", arm64SSACorpusRunner(t))
-}
-
 func TestInterpBufPushFiltered(t *testing.T) {
 	runBufPushMappedCorpus(t, "buf_push_filtered", func(t *testing.T, src string) string {
 		out, exit := runInterpExitCode(t, src)
@@ -268,14 +260,6 @@ func TestWASMBufPushFiltered(t *testing.T) {
 		}
 		return strings.Join(lines[:len(lines)-1], "\n")
 	})
-}
-
-func TestX86_64SSABufPushFiltered(t *testing.T) {
-	runBufPushMappedCorpus(t, "buf_push_filtered", x86_64SSACorpusRunner(t))
-}
-
-func TestArm64SSABufPushFiltered(t *testing.T) {
-	runBufPushMappedCorpus(t, "buf_push_filtered", arm64SSACorpusRunner(t))
 }
 
 // buf_push_expanded(b, s, table) appends each byte c of s as the record at
@@ -472,12 +456,4 @@ func TestWASMBufPushExpanded(t *testing.T) {
 		}
 		return strings.Join(lines[:len(lines)-1], "\n")
 	})
-}
-
-func TestX86_64SSABufPushExpanded(t *testing.T) {
-	runBufPushExpandedCorpus(t, x86_64SSACorpusRunner(t))
-}
-
-func TestArm64SSABufPushExpanded(t *testing.T) {
-	runBufPushExpandedCorpus(t, arm64SSACorpusRunner(t))
 }

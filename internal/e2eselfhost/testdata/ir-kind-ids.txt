@@ -341,3 +341,4 @@ getxattr=362
 lgetxattr=363
 setxattr=364
 lsetxattr=365
+fd_drop_cache=366

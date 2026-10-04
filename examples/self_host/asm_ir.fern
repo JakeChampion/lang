@@ -2046,7 +2046,9 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
   // its exponent selects, keeping 128 bits about the binary point — the top
   // two bits are the quadrant and the rest the fraction of x/(pi/2), which
   // stays fully accurate however large x is. Kept in lockstep with the
-  // native x86-64 backend's __fern_rem_pio2_large, register for register.
+  // native x86-64 backend's __fern_rem_pio2_large, register for register,
+  // except that the copy and the two conversions write whole registers here
+  // (movapd, and xorps first) where native writes the low lane.
   s = s.write("__fern_rem_pio2_large:\n");
   s = s.write("    movq %xmm0, %rdx\n");
   s = s.write("    movq %rdx, %r8\n    shrq $63, %r8\n");  // sign of x
@@ -2386,7 +2388,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "read_file_bytes", "read_file_bytes_u8", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
-    "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
+    "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority",
@@ -2407,7 +2409,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs",
-    "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "subprocess",
+    "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "subprocess",
     "signal_send", "set_process_group", "set_priority",
   ]);
 }
@@ -9865,6 +9867,14 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("fd_syncfs");
+  } else if (o.kind_tag == 366) {  // fd_drop_cache
+    // [fd, offset, len] with len on top; re-pushed reversed so param[0]
+    // (fd) is lowest.
+    s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
+    s = s.write("    call __fn___fern_fd_drop_cache\n    addq $24, %rsp\n    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need("reader");
+    s = s.need("fd_drop_cache");
   } else if (o.kind_tag == 298) {  // sync
     // No operands. sync(2) cannot fail, but its return is pushed for
     // the statement-position drop, as sleep_ns's is.

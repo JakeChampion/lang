@@ -35,9 +35,6 @@ func TestSelfHostFileBytes(t *testing.T) {
 				modes = append(modes, "plain")
 			} else {
 				modes = []string{"flat"}
-				if target.target == "arm64-linux" || target.target == "x86-64-linux" {
-					modes = append(modes, "ssa")
-				}
 			}
 			for _, mode := range modes {
 				for _, form := range forms {
@@ -107,7 +104,7 @@ func TestSelfHostFileBytesFullDevice(t *testing.T) {
 		for _, target := range targets {
 			modes := []string{"checked"}
 			if compiler.name == "bootstrap" {
-				modes = []string{"flat", "ssa"}
+				modes = []string{"flat"}
 			}
 			for _, mode := range modes {
 				t.Run(compiler.name+"/"+target.target+"/"+mode, func(t *testing.T) {

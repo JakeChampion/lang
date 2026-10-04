@@ -1,18 +1,15 @@
 // The differential oracles' shared pieces: the interpreter baseline every
 // generated program is judged against, the seed window and shard every sweep
-// draws from, and the failure-artifact directory. The exit-byte sweeps
+// draws from. The exit-byte sweeps
 // themselves are diff_oracle_selfhost_test.go and its arm64 and wasm
 // siblings; FuzzGenerate_ExecutionAgrees below is their coverage-guided form.
 package e2e
 
 import (
 	"encoding/binary"
-	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -21,96 +18,6 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 )
-
-// diffOracleSeedCount is the SSA differentials' corpus size.
-const diffOracleSeedCount = 2048
-
-// diffOracleSeeds returns the seed count for the differential sweep,
-// dropping to 1/8th (256) under `testing.Short()` so dev-loop
-// `go test -short ./internal/e2e` finishes promptly without sacrificing
-// the full 2048-seed coverage CI keeps.
-func diffOracleSeeds(t *testing.T) uint64 {
-	t.Helper()
-	if testing.Short() {
-		return diffOracleSeedCount / 8
-	}
-	return diffOracleSeedCount
-}
-
-// diffOracleArtifactDir returns the directory where the
-// differential oracle stashes asm + binary artifacts on
-// failure. The CI workflow uploads this path via
-// actions/upload-artifact; locally it just accumulates on
-// the filesystem (tests SetUp / TearDown don't touch it).
-// Defaults to /tmp/lang-diff-failures; override with
-// DIFF_ORACLE_ARTIFACT_DIR for sandboxed environments.
-func diffOracleArtifactDir() string {
-	if d := os.Getenv("DIFF_ORACLE_ARTIFACT_DIR"); d != "" {
-		return d
-	}
-	return "/tmp/lang-diff-failures"
-}
-
-// diagInfo is the bundle of post-mortem details a diff-oracle
-// failure needs: the captured stdout+stderr, the exit code,
-// a human-readable signal name (empty when the process exited
-// normally), and the path to the asm artifact for later
-// inspection. Helpers below fill it out.
-type diagInfo struct {
-	out     string
-	code    int
-	signal  string // e.g. "SIGSEGV" — empty if exited normally
-	asmPath string
-	binPath string
-}
-
-// describeSignal turns a Go ExitError's WaitStatus into a
-// short signal description (e.g. "signal 11 / segmentation
-// fault"). Returns the empty string when the process wasn't
-// signal-killed.
-func describeSignal(ps *os.ProcessState) string {
-	if ps == nil {
-		return ""
-	}
-	ws, ok := ps.Sys().(syscall.WaitStatus)
-	if !ok {
-		return ""
-	}
-	if !ws.Signaled() {
-		return ""
-	}
-	sig := ws.Signal()
-	return fmt.Sprintf("signal %d / %s", int(sig), sig.String())
-}
-
-// preserveDiagArtifacts copies the asm + binary out of the
-// per-test t.TempDir (which is rm-rf'd on test exit) into the
-// stable artifact directory so CI can upload them and a
-// developer can post-mortem locally. Source is also dumped so
-// the whole crash is reproducible from artifacts alone.
-//
-// Best-effort: errors from the copy aren't propagated. The
-// in-message `t.Errorf` text is the primary failure surface;
-// the artifact path is a bonus.
-func preserveDiagArtifacts(t *testing.T, label string, src string, d diagInfo) string {
-	t.Helper()
-	dest := filepath.Join(diffOracleArtifactDir(), label)
-	if err := os.MkdirAll(dest, 0o755); err != nil {
-		return ""
-	}
-	_ = os.WriteFile(filepath.Join(dest, "main.fern"), []byte(src), 0o644)
-	if d.asmPath != "" {
-		if b, err := os.ReadFile(d.asmPath); err == nil {
-			_ = os.WriteFile(filepath.Join(dest, "prog.s"), b, 0o644)
-		}
-	}
-	if d.binPath != "" {
-		if b, err := os.ReadFile(d.binPath); err == nil {
-			_ = os.WriteFile(filepath.Join(dest, "prog"), b, 0o755)
-		}
-	}
-	return dest
-}
 
 // diffOracleShard reads the optional `DIFF_ORACLE_SHARD` env var,
 // expected as "I/N" with 0 <= I < N (e.g. "0/4", "3/4"). Returns

@@ -168,6 +168,7 @@ var providedSigs = map[string]providedSig{
 	"__fern_fd_stat":                   {1, rWord},
 	"__fern_fd_fsync":                  {1, rWord},
 	"__fern_fd_fdatasync":              {1, rWord},
+	"__fern_fd_drop_cache":             {3, rWord},
 	"__fern_fd_syncfs":                 {1, rWord},
 	"__fern_fd_dup_onto":               {2, rWord},
 	"__fern_reader_read_line":          {1, rWord},

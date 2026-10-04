@@ -7,8 +7,8 @@
 //
 // RC is lowered to IR once here and each backend instruction-selects an
 // opcode, rather than every backend hand-writing its own RC emission.
-// (ssa.fern mirrors the DOWNSTREAM optimiser `internal/ssa`, which native
-// lifts FROM this IR; it is a different, higher layer.)
+// (ssa.fern is the DOWNSTREAM optimiser, lifted FROM this IR; it is a
+// different, higher layer.)
 //
 // Representation (mirrors internal/ir/ir.go, but pointer-free — the
 // self-host's value-semantics style, matching ssa.fern: a function body is
@@ -2088,6 +2088,13 @@ pub function op_fd_syncfs(): Op {
   return op0(301);
 }
 
+// `fd_drop_cache` pops [fd, offset, len] and pushes Option[IoError]:
+// posix_fadvise(2) with POSIX_FADV_DONTNEED over that range of the handle's
+// file. Backs `r.drop_cache(offset, len)` / `w.drop_cache(offset, len)`.
+pub function op_fd_drop_cache(): Op {
+  return op0(366);
+}
+
 // `fd_dup_onto` pops [fd, newfd] and pushes Option[IoError]: dup3(2) of the
 // handle's descriptor onto `newfd`, so the handle is reachable as that number
 // too and whatever it named is closed. Backs `r.dup_onto(fd)` /
@@ -4155,6 +4162,9 @@ function kind_id_len12_s(name: string): i32 {
 }
 
 function kind_id_len13(name: string): i32 {
+  if (name == "fd_drop_cache") {
+    return 366;
+  }
   if (name == "rmemchr_bytes") {
     return 360;
   }
@@ -5303,6 +5313,9 @@ function kind_name_4(id: i32): string {
   if (id == 281) {
     return "writer_truncate";
   }
+  if (id == 366) {
+    return "fd_drop_cache";
+  }
   if (id == 282) {
     return "priority";
   }
@@ -5634,7 +5647,8 @@ function pops3(t: i32): boolean {
     || t == 314  // set_window_size (fd, rows, cols)
     || t == 324  // scan_set (str, from, set)
     || t == 327  // count_runs (str, inside, set)
-    || t == 364 || t == 365;  // setxattr, lsetxattr (path, name, value)
+    || t == 364 || t == 365  // setxattr, lsetxattr (path, name, value)
+    || t == 366;  // fd_drop_cache (fd, offset, len)
 }
 
 // pops_buf is the operand count of one of the capacity-carrying string
@@ -8159,9 +8173,9 @@ pub function op_allocates(tag: i32): boolean {
     return true;
   }
   // fd_stat boxes the same pair; reader_seek, reader_splice and fd_flags
-  // box their Result[i64, IoError]; writer_truncate boxes its
-  // Option[IoError].
-  if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330) {
+  // box their Result[i64, IoError]; writer_truncate and fd_drop_cache box
+  // their Option[IoError].
+  if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330 || tag == 366) {
     return true;
   }
   // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr

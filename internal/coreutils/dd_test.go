@@ -327,6 +327,14 @@ func ddCases(t *testing.T) []invocation {
 	add("invalid-input-flag", "if=in10", "iflag=bogus")
 	add("invalid-output-flag", "if=in10", "oflag=bogus")
 	add("invalid-status", "if=in10", "status=bogus")
+	// `nocache` drops the copied range's cached pages (#11248). A dropped
+	// page is not observable, so what compares is the copy and the exit;
+	// with `count=0` the whole-file drop is the run, and on a pipe it is
+	// GNU's `failed to discard cache for:` and exit 1.
+	add("nocache-input", "if=in5000", "of=out", "bs=1024", "iflag=nocache", "status=noxfer")
+	add("nocache-output", "if=in5000", "of=out", "bs=1024", "oflag=nocache", "status=noxfer")
+	add("nocache-both-count0", "if=in10", "of=out", "iflag=nocache", "oflag=nocache", "count=0", "status=noxfer")
+	add("nocache-stdout-count0", "if=in10", "oflag=nocache", "count=0", "status=noxfer")
 	// The last operand of a repeated name wins.
 	add("last-name-wins", "if=pre", "if=in10", "of=out", "status=noxfer")
 	// `if=-` is a file called `-`, not standard input.
@@ -339,6 +347,8 @@ func ddCases(t *testing.T) []invocation {
 		invocation{name: "stdin-skip-past-eof", args: []string{"bs=1", "skip=11", "status=noxfer"}, stdin: "abcdefghij", seedTree: ddSeed},
 		invocation{name: "stdin-fullblock", args: []string{"bs=4", "iflag=fullblock", "status=noxfer"}, stdin: "abcdefghij", seedTree: ddSeed},
 		invocation{name: "stdin-to-file", args: []string{"of=out", "bs=3", "status=noxfer"}, stdin: "abcdefghij", seedTree: ddSeed},
+		invocation{name: "stdin-nocache", args: []string{"of=out", "iflag=nocache", "status=noxfer"}, stdin: "abcdefghij", seedTree: ddSeed},
+		invocation{name: "stdin-nocache-count0", args: []string{"of=out", "iflag=nocache", "count=0", "status=noxfer"}, stdin: "abcdefghij", seedTree: ddSeed},
 	)
 
 	return cases

@@ -165,16 +165,6 @@ func TestArm64ChdirSignalMask(t *testing.T) {
 	})
 }
 
-func TestArm64SSAChdirSignalMask(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	runChdirSignalChecks(t, func(t *testing.T, src string) int {
-		bin := compileArm64SSA(t, fern, src, os.Environ())
-		code, _ := runArm64SSABin(t, qemu, bin, t.TempDir(), os.Environ())
-		return code
-	})
-}
-
 // The Mach-O leg, run natively on Apple Silicon. XNU numbers the three
 // sigprocmask `how` values 1/2/3 where Linux spells the same three 0/1/2, so a
 // backend that passed Fern's value straight through would silently perform a

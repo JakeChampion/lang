@@ -61,6 +61,8 @@ var (
 	// set-size is a method on the descriptor itself, with no path:
 	// (self, size: i64, ret_ptr) -> ().
 	composeSetSizeParams = []byte{0x7f, 0x7e, 0x7f}
+	// advise: (self, offset: i64, length: i64, advice, retptr).
+	composeAdviseParams = []byte{0x7f, 0x7e, 0x7e, 0x7f, 0x7f}
 )
 
 const (
@@ -87,6 +89,7 @@ const (
 	composeSetSizeName    = "[method]descriptor.set-size"
 	composeSyncName       = "[method]descriptor.sync"
 	composeSyncDataName   = "[method]descriptor.sync-data"
+	composeAdviseName     = "[method]descriptor.advise"
 )
 
 type p2composer struct {
