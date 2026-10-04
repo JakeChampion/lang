@@ -335,10 +335,18 @@ const (
 	twoOverPiLimbs = 21
 	twoOverPiEnd   = twoOverPiBase + 8*twoOverPiLimbs
 
+	// logTabBase is fdlibm.LogTable's rows, 128 of three doubles, written
+	// by their own data segment when __fern_log_f64 is present
+	// (logTabSegment). Untyped for the same reason as the limb count;
+	// TestLogTabSegmentCoversTheTable pins it.
+	logTabBase  = twoOverPiEnd
+	logTabBytes = 128 * 3 * 8
+	logTabEnd   = logTabBase + logTabBytes
+
 	// stringStart is where heap-form string literals begin; the bump
 	// cursor is seeded past the end of that pool, so every heap
 	// allocation lands above all of the static regions.
-	stringStart = twoOverPiEnd
+	stringStart = logTabEnd
 )
 
 // rcLowAddrGuard is the address floor the rc helpers use to skip static
