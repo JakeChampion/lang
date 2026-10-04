@@ -565,7 +565,7 @@ pub trait Transport {
   function now_ns(self: Self): i64;
   function lookup(self: Self, host: string, checked: boolean): Result[Lookup, dns.DnsError];
   function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError];
-  function write(self: Self, conn: i32, data: string): i32;
+  function write(self: Self, conn: i32, data: u8[]): i32;
   function read(self: Self, conn: i32, max: i32, wait_ms: i64): tcp.Recv;
   function close(self: Self, conn: i32): i32;
   function idle(self: Self): Idle;
@@ -763,8 +763,8 @@ impl Transport for Sockets {
   function connect(self: Sockets, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError] {
     return dns.connect_race(addrs, port, dns.DialOptions { ...dns.dial_options(), timeout_ms: timeout_ms });
   }
-  function write(self: Sockets, conn: i32, data: string): i32 {
-    return tcp_send(conn, data);
+  function write(self: Sockets, conn: i32, data: u8[]): i32 {
+    return tcp_send_bytes(conn, data);
   }
   function read(self: Sockets, conn: i32, max: i32, wait_ms: i64): tcp.Recv {
     return tcp.tcp_recv_deadline(conn, max, time.duration_millis(wait_ms));
@@ -1055,7 +1055,7 @@ function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64,
     conn = __connect(tr, t, req.timeouts, guard)?;
   }
   let body: u8[] = req.body.bytes();
-  let sent: Result[void, FetchError] = __send_all(tr, conn, __head(req, t, body.len()) + string_from_bytes_unchecked(body));
+  let sent: Result[void, FetchError] = __send_all(tr, conn, __head(req, t, body.len()).bytes().concat(body));
   match (sent) {
     Ok(_) => {},
     Err(e) => {
@@ -1332,12 +1332,18 @@ function __reusable(framed: http.HttpResponseFramed, from: i32, read: i32, eof: 
 }
 
 // `__send_all(tr, conn, payload)` — every byte of `payload` written, or
-// the failure as the transport reported it. The payload is handed over as
-// the bytes it holds; a body is not text, and never read as one.
-function __send_all[T: Transport](tr: T, conn: i32, payload: string): Result[void, FetchError] {
+// the failure as the transport reported it.
+function __send_all[T: Transport](tr: T, conn: i32, payload: u8[]): Result[void, FetchError] {
   let at: i32 = 0;
   while (at < payload.len()) {
-    let n: i32 = tr.write(conn, slice_unchecked(payload, at, payload.len()).to_owned());
+    let rest: u8[] = payload;
+    if (at > 0) {
+      let b: usize = buf_new(payload.len() - at);
+      buf_push_bytes_range(b, payload, at, payload.len());
+      rest = buf_take_bytes(b);
+      buf_free(b);
+    }
+    let n: i32 = tr.write(conn, rest);
     if (n < 0) {
       return Err(Io(net.error_from_errno(0 - n)));
     }
