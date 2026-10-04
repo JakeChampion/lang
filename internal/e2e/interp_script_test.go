@@ -715,7 +715,7 @@ function main(): i32 {
     print(wire);
     return 0;
 }`,
-			wantStdout: "HTTP/1.1 200 OK\r\nx-trace-id: abc123\r\ncache-control: no-store\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello\n",
+			wantStdout: "HTTP/1.1 200 OK\r\nX-Trace-Id: abc123\r\nCache-Control: no-store\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello\n",
 		},
 		{
 			name: "redirect helper sets Location header",
@@ -756,7 +756,7 @@ function main(): i32 {
     print(wire);
     return 0;
 }`,
-			wantStdout: "HTTP/1.1 200 OK\r\nset-cookie: a=1\r\nset-cookie: b=2\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi\n",
+			wantStdout: "HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi\n",
 		},
 	}
 	for _, tc := range cases {

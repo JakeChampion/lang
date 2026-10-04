@@ -5,6 +5,7 @@ import "std/fetch";
 import "std/time";
 import "std/http";
 import "std/hash";
+import "std/string";
 import "std/utf8";
 
 // examples/tests/sim_fetch_test.fern — std/fetch's client over the
@@ -248,13 +249,13 @@ function test_cross_origin_drops_credentials(): test.TestOutcome {
   if (__body(got) != "there") {
     return test.fail(__body(got));
   }
-  if (__sent_text(n, 0).index_of("authorization: Bearer t") < 0) {
+  if (__sent_text(n, 0).index_of("Authorization: Bearer t") < 0) {
     return test.fail("first request lost its credentials");
   }
-  if (__sent_text(n, 1).index_of("authorization") >= 0) {
+  if (__sent_text(n, 1).to_lower().index_of("authorization") >= 0) {
     return test.fail("credentials crossed origins: " + __sent_text(n, 1));
   }
-  return test.assert_contains(__sent_text(n, 1), "x-trace: kept");
+  return test.assert_contains(__sent_text(n, 1), "X-Trace: kept");
 }
 
 // More redirects than the request allows is an error, after the allowed
