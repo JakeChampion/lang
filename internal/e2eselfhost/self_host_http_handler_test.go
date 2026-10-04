@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -137,12 +139,7 @@ function main(): i32 {
 	})
 
 	t.Run("raw-socket-serve", func(t *testing.T) {
-		probe, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("no free TCP port: %v", err)
-		}
-		port := probe.Addr().(*net.TCPAddr).Port
-		probe.Close()
+		port := freeTCPPort(t)
 
 		// std/http is imported to pull in the over-budget closure; the socket
 		// work uses the builtins directly, so no fn value crosses a unit
@@ -228,15 +225,32 @@ func TestSelfHostHttpHandlerServesWithOptionsX86_64(t *testing.T) {
 func checkSelfHostHttpHandlerServes(t *testing.T, entry func(port int) string) {
 	t.Helper()
 	gcc, runner, driverBin := buildModloadDriverX86(t)
-
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("no free TCP port: %v", err)
+	port := freeTCPPort(t)
+	asm, progDir := compileSourceModload(t, runner, driverBin, httpServeSrc(entry(port)))
+	if !strings.Contains(asm, ".Lssa_") {
+		t.Fatal("handler program did not route through the IR path")
 	}
-	port := probe.Addr().(*net.TCPAddr).Port
-	probe.Close()
+	checkServes(t, binCmd(runner, buildBin(t, gcc, progDir, "http_serve", asm)), port)
+}
 
-	src := fmt.Sprintf(`import "std/http";
+// TestSelfHostHttpHandlerServesArm64 is the same server built for arm64 Linux
+// by the self-host's own assembler and ELF writer, run under qemu. Every
+// request runs its handler as a task, whose state block the arm64 assembler
+// once reserved a quarter of, crashing the server on its first request
+// (#11377).
+func TestSelfHostHttpHandlerServesArm64(t *testing.T) {
+	_, qemu := arm64Tooling(t)
+	cli := buildSelfHostCLI(t)
+	port := freeTCPPort(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(httpServeSrc(fmt.Sprintf("return serve.run(%d, serve.config(), handle);", port))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checkServes(t, runArm64Bin(qemu, cli.arm64Binary(t, src)), port)
+}
+
+func httpServeSrc(mainBody string) string {
+	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
 
@@ -247,15 +261,13 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 function main(): i32 {
     %s
 }
-`, entry(port))
+`, mainBody)
+}
 
-	asm, progDir := compileSourceModload(t, runner, driverBin, src)
-	if !strings.Contains(asm, ".Lssa_") {
-		t.Fatal("handler program did not route through the IR path")
-	}
-	bin := buildBin(t, gcc, progDir, "http_serve", asm)
-
-	cmd := binCmd(runner, bin)
+// checkServes starts the server cmd and makes two requests on separate
+// connections to it on port.
+func checkServes(t *testing.T, cmd *exec.Cmd, port int) {
+	t.Helper()
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}

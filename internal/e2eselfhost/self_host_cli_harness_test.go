@@ -60,6 +60,22 @@ func (c *selfHostCLI) x86Binary(t *testing.T, src string, env ...string) string 
 	return bin
 }
 
+// arm64Binary compiles src for arm64 Linux the way `fern -target arm64-linux
+// -o` does: through the self-host's own assembler and ELF writer, not GNU as.
+func (c *selfHostCLI) arm64Binary(t *testing.T, src string, env ...string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "prog")
+	cmd := runX86_64Bin(c.runner, c.bin, "-target", "arm64-linux", src, c.stdlib, "-o", bin)
+	cmd.Env = append(os.Environ(), env...)
+	if msg, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("self-host CLI -target arm64-linux %s: %v\n%s", src, err, msg)
+	}
+	if err := os.Chmod(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
 // runWasmCensus runs a WAT module under wasmtime with args, returning its
 // stderr (where the leakcheck census lands) and exit code.
 func runWasmCensus(t *testing.T, wat string, args ...string) (string, int) {

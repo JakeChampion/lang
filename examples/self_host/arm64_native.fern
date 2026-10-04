@@ -9405,17 +9405,12 @@ function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasPro
     }
     return p;
   }
-  if (arm64_str_starts_with(line, ".quad")) {
-    return Arm64GasProg { ...p, bss_size: p.bss_size + 8 };
-  }
-  if (arm64_str_starts_with(line, ".4byte") || arm64_str_starts_with(line, ".word")) {
-    return Arm64GasProg { ...p, bss_size: p.bss_size + 4 };
-  }
-  // A `.byte` list reserves one byte PER VALUE, so the count is its
-  // commas plus one; reserving one for the whole list shifted every
-  // later symbol.
-  if (arm64_str_starts_with(line, ".byte")) {
-    return Arm64GasProg { ...p, bss_size: p.bss_size + arm64_gas_value_count(line, 5) };
+  // A data directive reserves its width for EVERY value it lists:
+  // `.quad 0, 0, 0, 0` is 32 bytes, and reserving one slot laid the next
+  // .bss symbols over the other three (#11377).
+  let width: i32 = arm64_gas_data_width(line);
+  if (width > 0) {
+    return Arm64GasProg { ...p, bss_size: p.bss_size + width * arm64_gas_values(line).len() };
   }
   if (arm64_str_starts_with(line, ".align") || arm64_str_starts_with(line, ".p2align") || arm64_str_starts_with(line, ".balign")) {
     let sp2: i32 = arm64_str_indexof(line, " ");
@@ -9447,74 +9442,34 @@ function arm64_gas_bss_off(p: Arm64GasProg, name: string): i32 {
 
 // arm64_gas_data_directive handles a `.`-directive inside a data section.
 function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasProg {
-  if (arm64_str_starts_with(line, ".quad")) {
-    let qtok: string = arm64_gas_trim(slice_unchecked(line, 5, line.len()));
-    // A SYMBOLIC operand (`.quad .S0`) is another symbol's absolute address,
-    // not a number: reserve the 8-byte slot and queue a relocation for
-    // arm64_gas_link, which is the only point the segment addresses exist.
-    // arm64_gas_atoi64 would have returned 0 here, indistinguishable from a
-    // real `.quad 0`.
-    if (!arm64_gas_numeric_tok(qtok)) {
-      p = Arm64GasProg {
-        ...p,
-        dref_offs: p.dref_offs.append(p.data.len()),
-        dref_syms: p.dref_syms.append(qtok),
-      };
-      return arm64_gas_data_le(p, 0, 8);
-    }
-    return arm64_gas_data_le(p, arm64_gas_atoi64(qtok), 8);
-  }
-  if (arm64_str_starts_with(line, ".4byte") || arm64_str_starts_with(line, ".word")) {
-    let off: i32 = 6;
-    if (arm64_str_starts_with(line, ".word")) {
-      off = 5;
-    }
-    return arm64_gas_data_le(p, arm64_gas_atoi64(arm64_gas_trim(slice_unchecked(line, off, line.len()))), 4);
-  }
-  if (arm64_str_starts_with(line, ".long")) {
-    // `.long a, b, …`: each comma-separated value as 4 little-endian bytes.
-    // The IR emitters lay an f64 constant down as two `.long` halves (exact
-    // bits, assembler-independent — see const_f64). Ignoring it (the
-    // pre-#5434 behaviour) silently dropped the 8 rodata bytes.
-    let lrest: string = arm64_gas_trim(slice_unchecked(line, 5, line.len()));
-    let ltok: string = "";
-    let lci: i32 = 0;
-    let lp: Arm64GasProg = p;
-    while (lci < lrest.len()) {
-      if (lrest[lci] == b',') {
-        lp = arm64_gas_data_le(lp, arm64_gas_atoi64(arm64_gas_trim(ltok)), 4);
-        ltok = "";
-      } else {
-        ltok = ltok + slice_unchecked(lrest, lci, lci + 1);
+  // `.quad`, `.4byte` / `.word` / `.long` and `.byte` lay down EVERY
+  // comma-separated value: taking only the first dropped the rest and
+  // shifted every later data symbol. The IR emitters lay an f64 constant
+  // down as two `.long` halves (see const_f64).
+  if (!arm64_str_starts_with(line, ".double")) {
+    let width: i32 = arm64_gas_data_width(line);
+    if (width > 0) {
+      let vals: string[] = arm64_gas_values(line);
+      let vi: i32 = 0;
+      while (vi < vals.len()) {
+        // A SYMBOLIC `.quad` operand (`.quad .S0`) is another symbol's
+        // absolute address, not a number: reserve the slot and queue a
+        // relocation for arm64_gas_link, the only point the segment
+        // addresses exist. Read as a number it would be 0.
+        if (width == 8 && !arm64_gas_numeric_tok(vals[vi])) {
+          p = Arm64GasProg {
+            ...p,
+            dref_offs: p.dref_offs.append(p.data.len()),
+            dref_syms: p.dref_syms.append(vals[vi]),
+          };
+          p = arm64_gas_data_le(p, 0, 8);
+        } else {
+          p = arm64_gas_data_le(p, arm64_gas_atoi64(vals[vi]), width);
+        }
+        vi = vi + 1;
       }
-      lci = lci + 1;
+      return p;
     }
-    if (arm64_gas_trim(ltok).len() > 0) {
-      lp = arm64_gas_data_le(lp, arm64_gas_atoi64(arm64_gas_trim(ltok)), 4);
-    }
-    return lp;
-  }
-  if (arm64_str_starts_with(line, ".byte")) {
-    // Every comma-separated value, the way `.long` above takes them.
-    // Taking only the first laid one byte down for a whole table and
-    // shifted every later data symbol.
-    let brest: string = arm64_gas_trim(slice_unchecked(line, 5, line.len()));
-    let bp: Arm64GasProg = p;
-    let btok: string = "";
-    let bci: i32 = 0;
-    while (bci < brest.len()) {
-      if (brest[bci] == b',') {
-        bp = arm64_gas_data_le(bp, arm64_gas_atoi64(arm64_gas_trim(btok)), 1);
-        btok = "";
-      } else {
-        btok = btok + slice_unchecked(brest, bci, bci + 1);
-      }
-      bci = bci + 1;
-    }
-    if (arm64_gas_trim(btok).len() > 0) {
-      bp = arm64_gas_data_le(bp, arm64_gas_atoi64(arm64_gas_trim(btok)), 1);
-    }
-    return bp;
   }
   if (arm64_str_starts_with(line, ".asciz") || arm64_str_starts_with(line, ".string")) {
     return arm64_gas_data_asciz(p, line);
@@ -9534,18 +9489,40 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasPr
   return p;  // other directives ignored
 }
 
-// arm64_gas_value_count counts the comma-separated values a data directive
-// carries, `from` being the index just past its mnemonic.
-function arm64_gas_value_count(line: string, from: i32): i32 {
-  let n: i32 = 1;
-  let i: i32 = from;
-  while (i < line.len()) {
-    if (line[i] == b',') {
-      n = n + 1;
+// arm64_gas_data_width is the bytes one value of a data directive occupies,
+// 0 for a line that is not one.
+function arm64_gas_data_width(line: string): i32 {
+  if (arm64_str_starts_with(line, ".quad") || arm64_str_starts_with(line, ".double")) {
+    return 8;
+  }
+  if (arm64_str_starts_with(line, ".4byte") || arm64_str_starts_with(line, ".word") || arm64_str_starts_with(line, ".long")) {
+    return 4;
+  }
+  if (arm64_str_starts_with(line, ".byte")) {
+    return 1;
+  }
+  return 0;
+}
+
+// arm64_gas_values is a data directive's comma-separated operands, trimmed.
+function arm64_gas_values(line: string): string[] {
+  let out: string[] = [];
+  let start: i32 = 0;
+  while (start < line.len() && line[start] != b' ' && line[start] != b'\t') {
+    start = start + 1;
+  }
+  let i: i32 = start;
+  while (i <= line.len()) {
+    if (i == line.len() || line[i] == b',') {
+      let tok: string = arm64_gas_trim(slice_unchecked(line, start, i));
+      if (tok.len() > 0) {
+        out = out.append(tok);
+      }
+      start = i + 1;
     }
     i = i + 1;
   }
-  return n;
+  return out;
 }
 
 // arm64_lit_le64 appends the 8 little-endian bytes of a 64-bit literal-pool
