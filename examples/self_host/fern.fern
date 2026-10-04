@@ -2610,8 +2610,10 @@ function run(): i32 {
       backtrace = true;
     } else if (a == "-backtrace=false" || a == "-backtrace=0") {
       backtrace = false;
-    } else if (a == "-sanitize") {
+    } else if (a == "-sanitize" || a == "-sanitize=true" || a == "-sanitize=1") {
       sanitize_flag = true;
+    } else if (a == "-sanitize=false" || a == "-sanitize=0") {
+      sanitize_flag = false;
     } else if (a == "-capabilities") {
       mode_caps = true;
     } else if (a == "-tangle") {

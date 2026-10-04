@@ -317,7 +317,7 @@ pub function new_state(): EmitState {
   let fns: parser.FuncDecl[] = [];
   let lts: Ty[] = [];
   let nd: string[] = [];
-  return EmitState {
+  let s: EmitState = EmitState {
     out: "",
     label_n: 0,
     builtin_i32: util.name_index(builtin_i32_names()),
@@ -353,15 +353,16 @@ pub function new_state(): EmitState {
     recs: 0 as usize,
     rt_lower: no_rt_lower,
     named: [],
-    rc_free_debug: sanitize_on() || rc_free_debug_on(),
-    sanitize: sanitize_on(),
-    leak_check: sanitize_on() || leak_check_on(),
-    backtrace: backtrace_on(),
+    rc_free_debug: false,
+    sanitize: false,
+    leak_check: false,
+    backtrace: false,
     dw_first: false,
     rt_owned_allocs: false,
     syscalls: [],
     raw_syscall: "",
   };
+  return with_switches(s, env_switches());
 }
 
 // sanitize_on reports whether FERN_SANITIZE is set — the self-host port of
@@ -436,16 +437,6 @@ pub function backtrace_on(): boolean {
   }
 }
 
-// rc_free_debug_on reports whether the use-after-free QUARANTINE is on —
-// FERN_RC_FREE_DEBUG, or implied by FERN_SANITIZE (ast.ApplySanitize parity;
-// the native RcFreeDebug port). Under it NOTHING is recycled: every free site
-// writes ast.RcPoison (0x7EEDFACE) over the rc word where the block has one,
-// through the backend's rc_poison, and declines its freelist push — a
-// recycled block would overwrite its own poison — so __fern_alloc just keeps
-// bumping, and the rc helpers die with a named report the moment a stale
-// reference touches a poisoned block. A quarantined block still counts as a
-// FREE for the census (hev_free runs at the release), so the two detectors
-// compose instead of every correct free reading as a leak.
 // leak_check_on reports whether FERN_LEAKCHECK is set — the self-host port
 // of ast.LeakCheckEnabled, the leak census on its own: every alloc and every
 // free counted (count + bytes) and one line printed at exit,
@@ -480,6 +471,16 @@ pub function with_switches(s: EmitState, sw: Switches): EmitState {
   return EmitState { ...s, backtrace: sw.backtrace, sanitize: sw.sanitize, leak_check: sw.sanitize || leak_check_on(), rc_free_debug: sw.sanitize || rc_free_debug_on() };
 }
 
+// rc_free_debug_on reports whether the use-after-free QUARANTINE is on —
+// FERN_RC_FREE_DEBUG, or implied by FERN_SANITIZE (ast.ApplySanitize parity;
+// the native RcFreeDebug port). Under it NOTHING is recycled: every free site
+// writes ast.RcPoison (0x7EEDFACE) over the rc word where the block has one,
+// through the backend's rc_poison, and declines its freelist push — a
+// recycled block would overwrite its own poison — so __fern_alloc just keeps
+// bumping, and the rc helpers die with a named report the moment a stale
+// reference touches a poisoned block. A quarantined block still counts as a
+// FREE for the census (hev_free runs at the release), so the two detectors
+// compose instead of every correct free reading as a leak.
 pub function rc_free_debug_on(): boolean {
   match (env("FERN_RC_FREE_DEBUG")) {
     Some(_) => {
