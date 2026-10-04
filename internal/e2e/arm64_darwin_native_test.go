@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/symname"
 )
 
@@ -674,4 +675,24 @@ func TestArm64DarwinNativePriority(t *testing.T) {
 	if code := ps.ExitCode(); code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see prioritySource)", code)
 	}
+}
+
+// The native Darwin runtime refuses a trailing-slash path to a non-directory
+// as Linux's kernel does (#11430): every open goes through
+// __fern_darwin_openat.
+func TestArm64DarwinNativeTrailingSlash(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(e2eharness.TrailingSlashSource), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	out := filepath.Join(dir, "prog")
+	if o, err := exec.Command(bin, "-target", "arm64-darwin", "-o", out, src).CombinedOutput(); err != nil {
+		t.Fatalf("native arm64-darwin build failed: %v\n%s", err, o)
+	}
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("execution check only runs on Apple Silicon")
+	}
+	e2eharness.CheckTrailingSlash(t, exec.Command(out), e2eharness.TrailingSlashTree(t))
 }
