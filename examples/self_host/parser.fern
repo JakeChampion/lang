@@ -485,6 +485,15 @@ pub function is_cast_op(op: string): boolean {
   return op.len() > 3 && slice_unchecked(op, 0, 3) == "as_";
 }
 
+// bare_return reports whether a `return`'s value is absent: a bare `return;`
+// leaves the `punct:;` placeholder in the value slot.
+pub function bare_return(e: ast.Expr): boolean {
+  if let ast.ExprUnknown(u) = e {
+    return u.kind == "punct:;";
+  }
+  return is_unit_expr(e);
+}
+
 // is_unit_expr asks the same of any expression.
 pub function is_unit_expr(e: ast.Expr): boolean {
   match (e) {

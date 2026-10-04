@@ -30,6 +30,7 @@ import "std/string";
 // for the parse-request entry placeholder, append for populating
 // from the parsed header block.
 import "std/headers";
+import "std/io_buffered" as io_buffered;
 import "std/json";
 // std/stream backs the HttpRequest.body field — stream_from_string
 // to wrap a parsed body, and the cursor readers the whole-body
@@ -548,9 +549,9 @@ function __find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
 }
 
 // __bytes_range copies buf[from, end) into a fresh array, and __bytes_string
-// copies it into a fresh string. The parser's outputs are owned copies of
-// what the handler keeps, so the wire buffer can be reused once the parse is
-// done.
+// copies the same range into a fresh string. The parser's outputs are owned
+// copies of what the handler keeps, so the wire buffer can be reused once the
+// parse is done.
 function __bytes_range(buf: u8[], from: i32, end: i32): u8[] {
   let out: u8[] = __alloc_u8(end - from);
   let i: i32 = 0;
@@ -828,15 +829,29 @@ function __find_crlf_crlf(buf: u8[], from: i32, end: i32): i32 {
 // all digits or overflows i32. The overflow is checked before each
 // multiply: the body cap cannot catch a length that has already wrapped
 // to a small nonnegative value.
+// `__field_at(h, key, from)` — the index of the first field named `key` at
+// or after `from`, or -1. `key` is lowercase, as HeaderMap stores names, so
+// the framing rules read the map without building anything.
+function __field_at(h: HeaderMap, key: string, from: i32): i32 {
+  let i: i32 = from;
+  while (i < h.names.len()) {
+    if (h.names[i] == key) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
 function __http_content_length(h: HeaderMap): Option[i32] {
-  let cls: string[] = h.get_all("content-length");
-  if (cls.len() == 0) {
+  let at: i32 = __field_at(h, "content-length", 0);
+  if (at < 0) {
     return Some(0);
   }
-  if (cls.len() > 1) {
+  if (__field_at(h, "content-length", at + 1) >= 0) {
     return None;
   }
-  let value: string = cls[0];
+  let value: string = h.values[at];
   if (value.len() == 0) {
     return None;
   }
@@ -872,8 +887,8 @@ enum __BodyFraming { Length(i32), Chunked }
 // reading of any of them would be a framing disagreement with the next
 // parser on the path.
 function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
-  let te: string[] = h.get_all("transfer-encoding");
-  if (te.len() == 0) {
+  let te: i32 = __field_at(h, "transfer-encoding", 0);
+  if (te < 0) {
     match (__http_content_length(h)) {
       Some(n) => {
         return Ok(Length(n));
@@ -884,10 +899,10 @@ function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
     }
     return Err(400);
   }
-  if (h.get_all("content-length").len() > 0 || te.len() > 1) {
+  if (__field_at(h, "content-length", 0) >= 0 || __field_at(h, "transfer-encoding", te + 1) >= 0) {
     return Err(400);
   }
-  let codings: string[] = te[0].split(",");
+  let codings: string[] = h.values[te].split(",");
   if (!__token_is(codings[codings.len() - 1], "chunked")) {
     return Err(400);
   }
@@ -910,16 +925,17 @@ function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
 // visible ASCII (an empty value is the request-target's authority, and
 // allowed).
 function __host_ok(h: HeaderMap, version: string): boolean {
-  let hosts: string[] = h.get_all("host");
-  if (hosts.len() > 1) {
-    return false;
-  }
-  if (hosts.len() == 0) {
+  let at: i32 = __field_at(h, "host", 0);
+  if (at < 0) {
     return version != "HTTP/1.1";
   }
+  if (__field_at(h, "host", at + 1) >= 0) {
+    return false;
+  }
+  let host: string = h.values[at];
   let i: i32 = 0;
-  while (i < hosts[0].len()) {
-    let b: i32 = hosts[0][i] as i32;
+  while (i < host.len()) {
+    let b: i32 = host[i] as i32;
     if (b < 33 || b > 126) {
       return false;
     }
@@ -1455,14 +1471,15 @@ pub enum HttpFraming { Framed(HttpFramed), Incomplete, Continue, Malformed(i32) 
 // 0 with none, 1 for `100-continue`, 417 for anything else, which this
 // server cannot meet.
 function __expectation(h: HeaderMap): i32 {
-  let expect: string[] = h.get_all("expect");
-  if (expect.len() == 0) {
+  let at: i32 = __field_at(h, "expect", 0);
+  if (at < 0) {
     return 0;
   }
-  for v in expect {
-    if (!__token_is(v, "100-continue")) {
+  while (at >= 0) {
+    if (!__token_is(h.values[at], "100-continue")) {
       return 417;
     }
+    at = __field_at(h, "expect", at + 1);
   }
   return 1;
 }
@@ -2048,8 +2065,9 @@ function __bytes_are(buf: u8[], from: i32, want: string): boolean {
 function __persists(version: string, h: HeaderMap): boolean {
   let close: boolean = false;
   let keep: boolean = false;
-  for v in h.get_all("connection") {
-    for tok in v.split(",") {
+  let at: i32 = __field_at(h, "connection", 0);
+  while (at >= 0) {
+    for tok in h.values[at].split(",") {
       if (__token_is(tok, "close")) {
         close = true;
       }
@@ -2057,6 +2075,7 @@ function __persists(version: string, h: HeaderMap): boolean {
         keep = true;
       }
     }
+    at = __field_at(h, "connection", at + 1);
   }
   if (close) {
     return false;
@@ -2145,11 +2164,17 @@ pub function http_serialize_response_conn_bytes(resp: HttpResponse, keep_alive: 
 
 pub function http_serialize_response_to_bytes(method: string, resp: HttpResponse, keep_alive: boolean): u8[] {
   if (http_bodiless(resp.status)) {
-    return http_serialize_response_head(resp, keep_alive, "").bytes();
+    let bare: usize = buf_new(256);
+    __push_head(bare, resp);
+    __push_close(bare, keep_alive);
+    return __take_wire(bare);
   }
   if (method == "HEAD") {
-    let framing: string = "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n";
-    return http_serialize_response_head(resp, keep_alive, framing).bytes();
+    let head: usize = buf_new(256);
+    __push_head(head, resp);
+    __push_length(head, resp.body_len());
+    __push_close(head, keep_alive);
+    return __take_wire(head);
   }
   let text: string = "";
   let body: u8[] = [];
@@ -2162,17 +2187,18 @@ pub function http_serialize_response_to_bytes(method: string, resp: HttpResponse
     }
   }
   let len: i32 = text.len() + body.len();
-  let framing: string = "Content-Length: " + int.int_to_string(len) + "\r\n";
-  let head: string = http_serialize_response_head(resp, keep_alive, framing);
-  let prefix: i32 = head.len();
-  assert(len <= 2147483647 - prefix);
-  let builder: usize = buf_new(prefix + len);
-  buf_push(builder, head);
+  let cap: i32 = len;
+  if (len <= 2147483647 - 256) {
+    cap = len + 256;
+  }
+  let builder: usize = buf_new(cap);
+  __push_head(builder, resp);
+  __push_length(builder, len);
+  __push_close(builder, keep_alive);
+  assert(len <= 2147483647 - buf_len(builder));
   buf_push(builder, text);
   buf_push_bytes_range(builder, body, 0, body.len());
-  let wire: u8[] = buf_take_bytes(builder);
-  buf_free(builder);
-  return wire;
+  return __take_wire(builder);
 }
 
 // `http_bodiless(status)` — whether a response with `status` carries no
@@ -2201,24 +2227,59 @@ pub function http_serialize_fields(fields: HeaderMap): string {
 }
 
 pub function http_serialize_response_head(resp: HttpResponse, keep_alive: boolean, framing: string): string {
-  let connection: string = "Connection: close\r\n";
-  if (keep_alive) {
-    connection = "Connection: keep-alive\r\n";
-  }
-  let status_line: string = "HTTP/1.1 " + int.int_to_string(resp.status)
-    + " " + __http_reason(resp.status) + "\r\n";
-  // Names in HeaderMap are case-folded on insert, so a direct string
-  // compare against the lowercase sentinel is correct.
-  let hdr_block: string = "";
+  let b: usize = buf_new(256);
+  __push_head(b, resp);
+  buf_push(b, framing);
+  __push_close(b, keep_alive);
+  let head: string = buf_take(b);
+  buf_free(b);
+  return head;
+}
+
+// `__push_head(b, resp)` — the status line and the handler's fields into
+// the builder `b`, all but `Content-Length`, `Connection` and
+// `Transfer-Encoding`, which the framing writes. Names in HeaderMap are
+// case-folded on insert, so comparing against the lowercase names is
+// enough.
+function __push_head(b: usize, resp: HttpResponse): void {
+  buf_push(b, "HTTP/1.1 ");
+  io_buffered.buf_push_i64(b, resp.status as i64);
+  buf_push(b, " ");
+  buf_push(b, __http_reason(resp.status));
+  buf_push(b, "\r\n");
   let i: i32 = 0;
   while (i < resp.headers.names.len()) {
     let hname: string = resp.headers.names[i];
     if (hname != "content-length" && hname != "connection" && hname != "transfer-encoding") {
-      hdr_block = hdr_block + hname + ": " + resp.headers.values[i] + "\r\n";
+      buf_push(b, hname);
+      buf_push(b, ": ");
+      buf_push(b, resp.headers.values[i]);
+      buf_push(b, "\r\n");
     }
     i = i + 1;
   }
-  return status_line + hdr_block + framing + connection + "\r\n";
+}
+
+function __push_length(b: usize, len: i32): void {
+  buf_push(b, "Content-Length: ");
+  io_buffered.buf_push_i64(b, len as i64);
+  buf_push(b, "\r\n");
+}
+
+// `__push_close(b, keep_alive)` — the `Connection` field and the blank
+// line that ends the head.
+function __push_close(b: usize, keep_alive: boolean): void {
+  if (keep_alive) {
+    buf_push(b, "Connection: keep-alive\r\n\r\n");
+    return;
+  }
+  buf_push(b, "Connection: close\r\n\r\n");
+}
+
+function __take_wire(b: usize): u8[] {
+  let wire: u8[] = buf_take_bytes(b);
+  buf_free(b);
+  return wire;
 }
 
 // ============================================================
@@ -2869,7 +2930,7 @@ function __response_payload(buf: u8[], at: i32, h: HeaderMap, status: i32, metho
   if (method == "HEAD" || http_bodiless(status)) {
     return (2, empty, at, none);
   }
-  if (h.get_all("transfer-encoding").len() == 0 && h.get_all("content-length").len() == 0) {
+  if (__field_at(h, "transfer-encoding", 0) < 0 && __field_at(h, "content-length", 0) < 0) {
     if (!eof) {
       return (1, empty, 0, none);
     }
