@@ -526,6 +526,66 @@ func CheckWorkersServeSideBySide(t *testing.T, addr, stderrPath string) {
 	}
 }
 
+// BlockingHandlerServerSource is a one-worker server whose /slow handler
+// waits on `plat.http` to the fetch upstream's /slow target (through the
+// forward proxy SetFetchProxy names, since the upstream is on loopback)
+// while /ok answers at once. It is the networking plan's blocking-handler
+// conformance case (#9851 §5, #9857).
+func BlockingHandlerServerSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/serve";
+import "std/platform";
+import "std/fetch";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    if (req.path == "/slow") {
+        match (plat.http(fetch.get("http://8.8.8.8/slow"))) {
+            Ok(resp) => { return http.ok("slow " + resp.status.to_string()); },
+            Err(e) => { return http.ok("slow err " + e.message()); }
+        }
+    }
+    return http.ok("ok");
+}
+function main(): i32 {
+    return serve.supervise(%d, serve.Config { ...serve.config(), workers: 1 }, handle);
+}
+`, port)
+}
+
+// CheckBlockingHandlerStallsWorker drives BlockingHandlerServerSource and
+// asserts what P1 documented: a handler waiting on an upstream holds its
+// worker, so /ok on a second connection is answered only once /slow's
+// upstream has. P3 (#9857) flips this check to /ok arriving inside the
+// upstream's delay.
+func CheckBlockingHandlerStallsWorker(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
+		t.Fatalf("first /ok: want 200, got\n%s", resp)
+	}
+	slow, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer slow.Close()
+	started := time.Now()
+	if _, err := io.WriteString(slow, "GET /slow HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	// Give the worker time to read /slow and enter its handler before the
+	// second connection arrives.
+	time.Sleep(20 * time.Millisecond)
+	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
+		t.Fatalf("/ok beside /slow: want 200, got\n%s", resp)
+	}
+	if waited := time.Since(started); waited < SlowUpstreamDelay {
+		t.Fatalf("/ok beside /slow took %v, inside the upstream's %v: the worker did not stall on the handler's wait, which this case pins until #9857 lifts it", waited, SlowUpstreamDelay)
+	}
+	b, err := io.ReadAll(slow)
+	if err != nil || !strings.Contains(string(b), "slow 200") {
+		t.Fatalf("/slow itself: %q, %v", b, err)
+	}
+}
+
 // InitStateServerSource is ThreadedStateServerSource with no `main`: an
 // `init(): S` and a state-taking `handle` are the two-phase lifecycle the
 // compilers synthesise a main for, which serves on `PORT` under the
