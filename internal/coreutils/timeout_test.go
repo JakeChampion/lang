@@ -56,10 +56,16 @@ func init() {
 // dies and the sleep is orphaned still holding the stdout pipe, so the
 // harness's read does not finish until it exits. Both sides wait the same
 // way, so the case is honest either way — it is only the suite's time. Two
-// seconds is eight times the 0.05 deadline plus the 0.2 grace period.
+// seconds is well past the trapDeadline plus the 0.2 grace period.
 func timeoutIgnoresTerm() []string {
 	return []string{"/bin/sh", "-c", `trap "" TERM; sleep 2`}
 }
+
+// trapDeadline is the duration the kill-after cases give timeoutIgnoresTerm.
+// A TERM that lands before the shell has run its trap kills the shell, and
+// the run exits 124 with no KILL, so the deadline has to outlast the shell's
+// startup on a loaded runner (#10070).
+const trapDeadline = "0.5"
 
 // timeoutExecTree is the fixture for the exec-failure cases: the two ways a
 // command can be there and still not run. A directory and a file without the
@@ -163,13 +169,13 @@ func timeoutCases(t *testing.T) []invocation {
 
 	// ---- the kill-after grace period ----
 	add(invocation{name: "the kill-after is not needed", args: []string{"-v", "-k", "0.3", "0.05", sleepBin, "30"}})
-	add(invocation{name: "the kill-after expires", args: append([]string{"-v", "-k", "0.2", "0.05"}, timeoutIgnoresTerm()...)})
-	add(invocation{name: "the kill-after expires quietly", args: append([]string{"-k", "0.2", "0.05"}, timeoutIgnoresTerm()...)})
-	add(invocation{name: "the kill-after in the foreground", args: append([]string{"--foreground", "-v", "-k", "0.2", "0.05"}, timeoutIgnoresTerm()...)})
-	add(invocation{name: "the kill-after with preserve-status", args: append([]string{"--foreground", "--preserve-status", "-k", "0.2", "0.05"}, timeoutIgnoresTerm()...)})
+	add(invocation{name: "the kill-after expires", args: append([]string{"-v", "-k", "0.2", trapDeadline}, timeoutIgnoresTerm()...)})
+	add(invocation{name: "the kill-after expires quietly", args: append([]string{"-k", "0.2", trapDeadline}, timeoutIgnoresTerm()...)})
+	add(invocation{name: "the kill-after in the foreground", args: append([]string{"--foreground", "-v", "-k", "0.2", trapDeadline}, timeoutIgnoresTerm()...)})
+	add(invocation{name: "the kill-after with preserve-status", args: append([]string{"--foreground", "--preserve-status", "-k", "0.2", trapDeadline}, timeoutIgnoresTerm()...)})
 	add(invocation{name: "a zero kill-after disables it", args: []string{"-v", "-k", "0", "0.05", sleepBin, "0.3"}})
 	add(invocation{name: "signal zero with a kill-after", args: []string{"--foreground", "-v", "-s", "0", "-k", "0.2", "0.05", sleepBin, "30"}})
-	add(invocation{name: "the last kill-after wins", args: append([]string{"-v", "-k", "30", "-k", "0.2", "0.05"}, timeoutIgnoresTerm()...)})
+	add(invocation{name: "the last kill-after wins", args: append([]string{"-v", "-k", "30", "-k", "0.2", trapDeadline}, timeoutIgnoresTerm()...)})
 	add(invocation{name: "the long kill-after spelling", args: []string{"-v", "--kill-after=0.3", "0.05", sleepBin, "30"}})
 	add(invocation{name: "the kill-after glued to the letter", args: []string{"-v", "-k0.3", "0.05", sleepBin, "30"}})
 	for _, k := range []string{"x", "", "-1", "1M"} {
