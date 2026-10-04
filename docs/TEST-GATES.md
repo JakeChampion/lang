@@ -247,6 +247,13 @@ then runs the same functions with no task; the self-host's x86-64 and arm64
 output must show both parks and the readiness word reaching every frame.
 `TestTaskSchedulerFallback` runs the same program through the Go compiler,
 which keeps the blocking fallback: no park, the plain figure both times.
+`TestSelfHostFetchTask` is slice 4's gate: `e2eharness.FetchTaskProgram`
+runs a `fetch.send` to the harness upstream's 100 ms `/slow` target inside a
+task, fetches `/plain` from the program's own loop while the task is parked,
+and waits on the task's wait set itself; the self-host's x86-64 and arm64
+output must show the task parked and the plain fetch answered first.
+`TestFetchTaskFallback` is the same program through the Go compiler: no
+park, the plain fetch never runs.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestSelfHostServeConfig` serves through

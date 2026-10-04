@@ -15660,6 +15660,9 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 				b.emit(Op{Kind: OpDrop})
 			}
+			if taskPrimitiveArray[id.Name] {
+				return b.expr(&ast.ArrayLit{P: n.P, ElemType: ast.NumberType{Width: 32, Signed: true}})
+			}
 			if !taskPrimitiveVoid[id.Name] {
 				b.emit(Op{Kind: OpConstI32, I32: v})
 			}

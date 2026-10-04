@@ -293,26 +293,27 @@ function slot_class(r: irtables.LowerResult, s: i32): string {
   return "w";
 }
 
-// A site: the call's arguments are the last pops(call) ops of the segment,
-// each a plain push, and the op after the call stores its result. The group
-// runs in normal mode or when it is the target; a call that comes back
-// unwinding saves this frame and returns a dummy.
+// A site: the call's arguments are the ops at the end of the segment that
+// produce its pops(call) values, each a pure value op since the rewind runs
+// them again, and the op after the call stores its result. The group runs
+// in normal mode or when it is the target; a call that comes back unwinding
+// saves this frame and returns a dummy.
 function site(t: Tx, r: irtables.LowerResult, ops: ir.Op[], at: i32, k: i32): Tx {
   let call: ir.Op = ops[at];
-  let argc: i32 = ir.op_pops(call);
-  if (argc < 0 || argc > t.seg.len()) {
+  let start: i32 = arg_start(t.seg, ir.op_pops(call));
+  if (start < 0) {
     return Tx { ...t, why: "suspend: " + r.name + ": call site " + util.i32_to_string(k) + " has no argument loads" };
   }
-  let args: ir.Op[] = sub_ops(t.seg, t.seg.len() - argc, t.seg.len());
+  let args: ir.Op[] = sub_ops(t.seg, start, t.seg.len());
   for a in args {
-    if (ir.op_pops(a) != 0 || ir.op_pushes(a) != 1) {
-      return Tx { ...t, why: "suspend: " + r.name + ": call site " + util.i32_to_string(k) + " computes an argument on the operand stack" };
+    if (!ir.pure_value_op(a)) {
+      return Tx { ...t, why: "suspend: " + r.name + ": call site " + util.i32_to_string(k) + " computes an argument with an effect on the operand stack (" + ir.kind_name(a.kind_tag) + ")" };
     }
   }
   if (at + 1 >= ops.len() || ops[at + 1].kind_tag != 19 && ops[at + 1].kind_tag != 159) {
     return Tx { ...t, why: "suspend: " + r.name + ": call site " + util.i32_to_string(k) + " is not followed by its result's store" };
   }
-  let t2: Tx = flush(Tx { ...t, seg: sub_ops(t.seg, 0, t.seg.len() - argc) });
+  let t2: Tx = flush(Tx { ...t, seg: sub_ops(t.seg, 0, start) });
   let out: ir.Op[] = util.append_all(t2.out, normal_test(t2));
   out = util.append_all(out, [ir.op_load_local(t2.ci), ir.op_const_i32(k), ir.op_bin("eq", 0, false), ir.op_bin("or", 0, false), ir.op_if(0)]);
   out = util.append_all(out, args);
@@ -337,6 +338,25 @@ function site(t: Tx, r: irtables.LowerResult, ops: ir.Op[], at: i32, k: i32): Tx
   out = out.append(ir.op_return());
   out = out.append(ir.op_end());
   return Tx { ...t2, out: out };
+}
+
+// arg_start is the index in `seg` where the ops producing its last `n`
+// values begin, read back from the end by each op's pops and pushes; -1
+// when the segment does not produce them.
+function arg_start(seg: ir.Op[], n: i32): i32 {
+  if (n < 0) {
+    return 0 - 1;
+  }
+  let need: i32 = n;
+  let j: i32 = seg.len();
+  while (need > 0 && j > 0) {
+    j = j - 1;
+    need = need - ir.op_pushes(seg[j]) + ir.op_pops(seg[j]);
+  }
+  if (need != 0) {
+    return 0 - 1;
+  }
+  return j;
 }
 
 function sub_ops(xs: ir.Op[], lo: i32, hi: i32): ir.Op[] {
