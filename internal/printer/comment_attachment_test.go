@@ -138,6 +138,24 @@ var commentAttachmentCorpus = []struct {
 	name string
 	src  string
 }{
+	{"trait-and-impl-member-comments", `trait Shape {
+    // The area, in whatever unit the shape was measured in.
+    function area(self: Self): i32;
+
+    function name(self: Self): string;  // for the report
+}
+
+struct Sq { s: i32 }
+
+impl Shape for Sq {
+    function area(self: Sq): i32 { return self.s * self.s; }
+
+    // A square is named after its side.
+    function name(self: Sq): string { return "square"; }
+}
+
+function main(): i32 { return 0; }
+`},
 	{"enum-variant-trailing-then-struct", `enum Verdict {
     Balanced,
     Unexpected(i32),        // closer at pos, nothing open

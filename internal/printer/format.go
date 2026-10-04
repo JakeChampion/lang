@@ -722,7 +722,13 @@ func (f *formatter) formatTraitDecl(td *ast.TraitDecl) {
 		f.b.WriteString(at)
 		f.b.WriteString(";\n")
 	}
-	for _, m := range td.Methods {
+	// A comment written above a member stays above it, and a blank line the
+	// source had between two members is kept, as between statements.
+	for i, m := range td.Methods {
+		if i > 0 && f.blankBefore(m.P.Line) {
+			f.b.WriteByte('\n')
+		}
+		f.drainLeading(m.P.Line, 1)
 		f.formatTraitMethod(m)
 	}
 	f.b.WriteString("}\n")
@@ -759,7 +765,9 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 		f.b.WriteByte('\n')
 		return
 	}
-	f.b.WriteString(";\n")
+	f.b.WriteByte(';')
+	f.emitTrailing(m.P.Line)
+	f.b.WriteByte('\n')
 }
 
 // formatImplDecl emits `impl[T] Trait[Args] for Type { … }` (or an
@@ -810,7 +818,11 @@ func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 	// method, so the methods must NOT respell them; a plain impl's method
 	// keeps its own.
 	parametric := len(id.TypeParams) > 0
-	for _, m := range id.Methods {
+	for i, m := range id.Methods {
+		if i > 0 && f.blankBefore(m.P.Line) {
+			f.b.WriteByte('\n')
+		}
+		f.drainLeading(m.P.Line, 1)
 		f.formatImplMethod(m, parametric)
 	}
 	f.b.WriteString("}\n")

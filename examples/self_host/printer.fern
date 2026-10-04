@@ -3540,8 +3540,12 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
   let g: Fmt = f;
   let mi: i32 = 0;
   while (mi < id.methods.len()) {
-    let (mtext, mg) = print_impl_method(id.methods[mi], id.type_params, g);
-    out = out + mtext;
+    if (mi > 0 && g.blank_before(id.methods[mi].line)) {
+      out = out + "\n";
+    }
+    let (lead, lg) = drain_leading(g, id.methods[mi].line, 1);
+    let (mtext, mg) = print_impl_method(id.methods[mi], id.type_params, lg);
+    out = out + lead + mtext;
     g = mg;
     mi = mi + 1;
   }
@@ -3638,11 +3642,17 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
     out = out + indent_str(1) + "type " + td.assoc_types[ati] + ";\n";
     ati = ati + 1;
   }
+  // A comment written above a member stays above it, and a blank line the
+  // source had between two members is kept, as between statements.
   let g: Fmt = f;
   let mi: i32 = 0;
   while (mi < td.methods.len()) {
-    let (mtext, mg) = print_trait_method(td.methods[mi], g);
-    out = out + mtext;
+    if (mi > 0 && g.blank_before(td.methods[mi].line)) {
+      out = out + "\n";
+    }
+    let (lead, lg) = drain_leading(g, td.methods[mi].line, 1);
+    let (mtext, mg) = print_trait_method(td.methods[mi], lg);
+    out = out + lead + mtext;
     g = mg;
     mi = mi + 1;
   }
