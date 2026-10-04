@@ -969,6 +969,9 @@ function sysno_x86_64(name: string): string {
   if (name == "fstatat") {
     return "262";
   }
+  if (name == "statx") {
+    return "332";
+  }
   if (name == "getrandom") {
     return "318";
   }
@@ -1530,6 +1533,9 @@ function sysno_arm64_linux(name: string): string {
   if (name == "fstatat") {
     return "79";
   }
+  if (name == "statx") {
+    return "291";
+  }
   if (name == "getrandom") {
     return "278";
   }
@@ -1828,120 +1834,17 @@ pub function at_fdcwd(t: string): string {
 }
 
 // statoff is the `struct stat` field-offset table — the third per-target axis
-// after sysno and oflag, and the one that decides whether a leaf reading kernel
-// structs is expressible as ONE source. All three kernels fill a different
-// layout: x86-64 Linux has a u32 st_mode at 24, arm64 Linux at 16, and Darwin's
-// 64-bit-inode stat a **u16** st_mode at 4 with st_size pushed to 96 by four
-// timespecs.
-//
-// The u16 needs no separate treatment, which is the part that makes this work:
-// the only consumer masks with S_IFMT (0xF000), and every bit above 15 —
-// Darwin's st_nlink, sharing the word — is discarded by that mask anyway. So a
-// plain 32-bit load at the target's offset is correct on all three.
+// after sysno and oflag. Darwin's stat-shaped leaves read the whole record
+// through it (with statkind for the widths); Linux's go through statx instead,
+// and read `struct stat` only for its size.
 pub function statoff(t: string, name: string): string {
-  if (t == "x86_64") {
-    return statoff_x86_64(name);
-  }
   if (t == "arm64-darwin") {
     return statoff_darwin(name);
   }
-  return statoff_arm64_linux(name);
-}
-
-// x86-64 Linux: 144 bytes, with 64-bit dev / ino / nlink ahead of the 32-bit
-// mode / uid / gid triple, and the three timestamps as second+nanosecond word
-// pairs from offset 72.
-function statoff_x86_64(name: string): string {
-  if (name == "dev") {
-    return "0";
-  }
-  if (name == "ino") {
-    return "8";
-  }
-  if (name == "nlink") {
-    return "16";
-  }
-  if (name == "mode") {
-    return "24";
-  }
-  if (name == "uid") {
-    return "28";
-  }
-  if (name == "gid") {
-    return "32";
-  }
-  if (name == "rdev") {
-    return "40";
-  }
+  // Linux stats through statx (statx_project_src); `struct stat` is read only
+  // for read_file's size, at 48 on both arches.
   if (name == "size") {
     return "48";
-  }
-  if (name == "blksize") {
-    return "56";
-  }
-  if (name == "blocks") {
-    return "64";
-  }
-  return statoff_times_72(name);
-}
-
-// arm64 Linux: the asm-generic record — 128 bytes, mode / nlink / uid / gid
-// all 32-bit up front, st_blksize a signed 32-bit word at 56. Timestamps sit
-// where x86-64's do.
-function statoff_arm64_linux(name: string): string {
-  if (name == "dev") {
-    return "0";
-  }
-  if (name == "ino") {
-    return "8";
-  }
-  if (name == "mode") {
-    return "16";
-  }
-  if (name == "nlink") {
-    return "20";
-  }
-  if (name == "uid") {
-    return "24";
-  }
-  if (name == "gid") {
-    return "28";
-  }
-  if (name == "rdev") {
-    return "32";
-  }
-  if (name == "size") {
-    return "48";
-  }
-  if (name == "blksize") {
-    return "56";
-  }
-  if (name == "blocks") {
-    return "64";
-  }
-  return statoff_times_72(name);
-}
-
-// The Linux timestamp block, identical on both arches: three
-// (seconds, nanoseconds) pairs of 64-bit words starting at 72.
-function statoff_times_72(name: string): string {
-  if (name == "atime") {
-    return "72";
-  }
-  if (name == "atime_nsec") {
-    return "80";
-  }
-  if (name == "mtime") {
-    return "88";
-  }
-  if (name == "mtime_nsec") {
-    return "96";
-  }
-  if (name == "ctime") {
-    return "104";
-  }
-  if (name == "ctime_nsec") {
-    return "112";
   }
   return "0";
 }
@@ -1949,8 +1852,7 @@ function statoff_times_72(name: string): string {
 // arm64 Darwin: the 64-bit-inode record, 144 bytes and sharing almost nothing
 // with Linux's. mode and nlink are 16-bit; dev, rdev and blksize are signed
 // 32-bit; the timestamps are `struct timespec` pairs from 32 — with
-// st_birthtimespec occupying 80..96, which FileStat has no field for — and
-// size / blocks sit near the end at 96 and 104.
+// st_birthtimespec at 80 — and size / blocks sit near the end at 96 and 104.
 function statoff_darwin(name: string): string {
   if (name == "dev") {
     return "0";
@@ -1991,6 +1893,12 @@ function statoff_darwin(name: string): string {
   if (name == "ctime_nsec") {
     return "72";
   }
+  if (name == "btime") {
+    return "80";
+  }
+  if (name == "btime_nsec") {
+    return "88";
+  }
   if (name == "size") {
     return "96";
   }
@@ -2020,17 +1928,6 @@ pub function statkind(t: string, name: string): string {
       return "i32";
     }
     return "i64";
-  }
-  if (name == "mode" || name == "uid" || name == "gid") {
-    return "i32";
-  }
-  if (t == "x86_64") {
-    // st_nlink is a 64-bit word here and a 32-bit one on arm64; the
-    // FileStat slot is u32 either way, so this only decides the load.
-    return "i64";
-  }
-  if (name == "nlink" || name == "blksize") {
-    return "i32";
   }
   return "i64";
 }
@@ -4435,21 +4332,16 @@ pub function rt_src_clock(which: string, t: string): string {
 }
 
 // rt_src_stat backs `stat(path)` (#2649) — the first syscall leaf that returned
-// a user-typed Result[FileStat, IoError]. NUL-terminate the path, fstatat into
-// the fixed static scratch buffer, read st_mode + st_size back with __load_i32 /
+// a user-typed Result[FileStat, IoError]. NUL-terminate the path, describe it
+// into the fixed static scratch buffer, read the record back with __load_i32 /
 // __load_i64, classify by S_IFMT, and build Ok(FileStat{...}) — or, on failure,
 // the errno classified by the shared __fern_io_error (bundled with this helper),
 // handed a FRESH path string so the borrowed `path` param is never stored.
 //
-// One body for all three targets, which took unifying on the **4-arg fstatat**
-// family: x86-64 newfstatat 262, arm64-linux newfstatat 79, arm64-darwin
-// fstatat64 470, all `(dirfd, path, buf, flags)` with flags 0 meaning
-// follow-symlinks. This helper used to call x86-64's 2-arg `stat` (4), which
-// arm64-linux does not have at all — that asymmetry, plus the differing field
-// offsets, is why #6352/#6356 recorded stat as needing a per-target BODY. It
-// does not: with fstatat and asmcore.statoff it is the same constant
-// substitution as the other leaves. (The u16 st_mode on Darwin needs no special
-// read — see statoff.)
+// Linux uses statx(2) (x86-64 332, arm64 291), whose record is the same on both
+// arches and carries the birth time `struct stat` has no field for (#9096).
+// Darwin uses fstatat64 (470), whose `struct stat` already has
+// st_birthtimespec, projected through statoff / statkind.
 //
 // The two field reads go through `__raw_addr(buf, off)`, not `buf + off` (#6386).
 // `__load_i32` / `__load_i64` take a bare address with no offset operand to fold,
@@ -4478,21 +4370,71 @@ pub function rt_src_lstat(t: string): string {
 }
 
 function rt_src_stat_like(t: string, name: string, at_flags: string): string {
-  return "function " + name + "(path: string): Result[FileStat, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let buf: usize = __raw_scratch(160); let rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz as i64, buf as i64, " + at_flags + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } " + stat_project_src(t) + " }";
+  let head: string = "function " + name + "(path: string): Result[FileStat, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); ";
+  let tail: string = " let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } ";
+  if (t == "arm64-darwin") {
+    return head + "let buf: usize = __raw_scratch(160); let rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz as i64, buf as i64, " + at_flags + ") as i32;" + tail + stat_project_src(t) + " }";
+  }
+  return head + "let buf: usize = __raw_scratch(256); let rc: i32 = __syscall5(" + sysno(t, "statx") + ", " + at_fdcwd(t) + ", pathz as i64, " + at_flags + ", " + statx_mask() + ", buf as i64) as i32;" + tail + statx_project_src() + " }";
 }
 
-// stat_project_src is the tail every stat-shaped leaf shares: the record in
-// `buf` read into an Ok(FileStat { ... }) return.
+// stat_project_src is the tail Darwin's stat-shaped leaves share: the record
+// in `buf` read into an Ok(FileStat { ... }) return.
 function stat_project_src(t: string): string {
   return "let mode: i32 = " + stat_load(t, "mode") + "; let mfmt: i32 = mode & 61440; let isf: boolean = mfmt == 32768; let isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: " + stat_i64(t, "size") + ", mode: (mode as u32), " + stat_fields_src(t) + " });";
 }
 
+// statx_mask is STATX_BASIC_STATS | STATX_BTIME: every field `struct stat`
+// has, and the birth time it does not.
+function statx_mask(): string {
+  return "4095";
+}
+
+// statx_project_src is the Linux tail: `struct statx` in `buf` read into an
+// Ok(FileStat { ... }) return. The record is the same on every Linux arch:
+// mask@0 blksize@4 nlink@16 uid@20 gid@24 mode@28 (u16) ino@32 size@40
+// blocks@48, then {sec i64, nsec u32} timestamps atime@64 btime@80 ctime@96
+// mtime@112, then rdev and dev as (major, minor) u32 pairs at 128 and 136,
+// recombined into a dev_t the way glibc's makedev does. A birth time the
+// filesystem does not record (STATX_BTIME clear in stx_mask) reads zero.
+function statx_project_src(): string {
+  let o: string = "let mode: i32 = __load_i32(__raw_addr(buf, 28)) & 65535; let mfmt: i32 = mode & 61440; let isf: boolean = mfmt == 32768; let isd: boolean = mfmt == 16384; ";
+  o = o + "let bt: i64 = 0 as i64; let btn: i64 = 0 as i64; if ((__load_i32(__raw_addr(buf, 0)) & 2048) != 0) { bt = __load_i64(__raw_addr(buf, 80)); btn = __load_i32(__raw_addr(buf, 88)) as i64; } ";
+  o = o + "return Ok(FileStat { is_file: isf, is_dir: isd, size: __load_i64(__raw_addr(buf, 40)), mode: (mode as u32)";
+  o = o + ", nlink: (__load_i32(__raw_addr(buf, 16)) as u32)";
+  o = o + ", uid: (__load_i32(__raw_addr(buf, 20)) as u32)";
+  o = o + ", gid: (__load_i32(__raw_addr(buf, 24)) as u32)";
+  o = o + ", dev: " + statx_makedev("136", "140");
+  o = o + ", rdev: " + statx_makedev("128", "132");
+  o = o + ", ino: __load_i64(__raw_addr(buf, 32))";
+  o = o + ", blksize: (__load_i32(__raw_addr(buf, 4)) as i64)";
+  o = o + ", blocks: __load_i64(__raw_addr(buf, 48))";
+  o = o + ", atime: __load_i64(__raw_addr(buf, 64)), atime_nsec: (__load_i32(__raw_addr(buf, 72)) as i64)";
+  o = o + ", mtime: __load_i64(__raw_addr(buf, 112)), mtime_nsec: (__load_i32(__raw_addr(buf, 120)) as i64)";
+  o = o + ", ctime: __load_i64(__raw_addr(buf, 96)), ctime_nsec: (__load_i32(__raw_addr(buf, 104)) as i64)";
+  o = o + ", btime: bt, btime_nsec: btn });";
+  return o;
+}
+
+// statx_makedev is glibc's makedev over the (major, minor) pair at those offsets:
+// minor's low byte, major's low 12 bits at 8, minor's remaining bits at 20 and
+// major's at 44. Both halves are non-negative, so the shifts need no masks.
+function statx_makedev(major: string, minor: string): string {
+  let maj: string = "(__load_i32(__raw_addr(buf, " + major + ")) as i64)";
+  let min: string = "(__load_i32(__raw_addr(buf, " + minor + ")) as i64)";
+  return "(((" + maj + " & (4095 as i64)) << 8) | ((" + maj + " >> 12) << 44) | (" + min + " & (255 as i64)) | ((" + min + " >> 8) << 20))";
+}
+
 // rt_src_fd_stat backs `r.stat()` / `w.stat()` -> Result[FileStat, IoError]:
-// fstat(2) of the handle's fd into the same record, projected by the same
-// tail. A handle carries no path, so the errno is classified against an
-// empty one, as a failed read is.
+// the handle's fd described by the same record and projected by the same
+// tail — statx(fd, "", AT_EMPTY_PATH) on Linux, fstat(2) on Darwin. A handle
+// carries no path, so the errno is classified against an empty one, as a
+// failed read is.
 pub function rt_src_fd_stat(t: string): string {
-  return "function __fern_fd_stat(fd: i32): Result[FileStat, IoError] { let buf: usize = __raw_scratch(160); let rc: i32 = __syscall3(" + sysno(t, "fstat") + ", fd as i64, buf as i64, 0) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } " + stat_project_src(t) + " }";
+  if (t == "arm64-darwin") {
+    return "function __fern_fd_stat(fd: i32): Result[FileStat, IoError] { let buf: usize = __raw_scratch(160); let rc: i32 = __syscall3(" + sysno(t, "fstat") + ", fd as i64, buf as i64, 0) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } " + stat_project_src(t) + " }";
+  }
+  return "function __fern_fd_stat(fd: i32): Result[FileStat, IoError] { let ez: usize = __raw_alloc(1); __raw_store8(ez, 0, 0); let buf: usize = __raw_scratch(256); let rc: i32 = __syscall5(" + sysno(t, "statx") + ", fd as i64, ez as i64, 4096, " + statx_mask() + ", buf as i64) as i32; let ez_own: string = __raw_string(ez, 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } " + statx_project_src() + " }";
 }
 
 // rt_src_fd_sync backs `r.fsync()` / `w.fsync()` and the fdatasync twin ->
@@ -4659,6 +4601,8 @@ function stat_fields_src(t: string): string {
   o = o + ", mtime_nsec: " + stat_i64(t, "mtime_nsec");
   o = o + ", ctime: " + stat_i64(t, "ctime");
   o = o + ", ctime_nsec: " + stat_i64(t, "ctime_nsec");
+  o = o + ", btime: " + stat_i64(t, "btime");
+  o = o + ", btime_nsec: " + stat_i64(t, "btime_nsec");
   return o;
 }
 

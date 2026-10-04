@@ -10219,6 +10219,8 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     fsf = fsf.append(StructFieldDecl { name: "mtime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
     fsf = fsf.append(StructFieldDecl { name: "ctime", type_name: "i64", fn_ret: "", fn_param_types: "" });
     fsf = fsf.append(StructFieldDecl { name: "ctime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "btime", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "btime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // FsStat: the builtin struct returned by statfs(path) — the filesystem's

@@ -8156,8 +8156,9 @@ pub function lstat_func(): string {
 //   uid      48   gid     56   dev     64   rdev     72   ino     80
 //   blksize  88   blocks  96   atime  104   atime_nsec 112
 //   mtime  120   mtime_nsec 128   ctime 136   ctime_nsec 144
+//   btime  152   btime_nsec 160
 function filestat_bytes(): i32 {
-  return 152;
+  return 168;
 }
 
 // filestat_copy_u64 stores one u64 straight out of the preview1 record.
@@ -8426,8 +8427,8 @@ function filestat_project_wat(): string {
   o = o + filestat_split_ns(104, 40);  // atime / atime_nsec
   o = o + filestat_split_ns(120, 48);  // mtime / mtime_nsec
   o = o + filestat_split_ns(136, 56);  // ctime / ctime_nsec
-  // Preview 1 reports no mode, owner, device node or block accounting at
-  // all, so those slots read zero — the contract the checker's `stat`
+  // Preview 1 reports no mode, owner, device node, block accounting or birth
+  // time at all, so those slots read zero — the contract the checker's `stat`
   // documentation states. A zero mode (an S_IFMT of 0, which no real file
   // has) is how a caller tells "not reported" from a restrictive one.
   o = o + filestat_zero(32);  // mode
@@ -8436,6 +8437,8 @@ function filestat_project_wat(): string {
   o = o + filestat_zero(72);  // rdev
   o = o + filestat_zero(88);  // blksize
   o = o + filestat_zero(96);  // blocks
+  o = o + filestat_zero(152);  // btime
+  o = o + filestat_zero(160);  // btime_nsec
   o = o + "    (call $__fern_raw_free (local.get $buf) (i32.const 64))\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
