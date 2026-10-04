@@ -444,13 +444,13 @@
 # gives 3901208 bytes; current main gives 4172000. Stdio adds no compiler or
 # stdlib change. Parser/checker fixes, typed ownership, byte operations and
 # array fusion account for the source growth. Avoiding unused verdict rows
-# saves 2008 bytes; TestSelfHostWarmStockDriver measures 4169992 after the fix.
+# saves 2008 bytes; TestSelfHostWarmStockDriver measured 4169992 at b3108829e.
 # docs/SELFHOST-PATH-PROBE-SIZE-2026-10-04.md records attribution and tests.
 # 2026-10-04 — fern.fern 10737128 -> 11300776 (+5.2%) and checker_modload_run
 # 2386128 -> 2520560 (+5.6%), main's growth through the Platform trait merges
 # (#11340, #11343). Numbers from driver-sizes' report on run 37166665810 (main
 # at 492818c4 plus #11345's few checker lines). The other rows stay inside 5%.
-# 2026-10-04 — fern.fern/stage2 10946736 -> 11495848 (+5.0%). Main at acf98243
+# 2026-10-04: fern.fern/stage2 10946736 -> 11495848 (+5.0%). Main at acf98243
 # builds its stage2 at 11461256 (+4.7%, the Platform trait and checker merges
 # above); #11354's label-id records add the other 34592 bytes (+0.3%), the same
 # share they add to the pin-built fern.fern. Both stage2 figures measured on one
