@@ -11,7 +11,9 @@ import (
 // branch record to a label id nothing defines, and a marker byte the arm64
 // assembler has no record for, must be refused rather than assembled; the
 // well-formed twin of each must assemble clean. A named record carrying an
-// adrp or its :lo12: add must queue the page fixup the text arm queues.
+// adrp or its :lo12: add must queue the page fixup the text arm queues. Each
+// x86 record encoder of the frame, the stack and the memory forms must
+// assemble to the bytes its text assembles to.
 const recordRefusalsDriver = `import "./x86_native"; import "./arm64_native"; import "./util";
 function first_diff(a: i32[], b: i32[]): i32 {
     let n: i32 = a.len();
@@ -29,7 +31,43 @@ function pack(id: i32, payload: i64): u8[] {
     buf_push_u64(recs, (id as i64 << 32 | payload & 4294967295i64) as u64);
     return buf_take_bytes(recs);
 }
+function words_of(b: i32[]): u8[] {
+    let w: usize = buf_new(32);
+    buf_push_byte(w, b.len());
+    for x in b { buf_push_byte(w, x); }
+    return buf_take_bytes(w);
+}
+// rec_vs_text assembles one x86 instruction as a bytes record and as text and
+// prints the first byte they differ at, -1 when they agree, then the count of
+// lines either assembly refused.
+function rec_vs_text(name: string, b: i32[], text: string): i32 {
+    let r = x86_native.x86_gas_assemble_words(".text\n\x01\n", words_of(b));
+    let t = x86_native.x86_gas_assemble_words(".text\n    " + text + "\n", buf_take_bytes(buf_new(1)));
+    print(name + " " + util.i32_to_string(first_diff(r.code, t.code)) + " " + util.i32_to_string(r.unknown.len() + t.unknown.len()));
+    return 0;
+}
 function main(): i32 {
+    // x86: each record encoder of the frame, the stack and the memory forms
+    // assembles to the bytes its text assembles to.
+    rec_vs_text("x86_push_r12", x86_native.x86_rec_push_r(12), "pushq %r12");
+    rec_vs_text("x86_pop_rbp", x86_native.x86_rec_pop_r(5), "popq %rbp");
+    rec_vs_text("x86_push_slot", x86_native.x86_rec_push_m(5, 0 - 24), "pushq -24(%rbp)");
+    rec_vs_text("x86_ret", x86_native.x86_rec_ret(), "ret");
+    rec_vs_text("x86_leave", x86_native.x86_rec_leave(), "leave");
+    rec_vs_text("x86_lea_rsp", x86_native.x86_rec_lea_rm(4, 5, 0 - 16), "leaq -16(%rbp), %rsp");
+    rec_vs_text("x86_mov_rmi_store", x86_native.x86_rec_mov_rmi(64, false, 6, 7, 2, 8, 8), "movq %rsi, 8(%rdi,%rdx,8)");
+    rec_vs_text("x86_mov_rmi_byte", x86_native.x86_rec_mov_rmi(8, false, 6, 7, 2, 1, 8), "movb %sil, 8(%rdi,%rdx)");
+    rec_vs_text("x86_mov_rmi_load", x86_native.x86_rec_mov_rmi(64, true, 12, 13, 1, 8, 8), "movq 8(%r13,%rcx,8), %r12");
+    rec_vs_text("x86_movzb_mi", x86_native.x86_rec_movzb_mi(0, 2, 0, 1, 8), "movzbl 8(%rax,%rcx), %edx");
+    rec_vs_text("x86_movzb_mi0", x86_native.x86_rec_movzb_mi(0, 9, 2, 1, 0), "movzbl (%rdx,%rcx), %r9d");
+    rec_vs_text("x86_mov_ir32", x86_native.x86_rec_mov_ir(32, 0 - 1, 1), "movl $4294967295, %ecx");
+    rec_vs_text("x86_mov_ir32_r9", x86_native.x86_rec_mov_ir(32, 7, 9), "movl $7, %r9d");
+    rec_vs_text("x86_mov_ir64", x86_native.x86_rec_mov_ir(64, 0 - 1, 9), "movq $-1, %r9");
+    rec_vs_text("x86_mov_im", x86_native.x86_rec_mov_im(64, 7, 5, 0 - 16), "movq $7, -16(%rbp)");
+    rec_vs_text("x86_inc_r12", x86_native.x86_rec_inc_r(12), "incq %r12");
+    rec_vs_text("x86_mov_rsp_base", x86_native.x86_rec_mov_rm(64, true, 0, 4, 0), "movq (%rsp), %rax");
+    rec_vs_text("x86_mov_r13_base", x86_native.x86_rec_mov_rm(64, true, 0, 13, 0), "movq (%r13), %rax");
+    rec_vs_text("x86_alu_rsp", x86_native.x86_rec_alu_ir(0, 64, 8, 4), "addq $8, %rsp");
     // x86: jmp (kind 16) to label id 7 with no definition, then with one.
     let bad = x86_native.x86_gas_assemble_words(".text\n\x05\n", pack(7, 16));
     print("x86_undefined_unknown " + util.i32_to_string(bad.unknown.len()));
@@ -99,6 +137,25 @@ func TestSelfHostRecordRefusals(t *testing.T) {
 		t.Errorf("a named record's fixup differs from the text arm's:\n%s", out)
 	}
 	for _, want := range []string{
+		"\nx86_push_r12 -1 0\n",
+		"\nx86_pop_rbp -1 0\n",
+		"\nx86_push_slot -1 0\n",
+		"\nx86_ret -1 0\n",
+		"\nx86_leave -1 0\n",
+		"\nx86_lea_rsp -1 0\n",
+		"\nx86_mov_rmi_store -1 0\n",
+		"\nx86_mov_rmi_byte -1 0\n",
+		"\nx86_mov_rmi_load -1 0\n",
+		"\nx86_movzb_mi -1 0\n",
+		"\nx86_movzb_mi0 -1 0\n",
+		"\nx86_mov_ir32 -1 0\n",
+		"\nx86_mov_ir32_r9 -1 0\n",
+		"\nx86_mov_ir64 -1 0\n",
+		"\nx86_mov_im -1 0\n",
+		"\nx86_inc_r12 -1 0\n",
+		"\nx86_mov_rsp_base -1 0\n",
+		"\nx86_mov_r13_base -1 0\n",
+		"\nx86_alu_rsp -1 0\n",
 		"\nx86_undefined_unknown 1\n",
 		"\n  branch to a label id nothing defines\n",
 		"\nx86_defined_unknown 0\n",
