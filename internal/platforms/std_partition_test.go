@@ -104,6 +104,7 @@ var stdModuleReach = map[string]string{
 	"std/signal":        "signal",
 	"std/sim":           "now,random,reactor",
 	"std/sim_fetch":     "config,env,fs,host,log,now,random,reactor,tcp,unix",
+	"std/sim_platform":  "config,env,fs,host,log,now,random,reactor,tcp,unix",
 	"std/sort":          "",
 	"std/strdist":       "",
 	"std/stream":        "",
