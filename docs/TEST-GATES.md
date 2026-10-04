@@ -119,6 +119,20 @@ response byte, every one of the six refusal classes must fire, and both must
 report a latency tail. `docs/FIP-HTTP-CODEC.md` holds the numbers the gate
 protects. It does not measure throughput: a slower build passes.
 
+### Experiment 4: the HTTP-like application pipeline
+
+`TestFipHttpAppDisciplinesAgreeAndDoNotAllocate` in `internal/e2e` compiles
+`examples/fip/httpapp_baseline.fern`, `httpapp_fbip.fern` and
+`httpapp_fip.fern` for x86-64 and runs all three: the two disciplined planes
+must report zero steady-state allocations over 128,000 requests and the
+baseline must allocate, the three must agree on every answer class, on the
+final counter table and on the digest over every response byte, the table
+must fill and refuse (256 live, a non-zero 503 count), both limits and both
+application errors must fire, every one of the six refusal classes must
+fire, and every variant must report a latency tail. `docs/FIP-HTTP-APP.md`
+holds the numbers the gate protects. It does not measure throughput: a
+slower build passes.
+
 ### The key/value core as a `fip` plane
 
 `TestFipKVDisciplinesAgreeAndDoNotAllocate` in `internal/e2e` compiles
@@ -268,6 +282,13 @@ the Go compiler: the entries run in order, nothing is cancelled.
 local string, a byte view and a closure sharing a mutated scalar with its
 frame, all read after a park, answer the plain run's figure on x86-64 and
 arm64. `TestTaskFrameFallback` is the Go compiler's twin, with no park.
+`TestSelfHostTaskPortable` is the task runtime's gate on every target
+(`e2eharness.TaskPortableProgram`): the parks nap on a bound alone, so no
+descriptor is needed, and an i64, an f64 and a string are held across them;
+the self-host's x86-64, arm64 and wasm output must show both parks and the
+plain run's figure. The wasm leg embeds `cmd/fern/wit`'s world and adapts
+the module before wasmtime runs it. `TestTaskPortableFallback` is the Go
+compiler's twin.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestSelfHostServeConfig` serves through

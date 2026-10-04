@@ -172,15 +172,20 @@ func TestWithEmitMemLimitDisabled(t *testing.T) {
 	}
 }
 
-// nativeLinkWeightMB scales with the asm size and never returns a
-// trivial reservation.
-func TestNativeLinkWeightScales(t *testing.T) {
-	small := nativeLinkWeightMB(1 << 20)
-	big := nativeLinkWeightMB(470 << 20)
+// gccBigLinkWeightMB scales with the asm size, never returns a trivial
+// reservation, and covers GNU as's measured peak on the compiler's own
+// listings (392 MB on 100 MB of x86-64, 590 MB on 102 MB of arm64).
+func TestGccBigLinkWeightScales(t *testing.T) {
+	small := gccBigLinkWeightMB(1 << 20)
+	x86 := gccBigLinkWeightMB(100 << 20)
+	arm64 := gccBigLinkWeightMB(102 << 20)
 	if small < 100 {
 		t.Fatalf("weight for 1MB asm = %dMB; want a real floor", small)
 	}
-	if big <= small || big < 2000 {
-		t.Fatalf("weight for 470MB asm = %dMB; want scaled multi-GB estimate", big)
+	if x86 <= small || x86 < 392 {
+		t.Fatalf("weight for the 100MB x86-64 listing = %dMB; want at least its measured 392MB peak", x86)
+	}
+	if arm64 < 590 {
+		t.Fatalf("weight for the 102MB arm64 listing = %dMB; want at least its measured 590MB peak", arm64)
 	}
 }
