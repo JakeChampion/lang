@@ -1145,12 +1145,8 @@ function text_lens(f: ssasem.Func): i32[] {
 // Per record, variant or array construction whose every field or element is a
 // narrow scalar constant: "|" and its words, which is a static box's whole
 // content; "" for any other value. An empty array literal is one whatever its
-// element type. A record or variant field may also hold another such box, as
-// the word `@<value>`. A static box's rc is immortal, so its releases and
-// uniqueness tests leave it alone.
-//
-// A field's box can be defined in a block visited after the field's, so a pass
-// that left a field waiting on one is repeated once it has placed anything.
+// element type. A static box's rc is immortal, so its releases and uniqueness
+// tests leave it alone.
 function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
   let out: string[] = [];
   let i: i32 = 0;
@@ -1158,89 +1154,38 @@ function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
     out = out.append("");
     i = i + 1;
   }
-  let raw: boolean[] = bits(f.graph.nvals);
-  for v in raw_reached(f, defs) {
-    raw = raw.with(v, true);
-  }
-  let again: boolean = true;
-  while (again) {
-    let placed: boolean = false;
-    let waiting: boolean = false;
-    for b in f.graph.blocks {
-      for ins in b.insts {
-        let built: Construction = placeable(f, raw, out, ins);
-        if (built.ok) {
-          let w: BoxWords = box_words(f, defs, raw, out, ins, built.fields);
-          waiting = waiting || w.waiting;
-          if (w.text != "") {
-            out = out.with(ins.result, w.text);
-            placed = true;
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      let fields: semrecords.Field[] = constructed_fields(f, ins);
+      if (fields.len() != ins.args.len()) {
+        continue;
+      }
+      if (ins.result >= 0 && ssasem.finalizer_of(f, f.values[ins.result]) != "") {
+        continue;
+      }
+      let words: string = "|";
+      let j: i32 = 0;
+      while (j < fields.len() && words != "") {
+        let w: string = constant_word(defs, ins.args[j], fields[j].ty);
+        if (w == "") {
+          words = "";
+        } else {
+          if (j > 0) {
+            words = words + ",";
           }
+          words = words + w;
         }
+        j = j + 1;
+      }
+      if (words != "") {
+        out = out.with(ins.result, words);
       }
     }
-    again = placed && waiting;
+  }
+  for v in raw_reached(f, defs) {
+    out = out.with(v, "");
   }
   return out;
-}
-
-// A construction `constants` has not placed and may: not handed to the raw
-// floor, and with no finalizer to run.
-function placeable(f: ssasem.Func, raw: boolean[], out: string[], ins: ssa.SInst): Construction {
-  let built: Construction = built_fields(f, ins);
-  if (!built.ok || built.fields.len() != ins.args.len() || raw[ins.result] || out[ins.result] != "") {
-    return Construction { ...built, ok: false };
-  }
-  if (ssasem.finalizer_of(f, f.values[ins.result]) != "") {
-    return Construction { ...built, ok: false };
-  }
-  return built;
-}
-
-// One construction's static words, "" when a field is not constant, and
-// whether a field is a box this pass has not placed yet.
-struct BoxWords { text: string, waiting: boolean }
-
-function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: string[], ins: ssa.SInst, fields: semrecords.Field[]): BoxWords {
-  let words: string = "|";
-  let j: i32 = 0;
-  while (j < fields.len()) {
-    let w: string = constant_word(defs, ins.args[j], fields[j].ty);
-    if (w == "" && ins.kind_tag != ssasem.array_new()) {
-      let at: i32 = placed_box(f, defs, raw, ins.args[j]);
-      if (at < 0 || out[at] == "") {
-        return BoxWords { text: "", waiting: at >= 0 };
-      }
-      w = "@" + util.i32_to_string(at);
-    }
-    if (w == "") {
-      return BoxWords { text: "", waiting: false };
-    }
-    if (j > 0) {
-      words = words + ",";
-    }
-    words = words + w;
-    j = j + 1;
-  }
-  return BoxWords { text: words, waiting: false };
-}
-
-// The construction a field's value is, read through copies, when it is one
-// `constants` could place; -1 otherwise.
-function placed_box(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], v: i32): i32 {
-  if (v < 0) {
-    return 0 - 1;
-  }
-  let d: ssa.SInst = defs[v];
-  let hops: i32 = 0;
-  while (d.kind_tag == 7 && d.args.len() == 1 && d.args[0] >= 0 && hops < 16) {
-    d = defs[d.args[0]];
-    hops = hops + 1;
-  }
-  if (d.result < 0 || raw[d.result] || !built_fields(f, d).ok) {
-    return 0 - 1;
-  }
-  return d.result;
 }
 
 // The values whose storage this body hands to the raw floor: an array cast to
@@ -1283,14 +1228,11 @@ function raw_reached(f: ssasem.Func, defs: ssa.SInst[]): i32[] {
 }
 
 // The declared fields a record or boxed-variant construction fills, one per
-// element for an array literal; not ok for anything else, an Option or Result
-// among them, whose box is a tag and a payload rather than a shape and fields.
+// element for an array literal, or none with a -1 sentinel for anything else.
 // A closure's environment is a record only to the lowering, so it is not one
 // here.
-struct Construction { ok: boolean, fields: semrecords.Field[] }
-
-function built_fields(f: ssasem.Func, ins: ssa.SInst): Construction {
-  let none: semrecords.Field[] = [];
+function constructed_fields(f: ssasem.Func, ins: ssa.SInst): semrecords.Field[] {
+  let none: semrecords.Field[] = [semrecords.Field { name: "", ty: typeinfo.unchecked() }];
   let t: typeinfo.Type = f.values[ins.result];
   if (ins.kind_tag == ssasem.array_new()) {
     if let typeinfo.TypeArray(a) = t {
@@ -1298,13 +1240,13 @@ function built_fields(f: ssasem.Func, ins: ssa.SInst): Construction {
       while (elems.len() < ins.args.len()) {
         elems = elems.append(semrecords.Field { name: "", ty: a.elem });
       }
-      return Construction { ok: true, fields: elems };
+      return elems;
     }
   }
   if (ins.kind_tag == ssasem.record_new() && !semtypes.is_env(t)) {
     let at: i32 = semrecords.find(f.records, t);
     if (at >= 0) {
-      return Construction { ok: true, fields: f.records.list[at].fields };
+      return f.records.list[at].fields;
     }
   }
   if (ins.kind_tag == ssasem.variant_new()) {
@@ -1312,12 +1254,12 @@ function built_fields(f: ssasem.Func, ins: ssa.SInst): Construction {
     if (e >= 0 && f.enums[e].layout == semrecords.layout_variant()) {
       for v in f.enums[e].variants {
         if (v.name == ins.str) {
-          return Construction { ok: true, fields: v.fields };
+          return v.fields;
         }
       }
     }
   }
-  return Construction { ok: false, fields: none };
+  return none;
 }
 
 // A field's static word, or "" when the value is not a constant this can

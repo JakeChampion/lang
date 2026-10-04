@@ -4580,46 +4580,22 @@ function negation_zero(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
 
 // A construction the plan found constant is a static box: its operands were
 // loaded for the ordinary construction and are dropped unread.
-function static_box(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
+function static_box(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, words: string): irtables.LowerResult {
   for a in ins.args {
     r = emit(r, ir.op_drop());
   }
-  let nfields: i32 = ins.args.len();
-  if (ins.kind_tag == ssasem.array_new()) {
-    nfields = 0;
-  }
-  return emit(r, ir.op_const_struct(static_name(f, ins), nfields, static_values(f, p, p.constants[ins.result])));
-}
-
-function static_name(f: ssasem.Func, ins: ssa.SInst): string {
+  let values: string = slice_unchecked(words, 1, words.len()) + "";
   if (ins.kind_tag == ssasem.array_new() && ssasem.is_u8(elem_type(f.values[ins.result]))) {
-    return "&bytes";
+    return emit(r, ir.op_const_bytes(values));
   }
   if (ins.kind_tag == ssasem.array_new()) {
-    return "&arr";
+    return emit(r, ir.op_const_array(values));
   }
+  let name: string = ins.str;
   if (ins.kind_tag == ssasem.record_new()) {
-    return record_name(f.values[ins.result]);
+    name = record_name(f.values[ins.result]);
   }
-  return ins.str;
-}
-
-// A static box's field words with each `@<value>` replaced by the packing of
-// the box that value is, in braces (ir.const_struct_ref).
-function static_values(f: ssasem.Func, p: ssaunits.Plan, words: string): string {
-  let out: string = "";
-  for w in ir.const_struct_values(words) {
-    if (out.len() > 0) {
-      out = out + ",";
-    }
-    if (w.len() > 0 && w[0] == b'@') {
-      let v: i32 = util.lit_to_i32(slice_unchecked(w, 1, w.len()) + "");
-      out = out + "{" + static_name(f, p.defs[v]) + "|" + static_values(f, p, p.constants[v]) + "}";
-    } else {
-      out = out + w;
-    }
-  }
-  return out;
+  return emit(r, ir.op_const_struct(name, ins.args.len(), values));
 }
 
 function constant_op(k: i32): boolean {
@@ -4712,7 +4688,7 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   if (ins.kind_tag == ssasem.slice() && p.frame_views[ins.result]) {
     r = emit(r, ir.op_str_slice_frame(0));
   } else if (p.constants[ins.result] != "") {
-    r = static_box(r, f, p, ins);
+    r = static_box(r, f, ins, p.constants[ins.result]);
   } else if (container_op(ins.kind_tag)) {
     r = container(r, f, ins, structs);
   }
