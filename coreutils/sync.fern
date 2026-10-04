@@ -150,11 +150,16 @@ pub function main(): i32 {
     exit(1);
   }
   let operands: string[] = g.operands();
-  if (operands.len() == 0) {
-    if (data) {
-      gnu.error("--data needs at least one argument");
-      exit(1);
-    }
+  if (operands.len() == 0 && data) {
+    gnu.error("--data needs at least one argument");
+    exit(1);
+  }
+  // No operand is sync(2). So is -f on a target without syncfs: GNU
+  // degrades the whole run to one sync(2) there and never opens the
+  // operands, so a missing one is not an error. XNU has no per-filesystem
+  // flush; a Fern `.syncfs()` on Darwin is F_FULLFSYNC per descriptor,
+  // which is a different and far costlier thing than GNU does.
+  if (operands.len() == 0 || file_system && target_os() == "darwin") {
     sync();
     return 0;
   }
