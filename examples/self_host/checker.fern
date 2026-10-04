@@ -1799,6 +1799,10 @@ pub struct Scope {
   // call_diags reads (#7221). Empty on every other scope.
   tpvars: string[],
   tpvar_tps: string[],
+  // fn_tvars is every type variable of the function this body declares, the
+  // erased ones included; an instantiation has none. Empty on every other
+  // scope.
+  fn_tvars: string[],
 }
 
 // SigTable is the module's function signature table plus a bucket index over
@@ -2188,7 +2192,7 @@ function new_scope(): Scope {
   let ss: StructSig[] = [];
   let us: UnionSig[] = [];
   let ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss, [], no_spellings()), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss, [], no_spellings()), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
 }
 
 // new_scope_full is a module's scope. The impl table rides on every one:
@@ -2197,19 +2201,19 @@ function new_scope(): Scope {
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
   let ns: string[] = s.names.append(name);
   let ts: typeinfo.Type[] = s.types.append(t);
-  return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: s.ret_type, try_ret: s.try_ret, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+  return Scope { ...s, names: ns, types: ts };
 }
 
 // with_tparams attaches the enclosing function's type parameters and their
 // trait bounds. Read by assoc_call_req to resolve `T.zero()`.
 function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: s.ret_type, try_ret: s.try_ret, impls: s.impls, trait_reqs: s.trait_reqs, tparams: tparams, tbounds: tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+  return Scope { ...s, tparams: tparams, tbounds: tbounds };
 }
 
 // resolve_type resolves a type SPELLING as written in this scope: the enclosing
@@ -2232,7 +2236,7 @@ function (s: Scope) resolve_type(name: string): typeinfo.Type {
 function (s: Scope) bind_tpvar(name: string, tp: string): Scope {
   let vs: string[] = s.tpvars.append(name);
   let ps: string[] = s.tpvar_tps.append(tp);
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: s.ret_type, try_ret: s.try_ret, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: vs, tpvar_tps: ps };
+  return Scope { ...s, tpvars: vs, tpvar_tps: ps };
 }
 
 // tpvar_of returns the type parameter a value binding was declared with, or ""
@@ -2593,11 +2597,11 @@ function for_iter_is_range(iter: ast.Expr): boolean {
 }
 
 function (s: Scope) enter_loop(): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth + 1, ret_type: s.ret_type, try_ret: s.try_ret, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+  return Scope { ...s, loop_depth: s.loop_depth + 1 };
 }
 
 function (s: Scope) with_ret_type(rt: typeinfo.Type): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: rt, try_ret: rt, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+  return Scope { ...s, ret_type: rt, try_ret: rt };
 }
 
 // with_block_ret is with_ret_type for a value block: its ret_type is the
@@ -5064,7 +5068,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // type-annotation (e.g. `let m: Map[K, V] = …`)
   // pins them via assignability.
   if (!is_method && is_map_new_name(name)) {
-    return t_map(t_unknown("map_new key"), t_unknown("map_new value"));
+    return t_map(t_unknown(MAP_NEW_KEY), t_unknown(MAP_NEW_VALUE));
   }
   // cell_new(v) builtin — the Cell[T] constructor
   // (docs/CELL-TYPE-PLAN.md). T is the argument's type; the
@@ -5411,7 +5415,7 @@ function sig_call_type(sig: FuncSig, name: string, c: ast.ExprCall, s: Scope): t
     for tp in sig.type_params {
       if (util.index_of_str(bn, tp) < 0) {
         bn = bn.append(tp);
-        bt = bt.append(t_unknown("type parameter " + tp));
+        bt = bt.append(t_unknown(TPARAM_MARK + tp));
       }
     }
     if (bn.len() > 0 && util.contains(sig.ret_type_name, "::")) {
@@ -7404,7 +7408,7 @@ function generic_method_ret(c: ast.ExprCall, msig: MethodSig, mb: MethodBinding,
   for tp in mb.full {
     if (util.index_of_str(bn, tp) < 0) {
       bn = bn.append(tp);
-      bt = bt.append(t_unknown("type parameter " + tp));
+      bt = bt.append(t_unknown(TPARAM_MARK + tp));
     }
   }
   if (bn.len() == 0) {
@@ -7841,7 +7845,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
       return t_union(r.base);
     }
   }
-  return t_unknown("unrecognised type name: " + name);
+  return t_unknown(UNRESOLVED_MARK + name);
 }
 
 // Keep callable construction separate from the scalar/nominal resolution ladder:
@@ -7948,6 +7952,50 @@ function with_nominal_args(t: typeinfo.Type, args: typeinfo.Type[]): typeinfo.Ty
 // A type variable erases to unknown in this partial type system, so each
 // parameter substitutes to unknown; a spelling naming none of them resolves
 // unchanged.
+// TPARAM_MARK is the reason a type variable erased to unknown carries; the rest
+// of the reason is the variable's name.
+const TPARAM_MARK: string = "type parameter ";
+
+const UNRESOLVED_MARK: string = "unrecognised type name: ";
+
+// A type variable reaches the checker as an UNKNOWN naming it: a promoted
+// parameter as "type parameter T", an unpromoted one as the unresolved
+// spelling itself, since parse_func_decl drops an unbounded parameter's name
+// from the declaration. This reads the name back out of either reason.
+pub function typevar_reason_name(reason: string): string {
+  if (reason.len() > TPARAM_MARK.len() && util.str_has_prefix(reason, TPARAM_MARK)) {
+    return slice_unchecked(reason, TPARAM_MARK.len(), reason.len()) + "";
+  }
+  if (reason.len() > UNRESOLVED_MARK.len() && util.str_has_prefix(reason, UNRESOLVED_MARK)) {
+    return slice_unchecked(reason, UNRESOLVED_MARK.len(), reason.len()) + "";
+  }
+  return "";
+}
+
+// tvar_name is the type variable `t` is, when it is one bare, else "".
+function tvar_name(t: typeinfo.Type): string {
+  if let typeinfo.TypeUnknown(u) = t {
+    let name: string = typevar_reason_name(u.reason);
+    if (parser.looks_type_var(name)) {
+      return name;
+    }
+  }
+  return "";
+}
+
+// tvar_meets_concrete reports whether a value of a bare type variable reaches a
+// destination that names a concrete type. The variable stands for every type,
+// so it meets no concrete one; a `dyn` destination is the bounds' question.
+function tvar_meets_concrete(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
+  if (!util.has_str(s.fn_tvars, tvar_name(from)) || type_contains_unknown(to)) {
+    return false;
+  }
+  if let typeinfo.TypeDyn(_) = to {
+    return false;
+  }
+  return true;
+}
+
 function type_from_name_erasing_tparams(name: string, tparams: string[], tn: TypeNames): typeinfo.Type {
   // A top-level dyn trait set cannot name an enclosing type variable.
   if (tparams.len() == 0 || name.len() == 0 || name.len() >= 5 && slice_unchecked(name, 0, 4) == "dyn ") {
@@ -7955,7 +8003,7 @@ function type_from_name_erasing_tparams(name: string, tparams: string[], tn: Typ
   }
   let erased: typeinfo.Type[] = [];
   for tp in tparams {
-    erased = erased.append(t_unknown("type parameter " + tp));
+    erased = erased.append(t_unknown(TPARAM_MARK + tp));
   }
   return type_from_ref_subst(parser.parse_type_ref(name), tparams, erased, tn);
 }
@@ -8152,6 +8200,13 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
     tbs = tbs.append("");
   }
   s = s.with_tparams(tps, tbs);
+  let fn_tvars: string[] = tps;
+  for tv in fd.all_type_params {
+    if (!util.has_str(fn_tvars, tv)) {
+      fn_tvars = fn_tvars.append(tv);
+    }
+  }
+  s = Scope { ...s, fn_tvars: fn_tvars };
   if (fd.ret_type.len() > 0) {
     s = s.with_ret_type(func_ret_type(fd, s.type_names()));
   }
@@ -8443,6 +8498,9 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
           out = util.append_diags(out, rbound);
           if (rbound.len() == 0 && !is_unknown(t) && !settles_to(r.value, ret_ty, cur) && !(type_assignable(t, ret_ty, unions) && dyn_conforms(t, ret_ty, cur))) {
             out = out.append(dg_at("E002", "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t) + str_copy_hint(t, ret_ty), r.line, r.col));
+          }
+          if (tvar_meets_concrete(t, ret_ty, cur)) {
+            out = out.append(dg_at("E002", "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + tvar_name(t), r.line, r.col));
           }
         }
       },
@@ -12651,7 +12709,7 @@ function tp_receiver(obj: ast.Expr, recv: typeinfo.Type, s: Scope): string {
   }
   match (recv) {
     typeinfo.TypeUnknown(u) => {
-      let prefix: string = "type parameter ";
+      let prefix: string = TPARAM_MARK;
       if (u.reason.len() > prefix.len() && util.str_has_prefix(u.reason, prefix)) {
         let tp: string = slice_unchecked(u.reason, prefix.len(), u.reason.len()) + "";
         if (util.index_of_str(s.tparams, tp) >= 0) {
@@ -13012,6 +13070,37 @@ function display_arg_diags(c: ast.ExprCall, s: Scope): util.Diag[] {
       + label + " a `to_string(): string` method, or " + util.derive_hint(display_dispatch_name(at), "cmp.Display", "cmp.Display"),
     expr_line(c.args[0]), expr_col(c.args[0]),
   )];
+}
+
+// The columns of a bare `map_new(n)`, which only a destination binds.
+const MAP_NEW_KEY: string = "map_new key";
+
+const MAP_NEW_VALUE: string = "map_new value";
+
+function unbound_column(t: typeinfo.Type, reason: string): boolean {
+  if let typeinfo.TypeUnknown(u) = t {
+    return u.reason == reason;
+  }
+  return false;
+}
+
+// unbound_map_arg_diags reports E038 for each written key or value argument of
+// a Map method whose column a bare `map_new(n)` left unbound: nothing names K
+// or V there, so the argument has no type to meet. A map literal's own inserts
+// bind the columns from their entries and are exempt.
+function unbound_map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.TypeMap, s: Scope, out: util.Diag[]): util.Diag[] {
+  if (literal_insert(c) || c.args.len() == 0) {
+    return out;
+  }
+  let takes_key: boolean = method == "insert" || method == "get_or" || method == "get" || method == "has" || method == "without";
+  if (takes_key && unbound_column(mt.key, MAP_NEW_KEY)) {
+    out = out.append(dg_at("E038", "argument 1 to \"" + method + "\": expected K, got " + type_label(check_expr(c.args[0], s)), expr_line(c.args[0]), expr_col(c.args[0])));
+  }
+  let takes_value: boolean = (method == "insert" || method == "get_or") && c.args.len() == 2;
+  if (takes_value && unbound_column(mt.value, MAP_NEW_VALUE)) {
+    out = out.append(dg_at("E038", "argument 2 to \"" + method + "\": expected V, got " + type_label(check_expr(c.args[1], s)), expr_line(c.args[1]), expr_col(c.args[1])));
+  }
+  return out;
 }
 
 // E038: `insert`'s key and value must match the map's columns, as `append`'s
@@ -13474,6 +13563,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (mfa.field == "insert") {
             out = insert_arg_diags(c, mt, s, out);
           }
+          out = unbound_map_arg_diags(c, mfa.field, mt, s, out);
           // E043 (map method existence). methods_in_namespace("Map") is the
           // whole surface — the runtime builtins plus whatever core/map's
           // receiver methods add once it is in the program — so a name that
@@ -15242,6 +15332,9 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !(type_assignable(initt, declared, unions) && dyn_conforms(initt, declared, cur))) {
             out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared) + str_copy_hint(initt, declared), v.line, v.col));
           }
+          if (tvar_meets_concrete(initt, declared, cur)) {
+            out = out.append(dg_at("E003", "cannot assign " + tvar_name(initt) + " to variable of type " + type_label(declared), v.line, v.col));
+          }
           // An annotation naming no declared type (the E064 case) is a type
           // native cannot assign a typed init to either, so E003 stands
           // beside the E064 (#10965). An annotation this resolver merely
@@ -15294,6 +15387,9 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           out = util.append_diags(out, ctor_payload_diags(a.value, tt, cur));
           if (!is_unknown(tt) && !is_unknown(vt) && !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur))) {
             out = out.append(dg_at("E003", "cannot assign " + type_label(vt) + " to " + type_label(tt) + str_copy_hint(vt, tt), a.line, a.col));
+          }
+          if (tvar_meets_concrete(vt, tt, cur)) {
+            out = out.append(dg_at("E003", "cannot assign " + tvar_name(vt) + " to " + type_label(tt), a.line, a.col));
           }
         }
       },
@@ -18819,7 +18915,7 @@ function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
   if (parser.is_reserved_struct_name(type_name) || parser.is_reserved_enum_name(type_name)) {
     return false;
   }
-  if (!plain_ident(type_name)) {
+  if (!plain_ident(type_name) || parser.looks_type_var(type_name)) {
     return false;
   }
   return is_unknown(type_from_spelling(type_name, tn));
