@@ -15,8 +15,8 @@ import (
 // such restriction, so the Linux dialect keeps them there.
 //
 // A link test can't guard this portably: lld's Mach-O port ACCEPTS the
-// illegal placement that real ld64 rejects, so the Linux cross-link in
-// TestArm64DarwinBuilds passed while the macOS runner failed (the #5052
+// illegal placement that real ld64 rejects, so a Linux cross-link
+// passed while the macOS runner failed (the #5052
 // map regression — core/map's keyed-family adapter fns materialised
 // `__closure_cell___map_*` cells in every map-using program). Hence this
 // textual assertion on the emitted section directives.

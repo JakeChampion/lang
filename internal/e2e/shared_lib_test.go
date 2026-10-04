@@ -1234,3 +1234,11 @@ func sharedLibX86(t *testing.T, asm string, names ...string) []byte {
 	}
 	return nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs), exports, "libfern.so")
 }
+
+func toElfRelocsX86(rs []nativex86.Reloc) []nativeelf.Reloc {
+	out := make([]nativeelf.Reloc, len(rs))
+	for i, r := range rs {
+		out[i] = nativeelf.Reloc{Offset: r.Offset, Addend: r.Addend}
+	}
+	return out
+}

@@ -37,10 +37,10 @@ var tcoIRCases = []struct {
 }
 
 // TestSelfHostTcoIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code.
+// x86-64, arm64 and wasm and checks the exit code.
 func TestSelfHostTcoIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		for _, tc := range tcoIRCases {
 			t.Run(target+"/"+tc.name, func(t *testing.T) {
 				if stderr, code := cli.exitOf(t, tc.src, target); code != tc.want {
