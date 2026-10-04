@@ -173,6 +173,25 @@ function main(): i32 {
   let outer: ir.Op[] = while_loop([load(2), load(0), slen(), lt()], cat(inner, inc(2)));
   out = out + "licm_nested: " + show(ir.hoist_loop_invariants(outer, 4)) + "\n";
 
+  // 8b. The body reads bytes of the string whose length the header reads
+  //     (`t = t + s[i]`): the data address is read once too, into the slot
+  //     after the length's. Slots 0 = s, 1 = i, 2 = t; frame 3 -> 5.
+  let bytes_body: ir.Op[] = cat([load(2), load(0), ir.op_str_data(), load(1), ir.op_raw_load8(), add(), store(2)], inc(1));
+  let bytes: ir.Op[] = while_loop([load(1), load(0), slen(), lt()], bytes_body);
+  let bytes_h: ir.OptimizedOps = ir.hoist_loop_invariants(bytes, 3);
+  out = out + "licm_data_address: " + show(bytes_h) + "\n";
+  out = out + "licm_data_address_stack_neutral=" + util.i32_to_string(stack_neutral(bytes_h.ops)) + "\n";
+
+  // 8c. A string the header does not read stays unhoisted: nothing shows its
+  //     box is valid when the loop is reached. Slots 0 = s, 1 = i, 2 = t, 3 = n.
+  let bytes_n: ir.Op[] = while_loop([load(1), load(3), lt()], bytes_body);
+  out = out + "licm_data_unread_refused: " + show(ir.hoist_loop_invariants(bytes_n, 4)) + "\n";
+
+  // 8d. A string the body stores to has neither its length nor its address
+  //     hoisted.
+  let bytes_m: ir.Op[] = while_loop([load(1), load(0), slen(), lt()], cat([load(2), store(0)], bytes_body));
+  out = out + "licm_data_mutated_refused: " + show(ir.hoist_loop_invariants(bytes_m, 3)) + "\n";
+
   // 9. A loop nothing closes is left alone rather than half-rewritten.
   let open: ir.Op[] = [ir.op_block(0), ir.op_loop(0), load(1), load(0), slen(), lt(), ir.op_bin("not", 0, false), ir.op_brif(1)];
   out = out + "licm_unclosed_refused: " + show(ir.hoist_loop_invariants(open, 3)) + "\n";

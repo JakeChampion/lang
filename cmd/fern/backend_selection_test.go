@@ -29,13 +29,9 @@ func buildWith(t *testing.T, dir, target, backend, name string) []byte {
 	return b
 }
 
-// Every target defaults to the stack-machine emitter. The SSA backend is
-// selected by name only: it emits less code, but on the single-word string ABI
-// it runs, a string passed to a user function is never reclaimed, so retention
-// grows with the input (internal/e2e/arm64_default_string_reclaim_test.go).
-//
-// Byte-identity is the assertion in both directions, so this fails if a target
-// silently changes which emitter it gets.
+// Every target's default is the stack-machine emitter, which `-backend flat`
+// names. Byte-identity is the assertion, so this fails if a target silently
+// changes which emitter it gets.
 func TestDefaultBackendPerTarget(t *testing.T) {
 	for _, target := range []string{"arm64-linux", "x86-64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
@@ -44,15 +40,6 @@ func TestDefaultBackendPerTarget(t *testing.T) {
 			flat := buildWith(t, dir, target, "flat", "flat")
 			if !bytes.Equal(dflt, flat) {
 				t.Errorf("the default for %s is not -backend flat: %d bytes against %d", target, len(dflt), len(flat))
-			}
-			// And the two names genuinely reach different emitters on the
-			// targets that have both — otherwise the check above proves
-			// nothing about which one ran.
-			if target == "wasm32-wasi" {
-				return
-			}
-			if ssa := buildWith(t, dir, target, "ssa", "ssa"); bytes.Equal(dflt, ssa) {
-				t.Errorf("-backend flat and -backend ssa produced identical images on %s, so this test cannot tell them apart", target)
 			}
 		})
 	}
@@ -71,14 +58,11 @@ func TestUnknownBackendIsRefused(t *testing.T) {
 	}
 }
 
-// The arm64-linux DEFAULT build carries unwind data.
-//
-// TestSSABackendsCarryUnwindData proves the SSA emitter does, but it names
-// `-backend ssa`, and TestNativeLinkPlacesEhFrame builds x86-64-linux. Neither
-// covers what a plain `fern -target arm64-linux` now produces, and that is the
-// build this change alters. A gate that checks a backend by name, while the
-// default moves under it, is how both SSA backends came to ship with no
-// .eh_frame at all in the first place (#9495, #9500).
+// The arm64-linux DEFAULT build carries unwind data. TestNativeLinkPlacesEhFrame
+// builds x86-64-linux; this covers what a plain `fern -target arm64-linux`
+// produces, since a gate that checks a backend by name while the default moves
+// under it is how two backends once shipped with no .eh_frame at all (#9495,
+// #9500).
 func TestArm64DefaultBuildCarriesUnwindData(t *testing.T) {
 	dir := t.TempDir()
 	img := buildWith(t, dir, "arm64-linux", "", "dflt")
@@ -109,25 +93,15 @@ func TestArm64DefaultBuildCarriesUnwindData(t *testing.T) {
 }
 
 // resolveBackend returns what the caller named, and the stack-machine emitter
-// otherwise. There is no per-flag fallback any more: the SSA backend is not
-// any target's default, so there is nothing to fall back FROM, and a build
-// that names it alongside a flag it cannot serve is refused by
-// ssaUnservedFlag rather than quietly re-resolved.
-//
-// It no longer takes the target either — every target answers the same — so
-// the per-target assertion lives in TestDefaultBackendPerTarget, which builds
-// and compares images rather than asking a function that cannot tell them
-// apart.
+// otherwise. It takes no target — every target answers the same — so the
+// per-target assertion lives in TestDefaultBackendPerTarget, which builds and
+// compares images.
 func TestResolveBackendDefaultsToFlat(t *testing.T) {
 	if got := resolveBackend(""); got != "flat" {
 		t.Errorf("resolveBackend(\"\") = %q, want \"flat\"", got)
 	}
-	// A named backend is never second-guessed: the caller said which emitter,
-	// and ssaUnservedFlag is what refuses a combination it cannot serve.
-	for _, name := range []string{"ssa", "typed-ssa", "flat"} {
-		if got := resolveBackend(name); got != name {
-			t.Errorf("an explicit -backend %s resolved to %q", name, got)
-		}
+	if got := resolveBackend("flat"); got != "flat" {
+		t.Errorf("an explicit -backend flat resolved to %q", got)
 	}
 }
 

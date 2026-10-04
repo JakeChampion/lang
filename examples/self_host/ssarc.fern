@@ -9,6 +9,7 @@ import "./ssasem";
 import "./ssalayout";
 import "./ssaunits";
 import "./ssabytes";
+import "./suspend";
 import "./semrecords";
 import "./semtypes";
 import "./typeinfo";
@@ -2752,6 +2753,11 @@ function kind_in(kinds: i32[], k: i32): boolean {
 // Everything that is not a container operation: the constants and a type's
 // zero, a parameter, a copy, a phi, the scalar operators, a call, a closure
 // value and the call through one.
+// unchecked_str_index is a byte read whose index the lowering proved in range.
+function unchecked_str_index(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.str_index() && ins.imm == 1;
+}
+
 function value_op(k: i32): boolean {
   return kind_in([1, 2, 5, 6, 7, 8, ssasem.zero(), ssasem.call()], k) || ssasem.scalar_op(k) || ssasem.is_function_op(k);
 }
@@ -3381,8 +3387,8 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
   if (ins.kind_tag == ssasem.str_bytes()) {
     return emit(r, ir.packed(ir.op_str_bytes()));
   }
-  if (ins.kind_tag == ssasem.str_index() && ins.imm == 1) {
-    return emit(r, ir.op_str_index_nc());
+  if (unchecked_str_index(ins)) {
+    return emit(r, ir.op_raw_load8());
   }
   if (ins.kind_tag == ssasem.str_index()) {
     return emit(r, ir.op_str_index());
@@ -4313,8 +4319,16 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
     r = dyn_site(r, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
-  for arg in ins.args {
-    r = emit(r, ir.op_load_local(arg));
+  if (unchecked_str_index(ins)) {
+    // The string's data address, then the index: hoist_loop_invariants can
+    // lift the address out of a loop that only reads the string.
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_str_data());
+    r = emit(r, ir.op_load_local(ins.args[1]));
+  } else {
+    for arg in ins.args {
+      r = emit(r, ir.op_load_local(arg));
+    }
   }
   if (constant_op(ins.kind_tag)) {
     r = constant(r, f, ins);
@@ -4473,7 +4487,7 @@ function append_push(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   // grows it in place and reclaims it on a realloc.
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, arr_push_op(elem));
+  r = emit(r, ir.Op { ...arr_push_op(elem), i32_imm: 1 });
   r = emit(r, ir.op_store_local(res));
   r = emit(r, ir.op_else());
   // Shared: the NON-consuming push un-shares, which is the same copy
@@ -5595,6 +5609,9 @@ function handle_metadata_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowe
   if (op == "syncfs") {
     return Lowered { found: true, r: emit(r, ir.op_fd_syncfs()) };
   }
+  if (op == "drop_cache") {
+    return Lowered { found: true, r: emit(r, ir.op_fd_drop_cache()) };
+  }
   // A handle is its descriptor, so these are the free ops with the receiver
   // as the first operand, as the AST lowering emits them.
   if (op == "isatty") {
@@ -5622,7 +5639,7 @@ function handle_metadata_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowe
 // contract name, "" for any other name.
 function handle_method(name: string): string {
   let methods: string[] = [
-    "stat", "flags", "seek", "fsync", "fdatasync", "syncfs", "isatty", "dup_onto", "window_size",
+    "stat", "flags", "seek", "fsync", "fdatasync", "syncfs", "drop_cache", "isatty", "dup_onto", "window_size",
     "set_window_size", "termios_get", "termios_set",
   ];
   for m in methods {
@@ -6204,6 +6221,11 @@ function raw_memory_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__free") {
     return Lowered { found: true, r: emit(r, ir.op_free()) };
   }
+  // The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4) are runtime
+  // functions written in Fern, called with the user ABI under `__fern_`.
+  if (util.str_has_prefix(ins.str, "__task_")) {
+    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_" + slice_unchecked(ins.str, 2, ins.str.len()), ins.args.len())) };
+  }
   if (ins.str == "__fern_box_free") {
     return Lowered { found: true, r: box_free(r, ins) };
   }
@@ -6296,6 +6318,7 @@ function raw_floor_ops(): RawOps[] {
     RawOps { name: "__raw_environ", ops: [ir.op_raw_environ()] },
     RawOps { name: "__raw_splice_pipe", ops: [ir.op_raw_splice_pipe()] },
     RawOps { name: "__raw_cover", ops: [ir.op_raw_cover()] },
+    RawOps { name: "__raw_task_state", ops: [ir.op_raw_task_state()] },
     RawOps { name: "__raw_call1", ops: [ir.op_call_indirect(1)] },
     RawOps { name: "__raw_call2", ops: [ir.op_call_indirect(2)] },
     RawOps { name: "__syscall3", ops: [ir.op_syscall3()] },
@@ -6927,7 +6950,9 @@ function place_views(own r: irtables.LowerResult): irtables.LowerResult {
 // by the caller-side bracket.
 // `pure` names the module's functions that reach no observable effect
 // (semlower.pure_rows), the element functions the in-place map may run.
-pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex, view: ssaunits.SchemaView): irtables.LowerResult {
+// `susp` names the module's suspendable rows (suspend.classify); one of them
+// is rewritten to its resumable form before the peepholes.
+pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex, view: ssaunits.SchemaView, susp: suspend.Set): irtables.LowerResult {
   let why: string = validate(f, modes, p, structs, view);
   if (why != "") {
     return empty(why);
@@ -6947,6 +6972,14 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
   e = Emit { ...e, r: aligned_rc(e.r, f) };
   e = Emit { ...e, r: ssabytes.lower_reads(e.r) };
   e = Emit { ...e, r: place_views(e.r) };
+  if (susp.on && susp.rows.has(f.graph.name)) {
+    suspend.dump_if_asked(e.r, "before");
+    e = Emit { ...e, r: suspend.transform(e.r, susp) };
+    suspend.dump_if_asked(e.r, "after");
+    if (!e.r.ok) {
+      return e.r;
+    }
+  }
   let optimized: ir.OptimizedOps = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
   return irtables.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
 }

@@ -4,12 +4,12 @@
 // host calls `wasi:http/incoming-handler@0.2.0#handle(req, out)`
 // per request, the wrapper marshals the canonical-ABI incoming
 // request into the user's `HttpRequest` struct, invokes the
-// user-defined `handle(req: HttpRequest, plat: Platform):
+// user-defined `handle(req: HttpRequest, plat: platform.Platform):
 // HttpResponse`, and streams the response back through
 // `outgoing-body` before handing an `Ok(outgoing-response)` to
 // `response-outparam.set`.
 //
-// HttpRequest / HttpResponse / HeaderMap / Platform are auto-
+// HttpRequest / HttpResponse / HeaderMap are auto-
 // injected at the checker level (see
 // `internal/checker/checker.go` near line 240). The field offsets
 // the wrapper hardcodes must stay in lockstep with the checker's
@@ -25,8 +25,9 @@
 //	HeaderMap    (8 bytes):  names_ptr@+0, values_ptr@+4
 //	Stream       (8 bytes):  data_ptr@+0 (u8[]), pos@+4
 //
-// Platform is deliberately absent from that list: the wrapper never touches
-// its layout, calling the compiler-synthesised `__fern_platform_new` for the
+// The platform is deliberately absent from that list: the wrapper never
+// builds one, calling the checker-synthesised `__fern_wasi_handle`, which
+// hands `handle` the host platform in Fern, for the
 // bag instead.
 //
 // Resource lifetime (matches the WAT path):
@@ -199,7 +200,7 @@ func synthResponse(body []byte, alloc uint32, status int32) []byte {
 //     HeaderMap from fields.entries via the lang-side
 //     __method_HeaderMap_append.
 //  8. Drop the fields handle.
-//  9. Call `__fern_platform_new` for the Platform bag, then user
+//  9. Call `__fern_wasi_handle`, which hands the host platform to the user
 //     `handle(req_struct, plat)`.
 //  10. Read HttpResponse fields (status, body, headers).
 //  11. Build outgoing-response: fields.new → fields.append for
@@ -284,8 +285,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	bytesToStr := idxs["__bytes_to_lang_string"]
 	hmAppend, hasHMAppend := idxs["__method_HeaderMap_append"]
 	bodyBytes, hasBodyBytes := idxs["__method_HttpResponse_body_bytes"]
-	handleFn, hasHandle := idxs["handle"]
-	platformCtor, hasPlatformCtor := idxs["__fern_platform_new"]
+	handleFn, hasHandle := idxs["__fern_wasi_handle"]
 	reqMethod := idxs["wasi_http_request_method"]
 	reqPath := idxs["wasi_http_request_path_with_query"]
 	reqHeaders := idxs["wasi_http_request_headers"]
@@ -779,21 +779,11 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, reqDrop)
 
-	// ================ Build the Platform bag and call handle ================
-	// Through the compiler-synthesised constructor, not by allocating the
-	// struct and storing its fields here: this wrapper is hand-written wasm
-	// and would otherwise carry a second copy of the bag's layout, which is
-	// the copy that goes stale when a capability field lands.
-	if hasPlatformCtor {
-		body = inst.InstCall(body, platformCtor)
-		body = inst.InstLocalSet(body, 25)
-	} else {
-		// No constructor in the module — a handler-less program, whose
-		// `handle` call below is skipped anyway. Keep local 25 defined.
-		body = inst.InstI32Const(body, 0)
-		body = inst.InstLocalSet(body, 25)
-	}
-
+	// ================ Call the handler ================
+	// Through the checker-synthesised `__fern_wasi_handle(req)`, which hands
+	// `handle` the host platform in Fern: this wrapper is hand-written wasm
+	// and cannot instantiate a handler generic over its platform, nor
+	// should it build a platform value out of raw memory.
 	if hasHandle {
 		// A body past the cap never reaches the handler: the response is
 		// a 413 with no body and no headers.
@@ -805,7 +795,6 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 		body = inst.InstElse(body)
 		{
 			body = inst.InstLocalGet(body, 17)
-			body = inst.InstLocalGet(body, 25)
 			body = inst.InstCall(body, handleFn)
 			body = inst.InstLocalSet(body, 18)
 		}

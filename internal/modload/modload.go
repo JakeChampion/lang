@@ -110,9 +110,13 @@ func LoadWithLiterate(entryPath string, overrides map[string]string) (*ast.Progr
 // and cmd/fern-wasm run. In-memory callers only import stdlib (served
 // from the embedded FS), so the synthetic directory is never read.
 func LoadSource(src string) (*ast.Program, map[string]string, error) {
-	const entry = "/__fern_source__/main.fern"
-	return loadCore(entry, map[string]string{entry: src})
+	return loadCore(SourceEntry, map[string]string{SourceEntry: src})
 }
+
+// SourceEntry is the path LoadSource loads its source as: the module path
+// stamped on the entry's declarations and the key of its text in the
+// returned source map.
+const SourceEntry = "/__fern_source__/main.fern"
 
 func loadCore(entryPath string, overrides map[string]string) (*ast.Program, map[string]string, error) {
 	prog, srcs, _, err := loadCoreLit(entryPath, overrides)
@@ -210,12 +214,10 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 		combined.LoadedStdlibPaths[path] = true
 	}
 	var firstErr error
-	for _, mod := range loaded {
-		errs := mod.rewriteAllOpts("", true, skipPaths)
-		for _, e := range errs {
-			if firstErr == nil {
-				firstErr = e
-			}
+	for _, p := range sortedPaths(loaded) {
+		errs := loaded[p].rewriteAllOpts("", true, skipPaths)
+		if len(errs) > 0 && firstErr == nil {
+			firstErr = errs[0]
 		}
 	}
 	if firstErr != nil {
@@ -240,12 +242,7 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 	// randomized, and the combined Program's slice order must be
 	// deterministic so downstream stages emit byte-identical output
 	// across runs (see TestLoadDeterministic).
-	pathsFlat := make([]string, 0, len(loaded))
-	for p := range loaded {
-		pathsFlat = append(pathsFlat, p)
-	}
-	sort.Strings(pathsFlat)
-	for _, p := range pathsFlat {
+	for _, p := range sortedPaths(loaded) {
 		mod := loaded[p]
 		if skipPaths[mod.path] {
 			continue
@@ -1180,6 +1177,7 @@ func importLocalName(path string) string {
 func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) {
 	combined := &ast.Program{
 		ModuleImports:     importClosures(loaded),
+		EntryModule:       entryPath,
 		DirectImports:     directImports(loaded),
 		LoadedStdlibPaths: map[string]bool{},
 	}
@@ -1192,13 +1190,13 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 	if err := resolveReexports(loaded); err != nil {
 		return nil, err
 	}
+	// In path order, so a program with errors in two modules reports the
+	// same one every run.
 	var firstErr error
-	for _, mod := range loaded {
-		errs := mod.rewriteAll(mod.manglePrefix)
-		for _, e := range errs {
-			if firstErr == nil {
-				firstErr = e
-			}
+	for _, p := range sortedPaths(loaded) {
+		errs := loaded[p].rewriteAll(loaded[p].manglePrefix)
+		if len(errs) > 0 && firstErr == nil {
+			firstErr = errs[0]
 		}
 	}
 	if firstErr != nil {
@@ -1212,12 +1210,7 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 	// stage (IR, codegen) and breaks the byte-identical self-host
 	// fixed-point gates and reproducible builds. Pinned by
 	// TestLoadDeterministic.
-	paths := make([]string, 0, len(loaded))
-	for p := range loaded {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	for _, p := range paths {
+	for _, p := range sortedPaths(loaded) {
 		mod := loaded[p]
 		combined.Funcs = append(combined.Funcs, mod.prog.Funcs...)
 		combined.Structs = append(combined.Structs, mod.prog.Structs...)
@@ -1250,6 +1243,17 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 	return combined, nil
 }
 
+// sortedPaths is the loaded modules' paths in order, for walking them the
+// same way every run.
+func sortedPaths(loaded map[string]*module) []string {
+	paths := make([]string, 0, len(loaded))
+	for p := range loaded {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
 // assignManglePrefixes finalises each loaded module's manglePrefix. The
 // entry module gets "" (its decls keep their original names). Every
 // other module defaults to `name + "__"`, preserving the historical
@@ -1265,11 +1269,7 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 // reproducible. stdlib modules are never disambiguated (they keep the
 // bare prefix); a colliding user module is what moves.
 func assignManglePrefixes(loaded map[string]*module, entryPath string) {
-	paths := make([]string, 0, len(loaded))
-	for p := range loaded {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
+	paths := sortedPaths(loaded)
 
 	used := map[string]bool{}
 	// Reserve entry ("") and every stdlib / bare prefix first so a
@@ -1373,11 +1373,7 @@ func (m *module) exportedMangled(name string) (mangled string, isType bool, ok b
 // land in the `reexports` table; types (struct / enum / trait) in
 // `reexportTypes`.
 func resolveReexports(loaded map[string]*module) error {
-	paths := make([]string, 0, len(loaded))
-	for p := range loaded {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
+	paths := sortedPaths(loaded)
 
 	type pending struct {
 		mod     *module
@@ -1741,6 +1737,11 @@ type rewriter struct {
 	skipPaths map[string]bool
 }
 
+// refuse records an error at pos in the module being rewritten.
+func (r *rewriter) refuse(pos ast.Position, format string, args ...any) {
+	r.errs = append(r.errs, &importError{path: r.modPath, pos: pos, msg: fmt.Sprintf(format, args...)})
+}
+
 // packageScopedOK reports whether `name` is a `pub(package)` decl of
 // `mod` that the current module may use (i.e. is in the same package).
 // `handled` is true when `name` is package-scoped at all — so the caller
@@ -1753,8 +1754,7 @@ func (r *rewriter) packageScopedOK(mod *module, name string, pos ast.Position) (
 	if samePackage(r.modPath, mod.path) {
 		return true, true
 	}
-	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is `pub(package)` — only modules in the same package as %s may use it",
-		r.modPath, pos, mod.name, name, mod.name))
+	r.refuse(pos, "%s.%s is `pub(package)` — only modules in the same package as %s may use it", mod.name, name, mod.name)
 	return false, true
 }
 
@@ -1784,8 +1784,7 @@ func (r *rewriter) reportUndeclared(mod *module, name, kind string, pos ast.Posi
 			hint = fmt.Sprintf(" — %q is a method, call it on the value: `x.%s(…)`", m, m)
 		}
 	}
-	r.errs = append(r.errs, fmt.Errorf("%s:%s: module %q has no %s %q%s",
-		r.modPath, pos, mod.name, kind, name, hint))
+	r.refuse(pos, "module %q has no %s %q%s", mod.name, kind, name, hint)
 }
 
 // methodNames is the exported receiver methods, for the hint above. Sorted so
@@ -1881,8 +1880,7 @@ func (r *rewriter) checkPublicFunc(mod *module, fn string, pos ast.Position) {
 	// the checker with no mention of the receiver form they actually want.
 	// Reported here, where the module is still in hand to say so.
 	if mod.publicMethods[fn] && !mod.publicPlainFuncs[fn] {
-		r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is a method — call it on the value: `x.%s(…)`",
-			r.modPath, pos, mod.name, fn, fn))
+		r.refuse(pos, "%s.%s is a method — call it on the value: `x.%s(…)`", mod.name, fn, fn)
 		return
 	}
 	if mod.publicFuncs[fn] {
@@ -1895,8 +1893,7 @@ func (r *rewriter) checkPublicFunc(mod *module, fn string, pos ast.Position) {
 		r.reportUndeclared(mod, fn, "function", pos)
 		return
 	}
-	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub function %s …` to make it accessible from other modules)",
-		r.modPath, pos, mod.name, fn, fn))
+	r.refuse(pos, "%s.%s is not exported (declare it as `pub function %s …` to make it accessible from other modules)", mod.name, fn, fn)
 }
 
 // checkPublicStruct records an error if `name` isn't an exported
@@ -1917,8 +1914,7 @@ func (r *rewriter) checkPublicStruct(mod *module, name string, pos ast.Position)
 		r.reportUndeclared(mod, name, "type", pos)
 		return
 	}
-	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub struct %s …` to make it accessible from other modules)",
-		r.modPath, pos, mod.name, name, name))
+	r.refuse(pos, "%s.%s is not exported (declare it as `pub struct %s …` to make it accessible from other modules)", mod.name, name, name)
 }
 
 // checkPublicValue gates a `mod.X` reference where X is expected
@@ -1945,8 +1941,7 @@ func (r *rewriter) checkPublicValue(mod *module, name string, pos ast.Position) 
 	if mod.allConsts[name] {
 		hint = "const"
 	}
-	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub %s %s …` to make it accessible from other modules)",
-		r.modPath, pos, mod.name, name, hint, name))
+	r.refuse(pos, "%s.%s is not exported (declare it as `pub %s %s …` to make it accessible from other modules)", mod.name, name, hint, name)
 }
 
 // importedModule looks up a local-name binding from this module's
@@ -2422,7 +2417,7 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos
 		}
 		mod, prefix, ok := r.importedModule(*armModule)
 		if !ok {
-			r.errs = append(r.errs, fmt.Errorf("%s:%s: unknown module %q in variant pattern", r.modPath, pos, *armModule))
+			r.refuse(pos, "unknown module %q in variant pattern", *armModule)
 			return
 		}
 		*armModule = mod.path
@@ -2434,8 +2429,7 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos
 			return
 		}
 		if en, private := mod.allVariants[*armName]; private && !mod.publicStructs[*armName] {
-			r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is a variant of enum %s, which is not exported (declare it as `pub enum %s …` to make it accessible from other modules)",
-				r.modPath, pos, mod.name, *armName, en, en))
+			r.refuse(pos, "%s.%s is a variant of enum %s, which is not exported (declare it as `pub enum %s …` to make it accessible from other modules)", mod.name, *armName, en, en)
 			return
 		}
 		*armName = prefix + *armName
@@ -2485,15 +2479,13 @@ func (r *rewriter) qualifiedVariant(mod *module, prefix, name string, pos ast.Po
 	}
 	if en, ok := mod.publicVariants[name]; ok {
 		if en == "" {
-			r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is a variant of more than one exported enum in module %q; match on a value of the enum you mean",
-				r.modPath, pos, mod.name, name, mod.name))
+			r.refuse(pos, "%s.%s is a variant of more than one exported enum in module %q; match on a value of the enum you mean", mod.name, name, mod.name)
 			return "", true
 		}
 		return prefix + en, true
 	}
 	if en, ok := mod.allVariants[name]; ok && !mod.allDecls[name] {
-		r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is a variant of enum %s, which is not exported (declare it as `pub enum %s …` to make it accessible from other modules)",
-			r.modPath, pos, mod.name, name, en, en))
+		r.refuse(pos, "%s.%s is a variant of enum %s, which is not exported (declare it as `pub enum %s …` to make it accessible from other modules)", mod.name, name, en, en)
 		return "", true
 	}
 	return "", false
@@ -2525,7 +2517,7 @@ func (r *rewriter) rewriteStructNameAt(name string, pos ast.Position) string {
 		// surface a clear "unknown module" error.
 		return name
 	}
-	if r.ownStructs[name] || r.ownEnums[name] {
+	if r.ownStructs[name] || r.ownEnums[name] || r.ownTraits[name] {
 		return r.selfPrefix + name
 	}
 	return name

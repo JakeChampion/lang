@@ -80,53 +80,73 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	// generic function that calls another generic (`wrap[T]` calling
 	// `id[T]`) instantiate the callee transitively.
 	var boundErrs []error
+	// instantiate records the instance of gen the type args name, checks
+	// their bounds, and renames id to it; false while an arg is still a type
+	// parameter (a generic caller before its own clone+substitution), which
+	// the clone loop's re-run picks up once the args are concrete.
+	instantiate := func(id *ast.Ident, gen *ast.FuncDecl, typeArgs []ast.Type, pos ast.Position) bool {
+		if hasParamType(typeArgs) {
+			return false
+		}
+		// The bound check the checker deferred. It skips an argument
+		// that is still a type parameter and leaves it "for the
+		// eventual monomorphic call"; this is that call, and until
+		// #8452 nothing was it — the clone's TypeParams are cleared
+		// below, so an unsatisfied bound surfaced as whatever the
+		// missing impl was needed for, under a compiler-bug banner.
+		boundErrs = append(boundErrs, checker.BoundErrors(info, gen, typeArgs, pos)...)
+		mang := mangle(id.Name, typeArgs)
+		instantiations[instKey{name: id.Name, mang: mang}] = typeArgs
+		id.Name = mang
+		return true
+	}
 	collectCalls := func(body *ast.Block) {
-		walkBlock(body, func(c *ast.Call) {
-			id, ok := c.Callee.(*ast.Ident)
-			if !ok {
-				return
+		if body == nil {
+			return
+		}
+		ast.Walk(body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.Call:
+				id, ok := x.Callee.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				gen, isGen := info.GenericFuncs[id.Name]
+				if !isGen || len(x.TypeArgs) != len(gen.TypeParams) {
+					// Checker should have populated TypeArgs; if it
+					// didn't, the call was already flagged as an
+					// inference failure and we leave it alone (the
+					// downstream stages will see a still-generic
+					// callee and report a clearer error).
+					return true
+				}
+				if !instantiate(id, gen, x.TypeArgs, x.P) {
+					return true
+				}
+				// The checker may have stamped the callee's type
+				// parameters onto the argument expressions (e.g. an
+				// array literal passed for a `T[]` param gets ElemType=T);
+				// rewrite those from the concrete TypeArgs.
+				sub := make(map[string]ast.Type, len(gen.TypeParams))
+				for i, name := range gen.TypeParams {
+					sub[name] = x.TypeArgs[i]
+				}
+				for _, arg := range x.Args {
+					substituteNode(arg, sub)
+				}
+				x.TypeArgs = nil
+			case *ast.Ident:
+				// A generic named as a value, instantiated from the
+				// function type the checker read it at.
+				gen, isGen := info.GenericFuncs[x.Name]
+				if !isGen || len(x.TypeArgs) != len(gen.TypeParams) {
+					return true
+				}
+				if instantiate(x, gen, x.TypeArgs, x.P) {
+					x.TypeArgs = nil
+				}
 			}
-			gen, isGen := info.GenericFuncs[id.Name]
-			if !isGen {
-				return
-			}
-			if len(c.TypeArgs) != len(gen.TypeParams) {
-				// Checker should have populated TypeArgs; if it
-				// didn't, the call was already flagged as an
-				// inference failure and we leave it alone (the
-				// downstream stages will see a still-generic
-				// callee and report a clearer error).
-				return
-			}
-			if hasParamType(c.TypeArgs) {
-				// Still parametric (a generic caller before its own
-				// clone+substitution): leave it for the clone loop,
-				// which re-runs collectCalls once the args are
-				// concrete.
-				return
-			}
-			// The bound check the checker deferred. It skips an argument
-			// that is still a type parameter and leaves it "for the
-			// eventual monomorphic call"; this is that call, and until
-			// #8452 nothing was it — the clone's TypeParams are cleared
-			// below, so an unsatisfied bound surfaced as whatever the
-			// missing impl was needed for, under a compiler-bug banner.
-			boundErrs = append(boundErrs, checker.BoundErrors(info, gen, c.TypeArgs, c.P)...)
-			mang := mangle(id.Name, c.TypeArgs)
-			instantiations[instKey{name: id.Name, mang: mang}] = c.TypeArgs
-			id.Name = mang
-			// The checker may have stamped the callee's type
-			// parameters onto the argument expressions (e.g. an
-			// array literal passed for a `T[]` param gets ElemType=T);
-			// rewrite those from the concrete TypeArgs.
-			sub := make(map[string]ast.Type, len(gen.TypeParams))
-			for i, name := range gen.TypeParams {
-				sub[name] = c.TypeArgs[i]
-			}
-			for _, arg := range c.Args {
-				substituteNode(arg, sub)
-			}
-			c.TypeArgs = nil
+			return true
 		})
 	}
 
@@ -777,7 +797,12 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		}
 		return fmt.Errorf("monomorph: re-check failed (compiler bug): %w", err)
 	}
+	// The re-check reads the monomorphised program, from which an
+	// uninstantiated generic `handle` is gone; what the checker found on the
+	// program as written stays found.
+	stateful := info.StatefulHandler
 	*info = *newInfo
+	info.StatefulHandler = info.StatefulHandler || stateful
 	return nil
 }
 
@@ -1221,6 +1246,10 @@ func substituteNode(n ast.Node, sub map[string]ast.Type) {
 				x.TypeArgs[i] = substituteType(x.TypeArgs[i], sub)
 			}
 			substituteAssocReceiver(x, sub)
+		case *ast.Ident:
+			for i := range x.TypeArgs {
+				x.TypeArgs[i] = substituteType(x.TypeArgs[i], sub)
+			}
 		case *ast.MapLit:
 			x.KeyType = substituteType(x.KeyType, sub)
 			x.ValueType = substituteType(x.ValueType, sub)
@@ -1696,6 +1725,10 @@ func rewriteBlockTypes(b *ast.Block, info *checker.Info, into map[instKey][]ast.
 			for i := range x.TypeArgs {
 				x.TypeArgs[i] = rewrite(x.TypeArgs[i])
 			}
+		case *ast.Ident:
+			for i := range x.TypeArgs {
+				x.TypeArgs[i] = rewrite(x.TypeArgs[i])
+			}
 		case *ast.MapLit:
 			x.KeyType = rewrite(x.KeyType)
 			x.ValueType = rewrite(x.ValueType)
@@ -1720,20 +1753,6 @@ func rewriteBlockTypes(b *ast.Block, info *checker.Info, into map[instKey][]ast.
 				x.Params[i].Type = rewrite(x.Params[i].Type)
 			}
 			x.ReturnType = rewrite(x.ReturnType)
-		}
-		return true
-	})
-}
-
-// walkBlock invokes fn on every Call expression reachable from the block —
-// generic call sites, the only thing the monomorph pass rewrites.
-func walkBlock(b *ast.Block, fn func(*ast.Call)) {
-	if b == nil {
-		return
-	}
-	ast.Walk(b, func(n ast.Node) bool {
-		if c, ok := n.(*ast.Call); ok {
-			fn(c)
 		}
 		return true
 	})

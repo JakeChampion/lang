@@ -270,6 +270,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E040 (#10453). The self-host dropped the written arguments.
 		{"struct-literal-written-instantiation-not-widened", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { let q = Same[i32] { a: 1, b: 4611686018427387904 }; return 0; }\n", []string{"E047"}},
 		{"struct-literal-written-arity", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { let q = Same[i64, i32] { a: 1, b: 2 }; return 0; }\n", []string{"E040"}},
+		// A free call that writes its type arguments is what it writes too: the
+		// arguments are held to them, and neither the shared-literal widening
+		// nor the destination's width reaches them (#11329).
+		{"call-written-type-arg-contradicted", "struct Item { name: string }\nfunction ident[T](v: T): T { return v; }\nfunction main(): i32 { let x: Item = ident[Item](1); return 0; }\n", []string{"E038"}},
+		{"call-written-instantiation-not-widened", "function big2[T](a: T, b: T): T { return a; }\nfunction use64(x: i64): i64 { return x; }\nfunction main(): i32 { use64(big2[i32](4611686018427387904, 1)); return 0; }\n", []string{"E038", "E047"}},
+		{"call-written-i32-read-at-i64", "function big2[T](a: T, b: T): T { return a; }\nfunction use64(x: i64): i64 { return x; }\nfunction main(): i32 { use64(big2[i32](3, 1)); return 0; }\n", []string{"E038"}},
 		{"struct-literal-written-i64-read-narrow", "struct Box[T] { v: T }\nfunction main(): i32 { let q = Box[i64] { v: 4 }; let r: i32 = q.v; return 0; }\n", []string{"E003"}},
 		// A written argument is validated as an annotation is, a type
 		// variable in it is the enclosing function's, and a struct-update
@@ -2057,6 +2063,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"match-guard-bool-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has(n) when n > 0 => { return n; }, _ => { return 0; } } }\n", nil},
 		// E015: variant pattern binding count must match the variant's payload count.
 		{"variant-too-many-bindings", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has(a, b) => { return a; }, Nil => { return 0; } } }\n", []string{"E015"}},
+		// A bare payload-less variant name in a GENERIC payload slot is a
+		// binder too: which enum the slot holds comes from the scrutinee's
+		// instantiation (#11368). A variant with a payload is a plain binder.
+		{"generic-slot-payloadless-binder-option", "function f(): Option[IoError] { return None; }\nfunction main(): i32 { match (f()) { Some(Unsupported) => { return 0; }, _ => { return 1; } } }\n", []string{"E015"}},
+		{"generic-slot-payloadless-binder-result", "function f(): Result[i32, IoError] { return Ok(1); }\nfunction main(): i32 { match (f()) { Ok(n) => { return n; }, Err(Interrupted) => { return 0; } } }\n", []string{"E015"}},
+		{"generic-slot-payloadless-binder-user", "enum Box[T] { Full(T), Empty }\nenum C { Red, Blue }\nfunction main(): i32 { let b: Box[C] = Full(Red); match (b) { Full(Blue) => { return 1; }, Empty => { return 0; } } }\n", []string{"E015"}},
+		{"generic-slot-payload-variant-name-binds", "function f(): Option[IoError] { return None; }\nfunction main(): i32 { match (f()) { Some(NotFound) => { return 0; }, _ => { return 1; } } }\n", nil},
 		{"variant-missing-binding", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has => { return 1; }, Nil => { return 0; } } }\n", []string{"E015"}},
 		{"variant-binding-arity-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
 		// E015 continued: a RECORD-form variant (#6676) is destructured by field
@@ -2957,6 +2970,22 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"method-enum-recv-bound-result-len", "enum Box[T] { Full(T), Empty }\nfunction (b: Box[T]) get_or(d: T): T { match (b) { Full(x) => { return x; }, Empty => { return d; } } }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { let o: Box[string] = Full(\"vw\"); return o.get_or(\"\").len(); }\n"},
 		{"method-struct-recv-bound-arg-mismatch", "struct Hold[T] { v: T }\nfunction (h: Hold[T]) or_else(d: T): T { if (h.v == d) { return d; } return h.v; }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { let h: Hold[i32] = Hold { v: 3 }; return h.or_else(\"x\"); }\n"},
 		{"method-struct-recv-bound-result-len", "struct Hold[T] { v: T }\nfunction (h: Hold[T]) or_else(d: T): T { if (h.v == d) { return d; } return h.v; }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { let h: Hold[string] = Hold { v: \"ab\" }; return h.or_else(\"x\").len(); }\n"},
+		// A parameter typed by a trait is an anonymous generic; a trait
+		// anywhere else is still no type.
+		{"trait-param-generic", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction total(a: Shape, b: Shape): i32 { return a.area() + b.area(); }\nfunction main(): i32 { return total(Sq { s: 1 }, Sq { s: 2 }); }\n"},
+		{"trait-param-missing-impl", "trait Shape { function area(self: Self): i32; }\nfunction total(a: Shape): i32 { return a.area(); }\nfunction main(): i32 { return total(5); }\n"},
+		{"trait-param-with-type-arguments", "trait Sink[T] { function put(self: Self, v: T): i32; }\nstruct Acc { n: i32 }\nimpl Sink[i32] for Acc { function put(self: Acc, v: i32): i32 { return self.n + v; } }\nfunction feed(s: Sink[i32]): i32 { return s.put(4); }\nfunction main(): i32 { return feed(Acc { n: 3 }); }\n"},
+		{"trait-param-array-is-not-the-trait", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction total(xs: Shape[]): i32 { return 7; }\nfunction main(): i32 { return 0; }\n"},
+		{"trait-param-beside-undeclared-type", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction total(a: Shape, b: Wibble): i32 { return a.area(); }\nfunction main(): i32 { return 0; }\n"},
+		{"generic-param-beside-undeclared-type", "function first[T](a: T, b: Wibble): T { return a; }\nfunction main(): i32 { return 0; }\n"},
+		{"trait-as-return-type", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction make(): Shape { return Sq { s: 1 }; }\nfunction main(): i32 { return 0; }\n"},
+
+		// A generic named as a value takes its type arguments from the
+		// function type it is wanted at; a position with none is E040.
+		{"fn-value-argument", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction measure[T: Shape](s: T): i32 { return s.area(); }\nfunction apply(f: (Sq) => i32, v: Sq): i32 { return f(v); }\nfunction main(): i32 { return apply(measure, Sq { s: 3 }); }\n"},
+		{"fn-value-let-and-generic-callee", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction measure[T: Shape](s: T): i32 { return s.area(); }\nfunction twice[A](f: (A) => i32, v: A): i32 { return f(v) * 2; }\nfunction main(): i32 { let g: (Sq) => i32 = measure; return g(Sq { s: 1 }) + twice(measure, Sq { s: 1 }); }\n"},
+		{"fn-value-bound-unmet", "trait Shape { function area(self: Self): i32; }\nfunction measure[T: Shape](s: T): i32 { return s.area(); }\nfunction apply_i(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 { return apply_i(measure, 3); }\n"},
+		{"fn-value-unannotated-let", "function ident[T](x: T): T { return x; }\nfunction main(): i32 { let f = ident; return 0; }\n"},
 		{"loop-string-byte-binding", `function f(text: string): i32 { let out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
 		{"loop-string-byte-mismatch", `function f(text: string): i32 { for ch in text { let wrong: string = ch; } return 0; }`},
 		{"loop-str-byte-binding", `function f(text: str): i32 { let out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
@@ -3553,6 +3582,10 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"derive-qualified-field-no-impl", "import \"core/cmp\";\nstruct Q { n: i32 }\n@derive(cmp.Eq)\nstruct P { q: Q }\nfunction main(): i32 { return 0; }\n"},
 		{"derive-aliased-bound-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction same[T: c.Eq](a: T, b: T): boolean { return a.eq(b); }\nfunction main(): i32 { let p: P = P { n: 1 }; if (same(p, p)) { return 3; } return 0; }\n"},
 		{"derive-unknown-qualifier", "@derive(cmp.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
+		// An entry const named like an imported variant shadows it in the
+		// entry and never reaches the importing module's bodies (#11143).
+		{"entry-const-named-like-imported-variant", "import \"std/dns\";\nconst A: i32 = 1;\nfunction main(): i32 { print(A.to_string()); return 0; }\n"},
+		{"entry-const-named-like-imported-variant-e003", "import \"std/dns\";\nconst A: i32 = 1;\nfunction main(): i32 { let s: string = A; return 0; }\n"},
 		// An imported module's struct named without its qualifier (#10965):
 		// E064 on the annotation with E003 beside it, and E043 on the literal,
 		// never a clean pass that the lowering then refuses.
@@ -3780,6 +3813,9 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"map-bundled-no-import", "function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		{"map-bundled-direct-import", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		{"map-bundled-transitive-import", "import \"std/json\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
+		// An imported trait as a parameter type is desugared against the
+		// modules this loader resolved, which record no `resolved` identity.
+		{"trait-param-imported", "import \"core/cmp\";\nfunction describe(s: cmp.Display): string { return s.to_string(); }\nfunction main(): i32 { return describe(1).len(); }\n"},
 		// #10095's escape, which only the bundled table can see: core/map's own
 		// receiver methods are not runtime builtins, they reach the Map
 		// namespace through the method table once the module is loaded. The

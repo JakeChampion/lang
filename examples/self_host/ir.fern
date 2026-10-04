@@ -7,8 +7,8 @@
 //
 // RC is lowered to IR once here and each backend instruction-selects an
 // opcode, rather than every backend hand-writing its own RC emission.
-// (ssa.fern mirrors the DOWNSTREAM optimiser `internal/ssa`, which native
-// lifts FROM this IR; it is a different, higher layer.)
+// (ssa.fern is the DOWNSTREAM optimiser, lifted FROM this IR; it is a
+// different, higher layer.)
 //
 // Representation (mirrors internal/ir/ir.go, but pointer-free — the
 // self-host's value-semantics style, matching ssa.fern: a function body is
@@ -392,6 +392,8 @@ pub function op_arr_push(): Op {
 // the dominant self-host-emitted leak that OOMed the per-module self-compile of
 // the large modules (#3452 / #3425). Register-backend only difference from
 // arr_push is the helper called; element width is unchanged (8-byte slot).
+// An i32_imm of 1 on any owned push says the receiver was just tested unique,
+// so the push needs no count test of its own.
 pub function op_arr_push_owned(): Op {
   return op0(93);
 }
@@ -573,12 +575,6 @@ pub function op_str_index(): Op {
   return op0(101);
 }
 
-// op_str_index_nc is the byte read with its bounds check elided (i32_imm 1), for
-// an index the lowering proved below the length, as op_arr_get_nc is.
-pub function op_str_index_nc(): Op {
-  return Op { ...op0(101), i32_imm: 1 };
-}
-
 // `str_slice` pops [str, start, end] → a fresh string for `s[start:end]`. On
 // x86/arm64 this is a zero-copy VIEW: a new 16-byte box [data = src.data+start,
 // len = end-start] sharing the source bytes. On wasm, strings are inline blocks
@@ -688,6 +684,13 @@ pub function op_raw_environ(): Op {
 // before the first) and, in the third word, the writer it last grew.
 pub function op_raw_splice_pipe(): Op {
   return op0(331);
+}
+
+// raw_task_state: pops nothing → the address of __fern_task_state, the words
+// the task runtime keeps between calls: the current task's id, its record
+// table and that table's capacity (docs/NET-P3-SUSPENSION-PLAN.md §3.4).
+pub function op_raw_task_state(): Op {
+  return op0(367);
 }
 
 // raw_cover: pops nothing → the address of __fern_cov_counters, the word
@@ -2090,6 +2093,13 @@ pub function op_fd_fdatasync(): Op {
 
 pub function op_fd_syncfs(): Op {
   return op0(301);
+}
+
+// `fd_drop_cache` pops [fd, offset, len] and pushes Option[IoError]:
+// posix_fadvise(2) with POSIX_FADV_DONTNEED over that range of the handle's
+// file. Backs `r.drop_cache(offset, len)` / `w.drop_cache(offset, len)`.
+pub function op_fd_drop_cache(): Op {
+  return op0(366);
 }
 
 // `fd_dup_onto` pops [fd, newfd] and pushes Option[IoError]: dup3(2) of the
@@ -4159,6 +4169,9 @@ function kind_id_len12_s(name: string): i32 {
 }
 
 function kind_id_len13(name: string): i32 {
+  if (name == "fd_drop_cache") {
+    return 366;
+  }
   if (name == "rmemchr_bytes") {
     return 360;
   }
@@ -4208,6 +4221,9 @@ function kind_id_len13(name: string): i32 {
 function kind_id_len14(name: string): i32 {
   if (name == "scan_set_bytes") {
     return 361;
+  }
+  if (name == "raw_task_state") {
+    return 367;
   }
   if (name == "udp_send_bytes") {
     return 354;
@@ -5082,6 +5098,9 @@ function kind_name_4(id: i32): string {
   if (id == 287) {
     return "raw_cover";
   }
+  if (id == 367) {
+    return "raw_task_state";
+  }
   if (id == 208) {
     return "udp_send";
   }
@@ -5307,6 +5326,9 @@ function kind_name_4(id: i32): string {
   if (id == 281) {
     return "writer_truncate";
   }
+  if (id == 366) {
+    return "fd_drop_cache";
+  }
   if (id == 282) {
     return "priority";
   }
@@ -5511,6 +5533,7 @@ function pops0(t: i32): boolean {
     || t == 207 || t == 211  // raw_environ, proc_fork
     || t == 331  // raw_splice_pipe
     || t == 287  // raw_cover
+    || t == 367  // raw_task_state
     || t == 216 || t == 217 || t == 218  // arr_push_shared_*, const_struct
     || t == 222  // map_hash_seed
     || t == 238 || t == 239 || t == 240  // geteuid, getegid, hostname
@@ -5558,7 +5581,7 @@ function pops1_io(t: i32): boolean {
     || t == 169 || t == 233 || t == 171 || t == 172 || t == 173  // read_file, read_file_bytes, read_dir, remove_dir_all, remove_file
     || t == 340  // unix_connect (path)
     || t == 310  // read_dir_all
-    || t == 174 || t == 175 || t == 176 || t == 179 || t == 181  // temp_dir, stat, env, reader_close, sleep_ms
+    || t == 174 || t == 175 || t == 236 || t == 176 || t == 179 || t == 181  // temp_dir, stat, lstat, env, reader_close, sleep_ms
     || t == 266  // sleep_ns
     || t == 168  // read_line (fd)
     || t == 231 || t == 232  // create_dir_all, isatty
@@ -5638,7 +5661,8 @@ function pops3(t: i32): boolean {
     || t == 314  // set_window_size (fd, rows, cols)
     || t == 324  // scan_set (str, from, set)
     || t == 327  // count_runs (str, inside, set)
-    || t == 364 || t == 365;  // setxattr, lsetxattr (path, name, value)
+    || t == 364 || t == 365  // setxattr, lsetxattr (path, name, value)
+    || t == 366;  // fd_drop_cache (fd, offset, len)
 }
 
 // pops_buf is the operand count of one of the capacity-carrying string
@@ -5790,6 +5814,25 @@ function kind_pops(t: i32): i32 {
 // invariant holds op for op. The exceptions are the ops that are not
 // expressions: the two that consume a value outright, and structured control
 // flow, whose scopes are all void.
+// pure_value_op reports an op that reads its operands and pushes one value
+// with no other effect: a constant, a local load, an element, field, tuple
+// or byte read, a length, or an arithmetic, comparison or conversion op. The
+// suspension pass runs such an op twice when it feeds a call site, once in
+// normal mode and once more on a rewind.
+pub function pure_value_op(o: Op): boolean {
+  let t: i32 = o.kind_tag;
+  if (t == 1 || t == 3 || t == 4 || t == 5 || t == 6 || t == 218 || t == 18) {
+    return true;
+  }
+  if (t == 88 || t == 139 || t == 143 || t == 90 || t == 97 || t == 101) {
+    return true;
+  }
+  if (t == 19 || t == 20) {
+    return false;
+  }
+  return pops2_arith(t) || pops1_conv(t);
+}
+
 pub function op_pushes(o: Op): i32 {
   let t: i32 = o.kind_tag;
   if (t == 19 || t == 159) {  // store_local, drop
@@ -7152,6 +7195,20 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32): Opti
     pre = pre.append(op_store_local(cur.n_locals + n));
     n = n + 1;
   }
+  // The header reads each operand's length, so its box is valid wherever the
+  // loop is reached, and its data address may be read there too.
+  let data_for: i32[] = licm_data_slots(ops, loop_idx, end, slot_for, cur.n_locals + n);
+  let slots: i32 = n;
+  let d: i32 = 0;
+  while (d < data_for.len()) {
+    if (data_for[d] >= 0) {
+      pre = pre.append(op_load_local(d));
+      pre = pre.append(op_str_data());
+      pre = pre.append(op_store_local(data_for[d]));
+      slots = slots + 1;
+    }
+    d = d + 1;
+  }
   let out: Op[] = [];
   let j: i32 = 0;
   while (j < loop_idx) {
@@ -7164,18 +7221,52 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32): Opti
     p = p + 1;
   }
   out = out.append(ops[loop_idx]);
+  let k_load: i32 = kind_id("load_local");
+  let k_len: i32 = kind_id("str_len");
+  let k_data: i32 = kind_id("str_data");
   j = loop_idx + 1;
   while (j < ops.len()) {
-    let slot: i32 = licm_cached_len(ops, j, hdr_end, slot_for);
+    let slot: i32 = 0 - 1;
+    if (j + 1 < end && ops[j].kind_tag == k_load) {
+      let src: i32 = ops[j].i32_imm;
+      if (j + 1 < hdr_end && ops[j + 1].kind_tag == k_len) {
+        slot = slot_for[src];
+      } else if (ops[j + 1].kind_tag == k_data && src < data_for.len()) {
+        slot = data_for[src];
+      }
+    }
     if (slot >= 0) {
       out = out.append(op_load_local(slot));
-      j = j + 2;  // the str_len is consumed with the load
+      j = j + 2;  // the str_len or str_data is consumed with the load
     } else {
       out = out.append(ops[j]);
       j = j + 1;
     }
   }
-  return OptimizedOps { ops: out, n_locals: cur.n_locals + order.len() };
+  return OptimizedOps { ops: out, n_locals: cur.n_locals + slots };
+}
+
+// licm_data_slots gives each hoisted operand (slot_for) whose data address
+// the loop reads its cache slot, numbered on from `next`; -1 for the rest.
+function licm_data_slots(ops: Op[], loop_idx: i32, end: i32, slot_for: i32[], next: i32): i32[] {
+  let k_load: i32 = kind_id("load_local");
+  let k_data: i32 = kind_id("str_data");
+  let out: i32[] = [];
+  while (out.len() < slot_for.len()) {
+    out = out.append(0 - 1);
+  }
+  let j: i32 = loop_idx + 1;
+  while (j + 1 < end) {
+    if (ops[j].kind_tag == k_load && ops[j + 1].kind_tag == k_data) {
+      let src: i32 = ops[j].i32_imm;
+      if (src < slot_for.len() && slot_for[src] >= 0 && out[src] < 0) {
+        out = out.with(src, next);
+        next = next + 1;
+      }
+    }
+    j = j + 1;
+  }
+  return out;
 }
 
 // licm_candidates is every local the header takes a length of without the
@@ -7207,18 +7298,6 @@ function licm_listed(order: i32[], src: i32): boolean {
     i = i + 1;
   }
   return false;
-}
-
-// licm_cached_len is the cache slot when ops[j] ; ops[j + 1] is a header read
-// `load_local src ; str_len` of a hoisted operand, else -1.
-function licm_cached_len(ops: Op[], j: i32, hdr_end: i32, slot_for: i32[]): i32 {
-  if (j + 1 >= hdr_end) {
-    return 0 - 1;
-  }
-  if (ops[j].kind_tag != kind_id("load_local") || ops[j + 1].kind_tag != kind_id("str_len")) {
-    return 0 - 1;
-  }
-  return slot_for[ops[j].i32_imm];
 }
 
 // licm_header_end is one past the last op that runs unconditionally on
@@ -8127,9 +8206,9 @@ pub function op_allocates(tag: i32): boolean {
     return true;
   }
   // fd_stat boxes the same pair; reader_seek, reader_splice and fd_flags
-  // box their Result[i64, IoError]; writer_truncate boxes its
-  // Option[IoError].
-  if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330) {
+  // box their Result[i64, IoError]; writer_truncate and fd_drop_cache box
+  // their Option[IoError].
+  if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330 || tag == 366) {
     return true;
   }
   // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr

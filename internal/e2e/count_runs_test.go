@@ -166,11 +166,3 @@ func TestWASMCountRuns(t *testing.T) {
 		return strings.Join(lines[:len(lines)-1], "\n")
 	})
 }
-
-func TestX86_64SSACountRuns(t *testing.T) {
-	runCountRunsCorpus(t, x86_64SSACorpusRunner(t))
-}
-
-func TestArm64SSACountRuns(t *testing.T) {
-	runCountRunsCorpus(t, arm64SSACorpusRunner(t))
-}

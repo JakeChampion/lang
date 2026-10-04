@@ -4,7 +4,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/e2eharness"
@@ -16,7 +15,7 @@ func TestDircolorsRawBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []string{"interp", "arm64-darwin", "x86-64-linux", "arm64-linux", "x86-64-linux-ssa", "arm64-linux-ssa", "wasm32-wasi", "wasm32-preview2"} {
+	for _, target := range []string{"interp", "arm64-darwin", "x86-64-linux", "arm64-linux", "wasm32-wasi", "wasm32-preview2"} {
 		t.Run(target, func(t *testing.T) {
 			if target == "interp" {
 				// The CLI separates program arguments from its source with --.
@@ -24,7 +23,7 @@ func TestDircolorsRawBytes(t *testing.T) {
 				return
 			}
 			var runner []string
-			actual := strings.TrimSuffix(target, "-ssa")
+			actual := target
 			switch actual {
 			case "arm64-darwin":
 				if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
@@ -45,11 +44,7 @@ func TestDircolorsRawBytes(t *testing.T) {
 				actual = "wasm32-wasi"
 			}
 			bin := filepath.Join(t.TempDir(), "dircolors")
-			backend := "flat"
-			if strings.HasSuffix(target, "-ssa") {
-				backend = "ssa"
-			}
-			args := []string{"-backend", backend, "-target", actual, "-o", bin}
+			args := []string{"-target", actual, "-o", bin}
 			if target == "wasm32-wasi" {
 				args = append(args, "-emit", "command-module")
 			}

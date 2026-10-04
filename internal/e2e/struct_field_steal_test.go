@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -63,32 +62,6 @@ function zipf(a: View, b: View): i32 {
 const structFieldStealSrc = structFieldStealBody + `
 function main(): i32 { return verdict(); }
 `
-
-// The two SSA legs read a printed verdict rather than an exit status, the
-// same way the kernel corpus does.
-const structFieldStealPrintingSrc = structFieldStealBody + `
-function main(): i32 {
-    write(verdict().to_string());
-    write("\n");
-    return 0;
-}
-`
-
-func structFieldStealVerdict(t *testing.T, out string) {
-	t.Helper()
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if got := strings.TrimSpace(lines[len(lines)-1]); got != "42" {
-		t.Errorf("struct field steal verdict = %q, want 42 (1/2 = a field was stolen from a live struct, 3 = the bound form regressed)\noutput:\n%s", got, out)
-	}
-}
-
-func TestArm64SSAStructFieldSteal(t *testing.T) {
-	structFieldStealVerdict(t, arm64SSACorpusRunner(t)(t, structFieldStealPrintingSrc))
-}
-
-func TestX86_64SSAStructFieldSteal(t *testing.T) {
-	structFieldStealVerdict(t, x86_64SSACorpusRunner(t)(t, structFieldStealPrintingSrc))
-}
 
 func TestInterpStructFieldSteal(t *testing.T) {
 	if got := runInterpExit(t, structFieldStealSrc); got != 42 {

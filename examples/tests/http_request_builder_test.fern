@@ -1,15 +1,16 @@
 import "std/test";
 import "std/http";
 import "std/mock_platform";
+import "std/platform";
 
 // examples/tests/http_request_builder_test.fern — testing a handler without
 // a socket (#9854): `http.request(method, path)` builds the request, a
-// `MockPlatform`'s bag stands in for the host, and `std/test`'s HTTP
+// `mock_platform.MockPlatform`'s bag stands in for the host, and `std/test`'s HTTP
 // assertions read the response back.
 
 // The handler under test: echoes a JSON body back as created, names the
 // caller from a header, and turns anything else away.
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   if (req.method == "POST" && req.path == "/items") {
     match (req.headers.get("content-type")) {
       Some(ct) => {
@@ -45,12 +46,12 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 }
 
 function test_json_body_is_created(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   let req: HttpRequest = http.request("POST", "/items").with_json("{\"n\": 1}");
   if (req.body_len() != 8) {
     return test.fail("body length: " + req.body_len().to_string());
   }
-  let resp: HttpResponse = handle(req, m.as_platform());
+  let resp: HttpResponse = handle(req, m);
   match (test.assert_status(resp, 200)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -82,8 +83,8 @@ function test_json_body_is_created(): test.TestOutcome {
 }
 
 function test_body_without_its_type_is_refused(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
-  let resp: HttpResponse = handle(http.request("POST", "/items").with_body("{}"), m.as_platform());
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("POST", "/items").with_body("{}"), m);
   match (test.assert_status(resp, 415)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -94,8 +95,8 @@ function test_body_without_its_type_is_refused(): test.TestOutcome {
 }
 
 function test_header_names_the_caller(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
-  let resp: HttpResponse = handle(http.request("GET", "/whoami").with_header("X-Caller", "ada"), m.as_platform());
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("GET", "/whoami").with_header("X-Caller", "ada"), m);
   match (test.assert_status(resp, 200)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -113,8 +114,8 @@ function test_bare_request_has_nothing(): test.TestOutcome {
   if (req.headers.len() != 0 || req.body_len() != 0 || req.trailers.len() != 0) {
     return test.fail("a bare request carries something");
   }
-  let m: MockPlatform = mock_platform.mock_platform_new();
-  return test.assert_status(handle(req, m.as_platform()), 401);
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  return test.assert_status(handle(req, m), 401);
 }
 
 function main(): i32 {

@@ -44,7 +44,7 @@ pub function http_entry_missing(entry: parser.Module, target: string): string {
     }
     i = i + 1;
   }
-  return "fern: -target wasm32-wasi-http: the program declares no `function handle(req: HttpRequest, plat: Platform): HttpResponse` for the host to call";
+  return "fern: -target wasm32-wasi-http: the program declares no `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse` for the host to call";
 }
 
 // http_refused is what a caller prints when wasm_http_component's composer

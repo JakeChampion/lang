@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // --- The use-after-free quarantine (the native RcFreeDebug port) -------------
@@ -46,8 +47,8 @@ const uafSelfHostIncSrc = `function main(): i32 {
 func TestSelfHostUafIncAfterFreeReportedX86_64(t *testing.T) {
 	bin, runner := sanSelfHostBuild(t, "uaf_inc", uafSelfHostIncSrc, []string{"FERN_SANITIZE=1"})
 	stderr, code := hevRun(t, runner, bin)
-	if code != sanExitStatus {
-		t.Errorf("exit=%d, want %d (a quarantine finding is fatal)", code, sanExitStatus)
+	if code != e2eharness.ExitSanitizer {
+		t.Errorf("exit=%d, want %d (a quarantine finding is fatal)", code, e2eharness.ExitSanitizer)
 	}
 	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)\n") {
 		t.Errorf("stderr does not carry the diagnostic: %q", stderr)
@@ -59,8 +60,8 @@ func TestSelfHostUafIncAfterFreeReportedX86_64(t *testing.T) {
 func TestSelfHostUafStandaloneFlagX86_64(t *testing.T) {
 	bin, runner := sanSelfHostBuild(t, "uaf_alone", uafSelfHostIncSrc, []string{"FERN_RC_FREE_DEBUG=1"})
 	stderr, code := hevRun(t, runner, bin)
-	if code != sanExitStatus {
-		t.Errorf("exit=%d, want %d", code, sanExitStatus)
+	if code != e2eharness.ExitSanitizer {
+		t.Errorf("exit=%d, want %d", code, e2eharness.ExitSanitizer)
 	}
 	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)\n") {
 		t.Errorf("stderr does not carry the diagnostic: %q", stderr)

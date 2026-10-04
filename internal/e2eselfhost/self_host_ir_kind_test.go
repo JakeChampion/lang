@@ -53,7 +53,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	const want = "kind_count=188\n" +
 		"bijection_ok=188\n" +
 		"bijection_failures=0\n" +
-		"ext_ok=155\n" +
+		"ext_ok=157\n" +
 		"ext_failures=0\n" +
 		"neg_ok=14\n" +
 		"neg_failures=0\n" +
@@ -68,7 +68,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"is_term return=1 br=1 exit=1 brif=0\n" +
 		"is_fold add=1 div_s=1 ge_s=1 fadd=0\n" +
 		"is_commute add=1 xor=1 sub=0 shl=0\n" +
-		"tag_consistency ok=156 bad=0\n"
+		"tag_consistency ok=158 bad=0\n"
 
 	// The report ends with every registered tag's id in id order, pinned by
 	// testdata/ir-kind-ids.txt. The backends dispatch on literal ids, so this
@@ -113,9 +113,6 @@ func TestSelfHostIROpConstructorTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A constructor whose name is not its kind's: str_index_nc is str_index
-	// with the bounds check off.
-	alias := map[string]string{"str_index_nc": "str_index"}
 	ctor := regexp.MustCompile(`(?m)^(?:pub )?function op_(\w+)\([^)]*\): Op \{\s*return (?:Op \{\s*\.\.\.)?op0\((\d+)\)`)
 	matches := ctor.FindAllStringSubmatch(string(src), -1)
 	if len(matches) < 200 {
@@ -123,9 +120,6 @@ func TestSelfHostIROpConstructorTags(t *testing.T) {
 	}
 	for _, m := range matches {
 		kind := m[1]
-		if a, ok := alias[kind]; ok {
-			kind = a
-		}
 		want, ok := ids[kind]
 		if !ok {
 			t.Errorf("op_%s: no kind %q in ir-kind-ids.txt", m[1], kind)

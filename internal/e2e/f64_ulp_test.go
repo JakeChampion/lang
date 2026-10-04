@@ -35,6 +35,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/e2eharness"
+	"github.com/jakechampion/lang/internal/fdlibm"
 )
 
 // maxULP is the bound each finite case must meet. The kernels are fdlibm's,
@@ -73,12 +74,71 @@ var f64UlpInputs = []float64{
 }
 
 // f64UlpPosInputs are the log-only inputs: strictly positive, spanning the
-// smallest normal through the top of the exponent range. math.Log is a usable
-// reference across all of them; the subnormals below it are not here but in
-// f64UlpCases, against literal bit patterns.
+// smallest normal through the top of the exponent range. The subnormals below
+// it are not here but in f64UlpCases, against literal bit patterns.
 var f64UlpPosInputs = []float64{
 	2.2250738585072014e-308, 1e-300, 1e-30, 1e-5, 0.1, 0.5, 0.9, 1, 1.0000001,
 	1.5, 2, 2.718281828459045, 10, 1e5, 1e30, 1e300, math.MaxFloat64,
+}
+
+// logULP is log's bound against the correctly rounded result: the table
+// kernel measures 0.53 ulp from the true value, so it rounds to within one of
+// the correctly rounded double everywhere.
+const logULP = 1
+
+// f64LogInputs is the corpus that gates log's two paths where they are
+// weakest: the band around 1, where the result is as small as the table
+// path's absolute error and the near-1 path takes over, stepped through and
+// probed a few ulp either side of both of its bounds and of 1 itself; and
+// both sides of a spread of the table's subinterval edges, at several
+// exponents.
+func f64LogInputs() []float64 {
+	var xs []float64
+	for j := range 81 {
+		xs = append(xs, 0.92+0.16*float64(j)/80)
+	}
+	for _, b := range []uint64{fdlibm.LogNear1Lo, fdlibm.LogNear1Hi, 0x3ff0000000000000} {
+		x, y := math.Float64frombits(b), math.Float64frombits(b)
+		for range 4 {
+			x, y = math.Nextafter(x, 0), math.Nextafter(y, 2)
+			xs = append(xs, x, y)
+		}
+	}
+	for i := uint64(0); i <= 1<<fdlibm.LogTableBits; i += 9 {
+		edge := fdlibm.LogOff + i<<(52-fdlibm.LogTableBits)
+		for _, k := range []int{-1000, -1, 1, 700} {
+			xs = append(xs, math.Ldexp(math.Float64frombits(edge-1), k), math.Ldexp(math.Float64frombits(edge), k))
+		}
+	}
+	return xs
+}
+
+// refLog computes ln x past double precision and rounds once. x = 2^e*m with
+// m in [1, 2), ln m = 2*atanh((m-1)/(m+1)), and the series converges by at
+// least a factor of 9 per term; 256 bits outlasts the 53 that ln m + e*ln2
+// can cancel for x just above 1.
+func refLog(x float64) float64 {
+	const prec = 256
+	nf := func() *big.Float { return new(big.Float).SetPrec(prec) }
+	frac, e := math.Frexp(x)
+	m := nf().SetFloat64(2 * frac)
+	t := nf().Quo(nf().Sub(m, nf().SetInt64(1)), nf().Add(m, nf().SetInt64(1)))
+	atanh := func(t *big.Float) *big.Float {
+		t2 := nf().Mul(t, t)
+		term, sum := nf().Set(t), nf().Set(t)
+		for n := int64(3); t.Sign() != 0; n += 2 {
+			term.Mul(term, t2)
+			q := nf().Quo(term, nf().SetInt64(n))
+			if q.MantExp(nil) < sum.MantExp(nil)-prec-8 {
+				break
+			}
+			sum.Add(sum, q)
+		}
+		return sum.Mul(sum, nf().SetInt64(2))
+	}
+	ln2 := atanh(nf().Quo(nf().SetInt64(1), nf().SetInt64(3)))
+	out, _ := nf().Add(atanh(t), nf().Mul(ln2, nf().SetInt64(int64(e-1)))).Float64()
+	return out
 }
 
 // ---- the reference ----
@@ -247,8 +307,8 @@ func f64UlpCases() []f64Case {
 	} {
 		cs = append(cs, f64Case{fmt.Sprintf("__exp_f64(%s)", lit(r.x)), math.Float64frombits(r.bits)})
 	}
-	for _, x := range f64UlpPosInputs {
-		cs = append(cs, f64Case{fmt.Sprintf("__log_f64(%s)", lit(x)), math.Log(x)})
+	for _, x := range append(f64UlpPosInputs, f64LogInputs()...) {
+		cs = append(cs, f64Case{fmt.Sprintf("__log_f64(%s)", lit(x)), refLog(x)})
 	}
 	// The subnormal band, where the reduction x = 2^k*m has to prescale
 	// before reading k out of the exponent field — a subnormal stores 0
@@ -472,9 +532,13 @@ func checkF64Output(t *testing.T, backend, out string, cs []f64Case, bound int64
 				bad++
 			}
 		default:
-			if d := ulpDist(got, c.want); d > bound {
+			b := bound
+			if strings.HasPrefix(c.call, "__log_f64") {
+				b = min(b, logULP)
+			}
+			if d := ulpDist(got, c.want); d > b {
 				t.Errorf("%s: %s = %v, want %v (%d ulp, bound %d)",
-					backend, c.call, got, c.want, d, bound)
+					backend, c.call, got, c.want, d, b)
 				bad++
 			}
 			// sin/cos are total on the finite doubles with range [-1, 1], so
@@ -525,8 +589,8 @@ func TestF64TranscendentalUlpX86_64(t *testing.T) {
 // exponent, so a fixed shortlist proves only the exponents in it. 1158
 // arguments at four mantissas across every seventh exponent, both signs.
 //
-// Every lane that implements sin/cos runs it: both register backends, the
-// SSA arm64 backend, wasm, and the interpreter — the last is a valid lane
+// Every lane that implements sin/cos runs it: both native backends, wasm, and
+// the interpreter — the last is a valid lane
 // only because it carries its own fdlibm reduction (internal/interp/trig.go)
 // rather than Go's math, whose error near a zero of sin/cos is unbounded in
 // ulp terms (617 ulp at 2^728, 3% at the worst-case argument below). The
@@ -582,10 +646,6 @@ func TestF64SinCosLargeArgument(t *testing.T) {
 		}
 		checkF64Output(t, "arm64-linux", out, cs, maxULP)
 	})
-	t.Run("arm64-ssa", func(t *testing.T) {
-		out := compileAndRunArm64SSACapture(t, prog)
-		checkF64Output(t, "arm64-ssa", out, cs, maxULP)
-	})
 	// Until #7878 the wasm backend did not merely lose accuracy here: its
 	// reduction ran every argument through i64.trunc_f64_s, a TRAPPING
 	// instruction, so |x| >= 2^63*pi/2 aborted the module. This lane holds
@@ -625,35 +685,6 @@ func compileAndRunWasmCapture(t *testing.T, src string) string {
 	return string(out)
 }
 
-// compileAndRunArm64SSACapture compiles src with the SSA arm64 backend
-// (`-target arm64-linux -backend ssa`) and returns its stdout, running the
-// binary natively on arm64 or under qemu elsewhere.
-func compileAndRunArm64SSACapture(t *testing.T, src string) string {
-	t.Helper()
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	bin := filepath.Join(dir, "prog")
-	cli := buildLangBinForInterp(t)
-	if out, err := exec.Command(cli, "-target", "arm64-linux", "-backend", "ssa", "-o", bin, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("arm64-ssa compile: %v\n%s", err, out)
-	}
-	var cmd *exec.Cmd
-	if qemu == "" {
-		cmd = exec.Command(bin)
-	} else {
-		cmd = exec.Command(qemu, bin)
-	}
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("arm64-ssa run: %v\n%s", err, out)
-	}
-	return string(out)
-}
-
 func TestF64TranscendentalUlpArm64(t *testing.T) {
 	cs := append(f64UlpCases(), f64SpecialCases()...)
 	out, code := compileAndRunArm64(t, f64UlpProg(cs))
@@ -661,17 +692,6 @@ func TestF64TranscendentalUlpArm64(t *testing.T) {
 		t.Fatalf("arm64 exited %d\n%s", code, out)
 	}
 	checkF64Output(t, "arm64-linux", out, cs, maxULP)
-}
-
-// TestF64TranscendentalUlpArm64SSA holds the SSA arm64 backend to the same
-// bound as the register backends. Only its trig lane was covered
-// (TestF64SinCosLargeArgument/arm64-ssa), so its exp / log / pow helpers —
-// separate emitters from internal/codegen/arm64's, sharing only the fdlibm
-// table — had no accuracy gate at all.
-func TestF64TranscendentalUlpArm64SSA(t *testing.T) {
-	cs := append(f64UlpCases(), f64SpecialCases()...)
-	out := compileAndRunArm64SSACapture(t, f64UlpProg(cs))
-	checkF64Output(t, "arm64-ssa", out, cs, maxULP)
 }
 
 // TestF64TranscendentalUlpWasm holds the wasm backend to the same bound as

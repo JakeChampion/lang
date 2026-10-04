@@ -563,6 +563,7 @@ var rcInert = map[string]bool{
 	"__fern_reader_splice": true,
 	"__fern_reader_flags":  true, "__fern_writer_flags": true,
 	"__fern_fd_fsync": true, "__fern_fd_fdatasync": true, "__fern_fd_syncfs": true,
+	"__fern_fd_drop_cache":          true,
 	"__fern_fd_dup_onto":            true,
 	"__fern_handle_window_size":     true,
 	"__fern_handle_set_window_size": true,
@@ -744,25 +745,6 @@ func isGeneratedDrop(name string) bool {
 	return false
 }
 
-// RcHelperUnmodelled reports whether name is a runtime helper this file
-// records as moving reference counts in a shape one operand effect
-// cannot express, and why.
-//
-// A caller that treats "no signature" as "no effect" is wrong about
-// exactly these names, and right about the inert ones. Asking lets it
-// tell the two apart and count the gap instead of absorbing it.
-func RcHelperUnmodelled(name string) (reason string, ok bool) {
-	if r, ok := rcUnmodelled[name]; ok {
-		return r, true
-	}
-	if alias, aliased := builtinRuntimeAlias(name); aliased {
-		if r, ok := rcUnmodelled[alias]; ok {
-			return r, true
-		}
-	}
-	return "", false
-}
-
 // RcReleaseNames lists every runtime helper whose signature says a call
 // gives up the caller's unit on its operand, and RcGeneratedDropPrefixes
 // / RcGeneratedDropNames expose the rule that covers the generated
@@ -794,9 +776,9 @@ func RcGeneratedDropNames() []string {
 }
 
 // RcReleases reports whether a call to name gives up the caller's unit
-// on its counted operand — the question `verifyrc.go` and
-// `internal/ssa` both ask. RcMove counts: the operand's unit is gone,
-// and what comes back is a different unit on the result.
+// on its counted operand — the question `verifyrc.go` asks. RcMove counts:
+// the operand's unit is gone, and what comes back is a different unit on
+// the result.
 func RcReleases(name string) (operand int, ok bool) {
 	sig, found := RcHelperSig(name)
 	if !found {

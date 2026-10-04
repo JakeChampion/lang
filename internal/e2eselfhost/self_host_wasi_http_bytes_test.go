@@ -93,7 +93,8 @@ const wasiHttpByteBodiesSrc = `
 import "std/http";
 import "std/stream";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let data: u8[] = req.body_bytes();
     if (req.path == "/stream") {
         return http.stream(200, Stream { data: data, pos: 1 });

@@ -34,8 +34,9 @@ func HeldConnectionsServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/time";
 import "std/serve";
+import "std/platform";
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok(__heap_bump_bytes().to_string());
 }
 
@@ -153,7 +154,8 @@ func heapBumpBytes(t *testing.T, addr string) int64 {
 func BumpPerRequestServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok(__heap_bump_bytes().to_string());
 }
 function main(): i32 {

@@ -9,53 +9,41 @@ without constructing invalid strings.
 The write ordering, block size selection and sticky-error behavior follow
 the existing GNU compatibility contract. A retained stream value keeps its
 pending bytes when another copy appends or flushes. Short appends use array
-reuse; larger appends use a private builder. Whole text writes lend
-`as_bytes()` to Writer. Partial ranges still copy, and this change makes no
-claim that every write is allocation-free.
+reuse; larger appends use a private builder. Direct writes lend byte views
+to Writer, including subranges of text or raw arrays. Only bytes retained
+in the pending buffer need an owned copy; a direct write never constructs
+a partial string or an owned array for its range.
 
 ## Validation
 
-The shared fixture has 179 cases covering all byte values, NUL, malformed
+The shared fixture has 183 cases covering all byte values, NUL, malformed
 UTF-8, clamped and empty ranges, retained stream aliases, closed descriptors,
 and Unicode across buffer boundaries. Sizes cover the append threshold and
-4096-, 8192- and 65536-byte boundaries.
+4096-, 8192- and 65536-byte boundaries. Four repeated large Unicode writes
+also retain the input string while crossing buffered and direct-write paths.
 
-The current Go Darwin fixture passes in 5.285 seconds. The reproduced primary
-compiler passes the same fixture on Darwin and core WASM, including balanced
-allocation counts and zero live bytes, in 2.289 seconds. Linux Go and primary
-target groups pass in 0.671 and 39.505 seconds. GNU consumer checks pass in
-5.473 seconds, and primary/native consumer comparisons in 20.397 seconds.
-The full Linux unit suite and all lint gates pass on that snapshot. Validation
-includes the prepared df operand-device correction.
+The validated PR snapshot is `01fe6a2529`, including main `9c8eb0032`.
+The full Linux unit suite,
+all lint gates, Stdio target groups, and GNU/primary consumer comparisons
+pass, including the df operand-device correction. Darwin Go and source-built
+primary tests pass in 9.536 and 38.977 seconds. The reproduced compiler
+passes all 366 native Darwin/core-WASM corpus runs in 3.059 seconds, with
+balanced allocations and zero live bytes.
 
-After integrating Writer's bootstrap cleanup repair `99abe4870`, the Linux
-Go and primary groups pass again in 0.677 and 40.780 seconds. GNU consumer
-checks pass in 5.736 seconds and primary/native comparisons in 20.965 seconds.
-All lint gates pass, and all 5,923 Go/Fern files match the integrated snapshot.
-The source-built Darwin primary test passes in 36.586 seconds. The earlier full unit pass
-belongs to the preceding Stdio snapshot; the Writer repair separately passes
-the full suite, and full integrated CI remains a merge gate.
+The Darwin bootstrap explicitly uses the previously reproduced local compiler
+with SHA-256 `27c93618d8c0b4d9eb15a8e3eef3664c4a0e70da18eded1dd842260754649359`
+as `STAGE0`. All three resulting stages are identical at 13,128,209 bytes,
+SHA-256 `89e577b9ef1315b819cbb198c3c49e8603558fcacd9d60cb40268b36b5c61d52`.
+This is the measured local-seed chain; the repository's pinned-seed bootstrap
+remains a separate CI gate.
+Main's Go SSA retirement and compiler/checker size baselines are retained;
+all three affected driver checks pass the unchanged 5% gate. The path probe,
+compiler and checker measure 4,283,816, 11,426,392 and 2,532,088 bytes.
+Assembler record parity/refusals, checker codes, scheduler/fetch, IR registry,
+LSP and cache-advice integration checks also pass. The benchmark
+sections below identify their own compiler and source revisions.
 
-The next integration includes main `26b82ea7c` and the borrowed-map alias
-repair `80d197eb8`. Linux Go and primary fixture groups pass in 0.650 and
-39.734 seconds; GNU consumers and primary/native comparisons pass in 5.409
-and 20.489 seconds. The full unit suite and all lint gates pass. All 5,928
-Go/Fern files match the frozen snapshot. Darwin Go and primary tests pass,
-and the actual reproduced compiler passes all 179 fixture cases on native
-Darwin and core WASM with balanced allocation counts in 3.263 seconds.
-The 208 primary compiler and standard-library source files match that
-compiler's reproduced source tree exactly.
-
-The latest integration includes upstream head `38f4a269d`. Linux Go and
-primary fixture groups pass in 6.456 and 41.445 seconds, GNU consumers in
-5.674 seconds and primary/native comparisons in 21.612 seconds. The full
-unit suite and every lint gate pass. All 5,946 Go/Fern files match the frozen
-snapshot. Darwin Go and primary tests pass in 7.961 and 36.571 seconds.
-The fresh compiler passes all 179 cases on Darwin and core WASM with balanced
-allocation counts in 2.931 seconds. Its bootstrap takes 35, 27 and 15 seconds;
-stages two and three are identical at 12,878,049 bytes.
-
-## Controlled measurements
+## Measurements before the direct-write follow-up
 
 Both versions use the reproduced primary compiler with SHA-256
 `3f4f3a40bf167dee51cbdc2d90e396cb3999a3bd34ccc741d479d42904d9682a`
@@ -93,6 +81,37 @@ Stdio itself needs no size baseline change. A later main integration crossed
 the compiler path-probe gate. Its separate [size investigation](SELFHOST-PATH-PROBE-SIZE-2026-10-04.md)
 attributes the accumulated compiler growth and removes unused verdict report
 construction before updating that driver's measured baseline.
+
+## Borrowed direct ranges, October 4
+
+The review follow-up removes the temporary owned array from direct subrange
+writes. Text first lends `as_bytes()`, then selects a borrowed byte subview;
+raw input lends its array subview directly. This avoids constructing a
+partial UTF-8 string even when a block boundary splits a character.
+
+Both benchmark versions use the reproduced compiler with SHA-256
+`48efd5540bac3b85b564beb4b49e0c0d3b2b6aea510c1652c0328258909f66fe`
+and its matching standard library. Compiler sources are unchanged by this
+follow-up. The before GNU library is from `74c69bdf8`; only that module
+differs in the after build. Task-owned heavy jobs were idle, but the desktop
+was not isolated. A 131072-byte pilot precedes 8388608 bytes with the same
+exact-output and allocation checks, two warmups and seven alternating samples.
+The new raw-range workloads retain a byte array with one sentinel at each end
+and repeatedly write the interior range.
+
+| Piece | Before median | After median | Before allocations | After allocations |
+| --- | ---: | ---: | ---: | ---: |
+| 7 ASCII bytes | 25.708 ms | 26.380 ms | 11,588 | 11,588 |
+| 7 Unicode bytes | 25.456 ms | 25.506 ms | 11,588 | 11,588 |
+| 4096 ASCII bytes | 3.052 ms | 3.079 ms | 6,180 | 6,180 |
+| 65536 ASCII bytes | 2.885 ms | 2.806 ms | 1,183 | 930 |
+| 4096-byte raw range | 3.461 ms | 3.402 ms | 8,230 | 8,230 |
+| 65536-byte raw range | 2.970 ms | 2.659 ms | 1,188 | 932 |
+
+All timing ranges overlap. The allocation reductions on large direct writes
+are measured; these timing samples do not establish a speedup. Both native
+files occupy 83,089 bytes. Text shrinks from 43,056 to 43,032 bytes, while
+unwind data stays at 7,572 bytes and data at 4,168 bytes. No baseline changes.
 
 This enables byte-oriented consumers such as dircolors. It does not complete
 their conversion or the remaining producer audit for #5714.

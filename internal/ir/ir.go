@@ -628,10 +628,13 @@ const WidthPtr = -1
 const WidthString = -2
 
 // On an OpCallDirect, Width is the RESULT classification: what the callee
-// leaves in the register the 64-bit backends read its result out of. The
-// SSA layer can read that off an ssa.Func for a callee the program
-// defines, but a backend-provided builtin or runtime helper has no
-// signature it can reach, so the fact travels on the call instead.
+// leaves in the register a 64-bit register-allocating backend reads its
+// result out of. Such a backend can read that off the callee for a function
+// the program defines, but a backend-provided builtin or runtime helper has
+// no signature it can reach, so the fact travels on the call instead. The
+// stack-machine emitters do not need it; its reader was the Go SSA lift,
+// which went with the Go SSA backends, and ir.Verify keeps the stamp total
+// for the next one.
 //
 // Zero is not a default here: it means unclassified, which ir.Verify
 // rejects on a provided callee. OpCallDirectPair's Width means something
@@ -2758,8 +2761,8 @@ func buildDynboxWrappers(info *checker.Info, ptrW int, vtables []VtableDecl) ([]
 // implementors still emits a helper (its method count is well-defined and
 // a no-implementor set is unreachable at runtime, but the symbol must
 // resolve where a `dyn` of that set is dec'd). Declines on a native
-// backend that hasn't opted in (arm64ssa): no helper, no drop slot read,
-// `dyn` keeps leaking — no dangling call.
+// backend that hasn't opted in: no helper, no drop slot read, `dyn` keeps
+// leaking — no dangling call.
 func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcSupported bool) []*Func {
 	if (ptrW != 4 && !dynRcSupported) || info == nil {
 		return nil
@@ -2898,8 +2901,8 @@ type lowerOpts struct {
 	// the trailing vtable drop slot, and the dec/drop sweep arms —
 	// docs/DYN-TRAITS.md §4.4). A STRICT subset of dynSupported: both
 	// natives pass it (x86-64 slice 4b, arm64 slice 4c); a backend that
-	// dispatches without it (arm64ssa) leaks `dyn`. wasm RC (slice 4a) keys
-	// on ptrW==4 and never needs this.
+	// dispatches without it leaks `dyn`. wasm RC (slice 4a) keys on ptrW==4
+	// and never needs this.
 	dynRcSupported bool
 	// emitLineMarkers makes the builder emit a zero-effect OpLine at each
 	// statement boundary, carrying its source Pos, so a native backend can
@@ -2943,7 +2946,7 @@ func DynSupported() LowerOption { return func(o *lowerOpts) { o.dynSupported = t
 // DynRcSupported marks the calling backend as able to RECLAIM boxed
 // `dyn Trait` values via Perceus RC (the __drop_dyn_<set> helper + the
 // trailing vtable drop slot, §4.4). A strict subset of DynSupported:
-// x86-64 (slice 4b) and arm64 (slice 4c) pass it; arm64ssa does not, and
+// x86-64 (slice 4b) and arm64 (slice 4c) pass it; a backend that does not
 // leaks `dyn`. wasm RC keys on ptrW==4 directly.
 func DynRcSupported() LowerOption { return func(o *lowerOpts) { o.dynRcSupported = true } }
 
@@ -5257,6 +5260,119 @@ func (b *builder) pushPendingDrop(emit func()) func() {
 	return func() {
 		b.pendingDrops = b.pendingDrops[:len(b.pendingDrops)-1]
 	}
+}
+
+// heldArm is one arm as scrutineeReassignedIn reads it: every name the
+// pattern binds and the nodes the arm runs.
+type heldArm struct {
+	names  []string
+	region []ast.Node
+}
+
+func heldArms(arms []*ast.MatchArm) []heldArm {
+	out := make([]heldArm, 0, len(arms))
+	for _, arm := range arms {
+		out = append(out, heldArm{names: arm.Binders(), region: []ast.Node{arm.Guard, arm.Body}})
+	}
+	return out
+}
+
+func heldExprArms(arms []*ast.MatchExprArm) []heldArm {
+	out := make([]heldArm, 0, len(arms))
+	for _, arm := range arms {
+		out = append(out, heldArm{names: arm.Binders(), region: []ast.Node{arm.Guard, arm.Body}})
+	}
+	return out
+}
+
+// scrutineeReassignedIn reports a match whose scrutinee is an owned enum
+// local that an arm assigns while a name the arm binds, a payload or the
+// `@` whole, is still read afterwards (`match (e) { Run(f) => { e = Idle;
+// f(1); } }`), with the local's enum type. The bindings borrow from the box
+// the assignment drops, so such a match holds its own count on it until it
+// completes. An arm whose assignment comes last, or whose bindings are read
+// only in the assigned value (`cur = kids[i]`), leaves the box alive for
+// every read and needs no hold.
+func (b *builder) scrutineeReassignedIn(tag ast.Expr, arms []heldArm) (ast.EnumType, bool) {
+	id, ok := tag.(*ast.Ident)
+	if !ok || !b.isOwnedRcLocal(id.Name) {
+		return ast.EnumType{}, false
+	}
+	et, isEnum := b.exprStaticType(tag).(ast.EnumType)
+	if !isEnum {
+		return ast.EnumType{}, false
+	}
+	for _, arm := range arms {
+		if bindingReadAfterAssign(id.Name, arm.names, arm.region) {
+			return et, true
+		}
+	}
+	return ast.EnumType{}, false
+}
+
+// bindingReadAfterAssign reports whether region assigns scrut and then reads
+// one of names: later in source order, or anywhere in a loop the assignment
+// sits in, whose next pass reads before it assigns again. The assigned value
+// is evaluated before the old box drops, so its reads do not count.
+func bindingReadAfterAssign(scrut string, names []string, region []ast.Node) bool {
+	if len(names) == 0 {
+		return false
+	}
+	bound := make(map[string]bool, len(names))
+	for _, n := range names {
+		bound[n] = true
+	}
+	assignsScrut := func(n ast.Node) bool {
+		a, ok := n.(*ast.Assign)
+		if !ok {
+			return false
+		}
+		t, ok := a.Target.(*ast.Ident)
+		return ok && t.Name == scrut
+	}
+	assigned, read := false, false
+	var visit func(ast.Node) bool
+	visit = func(n ast.Node) bool {
+		if read {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.Assign:
+			if assignsScrut(x) {
+				ast.Walk(x.Value, visit)
+				assigned = true
+				return false
+			}
+		case *ast.Ident:
+			if assigned && bound[x.Name] {
+				read = true
+			}
+		case *ast.While, *ast.Loop, *ast.For, *ast.ForEach:
+			if !assigned {
+				ast.Walk(n, func(m ast.Node) bool {
+					if assignsScrut(m) {
+						assigned = true
+					}
+					return !assigned
+				})
+			}
+		}
+		return true
+	}
+	for _, r := range region {
+		if r != nil {
+			ast.Walk(r, visit)
+		}
+	}
+	return read
+}
+
+// emitMatchScrutineeRetain takes the match's own count on the scrutinee box
+// parked in ptrSlot; the pending drop the caller registers releases it.
+func (b *builder) emitMatchScrutineeRetain(ptrSlot int32) {
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+	b.emit(Op{Kind: OpDrop})
 }
 
 // operandDropType reports whether an owned operand of type t carries a count
@@ -9805,6 +9921,8 @@ func (b *builder) stmt(s ast.Stmt) error {
 		var (
 			reclaimScrut bool
 			scrutEnum    ast.EnumType
+			heldScrut    bool
+			heldEnum     ast.EnumType
 		)
 		// A `m.get(k)` scrutinee's rebuilt Option box is reclaimed by
 		// emitMapGetScrutineeReclaim instead, which reads its own SHALLOW /
@@ -9863,6 +9981,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 			defer b.pushPendingDrop(func() { b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true) })()
 		} else if reclaimMapGet && !pairFormScrutinee {
 			defer b.pushPendingDrop(func() { b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan) })()
+		} else if !pairFormScrutinee && !consumeScrut && consumeOwnedName == "" {
+			heldEnum, heldScrut = b.scrutineeReassignedIn(n.Tag, heldArms(n.Arms))
+			if heldScrut {
+				b.emitMatchScrutineeRetain(ptrSlot)
+				defer b.pushPendingDrop(func() { b.emitOwnedEnumDrop(ptrSlot, heldEnum, true) })()
+			}
 		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
@@ -10214,6 +10338,8 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true)
 		} else if reclaimMapGet && !pairFormScrutinee {
 			b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan)
+		} else if heldScrut {
+			b.emitOwnedEnumDrop(ptrSlot, heldEnum, true)
 		}
 	default:
 		return fmt.Errorf("ir: unsupported statement %T", s)
@@ -10843,6 +10969,13 @@ func (b *builder) expr(e ast.Expr) error {
 		} else if reclaimMapGet {
 			defer b.pushPendingDrop(func() { b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan) })()
 		}
+		heldEnum, heldScrut := b.scrutineeReassignedIn(n.Tag, heldExprArms(n.Arms))
+		if heldScrut && !reclaimScrut && !reclaimMapGet {
+			b.emitMatchScrutineeRetain(ptrSlot)
+			defer b.pushPendingDrop(func() { b.emitOwnedEnumDrop(ptrSlot, heldEnum, true) })()
+		} else {
+			heldScrut = false
+		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
 		for _, arm := range n.Arms {
@@ -10956,6 +11089,8 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true)
 		} else if reclaimMapGet {
 			b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan)
+		} else if heldScrut {
+			b.emitOwnedEnumDrop(ptrSlot, heldEnum, true)
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	case *ast.TryOp:
@@ -15647,6 +15782,28 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4) in the
+	// blocking fallback: this compiler never suspends, so no task is ever
+	// current and each answers as the interp does. The arguments are
+	// evaluated for their effects and dropped; a void primitive pushes
+	// nothing, as a void runtime helper would.
+	if v, isTask := taskPrimitiveFallback[id.Name]; isTask {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpDrop})
+			}
+			if taskPrimitiveArray[id.Name] {
+				return b.expr(&ast.ArrayLit{P: n.P, ElemType: ast.NumberType{Width: 32, Signed: true}})
+			}
+			if !taskPrimitiveVoid[id.Name] {
+				b.emit(Op{Kind: OpConstI32, I32: v})
+			}
+			return nil
+		}
+	}
 	if id.Name == "__heap_release_to" && len(n.Args) == 1 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			if err := b.expr(n.Args[0]); err != nil {
@@ -18605,6 +18762,14 @@ func (b *builder) dropStructField(t ast.Type) {
 	// (a shared header only decs); the viewed bytes are the source's.
 	if isSliceType(t) {
 		b.emitSliceHeaderDropOnStack()
+		return
+	}
+	// A closure child releases its pair and environment through
+	// __drop_closure_value, as appendChildDrop does in the generated drop
+	// fns; the flat dec below would strand both.
+	if _, isFunc := t.(*ast.FuncType); isFunc {
+		b.emit(Op{Kind: OpCallDirect, Str: "__drop_closure_value", I32: 1})
+		b.emit(Op{Kind: OpDrop})
 		return
 	}
 	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {

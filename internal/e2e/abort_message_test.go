@@ -114,27 +114,3 @@ func TestArm64AbortMessages(t *testing.T) {
 		return exec.Command(qemu, bin)
 	})
 }
-
-// The SSA backends are a second emitter per native target, and a program's
-// abort output must not depend on which one built it. They exit with the right
-// status on their own — what these pin is the diagnostic, which both of them
-// used to omit entirely: exit 134 and nothing on stderr, so a bounds failure
-// looked like a signal.
-//
-// Named backends, not defaults, for the same reason the verify-gate test names
-// them: whichever way a target's default points, one of its two emitters goes
-// untested otherwise.
-func TestArm64SSAAbortMessages(t *testing.T) {
-	qemu := arm64QemuOrEmpty(t)
-	runAbortCases(t, "arm64-linux", "ssa", func(bin string) *exec.Cmd {
-		if qemu == "" {
-			return exec.Command(bin)
-		}
-		return exec.Command(qemu, bin)
-	})
-}
-
-func TestX86_64SSAAbortMessages(t *testing.T) {
-	qemu := x86QemuOrEmpty(t)
-	runAbortCases(t, "x86-64-linux", "ssa", func(bin string) *exec.Cmd { return runX86Bin(qemu, bin) })
-}

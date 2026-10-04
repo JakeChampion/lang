@@ -13,10 +13,12 @@ read that for the shipped mechanism, this for where we go next.
 ## 1. Where we are
 
 Reclamation (`ast.RcFreeEnabled`) and constructor reuse
-(`ast.RcReuseEnabled`) are both **default-on**, differentially gated
-(`Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree` and
-`…ReuseMatchesNoReuse` pin free-on==free-off and reuse-on==reuse-off
-byte-identical across all three backends). The guiding invariant is
+(`ast.RcReuseEnabled`) are both **default-on**. The Go-compiler differentials
+that pinned free-on == free-off and reuse-on == reuse-off on the fixture
+corpus went with the Go backends (`docs/NATIVE-RETIREMENT.md`); the
+self-host's reuse differential
+(`internal/e2eselfhost/self_host_reuse_differential_test.go`), its fixture
+legs and the leak census hold the property now. The guiding invariant is
 **"safe leak"**: every conservative bail-out degrades to
 decrement-without-free or skip-reuse — it leaks memory but **never**
 over-releases. The runtime `__fern_rc_is_unique` gate is the universal
@@ -129,9 +131,9 @@ carries the param out (`Holder { t: p }`) inc's what it stores, and that inc
 balances the stray dec — which is why the first shapes tried looked clean and
 why the bound above is about the param's TYPE, not about escaping as such.
 
-The `*BorrowInferMatchesOwned` differentials are structurally blind to the
-default-configuration half: both configurations are wrong in the same way, so
-comparing them agrees. Only a case asserting that the shipping compiler is
+The `*BorrowInferMatchesOwned` differentials (since retired with the Go
+backends) were structurally blind to the default-configuration half: both
+configurations are wrong in the same way, so comparing them agrees. Only a case asserting that the shipping compiler is
 RIGHT can see it — `TestX86_64RcIndirectDispatchDefault` and its two siblings
 are that, and they run with the flags untouched.
 
@@ -141,9 +143,9 @@ Each step was a corpus gap rather than a new defect, which is the argument for
 adding cases at each layer rather than only at the one that happened to fire.
 
 Borrow inference reaches the same verdict from the escape facts for the common
-non-escaping case, so both bugs were invisible with it on: the gate that sees
-them is the `*BorrowInferMatchesOwned` differential, and the corpus needs a case
-of the shape for it to fire.
+non-escaping case, so both bugs were invisible with it on: the gate that saw
+them was the `*BorrowInferMatchesOwned` differential, and the corpus needed a
+case of the shape for it to fire.
 
 ## 2. How we compare
 
@@ -289,9 +291,9 @@ analysis, which is independent, pure, and de-risks the design.
   caller retains it with an inc at the call site, the callee reclaims it
   with a dec at exit) so an ordinary reader reclaims its argument when it
   holds the last reference — no `own` needed. rc is invisible, so the
-  differential gate (`Test{X86_64,Arm64,WASM}OwnedByDefaultMatchesBorrow`)
-  pins owned == borrow byte-identical on the whole corpus; the reclaim is
-  the only effect. Shipped per parameter-type category, exactly like
+  differential gate (`Test{X86_64,Arm64,WASM}OwnedByDefaultMatchesBorrow`,
+  since retired with the Go backends) pinned owned == borrow byte-identical
+  on the whole corpus; the reclaim is the only effect. Shipped per parameter-type category, exactly like
   Phase 1.
 
   **Sub-slice 2a — DONE (default on).** Enum parameters that are
@@ -369,9 +371,9 @@ analysis, which is independent, pure, and de-risks the design.
   **consume-safe TRMC callee**, which always frees its scrutinee in the
   loop and so stays owned at the call site regardless of escape facts (the
   precedence fix that avoids a double free: the caller must not also reclaim
-  a cell the loop already freed). Verified: the differential gate
-  (`Test{X86_64,Arm64,WASM}BorrowInferMatchesOwned`) is byte-identical on
-  the whole corpus; IR tests pin that a pure reader loses both its
+  a cell the loop already freed). Verified at the time: the differential gate
+  (`Test{X86_64,Arm64,WASM}BorrowInferMatchesOwned`, since retired with the
+  Go backends) was byte-identical on the whole corpus; IR tests pin that a pure reader loses both its
   caller-side incs and its callee-side reclamation while an escaping
   (returned) param stays owned.
 
@@ -405,7 +407,7 @@ analysis, which is independent, pure, and de-risks the design.
 
   **Self-host port — DONE (2026-09-21, #9891).** `examples/self_host/ownership.fern`
   answers which parameters a function consumes, `semsource.with_inferred_modes`
-  rewrites the contracts from it, and `semlower.inferred_pass` applies it. Slice
+  rewrites the contracts from it, and `semlower.inferred_rows` applies it. Slice
   2 and sub-slice 2d had to land TOGETHER there: the blanket form is slower on
   nine of the twenty-nine bench programs and faster on none (1.901x on
   `ordmap_insert`), because the self-host's widened shape is native's end state
@@ -437,6 +439,9 @@ analysis, which is independent, pure, and de-risks the design.
   what `TestSelfHostInferredReuseIsIdentical` compares the reuse against.
   Measurement and the trace that found it:
   `docs/rc-log/2026-09-22-the-inference-re-lowered-rows-it-did-not-move.md`.
+  The rows it did move were still lowered under the declared modes first; now
+  every plan is made before any body, and each row is lowered once, under the
+  modes it keeps (`docs/rc-log/2026-10-03-m-a-row-is-lowered-once-under-the-modes-it-keeps.md`).
 
   `pvec_with` 681,006,132 retired instructions to 219,077,188 against native's
   184,540,118 (3.69x to 1.187x), `record_update` 0.769x, `map_probe_chain`

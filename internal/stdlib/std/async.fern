@@ -14,10 +14,9 @@
 //     of ready futures (the unit-test shape) works on interp / wasm /
 //     native alike.
 //   * `Pending(fd, resume)` futures resolve when `fd` is readable,
-//     driven by the real `poll` builtin (poll(2) / ppoll(2)). On
-//     interp / wasm `poll` is a `-1` stub, so fd-backed futures never
-//     resolve there — real socket I/O is native today (the wasm path
-//     is component-model-async via `@import async`, folded in later —
+//     driven by the `poll` builtin: poll(2) / ppoll(2) on native, a set
+//     over the handles' descriptors on the interpreter, wasi:io/poll on
+//     wasm (component-model-async via `@import async` is folded in later —
 //     docs/ASYNC-REDESIGN.md PR5).
 //
 // Generic over `T`: the native compiler monomorphizes, so
@@ -90,7 +89,7 @@ pub trait Driver {
 
 // RealDriver — the production Driver: each wait is exactly the builtin
 // the combinator loops used to call directly (poll(2) / ppoll(2) on
-// native, wasi:io/poll on wasm, the -1 stubs on interp), and the reactor
+// native, wasi:io/poll on wasm, a set over the handles on interp), and the reactor
 // is the `reactor_*` floor (epoll, kqueue, a table of wasi pollables),
 // made on the first watch so a driver that only polls costs nothing.
 // `signals` is the watched signals as rows `sig:descriptor;`, the
@@ -133,7 +132,7 @@ function __real_reactor(d: RealDriver): i32 {
   return r;
 }
 
-// `.handle()` — the driver's reactor as the opaque handle a `Platform`
+// `.handle()` — the driver's reactor as the opaque handle a `platform.Host`
 // carries (`handle`), made on first use like `watch` makes it; negative
 // when the target has no reactor.
 pub function (d: RealDriver) handle(): i32 {
@@ -251,8 +250,8 @@ function __all_ready[T](fs: Future[T][]): boolean {
 // values in input order. The canonical edge fan-out: issue N outbound
 // fetches, take every result (cache + primary). All pending futures'
 // fds are in flight simultaneously, so their I/O overlaps on one
-// thread. A future that never resolves (poll error / the interp-wasm
-// stub) lands `on_incomplete` in its slot — generic `T` has no default,
+// thread. A future that never resolves (a poll error) lands
+// `on_incomplete` in its slot — generic `T` has no default,
 // so the caller supplies the fallback (matching the realities of a
 // blocking poll, which otherwise always makes progress).
 pub function gather[T](fs_in: Future[T][], on_incomplete: T): T[] {
@@ -453,7 +452,7 @@ pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: F
     // and the appended timer is -1 (ignored); wasm `poll` ignores its
     // timeout arg, so the real timer pollable in the set is what fires at
     // the deadline. A `ready` of `nfds` (the timer's slot) = deadline hit.
-    // wasm_timer_pollable is -1 on native/interp, so this stays portable.
+    // wasm_timer_pollable is -1 on native/interp, which poll skips.
     let nfds: i32 = fds.len();
     let timer: i32 = drv.timer(remaining_ns);
     let pollset: i32[] = fds.append(timer);
@@ -494,4 +493,159 @@ pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: F
     k = k + 1;
   }
   return out;
+}
+
+// Tasks (docs/NET-P3-SUSPENSION-PLAN.md §3.4). A Task runs an entry under a
+// scheduler: `task_start` runs it until it returns or parks on a wait,
+// `task_resume` runs a parked task on from its park with the word the
+// scheduler read, and `task_cancel` runs it on with every later wait
+// answering `cancelled()`. A function reaches the park through `wait_any`,
+// which blocks instead when no task is current, so the same code runs under
+// a scheduler and in a plain program. The self-host compiler lowers the
+// functions that reach a park to resumable form; the native compiler keeps
+// the blocking fallback, where a task always runs to completion.
+pub enum TaskStatus[T] { Done(T), Suspended(Wait), Cancelled }
+
+// `Wait` — what a parked task waits for, as its scheduler reads it: the
+// (fd, interest) pairs of `wait_any`'s set, and the milliseconds it gave
+// (-1 for no bound). The scheduler watches each pair and resumes the task
+// with the index of the pair that became ready, or -1 at the timeout.
+pub struct Wait { set: i32[], timeout_ms: i32 }
+
+pub struct Task[T] { id: i32, entry: () => T }
+
+// `cancelled()` — what `suspend` answers in a cancelled task, on every wait
+// from the cancellation on.
+pub function cancelled(): i32 {
+  return 0 - 2;
+}
+
+pub function task_new[T](entry: () => T): Task[T] {
+  return Task { id: __task_new(), entry: entry };
+}
+
+pub function task_start[T](t: Task[T]): TaskStatus[T] {
+  return run_task(t, 0);
+}
+
+// `task_resume(t, ready)` — the parked task runs on, its `suspend`
+// answering `ready`.
+pub function task_resume[T](t: Task[T], ready: i32): TaskStatus[T] {
+  __task_set_ready(t.id, ready);
+  return run_task(t, 2);
+}
+
+// `task_cancel(t)` — the parked task runs on to its end with every wait
+// answering `cancelled()`, and cannot park again.
+pub function task_cancel[T](t: Task[T]): TaskStatus[T] {
+  __task_set_cancelled(t.id);
+  let st: TaskStatus[T] = run_task(t, 2);
+  return Cancelled;
+}
+
+// `task_free(t)` — hand the task's record back once it is done.
+pub function task_free[T](t: Task[T]): void {
+  __task_free(t.id);
+}
+
+function run_task[T](t: Task[T], mode: i32): TaskStatus[T] {
+  __task_enter(t.id, mode);
+  let v: T = t.entry();
+  let m: i32 = __task_leave();
+  if (m == 1) {
+    return Suspended(Wait { set: __task_wait(t.id), timeout_ms: __task_timeout(t.id) });
+  }
+  return Done(v);
+}
+
+// `wait_any(set, timeout_ms)` — wait for any of the (fd, interest) pairs in
+// `set`, interest 1 readable and 2 writable as `Driver.wait` reports them:
+// the index of the first pair that became ready, -1 once `timeout_ms`
+// passed (-1 waits without a bound), and `cancelled()` in a cancelled
+// task. Under a scheduler the task parks and the scheduler's word is the
+// answer; with no task current the wait blocks here. On wasm an fd is a
+// socket handle, subscribed for the wait.
+pub function wait_any(set: i32[], timeout_ms: i32): i32 {
+  if (__task_cur() != 0) {
+    return __task_park(set, timeout_ms);
+  }
+  let n: i32 = set.len() / 2;
+  if (n <= 0) {
+    return 0 - 1;
+  }
+  let reads: boolean = true;
+  let i: i32 = 0;
+  while (i < n) {
+    if (set[i * 2 + 1] != 1) {
+      reads = false;
+    }
+    i = i + 1;
+  }
+  if (reads) {
+    return __wait_readable(set, n, timeout_ms);
+  }
+  return __wait_watched(set, n, timeout_ms);
+}
+
+// A read-only set waits in one `poll`, the socket subscriptions dropped
+// after it. wasm's poll ignores its timeout, so a bound is a timer
+// pollable in the set that fires at the deadline; on native and the
+// interpreter that token is -1, which poll skips, and the timeout itself
+// bounds the wait.
+function __wait_readable(set: i32[], n: i32, timeout_ms: i32): i32 {
+  let toks: i32[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    toks = toks.append(tcp_pollable(set[i * 2]));
+    i = i + 1;
+  }
+  let timer: i32 = 0 - 1;
+  if (timeout_ms >= 0) {
+    timer = wasm_timer_pollable(timeout_ms as i64 * 1000000i64);
+    toks = toks.append(timer);
+  }
+  let ready: i32 = poll(toks, timeout_ms);
+  i = 0;
+  while (i < n) {
+    let dropped: i32 = wasm_pollable_drop(toks[i]);
+    i = i + 1;
+  }
+  if (timer >= 0) {
+    let dtimer: i32 = wasm_pollable_drop(timer);
+  }
+  if (ready >= 0 && ready < n) {
+    return ready;
+  }
+  return 0 - 1;
+}
+
+// A set with a write interest waits on a reactor made for the call, each
+// pair watched with its interest and unwatched after.
+function __wait_watched(set: i32[], n: i32, timeout_ms: i32): i32 {
+  let drv: RealDriver = real_driver();
+  let i: i32 = 0;
+  while (i < n) {
+    let watched: i32 = drv.watch(set[i * 2], set[i * 2 + 1]);
+    i = i + 1;
+  }
+  let woke: i32[] = drv.wait(n, timeout_ms);
+  i = 0;
+  while (i < n) {
+    let unwatched: i32 = drv.unwatch(set[i * 2]);
+    i = i + 1;
+  }
+  let closed: i32 = drv.close();
+  let hit: i32 = 0 - 1;
+  let k: i32 = 0;
+  while (k + 1 < woke.len()) {
+    i = 0;
+    while (i < n) {
+      if (set[i * 2] == woke[k] && (hit < 0 || i < hit)) {
+        hit = i;
+      }
+      i = i + 1;
+    }
+    k = k + 2;
+  }
+  return hit;
 }

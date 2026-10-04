@@ -93,6 +93,60 @@ This is exactly how the [test runner](../../tutorial/testing/) types its
 assertions — `assert_eq[T: cmp.Eq + cmp.Display]` accepts any comparable,
 printable value.
 
+### A trait as a parameter type
+
+A parameter whose type is a trait is shorthand for a type parameter bounded
+by it:
+
+```fern
+import "core/cmp";
+
+// The same as `describe[T: cmp.Display](s: T): string`.
+function describe(s: cmp.Display): string {
+    return "<" + s.to_string() + ">";
+}
+
+function main(): i32 {
+    print(describe(42));        // <42>
+    print(describe("pear"));    // <pear>
+    return 0;
+}
+```
+
+Each such parameter gets a type parameter of its own, so in
+`function pair(a: cmp.Display, b: cmp.Display)` the two arguments may be
+different types. Write the type parameter out when two parameters must share
+one, or when the return type names it. The parameter's type is the trait
+itself, with its type arguments when it has them (`s: Sink[i32]`); an array
+of a trait is not it, and a trait's methods are not generic, so inside an
+`impl` the rule does not apply. A trait means this only as a parameter type:
+in a return type, a field or a `let`, write
+[`dyn Trait`](#runtime-dispatch--dyn-trait) for a value of any implementing
+type, or a type parameter.
+
+### A generic function as a value
+
+A generic function can be passed or stored where a function type is
+expected, and takes its type arguments from that type:
+
+```fern
+import "core/cmp";
+
+function show[T: cmp.Display](v: T): string { return v.to_string(); }
+function apply(f: (i32) => string, v: i32): string { return f(v); }
+
+function main(): i32 {
+    print(apply(show, 42));                 // 42: `show` at T = i32
+    let g: (string) => string = show;       // `show` at T = string
+    print(g("pear"));
+    return 0;
+}
+```
+
+Each use is its own instance, as a call would be. The expected type has to
+determine every type parameter: `let f = show;` has none and is refused
+(E040), as is a type that leaves a bound unmet (E021).
+
 ## The `core/cmp` foundation
 
 The standard library's [`core/cmp`](../../stdlib/cmp/) module defines the

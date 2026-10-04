@@ -4,9 +4,9 @@
 // A request is a value built from a URL (`get(url)`, `request(method,
 // url)`, then `with_header`, `with_text`, `with_bytes`, `with_body`,
 // `with_timeouts`, `with_limits`) and sent with `send(req)` from a program
-// with a `main`, or through the `Platform` bag a handler was handed
-// (`plat.http(req)`), which is the capability-scoped route: a handler can
-// only fetch through the platform it was given, and a recording bag
+// with a `main`, or through the platform a handler was handed
+// (`plat.http(req)`, std/platform), which is the capability-scoped route: a
+// handler can only fetch through the platform it was given, and a mock
 // answers what the test canned instead of opening a socket.
 //
 // The answer is `Result[HttpResponse, FetchError]`: the status is data on
@@ -25,10 +25,11 @@
 // fails with `Tls`). A connection whose response was framed and that the
 // peer did not ask to close is kept in the transport's `Idle` pool, and
 // the next idempotent request to the same host and port takes it rather
-// than dialling; `send` and `plat.http` keep a pool for the one call (so a
-// redirect back to the same origin reuses its connection) and close it
-// after, and a caller holding a `Sockets` across `send_on` calls keeps one
-// across them. A `wasm32-wasi-http` build dials nothing: the
+// than dialling; `send` keeps a pool for the one call (so a redirect back
+// to the same origin reuses its connection) and closes it after, a caller
+// holding a `Sockets` across `send_on` calls keeps one across them, and a
+// host platform's `plat.http` keeps the platform's own, for as long as the
+// platform lives (std/platform). A `wasm32-wasi-http` build dials nothing: the
 // request goes to the host's wasi:http/outgoing-handler (std/wasi_http),
 // which resolves the name, connects and speaks TLS, and everything above
 // the transport is the same. Where the client dials, it reaches the
@@ -69,7 +70,6 @@ import "std/time";
 // std/tcp — tcp_recv_deadline, the recv-with-deadline primitive behind
 // the inactivity and total timeouts.
 import "std/tcp";
-import "std/platform";
 import "std/http";
 import "std/headers";
 import "std/url";
@@ -783,6 +783,21 @@ pub function send(req: Request): Result[HttpResponse, FetchError] {
   return __send_closing(Policy { public_only: false, proxies: __proxies() }, req);
 }
 
+// `send_public(req)` — `send`, refusing a host that resolves to an address
+// that is not global (`Blocked`), since a handler reaches only what the
+// deployment exposes publicly. A proxy the environment names is dialled
+// wherever it is.
+pub function send_public(req: Request): Result[HttpResponse, FetchError] {
+  return __send_closing(Policy { public_only: true, proxies: __proxies() }, req);
+}
+
+// `send_public_on(tr, req)` — `send_public` over the transport `tr`, whose
+// pool keeps the connection for the next request: the route a handler's
+// platform fetches through (std/platform), the pool the platform's own.
+pub function send_public_on[T: Transport](tr: T, req: Request): Result[HttpResponse, FetchError] {
+  return send_on(tr, req, Policy { public_only: true, proxies: __proxies() });
+}
+
 // `__send_closing(policy, req)` — `req` sent over the machine's transport
 // with a pool for this one call, closed once it answers. On wasi-http the
 // host dials and nothing is kept; the `else` arm is what the fold drops,
@@ -1138,7 +1153,7 @@ function __send_hosted(req: Request, t: __Target): Result[HttpResponse, FetchErr
       return Err(__hosted_error(e));
     }
   }
-  return Err(Cancelled);
+  return Err(FetchError.Cancelled);
 }
 
 // `__hosted_error(e)` — the host's refusal as this client's error.
@@ -1160,7 +1175,7 @@ function __hosted_error(e: wasi_http.OutgoingError): FetchError {
       return Protocol("the host gave no response");
     }
   }
-  return Cancelled;
+  return FetchError.Cancelled;
 }
 
 // `__host_code(code)` — a wasi:http `error-code` case as the phase it
@@ -1554,54 +1569,6 @@ function __rejected(code: i32): FetchError {
     return Protocol("an HTTP version other than 1");
   }
   return Protocol("a malformed response");
-}
-
-// `(plat: Platform).http(req)` — `send(req)` through the handler's
-// `Platform` bag, the capability-scoped route (docs/PLATFORM-RESEARCH.md
-// Rec §1): a handler can only fetch through the platform it was handed,
-// and only to a global address (`Blocked` otherwise); a proxy the
-// environment names is dialled wherever it is, since the environment is
-// the deployment's.
-//
-// A recording bag reaches no socket: the call is logged as `http` with
-// `METHOD url` and answered with what the test canned for that pair
-// (std/mock_platform's `http_set`), else `Err(Connect(ConnectionRefused))`,
-// what a real request gives for a host that is not listening.
-pub function (plat: Platform) http(req: Request): Result[HttpResponse, FetchError] {
-  if (!plat.is_mock()) {
-    return __send_closing(Policy { public_only: true, proxies: __proxies() }, req);
-  }
-  let summary: string = req.method + " " + req.url;
-  plat.record("http", summary);
-  match (plat.canned("http " + summary)) {
-    Some(v) => {
-      return Ok(__canned_response(v));
-    },
-    None => {
-      return Err(Connect(net.ConnectionRefused));
-    }
-  }
-  return Err(Connect(net.ConnectionRefused));
-}
-
-// `__canned_response(v)` — the canned `STATUS BODY` as a response, 200
-// when the status does not read.
-function __canned_response(v: string): HttpResponse {
-  let sp: i32 = v.index_of(" ");
-  let code: string = v;
-  let body: string = "";
-  if (sp >= 0) {
-    code = slice_unchecked(v, 0, sp).to_owned();
-    body = slice_unchecked(v, sp + 1, v.len()).to_owned();
-  }
-  let status: i32 = 200;
-  match (int.parse_int_radix(code, 10)) {
-    Some(n) => {
-      status = n;
-    },
-    None => {}
-  }
-  return http.text(status, body);
 }
 
 // ---------------------------------------------------------------------------
@@ -2007,8 +1974,7 @@ function __join_bytes(chunks: u8[][]): u8[] {
 // real wasi:io/poll pollable handle on wasm — so `poll` (poll(2) /
 // ppoll(2) native, wasi:io/poll.poll on wasm) drives it either way. The
 // continuation captures the connection `c` (it reads the socket, not the
-// woken token, which differs by backend). On interp the `poll` stub
-// means the `Pending` never resolves (consistent with std/async).
+// woken token, which differs by backend).
 pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u8[]] {
   let empty: u8[] = [];
   if (!http.http_target_ok(path)) {

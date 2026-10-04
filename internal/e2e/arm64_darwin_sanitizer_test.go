@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
@@ -35,13 +34,13 @@ func TestArm64DarwinSanitize(t *testing.T) {
 		{name: "clean_run_is_silent", src: sanCleanSrc, sanitize: true, wantExit: 0, census: true},
 		{
 			name: "use_after_free_reported", src: sanUseAfterFreeSrc, sanitize: true,
-			wantExit:   arm64codegen.ExitSanitizer,
+			wantExit:   e2eharness.ExitSanitizer,
 			wantStderr: []string{"fern-sanitizer: use-after-free (touched a quarantined block)", "backtrace:"},
 			noStderr:   []string{"rc over-release"},
 		},
 		{
 			name: "double_free_reported", src: sanDoubleFreeSrc, sanitize: true,
-			wantExit:   arm64codegen.ExitSanitizer,
+			wantExit:   e2eharness.ExitSanitizer,
 			wantStderr: []string{"fern-sanitizer: rc over-release (double free)", "backtrace:"},
 		},
 		// Flag off, the same stale touch recycles the block and bumps a

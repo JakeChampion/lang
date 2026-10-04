@@ -482,7 +482,7 @@ pub function resolve_imports(mod: parser.Module, dir: string, root: string): par
 //
 //     function main(): i32 { return serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle); }
 //
-// or, for `init(plat: Platform): (serve.Config, S)` beside a handler
+// or, for `init(plat: platform.Platform): (serve.Config, S)` beside a handler
 // threading `S` and a `shutdown(reason, state)` hook,
 //
 //     let (__fern_opts, __fern_state) = init(serve.__init_platform());
@@ -523,7 +523,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
       return entry;
     }
     if (entry.funcs[ii].params.len() == 1) {
-      if (entry.funcs[ii].params[0].type_name != "Platform") {
+      if (!parser.is_platform_param(entry.funcs[ii], 0, parser.std_qualifier(entry, "platform"))) {
         return entry;
       }
       let plat: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "__init_platform"), args: [], line: 0, col: 0, type_args: [], ty: "" };
@@ -658,7 +658,10 @@ pub function with_result_handler(entry: parser.Module, error_pfx: string, http_p
     adapter = mangled_name(http_pfx, adapter);
   }
   let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: adapter, line: 0, col: 0, ty: "" }, args: adapter_args, line: 0, col: 0, type_args: [], ty: "" };
-  let wrapper: parser.FuncDecl = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], type_params: [], all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
+  // The wrapper keeps the handler's type parameters and bounds: a handler
+  // generic over its platform is instantiated where the serve loop hands it
+  // the host platform, and the wrapper stands in its place there.
+  let wrapper: parser.FuncDecl = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
   let funcs: parser.FuncDecl[] = [];
   let i: i32 = 0;
   while (i < entry.funcs.len()) {
@@ -1603,7 +1606,20 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
 // the entry module (whose own decls keep their bare names).
 pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
   let empty: string[] = [];
-  let ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: import_prefixes(mod, ids, pfxs), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
+  // The entry's own decls keep their names, so one sharing an imported
+  // variant's name must still win over it, as an imported module's does (#11143).
+  let own: string[] = collect_decl_names(mod);
+  let ivn: string[] = [];
+  let ivm: string[] = [];
+  let i: i32 = 0;
+  while (i < ivar_names.len()) {
+    if (!util.has_str(own, ivar_names[i])) {
+      ivn = ivn.append(ivar_names[i]);
+      ivm = ivm.append(ivar_mangled[i]);
+    }
+    i = i + 1;
+  }
+  let ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: import_prefixes(mod, ids, pfxs), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, ivar_names: ivn, ivar_mangled: ivm, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
   return rewrite_module_bodies(mod, ctx);
 }
 
@@ -1848,6 +1864,58 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
   return MethodDedup { mod: deduped, keys: keys };
 }
 
+// imported_trait_spellings is every `alias.Trait` with which `mod` can name a
+// trait one of its imports declares: the parameter types
+// parser.desugar_trait_params turns into anonymous type parameters. A module's
+// own traits are bare, and the parser has already desugared those. An import
+// is matched as import_prefixes matches it: by `resolved` identity, else by
+// the basename a loader that records no identity named the module by.
+function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[]): string[] {
+  let ids: string[] = module_ids(imports);
+  let quals: string[] = mod_names(mod);
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < mod.imports.len()) {
+    let k: i32 = 0 - 1;
+    if (mod.imports[i].resolved.len() > 0) {
+      k = index_of_str(mod.imports[i].resolved, ids);
+    }
+    if (k < 0) {
+      k = loaded_index_by_name(imports, basename(mod.imports[i].path));
+    }
+    if (k >= 0) {
+      for t in imports[k].mod.trait_decls {
+        out = out.append(quals[i] + "." + t.name);
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// loaded_index_by_name is the position of the loaded module named `name`,
+// or -1.
+function loaded_index_by_name(imports: LoadedModule[], name: string): i32 {
+  let i: i32 = 0;
+  while (i < imports.len()) {
+    if (imports[i].name == name) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// desugar_imported_trait_params applies parser.desugar_trait_params to every
+// loaded module, against the traits its own imports declare.
+function desugar_imported_trait_params(imports: LoadedModule[]): LoadedModule[] {
+  let out: LoadedModule[] = [];
+  for lm in imports {
+    out = out.append(LoadedModule { ...lm, mod: parser.desugar_trait_params(lm.mod, imported_trait_spellings(lm.mod, imports), true) });
+  }
+  return out;
+}
+
 // bundle merges an entry module with its imported modules into one
 // flat Module the asm emitter can lower directly. Each import is
 // mangled (`name__*`, brick 2) — which also renames its own `main`
@@ -1858,8 +1926,9 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
 // the compiler's module layout). This is the final brick: after it,
 // a multi-module program — the compiler itself — lowers to a single
 // namespace and self-compiles.
-pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: string): parser.Module {
-  let entry: parser.Module = with_handler_main(entry0, target);
+pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: string): parser.Module {
+  let imports: LoadedModule[] = desugar_imported_trait_params(imports0);
+  let entry: parser.Module = parser.desugar_trait_params(with_handler_main(entry0, target), imported_trait_spellings(entry0, imports0), true);
   let funcs: parser.FuncDecl[] = [];
   let structs: parser.StructDecl[] = [];
   let aliases: parser.TypeAlias[] = [];
@@ -2018,6 +2087,7 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
     trait_reqs: trait_reqs,
     trait_decls: trait_decls,
     inferred_consts: inferred,
+    todo_sites: e.todo_sites,
   };
   return parser.resolve_dyn_traits(parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred))));
 }
@@ -2109,8 +2179,9 @@ pub struct PerModule { ns: string, mod: parser.Module, is_entry: boolean }
 // emitted as its own translation unit (entry → `_start` + the shared runtime;
 // imports → library units exposing their `.globl __fn_*`), and the units link
 // into one binary. The entry is the LAST element.
-pub function bundle_per_module(entry0: parser.Module, imports: LoadedModule[], target: string): PerModule[] {
-  let entry: parser.Module = with_handler_main(entry0, target);
+pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], target: string): PerModule[] {
+  let imports: LoadedModule[] = desugar_imported_trait_params(imports0);
+  let entry: parser.Module = parser.desugar_trait_params(with_handler_main(entry0, target), imported_trait_spellings(entry0, imports0), true);
   // One prefix authority for the whole bundle. Everything below -- the
   // enum-variant map, the re-export table, each module's own decls, and
   // every importer's references -- reads these rather than deriving a

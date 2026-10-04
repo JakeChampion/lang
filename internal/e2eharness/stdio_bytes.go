@@ -44,6 +44,16 @@ function main(): i32 {
     out.close_stdout();
     return 0;
   }
+  if (mode == "unicode-shared") {
+    let piece: string = "x".repeat(size) + "€🙂";
+    let held: string = piece;
+    out = out.fwrite("seed");
+    out = out.fwrite(piece);
+    out = out.fwrite(held);
+    out = out.fwrite("tail");
+    out.close_stdout();
+    return 0;
+  }
   if (mode == "shared") {
     out = out.fwrite("seed");
     let held: gnu.Stdio = out;
@@ -150,6 +160,10 @@ func RunStdioByteCases(t *testing.T, bin string, runner []string, census func(*t
 	}
 	for _, n := range []int{0, 56, 57, 58, 120, 121, 122, 4094, 4095, 4096, 8190, 8191, 8192, 65535} {
 		cases = append(cases, testCase{mode: "unicode", size: n, want: []byte(strings.Repeat("x", n) + "€🙂")})
+	}
+	for _, n := range []int{4094, 4095, 65535, 65536} {
+		piece := strings.Repeat("x", n) + "€🙂"
+		cases = append(cases, testCase{mode: "unicode-shared", size: n, want: []byte("seed" + piece + piece + "tail")})
 	}
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("%s/input%d/chunk%d", tc.mode, len(tc.data), tc.size), func(t *testing.T) {

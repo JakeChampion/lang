@@ -158,9 +158,12 @@ pub struct EmitState {
   // take its operands in registers.
   capture: usize,
   // The buffer an emitter writing a binary hands encoded instruction words to
-  // (`word`, `branch`), 0 when the text is the output: each word leaves a
-  // marker line in the text, which the assembler replaces with the next word.
+  // (`word`, `branch`, `bytes`), 0 when the text is the output: each record
+  // leaves a marker line in the text, which the assembler replaces with it.
   recs: usize,
+  // The next id lab_new / lab_take hands out: a label an emitter defines and
+  // branches to travels as its id when records are on, by name in the text.
+  nlab: i32,
   // The typed lowering of a runtime helper's source: one body per function it
   // defines, then the drop helpers those bodies carry. The CLI supplies it
   // (semlower.runtime_bodies); a backend never links that pipeline itself.
@@ -330,6 +333,7 @@ pub function new_state(): EmitState {
     reg_entries: irtables.sig_reg_of([]),
     leaves: [],
     capture: 0 as usize,
+    nlab: 0,
     recs: 0 as usize,
     rt_lower: no_rt_lower,
     named: [],
@@ -694,14 +698,29 @@ pub function (s: EmitState) word(w: i64): EmitState {
   return s;
 }
 
+// mark writes a record line: the marker `m`, then `text`.
+pub function (s: EmitState) mark(m: string, text: string): EmitState {
+  strbuf_append(m);
+  strbuf_append(text);
+  strbuf_append("\n");
+  return s;
+}
+
+// bytes hands over one x86 instruction's encoding: its length, then it.
+pub function (s: EmitState) bytes(b: i32[]): EmitState {
+  buf_push_byte(s.recs, b.len());
+  for x in b {
+    buf_push_byte(s.recs, x);
+  }
+  strbuf_append("\x01\n");
+  return s;
+}
+
 // branch hands over a branch word with no displacement, and the label it goes
 // to, which the assembler resolves as it would the text's.
 pub function (s: EmitState) branch(w: i64, label: string): EmitState {
   buf_push_u64(s.recs, w as u64);
-  strbuf_append("\x02");
-  strbuf_append(label);
-  strbuf_append("\n");
-  return s;
+  return s.mark("\x02", label);
 }
 
 pub function (s: EmitState) bind_local(name: string): EmitState {
@@ -969,6 +988,9 @@ function sysno_x86_64(name: string): string {
   if (name == "fstatat") {
     return "262";
   }
+  if (name == "statx") {
+    return "332";
+  }
   if (name == "getrandom") {
     return "318";
   }
@@ -1160,6 +1182,9 @@ function sysno_x86_64(name: string): string {
   }
   if (name == "fdatasync") {
     return "75";
+  }
+  if (name == "fadvise64") {
+    return "221";
   }
   if (name == "sync") {
     return "162";
@@ -1459,7 +1484,7 @@ function sysno_arm64_darwin(name: string): string {
     return "100";
   }
   if (name == "setpriority") {
-    return "101";
+    return "96";
   }
   if (name == "kill") {
     return "37";
@@ -1529,6 +1554,9 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "fstatat") {
     return "79";
+  }
+  if (name == "statx") {
+    return "291";
   }
   if (name == "getrandom") {
     return "278";
@@ -1651,6 +1679,9 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "fdatasync") {
     return "83";
+  }
+  if (name == "fadvise64") {
+    return "223";
   }
   if (name == "sync") {
     return "81";
@@ -1828,120 +1859,17 @@ pub function at_fdcwd(t: string): string {
 }
 
 // statoff is the `struct stat` field-offset table — the third per-target axis
-// after sysno and oflag, and the one that decides whether a leaf reading kernel
-// structs is expressible as ONE source. All three kernels fill a different
-// layout: x86-64 Linux has a u32 st_mode at 24, arm64 Linux at 16, and Darwin's
-// 64-bit-inode stat a **u16** st_mode at 4 with st_size pushed to 96 by four
-// timespecs.
-//
-// The u16 needs no separate treatment, which is the part that makes this work:
-// the only consumer masks with S_IFMT (0xF000), and every bit above 15 —
-// Darwin's st_nlink, sharing the word — is discarded by that mask anyway. So a
-// plain 32-bit load at the target's offset is correct on all three.
+// after sysno and oflag. Darwin's stat-shaped leaves read the whole record
+// through it (with statkind for the widths); Linux's go through statx instead,
+// and read `struct stat` only for its size.
 pub function statoff(t: string, name: string): string {
-  if (t == "x86_64") {
-    return statoff_x86_64(name);
-  }
   if (t == "arm64-darwin") {
     return statoff_darwin(name);
   }
-  return statoff_arm64_linux(name);
-}
-
-// x86-64 Linux: 144 bytes, with 64-bit dev / ino / nlink ahead of the 32-bit
-// mode / uid / gid triple, and the three timestamps as second+nanosecond word
-// pairs from offset 72.
-function statoff_x86_64(name: string): string {
-  if (name == "dev") {
-    return "0";
-  }
-  if (name == "ino") {
-    return "8";
-  }
-  if (name == "nlink") {
-    return "16";
-  }
-  if (name == "mode") {
-    return "24";
-  }
-  if (name == "uid") {
-    return "28";
-  }
-  if (name == "gid") {
-    return "32";
-  }
-  if (name == "rdev") {
-    return "40";
-  }
+  // Linux stats through statx (statx_project_src); `struct stat` is read only
+  // for read_file's size, at 48 on both arches.
   if (name == "size") {
     return "48";
-  }
-  if (name == "blksize") {
-    return "56";
-  }
-  if (name == "blocks") {
-    return "64";
-  }
-  return statoff_times_72(name);
-}
-
-// arm64 Linux: the asm-generic record — 128 bytes, mode / nlink / uid / gid
-// all 32-bit up front, st_blksize a signed 32-bit word at 56. Timestamps sit
-// where x86-64's do.
-function statoff_arm64_linux(name: string): string {
-  if (name == "dev") {
-    return "0";
-  }
-  if (name == "ino") {
-    return "8";
-  }
-  if (name == "mode") {
-    return "16";
-  }
-  if (name == "nlink") {
-    return "20";
-  }
-  if (name == "uid") {
-    return "24";
-  }
-  if (name == "gid") {
-    return "28";
-  }
-  if (name == "rdev") {
-    return "32";
-  }
-  if (name == "size") {
-    return "48";
-  }
-  if (name == "blksize") {
-    return "56";
-  }
-  if (name == "blocks") {
-    return "64";
-  }
-  return statoff_times_72(name);
-}
-
-// The Linux timestamp block, identical on both arches: three
-// (seconds, nanoseconds) pairs of 64-bit words starting at 72.
-function statoff_times_72(name: string): string {
-  if (name == "atime") {
-    return "72";
-  }
-  if (name == "atime_nsec") {
-    return "80";
-  }
-  if (name == "mtime") {
-    return "88";
-  }
-  if (name == "mtime_nsec") {
-    return "96";
-  }
-  if (name == "ctime") {
-    return "104";
-  }
-  if (name == "ctime_nsec") {
-    return "112";
   }
   return "0";
 }
@@ -1949,8 +1877,7 @@ function statoff_times_72(name: string): string {
 // arm64 Darwin: the 64-bit-inode record, 144 bytes and sharing almost nothing
 // with Linux's. mode and nlink are 16-bit; dev, rdev and blksize are signed
 // 32-bit; the timestamps are `struct timespec` pairs from 32 — with
-// st_birthtimespec occupying 80..96, which FileStat has no field for — and
-// size / blocks sit near the end at 96 and 104.
+// st_birthtimespec at 80 — and size / blocks sit near the end at 96 and 104.
 function statoff_darwin(name: string): string {
   if (name == "dev") {
     return "0";
@@ -1991,6 +1918,12 @@ function statoff_darwin(name: string): string {
   if (name == "ctime_nsec") {
     return "72";
   }
+  if (name == "btime") {
+    return "80";
+  }
+  if (name == "btime_nsec") {
+    return "88";
+  }
   if (name == "size") {
     return "96";
   }
@@ -2020,17 +1953,6 @@ pub function statkind(t: string, name: string): string {
       return "i32";
     }
     return "i64";
-  }
-  if (name == "mode" || name == "uid" || name == "gid") {
-    return "i32";
-  }
-  if (t == "x86_64") {
-    // st_nlink is a 64-bit word here and a 32-bit one on arm64; the
-    // FileStat slot is u32 either way, so this only decides the load.
-    return "i64";
-  }
-  if (name == "nlink" || name == "blksize") {
-    return "i32";
   }
   return "i64";
 }
@@ -3363,6 +3285,40 @@ function kqueue_wait_src(t: string): string {
     + "let buf_own: string = __raw_string(buf, cap * 32 + 16); return n;";
 }
 
+// rt_src_task backs the task primitives (docs/NET-P3-SUSPENSION-PLAN.md
+// §3.4). The state block __fern_task_state holds the current task's id, the
+// record table and its capacity; a record is twelve words: mode (0 running,
+// 1 unwinding, 2 rewinding), the timeout a parked task gave, the readiness
+// word its scheduler set, the cancelled flag, the save area's pointer, length
+// and capacity in words, the free flag a released id leaves for reuse, and
+// the wait set's pointer, length and capacity in words.
+// park is the one primitive the suspension pass's classifier starts from: a
+// running task parks by flipping to unwinding; a rewinding one lands here
+// again and answers the readiness word, or the cancel mark once cancelled.
+// Records and save areas are never returned to the heap; a freed id is reused.
+pub function rt_src_task(t: string): string {
+  return "function __fern_task_tab(): usize { let st: usize = __raw_task_state(); let tab: usize = __raw_load_ptr(st, 1); if (tab == 0 as usize) { tab = __raw_alloc(512); let i: i32 = 0; while (i < 64) { __raw_store_ptr(tab, i, 0 as usize); i = i + 1; } __raw_store_ptr(st, 1, tab); __raw_store_ptr(st, 2, 64 as usize); } return tab; }"
+    + " function __fern_task_rec(id: i32): usize { let tab: usize = __fern_task_tab(); return __raw_load_ptr(tab, id); }"
+    + " function __fern_task_blank(): usize { let rec: usize = __raw_alloc(96); let w: i32 = 0; while (w < 12) { __raw_store_ptr(rec, w, 0 as usize); w = w + 1; } return rec; }"
+    + " function __fern_task_new(): i32 { let st: usize = __raw_task_state(); let tab: usize = __fern_task_tab(); let cap: i32 = __raw_load_ptr(st, 2) as i32; let id: i32 = 1; while (id < cap) { let rec: usize = __raw_load_ptr(tab, id); if (rec == 0 as usize) { __raw_store_ptr(tab, id, __fern_task_blank()); return id; } if (__raw_load_ptr(rec, 7) != 0 as usize) { __raw_store_ptr(rec, 7, 0 as usize); __raw_store_ptr(rec, 0, 0 as usize); __raw_store_ptr(rec, 1, 0 as usize); __raw_store_ptr(rec, 2, 0 as usize); __raw_store_ptr(rec, 3, 0 as usize); __raw_store_ptr(rec, 5, 0 as usize); __raw_store_ptr(rec, 9, 0 as usize); return id; } id = id + 1; } let ntab: usize = __raw_alloc(cap * 16); let j: i32 = 0; while (j < cap * 2) { let v: usize = 0 as usize; if (j < cap) { v = __raw_load_ptr(tab, j); } __raw_store_ptr(ntab, j, v); j = j + 1; } __raw_store_ptr(st, 1, ntab); __raw_store_ptr(st, 2, (cap * 2) as usize); __raw_store_ptr(ntab, cap, __fern_task_blank()); return cap; }"
+    + " function __fern_task_free(id: i32): i32 { let rec: usize = __fern_task_rec(id); if (rec != 0 as usize) { __raw_store_ptr(rec, 7, 1 as usize); } return 0; }"
+    + " function __fern_task_cur(): i32 { let st: usize = __raw_task_state(); return __raw_load_ptr(st, 0) as i32; }"
+    + " function __fern_task_enter(id: i32, mode: i32): i32 { let st: usize = __raw_task_state(); __raw_store_ptr(st, 0, id as usize); let rec: usize = __fern_task_rec(id); __raw_store_ptr(rec, 0, mode as usize); return 0; }"
+    + " function __fern_task_leave(): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; __raw_store_ptr(st, 0, 0 as usize); if (id == 0) { return 0; } let rec: usize = __fern_task_rec(id); return __raw_load_ptr(rec, 0) as i32; }"
+    + " function __fern_task_mode(): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0; } let rec: usize = __fern_task_rec(id); return __raw_load_ptr(rec, 0) as i32; }"
+    + " function __fern_task_park(set: i32[], timeout_ms: i32): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0 - 1; } let rec: usize = __fern_task_rec(id); let mode: i32 = __raw_load_ptr(rec, 0) as i32; if (mode == 2) { __raw_store_ptr(rec, 0, 0 as usize); if (__raw_load_ptr(rec, 3) != 0 as usize) { return 0 - 2; } return __raw_load_ptr(rec, 2) as i32; } if (__raw_load_ptr(rec, 3) != 0 as usize) { return 0 - 2; } __raw_store_ptr(rec, 0, 1 as usize); __raw_store_ptr(rec, 1, timeout_ms as usize); let n: i32 = set.len(); let buf: usize = __raw_load_ptr(rec, 8); if (n > (__raw_load_ptr(rec, 10) as i32)) { buf = __raw_alloc(n * 8); __raw_store_ptr(rec, 8, buf); __raw_store_ptr(rec, 10, n as usize); } let i: i32 = 0; while (i < n) { __raw_store_ptr(buf, i, set[i] as usize); i = i + 1; } __raw_store_ptr(rec, 9, n as usize); return 0; }"
+    + " function __fern_task_wait(id: i32): i32[] { let rec: usize = __fern_task_rec(id); let n: i32 = __raw_load_ptr(rec, 9) as i32; let buf: usize = __raw_load_ptr(rec, 8); let out: i32[] = []; let i: i32 = 0; while (i < n) { out = out.append(__raw_load_ptr(buf, i) as i32); i = i + 1; } return out; }"
+    + " function __fern_task_timeout(id: i32): i32 { let rec: usize = __fern_task_rec(id); return __raw_load_ptr(rec, 1) as i32; }"
+    + " function __fern_task_set_ready(id: i32, w: i32): i32 { let rec: usize = __fern_task_rec(id); __raw_store_ptr(rec, 2, w as usize); return 0; }"
+    + " function __fern_task_set_cancelled(id: i32): i32 { let rec: usize = __fern_task_rec(id); __raw_store_ptr(rec, 3, 1 as usize); return 0; }"
+    + " function __fern_task_push_w(x: usize): i32 { let st: usize = __raw_task_state(); let rec: usize = __fern_task_rec(__raw_load_ptr(st, 0) as i32); let len: i32 = __raw_load_ptr(rec, 5) as i32; let cap: i32 = __raw_load_ptr(rec, 6) as i32; let buf: usize = __raw_load_ptr(rec, 4); if (len >= cap) { let ncap: i32 = 64; if (cap > 0) { ncap = cap * 2; } let nbuf: usize = __raw_alloc(ncap * 8); let i: i32 = 0; while (i < len) { __raw_store_ptr(nbuf, i, __raw_load_ptr(buf, i)); i = i + 1; } buf = nbuf; __raw_store_ptr(rec, 4, buf); __raw_store_ptr(rec, 6, ncap as usize); } __raw_store_ptr(buf, len, x); __raw_store_ptr(rec, 5, (len + 1) as usize); return 0; }"
+    + " function __fern_task_pop_w(): usize { let st: usize = __raw_task_state(); let rec: usize = __fern_task_rec(__raw_load_ptr(st, 0) as i32); let len: i32 = (__raw_load_ptr(rec, 5) as i32) - 1; __raw_store_ptr(rec, 5, len as usize); let buf: usize = __raw_load_ptr(rec, 4); return __raw_load_ptr(buf, len); }"
+    + " function __fern_task_push_i64(x: i64): i32 { return __fern_task_push_w(x as usize); }"
+    + " function __fern_task_pop_i64(): i64 { return __fern_task_pop_w() as i64; }"
+    + " function __fern_task_push_f64(x: f64): i32 { return __fern_task_push_w(f64_bits(x) as usize); }"
+    + " function __fern_task_pop_f64(): f64 { return f64_from_bits(__fern_task_pop_w() as i64); }";
+}
+
 pub function rt_src_reactor_wait(t: string): string {
   let wait: string = epoll_wait_src(t);
   if (t == "arm64-darwin") {
@@ -4435,21 +4391,16 @@ pub function rt_src_clock(which: string, t: string): string {
 }
 
 // rt_src_stat backs `stat(path)` (#2649) — the first syscall leaf that returned
-// a user-typed Result[FileStat, IoError]. NUL-terminate the path, fstatat into
-// the fixed static scratch buffer, read st_mode + st_size back with __load_i32 /
+// a user-typed Result[FileStat, IoError]. NUL-terminate the path, describe it
+// into the fixed static scratch buffer, read the record back with __load_i32 /
 // __load_i64, classify by S_IFMT, and build Ok(FileStat{...}) — or, on failure,
 // the errno classified by the shared __fern_io_error (bundled with this helper),
 // handed a FRESH path string so the borrowed `path` param is never stored.
 //
-// One body for all three targets, which took unifying on the **4-arg fstatat**
-// family: x86-64 newfstatat 262, arm64-linux newfstatat 79, arm64-darwin
-// fstatat64 470, all `(dirfd, path, buf, flags)` with flags 0 meaning
-// follow-symlinks. This helper used to call x86-64's 2-arg `stat` (4), which
-// arm64-linux does not have at all — that asymmetry, plus the differing field
-// offsets, is why #6352/#6356 recorded stat as needing a per-target BODY. It
-// does not: with fstatat and asmcore.statoff it is the same constant
-// substitution as the other leaves. (The u16 st_mode on Darwin needs no special
-// read — see statoff.)
+// Linux uses statx(2) (x86-64 332, arm64 291), whose record is the same on both
+// arches and carries the birth time `struct stat` has no field for (#9096).
+// Darwin uses fstatat64 (470), whose `struct stat` already has
+// st_birthtimespec, projected through statoff / statkind.
 //
 // The two field reads go through `__raw_addr(buf, off)`, not `buf + off` (#6386).
 // `__load_i32` / `__load_i64` take a bare address with no offset operand to fold,
@@ -4478,21 +4429,71 @@ pub function rt_src_lstat(t: string): string {
 }
 
 function rt_src_stat_like(t: string, name: string, at_flags: string): string {
-  return "function " + name + "(path: string): Result[FileStat, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let buf: usize = __raw_scratch(160); let rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz as i64, buf as i64, " + at_flags + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } " + stat_project_src(t) + " }";
+  let head: string = "function " + name + "(path: string): Result[FileStat, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); ";
+  let tail: string = " let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } ";
+  if (t == "arm64-darwin") {
+    return head + "let buf: usize = __raw_scratch(160); let rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz as i64, buf as i64, " + at_flags + ") as i32;" + tail + stat_project_src(t) + " }";
+  }
+  return head + "let buf: usize = __raw_scratch(256); let rc: i32 = __syscall5(" + sysno(t, "statx") + ", " + at_fdcwd(t) + ", pathz as i64, " + at_flags + ", " + statx_mask() + ", buf as i64) as i32;" + tail + statx_project_src() + " }";
 }
 
-// stat_project_src is the tail every stat-shaped leaf shares: the record in
-// `buf` read into an Ok(FileStat { ... }) return.
+// stat_project_src is the tail Darwin's stat-shaped leaves share: the record
+// in `buf` read into an Ok(FileStat { ... }) return.
 function stat_project_src(t: string): string {
   return "let mode: i32 = " + stat_load(t, "mode") + "; let mfmt: i32 = mode & 61440; let isf: boolean = mfmt == 32768; let isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: " + stat_i64(t, "size") + ", mode: (mode as u32), " + stat_fields_src(t) + " });";
 }
 
+// statx_mask is STATX_BASIC_STATS | STATX_BTIME: every field `struct stat`
+// has, and the birth time it does not.
+function statx_mask(): string {
+  return "4095";
+}
+
+// statx_project_src is the Linux tail: `struct statx` in `buf` read into an
+// Ok(FileStat { ... }) return. The record is the same on every Linux arch:
+// mask@0 blksize@4 nlink@16 uid@20 gid@24 mode@28 (u16) ino@32 size@40
+// blocks@48, then {sec i64, nsec u32} timestamps atime@64 btime@80 ctime@96
+// mtime@112, then rdev and dev as (major, minor) u32 pairs at 128 and 136,
+// recombined into a dev_t the way glibc's makedev does. A birth time the
+// filesystem does not record (STATX_BTIME clear in stx_mask) reads zero.
+function statx_project_src(): string {
+  let o: string = "let mode: i32 = __load_i32(__raw_addr(buf, 28)) & 65535; let mfmt: i32 = mode & 61440; let isf: boolean = mfmt == 32768; let isd: boolean = mfmt == 16384; ";
+  o = o + "let bt: i64 = 0 as i64; let btn: i64 = 0 as i64; if ((__load_i32(__raw_addr(buf, 0)) & 2048) != 0) { bt = __load_i64(__raw_addr(buf, 80)); btn = __load_i32(__raw_addr(buf, 88)) as i64; } ";
+  o = o + "return Ok(FileStat { is_file: isf, is_dir: isd, size: __load_i64(__raw_addr(buf, 40)), mode: (mode as u32)";
+  o = o + ", nlink: (__load_i32(__raw_addr(buf, 16)) as u32)";
+  o = o + ", uid: (__load_i32(__raw_addr(buf, 20)) as u32)";
+  o = o + ", gid: (__load_i32(__raw_addr(buf, 24)) as u32)";
+  o = o + ", dev: " + statx_makedev("136", "140");
+  o = o + ", rdev: " + statx_makedev("128", "132");
+  o = o + ", ino: __load_i64(__raw_addr(buf, 32))";
+  o = o + ", blksize: (__load_i32(__raw_addr(buf, 4)) as i64)";
+  o = o + ", blocks: __load_i64(__raw_addr(buf, 48))";
+  o = o + ", atime: __load_i64(__raw_addr(buf, 64)), atime_nsec: (__load_i32(__raw_addr(buf, 72)) as i64)";
+  o = o + ", mtime: __load_i64(__raw_addr(buf, 112)), mtime_nsec: (__load_i32(__raw_addr(buf, 120)) as i64)";
+  o = o + ", ctime: __load_i64(__raw_addr(buf, 96)), ctime_nsec: (__load_i32(__raw_addr(buf, 104)) as i64)";
+  o = o + ", btime: bt, btime_nsec: btn });";
+  return o;
+}
+
+// statx_makedev is glibc's makedev over the (major, minor) pair at those offsets:
+// minor's low byte, major's low 12 bits at 8, minor's remaining bits at 20 and
+// major's at 44. Both halves are non-negative, so the shifts need no masks.
+function statx_makedev(major: string, minor: string): string {
+  let maj: string = "(__load_i32(__raw_addr(buf, " + major + ")) as i64)";
+  let min: string = "(__load_i32(__raw_addr(buf, " + minor + ")) as i64)";
+  return "(((" + maj + " & (4095 as i64)) << 8) | ((" + maj + " >> 12) << 44) | (" + min + " & (255 as i64)) | ((" + min + " >> 8) << 20))";
+}
+
 // rt_src_fd_stat backs `r.stat()` / `w.stat()` -> Result[FileStat, IoError]:
-// fstat(2) of the handle's fd into the same record, projected by the same
-// tail. A handle carries no path, so the errno is classified against an
-// empty one, as a failed read is.
+// the handle's fd described by the same record and projected by the same
+// tail — statx(fd, "", AT_EMPTY_PATH) on Linux, fstat(2) on Darwin. A handle
+// carries no path, so the errno is classified against an empty one, as a
+// failed read is.
 pub function rt_src_fd_stat(t: string): string {
-  return "function __fern_fd_stat(fd: i32): Result[FileStat, IoError] { let buf: usize = __raw_scratch(160); let rc: i32 = __syscall3(" + sysno(t, "fstat") + ", fd as i64, buf as i64, 0) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } " + stat_project_src(t) + " }";
+  if (t == "arm64-darwin") {
+    return "function __fern_fd_stat(fd: i32): Result[FileStat, IoError] { let buf: usize = __raw_scratch(160); let rc: i32 = __syscall3(" + sysno(t, "fstat") + ", fd as i64, buf as i64, 0) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } " + stat_project_src(t) + " }";
+  }
+  return "function __fern_fd_stat(fd: i32): Result[FileStat, IoError] { let ez: usize = __raw_alloc(1); __raw_store8(ez, 0, 0); let buf: usize = __raw_scratch(256); let rc: i32 = __syscall5(" + sysno(t, "statx") + ", fd as i64, ez as i64, 4096, " + statx_mask() + ", buf as i64) as i32; let ez_own: string = __raw_string(ez, 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } " + statx_project_src() + " }";
 }
 
 // rt_src_fd_sync backs `r.fsync()` / `w.fsync()` and the fdatasync twin ->
@@ -4518,6 +4519,19 @@ pub function rt_src_fd_syncfs(t: string): string {
   return "function __fern_fd_syncfs(fd: i32): Option[IoError] { let rc: i32 = __syscall3(" + sysno(t, "syncfs") + ", fd as i64, 0, 0) as i32; if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
 }
 
+// rt_src_fd_drop_cache backs `r.drop_cache(offset, len)` /
+// `w.drop_cache(offset, len)` -> Option[IoError]: fadvise64(2) with
+// POSIX_FADV_DONTNEED (4) over that range. XNU has no fadvise, and
+// F_NOCACHE is a different request, so Darwin answers Unsupported once lseek
+// has shown the descriptor is seekable (a pipe is ESPIPE, as on Linux).
+pub function rt_src_fd_drop_cache(t: string): string {
+  let head: string = "function __fern_fd_drop_cache(fd: i32, off: i64, n: i64): Option[IoError] { ";
+  if (t == "arm64-darwin") {
+    return head + "let at: i64 = __syscall3(" + sysno(t, "lseek") + ", fd as i64, 0, 1); if (at < (0 as i64)) { return Some(__fern_io_error(((0 as i64) - at) as i32, \"\")); } return Some(Unsupported); }";
+  }
+  return head + "let rc: i32 = __syscall5(" + sysno(t, "fadvise64") + ", fd as i64, off, n, 4, 0) as i32; if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
+}
+
 // rt_src_fd_dup_onto backs `r.dup_onto(fd)` / `w.dup_onto(fd)` ->
 // Option[IoError]: dup3(2) of the handle's descriptor onto `newfd`, so the
 // handle is reachable as that number too and whatever it named is closed.
@@ -4538,9 +4552,10 @@ pub function rt_src_sync(t: string): string {
   return "function __fern_sync(): i32 { return __syscall3(" + sysno(t, "sync") + ", 0, 0, 0) as i32; }";
 }
 
-// rt_src_sync_family gathers whichever of the four write-back helpers the
-// module actually reached. Both native backends select them identically, so
-// the four `has_need` tests live here once rather than in each emitter.
+// rt_src_sync_family gathers whichever of the write-back helpers, and
+// drop_cache beside them, the module actually reached. Both native backends
+// select them identically, so the `has_need` tests live here once rather than
+// in each emitter.
 pub function rt_src_sync_family(s: EmitState, t: string): string {
   let out: string = "";
   if (s.has_need("fd_fsync")) {
@@ -4551,6 +4566,9 @@ pub function rt_src_sync_family(s: EmitState, t: string): string {
   }
   if (s.has_need("fd_syncfs")) {
     out = out + " " + rt_src_fd_syncfs(t);
+  }
+  if (s.has_need("fd_drop_cache")) {
+    out = out + " " + rt_src_fd_drop_cache(t);
   }
   if (s.has_need("sync")) {
     out = out + " " + rt_src_sync(t);
@@ -4659,6 +4677,8 @@ function stat_fields_src(t: string): string {
   o = o + ", mtime_nsec: " + stat_i64(t, "mtime_nsec");
   o = o + ", ctime: " + stat_i64(t, "ctime");
   o = o + ", ctime_nsec: " + stat_i64(t, "ctime_nsec");
+  o = o + ", btime: " + stat_i64(t, "btime");
+  o = o + ", btime_nsec: " + stat_i64(t, "btime_nsec");
   return o;
 }
 
@@ -8024,6 +8044,41 @@ pub function fresh_label(s: EmitState): LabelOut {
   return LabelOut { state: ns, name: name };
 }
 
+// Lab is a label an emitter defines and branches to: its id for the records
+// and its name for the text. The name is built in both modes, so a branch
+// the records cannot take still has its text.
+pub struct Lab { id: i32, name: string }
+
+pub struct LabNew { state: EmitState, lab: Lab }
+
+// lab_new mints the label `name` with the next id.
+pub function lab_new(s: EmitState, name: string): LabNew {
+  return LabNew { state: EmitState { ...s, nlab: s.nlab + 1 }, lab: Lab { id: s.nlab, name: name } };
+}
+
+// lab_take allocates the next n ids, the first of them `nlab` before the call.
+pub function (s: EmitState) lab_take(n: i32): EmitState {
+  return EmitState { ...s, nlab: s.nlab + n };
+}
+
+// lab_def defines `l` here: as the \x04 record carrying its id when records
+// are on, otherwise as the text `name:`.
+pub function (s: EmitState) lab_def(l: Lab): EmitState {
+  if (s.records()) {
+    buf_push_u64(s.recs, l.id as u64);
+    return s.mark("\x04", "");
+  }
+  return s.write(l.name + ":\n");
+}
+
+// lab_ref hands over a branch to `l` as the \x05 record: the target's id in
+// the high 32 bits and `payload` (the instruction word on arm64, the jump
+// kind on x86) in the low 32. The caller writes the text when records are off.
+pub function (s: EmitState) lab_ref(payload: i64, l: Lab): EmitState {
+  buf_push_u64(s.recs, (l.id as i64 << 32 | payload & 4294967295i64) as u64);
+  return s.mark("\x05", "");
+}
+
 pub function count_locals(body: ast.Stmt[]): i32 {
   let n: i32 = 0;
   let i: i32 = 0;
@@ -8280,8 +8335,9 @@ pub function runtime_need_deps(name: string): string[] {
     || name == "str_case" || name == "str_repeat"
     || name == "str_replace"
     || name == "arrarr_free" || name == "strarrarr_free" || name == "optarrarr_free"
-    || name == "poll") {
-    // poll's __fern_poll allocates the transient pollfd[] via __fern_alloc.
+    || name == "poll" || name == "task") {
+    // poll's __fern_poll allocates the transient pollfd[] via __fern_alloc;
+    // the task runtime its records, table and save areas.
     return heap;
   }
   if (name == "str_trim") {

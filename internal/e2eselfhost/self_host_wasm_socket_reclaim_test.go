@@ -17,15 +17,7 @@ func TestSelfHostWasmTcpLifecycleCensus(t *testing.T) {
 
 func buildWasiSocketCensusComponent(t *testing.T, src string) string {
 	t.Helper()
-	for _, tool := range []string{"wasm-tools", "wasmtime"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skip(tool + " not on PATH")
-		}
-	}
-	adapter := os.Getenv("FERN_WASI_ADAPTER")
-	if adapter == "" {
-		t.Skip("FERN_WASI_ADAPTER unset")
-	}
+	e2eharness.Wasmtime(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "wasm_run.fern")
@@ -41,26 +33,7 @@ func buildWasiSocketCensusComponent(t *testing.T, src string) string {
 	if err := os.WriteFile(path, wat, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	wit, err := filepath.Abs("../../cmd/fern/wit")
-	if err != nil {
-		t.Fatal(err)
-	}
-	core, embedded, component := filepath.Join(dir, "core.wasm"), filepath.Join(dir, "embedded.wasm"), filepath.Join(dir, "component.wasm")
-	// Give the external Preview 1 adapter its own stack pages. Otherwise it
-	// calls the exported guest allocator before _start and keeps two 64 KiB
-	// blocks alive for the component lifetime. The census measures Fern heap
-	// ownership; adapter stack pages remain outside it, as native stacks do.
-	for _, args := range [][]string{
-		{"parse", path, "-o", core},
-		{"component", "embed", wit, "-w", "fern", core, "-o", embedded},
-		{"component", "new", embedded, "--realloc-via-memory-grow", "--adapt", "wasi_snapshot_preview1=" + adapter, "-o", component},
-		{"validate", component},
-	} {
-		if out, err := exec.Command("wasm-tools", args...).CombinedOutput(); err != nil {
-			t.Fatalf("wasm-tools %v: %v\n%s", args, err, out)
-		}
-	}
-	return component
+	return e2eharness.AdaptPreview1Component(t, path)
 }
 
 func TestSelfHostWasmSocketSetupReclaimsOnError(t *testing.T) {

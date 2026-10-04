@@ -132,11 +132,3 @@ func TestWASMBsdSum(t *testing.T) {
 		return strings.Join(lines[:len(lines)-1], "\n")
 	})
 }
-
-func TestX86_64SSABsdSum(t *testing.T) {
-	runBsdSumCorpus(t, x86_64SSACorpusRunner(t))
-}
-
-func TestArm64SSABsdSum(t *testing.T) {
-	runBsdSumCorpus(t, arm64SSACorpusRunner(t))
-}

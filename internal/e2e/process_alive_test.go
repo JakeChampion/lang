@@ -13,7 +13,6 @@
 package e2e
 
 import (
-	"os"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -54,16 +53,6 @@ func TestArm64ProcessAlive(t *testing.T) {
 	out, code := compileAndRunArm64(t, processAliveSource)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see processAliveSource)\n%s", code, out)
-	}
-}
-
-func TestArm64SSAProcessAlive(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	bin := compileArm64SSA(t, fern, processAliveSource, os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, t.TempDir(), os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see processAliveSource)\n%s", code, stderr)
 	}
 }
 

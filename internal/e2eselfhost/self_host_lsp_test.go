@@ -364,14 +364,9 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 // lspCases are programs both front ends judge alike, placed through every
 // shape the wire conversion has: no diagnostic, one, several, a line with
 // non-ASCII before the position (2- and 4-byte UTF-8: one and two UTF-16
-// units), CRLF line endings, a parse marker, a positionless refusal, and
-// imports from a sibling and from the stdlib.
-//
-// Two shapes are left out because native is the one that is wrong: a
-// top-level const, which fern-lsp reports as undefined at every use because
-// it skips `-check`'s const fold, and a cross-module visibility error, which
-// it publishes at 0:0 (#11314). TestSelfHostLSPPublishesCheckFindingsX86_64
-// covers both on the self-host side.
+// units), CRLF line endings, a parse marker, a positionless refusal, a
+// top-level const, imports from a sibling and from the stdlib, and a
+// sibling's private function.
 var lspCases = []struct {
 	name  string
 	files map[string]string // main.fern is the document opened
@@ -395,6 +390,11 @@ var lspCases = []struct {
 		"lib.fern":  "pub function shown(): i32 { return 2; }\n",
 	}},
 	{"stdlib-import", map[string]string{"main.fern": "import \"std/string\";\nfunction main(): i32 {\n  let s: string = \"abc\";\n  return s.len() + w;\n}\n"}},
+	{"const", map[string]string{"main.fern": "const LIMIT: i32 = 10;\nfunction main(): i32 {\n  return LIMIT + y;\n}\n"}},
+	{"private-in-sibling", map[string]string{
+		"main.fern": "import \"./lib\";\nfunction main(): i32 {\n  return lib.hidden();\n}\n",
+		"lib.fern":  "function hidden(): i32 { return 1; }\n",
+	}},
 }
 
 // TestSelfHostLSPDiagnosticsMatchFernLSPX86_64 is the differential the issue
@@ -475,9 +475,6 @@ func TestSelfHostLSPDocumentSyncMatchesFernLSPX86_64(t *testing.T) {
 // formatting request from both servers: one edit replacing the document with
 // what `-fmt` writes, its end in UTF-16 units, or none when the text is
 // already formatted, does not parse, or is not open.
-//
-// A file missing its last `}` is not here: the self-host parser accepts one
-// (#11315), so it formats where native refuses.
 func TestSelfHostLSPFormattingMatchesFernLSPX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	edits := 0
@@ -489,6 +486,7 @@ func TestSelfHostLSPFormattingMatchesFernLSPX86_64(t *testing.T) {
 		{"non-ascii-last-line", "function main(): i32 {\n  return 0;\n}\n// café"},
 		{"formatted", "function main(): i32 {\n  return 0;\n}\n"},
 		{"does-not-parse", "function main(): i32 { return"},
+		{"missing-last-brace", "function main(): i32 {\n  return 0;\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "main.fern")
@@ -522,7 +520,8 @@ func TestSelfHostLSPFormattingMatchesFernLSPX86_64(t *testing.T) {
 }
 
 // checkLine matches one line of `-check` output that names a position in the
-// entry module; a position in another module carries its path first.
+// entry module; a position in another module carries its path first, as a
+// `todo` warning carries the entry's.
 var (
 	checkLine          = regexp.MustCompile(`^(\d+):(\d+): (.*)$`)
 	checkLineElsewhere = regexp.MustCompile(`^\S+:\d+:\d+: `)
@@ -533,7 +532,7 @@ var (
 // from what `-check` prints for the same file: one diagnostic per line, at the
 // line's position converted to LSP's, carrying its code, severity and
 // message. A line in an imported module is not the document's.
-func expectedFromCheck(t *testing.T, src, out string) []lspDiag {
+func expectedFromCheck(t *testing.T, path, src, out string) []lspDiag {
 	t.Helper()
 	lines := strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n")
 	want := []lspDiag{}
@@ -543,7 +542,7 @@ func expectedFromCheck(t *testing.T, src, out string) []lspDiag {
 		}
 		d := lspDiag{Severity: 1, Source: "fern"}
 		rest := line
-		if m := checkLine.FindStringSubmatch(line); m != nil {
+		if m := checkLine.FindStringSubmatch(strings.TrimPrefix(line, path+":")); m != nil {
 			ln, _ := strconv.Atoi(m[1])
 			col, _ := strconv.Atoi(m[2])
 			ch := utf16Column(lines, ln, col)
@@ -600,8 +599,8 @@ func utf16Column(lines []string, ln, col int) int {
 // definition: what it publishes for a document is what `-check` reports for
 // that file — every finding in the document, at its position, with its code,
 // severity and message — and nothing else. It runs over every rejection case
-// in the conformance corpus, where `-check` has the most to say, plus the
-// shapes lspCases leaves out because native gets them wrong.
+// in the conformance corpus, where `-check` has the most to say, plus a few
+// shapes the corpus does not have.
 //
 // This is what makes the server's diagnostics the self-host checker's, so the
 // checker differentials gate them too. Where those report a gap, the server
@@ -636,8 +635,9 @@ func TestSelfHostLSPPublishesCheckFindingsX86_64(t *testing.T) {
 		"non-ascii/main.fern":    "function main(): i32 {\n  let s: string = \"日本\"; let x: i32 = y;\n  return 0;\n}\n",
 		"in-an-import/main.fern": "import \"./lib\";\nfunction main(): i32 {\n  return lib.f();\n}\n",
 		"in-an-import/lib.fern":  "pub function f(): i32 {\n  return nope;\n}\n",
+		"todo/main.fern":         "function f(): i32 {\n  todo;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
 	})
-	for _, name := range []string{"const", "private", "non-ascii", "in-an-import"} {
+	for _, name := range []string{"const", "private", "non-ascii", "in-an-import", "todo"} {
 		p := filepath.Join(extra, name, "main.fern")
 		b, _ := os.ReadFile(p)
 		docs = append(docs, doc{name, p, string(b)})
@@ -669,7 +669,7 @@ func TestSelfHostLSPPublishesCheckFindingsX86_64(t *testing.T) {
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
 			_ = cmd.Run()
-			want := expectedFromCheck(t, d.src, stderr.String())
+			want := expectedFromCheck(t, d.path, d.src, stderr.String())
 			findings += len(want)
 			if have := got[fileURI(d.path)]; !reflect.DeepEqual(have, want) {
 				t.Errorf("published %+v\n-check says %+v\n(-check output: %q)", have, want, stderr.String())

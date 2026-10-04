@@ -21,7 +21,6 @@ package e2e
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -72,17 +71,6 @@ func TestArm64Statfs(t *testing.T) {
 	out, code := compileAndRunArm64(t, statfsProbe(t, t.TempDir()))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see statfsProbe)\n%s", code, out)
-	}
-}
-
-func TestArm64SSAStatfs(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, statfsProbe(t, dir), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see statfsProbe)\n%s", code, stderr)
 	}
 }
 

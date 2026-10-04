@@ -35,6 +35,7 @@ import "std/http";
 import "std/serve";
 import "std/fetch";
 import "std/headers";
+import "std/platform";
 import "./ast";
 import "./diag";
 import "./parser";
@@ -165,7 +166,7 @@ function serve(decls: ast.Decl[], port: i32): i32 {
   // a string and nothing composite, so the cache is encoded on the way out
   // and decoded on the way in. See store.fern for why, and for the cost.
   let cache: Cell[string] = cell_new("");
-  let handler: (HttpRequest, Platform) => HttpResponse = (req: HttpRequest, plat: Platform): HttpResponse => {
+  let handler: (HttpRequest, platform.Host) => HttpResponse = (req: HttpRequest, plat: platform.Host): HttpResponse => {
     let names: string[] = req.headers.names;
     let values: string[] = req.headers.values;
     let body: string = "";

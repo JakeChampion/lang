@@ -242,9 +242,8 @@ const (
 	sysRead  = 0
 	sysWrite = 1
 	sysClose = 3
-	// fstat(2) / lseek(2): x86-64 syscalls 5 / 8, backing the Reader /
-	// Writer `stat` and `seek` methods.
-	sysFstat = 5
+	// lseek(2): x86-64 syscall 8, backing the Reader / Writer `seek`
+	// method.
 	sysLseek = 8
 	// Write-back: fsync(2) / fdatasync(2) on one descriptor, syncfs(2)
 	// on the filesystem holding it, and sync(2) on every filesystem.
@@ -253,6 +252,10 @@ const (
 	sysFdatasync = 75
 	sysSync      = 162
 	sysSyncfs    = 306
+	// fadvise64(2), behind the handle `drop_cache` method, with
+	// POSIX_FADV_DONTNEED as its advice.
+	sysFadvise64      = 221
+	posixFadvDontneed = 4
 	// dup3(2), behind the handle `dup_onto` method. Linux/arm64 has no
 	// dup2 at all, so dup3 is the form both Linux architectures carry.
 	sysDup3 = 292
@@ -1174,6 +1177,13 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesFdSyncfs {
 		g.emitFdCallRuntime("__fern_fd_syncfs", "sfs", sysSyncfs, nil)
 	}
+	if g.usesFdDropCache {
+		// fadvise64(fd, offset, len, DONTNEED): the offset and length
+		// arrive in rsi and rdx, where the call wants them.
+		g.emitFdCallRuntime("__fern_fd_drop_cache", "fdc", sysFadvise64, func() {
+			g.emit(fmt.Sprintf("mov r10d, %d", posixFadvDontneed))
+		})
+	}
 	if g.usesFdDupOnto {
 		// dup3(own_fd, fd, 0). The destination is sign-extended rather
 		// than zero-extended so a negative one stays negative and
@@ -1766,8 +1776,7 @@ type generator struct {
 	usesWriteFileExec  bool
 	usesWriteFileBytes bool
 	// usesRemoveDirAll pulls in the recursive `rm -rf` runtime
-	// (`__fern_remove_dir_all(path) → Option[IoError]`) — the
-	// x86-64 sibling of arm64-ssa's emitRemoveDirAllHelper. It's
+	// (`__fern_remove_dir_all(path) → Option[IoError]`). It's
 	// what std/test's TestRunner.finish() needs to clean up its
 	// temp dirs when a TAP program links through the native CLI.
 	usesRemoveDirAll bool
@@ -1793,6 +1802,7 @@ type generator struct {
 	usesWriterTruncate bool
 	usesFdSync         bool
 	usesFdDatasync     bool
+	usesFdDropCache    bool
 	usesFdSyncfs       bool
 	usesFdDupOnto      bool
 	usesSync           bool
@@ -2412,6 +2422,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "__method_Reader_syncfs", "__method_Writer_syncfs":
 		g.usesFdSyncfs = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Reader_drop_cache", "__method_Writer_drop_cache":
+		g.usesFdDropCache = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "__method_Reader_dup_onto", "__method_Writer_dup_onto":
@@ -4364,6 +4378,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_fd_fdatasync"
 		case "__method_Reader_syncfs", "__method_Writer_syncfs":
 			target = "__fern_fd_syncfs"
+		case "__method_Reader_drop_cache", "__method_Writer_drop_cache":
+			target = "__fern_fd_drop_cache"
 		case "__method_Reader_dup_onto", "__method_Writer_dup_onto":
 			target = "__fern_fd_dup_onto"
 		case "sync":
@@ -8204,11 +8220,8 @@ const (
 	sanLeakSuffix = " blocks"
 )
 
-// MsgArenaExhausted is the arena-exhaustion diagnostic. Exported so the x86-64
-// SSA backend's heap guard (internal/codegen/x86_64ssa) writes the identical
-// text: a program's abort output must not depend on which x86-64 emitter built
-// it. Must stay identical to the arm64 backend's entry, like every other
-// message in the table above.
+// MsgArenaExhausted is the arena-exhaustion diagnostic. Must stay identical
+// to the arm64 backend's entry, like every other message in the table above.
 const MsgArenaExhausted = "fern: out of memory (heap arena exhausted)\n"
 
 // ExitArenaExhausted is the status a Fern binary exits with when __fern_alloc's
@@ -10836,8 +10849,7 @@ func (g *generator) emitStrAppendRangeRuntime() {
 // mirroring arm64's d0/d1. All scratch is caller-saved under SysV.
 //
 // Written through w, one line per call, with fresh naming a module-unique
-// label for a prefix: the SSA backend (internal/codegen/x86_64ssa) emits the
-// same bundle for its own f64 helpers.
+// label for a prefix.
 func EmitFloatTranscendentals(w func(string, ...any), fresh func(prefix string) string) {
 	emit := func(s string) { w("\t%s", s) }
 	label := func(name string) { w("%s:", name) }
@@ -10869,6 +10881,10 @@ func EmitFloatTranscendentals(w func(string, ...any), fresh func(prefix string) 
 	}
 	label(".Lfc_2opi_bits")
 	for _, w := range fdlibm.TwoOverPiBits {
+		line(fmt.Sprintf("\t.quad 0x%016x", w))
+	}
+	label(".Lfc_logtab")
+	for _, w := range fdlibm.LogData() {
 		line(fmt.Sprintf("\t.quad 0x%016x", w))
 	}
 	line(".text")
@@ -11197,90 +11213,146 @@ func EmitFloatTranscendentals(w func(string, ...any), fresh func(prefix string) 
 	emit("ret")
 	line(".size __fern_exp_f64, .-__fern_exp_f64")
 
-	// __fern_log_f64(xmm0=x) → ln x (x>0). x = 2^k·m, m normalised to
-	// [sqrt2/2, sqrt2); f = m-1; s = f/(2+f).
-	//   R = t1+t2 over two INDEPENDENT chains in w = z², z = s², so they
-	//   issue in parallel instead of one 7-deep Horner.
-	//   ln x = k·ln2_hi - ((hfsq - (s·(hfsq+R) + k·ln2_lo)) - f)
+	// __fern_log_f64(xmm0=x) → ln x, the table-driven kernel
+	// internal/fdlibm/logtab.go documents. r8 holds .Lfc_logtab's address
+	// throughout; rdx is 3·i, the row's index in doubles. Register copies
+	// are movapd, not movsd: movsd merges into the destination's high lane,
+	// which chains each call to registers the previous one left behind.
 	fn("__fern_log_f64")
+	logMain, logNear1, logSpecial := fresh("logMain"), fresh("logNear1"), fresh("logSpecial")
 	logRet, logNaN, logNegInf := fresh("logRet"), fresh("logNaN"), fresh("logNegInf")
-	logNoScale := fresh("logNoScale")
-	// Domain guards. The bit-twiddling below extracts an exponent
-	// from 0 or +Inf and carries on, so log(0) returned -709.09 and
-	// log(+Inf) returned 709.78 — finite garbage, not the -Inf / +Inf the
-	// values call for. log(-0) == log(0) == -Inf, which the equality
-	// branch already covers.
-	nanGuard(logRet)
-	emit("xorpd xmm1, xmm1")
-	emit("ucomisd xmm0, xmm1")
-	emit("jb " + logNaN)    // x < 0
-	emit("je " + logNegInf) // x == ±0
-	emit("movabs rax, 0x7ff0000000000000")
-	emit("movq xmm1, rax")
-	emit("ucomisd xmm0, xmm1")
-	emit("je " + logRet) // x == +Inf → itself
-	// A subnormal stores exponent 0 — its magnitude is in the mantissa's
-	// leading zeros — so the field below reports the smallest normal
-	// exponent for every one of them. Scale into the normal range and take
-	// the 54 back off k. rdx carries the adjustment; it is dead until the
-	// mantissa mask below.
-	emit("xor edx, edx")
-	ldc("xmm1", ".Lfc_minnorm")
-	emit("ucomisd xmm0, xmm1")
-	emit("jae " + logNoScale)
-	emit("mulsd xmm0, [rip+.Lfc_two54]")
-	emit("mov edx, 54")
-	label(logNoScale)
+	row := func(j int) string { return fmt.Sprintf("[r8+rdx*8+%d]", fdlibm.LogRowsOff+8*j) }
+	near := func(j int) string { return fmt.Sprintf("[r8+%d]", fdlibm.LogNear1Off+8*j) }
+	emit("lea r8, [rip+.Lfc_logtab]")
 	emit("movq rax, xmm0")
+	emit(fmt.Sprintf("movabs rcx, 0x%016x", fdlibm.LogNear1Lo))
+	emit("mov rdx, rax")
+	emit("sub rdx, rcx")
+	emit(fmt.Sprintf("movabs rcx, 0x%016x", fdlibm.LogNear1Hi-fdlibm.LogNear1Lo))
+	emit("cmp rdx, rcx")
+	emit("jb " + logNear1)
 	emit("mov rcx, rax")
 	emit("shr rcx, 52")
-	emit("and rcx, 0x7ff")
-	emit("sub rcx, 1023") // k
-	emit("sub rcx, rdx")
-	emit("movabs rdx, 0xfffffffffffff")
-	emit("and rax, rdx")
-	emit("movabs rdx, 0x3ff0000000000000")
-	emit("or rax, rdx")
-	emit("movq xmm1, rax") // m in [1,2)
-	noAdj := fresh("logNoAdj")
-	ldc("xmm2", ".Lfc_sqrt2")
-	emit("comisd xmm1, xmm2")
-	emit("jb " + noAdj)
-	emit("mulsd xmm1, [rip+.Lfc_half]")
-	emit("add rcx, 1")
-	label(noAdj)
-	emit("subsd xmm1, [rip+.Lfc_one]") // f
-	ldc("xmm2", ".Lfc_two")
-	emit("addsd xmm2, xmm1") // 2+f
-	emit("movsd xmm3, xmm1")
-	emit("divsd xmm3, xmm2") // s
-	emit("movsd xmm4, xmm3")
-	emit("mulsd xmm4, xmm3") // z
-	emit("movsd xmm5, xmm4")
-	emit("mulsd xmm5, xmm4") // w
-	ldc("xmm6", ".Lfc_lg6")
-	horner("xmm6", "xmm5", ".Lfc_lg4")
-	horner("xmm6", "xmm5", ".Lfc_lg2")
-	emit("mulsd xmm6, xmm5") // t1
-	ldc("xmm7", ".Lfc_lg7")
-	horner("xmm7", "xmm5", ".Lfc_lg5")
-	horner("xmm7", "xmm5", ".Lfc_lg3")
-	horner("xmm7", "xmm5", ".Lfc_lg1")
-	emit("mulsd xmm7, xmm4") // t2
-	emit("addsd xmm6, xmm7") // R
-	emit("movsd xmm2, xmm1")
-	emit("mulsd xmm2, xmm1")
-	emit("mulsd xmm2, [rip+.Lfc_half]") // hfsq
-	emit("cvtsi2sd xmm0, rcx")          // kf
-	emit("movsd xmm5, xmm0")
-	emit("mulsd xmm5, [rip+.Lfc_ln2lo]") // k*ln2_lo
-	emit("addsd xmm6, xmm2")             // hfsq+R
-	emit("mulsd xmm6, xmm3")             // s*(hfsq+R)
-	emit("addsd xmm6, xmm5")
-	emit("subsd xmm2, xmm6") // hfsq - (…)
-	emit("subsd xmm2, xmm1") // - f
-	emit("mulsd xmm0, [rip+.Lfc_ln2hi]")
-	emit("subsd xmm0, xmm2")
+	emit("sub rcx, 1")
+	emit("cmp rcx, 0x7fe")
+	emit("jae " + logSpecial) // zero, subnormal, negative, Inf or NaN
+	label(logMain)
+	emit(fmt.Sprintf("movabs rcx, 0x%016x", fdlibm.LogOff))
+	emit("mov rsi, rax")
+	emit("sub rsi, rcx") // tmp
+	emit("mov rcx, rsi")
+	emit("sar rcx, 52")
+	emit("xorps xmm4, xmm4")   // cvtsi2sd writes the low lane only
+	emit("cvtsi2sd xmm4, rcx") // k
+	emit("shl rcx, 52")
+	emit("sub rax, rcx") // bits(z)
+	emit("mov rdx, rsi")
+	emit(fmt.Sprintf("shr rdx, %d", 52-fdlibm.LogTableBits))
+	emit(fmt.Sprintf("and edx, %d", 1<<fdlibm.LogTableBits-1))
+	emit("lea rdx, [rdx+rdx*2]")
+	emit("movq xmm0, rax") // z
+	emit(fmt.Sprintf("shr rax, %d", 51-fdlibm.LogTableBits))
+	emit("or rax, 1")
+	emit(fmt.Sprintf("shl rax, %d", 51-fdlibm.LogTableBits))
+	emit("movq xmm1, rax") // c
+	emit("subsd xmm0, xmm1")
+	emit("mulsd xmm0, " + row(0)) // r
+	emit("movapd xmm2, xmm4")
+	emit("mulsd xmm2, [rip+.Lfc_ln2hi]")
+	emit("addsd xmm2, " + row(1)) // w
+	emit("movapd xmm3, xmm2")
+	emit("addsd xmm3, xmm0") // hi
+	emit("subsd xmm2, xmm3")
+	emit("addsd xmm2, xmm0")
+	emit("mulsd xmm4, [rip+.Lfc_ln2lo]")
+	emit("addsd xmm4, " + row(2))
+	emit("addsd xmm2, xmm4") // lo
+	emit("movapd xmm5, xmm0")
+	emit("mulsd xmm5, xmm0") // r2
+	emit("movapd xmm6, xmm0")
+	emit("mulsd xmm6, [r8+8]")
+	emit("addsd xmm6, [r8]")
+	emit("movapd xmm7, xmm0")
+	emit("mulsd xmm7, [r8+24]")
+	emit("addsd xmm7, [r8+16]")
+	emit("mulsd xmm7, xmm5")
+	emit("addsd xmm6, xmm7") // p
+	emit("movapd xmm7, xmm5")
+	emit("mulsd xmm7, [rip+.Lfc_half]")
+	emit("subsd xmm2, xmm7")
+	emit("mulsd xmm5, xmm0")
+	emit("mulsd xmm5, xmm6")
+	emit("addsd xmm2, xmm5")
+	emit("addsd xmm2, xmm3")
+	emit("movapd xmm0, xmm2")
+	emit("ret")
+	// log1p(r) for r = x - 1, which is exact here.
+	label(logNear1)
+	emit("subsd xmm0, [rip+.Lfc_one]") // r
+	emit("movapd xmm1, xmm0")
+	emit("mulsd xmm1, xmm0") // r2
+	emit("movapd xmm2, xmm0")
+	emit("mulsd xmm2, xmm1") // r3
+	// p = ((B[a] + r*B[a+1]) + r2*B[a+2]) + r3*tail, innermost first.
+	for _, a := range []int{6, 3, 0} {
+		emit("movapd xmm4, xmm0")
+		emit("mulsd xmm4, " + near(a+1))
+		emit("addsd xmm4, " + near(a))
+		emit("movapd xmm5, xmm1")
+		emit("mulsd xmm5, " + near(a+2))
+		emit("addsd xmm4, xmm5")
+		if a == 6 {
+			emit("movapd xmm3, xmm2")
+			emit("mulsd xmm3, " + near(9))
+		} else {
+			emit("mulsd xmm3, xmm2")
+		}
+		emit("addsd xmm3, xmm4")
+	}
+	emit("mulsd xmm3, xmm2") // y
+	emit("movabs rax, 0x41a0000000000000")
+	emit("movq xmm1, rax")
+	emit("mulsd xmm1, xmm0") // r·2^27
+	emit("movapd xmm4, xmm0")
+	emit("addsd xmm4, xmm1")
+	emit("subsd xmm4, xmm1") // rhi
+	emit("movapd xmm5, xmm0")
+	emit("subsd xmm5, xmm4") // rlo
+	emit("movapd xmm6, xmm4")
+	emit("mulsd xmm6, xmm4")
+	emit("mulsd xmm6, [rip+.Lfc_half]") // h
+	emit("movapd xmm7, xmm0")
+	emit("subsd xmm7, xmm6") // hi
+	emit("movapd xmm1, xmm0")
+	emit("subsd xmm1, xmm7")
+	emit("subsd xmm1, xmm6") // lo
+	emit("addsd xmm4, xmm0")
+	emit("mulsd xmm5, [rip+.Lfc_half]")
+	emit("mulsd xmm5, xmm4")
+	emit("subsd xmm1, xmm5")
+	emit("addsd xmm3, xmm1")
+	emit("addsd xmm3, xmm7")
+	emit("movapd xmm0, xmm3")
+	emit("ret")
+	// rax = bits(x), rcx = top-1 with top the sign and exponent.
+	label(logSpecial)
+	emit("mov rdx, rax")
+	emit("add rdx, rdx")
+	emit("jz " + logNegInf) // ±0
+	nanGuard(logRet)
+	emit("test rax, rax")
+	emit("js " + logNaN)
+	emit("cmp rcx, 0x7fe")
+	emit("je " + logRet) // +Inf
+	// Subnormal: scale into the normal range, then take the 52 back off
+	// the exponent field so the reduction's k comes out right.
+	emit("movabs rdx, 0x4330000000000000")
+	emit("movq xmm1, rdx")
+	emit("mulsd xmm0, xmm1")
+	emit("movq rax, xmm0")
+	emit("movabs rdx, 0x0340000000000000")
+	emit("sub rax, rdx")
+	emit("jmp " + logMain)
 	label(logRet)
 	emit("ret")
 	label(logNaN)
@@ -16782,9 +16854,7 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 
 // emitRemoveDirAllRuntime emits
 // `__fern_remove_dir_all(path) → Option[IoError]` — a recursive
-// `rm -rf`. It's the x86-64 sibling of arm64-ssa's
-// emitRemoveDirAllHelper: syscalls are inlined and the helper
-// self-recurses per directory entry, so it pulls in no separate
+// `rm -rf`: syscalls are inlined and the helper self-recurses per directory entry, so it pulls in no separate
 // read_dir/stat helpers. Pipeline:
 //
 //	openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0)
@@ -18670,57 +18740,83 @@ func (g *generator) emitReadDirLike(sym string, lb string, skipDots bool) {
 	g.line(".size " + sym + ", .-" + sym)
 }
 
-// LinuxStatField is one FileStat field read out of the Linux x86-64
-// `struct stat`: the box offset, the statbuf offset, and how many bytes
-// to load.
-type LinuxStatField struct {
-	Box, Src, Width int32
-}
+// sysStatx is statx(2) on x86-64, and atEmptyPath the flag that makes it
+// describe its dirfd rather than a path.
+const (
+	sysStatx    = 332
+	atEmptyPath = 0x1000
+)
 
-// LinuxStatFields maps each FileStat field onto the Linux x86-64
-// `struct stat` field it is read from. It is all that makes
-// this target-specific — everything else about the helper is shared,
-// and the x86-64 SSA emitter's stat reads the same table.
-//
-// Two loads are narrower than the field they fill. `st_nlink` is a
-// 64-bit word here (it is 32-bit on arm64 Linux) and FileStat's `nlink`
-// is u32, so the low word is what lands; a link count past 4 billion is
-// not a thing any filesystem produces. Everything else is width-for-
-// width, and the three timestamps happen to sit at the same offsets in
-// both records.
-var LinuxStatFields = []LinuxStatField{
-	{ir.FileStat.Mode, 24, 4},
-	{ir.FileStat.Nlink, 16, 4},
-	{ir.FileStat.UID, 28, 4},
-	{ir.FileStat.GID, 32, 4},
-	{ir.FileStat.Dev, 0, 8},
-	{ir.FileStat.Rdev, 40, 8},
-	{ir.FileStat.Ino, 8, 8},
-	{ir.FileStat.Blksize, 56, 8},
-	{ir.FileStat.Blocks, 64, 8},
-	{ir.FileStat.Atime, 72, 8},
-	{ir.FileStat.AtimeNsec, 80, 8},
-	{ir.FileStat.Mtime, 88, 8},
-	{ir.FileStat.MtimeNsec, 96, 8},
-	{ir.FileStat.Ctime, 104, 8},
-	{ir.FileStat.CtimeNsec, 112, 8},
+// StatxProjection returns the instructions that copy the statx record at
+// [buf] onto the FileStat fields at [box] — every field but is_file, is_dir
+// and size, which the callers already hold in registers. A dev_t is glibc's
+// makedev of its pair, and a birth time the filesystem does not record
+// (STATX_BTIME clear in stx_mask) is stored as zero. Clobbers r8-r11; `lbl`
+// is the one local label it defines.
+func StatxProjection(buf, box, lbl string) []string {
+	var out []string
+	add := func(f string, a ...any) { out = append(out, fmt.Sprintf(f, a...)) }
+	for _, f := range ir.StatxFields {
+		switch f.Load {
+		case 2:
+			add("movzx r9d, word ptr [%s + %d]", buf, f.Src)
+		case 4:
+			add("mov r9d, dword ptr [%s + %d]", buf, f.Src)
+		default:
+			add("mov r9, [%s + %d]", buf, f.Src)
+		}
+		if f.Store == 4 {
+			add("mov dword ptr [%s + %d], r9d", box, f.Box)
+		} else {
+			add("mov [%s + %d], r9", box, f.Box)
+		}
+	}
+	for _, d := range ir.StatxDevs {
+		add("mov r8d, dword ptr [%s + %d]", buf, d.Major)
+		add("mov r9d, dword ptr [%s + %d]", buf, d.Minor)
+		add("mov r10, r8")
+		add("and r10d, 4095")
+		add("shl r10, 8")
+		add("mov r11, r8")
+		add("shr r11, 12")
+		add("shl r11, 44")
+		add("or r10, r11")
+		add("mov r11, r9")
+		add("and r11d, 255")
+		add("or r10, r11")
+		add("mov r11, r9")
+		add("shr r11, 8")
+		add("shl r11, 20")
+		add("or r10, r11")
+		add("mov [%s + %d], r10", box, d.Box)
+	}
+	add("xor r9d, r9d")
+	add("xor r10d, r10d")
+	add("test dword ptr [%s], %d", buf, ir.StatxBtimeBit)
+	add("jz %s", lbl)
+	add("mov r9, [%s + %d]", buf, ir.StatxBtimeOff)
+	add("mov r10d, dword ptr [%s + %d]", buf, ir.StatxBtimeOff+8)
+	out = append(out, lbl+":")
+	add("mov [%s + %d], r9", box, ir.FileStat.Btime)
+	add("mov [%s + %d], r10", box, ir.FileStat.BtimeNsec)
+	return out
 }
 
 // emitStatRuntime emits `__fern_stat(path) →
-// Result[FileStat, IoError]` — newfstatat(AT_FDCWD, path, buf, 0)
-// into a 144-byte stack buffer, projected onto FileStat by
-// LinuxStatFields. The box is ir.FileStat.Bytes from __fern_alloc_box
-// (immortal, same class as the Result boxes).
+// Result[FileStat, IoError]` — statx(AT_FDCWD, path, 0, StatxMask, buf)
+// into a stack buffer, projected onto FileStat by StatxProjection. The box
+// is ir.FileStat.Bytes from __fern_alloc_box (immortal, same class as the
+// Result boxes).
 // System V: rdi = path string value.
 func (g *generator) emitStatRuntime() {
 	g.emitStatLikeRuntime("__fern_stat", 0, "st", false)
 }
 
-// emitFdStatRuntime emits `__fern_fd_stat(handle_ptr)` — fstat(2) of the
-// fd a Reader / Writer holds, projected onto the same FileStat the path
-// helpers build. It is the same body with the path copy replaced by a
-// load of the fd, and the errno classified against an empty path, as a
-// failed read or write is.
+// emitFdStatRuntime emits `__fern_fd_stat(handle_ptr)` — statx(fd, "",
+// AT_EMPTY_PATH) of the fd a Reader / Writer holds, projected onto the same
+// FileStat the path helpers build. It is the same body with the path copy
+// replaced by a load of the fd, and the errno classified against an empty
+// path, as a failed read or write is.
 func (g *generator) emitFdStatRuntime() {
 	g.emitStatLikeRuntime("__fern_fd_stat", 0, "fst", true)
 }
@@ -18728,7 +18824,7 @@ func (g *generator) emitFdStatRuntime() {
 // emitFdCallRuntime emits a helper that makes ONE syscall on a
 // Reader / Writer handle's descriptor and answers `Option[IoError]` —
 // the three write-back calls (`__fern_fd_fsync` / `__fern_fd_fdatasync`
-// / `__fern_fd_syncfs`) and `__fern_fd_dup_onto`. They differ only in
+// / `__fern_fd_syncfs`), `__fern_fd_drop_cache` and `__fern_fd_dup_onto`. They differ only in
 // the syscall number and in whether anything beyond the descriptor
 // needs setting up, which is what `prep` emits.
 //
@@ -18791,7 +18887,7 @@ func (g *generator) emitSyncRuntime() {
 }
 
 // emitLstatRuntime emits `__fern_lstat(path)`, which is the same helper with
-// AT_SYMLINK_NOFOLLOW set: newfstatat resolves every component but the last,
+// AT_SYMLINK_NOFOLLOW set: statx resolves every component but the last,
 // so a symlink reports its own st_mode and comes back neither is_file nor
 // is_dir. That three-way answer is what a directory walk needs to choose
 // between recursing, reading and skipping (#7982).
@@ -18799,10 +18895,10 @@ func (g *generator) emitLstatRuntime() {
 	g.emitStatLikeRuntime("__fern_lstat", 256, "lst", false)
 }
 
-// emitStatLikeRuntime is the shared body. `atFlags` is newfstatat's flags word
-// — 0 to follow, AT_SYMLINK_NOFOLLOW (0x100) not to — and `lp` prefixes the
+// emitStatLikeRuntime is the shared body. `atFlags` is statx's flags word —
+// 0 to follow, AT_SYMLINK_NOFOLLOW (0x100) not to — and `lp` prefixes the
 // local labels so the helpers can all be emitted into one object. `byFd`
-// selects fstat(2) of the fd at [rdi] over newfstatat of a path.
+// describes the fd at [rdi] (AT_EMPTY_PATH) rather than a path.
 func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd bool) {
 	g.line("")
 	g.line(".globl " + sym)
@@ -18815,16 +18911,20 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	g.emit("push r13") // path len / IoError box
 	g.emit("push r14") // is_dir
 	g.emit("push r15") // st_size
-	// 6 pushes ⇒ rsp≡8 mod 16; sub 168 realigns — 144-byte stat
-	// buf at [rsp..143] + slots:
-	//   [rbp-56] emitStrDataPtr inline-spill scratch
+	// 6 pushes ⇒ rsp≡8 mod 16; sub 280 realigns — the statx record
+	// at [rsp..255] + slots:
+	//   [rbp-56] emitStrDataPtr inline-spill scratch, or the fd form's ""
 	//   [rbp-64] original path string value (io_error arg)
-	g.emit("sub rsp, 168")
+	g.emit(fmt.Sprintf("sub rsp, %d", ir.StatxBytes+24))
 	if byFd {
-		// fstat(fd, statbuf)
+		// statx(fd, "", AT_EMPTY_PATH, mask, statbuf)
 		g.emit("mov edi, [rdi]")
-		g.emit("mov rsi, rsp")
-		g.emitSyscall(sysFstat)
+		g.emit("mov byte ptr [rbp - 56], 0")
+		g.emit("lea rsi, [rbp - 56]")
+		g.emit(fmt.Sprintf("mov edx, %d", atEmptyPath))
+		g.emit(fmt.Sprintf("mov r10d, %d", ir.StatxMask))
+		g.emit("mov r8, rsp")
+		g.emitSyscall(sysStatx)
 	} else {
 		g.emit("mov [rbp - 64], rdi")
 		g.emitStrLen("r13d", "rdi")
@@ -18843,16 +18943,13 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 		g.emit("jmp .L" + lp + "_cp")
 		g.label(".L" + lp + "_cpd")
 		g.emit("mov byte ptr [rbx + r13], 0")
-		// newfstatat(AT_FDCWD=-100, pathz, statbuf, atFlags)
+		// statx(AT_FDCWD=-100, pathz, atFlags, mask, statbuf)
 		g.emit("mov edi, -100")
 		g.emit("mov rsi, rbx")
-		g.emit("mov rdx, rsp")
-		if atFlags == 0 {
-			g.emit("xor r10d, r10d")
-		} else {
-			g.emit(fmt.Sprintf("mov r10d, %d", atFlags))
-		}
-		g.emitSyscall(262)
+		g.emit(fmt.Sprintf("mov edx, %d", atFlags))
+		g.emit(fmt.Sprintf("mov r10d, %d", ir.StatxMask))
+		g.emit("mov r8, rsp")
+		g.emitSyscall(sysStatx)
 		g.emit("mov r14, rax") // result across the free
 		g.emit("mov rdi, rbx")
 		g.emit("lea rsi, [r13 + 1]")
@@ -18861,15 +18958,15 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	}
 	g.emit("test rax, rax")
 	g.emit("js .L" + lp + "_err")
-	g.emit("mov eax, [rsp + 24]") // st_mode
-	g.emit("and eax, 61440")      // S_IFMT
+	g.emit(fmt.Sprintf("movzx eax, word ptr [rsp + %d]", ir.StatxModeOff))
+	g.emit("and eax, 61440") // S_IFMT
 	g.emit("xor r12d, r12d")
 	g.emit("cmp eax, 32768") // S_IFREG
 	g.emit("sete r12b")
 	g.emit("xor r14d, r14d")
 	g.emit("cmp eax, 16384") // S_IFDIR
 	g.emit("sete r14b")
-	g.emit("mov r15, [rsp + 48]") // st_size
+	g.emit(fmt.Sprintf("mov r15, [rsp + %d]", ir.StatxSizeOff))
 	// The statbuf stays at [rsp] across __fern_alloc_box, so the rest of
 	// the record is copied out after the box exists.
 	g.emit(fmt.Sprintf("mov edi, %d", ir.FileStat.Bytes))
@@ -18877,14 +18974,12 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	g.emit("mov [rax], r12d")
 	g.emit("mov [rax + 4], r14d")
 	g.emit(fmt.Sprintf("mov [rax + %d], r15", ir.FileStat.Size))
-	for _, f := range LinuxStatFields {
-		if f.Width == 4 {
-			g.emit(fmt.Sprintf("mov r9d, [rsp + %d]", f.Src))
-			g.emit(fmt.Sprintf("mov [rax + %d], r9d", f.Box))
+	for _, line := range StatxProjection("rsp", "rax", ".L"+lp+"_bt") {
+		if strings.HasSuffix(line, ":") {
+			g.label(strings.TrimSuffix(line, ":"))
 			continue
 		}
-		g.emit(fmt.Sprintf("mov r9, [rsp + %d]", f.Src))
-		g.emit(fmt.Sprintf("mov [rax + %d], r9", f.Box))
+		g.emit(line)
 	}
 	g.emit("mov r13, rax")
 	g.emit("mov edi, 16")
@@ -18910,7 +19005,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	g.emit("mov [rax + 8], r13")
 
 	g.label(".L" + lp + "_return")
-	g.emit("add rsp, 168")
+	g.emit(fmt.Sprintf("add rsp, %d", ir.StatxBytes+24))
 	g.emit("pop r15")
 	g.emit("pop r14")
 	g.emit("pop r13")

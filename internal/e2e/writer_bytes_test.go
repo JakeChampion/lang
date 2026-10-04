@@ -84,7 +84,7 @@ func TestWriterBytesCensus(t *testing.T) {
 			return runSplit(t, runArm64Bin(qemu, bin))
 		}},
 		{"wasm", func(t *testing.T, source string) (string, string, int) {
-			return runComponent(t, buildLeakCheckComponentPrinting(t, source, false, false), runOpts{})
+			return runComponent(t, buildLeakCheckCLIComponent(t, source, false), runOpts{})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,22 +181,4 @@ func TestWasmWriterBytesPreview1(t *testing.T) {
 		t.Fatalf("compile: %v\n%s", err, out)
 	}
 	runWriterBytesCommand(t, exec.Command("wasmtime", "run", bin))
-}
-
-func TestArm64SSAWriterBytes(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	bin := compileArm64SSA(t, fern, e2eharness.WriterBytesProgram, os.Environ())
-	runWriterBytesCommand(t, runArm64Bin(qemu, bin))
-}
-
-func TestX86_64SSAWriterBytes(t *testing.T) {
-	qemu := x86QemuOrEmpty(t)
-	fern := buildFernCLI(t)
-	bin := compileX86_64SSA(t, fern, e2eharness.WriterBytesProgram, os.Environ())
-	cmd := exec.Command(bin)
-	if qemu != "" {
-		cmd = exec.Command(qemu, bin)
-	}
-	runWriterBytesCommand(t, cmd)
 }

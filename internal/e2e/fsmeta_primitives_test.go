@@ -3,8 +3,8 @@
 // natives.
 //
 // What these assert that no unit test can: each backend builds the syscall
-// arguments by hand — the two arm64 emitters and x86-64 from hand-written
-// assembly, wasmbin from two WASI previews — and each is a place to swap the
+// arguments by hand — the arm64 and x86-64 emitters from hand-written
+// assembly, the wasm emitter from two WASI previews — and each is a place to swap the
 // two path operands of a rename, to write a timespec pair in the wrong order,
 // or to drop an omit sentinel. Every one of those produces a plausible call
 // that succeeds against the wrong thing, so the probe reads the metadata BACK
@@ -35,11 +35,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // fsMetaSource is the probe, parameterised by the directory its relative
@@ -196,21 +192,6 @@ func TestArm64FsMetaPrimitives(t *testing.T) {
 	fsMetaCheckTree(t, dir, true)
 }
 
-// The arm64 SSA-direct backend is a third hand-written implementation of the
-// same three syscalls, with its own frame discipline, so it gets the same
-// probe rather than being taken on trust.
-func TestArm64SSAFsMetaPrimitives(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, fsMetaSource(dir, true, true), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see fsMetaSource)\n%s", code, stderr)
-	}
-	fsMetaCheckTree(t, dir, true)
-}
-
 // The interpreter is another implementation and the one an in-language test
 // suite runs under. Its Linux and Darwin syscalls both support nofollow.
 func TestInterpFsMetaPrimitives(t *testing.T) {
@@ -222,42 +203,14 @@ func TestInterpFsMetaPrimitives(t *testing.T) {
 	fsMetaCheckTree(t, dir, true)
 }
 
-// buildPreview1Module compiles src to a bare preview-1 core module — the
-// wasm32-wasi artifact `-emit core-module` produces, importing
-// `wasi_snapshot_preview1` directly rather than through a component wrapper —
-// and returns its path.
+// buildPreview1Module compiles src with the self-host compiler to a bare
+// preview-1 core module — the wasm32-wasi artifact `-emit core-module`
+// produces, importing `wasi_snapshot_preview1` directly rather than through a
+// component wrapper — and returns its path.
 func buildPreview1Module(t *testing.T, src string) string {
 	t.Helper()
 	skipIfPreview2Missing(t) // the gate is wasmtime itself, which runs both
-
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{ForceMemorySection: true})
-	if err != nil {
-		t.Fatalf("wasmbin (preview 1): %v", err)
-	}
-	out := filepath.Join(dir, "main.wasm")
-	if err := os.WriteFile(out, bin, 0o644); err != nil {
-		t.Fatalf("write wasm: %v", err)
-	}
-	return out
+	return e2eharness.CompileSelfHostSource(t, e2eharness.TargetWasm32Wasi, src, nil)
 }
 
 // runPreview1Module runs a preview-1 core module with `workDir` as its only
