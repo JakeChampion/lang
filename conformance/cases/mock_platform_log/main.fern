@@ -11,7 +11,7 @@ import "std/i32";
 // `calls()` parses the log back into MockCall values. Nothing here reaches
 // the host — the `.log` lines would go to stderr on a host bag.
 // FEATURE-AUDIT std/mock_platform row.
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log("serving " + req.path);
     match (plat.env("REGION")) {
         Some(v) => { plat.log("region=" + v); },
@@ -22,12 +22,12 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 }
 
 function main(): i32 {
-    let m: MockPlatform = mock_platform.mock_platform_new();
+    let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
     let req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.header_map_new(), trailers: headers.header_map_new() };
-    let resp: HttpResponse = handle(req, m.as_platform());
+    let resp: HttpResponse = handle(req, m);
     print(resp.body_string());                            // body-/a
     print(m.call_count().to_string());           // 4
-    let cs: MockCall[] = m.calls();
+    let cs: mock_platform.MockCall[] = m.calls();
     print(cs[0].name);                           // log
     print(cs[0].args);                           // serving /a
     print(cs[1].name);                           // env
