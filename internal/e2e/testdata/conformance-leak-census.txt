@@ -219,6 +219,7 @@ generic_array_method_chain                           0
 generic_array_methods                                0
 generic_associated_fn                                0
 generic_box                                          0
+generic_call_binds_through_closure_array_param       0
 generic_call_in_struct_field                         0
 generic_enum_bound_dispatch                          0
 generic_float_literal_arg                            0
@@ -230,6 +231,7 @@ generic_method_typeparams                            0
 generic_pair                                         0
 generic_reads_an_array_literals_joined_element_type  0
 generic_receiver_methods                             0
+generic_struct_literal_in_append                     0
 generic_view_methods                                 0
 grow_past_capacity                                   0
 hash_struct_enum                                     0
