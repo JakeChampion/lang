@@ -1105,6 +1105,10 @@ function ent_nsec(c: Cfg, e: Ent): i64 {
 // Whether the entry's filesystem records no birth time, which FileStat
 // reports as zero.
 function no_birth(e: Ent): boolean {
+  if (target_os() == "darwin") {
+    // gnulib treats a zero second or an invalid fraction as unknown on BSD.
+    return e.st.btime == 0 as i64 || e.st.btime_nsec < 0 as i64 || e.st.btime_nsec >= 1000000000 as i64;
+  }
   return e.st.btime == 0 as i64 && e.st.btime_nsec == 0 as i64;
 }
 
