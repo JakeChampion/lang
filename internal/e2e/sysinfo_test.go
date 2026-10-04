@@ -86,11 +86,6 @@ func TestArm64UnameField(t *testing.T) {
 	checkUnameFieldOutput(t, out, "aarch64")
 }
 
-// The SSA backend keeps its own helper table, so it is its own leg.
-func TestArm64SSAUnameField(t *testing.T) {
-	checkUnameFieldOutput(t, compileAndRunArm64SSACapture(t, unameFieldProbeSource()), "aarch64")
-}
-
 // getcwdProbeSource prints the working directory the process inherited.
 const getcwdProbeSource = `function main(): i32 {
     print(getcwd());
@@ -120,13 +115,6 @@ func TestArm64Getcwd(t *testing.T) {
 	out, code := compileAndRunArm64(t, getcwdProbeSource)
 	if want := hostCwd(t); code != 0 || strings.TrimSpace(out) != want {
 		t.Errorf("getcwd() = %q (exit %d), want %q", strings.TrimSpace(out), code, want)
-	}
-}
-
-func TestArm64SSAGetcwd(t *testing.T) {
-	out := compileAndRunArm64SSACapture(t, getcwdProbeSource)
-	if want := hostCwd(t); strings.TrimSpace(out) != want {
-		t.Errorf("getcwd() = %q, want %q", strings.TrimSpace(out), want)
 	}
 }
 

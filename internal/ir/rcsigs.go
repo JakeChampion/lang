@@ -744,25 +744,6 @@ func isGeneratedDrop(name string) bool {
 	return false
 }
 
-// RcHelperUnmodelled reports whether name is a runtime helper this file
-// records as moving reference counts in a shape one operand effect
-// cannot express, and why.
-//
-// A caller that treats "no signature" as "no effect" is wrong about
-// exactly these names, and right about the inert ones. Asking lets it
-// tell the two apart and count the gap instead of absorbing it.
-func RcHelperUnmodelled(name string) (reason string, ok bool) {
-	if r, ok := rcUnmodelled[name]; ok {
-		return r, true
-	}
-	if alias, aliased := builtinRuntimeAlias(name); aliased {
-		if r, ok := rcUnmodelled[alias]; ok {
-			return r, true
-		}
-	}
-	return "", false
-}
-
 // RcReleaseNames lists every runtime helper whose signature says a call
 // gives up the caller's unit on its operand, and RcGeneratedDropPrefixes
 // / RcGeneratedDropNames expose the rule that covers the generated

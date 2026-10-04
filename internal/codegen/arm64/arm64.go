@@ -1749,11 +1749,8 @@ const (
 	sanLeakSuffix = " blocks"
 )
 
-// MsgArenaExhausted is the arena-exhaustion diagnostic. Exported so the arm64
-// SSA backend's heap guard (internal/codegen/arm64ssa) writes the identical
-// text: a program's abort output must not depend on which arm64 emitter built
-// it. Must stay identical to the x86-64 backend's entry, like every other
-// message in the table above.
+// MsgArenaExhausted is the arena-exhaustion diagnostic. Must stay identical
+// to the x86-64 backend's entry, like every other message in the table above.
 const MsgArenaExhausted = "fern: out of memory (heap arena exhausted)\n"
 
 // ExitArenaExhausted mirrors the x86-64 backend's constant — see the comment
@@ -14080,8 +14077,7 @@ func (g *generator) emitDarwinStatFields() {
 // is_file, is_dir and size, which the callers already hold. A dev_t is
 // glibc's makedev of its (major, minor) pair, and a birth time the
 // filesystem does not record (STATX_BTIME clear in stx_mask) is stored as
-// zero. Clobbers x9-x12; `lbl` is the one local label it defines. arm64ssa
-// reads it too.
+// zero. Clobbers x9-x12; `lbl` is the one local label it defines.
 func StatxProjection(base string, off int32, box, lbl string) []string {
 	var out []string
 	add := func(f string, a ...any) { out = append(out, fmt.Sprintf(f, a...)) }

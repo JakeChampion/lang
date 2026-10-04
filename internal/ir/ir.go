@@ -628,10 +628,10 @@ const WidthPtr = -1
 const WidthString = -2
 
 // On an OpCallDirect, Width is the RESULT classification: what the callee
-// leaves in the register the 64-bit backends read its result out of. The
-// SSA layer can read that off an ssa.Func for a callee the program
-// defines, but a backend-provided builtin or runtime helper has no
-// signature it can reach, so the fact travels on the call instead.
+// leaves in the register the 64-bit backends read its result out of. A
+// backend can read that off the callee for a function the program defines,
+// but a backend-provided builtin or runtime helper has no signature it can
+// reach, so the fact travels on the call instead.
 //
 // Zero is not a default here: it means unclassified, which ir.Verify
 // rejects on a provided callee. OpCallDirectPair's Width means something
@@ -2758,8 +2758,8 @@ func buildDynboxWrappers(info *checker.Info, ptrW int, vtables []VtableDecl) ([]
 // implementors still emits a helper (its method count is well-defined and
 // a no-implementor set is unreachable at runtime, but the symbol must
 // resolve where a `dyn` of that set is dec'd). Declines on a native
-// backend that hasn't opted in (arm64ssa): no helper, no drop slot read,
-// `dyn` keeps leaking — no dangling call.
+// backend that hasn't opted in: no helper, no drop slot read, `dyn` keeps
+// leaking — no dangling call.
 func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcSupported bool) []*Func {
 	if (ptrW != 4 && !dynRcSupported) || info == nil {
 		return nil
@@ -2898,8 +2898,8 @@ type lowerOpts struct {
 	// the trailing vtable drop slot, and the dec/drop sweep arms —
 	// docs/DYN-TRAITS.md §4.4). A STRICT subset of dynSupported: both
 	// natives pass it (x86-64 slice 4b, arm64 slice 4c); a backend that
-	// dispatches without it (arm64ssa) leaks `dyn`. wasm RC (slice 4a) keys
-	// on ptrW==4 and never needs this.
+	// dispatches without it leaks `dyn`. wasm RC (slice 4a) keys on ptrW==4
+	// and never needs this.
 	dynRcSupported bool
 	// emitLineMarkers makes the builder emit a zero-effect OpLine at each
 	// statement boundary, carrying its source Pos, so a native backend can
@@ -2943,7 +2943,7 @@ func DynSupported() LowerOption { return func(o *lowerOpts) { o.dynSupported = t
 // DynRcSupported marks the calling backend as able to RECLAIM boxed
 // `dyn Trait` values via Perceus RC (the __drop_dyn_<set> helper + the
 // trailing vtable drop slot, §4.4). A strict subset of DynSupported:
-// x86-64 (slice 4b) and arm64 (slice 4c) pass it; arm64ssa does not, and
+// x86-64 (slice 4b) and arm64 (slice 4c) pass it; a backend that does not
 // leaks `dyn`. wasm RC keys on ptrW==4 directly.
 func DynRcSupported() LowerOption { return func(o *lowerOpts) { o.dynRcSupported = true } }
 

@@ -180,13 +180,6 @@ func TestWASMSumBytes(t *testing.T) {
 	})
 }
 
-// The `-backend ssa` (arm64) leg, on the same corpus. It is the backend §3.4
-// miscounted and the one an adoption forgets, so it gets the lowering and the
-// coverage at the same time as the other seven rather than after.
-func TestArm64SSASumBytes(t *testing.T) {
-	runSumBytesCorpus(t, arm64SSACorpusRunner(t))
-}
-
 // The wrap, which no case in the corpus above can reach: 2^32 needs more than
 // 16 MiB of 0xff, so the input is built at run time rather than written as a
 // literal. 255 * 16843010 is 2^32 + 254, so the kernel must return 254 and a backend

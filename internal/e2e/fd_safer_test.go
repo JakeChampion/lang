@@ -81,7 +81,6 @@ func TestOpenedHandleNeverLandsOnAStandardDescriptor(t *testing.T) {
 	}{
 		{"x86-64", []string{"-target", "x86-64-linux"}, false},
 		{"arm64", []string{"-target", "arm64-linux"}, true},
-		{"arm64-ssa", []string{"-target", "arm64-linux", "-backend", "ssa"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runner, have := x86Qemu, haveX86
@@ -125,11 +124,6 @@ func TestOpenedHandleNeverLandsOnAStandardDescriptor(t *testing.T) {
 				t.Errorf("the opened file holds %q (err %v), want only what was written to it", got, err)
 			}
 
-			// The arm64 SSA backend has no read_line runtime helper yet, so
-			// the stdin direction is x86-64 and the shipping arm64 backend.
-			if tc.name == "arm64-ssa" {
-				return
-			}
 			if err := os.WriteFile(filepath.Join(dir, "data.txt"), []byte("FROM-FILE\nsecond\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}

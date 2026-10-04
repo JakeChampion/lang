@@ -143,21 +143,3 @@ func TestWasmBufferedWriterBytesPreview1(t *testing.T) {
 	}
 	runBufferedWriterBytesCommand(t, exec.Command("wasmtime", "run", bin))
 }
-
-func TestArm64SSABufferedWriterBytes(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	bin := compileArm64SSA(t, fern, e2eharness.BufferedWriterBytesProgram, os.Environ())
-	runBufferedWriterBytesCommand(t, runArm64Bin(qemu, bin))
-}
-
-func TestX86_64SSABufferedWriterBytes(t *testing.T) {
-	qemu := x86QemuOrEmpty(t)
-	fern := buildFernCLI(t)
-	bin := compileX86_64SSA(t, fern, e2eharness.BufferedWriterBytesProgram, os.Environ())
-	cmd := exec.Command(bin)
-	if qemu != "" {
-		cmd = exec.Command(qemu, bin)
-	}
-	runBufferedWriterBytesCommand(t, cmd)
-}

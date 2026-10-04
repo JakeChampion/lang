@@ -15,7 +15,6 @@
 package e2e
 
 import (
-	"os"
 	"testing"
 )
 
@@ -61,18 +60,6 @@ func TestArm64SleepNs(t *testing.T) {
 	out, code := compileAndRunArm64(t, sleepNsSource)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see sleepNsSource)\n%s", code, out)
-	}
-}
-
-// The SSA-direct arm64 backend writes its own timespec in its own frame
-// discipline, so it gets the probe rather than being taken on trust.
-func TestArm64SSASleepNs(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	bin := compileArm64SSA(t, fern, sleepNsSource, os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, t.TempDir(), os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see sleepNsSource)\n%s", code, stderr)
 	}
 }
 

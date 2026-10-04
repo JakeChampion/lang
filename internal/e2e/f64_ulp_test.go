@@ -589,8 +589,8 @@ func TestF64TranscendentalUlpX86_64(t *testing.T) {
 // exponent, so a fixed shortlist proves only the exponents in it. 1158
 // arguments at four mantissas across every seventh exponent, both signs.
 //
-// Every lane that implements sin/cos runs it: both register backends, the
-// SSA arm64 backend, wasm, and the interpreter — the last is a valid lane
+// Every lane that implements sin/cos runs it: both native backends, wasm, and
+// the interpreter — the last is a valid lane
 // only because it carries its own fdlibm reduction (internal/interp/trig.go)
 // rather than Go's math, whose error near a zero of sin/cos is unbounded in
 // ulp terms (617 ulp at 2^728, 3% at the worst-case argument below). The
@@ -646,10 +646,6 @@ func TestF64SinCosLargeArgument(t *testing.T) {
 		}
 		checkF64Output(t, "arm64-linux", out, cs, maxULP)
 	})
-	t.Run("arm64-ssa", func(t *testing.T) {
-		out := compileAndRunArm64SSACapture(t, prog)
-		checkF64Output(t, "arm64-ssa", out, cs, maxULP)
-	})
 	// Until #7878 the wasm backend did not merely lose accuracy here: its
 	// reduction ran every argument through i64.trunc_f64_s, a TRAPPING
 	// instruction, so |x| >= 2^63*pi/2 aborted the module. This lane holds
@@ -689,35 +685,6 @@ func compileAndRunWasmCapture(t *testing.T, src string) string {
 	return string(out)
 }
 
-// compileAndRunArm64SSACapture compiles src with the SSA arm64 backend
-// (`-target arm64-linux -backend ssa`) and returns its stdout, running the
-// binary natively on arm64 or under qemu elsewhere.
-func compileAndRunArm64SSACapture(t *testing.T, src string) string {
-	t.Helper()
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	bin := filepath.Join(dir, "prog")
-	cli := buildLangBinForInterp(t)
-	if out, err := exec.Command(cli, "-target", "arm64-linux", "-backend", "ssa", "-o", bin, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("arm64-ssa compile: %v\n%s", err, out)
-	}
-	var cmd *exec.Cmd
-	if qemu == "" {
-		cmd = exec.Command(bin)
-	} else {
-		cmd = exec.Command(qemu, bin)
-	}
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("arm64-ssa run: %v\n%s", err, out)
-	}
-	return string(out)
-}
-
 func TestF64TranscendentalUlpArm64(t *testing.T) {
 	cs := append(f64UlpCases(), f64SpecialCases()...)
 	out, code := compileAndRunArm64(t, f64UlpProg(cs))
@@ -725,17 +692,6 @@ func TestF64TranscendentalUlpArm64(t *testing.T) {
 		t.Fatalf("arm64 exited %d\n%s", code, out)
 	}
 	checkF64Output(t, "arm64-linux", out, cs, maxULP)
-}
-
-// TestF64TranscendentalUlpArm64SSA holds the SSA arm64 backend to the same
-// bound as the register backends. Only its trig lane was covered
-// (TestF64SinCosLargeArgument/arm64-ssa), so its exp / log / pow helpers —
-// separate emitters from internal/codegen/arm64's, sharing only the fdlibm
-// table — had no accuracy gate at all.
-func TestF64TranscendentalUlpArm64SSA(t *testing.T) {
-	cs := append(f64UlpCases(), f64SpecialCases()...)
-	out := compileAndRunArm64SSACapture(t, f64UlpProg(cs))
-	checkF64Output(t, "arm64-ssa", out, cs, maxULP)
 }
 
 // TestF64TranscendentalUlpWasm holds the wasm backend to the same bound as

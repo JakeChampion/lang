@@ -54,7 +54,7 @@ do not establish socket correctness, leak freedom or a performance result.
 
 The Go compiler's copy of that floor (`__syscall3` … `__syscall6`,
 `__store_u8`) is gated by `TestNativeSyscallFloor` in `internal/e2e`, one leg
-per native backend (x86-64 and arm64, stack machine and `-backend ssa`),
+per native backend (x86-64 and arm64),
 `TestArm64DarwinNativeSyscallFloor` in the macOS lane, and
 `TestSyscallFloorRefusedOnWasm`, which wants the E066 refusal to name the
 callee. `TestSelfHostSyscallFloorX86_64` / `…Arm64` run the same probe
@@ -69,11 +69,8 @@ tests that were already on the builtins (`TestTcpLocalPortRoundTrip` on
 every native leg, `TestArm64TcpListen`, the `Serve*` and `Fetch*` tests,
 the Darwin lane) and by `TestEveryHelperLowersForEveryTarget` and
 `TestHelpersCallOnlyTheFloorOrEachOther` in `internal/fernrt`.
-The probe's last-byte read is also the regression test for the SSA lift
-masking usize arithmetic to 32 bits; `TestLiftPointerWidthArithmeticIsAnAddress`
-in `internal/ssa` pins the lift half on its own.
 
-`TestBytesFloor` runs `e2eharness.BytesFloorProbe` on the same four native
+`TestBytesFloor` runs `e2eharness.BytesFloorProbe` on the same two native
 legs and `TestArm64DarwinBytesFloor` on Apple Silicon: a byte array filled
 through its data pointer and shortened by `__arr_set_len`, and an inline and
 a heap string read through `__str_bytes` with scratch to spill into and
@@ -299,7 +296,7 @@ and require equal allocations/frees with zero live bytes. Linux x86-64, ARM64
 and native Darwin run the same fixture; QEMU is permitted for correctness.
 `TestHTTPHandlerCensus`, `TestArm64DarwinHTTPHandlerCensus` and
 `TestWasmHTTPHandlerCensus` are the Go compiler's twins over the same fixture
-(x86-64 and arm64 on both the flat and SSA backends, native Darwin, and real
+(x86-64 and arm64, native Darwin, and real
 wasi:sockets), the bounded-serve exit criterion of #9853 on that compiler.
 
 `TestSelfHostServeShutdownDrainsAndExitsClean`,
@@ -530,7 +527,7 @@ payloads crossing a read-buffer boundary, and require zero live Fern heap bytes.
 `TestNativeSocketSetupReclaimsDescriptors` and its `TestSelfHost` twin
 exercise failed binds and connects on x86-64 and ARM64 Linux, including QEMU.
 The `Arm64DarwinSocketSetupReclaimsDescriptors` tests cover native Darwin.
-Bootstrap tests run both flat and SSA backends on Linux; self-host tests
+The Go-compiler legs run x86-64 and arm64 Linux; self-host tests
 compile through the production driver with strict IR enabled.
 
 Each probe repeats a setup failure 32 times and requires the kernel to reuse
@@ -721,8 +718,6 @@ rather than the IR path.
 | Assembler encoding fuzz (`internal/native/{x86_64,arm64}` `TestFuzzEncodingsAgainstGNUAs`; second oracle `TestEncodingsAgainstLLVMMC`) | Byte-for-byte agreement of the Go in-process assemblers with GNU as across a seeded form inventory — register-number quirks, imm/disp width boundaries, bitmask/imm7/imm9/imm12 edges, rel8 relaxation — plus llvm-mc as an independent second opinion (a gas-vs-llvm disagreement fails with both encodings printed). The smoke tier (8 cases/form) runs in every normal `go test`; `FERN_ASM_FUZZ=1` runs the deep tier (2000 cases/form), `FERN_ASM_FUZZ_SEED` reseeds. Found on first deep runs: two-fixpoint x86 branch relaxation around alignment pads, the rep/lock-vs-0x66 prefix order, cvtsi2sd memory-width REX.W, arm64 `sxtb w,w` / w-form extended add/sub missing sf clears, signed-load unscaled routing, shifted neg/negs | The self-host assemblers (`x86_native.fern`, `arm64_native.fern`); instruction forms outside the inventory; semantics — an encoding both oracles agree on can still be the wrong instruction for the IR. Both oracle lanes skip when their external assembler is absent, and the arm64-gas lane needs the cross binutils |
 | `RUN_SECCOMP_CORPUS=1` (`TestSeccompFixtureCorpus`) | The seccomp filter is not too TIGHT: every runnable fixture behaves identically sandboxed and not | Whether the filter DENIES anything — that is `TestSeccompFilterDenies`. A permit-all filter passes this gate trivially |
 | `RUN_SHRINK_PROPERTY=1` (`TestGenBytesShrinkIsMonotonicAndValid`) | fernsmith's minimisation contract: chopping a byte off a corpus yields a program that still type-checks and is never LARGER, so a failing fuzz input reduces to a small repro. Runs over all three byte-driven entry points — `GenBytes`, `GenMainBytes`, `GenPrintableMainBytes` — at 2 seeds each unguarded; the env var widens it to 24. Checking only `GenBytes` left the two corpora the differential oracles actually shrink unproven, and adding the other two immediately found two fall-throughs that were not the smallest branch | Whether the generated programs are interesting. A generator that emitted `function main(): i32 { return 0i32; }` for every input satisfies it perfectly |
-| arm64-SSA fernsmith differential (`internal/e2e/diff_oracle_ssa_test.go`, `TestDifferential_Arm64SSA{ExitByte,Stdout}`) | The Go arm64 SSA backend agrees with interp on fernsmith-generated programs, by exit byte and by stdout. A compile or run child still going at `arm64SSAChildTimeout` is a TIMEOUT, counted apart from a coverage gap so the 100% floor is measured over the seeds that finished, and the sweep fails on its own terms only past `diffOracleSSAMaxTimeoutRatio` (#8875) | Everything about memory — see below. Anything the generator cannot emit — a shape absent from `gtype` is untested no matter how many seeds run. The self-host compiler, whose exit-byte sweeps are the three `Self-host … differential` rows below |
-| arm64 flat-vs-SSA differential (`internal/e2e/arm64_ssa_differential_test.go`, `TestArm64SSABackendDifferential`) | That `-target arm64-linux -backend ssa` behaves like the SHIPPING arm64 backend on the whole `examples/**` corpus (self_host excluded), comparing exit status AND stdout. Three outcomes, not two: a clean refusal is the documented coverage subset working and is counted separately, while a refusal that is really a compiler SIGNAL, or a non-zero exit with no diagnostic, fails. Its value is that it samples a corpus — the neighbouring `arm64_ssa_test.go` is ~80 hand-written cases, so it only ever saw shapes somebody wrote down, and both defects behind #7325 (a fixed 64 KiB .bss bump heap; f32 stored into a multi-slot aggregate landing only in the last slot) shipped through that gap. Measured 2026-08-26 over 286 walked programs: 281 compared, 0 refused, 5 rejected by the flat baseline; `testdata/arm64-ssa-diff-known-divergences.txt` has no rows, so every compared program agrees. That file is exact in both directions, and the 281 floor (`arm64SSADiffMinCompared`) fails a run that quietly widens the SSA bail set | Everything the corpus does not contain. `x86_64ssa`'s (`TestX86_64SSABackendDifferential`) compares fewer programs — its floor is 215, against this leg's 281. Since `wasmssa` was retired (#9397) this leg is the ONLY end-to-end gate on the lift and the register allocator, which `docs/SSA-DECISION.md`'s maintenance contract names explicitly — and it matters more while #8822 has the SSA emitters under active measurement. Programs listed in `testdata/ssa-diff-stdout-unstable.txt`, which are compared on exit status only. Memory, allocation volume, and emitted-instruction count, none of which it looks at |
 | Self-host checker CODE differential (`internal/e2eselfhost/self_host_checker_codes_test.go`) | That the two checkers ACCEPT AND REJECT the same programs: `TestSelfHostCheckerCodesX86_64` pins a hardcoded code set per row AND compares against the Go checker, `TestSelfHostChecker{,Bundle}DifferentialX86_64` use the Go checker as sole oracle. The hardcoded half is not redundancy — a pure differential cannot tell "both emit E072" from "neither emits anything" | What the two checkers SAY. It scrapes `E\d{3}` and discards the rest, so the two can word the same code arbitrarily differently, or identically wrongly. #6990 shipped four hints naming a spelling that does not compile, in both compilers, under a green run of this gate (#7018). **And every row is a stdlib-free single-file program**, so a self-host checker change that false-positives on real library code passes it green: #7500's E063 mirror did exactly that, then failed 154 tests across a dozen lanes the moment a program importing `core/bigint` was compiled. On a self-host CHECKER change this gate is necessary and not sufficient — pair it with `TestSelfHostStdTestE2E`, which compiles the stdlib |
 | Self-host conformance REJECTION coverage (`internal/e2eselfhost/self_host_conformance_rejection_test.go`) | That the self-host CHECKER refuses the programs the corpus says must be refused. It runs every `conformance/cases/*/expected.error` case — real programs with imports, unlike the stdlib-free single-file rows of the differentials above — through the self-host checker driver and pins the verdict per case in `testdata/selfhost-rejection-gaps.txt`, exact in both directions, so the 58 that reject cannot regress and the 7 that do not are enumerable. It exists because `internal/e2e`'s self-host fixture legs SKIP these cases as "already covered once by TestFernFixtures" — true of the native front end, which is not the one under test, so they were covered twice and the self-host's checker zero times. ~4 s | Everything outside `expected.error`. It reads the CHECKER only: `-emit asm` does not gate on the checker at all, so a case the checker rejects still emits (`diag_e034` exits 0 and writes an invalid module), and nothing here covers that. Parse-error cases are pinned as out of scope rather than checked, since a program that does not parse reaches no checker. And it asks only whether a diagnostic appeared, never which one — the code differentials next door are what say it is the RIGHT diagnostic |
 | Self-host checker HINT-TEXT differential (`internal/e2eselfhost/self_host_checker_hint_text_test.go`) | That the two checkers give the same ADVICE where a diagnostic tells the reader what to write. Deliberately narrow: the corpus holds only messages naming a spelling, since that is the text where a difference is a bug rather than a style — forcing all prose into lockstep would fight the partial self-host checker. `hintTextDivergences` records the rows meant to differ, and is exact in both directions: a listed row that CONVERGES fails too. "Self-host says nothing" is listed as a divergence rather than skipped, so the port's remaining hint gaps are enumerable. Runs the driver under `-interp`, so unlike its `X86_64` neighbours it needs no cross toolchain and runs on every host (~5 s) | Every message outside the corpus, and whether the advice is CORRECT — two compilers can agree on a hint that does not compile. That half is `internal/checker/derive_hint_test.go` (compile the suggestion) and `internal/sourcelint/diag_suggestion_spelling_test.go` (no bare trait name in either compiler) |
@@ -956,7 +951,7 @@ Worth knowing so you do not assume coverage you do not have:
   straight-line code, per-label agreement across branches, zero at the return
   label. Anything sp-touching the walk does not model fails the test rather
   than being skipped. There is no equivalent gate on x86-64 (which has no
-  two-word values on its operand stack) or on the SSA backends.
+  two-word values on its operand stack).
 
 - **A checker driver that DIED, versus one that found nothing — now
   distinguished, by `checkerDriverFault`** (`internal/e2eselfhost`). The checker
@@ -1307,8 +1302,7 @@ Worth knowing so you do not assume coverage you do not have:
    after `LowerWith` alone and 2,680 after it, because `ConstPropagate` plus
    Fold's const-guard rule and `pruneConstIf` already delete half of them
    (#7787). A figure taken before it overstates shipped code — in that case
-   by 2x. The same applies to a lift into `internal/ssa`: `LiftProgram`
-   deliberately skips `Optimize`, so it sees the pre-battery form too.
+   by 2x.
 
 16. **A buffered `go test` log is EMPTY until the package finishes, so
    grepping a running one for `--- FAIL` always answers zero.** Without
@@ -1566,15 +1560,6 @@ answer, these are the tools, in the order they are usually reached for:
   counters also produce a one-line verdict (`fern-sanitizer: leak <K> bytes in
   <N> blocks`) when the balance is positive, so a leak needs no number read.
 
-  **`-backend ssa` on arm64 reports the same line but counts differently, and
-  its live_bytes has a floor.** Allocation there is inline bump sites rather
-  than one `__fern_alloc`, so the count is taken where every allocation passes —
-  the heap guard on the bump path, the freelist pop in `__alloc` — and the bytes
-  are read off the arena at exit (16-rounded cursor − base, plus popped bytes,
-  less freed bytes). `__fern_str_dec` on that backend does not reclaim (its
-  producers disagree on where the block base is), so every heap string a program
-  makes is counted live: read live_bytes there as a DELTA between two runs of
-  the same program, not as an absolute leak.
 
   **A probe of a call-boundary shape needs `@noinline` on the callee AND on
   whatever produces the argument.** `internal/ir/inline.go` inlines a

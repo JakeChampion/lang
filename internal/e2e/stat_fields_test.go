@@ -157,28 +157,26 @@ func TestNativeStatFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
-		for _, backend := range []string{"flat", "ssa"} {
-			t.Run(target+"/"+backend, func(t *testing.T) {
-				runner := ""
-				if target == "x86-64-linux" {
-					runner = x86QemuOrEmpty(t)
-				} else {
-					runner = arm64QemuOrEmpty(t)
-				}
-				bin := filepath.Join(t.TempDir(), "probe")
-				if out, err := exec.Command(fern, "-target", target, "-backend", backend, "-o", bin, srcPath).CombinedOutput(); err != nil {
-					t.Fatalf("compile: %v\n%s", err, out)
-				}
-				cmd := exec.Command(bin)
-				if runner != "" {
-					cmd = exec.Command(runner, bin)
-				}
-				out, _ := cmd.CombinedOutput()
-				if code := cmd.ProcessState.ExitCode(); code != 0 {
-					t.Errorf("exit = %d, want 0 — the code names the field (see statFieldsNativeSource)\n%s", code, out)
-				}
-			})
-		}
+		t.Run(target, func(t *testing.T) {
+			runner := ""
+			if target == "x86-64-linux" {
+				runner = x86QemuOrEmpty(t)
+			} else {
+				runner = arm64QemuOrEmpty(t)
+			}
+			bin := filepath.Join(t.TempDir(), "probe")
+			if out, err := exec.Command(fern, "-target", target, "-o", bin, srcPath).CombinedOutput(); err != nil {
+				t.Fatalf("compile: %v\n%s", err, out)
+			}
+			cmd := exec.Command(bin)
+			if runner != "" {
+				cmd = exec.Command(runner, bin)
+			}
+			out, _ := cmd.CombinedOutput()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Errorf("exit = %d, want 0 — the code names the field (see statFieldsNativeSource)\n%s", code, out)
+			}
+		})
 	}
 }
 
