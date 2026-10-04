@@ -7,20 +7,21 @@
 // / HttpResponse wiring + the wasi-http canonical-ABI fields-
 // resource integration follow in their own reviewable units.
 //
-// Storage: two parallel arrays. `names` holds case-folded
-// (lowercase) header names so lookup compares against the same
-// form the caller passes through `to_lower()`; `values` holds
-// the raw value at the matching index in insertion order. Linear-
-// scan lookup is fine for the typical <20-header request, matches
-// the spirit of hyper's HeaderMap, and avoids the IndexMap
-// indexing-table overhead until profiling says otherwise.
+// Storage: two parallel arrays. `names` holds each name as it was
+// given, and lookups compare names ASCII-case-insensitively (field
+// names are case-insensitive, RFC 9110 §5.1), so nothing is copied
+// to fold them. `values` holds the raw value at the matching index
+// in insertion order. Linear-scan lookup is fine for the typical
+// <20-header request, matches the spirit of hyper's HeaderMap, and
+// avoids the IndexMap indexing-table overhead until profiling says
+// otherwise.
 //
 // Invariants:
 //   - `len(h.names) == len(h.values)`.
-//   - `h.names[i]` is always lowercase ASCII.
 //   - Iteration / append order is insertion order; `.set`
-//     replaces in-place at the existing index and drops any
-//     additional duplicates further down.
+//     replaces in-place at the existing index, with the spelling
+//     the caller passed, and drops any additional duplicates
+//     further down.
 
 import "std/string";
 import "core/map";
@@ -39,10 +40,9 @@ pub function header_map_new(): HeaderMap {
 // None when no entry matches; use `.get_all` when duplicates
 // matter (`Set-Cookie`, `Accept`, `Via`).
 pub function (h: HeaderMap) get(name: string): Option[string] {
-  let key: string = name.to_lower();
   let i: i32 = 0;
   while (i < h.names.len()) {
-    if (h.names[i] == key) {
+    if (h.names[i].eq_ignore_ascii_case(name)) {
       return Some(h.values[i]);
     }
     i = i + 1;
@@ -55,11 +55,10 @@ pub function (h: HeaderMap) get(name: string): Option[string] {
 // shouldn't need to special-case "missing" separately from
 // "present but empty list").
 pub function (h: HeaderMap) get_all(name: string): string[] {
-  let key: string = name.to_lower();
   let out: string[] = [];
   let i: i32 = 0;
   while (i < h.names.len()) {
-    if (h.names[i] == key) {
+    if (h.names[i].eq_ignore_ascii_case(name)) {
       out = out.append(h.values[i]);
     }
     i = i + 1;
@@ -74,7 +73,7 @@ pub function (h: HeaderMap) get_all(name: string): string[] {
 pub function (h: HeaderMap) append(name: string, value: string): HeaderMap {
   return HeaderMap {
     ...h,
-    names: h.names.append(name.to_lower()),
+    names: h.names.append(name),
     values: h.values.append(value),
   };
 }
@@ -85,15 +84,14 @@ pub function (h: HeaderMap) append(name: string, value: string): HeaderMap {
 // further duplicates are dropped; if `name` was absent, the new
 // entry appends.
 pub function (h: HeaderMap) set(name: string, value: string): HeaderMap {
-  let key: string = name.to_lower();
   let new_names: string[] = [];
   let new_values: string[] = [];
   let inserted: boolean = false;
   let i: i32 = 0;
   while (i < h.names.len()) {
-    if (h.names[i] == key) {
+    if (h.names[i].eq_ignore_ascii_case(name)) {
       if (!inserted) {
-        new_names = new_names.append(key);
+        new_names = new_names.append(name);
         new_values = new_values.append(value);
         inserted = true;
       }
@@ -104,7 +102,7 @@ pub function (h: HeaderMap) set(name: string, value: string): HeaderMap {
     i = i + 1;
   }
   if (!inserted) {
-    new_names = new_names.append(key);
+    new_names = new_names.append(name);
     new_values = new_values.append(value);
   }
   return HeaderMap { ...h, names: new_names, values: new_values };

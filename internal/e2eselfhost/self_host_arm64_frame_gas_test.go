@@ -55,25 +55,25 @@ const arm64FrameGasSelfTestMain = `
 function main(): i32 {
     // stp x29, x30, [sp, #-16]! -> 0xA9BF7BFD -> FD 7B BF A9
     let a: Arm64Asm = arm64_gas_assemble("stp x29, x30, [sp, #-16]!");
-    if (a.code[0] != 253 || a.code[1] != 123 || a.code[2] != 191 || a.code[3] != 169) { return 1; }
+    if (a.text[0] != 253 || a.text[1] != 123 || a.text[2] != 191 || a.text[3] != 169) { return 1; }
     // ldp x29, x30, [sp], #16 -> 0xA8C17BFD -> FD 7B C1 A8
     let b: Arm64Asm = arm64_gas_assemble("ldp x29, x30, [sp], #16");
-    if (b.code[0] != 253 || b.code[1] != 123 || b.code[2] != 193 || b.code[3] != 168) { return 2; }
+    if (b.text[0] != 253 || b.text[1] != 123 || b.text[2] != 193 || b.text[3] != 168) { return 2; }
     // str x0, [sp, #-16]! -> 0xF81F0FE0 -> E0 0F 1F F8
     let c: Arm64Asm = arm64_gas_assemble("str x0, [sp, #-16]!");
-    if (c.code[0] != 224 || c.code[1] != 15 || c.code[2] != 31 || c.code[3] != 248) { return 3; }
+    if (c.text[0] != 224 || c.text[1] != 15 || c.text[2] != 31 || c.text[3] != 248) { return 3; }
     // ldr x0, [sp], #16 -> 0xF84107E0 -> E0 07 41 F8
     let d: Arm64Asm = arm64_gas_assemble("ldr x0, [sp], #16");
-    if (d.code[0] != 224 || d.code[1] != 7 || d.code[2] != 65 || d.code[3] != 248) { return 4; }
+    if (d.text[0] != 224 || d.text[1] != 7 || d.text[2] != 65 || d.text[3] != 248) { return 4; }
     // mov x29, sp -> add x29, sp, #0 -> 0x910003FD -> FD 03 00 91
     let e: Arm64Asm = arm64_gas_assemble("mov x29, sp");
-    if (e.code[0] != 253 || e.code[1] != 3 || e.code[2] != 0 || e.code[3] != 145) { return 5; }
+    if (e.text[0] != 253 || e.text[1] != 3 || e.text[2] != 0 || e.text[3] != 145) { return 5; }
     // mov sp, x29 -> add sp, x29, #0 -> 0x910003BF -> BF 03 00 91
     let f: Arm64Asm = arm64_gas_assemble("mov sp, x29");
-    if (f.code[0] != 191 || f.code[1] != 3 || f.code[2] != 0 || f.code[3] != 145) { return 6; }
+    if (f.text[0] != 191 || f.text[1] != 3 || f.text[2] != 0 || f.text[3] != 145) { return 6; }
     // offset (non-writeback) form still works: str x0, [sp, #8] -> 0xF90007E0
     let g: Arm64Asm = arm64_gas_assemble("str x0, [sp, #8]");
-    if (g.code[0] != 224 || g.code[1] != 7 || g.code[2] != 0 || g.code[3] != 249) { return 7; }
+    if (g.text[0] != 224 || g.text[1] != 7 || g.text[2] != 0 || g.text[3] != 249) { return 7; }
     return 0;
 }
 `
@@ -99,7 +99,7 @@ const arm64MachOFnGasDriverMain = "\n" +
 	"    asm = asm + \"    ret\\n\";\n" +
 	"    let a: Arm64Asm = arm64_gas_assemble(asm);\n" +
 	"    let none: i32[] = [];\n" +
-	"    let bin: i32[] = macho_executable(a.code, none, none, \"fern\", macho_entry_off(a), 0, none);\n" +
+	"    let bin: i32[] = macho_executable(a.text, none, none, \"fern\", macho_entry_off(a), 0, none);\n" +
 	"    write(string_from_bytes_unchecked(to_u8(bin)));\n" +
 	"    return 0;\n" +
 	"}\n"

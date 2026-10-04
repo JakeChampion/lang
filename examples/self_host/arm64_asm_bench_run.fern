@@ -51,11 +51,11 @@ function main(): i32 {
   }
   let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(src);
   let pa: arm64_native.Arm64Asm = p.asm;
-  let tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);
-  let dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);
+  let tv: i64 = arm64_native.macho_text_vaddr(pa.text.len(), 0, p.data.len(), p.bss_size);
+  let dv: i64 = arm64_native.macho_data_vaddr(pa.text.len(), 0, p.data.len(), p.bss_size);
   p = arm64_native.arm64_gas_link(p, tv, dv);
   let pa2: arm64_native.Arm64Asm = p.asm;
-  print("text=" + pa2.code.len().to_string() + " data=" + p.data.len().to_string()
+  print("text=" + pa2.text.len().to_string() + " data=" + p.data.len().to_string()
     + " bump=" + __heap_bump_bytes().to_string() + "\n");
   if (p.unknown.len() > 0) {
     let u: i32 = 0;
@@ -68,9 +68,9 @@ function main(): i32 {
     // Little-endian bytes back into 32-bit words, so the output is directly
     // comparable with the native assembler's instruction stream.
     let b: i32 = 0;
-    while (b + 3 < pa2.code.len()) {
-      let w: i64 = pa2.code[b] as i64 | pa2.code[b + 1] as i64 << 8
-        | pa2.code[b + 2] as i64 << 16 | pa2.code[b + 3] as i64 << 24;
+    while (b + 3 < pa2.text.len()) {
+      let w: i64 = pa2.text[b] as i64 | pa2.text[b + 1] as i64 << 8
+        | pa2.text[b + 2] as i64 << 16 | pa2.text[b + 3] as i64 << 24;
       print("word " + (b / 4).to_string() + " " + w.to_string());
       b = b + 4;
     }

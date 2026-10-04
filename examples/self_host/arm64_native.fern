@@ -73,6 +73,21 @@ function arm64_le32(buf: i32[], v: i64): i32[] {
   return buf;
 }
 
+// arm64_push_word appends an instruction word to a code builder,
+// little-endian, and arm64_push_arr an encoder's raw bytes.
+function arm64_push_word(b: usize, v: i64): void {
+  buf_push_byte(b, (v & 255) as i32);
+  buf_push_byte(b, (v >> 8 & 255) as i32);
+  buf_push_byte(b, (v >> 16 & 255) as i32);
+  buf_push_byte(b, (v >> 24 & 255) as i32);
+}
+
+function arm64_push_arr(b: usize, xs: i32[]): void {
+  for x in xs {
+    buf_push_byte(b, x);
+  }
+}
+
 // arm64_word_bytes appends the instruction word an emitter recorded at
 // `at` in `words`, whose low four bytes are already little-endian.
 // ---- record forms ----
@@ -479,14 +494,6 @@ function arm64_branch_kind(top: u8): i32 {
 // arm64_words_i32 reads the little-endian 32-bit value at `at` in the words.
 function arm64_words_i32(words: u8[], at: i32): i32 {
   return words[at] as i32 | words[at + 1] as i32 << 8 | words[at + 2] as i32 << 16 | words[at + 3] as i32 << 24;
-}
-
-function arm64_word_bytes(buf: i32[], words: u8[], at: i32): i32[] {
-  buf = buf.append(words[at] as i32);
-  buf = buf.append(words[at + 1] as i32);
-  buf = buf.append(words[at + 2] as i32);
-  buf = buf.append(words[at + 3] as i32);
-  return buf;
 }
 
 // ---- move-wide family ----
@@ -924,7 +931,7 @@ function arm64_read_word(buf: i32[], at: i32): i64 {
 // `own buf` is what makes the patch path linear rather than O(code_len^2).
 // A BORROWED array parameter forces every `.with` down the copy-on-write
 // path — the callee cannot know the caller has no other reader — so each
-// patched word cloned the whole .text buffer. Consuming the buffer lets the
+// patched word cloned the whole buffer. Consuming the buffer lets the
 // rc check see a unique owner and overwrite in place. The whole patch family
 // below threads it the same way, and so must every caller: an owned argument
 // has to be a fresh value, another `own` parameter, or a self-reassign
@@ -937,19 +944,58 @@ function arm64_write_word(own buf: i32[], at: i32, w: i64): i32[] {
   return buf;
 }
 
+// arm64_patch_bytes rewrites the instruction word at byte offset `at` of
+// assembled .text, keeping the bits in `keep` and or-ing in `field`. The
+// i32[] patchers below are the raw encoder API's form.
+function arm64_patch_bytes(own buf: u8[], at: i32, keep: i64, field: i64): u8[] {
+  let w: i64 = (buf[at] as i64 | buf[at + 1] as i64 << 8 | buf[at + 2] as i64 << 16 | buf[at + 3] as i64 << 24) & keep | field;
+  buf = buf.with(at, (w & 255) as u8);
+  buf = buf.with(at + 1, (w >> 8 & 255) as u8);
+  buf = buf.with(at + 2, (w >> 16 & 255) as u8);
+  buf = buf.with(at + 3, (w >> 24 & 255) as u8);
+  return buf;
+}
+
+// arm64_branch_keep is the mask of the bits a branch patch of `kind` leaves
+// alone, and arm64_branch_field places a byte displacement in its immediate:
+// 0 = imm26 (b / bl), 1 = imm19 at bits 23:5 (b.cond / cbz / cbnz, and the
+// LDR literal), 2 = imm14 at bits 18:5 (tbz / tbnz).
+function arm64_branch_keep(kind: i32): i64 {
+  if (kind == 1) {
+    return 0xff00001f;
+  }
+  if (kind == 2) {
+    return 0xfff8001f;
+  }
+  return 0xfc000000;
+}
+
+function arm64_branch_field(kind: i32, rel: i32): i64 {
+  if (kind == 1) {
+    return (rel >> 2 & 0x7ffff) as i64 << 5;
+  }
+  if (kind == 2) {
+    return (rel >> 2 & 0x3fff) as i64 << 5;
+  }
+  return (rel >> 2 & 0x3ffffff) as i64;
+}
+
+function arm64_patch_branch(own buf: i32[], at: i32, kind: i32, rel: i32): i32[] {
+  let w: i64 = arm64_read_word(buf, at) & arm64_branch_keep(kind) | arm64_branch_field(kind, rel);
+  return arm64_write_word(buf, at, w);
+}
+
 // arm64_patch_b splices a rel into the imm26 field of a `b` placeholder at
 // byte offset `at`, preserving the top 6 opcode bits.
 function arm64_patch_b(own buf: i32[], at: i32, rel: i32): i32[] {
-  let w: i64 = arm64_read_word(buf, at) & 0xfc000000 | (rel >> 2 & 0x3ffffff) as i64;
-  return arm64_write_word(buf, at, w);
+  return arm64_patch_branch(buf, at, 0, rel);
 }
 
 // arm64_patch_b19 splices a rel into the imm19 field (bits 23:5) of a
 // `b.cond` / `cbz` / `cbnz` placeholder at byte offset `at`, preserving
-// the opcode plus the cond/Rt bits (the masked-out 0xff00001f).
+// the opcode plus the cond/Rt bits.
 function arm64_patch_b19(own buf: i32[], at: i32, rel: i32): i32[] {
-  let w: i64 = arm64_read_word(buf, at) & 0xff00001f | (rel >> 2 & 0x7ffff) as i64 << 5;
-  return arm64_write_word(buf, at, w);
+  return arm64_patch_branch(buf, at, 1, rel);
 }
 
 // ---- bl (branch-with-link, the call instruction) ----
@@ -977,7 +1023,14 @@ function arm64_bl(buf: i32[], rel: i32): i32[] {
 // field: 0 = imm26 (b / bl), 1 = imm19 (b.cond / cbz / cbnz).
 
 pub struct Arm64Asm {
-  code: i32[],
+  // The code goes into a builder; arm64_asm_resolve takes it into `text` and
+  // applies `patq` and the fixups there.
+  code: usize,
+  text: u8[],
+  // Branch and literal patches whose displacement was known when queued, one
+  // u64 each: the word's offset low, the displacement or'd with its kind
+  // (arm64_branch_keep) high. 0 until the first.
+  patq: usize,
   lab_names: string[],
   lab_offs: i32[],
   // The `.file N "path"` table (files[N - 1]) and the `.loc` rows, one entry
@@ -1075,14 +1128,20 @@ function arm64_loc_row(own a: Arm64Asm, line: string): Arm64Asm {
   }
   return Arm64Asm {
     ...a,
-    loc_offs: a.loc_offs.append(a.code.len()), loc_files: a.loc_files.append(arm64_gas_atoi(f[1])),
+    loc_offs: a.loc_offs.append(buf_len(a.code)), loc_files: a.loc_files.append(arm64_gas_atoi(f[1])),
     loc_lines: a.loc_lines.append(arm64_gas_atoi(f[2])), loc_cols: a.loc_cols.append(col), loc_flags: a.loc_flags.append(flags),
   };
 }
 
 function arm64_asm_new(): Arm64Asm {
+  return Arm64Asm { ...arm64_asm_vacant(), code: buf_new(4096) };
+}
+
+// arm64_asm_vacant is an assembler with no builder: the placeholder left in a
+// struct the live one was moved out of.
+function arm64_asm_vacant(): Arm64Asm {
   return Arm64Asm {
-    code: [], lab_names: [], lab_offs: [], files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [],
+    code: 0 as usize, text: [], patq: 0 as usize, lab_names: [], lab_offs: [], files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [],
     lab_head: arm64_empty_buckets(), lab_next: [], lab_tail: arm64_empty_buckets(),
     fix_offs: [], fix_names: [], fix_kinds: [], lid_offs: [], fix_ids: [], unres: [], oor: [],
   };
@@ -1127,7 +1186,7 @@ function arm64_asm_label(own a: Arm64Asm, name: string): Arm64Asm {
   let b: i32 = arm64_name_bucket(name);
   let prev: i32 = a.lab_tail[b];
   a = Arm64Asm { ...a, lab_names: a.lab_names.append(name) };
-  a = Arm64Asm { ...a, lab_offs: a.lab_offs.append(a.code.len()) };
+  a = Arm64Asm { ...a, lab_offs: a.lab_offs.append(buf_len(a.code)) };
   a = Arm64Asm { ...a, lab_next: a.lab_next.append(0 - 1) };
   if (prev < 0) {
     a = Arm64Asm { ...a, lab_head: a.lab_head.with(b, at) };
@@ -1203,32 +1262,18 @@ function arm64_oor_note(name: string, rel: i32, bits: i32): string {
 }
 
 // arm64_asm_fixup_or_patch handles a branch placeholder just emitted into
-// a.code (its instruction word at a.code.len()-4). `kind` selects the
-// immediate field. If the target label is already placed, patch now;
-// otherwise queue a fixup for arm64_asm_resolve.
+// a.code (its instruction word at buf_len(a.code)-4). `kind` selects the
+// immediate field. If the target label is already placed, queue the patch;
+// otherwise queue a fixup for arm64_asm_resolve to look the label up.
 function arm64_asm_fixup_or_patch(own a: Arm64Asm, name: string, kind: i32): Arm64Asm {
-  let at: i32 = a.code.len() - 4;
+  let at: i32 = buf_len(a.code) - 4;
   let target: i32 = arm64_asm_label_off(a, name);
   if (target >= 0) {
-    // Take the buffer OUT of the struct before patching. `a.code` read
-    // while `a` still holds it is a second reference, which sends the
-    // `.with` inside the patch helpers down the copy path — one full
-    // .text clone per backward branch. Owning `a` lets the field be
-    // emptied first, so the local below is the only reference.
     let bits: i32 = arm64_branch_field_bits(kind);
     if (!arm64_rel_fits(target - at, bits)) {
       return Arm64Asm { ...a, oor: a.oor.append(arm64_oor_note(name, target - at, bits)) };
     }
-    let code: i32[] = a.code;
-    a = Arm64Asm { ...a, code: [] };
-    if (kind == 1) {
-      code = arm64_patch_b19(code, at, target - at);
-    } else if (kind == 2) {
-      code = arm64_patch_b14(code, at, target - at);
-    } else {
-      code = arm64_patch_b(code, at, target - at);
-    }
-    a = Arm64Asm { ...a, code: code };
+    a = arm64_queue_patch(a, at, kind, target - at);
   } else {
     a = Arm64Asm { ...a, fix_offs: a.fix_offs.append(at) };
     a = Arm64Asm { ...a, fix_names: a.fix_names.append(name) };
@@ -1245,7 +1290,7 @@ function arm64_asm_label_id(own a: Arm64Asm, id: i32): Arm64Asm {
   while (offs.len() <= id) {
     offs = offs.append(0 - 1);
   }
-  return Arm64Asm { ...a, lid_offs: offs.with(id, a.code.len()) };
+  return Arm64Asm { ...a, lid_offs: offs.with(id, buf_len(a.code)) };
 }
 
 function arm64_lid_off(a: Arm64Asm, id: i32): i32 {
@@ -1258,7 +1303,7 @@ function arm64_lid_off(a: Arm64Asm, id: i32): i32 {
 // arm64_asm_fixup_id is arm64_asm_fixup_or_patch for a branch, just
 // appended, to label id `id`.
 function arm64_asm_fixup_id(own a: Arm64Asm, id: i32, kind: i32): Arm64Asm {
-  let at: i32 = a.code.len() - 4;
+  let at: i32 = buf_len(a.code) - 4;
   let target: i32 = arm64_lid_off(a, id);
   if (target < 0) {
     a = Arm64Asm { ...a, fix_offs: a.fix_offs.append(at) };
@@ -1270,44 +1315,45 @@ function arm64_asm_fixup_id(own a: Arm64Asm, id: i32, kind: i32): Arm64Asm {
   if (!arm64_rel_fits(target - at, bits)) {
     return Arm64Asm { ...a, oor: a.oor.append(arm64_oor_note("#" + arm64_gas_dec(id), target - at, bits)) };
   }
-  let code: i32[] = a.code;
-  a = Arm64Asm { ...a, code: [] };
-  if (kind == 1) {
-    code = arm64_patch_b19(code, at, target - at);
-  } else if (kind == 2) {
-    code = arm64_patch_b14(code, at, target - at);
-  } else {
-    code = arm64_patch_b(code, at, target - at);
+  return arm64_queue_patch(a, at, kind, target - at);
+}
+
+// arm64_queue_patch records a patch of `kind` at `at` whose displacement is
+// already known. `rel` is a multiple of four, so the kind rides its low bits.
+function arm64_queue_patch(own a: Arm64Asm, at: i32, kind: i32, rel: i32): Arm64Asm {
+  if (a.patq == 0 as usize) {
+    a = Arm64Asm { ...a, patq: buf_new(8192) };
   }
-  return Arm64Asm { ...a, code: code };
+  buf_push_u64(a.patq, ((rel | kind) as i64 << 32 | at as i64 & 4294967295i64) as u64);
+  return a;
 }
 
 // arm64_asm_b / arm64_asm_bl emit an unconditional branch / call to a
 // (possibly forward) label.
 function arm64_asm_b(own a: Arm64Asm, name: string): Arm64Asm {
-  a = Arm64Asm { ...a, code: arm64_b(a.code, 0) };
+  arm64_push_arr(a.code, arm64_b([], 0));
   return arm64_asm_fixup_or_patch(a, name, 0);
 }
 
 function arm64_asm_bl(own a: Arm64Asm, name: string): Arm64Asm {
-  a = Arm64Asm { ...a, code: arm64_bl(a.code, 0) };
+  arm64_push_arr(a.code, arm64_bl([], 0));
   return arm64_asm_fixup_or_patch(a, name, 0);
 }
 
 // arm64_asm_bcond / arm64_asm_cbz / arm64_asm_cbnz emit a conditional
 // branch to a (possibly forward) label.
 function arm64_asm_bcond(own a: Arm64Asm, cond: i32, name: string): Arm64Asm {
-  a = Arm64Asm { ...a, code: arm64_bcond(a.code, cond, 0) };
+  arm64_push_arr(a.code, arm64_bcond([], cond, 0));
   return arm64_asm_fixup_or_patch(a, name, 1);
 }
 
 function arm64_asm_cbz(own a: Arm64Asm, rt: i32, name: string, w: boolean): Arm64Asm {
-  a = Arm64Asm { ...a, code: arm64_cbz(a.code, rt, 0, w) };
+  arm64_push_arr(a.code, arm64_cbz([], rt, 0, w));
   return arm64_asm_fixup_or_patch(a, name, 1);
 }
 
 function arm64_asm_cbnz(own a: Arm64Asm, rt: i32, name: string, w: boolean): Arm64Asm {
-  a = Arm64Asm { ...a, code: arm64_cbnz(a.code, rt, 0, w) };
+  arm64_push_arr(a.code, arm64_cbnz([], rt, 0, w));
   return arm64_asm_fixup_or_patch(a, name, 1);
 }
 
@@ -1319,17 +1365,29 @@ function arm64_fixup_name(a: Arm64Asm, i: i32): string {
   return a.fix_names[i];
 }
 
-// arm64_asm_resolve patches every queued (forward) fixup now that all
-// labels are placed. Call once after emitting the whole program;
-// afterwards a.code is the final .text.
-// The buffer is pulled out of the struct ONCE and threaded through the whole
-// fixup loop as a uniquely-owned local, then folded back. Patching it in
-// place inside the struct — `a = Arm64Asm { ...a, code: arm64_patch_b(a.code,
-// …) }` — cloned the entire .text per fixup, which is the largest of the
-// three quadratic patch loops in this assembler (#6011).
+// arm64_asm_resolve takes the code out of its builder, applies the queued
+// patches, and patches every fixup now that all labels are placed. Call once
+// after emitting the whole program; afterwards a.text is the final .text.
+// The bytes are threaded through both loops as a uniquely-owned local and
+// folded back at the end, so each patch writes in place (#6011).
 function arm64_asm_resolve(own a: Arm64Asm): Arm64Asm {
-  let code: i32[] = a.code;
-  a = Arm64Asm { ...a, code: [] };
+  let code: u8[] = buf_take_bytes(a.code);
+  buf_free(a.code);
+  a = Arm64Asm { ...a, code: 0 as usize };
+  if (a.patq != 0 as usize) {
+    let pq: u8[] = buf_take_bytes(a.patq);
+    buf_free(a.patq);
+    a = Arm64Asm { ...a, patq: 0 as usize };
+    let q: i32 = 0;
+    let nq: i32 = pq.len();
+    while (q < nq) {
+      let at: i32 = pq[q] as i32 | pq[q + 1] as i32 << 8 | pq[q + 2] as i32 << 16 | pq[q + 3] as i32 << 24;
+      let hi: i32 = pq[q + 4] as i32 | pq[q + 5] as i32 << 8 | pq[q + 6] as i32 << 16 | pq[q + 7] as i32 << 24;
+      let kind: i32 = hi & 3;
+      code = arm64_patch_bytes(code, at, arm64_branch_keep(kind), arm64_branch_field(kind, hi - kind));
+      q = q + 8;
+    }
+  }
   let i: i32 = 0;
   while (i < a.fix_offs.len()) {
     let at: i32 = a.fix_offs[i];
@@ -1356,16 +1414,11 @@ function arm64_asm_resolve(own a: Arm64Asm): Arm64Asm {
       i = i + 1;
       continue;
     }
-    if (a.fix_kinds[i] == 1) {
-      code = arm64_patch_b19(code, at, target - at);
-    } else if (a.fix_kinds[i] == 2) {
-      code = arm64_patch_b14(code, at, target - at);
-    } else {
-      code = arm64_patch_b(code, at, target - at);
-    }
+    let kind: i32 = a.fix_kinds[i];
+    code = arm64_patch_bytes(code, at, arm64_branch_keep(kind), arm64_branch_field(kind, target - at));
     i = i + 1;
   }
-  return Arm64Asm { ...a, code: code };
+  return Arm64Asm { ...a, text: code };
 }
 
 // ---- load / store (64-bit, unsigned scaled immediate) ----
@@ -1503,21 +1556,30 @@ function arm64_adr(buf: i32[], rd: i32, delta: i32): i32[] {
   return arm64_le32(buf, 0x10000000 | immlo << 29 | immhi << 5 | (rd & 31) as i64);
 }
 
-// arm64_patch_adrp splices a page_delta into an `adrp` placeholder — or a
-// byte delta into an `adr` one, the field layout is shared — at byte
-// offset `at`, preserving the opcode + Rd (masked-out 0x9f00001f).
+// arm64_adrp_field places a page delta — or, for `adr`, a byte delta, the
+// field layout is shared — in the immlo:immhi field, beside the opcode + Rd
+// that the mask 0x9f00001f keeps.
+function arm64_adrp_field(delta: i32): i64 {
+  return (delta & 3) as i64 << 29 | (delta >> 2 & 0x7ffff) as i64 << 5;
+}
+
+// arm64_imm12_field places a 12-bit immediate in bits 21:10, beside the
+// opcode + Rd/Rn that the mask 0xffc003ff keeps.
+function arm64_imm12_field(v: i32): i64 {
+  return (v & 0xfff) as i64 << 10;
+}
+
+// arm64_patch_adrp splices a page_delta into an `adrp` placeholder, or a
+// byte delta into an `adr` one, at byte offset `at`.
 function arm64_patch_adrp(own buf: i32[], at: i32, page_delta: i32): i32[] {
-  let immlo: i64 = (page_delta & 3) as i64;
-  let immhi: i64 = (page_delta >> 2 & 0x7ffff) as i64;
-  let w: i64 = arm64_read_word(buf, at) & 0x9f00001f | immlo << 29 | immhi << 5;
+  let w: i64 = arm64_read_word(buf, at) & 0x9f00001f | arm64_adrp_field(page_delta);
   return arm64_write_word(buf, at, w);
 }
 
-// arm64_patch_ldr_off splices a (scaled) byte offset into the imm12 field
-// (bits 21:10) of an `ldr` placeholder at byte offset `at`, preserving the
-// opcode + Rt/Rn (masked-out 0xffc003ff).
+// arm64_patch_ldr_off splices a byte offset, scaled by 8, into the imm12
+// field of an `ldr` placeholder at byte offset `at`.
 function arm64_patch_ldr_off(own buf: i32[], at: i32, off: i32): i32[] {
-  let w: i64 = arm64_read_word(buf, at) & 0xffc003ff | (off / 8 & 0xfff) as i64 << 10;
+  let w: i64 = arm64_read_word(buf, at) & 0xffc003ff | arm64_imm12_field(off / 8);
   return arm64_write_word(buf, at, w);
 }
 
@@ -1535,13 +1597,6 @@ function arm64_ldr_lit_word(rt: i32, imm19: i32): i64 {
 
 function arm64_ldr_lit(buf: i32[], rt: i32, imm19: i32): i32[] {
   return arm64_le32(buf, arm64_ldr_lit_word(rt, imm19));
-}
-
-// arm64_patch_ldr_lit splices imm19 (bits 23:5) into an LDR-literal
-// placeholder at byte offset `at`, preserving the opcode + Rt (0xff00001f).
-function arm64_patch_ldr_lit(own buf: i32[], at: i32, imm19: i32): i32[] {
-  let w: i64 = arm64_read_word(buf, at) & 0xff00001f | (imm19 & 0x7ffff) as i64 << 5;
-  return arm64_write_word(buf, at, w);
 }
 
 // ---- pair load/store (the prologue/epilogue idiom, and W/D pairs) ----
@@ -1595,14 +1650,6 @@ function arm64_ldr_pre(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
 
 function arm64_ldr_post(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
   return arm64_le32(buf, arm64_ldr_post_word(rt, rn, off));
-}
-
-// arm64_patch_addimm_off splices an unscaled 12-bit immediate into the
-// imm12 field (bits 21:10) of an `add` (immediate) placeholder — used for
-// `add Xd, Xn, sym@PAGEOFF`, preserving the opcode + Rd/Rn (0xffc003ff).
-function arm64_patch_addimm_off(own buf: i32[], at: i32, off: i32): i32[] {
-  let w: i64 = arm64_read_word(buf, at) & 0xffc003ff | (off & 0xfff) as i64 << 10;
-  return arm64_write_word(buf, at, w);
 }
 
 // ---- bitfield extract + negate + test-bit branch ----
@@ -1746,23 +1793,15 @@ function arm64_tbnz(buf: i32[], rt: i32, bit: i32, rel: i32): i32[] {
   return arm64_le32(buf, arm64_tbnz_word(rt, bit, rel));
 }
 
-// arm64_patch_b14 splices a rel into the imm14 field (bits 18:5) of a
-// `tbz`/`tbnz` placeholder, preserving the opcode + b5/b40/Rt (mask
-// 0xfff8001f).
-function arm64_patch_b14(own buf: i32[], at: i32, rel: i32): i32[] {
-  let w: i64 = arm64_read_word(buf, at) & 0xfff8001f | (rel >> 2 & 0x3fff) as i64 << 5;
-  return arm64_write_word(buf, at, w);
-}
-
 // arm64_asm_tbz / arm64_asm_tbnz emit a test-bit branch to a (possibly
 // forward) label (fixup kind 2 = imm14).
 function arm64_asm_tbz(own a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
-  a = Arm64Asm { ...a, code: arm64_tbz(a.code, rt, bit, 0) };
+  arm64_push_arr(a.code, arm64_tbz([], rt, bit, 0));
   return arm64_asm_fixup_or_patch(a, name, 2);
 }
 
 function arm64_asm_tbnz(own a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
-  a = Arm64Asm { ...a, code: arm64_tbnz(a.code, rt, bit, 0) };
+  arm64_push_arr(a.code, arm64_tbnz([], rt, bit, 0));
   return arm64_asm_fixup_or_patch(a, name, 2);
 }
 
@@ -3266,10 +3305,11 @@ function arm64_gas_emit_narrowwide(own a: Arm64Asm, mnem: string, ops: string[])
       return a;
     }
     let xc: i32 = arm64_gas_vreg_arrof(ops[0]);
-    return Arm64Asm { ...a, code: arm64_vec2misc(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vec2misc(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       18, arm64_gas_arr_size(xc), arm64_gas_arr_q(xc), false,
-    ) };
+    ));
+    return a;
   }
   if (mnem == "shrn" || mnem == "shrn2") {
     if (ops.len() != 3) {
@@ -3277,10 +3317,11 @@ function arm64_gas_emit_narrowwide(own a: Arm64Asm, mnem: string, ops: string[])
     }
     let nc: i32 = arm64_gas_vreg_arrof(ops[0]);
     let nes: i32 = arm64_gas_esize(nc);
-    return Arm64Asm { ...a, code: arm64_vecshift(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vecshift(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       16, 2 * nes - arm64_gas_imm(ops[2]), arm64_gas_arr_q(nc), false,
-    ) };
+    ));
+    return a;
   }
   let kind: i32 = arm64_gas_shll_kind(mnem);
   let alias: boolean = kind >= 4;
@@ -3295,10 +3336,11 @@ function arm64_gas_emit_narrowwide(own a: Arm64Asm, mnem: string, ops: string[])
   if (!alias) {
     amt = arm64_gas_imm(ops[2]);
   }
-  return Arm64Asm { ...a, code: arm64_vecshift(
-    a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+  arm64_push_arr(a.code, arm64_vecshift(
+    [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
     20, arm64_gas_esize(sc) + amt, kind % 4 >= 2, kind % 2 == 1,
-  ) };
+  ));
+  return a;
 }
 
 // arm64_gas_emit_vecgen encodes one of them. Operand shapes are vetted by
@@ -3314,20 +3356,22 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
       return a;
     }
     let cc: i32 = arm64_gas_vreg_arrof(ops[0]);
-    return Arm64Asm { ...a, code: arm64_vec2misc(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vec2misc(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       arm64_vec_entry_op(czero), arm64_gas_arr_size(cc), arm64_gas_arr_q(cc), arm64_vec_entry_u(czero),
-    ) };
+    ));
+    return a;
   }
   if (three >= 0) {
     if (ops.len() != 3) {
       return a;
     }
     let tc: i32 = arm64_gas_vreg_arrof(ops[0]);
-    return Arm64Asm { ...a, code: arm64_vec3same(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vec3same(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       arm64_gas_vreg_any(ops[2]), arm64_vec_entry_op(three), arm64_gas_arr_size(tc), arm64_gas_arr_q(tc), arm64_vec_entry_u(three),
-    ) };
+    ));
+    return a;
   }
   let logic: i32 = arm64_vlogical_entry(mnem);
   if (logic >= 0) {
@@ -3336,10 +3380,11 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
     }
     let lc: i32 = arm64_gas_vreg_arrof(ops[0]);
     // The operation lives in the size field here; the opcode is always 3.
-    return Arm64Asm { ...a, code: arm64_vec3same(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vec3same(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       arm64_gas_vreg_any(ops[2]), 3, arm64_vec_entry_op(logic), arm64_gas_arr_q(lc), arm64_vec_entry_u(logic),
-    ) };
+    ));
+    return a;
   }
   let pl: i32 = arm64_pairlong_entry(mnem);
   if (pl >= 0) {
@@ -3347,10 +3392,11 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
       return a;
     }
     let pc: i32 = arm64_gas_vreg_arrof(ops[1]);
-    return Arm64Asm { ...a, code: arm64_vec2misc(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vec2misc(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       arm64_vec_entry_op(pl), arm64_gas_arr_size(pc), arm64_gas_arr_q(pc), arm64_vec_entry_u(pl),
-    ) };
+    ));
+    return a;
   }
   let misc: i32 = arm64_v2misc_entry(mnem);
   if (misc >= 0) {
@@ -3358,10 +3404,11 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
       return a;
     }
     let mc: i32 = arm64_gas_vreg_arrof(ops[0]);
-    return Arm64Asm { ...a, code: arm64_vec2misc(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vec2misc(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       arm64_vec_entry_op(misc), arm64_gas_arr_size(mc), arm64_gas_arr_q(mc), arm64_vec_entry_u(misc),
-    ) };
+    ));
+    return a;
   }
   let fz: i32 = arm64_vfpcmpzero_entry(mnem);
   let f3: i32 = arm64_vfp3_entry(mnem);
@@ -3371,21 +3418,23 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
       return a;
     }
     let zc: i32 = arm64_gas_vreg_arrof(ops[0]);
-    return Arm64Asm { ...a, code: arm64_vec2misc(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vec2misc(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       arm64_vec_entry_op(fz), arm64_gas_fp_size(zc, true), arm64_gas_arr_q(zc), arm64_vec_entry_u(fz),
-    ) };
+    ));
+    return a;
   }
   if (f3 >= 0) {
     if (ops.len() != 3) {
       return a;
     }
     let fc: i32 = arm64_gas_vreg_arrof(ops[0]);
-    return Arm64Asm { ...a, code: arm64_vec3same(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vec3same(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       arm64_gas_vreg_any(ops[2]), arm64_vec_entry_op(f3),
       arm64_gas_fp_size(fc, arm64_vec_entry_sizes(f3) == 1), arm64_gas_arr_q(fc), arm64_vec_entry_u(f3),
-    ) };
+    ));
+    return a;
   }
   let f2: i32 = arm64_vfp2_entry(mnem);
   if (f2 >= 0) {
@@ -3393,11 +3442,12 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
       return a;
     }
     let f2c: i32 = arm64_gas_vreg_arrof(ops[0]);
-    return Arm64Asm { ...a, code: arm64_vec2misc(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vec2misc(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       arm64_vec_entry_op(f2), arm64_gas_fp_size(f2c, arm64_vec_entry_sizes(f2) == 1),
       arm64_gas_arr_q(f2c), arm64_vec_entry_u(f2),
-    ) };
+    ));
+    return a;
   }
   let sh: i32 = arm64_vshift_entry(mnem);
   if (sh >= 0) {
@@ -3411,10 +3461,11 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
     if (arm64_vec_entry_sizes(sh) == 1) {
       immhb = es + amt;
     }
-    return Arm64Asm { ...a, code: arm64_vecshift(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vecshift(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       arm64_vec_entry_op(sh), immhb, arm64_gas_arr_q(sc), arm64_vec_entry_u(sh),
-    ) };
+    ));
+    return a;
   }
   if (arm64_gas_shll_kind(mnem) >= 0 || mnem == "xtn" || mnem == "xtn2"
     || mnem == "shrn" || mnem == "shrn2") {
@@ -3425,20 +3476,22 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
       return a;
     }
     let ec: i32 = arm64_gas_vreg_arrof(ops[0]);
-    return Arm64Asm { ...a, code: arm64_vecext(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vecext(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       arm64_gas_vreg_any(ops[2]), arm64_gas_imm(ops[3]), arm64_gas_arr_q(ec),
-    ) };
+    ));
+    return a;
   }
   if (mnem == "tbl") {
     if (ops.len() != 3) {
       return a;
     }
     let tc: i32 = arm64_gas_vreg_arrof(ops[0]);
-    return Arm64Asm { ...a, code: arm64_vectbl1(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vlist_one(ops[1]),
+    arm64_push_arr(a.code, arm64_vectbl1(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vlist_one(ops[1]),
       arm64_gas_vreg_any(ops[2]), arm64_gas_arr_q(tc),
-    ) };
+    ));
+    return a;
   }
   let poly: i32 = arm64_vpolylong_entry(mnem);
   if (poly >= 0) {
@@ -3448,20 +3501,22 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
     // The SOURCE arrangement is what the encoding carries; the
     // destination is checked by arm64_gas_bad_pmull, not encoded.
     let yc: i32 = arm64_gas_vreg_arrof(ops[1]);
-    return Arm64Asm { ...a, code: arm64_vec3diff(
-      a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vec3diff(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       arm64_gas_vreg_any(ops[2]), arm64_vec_entry_op(poly), arm64_gas_arr_size(yc), arm64_gas_arr_q(yc), arm64_vec_entry_u(poly),
-    ) };
+    ));
+    return a;
   }
   let pm: i32 = arm64_vpermute_opc(mnem);
   if (pm < 0 || ops.len() != 3) {
     return a;
   }
   let pc: i32 = arm64_gas_vreg_arrof(ops[0]);
-  return Arm64Asm { ...a, code: arm64_vecpermute(
-    a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+  arm64_push_arr(a.code, arm64_vecpermute(
+    [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
     arm64_gas_vreg_any(ops[2]), pm, arm64_gas_arr_size(pc), arm64_gas_arr_q(pc),
-  ) };
+  ));
+  return a;
 }
 
 // ---- packed NEON (the fused vector kernels of ATLAS-PLATFORM-PLAN §3) ----
@@ -7700,12 +7755,14 @@ function arm64_gas_emit_carry(own a: Arm64Asm, mnem: string, ops: string[]): Arm
     if (ops.len() < 2) {
       return a;
     }
-    return Arm64Asm { ...a, code: arm64_rrr(a.code, arm64_carry_base(mnem), arm64_gas_reg(ops[0]), 31, arm64_gas_reg(ops[1]), w) };
+    arm64_push_arr(a.code, arm64_rrr([], arm64_carry_base(mnem), arm64_gas_reg(ops[0]), 31, arm64_gas_reg(ops[1]), w));
+    return a;
   }
   if (ops.len() < 3) {
     return a;
   }
-  return Arm64Asm { ...a, code: arm64_rrr(a.code, arm64_carry_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), w) };
+  arm64_push_arr(a.code, arm64_rrr([], arm64_carry_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), w));
+  return a;
 }
 
 function arm64_gas_emit_mulwide(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
@@ -7717,19 +7774,22 @@ function arm64_gas_emit_mulwide(own a: Arm64Asm, mnem: string, ops: string[]): A
     if (mnem == "smulh") {
       hb = 0x9b407c00;
     }
-    return Arm64Asm { ...a, code: arm64_rrr(a.code, hb, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), false) };
+    arm64_push_arr(a.code, arm64_rrr([], hb, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), false));
+    return a;
   }
   if (mnem == "madd") {
     if (ops.len() < 4) {
       return a;
     }
-    return Arm64Asm { ...a, code: arm64_muladd(a.code, 0x9b000000, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_reg(ops[3]), arm64_gas_is_w(ops[0])) };
+    arm64_push_arr(a.code, arm64_muladd([], 0x9b000000, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_reg(ops[3]), arm64_gas_is_w(ops[0])));
+    return a;
   }
   let ra: i32 = 31;
   if (ops.len() >= 4) {
     ra = arm64_gas_reg(ops[3]);
   }
-  return Arm64Asm { ...a, code: arm64_muladd(a.code, arm64_mulwide_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), ra, false) };
+  arm64_push_arr(a.code, arm64_muladd([], arm64_mulwide_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), ra, false));
+  return a;
 }
 
 function arm64_gas_emit_logical2(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
@@ -7757,7 +7817,8 @@ function arm64_gas_emit_logical2(own a: Arm64Asm, mnem: string, ops: string[]): 
     if (mnem != "tst" && mnem != "ands") {
       return a;
     }
-    return Arm64Asm { ...a, code: arm64_ands_imm(a.code, rd, rn, arm64_gas_imm64(rm_tok), w) };
+    arm64_push_arr(a.code, arm64_ands_imm([], rd, rn, arm64_gas_imm64(rm_tok), w));
+    return a;
   }
   let st: i32 = 0;
   let amt: i32 = 0;
@@ -7765,7 +7826,8 @@ function arm64_gas_emit_logical2(own a: Arm64Asm, mnem: string, ops: string[]): 
     st = arm64_gas_shift_type(ops[base_n]);
     amt = arm64_gas_lsl_amount(ops[base_n]);
   }
-  return Arm64Asm { ...a, code: arm64_logical_shift(a.code, arm64_logical2_base(mnem), rd, rn, arm64_gas_reg(rm_tok), st, amt, w) };
+  arm64_push_arr(a.code, arm64_logical_shift([], arm64_logical2_base(mnem), rd, rn, arm64_gas_reg(rm_tok), st, amt, w));
+  return a;
 }
 
 function arm64_bfm_base(mnem: string, w: boolean): i64 {
@@ -7809,7 +7871,8 @@ function arm64_gas_emit_bitfield(own a: Arm64Asm, mnem: string, ops: string[]): 
     immr = lsb;
     imms = lsb + width - 1;
   }
-  return Arm64Asm { ...a, code: arm64_bitfield(a.code, arm64_bfm_base(mnem, w), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), immr, imms) };
+  arm64_push_arr(a.code, arm64_bitfield([], arm64_bfm_base(mnem, w), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), immr, imms));
+  return a;
 }
 
 function arm64_gas_emit_extr_ror(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
@@ -7817,15 +7880,18 @@ function arm64_gas_emit_extr_ror(own a: Arm64Asm, mnem: string, ops: string[]): 
     if (ops.len() < 4) {
       return a;
     }
-    return Arm64Asm { ...a, code: arm64_extr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_imm(ops[3]), arm64_gas_is_w(ops[0])) };
+    arm64_push_arr(a.code, arm64_extr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_imm(ops[3]), arm64_gas_is_w(ops[0])));
+    return a;
   }
   if (ops.len() < 3) {
     return a;
   }
   if (ops[2].len() > 0 && ops[2][0] == b'#') {  // extr Rd, Rn, Rn, #n alias
-    return Arm64Asm { ...a, code: arm64_extr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
+    arm64_push_arr(a.code, arm64_extr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])));
+    return a;
   }
-  return Arm64Asm { ...a, code: arm64_rrr(a.code, 0x9ac02c00, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])) };
+  arm64_push_arr(a.code, arm64_rrr([], 0x9ac02c00, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])));
+  return a;
 }
 
 // The cset/csetm/cinc/cinv/cneg aliases invert the condition, so the
@@ -7840,19 +7906,22 @@ function arm64_gas_emit_condsel(own a: Arm64Asm, mnem: string, ops: string[]): A
     if (ops.len() < 2) {
       return a;
     }
-    return Arm64Asm { ...a, code: arm64_condsel(a.code, arm64_condsel_base(mnem), rd, 31, 31, arm64_gas_cond(ops[1]) ^ 1, w) };
+    arm64_push_arr(a.code, arm64_condsel([], arm64_condsel_base(mnem), rd, 31, 31, arm64_gas_cond(ops[1]) ^ 1, w));
+    return a;
   }
   if (mnem == "cinc" || mnem == "cinv" || mnem == "cneg") {
     if (ops.len() < 3) {
       return a;
     }
     let rn2: i32 = arm64_gas_reg(ops[1]);
-    return Arm64Asm { ...a, code: arm64_condsel(a.code, arm64_condsel_base(mnem), rd, rn2, rn2, arm64_gas_cond(ops[2]) ^ 1, w) };
+    arm64_push_arr(a.code, arm64_condsel([], arm64_condsel_base(mnem), rd, rn2, rn2, arm64_gas_cond(ops[2]) ^ 1, w));
+    return a;
   }
   if (ops.len() < 4) {
     return a;
   }
-  return Arm64Asm { ...a, code: arm64_condsel(a.code, arm64_condsel_base(mnem), rd, arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_cond(ops[3]), w) };
+  arm64_push_arr(a.code, arm64_condsel([], arm64_condsel_base(mnem), rd, arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_cond(ops[3]), w));
+  return a;
 }
 
 function arm64_gas_emit_condcmp(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
@@ -7867,7 +7936,8 @@ function arm64_gas_emit_condcmp(own a: Arm64Asm, mnem: string, ops: string[]): A
   } else {
     rm5 = arm64_gas_reg(ops[1]);
   }
-  return Arm64Asm { ...a, code: arm64_condcmp(a.code, base, arm64_gas_reg(ops[0]), rm5, arm64_gas_imm(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_w(ops[0])) };
+  arm64_push_arr(a.code, arm64_condcmp([], base, arm64_gas_reg(ops[0]), rm5, arm64_gas_imm(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_w(ops[0])));
+  return a;
 }
 
 // arm64_gas_emit_bitops encodes the one-source data-processing ops.
@@ -7879,21 +7949,27 @@ function arm64_gas_emit_bitops(own a: Arm64Asm, mnem: string, ops: string[]): Ar
   let rn: i32 = arm64_gas_reg(ops[1]);
   let w: boolean = arm64_gas_is_w(ops[0]);
   if (mnem == "rev") {
-    return Arm64Asm { ...a, code: arm64_rev(a.code, rd, rn, w) };
+    arm64_push_arr(a.code, arm64_rev([], rd, rn, w));
+    return a;
   }
   if (mnem == "rev32") {
-    return Arm64Asm { ...a, code: arm64_rev32(a.code, rd, rn) };
+    arm64_push_arr(a.code, arm64_rev32([], rd, rn));
+    return a;
   }
   if (mnem == "rev16") {
-    return Arm64Asm { ...a, code: arm64_rev16(a.code, rd, rn, w) };
+    arm64_push_arr(a.code, arm64_rev16([], rd, rn, w));
+    return a;
   }
   if (mnem == "clz") {
-    return Arm64Asm { ...a, code: arm64_clz(a.code, rd, rn, w) };
+    arm64_push_arr(a.code, arm64_clz([], rd, rn, w));
+    return a;
   }
   if (mnem == "rbit") {
-    return Arm64Asm { ...a, code: arm64_rbit(a.code, rd, rn, w) };
+    arm64_push_arr(a.code, arm64_rbit([], rd, rn, w));
+    return a;
   }
-  return Arm64Asm { ...a, code: arm64_cls(a.code, rd, rn, w) };
+  arm64_push_arr(a.code, arm64_cls([], rd, rn, w));
+  return a;
 }
 
 function arm64_gas_emit_excl(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
@@ -7901,10 +7977,11 @@ function arm64_gas_emit_excl(own a: Arm64Asm, mnem: string, ops: string[], lm: A
     if (ops.len() < 3) {
       return a;
     }
-    return Arm64Asm { ...a, code: arm64_excl_store(
-      a.code, arm64_gas_excl_size(mnem, ops[1]),
+    arm64_push_arr(a.code, arm64_excl_store(
+      [], arm64_gas_excl_size(mnem, ops[1]),
       arm64_str_starts_with(mnem, "stl"), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_mem_at(ops, 2, lm).base,
-    ) };
+    ));
+    return a;
   }
   if (ops.len() < 2) {
     return a;
@@ -7913,19 +7990,23 @@ function arm64_gas_emit_excl(own a: Arm64Asm, mnem: string, ops: string[], lm: A
   let rt: i32 = arm64_gas_reg(ops[0]);
   let rn: i32 = arm64_gas_mem_at(ops, 1, lm).base;
   if (arm64_gas_is_acqrel(mnem)) {
-    return Arm64Asm { ...a, code: arm64_acqrel(a.code, size, arm64_str_starts_with(mnem, "ld"), rt, rn) };
+    arm64_push_arr(a.code, arm64_acqrel([], size, arm64_str_starts_with(mnem, "ld"), rt, rn));
+    return a;
   }
-  return Arm64Asm { ...a, code: arm64_excl_load(a.code, size, arm64_str_starts_with(mnem, "lda"), rt, rn) };
+  arm64_push_arr(a.code, arm64_excl_load([], size, arm64_str_starts_with(mnem, "lda"), rt, rn));
+  return a;
 }
 
 function arm64_gas_emit_barrier(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
   if (mnem == "isb") {
-    return Arm64Asm { ...a, code: arm64_le32(a.code, 0xd5033fdf) };
+    arm64_push_word(a.code, 0xd5033fdf);
+    return a;
   }
   if (ops.len() < 1) {
     return a;
   }
-  return Arm64Asm { ...a, code: arm64_barrier(a.code, mnem == "dsb", arm64_barrier_opt(arm64_gas_trim(ops[0]))) };
+  arm64_push_arr(a.code, arm64_barrier([], mnem == "dsb", arm64_barrier_opt(arm64_gas_trim(ops[0]))));
+  return a;
 }
 
 function arm64_gas_emit_unscaled2(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
@@ -7942,13 +8023,15 @@ function arm64_gas_emit_unscaled2(own a: Arm64Asm, mnem: string, ops: string[], 
     if (mnem == "ldursw") {
       ssz = 2;
     }
-    return Arm64Asm { ...a, code: arm64_ldst_sun(a.code, ssz, !arm64_gas_is_w(ops[0]), rt, m.base, m.off) };
+    arm64_push_arr(a.code, arm64_ldst_sun([], ssz, !arm64_gas_is_w(ops[0]), rt, m.base, m.off));
+    return a;
   }
   let sz: i32 = 0;
   if (mnem == "ldurh" || mnem == "sturh") {
     sz = 1;
   }
-  return Arm64Asm { ...a, code: arm64_ldst_unscaled(a.code, sz, mnem == "ldurb" || mnem == "ldurh", rt, m.base, m.off) };
+  arm64_push_arr(a.code, arm64_ldst_unscaled([], sz, mnem == "ldurb" || mnem == "ldurh", rt, m.base, m.off));
+  return a;
 }
 
 // stp/ldp for X, W and D pairs in the three addressing modes (offset,
@@ -7979,7 +8062,8 @@ function arm64_gas_emit_pair(own a: Arm64Asm, mnem: string, ops: string[], lm: A
     mode = 0x800000;  // post-index (1 << 23)
     off = arm64_gas_imm(ops[3]);
   }
-  return Arm64Asm { ...a, code: arm64_pair(a.code, base | mode, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), m.base, off, scale) };
+  arm64_push_arr(a.code, arm64_pair([], base | mode, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), m.base, off, scale));
+  return a;
 }
 
 // arm64_gas_emit_ldst_regext encodes the register/extended-register
@@ -7988,7 +8072,8 @@ function arm64_gas_emit_pair(own a: Arm64Asm, mnem: string, ops: string[], lm: A
 // `#0` — sets it.
 function arm64_gas_emit_ldst_regext(own a: Arm64Asm, load: boolean, size: i32, rt: i32, m: Arm64Mem): Arm64Asm {
   let scaled: boolean = m.ext_has_amt && m.ext_amt == size;
-  return Arm64Asm { ...a, code: arm64_ldst_regext(a.code, size, load, rt, m.base, m.off_reg, m.ext_opt, scaled) };
+  arm64_push_arr(a.code, arm64_ldst_regext([], size, load, rt, m.base, m.off_reg, m.ext_opt, scaled));
+  return a;
 }
 
 // Scalar D/S ldr/str in all four addressing modes; a negative or
@@ -7997,20 +8082,24 @@ function arm64_gas_emit_ldst_regext(own a: Arm64Asm, load: boolean, size: i32, r
 function arm64_gas_emit_ldst_fp(own a: Arm64Asm, load: boolean, rt: i32, ops: string[], single: boolean, lm: Arm64Mem): Arm64Asm {
   if (ops.len() >= 3) {  // post-index `[Xn], #imm9`
     let pm: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
-    return Arm64Asm { ...a, code: arm64_ldst_fp_imm9(a.code, load, rt, pm.base, arm64_gas_imm(ops[2]), 0x400, single) };
+    arm64_push_arr(a.code, arm64_ldst_fp_imm9([], load, rt, pm.base, arm64_gas_imm(ops[2]), 0x400, single));
+    return a;
   }
   let m: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
   if (arm64_gas_has_bang(ops[1])) {  // pre-index `[Xn, #imm9]!`
-    return Arm64Asm { ...a, code: arm64_ldst_fp_imm9(a.code, load, rt, m.base, m.off, 0xc00, single) };
+    arm64_push_arr(a.code, arm64_ldst_fp_imm9([], load, rt, m.base, m.off, 0xc00, single));
+    return a;
   }
   let align: i32 = 7;
   if (single) {
     align = 3;
   }
   if (m.off < 0 || (m.off & align) != 0) {
-    return Arm64Asm { ...a, code: arm64_ldst_fp_imm9(a.code, load, rt, m.base, m.off, 0, single) };
+    arm64_push_arr(a.code, arm64_ldst_fp_imm9([], load, rt, m.base, m.off, 0, single));
+    return a;
   }
-  return Arm64Asm { ...a, code: arm64_ldst_fp_scaled(a.code, load, rt, m.base, m.off, single) };
+  arm64_push_arr(a.code, arm64_ldst_fp_scaled([], load, rt, m.base, m.off, single));
+  return a;
 }
 
 function arm64_gas_emit_fpx(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
@@ -8018,13 +8107,16 @@ function arm64_gas_emit_fpx(own a: Arm64Asm, mnem: string, ops: string[]): Arm64
     return a;
   }
   if (arm64_fp4_base(mnem) >= 0) {
-    return Arm64Asm { ...a, code: arm64_fp4(a.code, arm64_fp4_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_reg(ops[3]), arm64_gas_is_sreg(ops[0])) };
+    arm64_push_arr(a.code, arm64_fp4([], arm64_fp4_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_reg(ops[3]), arm64_gas_is_sreg(ops[0])));
+    return a;
   }
   if (mnem == "fcsel") {
-    return Arm64Asm { ...a, code: arm64_fcsel(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_sreg(ops[0])) };
+    arm64_push_arr(a.code, arm64_fcsel([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_sreg(ops[0])));
+    return a;
   }
   // fccmp
-  return Arm64Asm { ...a, code: arm64_fccmp(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_sreg(ops[0])) };
+  arm64_push_arr(a.code, arm64_fccmp([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_sreg(ops[0])));
+  return a;
 }
 
 function arm64_gas_emit_fcmp(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
@@ -8041,7 +8133,8 @@ function arm64_gas_emit_fcmp(own a: Arm64Asm, mnem: string, ops: string[]): Arm6
   } else {
     rm = arm64_gas_reg(ops[1]);
   }
-  return Arm64Asm { ...a, code: arm64_fcmp(a.code, arm64_gas_reg(ops[0]), rm, opc, arm64_gas_is_sreg(ops[0])) };
+  arm64_push_arr(a.code, arm64_fcmp([], arm64_gas_reg(ops[0]), rm, opc, arm64_gas_is_sreg(ops[0])));
+  return a;
 }
 
 // ---- instruction dispatch ----
@@ -8071,9 +8164,11 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
   let fam: i32 = arm64_gas_family(mnem);
   if (fam == arm64_fam_fixed()) {
     if (mnem == "ret") {
-      return Arm64Asm { ...a, code: arm64_ret(a.code, arm64_lr()) };
+      arm64_push_arr(a.code, arm64_ret([], arm64_lr()));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_nop(a.code) };
+    arm64_push_arr(a.code, arm64_nop([]));
+    return a;
   }
   // SIMD forms are recognised by the first operand being an arranged vector
   // register, so the mnemonics that have both — add, sub, mul, and, orr,
@@ -8086,18 +8181,22 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
       return a;
     }
     if (mnem == "svc") {
-      return Arm64Asm { ...a, code: arm64_svc(a.code, arm64_gas_imm(ops[0])) };
+      arm64_push_arr(a.code, arm64_svc([], arm64_gas_imm(ops[0])));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_brk(a.code, arm64_gas_imm(ops[0])) };
+    arm64_push_arr(a.code, arm64_brk([], arm64_gas_imm(ops[0])));
+    return a;
   }
   if (fam == arm64_fam_indirect()) {
     if (ops.len() < 1) {
       return a;
     }
     if (mnem == "blr") {
-      return Arm64Asm { ...a, code: arm64_blr(a.code, arm64_gas_reg(ops[0])) };
+      arm64_push_arr(a.code, arm64_blr([], arm64_gas_reg(ops[0])));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_br(a.code, arm64_gas_reg(ops[0])) };
+    arm64_push_arr(a.code, arm64_br([], arm64_gas_reg(ops[0])));
+    return a;
   }
   // Each family is dispatched on the index the generated lookup gives it,
   // the one arm64_gas_known consults too. Operand shapes were vetted by
@@ -8139,7 +8238,8 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     if (ops.len() < 3) {
       return a;
     }
-    return Arm64Asm { ...a, code: arm64_fp3(a.code, arm64_fp3_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_sreg(ops[0])) };
+    arm64_push_arr(a.code, arm64_fp3([], arm64_fp3_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_sreg(ops[0])));
+    return a;
   }
   if (fam == arm64_fam_fp4() || fam == arm64_fam_fpcond()) {
     return arm64_gas_emit_fpx(a, mnem, ops);
@@ -8166,7 +8266,8 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
       nst = arm64_gas_shift_type(ops[2]);
       namt = arm64_gas_lsl_amount(ops[2]);
     }
-    return Arm64Asm { ...a, code: arm64_le32(a.code, arm64_addsub_reg_word(true, mnem == "negs", arm64_gas_is_w(ops[0]), arm64_gas_reg(ops[0]), 31, arm64_gas_reg(ops[1]), nst, namt)) };
+    arm64_push_word(a.code, arm64_addsub_reg_word(true, mnem == "negs", arm64_gas_is_w(ops[0]), arm64_gas_reg(ops[0]), 31, arm64_gas_reg(ops[1]), nst, namt));
+    return a;
   }
   if (fam == arm64_fam_bfx()) {
     // The program loop records a bad shape and then still calls through
@@ -8181,20 +8282,24 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     let bfl: i32 = arm64_gas_imm(ops[2]);
     let bfc: i32 = arm64_gas_imm(ops[3]);
     if (mnem == "sbfx") {
-      return Arm64Asm { ...a, code: arm64_sbfx(a.code, bfd, bfn, bfl, bfc, bfw) };
+      arm64_push_arr(a.code, arm64_sbfx([], bfd, bfn, bfl, bfc, bfw));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_ubfx(a.code, bfd, bfn, bfl, bfc, bfw) };
+    arm64_push_arr(a.code, arm64_ubfx([], bfd, bfn, bfl, bfc, bfw));
+    return a;
   }
   if (fam == arm64_fam_extend()) {
     if (ops.len() < 2) {
       return a;
     }
     if (mnem == "sxtw") {
-      return Arm64Asm { ...a, code: arm64_sxtw(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+      arm64_push_arr(a.code, arm64_sxtw([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])));
+      return a;
     }
     let xsign: boolean = mnem == "sxtb" || mnem == "sxth";
     let xhalf: boolean = mnem == "sxth" || mnem == "uxth";
-    return Arm64Asm { ...a, code: arm64_extend(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), xsign, xhalf, !arm64_gas_is_w(ops[0])) };
+    arm64_push_arr(a.code, arm64_extend([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), xsign, xhalf, !arm64_gas_is_w(ops[0])));
+    return a;
   }
   if (fam == arm64_fam_muldiv()) {
     return arm64_gas_emit_muldiv(a, mnem, ops);
@@ -8222,7 +8327,8 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
       lst = arm64_gas_shift_type(ops[3]);
       lamt = arm64_gas_lsl_amount(ops[3]);
     }
-    return Arm64Asm { ...a, code: arm64_logical_shift(a.code, lb, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), lst, lamt, arm64_gas_is_w(ops[0])) };
+    arm64_push_arr(a.code, arm64_logical_shift([], lb, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), lst, lamt, arm64_gas_is_w(ops[0])));
+    return a;
   }
   let acr: i32 = arm64_across_entry(mnem);
   if (acr >= 0) {
@@ -8230,10 +8336,11 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
       return a;
     }
     let ac: i32 = arm64_gas_vreg_arrof(ops[1]);
-    return Arm64Asm { ...a, code: arm64_vecacross(
-      a.code, arm64_gas_scalar_reg(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_push_arr(a.code, arm64_vecacross(
+      [], arm64_gas_scalar_reg(ops[0]), arm64_gas_vreg_any(ops[1]),
       arm64_vec_entry_op(acr), arm64_gas_arr_size(ac), arm64_gas_arr_q(ac), arm64_vec_entry_u(acr),
-    ) };
+    ));
+    return a;
   }
   if (fam == arm64_fam_vecldst()) {
     return arm64_gas_emit_vecldst(a, mnem, ops, lm);
@@ -8248,19 +8355,24 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     return arm64_gas_emit_ldst_narrow(a, mnem, ops, lm);
   }
   if (fam == arm64_fam_funary()) {
-    return Arm64Asm { ...a, code: arm64_funary_d(a.code, arm64_funary_d_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_sreg(ops[0])) };
+    arm64_push_arr(a.code, arm64_funary_d([], arm64_funary_d_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_sreg(ops[0])));
+    return a;
   }
   if (fam == arm64_fam_fcvtz()) {  // Xd/Wd, Dn (double -> int)
-    return Arm64Asm { ...a, code: arm64_fcvtz_int(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0]), mnem == "fcvtzu") };
+    arm64_push_arr(a.code, arm64_fcvtz_int([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0]), mnem == "fcvtzu"));
+    return a;
   }
   if (fam == arm64_fam_fcvt()) {  // Sd, Dn (narrow) or Dd, Sn (widen)
     if (arm64_gas_is_d(ops[0])) {
-      return Arm64Asm { ...a, code: arm64_fcvt_d_s(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+      arm64_push_arr(a.code, arm64_fcvt_d_s([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_fcvt_s_d(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+    arm64_push_arr(a.code, arm64_fcvt_s_d([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])));
+    return a;
   }
   if (fam == arm64_fam_cvtf()) {  // Dd, Xn/Wn (int -> double)
-    return Arm64Asm { ...a, code: arm64_cvtf(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[1]), mnem == "ucvtf") };
+    arm64_push_arr(a.code, arm64_cvtf([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[1]), mnem == "ucvtf"));
+    return a;
   }
   if (fam == arm64_fam_fmov()) {
     return arm64_gas_emit_fmov(a, ops);
@@ -8310,16 +8422,16 @@ function arm64_gas_emit_movwide(own a: Arm64Asm, mnem: string, ops: string[]): A
         // truncated low half loaded 65436 (#6060). The line loop's
         // range guard has already refused anything whose complement
         // does not fit in imm16.
-        a = Arm64Asm { ...a, code: arm64_movn(a.code, rd, 0 - mvimm - 1, mvsh, arm64_gas_is_w(ops[0])) };
+        arm64_push_arr(a.code, arm64_movn([], rd, 0 - mvimm - 1, mvsh, arm64_gas_is_w(ops[0])));
       } else {
-        a = Arm64Asm { ...a, code: arm64_movz(a.code, rd, mvimm, mvsh, arm64_gas_is_w(ops[0])) };
+        arm64_push_arr(a.code, arm64_movz([], rd, mvimm, mvsh, arm64_gas_is_w(ops[0])));
       }
     } else if (arm64_gas_trim(ops[0]) == "sp" || arm64_gas_trim(ops[1]) == "sp") {
       // `mov Xd, sp` / `mov sp, Xn` is the `add Xd, Xn, #0` alias
       // (ORR can't name SP).
-      a = Arm64Asm { ...a, code: arm64_addimm(a.code, rd, arm64_gas_reg(ops[1]), 0, arm64_gas_is_w(ops[0])) };
+      arm64_push_arr(a.code, arm64_addimm([], rd, arm64_gas_reg(ops[1]), 0, arm64_gas_is_w(ops[0])));
     } else {
-      a = Arm64Asm { ...a, code: arm64_movreg(a.code, rd, arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
+      arm64_push_arr(a.code, arm64_movreg([], rd, arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])));
     }
     return a;
   }
@@ -8328,7 +8440,7 @@ function arm64_gas_emit_movwide(own a: Arm64Asm, mnem: string, ops: string[]): A
     if (ops.len() > 2) {
       sh = arm64_gas_lsl_amount(ops[2]);
     }
-    a = Arm64Asm { ...a, code: arm64_movk(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), sh, arm64_gas_is_w(ops[0])) };
+    arm64_push_arr(a.code, arm64_movk([], arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), sh, arm64_gas_is_w(ops[0])));
     return a;
   }
   // `movn Rd, #imm{, lsl #N}` written out explicitly. arm64_gas_known has
@@ -8342,7 +8454,7 @@ function arm64_gas_emit_movwide(own a: Arm64Asm, mnem: string, ops: string[]): A
     if (ops.len() > 2) {
       nsh = arm64_gas_lsl_amount(ops[2]);
     }
-    a = Arm64Asm { ...a, code: arm64_movn(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), nsh, arm64_gas_is_w(ops[0])) };
+    arm64_push_arr(a.code, arm64_movn([], arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), nsh, arm64_gas_is_w(ops[0])));
     return a;
   }
   return a;
@@ -8387,9 +8499,11 @@ function arm64_gas_emit_addsub(own a: Arm64Asm, mnem: string, ops: string[]): Ar
     let mag: i32 = arm64_addsub_imm_mag(iv);
     if (src.len() >= 4) {
       let sh12: boolean = arm64_gas_lsl_amount(src[3]) == 12;
-      return Arm64Asm { ...a, code: arm64_le32(a.code, arm64_addsub_imm_word_sh(isub, sets, w, ad, an, mag, sh12)) };
+      arm64_push_word(a.code, arm64_addsub_imm_word_sh(isub, sets, w, ad, an, mag, sh12));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_le32(a.code, arm64_addsub_imm_word(isub, sets, w, ad, an, mag)) };
+    arm64_push_word(a.code, arm64_addsub_imm_word(isub, sets, w, ad, an, mag));
+    return a;
   }
   let am: i32 = arm64_gas_reg(src[2]);
   // A fourth operand is a shift or an extend applied to Xm, and it is
@@ -8399,21 +8513,23 @@ function arm64_gas_emit_addsub(own a: Arm64Asm, mnem: string, ops: string[]): Ar
   if (src.len() >= 4) {
     let ext: i32 = arm64_gas_extend_option(src[3]);
     if (ext >= 0) {
-      a = Arm64Asm { ...a, code: arm64_addsub_ext(a.code, is_sub, ad, an, am, ext, arm64_gas_lsl_amount(src[3])) };
+      arm64_push_arr(a.code, arm64_addsub_ext([], is_sub, ad, an, am, ext, arm64_gas_lsl_amount(src[3])));
       return a;
     }
-    return Arm64Asm { ...a, code: arm64_le32(a.code, arm64_addsub_reg_word(
+    arm64_push_word(a.code, arm64_addsub_reg_word(
       is_sub, sets, w, ad, an, am,
       arm64_gas_shift_type(src[3]), arm64_gas_lsl_amount(src[3]),
-    )) };
+    ));
+    return a;
   }
   // An sp operand takes the extended-register encoding, not the shifted
   // one — the same written syntax, a different instruction.
   if (arm64_gas_trim(src[1]) == "sp") {
-    a = Arm64Asm { ...a, code: arm64_addsub_ext_sp(a.code, is_sub, ad, an, am) };
+    arm64_push_arr(a.code, arm64_addsub_ext_sp([], is_sub, ad, an, am));
     return a;
   }
-  return Arm64Asm { ...a, code: arm64_le32(a.code, arm64_addsub_reg_word(is_sub, sets, w, ad, an, am, 0, 0)) };
+  arm64_push_word(a.code, arm64_addsub_reg_word(is_sub, sets, w, ad, an, am, 0, 0));
+  return a;
 }
 
 // arm64_gas_emit_ldst encodes ldr/str for X, W, D and S registers in
@@ -8429,9 +8545,11 @@ function arm64_gas_emit_ldst(own a: Arm64Asm, mnem: string, ops: string[], lm: A
     let pb: i32 = arm64_gas_mem_at(ops, 1, lm).base;
     let po: i32 = arm64_gas_imm(ops[2]);
     if (mnem == "ldr") {
-      return Arm64Asm { ...a, code: arm64_ldr_post(a.code, rt, pb, po) };
+      arm64_push_arr(a.code, arm64_ldr_post([], rt, pb, po));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_str_post(a.code, rt, pb, po) };
+    arm64_push_arr(a.code, arm64_str_post([], rt, pb, po));
+    return a;
   }
   let m: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
   // register / extended-register offset `[Xn, Rm{, <ext> {#s}}]`
@@ -8442,9 +8560,11 @@ function arm64_gas_emit_ldst(own a: Arm64Asm, mnem: string, ops: string[], lm: A
   if (arm64_gas_has_bang(ops[1])) {
     // pre-index writeback: `[Xn, #off]!`
     if (mnem == "ldr") {
-      return Arm64Asm { ...a, code: arm64_ldr_pre(a.code, rt, m.base, m.off) };
+      arm64_push_arr(a.code, arm64_ldr_pre([], rt, m.base, m.off));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_str_pre(a.code, rt, m.base, m.off) };
+    arm64_push_arr(a.code, arm64_str_pre([], rt, m.base, m.off));
+    return a;
   }
   // A negative or misaligned offset can't use the scaled unsigned form
   // (imm12 is unsigned, scaled by the ACCESS SIZE); fall back to the
@@ -8462,14 +8582,18 @@ function arm64_gas_emit_ldst(own a: Arm64Asm, mnem: string, ops: string[], lm: A
   }
   if (m.off < 0 || (m.off & align) != 0) {
     if (mnem == "ldr") {
-      return Arm64Asm { ...a, code: arm64_ldur(a.code, rt, m.base, m.off, arm64_gas_is_w(ops[0])) };
+      arm64_push_arr(a.code, arm64_ldur([], rt, m.base, m.off, arm64_gas_is_w(ops[0])));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_stur(a.code, rt, m.base, m.off, arm64_gas_is_w(ops[0])) };
+    arm64_push_arr(a.code, arm64_stur([], rt, m.base, m.off, arm64_gas_is_w(ops[0])));
+    return a;
   }
   if (mnem == "ldr") {
-    return Arm64Asm { ...a, code: arm64_ldr(a.code, rt, m.base, m.off, arm64_gas_is_w(ops[0])) };
+    arm64_push_arr(a.code, arm64_ldr([], rt, m.base, m.off, arm64_gas_is_w(ops[0])));
+    return a;
   }
-  return Arm64Asm { ...a, code: arm64_str(a.code, rt, m.base, m.off, arm64_gas_is_w(ops[0])) };
+  arm64_push_arr(a.code, arm64_str([], rt, m.base, m.off, arm64_gas_is_w(ops[0])));
+  return a;
 }
 
 // arm64_gas_emit_shift encodes lsl/lsr/asr by immediate (the BFM aliases)
@@ -8485,20 +8609,26 @@ function arm64_gas_emit_shift(own a: Arm64Asm, mnem: string, ops: string[]): Arm
   let w: boolean = arm64_gas_is_w(ops[0]);
   if (mnem == "lsl") {
     if (imm) {
-      return Arm64Asm { ...a, code: arm64_lsl_imm(a.code, rd, rn, arm64_gas_imm(ops[2]), w) };
+      arm64_push_arr(a.code, arm64_lsl_imm([], rd, rn, arm64_gas_imm(ops[2]), w));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_lslv(a.code, rd, rn, arm64_gas_reg(ops[2]), w) };
+    arm64_push_arr(a.code, arm64_lslv([], rd, rn, arm64_gas_reg(ops[2]), w));
+    return a;
   }
   if (mnem == "lsr") {
     if (imm) {
-      return Arm64Asm { ...a, code: arm64_lsr_imm(a.code, rd, rn, arm64_gas_imm(ops[2]), w) };
+      arm64_push_arr(a.code, arm64_lsr_imm([], rd, rn, arm64_gas_imm(ops[2]), w));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_lsrv(a.code, rd, rn, arm64_gas_reg(ops[2]), w) };
+    arm64_push_arr(a.code, arm64_lsrv([], rd, rn, arm64_gas_reg(ops[2]), w));
+    return a;
   }
   if (imm) {
-    return Arm64Asm { ...a, code: arm64_asr_imm(a.code, rd, rn, arm64_gas_imm(ops[2]), w) };
+    arm64_push_arr(a.code, arm64_asr_imm([], rd, rn, arm64_gas_imm(ops[2]), w));
+    return a;
   }
-  return Arm64Asm { ...a, code: arm64_asrv(a.code, rd, rn, arm64_gas_reg(ops[2]), w) };
+  arm64_push_arr(a.code, arm64_asrv([], rd, rn, arm64_gas_reg(ops[2]), w));
+  return a;
 }
 
 // arm64_gas_emit_muldiv encodes mul, msub and the divides.
@@ -8512,15 +8642,18 @@ function arm64_gas_emit_muldiv(own a: Arm64Asm, mnem: string, ops: string[]): Ar
   let w: boolean = arm64_gas_is_w(ops[0]);
   // mul is the `madd Rd, Rn, Rm, XZR` alias.
   if (mnem == "mul") {
-    return Arm64Asm { ...a, code: arm64_muladd(a.code, 0x9b000000, rd, rn, rm, 31, w) };
+    arm64_push_arr(a.code, arm64_muladd([], 0x9b000000, rd, rn, rm, 31, w));
+    return a;
   }
   if (mnem == "msub") {
     if (ops.len() < 4) {
       return a;
     }
-    return Arm64Asm { ...a, code: arm64_muladd(a.code, 0x9b008000, rd, rn, rm, arm64_gas_reg(ops[3]), w) };
+    arm64_push_arr(a.code, arm64_muladd([], 0x9b008000, rd, rn, rm, arm64_gas_reg(ops[3]), w));
+    return a;
   }
-  return Arm64Asm { ...a, code: arm64_div_w(a.code, mnem == "sdiv", rd, rn, rm, w) };
+  arm64_push_arr(a.code, arm64_div_w([], mnem == "sdiv", rd, rn, rm, w));
+  return a;
 }
 
 // arm64_gas_emit_unscaled encodes the explicit ldur/stur spellings.
@@ -8534,14 +8667,14 @@ function arm64_gas_emit_unscaled(own a: Arm64Asm, mnem: string, ops: string[], l
   // GP encoder, so `stur d1, [x2, #-16]` assembled as the integer STUR of
   // x1 — the right shape, the wrong register file, silently (#6075).
   if (arm64_gas_is_d(ops[0]) || arm64_gas_is_sreg(ops[0])) {
-    a = Arm64Asm { ...a, code: arm64_ldst_fp_imm9(a.code, mnem == "ldur", arm64_gas_reg(ops[0]), um.base, um.off, 0, arm64_gas_is_sreg(ops[0])) };
+    arm64_push_arr(a.code, arm64_ldst_fp_imm9([], mnem == "ldur", arm64_gas_reg(ops[0]), um.base, um.off, 0, arm64_gas_is_sreg(ops[0])));
     return a;
   }
   if (mnem == "ldur") {
-    a = Arm64Asm { ...a, code: arm64_ldur(a.code, arm64_gas_reg(ops[0]), um.base, um.off, arm64_gas_is_w(ops[0])) };
+    arm64_push_arr(a.code, arm64_ldur([], arm64_gas_reg(ops[0]), um.base, um.off, arm64_gas_is_w(ops[0])));
     return a;
   }
-  a = Arm64Asm { ...a, code: arm64_stur(a.code, arm64_gas_reg(ops[0]), um.base, um.off, arm64_gas_is_w(ops[0])) };
+  arm64_push_arr(a.code, arm64_stur([], arm64_gas_reg(ops[0]), um.base, um.off, arm64_gas_is_w(ops[0])));
   return a;
 }
 
@@ -8560,10 +8693,11 @@ function arm64_gas_emit_vecldst(own a: Arm64Asm, mnem: string, ops: string[], lm
     lbase = 0x0d40c000;
   }
   let lc: i32 = arm64_gas_vlist_one_arr(ops[0]);
-  return Arm64Asm { ...a, code: arm64_vecldst1(
-    a.code, lbase, arm64_gas_vlist_one(ops[0]),
+  arm64_push_arr(a.code, arm64_vecldst1(
+    [], lbase, arm64_gas_vlist_one(ops[0]),
     arm64_gas_mem_at(ops, 1, lm).base, arm64_gas_arr_size(lc), arm64_gas_arr_q(lc),
-  ) };
+  ));
+  return a;
 }
 
 // arm64_gas_emit_vecmov encodes the lane moves: dup, ins, umov and smov.
@@ -8575,15 +8709,17 @@ function arm64_gas_emit_vecmov(own a: Arm64Asm, mnem: string, ops: string[]): Ar
     let dc: i32 = arm64_gas_vreg_arrof(ops[0]);
     let dsz: i32 = arm64_gas_arr_size(dc);
     if (arm64_gas_lane_size(ops[1]) >= 0) {
-      return Arm64Asm { ...a, code: arm64_vecdup(
-        a.code, 0x0e000400, arm64_gas_vreg_any(ops[0]),
+      arm64_push_arr(a.code, arm64_vecdup(
+        [], 0x0e000400, arm64_gas_vreg_any(ops[0]),
         arm64_gas_lane_reg(ops[1]), arm64_vec_imm5(dsz, arm64_gas_lane_index(ops[1])), arm64_gas_arr_q(dc),
-      ) };
+      ));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_vecdup(
-      a.code, 0x0e000c00, arm64_gas_vreg_any(ops[0]),
+    arm64_push_arr(a.code, arm64_vecdup(
+      [], 0x0e000c00, arm64_gas_vreg_any(ops[0]),
       arm64_gas_reg(ops[1]), arm64_gas_pow2(dsz), arm64_gas_arr_q(dc),
-    ) };
+    ));
+    return a;
   }
   if (mnem == "ins") {
     if (ops.len() != 2) {
@@ -8592,15 +8728,17 @@ function arm64_gas_emit_vecmov(own a: Arm64Asm, mnem: string, ops: string[]): Ar
     let isz: i32 = arm64_gas_lane_size(ops[0]);
     let iimm5: i32 = arm64_vec_imm5(isz, arm64_gas_lane_index(ops[0]));
     if (arm64_gas_lane_size(ops[1]) >= 0) {
-      return Arm64Asm { ...a, code: arm64_vecinselem(
-        a.code, arm64_gas_lane_reg(ops[0]), arm64_gas_lane_reg(ops[1]),
+      arm64_push_arr(a.code, arm64_vecinselem(
+        [], arm64_gas_lane_reg(ops[0]), arm64_gas_lane_reg(ops[1]),
         iimm5, arm64_gas_lane_index(ops[1]) * arm64_gas_pow2(isz),
-      ) };
+      ));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_vecmovlane(
-      a.code, 0x4e001c00, arm64_gas_lane_reg(ops[0]),
+    arm64_push_arr(a.code, arm64_vecmovlane(
+      [], 0x4e001c00, arm64_gas_lane_reg(ops[0]),
       arm64_gas_reg(ops[1]), iimm5, false,
-    ) };
+    ));
+    return a;
   }
   if (ops.len() != 2) {
     return a;
@@ -8610,10 +8748,11 @@ function arm64_gas_emit_vecmov(own a: Arm64Asm, mnem: string, ops: string[]): Ar
   if (mnem == "smov") {
     ubase = 0x0e002c00;
   }
-  return Arm64Asm { ...a, code: arm64_vecmovlane(
-    a.code, ubase, arm64_gas_reg(ops[0]),
+  arm64_push_arr(a.code, arm64_vecmovlane(
+    [], ubase, arm64_gas_reg(ops[0]),
     arm64_gas_lane_reg(ops[1]), arm64_vec_imm5(usz, arm64_gas_lane_index(ops[1])), !arm64_gas_is_w(ops[0]),
-  ) };
+  ));
+  return a;
 }
 
 // arm64_gas_emit_movi encodes the vector modified immediate.
@@ -8626,7 +8765,8 @@ function arm64_gas_emit_movi(own a: Arm64Asm, ops: string[]): Arm64Asm {
   let mimm: i32 = arm64_gas_imm(ops[1]);
   // The .2d form is the bytemask: each imm8 bit expands to a byte.
   if (msz == 3) {
-    return Arm64Asm { ...a, code: arm64_vecmovi(a.code, arm64_gas_vreg_any(ops[0]), mimm, 14, true, true) };
+    arm64_push_arr(a.code, arm64_vecmovi([], arm64_gas_vreg_any(ops[0]), mimm, 14, true, true));
+    return a;
   }
   let mshift: i32 = 0;
   if (ops.len() == 3) {
@@ -8641,7 +8781,8 @@ function arm64_gas_emit_movi(own a: Arm64Asm, ops: string[]): Arm64Asm {
   if (msz == 2) {
     cmode = mshift / 8 * 2;
   }
-  return Arm64Asm { ...a, code: arm64_vecmovi(a.code, arm64_gas_vreg_any(ops[0]), mimm, cmode, arm64_gas_arr_q(mc), false) };
+  arm64_push_arr(a.code, arm64_vecmovi([], arm64_gas_vreg_any(ops[0]), mimm, cmode, arm64_gas_arr_q(mc), false));
+  return a;
 }
 
 // arm64_gas_emit_ldst_narrow encodes the byte and halfword accesses and the
@@ -8656,9 +8797,11 @@ function arm64_gas_emit_ldst_narrow(own a: Arm64Asm, mnem: string, ops: string[]
     let pbb: i32 = arm64_gas_mem_at(ops, 1, lm).base;
     let poo: i32 = arm64_gas_imm(ops[2]);
     if (mnem == "ldrb") {
-      return Arm64Asm { ...a, code: arm64_ldrb_post(a.code, arm64_gas_reg(ops[0]), pbb, poo) };
+      arm64_push_arr(a.code, arm64_ldrb_post([], arm64_gas_reg(ops[0]), pbb, poo));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_strb_post(a.code, arm64_gas_reg(ops[0]), pbb, poo) };
+    arm64_push_arr(a.code, arm64_strb_post([], arm64_gas_reg(ops[0]), pbb, poo));
+    return a;
   }
   let bm: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
   // `ldrb/strb/ldrh/strh Wt, [Xn, Rm{, <ext> {#s}}]` — base + index,
@@ -8674,26 +8817,30 @@ function arm64_gas_emit_ldst_narrow(own a: Arm64Asm, mnem: string, ops: string[]
   let lsz: i32 = arm64_gas_ldst_size(mnem, ops[0]);
   if (!arm64_ldst_scalable(bm.off, lsz)) {
     if (mnem == "ldrsb" || mnem == "ldrsh" || mnem == "ldrsw") {
-      return Arm64Asm { ...a, code: arm64_ldst_sun(a.code, lsz, !arm64_gas_is_w(ops[0]), arm64_gas_reg(ops[0]), bm.base, bm.off) };
+      arm64_push_arr(a.code, arm64_ldst_sun([], lsz, !arm64_gas_is_w(ops[0]), arm64_gas_reg(ops[0]), bm.base, bm.off));
+      return a;
     }
-    return Arm64Asm { ...a, code: arm64_ldst_unscaled(a.code, lsz, mnem == "ldrb" || mnem == "ldrh", arm64_gas_reg(ops[0]), bm.base, bm.off) };
+    arm64_push_arr(a.code, arm64_ldst_unscaled([], lsz, mnem == "ldrb" || mnem == "ldrh", arm64_gas_reg(ops[0]), bm.base, bm.off));
+    return a;
   }
   if (mnem == "ldrsb") {
-    return Arm64Asm { ...a, code: arm64_ldrsb(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off, arm64_gas_is_w(ops[0])) };
+    arm64_push_arr(a.code, arm64_ldrsb([], arm64_gas_reg(ops[0]), bm.base, bm.off, arm64_gas_is_w(ops[0])));
+    return a;
   }
   if (mnem == "ldrsh") {
-    return Arm64Asm { ...a, code: arm64_ldrsh(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off, arm64_gas_is_w(ops[0])) };
+    arm64_push_arr(a.code, arm64_ldrsh([], arm64_gas_reg(ops[0]), bm.base, bm.off, arm64_gas_is_w(ops[0])));
+    return a;
   }
   if (mnem == "ldrb") {
-    a = Arm64Asm { ...a, code: arm64_ldrb(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off) };
+    arm64_push_arr(a.code, arm64_ldrb([], arm64_gas_reg(ops[0]), bm.base, bm.off));
   } else if (mnem == "strb") {
-    a = Arm64Asm { ...a, code: arm64_strb(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off) };
+    arm64_push_arr(a.code, arm64_strb([], arm64_gas_reg(ops[0]), bm.base, bm.off));
   } else if (mnem == "ldrh") {
-    a = Arm64Asm { ...a, code: arm64_ldrh(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off) };
+    arm64_push_arr(a.code, arm64_ldrh([], arm64_gas_reg(ops[0]), bm.base, bm.off));
   } else if (mnem == "strh") {
-    a = Arm64Asm { ...a, code: arm64_strh(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off) };
+    arm64_push_arr(a.code, arm64_strh([], arm64_gas_reg(ops[0]), bm.base, bm.off));
   } else {
-    a = Arm64Asm { ...a, code: arm64_ldrsw(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off) };
+    arm64_push_arr(a.code, arm64_ldrsw([], arm64_gas_reg(ops[0]), bm.base, bm.off));
   }
   return a;
 }
@@ -8709,17 +8856,19 @@ function arm64_gas_emit_fmov(own a: Arm64Asm, ops: string[]): Arm64Asm {
   // d-registers, so they used to fall into the `Xd, Dn` arm below and
   // encode a 64-bit fp->gpr move instead (#6044).
   if (arm64_gas_is_s(ops[0])) {
-    return Arm64Asm { ...a, code: arm64_fmov_s_from_gpr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+    arm64_push_arr(a.code, arm64_fmov_s_from_gpr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])));
+    return a;
   }
   if (arm64_gas_is_s(ops[1])) {
-    return Arm64Asm { ...a, code: arm64_fmov_s_to_gpr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+    arm64_push_arr(a.code, arm64_fmov_s_to_gpr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])));
+    return a;
   }
   if (d0 && d1) {
-    a = Arm64Asm { ...a, code: arm64_fmov_dd(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+    arm64_push_arr(a.code, arm64_fmov_dd([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])));
   } else if (d0) {  // Dd, Xn
-    a = Arm64Asm { ...a, code: arm64_fmov_from_gpr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+    arm64_push_arr(a.code, arm64_fmov_from_gpr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])));
   } else {  // Xd, Dn
-    a = Arm64Asm { ...a, code: arm64_fmov_to_gpr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+    arm64_push_arr(a.code, arm64_fmov_to_gpr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])));
   }
   return a;
 }
@@ -9693,14 +9842,6 @@ function arm64_gas_values(line: string): string[] {
   return arm64_gas_operands(slice_unchecked(line, start, line.len()));
 }
 
-// arm64_lit_le64 appends the 8 little-endian bytes of a 64-bit literal-pool
-// value to a code buffer (low word then high word).
-function arm64_lit_le64(buf: i32[], v: i64): i32[] {
-  buf = arm64_le32(buf, v);
-  buf = arm64_le32(buf, v >> 32);
-  return buf;
-}
-
 // arm64_lit_reach is the LDR-literal forward reach in bytes: imm19 is a
 // signed word count, so +262143 words.
 function arm64_lit_reach(): i32 {
@@ -9731,34 +9872,29 @@ function arm64_lit_pool_far(p: Arm64GasProg, code_len: i32): i32 {
 }
 
 // arm64_gas_ltorg flushes the pending `ldr Xd, =N` literal pool into .text
-// at the current offset: 8-align, then for each pending load patch its
-// LDR-literal imm19 to the (PC-relative) pool slot and append the value's 8
-// bytes. asm_arm64_ir emits a `.ltorg` after every function so the pool stays
-// within the ±1 MiB LDR-literal reach; the pool sits after the function's
-// `ret`, so it is never executed.
-// It takes the assembler state as an argument and hands it back rather than
-// reading p.asm, so the buffer is uniquely owned here too — see
-// arm64_gas_program's note on why an alias makes every append copy. It
-// consumes that state (`own`) so the .text buffer can be lifted out of the
-// struct for the patch loop; clearing the pending lists is the caller's job.
+// at the current offset: 8-align, then for each pending load queue the patch
+// of its LDR-literal imm19 to the (PC-relative) pool slot and append the
+// value's 8 bytes, low word first. asm_arm64_ir emits a `.ltorg` after every
+// function so the pool stays within the ±1 MiB LDR-literal reach; the pool
+// sits after the function's `ret`, so it is never executed. Clearing the
+// pending lists is the caller's job.
 function arm64_gas_ltorg(p: Arm64GasProg, own aw: Arm64Asm): Arm64Asm {
   if (p.lit_sites.len() == 0) {
     return aw;
   }
-  let code: i32[] = aw.code;
-  aw = Arm64Asm { ...aw, code: [] };
-  while ((code.len() & 7) != 0) {
-    code = code.append(0);
+  while ((buf_len(aw.code) & 7) != 0) {
+    buf_push_byte(aw.code, 0);
   }
   let i: i32 = 0;
   while (i < p.lit_sites.len()) {
     let site: i32 = p.lit_sites[i];
-    let imm19: i32 = (code.len() - site) / 4;
-    code = arm64_patch_ldr_lit(code, site, imm19);
-    code = arm64_lit_le64(code, p.lit_vals[i]);
+    let rel: i32 = buf_len(aw.code) - site;
+    aw = arm64_queue_patch(aw, site, 1, rel);
+    arm64_push_word(aw.code, p.lit_vals[i]);
+    arm64_push_word(aw.code, p.lit_vals[i] >> 32);
     i = i + 1;
   }
-  return Arm64Asm { ...aw, code: code };
+  return aw;
 }
 
 // ---- the assemble loop ----
@@ -9788,20 +9924,17 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
   // into `p` on return, for the same reason `a` is (below): recording through
   // the field would append its rule arrays through a shared base (#8172).
   let cfi: CfiState = cfi_new(cfi_profile_arm64());
-  // The .text buffer is threaded through the loop as `a`, a UNIQUELY-owned
-  // local, and only folded back into p on return. Reading it out of p.asm per
+  // The assembler is threaded through the loop as `a`, a UNIQUELY-owned local,
+  // and only folded back into p on return. Reading it out of p.asm per
   // instruction — `arm64_gas_emit(p.asm, …)`, or the `let xas: Arm64Asm =
-  // p.asm; …; p = { ...p, asm: xas }` shape the special cases used — left the
-  // code array reachable through BOTH p and the local, so every append inside
-  // saw a shared array and copied the whole buffer instead of extending it:
-  // one full copy per emitted instruction, i.e. O(code_len^2) arena traffic.
-  // That is #6011 — the self-host arm64 CLI needed 8.5 GB (arena exhausted,
-  // exit 137) to compile an empty `main` importing std/array, where x86-64
-  // did it in 1.5 GB. The emitters were never at fault; only this assembler
-  // is on the arm64 CLI path, and x86-64's stops at `.s` text. Held uniquely,
-  // Perceus reuse extends the buffer in place and the cost is linear.
+  // p.asm; …; p = { ...p, asm: xas }` shape the special cases used — left its
+  // arrays reachable through BOTH p and the local, so every append saw a
+  // shared array and copied it whole instead of extending it: O(n^2) arena
+  // traffic. That is #6011 — the self-host arm64 CLI needed 8.5 GB (arena
+  // exhausted, exit 137) to compile an empty `main` importing std/array.
+  // Held uniquely, Perceus reuse extends them in place.
   let a: Arm64Asm = p.asm;
-  p = Arm64GasProg { ...p, asm: arm64_asm_new() };
+  p = Arm64GasProg { ...p, asm: arm64_asm_vacant() };
   // The @PAGE / @PAGEOFF fixup queue is threaded the same way, for the same
   // reason: `p` is handed to helpers and reassigned from their results, so
   // the analysis cannot prove its box unowned elsewhere, and an append
@@ -9830,18 +9963,18 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
         // its offset in the high one (cfi_record).
         let w0: i32 = arm64_words_i32(words, wi);
         let cfi_bad_before: i32 = cfi.bad.len();
-        cfi = cfi_record(cfi, w0 & 255, w0 >> 8 & 255, arm64_words_i32(words, wi + 4), a.code.len());
+        cfi = cfi_record(cfi, w0 & 255, w0 >> 8 & 255, arm64_words_i32(words, wi + 4), buf_len(a.code));
         if (cfi.bad.len() > cfi_bad_before) {
           p = Arm64GasProg { ...p, unknown: p.unknown.append(cfi.bad[cfi.bad.len() - 1]) };
         }
       } else {
-        a = Arm64Asm { ...a, code: arm64_word_bytes(a.code, words, wi) };
+        buf_push_bytes_range(a.code, words, wi, wi + 4);
         if (mark == 2) {
           let nk: i32 = arm64_named_kind(words[wi + 3]);
           if (nk == 0) {
             a = arm64_asm_fixup_or_patch(a, slice_unchecked(src, pos + 1, end) + "", arm64_branch_kind(words[wi + 3]));
           } else {
-            pf_sites = pf_sites.append(a.code.len() - 4);
+            pf_sites = pf_sites.append(buf_len(a.code) - 4);
             pf_syms = pf_syms.append(slice_unchecked(src, pos + 1, end) + "");
             let pk: i32 = 0;
             if (nk == 2) {
@@ -9906,13 +10039,13 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
           // a dropped rule unwinds at the wrong instruction with
           // well-formed bytes.
           let cfi_bad_before: i32 = cfi.bad.len();
-          cfi = cfi_directive(cfi, line, a.code.len());
+          cfi = cfi_directive(cfi, line, buf_len(a.code));
           if (cfi.bad.len() > cfi_bad_before) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(cfi.bad[cfi.bad.len() - 1]) };
           }
         }
       } else if (line == ".ltorg") {
-        if (arm64_lit_pool_far(p, a.code.len()) > arm64_lit_reach()) {
+        if (arm64_lit_pool_far(p, buf_len(a.code)) > arm64_lit_reach()) {
           p = Arm64GasProg { ...p, unknown: p.unknown.append("ltorg:range") };
         }
         a = arm64_gas_ltorg(p, a);
@@ -10024,16 +10157,16 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
     if (mnem == "ldr" && arm64_str_indexof(rest, "=") >= 0) {
       let litok: string = arm64_gas_trim(ops[1]);
       let nval: i64 = arm64_gas_atoi64(arm64_gas_trim(slice_unchecked(litok, 1, litok.len())));
-      a = Arm64Asm { ...a, code: arm64_ldr_lit(a.code, arm64_gas_reg(ops[0]), 0) };
-      p = Arm64GasProg { ...p, lit_sites: p.lit_sites.append(a.code.len() - 4) };
+      arm64_push_arr(a.code, arm64_ldr_lit([], arm64_gas_reg(ops[0]), 0));
+      p = Arm64GasProg { ...p, lit_sites: p.lit_sites.append(buf_len(a.code) - 4) };
       p = Arm64GasProg { ...p, lit_vals: p.lit_vals.append(nval) };
       continue;
     }
     // @PAGE / @PAGEOFF symbol references queue a fixup; everything else
     // assembles directly into .text.
     if (mnem == "adrp") {
-      a = Arm64Asm { ...a, code: arm64_adrp(a.code, arm64_gas_reg(ops[0]), 0) };
-      pf_sites = pf_sites.append(a.code.len() - 4);
+      arm64_push_arr(a.code, arm64_adrp([], arm64_gas_reg(ops[0]), 0));
+      pf_sites = pf_sites.append(buf_len(a.code) - 4);
       pf_syms = pf_syms.append(arm64_gas_strip_at(ops[1]));
       pf_kinds = pf_kinds.append(0);
       continue;
@@ -10046,8 +10179,8 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("adr:operands") };
         continue;
       }
-      a = Arm64Asm { ...a, code: arm64_adr(a.code, arm64_gas_reg(ops[0]), 0) };
-      pf_sites = pf_sites.append(a.code.len() - 4);
+      arm64_push_arr(a.code, arm64_adr([], arm64_gas_reg(ops[0]), 0));
+      pf_sites = pf_sites.append(buf_len(a.code) - 4);
       pf_syms = pf_syms.append(arm64_gas_trim(ops[1]));
       pf_kinds = pf_kinds.append(3);
       continue;
@@ -10059,15 +10192,15 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
       let lb: i32 = arm64_str_indexof(linner, "[");
       let rb: i32 = arm64_str_indexof(linner, "]");
       let lparts: string[] = arm64_gas_operands(slice_unchecked(linner, lb + 1, rb));
-      a = Arm64Asm { ...a, code: arm64_ldr(a.code, arm64_gas_reg(ops[0]), lm.base, 0, arm64_gas_is_w(ops[0])) };
-      pf_sites = pf_sites.append(a.code.len() - 4);
+      arm64_push_arr(a.code, arm64_ldr([], arm64_gas_reg(ops[0]), lm.base, 0, arm64_gas_is_w(ops[0])));
+      pf_sites = pf_sites.append(buf_len(a.code) - 4);
       pf_syms = pf_syms.append(arm64_gas_strip_at(lparts[1]));
       pf_kinds = pf_kinds.append(1);
       continue;
     }
     if (mnem == "add" && arm64_str_indexof(rest, "@PAGEOFF") >= 0) {
-      a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), 0, false) };
-      pf_sites = pf_sites.append(a.code.len() - 4);
+      arm64_push_arr(a.code, arm64_addimm([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), 0, false));
+      pf_sites = pf_sites.append(buf_len(a.code) - 4);
       pf_syms = pf_syms.append(arm64_gas_strip_at(ops[2]));
       pf_kinds = pf_kinds.append(2);
       continue;
@@ -10077,8 +10210,8 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
     // arm64_gas_link resolves both to target & 0xfff). The matching
     // `adrp Xd, sym` is handled by the adrp branch above (bare symbol).
     if (mnem == "add" && arm64_str_indexof(rest, ":lo12:") >= 0) {
-      a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), 0, false) };
-      pf_sites = pf_sites.append(a.code.len() - 4);
+      arm64_push_arr(a.code, arm64_addimm([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), 0, false));
+      pf_sites = pf_sites.append(buf_len(a.code) - 4);
       pf_syms = pf_syms.append(arm64_gas_strip_lo12(ops[2]));
       pf_kinds = pf_kinds.append(2);
       continue;
@@ -10091,7 +10224,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
       let nimm: i64 = arm64_gas_imm64(ops[2]);
       let nw: boolean = arm64_gas_is_w(ops[0]);
       if (arm64_logical_imm_ok(nimm, nw)) {
-        a = Arm64Asm { ...a, code: arm64_le32(a.code, arm64_logical_imm_word(0x92000000, nw, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), nimm)) };
+        arm64_push_word(a.code, arm64_logical_imm_word(0x92000000, nw, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), nimm));
       } else {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("and#") };
       }
@@ -10106,7 +10239,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
       let oimm: i64 = arm64_gas_imm64(ops[2]);
       let ow: boolean = arm64_gas_is_w(ops[0]);
       if (arm64_logical_imm_ok(oimm, ow)) {
-        a = Arm64Asm { ...a, code: arm64_le32(a.code, arm64_logical_imm_word(0xb2000000, ow, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), oimm)) };
+        arm64_push_word(a.code, arm64_logical_imm_word(0xb2000000, ow, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), oimm));
       } else {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("orr#") };
       }
@@ -10118,7 +10251,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
       let eimm: i64 = arm64_gas_imm64(ops[2]);
       let ew: boolean = arm64_gas_is_w(ops[0]);
       if (arm64_logical_imm_ok(eimm, ew)) {
-        a = Arm64Asm { ...a, code: arm64_le32(a.code, arm64_logical_imm_word(0xd2000000, ew, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), eimm)) };
+        arm64_push_word(a.code, arm64_logical_imm_word(0xd2000000, ew, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), eimm));
       } else {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("eor#") };
       }
@@ -10133,7 +10266,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("mrs:" + rest) };
         continue;
       }
-      a = Arm64Asm { ...a, code: arm64_mrs(a.code, arm64_gas_reg(ops[0]), arm64_gas_trim(ops[1])) };
+      arm64_push_arr(a.code, arm64_mrs([], arm64_gas_reg(ops[0]), arm64_gas_trim(ops[1])));
       continue;
     }
     if (mnem == "msr") {
@@ -10142,7 +10275,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("msr:" + rest) };
         continue;
       }
-      a = Arm64Asm { ...a, code: arm64_msr(a.code, arm64_gas_reg(ops[1]), arm64_gas_trim(ops[0])) };
+      arm64_push_arr(a.code, arm64_msr([], arm64_gas_reg(ops[1]), arm64_gas_trim(ops[0])));
       continue;
     }
     if (!arm64_gas_known(mnem)) {
@@ -10153,10 +10286,9 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
     // Threaded through gas_emit instead, the transfer sits early in a
     // 60-branch if-chain with `a` mentioned in every later branch, so it is
     // not the parameter's last use and the compiler has to RETAIN across
-    // it — which leaves the .text buffer shared and sends every
-    // backward-branch patch down the copy path (the last of #6011's
-    // quadratic loops). Here the callee is the sole owner and patches in
-    // place.
+    // it — which leaves the assembler's arrays shared and sends every
+    // fixup append down the copy path (the last of #6011's quadratic
+    // loops). Here the callee is the sole owner and appends in place.
     let fam: i32 = arm64_gas_family(mnem);
     if (fam == arm64_fam_branch() || fam == arm64_fam_cbranch()
       || fam == arm64_fam_tbranch() || arm64_gas_is_bcond(mnem)) {
@@ -10182,7 +10314,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
   if (wi != words.len()) {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("words left over past the last word record") };
   }
-  if (arm64_lit_pool_far(p, a.code.len()) > arm64_lit_reach()) {
+  if (arm64_lit_pool_far(p, buf_len(a.code)) > arm64_lit_reach()) {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("ltorg:range") };
   }
   a = arm64_gas_ltorg(p, a);  // flush any literals after the final `.ltorg`
@@ -10278,15 +10410,15 @@ function arm64_import_sym(name: string): boolean {
 // arm64_gas_link resolves the queued @PAGE/@PAGEOFF fixups now that the
 // final __TEXT / __DATA segment addresses are known (the caller supplies
 // them from macho.fern's macho_text_vaddr / macho_data_vaddr). After this,
-// p.asm.code + p.data are the final sections.
-// It consumes the prog (`own`) so the .text buffer can be lifted clear of both
+// p.asm.text + p.data are the final sections.
+// It consumes the prog (`own`) so the .text bytes can be lifted clear of both
 // enclosing structs before the loop: patched in place inside them, each fixup
 // cloned the whole .text.
 pub function arm64_gas_link(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): Arm64GasProg {
   let aw: Arm64Asm = p.asm;
-  p = Arm64GasProg { ...p, asm: arm64_asm_new() };
-  let code: i32[] = aw.code;
-  aw = Arm64Asm { ...aw, code: [] };
+  p = Arm64GasProg { ...p, asm: arm64_asm_vacant() };
+  let code: u8[] = aw.text;
+  aw = Arm64Asm { ...aw, text: [] };
   let i: i32 = 0;
   while (i < p.pf_sites.len()) {
     let site: i32 = p.pf_sites[i];
@@ -10311,9 +10443,9 @@ pub function arm64_gas_link(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i6
     let kind: i32 = p.pf_kinds[i];
     if (kind == 0) {
       let adrp_addr: i64 = text_vaddr + site as i64;
-      code = arm64_patch_adrp(code, site, arm64_page_delta(target, adrp_addr));
+      code = arm64_patch_bytes(code, site, 0x9f00001f, arm64_adrp_field(arm64_page_delta(target, adrp_addr)));
     } else if (kind == 1) {
-      code = arm64_patch_ldr_off(code, site, arm64_page_off(target));
+      code = arm64_patch_bytes(code, site, 0xffc003ff, arm64_imm12_field(arm64_page_off(target) / 8));
     } else if (kind == 3) {
       // adr: byte-relative. A delta outside the signed 21-bit span is
       // refused — the patch masks, so it would otherwise wrap into a
@@ -10322,9 +10454,9 @@ pub function arm64_gas_link(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i6
       if (delta < 0 - 1048576 || delta >= 1048576) {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("adr:range:" + p.pf_syms[i]) };
       }
-      code = arm64_patch_adrp(code, site, delta as i32);
+      code = arm64_patch_bytes(code, site, 0x9f00001f, arm64_adrp_field(delta as i32));
     } else {
-      code = arm64_patch_addimm_off(code, site, arm64_page_off(target));
+      code = arm64_patch_bytes(code, site, 0xffc003ff, arm64_imm12_field(arm64_page_off(target)));
     }
     i = i + 1;
   }
@@ -10356,7 +10488,7 @@ pub function arm64_gas_link(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i6
     di = di + 1;
   }
   p = Arm64GasProg { ...p, data: dat };
-  aw = Arm64Asm { ...aw, code: code };
+  aw = Arm64Asm { ...aw, text: code };
   p = Arm64GasProg { ...p, asm: aw };
   return p;
 }
@@ -11291,7 +11423,7 @@ pub function macho_entry_off(a: Arm64Asm): i32 {
 // dyld slides a PIE image, so each of those needs the slide added; the
 // LC_DYLD_INFO_ONLY rebase stream is how the image asks for that. Pass an
 // empty array when the data blob holds no absolute addresses.
-pub function macho_executable(text: i32[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[]): i32[] {
+pub function macho_executable(text: u8[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[]): i32[] {
   return macho_executable_binds(text, eh, data, ident, entry_off, bss, rebase_offs, [], [], [], []);
 }
 
@@ -11302,7 +11434,7 @@ pub function macho_executable(text: i32[], eh: i32[], data: i32[], ident: string
 // LC_SYMTAB as nlist_64 entries so lldb, nm and a crash backtrace can name a
 // code address (#11409, the Mach-O counterpart of elf_append_debug). Empty
 // arrays write the degenerate LC_SYMTAB a default build has, byte for byte.
-pub function macho_executable_binds(text: i32[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[], sym_names: string[], sym_offs: i32[]): i32[] {
+pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[], sym_names: string[], sym_offs: i32[]): i32[] {
   let text_len: i32 = text.len();
   let eh_len: i32 = eh.len();
   let has_eh: boolean = eh_len > 0;
@@ -11428,7 +11560,9 @@ pub function macho_executable_binds(text: i32[], eh: i32[], data: i32[], ident: 
   // pad_to closes the 48-byte slack macho_load_cmds_len reserves past
   // the last load command, so code starts at text_off.
   buf = macho_pad_to(buf, text_off);
-  buf = macho_cat(buf, text);
+  for b in text {
+    buf = buf.append(b as i32);
+  }
   if (has_eh) {
     buf = macho_pad_to(buf, eh_off);
     buf = macho_cat(buf, eh);

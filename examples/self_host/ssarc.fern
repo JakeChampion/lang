@@ -1590,29 +1590,46 @@ function no_route(): Route {
   return Route { target: 0 - 1, exit_from: [], exit_to: [] };
 }
 
-function carry_route(f: ssasem.Func, p: ssaunits.Plan, from: ssa.SBlock): Route {
-  let ahead: i32[] = [];
+// The per-function facts every route search reads: each block's position by
+// id, whether it builds, and an all-zero mark per position for a search to
+// copy and fill.
+struct RouteGraph { at: i32[], builds: boolean[], blank: i32[] }
+
+function route_graph(f: ssasem.Func, p: ssaunits.Plan): RouteGraph {
+  let builds: boolean[] = [];
+  let blank: i32[] = [];
+  for b in f.graph.blocks {
+    builds = builds.append(first_claim(f, p, b) >= 0);
+    blank = blank.append(0);
+  }
+  return RouteGraph { at: ssa.block_positions(f.graph), builds: builds, blank: blank };
+}
+
+function carry_route(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock): Route {
+  // mark: 1 for a block ahead that builds nothing, 2 for one that builds.
+  let mark: i32[] = g.blank;
   let builds: i32[] = [];
   let work: i32[] = successors(from.term);
   let next: i32 = 0;
   while (next < work.len()) {
     let id: i32 = work[next];
     next = next + 1;
-    if (id == from.id || util.index_of_i32(builds, id) >= 0 || util.index_of_i32(ahead, id) >= 0) {
+    let k: i32 = g.at[id];
+    if (id == from.id || mark[k] != 0) {
       continue;
     }
-    let b: ssa.SBlock = f.graph.blocks[block_index(f.graph, id)];
-    if (first_claim(f, p, b) >= 0) {
+    if (g.builds[k]) {
       builds = builds.append(id);
+      mark = mark.with(k, 2);
     } else {
-      ahead = ahead.append(id);
-      for s in successors(b.term) {
+      mark = mark.with(k, 1);
+      for s in successors(f.graph.blocks[k].term) {
         work = work.append(s);
       }
     }
   }
   for target in builds {
-    let r: Route = route_to(f, from, ahead, target);
+    let r: Route = route_to(f, g, from, mark, target);
     if (r.target >= 0) {
       return r;
     }
@@ -1620,32 +1637,36 @@ function carry_route(f: ssasem.Func, p: ssaunits.Plan, from: ssa.SBlock): Route 
   return no_route();
 }
 
-function route_to(f: ssasem.Func, from: ssa.SBlock, ahead: i32[], target: i32): Route {
-  // The blocks ahead that reach the target without passing `from`.
+function route_to(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, ahead: i32[], target: i32): Route {
+  // The blocks ahead that reach the target without passing `from`, marked 3
+  // in a copy of the caller's marks.
+  let mark: i32[] = ahead;
   let between: i32[] = [];
-  let work: i32[] = f.graph.blocks[block_index(f.graph, target)].preds;
+  let work: i32[] = f.graph.blocks[g.at[target]].preds;
   let next: i32 = 0;
   while (next < work.len()) {
     let id: i32 = work[next];
     next = next + 1;
-    if (util.index_of_i32(ahead, id) >= 0 && util.index_of_i32(between, id) < 0) {
+    let k: i32 = g.at[id];
+    if (mark[k] == 1) {
       between = between.append(id);
-      for pr in f.graph.blocks[block_index(f.graph, id)].preds {
+      mark = mark.with(k, 3);
+      for pr in f.graph.blocks[k].preds {
         work = work.append(pr);
       }
     }
   }
   for id in between.append(target) {
-    for pr in f.graph.blocks[block_index(f.graph, id)].preds {
-      if (pr != from.id && util.index_of_i32(between, pr) < 0) {
+    for pr in f.graph.blocks[g.at[id]].preds {
+      if (pr != from.id && mark[g.at[pr]] != 3) {
         return no_route();
       }
     }
   }
   let r: Route = Route { target: target, exit_from: [], exit_to: [] };
   for id in between.append(from.id) {
-    for s in successors(f.graph.blocks[block_index(f.graph, id)].term) {
-      if (s != target && util.index_of_i32(between, s) < 0) {
+    for s in successors(f.graph.blocks[g.at[id]].term) {
+      if (s != target && mark[g.at[s]] != 3) {
         r = Route { ...r, exit_from: r.exit_from.append(id), exit_to: r.exit_to.append(s) };
       }
     }
@@ -1658,13 +1679,14 @@ function carried_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i3
   if (off) {
     return c;
   }
+  let g: RouteGraph = route_graph(f, p);
   for b in f.graph.blocks {
-    let route: Route = carry_route(f, p, b);
+    let route: Route = carry_route(f, g, b);
     let target: i32 = route.target;
     if (target < 0) {
       continue;
     }
-    let to: ssa.SBlock = f.graph.blocks[block_index(f.graph, target)];
+    let to: ssa.SBlock = f.graph.blocks[g.at[target]];
     let build: i32 = first_claim(f, p, to);
     let slots: i32 = recipient_slots(f, p, to.insts[build]);
     let pos: i32 = last_claim(f, p, b) + 1;

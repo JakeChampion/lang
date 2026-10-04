@@ -75,9 +75,9 @@ function main(): i32 {
     p4 = arm64_gas_link(p4, 0x100000310, 0x100004000);
     let as4: Arm64Asm = p4.asm;
     // adrp x1, #4 -> 0x90000021 -> 21 00 00 90
-    if (as4.code[0] != 33 || as4.code[1] != 0 || as4.code[2] != 0 || as4.code[3] != 144) { return 7; }
+    if (as4.text[0] != 33 || as4.text[1] != 0 || as4.text[2] != 0 || as4.text[3] != 144) { return 7; }
     // ldr x0, [x1, #0] -> 0xF9400020 -> 20 00 40 F9
-    if (as4.code[4] != 32 || as4.code[5] != 0 || as4.code[6] != 64 || as4.code[7] != 249) { return 8; }
+    if (as4.text[4] != 32 || as4.text[5] != 0 || as4.text[6] != 64 || as4.text[7] != 249) { return 8; }
     return 0;
 }
 `
@@ -97,12 +97,12 @@ const arm64MachOSymbolDriverMain = "\n" +
 	"    asm = asm + \"    .quad 42\\n\";\n" +
 	"    let p: Arm64GasProg = arm64_gas_program(asm);\n" +
 	"    let pa: Arm64Asm = p.asm;\n" +
-	"    let tvaddr: i64 = macho_text_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);\n" +
-	"    let dvaddr: i64 = macho_data_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);\n" +
+	"    let tvaddr: i64 = macho_text_vaddr(pa.text.len(), 0, p.data.len(), p.bss_size);\n" +
+	"    let dvaddr: i64 = macho_data_vaddr(pa.text.len(), 0, p.data.len(), p.bss_size);\n" +
 	"    p = arm64_gas_link(p, tvaddr, dvaddr);\n" +
 	"    let pa2: Arm64Asm = p.asm;\n" +
 	"    let none: i32[] = [];\n" +
-	"    let bin: i32[] = macho_executable(pa2.code, none, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n" +
+	"    let bin: i32[] = macho_executable(pa2.text, none, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n" +
 	"    write(string_from_bytes_unchecked(to_u8(bin)));\n" +
 	"    return 0;\n" +
 	"}\n"

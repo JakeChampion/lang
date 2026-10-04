@@ -3885,7 +3885,9 @@ func TestRunnerHeaderMapMigratedExample(t *testing.T) {
 		"ok 2 - get_all preserves insertion order",
 		"ok 3 - set replaces drops dupes (size=2)",
 		"ok 6 - get_all on missing name is empty",
-		"# pass 6",
+		"ok 8 - set takes the caller's spelling in place",
+		"ok 10 - names fold ASCII only",
+		"# pass 10",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

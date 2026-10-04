@@ -106,7 +106,7 @@ function main(): i32 {
     code = arm64_patch_ldr_off(code, 4, arm64_page_off(answer));
 
     let none: i32[] = [];               // no absolute-address data slots to rebase
-    let bin: i32[] = macho_executable(code, none, data, "fern", 0, 0, none);
+    let bin: i32[] = macho_executable(to_u8(code), none, data, "fern", 0, 0, none);
     write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }

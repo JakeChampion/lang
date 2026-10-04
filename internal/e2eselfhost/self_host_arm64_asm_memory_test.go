@@ -12,7 +12,7 @@ import (
 // memory to LINEAR in the size of the assembled program (#6011).
 //
 // arm64_gas_program used to hold the .text buffer inside its Arm64Asm /
-// Arm64GasProg structs while patching it, so every fixup read `a.code` while
+// Arm64GasProg structs while patching it, so every fixup read `a.text` while
 // `a` still referenced it. A second reference sends `.with` down the
 // copy-on-write path, so each patched instruction word cloned the whole
 // buffer: O(code_len^2) arena traffic, and `bin/fern-selfhost -target arm64-linux`

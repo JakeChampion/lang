@@ -113,7 +113,7 @@ function main(): i32 {
     let ar = arm64_native.arm64_gas_program_words(".text\nf:\n\x06\n\x01\n\x06\n\x06\n\x06\n\x01\n\x06\n\x06\n\x01\n\x06\n\x01\n\x06\n\x06\n", buf_take_bytes(ca));
     let at = arm64_native.arm64_gas_program(".text\nf:\n    .cfi_startproc\n    stp x29, x30, [sp, #-16]!\n    .cfi_def_cfa_offset 16\n    .cfi_offset x29, -16\n    .cfi_offset x30, -8\n    mov x29, sp\n    .cfi_def_cfa_register x29\n    .cfi_remember_state\n    ldp x29, x30, [sp], #16\n    .cfi_def_cfa sp, 0\n    ret\n    .cfi_restore_state\n    .cfi_endproc\n");
     let aeh: i32[] = arm64_native.arm64_eh_frame(ar, 0 as i64, 0 as i64);
-    print("arm64_cfi " + util.i32_to_string(first_diff(aeh, arm64_native.arm64_eh_frame(at, 0 as i64, 0 as i64))) + " " + util.i32_to_string(first_diff(ar.asm.code, at.asm.code)) + " " + util.i32_to_string(ar.unknown.len() + at.unknown.len()));
+    print("arm64_cfi " + util.i32_to_string(first_diff(aeh, arm64_native.arm64_eh_frame(at, 0 as i64, 0 as i64))) + " " + util.i32_to_string(first_diff_u8(ar.asm.text, at.asm.text)) + " " + util.i32_to_string(ar.unknown.len() + at.unknown.len()));
     print("arm64_cfi_eh " + util.i32_to_string(aeh.len()));
     // x86: a named record is the call or the rip-relative address its text
     // assembles to, forward and backward; one without its record, and one
@@ -189,12 +189,12 @@ function main(): i32 {
     let a3 = arm64_native.arm64_gas_program_words("\x03nop\n", buf_take_bytes(nop));
     print("arm64_mark3_unknown " + util.i32_to_string(a3.unknown.len()));
     for u in a3.unknown { print("  " + u); }
-    print("arm64_mark3_code " + util.i32_to_string(a3.asm.code.len()));
+    print("arm64_mark3_code " + util.i32_to_string(a3.asm.text.len()));
     let nop1: usize = buf_new(16);
     buf_push_u64(nop1, 3573751839 as u64);
     let a1 = arm64_native.arm64_gas_program_words("\x01\n", buf_take_bytes(nop1));
     print("arm64_mark1_unknown " + util.i32_to_string(a1.unknown.len()));
-    print("arm64_mark1_code " + util.i32_to_string(a1.asm.code.len()));
+    print("arm64_mark1_code " + util.i32_to_string(a1.asm.text.len()));
     // arm64: a named record carrying adrp or the :lo12: add is the symbol's
     // page fixup, queued as the text arms queue theirs.
     let addr: usize = buf_new(16);
@@ -204,7 +204,7 @@ function main(): i32 {
     let pt = arm64_native.arm64_gas_program("    adrp x3, sym\n    add x3, x3, :lo12:sym\n" + tail);
     let pr = arm64_native.arm64_gas_program_words("\x02sym\n\x02sym\n" + tail, buf_take_bytes(addr));
     print("arm64_named_unknown " + util.i32_to_string(pr.unknown.len()));
-    print("arm64_named_code_diff " + util.i32_to_string(first_diff(pt.asm.code, pr.asm.code)));
+    print("arm64_named_code_diff " + util.i32_to_string(first_diff_u8(pt.asm.text, pr.asm.text)));
     print("arm64_named_fixups " + util.i32_to_string(pr.pf_sites.len()));
     let fi: i32 = 0;
     while (fi < pr.pf_sites.len() && fi < pt.pf_sites.len()) {
@@ -220,7 +220,7 @@ function main(): i32 {
     buf_push_u64(sxw, arm64_native.arm64_rec_sxtw("x9", "w11") as u64);
     let sxr = arm64_native.arm64_gas_program_words(".text\n\x01\n", buf_take_bytes(sxw));
     let sxt = arm64_native.arm64_gas_program(".text\n    sxtw x9, w11\n");
-    print("arm64_sxtw " + util.i32_to_string(first_diff(sxr.asm.code, sxt.asm.code)) + " " + util.i32_to_string(sxr.unknown.len() + sxt.unknown.len()) + " " + util.i32_to_string(sxr.asm.code.len()));
+    print("arm64_sxtw " + util.i32_to_string(first_diff_u8(sxr.asm.text, sxt.asm.text)) + " " + util.i32_to_string(sxr.unknown.len() + sxt.unknown.len()) + " " + util.i32_to_string(sxr.asm.text.len()));
     print("arm64_sxtw_bad " + util.i64_to_string(arm64_native.arm64_rec_sxtw("w9", "w11")) + " " + util.i64_to_string(arm64_native.arm64_rec_sxtw("x9", "x11")) + " " + util.i64_to_string(arm64_native.arm64_rec_sxtw("sp", "w0")));
     // arm64: a pair mode the text fallback cannot spell, and a w register
     // beside sp, are refused rather than encoded.
