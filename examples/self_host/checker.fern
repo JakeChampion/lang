@@ -23782,16 +23782,37 @@ pub function annotate_module(mod: parser.Module): parser.Module {
   // The same value-local re-declaration check_module types against, so the
   // module handed to lowering carries the arms' type rather than the parser's
   // syntactic guess (#8657).
-  return annotate_module_in(mod, build_module_tables(mod));
+  return annotate_module_in(mod, build_module_tables(mod), whole_focus(mod));
 }
 
-function annotate_module_in(mod: parser.Module, mt: ModuleTables): parser.Module {
-  let rmod: parser.Module = pretype_module_in(settle_literal_locals_in(mod, mt), mt);
-  let nfuncs: parser.FuncDecl[] = [];
-  for func in rmod.funcs {
-    nfuncs = nfuncs.append(annotate_func(func, mt));
+// The parts of a module a pass rewrites: function `i` where `funcs[i]`, and the
+// top level where `top`. Every other part comes back as it was.
+struct Focus { funcs: boolean[], top: boolean }
+
+function whole_focus(mod: parser.Module): Focus {
+  let funcs: boolean[] = [];
+  for fd in mod.funcs {
+    funcs = funcs.append(true);
   }
-  let ntop: ast.Stmt[] = annotate_block(rmod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs));
+  return Focus { funcs: funcs, top: true };
+}
+
+function annotate_module_in(mod: parser.Module, mt: ModuleTables, focus: Focus): parser.Module {
+  let rmod: parser.Module = pretype_module_in(settle_literal_locals_in(mod, mt, focus), mt, focus);
+  let nfuncs: parser.FuncDecl[] = [];
+  let i: i32 = 0;
+  while (i < rmod.funcs.len()) {
+    if (focus.funcs[i]) {
+      nfuncs = nfuncs.append(annotate_func(rmod.funcs[i], mt));
+    } else {
+      nfuncs = nfuncs.append(rmod.funcs[i]);
+    }
+    i = i + 1;
+  }
+  let ntop: ast.Stmt[] = rmod.top_stmts;
+  if (focus.top) {
+    ntop = annotate_block(rmod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs));
+  }
   return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls, inferred_consts: rmod.inferred_consts };
 }
 
@@ -23830,41 +23851,51 @@ function display_unrewritten(e: ast.Expr, own found: boolean): boolean {
   return false;
 }
 
-function has_unrewritten_display(mod: parser.Module): boolean {
+// unannotated reports whether `stmts` hold a lambda whose captures have not
+// been typed or a `print` / `write` / `eprint` argument the Display rewrite has
+// not judged.
+function unannotated(stmts: ast.Stmt[]): boolean {
   let found: boolean = false;
-  for fd in mod.funcs {
-    for st in fd.body {
-      found = astwalk.fold_stmt(st, found, display_unrewritten);
-    }
-  }
-  for st in mod.top_stmts {
+  for st in stmts {
+    found = astwalk.fold_stmt(st, found, unchecked_capture);
     found = astwalk.fold_stmt(st, found, display_unrewritten);
   }
   return found;
 }
 
-// Raw IR drivers enter the same checked boundary as the CLI: a module whose
-// lambdas have not had their captures typed, or whose `print` / `write` /
-// `eprint` arguments have not been through the Display rewrite, is annotated
-// here. Already annotated syntax keeps its contracts without a second pass.
-pub function ensure_annotated(mod: parser.Module): parser.Module {
-  if (has_unchecked_captures(mod) || has_unrewritten_display(mod)) {
-    return annotate_module(mod);
+// The parts of `mod` annotate_module has not been through.
+function unannotated_focus(mod: parser.Module): Focus {
+  let funcs: boolean[] = [];
+  for fd in mod.funcs {
+    funcs = funcs.append(unannotated(fd.body));
   }
-  return mod;
+  return Focus { funcs: funcs, top: unannotated(mod.top_stmts) };
 }
 
-function has_unchecked_captures(mod: parser.Module): boolean {
-  let unchecked: boolean = false;
-  for fd in mod.funcs {
-    for st in fd.body {
-      unchecked = astwalk.fold_stmt(st, unchecked, unchecked_capture);
+function any_focus(f: Focus): boolean {
+  if (f.top) {
+    return true;
+  }
+  for b in f.funcs {
+    if (b) {
+      return true;
     }
   }
-  for st in mod.top_stmts {
-    unchecked = astwalk.fold_stmt(st, unchecked, unchecked_capture);
+  return false;
+}
+
+// Raw IR drivers enter the same checked boundary as the CLI: a function whose
+// lambdas have not had their captures typed, or whose `print` / `write` /
+// `eprint` arguments have not been through the Display rewrite, is annotated
+// here — a generic's instance among them, since instantiation retypes its
+// lambdas' captures. Already annotated syntax keeps its contracts without a
+// second pass.
+pub function ensure_annotated(mod: parser.Module): parser.Module {
+  let focus: Focus = unannotated_focus(mod);
+  if (any_focus(focus)) {
+    return annotate_module_in(mod, build_module_tables(mod), focus);
   }
-  return unchecked;
+  return mod;
 }
 
 // Separate emission does not make imported nominal types or call signatures
@@ -23872,10 +23903,13 @@ function has_unchecked_captures(mod: parser.Module): boolean {
 // own functions, top-level statements and emission ownership.
 pub function ensure_annotated_parts(mods: parser.Module[]): parser.Module[] {
   let needed: boolean = false;
+  let focus: Focus[] = [];
   for mod in mods {
-    if (has_unchecked_captures(mod) || has_unrewritten_display(mod)) {
+    let f: Focus = unannotated_focus(mod);
+    if (any_focus(f)) {
       needed = true;
     }
+    focus = focus.append(f);
   }
   if (!needed) {
     return mods;
@@ -23901,12 +23935,14 @@ pub function ensure_annotated_parts(mods: parser.Module[]): parser.Module[] {
   let view = parser.Module { ...mods[0], funcs: funcs, structs: structs, aliases: aliases, enums: enums };
   let mt = build_module_tables(view);
   let out: parser.Module[] = [];
-  for mod in mods {
-    if (has_unchecked_captures(mod) || has_unrewritten_display(mod)) {
-      out = out.append(annotate_module_in(mod, ModuleTables { ...mt, imports: import_paths_of(mod) }));
+  let k: i32 = 0;
+  while (k < mods.len()) {
+    if (any_focus(focus[k])) {
+      out = out.append(annotate_module_in(mods[k], ModuleTables { ...mt, imports: import_paths_of(mods[k]) }, focus[k]));
     } else {
-      out = out.append(mod);
+      out = out.append(mods[k]);
     }
+    k = k + 1;
   }
   return out;
 }
@@ -24795,24 +24831,26 @@ function use_typed(c: ast.ExprCall, s: Scope): ast.ExprCall {
 pub function pretype_module(mod: parser.Module): parser.Module {
   let coll: string[] = colliding_variant_names(mod);
   if (needs_pretype_or_rescope(mod.top_stmts, coll)) {
-    return pretype_module_in(mod, build_module_tables(mod));
+    return pretype_module_in(mod, build_module_tables(mod), whole_focus(mod));
   }
   for fd in mod.funcs {
     if (needs_pretype_or_rescope(fd.body, coll)) {
-      return pretype_module_in(mod, build_module_tables(mod));
+      return pretype_module_in(mod, build_module_tables(mod), whole_focus(mod));
     }
   }
   return mod;
 }
 
-function pretype_module_in(mod: parser.Module, mt: ModuleTables): parser.Module {
+function pretype_module_in(mod: parser.Module, mt: ModuleTables, focus: Focus): parser.Module {
   // Keep untouched functions and avoid rebuilding bodies with nothing to retype.
   let coll: string[] = colliding_variant_names(mod);
-  let top_hit: boolean = needs_pretype_or_rescope(mod.top_stmts, coll);
+  let top_hit: boolean = focus.top && needs_pretype_or_rescope(mod.top_stmts, coll);
   let hits: boolean[] = [];
   let any: boolean = top_hit;
+  let k: i32 = 0;
   for fn in mod.funcs {
-    let hit: boolean = needs_pretype_or_rescope(fn.body, coll);
+    let hit: boolean = focus.funcs[k] && needs_pretype_or_rescope(fn.body, coll);
+    k = k + 1;
     hits = hits.append(hit);
     if (hit) {
       any = true;
@@ -26321,14 +26359,17 @@ pub function settle_literal_locals(mod: parser.Module): parser.Module {
   if (!any) {
     return mod;
   }
-  return settle_literal_locals_in(mod, build_module_tables(mod));
+  return settle_literal_locals_in(mod, build_module_tables(mod), whole_focus(mod));
 }
 
-function settle_literal_locals_in(mod: parser.Module, mt: ModuleTables): parser.Module {
+function settle_literal_locals_in(mod: parser.Module, mt: ModuleTables, focus: Focus): parser.Module {
   let generics: string[] = generic_fn_names(mod.funcs);
   let nfuncs: parser.FuncDecl[] = [];
+  let k: i32 = 0;
   for func in mod.funcs {
-    if (needs_lit_settle(func.body, generics)) {
+    let hit: boolean = focus.funcs[k] && needs_lit_settle(func.body, generics);
+    k = k + 1;
+    if (hit) {
       let fs: Scope = build_func_scope(func, mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs);
       nfuncs = nfuncs.append(parser.FuncDecl { ...func, body: settle_lit_body(func.body, fs) });
     } else {
@@ -26336,7 +26377,7 @@ function settle_literal_locals_in(mod: parser.Module, mt: ModuleTables): parser.
     }
   }
   let ntop: ast.Stmt[] = mod.top_stmts;
-  if (needs_lit_settle(mod.top_stmts, generics)) {
+  if (focus.top && needs_lit_settle(mod.top_stmts, generics)) {
     ntop = settle_lit_body(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
