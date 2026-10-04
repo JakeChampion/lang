@@ -18,7 +18,7 @@ func TestArm64StrbufGrowsPastFixedCeiling(t *testing.T) {
 }
 
 func TestX86_64StrbufGrowsPastFixedCeiling(t *testing.T) {
-	_, exit := compileAndRunX86Native(t, e2eharness.StrbufCeilingProbe)
+	_, exit := compileAndRunX86_64(t, e2eharness.StrbufCeilingProbe)
 	if exit != 0 {
 		t.Errorf("exit %d, want 0 (%s)", exit, e2eharness.StrbufCeilingProbeCodes)
 	}
