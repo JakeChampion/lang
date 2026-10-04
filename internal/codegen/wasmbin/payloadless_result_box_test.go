@@ -32,6 +32,7 @@ var payloadlessArmBoxSize = map[string]int32{
 	"__fern_reader_close_fd":    8,
 	"__fern_fd_fsync":           8,
 	"__fern_fd_fdatasync":       8,
+	"__fern_fd_drop_cache":      8,
 }
 
 // payloadlessArmAbsent names the result-box helpers with no uninitialised
