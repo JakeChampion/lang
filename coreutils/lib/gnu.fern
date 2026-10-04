@@ -1444,11 +1444,11 @@ function xsputn(s0: Stdio, data: u8[], text: string, lo: i32, hi: i32): Stdio {
     let to_do: i32 = n - pos;
     let do_write: i32 = to_do - to_do % s.cap;
     if (do_write > 0) {
-      if (text.len() > 0 && lo + pos == 0 && do_write == text.len()) {
-        s = sys_write(s, text.as_bytes());
+      if (text.len() > 0) {
+        let bytes: [u8] = text.as_bytes();
+        s = sys_write(s, bytes[lo + pos:lo + pos + do_write]);
       } else {
-        let piece: u8[] = stdio_append_range([], data, text, lo + pos, lo + pos + do_write);
-        s = sys_write(s, piece);
+        s = sys_write(s, data[lo + pos:lo + pos + do_write]);
       }
       if (stdio_failed(s)) {
         return s;
