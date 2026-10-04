@@ -14960,20 +14960,26 @@ function monomorphize_chain(mod: Module, erased: string[]): Module {
 // clone has a mangled name, so a bare one is the dropped template.
 function stranded_names(mod: Module, candidates: string[], erased: string[]): string[] {
   let out: string[] = [];
+  if (candidates.len() == 0) {
+    return out;
+  }
+  // Only a free reference can name a dropped template. A parameter or local
+  // with the same spelling belongs to its lexical scope, including captures
+  // and names introduced by patterns. Keep reads before a later shadow.
+  let refs: string[] = astwalk.collect_free_idents([], mod.top_stmts, []);
+  for fd in mod.funcs {
+    let bound: string[] = hl_param_names(fd.params);
+    if (fd.receiver_name.len() > 0) {
+      bound = bound.append(fd.receiver_name);
+    }
+    refs = astwalk.collect_free_idents(bound, fd.body, refs);
+  }
+  let used: util.NameIndex = util.name_index(refs);
   for name in candidates {
     if (util.has_str(erased, name)) {
       continue;
     }
-    let scan: NameScan = NameScan { name: name, hit: false };
-    for fd in mod.funcs {
-      for st in fd.body {
-        scan = astwalk.fold_stmt_nodes(st, scan, name_scan_stmt, name_scan_expr, astwalk.descend_all);
-      }
-    }
-    for st in mod.top_stmts {
-      scan = astwalk.fold_stmt_nodes(st, scan, name_scan_stmt, name_scan_expr, astwalk.descend_all);
-    }
-    if (scan.hit) {
+    if (used.find(name) >= 0) {
       out = out.append(name);
     }
   }
@@ -15004,24 +15010,6 @@ function fn_param_promoted(fd: FuncDecl): boolean {
     }
   }
   return false;
-}
-
-struct NameScan { name: string, hit: boolean }
-
-function name_scan_stmt(st: ast.Stmt, own acc: NameScan): NameScan {
-  return acc;
-}
-
-function name_scan_expr(e: ast.Expr, own acc: NameScan): NameScan {
-  if (acc.hit) {
-    return acc;
-  }
-  if let ast.ExprIdent(id) = e {
-    if (id.name == acc.name) {
-      return NameScan { ...acc, hit: true };
-    }
-  }
-  return acc;
 }
 
 function erase_promotions(funcs: FuncDecl[], erased: string[]): FuncDecl[] {
