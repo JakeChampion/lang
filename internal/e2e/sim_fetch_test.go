@@ -46,7 +46,7 @@ func simFetchSource(t *testing.T) string {
 }
 
 func TestSimFetchNativeX86_64(t *testing.T) {
-	out, code := compileAndRunX86Native(t, simFetchSource(t))
+	out, code := compileAndRunX86_64(t, simFetchSource(t))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\n%s", code, out)
 	}

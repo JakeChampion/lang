@@ -75,7 +75,7 @@ func TestWithChainWritesInPlace(t *testing.T) {
 		}
 	}
 	t.Run("x86-64", func(t *testing.T) {
-		out, code := compileAndRunX86Native(t, withChainInPlaceSrc)
+		out, code := compileAndRunX86_64(t, withChainInPlaceSrc)
 		check(t, code, out)
 	})
 	t.Run("x86-64/leakcheck", func(t *testing.T) {
