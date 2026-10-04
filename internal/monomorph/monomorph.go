@@ -797,7 +797,12 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		}
 		return fmt.Errorf("monomorph: re-check failed (compiler bug): %w", err)
 	}
+	// The re-check reads the monomorphised program, from which an
+	// uninstantiated generic `handle` is gone; what the checker found on the
+	// program as written stays found.
+	stateful := info.StatefulHandler
 	*info = *newInfo
+	info.StatefulHandler = info.StatefulHandler || stateful
 	return nil
 }
 

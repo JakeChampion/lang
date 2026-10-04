@@ -80,11 +80,12 @@ func LiveFunctionsWithAliases(prog *Program, aliases map[string]string, keepAliv
 		}
 	}
 	enqueue("main")
-	enqueue("handle")
+	// The wasi-http entry (checker.WasiHandleName); ir does not import checker.
+	enqueue("__fern_wasi_handle")
 	for _, name := range keepAlive {
 		enqueue(name)
 	}
-	if !reached["main"] && !reached["handle"] {
+	if !reached["main"] && !reached["__fern_wasi_handle"] {
 		return nil
 	}
 

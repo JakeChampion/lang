@@ -33,7 +33,8 @@ func TestHttpHandlerModuleIsValidWasm(t *testing.T) {
 	src := `
 import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     match (req.body_string()) {
         Ok(text) => { return http.ok(text); },
         Err(e) => { return e.to_response(); }

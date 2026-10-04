@@ -613,7 +613,7 @@ function capability_violations(merged: parser.Module, target: string): boolean {
 }
 
 // ambient_violations reports every host effect a handler reaches around its
-// `Platform` bag (E080 — ambient.fern), printing one diagnostic per
+// platform (E080 — ambient.fern), printing one diagnostic per
 // violation, and returns true when the program must be rejected. Target-
 // independent, so it runs on every check and every build, on the bundle
 // before the shake: a handler is judged on what its body reaches.
@@ -2702,7 +2702,7 @@ function run(): i32 {
   }
 
   // The bag boundary (E080 — ambient.fern): a handler reaching a host
-  // effect around its `Platform`, on either compiler.
+  // effect around its platform, on either compiler.
   if (ambient_violations(merged)) {
     return 1;
   }

@@ -91,13 +91,3 @@ struct HttpRequest { method: string, path: string, body: Stream, headers: Header
 
 struct HttpResponse { status: i32, body: Body, headers: HeaderMap, trailers: HeaderMap }
 
-// Platform — the capability bag threaded as the second parameter of every
-// handler (docs/PLATFORM-RESEARCH.md Rec §1). Native declares it in the
-// checker's builtin struct table; the self-host had no declaration at all, so
-// a signature mentioning it — `(HttpRequest, Platform) => HttpResponse`, which
-// is every std/serve entry point — could not resolve and `__serve_loop`
-// bailed — and the AST emitter it then fell to could not emit tcp_listen /
-// poll either (#5686). `version` is the bag's ABI version; `mode` and `sink`
-// carry the mock seam (Rec §6) — a recording bag is mode 1 over a cell that
-// std/platform's capability methods append to instead of reaching the host.
-struct Platform { version: i32, mode: i32, sink: Cell[string], handle: i32 }

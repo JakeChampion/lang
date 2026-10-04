@@ -4,12 +4,10 @@
 // `run(port, cfg, handler)` runs an HTTP/1.1 accept loop on
 // `port`, calling `handler(req, plat)` once per request; `supervise`
 // runs `cfg.workers` of those loops in forked workers under a supervisor
-// that replaces whichever dies. The
-// `plat: Platform` capability bag is the seam
-// where future host-side effects (fetch / kv / secrets / log /
-// now) will be plumbed per docs/PLATFORM-RESEARCH.md Rec §1;
-// for Phase 1 it carries a single `version: i32` placeholder
-// and handler code typically ignores it.
+// that replaces whichever dies. `plat` is the worker's `platform.Host`,
+// the capabilities a handler reaches the host through
+// (docs/PLATFORM-RESEARCH.md Rec §1); a handler written against the
+// `platform.Platform` trait takes it, as it would a test's mock.
 // When the listener can't be bound (EADDRINUSE, say) the address and the
 // error's text go to stderr and the entry returns 98; otherwise the loop
 // runs until SIGTERM or SIGINT, then
@@ -81,6 +79,7 @@
 // Phase 5).
 
 import "std/async";
+import "std/platform";
 import "std/http";
 import "std/net";
 import "std/time";
@@ -159,7 +158,7 @@ pub function config(): Config {
 
 // run(port, opts, handler) — serve `handler` on `port` in this process,
 // under `opts`.
-pub function run(port: i32, opts: Config, handler: (HttpRequest, Platform) => HttpResponse): i32 {
+pub function run(port: i32, opts: Config, handler: (HttpRequest, platform.Host) => HttpResponse): i32 {
   return run_shutdown(port, opts, handler, (reason: string): void => {});
 }
 
@@ -168,7 +167,7 @@ pub function run(port: i32, opts: Config, handler: (HttpRequest, Platform) => Ht
 // "sigterm" or "sigint", the signal that started the shutdown, when every
 // request in flight was answered, or "drain-deadline" when one was cut
 // off at the drain deadline.
-pub function run_shutdown(port: i32, opts: Config, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 {
+pub function run_shutdown(port: i32, opts: Config, handler: (HttpRequest, platform.Host) => HttpResponse, shutdown: (string) => void): i32 {
   let listener: i32 = __serve_listener(port, opts);
   if (listener < 0) {
     return __listen_failed(port, listener);
@@ -248,7 +247,7 @@ function __eafnosupport(): i32 {
 // will see, paired with the response to send:
 //
 //     function handle(hits: Map[string, i32], req: HttpRequest,
-//                     plat: Platform): (Map[string, i32], HttpResponse) {
+//                     plat: platform.Platform): (Map[string, i32], HttpResponse) {
 //         let n: i32 = hits.get_or(req.path, 0) + 1;
 //         return (hits.insert(req.path, n),
 //                 http.ok(int.int_to_string(n)));
@@ -269,7 +268,7 @@ function __eafnosupport(): i32 {
 // Under `supervise_with` each worker carries a copy of its own, and a
 // worker forked again after a death starts from `init`: state that must
 // outlive a crash belongs in a store the handler reaches through `plat`.
-pub function run_with[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 {
+pub function run_with[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse)): i32 {
   return run_with_shutdown(port, opts, init, handler, (reason: string, state: S): void => {});
 }
 
@@ -278,7 +277,7 @@ pub function run_with[S](port: i32, opts: Config, init: S, handler: (S, HttpRequ
 // before returning, with the reason `run_shutdown` gives and the
 // state as the last request left it: where a counter is flushed or a
 // store is closed.
-pub function run_with_shutdown[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 {
+pub function run_with_shutdown[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), shutdown: (string, S) => void): i32 {
   let listener: i32 = __serve_listener(port, opts);
   if (listener < 0) {
     return __listen_failed(port, listener);
@@ -1470,25 +1469,21 @@ function __serve_expire[D: async.Driver](drv: D, c: __Conns, opts: Config, now: 
   return c;
 }
 
-// __host_platform — the bag the accept loops hand every handler: the host
-// mode, a sink nothing writes to, and the worker's reactor as its handle,
-// 0 where the target has none, as a bag from `platform_new` carries.
-// Recording is a MockPlatform's job; it builds a bag over its own cell
-// (std/mock_platform). Built once per loop rather than per request, since
-// no request can change it.
-function __host_platform(reactor: i32): Platform {
-  let handle: i32 = reactor;
-  if (handle < 0) {
-    handle = 0;
+// __host_platform — the platform the accept loops hand every handler: the
+// host over the worker's reactor, 0 where the target has none. Built once
+// per loop rather than per request, since no request can change it.
+function __host_platform(reactor: i32): platform.Host {
+  if (reactor < 0) {
+    return platform.host();
   }
-  return Platform { version: 3, mode: 0, sink: cell_new(""), handle: handle };
+  return platform.host_on(reactor);
 }
 
 // __init_platform() — the platform a handler program's `init(plat)` is
-// handed: the host bag with no reactor, since it runs once in the
-// supervising parent before any worker's loop exists.
-function __init_platform(): Platform {
-  return __host_platform(0 - 1);
+// handed: the host with no reactor, since it runs once in the supervising
+// parent before any worker's loop exists.
+function __init_platform(): platform.Host {
+  return platform.host();
 }
 
 // __serve_loop — the HTTP/1.1 reactor loop factored out of `run`
@@ -1501,7 +1496,7 @@ function __init_platform(): Platform {
 // listener the reactor cannot watch returns its -errno like a failed
 // bind. `opts` bounds each connection's request read and its
 // persistence.
-function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, opts: Config, on_stop: (string) => void): i32 {
+function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, on_stop: (string) => void): i32 {
   let drv: async.RealDriver = async.real_driver();
   let watched: i32 = drv.watch(listener, __listener_interest(opts));
   if (watched < 0) {
@@ -1509,7 +1504,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
   }
   let accepting: boolean = true;
   let stop: __Stop = __serve_stop_sources(drv, opts);
-  let plat: Platform = __host_platform(drv.handle());
+  let plat: platform.Host = __host_platform(drv.handle());
   let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "" };
@@ -1595,7 +1590,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
 // value through the handler chain. The state lives in the loop frame,
 // so it is process-lifetime without any language-level global: each
 // request sees the value the previous one returned.
-function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), opts: Config, on_stop: (string, S) => void): i32 {
+function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), opts: Config, on_stop: (string, S) => void): i32 {
   let st: S = init;
   let drv: async.RealDriver = async.real_driver();
   let watched: i32 = drv.watch(listener, __listener_interest(opts));
@@ -1604,7 +1599,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   }
   let accepting: boolean = true;
   let stop: __Stop = __serve_stop_sources(drv, opts);
-  let plat: Platform = __host_platform(drv.handle());
+  let plat: platform.Host = __host_platform(drv.handle());
   let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "" };
@@ -1702,7 +1697,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
 // and the fast-death count shared among them. SIGTERM or SIGINT is
 // forwarded to every worker and the supervisor waits for them, exiting with the
 // worst code they answered (1 when one cut a request off).
-pub function supervise(port: i32, opts: Config, handler: (HttpRequest, Platform) => HttpResponse): i32 {
+pub function supervise(port: i32, opts: Config, handler: (HttpRequest, platform.Host) => HttpResponse): i32 {
   return supervise_shutdown(port, opts, handler, (reason: string): void => {});
 }
 
@@ -1710,7 +1705,7 @@ pub function supervise(port: i32, opts: Config, handler: (HttpRequest, Platform)
 // `supervise` with a hook each worker's loop calls once
 // it has stopped, as `run_shutdown` does: with `opts.workers`
 // workers it runs once per worker.
-pub function supervise_shutdown(port: i32, opts: Config, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 {
+pub function supervise_shutdown(port: i32, opts: Config, handler: (HttpRequest, platform.Host) => HttpResponse, shutdown: (string) => void): i32 {
   return __supervise(port, opts, (fd: i32, worker_opts: Config): i32 => __serve_loop(fd, handler, worker_opts, shutdown));
 }
 
@@ -1721,7 +1716,7 @@ pub function supervise_shutdown(port: i32, opts: Config, handler: (HttpRequest, 
 // requests make of it is that worker's alone, and a worker forked again
 // after a death starts from the copy `init` was, not from where the
 // dead one left it.
-pub function supervise_with[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 {
+pub function supervise_with[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse)): i32 {
   return supervise_with_shutdown(port, opts, init, handler, (reason: string, state: S): void => {});
 }
 
@@ -1729,7 +1724,7 @@ pub function supervise_with[S](port: i32, opts: Config, init: S, handler: (S, Ht
 // — `supervise_with` with a hook each worker's loop calls once
 // it has stopped, with the reason and the state as that worker's last
 // request left it.
-pub function supervise_with_shutdown[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 {
+pub function supervise_with_shutdown[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), shutdown: (string, S) => void): i32 {
   return __supervise(port, opts, (fd: i32, worker_opts: Config): i32 => __serve_loop_with(fd, init, handler, worker_opts, shutdown));
 }
 

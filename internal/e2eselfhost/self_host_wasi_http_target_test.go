@@ -19,7 +19,8 @@ const wasiHttpRouterSrc = `
 import "std/http";
 import "std/headers";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/hello") {
         return http.ok("world")
             .with_header("x-served-by", "fern")

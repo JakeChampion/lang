@@ -1,288 +1,129 @@
-// std/platform — the capability surface on the `Platform` bag.
+// std/platform — the capabilities a handler is handed.
 //
-// Every handler takes the bag as its second parameter
-// (`handle(req: HttpRequest, plat: Platform)`,
-// docs/PLATFORM-RESEARCH.md Rec §1). This module is what the bag is
-// FOR: the host effects a handler is allowed to reach — a log sink, a
-// clock, the invocation environment, entropy — reachable as methods on
-// the value it was handed rather than as ambient free functions.
+// Every handler takes a platform as its last parameter
+// (`handle(req: HttpRequest, plat: platform.Platform)`,
+// docs/PLATFORM-RESEARCH.md Rec §1): the host effects it is allowed to reach
+// — a log sink, a clock, the invocation environment, configuration, entropy,
+// outbound HTTP — as methods on the value it was handed rather than as
+// ambient free functions. A function that is handed a platform and reaches
+// around it, directly or through a helper, is refused at check time (E080).
+//
+// `Platform` is a trait. A parameter typed by it makes the handler generic
+// over it, so each implementation is compiled in statically: `Host`, which
+// std/serve's accept loops and the wasi-http entry hand a handler, and
+// std/mock_platform's `MockPlatform`, which records what a test's handler
+// tried to do. Each keeps its own state as ordinary fields.
 //
 // The free functions stay: a CLI tool with no handler in sight calls
-// `eprint` / `now_unix_ms` directly and always will. What the bag adds
-// is a handler that cannot reach an effect it was not given, which is
-// the seam the rest of the platform design hangs off — mock platforms in
-// tests (Rec §6), per-target capability sets (Rec §2), effect rows
-// (Rec §10). A function handed a bag that reaches around it, directly or
-// through a helper, is refused at check time (E080).
+// `eprint` / `now_unix_ms` directly and always will.
 //
 // Each method needs the target capability named in its comment
-// (`internal/platforms`): a target whose profile lacks it fails the
-// build with E066 rather than at run time. What a handler can call is
-// therefore a property of where it is going — the `wasi-http` proxy
-// world grants log / now / random / fetch and nothing else, so `.env`
-// is a build error there and deploy-time configuration has to arrive
-// as a binding (Rec §7) rather than through envp.
+// (`internal/platforms`): a target whose profile lacks it fails the build
+// with E066 rather than at run time. What a handler can call is therefore a
+// property of where it is going — the `wasi-http` proxy world grants log /
+// now / random / fetch / config and nothing else, so `.env` is a build error
+// there and deploy-time configuration arrives through `.config`.
+
+import "std/fetch";
+
+pub trait Platform {
+  // `.log(msg)` — write one diagnostic line to the platform's log sink.
+  // Needs the `log` capability. Newline-terminated; goes to stderr on every
+  // target that has one (a proxy-world component has no stdout, so this is
+  // the only output a handler gets).
+  function log(self: Self, msg: string): void;
+
+  // `.now_ms()` — wall-clock milliseconds since the Unix epoch. Needs the
+  // `now` capability. Subject to clock adjustment: stamp a response with it,
+  // don't time anything with it — that's `.elapsed_ns()`.
+  function now_ms(self: Self): i64;
+
+  // `.elapsed_ns()` — monotonically non-decreasing nanoseconds from an
+  // unspecified origin. Needs the `now` capability. The difference between
+  // two readings is an elapsed time regardless of what the wall clock did in
+  // between, which is what a handler's latency budget wants.
+  function elapsed_ns(self: Self): i64;
+
+  // `.env(name)` — one variable from the invocation environment. Needs the
+  // `env` capability, which only a target with a process has. `Some("")` for
+  // a variable set to the empty string, `None` for one that is not set.
+  function env(self: Self, name: string): Option[string];
+
+  // `.config(name)` — one deploy-time configuration value. Needs the
+  // `config` capability, which every target grants: the invocation
+  // environment where the target has one, and wasi:config/store on the proxy
+  // world (`wasmtime serve -S config -S config-var=NAME=VALUE`). `None` for a
+  // name the deployment does not set, and for a store that answers with an
+  // error.
+  function config(self: Self, name: string): Option[string];
+
+  // `.secret(name)` — one deploy-time secret, read as `.config` reads, from
+  // the same source. A mock records the name it was asked for and never the
+  // value.
+  function secret(self: Self, name: string): Option[string];
+
+  // `.random_i32()` — one uniformly random i32 from the platform CSPRNG.
+  // Needs the `random` capability.
+  function random_i32(self: Self): i32;
+
+  // `.http(req)` — `req` sent and its response read. Needs the `fetch`
+  // capability. The host sends it with `fetch.send_public`: a handler can
+  // fetch only through the platform it was handed, and only to a global
+  // address (`Blocked` otherwise).
+  function http(self: Self, req: fetch.Request): Result[HttpResponse, fetch.FetchError];
+}
+
+// `Host` — the platform that performs its effects on the machine it runs
+// on: what std/serve's accept loops hand a handler, built once per worker
+// loop over that worker's reactor, and what the wasi-http entry hands one,
+// with no reactor (0).
+pub struct Host { reactor: i32 }
+
+// `host()` — a host platform with no reactor, for code that has to build
+// one: a test driving a handler directly, or a caller of `serve.run` handing
+// its own handler what the accept loop would.
 //
-// Outbound HTTP is the one capability that lives elsewhere:
-// `(plat: Platform).http(req)` is in `std/fetch`, next to the socket
-// machinery that implements it.
-//
-// A bag is either a host bag or a recording one. Every method here asks
-// which before it acts: a recording bag appends the call to its sink and
-// answers what the test canned for it, or a fixed value, so a test can
-// hand a handler a mock and read back what it tried to do without the
-// effect happening (std/mock_platform). A canned answer is a row of the
-// same sink, `canned`, tab, the capability's key, tab, the value, which
-// the log's reader skips; the sink is the mock's whole state, since the
-// bag's layout is frozen and a cell holds one string.
-
-import "std/string";
-
-// PLATFORM_MODE_HOST / PLATFORM_MODE_MOCK — what the bag's `mode` field
-// selects. A host bag performs its effects; a recording one appends them to
-// its sink and leaves the host alone, which is what makes the bag
-// substitutable (docs/PLATFORM-RESEARCH.md Rec §6). Private: `platform_new`
-// and `platform_mock` below are the only two ways to build a bag, so no
-// caller has to name a mode.
-const PLATFORM_MODE_HOST: i32 = 0;
-
-const PLATFORM_MODE_MOCK: i32 = 1;
-
-// `platform_new()` — the bag as the host serves it, for code that has
-// to build one: a test driving a handler directly, or a caller of
-// `serve.run` that wants to hand its own handler the same value the
-// accept loop would. (The serving paths — `std/serve`'s accept loop and
-// the wasi-http entry wrapper — construct the bag themselves; reaching
-// here for it would put this module's capabilities in their reach.)
-//
-//     let resp: HttpResponse = handle(req, platform_new());
-//
-// `version` is the bag's ABI version, bumped when a capability field is
-// added, so a handler compiled against an older bag can tell. Version 2
-// added `handle`, the worker-owned runtime handle: the reactor of the
-// serving worker that built the bag (`std/serve`'s loops), 0 for a bag built
-// here or by the wasi-http wrapper, which serve no reactor. Struct fields
-// are frozen after construction and a cell holds only a scalar or a string
-// (E057), so the mutable per-worker state a capability needs — idle
-// connections, timers, the sim's driver — lives behind the handle rather
-// than in the bag.
-pub function platform_new(): Platform {
-  return Platform { version: 3, mode: PLATFORM_MODE_HOST, sink: cell_new(""), handle: 0 };
+//     let resp: HttpResponse = handle(req, platform.host());
+pub function host(): Host {
+  return Host { reactor: 0 };
 }
 
-// `platform_mock(sink)` — a bag that records into `sink` instead of reaching
-// the host. std/mock_platform is the caller: it passes its own cell, so the
-// mock and the handler write one log through two views.
-pub function platform_mock(sink: Cell[string]): Platform {
-  return Platform { version: 3, mode: PLATFORM_MODE_MOCK, sink: sink, handle: 0 };
+// `host_on(reactor)` — the host platform of the worker whose reactor is
+// `reactor`; std/serve builds one per worker loop.
+pub function host_on(reactor: i32): Host {
+  return Host { reactor: reactor };
 }
 
-// `.is_mock()` — is this a recording bag? Each capability method below asks
-// before performing its effect, and so does `.http`, the one capability that
-// lives next to the socket machinery in std/fetch rather than here.
-pub function (plat: Platform) is_mock(): boolean {
-  return plat.mode == PLATFORM_MODE_MOCK;
-}
+impl Platform for Host {
+  function log(self: Host, msg: string): void {
+    eprint(msg);
+  }
 
-// `.record(name, args)` — append one call to a recording bag's log; a no-op
-// on a host bag. The log is one string because a cell's element must be a
-// scalar or a string (E057), and std/mock_platform parses it back into
-// MockCall values. An entry is name, tab, args, newline — so a tab or a
-// newline inside `args` splits it, which is why what gets recorded is a
-// summary of the arguments rather than a payload.
-pub function (plat: Platform) record(name: string, args: string): void {
-  if (plat.mode != PLATFORM_MODE_MOCK) {
-    return;
+  function now_ms(self: Host): i64 {
+    return now_unix_ms();
   }
-  plat.sink.set(plat.sink.get() + name + "\t" + args + "\n");
-}
 
-// `.can(key, value)` — on a recording bag, answer `key` with `value` from
-// now on: the capability methods ask `.canned(key)` before their fixed
-// answer. The keys are `env NAME`, `config NAME`, `secret NAME`, `now_ms`,
-// `elapsed_ns`, `random_i32` and `fetch HOST:PORT PATH`; std/mock_platform's
-// setters spell them. A
-// tab, newline or backslash in the value is escaped into the row.
-pub function (plat: Platform) can(key: string, value: string): void {
-  if (plat.mode != PLATFORM_MODE_MOCK) {
-    return;
+  function elapsed_ns(self: Host): i64 {
+    return monotonic_ns();
   }
-  plat.sink.set(plat.sink.get() + "canned\t" + key + "\t" + __canned_escape(value) + "\n");
-}
 
-// `.canned(key)` — the value `.can` recorded for `key`, the last one when
-// several were, or `None`.
-pub function (plat: Platform) canned(key: string): Option[string] {
-  if (plat.mode != PLATFORM_MODE_MOCK) {
-    return None;
+  function env(self: Host, name: string): Option[string] {
+    return env(name);
   }
-  let found: Option[string] = None;
-  let prefix: string = "canned\t" + key + "\t";
-  for line in plat.sink.get().split("\n") {
-    if (line.len() >= prefix.len() && slice_unchecked(line, 0, prefix.len()) + "" == prefix) {
-      found = Some(__canned_unescape(slice_unchecked(line, prefix.len(), line.len()) + ""));
-    }
-  }
-  return found;
-}
 
-function __canned_escape(v: string): string {
-  let out: string = "";
-  let i: i32 = 0;
-  while (i < v.len()) {
-    let b: u8 = v[i];
-    if (b == 92 as u8) {
-      out = out + "\\\\";
-    } else if (b == 9 as u8) {
-      out = out + "\\t";
-    } else if (b == 10 as u8) {
-      out = out + "\\n";
-    } else {
-      out = out + slice_unchecked(v, i, i + 1);
-    }
-    i = i + 1;
+  function config(self: Host, name: string): Option[string] {
+    return config_get(name);
   }
-  return out;
-}
 
-function __canned_unescape(v: string): string {
-  let out: string = "";
-  let i: i32 = 0;
-  while (i < v.len()) {
-    let b: u8 = v[i];
-    if (b == 92 as u8 && i + 1 < v.len()) {
-      let n: u8 = v[i + 1];
-      if (n == 116 as u8) {
-        out = out + "\t";
-      } else if (n == 110 as u8) {
-        out = out + "\n";
-      } else {
-        out = out + slice_unchecked(v, i + 1, i + 2);
-      }
-      i = i + 2;
-      continue;
-    }
-    out = out + slice_unchecked(v, i, i + 1);
-    i = i + 1;
+  function secret(self: Host, name: string): Option[string] {
+    return config_get(name);
   }
-  return out;
-}
 
-// __canned_i64(plat, key, fallback) — a canned number, or `fallback`.
-function __canned_i64(plat: Platform, key: string, fallback: i64): i64 {
-  match (plat.canned(key)) {
-    Some(v) => {
-      return __parse_i64(v);
-    },
-    None => {
-      return fallback;
-    }
+  function random_i32(self: Host): i32 {
+    return random_i32();
   }
-  return fallback;
-}
 
-function __parse_i64(s: string): i64 {
-  let n: i64 = 0 as i64;
-  let neg: boolean = false;
-  let i: i32 = 0;
-  if (s.len() > 0 && s[0] == 45 as u8) {
-    neg = true;
-    i = 1;
+  function http(self: Host, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
+    return fetch.send_public(req);
   }
-  while (i < s.len()) {
-    let d: i32 = s[i] as i32 - 48;
-    if (d < 0 || d > 9) {
-      break;
-    }
-    n = n * (10 as i64) + d as i64;
-    i = i + 1;
-  }
-  if (neg) {
-    return 0 as i64 - n;
-  }
-  return n;
-}
-
-// `.log(msg)` — write one diagnostic line to the platform's log sink.
-// Needs the `log` capability. Newline-terminated; goes to stderr on
-// every target that has one (a proxy-world component has no stdout, so
-// this is the only output a handler gets).
-pub function (plat: Platform) log(msg: string): void {
-  if (plat.is_mock()) {
-    plat.record("log", msg);
-    return;
-  }
-  eprint(msg);
-}
-
-// `.now_ms()` — wall-clock milliseconds since the Unix epoch. Needs the
-// `now` capability. Subject to clock adjustment: stamp a response with
-// it, don't time anything with it — that's `.elapsed_ns()`.
-pub function (plat: Platform) now_ms(): i64 {
-  if (plat.is_mock()) {
-    plat.record("now_ms", "");
-    return __canned_i64(plat, "now_ms", 0i64);
-  }
-  return now_unix_ms();
-}
-
-// `.elapsed_ns()` — monotonically non-decreasing nanoseconds from an
-// unspecified origin. Needs the `now` capability. The difference
-// between two readings is an elapsed time regardless of what the wall
-// clock did in between, which is what a handler's latency budget wants.
-pub function (plat: Platform) elapsed_ns(): i64 {
-  if (plat.is_mock()) {
-    plat.record("elapsed_ns", "");
-    return __canned_i64(plat, "elapsed_ns", 0i64);
-  }
-  return monotonic_ns();
-}
-
-// `.env(name)` — one variable from the invocation environment. Needs
-// the `env` capability, which only a target with a process has: this is
-// where deploy-time configuration arrives on the native and wasi-cli
-// targets, while a proxy-world handler waits on named bindings
-// (docs/PLATFORM-RESEARCH.md Rec §7). `Some("")` for a variable set to
-// the empty string, `None` for one that is not set.
-pub function (plat: Platform) env(name: string): Option[string] {
-  if (plat.is_mock()) {
-    plat.record("env", name);
-    return plat.canned("env " + name);
-  }
-  return env(name);
-}
-
-// `.config(name)` — one deploy-time configuration value. Needs the `config`
-// capability, which every target grants: the invocation environment where
-// the target has one, and wasi:config/store on the proxy world (`wasmtime
-// serve -S config -S config-var=NAME=VALUE`), so a handler reads its
-// settings the same way wherever it is deployed. `None` for a name the
-// deployment does not set, and for a store that answers with an error.
-pub function (plat: Platform) config(name: string): Option[string] {
-  if (plat.is_mock()) {
-    plat.record("config", name);
-    return plat.canned("config " + name);
-  }
-  return config_get(name);
-}
-
-// `.secret(name)` — one deploy-time secret: read as `.config` reads, from the
-// same source. A recording bag logs the name it was asked for and never the
-// value, so a test's call log cannot leak one.
-pub function (plat: Platform) secret(name: string): Option[string] {
-  if (plat.is_mock()) {
-    plat.record("secret", name);
-    return plat.canned("secret " + name);
-  }
-  return config_get(name);
-}
-
-// `.random_i32()` — one uniformly random i32 from the platform CSPRNG.
-// Needs the `random` capability.
-pub function (plat: Platform) random_i32(): i32 {
-  if (plat.is_mock()) {
-    plat.record("random_i32", "");
-    return __canned_i64(plat, "random_i32", 0 as i64) as i32;
-  }
-  return random_i32();
 }

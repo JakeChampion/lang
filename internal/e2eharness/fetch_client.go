@@ -408,13 +408,13 @@ function main(): i32 {
     show("echo", fetch.send(fetch.request("POST", base() + "/echo?q=1").with_header("X-Trace", "t1").with_text("payload")));
     let raw: u8[] = "raw".bytes();
     show("put", fetch.send(fetch.request("PUT", base() + "/echo").with_bytes(raw)));
-    show("blocked", platform.platform_new().http(fetch.get(base() + "/echo")));
+    show("blocked", platform.host().http(fetch.get(base() + "/echo")));
     show("numeric", fetch.send(fetch.get("http://2130706433/")));
     show("octal", fetch.send(fetch.get("http://0177.0.0.1/")));
     show("short", fetch.send(fetch.get("http://127.1/")));
     show("proxied", fetch.send(fetch.request("POST", "http://origin.invalid:81/via?x=1").with_header("X-Trace", "p1").with_text("body")));
-    show("platproxied", platform.platform_new().http(fetch.get("http://8.8.8.8/via")));
-    show("platproxiedblocked", platform.platform_new().http(fetch.get("http://169.254.169.254/via")));
+    show("platproxied", platform.host().http(fetch.get("http://8.8.8.8/via")));
+    show("platproxiedblocked", platform.host().http(fetch.get("http://169.254.169.254/via")));
     match (fetch.send(fetch.get(base() + "/binary"))) {
         Ok(resp) => {
             let bs: u8[] = resp.body_bytes();
@@ -569,7 +569,7 @@ function size(name: string, answer: Result[HttpResponse, fetch.FetchError]): str
     return "";
 }
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let small: http.HttpLimits = http.http_limits();
     let raw: u8[] = "raw".bytes();
     let out: string = "";

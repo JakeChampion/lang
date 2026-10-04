@@ -2,6 +2,7 @@ import "std/test";
 import "std/http";
 import "std/json";
 import "std/mock_platform";
+import "std/platform";
 
 // examples/tests/http_body_json_test.fern — a typed JSON body (#9854):
 // `http.body_json[T](req)` decodes the body as a `T` deriving
@@ -21,14 +22,14 @@ function create(req: HttpRequest): Result[HttpResponse, http.BodyError] {
   return Ok(http.json_status(201, item.to_json()));
 }
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   return http.respond(create(req));
 }
 
 function test_a_json_body_decodes(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   let req: HttpRequest = http.request("POST", "/items").with_json("{\"name\":\"axe\",\"qty\":2,\"tags\":[\"iron\",\"oak\"]}");
-  let resp: HttpResponse = handle(req, m.as_platform());
+  let resp: HttpResponse = handle(req, m);
   match (test.assert_status(resp, 201)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -39,8 +40,8 @@ function test_a_json_body_decodes(): test.TestOutcome {
 }
 
 function test_the_media_type_must_be_json(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
-  let resp: HttpResponse = handle(http.request("POST", "/items").with_body("{\"name\":\"axe\",\"qty\":2,\"tags\":[]}"), m.as_platform());
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("POST", "/items").with_body("{\"name\":\"axe\",\"qty\":2,\"tags\":[]}"), m);
   match (test.assert_status(resp, 415)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -54,12 +55,12 @@ function test_the_media_type_must_be_json(): test.TestOutcome {
     Pass => {}
   }
   let typed: HttpRequest = http.request("POST", "/items").with_body("{\"name\":\"axe\",\"qty\":2,\"tags\":[]}").with_header("Content-Type", "application/vnd.shop+JSON; charset=utf-8");
-  return test.assert_status(handle(typed, m.as_platform()), 201);
+  return test.assert_status(handle(typed, m), 201);
 }
 
 function test_malformed_json_is_400(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
-  let resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"name\":"), m.as_platform());
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"name\":"), m);
   match (test.assert_status(resp, 400)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -76,9 +77,9 @@ function test_malformed_json_is_400(): test.TestOutcome {
 // A body whose bytes are not UTF-8 is refused before the JSON is looked
 // at, with the status `body_string` carries.
 function test_a_body_that_is_not_utf8_is_400(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   let raw: string = string_from_bytes_unchecked([123 as u8, 255 as u8, 125 as u8]);
-  let resp: HttpResponse = handle(http.request("POST", "/items").with_json(raw), m.as_platform());
+  let resp: HttpResponse = handle(http.request("POST", "/items").with_json(raw), m);
   match (test.assert_status(resp, 400)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -93,8 +94,8 @@ function test_a_body_that_is_not_utf8_is_400(): test.TestOutcome {
 }
 
 function test_the_wrong_shape_is_422(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
-  let resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"name\":\"axe\",\"qty\":\"two\",\"tags\":[]}"), m.as_platform());
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"name\":\"axe\",\"qty\":\"two\",\"tags\":[]}"), m);
   match (test.assert_status(resp, 422)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -105,7 +106,7 @@ function test_the_wrong_shape_is_422(): test.TestOutcome {
   if (!body.contains("field \\\"qty\\\": expected an integer, got a string")) {
     return test.fail("problem body: " + body);
   }
-  let missing: HttpResponse = handle(http.request("POST", "/items").with_json("{\"name\":\"axe\"}"), m.as_platform());
+  let missing: HttpResponse = handle(http.request("POST", "/items").with_json("{\"name\":\"axe\"}"), m);
   match (test.assert_status(missing, 422)) {
     Fail(msg) => {
       return test.fail(msg);

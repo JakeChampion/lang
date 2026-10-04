@@ -1589,7 +1589,8 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 	src := `
 import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/hello") {
         return http.ok("world");
     }
@@ -1730,7 +1731,8 @@ func TestWasmPreview2HttpHandlerResponseHeaders(t *testing.T) {
 	src := `
 import "std/headers";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let h: HeaderMap = headers.header_map_new();
     h = h.set("x-served-by", "fern");
     h = h.set("content-type", "text/plain");
@@ -1831,7 +1833,8 @@ func TestWasmPreview2HttpHandlerRequestHeaders(t *testing.T) {
 	src := `
 import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     match (req.headers.get("x-echo")) {
         Some(v) => { return http.ok(v); },
         None => { return http.text(400, "no x-echo"); },
@@ -1936,7 +1939,7 @@ func TestWasmPreview2HttpHandlerLoggingAdapterFree(t *testing.T) {
 import "std/http";
 import "std/platform";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log(f"LOGLINE {req.method} {req.path}");
     return http.ok("logged");
 }
@@ -2046,7 +2049,7 @@ func TestWasmPreview2HttpHandlerClockAdapterFree(t *testing.T) {
 import "std/http";
 import "std/platform";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let t: i64 = plat.now_ms();
     let m: i64 = plat.elapsed_ns();
     let r: i32 = plat.random_i32();
@@ -2119,7 +2122,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 import "std/http";
 import "std/platform";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     match (plat.env("X")) { Some(_) => {}, None => {} }
     return http.ok("e");
 }
@@ -2168,7 +2171,8 @@ func TestWasmPreview2HttpHandlerAdapterFree(t *testing.T) {
 	src := `
 import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/hello") {
         return http.ok("world");
     }
@@ -2303,7 +2307,7 @@ func TestWasmPreview2HttpHandlerPlatformCapabilities(t *testing.T) {
 import "std/http";
 import "std/serve";
 import "std/platform" as platform;
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log("handled " + req.path);
     let floor: i64 = 1600000000000;
     if (plat.now_ms() < floor) {

@@ -4411,17 +4411,23 @@ func TestCheckContextBackgroundBehavesLikeOldCheck(t *testing.T) {
 // serveStubDecls stands in for std/serve's entries and the helpers the
 // synthesised main of a handler program calls, under the names modload
 // gives them.
-const serveStubDecls = `struct serve__Config { backlog: i32 }
+// hostStubDecls stands in for std/platform's `Host` in a program checked
+// without the stdlib; a handler's platform parameter is typed by it directly.
+const hostStubDecls = `struct platform__Host { reactor: i32 }
+function platform__host(): platform__Host { return platform__Host { reactor: 0 }; }
+`
+
+const serveStubDecls = hostStubDecls + `struct serve__Config { backlog: i32 }
 function serve__config(): serve__Config { return serve__Config { backlog: 128 }; }
-function serve____init_platform(): Platform { return Platform { version: 3, mode: 0, sink: cell_new(""), handle: 0 }; }
-function serve__supervise(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function serve__supervise_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
-function serve__supervise_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
-function serve__supervise_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
-function serve__run(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function serve__run_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
-function serve__run_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
-function serve__run_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function serve____init_platform(): platform__Host { return platform__host(); }
+function serve__supervise(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse): i32 { return 0; }
+function serve__supervise_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function serve__supervise_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse)): i32 { return 0; }
+function serve__supervise_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function serve__run(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse): i32 { return 0; }
+function serve__run_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function serve__run_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse)): i32 { return 0; }
+function serve__run_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
 function serve____port_from_env(name: string, def: i32): i32 { return def; }
 `
 
@@ -4430,13 +4436,13 @@ function serve____port_from_env(name: string, def: i32): i32 { return def; }
 func TestSynthesisedHandleMainFollowsTargetProcesses(t *testing.T) {
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
 	cases := []struct{ name, src, target, entry string }{
-		{"stateless on wasi", serveStubDecls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }`, "wasm32-wasi", "serve__run"},
+		{"stateless on wasi", serveStubDecls + `function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }`, "wasm32-wasi", "serve__run"},
 		{"stateful hook on wasi", serveStubDecls + `function init(): i32 { return 7; }
-function handle(n: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (n, ` + response + `); }
+function handle(n: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) { return (n, ` + response + `); }
 function shutdown(reason: string, n: i32): void { print(reason); }`, "wasm32-wasi", "serve__run_with_shutdown"},
 		{"stateful on linux", serveStubDecls + `function init(): i32 { return 7; }
-function handle(n: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (n, ` + response + `); }`, "x86-64-linux", "serve__supervise_with"},
-		{"stateless hook on darwin", serveStubDecls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }
+function handle(n: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) { return (n, ` + response + `); }`, "x86-64-linux", "serve__supervise_with"},
+		{"stateless hook on darwin", serveStubDecls + `function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }
 function shutdown(reason: string): void { print(reason); }`, "arm64-darwin", "serve__supervise_shutdown"},
 	}
 	for _, tc := range cases {
@@ -4506,7 +4512,7 @@ func TestConfigGetFollowsTheTargetsEnvironment(t *testing.T) {
 // serve accept loop.
 func TestSynthesisedHandleMainRunsInitFirst(t *testing.T) {
 	prog, err := parser.Parse(serveStubDecls + `function init(): void { print("starting"); }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
     return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
 }`)
 	if err != nil {
@@ -4546,7 +4552,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // compat: programs without init() still get the original
 // single-stmt synth main (just the serve return).
 func TestSynthesisedHandleMainNoInitElidesPrepend(t *testing.T) {
-	prog, err := parser.Parse(serveStubDecls + `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+	prog, err := parser.Parse(serveStubDecls + `function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
     return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
 }`)
 	if err != nil {
@@ -4577,7 +4583,7 @@ func TestSynthesisedHandleMainNoInitElidesPrepend(t *testing.T) {
 // request. No `init();` statement of its own — the value IS the call.
 func TestSynthesisedHandleMainThreadsInitState(t *testing.T) {
 	prog, err := parser.Parse(serveStubDecls + `function init(): i32 { return 7; }
-function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
+function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) {
     return (hits + 1, HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } });
 }`)
 	if err != nil {
@@ -4630,8 +4636,8 @@ function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse
 func TestSynthesisedHandleMainTakesInitOptions(t *testing.T) {
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
 	t.Run("options beside the state", func(t *testing.T) {
-		prog, err := parser.Parse(serveStubDecls + `function init(plat: Platform): (serve__Config, i32) { return (serve__config(), 7); }
-function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (hits + 1, ` + response + `); }
+		prog, err := parser.Parse(serveStubDecls + `function init(plat: platform__Host): (serve__Config, i32) { return (serve__config(), 7); }
+function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) { return (hits + 1, ` + response + `); }
 function shutdown(reason: string, hits: i32): void { print(reason); }`)
 		if err != nil {
 			t.Fatalf("parse: %v", err)
@@ -4669,7 +4675,7 @@ function shutdown(reason: string, hits: i32): void { print(reason); }`)
 	})
 	t.Run("options alone", func(t *testing.T) {
 		prog, err := parser.Parse(serveStubDecls + `function init(): serve__Config { return serve__Config { backlog: 4 }; }
-function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }`)
+function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }`)
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -4695,9 +4701,10 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + res
 	// a state like any other.
 	t.Run("the config under an alias", func(t *testing.T) {
 		prog, _, err := modload.LoadSource(`import "std/http";
+import "std/platform";
 import "std/serve" as web;
-function init(plat: Platform): (web.Config, i32) { return (web.Config { ...web.config(), workers: 1 }, 7); }
-function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (hits + 1, http.ok("ok")); }`)
+function init(plat: platform.Platform): (web.Config, i32) { return (web.Config { ...web.config(), workers: 1 }, 7); }
+function handle(hits: i32, req: HttpRequest, plat: platform.Platform): (i32, HttpResponse) { return (hits + 1, http.ok("ok")); }`)
 		if err != nil {
 			t.Fatalf("load: %v", err)
 		}
@@ -4718,7 +4725,7 @@ function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse
 	t.Run("a Config of the program's own", func(t *testing.T) {
 		prog, err := parser.Parse(serveStubDecls + `struct Config { n: i32 }
 function init(): Config { return Config { n: 1 }; }
-function handle(c: Config, req: HttpRequest, plat: Platform): (Config, HttpResponse) { return (c, ` + response + `); }`)
+function handle(c: Config, req: HttpRequest, plat: platform__Host): (Config, HttpResponse) { return (c, ` + response + `); }`)
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -4733,11 +4740,11 @@ function handle(c: Config, req: HttpRequest, plat: Platform): (Config, HttpRespo
 	})
 	for name, src := range map[string]string{
 		"a parameter that is not the platform": `function init(n: i32): i32 { return n; }`,
-		"two parameters":                       `function init(plat: Platform, n: i32): i32 { return n; }`,
+		"two parameters":                       `function init(plat: platform__Host, n: i32): i32 { return n; }`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			prog, err := parser.Parse(serveStubDecls + src + `
-function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (hits + 1, ` + response + `); }`)
+function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) { return (hits + 1, ` + response + `); }`)
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
@@ -4756,15 +4763,15 @@ func TestSynthesisedHandleMainWiresShutdown(t *testing.T) {
 	const decls = serveStubDecls
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
 	cases := []struct{ name, src, entry, message string }{
-		{"stateless", decls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }
+		{"stateless", decls + `function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }
 function shutdown(reason: string): void { print(reason); }`, "serve__supervise_shutdown", ""},
 		{"stateful", decls + `function init(): i32 { return 7; }
-function handle(n: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (n, ` + response + `); }
+function handle(n: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) { return (n, ` + response + `); }
 function shutdown(reason: string, n: i32): void { print(reason); }`, "serve__supervise_with_shutdown", ""},
-		{"state hook without init", decls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }
+		{"state hook without init", decls + `function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }
 function shutdown(reason: string, n: i32): void { print(reason); }`, "", "`shutdown` takes a state parameter, but no `init` produces the state to hand it"},
 		{"stateless hook drops the state", decls + `function init(): i32 { return 7; }
-function handle(n: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (n, ` + response + `); }
+function handle(n: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) { return (n, ` + response + `); }
 function shutdown(reason: string): void { print(reason); }`, "", "`shutdown` takes no state parameter, but the handler threads a state it would drop"},
 	}
 	for _, tc := range cases {
@@ -4816,29 +4823,29 @@ function respond_with(pair: (i32, Result[HttpResponse, string])): (i32, HttpResp
 	// `trait Error` pin the two spellings that must not match it.
 	const dynDecls = serveStubDecls + `struct Oops { why: string }
 impl err.Error for Oops { function message(self: Self): string { return self.why; } }
-function respond_error(r: Result[HttpResponse, dyn err.Error], plat: Platform): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
-function respond_error_with(pair: (i32, Result[HttpResponse, dyn err.Error]), plat: Platform): (i32, HttpResponse) { return (pair.0, respond_error(pair.1, plat)); }
+function respond_error(r: Result[HttpResponse, dyn err.Error], plat: platform__Host): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
+function respond_error_with(pair: (i32, Result[HttpResponse, dyn err.Error]), plat: platform__Host): (i32, HttpResponse) { return (pair.0, respond_error(pair.1, plat)); }
 `
 	const ownErrorDecls = serveStubDecls + `trait Error { function message(self: Self): string; }
 struct Oops { why: string }
 impl Error for Oops { function message(self: Self): string { return self.why; } }
 function respond(r: Result[HttpResponse, dyn Error]): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
-function respond_error(r: Result[HttpResponse, dyn Error], plat: Platform): HttpResponse { return HttpResponse { status: 418, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
+function respond_error(r: Result[HttpResponse, dyn Error], plat: platform__Host): HttpResponse { return HttpResponse { status: 418, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
 `
 	cases := []struct {
 		name, src, adapter string
 		params, args       int
 		load               bool
 	}{
-		{"stateless", decls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, string] { return Err("no"); }`, "respond", 2, 1, false},
+		{"stateless", decls + `function handle(req: HttpRequest, plat: platform__Host): Result[HttpResponse, string] { return Err("no"); }`, "respond", 2, 1, false},
 		{"stateful", decls + `function init(): i32 { return 0; }
-function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResponse, string]) { return (n + 1, Err("no")); }`, "respond_with", 3, 1, false},
+function handle(n: i32, req: HttpRequest, plat: platform__Host): (i32, Result[HttpResponse, string]) { return (n + 1, Err("no")); }`, "respond_with", 3, 1, false},
 		{"dyn-error", `import "std/error" as err;
-` + dynDecls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, dyn err.Error] { return Err(Oops { why: "no" }); }`, "respond_error", 2, 2, true},
+` + dynDecls + `function handle(req: HttpRequest, plat: platform__Host): Result[HttpResponse, dyn err.Error] { return Err(Oops { why: "no" }); }`, "respond_error", 2, 2, true},
 		{"dyn-error-stateful", `import "std/error" as err;
 ` + dynDecls + `function init(): i32 { return 0; }
-function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResponse, dyn err.Error]) { return (n + 1, Err(Oops { why: "no" })); }`, "respond_error_with", 3, 2, true},
-		{"a program's own Error trait is not std/error's", ownErrorDecls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, dyn Error] { return Err(Oops { why: "no" }); }`, "respond", 2, 1, false},
+function handle(n: i32, req: HttpRequest, plat: platform__Host): (i32, Result[HttpResponse, dyn err.Error]) { return (n + 1, Err(Oops { why: "no" })); }`, "respond_error_with", 3, 2, true},
+		{"a program's own Error trait is not std/error's", ownErrorDecls + `function handle(req: HttpRequest, plat: platform__Host): Result[HttpResponse, dyn Error] { return Err(Oops { why: "no" }); }`, "respond", 2, 1, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -4897,15 +4904,15 @@ function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResp
 func TestHandlerInitStateMismatchIsRejected(t *testing.T) {
 	const decls = serveStubDecls
 	cases := map[string]string{
-		"handler takes state nobody produces": decls + `function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
+		"handler takes state nobody produces": decls + `function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) {
     return (hits + 1, HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } });
 }`,
 		"void init produces no state": decls + `function init(): void { print("starting"); }
-function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
+function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) {
     return (hits + 1, HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } });
 }`,
 		"init produces state nobody takes": decls + `function init(): i32 { return 7; }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
     return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
 }`,
 	}
@@ -4926,8 +4933,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // some other way there is that program's business, so the rule that
 // governs the synthesised main does not reach it.
 func TestHandlerInitStateMismatchAllowedUnderUserMain(t *testing.T) {
-	err := checkSource(t, `function init(): i32 { return 7; }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+	err := checkSource(t, hostStubDecls+`function init(): i32 { return 7; }
+function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
     return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
 }
 function main(): i32 { return init(); }`)
@@ -4936,13 +4943,14 @@ function main(): i32 { return init(); }`)
 	}
 }
 
-// The Platform bag's constructor is compiler-owned and synthesised for any
-// program with a handler, whether or not that program also has a `main`.
-// The wasi-http entry wrapper calls it in place of building the struct out
-// of raw memory, so its absence is a wrapper that has to know the layout.
-func TestPlatformConstructorIsSynthesisedForHandlers(t *testing.T) {
+// The wasi-http entry is compiler-owned: `__fern_wasi_handle(req)`, which
+// hands `handle` the host platform, is synthesised for any program with a
+// two-parameter handler, whether or not that program also has a `main`.
+// The wasi-http wrapper is hand-written wasm, so it calls that instead of
+// instantiating a handler generic over its platform itself.
+func TestWasiHandleIsSynthesisedForHandlers(t *testing.T) {
 	const decls = serveStubDecls
-	const handler = `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+	const handler = `function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
     return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
 }`
 	cases := map[string]struct {
@@ -4962,31 +4970,31 @@ func TestPlatformConstructorIsSynthesisedForHandlers(t *testing.T) {
 			if _, err := Check(prog); err != nil {
 				t.Fatalf("check: %v", err)
 			}
-			ctor := findDecl(prog, "__fern_platform_new")
-			if tc.want && ctor == nil {
-				t.Fatalf("no __fern_platform_new synthesised; got %v", funcNamesOf(prog))
+			entry := findDecl(prog, WasiHandleName)
+			if tc.want && entry == nil {
+				t.Fatalf("no %s synthesised; got %v", WasiHandleName, funcNamesOf(prog))
 			}
-			if !tc.want && ctor != nil {
-				t.Fatal("__fern_platform_new synthesised for a program with no handler")
+			if !tc.want && entry != nil {
+				t.Fatalf("%s synthesised for a program with no handler", WasiHandleName)
 			}
-			if ctor == nil {
+			if entry == nil {
 				return
 			}
-			if st, ok := ctor.ReturnType.(ast.StructType); !ok || st.Name != "Platform" {
-				t.Errorf("constructor returns %v, want Platform", ctor.ReturnType)
+			if st, ok := entry.ReturnType.(ast.StructType); !ok || st.Name != "HttpResponse" {
+				t.Errorf("entry returns %v, want HttpResponse", entry.ReturnType)
 			}
-			if len(ctor.Params) != 0 {
-				t.Errorf("constructor takes %d params, want 0", len(ctor.Params))
+			if len(entry.Params) != 1 {
+				t.Errorf("entry takes %d params, want the request alone", len(entry.Params))
 			}
 		})
 	}
 }
 
-// A program that declares the constructor itself keeps its own: the
-// synthesis fills a gap, it does not overwrite a definition.
-func TestPlatformConstructorNotSynthesisedOverUserDefinition(t *testing.T) {
-	prog, err := parser.Parse(serveStubDecls + `function __fern_platform_new(): Platform { return Platform { version: 7, mode: 0, sink: cell_new(""), handle: 0 }; }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+// A program that declares the entry itself keeps its own: the synthesis
+// fills a gap, it does not overwrite a definition.
+func TestWasiHandleNotSynthesisedOverUserDefinition(t *testing.T) {
+	prog, err := parser.Parse(serveStubDecls + `function __fern_wasi_handle(req: HttpRequest): HttpResponse { return handle(req, platform__Host { reactor: 7 }); }
+function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
     return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
 }`)
 	if err != nil {
@@ -4997,12 +5005,12 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	}
 	n := 0
 	for _, fn := range prog.Funcs {
-		if fn.Name == "__fern_platform_new" {
+		if fn.Name == WasiHandleName {
 			n++
 		}
 	}
 	if n != 1 {
-		t.Errorf("%d __fern_platform_new declarations, want 1 (the user's)", n)
+		t.Errorf("%d %s declarations, want 1 (the user's)", n, WasiHandleName)
 	}
 }
 
@@ -5020,8 +5028,8 @@ func funcNamesOf(prog *ast.Program) []string {
 // entirely. User's main has the freedom to call init() (or
 // not) wherever they choose.
 func TestUserDefinedMainSkipsSynthEvenWithInit(t *testing.T) {
-	prog, err := parser.Parse(`function init(): void { print("starting"); }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+	prog, err := parser.Parse(hostStubDecls + `function init(): void { print("starting"); }
+function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
     return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
 }
 function main(): i32 { return 0; }`)

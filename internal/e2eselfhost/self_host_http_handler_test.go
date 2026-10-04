@@ -18,8 +18,9 @@ import (
 // synthesis; native's synthesiseHandleMain is checker-side and native-only.)
 const httpHandlerSrc = `import "std/http";
 import "std/serve";
+import "std/platform";
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("method=" + req.method + " path=" + req.path);
 }
 
@@ -237,8 +238,9 @@ func checkSelfHostHttpHandlerServes(t *testing.T, entry func(port int) string) {
 
 	src := fmt.Sprintf(`import "std/http";
 import "std/serve";
+import "std/platform";
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("method=" + req.method + " path=" + req.path);
 }
 

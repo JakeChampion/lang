@@ -488,6 +488,7 @@ func TestBuildPrintMainResult(t *testing.T) {
 	// the auto-prelude gone the program must import it explicitly.
 	src := `
 import "core/int";
+import "std/platform";
 function main(): i32 { return 42; }`
 	prog, info := loadAndCheckModule(t, src)
 	bin, err := BuildWithOptions(prog, info, BuildOptions{
@@ -704,7 +705,7 @@ function main(): i32 {
 
 // TestBuildHttpHandlerCompiles — pin the compile-time wiring of
 // the wasi:http/incoming-handler wrapper. A program that defines
-// `function handle(req: HttpRequest, plat: Platform):
+// `function handle(req: HttpRequest, plat: platform.Platform):
 // HttpResponse` must reach the end of Build with HttpHandler=true
 // without surfacing "unsupported op" / "unknown callee" — i.e.
 // the wasi:http import specs (wasi.go), the __http_entry helper
@@ -723,8 +724,9 @@ func TestBuildHttpHandlerRefusesStatefulHandler(t *testing.T) {
 	src := `
 import "std/http";
 import "std/serve";
+import "std/platform";
 function init(): i32 { return 0; }
-function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
+function handle(hits: i32, req: HttpRequest, plat: platform.Platform): (i32, HttpResponse) {
     return (hits + 1, http.ok("ok"));
 }
 `
@@ -745,7 +747,8 @@ func TestBuildHttpHandlerCompiles(t *testing.T) {
 	src := `
 import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/hello") {
         return http.ok("world");
     }

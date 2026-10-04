@@ -482,7 +482,7 @@ pub function resolve_imports(mod: parser.Module, dir: string, root: string): par
 //
 //     function main(): i32 { return serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle); }
 //
-// or, for `init(plat: Platform): (serve.Config, S)` beside a handler
+// or, for `init(plat: platform.Platform): (serve.Config, S)` beside a handler
 // threading `S` and a `shutdown(reason, state)` hook,
 //
 //     let (__fern_opts, __fern_state) = init(serve.__init_platform());
@@ -523,7 +523,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
       return entry;
     }
     if (entry.funcs[ii].params.len() == 1) {
-      if (entry.funcs[ii].params[0].type_name != "Platform") {
+      if (!parser.is_platform_param(entry.funcs[ii], 0, parser.std_qualifier(entry, "platform"))) {
         return entry;
       }
       let plat: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "__init_platform"), args: [], line: 0, col: 0, type_args: [], ty: "" };
@@ -658,7 +658,10 @@ pub function with_result_handler(entry: parser.Module, error_pfx: string, http_p
     adapter = mangled_name(http_pfx, adapter);
   }
   let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: adapter, line: 0, col: 0, ty: "" }, args: adapter_args, line: 0, col: 0, type_args: [], ty: "" };
-  let wrapper: parser.FuncDecl = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], type_params: [], all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
+  // The wrapper keeps the handler's type parameters and bounds: a handler
+  // generic over its platform is instantiated where the serve loop hands it
+  // the host platform, and the wrapper stands in its place there.
+  let wrapper: parser.FuncDecl = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
   let funcs: parser.FuncDecl[] = [];
   let i: i32 = 0;
   while (i < entry.funcs.len()) {
