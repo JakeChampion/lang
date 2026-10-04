@@ -106,7 +106,8 @@ function arm64_rec_gpr(tok: string): i32 {
 }
 
 // arm64_rec_mov is `mov dst, src` between two registers of one width, or
-// with sp on either side the `add #0` the text path encodes it as.
+// with sp on either side and an x register on the other the 64-bit `add #0`
+// the text path encodes it as.
 pub function arm64_rec_mov(dst: string, src: string): i64 {
   if (dst == "sp" || src == "sp") {
     let d: i32 = arm64_rec_base(dst);
@@ -310,17 +311,17 @@ function arm64_rec_base(base: string): i32 {
   return arm64_rec_gpr(base);
 }
 
-// arm64_rec_pair is `stp|ldp a, b, [base, #off]!` (mode 3, pre-index),
-// `[base], #off` (mode 1, post-index) or `[base, #off]` (mode 2) on x
-// registers, as arm64_gas_emit_pair encodes it.
+// arm64_rec_pair is `stp|ldp a, b, [base, #off]!` (mode 3, pre-index) or
+// `[base], #off` (mode 1, post-index) on x registers, as arm64_gas_emit_pair
+// encodes them; any other mode is refused.
 pub function arm64_rec_pair(load: boolean, mode: i32, a: string, b: string, base: string, off: i32): i64 {
   let ra: i32 = arm64_rec_gpr(a);
   let rb: i32 = arm64_rec_gpr(b);
   let rn: i32 = arm64_rec_base(base);
-  if (ra < 0 || rb < 0 || rn < 0 || a[0] != b'x' || b[0] != b'x' || off % 8 != 0 || off < 0 - 512 || off > 504) {
+  if (mode != 1 && mode != 3 || ra < 0 || rb < 0 || rn < 0 || a[0] != b'x' || b[0] != b'x' || off % 8 != 0 || off < 0 - 512 || off > 504) {
     return 0 - 1;
   }
-  let w: i64 = 0xa8000000 | (mode & 3) as i64 << 23;
+  let w: i64 = 0xa8000000 | mode as i64 << 23;
   if (load) {
     w = w | 0x00400000;
   }
@@ -374,10 +375,10 @@ pub function arm64_rec_add_lo12(d: string, n: string): i64 {
 }
 
 // arm64_named_kind sorts a named record by its word's top byte: 0 for a
-// branch, 1 for adrp (a page fixup), 2 for the unshifted 64-bit add
-// immediate that carries :lo12:.
+// branch, 1 for adrp with the zero page delta a record carries, 2 for the
+// unshifted 64-bit add immediate that carries :lo12:.
 function arm64_named_kind(top: u8): i32 {
-  if ((top & 0x9f) == 0x90) {
+  if (top == 0x90) {
     return 1;
   }
   if (top == 0x91) {

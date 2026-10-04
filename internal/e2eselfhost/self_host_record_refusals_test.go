@@ -71,6 +71,12 @@ function main(): i32 {
         fi = fi + 1;
     }
     print("arm64_named_fixups_text " + util.i32_to_string(pt.pf_sites.len()));
+    // arm64: a pair mode the text fallback cannot spell, and a w register
+    // beside sp, are refused rather than encoded.
+    print("arm64_pair_mode2 " + util.i64_to_string(arm64_native.arm64_rec_pair(false, 2, "x19", "x20", "sp", 16)));
+    print("arm64_pair_mode3 " + util.i64_to_string(arm64_native.arm64_rec_pair(false, 3, "x19", "x20", "sp", 0 - 16)));
+    print("arm64_mov_w_sp " + util.i64_to_string(arm64_native.arm64_rec_mov("w0", "sp")));
+    print("arm64_mov_sp_w " + util.i64_to_string(arm64_native.arm64_rec_mov("sp", "w0")));
     return 0;
 }
 `
@@ -105,6 +111,10 @@ func TestSelfHostRecordRefusals(t *testing.T) {
 		"\narm64_named_code_diff -1\n",
 		"\narm64_named_fixups 2\n",
 		"\narm64_named_fixups_text 2\n",
+		"\narm64_pair_mode2 -1\n",
+		"\narm64_pair_mode3 2847888371\n", // stp x19, x20, [sp, #-16]! is 0xa9bf53f3
+		"\narm64_mov_w_sp -1\n",
+		"\narm64_mov_sp_w -1\n",
 	} {
 		if !bytes.Contains(append([]byte("\n"), out...), []byte(want)) {
 			t.Errorf("missing %q in driver output:\n%s", want[1:len(want)-1], out)
