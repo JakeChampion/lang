@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -27,7 +26,7 @@ const arm64ImageSpan = 1 << 27
 // only as a host binary, and the aarch64 shards do not build it at all.
 // Nothing needs an aarch64 toolchain to catch it — the assembler and
 // linker are pure Go — so this test runs on every shard, and only the
-// final execution check waits for qemu.
+// final execution check waits for the aarch64 cross toolchain and qemu.
 //
 // It is a heavy build (a ~130 MB image, several GB of RSS), so it takes a
 // reservation against the harness RAM budget the same way a cold driver
@@ -80,10 +79,10 @@ func TestSelfHostArm64ModloadNativeBuild(t *testing.T) {
 
 	// An image that links proves nothing about a veneer: the branched-to
 	// code has to actually run. Compile a program with the arm64-hosted
-	// driver and check the asm it emits. Only this half needs an
-	// emulator — the build above is the part that must run everywhere.
+	// driver and check the asm it emits. Only this half needs the aarch64
+	// toolchain — the build above is the part that must run everywhere.
 	t.Run("executes", func(t *testing.T) {
-		qemu := qemuAarch64(t)
+		gcc, qemu := arm64Tooling(t)
 		prog := filepath.Join(dir, "prog.fern")
 		if err := os.WriteFile(prog, []byte("function main(): i32 { return 42; }\n"), 0o644); err != nil {
 			t.Fatalf("write program: %v", err)
@@ -98,33 +97,13 @@ func TestSelfHostArm64ModloadNativeBuild(t *testing.T) {
 		// Assembled and run, not just inspected: a veneer that lands
 		// anywhere but its target still produces plausible-looking asm
 		// from a compiler that crashed or went wrong mid-emit.
-		compiled := filepath.Join(dir, "prog.bin")
-		if err := nativeLinkArm64(string(asm), compiled); err != nil {
-			t.Fatalf("linking the orchestrator's output: %v", err)
-		}
+		compiled := buildBinArm64(t, gcc, dir, "prog", string(asm))
 		run := runArm64Bin(qemu, compiled)
 		_ = run.Run()
 		if got := run.ProcessState.ExitCode(); got != 42 {
 			t.Fatalf("program built by the arm64 orchestrator exited %d, want 42", got)
 		}
 	})
-}
-
-// qemuAarch64 returns the emulator that runs arm64 binaries, or "" on a
-// host that runs them directly. Unlike arm64Tooling it does not demand a
-// cross gcc: the pure-Go assembler and linker need no toolchain.
-func qemuAarch64(t *testing.T) string {
-	t.Helper()
-	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
-		return ""
-	}
-	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
-		if p, err := exec.LookPath(c); err == nil {
-			return p
-		}
-	}
-	t.Skip("no qemu-aarch64 to run arm64 binaries")
-	return ""
 }
 
 // arm64ImageBuildMB is this build's estimated peak RSS. The emit of a
