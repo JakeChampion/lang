@@ -214,6 +214,8 @@ general_reuse_struct                                 0
 general_reuse_tuple                                  0
 generic_array_method_chain                           0
 generic_array_methods                                0
+generic_assoc_result_self                            0
+generic_assoc_through_type_param                     0
 generic_associated_fn                                0
 generic_box                                          0
 generic_call_binds_through_closure_array_param       0
@@ -336,6 +338,7 @@ match_struct_pattern                                 0
 match_wildcard                                       0
 math_range                                           0
 method_type_arg_names_the_method                     0
+method_written_type_arg_result                       0
 mock_platform_log                                    0
 module_scoped_variant                                0
 multi_file                                           0

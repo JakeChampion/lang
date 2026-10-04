@@ -1319,6 +1319,12 @@ func substituteAssocReceiver(c *ast.Call, sub map[string]ast.Type) {
 	if !ok {
 		return
 	}
+	// An applied generic struct is cloned per instantiation, so the call
+	// names the clone (`Box[string]` -> `Box__string`).
+	if st, ok := ct.(ast.StructType); ok && len(st.Args) > 0 {
+		fa.Target = &ast.Ident{P: tid.P, Name: mangle(st.Name, st.Args)}
+		return
+	}
 	if name, ok := concreteTypeNameOf(ct); ok {
 		fa.Target = &ast.Ident{P: tid.P, Name: name}
 	}

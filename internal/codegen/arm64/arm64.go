@@ -13432,8 +13432,9 @@ func (g *generator) emitReadDirAllRuntime() {
 }
 
 // emitReadDirLike is the body both share. Pipeline:
-// openat(O_RDONLY|O_DIRECTORY) → getdents64-drain into a 1 MiB heap
-// buffer → close → pass 1 counts entries → array alloc (canonical
+// openat(O_RDONLY|O_DIRECTORY) → getdents64-drain into a heap buffer
+// that starts at 1 MiB and doubles whenever less than a record's worth
+// is left → close → pass 1 counts entries → array alloc (canonical
 // two-word layout: 16-byte header, cap@data-12, rc=1@data-8,
 // len@data-4, 16-byte (data, len) elements) → pass 2 fills with fresh
 // rc=1 strings. openat failure → Err(IoError). Ok = 16-byte box
@@ -13467,7 +13468,8 @@ func (g *generator) emitReadDirLike(sym string, lb string, skipDots bool) {
 	g.emitFreeNulTermPath2W("x21", "x22")
 	g.emit("tbnz x0, #63, %s", L("err"))
 	g.emit("mov x23, x0") // fd
-	// 1 MiB dirent buffer (mirrors the self-host helper's cap).
+	// 1 MiB initial dirent buffer; x25 holds its capacity until the
+	// drain ends.
 	g.emit("mov x0, #1")
 	g.emit("lsl x0, x0, #20")
 	g.emit("bl __fern_alloc")
@@ -13479,11 +13481,12 @@ func (g *generator) emitReadDirLike(sym string, lb string, skipDots bool) {
 		g.emit("mov x24, x0")
 	}
 	g.emit("mov x22, #0") // total (path byte len dead)
+	g.emit("mov x25, #1")
+	g.emit("lsl x25, x25, #20")
 	g.label(L("g"))
-	g.emit("mov x2, #1")
-	g.emit("lsl x2, x2, #20")
-	g.emit("sub x2, x2, x22")
-	g.emit("cbz x2, %s", L("gd"))
+	g.emit("sub x2, x25, x22")
+	g.emit("cmp x2, #2048") // room for the largest record, else grow
+	g.emit("b.lt %s", L("grow"))
 	g.emit("mov x0, x23")
 	g.emit("add x1, x21, x22")
 	if g.darwin {
@@ -13494,7 +13497,28 @@ func (g *generator) emitReadDirLike(sym string, lb string, skipDots bool) {
 	g.emit("b.le %s", L("gd"))
 	g.emit("add x22, x22, x0")
 	g.emit("b %s", L("g"))
+	// Double the buffer: allocate 2*cap, copy the drained bytes, free the old.
+	g.label(L("grow"))
+	g.emit("lsl x0, x25, #1")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x26, x0")
+	g.emit("mov x10, #0")
+	g.label(L("gc"))
+	g.emit("cmp x10, x22")
+	g.emit("b.ge %s", L("gcd"))
+	g.emit("ldrb w11, [x21, x10]")
+	g.emit("strb w11, [x26, x10]")
+	g.emit("add x10, x10, #1")
+	g.emit("b %s", L("gc"))
+	g.label(L("gcd"))
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x25")
+	g.emit("bl __fern_free")
+	g.emit("mov x21, x26")
+	g.emit("lsl x25, x25, #1")
+	g.emit("b %s", L("g"))
 	g.label(L("gd"))
+	g.emit("str x25, [x29, #80]") // capacity, for the free after pass 2
 	g.emit("mov x0, x23")
 	g.syscall("close")
 	if g.darwin {
@@ -13594,7 +13618,9 @@ func (g *generator) emitReadDirLike(sym string, lb string, skipDots bool) {
 	g.emit("add x26, x26, x11")
 	g.emit("b %s", L("p2"))
 	g.label(L("p2d"))
-	g.emitFreeScratch2W("x21", 1<<20) // the dirent buffer
+	g.emit("mov x0, x21") // the dirent buffer
+	g.emit("ldr x1, [x29, #80]")
+	g.emit("bl __fern_free")
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]") // tag = 0 (Ok)

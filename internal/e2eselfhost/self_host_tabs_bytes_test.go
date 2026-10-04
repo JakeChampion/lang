@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -112,6 +113,8 @@ func TestSelfHostTabsBytes(t *testing.T) {
 								wantExit = 1
 							}
 							ref := exec.Command(oracle, args...)
+							var wantDiagnostic bytes.Buffer
+							ref.Stderr = &wantDiagnostic
 							ref.Dir = dir
 							ref.Env = append(os.Environ(), "LC_ALL=C")
 							ref.Stdin = strings.NewReader(tc.input)
@@ -134,6 +137,16 @@ func TestSelfHostTabsBytes(t *testing.T) {
 								t.Fatalf("stdout differs: got %d bytes, want %d", out.Len(), len(want))
 							}
 							assertBalancedCensus(t, diagnostic.String())
+							census := regexp.MustCompile(`(?m)^leakcheck: allocs=[0-9]+ frees=[0-9]+ live_bytes=[0-9]+\r?\n?`)
+							if len(census.FindAllStringIndex(diagnostic.String(), -1)) != 1 {
+								t.Fatalf("want one allocation census, got %q", diagnostic.String())
+							}
+							prefix := regexp.MustCompile(`(?m)^[^:\n]+: `)
+							gotError := prefix.ReplaceAllString(census.ReplaceAllString(diagnostic.String(), ""), "utility: ")
+							wantError := prefix.ReplaceAllString(wantDiagnostic.String(), "utility: ")
+							if gotError != wantError {
+								t.Fatalf("diagnostic differs: got %q, want %q", gotError, wantError)
+							}
 						})
 					}
 				})

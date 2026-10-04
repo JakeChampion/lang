@@ -11,38 +11,33 @@ import (
 	"testing"
 )
 
-// A diagnostic from an imported module names its file, as native's does
-// (#9523). Without one, `1:27` in a sibling module or a stdlib module read as
-// a position in the file being compiled. The entry's own diagnostics keep the
-// bare `line:col`.
+// A diagnostic names its file, as native's does: the entry's the path the
+// command line gave (#11407), an imported module's its own (#9523). Without
+// one, `1:27` in a sibling module or a stdlib module read as a position in
+// the file being compiled.
 
 var diagPosRE = regexp.MustCompile(`^(?:(\S+):)?(\d+):(\d+): error\[(E\d{3})\]`)
 
-// diagPositions reduces a `-check` transcript to `file:line:col CODE` lines,
-// with the entry's path dropped the way the self-host prints it.
-func diagPositions(out, entry string) []string {
+// diagPositions reduces a `-check` transcript to `file:line:col CODE` lines.
+func diagPositions(out string) []string {
 	var got []string
 	for _, line := range strings.Split(out, "\n") {
 		m := diagPosRE.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
-		file := m[1]
-		if file == entry {
-			file = ""
-		}
-		got = append(got, file+":"+m[2]+":"+m[3]+" "+m[4])
+		got = append(got, m[1]+":"+m[2]+":"+m[3]+" "+m[4])
 	}
 	sort.Strings(got)
 	return got
 }
 
 // diagFullLines is diagPositions keeping each diagnostic's whole line.
-func diagFullLines(out, entry string) []string {
+func diagFullLines(out string) []string {
 	var got []string
 	for _, line := range strings.Split(out, "\n") {
 		if diagPosRE.MatchString(line) {
-			got = append(got, strings.TrimPrefix(line, entry+":"))
+			got = append(got, line)
 		}
 	}
 	sort.Strings(got)
@@ -125,10 +120,10 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 			cmd := runX86_64Bin(runner, driver)
 			cmd.Args = append(cmd.Args, "-check", entry, root)
 			sout, _ := cmd.CombinedOutput()
-			want := diagPositions(string(nout), entry)
-			got := diagPositions(string(sout), entry)
+			want := diagPositions(string(nout))
+			got := diagPositions(string(sout))
 			if tc.exact {
-				want, got = diagFullLines(string(nout), entry), diagFullLines(string(sout), entry)
+				want, got = diagFullLines(string(nout)), diagFullLines(string(sout))
 			}
 			if len(want) == 0 {
 				t.Fatalf("native reported nothing — the probe is not exercising the path:\n%s", nout)
@@ -161,7 +156,7 @@ func TestSelfHostStdlibDiagnosticNamesItsFile(t *testing.T) {
 		cmd := runX86_64Bin(runner, driver)
 		cmd.Args = append(cmd.Args, "-check", entry, r)
 		out, _ := cmd.CombinedOutput()
-		got := diagPositions(string(out), entry)
+		got := diagPositions(string(out))
 		if want := "stdlib://std/bad.fern:2:5 E002"; strings.Join(got, "\n") != want {
 			t.Errorf("root %q: got %q, want %q\n%s", r, got, want, out)
 		}

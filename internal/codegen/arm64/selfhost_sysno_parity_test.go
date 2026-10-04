@@ -28,9 +28,10 @@ import (
 const selfHostSysnoSrc = "../../../examples/self_host/asmcore.fern"
 
 // handAsmOnly names the rows deliberately absent from `sysno`: the self-host
-// arm64 backend writes these two as hand-assembly (the process exit path and
-// the heap's initial mapping) rather than through a Fern runtime body, so
-// they never reach `sysno` at all.
+// arm64 backend writes these as hand-assembly (the exit op's exit_group, the
+// abort reporter's exit and the heap's initial mapping) rather than through a
+// Fern runtime body, so they never reach `sysno` at all. `exit` stays a row:
+// the subprocess child exits through it when every execve fails.
 var handAsmOnly = map[string]bool{"exit_group": true, "mmap": true}
 
 // selfHostSysnoTables returns the rows of `sysno`'s arm64-darwin and

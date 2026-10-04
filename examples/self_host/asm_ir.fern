@@ -1287,17 +1287,13 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
   s = s.syscall(1);
-  s = san_report_exit(s);
-  if (asmcore.backtrace_on()) {
-    s = emit_bt_exit(s);
-  }
-  return s;
+  return san_report_exit(s);
 }
 
 // san_report_exit ends a sanitizer report: exit 124, through the backtrace
-// walk unless FERN_BACKTRACE=0.
+// walk when the build keeps it.
 function san_report_exit(s: asmcore.EmitState): asmcore.EmitState {
-  if (asmcore.backtrace_on()) {
+  if (s.backtrace) {
     return s.write("    movq $124, %r15\n    jmp __fern_bt_exit\n");
   }
   return s.write("    movq $124, %rdi\n    movq $60, %rax\n").syscall(60);
@@ -1306,19 +1302,19 @@ function san_report_exit(s: asmcore.EmitState): asmcore.EmitState {
 // emit_bt_exit emits __fern_bt_exit: "backtrace:" and then each return
 // address up the frame-pointer chain as "  0x<16 hex>", the native backends'
 // format, and exit with the status in %r15. Bounded to 64 frames, and a frame
-// pointer that is not above the stack pointer, not 8-aligned, or not climbing
-// ends the walk rather than faulting the report, as does a return address in
-// the low 64 KiB, which is _start's frame reading the initial stack's argc. Emitted with the quarantine's
-// report, which every sanitizer build carries.
+// pointer below the stack pointer, not 8-aligned, or not climbing ends the
+// walk rather than faulting the report, as does a return address in the low
+// 64 KiB, which is _start's frame reading the initial stack's argc. Emitted
+// with __fern_report.
 function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .rodata\n");
-  s = s.write(".Lsan_bt:\n    .ascii \"backtrace:\\n\"\n");
+  s = s.write(".Lmsg_bt:\n    .ascii \"backtrace:\\n\"\n");
   s = s.write("    .section .text\n");
   s = s.write("    .globl __fern_bt_exit\n");
   s = s.write("__fern_bt_exit:\n");
   s = s.write("    andq $-16, %rsp\n");
   s = s.write("    movq %rsp, %r13\n");
-  s = s.write("    leaq .Lsan_bt(%rip), %rsi\n");
+  s = s.write("    leaq .Lmsg_bt(%rip), %rsi\n");
   s = s.write("    movq $11, %rdx\n");
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
@@ -1329,7 +1325,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    testl %r14d, %r14d\n");
   s = s.write("    jz .Lbt_done\n");
   s = s.write("    cmpq %r13, %rbx\n");
-  s = s.write("    jbe .Lbt_done\n");
+  s = s.write("    jb .Lbt_done\n");
   s = s.write("    testq $7, %rbx\n");
   s = s.write("    jnz .Lbt_done\n");
   s = s.write("    movq 8(%rbx), %rsi\n");
@@ -2788,6 +2784,47 @@ function emit_runtime_memcpy(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    ret\n");
 }
 
+// oob_leaf_trap is the array-bounds trap a frameless leaf with n saved
+// registers branches to.
+function oob_leaf_trap(n: i32): string {
+  return "__fern_oob_abort.l" + util.i32_to_string(n);
+}
+
+// abort_trap emits the trap `label`: it points %rsi / %rdx at the cause line
+// `text` (laid down in .rodata under `msg`) and tail-jumps to __fern_report
+// with the exit status in %rdi.
+function abort_trap(s: asmcore.EmitState, label: string, msg: string, text: string, status: i32): asmcore.EmitState {
+  s = s.write("    .section .rodata\n");
+  s = s.write(msg + ":\n    .ascii \"" + text + "\\n\"\n");
+  s = s.write("    .section .text\n");
+  s = s.write(label + ":\n");
+  s = ssa_lea_sym(s, msg, "%rsi");
+  s = s.write("    movq $" + util.i32_to_string(text.len() + 1) + ", %rdx\n");
+  s = s.write("    movq $" + util.i32_to_string(status) + ", %rdi\n");
+  s = s.write("    jmp __fern_report\n");
+  return s;
+}
+
+// emit_report emits __fern_report(%rsi = cause line, %rdx = its length,
+// %rdi = exit status): write(2) the line, then exit with the status — through
+// __fern_bt_exit's frame-pointer walk when the build keeps the backtrace,
+// which is also where the sanitizer's reports end. The status rides %r15,
+// which the walk reads; nothing here returns.
+function emit_report(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_report:\n");
+  s = s.write("    movq %rdi, %r15\n");
+  s = s.write("    movq $2, %rdi\n");
+  s = s.write("    movq $1, %rax\n");
+  s = s.syscall(1);
+  if (s.backtrace) {
+    s = s.write("    jmp __fern_bt_exit\n");
+    return emit_bt_exit(s);
+  }
+  s = s.write("    movq %r15, %rdi\n");
+  s = s.write("    movq $60, %rax\n");
+  return s.syscall(60);
+}
+
 function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // .bss: heap bump pointer + arena end, the over-release detector, and the
   // size-classed freelist (65536 classes * 8 bytes). The heap arena itself is
@@ -3065,37 +3102,36 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
   s = s.write("    popq %rbp\n");
   s = s.write("    ret\n");
-  s = s.write(".Lalloc_oom:\n");
-  s = s.write("    movq $60, %rax\n");
   // 125, not 137: 137 is 128+9, what a shell reports for SIGKILL, so an arena
   // trap could not be told apart from the kernel OOM-killer. Opposite causes,
   // opposite fixes. Lockstep with the native backends' ExitArenaExhausted.
-  s = s.write("    movq $125, %rdi\n");
-  s = s.syscall(60);
-  // __fern_oob_abort — shared out-of-bounds trap for arr_get / arr_set.
-  // Aborts with exit 134, matching the native backends + docs/ARRAY-BOUNDS.md
-  // ("an out-of-bounds index aborts before producing a value; never returns a
-  // garbage value"). A single shared routine keeps the per-access check to a
-  // compare + a jae to here, with no per-site label churn.
-  s = s.write("__fern_oob_abort:\n");
-  s = s.write("    movq $60, %rax\n");
-  s = s.write("    movq $134, %rdi\n");
-  s = s.syscall(60);
-  // __fern_alloc_size_abort — a raw_alloc or __alloc_u8 size that is negative
-  // as an i32, which is how a helper's `la + lb` looks once it wraps past 2 GiB. The
-  // message and exit 134 match the native backends' allocation-size abort.
-  s = s.write("    .section .rodata\n");
-  s = s.write(".Lalloc_size_msg:\n    .ascii \"fern: allocation size out of range\\n\"\n");
-  s = s.write("    .section .text\n");
-  s = s.write("__fern_alloc_size_abort:\n");
-  s = s.write("    movq $1, %rax\n");
-  s = s.write("    movq $2, %rdi\n");
-  s = s.write("    leaq .Lalloc_size_msg(%rip), %rsi\n");
-  s = s.write("    movq $35, %rdx\n");
-  s = s.syscall(1);
-  s = s.write("    movq $60, %rax\n");
-  s = s.write("    movq $134, %rdi\n");
-  s = s.syscall(60);
+  s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", asmcore.msg_oom(), 125);
+  // The fatal aborts (#5538, #11405): each trap names its cause and
+  // tail-jumps to __fern_report, so a per-access check stays a compare + a
+  // jae to a shared label. __fern_oob_abort is arr_get / arr_set,
+  // __fern_str_oob_abort the inline str_slice view, __fern_slice_abort the
+  // __fern_arr_slice bodies' range check, __fern_alloc_size_abort a
+  // raw_alloc or __alloc_u8 size that is negative as an i32, which is how a
+  // helper's `la + lb` looks once it wraps past 2 GiB. Texts and statuses
+  // match the native backends'.
+  s = abort_trap(s, "__fern_oob_abort", ".Lmsg_arr_oob", asmcore.msg_arr_oob(), 134);
+  // A leaf with no frame (ssa_needs_frame) traps with %rbp still its caller's
+  // frame and its own return address at 8 * n(%rsp), above the n callee-saved
+  // registers it pushed, so the walk would start a frame too far out and lose
+  // the caller. Its trap goes through the stub for its n, which builds the
+  // frame the leaf did not: the return address copied under a fresh %rbp link.
+  let n: i32 = 0;
+  while (n <= ssa_nsaved()) {
+    s = s.write(oob_leaf_trap(n) + ":\n");
+    s = s.write("    pushq " + util.i32_to_string(8 * n) + "(%rsp)\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    jmp __fern_oob_abort\n");
+    n = n + 1;
+  }
+  s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", asmcore.msg_str_oob(), 134);
+  s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", asmcore.msg_slice_range(), 134);
+  s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", asmcore.msg_alloc_size(), 134);
   // __fern_arr_box(%rdi = cap element count) -> %rax = data ptr (base+16).
   // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
   s = s.write("__fern_arr_box:\n");
@@ -6712,7 +6748,7 @@ function ssa_emit_epilogue(fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitStat
   if (fr.leaf || !s.records()) {
     return s.write(fr.epilogue);
   }
-  s = s.write("    .cfi_remember_state\n");
+  s = ssa_cfi(s, 7, "", 0);
   if (fr.saved.len() == 0) {
     s = ssa_leave(s);
   } else {
@@ -6724,7 +6760,7 @@ function ssa_emit_epilogue(fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitStat
     }
     s = ssa_pop_r(s, "%rbp");
   }
-  return ssa_ret(s.write("    .cfi_def_cfa %rsp, 8\n")).write("    .cfi_restore_state\n");
+  return ssa_cfi(ssa_ret(ssa_cfi(s, 5, "%rsp", 8)), 8, "", 0);
 }
 
 // ssa_load puts value v in `reg`; ssa_store writes `reg` to value v's home.
@@ -6761,9 +6797,25 @@ function ssa_branch(s: asmcore.EmitState, mnem: string, l: asmcore.Lab): asmcore
 // line skips the text path's memo lookup and comment and label scans.
 function ssa_call_sym(s: asmcore.EmitState, name: string): asmcore.EmitState {
   if (s.records()) {
-    return s.mark("\x03", "call " + name);
+    return s.named(x86_native.x86_rec_call(), name);
   }
   return s.write("    call " + name + "\n");
+}
+
+// ssa_lea_sym loads the address of `label` into `dst`.
+function ssa_lea_sym(s: asmcore.EmitState, label: string, dst: string): asmcore.EmitState {
+  if (s.records()) {
+    let d: i32 = ssa_xreg(dst);
+    if (d >= 0) {
+      return s.named(x86_native.x86_rec_lea_rip(d), label);
+    }
+  }
+  return s.write("    leaq " + label + "(%rip), " + dst + "\n");
+}
+
+// ssa_sext32 reports the width ops that are `movslq src32, dst`.
+function ssa_sext32(what: string, unsigned: boolean): boolean {
+  return what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned;
 }
 
 // ssa_blab is block `id`'s label: its id from the function's base, its name
@@ -7025,6 +7077,49 @@ function ssa_inc(s: asmcore.EmitState, dst: string): asmcore.EmitState {
     }
   }
   return s.write("    incq " + dst + "\n");
+}
+
+// ssa_cfi writes a .cfi_* directive: as a record when records are on, else
+// as its text. `kind` is cfi_record's: 1 startproc, 2 endproc, 3
+// def_cfa_offset n, 4 def_cfa_register reg, 5 def_cfa reg, n, 6 offset reg, n,
+// 7 remember_state, 8 restore_state.
+function ssa_cfi(s: asmcore.EmitState, kind: i32, reg: string, n: i32): asmcore.EmitState {
+  if (s.records()) {
+    return s.cfi(kind, ssa_dwarf(reg), n);
+  }
+  if (kind == 1) {
+    return s.write("    .cfi_startproc\n");
+  }
+  if (kind == 2) {
+    return s.write("    .cfi_endproc\n");
+  }
+  if (kind == 3) {
+    return s.write("    .cfi_def_cfa_offset " + util.i32_to_string(n) + "\n");
+  }
+  if (kind == 4) {
+    return s.write("    .cfi_def_cfa_register " + reg + "\n");
+  }
+  if (kind == 5) {
+    return s.write("    .cfi_def_cfa " + reg + ", " + util.i32_to_string(n) + "\n");
+  }
+  if (kind == 6) {
+    return s.write("    .cfi_offset " + reg + ", " + util.i32_to_string(n) + "\n");
+  }
+  if (kind == 7) {
+    return s.write("    .cfi_remember_state\n");
+  }
+  return s.write("    .cfi_restore_state\n");
+}
+
+// ssa_dwarf is a register's DWARF column, which orders rcx, rdx, rsi, rdi,
+// rbp and rsp differently from their encoding; 0 for a name ssa_xreg does not
+// know, which no directive here names.
+function ssa_dwarf(reg: string): i32 {
+  let m: i32 = ssa_xreg(reg);
+  if (m < 0) {
+    return 0;
+  }
+  return [0, 2, 1, 3, 7, 6, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15][m];
 }
 
 // ssa_jump_sym branches to a symbol, which keeps its name: the record line
@@ -8599,7 +8694,7 @@ function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (ins.imm == 1) {
     s = s.write("    movq " + ins.str + "(%rip), " + d + "\n");
   } else {
-    s = s.write("    leaq " + ins.str + "(%rip), " + d + "\n");
+    s = ssa_lea_sym(s, ins.str, d);
   }
   return ssa_store(reg_of, ins.result, d, s);
 }
@@ -8798,7 +8893,7 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
   s = ssa_load(reg_of, ins.args[0], "%rdx", s);
   s = ssa_load(reg_of, ins.args[1], "%rcx", s);
   s = ssa_load(reg_of, ins.args[2], "%rax", s);
-  s = s.write("    cmpq 8(%rdx), %rax\n    ja __fern_oob_abort\n    cmpq %rax, %rcx\n    ja __fern_oob_abort\n");
+  s = s.write("    cmpq 8(%rdx), %rax\n    ja __fern_str_oob_abort\n    cmpq %rax, %rcx\n    ja __fern_str_oob_abort\n");
   s = s.write("    subq %rcx, %rax\n    addq (%rdx), %rcx\n");
   if (ins.imm == 1) {
     s = s.write("    leaq " + util.i32_to_string(base_off) + "(%rbp), %rdx\n");
@@ -8944,7 +9039,7 @@ function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): a
   let kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
   s = kout.state;
   let d: string = ssa_dst(reg_of, ins.result);
-  s = s.write("    leaq " + asmcore.const_agg_label(s, kout.idx) + "(%rip), " + d + "\n");
+  s = ssa_lea_sym(s, asmcore.const_agg_label(s, kout.idx), d);
   return ssa_store(reg_of, ins.result, d, s);
 }
 
@@ -8969,7 +9064,7 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
   }
   let d: string = ssa_dst(reg_of, ins.result);
-  s = s.write("    leaq " + label + "(%rip), " + d + "\n");
+  s = ssa_lea_sym(s, label, d);
   return ssa_store(reg_of, ins.result, d, s);
 }
 
@@ -9052,11 +9147,21 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     s = ssa_load(reg_of, ins.args[0], d, s);
     s = ssa_binary(ins, fr, lp, d, s);
   } else {
-    let from: string = "";
+    let src: string = "";
     if (reg_of[ins.args[0]] >= 0 && ssa_reg(reg_of[ins.args[0]]) != d) {
-      from = ssa_unary_from(ins.str, ins.imm == 1, ssa_reg(reg_of[ins.args[0]]), d);
+      src = ssa_reg(reg_of[ins.args[0]]);
     }
-    if (from != "") {
+    let from: string = "";
+    if (src != "") {
+      from = ssa_unary_from(ins.str, ins.imm == 1, src, d);
+    }
+    if (s.records() && ssa_sext32(ins.str, ins.imm == 1) && ssa_xreg(d) >= 0 && (src == "" || ssa_xreg(src) >= 0)) {
+      if (src == "") {
+        s = ssa_load(reg_of, ins.args[0], d, s);
+        src = d;
+      }
+      s = s.bytes(x86_native.x86_rec_movslq_rr(ssa_xreg(d), ssa_xreg(src)));
+    } else if (from != "") {
       s = s.write(from);
     } else {
       s = ssa_load(reg_of, ins.args[0], d, s);
@@ -9423,18 +9528,17 @@ function ssa_reg_params(f: ssa.SFunc): i32 {
 // ssa_reg_params() arguments from the caller's stack into the pool registers
 // and falls through into `__fn_<name>.r`, where a register-ABI caller enters
 // with them already there. A function with no parameters has one entry.
-function ssa_entry_shim(f: ssa.SFunc, name: string): string {
+function ssa_entry_shim(f: ssa.SFunc, name: string, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ssa_reg_params(f);
   if (k == 0) {
-    return "";
+    return s;
   }
-  let out: string = "";
   let p: i32 = 0;
   while (p < k) {
-    out = out + "    movq " + util.i32_to_string(8 + 8 * p) + "(%rsp), " + ssa_reg(p) + "\n";
+    s = ssa_mov_rm(s, 64, true, ssa_reg(p), "%rsp", 8 + 8 * p);
     p = p + 1;
   }
-  return out + "__fn_" + name + ".r:\n";
+  return s.write("__fn_" + name + ".r:\n");
 }
 
 // ssa_reg_helper names the hand-written runtime helpers with a register
@@ -9508,8 +9612,8 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
   let reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
-  s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n    .cfi_startproc\n");
-  s = s.write(ssa_entry_shim(f, asmcore.sanitize_label(label_name)));
+  s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
+  s = ssa_entry_shim(f, asmcore.sanitize_label(label_name), s);
   s = ssa_release_entry(r, lp, s);
   let saved: i32[] = ssa_saved_regs(reg_of);
   let save: i32 = 8 * saved.len();
@@ -9574,11 +9678,12 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
       s = s.write(ssa_replace_all(text, ssa_epilogue_mark(), ssa_epilogue_for(saved)));
     } else {
       s = ssa_leaf_save(s, saved);
-      s = s.write(ssa_replace_all(text, ssa_epilogue_mark(), ssa_leaf_epilogue(saved)));
+      let leaf_text: string = ssa_replace_all(text, " __fern_oob_abort\n", " __fern_oob_abort.l" + util.i32_to_string(saved.len()) + "\n");
+      s = s.write(ssa_replace_all(leaf_text, ssa_epilogue_mark(), ssa_leaf_epilogue(saved)));
     }
   }
   s = asmcore.EmitState { ...s, ssa_save: 0 };
-  return s.write("    .cfi_endproc\n");
+  return ssa_cfi(s, 2, "", 0);
 }
 
 // ssa_frame writes the %rbp frame: the saved registers pushed under it and
@@ -9588,8 +9693,8 @@ function ssa_frame(s: asmcore.EmitState, saved: i32[], frame: i32): asmcore.Emit
   if (!s.records()) {
     return s.write(ssa_frame_asm(saved, frame));
   }
-  s = ssa_push_r(s, "%rbp").write("    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n");
-  s = ssa_mov_rr(s, "%rbp", "%rsp").write("    .cfi_def_cfa_register %rbp\n");
+  s = ssa_cfi(ssa_cfi(ssa_push_r(s, "%rbp"), 3, "", 16), 6, "%rbp", 0 - 16);
+  s = ssa_cfi(ssa_mov_rr(s, "%rbp", "%rsp"), 4, "%rbp", 0);
   for k in saved {
     s = ssa_push_r(s, ssa_reg(k));
   }
@@ -9651,8 +9756,7 @@ function ssa_leaf_save(s: asmcore.EmitState, saved: i32[]): asmcore.EmitState {
   }
   let i: i32 = 0;
   while (i < saved.len()) {
-    let off: string = util.i32_to_string(16 + 8 * i);
-    s = ssa_push_r(s, ssa_reg(saved[i])).write("    .cfi_def_cfa_offset " + off + "\n    .cfi_offset " + ssa_reg(saved[i]) + ", -" + off + "\n");
+    s = ssa_cfi(ssa_cfi(ssa_push_r(s, ssa_reg(saved[i])), 3, "", 16 + 8 * i), 6, ssa_reg(saved[i]), 0 - (16 + 8 * i));
     i = i + 1;
   }
   return s;
@@ -10604,7 +10708,7 @@ function emit_ir_op_map(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asm
   } else if (o.kind_tag == 127) {  // map_get
     s = s.write("    popq %rsi\n    popq %rdi\n");
     if (o.str != "") {
-      s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n");
+      s = ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(o.str), "%r8");
     } else {
       s = s.write("    xorq %r8, %r8\n");
     }
@@ -10612,7 +10716,7 @@ function emit_ir_op_map(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asm
   } else if (o.kind_tag == 128) {  // map_has
     s = s.write("    popq %rsi\n    popq %rdi\n");
     if (o.str != "") {
-      s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n");
+      s = ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(o.str), "%r8");
     } else {
       s = s.write("    xorq %r8, %r8\n");
     }
@@ -10676,7 +10780,7 @@ function map_fn_address_rax(s: asmcore.EmitState, name: string): asmcore.EmitSta
   if (name == "") {
     return s.write("    xorq %rax, %rax\n");
   }
-  return s.write("    leaq __fn_" + asmcore.sanitize_label(name) + "(%rip), %rax\n");
+  return ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(name), "%rax");
 }
 
 function emit_ir_op_map_read(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
@@ -10741,17 +10845,17 @@ function emit_ir_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   // (#9962); 0 where the op names none. ir.map_op_symbols splits the three.
   let syms: string[] = ir.map_op_symbols(o);
   if (o.i32_imm == 2 && syms[0] != "") {
-    s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[0]) + "(%rip), %r8\n");
+    s = ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(syms[0]), "%r8");
   } else {
     s = s.write("    xorq %r8, %r8\n");
   }
   if (syms[1] != "") {
-    s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[1]) + "(%rip), %r10\n");
+    s = ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(syms[1]), "%r10");
   } else {
     s = s.write("    xorq %r10, %r10\n");
   }
   if (o.i32_imm == 2 && syms[2] != "") {
-    s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[2]) + "(%rip), %r11\n");
+    s = ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(syms[2]), "%r11");
   } else {
     s = s.write("    xorq %r11, %r11\n");
   }
@@ -10811,7 +10915,7 @@ function emit_ir_op_map_get_or(o: ir.Op, i: i32, lp: string, s: asmcore.EmitStat
   let golbl: string = lp + "go" + util.i32_to_string(i);
   s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n");
   if (o.str != "") {
-    s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n");
+    s = ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(o.str), "%r8");
   } else {
     s = s.write("    xorq %r8, %r8\n");
   }
@@ -10855,7 +10959,7 @@ function emit_ir_op_map_keys(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState 
 // SSA backend's. A call_direct does not imply a need, so without these a
 // call site is emitted against a body the runtime never writes.
 function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (name == "__fern_oob_abort") {
+  if (name == "__fern_oob_abort" || name == "__fern_slice_abort") {
     s = s.need("heap");
   }
   if (name == "__fern_i32_to_string") {
@@ -11068,7 +11172,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
       let dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
       s = dlit.state;
       let dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-      s = s.write("    leaq " + dlit.label + "(%rip), %rdx\n");
+      s = ssa_lea_sym(s, dlit.label, "%rdx");
       s = s.write("    cmpq %rdx, %rcx\n");
       s = s.write("    jne " + dnext + "\n");
       let dk: i32 = dargc - 1;
@@ -11112,7 +11216,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
           let vlit_name: string = s.struct_decls.decls[dvi].name;
           let vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, vlit_name);
           s = vlit.state;
-          s = s.write("    leaq " + vlit.label + "(%rip), %rdx\n");
+          s = ssa_lea_sym(s, vlit.label, "%rdx");
           s = s.write("    cmpq %rdx, %rcx\n");
           s = s.write("    je " + dehit + "\n");
         }
@@ -11157,7 +11261,7 @@ function emit_ir_op_dyn_box(o: ir.Op, own s: asmcore.EmitState): asmcore.EmitSta
   let dbl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
   s = dbl.state;
   s = s.write("    movq $2, %rdi\n    call __fern_arr_box\n");
-  s = s.write("    leaq " + dbl.label + "(%rip), %rcx\n");
+  s = ssa_lea_sym(s, dbl.label, "%rcx");
   s = s.write("    movq %rcx, (%rax)\n");
   s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
 
@@ -11645,7 +11749,7 @@ function emit_ir_enum_variant_payload_decs(own s: asmcore.EmitState, ety: string
         s = vlo.state;
         let vls: string = util.i32_to_string(vlabel);
         s = s.write("    movq (" + reg + "), %rax\n");  // shape ptr @0
-        s = s.write("    leaq " + vlo.label + "(%rip), %rcx\n");
+        s = ssa_lea_sym(s, vlo.label, "%rcx");
         s = s.write("    cmpq %rcx, %rax\n");
         s = s.write("    jne " + lp + "_v" + vls + "\n");
         let oi: i32 = 0;
@@ -11754,7 +11858,7 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   // their own .rodata block then return to .text. A literal-free helper (the
   // str_eq / str_cmp / str_trim bodies) adds none, so
   // this is a no-op for them.
-  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(fns), pops: s.kinds.pops };
+  let vgate: irverifygate.Gate = irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops);
   let lit0: i32 = s.string_lits.len();
   let agg0: i32 = s.const_aggs.len();
   let sh0: i32 = s.shape_lits.len();
@@ -11809,7 +11913,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
   // The IR verify gate's callee-arity index, derived ONCE over the
   // whole-program all_funcs for the reason the registries above are: a
   // per-function rebuild would be O(n^2) on the compiler's own sources.
-  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(all_funcs), pops: s.kinds.pops };
+  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(all_funcs), s.kinds.pops);
   // hi<0 is the "to the end" sentinel; an over-large hi is clamped so a shard
   // window that overshoots the module length can't index past mod.funcs.
   let hh: i32 = hi;
@@ -11846,7 +11950,9 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
   // Cache entries past the declarations are bodies with no FuncDecl, each
   // naming the symbol it defines. `.weak`, so a shard window or a sibling
   // unit that emits the same body co-links to one definition.
-  return emit_named_bodies(cache, mod.funcs.len(), s, vgate);
+  s = emit_named_bodies(cache, mod.funcs.len(), s, vgate);
+  irverifygate.report(vgate);
+  return s;
 }
 
 function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
@@ -11931,11 +12037,11 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub, recs:
     return "";
   }
   // Every function eligible — emit from the cache (no second lowering).
-  return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower, recs);
+  return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower, recs, sub.backtrace);
 }
 
 // `rt` lowers the runtime helpers this unit appends (asmcore.EmitState.rt_lower).
-pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], b: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[], recs: usize): string {
+pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], b: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[], recs: usize, backtrace: boolean): string {
   // Infer return types for unannotated functions so the IR path's
   // ret-type-keyed call tagging matches what module_with_builtins supplies.
   // (#4394 lever 3: `cache`, when non-empty, is the caller's pre-lowered
@@ -11947,7 +12053,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   let s: asmcore.EmitState = asmcore.new_state();
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
   // layout resolves and a `dyn` dispatch has an arm for every impl (#10891).
-  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs }, all_funcs);
+  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs, backtrace: backtrace }, all_funcs);
   // A unit never passes emit_module_or_error_sub's check, so the Display gate
   // runs here: a `print(xs)` nothing gives a `to_string` would otherwise hand
   // the string-only runtime helper a raw pointer (#9945).
@@ -11972,6 +12078,12 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // library modules can link their `call __fern_*` externs against them.
   if (is_entry && globl_defs) {
     s = asmcore.emit_runtime_globls(s);
+    // The frameless leaves' bounds traps, x86-64's alone.
+    let n: i32 = 0;
+    while (n <= ssa_nsaved()) {
+      s = s.write(".globl " + oob_leaf_trap(n) + "\n");
+      n = n + 1;
+    }
   }
   // The side-table bases arrive as INDIVIDUAL params (b_*), threaded straight to
   // emit_module_funcs. The strfldok need seeding below recomputes its column
@@ -12284,6 +12396,14 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_hev_runtime(s);
   }
+  // The abort reporter (#11405): with the heap runtime, whose traps jump to
+  // it, and under either sanitizer flag, whose reports end in its walk even
+  // when the program allocates nothing. A build that has neither carries no
+  // reporter.
+  if (needs_heap_runtime(s) || s.rc_free_debug || asmcore.sanitize_on()) {
+    s = s.write("    .text\n");
+    s = emit_report(s);
+  }
   // The UAF quarantine's fatal report. Self-contained — its own write(2) +
   // exit(124) rather than the hev writer — so FERN_RC_FREE_DEBUG works
   // standalone, without leakcheck. Entry-only, like the hev block above.
@@ -12385,7 +12505,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("arr_slice_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice_u8("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice_u8(), s);
   }
   if (s.has_need("random_bytes_u8")) {
     s = s.write("    .text\n");
@@ -12415,7 +12535,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // per-target (asmcore.sysno picks 60 here).
   if (s.has_need("arr_slice")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice(), s);
   }
   // str_split — now a Fern runtime function (#2649), lowered through the IR
   // pipeline: scan for `sep`, append each segment slice (.append() ->

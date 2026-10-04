@@ -1,0 +1,27 @@
+import "std/i32";
+
+// A method whose own type parameter appears only in its result takes it from
+// the written list, on a plain receiver and on a generic one, where the list
+// names the method's parameters after the receiver's.
+struct W { n: i32 }
+
+function (w: W) empty[T](): T[] {
+    let xs: T[] = [];
+    return xs;
+}
+
+struct Bag[T] { items: T[] }
+
+function (b: Bag[T]) none[U](): U[] {
+    let xs: U[] = [];
+    return xs;
+}
+
+function main(): i32 {
+    let w: W = W { n: 1 };
+    let names: string[] = w.empty[string]();
+    let bag: Bag[i32] = Bag { items: [1, 2, 3] };
+    let flags: boolean[] = bag.none[boolean]();
+    print((names.len() + flags.len() + bag.items.len() + w.n).to_string());
+    return 0;
+}

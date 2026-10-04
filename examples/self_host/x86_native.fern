@@ -3785,6 +3785,22 @@ pub function x86_rec_lea_rm(dst: i32, base: i32, disp: i32): i32[] {
   return x86_lea_load([], 64, dst, base, false, 0, 1, disp);
 }
 
+// x86_rec_call is `call sym` and x86_rec_lea_rip `leaq sym(%rip), dst`,
+// each with its rel32 unpatched: the bytes of a named record, whose last
+// four the assembler patches to the symbol.
+pub function x86_rec_call(): i32[] {
+  return x86_call_rel32([], 0);
+}
+
+pub function x86_rec_lea_rip(dst: i32): i32[] {
+  return x86_le32([x86_rex(1, dst, 0, 0), 141, x86_modrm(0, dst, 5)], 0);
+}
+
+// x86_rec_movslq_rr is `movslq src32, dst`.
+pub function x86_rec_movslq_rr(dst: i32, src: i32): i32[] {
+  return x86_movslq_rr([], dst, src);
+}
+
 // x86_rec_mov_rmi is the load `mov disp(base,index,scale), reg` or the
 // store `mov reg, disp(base,index,scale)`.
 pub function x86_rec_mov_rmi(size: i32, load: boolean, reg: i32, base: i32, index: i32, scale: i32, disp: i32): i32[] {
@@ -6420,7 +6436,11 @@ pub function x86_gas_assemble(src: string): X86Asm {
 // one line, a run of records laid down together. A line starting \x03 is
 // an instruction with nothing to trim; \x04 defines the label whose id the
 // next eight bytes of `words` hold; \x05 branches to the label id in the
-// high four of the next eight, by the jump kind in the low four.
+// high four of the next eight, by the jump kind in the low four; \x06 is a
+// .cfi_* directive, its kind and register in the low four of the next eight
+// and its offset in the high four (cfi_record); \x07 takes the next record
+// as an instruction whose last four bytes are a rel32 to the symbol the
+// line names, patched as a call's is.
 pub function x86_gas_assemble_words(src: string, words: u8[]): X86Asm {
   // Parsed ONCE, not per round. The source does not change between
   // relaxation rounds, so splitting and re-parsing it each round bought
@@ -6885,6 +6905,14 @@ const GK_BYTES: i32 = 46;
 // A label the emitter defines by id (the \x04 record): `lid` is the id.
 const GK_LABEL_ID: i32 = 47;
 
+// A .cfi_* directive the emitter handed over as the \x06 record: `ext` is
+// its offset in the words, eight bytes cfi_record reads.
+const GK_CFI: i32 = 48;
+
+// A named record: `ext` is the record's start in the words, `rest` the
+// symbol its last four bytes reach.
+const GK_NAMED: i32 = 49;
+
 // EncCache is the first round's encoding of every line no later round can
 // change: the code that round produced, and per line the range of it the
 // line's bytes are, or -1 at `at` for a line that is encoded again each
@@ -7008,7 +7036,7 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
       if (l.lid < labs.nids) {
         ref_idx = labs.names.len() + l.lid;
       }
-    } else if (l.kind == GK_JCC) {
+    } else if (l.kind == GK_JCC || l.kind == GK_NAMED) {
       ref_idx = x86_gas_label_lookup(labs, l.rest);
     } else if (l.kind == GK_BRANCH) {
       if (l.rest.len() == 0 || l.rest[0] != b'*') {
@@ -7370,12 +7398,32 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       pos = pos + 2;
       continue;
     }
-    if (pos < n && (src[pos] == 4 || src[pos] == 5)) {
-      // A label defined by id, or a branch to one: eight bytes of the words,
-      // the id in the low four for a definition and the high four for a
-      // branch, whose low four are the jump kind.
+    if (pos < n && src[pos] == 7) {
+      // A named record: the next record of the words, whose last four bytes
+      // are a rel32 to the symbol the line names.
+      let nl7: i32 = __memchr(src, 10, pos);
+      if (nl7 < 0) {
+        nl7 = n;
+      }
+      if (wi < words.len() && wi + 1 + words[wi] as i32 <= words.len()) {
+        out = out.append(GasLine { label: "", body: "\x07", mnem: "", rest: slice_unchecked(src, pos + 1, nl7) + "", kind: GK_NAMED, ext: wi, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1, run_end: 0 });
+        wi = wi + 1 + words[wi] as i32;
+      } else {
+        out = out.append(x86_bytes_line(0 - 1, 0));
+      }
+      pos = nl7 + 1;
+      continue;
+    }
+    if (pos < n && (src[pos] == 4 || src[pos] == 5 || src[pos] == 6)) {
+      // A label defined by id, a branch to one, or a cfi directive: eight
+      // bytes of the words, the id in the low four for a definition and the
+      // high four for a branch, whose low four are the jump kind; a
+      // directive's kind and register in the low four and its offset in the
+      // high four.
       if (wi + 8 > words.len()) {
         out = out.append(x86_bytes_line(0 - 1, 0));
+      } else if (src[pos] == 6) {
+        out = out.append(GasLine { label: "", body: "\x06", mnem: "", rest: "", kind: GK_CFI, ext: wi, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1, run_end: 0 });
       } else if (src[pos] == 4) {
         out = out.append(GasLine { label: "", body: "\x04", mnem: "", rest: "", kind: GK_LABEL_ID, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: x86_words_i32(words, wi), run_end: 0 });
       } else {
@@ -7563,6 +7611,19 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
       a = x86_label_at(a, "", pline.def_idx);
       continue;
     }
+    if (pline.kind == GK_CFI) {
+      if (section != 0) {
+        a = X86Asm { ...a, unknown: a.unknown.append("a cfi record outside .text") };
+      } else {
+        let w0: i32 = x86_words_i32(words, pline.ext);
+        let cfi_bad_before: i32 = cfi.bad.len();
+        cfi = cfi_record(cfi, w0 & 255, w0 >> 8 & 255, x86_words_i32(words, pline.ext + 4), a.code.len());
+        if (cfi.bad.len() > cfi_bad_before) {
+          a = X86Asm { ...a, unknown: a.unknown.append(cfi.bad[cfi.bad.len() - 1]) };
+        }
+      }
+      continue;
+    }
     if (lbl.len() > 0) {
       if (section == 1) {
         a = x86_rodata_label_at(a, lbl, pline.def_idx);
@@ -7685,6 +7746,11 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
       // A record's bytes depend on nothing a round computes, so it is
       // read from the words in every round and never cached.
       a = x86_gas_bytes(a, words, pline.ext, pline.run_end);
+      continue;
+    }
+    if (pline.kind == GK_NAMED) {
+      a = x86_gas_bytes(a, words, pline.ext, pline.ext + 1 + words[pline.ext] as i32);
+      a = x86_fixup_or_patch_at(a, pline.rest, pline.ref_idx);
       continue;
     }
     if (!record) {
@@ -8119,6 +8185,82 @@ pub function cfi_directive(own s: CfiState, line: string, off: i32): CfiState {
   return cfi_reg_directive(s, d, ops, rest, off);
 }
 
+// cfi_record applies a directive an emitter handed over as a record instead
+// of text: `kind` 1 is .cfi_startproc, 2 .cfi_endproc, 3 .cfi_def_cfa_offset n,
+// 4 .cfi_def_cfa_register r, 5 .cfi_def_cfa r, n, 6 .cfi_offset r, n, 7
+// .cfi_remember_state and 8 .cfi_restore_state, with `r` the DWARF register
+// number. Each records what its text would have recorded.
+pub function cfi_record(own s: CfiState, kind: i32, r: i32, n: i32, off: i32): CfiState {
+  if (kind == 1) {
+    return cfi_proc_directive(s, ".cfi_startproc", [], off);
+  }
+  if (kind == 2) {
+    return cfi_proc_directive(s, ".cfi_endproc", [], off);
+  }
+  if (!s.open) {
+    return cfi_bad(s, "a cfi record outside .cfi_startproc/.cfi_endproc");
+  }
+  if (kind == 3) {
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_offset()], n));
+  }
+  if (kind == 4) {
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_register()], r));
+  }
+  if (kind == 5) {
+    return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_def_cfa()], r), n));
+  }
+  if (kind == 6) {
+    let reg: string = cfi_reg_label(s.profile, r);
+    return cfi_offset_rule(s, reg, r, n, off);
+  }
+  if (kind == 7) {
+    return cfi_add_rule(s, off, [cfi_op_remember_state()]);
+  }
+  if (kind == 8) {
+    return cfi_add_rule(s, off, [cfi_op_restore_state()]);
+  }
+  return cfi_bad(s, "a cfi record of an unknown kind");
+}
+
+// cfi_reg_label is the name the profile gives DWARF register `r`, for a
+// refusal's message; the number itself when it has none.
+function cfi_reg_label(p: CfiProfile, r: i32): string {
+  let i: i32 = 0;
+  while (i < p.reg_nums.len()) {
+    if (p.reg_nums[i] == r) {
+      return p.reg_names[i];
+    }
+    i = i + 1;
+  }
+  return cfi_uleb_text(r);
+}
+
+// cfi_uleb_text spells a non-negative register number in decimal.
+function cfi_uleb_text(v: i32): string {
+  if (v >= 10) {
+    return cfi_uleb_text(v / 10) + cfi_uleb_text(v % 10);
+  }
+  return slice_unchecked("0123456789", v, v + 1) + "";
+}
+
+// cfi_offset_rule records `.cfi_offset r, n`, register `r` (spelt `reg` in a
+// refusal) saved at CFA-relative offset `n`.
+function cfi_offset_rule(own s: CfiState, reg: string, r: i32, n: i32, off: i32): CfiState {
+  if (n % s.profile.data_align != 0) {
+    return cfi_bad(s, ".cfi_offset " + reg + ": offset not a multiple of the data alignment");
+  }
+  let f: i32 = n / s.profile.data_align;
+  // A positive CFA-relative offset needs the extended_sf form, which this
+  // module does not produce; refuse rather than unwind wrongly.
+  if (f < 0) {
+    return cfi_bad(s, ".cfi_offset " + reg + ": positive offset is not supported");
+  }
+  if (r < 64) {
+    return cfi_add_rule(s, off, cfi_uleb([cfi_op_offset() | r], f));
+  }
+  return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_offset_extended()], r), f));
+}
+
 // cfi_proc_directive opens or closes an FDE.
 function cfi_proc_directive(own s: CfiState, d: string, ops: string[], off: i32): CfiState {
   if (d == ".cfi_startproc") {
@@ -8179,20 +8321,7 @@ function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: stri
     if (ops.len() < 2 || !cfi_is_int(ops[1])) {
       return cfi_bad(s, d + " " + rest);
     }
-    let n: i32 = cfi_atoi(ops[1]);
-    if (n % s.profile.data_align != 0) {
-      return cfi_bad(s, d + " " + ops[0] + ": offset not a multiple of the data alignment");
-    }
-    let f: i32 = n / s.profile.data_align;
-    // A positive CFA-relative offset needs the extended_sf form, which
-    // this module does not produce; refuse rather than unwind wrongly.
-    if (f < 0) {
-      return cfi_bad(s, d + " " + ops[0] + ": positive offset is not supported");
-    }
-    if (r < 64) {
-      return cfi_add_rule(s, off, cfi_uleb([cfi_op_offset() | r], f));
-    }
-    return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_offset_extended()], r), f));
+    return cfi_offset_rule(s, ops[0], r, cfi_atoi(ops[1]), off);
   }
   if (d == ".cfi_register") {
     if (ops.len() < 2) {

@@ -9,6 +9,7 @@
 //     fern -target wasm32-wasi <entry>      a wasi:cli/run component
 //     fern -emit asm <entry.fern>           emit the emitter's text instead
 //     fern -emit core-module -target …      a raw wasm core module
+//     fern -emit command-module -target …   the same core, named as the preview-1 command it is
 //     fern -check <entry.fern>              type-check; exit 0 ok / 1 bad
 //     fern -check <DIR>                     check a package, or every
 //                                           member of the workspace it roots
@@ -195,11 +196,11 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
 // leave it out: native names the entry on its `todo` warnings, not its errors.
 struct Finding { diag: util.Diag, warning: boolean, path: string }
 
-// Checked is a check's whole answer: its findings in report order, the module
-// files their positions index (util.pos_str), and whether the program is
-// accepted. A rejection can carry no finding at all: an ill-typed module the
-// checker has no diagnostic for.
-struct Checked { findings: Finding[], files: string[], ok: boolean }
+// Checked is a check's whole answer: its findings in report order, the entry
+// path and the module files their positions index (util.pos_str), and whether
+// the program is accepted. A rejection can carry no finding at all: an
+// ill-typed module the checker has no diagnostic for.
+struct Checked { findings: Finding[], entry: string, files: string[], ok: boolean }
 
 // errors_of wraps diagnostics that each reject the program.
 function errors_of(ds: util.Diag[]): Finding[] {
@@ -226,10 +227,10 @@ function has_error(fs: Finding[]): boolean {
 }
 
 // finding_text renders a finding as `-check` and native print it: the
-// position (util.pos_str) when it is known, then `warning: `, or `error[…]: `
-// for a coded error — an uncoded one (the const-grammar rule, a visibility
-// error) has no tag.
-function finding_text(f: Finding, files: string[]): string {
+// position (util.pos_str, naming the entry file as the command line did) when
+// it is known, then `warning: `, or `error[…]: ` for a coded error — an
+// uncoded one (the const-grammar rule, a visibility error) has no tag.
+function finding_text(f: Finding, entry: string, files: string[]): string {
   let tag: string = "";
   if (f.warning) {
     tag = "warning: ";
@@ -237,19 +238,29 @@ function finding_text(f: Finding, files: string[]): string {
     tag = "error[" + f.diag.code + "]: ";
   }
   if (f.diag.line > 0 && f.path.len() > 0) {
-    return f.path + ":" + util.pos_str(files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
+    return f.path + ":" + util.pos_str("", files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
   }
   if (f.diag.line > 0) {
-    return util.pos_str(files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
+    return util.pos_str(entry_display(entry), files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
   }
   return tag + f.diag.message;
 }
 
+// entry_display is the entry path as a diagnostic names it: the path the
+// command line gave, or `<stdin>` for a program read from stdin, as native
+// spells it.
+function entry_display(entry_path: string): string {
+  if (entry_path == "-") {
+    return "<stdin>";
+  }
+  return entry_path;
+}
+
 // eprint_findings prints each finding and reports whether any rejects the
 // program.
-function eprint_findings(fs: Finding[], files: string[]): boolean {
+function eprint_findings(fs: Finding[], entry: string, files: string[]): boolean {
   for f in fs {
-    eprint(finding_text(f, files));
+    eprint(finding_text(f, entry, files));
   }
   return has_error(fs);
 }
@@ -506,7 +517,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-  eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]");
+  eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module|command-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]");
   eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)");
   eprint("       fern -targets                                (list supported targets + capabilities)");
   eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)");
@@ -1627,7 +1638,7 @@ function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, Finding[])
 function check_source(entry_path: string, src: string, root: string, target: string, target_given: boolean, embed_dir: string): Checked {
   let ld: Loaded = load_checked(entry_path, src, root, target, embed_dir);
   if (ld.refused.len() > 0) {
-    return Checked { findings: ld.refused, files: ld.b.files, ok: false };
+    return Checked { findings: ld.refused, entry: entry_path, files: ld.b.files, ok: false };
   }
   return check_bundle(ld.b, entry_path, target, target_given);
 }
@@ -1635,7 +1646,7 @@ function check_source(entry_path: string, src: string, root: string, target: str
 // report_checked prints a check's findings and returns the exit code `-check`
 // answers with.
 function report_checked(c: Checked): i32 {
-  let _rejected: boolean = eprint_findings(c.findings, c.files);
+  let _rejected: boolean = eprint_findings(c.findings, c.entry, c.files);
   if (c.ok) {
     return 0;
   }
@@ -1651,7 +1662,7 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   // anything downstream of a declaration that did not parse is noise.
   let parsed: Finding[] = parse_findings(merged);
   if (parsed.len() > 0) {
-    return Checked { findings: parsed, files: b.files, ok: false };
+    return Checked { findings: parsed, entry: entry_path, files: b.files, ok: false };
   }
   // The coded diagnostics are the same E0XX codes the Go checker emits — see
   // docs/SELFHOST-CHECKER-PORT.md.
@@ -1673,13 +1684,13 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   let fs: Finding[] = util.append_all(errors_of(mt.diags), bounds);
   if (mt.all_well_typed) {
     if (has_error(bounds)) {
-      return Checked { findings: fs, files: b.files, ok: false };
+      return Checked { findings: fs, entry: entry_path, files: b.files, ok: false };
     }
     let views: Finding[] = errors_of(semlower.view_escape_diags(merged));
     if (views.len() > 0) {
-      return Checked { findings: util.append_all(fs, views), files: b.files, ok: false };
+      return Checked { findings: util.append_all(fs, views), entry: entry_path, files: b.files, ok: false };
     }
-    return Checked { findings: util.append_all(fs, todo_warnings(merged.todo_sites, entry_path)), files: b.files, ok: true };
+    return Checked { findings: util.append_all(fs, todo_warnings(merged.todo_sites, entry_path)), entry: entry_path, files: b.files, ok: true };
   }
   // The module is ill-typed but produced no coded diagnostic — an
   // expression collapsed to TypeUnknown on a type the partial checker
@@ -1688,16 +1699,13 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   if (mt.diags.len() == 0) {
     fs = util.append_all(fs, errors_of(checker.ill_typed_hint(merged)));
   }
-  return Checked { findings: fs, files: b.files, ok: false };
+  return Checked { findings: fs, entry: entry_path, files: b.files, ok: false };
 }
 
 // todo_warnings lists the entry's remaining `todo` stubs, which an accepted
 // check still reports. An imported module's are not tracked, as native's are not.
 function todo_warnings(sites: parser.TodoSite[], entry_path: string): Finding[] {
-  let name: string = entry_path;
-  if (name == "-") {
-    name = "<stdin>";
-  }
+  let name: string = entry_display(entry_path);
   let out: Finding[] = [];
   for site in sites {
     out = out.append(Finding { diag: util.Diag { code: "", message: "`todo` stub remaining", line: site.line, col: site.col }, warning: true, path: name });
@@ -2480,6 +2488,9 @@ function run(): i32 {
   // compiler — that runs on every build.
   let optimize: boolean = false;
   let emit_syms: boolean = false;
+  // -backtrace: whether a fatal abort walks the frame chain under its cause
+  // line, as native's flag of the same name; FERN_BACKTRACE is the default.
+  let backtrace: boolean = asmcore.backtrace_on();
   // `-cover` (or FERN_COVER=1) instruments the program with line and branch
   // counters it reports to stderr at exit (cover.fern).
   let cover_on: boolean = false;
@@ -2523,6 +2534,10 @@ function run(): i32 {
       // image, which needs its own wiring. Native excludes darwin and
       // android from -g too.
       emit_syms = true;
+    } else if (a == "-backtrace" || a == "-backtrace=true" || a == "-backtrace=1") {
+      backtrace = true;
+    } else if (a == "-backtrace=false" || a == "-backtrace=0") {
+      backtrace = false;
     } else if (a == "-capabilities") {
       mode_caps = true;
     } else if (a == "-tangle") {
@@ -2688,8 +2703,21 @@ function run(): i32 {
     eprint("fern: -cover: -target " + target + " has no coverage instrumentation — build for x86-64-linux or arm64-linux, or drop -cover");
     return 2;
   }
+  // Native's `-emit command-module` is a WASI preview-1 command: the core
+  // bytes plus a `_start` that runs main and exits with its value, and an
+  // exported memory — the shape `wasmtime run` and a browser shim run. This
+  // compiler's core module already has both (and exports `main`, #10768), so
+  // the two forms are one artifact here and the spelling is accepted for the
+  // one target native gives it (#11408).
+  if (emit == "command-module") {
+    if (target != "wasm32-wasi") {
+      eprint("fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)");
+      return 2;
+    }
+    emit = "core-module";
+  }
   if (emit.len() > 0 && emit != "asm" && emit != "core-module") {
-    eprint("fern: unknown -emit: " + emit + " (want asm, core-module, or omit it for the target's default output form)");
+    eprint("fern: unknown -emit: " + emit + " (want asm, core-module, command-module, or omit it for the target's default output form)");
     return 2;
   }
   if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
@@ -2765,7 +2793,7 @@ function run(): i32 {
   // that assets exist. Native folds them in the same place, ahead of
   // checker.Check.
   let ld: Loaded = load_checked(entry_path, esrc, root, target, embed_dir);
-  if (eprint_findings(ld.refused, ld.b.files)) {
+  if (eprint_findings(ld.refused, entry_path, ld.b.files)) {
     return 1;
   }
   let b: Bundle = ld.b;
@@ -2789,10 +2817,10 @@ function run(): i32 {
     // Package-capability gate (E070 — caps.fern): a dependency reaching
     // past its grant is refused before the program runs, not after it has
     // already opened the socket.
-    if (eprint_findings(package_findings(merged, pkgs), b.files)) {
+    if (eprint_findings(package_findings(merged, pkgs), entry_path, b.files)) {
       return 1;
     }
-    if (eprint_findings(ambient_findings(merged), b.files)) {
+    if (eprint_findings(ambient_findings(merged), entry_path, b.files)) {
       return 1;
     }
     // Evaluate via the tree-walking interpreter; the program's
@@ -2835,7 +2863,7 @@ function run(): i32 {
   // checker gate below exists: without them a build is MORE permissive than
   // `-check`, and a keyword-named function reaches codegen as a nameless
   // declaration.
-  if (eprint_findings(parse_findings(merged), b.files)) {
+  if (eprint_findings(parse_findings(merged), entry_path, b.files)) {
     return 1;
   }
 
@@ -2850,7 +2878,7 @@ function run(): i32 {
   // diagnostic except the partial-port rules measured to false-positive —
   // and a hit is reported with the same `line:col: error[CODE]: message`
   // shape as `-check`.
-  if (eprint_findings(errors_of(checker.build_gate_diags(merged)), b.files)) {
+  if (eprint_findings(errors_of(checker.build_gate_diags(merged)), entry_path, b.files)) {
     return 1;
   }
 
@@ -2872,20 +2900,20 @@ function run(): i32 {
   // Without it the self-host compiles a program native refuses, and the
   // failure lands mid-build as an undefined label or, on wasm, as a
   // host-side instantiation error.
-  if (eprint_findings(capability_findings(merged, target), b.files)) {
+  if (eprint_findings(capability_findings(merged, target), entry_path, b.files)) {
     return 1;
   }
 
   // Package-capability gate (E070 — caps.fern): the other capability
   // system, gating what a DEPENDENCY may reach rather than what the target
   // provides. Without it the self-host builds a program native refuses.
-  if (eprint_findings(package_findings(merged, pkgs), b.files)) {
+  if (eprint_findings(package_findings(merged, pkgs), entry_path, b.files)) {
     return 1;
   }
 
   // The bag boundary (E080 — ambient.fern): a handler reaching a host
   // effect around its platform, on either compiler.
-  if (eprint_findings(ambient_findings(merged), b.files)) {
+  if (eprint_findings(ambient_findings(merged), entry_path, b.files)) {
     return 1;
   }
 
@@ -2960,7 +2988,7 @@ function run(): i32 {
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
   let full: parser.Module = parser.erase_view_module(typed);
   // The typed semantic lowering, threaded into whichever emit path runs.
-  let sub: ircore.Sub = semlower.target_substitution(typed, target);
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target), backtrace: backtrace };
   let out_asm: string = "";
   let emit_text: boolean = emit == "asm";
   if (target == "arm64-linux") {

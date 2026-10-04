@@ -35,7 +35,9 @@ and `-emit` an alternate output form (#6536).
 `-emit core-module` writes the raw core module (no entry point — `wasmtime run`
 on one calls nothing), and `-emit command-module` writes a WASI preview-1
 command, the same core bytes plus a `_start` that runs main and exits with its
-value. The exit code is what separates the last two from the first: a
+value. The self-host's core module carries that `_start` (and exports `main`,
+#10768) already, so there the two spellings write one artifact (#11408). The
+exit code is what separates the last two from the first: a
 `wasi:cli/run` component reports ok or err and nothing wider, so `return 42`
 reaches the host as 1. A `main` that returns NOTHING exits 0 on all three
 (#9233): the natives used to hand the kernel whatever the last call left in

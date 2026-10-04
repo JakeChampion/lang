@@ -184,7 +184,7 @@ function typed_unit(mod: parser.Module, siblings: parser.Module[], is_entry: boo
   if (is_entry) {
     needs = extra;
   }
-  return asm_ir.emit_module_ir_unit_flat(t.u.mods[0], is_entry, true, ns, needs, t.g.im.funcs, t.g.stab, 0, 0 - 1, t.u.caches[0], t.g.base, t.d.sub.rt_lower, 0 as usize);
+  return asm_ir.emit_module_ir_unit_flat(t.u.mods[0], is_entry, true, ns, needs, t.g.im.funcs, t.g.stab, 0, 0 - 1, t.u.caches[0], t.g.base, t.d.sub.rt_lower, 0 as usize, asmcore.backtrace_on());
 }
 
 // The typed lowering checks a whole program, so it lowers `mod` together with

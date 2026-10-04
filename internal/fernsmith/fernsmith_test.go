@@ -408,6 +408,9 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"if/else statement":            false,
 		"loop with break":              false,
 		"match statement":              false,
+		"labelled break":               false,
+		"labelled continue":            false,
+		"defer block":                  false,
 		"match guard (when)":           false,
 		"at-binding (@)":               false,
 		"loop with continue":           false,
@@ -610,6 +613,15 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, "match (") && strings.Contains(src, "(__ms") {
 			want["match statement"] = true
+		}
+		if strings.Contains(src, "break __lp") {
+			want["labelled break"] = true
+		}
+		if strings.Contains(src, "continue __lp") {
+			want["labelled continue"] = true
+		}
+		if strings.Contains(src, "defer { ") {
+			want["defer block"] = true
 		}
 		if strings.Contains(src, ") when (") {
 			want["match guard (when)"] = true
@@ -1259,9 +1271,14 @@ func TestParseShard(t *testing.T) {
 	}
 }
 
-// astNodeCount type-checks src and returns the size of its AST. It is the
-// structural size measure the shrink property is stated in; an error means
-// the generated program is not valid, which is itself a contract breach.
+// astNodeCount type-checks src and returns the size of its AST as parsed,
+// before constant folding. It is the structural size measure the shrink
+// property is stated in; an error means the generated program is not valid,
+// which is itself a contract breach. The count has to be taken before the
+// fold: folding deletes the dead arm of an `if` on a literal condition, so
+// a truncation that only simplified `!(true && true)` to `!(!true)` would
+// otherwise read as GROWTH, the kept arm counted against the deleted one,
+// for a step that made the source strictly smaller.
 func astNodeCount(t *testing.T, src string) (int, error) {
 	t.Helper()
 	dir := t.TempDir()
@@ -1273,13 +1290,55 @@ func astNodeCount(t *testing.T, src string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	n := 0
+	ast.WalkProgram(prog, func(ast.Node) bool { n++; return true })
 	if err := constfold.Fold(prog, nil); err != nil {
 		return 0, err
 	}
 	if _, err := checker.Check(prog); err != nil {
 		return 0, err
 	}
-	n := 0
-	ast.WalkProgram(prog, func(ast.Node) bool { n++; return true })
 	return n, nil
+}
+
+// TestGenDeferBodyHasNoTry: a deferred action has no caller to propagate a
+// failure to, so the checker refuses `?` inside one, and a defer generated in
+// an Option- or Result-returning function must not draw it. Seed 321 is the
+// GenMain program the self-host differential legs first refused for it.
+func TestGenDeferBodyHasNoTry(t *testing.T) {
+	src := fernsmith.GenMain(321)
+	if err := checkGenerated(t, src); err != nil {
+		t.Fatalf("GenMain(321) failed to type-check:\nsrc:\n%s\nerr: %v", src, err)
+	}
+	defers := 0
+	for seed := uint64(0); seed < sweepN(t, 512); seed++ {
+		src := fernsmith.GenMain(seed)
+		for at := strings.Index(src, "defer { "); at >= 0; {
+			depth := 0
+			end := at
+			for end < len(src) {
+				if src[end] == '{' {
+					depth++
+				} else if src[end] == '}' {
+					depth--
+					if depth == 0 {
+						break
+					}
+				}
+				end++
+			}
+			defers++
+			if strings.Contains(src[at:end], "?)") {
+				t.Fatalf("seed=%d: `?` inside a defer body:\n%s", seed, src[at:end+1])
+			}
+			next := strings.Index(src[end:], "defer { ")
+			if next < 0 {
+				break
+			}
+			at = end + next
+		}
+	}
+	if defers == 0 {
+		t.Fatal("no seed generated a defer, so the sweep checked nothing")
+	}
 }

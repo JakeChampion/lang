@@ -22,15 +22,24 @@
 # multi-threaded tokio runtime, built --locked against its Cargo.lock by
 # the Rust toolchain mise.net-nightly.toml pins; and h2o, the host's
 # package (Ubuntu's 2.2.5 on the runner), answering through an mruby
-# handler with a worker thread per core. The report's header names the
-# versions. oha holds N connections closed-loop for the duration and the
-# report keeps its throughput and its p50 / p99 latency per server and N,
-# plus, on x86-64, the bump-allocator growth one held idle connection
-# costs the Fern loop (the number TestSelfHostHeldConnectionsHeapBoundX86_64
-# bounds). Closed-loop, without `-q`, because these are throughput
-# ceilings: oha's latency correction only applies under a fixed rate, and
-# the p99 here says how the server queues at saturation, not what a
-# client at a given rate would see.
+# handler with a worker thread per core. Then two servers whose handler
+# fetches an upstream twice per request, P3's exit case
+# (docs/NET-P3-SUSPENSION-PLAN.md §1): scripts/net-bench.d/twofetch.fern,
+# one loop built by the self-host compiler (bin/fern-selfhost, whose
+# suspension pass parks the handler on the upstream) reaching it through
+# the forward proxy `http_proxy` names, since a handler's fetch refuses a
+# loopback address; and the hyper crate's `twofetch` binary, hyper-util's
+# pooled client on the multi-threaded runtime. The upstream is the Go
+# hello. The report's header names the versions. oha holds N connections
+# closed-loop for the duration and the report keeps its throughput and
+# its p50 / p99 latency per server and N, plus, on x86-64, the
+# bump-allocator growth one held idle connection and one suspended
+# handler cost the Fern loop (the numbers
+# TestSelfHostHeldConnectionsHeapBoundX86_64 bounds). Closed-loop,
+# without `-q`, because these are throughput ceilings: oha's latency
+# correction only applies under a fixed rate, and the p99 here says how
+# the server queues at saturation, not what a client at a given rate
+# would see.
 #
 # RECORDED, NOT GATED. Wall-clock throughput on a shared runner moves by
 # tens of percent between runs, which is why perf.yml counts instructions
@@ -39,13 +48,16 @@
 # note under refs/notes/perf, so `scripts/perf-history show
 # net/fern/c64.rps` is the trend.
 #
-#   net/<server>/c<N>.rps       requests per second, whole
+#   net/<server>/c<N>.rps       requests per second, whole; <server> is
+#                               fern, go, hyper, h2o, fern-twofetch or
+#                               hyper-twofetch
 #   net/<server>/c<N>.p50_us    median latency, microseconds
 #   net/<server>/c<N>.p99_us    99th-percentile latency, microseconds
 #   net/<server>/c<N>.failed    responses that were not 200, plus errors
 #                               other than the requests cut off by the end
 #                               of the run
-#   net/fern/held.bytes_per_connection  (x86-64 only)
+#   net/fern/held.bytes_per_connection          (x86-64 only)
+#   net/fern/held.bytes_per_suspended_handler   (x86-64 only)
 
 set -euo pipefail
 
@@ -79,6 +91,9 @@ bin/fern -target "$TARGET" -o "$work/fern-hello" scripts/net-bench.d/hello.fern
 go build -o "$work/go-hello" ./scripts/net-bench.d/gohello
 cargo build --release --locked --quiet --manifest-path scripts/net-bench.d/hyperhello/Cargo.toml --target-dir "$work/hyper-target"
 cp "$work/hyper-target/release/hyperhello" "$work/hyper-hello"
+cp "$work/hyper-target/release/twofetch" "$work/hyper-twofetch"
+make selfhost-cli >&2
+bin/fern-selfhost -target "$TARGET" -o "$work/fern-twofetch" "$PWD/scripts/net-bench.d/twofetch.fern" "$PWD/internal/stdlib"
 hyper_version="$(sed -n '/^name = "hyper"$/{n;s/^version = "\(.*\)"/\1/p}' scripts/net-bench.d/hyperhello/Cargo.lock)"
 h2o_version="$(h2o --version | sed -n 's/^h2o version \(.*\)/\1/p')"
 
@@ -89,6 +104,18 @@ start() {
     start_server "$work/server.log" h2o -c "$work/h2o.conf"
   else
     PORT="$2" start_server "$work/server.log" "$work/$1-hello"
+  fi
+  await_server "$1" "$2" "$work/server.log"
+}
+
+# start_twofetch NAME PORT UPSTREAM_PORT — the two-fetch server NAME on
+# PORT, reaching the hello on UPSTREAM_PORT: the Fern one through it as a
+# forward proxy, the hyper one directly.
+start_twofetch() {
+  if [ "$1" = fern-twofetch ]; then
+    http_proxy="http://u@127.0.0.1:$3" PORT="$2" start_server "$work/server.log" "$work/fern-twofetch"
+  else
+    UPSTREAM="http://127.0.0.1:$3/" PORT="$2" start_server "$work/server.log" "$work/hyper-twofetch"
   fi
   await_server "$1" "$2" "$work/server.log"
 }
@@ -122,6 +149,19 @@ PY
     done
     stop_server
   done
+  upstream_port="$(free_port)"
+  start go "$upstream_port"
+  keep_as_upstream
+  for server in fern-twofetch hyper-twofetch; do
+    port="$(free_port)"
+    start_twofetch "$server" "$port" "$upstream_port"
+    for n in $CONNECTIONS; do
+      "$OHA" -z "${SECONDS_PER}s" -c "$n" --no-tui --output-format json "http://127.0.0.1:$port/" > "$work/$server-c$n.json"
+      rows "$server" "$n" "$work/$server-c$n.json"
+    done
+    stop_server
+  done
+  stop_upstream
   if [ "$ARCH" = x86_64 ]; then
     # The per-connection heap cost, read off the test that bounds it.
     go test ./internal/e2eselfhost -run 'TestSelfHostHeldConnectionsHeapBoundX86_64$' -count=1 -v > "$work/held.log" 2>&1 || {
@@ -130,11 +170,13 @@ PY
       exit 1
     }
     per="$(sed -n 's/.*(\([0-9]*\) per connection).*/\1/p' "$work/held.log" | head -1)"
-    if [ -z "$per" ]; then
-      echo "net-bench: no per-connection figure in the held-connections log" >&2
+    suspended="$(sed -n 's/.*(\([0-9]*\) per handler).*/\1/p' "$work/held.log" | head -1)"
+    if [ -z "$per" ] || [ -z "$suspended" ]; then
+      echo "net-bench: no per-connection or per-handler figure in the held-connections log" >&2
       exit 1
     fi
     printf 'net/fern/held.bytes_per_connection\t%s\n' "$per"
+    printf 'net/fern/held.bytes_per_suspended_handler\t%s\n' "$suspended"
   fi
 } > "$work/report"
 

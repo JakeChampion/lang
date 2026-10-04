@@ -1045,6 +1045,9 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__fern_rc_dec", params: [p], result: t_void() },
     RawFloorSig { name: "__fern_map_find", params: [p, p, n, p], result: n },
     RawFloorSig { name: "__fern_map_delete", params: [p, p, n, p], result: p },
+    // The slice-range abort the __fern_arr_slice bodies call (#11405): the
+    // emitters' reporter, so it never returns.
+    RawFloorSig { name: "__fern_slice_abort", params: [], result: t_void() },
     RawFloorSig { name: "__syscall3", params: [n, w, w, w], result: w },
     RawFloorSig { name: "__syscall4", params: [n, w, w, w, w], result: w },
     RawFloorSig { name: "__syscall5", params: [n, w, w, w, w, w], result: w },
@@ -11165,7 +11168,10 @@ function variant_pattern_owner(name: string): string {
 // enum's declared type-parameter count, it's E019. Checked at every
 // annotation position: parameter, struct field, return and body `let`. At
 // the last two the Go checker adds an E003 / E002 on the mismatched value as
-// well; this reports the E019 alone.
+// well; this reports the E019 alone. A declaration that shadows a built-in's
+// name is E010 and its arity is not judged, as native's reservedShadows
+// skips it: the built-in's own uses would otherwise count against the
+// shadowing declaration.
 function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
   let out: util.Diag[] = [];
   // An array of an instantiation (`Pair[i32][]`) names the same head.
@@ -11177,9 +11183,10 @@ function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.
     return out;
   }
   let base: string = util.base_type_name(t);
+  let shadows: boolean = parser.is_reserved_struct_name(base) || parser.is_reserved_enum_name(base);
   let tpc: i32 = struct_type_param_count(structs, base);
   if (tpc >= 0) {
-    if (nargs != tpc) {
+    if (nargs != tpc && !shadows) {
       out = out.append(dg_at("E019", "struct " + base + " has " + util.i32_to_string(tpc) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", struct_decl_line(structs, base), struct_decl_col(structs, base)));
     }
     return out;
@@ -11200,7 +11207,7 @@ function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.
     return out;
   }
   for ed in enums {
-    if (ed.name == base && ed.type_params.len() != nargs) {
+    if (ed.name == base && ed.type_params.len() != nargs && !shadows) {
       return out.append(dg_at("E019", "enum " + base + " has " + util.i32_to_string(ed.type_params.len()) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", ed.line, ed.col));
     }
   }
@@ -12656,8 +12663,9 @@ function tp_receiver(obj: ast.Expr, recv: typeinfo.Type, s: Scope): string {
   return "";
 }
 
-// type_assoc_req resolves a CONCRETE `i32.zero()` / `Point.origin()`: some
-// `impl … for <tyname>` in the module lists `field`, and `field` is not a
+// type_assoc_req resolves a CONCRETE `i32.zero()` / `Point.origin()` /
+// `Box[string].make()`: some `impl … for <tyname>` (by its base name) in the
+// module lists `field`, and `field` is not a
 // receiver method on that type (parse_impl_decl gives an associated function
 // an empty receiver_name, so collect_method_sigs never records it — absence
 // from the method table is what makes it associated). A `self`-taking method
@@ -12665,9 +12673,10 @@ function tp_receiver(obj: ast.Expr, recv: typeinfo.Type, s: Scope): string {
 // type comes from the trait requirement when the impl names a declared trait;
 // an inherent impl resolves with no return type (unknown).
 function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
+  let base: string = util.base_type_name(tyname);
   for imp in s.impls {
-    if (imp.impl_type == tyname && util.has_str(imp.method_names, field)) {
-      if (s.lookup_method(field, tyname).name.len() == 0) {
+    if (imp.impl_type == base && util.has_str(imp.method_names, field)) {
+      if (s.lookup_method(field, base).name.len() == 0) {
         let h: AssocHit = trait_assoc_req(s.trait_reqs, imp.trait_name, field, []);
         if (h.found) {
           return h;
@@ -22244,10 +22253,22 @@ pub function scope_type(s: Scope, name: string): typeinfo.Type {
   return s.lookup(name);
 }
 
-// func_type_params is free function `name`'s type parameters in declared
-// order, the positions a written instantiation `name[A, B](…)` binds.
+// func_type_params is function `name`'s type parameters in declared order,
+// the positions a written instantiation `name[A, B](…)` binds. A method is
+// named `Owner.method`, its receiver's parameters ahead of its own.
 pub function func_type_params(s: Scope, name: string): string[] {
-  return s.lookup_sig(name).all_type_params;
+  let sig: FuncSig = s.lookup_sig(name);
+  if (sig.name.len() > 0) {
+    return sig.all_type_params;
+  }
+  let dot: i32 = name.len() - 1;
+  while (dot > 0 && name[dot] != b'.') {
+    dot = dot - 1;
+  }
+  if (dot <= 0) {
+    return sig.all_type_params;
+  }
+  return s.lookup_method(slice_unchecked(name, dot + 1, name.len()) + "", slice_unchecked(name, 0, dot) + "").all_type_params;
 }
 
 // spelled_type is the type a written spelling names in this scope.

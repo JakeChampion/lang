@@ -368,6 +368,12 @@ the virtual time task `i` is cancelled at, a scripted disconnect. A handler's
 `plat.http` over a `SimPlatform` parks on the scripted network's latencies
 and, cancelled while it waits, answers `FetchError.Cancelled` — the same bytes
 on every target (`TestSelfHostSimTasks`).
+A streamed request body parks the same way: with `serve.Config.stream_bodies`
+a handler starts on its request's header block, and `req.body_stream()`
+pulls the bytes as the handler reads them, each pull a `wait_any` on the
+connection under the body's data-rate deadline (`std/stream`'s source,
+`docs/NET-P3-SUSPENSION-PLAN.md` §3.9). The pull is a closure the stream
+calls, so this is the indirect call that reaches a park.
 `docs/NET-P3-SUSPENSION-PLAN.md` is the design.
 
 ## 9. How it works (one paragraph)

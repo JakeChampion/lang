@@ -637,18 +637,30 @@ func builtinStructDecls() []*ast.StructDecl {
 		},
 		// Stream — byte-stream value (docs/STDLIB-DESIGN-RESEARCH.md
 		// Rec §1 Phase 2), and the type of `HttpRequest.body`.
-		// Phase 1 ships an in-memory buffer-backed
-		// Stream with `data: u8[]` + `pos: i32` cursor. Lazy /
-		// chunked reads land in Phase 2 once the underlying
-		// runtime grows a reader-shaped iteration protocol.
-		// `bytes` is treated as `u8[]` throughout — no separate
-		// type alias yet; doc-comments call out the bytes ≡
-		// u8[] equivalence.
+		// Stream — std/stream's byte reader: a buffer and a cursor,
+		// and for a body that arrives as it is read (std/serve's
+		// streamed request body) a source the reads ask for the next
+		// chunk once the buffer is exhausted. `bytes` is `u8[]`
+		// throughout.
 		{
 			Name: "Stream",
 			Fields: []ast.Param{
 				{Name: "data", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 				{Name: "pos", Type: ast.NumberType{}},
+				{Name: "source", Type: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StructType{Name: "BodySource"}}}},
+			},
+		},
+		// BodySource — what a lazy Stream pulls from: `next` answers the
+		// next chunk, None at the end and on every call after; `fault`
+		// is why the stream ended early (an HTTP status, or
+		// async.cancelled()), 0 for a stream that reached its end.
+		{
+			Name: "BodySource",
+			Fields: []ast.Param{
+				{Name: "next", Type: &ast.FuncType{
+					Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}},
+				}},
+				{Name: "fault", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.NumberType{}}}},
 			},
 		},
 		// ChunkProducer — the producer a `BodyChunks` carries: asked for

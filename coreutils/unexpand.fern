@@ -216,7 +216,18 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
               piece = c;
             },
             Err(e) => {
-              o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
+              let message: string = gnu.io_error_text(e);
+              // WASI may answer EBADF for a directory. Classify the open
+              // descriptor only after a failed read, preserving normal I/O.
+              match (r.stat()) {
+                Ok(st) => {
+                  if (st.is_dir) {
+                    message = "Is a directory";
+                  }
+                },
+                Err(_) => {}
+              }
+              o = gnu.error_out(o, gnu.quotef(name) + ": " + message);
               ok = false;
               read_ok = false;
             }

@@ -50,6 +50,7 @@
 // so runs from the modload driver rather than from a per-module emit.
 
 import "./ir";
+import "./util";
 import "./irverify";
 import "./irverifyrc";
 import "./irverifystack";
@@ -73,7 +74,61 @@ pub function verify_on(): boolean {
 // does not carry is left alone — a runtime helper, a lifted lambda, another
 // unit's function — so the check reports a genuine arity mismatch and never a
 // missing entry.
-pub struct Gate { sigs: irverify.NameIndex, pops: i32[] }
+//
+// `seen` and `modelled` count the functions the gate looked at and the ones
+// the stack pass modelled, one byte each in a buffer, so one gate shared by
+// an emit loop's calls can say at the end how much was verified (report).
+// Both are 0 unless FERN_IR_VERIFY=1 asks for the line.
+pub struct Gate { sigs: irverify.NameIndex, pops: i32[], seen: usize, modelled: usize }
+
+// gate builds the Gate a program's emit loop hands to every
+// verify_or_refuse and reports at its end.
+pub function gate(sigs: irverify.NameIndex, pops: i32[]): Gate {
+  if (!report_on()) {
+    return gate_unreported(sigs, pops);
+  }
+  return Gate { sigs: sigs, pops: pops, seen: buf_new(64), modelled: buf_new(64) };
+}
+
+// gate_unreported is the Gate for the runtime helpers' bodies, which the
+// line does not count: native's counts the program's functions.
+pub function gate_unreported(sigs: irverify.NameIndex, pops: i32[]): Gate {
+  return Gate { sigs: sigs, pops: pops, seen: 0 as usize, modelled: 0 as usize };
+}
+
+// report_on reports whether the coverage line is wanted: FERN_IR_VERIFY=1,
+// the explicit form, as native prints it. The gate itself runs by default,
+// but a line on every compile's stderr is a diagnostic mode, not a default.
+pub function report_on(): boolean {
+  match (env("FERN_IR_VERIFY")) {
+    Some(v) => {
+      return v == "1";
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// report prints the coverage line native prints (#8798, #11412) — a verifier
+// that reports nothing for a function it could not model is silent, not
+// clean, so the line is what says how much was looked at — and releases the
+// counters. Silent unless report_on.
+pub function report(g: Gate): void {
+  if (!report_on()) {
+    return;
+  }
+  let seen: i32 = buf_len(g.seen);
+  let modelled: i32 = buf_len(g.modelled);
+  eprint("FERN_IR_VERIFY: " + util.i32_to_string(seen) + " functions verified, " + util.i32_to_string(modelled)
+    + " modelled by the stack verifier, " + util.i32_to_string(seen - modelled) + " skipped");
+  buf_free(g.seen);
+  buf_free(g.modelled);
+}
+
+// Verdict is one function's result: what the verifiers found, and whether
+// the stack pass modelled it rather than bailing.
+pub struct Verdict { problems: irverify.Problem[], modelled: boolean }
 
 // verify_problems runs both verifiers over one lowered function and returns
 // everything they found, structure problems first.
@@ -81,6 +136,12 @@ pub struct Gate { sigs: irverify.NameIndex, pops: i32[] }
 // Pure, and separate from the refusal below so the gate's verdict can be
 // asserted without the exit that acting on it entails.
 pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, g: Gate): irverify.Problem[] {
+  return verdict(fn_name, ops, n_params, n_locals, g).problems;
+}
+
+// verdict is verify_problems with the stack pass's coverage beside the
+// problems.
+pub function verdict(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, g: Gate): Verdict {
   let out: irverify.Problem[] = irverify.verify_fn(fn_name, ops, n_params, n_locals, g.sigs);
   let sr: irverifystack.StackResult = irverifystack.verify_stack_fn(fn_name, ops, g.pops);
   let i: i32 = 0;
@@ -96,7 +157,7 @@ pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_loc
     out = out.append(rr.problems[j]);
     j = j + 1;
   }
-  return out;
+  return Verdict { problems: out, modelled: sr.bail.len() == 0 };
 }
 
 // verify_or_refuse is what the backends call: a hard exit naming what the
@@ -109,7 +170,14 @@ pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_lo
   if (!verify_on()) {
     return 0;
   }
-  let ps: irverify.Problem[] = verify_problems(fn_name, ops, n_params, n_locals, g);
+  let v: Verdict = verdict(fn_name, ops, n_params, n_locals, g);
+  if (g.seen != 0 as usize) {
+    buf_push_byte(g.seen, 1);
+    if (v.modelled) {
+      buf_push_byte(g.modelled, 1);
+    }
+  }
+  let ps: irverify.Problem[] = v.problems;
   if (ps.len() == 0) {
     return 0;
   }

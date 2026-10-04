@@ -2113,7 +2113,7 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 	// a fresh Pair via the method-dispatch path.
 	if t == tPair {
 		pairs := sc.inScope(tPair)
-		if len(pairs) > 0 && !g.flip(0.7) {
+		if len(pairs) > 0 && !g.flip(0.4) {
 			name := pairs[g.ch.intN(len(pairs))]
 			fmt.Fprintf(b, "%s.swap()", name)
 			return true
@@ -3366,6 +3366,9 @@ func (g *Generator) maybeEmitControlStmt(b *strings.Builder, sc *scope, retT gty
 	if g.maybeEmitMatchStmt(b, sc) {
 		return true
 	}
+	if g.maybeEmitDefer(b, sc) {
+		return true
+	}
 	if g.maybeEmitLetElse(b, sc, retT) {
 		return true
 	}
@@ -3422,9 +3425,17 @@ func (g *Generator) maybeEmitIfElseStmt(b *strings.Builder, sc *scope) bool {
 // skip an iteration through `continue`:
 //
 //	let __lb<N>: i32 = 0i32;
-//	loop {
+//	__lp<N>: loop {                                           // the label, sometimes
 //	    if (__lb<N> >= <K>i32) { break; }
 //	    if (<bool>) { __lb<N> = __lb<N> + 1i32; continue; }   // sometimes
+//	    let __li<N>: i32 = 0i32;                              // an inner loop, sometimes,
+//	    loop {                                                // only under a label
+//	        if (__li<N> >= <K2>i32) { break; }
+//	        if (<bool>) { break __lp<N>; }
+//	        if (<bool>) { __lb<N> = __lb<N> + 1i32; continue __lp<N>; }
+//	        <stmts>
+//	        __li<N> = __li<N> + 1i32;
+//	    }
 //	    <stmts>
 //	    __lb<N> = __lb<N> + 1i32;
 //	}
@@ -3432,7 +3443,10 @@ func (g *Generator) maybeEmitIfElseStmt(b *strings.Builder, sc *scope) bool {
 // The counter is bumped on every path that goes round again, so the loop
 // runs at most K times whatever the body does, as the `while` production's
 // does. `break` and `continue` out of a nested `if` are the two edges a
-// lowering's loop-exit bookkeeping has to get right.
+// lowering's loop-exit bookkeeping has to get right; the labelled forms
+// out of the inner loop are the same two edges crossing a loop boundary,
+// so the inner loop's own counter and the outer's both have to be left in
+// the state the target loop expects.
 func (g *Generator) maybeEmitLoopBreak(b *strings.Builder, sc *scope) bool {
 	if g.loopDepth >= maxInt(g.cfg.MaxLoopDepth, 0) {
 		return false
@@ -3447,15 +3461,73 @@ func (g *Generator) maybeEmitLoopBreak(b *strings.Builder, sc *scope) bool {
 	defer func() { g.loopDepth-- }()
 	counter := fmt.Sprintf("__lb%d", idx)
 	iters := 1 + g.ch.intN(maxInt(g.cfg.MaxLoopIters, 1))
-	fmt.Fprintf(b, "let %s: i32 = 0i32; loop { if (%s >= %di32) { break; } ", counter, counter, iters)
+	fmt.Fprintf(b, "let %s: i32 = 0i32; ", counter)
+	// `true` — the exhausted choice — is no label.
+	label := ""
+	if !g.flip(0.6) {
+		label = fmt.Sprintf("__lp%d", idx)
+		fmt.Fprintf(b, "%s: ", label)
+	}
+	fmt.Fprintf(b, "loop { if (%s >= %di32) { break; } ", counter, iters)
 	// `true` — the exhausted choice — is no `continue`.
 	if !g.flip(0.6) {
 		b.WriteString("if (")
 		g.boolExpr(b, sc, 0)
 		fmt.Fprintf(b, ") { %s = %s + 1i32; continue; } ", counter, counter)
 	}
+	// The inner loop, whose labelled edges leave for the outer one. `true`
+	// is the exhausted choice: none.
+	if label != "" && g.loopDepth < maxInt(g.cfg.MaxLoopDepth, 0) && !g.flip(0.5) {
+		g.loopDepth++
+		inner := fmt.Sprintf("__li%d", idx)
+		innerIters := 1 + g.ch.intN(maxInt(g.cfg.MaxLoopIters, 1))
+		fmt.Fprintf(b, "let %s: i32 = 0i32; loop { if (%s >= %di32) { break; } if (", inner, inner, innerIters)
+		g.boolExpr(b, sc, 0)
+		fmt.Fprintf(b, ") { break %s; } if (", label)
+		g.boolExpr(b, sc, 0)
+		fmt.Fprintf(b, ") { %s = %s + 1i32; continue %s; } ", counter, counter, label)
+		g.innerStmts(b, newScope(sc), fmt.Sprintf("__li%d", idx), 2)
+		fmt.Fprintf(b, "%s = %s + 1i32; } ", inner, inner)
+		g.loopDepth--
+	}
 	g.innerStmts(b, newScope(sc), fmt.Sprintf("__lb%d", idx), 3)
 	fmt.Fprintf(b, "%s = %s + 1i32; } ", counter, counter)
+	return true
+}
+
+// maybeEmitDefer emits a block-shaped defer:
+//
+//	defer { <stmts> }
+//
+// whose body is a scope of its own over the enclosing one, run at the
+// function's exit after everything that follows it. What the lowering has
+// to get right is the frame at that point: the body reads locals declared
+// before the defer, which must still be live when it runs, and binds locals
+// of its own, which must be released on the deferred path.
+//
+// Not in the printable profile, as maybeEmitLetElse is not: that profile's
+// main is a fixed sequence of observations whose reach the float landmarks
+// pin, and one more draw ahead of its declarations moves every type they
+// pick.
+func (g *Generator) maybeEmitDefer(b *strings.Builder, sc *scope) bool {
+	if g.profile == ProfilePrintable {
+		return false
+	}
+	// Exhaustion convention: `true` here = no statement (smaller output).
+	if g.flip(0.92) {
+		return false
+	}
+	idx := g.ctrlCounter
+	g.ctrlCounter++
+	// A deferred action has no caller to propagate a failure to, so `?`
+	// is refused inside it: the body is generated as if the function
+	// returned no Option or Result.
+	prevRet := g.currentReturnType
+	g.currentReturnType = tI32
+	b.WriteString("defer { ")
+	g.innerStmts(b, newScope(sc), fmt.Sprintf("__df%d", idx), 3)
+	b.WriteString("} ")
+	g.currentReturnType = prevRet
 	return true
 }
 
