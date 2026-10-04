@@ -318,6 +318,9 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		// suite.
 		{"sim_platform", langSrcAbs(t, "examples/tests/sim_platform_test.fern"), ""},
 		{"http_body", langSrcAbs(t, "examples/tests/http_body_test.fern"), ""},
+		// HttpRequest.body as a Stream, in memory and pulled from a source
+		// (a closure over cells), the shape a streamed request body has.
+		{"http_request_body_stream", langSrcAbs(t, "examples/tests/http_request_body_stream_test.fern"), ""},
 		{"http_body_json", langSrcAbs(t, "examples/tests/http_body_json_test.fern"), ""},
 		{"http_response_headers_migrated", langSrcAbs(t, "examples/tests/http_response_headers_migrated_test.fern"), ""},
 		{"string_prelude_migrated", langSrcAbs(t, "examples/tests/string_prelude_migrated_test.fern"), ""},

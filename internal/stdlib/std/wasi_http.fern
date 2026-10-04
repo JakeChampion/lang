@@ -28,6 +28,7 @@
 
 import "std/http";
 import "std/platform";
+import "std/stream";
 
 // The wasi:http method variant, in the WIT's case order: the discriminant
 // the host writes is this variant's index.
@@ -146,7 +147,7 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, platfo
   }
   // The body's trailers are a future the host settles after the body is
   // finished; nothing reads it yet, so the request's are empty.
-  let req: HttpRequest = HttpRequest { method: method, path: path, body: Stream { data: data, pos: 0 }, headers: headers, trailers: HeaderMap { names: [], values: [] } };
+  let req: HttpRequest = HttpRequest { method: method, path: path, body: stream.stream_from_bytes(data), headers: headers, trailers: HeaderMap { names: [], values: [] } };
   let resp: HttpResponse = handle(req, platform.host());
   send(response_out, resp);
 }
