@@ -1845,10 +1845,12 @@ answer is `Result[HttpResponse, FetchError]`.
   idempotent request that finds it closed is sent once more on a new one.
   `idle()` keeps up to 64 connections for 90 s each, `idle_limited(max,
   idle_ms)` sets both, and `sockets_with(pool)` dials with a given pool.
-  `send` and `plat.http` keep a pool for the one call (so a redirect back
-  to the same origin is followed on its connection) and close it after; a
-  caller that holds a `Sockets` across `send_on` calls reuses across them
-  and closes what is left with `close_idle(tr)`. Every rule above (the block list, the bounds, the retry,
+  `send` keeps a pool for the one call (so a redirect back to the same
+  origin is followed on its connection) and closes it after; a caller that
+  holds a `Sockets` across `send_on` calls reuses across them and closes
+  what is left with `close_idle(tr)`; `send_public_on(tr, req)` is the
+  public-only route over a caller's transport, which the host platform's
+  `plat.http` takes over the platform's own pool. Every rule above (the block list, the bounds, the retry,
   redirects, decoding) stays above the seam, so a scripted transport
   exercises the same client a real one does. `lookup` answers a `Lookup`:
   the addresses to dial and, when asked to be judged, the addresses the
@@ -2055,8 +2057,10 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 - `(plat).random_i32()` — one draw from the platform CSPRNG
   (`random`).
 - `(plat).http(req)` — `req` sent and its response read (`fetch`); the
-  host sends it with `fetch.send_public`, so a handler reaches global
-  addresses only.
+  host sends it with `fetch.send_public_on` over the platform's own pool,
+  so a handler reaches global addresses only, and a connection the peer
+  kept open carries the platform's next request to the same place — for
+  the life of the worker loop under std/serve.
 
 ### `std/sim_fetch`
 

@@ -25,10 +25,11 @@
 // fails with `Tls`). A connection whose response was framed and that the
 // peer did not ask to close is kept in the transport's `Idle` pool, and
 // the next idempotent request to the same host and port takes it rather
-// than dialling; `send` and `plat.http` keep a pool for the one call (so a
-// redirect back to the same origin reuses its connection) and close it
-// after, and a caller holding a `Sockets` across `send_on` calls keeps one
-// across them. A `wasm32-wasi-http` build dials nothing: the
+// than dialling; `send` keeps a pool for the one call (so a redirect back
+// to the same origin reuses its connection) and closes it after, a caller
+// holding a `Sockets` across `send_on` calls keeps one across them, and a
+// host platform's `plat.http` keeps the platform's own, for as long as the
+// platform lives (std/platform). A `wasm32-wasi-http` build dials nothing: the
 // request goes to the host's wasi:http/outgoing-handler (std/wasi_http),
 // which resolves the name, connects and speaks TLS, and everything above
 // the transport is the same. Where the client dials, it reaches the
@@ -783,11 +784,18 @@ pub function send(req: Request): Result[HttpResponse, FetchError] {
 }
 
 // `send_public(req)` — `send`, refusing a host that resolves to an address
-// that is not global (`Blocked`): the route a handler's platform fetches
-// through (std/platform), since a handler reaches only what the deployment
-// exposes publicly. A proxy the environment names is dialled wherever it is.
+// that is not global (`Blocked`), since a handler reaches only what the
+// deployment exposes publicly. A proxy the environment names is dialled
+// wherever it is.
 pub function send_public(req: Request): Result[HttpResponse, FetchError] {
   return __send_closing(Policy { public_only: true, proxies: __proxies() }, req);
+}
+
+// `send_public_on(tr, req)` — `send_public` over the transport `tr`, whose
+// pool keeps the connection for the next request: the route a handler's
+// platform fetches through (std/platform), the pool the platform's own.
+pub function send_public_on[T: Transport](tr: T, req: Request): Result[HttpResponse, FetchError] {
+  return send_on(tr, req, Policy { public_only: true, proxies: __proxies() });
 }
 
 // `__send_closing(policy, req)` — `req` sent over the machine's transport

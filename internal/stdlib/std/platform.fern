@@ -67,31 +67,36 @@ pub trait Platform {
   function random_i32(self: Self): i32;
 
   // `.http(req)` — `req` sent and its response read. Needs the `fetch`
-  // capability. The host sends it with `fetch.send_public`: a handler can
-  // fetch only through the platform it was handed, and only to a global
-  // address (`Blocked` otherwise).
+  // capability. The host sends it with `fetch.send_public_on` over its own
+  // pool: a handler can fetch only through the platform it was handed,
+  // and only to a global address (`Blocked` otherwise), and a connection
+  // the peer kept open carries the platform's next request to the same
+  // place.
   function http(self: Self, req: fetch.Request): Result[HttpResponse, fetch.FetchError];
 }
 
 // `Host` — the platform that performs its effects on the machine it runs
 // on: what std/serve's accept loops hand a handler, built once per worker
 // loop over that worker's reactor, and what the wasi-http entry hands one,
-// with no reactor (0).
-pub struct Host { reactor: i32 }
+// with no reactor (0). `pool` is the connections its `http` keeps for the
+// next request to the same place (`fetch.Idle`), shared by every copy of
+// the platform and kept for as long as it lives: a worker loop's, in
+// std/serve.
+pub struct Host { reactor: i32, pool: fetch.Idle }
 
-// `host()` — a host platform with no reactor, for code that has to build
-// one: a test driving a handler directly, or a caller of `serve.run` handing
-// its own handler what the accept loop would.
+// `host()` — a host platform with no reactor and an empty pool, for code
+// that has to build one: a test driving a handler directly, or a caller of
+// `serve.run` handing its own handler what the accept loop would.
 //
 //     let resp: HttpResponse = handle(req, platform.host());
 pub function host(): Host {
-  return Host { reactor: 0 };
+  return host_on(0);
 }
 
 // `host_on(reactor)` — the host platform of the worker whose reactor is
 // `reactor`; std/serve builds one per worker loop.
 pub function host_on(reactor: i32): Host {
-  return Host { reactor: reactor };
+  return Host { reactor: reactor, pool: fetch.idle() };
 }
 
 impl Platform for Host {
@@ -124,6 +129,6 @@ impl Platform for Host {
   }
 
   function http(self: Host, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
-    return fetch.send_public(req);
+    return fetch.send_public_on(fetch.sockets_with(self.pool), req);
   }
 }
