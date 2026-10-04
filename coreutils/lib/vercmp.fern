@@ -12,6 +12,7 @@
 // one buffer and never cuts a string out of it to compare.
 import "std/string";
 import "./gnu";
+import "./byte_input";
 
 function is_alnum_b(c: i32): boolean {
   return c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122;
@@ -38,19 +39,19 @@ function ver_order(c: i32): i32 {
   return c + 256;
 }
 
-function verrevcmp(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
+function verrevcmp[T: byte_input.Input](ta: T, a0: i32, a1: i32, tb: T, b0: i32, b1: i32): i32 {
   let a: i32 = a0;
   let b: i32 = b0;
   while (a < a1 || b < b1) {
     let first_diff: i32 = 0;
-    while (a < a1 && !gnu.is_digit(ta[a] as i32) || b < b1 && !gnu.is_digit(tb[b] as i32)) {
+    while (a < a1 && !gnu.is_digit(ta.byte_at(a) as i32) || b < b1 && !gnu.is_digit(tb.byte_at(b) as i32)) {
       let ca: i32 = 0;
       if (a < a1) {
-        ca = ver_order(ta[a] as i32);
+        ca = ver_order(ta.byte_at(a) as i32);
       }
       let cb: i32 = 0;
       if (b < b1) {
-        cb = ver_order(tb[b] as i32);
+        cb = ver_order(tb.byte_at(b) as i32);
       }
       if (ca != cb) {
         return ca - cb;
@@ -58,23 +59,23 @@ function verrevcmp(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): 
       a = a + 1;
       b = b + 1;
     }
-    while (a < a1 && ta[a] as i32 == 48) {
+    while (a < a1 && ta.byte_at(a) as i32 == 48) {
       a = a + 1;
     }
-    while (b < b1 && tb[b] as i32 == 48) {
+    while (b < b1 && tb.byte_at(b) as i32 == 48) {
       b = b + 1;
     }
-    while (a < a1 && b < b1 && gnu.is_digit(ta[a] as i32) && gnu.is_digit(tb[b] as i32)) {
+    while (a < a1 && b < b1 && gnu.is_digit(ta.byte_at(a) as i32) && gnu.is_digit(tb.byte_at(b) as i32)) {
       if (first_diff == 0) {
-        first_diff = ta[a] as i32 - tb[b] as i32;
+        first_diff = ta.byte_at(a) as i32 - tb.byte_at(b) as i32;
       }
       a = a + 1;
       b = b + 1;
     }
-    if (a < a1 && gnu.is_digit(ta[a] as i32)) {
+    if (a < a1 && gnu.is_digit(ta.byte_at(a) as i32)) {
       return 1;
     }
-    if (b < b1 && gnu.is_digit(tb[b] as i32)) {
+    if (b < b1 && gnu.is_digit(tb.byte_at(b) as i32)) {
       return 0 - 1;
     }
     if (first_diff != 0) {
@@ -96,10 +97,10 @@ function verrevcmp(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): 
 // stops at the first dot where the backward one walks the whole prefix,
 // and the names a sort sees look like that. The cost is the per-byte
 // call, not the shape.
-function file_prefixlen(text: string, from: i32, end: i32): i32 {
+function file_prefixlen[T: byte_input.Input](text: T, from: i32, end: i32): i32 {
   let i: i32 = from;
   while (i < end) {
-    if (text[i] as i32 == 46 && i > from) {
+    if (text.byte_at(i) as i32 == 46 && i > from) {
       if (suffix_runs_to_end(text, i, end)) {
         return i;
       }
@@ -111,23 +112,23 @@ function file_prefixlen(text: string, from: i32, end: i32): i32 {
 
 // Whether [at, end) is one or more `\.[A-Za-z~][A-Za-z0-9~]*` segments
 // and nothing else.
-function suffix_runs_to_end(text: string, at: i32, end: i32): boolean {
+function suffix_runs_to_end[T: byte_input.Input](text: T, at: i32, end: i32): boolean {
   let i: i32 = at;
   while (i < end) {
-    if (text[i] as i32 != 46) {
+    if (text.byte_at(i) as i32 != 46) {
       return false;
     }
     i = i + 1;
     if (i >= end) {
       return false;
     }
-    let c: i32 = text[i] as i32;
+    let c: i32 = text.byte_at(i) as i32;
     if (!is_alpha_b(c) && c != 126) {
       return false;
     }
     i = i + 1;
     while (i < end) {
-      let d: i32 = text[i] as i32;
+      let d: i32 = text.byte_at(i) as i32;
       if (!is_alnum_b(d) && d != 126) {
         break;
       }
@@ -141,8 +142,8 @@ function is_alpha_b(c: i32): boolean {
   return c >= 65 && c <= 90 || c >= 97 && c <= 122;
 }
 
-// `compare_texts(ta, a0, a1, tb, b0, b1)` — ta[a0, a1) against tb[b0, b1).
-pub function compare_texts(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
+// Compare the half-open ranges [a0, a1) and [b0, b1).
+function compare_inputs[T: byte_input.Input](ta: T, a0: i32, a1: i32, tb: T, b0: i32, b1: i32): i32 {
   if (a0 == a1) {
     if (b0 == b1) {
       return 0;
@@ -152,8 +153,8 @@ pub function compare_texts(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1
   if (b0 == b1) {
     return 1;
   }
-  if (ta[a0] as i32 == 46) {
-    if (tb[b0] as i32 != 46) {
+  if (ta.byte_at(a0) as i32 == 46) {
+    if (tb.byte_at(b0) as i32 != 46) {
       return 0 - 1;
     }
     let adot: boolean = a1 - a0 == 1;
@@ -167,8 +168,8 @@ pub function compare_texts(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1
     if (bdot) {
       return 1;
     }
-    let add: boolean = a1 - a0 == 2 && ta[a0 + 1] as i32 == 46;
-    let bdd: boolean = b1 - b0 == 2 && tb[b0 + 1] as i32 == 46;
+    let add: boolean = a1 - a0 == 2 && ta.byte_at(a0 + 1) as i32 == 46;
+    let bdd: boolean = b1 - b0 == 2 && tb.byte_at(b0 + 1) as i32 == 46;
     if (add) {
       if (bdd) {
         return 0;
@@ -178,7 +179,7 @@ pub function compare_texts(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1
     if (bdd) {
       return 1;
     }
-  } else if (tb[b0] as i32 == 46) {
+  } else if (tb.byte_at(b0) as i32 == 46) {
     return 1;
   }
   let ap: i32 = file_prefixlen(ta, a0, a1);
@@ -189,4 +190,23 @@ pub function compare_texts(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1
     return r;
   }
   return verrevcmp(ta, a0, a1, tb, b0, b1);
+}
+
+// Both entry points use the same version ordering without copying ranges.
+pub function compare_texts(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
+  return compare_inputs(ta, a0, a1, tb, b0, b1);
+}
+
+pub function compare_bytes(ta: [u8], a0: i32, a1: i32, tb: [u8], b0: i32, b1: i32): i32 {
+  return compare_inputs(byte_input.Bytes { data: ta }, a0, a1, byte_input.Bytes { data: tb }, b0, b1);
+}
+
+// Callers retaining whole buffers can borrow the arrays directly, avoiding
+// view descriptors for each comparison in a sort.
+pub function compare_arrays(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
+  return compare_inputs(byte_input.Array { data: ta }, a0, a1, byte_input.Array { data: tb }, b0, b1);
+}
+
+pub function compare_buffer(input: byte_input.Array, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+  return compare_inputs(input, a0, a1, input, b0, b1);
 }

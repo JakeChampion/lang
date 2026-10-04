@@ -665,6 +665,7 @@ func sortCases(t *testing.T) []invocation {
 		{name: "stdout full big", args: []string{big}, stdout: stdoutFull},
 		{name: "stdout full with nothing to write", args: []string{empty}, stdout: stdoutFull},
 		{name: "stdout closed", args: []string{ba}, stdout: stdoutClosed},
+		{name: "stdout closed with large output", args: []string{big}, stdout: stdoutClosed},
 		{name: "stdout closed with nothing to write", args: []string{empty}, stdout: stdoutClosed},
 		{name: "check stdout closed", args: []string{"-c", ba}, stdout: stdoutClosed},
 	}

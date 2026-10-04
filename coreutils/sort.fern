@@ -29,12 +29,14 @@
 // strings.
 import "std/string";
 import "std/array";
+import "std/utf8";
 import "std/io_buffered";
 import "std/crypto";
 import "./lib/gnu";
 import "./lib/vercmp";
 import "./lib/ld";
 import "./lib/radix";
+import "./lib/byte_input";
 
 // The exit status of a usage error and of any other failure; gnulib's
 // exit_failure, which sort sets to 2. A `-c` mismatch is 1, and so is
@@ -320,7 +322,7 @@ function tab_default(): i32 {
 }
 
 // ---- the run's settings -----------------------------------------------------
-struct Conf { keys: Key[], tab: i32, reverse: boolean, unique: boolean, stable: boolean, term: i32, seed: string, debug: boolean, gkey_only: boolean }
+struct Conf { keys: Key[], tab: i32, reverse: boolean, unique: boolean, stable: boolean, term: i32, seed: [u8], debug: boolean, gkey_only: boolean }
 
 // ---- diagnostics ------------------------------------------------------------
 function die(msg: string): void {
@@ -493,7 +495,7 @@ function parse_key(spec: string): Key {
 // field starts at the blanks in front of it when no -t was given, so
 // `-k2` on `b a` selects ` a`; with -t the separator belongs to the
 // field it precedes.
-function begfield(text: string, lo: i32, hi: i32, k: Key, tab: i32): i32 {
+function begfield(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i32 {
   let ptr: i32 = lo;
   let sword: i32 = k.sword;
   if (tab != tab_default()) {
@@ -528,7 +530,7 @@ function begfield(text: string, lo: i32, hi: i32, k: Key, tab: i32): i32 {
   return ptr + k.schar;
 }
 
-function limfield(text: string, lo: i32, hi: i32, k: Key, tab: i32): i32 {
+function limfield(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i32 {
   let ptr: i32 = lo;
   let eword: i32 = k.eword;
   let echar: i32 = k.echar;
@@ -576,7 +578,7 @@ function limfield(text: string, lo: i32, hi: i32, k: Key, tab: i32): i32 {
 // The half-open span key `k` selects out of the line at [lo, hi),
 // packed the way a line is: a tuple here would be a heap pair per key
 // per comparison, which is most of what an ordering mode costs.
-function key_span(text: string, lo: i32, hi: i32, k: Key, tab: i32): i64 {
+function key_span(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i64 {
   let lim: i32 = hi;
   if (k.eword != 0 - 1) {
     lim = limfield(text, lo, hi, k, tab);
@@ -597,7 +599,7 @@ function key_span(text: string, lo: i32, hi: i32, k: Key, tab: i32): i64 {
 
 // The comparisons that GNU makes over a NUL-terminated copy of the key
 // stop at an embedded NUL as well as at the key's end.
-function nul_end(text: string, lo: i32, hi: i32): i32 {
+function nul_end(text: u8[], lo: i32, hi: i32): i32 {
   let i: i32 = lo;
   while (i < hi && text[i] as i32 != 0) {
     i = i + 1;
@@ -613,7 +615,7 @@ function nul_end(text: string, lo: i32, hi: i32): i32 {
 // a decimal point.
 //
 // `byte_at` is the NUL a C string would have past its end.
-function byte_at(text: string, i: i32, end: i32): i32 {
+function byte_at(text: u8[], i: i32, end: i32): i32 {
   if (i >= end) {
     return 0;
   }
@@ -622,7 +624,7 @@ function byte_at(text: string, i: i32, end: i32): i32 {
 
 // The fraction after a decimal point, once the integer parts have been
 // found equal.
-function fraccompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i32): i32 {
+function fraccompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32): i32 {
   let a: i32 = ai;
   let b: i32 = bi;
   if (byte_at(ta, a, aend) == 46 && byte_at(tb, b, bend) == 46) {
@@ -657,7 +659,7 @@ function fraccompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: 
 
 // 1 when what follows the zeros is still a digit — a fraction that is
 // not all zeros, so the number with it is the larger.
-function trailing_nonzero(text: string, from: i32, end: i32): i32 {
+function trailing_nonzero(text: u8[], from: i32, end: i32): i32 {
   let i: i32 = from;
   while (byte_at(text, i, end) == 48) {
     i = i + 1;
@@ -670,7 +672,7 @@ function trailing_nonzero(text: string, from: i32, end: i32): i32 {
 
 // The sign-free half of strnumcmp: two magnitudes, leading zeros
 // already skipped.
-function magcompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i32): i32 {
+function magcompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32): i32 {
   let a: i32 = ai;
   let b: i32 = bi;
   let ca: i32 = 0;
@@ -729,7 +731,7 @@ function magcompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i
 
 // Past a run of `-`, then a run of zeros; the two skips strnumcmp makes
 // before it can compare anything.
-function skip_zeros(text: string, from: i32, end: i32): i32 {
+function skip_zeros(text: u8[], from: i32, end: i32): i32 {
   let i: i32 = from;
   while (i < end && text[i] as i32 == 48) {
     i = i + 1;
@@ -740,7 +742,7 @@ function skip_zeros(text: string, from: i32, end: i32): i32 {
 // Whether what remains, after any leading zeros and one decimal point
 // with its zeros, is a digit: strnumcmp's test for "this side is a
 // nonzero number and the other is not".
-function nonzero_after(text: string, from: i32, end: i32): boolean {
+function nonzero_after(text: u8[], from: i32, end: i32): boolean {
   let i: i32 = skip_zeros(text, from, end);
   if (byte_at(text, i, end) == 46) {
     i = skip_zeros(text, i + 1, end);
@@ -748,7 +750,7 @@ function nonzero_after(text: string, from: i32, end: i32): boolean {
   return is_digit_b(byte_at(text, i, end));
 }
 
-function numcompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i32): i32 {
+function numcompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32): i32 {
   let a: i32 = ai;
   let b: i32 = bi;
   while (a < aend && is_blank_b(ta[a] as i32)) {
@@ -822,7 +824,7 @@ function unit_order(c: i32): i32 {
   return 0;
 }
 
-function find_unit_order(text: string, from: i32, end: i32): i32 {
+function find_unit_order(text: u8[], from: i32, end: i32): i32 {
   let p: i32 = from;
   while (is_blank_b(byte_at(text, p, end))) {
     p = p + 1;
@@ -852,7 +854,7 @@ function find_unit_order(text: string, from: i32, end: i32): i32 {
   return sign * unit_order(byte_at(text, p, end));
 }
 
-function human_numcompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i32): i32 {
+function human_numcompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32): i32 {
   let a: i32 = ai;
   let b: i32 = bi;
   while (is_blank_b(byte_at(ta, a, aend))) {
@@ -912,7 +914,7 @@ function month_name(i: i32): string {
 
 // The month at the start of [from, end), packed with the offset its
 // name ended at: the value in the high half, the end in the low one.
-function getmonth(text: string, from: i32, end: i32): i64 {
+function getmonth(text: u8[], from: i32, end: i32): i64 {
   let p: i32 = from;
   while (p < end && is_blank_b(text[p] as i32)) {
     p = p + 1;
@@ -943,9 +945,9 @@ function getmonth(text: string, from: i32, end: i32): i64 {
 // documents. It costs nothing — a shared state's pending block is
 // copied by every update anyway — and the shape it avoids is one the
 // self-host compiler miscompiles (#8825).
-function compare_random(seed: string, ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
-  let da: u8[] = crypto.md5_new().update(seed).update(slice_unchecked(ta, a0, a1) + "").final_bytes();
-  let db: u8[] = crypto.md5_new().update(seed).update(slice_unchecked(tb, b0, b1) + "").final_bytes();
+function compare_random(seed: [u8], ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
+  let da: u8[] = crypto.md5_new().update_bytes(seed).update_bytes(ta[a0:a1]).final_bytes();
+  let db: u8[] = crypto.md5_new().update_bytes(seed).update_bytes(tb[b0:b1]).final_bytes();
   let i: i32 = 0;
   while (i < da.len()) {
     let x: i32 = da[i] as i32;
@@ -983,7 +985,7 @@ function line_len(v: i64): i32 {
 // A plain byte comparison of two spans, with the shorter one first when
 // one is a prefix of the other. An empty span sorts before every
 // non-empty one.
-function cmp_bytes(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
+function cmp_bytes(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
   let la: i32 = a1 - a0;
   let lb: i32 = b1 - b0;
   if (la == 0) {
@@ -1002,7 +1004,7 @@ function cmp_bytes(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): 
   // Scan only the common span: a terminator or the next line must not
   // decide prefix ordering. The mismatch kernel compares bytes in blocks
   // without allocating substrings, including embedded NUL and high bytes.
-  let i: i32 = __mismatch(ta, a0, tb, b0, n);
+  let i: i32 = __mismatch_bytes(ta, a0, tb, b0, n);
   if (i < n) {
     return ta[a0 + i] as i32 - tb[b0 + i] as i32;
   }
@@ -1016,7 +1018,7 @@ function cmp_bytes(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): 
 }
 
 // The same with each byte folded to upper case first: -f.
-function cmp_folded(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
+function cmp_folded(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
   let la: i32 = a1 - a0;
   let lb: i32 = b1 - b0;
   let n: i32 = la;
@@ -1044,7 +1046,7 @@ function cmp_folded(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32):
 // The same skipping every byte the key's `ignore` table drops, with or
 // without the case fold. Two keys are equal when both run out at the
 // same time.
-function cmp_ignoring(k: Key, ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
+function cmp_ignoring(k: Key, ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
   let a: i32 = a0;
   let b: i32 = b0;
   while (true) {
@@ -1081,7 +1083,7 @@ function cmp_ignoring(k: Key, ta: string, a0: i32, a1: i32, tb: string, b0: i32,
 }
 
 // One key's verdict on two spans, before its own `r` is applied.
-function key_diff(c: Conf, k: Key, ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
+function key_diff(c: Conf, k: Key, ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
   if (k.random) {
     return compare_random(c.seed, ta, a0, a1, tb, b0, b1);
   }
@@ -1099,7 +1101,7 @@ function key_diff(c: Conf, k: Key, ta: string, a0: i32, a1: i32, tb: string, b0:
     return numcompare(ta, a0, a1, tb, b0, b1);
   }
   if (k.version) {
-    return vercmp.compare_texts(ta, a0, nul_end(ta, a0, a1), tb, b0, nul_end(tb, b0, b1));
+    return vercmp.compare_arrays(ta, a0, a1, tb, b0, b1);
   }
   if (k.month) {
     return line_start(getmonth(ta, a0, nul_end(ta, a0, a1))) - line_start(getmonth(tb, b0, nul_end(tb, b0, b1)));
@@ -1126,10 +1128,10 @@ function key_diff(c: Conf, k: Key, ta: string, a0: i32, a1: i32, tb: string, b0:
 // is the one ordering mode whose answer depends on the machine's
 // format. A string no conversion consumed sorts before every number,
 // and a NaN between the two.
-function general_numcompare(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
+function general_numcompare(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
   let f: ld.Format = ld.format();
-  let pa: ld.Parse = f.strtold(slice_unchecked(ta, a0, a1) + "");
-  let pb: ld.Parse = f.strtold(slice_unchecked(tb, b0, b1) + "");
+  let pa: ld.Parse = f.strtold_array(ta, a0, a1);
+  let pb: ld.Parse = f.strtold_array(tb, b0, b1);
   if (pa.end == 0) {
     if (pb.end == 0) {
       return 0;
@@ -1153,7 +1155,7 @@ function general_numcompare(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b
 }
 
 // How key `k` orders the two spans, reversed when the key was.
-function key_ordered(c: Conf, k: Key, ta: string, sa: i64, tb: string, sb: i64): i32 {
+function key_ordered(c: Conf, k: Key, ta: u8[], sa: i64, tb: u8[], sb: i64): i32 {
   let a0: i32 = line_start(sa);
   let b0: i32 = line_start(sb);
   let d: i32 = key_diff(c, k, ta, a0, a0 + line_len(sa), tb, b0, b0 + line_len(sb));
@@ -1164,7 +1166,7 @@ function key_ordered(c: Conf, k: Key, ta: string, sa: i64, tb: string, sb: i64):
 }
 
 // Every key in turn; the first that separates the two lines decides.
-function keycompare(c: Conf, ta: string, alo: i32, ahi: i32, tb: string, blo: i32, bhi: i32): i32 {
+function keycompare(c: Conf, ta: u8[], alo: i32, ahi: i32, tb: u8[], blo: i32, bhi: i32): i32 {
   let i: i32 = 0;
   while (i < c.keys.len()) {
     let k: Key = c.keys[i];
@@ -1184,7 +1186,7 @@ function keycompare(c: Conf, ta: string, alo: i32, ahi: i32, tb: string, blo: i3
 // words decide nothing — a fraction, digits past fourteen, and a
 // magnitude of zero (a non-number, or a negative zero) all leave the
 // answer to numcompare.
-function numeric_key(text: string, a0: i32, a1: i32): i64 {
+function numeric_key(text: u8[], a0: i32, a1: i32): i64 {
   let a: i32 = a0;
   while (a < a1 && is_blank_b(text[a] as i32)) {
     a = a + 1;
@@ -1228,7 +1230,7 @@ function plain_numeric(k: Key): boolean {
 
 // `numeric_keys(c, text, spans, n)` — numeric_key of every span of every
 // plain numeric key, indexed like `spans`; zero under any other key.
-function numeric_keys(c: Conf, text: string, spans: i64[], n: i32): i64[] {
+function numeric_keys(c: Conf, text: u8[], spans: i64[], n: i32): i64[] {
   let out: i64[] = [];
   let ki: i32 = 0;
   while (ki < c.keys.len()) {
@@ -1253,7 +1255,7 @@ function numeric_keys(c: Conf, text: string, spans: i64[], n: i32): i64[] {
 // under key k. Locating a key is a byte walk over the line, and the sort
 // compares each line log n times, so the walk is done once and a
 // comparison reads two words.
-function key_spans(c: Conf, text: string, lines: i64[]): i64[] {
+function key_spans(c: Conf, text: u8[], lines: i64[]): i64[] {
   let n: i32 = lines.len();
   let out: i64[] = [];
   let ki: i32 = 0;
@@ -1274,7 +1276,7 @@ function key_spans(c: Conf, text: string, lines: i64[]): i64[] {
 // The whole comparison: the keys, then the line itself unless -u or -s
 // dropped that last resort. The global -r applies only here once a key
 // exists.
-function compare(c: Conf, ta: string, a: i64, tb: string, b: i64): i32 {
+function compare(c: Conf, ta: u8[], a: i64, tb: u8[], b: i64): i32 {
   let alo: i32 = line_start(a);
   let ahi: i32 = alo + line_len(a);
   let blo: i32 = line_start(b);
@@ -1297,7 +1299,7 @@ function compare(c: Conf, ta: string, a: i64, tb: string, b: i64): i32 {
 // than shared, because this runs n log n times and compare, which calls,
 // is not inlined: a call is most of what a comparison of two short lines
 // costs.
-function compare_at(c: Conf, text: string, lines: i64[], spans: i64[], nkeys: i64[], n: i32, ia: i32, ib: i32): i32 {
+function compare_at(c: Conf, text: u8[], input: byte_input.Array, lines: i64[], spans: i64[], nkeys: i64[], n: i32, ia: i32, ib: i32): i32 {
   let nk: i32 = c.keys.len();
   if (nk > 0) {
     let i: i32 = 0;
@@ -1311,6 +1313,15 @@ function compare_at(c: Conf, text: string, lines: i64[], spans: i64[], nkeys: i6
         if (ka < kb) {
           d = 0 - 1;
         }
+        if (c.keys[i].reverse) {
+          d = 0 - d;
+        }
+      } else if (c.keys[i].version && !c.keys[i].random) {
+        let a: i64 = spans[i * n + ia];
+        let b: i64 = spans[i * n + ib];
+        let alo: i32 = line_start(a);
+        let blo: i32 = line_start(b);
+        d = vercmp.compare_buffer(input, alo, alo + line_len(a), blo, blo + line_len(b));
         if (c.keys[i].reverse) {
           d = 0 - d;
         }
@@ -1346,7 +1357,7 @@ function compare_at(c: Conf, text: string, lines: i64[], spans: i64[], nkeys: i6
 // result, and GNU's merge finds that in one comparison a line where the
 // radix pass would cost a full sort. Unsorted input stops at its first
 // disorder.
-function in_order(c: Conf, text: string, lines: i64[]): boolean {
+function in_order(c: Conf, text: u8[], lines: i64[]): boolean {
   let i: i32 = 1;
   while (i < lines.len()) {
     if (compare(c, text, lines[i - 1], text, lines[i]) > 0) {
@@ -1361,7 +1372,8 @@ function in_order(c: Conf, text: string, lines: i64[]): boolean {
 // and equal lines keep their input order, which is what -u and -s both
 // rely on. Each pass writes a fresh destination rather than merging
 // through an alias.
-function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
+function sort_lines(c: Conf, text: u8[], lines: i64[]): i64[] {
+  let input: byte_input.Array = byte_input.Array { data: text };
   let n: i32 = lines.len();
   if (n < 2 || in_order(c, text, lines)) {
     return lines;
@@ -1421,7 +1433,7 @@ function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
           let lb: i64 = src[b];
           let d: i32 = 0;
           if (keyed) {
-            d = compare_at(c, text, lines, spans, nkeys, n, lb as i32, la as i32);
+            d = compare_at(c, text, input, lines, spans, nkeys, n, lb as i32, la as i32);
           } else {
             d = compare(c, text, lines[lb as i32], text, lines[la as i32]);
           }
@@ -1483,7 +1495,7 @@ function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
 // comparison's is those bytes folded. Two lines with equal words are
 // ordered by the whole comparison afterwards, so the word has only to
 // agree with it wherever it separates them.
-function line_words(c: Conf, text: string, lines: i64[], nkeys: i64[], spans: i64[], n: i32): i64[] {
+function line_words(c: Conf, text: u8[], lines: i64[], nkeys: i64[], spans: i64[], n: i32): i64[] {
   let fold: boolean = false;
   let numeric: boolean = false;
   if (c.keys.len() > 0) {
@@ -1516,7 +1528,7 @@ function line_words(c: Conf, text: string, lines: i64[], nkeys: i64[], spans: i6
     let hi: i32 = lo + line_len(sp);
     let w: i64 = 0 as i64;
     if (!fold) {
-      w = radix.bytes_word(text, lo, hi);
+      w = radix.bytes_word_bytes(text, lo, hi);
     } else {
       let b: i32 = 0;
       while (b < 8) {
@@ -1592,12 +1604,12 @@ function read_into(h: usize, path: string, open_msg: string): i32 {
 function read_into_from(h: usize, r: Reader, path: string): i32 {
   let last: i32 = 0 - 1;
   while (true) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           break;
         }
-        buf_push(h, chunk);
+        buf_push_bytes_range(h, chunk, 0, chunk.len());
         last = chunk[chunk.len() - 1] as i32;
       },
       Err(e) => {
@@ -1610,39 +1622,39 @@ function read_into_from(h: usize, r: Reader, path: string): i32 {
 
 // Every byte of `path` ("-" is standard input), or death with the
 // wording GNU uses for that stage.
-function slurp(path: string, open_msg: string): string {
-  let r: Reader = stdin();
-  if (path != "-") {
-    match (open_reader(path)) {
-      Ok(f) => {
-        r = f;
-      },
-      Err(e) => {
-        die_file(open_msg, path, e);
-      }
-    }
+function slurp(path: string, open_msg: string): u8[] {
+  let h: usize = buf_new(read_size());
+  read_into(h, path, open_msg);
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return bytes;
+}
+
+// Copy only retained ranges; comparisons use offsets into the original array.
+function byte_range(bytes: u8[], lo: i32, hi: i32): u8[] {
+  if (lo == 0 && hi == bytes.len()) {
+    return bytes;
   }
-  let chunks: string[] = [];
-  while (true) {
-    match (r.read_chunk(read_size())) {
-      Ok(chunk) => {
-        if (chunk.len() == 0) {
-          break;
-        }
-        chunks = chunks.append(chunk);
-      },
-      Err(e) => {
-        die_file("read failed", path, e);
-      }
-    }
+  let h: usize = buf_new(hi - lo);
+  buf_push_bytes_range(h, bytes, lo, hi);
+  let out: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+function concat_bytes(a: u8[], b: u8[]): u8[] {
+  if (a.len() == 0) {
+    return b;
   }
-  if (path != "-") {
-    r.close();
+  if (b.len() == 0) {
+    return a;
   }
-  if (chunks.len() == 1) {
-    return chunks[0];
-  }
-  return chunks.join("");
+  let h: usize = buf_new(a.len() + b.len());
+  buf_push_bytes_range(h, a, 0, a.len());
+  buf_push_bytes_range(h, b, 0, b.len());
+  let out: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return out;
 }
 
 // GNU asks access(R_OK) about every named input before it reads any of
@@ -1691,16 +1703,37 @@ function out_name(o: Out): string {
   return gnu.quotef(o.file);
 }
 
-// A failure here is followed by close_stdout's own line, which carries
-// no strerror text because the stream already holds the error.
+// A failure here is followed by close_stdout's own line. Darwin's
+// fclose still reports a failed close after the stream's write failure;
+// glibc reports the existing stream error without another errno.
 function out_die(o: Out, stage: string, e: IoError): void {
   gnu.error(stage + ": " + out_name(o) + ": " + gnu.io_error_text(e));
+  if (target_os() == "darwin" && o.to_stdout) {
+    match (o.w.w.close()) {
+      Some(close_error) => {
+        gnu.error("write error: " + gnu.io_error_text(close_error));
+        exit(sort_failure());
+      },
+      None => {}
+    }
+  }
   gnu.error("write error");
   exit(sort_failure());
 }
 
 function out_put(o: Out, s: string): Out {
   let w: io_buffered.BufWriter = o.w.write_string(s);
+  match (w.error()) {
+    Some(e) => {
+      out_die(o, "write failed", e);
+    },
+    None => {}
+  }
+  return Out { ...o, w: w };
+}
+
+function out_put_bytes(o: Out, bytes: u8[]): Out {
+  let w: io_buffered.BufWriter = o.w.write_bytes(bytes);
   match (w.error()) {
     Some(e) => {
       out_die(o, "write failed", e);
@@ -1738,11 +1771,11 @@ function out_finish(o: Out): void {
 //
 // The line boundaries of `text`: [lo, hi) excludes the terminator, and
 // a final line without one still counts. An empty input has no lines.
-function split_lines(text: string, term: i32): i64[] {
+function split_lines(text: u8[], term: i32): i64[] {
   let lines: i64[] = [];
   let start: i32 = 0;
   while (start < text.len()) {
-    let end: i32 = __memchr(text, term, start);
+    let end: i32 = __memchr_bytes(text, term, start);
     if (end < 0) {
       lines = lines.append(pack_line(start, text.len() - start));
       break;
@@ -2020,7 +2053,7 @@ function byte_width(b: i32): i32 {
   return 0;
 }
 
-function debug_width(text: string, from: i32, to: i32): i32 {
+function debug_width(text: u8[], from: i32, to: i32): i32 {
   let w: i32 = 0;
   let i: i32 = from;
   while (i < to) {
@@ -2044,7 +2077,7 @@ function mark_key(o: Out, offset: i32, width: i32): Out {
 // The end of the number `-n` and `-h` would read at `beg`: an optional
 // minus, then digits and decimal points, and for -h the unit letter
 // after them. A run with no digit at all is no match.
-function raw_number_end(text: string, beg: i32, lim: i32, human: boolean): i32 {
+function raw_number_end(text: u8[], beg: i32, lim: i32, human: boolean): i32 {
   let p: i32 = beg;
   if (p < lim && text[p] as i32 == 45) {
     p = p + 1;
@@ -2070,7 +2103,7 @@ function raw_number_end(text: string, beg: i32, lim: i32, human: boolean): i32 {
 
 // One underline row: the span key `k` reads, narrowed to the part an
 // ordering mode would actually convert.
-function debug_key(o: Out, c: Conf, text: string, lo: i32, hi: i32, k: Key, has_key: boolean): Out {
+function debug_key(o: Out, c: Conf, text: u8[], lo: i32, hi: i32, k: Key, has_key: boolean): Out {
   let beg: i32 = lo;
   let lim: i32 = hi;
   if (has_key) {
@@ -2092,7 +2125,7 @@ function debug_key(o: Out, c: Conf, text: string, lo: i32, hi: i32, k: Key, has_
         tighter = line_len(getmonth(text, beg, lim));
       } else if (k.general) {
         let f: ld.Format = ld.format();
-        let parsed: ld.Parse = f.strtold(slice_unchecked(text, beg, lim) + "");
+        let parsed: ld.Parse = f.strtold_array(text, beg, lim);
         tighter = beg + parsed.end;
       } else if (key_numeric(k)) {
         tighter = raw_number_end(text, beg, lim, k.human);
@@ -2107,7 +2140,7 @@ function debug_key(o: Out, c: Conf, text: string, lo: i32, hi: i32, k: Key, has_
 
 // The line itself, then one row per key, then the whole line for the
 // last-resort comparison unless -u or -s dropped it.
-function debug_line(o: Out, c: Conf, text: string, lo: i32, hi: i32): Out {
+function debug_line(o: Out, c: Conf, text: u8[], lo: i32, hi: i32): Out {
   let bs: u8[] = [];
   let i: i32 = lo;
   while (i < hi) {
@@ -2119,7 +2152,7 @@ function debug_line(o: Out, c: Conf, text: string, lo: i32, hi: i32): Out {
     i = i + 1;
   }
   bs = bs.append(10 as u8);
-  let out: Out = out_put(o, string_from_bytes_unchecked(bs));
+  let out: Out = out_put_bytes(o, bs);
   i = 0;
   while (i < c.keys.len()) {
     out = debug_key(out, c, text, lo, hi, c.keys[i], true);
@@ -2304,18 +2337,18 @@ function check_order(c: Conf, name: string, quiet: boolean): i32 {
       }
     }
   }
-  let buf: string = "";
+  let buf: u8[] = [];
   let prev: i64 = 0 - 1 as i64;
   let at: i32 = 0;
   let lineno: i32 = 0;
   let eof: boolean = false;
   while (!eof) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           eof = true;
         } else {
-          buf = buf + chunk;
+          buf = concat_bytes(buf, chunk);
         }
       },
       Err(e) => {
@@ -2323,7 +2356,7 @@ function check_order(c: Conf, name: string, quiet: boolean): i32 {
       }
     }
     while (at < buf.len()) {
-      let end: i32 = __memchr(buf, c.term, at);
+      let end: i32 = __memchr_bytes(buf, c.term, at);
       if (end < 0) {
         if (!eof) {
           break;
@@ -2337,7 +2370,9 @@ function check_order(c: Conf, name: string, quiet: boolean): i32 {
         if (d > 0 || c.unique && d == 0) {
           if (!quiet) {
             let w: Writer = stderr();
-            w.write(gnu.prog() + ": " + name + ":" + lineno.to_string() + ": disorder: " + slice_unchecked(buf, at, end) + term_string(c.term));
+            w.write(gnu.prog() + ": " + name + ":" + lineno.to_string() + ": disorder: ");
+            w.write_bytes(buf[at:end]);
+            w.write(term_string(c.term));
           }
           return 1;
         }
@@ -2347,7 +2382,7 @@ function check_order(c: Conf, name: string, quiet: boolean): i32 {
     }
     if (!eof && prev >= 0 as i64) {
       let keep: i32 = line_start(prev);
-      buf = slice_unchecked(buf, keep, buf.len()) + "";
+      buf = byte_range(buf, keep, buf.len());
       prev = pack_line(0, line_len(prev));
       at = at - keep;
     }
@@ -2359,8 +2394,8 @@ function check_order(c: Conf, name: string, quiet: boolean): i32 {
 }
 
 // ---- --files0-from ----------------------------------------------------------
-function read_names(file: string): string[] {
-  let text: string = "";
+function read_names(file: string): Option[string[]] {
+  let text: u8[] = [];
   if (file == "-") {
     text = slurp("-", "open failed");
   } else {
@@ -2381,12 +2416,21 @@ function read_names(file: string): string[] {
   let start: i32 = 0;
   let n: i32 = 0;
   while (start < text.len()) {
-    let end: i32 = __memchr(text, 0, start);
+    let end: i32 = __memchr_bytes(text, 0, start);
     if (end < 0) {
       end = text.len();
     }
     n = n + 1;
-    let name: string = slice_unchecked(text, start, end) + "";
+    let name: string = "";
+    match (utf8.from_bytes(byte_range(text, start, end))) {
+      Some(valid) => {
+        name = valid;
+      },
+      None => {
+        gnu.error(gnu.quotef(file) + ":" + n.to_string() + ": invalid UTF-8 file name");
+        return None;
+      }
+    }
     if (name.len() == 0) {
       die(gnu.quotef(file) + ":" + n.to_string() + ": invalid zero-length file name");
     }
@@ -2396,7 +2440,7 @@ function read_names(file: string): string[] {
     names = names.append(name);
     start = end + 1;
   }
-  return names;
+  return Some(names);
 }
 
 // ---- main -------------------------------------------------------------------
@@ -2751,22 +2795,22 @@ function batch_size(a: Args, v: string): Args {
 
 // The sixteen bytes `-R` seeds each key's MD5 with: read from
 // --random-source, or from the default source when none was named.
-function random_seed(a: Args): string {
+function random_seed(a: Args): u8[] {
   let src: string = default_random_source();
   if (a.have_rand) {
     src = a.randsource;
   }
   match (open_reader(src)) {
     Ok(r) => {
-      let got: string = "";
+      let got: u8[] = [];
       while (got.len() < 16) {
-        match (r.read_chunk(16 - got.len())) {
+        match (r.read_chunk_bytes(16 - got.len())) {
           Ok(chunk) => {
             if (chunk.len() == 0) {
               r.close();
               die(gnu.quote(src) + ": end of file");
             }
-            got = got + chunk;
+            got = concat_bytes(got, chunk);
           },
           Err(e) => {
             r.close();
@@ -2781,7 +2825,7 @@ function random_seed(a: Args): string {
       die_file("open failed", src, e);
     }
   }
-  return "";
+  return [];
 }
 
 // Where `-R` gets its sixteen bytes when --random-source names no
@@ -2817,7 +2861,14 @@ function run(a0: Args): i32 {
       gnu.error("extra operand " + gnu.quote(files[0]) + "\nfile operands cannot be combined with --files0-from");
       gnu.try_help(sort_failure());
     }
-    files = read_names(a.files0);
+    match (read_names(a.files0)) {
+      Some(names) => {
+        files = names;
+      },
+      None => {
+        return sort_failure();
+      }
+    }
   }
   if (a.checkonly != 0 && files.len() > 1) {
     let letter2: string = "c";
@@ -2852,7 +2903,7 @@ function run(a0: Args): i32 {
     }
     i = i + 1;
   }
-  let seed: string = "";
+  let seed: u8[] = [];
   if (need_random) {
     seed = random_seed(a);
   }
@@ -2860,7 +2911,7 @@ function run(a0: Args): i32 {
   if (a.zero) {
     term = 0;
   }
-  let c: Conf = Conf { keys: keys, tab: a.tab, reverse: a.gkey.reverse, unique: a.unique, stable: a.stable, term: term, seed: seed, debug: a.debug, gkey_only: gkey_only };
+  let c: Conf = Conf { keys: keys, tab: a.tab, reverse: a.gkey.reverse, unique: a.unique, stable: a.stable, term: term, seed: seed[:], debug: a.debug, gkey_only: gkey_only };
   if (c.debug) {
     key_warnings(c, a.gkey);
   }
@@ -2883,7 +2934,7 @@ function run(a0: Args): i32 {
     }
     i = i + 1;
   }
-  let all: string = buf_take(hb);
+  let all: u8[] = buf_take_bytes(hb);
   buf_free(hb);
   let lines: i64[] = sort_lines(c, all, split_lines(all, term));
 
@@ -2900,7 +2951,7 @@ function run(a0: Args): i32 {
       if (c.debug) {
         out = debug_line(out, c, all, at, at + line_len(v));
       } else {
-        buf_push_range(h, all, at, at + line_len(v));
+        buf_push_bytes_range(h, all, at, at + line_len(v));
         buf_push_byte(h, term);
         if (buf_len(h) >= block) {
           out = out_settle(out);
@@ -2925,13 +2976,13 @@ function run(a0: Args): i32 {
 // buffer (-1 once the input is spent), and `at[f]` where the line after
 // the head starts. `Feeds` holds what only a refill touches; `fresh` is
 // the buffer the last refill read.
-struct Feeds { rs: Reader[], names: string[], eof: boolean[], fresh: string }
+struct Feeds { rs: Reader[], names: string[], eof: boolean[], fresh: u8[] }
 
 function merge_files(c: Conf, a: Args, files: string[]): i32 {
   let n: i32 = files.len();
   let term: i32 = c.term;
-  let m: Feeds = Feeds { rs: [], names: files, eof: [], fresh: "" };
-  let bufs: string[] = [];
+  let m: Feeds = Feeds { rs: [], names: files, eof: [], fresh: [] };
+  let bufs: u8[][] = [];
   let at: i32[] = [];
   let cur: i64[] = [];
   let o_dev: i64 = 0 as i64;
@@ -2958,7 +3009,7 @@ function merge_files(c: Conf, a: Args, files: string[]): i32 {
   let out: Out = out_open(a.outfile, !a.have_out);
   let h: usize = out.w.handle();
   let block: i32 = gnu.block_bytes();
-  let prev_text: string = "";
+  let prev_text: u8[] = [];
   let prev: i64 = 0 as i64;
   let have_prev: boolean = false;
   // Each input is advanced once to prime it, then the input a line was
@@ -2967,12 +3018,12 @@ function merge_files(c: Conf, a: Args, files: string[]): i32 {
   f = 0;
   while (f >= 0) {
     let from: i32 = at[f];
-    let end: i32 = __memchr(bufs[f], term, from);
+    let end: i32 = __memchr_bytes(bufs[f], term, from);
     if (end < 0) {
       m = refill(m, f, bufs[f], from, term);
       bufs = bufs.with(f, m.fresh);
       from = 0;
-      end = __memchr(bufs[f], term, 0);
+      end = __memchr_bytes(bufs[f], term, 0);
     }
     if (end < 0) {
       cur = cur.with(f, 0 - 1 as i64);
@@ -2995,14 +3046,14 @@ function merge_files(c: Conf, a: Args, files: string[]): i32 {
         g = g + 1;
       }
       if (f >= 0) {
-        let text: string = bufs[f];
+        let text: u8[] = bufs[f];
         let v: i64 = cur[f];
         if (!(a.unique && have_prev && compare(c, prev_text, prev, text, v) == 0)) {
           let lo: i32 = line_start(v);
           if (c.debug) {
             out = debug_line(out, c, text, lo, lo + line_len(v));
           } else {
-            buf_push_range(h, text, lo, lo + line_len(v));
+            buf_push_bytes_range(h, text, lo, lo + line_len(v));
             buf_push_byte(h, term);
             if (buf_len(h) >= block) {
               out = out_settle(out);
@@ -3041,7 +3092,7 @@ function open_feed(own m: Feeds, path: string, o_file: boolean, o_dev: i64, o_in
       }
     }
   }
-  let buf: string = "";
+  let buf: u8[] = [];
   let whole: boolean = false;
   if (o_file) {
     match (r.stat()) {
@@ -3057,7 +3108,7 @@ function open_feed(own m: Feeds, path: string, o_file: boolean, o_dev: i64, o_in
     if (last >= 0 && last != term) {
       buf_push_byte(h, term);
     }
-    buf = buf_take(h);
+    buf = buf_take_bytes(h);
     buf_free(h);
   }
   return Feeds { ...m, rs: m.rs.append(r), eof: m.eof.append(whole), fresh: buf };
@@ -3067,16 +3118,16 @@ function open_feed(own m: Feeds, path: string, o_file: boolean, o_dev: i64, o_in
 // what is left of `buf` past `from`, then reads until one holds a
 // terminator or the input ends, when a last unterminated line gets one.
 // Empty once the input is spent.
-function refill(own m: Feeds, f: i32, buf: string, from: i32, term: i32): Feeds {
+function refill(own m: Feeds, f: i32, buf: u8[], from: i32, term: i32): Feeds {
   if (m.eof[f]) {
-    return Feeds { ...m, fresh: "" };
+    return Feeds { ...m, fresh: [] };
   }
   let h: usize = buf_new(read_size());
-  buf_push_range(h, buf, from, buf.len());
+  buf_push_bytes_range(h, buf, from, buf.len());
   let ended: boolean = false;
   let done: boolean = false;
   while (!done) {
-    match (m.rs[f].read_chunk(read_size())) {
+    match (m.rs[f].read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           // What is held has no terminator, or the loop had stopped.
@@ -3086,8 +3137,8 @@ function refill(own m: Feeds, f: i32, buf: string, from: i32, term: i32): Feeds 
           }
           done = true;
         } else {
-          buf_push(h, chunk);
-          done = __memchr(chunk, term, 0) >= 0;
+          buf_push_bytes_range(h, chunk, 0, chunk.len());
+          done = __memchr_bytes(chunk, term, 0) >= 0;
         }
       },
       Err(e) => {
@@ -3095,7 +3146,7 @@ function refill(own m: Feeds, f: i32, buf: string, from: i32, term: i32): Feeds 
       }
     }
   }
-  let fresh: string = buf_take(h);
+  let fresh: u8[] = buf_take_bytes(h);
   buf_free(h);
   return Feeds { ...m, eof: m.eof.with(f, ended), fresh: fresh };
 }
