@@ -1,6 +1,5 @@
 // examples/self_host/ssa_lift.fern — lift the self-host STACK IR (ir.fern's
-// `Op[]`) into SSA form (ssa.fern's `SFunc`), the self-hosted mirror of
-// native's `internal/ssa/lift.go` (`LiftFromIR`). The lift is the front of
+// `Op[]`) into SSA form (ssa.fern's `SFunc`). The lift is the front of
 // `-backend ssa` (docs/SELFHOST-SSA-BACKEND.md): each lowered function's ops
 // become one SFunc that `ssa.prune_dead`, `ssa.regalloc_linear` and the
 // per-ISA emitters in `asm_arm64_ir.fern` and `asm_ir.fern` turn into code

@@ -1776,8 +1776,7 @@ type generator struct {
 	usesWriteFileExec  bool
 	usesWriteFileBytes bool
 	// usesRemoveDirAll pulls in the recursive `rm -rf` runtime
-	// (`__fern_remove_dir_all(path) → Option[IoError]`) — the
-	// x86-64 sibling of arm64-ssa's emitRemoveDirAllHelper. It's
+	// (`__fern_remove_dir_all(path) → Option[IoError]`). It's
 	// what std/test's TestRunner.finish() needs to clean up its
 	// temp dirs when a TAP program links through the native CLI.
 	usesRemoveDirAll bool
@@ -8221,11 +8220,8 @@ const (
 	sanLeakSuffix = " blocks"
 )
 
-// MsgArenaExhausted is the arena-exhaustion diagnostic. Exported so the x86-64
-// SSA backend's heap guard (internal/codegen/x86_64ssa) writes the identical
-// text: a program's abort output must not depend on which x86-64 emitter built
-// it. Must stay identical to the arm64 backend's entry, like every other
-// message in the table above.
+// MsgArenaExhausted is the arena-exhaustion diagnostic. Must stay identical
+// to the arm64 backend's entry, like every other message in the table above.
 const MsgArenaExhausted = "fern: out of memory (heap arena exhausted)\n"
 
 // ExitArenaExhausted is the status a Fern binary exits with when __fern_alloc's
@@ -10853,8 +10849,7 @@ func (g *generator) emitStrAppendRangeRuntime() {
 // mirroring arm64's d0/d1. All scratch is caller-saved under SysV.
 //
 // Written through w, one line per call, with fresh naming a module-unique
-// label for a prefix: the SSA backend (internal/codegen/x86_64ssa) emits the
-// same bundle for its own f64 helpers.
+// label for a prefix.
 func EmitFloatTranscendentals(w func(string, ...any), fresh func(prefix string) string) {
 	emit := func(s string) { w("\t%s", s) }
 	label := func(name string) { w("%s:", name) }
@@ -16859,9 +16854,7 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 
 // emitRemoveDirAllRuntime emits
 // `__fern_remove_dir_all(path) → Option[IoError]` — a recursive
-// `rm -rf`. It's the x86-64 sibling of arm64-ssa's
-// emitRemoveDirAllHelper: syscalls are inlined and the helper
-// self-recurses per directory entry, so it pulls in no separate
+// `rm -rf`: syscalls are inlined and the helper self-recurses per directory entry, so it pulls in no separate
 // read_dir/stat helpers. Pipeline:
 //
 //	openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0)

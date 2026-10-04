@@ -118,41 +118,6 @@ func TestWASMSignalDispositionIsANoOp(t *testing.T) {
 	}
 }
 
-// TestArm64SSASignalDisposition drives the same three cases through the Go
-// compiler's SSA-direct arm64 backend.
-func TestArm64SSASignalDisposition(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("arm64-ssa not exercised on windows")
-	}
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	fern := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fern, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build fern: %v\n%s", err, out)
-	}
-	src := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(src, []byte(signalDispositionSrc+"\n"), 0o644); err != nil {
-		t.Fatalf("write main.fern: %v", err)
-	}
-	bin := filepath.Join(dir, "main.bin")
-	// Not a coverage gap to skip over: every construct here is in the subset,
-	// and a refusal is a regression in its own right.
-	emit := exec.Command(fern, "-target", "arm64-linux", "-backend", "ssa", "-o", bin, src)
-	if out, err := emit.CombinedOutput(); err != nil {
-		t.Fatalf("compile: %v\n%s", err, out)
-	}
-	for _, tc := range signalDispositionCases {
-		var argv []string
-		if qemu != "" {
-			argv = append(argv, qemu)
-		}
-		argv = append(argv, bin)
-		if got := runWithStdoutClosed(t, append(argv, tc.argv...)...); got != tc.want {
-			t.Errorf("%s: exit = %d, want %d (#8792)", tc.name, got, tc.want)
-		}
-	}
-}
-
 // A signal number outside 1..64 must be a no-op in the interpreter, as it is on
 // every compiled backend, and must above all RETURN.
 //

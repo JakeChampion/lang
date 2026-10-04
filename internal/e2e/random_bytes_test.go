@@ -1,8 +1,6 @@
 package e2e
 
 import (
-	"os"
-	"os/exec"
 	"runtime"
 	"testing"
 
@@ -39,27 +37,5 @@ func TestArm64DarwinSeededRandomBytes(t *testing.T) {
 	}
 	if got := runArm64Darwin(t, e2eharness.SeededRandomBytesProgram); got != 0 {
 		t.Fatalf("exit = %d, want 0", got)
-	}
-}
-
-func TestArm64SSASeededRandomBytes(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	bin := compileArm64SSA(t, fern, e2eharness.SeededRandomBytesProgram, os.Environ())
-	if out, err := runArm64Bin(qemu, bin).CombinedOutput(); err != nil {
-		t.Fatalf("run: %v\n%s", err, out)
-	}
-}
-
-func TestX86_64SSASeededRandomBytes(t *testing.T) {
-	qemu := x86QemuOrEmpty(t)
-	fern := buildFernCLI(t)
-	bin := compileX86_64SSA(t, fern, e2eharness.SeededRandomBytesProgram, os.Environ())
-	cmd := exec.Command(bin)
-	if qemu != "" {
-		cmd = exec.Command(qemu, bin)
-	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("run: %v\n%s", err, out)
 	}
 }

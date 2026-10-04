@@ -5,7 +5,7 @@
 // the platform is the whole test seam: hand `handle` a mock, run it, and read
 // back what it tried to do.
 //
-//     let m: MockPlatform = mock_platform_new();
+//     let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
 //     let resp: HttpResponse = handle(req, m);
 //
 //     assert_eq(resp.status, 200);

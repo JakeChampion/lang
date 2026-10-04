@@ -22,29 +22,25 @@ import (
 func TestX86_64UdpSend(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	start := func(bin string) *exec.Cmd { return runX86_64Bin(runner, bin) }
-	for _, backend := range []string{"flat", "ssa"} {
-		t.Run(backend, func(t *testing.T) { runNativeUdpSend(t, "x86-64-linux", backend, start) })
-	}
+	runNativeUdpSend(t, "x86-64-linux", start)
 }
 
 func TestArm64UdpSend(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	start := func(bin string) *exec.Cmd { return runArm64Bin(qemu, bin) }
-	for _, backend := range []string{"flat", "ssa"} {
-		t.Run(backend, func(t *testing.T) { runNativeUdpSend(t, "arm64-linux", backend, start) })
-	}
+	runNativeUdpSend(t, "arm64-linux", start)
 }
 
 // Darwin needs its own sockaddr_in head: XNU refuses a datagram connect whose
-// family byte is Linux's. Only the flat backend targets Darwin.
+// family byte is Linux's.
 func TestArm64DarwinUdpSend(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("execution check only runs on Apple Silicon")
 	}
-	runNativeUdpSend(t, "arm64-darwin", "flat", func(bin string) *exec.Cmd { return exec.Command(bin) })
+	runNativeUdpSend(t, "arm64-darwin", func(bin string) *exec.Cmd { return exec.Command(bin) })
 }
 
-func runNativeUdpSend(t *testing.T, target, backend string, start func(bin string) *exec.Cmd) {
+func runNativeUdpSend(t *testing.T, target string, start func(bin string) *exec.Cmd) {
 	fern := buildLangBinForInterp(t)
 	stdlib, err := filepath.Abs("../stdlib")
 	if err != nil {
@@ -64,7 +60,7 @@ func runNativeUdpSend(t *testing.T, target, backend string, start func(bin strin
 			t.Fatal(err)
 		}
 		bin := filepath.Join(dir, name)
-		out, err := exec.Command(fern, "-target", target, "-backend", backend, "-o", bin, path, stdlib).CombinedOutput()
+		out, err := exec.Command(fern, "-target", target, "-o", bin, path, stdlib).CombinedOutput()
 		if err != nil {
 			t.Fatalf("compile %s: %v\n%s", name, err, out)
 		}

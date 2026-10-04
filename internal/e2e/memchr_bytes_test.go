@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/e2eharness"
@@ -28,10 +27,10 @@ func runOnEveryNativeTarget(t *testing.T, program string) {
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []string{"interp", "arm64-darwin", "x86-64-linux", "arm64-linux", "x86-64-linux-ssa", "arm64-linux-ssa", "wasm32-wasi", "wasm32-preview2"} {
+	for _, target := range []string{"interp", "arm64-darwin", "x86-64-linux", "arm64-linux", "wasm32-wasi", "wasm32-preview2"} {
 		t.Run(target, func(t *testing.T) {
 			var runner []string
-			actual := strings.TrimSuffix(target, "-ssa")
+			actual := target
 			switch actual {
 			case "arm64-darwin":
 				if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
@@ -61,9 +60,6 @@ func runOnEveryNativeTarget(t *testing.T, program string) {
 				args := []string{"-target", actual, "-o", bin, src}
 				if target == "wasm32-wasi" {
 					args = append([]string{"-emit", "command-module"}, args...)
-				}
-				if strings.HasSuffix(target, "-ssa") {
-					args = append([]string{"-backend", "ssa"}, args...)
 				}
 				if out, err := exec.Command(fern, args...).CombinedOutput(); err != nil {
 					t.Fatalf("compile: %v\n%s", err, out)

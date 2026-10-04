@@ -78,21 +78,3 @@ func TestWasmReaderBytesPreview1(t *testing.T) {
 	}
 	runReaderBytesCommand(t, exec.Command("wasmtime", "run", bin))
 }
-
-func TestArm64SSAReaderBytes(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	bin := compileArm64SSA(t, fern, e2eharness.ReaderBytesProgram, os.Environ())
-	runReaderBytesCommand(t, runArm64Bin(qemu, bin))
-}
-
-func TestX86_64SSAReaderBytes(t *testing.T) {
-	qemu := x86QemuOrEmpty(t)
-	fern := buildFernCLI(t)
-	bin := compileX86_64SSA(t, fern, e2eharness.ReaderBytesProgram, os.Environ())
-	cmd := exec.Command(bin)
-	if qemu != "" {
-		cmd = exec.Command(qemu, bin)
-	}
-	runReaderBytesCommand(t, cmd)
-}

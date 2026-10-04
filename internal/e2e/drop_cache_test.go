@@ -102,35 +102,11 @@ func TestX86_64DropCache(t *testing.T) {
 	dropCacheCheckTree(t, dir)
 }
 
-// The x86-64 SSA backend keeps the fd at [handle+8] and has its own helper.
-func TestX86_64SSADropCache(t *testing.T) {
-	qemu := x86QemuOrEmpty(t)
-	bin := buildFernCLI(t)
-	dir := t.TempDir()
-	data := t.TempDir()
-	if code := runPathProbe(t, bin, qemu, dir, "dropcache", "ssa", dropCacheSource(data, true), ""); code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see dropCacheSource)", code)
-	}
-	dropCacheCheckTree(t, data)
-}
-
 func TestArm64DropCache(t *testing.T) {
 	dir := t.TempDir()
 	out, code := compileAndRunArm64(t, dropCacheSource(dir, true))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see dropCacheSource)\n%s", code, out)
-	}
-	dropCacheCheckTree(t, dir)
-}
-
-func TestArm64SSADropCache(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, dropCacheSource(dir, true), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see dropCacheSource)\n%s", code, stderr)
 	}
 	dropCacheCheckTree(t, dir)
 }

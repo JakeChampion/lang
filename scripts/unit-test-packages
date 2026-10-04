@@ -41,10 +41,10 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 
 # FERN_CI_UNIT_PACKAGE_GROUP splits the set across two CI jobs: `heavy` is the
 # packages whose tests run 350-390 s each and cannot t.Parallel (internal/ir
-# writes the ast package globals; ssa and printer are alike), `rest` is
+# writes the ast package globals; printer is alike), `rest` is
 # everything else. Unset, every package, which is what the lane-coverage gate
 # and a local run read.
-heavy='/internal/(ir|ssa|printer)(/|$)'
+heavy='/internal/(ir|printer)(/|$)'
 go list ./internal/... ./cmd/... |
   grep -vE '/internal/(e2e|e2eselfhost|fernsmith|coreutils)(/|$)' |
   case "${FERN_CI_UNIT_PACKAGE_GROUP:-}" in
