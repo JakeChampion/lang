@@ -5843,7 +5843,7 @@ function x86_words_i32(words: u8[], at: i32): i32 {
 }
 
 // x86_jump_line is the line of a branch record to label id `lid`: a jcc of
-// condition `kind` below 16, jmp at 16 (x86_rec_jump_kind). The body is the
+// condition `kind` below 16, jmp at 16. The body is the
 // marker, not "": the round loop skips an empty line.
 function x86_jump_line(kind: i32, lid: i32): GasLine {
   let l: GasLine = GasLine { label: "", body: "\x05", mnem: "", rest: "", kind: GK_JCC, ext: kind, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: lid, run_end: 0 };
@@ -5851,18 +5851,6 @@ function x86_jump_line(kind: i32, lid: i32): GasLine {
     return GasLine { ...l, kind: GK_BRANCH, ext: 4 };
   }
   return l;
-}
-
-// x86_rec_jump_kind is the kind a branch record carries for a mnemonic: the
-// condition code of a jcc, 16 for jmp, -1 for anything else.
-pub function x86_rec_jump_kind(mnem: string): i32 {
-  if (mnem == "jmp") {
-    return 16;
-  }
-  if (mnem.len() >= 2 && mnem[0] == b'j') {
-    return x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()) + "");
-  }
-  return 0 - 1;
 }
 
 // x86_gas_bytes appends the instruction records over [at, to) of the words,
