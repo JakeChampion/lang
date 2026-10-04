@@ -52,7 +52,7 @@ function rec_vs_text(name: string, b: i32[], text: string): i32 {
 // cfi_word packs a .cfi_* record as asmcore's cfi does: the kind and the DWARF
 // register in the low word, the offset in the high one.
 function cfi_word(w: usize, kind: i32, r: i32, n: i32): void {
-    buf_push_u64(w, ((n as i64 & 4294967295i64) << 32 | (r as i64) << 8 | kind as i64) as u64);
+    buf_push_u64(w, ((n as i64 & 4294967295i64) << 32 | r as i64 << 8 | kind as i64) as u64);
 }
 function bytes_into(w: usize, b: i32[]): void {
     for x in words_of(b) { buf_push_byte(w, x as i32); }
