@@ -62,8 +62,8 @@ function main(): i32 {
     resp = resp.with_set_cookie(http.cookie_new("a", "1"));
     resp = resp.with_set_cookie(http.cookie_new("b", "2"));
     let out: string = http.http_serialize_response(resp);
-    if (!out.contains("set-cookie: a=1; Path=/; HttpOnly; SameSite=Lax")) { return 15; }
-    if (!out.contains("set-cookie: b=2; Path=/; HttpOnly; SameSite=Lax")) { return 16; }
+    if (!out.contains("Set-Cookie: a=1; Path=/; HttpOnly; SameSite=Lax")) { return 15; }
+    if (!out.contains("Set-Cookie: b=2; Path=/; HttpOnly; SameSite=Lax")) { return 16; }
 
     return 42;
 }

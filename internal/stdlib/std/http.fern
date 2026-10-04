@@ -2316,13 +2316,13 @@ pub function (r: HttpRequest) with_header(name: string, value: string): HttpRequ
 // `(r: HttpRequest).with_body(body)` — the request with `body` as its
 // body and the `Content-Length` a client would send for it.
 pub function (r: HttpRequest) with_body(body: string): HttpRequest {
-  return HttpRequest { ...r, body: stream.stream_from_bytes(body.bytes()), headers: r.headers.set("content-length", int.int_to_string(body.len())) };
+  return HttpRequest { ...r, body: stream.stream_from_bytes(body.bytes()), headers: r.headers.set("Content-Length", int.int_to_string(body.len())) };
 }
 
 // `(r: HttpRequest).with_json(body)` — `with_body` with the
 // `Content-Type` of JSON.
 pub function (r: HttpRequest) with_json(body: string): HttpRequest {
-  return r.with_body(body).with_header("content-type", "application/json");
+  return r.with_body(body).with_header("Content-Type", "application/json");
 }
 
 // `(r: HttpRequest).body_stream()` — the body as a Stream,
