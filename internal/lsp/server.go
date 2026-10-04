@@ -11,6 +11,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -615,27 +616,23 @@ func (s *Server) updateDoc(uri, src string) []string {
 		return nil
 	}
 	state := &docState{uri: uri, src: src}
-	prog, perr := parseFor(src)
+	prog, _ := parseFor(src)
 	state.prog = prog
-	var checkErr error
 	if prog != nil {
-		state.info, checkErr = checker.Check(prog)
+		state.info, _ = checker.Check(prog)
 	}
-	state.diags = collectDiagnostics(src, perr, checkErr)
+	state.diags = sourceDiagnostics(src)
 	s.docs[uri] = state
 	s.cache.put(src, state.prog, state.info, state.diags)
 	return nil
 }
 
-func collectDiagnostics(src string, parseErr, checkErr error) []Diagnostic {
-	out := []Diagnostic{}
-	if parseErr != nil {
-		out = append(out, toDiagnostics(src, parseErr)...)
-	}
-	if checkErr != nil {
-		out = append(out, toDiagnostics(src, checkErr)...)
-	}
-	return out
+// sourceDiagnostics is what `fern -check -` reports for src.
+func sourceDiagnostics(src string) []Diagnostic {
+	return checkDiagnostics("-", modload.SourceEntry, func() (*ast.Program, error) {
+		p, _, err := modload.LoadSource(src)
+		return p, err
+	}, map[string]string{modload.SourceEntry: src})[modload.SourceEntry]
 }
 
 func (s *Server) handleDidClose(raw json.RawMessage) *rpcError {

@@ -40,7 +40,14 @@
 //      414, 417, 431 or 501), an empty body and `Connection: close`, then close; a
 //      malformed request behind an answered one gets no answer, since
 //      that answer already said close (RFC 9112 §9.6).
-//   4. handler(req) returns the HttpResponse.
+//   4. handler(req, plat) runs as a task: it returns the HttpResponse,
+//      or parks on a wait (`plat.http` waiting on its upstream, through
+//      `async.wait_any`), in which case the loop watches what it waits
+//      on, serves other connections meanwhile, and answers when it runs
+//      on and returns (`__Flight`). A connection with a parked handler
+//      takes no further request until it answers, so its pipelined
+//      requests stay in order. `run_with`'s handler, whose state threads
+//      through every request, runs to completion instead.
 //   5. http_serialize_response_to → tcp_send, with a `Date` the loop
 //      formats once per second (RFC 9110 §6.6.1) unless the handler set
 //      one, and no body on a response to HEAD or a 1xx, 204 or 304;
@@ -116,7 +123,10 @@ function __recv_deadline_default(): Duration {
 // wait in its accept queue until one closes), how many of them one
 // client may hold (by the peer's address key, `net.peer_key`, counted by
 // this loop alone; a connection past it is closed as it is accepted; 0
-// for no cap), how many workers
+// for no cap), how many handlers the loop keeps parked on their waits at
+// once (a handler whose `plat.http` waits on its upstream parks and the
+// loop serves other connections meanwhile; at the cap the listener is
+// not read until one finishes), how many workers
 // `supervise` forks, each running its own loop over the
 // one listener (below 1: one per processing unit the process may use,
 // what `cpu_count()` answers), and the shutdown a
@@ -140,6 +150,7 @@ pub struct Config {
   keep_alive_requests: i32,
   max_connections: i32,
   max_connections_per_ip: i32,
+  max_in_flight: i32,
   workers: i32,
   shutdown_grace: Duration,
   readiness_path: string,
@@ -151,9 +162,10 @@ pub struct Config {
 // config() — the defaults: a backlog of 128, the port held
 // by one listener, the 10 s read deadline, a 130 s keep-alive idle span,
 // 1000 requests per connection, 1024 connections open and 100 of them per
-// client, a worker per processing unit, and the parser's `http_limits()`.
+// client, 1024 handlers parked at once, a worker per processing unit, and
+// the parser's `http_limits()`.
 pub function config(): Config {
-  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false };
+  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false };
 }
 
 // run(port, opts, handler) — serve `handler` on `port` in this process,
@@ -1297,16 +1309,17 @@ function __stop_signal(fd: i32): i32 {
   return 0;
 }
 
-// __serve_pass_end(drv, listener, c, opts, stop, accepting) — what one
-// pass of the loop does after its events: connections past their
-// deadline are closed, the listener is gated by the connection cap
-// (until a shutdown, which owns the listener from then), and the
-// shutdown takes its next step. `(conns, stop, accepting, done)`.
-function __serve_pass_end[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: Config, stop: __Stop, accepting: boolean): (__Conns, __Stop, boolean, boolean) {
+// __serve_pass_end(drv, listener, c, opts, stop, accepting, parked) — what
+// one pass of the loop does after its events: connections past their
+// deadline are closed, the listener is gated by the connection cap and the
+// count of parked handlers (until a shutdown, which owns the listener from
+// then), and the shutdown takes its next step. `(conns, stop, accepting,
+// done)`.
+function __serve_pass_end[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: Config, stop: __Stop, accepting: boolean, parked: i32): (__Conns, __Stop, boolean, boolean) {
   let now: i64 = monotonic_ns();
   c = __serve_expire(drv, c, opts, now);
   if (!__serve_stopping(stop)) {
-    accepting = __serve_gate(drv, listener, c, opts, accepting);
+    accepting = __serve_gate(drv, listener, c, opts, accepting, parked);
   }
   return __serve_stop_step(drv, listener, c, opts, stop, accepting, now);
 }
@@ -1427,16 +1440,17 @@ function __serve_not_ready(f: http.HttpFramed, opts: Config, stop: __Stop): bool
 }
 
 // __serve_gate(drv, listener, c, opts, accepting) — whether the listener
-// is watched after this pass: unwatched once `max_connections` are open,
-// so the accept queue holds the rest, and watched again once one has
-// closed. A watch the reactor refuses leaves the listener unwatched
-// until the next pass tries again.
-function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: Config, accepting: boolean): boolean {
+// is watched after this pass: unwatched once `max_connections` are open
+// or `max_in_flight` handlers are parked, so the accept queue holds the
+// rest, and watched again once one has closed or finished. A watch the
+// reactor refuses leaves the listener unwatched until the next pass tries
+// again.
+function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: Config, accepting: boolean, parked: i32): boolean {
   let cap: i32 = opts.max_connections;
   if (cap < 1) {
     cap = 1;
   }
-  let full: boolean = c.fds.len() >= cap;
+  let full: boolean = c.fds.len() >= cap || parked >= opts.max_in_flight;
   if (accepting && full) {
     drv.unwatch(listener);
     return false;
@@ -1467,6 +1481,290 @@ function __serve_expire[D: async.Driver](drv: D, c: __Conns, opts: Config, now: 
     }
   }
   return c;
+}
+
+// __Flight — a handler parked on a connection (docs/NET-P3-SUSPENSION-PLAN.md
+// §3.4): its task; the connection's descriptor; the (fd, interest) pairs it
+// waits on, each watched on the worker's reactor; the monotonic nanosecond
+// its wait is due by, -1 for no bound; and what its response needs when it
+// comes: the request's method and version, whether the connection persists
+// past it, and the framing of the bytes behind the request. A connection
+// with a flight takes no further request until the flight answers, so
+// pipelined requests stay in order; what the peer sends meanwhile is read
+// into the buffer, and the end of its stream closes the connection after
+// the response, as it does today.
+struct __Flight { task: async.Task[HttpResponse], fd: i32, set: i32[], due: i64, method: string, version: string, kept: boolean, tail: http.HttpFraming }
+
+// __Started — how a handler's first run ended: with its response, or parked
+// on a wait, the flight not yet watching it.
+enum __Started { HandlerDone(HttpResponse), HandlerParked(__Flight, async.Wait) }
+
+// __serve_start(handler, plat, f, kept, tail, opts, stop) — the handler run
+// for the request as a task: its response when it returns, the flight and
+// the wait it parked on otherwise, for the loop to watch. The readiness
+// probe of a stopping loop is answered 503 without running it.
+function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, plat: platform.Host, f: http.HttpFramed, kept: boolean, tail: http.HttpFraming, opts: Config, stop: __Stop): __Started {
+  if (__serve_not_ready(f, opts, stop)) {
+    return HandlerDone(http.text(503, ""));
+  }
+  let req: HttpRequest = f.request;
+  let t: async.Task[HttpResponse] = async.task_new(() => handler(req, plat));
+  match (async.task_start(t)) {
+    Done(resp) => {
+      async.task_free(t);
+      return HandlerDone(resp);
+    },
+    Suspended(w) => {
+      let none: i32[] = [];
+      return HandlerParked(__Flight { task: t, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: f.version, kept: kept, tail: tail }, w);
+    },
+    Cancelled => {
+      async.task_free(t);
+    }
+  }
+  return HandlerDone(http.text(503, ""));
+}
+
+// __serve_park(drv, c, fls, at, fl, corked, opts) — the connection at `at`
+// held for the flight: what the event's burst had corked goes out first,
+// since the flight's response comes after it, and the connection's read
+// deadline is lifted while the handler waits. A write the kernel refuses
+// closes the connection and cancels the flight.
+function __serve_park[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, fl: __Flight, corked: string, opts: Config): (__Conns, __Flight[]) {
+  let fd: i32 = c.fds[at];
+  if (corked.len() > 0) {
+    let sent: (__Conns, __Sent) = __serve_send(drv, c, at, corked, opts);
+    c = sent.0;
+    match (sent.1) {
+      Failed => {
+        __flight_cancel(drv, fl);
+        return (__serve_close(drv, c, at), fls);
+      },
+      _ => {}
+    }
+  }
+  return (__Conns { ...c, deadlines: c.deadlines.with(at, __held_deadline()) }, fls.append(__Flight { ...fl, fd: fd }));
+}
+
+// __held_deadline() — the read deadline of a connection whose handler is
+// parked: none, since the peer has nothing to send until the response.
+function __held_deadline(): i64 {
+  let g: i64 = 1000000000 as i64;
+  return g * g * 9;
+}
+
+// __serve_held_event(drv, c, fls, fi, fd, readiness, scratch, opts) — a
+// readiness event on a connection whose flight `fi` is parked: a hang-up
+// cancels the flight and closes the connection; anything else is read into
+// the buffer, the end of the stream remembered, and the read deadline kept
+// lifted.
+function __serve_held_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fi: i32, fd: i32, readiness: i32, scratch: u8[], opts: Config): (__Conns, __Flight[]) {
+  let at: i32 = __conns_index(c, fd);
+  if (at < 0) {
+    return (c, fls);
+  }
+  if ((readiness & 4) != 0) {
+    __flight_cancel(drv, fls[fi]);
+    return (__serve_close(drv, c, at), __flights_remove(fls, fi));
+  }
+  let read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
+  c = read.0;
+  if (read.1) {
+    c = __Conns { ...c, keep: c.keep.with(at, false) };
+  }
+  return (__Conns { ...c, deadlines: c.deadlines.with(at, __held_deadline()) }, fls);
+}
+
+// __flight_wake(drv, c, fls, fi, ready, opts, clk) — flight `fi` run on
+// with `ready`, the index of the pair that became ready (-1 at its bound):
+// its response answered on its connection when it returns, its new wait
+// watched when it parks again, its connection closed when it was cancelled.
+function __flight_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fi: i32, ready: i32, opts: Config, clk: __Clock): (__Conns, __Flight[]) {
+  let fl: __Flight = fls[fi];
+  __flight_unwatch(drv, fl);
+  fls = __flights_remove(fls, fi);
+  match (async.task_resume(fl.task, ready)) {
+    Done(resp) => {
+      async.task_free(fl.task);
+      return (__serve_answer(drv, c, fl, resp, opts, clk), fls);
+    },
+    Suspended(w) => {
+      return (c, fls.append(__flight_watch(drv, fl, w, monotonic_ns())));
+    },
+    Cancelled => {
+      async.task_free(fl.task);
+      return (__serve_abandon(drv, c, fl.fd), fls);
+    }
+  }
+  return (c, fls);
+}
+
+// __serve_answer(drv, c, fl, resp, opts, clk) — the flight's response
+// written on its connection, outside any burst (so it is never corked),
+// and the request behind it, if one is framed, left as the connection's
+// backlog for the next pass. A connection that went away meanwhile drops
+// the response.
+function __serve_answer[D: async.Driver](drv: D, c: __Conns, fl: __Flight, resp: HttpResponse, opts: Config, clk: __Clock): __Conns {
+  let at: i32 = __conns_index(c, fl.fd);
+  if (at < 0) {
+    return c;
+  }
+  let answered: (__Conns, boolean, string) = __serve_respond(drv, c, at, __serve_wire(fl.method, fl.version, resp, fl.kept, clk), opts, __pipeline_burst(), fl.tail, clk, "");
+  return __serve_finish(drv, answered.0, fl.fd, false);
+}
+
+// __serve_abandon(drv, c, fd) — the connection `fd` closed, when it is
+// still open: its handler was cancelled and answers nothing.
+function __serve_abandon[D: async.Driver](drv: D, c: __Conns, fd: i32): __Conns {
+  let at: i32 = __conns_index(c, fd);
+  if (at < 0) {
+    return c;
+  }
+  return __serve_close(drv, c, at);
+}
+
+// __flight_watch(drv, fl, w, now) — the flight waiting on `w`: each pair
+// watched with its interest, the bound kept as the flight's due time.
+function __flight_watch[D: async.Driver](drv: D, fl: __Flight, w: async.Wait, now: i64): __Flight {
+  let i: i32 = 0;
+  while (i + 1 < w.set.len()) {
+    let watched: i32 = drv.watch(w.set[i], w.set[i + 1]);
+    i = i + 2;
+  }
+  let due: i64 = 0 - 1 as i64;
+  if (w.timeout_ms >= 0) {
+    due = now + w.timeout_ms as i64 * 1000000;
+  }
+  return __Flight { ...fl, set: w.set, due: due };
+}
+
+// __flight_unwatch(drv, fl) — the flight's pairs unwatched before it runs
+// on or goes.
+function __flight_unwatch[D: async.Driver](drv: D, fl: __Flight): void {
+  let i: i32 = 0;
+  while (i + 1 < fl.set.len()) {
+    let unwatched: i32 = drv.unwatch(fl.set[i]);
+    i = i + 2;
+  }
+}
+
+// __flight_cancel(drv, fl) — the flight run on to its end with every wait
+// answering `async.cancelled()`, and its record freed.
+function __flight_cancel[D: async.Driver](drv: D, fl: __Flight): void {
+  __flight_unwatch(drv, fl);
+  let st: async.TaskStatus[HttpResponse] = async.task_cancel(fl.task);
+  async.task_free(fl.task);
+}
+
+// __flights_cancel(drv, fls) — every flight cancelled, as the loop ends.
+function __flights_cancel[D: async.Driver](drv: D, fls: __Flight[]): void {
+  for fl in fls {
+    __flight_cancel(drv, fl);
+  }
+}
+
+// __flight_index(fls, fd) — the flight watching descriptor `fd`, -1 for
+// none.
+function __flight_index(fls: __Flight[], fd: i32): i32 {
+  let i: i32 = 0;
+  while (i < fls.len()) {
+    if (__flight_pair(fls[i], fd) >= 0) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+// __flight_pair(fl, fd) — the index of the pair in the flight's set whose
+// descriptor is `fd`, -1 for none.
+function __flight_pair(fl: __Flight, fd: i32): i32 {
+  let i: i32 = 0;
+  while (i + 1 < fl.set.len()) {
+    if (fl.set[i] == fd) {
+      return i / 2;
+    }
+    i = i + 2;
+  }
+  return -1;
+}
+
+// __flight_at(fls, fd) — the flight parked on connection `fd`, -1 for none.
+function __flight_at(fls: __Flight[], fd: i32): i32 {
+  let i: i32 = 0;
+  while (i < fls.len()) {
+    if (fls[i].fd == fd) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+function __flights_remove(fls: __Flight[], at: i32): __Flight[] {
+  let out: __Flight[] = [];
+  let i: i32 = 0;
+  while (i < fls.len()) {
+    if (i != at) {
+      out = out.append(fls[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// __flights_timeout(fls, now) — the milliseconds until the earliest bound
+// a flight waits under (0 once one is due), -1 with none bounded.
+function __flights_timeout(fls: __Flight[], now: i64): i32 {
+  let best: i64 = 0 - 1 as i64;
+  for fl in fls {
+    if (fl.due >= 0 as i64 && (best < 0 as i64 || fl.due < best)) {
+      best = fl.due;
+    }
+  }
+  if (best < 0 as i64) {
+    return -1;
+  }
+  if (best <= now) {
+    return 0;
+  }
+  let ms: i64 = (best - now + 999999 as i64) / 1000000;
+  if (ms > 2147483647 as i64) {
+    return 2147483647;
+  }
+  return ms as i32;
+}
+
+// __least_timeout(a, b) — the sooner of two wait timeouts, -1 meaning none.
+function __least_timeout(a: i32, b: i32): i32 {
+  if (a < 0) {
+    return b;
+  }
+  if (b < 0 || a < b) {
+    return a;
+  }
+  return b;
+}
+
+// __flights_expire(drv, c, fls, opts, clk) — every flight whose bound has
+// passed run on with -1, the timeout answer, as many times as one is due.
+function __flights_expire[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: Config, clk: __Clock): (__Conns, __Flight[]) {
+  let again: boolean = true;
+  while (again) {
+    again = false;
+    let now: i64 = monotonic_ns();
+    let i: i32 = 0;
+    while (i < fls.len() && !again) {
+      if (fls[i].due >= 0 as i64 && fls[i].due <= now) {
+        let woke: (__Conns, __Flight[]) = __flight_wake(drv, c, fls, i, -1, opts, clk);
+        c = woke.0;
+        fls = woke.1;
+        again = true;
+      }
+      i = i + 1;
+    }
+  }
+  return (c, fls);
 }
 
 // __host_platform — the platform the accept loops hand every handler: the
@@ -1506,14 +1804,17 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle());
   let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
+  let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "" };
   while (true) {
-    let events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, monotonic_ns(), __conns_timeout(conns, monotonic_ns()))));
+    let now: i64 = monotonic_ns();
+    let events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, now, __least_timeout(__conns_timeout(conns, now), __flights_timeout(flights, now)))));
     clk = __clock_tick(clk);
     let k: i32 = 0;
     while (k + 1 < events.len()) {
       let fd: i32 = events[k];
+      let readiness: i32 = events[k + 1];
       k = k + 2;
       let sig: i32 = __stop_signal(fd);
       if (sig != 0) {
@@ -1522,6 +1823,20 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
       }
       if (fd == listener) {
         conns = __serve_accept(drv, listener, conns, opts);
+        continue;
+      }
+      let fi: i32 = __flight_index(flights, fd);
+      if (fi >= 0) {
+        let woke: (__Conns, __Flight[]) = __flight_wake(drv, conns, flights, fi, __flight_pair(flights[fi], fd), opts, clk);
+        conns = woke.0;
+        flights = woke.1;
+        continue;
+      }
+      let busy: i32 = __flight_at(flights, fd);
+      if (busy >= 0) {
+        let held: (__Conns, __Flight[]) = __serve_held_event(drv, conns, flights, busy, fd, readiness, scratch, opts);
+        conns = held.0;
+        flights = held.1;
         continue;
       }
       let ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
@@ -1541,15 +1856,22 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
             let took: (__Conns, boolean, http.HttpFraming) = __serve_took(conns, at, f, opts, ev.2, stop);
             conns = took.0;
             count = count + 1;
-            let resp: HttpResponse = http.text(503, "");
-            if (!__serve_not_ready(f, opts, stop)) {
-              resp = handler(f.request, plat);
+            match (__serve_start(handler, plat, f, took.1, took.2, opts, stop)) {
+              HandlerDone(resp) => {
+                let answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, resp, took.1, clk), opts, count, took.2, clk, corked);
+                conns = answered.0;
+                more = answered.1;
+                corked = answered.2;
+                next = took.2;
+              },
+              HandlerParked(fl, w) => {
+                let parked: (__Conns, __Flight[]) = __serve_park(drv, conns, flights, at, __flight_watch(drv, fl, w, monotonic_ns()), corked, opts);
+                conns = parked.0;
+                flights = parked.1;
+                corked = "";
+                more = false;
+              }
             }
-            let answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, resp, took.1, clk), opts, count, took.2, clk, corked);
-            conns = answered.0;
-            more = answered.1;
-            corked = answered.2;
-            next = took.2;
           },
           http.Incomplete => {
             more = false;
@@ -1567,11 +1889,15 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
       }
       conns = __serve_finish(drv, conns, fd, ev.2);
     }
-    let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting);
+    let due: (__Conns, __Flight[]) = __flights_expire(drv, conns, flights, opts, clk);
+    conns = due.0;
+    flights = due.1;
+    let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting, flights.len());
     conns = ended.0;
     stop = ended.1;
     accepting = ended.2;
     if (ended.3) {
+      __flights_cancel(drv, flights);
       drv.close();
       on_stop(__stop_reason(stop));
       return __stop_code(stop);
@@ -1663,7 +1989,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
       }
       conns = __serve_finish(drv, conns, fd, ev.2);
     }
-    let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting);
+    let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting, 0);
     conns = ended.0;
     stop = ended.1;
     accepting = ended.2;

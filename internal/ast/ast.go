@@ -4374,6 +4374,9 @@ type Program struct {
 	// method dispatch under module-scoped semantics (see
 	// docs/PRELUDE-TO-MODULES.md).
 	ModuleImports map[string]map[string]bool
+	// EntryModule is the entry module's path, whose declarations keep
+	// their names unmangled; "" for a program modload did not combine.
+	EntryModule string
 	// DirectImports is ModuleImports without the transitive step: each
 	// entry holds only the module paths named by that module's own
 	// `import` declarations, plus the module itself. Trait-method

@@ -32,12 +32,13 @@ formatting, and none of the cursor features yet.
   clears them. The exit codes are the spec's: 0 for `exit` after `shutdown`,
   1 for `exit` without it, and 2 for input that cannot be framed.
 
-Measured 2026-10-03 on a 4-core x86-64 container: a one-function document with
-no imports re-checks in about 1 ms. One importing `std/string` takes about
-280 ms per change, against native fern-lsp's 120 ms. The difference is
-re-loading and re-checking the stdlib closure on every edit, so caching parsed
-imports between checks is the first step `IDE-COMPILATION-RESEARCH.md`
-describes. Peak RSS stays at 30–31 MB over 100 changes, so each check's memory
+Measured on a 4-core x86-64 container: a one-function document with no
+imports re-checks in about 1 ms. One importing `std/string` takes about 280 ms
+per change (2026-10-03), and about 285 ms in native fern-lsp (2026-10-04),
+which runs the same gates and then loads and checks the program a second time
+for its cursor features. Most of either is re-loading and re-checking the
+stdlib closure on every edit, so caching parsed imports between checks is the
+first step `IDE-COMPILATION-RESEARCH.md` describes. Peak RSS stays at 30–31 MB over 100 changes, so each check's memory
 is reclaimed.
 
 `internal/e2eselfhost/self_host_lsp_test.go` gates it (`TEST-GATES.md` has the
@@ -47,13 +48,12 @@ row). It holds the server to two references:
   document is published, at its position, with its code and message, and
   nothing else is.
 - **native fern-lsp, on a curated corpus.** That corpus covers every placement
-  shape: non-ASCII before a position, CRLF, a positionless refusal, sibling
-  and stdlib imports, document sync, and formatting. It has to be curated,
-  because fern-lsp is not the right oracle everywhere. Its diagnostics skip
-  `-check`'s const fold, so every const use reads as undefined, and it places
-  a visibility error at 0:0 (#11314). The self-host checker's own gaps reach
-  the server exactly as they reach `-check`; they are tracked where the
-  checker differentials track them.
+  shape: non-ASCII before a position, CRLF, a positionless refusal, a
+  top-level const, sibling and stdlib imports, a visibility error in a
+  sibling, document sync, and formatting. Native's diagnostics are its
+  `fern -check`'s too, so the two servers differ only where the two checkers
+  do; the corpus is curated to keep those out, and the checker differentials
+  track them.
 
 What the next slices add:
 
@@ -107,8 +107,11 @@ A thin Go binary that:
 
 1. Reads JSON-RPC over stdin/stdout per the LSP spec.
 2. Maintains `map[uri]string` of open documents.
-3. On `didOpen` / `didChange`: re-parses + re-checks, translates
-   `diag.Errors` into `PublishDiagnosticsParams`, sends the notification.
+3. On `didOpen` / `didChange`: loads the program and runs `fern -check`'s
+   front end on it (`internal/gates.Check`), translates its errors and
+   warnings into `PublishDiagnosticsParams`, and sends the notification. The
+   cursor features below read a second load, type-checked but not folded:
+   the const fold strips the consts that symbols and references look up.
 4. On `textDocument/hover`: walks the AST, finds the node at the position,
    returns the type from `Info.VarTypes` (or the AST-attached type field).
 5. On `textDocument/definition`: looks up identifiers in `Info` tables.

@@ -3,8 +3,10 @@ package lsp
 import (
 	"strings"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/literate"
+	"github.com/jakechampion/lang/internal/modload"
 )
 
 // isLiterateURI reports whether uri names a literate Fern document
@@ -41,13 +43,12 @@ func (s *Server) updateLiterateDoc(uri, src string) []string {
 		return nil
 	}
 
-	prog, perr := parseFor(code)
+	prog, _ := parseFor(code)
 	var info *checker.Info
-	var checkErr error
 	if prog != nil {
-		info, checkErr = checker.Check(prog)
+		info, _ = checker.Check(prog)
 	}
-	diags := remapLiterateDiagnostics(collectDiagnostics(src, perr, checkErr), lineMap)
+	diags := remapLiterateDiagnostics(s.tangledDiagnostics(uri, code), lineMap)
 
 	// Keep the tangled products + the bidirectional line maps in a side
 	// channel (state.lit). The top-level prog/info stay nil so features
@@ -66,6 +67,23 @@ func (s *Server) updateLiterateDoc(uri, src string) []string {
 		},
 	}
 	return nil
+}
+
+// tangledDiagnostics is what `fern -check` reports for the document at uri,
+// whose tangled source is code, in the tangled source's coordinates. In
+// workspace mode a document with a file path loads as the CLI loads it, its
+// imports resolved beside it; otherwise as stdin.
+func (s *Server) tangledDiagnostics(uri, code string) []Diagnostic {
+	path, ok := uriToPath(uri)
+	if !s.workspace || !ok {
+		return sourceDiagnostics(code)
+	}
+	files := s.openFiles()
+	files[path] = code
+	return checkDiagnostics(path, path, func() (*ast.Program, error) {
+		p, _, err := modload.LoadWith(path, files)
+		return p, err
+	}, files)[path]
 }
 
 // literateDoc holds what a `.fern.md`'s cursor-driven LSP features need:
