@@ -18616,14 +18616,15 @@ function e049_lambda_init_names(stmts: ast.Stmt[]): string[] {
     }
     return acc;
   }
-  function no_expr(e: ast.Expr, own acc: string[]): string[] {
-    return acc;
-  }
   let out: string[] = [];
   for st in stmts {
-    out = astwalk.fold_stmt_nodes(st, out, at_var, no_expr, e049_not_into_lambda);
+    out = astwalk.fold_stmt_nodes(st, out, at_var, e049_no_expr, e049_not_into_lambda);
   }
   return out;
+}
+
+function e049_no_expr(e: ast.Expr, own acc: string[]): string[] {
+  return acc;
 }
 
 function e049_store_walk(stmts: ast.Stmt[], sc: Scope, vars: NameTy[], captured: string[], tparams: string[], mod: parser.Module, own out: util.Diag[]): util.Diag[] {
