@@ -6299,6 +6299,7 @@ struct Closed { rows: ssasem.EnvRow[], dyns: ssasem.EnvRow[], table: Schemas }
 function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Closed {
   let rows: ssasem.EnvRow[] = [];
   let drows: ssasem.EnvRow[] = [];
+  let envs: ssasem.Contract[] = frame_envs(s);
   let table: Schemas = schemas(named, s, memo);
   while (table.ok) {
     let reach: typeinfo.Type[] = [];
@@ -6308,7 +6309,7 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Cl
       dreach = dyn_types_in(t, dreach);
     }
     let grown: boolean = false;
-    for row in env_rows(reach, s.contracts.envs) {
+    for row in env_rows(reach, envs) {
       if (has_env_row(rows, row.fn_ty, row.env_ty)) {
         continue;
       }
@@ -6332,6 +6333,19 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Cl
     table = schemas(named, s, table.memo);
   }
   return Closed { rows: rows, dyns: drows, table: table };
+}
+
+// The closure bodies a box this frame drops may carry: the module's, and the
+// instances this frame builds itself, which a template's body names under the
+// binding it is produced at and the module table may not hold yet.
+function frame_envs(s: State): ssasem.Contract[] {
+  let out: ssasem.Contract[] = s.contracts.envs;
+  for c in s.calls {
+    if (c.params.len() > 0 && semtypes.is_env(c.params[0]) && ssasem.find_contract_in(out, c.name) < 0) {
+      out = out.append(c);
+    }
+  }
+  return out;
 }
 
 // The dyn types a type carries, itself included, through the containers a
