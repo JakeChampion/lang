@@ -876,7 +876,9 @@ function render(f: Format, tm: Tm, t: i64, nsec: i64, yr_spec: i32): string {
       width_add(h, cased(p.lit, p.s.up, p.s.low), p.s.width, p.s.pad);
     }
   }
-  return buf_take(h);
+  let text: string = buf_take(h);
+  buf_free(h);
+  return text;
 }
 
 // `format_with(fmt, tm, t, nsec, upcase, yr_spec, width)` — the engine,
