@@ -8,8 +8,8 @@ import (
 
 // GenericFnValueProgram names a generic function as a value in every position
 // a function type can be wanted at: an argument to a plain function, to a
-// generic one and to a function-typed parameter, a let, a struct field and a
-// return, with a bounded and an unbounded generic. main answers 0 when every
+// generic one (also in a return) and to a function-typed parameter, a let, a
+// struct field and a return, with a bounded and an unbounded generic. main answers 0 when every
 // call dispatched to the right instance, and the sum it got otherwise.
 const GenericFnValueProgram = `trait Shape { function area(self: Self): i32; }
 struct Sq { s: i32 }
@@ -27,17 +27,18 @@ struct Holder { f: (Rect) => i32 }
 function pick(): (Sq) => i32 { return measure; }
 function apply_to[T: Shape](f: (T) => i32, v: T): i32 { return f(v); }
 function use2(g: ((Sq) => i32, Sq) => i32): i32 { return g(measure, Sq { s: 2 }); }
+function twice_sq(): i32 { return twice(measure, Sq { s: 1 }); }
 
 function main(): i32 {
     let g: (Rect) => i32 = measure;
     let h: Holder = Holder { f: measure };
     let p: (Sq) => i32 = pick();
     let id: (i32) => i32 = ident;
-    // 9 + 10 + 1 + 4 + 4 + 2 + 4 + 5 + 3
+    // 9 + 10 + 1 + 4 + 4 + 2 + 4 + 5 + 3 + 2
     let n: i32 = apply(measure, Sq { s: 3 }) + apply_r(measure, Rect { w: 2, h: 5 }) + g(Rect { w: 1, h: 1 })
         + h.f(Rect { w: 2, h: 2 }) + p(Sq { s: 2 }) + twice(measure, Sq { s: 1 }) + use2(apply_to)
-        + id(5) + apply_i(ident, 3);
-    if (n == 42) {
+        + id(5) + apply_i(ident, 3) + twice_sq();
+    if (n == 44) {
         return 0;
     }
     return n;

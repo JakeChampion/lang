@@ -270,6 +270,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E040 (#10453). The self-host dropped the written arguments.
 		{"struct-literal-written-instantiation-not-widened", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { let q = Same[i32] { a: 1, b: 4611686018427387904 }; return 0; }\n", []string{"E047"}},
 		{"struct-literal-written-arity", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { let q = Same[i64, i32] { a: 1, b: 2 }; return 0; }\n", []string{"E040"}},
+		// A free call that writes its type arguments is what it writes too: the
+		// arguments are held to them, and neither the shared-literal widening
+		// nor the destination's width reaches them (#11329).
+		{"call-written-type-arg-contradicted", "struct Item { name: string }\nfunction ident[T](v: T): T { return v; }\nfunction main(): i32 { let x: Item = ident[Item](1); return 0; }\n", []string{"E038"}},
+		{"call-written-instantiation-not-widened", "function big2[T](a: T, b: T): T { return a; }\nfunction use64(x: i64): i64 { return x; }\nfunction main(): i32 { use64(big2[i32](4611686018427387904, 1)); return 0; }\n", []string{"E038", "E047"}},
+		{"call-written-i32-read-at-i64", "function big2[T](a: T, b: T): T { return a; }\nfunction use64(x: i64): i64 { return x; }\nfunction main(): i32 { use64(big2[i32](3, 1)); return 0; }\n", []string{"E038"}},
 		{"struct-literal-written-i64-read-narrow", "struct Box[T] { v: T }\nfunction main(): i32 { let q = Box[i64] { v: 4 }; let r: i32 = q.v; return 0; }\n", []string{"E003"}},
 		// A written argument is validated as an annotation is, a type
 		// variable in it is the enclosing function's, and a struct-update
