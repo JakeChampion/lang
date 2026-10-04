@@ -314,6 +314,9 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"sim_fetch", langSrcAbs(t, "examples/tests/sim_fetch_test.fern"), ""},
 		{"sim_net", langSrcAbs(t, "examples/tests/sim_net_test.fern"), ""},
 		{"sim_fault", langSrcAbs(t, "examples/tests/sim_fault_test.fern"), ""},
+		// A handler's platform over the simulation: the platform's sim parity
+		// suite.
+		{"sim_platform", langSrcAbs(t, "examples/tests/sim_platform_test.fern"), ""},
 		{"http_body", langSrcAbs(t, "examples/tests/http_body_test.fern"), ""},
 		{"http_body_json", langSrcAbs(t, "examples/tests/http_body_json_test.fern"), ""},
 		{"http_response_headers_migrated", langSrcAbs(t, "examples/tests/http_response_headers_migrated_test.fern"), ""},

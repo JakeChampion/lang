@@ -1,5 +1,5 @@
 // Package ambient is the ambient-effect rule (E080): a function handed a
-// `Platform` bag reaches every host effect through the bag, never around
+// platform reaches every host effect through the platform, never around
 // it.
 //
 // The bag is the handler's whole capability surface (docs/PLATFORM-RESEARCH.md
@@ -14,8 +14,8 @@
 // It runs over the call graph internal/effects builds, so an effect inside a
 // helper the handler calls is charged to the handler, with the call chain in
 // the message. A handler is any top-level function with a parameter of type
-// `Platform`, found by type rather than by position or by the name `handle`.
-// The bag's own methods (`(plat: Platform).log` and its siblings) are the
+// `platform.Platform`, found by type rather than by position or by the name `handle`.
+// A platform's own methods (`Host`'s `log` and its siblings) are the
 // sanctioned route, so the walk stops at them.
 //
 // The walk follows named calls, methods and function values named in a body,
@@ -27,6 +27,7 @@ package ambient
 
 import (
 	"fmt"
+	"github.com/jakechampion/lang/internal/checker"
 	"sort"
 	"strings"
 
@@ -86,37 +87,29 @@ func (v Violation) Message(entryModule string) string {
 	if method, ok := bagMethods[v.Builtin]; ok {
 		fix = fmt.Sprintf("call `%s.%s(…)` (`import \"std/platform\";`) so the effect comes from the platform the handler was handed", v.Bag, method)
 	}
-	return fmt.Sprintf("handler `%s`%s reaches `%s` (`%s`) around its `Platform` bag `%s`: %s; %s",
+	return fmt.Sprintf("handler `%s`%s reaches `%s` (`%s`) around its platform `%s`: %s; %s",
 		v.Handler, where, v.Builtin, v.Capability, v.Bag, strings.Join(v.Chain, " -> "), fix)
 }
 
-// BagParam reports the name of fn's `Platform` parameter, and whether fn
-// is a handler at all. The bag's own methods are not handlers: their
-// receiver is the bag, and they are the route the rule sends a handler
-// down.
+// BagParam reports the name of fn's platform parameter, and whether fn is a
+// handler at all. A platform's own methods are not handlers: they are the
+// route the rule sends a handler down.
 func BagParam(fn *ast.FuncDecl) (string, bool) {
 	if IsBagMethod(fn) {
 		return "", false
 	}
 	for _, p := range fn.Params {
-		if isPlatform(p.Type) {
+		if checker.IsPlatformParam(fn, p) {
 			return p.Name, true
 		}
 	}
 	return "", false
 }
 
-// IsBagMethod reports whether fn is a method on the bag.
+// IsBagMethod reports whether fn is a method of a `platform.Platform`
+// implementation.
 func IsBagMethod(fn *ast.FuncDecl) bool {
-	if fn.MethodRecv == "Platform" {
-		return true
-	}
-	return fn.Receiver != nil && isPlatform(fn.Receiver.Type)
-}
-
-func isPlatform(t ast.Type) bool {
-	st, ok := t.(ast.StructType)
-	return ok && st.Name == "Platform"
+	return fn.ImplTrait == "platform__Platform"
 }
 
 // Enforce reports every host effect a handler in prog reaches around its

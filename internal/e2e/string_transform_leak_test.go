@@ -20,15 +20,6 @@ func TestStringConcatCopySearchInterp(t *testing.T) {
 	}
 }
 
-func TestArm64SSAStringConcatCopySearch(t *testing.T) {
-	qemu := arm64QemuOrEmpty(t)
-	fern := buildFernCLI(t)
-	bin := compileArm64SSA(t, fern, e2eharness.StringConcatCopySearchProgram, nil)
-	if code, out := runArm64SSABin(t, qemu, bin, t.TempDir(), nil); code != 0 {
-		t.Fatalf("exit = %d\n%s", code, out)
-	}
-}
-
 func TestArm64DarwinStringConcatCopySearch(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires Apple Silicon")

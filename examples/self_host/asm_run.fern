@@ -38,7 +38,7 @@ function main(): i32 {
     return 1;
   }
   let d: semlower.Driven = semlower.driven(mod, "x86-64-linux");
-  let emitted: string = asm_ir.emit_module_or_error_sub(d.full, d.sub);
+  let emitted: string = asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize);
   print(emitted);
   return 0;
 }

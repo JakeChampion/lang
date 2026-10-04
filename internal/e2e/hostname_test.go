@@ -53,15 +53,6 @@ func TestArm64Hostname(t *testing.T) {
 	}
 }
 
-// The SSA backend has its own helper table, so it is its own leg.
-func TestArm64SSAHostname(t *testing.T) {
-	want := hostHostname(t)
-	out := compileAndRunArm64SSACapture(t, hostnameProbeSource(want))
-	if strings.TrimSpace(out) != want {
-		t.Errorf("hostname() = %q, want %q", strings.TrimSpace(out), want)
-	}
-}
-
 func TestInterpHostname(t *testing.T) {
 	want := hostHostname(t)
 	if code := runInterpExit(t, hostnameProbeSource(want)); code != 0 {

@@ -215,8 +215,8 @@ func TestStaticExecutableDataWXHeader(t *testing.T) {
 // blob whose tail is zero-filled (the bump heap / strbuf / args globals the
 // assembler materialises as trailing zeros) is stored in the file only up to its
 // last non-zero byte — p_filesz — while p_memsz still spans the whole blob so the
-// loader zero-fills the rest. This is what keeps arm64-ssa binaries from carrying
-// their (potentially huge) zero-init regions on disk.
+// loader zero-fills the rest. This is what keeps a binary with a large
+// zero-initialised region from carrying it on disk.
 func TestStaticExecutableDataWXBssNobits(t *testing.T) {
 	text := []byte{0x00, 0x00, 0x80, 0xd2} // movz x0,#0
 	const initLen = 5

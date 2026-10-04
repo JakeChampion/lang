@@ -71,7 +71,7 @@ function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.Loaded
     if (parts[ti].is_entry) {
       textra = needs;
     }
-    out = out + asm_ir.emit_module_ir_unit_flat(u.mods[ti], parts[ti].is_entry, true, parts[ti].ns, textra, g.im.funcs, g.stab, 0, 0 - 1, u.caches[ti], g.base, d.sub.rt_lower);
+    out = out + asm_ir.emit_module_ir_unit_flat(u.mods[ti], parts[ti].is_entry, true, parts[ti].ns, textra, g.im.funcs, g.stab, 0, 0 - 1, u.caches[ti], g.base, d.sub.rt_lower, 0 as usize);
     ti = ti + 1;
   }
   return asmcore.dedupe_weak_defs(out);
@@ -366,7 +366,7 @@ function main(): i32 {
     let pd: semlower.Driven = semlower.driven_annotated(checked_or_exit(flatten.bundle(entry_mod, loaded, target), prune, target), target);
     let pg: ircore.Gated = semlower.program(pd);
     let pu: ircore.Units = ircore.split_units(pg, part_mods(parts), entry_index(parts));
-    write(asm_ir.emit_module_ir_unit_flat(pu.mods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, pg.im.funcs, pg.stab, 0, 0 - 1, pu.caches[pm_index], pg.base, pd.sub.rt_lower));
+    write(asm_ir.emit_module_ir_unit_flat(pu.mods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, pg.im.funcs, pg.stab, 0, 0 - 1, pu.caches[pm_index], pg.base, pd.sub.rt_lower, 0 as usize));
     return 0;
   }
 
@@ -439,6 +439,6 @@ function main(): i32 {
   }
   // Every other program takes the merged emit, where a module the gate
   // declines is an ERROR (#3457 slice 5).
-  write(asm_ir.emit_module_or_error_sub(d.full, d.sub));
+  write(asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize));
   return 0;
 }

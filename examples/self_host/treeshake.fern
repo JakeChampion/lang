@@ -453,8 +453,12 @@ function local_types(fd: parser.FuncDecl): LocalTypes {
     if (util.base_type_name(ty) == "Self") {
       ty = fd.receiver_type;
     }
-    if (util.has_str(fd.type_params, util.base_type_name(ty))) {
+    let tk: i32 = util.index_of_str(fd.type_params, util.base_type_name(ty));
+    if (tk >= 0) {
       ty = "";
+      if (tk < fd.bound_traits.len() && fd.bound_traits[tk].len() > 0) {
+        ty = ts_bound_type(fd.bound_traits[tk]);
+      }
     }
     lt = lt_bind(lt, fd.params[pi].name, ty);
     pi = pi + 1;
@@ -467,15 +471,36 @@ function local_types(fd: parser.FuncDecl): LocalTypes {
   return lt;
 }
 
+// ts_bound_type is the local type recorded for a parameter typed by a
+// trait-bounded type parameter: its bounds behind a marker no declared type
+// spells, so a method on it reaches the bounds' impls (ts_impl_tag).
+function ts_bound_type(bounds: string): string {
+  return "impl " + bounds;
+}
+
+// ts_impl_tag is the receiver tag of every method an impl of `tr` has.
+function ts_impl_tag(tr: string): string {
+  return "impl " + parser.trait_simple_name(tr);
+}
+
 // method_name_of is ts_method_name_of with a method spelled on a receiver of
-// known declared type qualified by it: `plat.log` reaches `Platform`'s `log`
-// and not every `log`, as native's typed dispatch reads it.
+// known declared type qualified by it: `plat.log` reaches the platform's `log`
+// and not every `log`, as native's typed dispatch reads it. On a receiver
+// whose type is a trait-bounded type parameter it is qualified by each bound,
+// reaching the impls of those traits.
 function method_name_of(e: ast.Expr, lt: LocalTypes, own acc: string[]): string[] {
   if let ast.ExprFieldAccess(fa) = e {
     if let ast.ExprIdent(id) = fa.obj {
       let k: i32 = util.index_of_str(lt.names, id.name);
       if (k >= 0) {
-        let base: string = util.base_type_name(lt.types[k]);
+        let spelled: string = lt.types[k];
+        if (util.str_has_prefix(spelled, "impl ")) {
+          for b in parser.split_plus_bounds(slice_unchecked(spelled, 5, spelled.len()) + "") {
+            acc = acc.append(ts_qualified_root(ts_impl_tag(b), fa.field));
+          }
+          return acc;
+        }
+        let base: string = util.base_type_name(spelled);
         if (ts_named_tag(base)) {
           return acc.append(ts_qualified_root(base, fa.field));
         }
@@ -503,6 +528,9 @@ pub function refs_name(br: BodyRefs, fd: parser.FuncDecl): boolean {
       return true;
     }
     if (refset_has(br.methods, ts_qualified_root(util.base_type_name(fd.receiver_type), fd.name))) {
+      return true;
+    }
+    if (fd.impl_trait.len() > 0 && refset_has(br.methods, ts_qualified_root(ts_impl_tag(fd.impl_trait), fd.name))) {
       return true;
     }
     let im: string = ts_interposed_method_name(fd.name);

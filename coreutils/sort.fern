@@ -247,9 +247,6 @@ function is_print_b(c: i32): boolean {
 }
 
 // The C-locale digit test the numeric comparisons ask once per byte.
-// Local rather than gnu.fern's, and spelled out again inside the two
-// hottest loops below: nothing is inlined in a program this size
-// (#8822), so a call there is a third of what `sort -n` spends.
 function is_digit_b(c: i32): boolean {
   return c >= 48 && c <= 57;
 }
@@ -673,9 +670,6 @@ function trailing_nonzero(text: string, from: i32, end: i32): i32 {
 
 // The sign-free half of strnumcmp: two magnitudes, leading zeros
 // already skipped.
-// The digit test and the byte read are written out rather than called
-// here and in `numcompare`: this is the loop `sort -n` lives in, and
-// see is_digit_b above for why a call costs what it does.
 function magcompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i32): i32 {
   let a: i32 = ai;
   let b: i32 = bi;
@@ -687,7 +681,7 @@ function magcompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i
   if (b < bend) {
     cb = tb[b] as i32;
   }
-  while (ca == cb && ca >= 48 && ca <= 57) {
+  while (ca == cb && is_digit_b(ca)) {
     a = a + 1;
     b = b + 1;
     ca = 0;
@@ -699,16 +693,15 @@ function magcompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i
       cb = tb[b] as i32;
     }
   }
-  let da: boolean = ca >= 48 && ca <= 57;
-  let db: boolean = cb >= 48 && cb <= 57;
+  let da: boolean = is_digit_b(ca);
+  let db: boolean = is_digit_b(cb);
   if (ca == 46 && !db || cb == 46 && !da) {
     return fraccompare(ta, a, aend, tb, b, bend);
   }
   let tmp: i32 = ca - cb;
   let log_a: i32 = 0;
   while (a < aend) {
-    let x: i32 = ta[a] as i32;
-    if (x < 48 || x > 57) {
+    if (!is_digit_b(ta[a] as i32)) {
       break;
     }
     log_a = log_a + 1;
@@ -716,8 +709,7 @@ function magcompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i
   }
   let log_b: i32 = 0;
   while (b < bend) {
-    let y: i32 = tb[b] as i32;
-    if (y < 48 || y > 57) {
+    if (!is_digit_b(tb[b] as i32)) {
       break;
     }
     log_b = log_b + 1;
@@ -759,18 +751,10 @@ function nonzero_after(text: string, from: i32, end: i32): boolean {
 function numcompare(ta: string, ai: i32, aend: i32, tb: string, bi: i32, bend: i32): i32 {
   let a: i32 = ai;
   let b: i32 = bi;
-  while (a < aend) {
-    let ba: i32 = ta[a] as i32;
-    if (ba != 32 && ba != 9 && ba != 10) {
-      break;
-    }
+  while (a < aend && is_blank_b(ta[a] as i32)) {
     a = a + 1;
   }
-  while (b < bend) {
-    let bb: i32 = tb[b] as i32;
-    if (bb != 32 && bb != 9 && bb != 10) {
-      break;
-    }
+  while (b < bend && is_blank_b(tb[b] as i32)) {
     b = b + 1;
   }
   let nega: boolean = a < aend && ta[a] as i32 == 45;
@@ -981,9 +965,7 @@ function compare_random(seed: string, ta: string, a0: i32, a1: i32, tb: string, 
 // those, so reaching a line's text costs one SEQUENTIAL read of the
 // array being merged rather than two scattered reads of an offset
 // table — and over a file too large for the last-level cache that
-// difference is most of the sort. `compare` and `keycompare` write the
-// unpack out rather than calling these, for the reason is_digit_b
-// gives above.
+// difference is most of the sort.
 function pack_line(start: i32, len: i32): i64 {
   return start as i64 << 32 as i64 | len as i64;
 }
@@ -1172,9 +1154,9 @@ function general_numcompare(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b
 
 // How key `k` orders the two spans, reversed when the key was.
 function key_ordered(c: Conf, k: Key, ta: string, sa: i64, tb: string, sb: i64): i32 {
-  let a0: i32 = (sa >> 32 as i64) as i32;
-  let b0: i32 = (sb >> 32 as i64) as i32;
-  let d: i32 = key_diff(c, k, ta, a0, a0 + (sa & 4294967295 as i64) as i32, tb, b0, b0 + (sb & 4294967295 as i64) as i32);
+  let a0: i32 = line_start(sa);
+  let b0: i32 = line_start(sb);
+  let d: i32 = key_diff(c, k, ta, a0, a0 + line_len(sa), tb, b0, b0 + line_len(sb));
   if (d != 0 && k.reverse) {
     return 0 - d;
   }
@@ -1204,11 +1186,7 @@ function keycompare(c: Conf, ta: string, alo: i32, ahi: i32, tb: string, blo: i3
 // answer to numcompare.
 function numeric_key(text: string, a0: i32, a1: i32): i64 {
   let a: i32 = a0;
-  while (a < a1) {
-    let c: i32 = text[a] as i32;
-    if (c != 32 && c != 9 && c != 10) {
-      break;
-    }
+  while (a < a1 && is_blank_b(text[a] as i32)) {
     a = a + 1;
   }
   let neg: boolean = a < a1 && text[a] as i32 == 45;
@@ -1220,7 +1198,7 @@ function numeric_key(text: string, a0: i32, a1: i32): i64 {
   let d: i64 = 0;
   while (a < a1) {
     let x: i32 = text[a] as i32;
-    if (x < 48 || x > 57) {
+    if (!is_digit_b(x)) {
       break;
     }
     if (len < 14) {
@@ -1260,8 +1238,8 @@ function numeric_keys(c: Conf, text: string, spans: i64[], n: i32): i64[] {
       let key: i64 = 0 as i64;
       if (plain) {
         let sp: i64 = spans[ki * n + i];
-        let lo: i32 = (sp >> 32 as i64) as i32;
-        key = numeric_key(text, lo, lo + (sp & 4294967295 as i64) as i32);
+        let lo: i32 = line_start(sp);
+        key = numeric_key(text, lo, lo + line_len(sp));
       }
       out = out.append(key);
       i = i + 1;
@@ -1284,8 +1262,8 @@ function key_spans(c: Conf, text: string, lines: i64[]): i64[] {
     let i: i32 = 0;
     while (i < n) {
       let l: i64 = lines[i];
-      let lo: i32 = (l >> 32 as i64) as i32;
-      out = out.append(key_span(text, lo, lo + (l & 4294967295 as i64) as i32, k, c.tab));
+      let lo: i32 = line_start(l);
+      out = out.append(key_span(text, lo, lo + line_len(l), k, c.tab));
       i = i + 1;
     }
     ki = ki + 1;
@@ -1297,10 +1275,10 @@ function key_spans(c: Conf, text: string, lines: i64[]): i64[] {
 // dropped that last resort. The global -r applies only here once a key
 // exists.
 function compare(c: Conf, ta: string, a: i64, tb: string, b: i64): i32 {
-  let alo: i32 = (a >> 32 as i64) as i32;
-  let ahi: i32 = alo + (a & 4294967295 as i64) as i32;
-  let blo: i32 = (b >> 32 as i64) as i32;
-  let bhi: i32 = blo + (b & 4294967295 as i64) as i32;
+  let alo: i32 = line_start(a);
+  let ahi: i32 = alo + line_len(a);
+  let blo: i32 = line_start(b);
+  let bhi: i32 = blo + line_len(b);
   if (c.keys.len() > 0) {
     let d: i32 = keycompare(c, ta, alo, ahi, tb, blo, bhi);
     if (d != 0 || c.unique || c.stable) {
@@ -1316,8 +1294,9 @@ function compare(c: Conf, ta: string, a: i64, tb: string, b: i64): i32 {
 
 // compare for the sort: lines `ia` and `ib` of `lines`, their keys read
 // out of `spans`. The same decision as compare, written out again rather
-// than shared, because this runs n log n times and nothing here is
-// inlined: a call is most of what a comparison of two short lines costs.
+// than shared, because this runs n log n times and compare, which calls,
+// is not inlined: a call is most of what a comparison of two short lines
+// costs.
 function compare_at(c: Conf, text: string, lines: i64[], spans: i64[], nkeys: i64[], n: i32, ia: i32, ib: i32): i32 {
   let nk: i32 = c.keys.len();
   if (nk > 0) {
@@ -1349,10 +1328,10 @@ function compare_at(c: Conf, text: string, lines: i64[], spans: i64[], nkeys: i6
   }
   let a: i64 = lines[ia];
   let b: i64 = lines[ib];
-  let alo: i32 = (a >> 32 as i64) as i32;
-  let ahi: i32 = alo + (a & 4294967295 as i64) as i32;
-  let blo: i32 = (b >> 32 as i64) as i32;
-  let bhi: i32 = blo + (b & 4294967295 as i64) as i32;
+  let alo: i32 = line_start(a);
+  let ahi: i32 = alo + line_len(a);
+  let blo: i32 = line_start(b);
+  let bhi: i32 = blo + line_len(b);
   let r: i32 = cmp_bytes(text, alo, ahi, text, blo, bhi);
   if (c.reverse) {
     return 0 - r;
@@ -1533,8 +1512,8 @@ function line_words(c: Conf, text: string, lines: i64[], nkeys: i64[], spans: i6
     if (c.keys.len() > 0) {
       sp = spans[j];
     }
-    let lo: i32 = (sp >> 32 as i64) as i32;
-    let hi: i32 = lo + (sp & 4294967295 as i64) as i32;
+    let lo: i32 = line_start(sp);
+    let hi: i32 = lo + line_len(sp);
     let w: i64 = 0 as i64;
     if (!fold) {
       w = radix.bytes_word(text, lo, hi);

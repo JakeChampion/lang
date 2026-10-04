@@ -446,8 +446,13 @@
 # array fusion account for the source growth. Avoiding unused verdict rows
 # saves 2008 bytes; TestSelfHostWarmStockDriver measures 4169992 after the fix.
 # docs/SELFHOST-PATH-PROBE-SIZE-2026-10-04.md records attribution and tests.
+# 2026-10-04 — fern.fern 10737128 -> 11300776 (+5.2%) and checker_modload_run
+# 2386128 -> 2520560 (+5.6%), main's growth through the Platform trait merges
+# (#11340, #11343). Numbers from driver-sizes' report on run 37166665810 (main
+# at 492818c4 plus #11345's few checker lines). The other rows stay inside 5%.
+
 fern.fern/stage2 10946736
-fern.fern 10737128
+fern.fern 11300776
 asm_load_run.fern 8721320
 asm_modload_run.fern 7618432
 asm_ir_run.fern 7420200
@@ -456,4 +461,4 @@ wasm_ir_run.fern 6878120
 wasm_run.fern 6878824
 wasm_runio_run.fern 6878184
 asm_pathprobe_run.fern 4169992
-checker_modload_run.fern 2386128
+checker_modload_run.fern 2520560

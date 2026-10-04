@@ -43,9 +43,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Two jobs per host: `heavy` is internal/ir, ssa and printer, each
+          # Two jobs per host: `heavy` is internal/ir and printer, each
           # 350-390 s of serial tests that cannot t.Parallel; `rest` is the
-          # other ~75 packages. One job was 10 minutes on x86 with the three
+          # other ~75 packages. One job was 10 minutes on x86 with the
           # heavy packages sharing four cores with everything else.
           - { runner: ubuntu-latest,    host: x86_64,  group: heavy }
           - { runner: ubuntu-latest,    host: x86_64,  group: rest }
@@ -88,8 +88,7 @@ jobs:
           build-cache-key: ${{ steps.day.outputs.stamp }}
           wasmtime: true
       # qemu-aarch64 for the arm64 EXECUTION tests in the unit packages —
-      # internal/codegen/arm64ssa's TestArmRun* family and internal/native/elf's
-      # *RunsUnderQemu cases — plus the aarch64 binutils/gcc that
+      # internal/native/elf's *RunsUnderQemu cases — plus the aarch64 binutils/gcc that
       # internal/native/arm64's gas oracle and internal/e2eharness's
       # native-linker parity gate assemble against. Same lookup-and-skip shape
       # as wasm: without these the tests report `ok` having executed nothing.

@@ -52,53 +52,44 @@ func TestSelfHostTCPSendBytes(t *testing.T) {
 	}
 	for _, compiler := range []struct{ name, path string }{{"primary", primary}, {"bootstrap", bootstrap}} {
 		for _, target := range targets {
-			backends := []string{""}
-			if compiler.name == "bootstrap" && strings.HasSuffix(target.target, "-linux") {
-				backends = append(backends, "ssa")
-			}
-			for _, backend := range backends {
-				t.Run(compiler.name+"/"+target.target+"/"+backend, func(t *testing.T) {
-					compile := func(src, bin string) *exec.Cmd {
-						args := []string{"-target", target.target, "-o", bin}
-						if backend != "" {
-							args = append(args, "-backend", backend)
-						}
-						if compiler.name == "primary" && target.target == "wasm32-wasi" {
-							args = append(args, "-emit", "core-module")
-						}
-						args = append(args, src)
+			t.Run(compiler.name+"/"+target.target, func(t *testing.T) {
+				compile := func(src, bin string) *exec.Cmd {
+					args := []string{"-target", target.target, "-o", bin}
+					if compiler.name == "primary" && target.target == "wasm32-wasi" {
+						args = append(args, "-emit", "core-module")
+					}
+					args = append(args, src)
+					if compiler.name == "primary" {
+						args = append(args, stdlib)
+					}
+					compile := exec.Command(compiler.path, args...)
+					compile.Env = append(os.Environ(), "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+					if out, err := compile.CombinedOutput(); err != nil {
+						t.Fatalf("compile: %v\n%s", err, out)
+					}
+					if target.target == "wasm32-wasi" {
 						if compiler.name == "primary" {
-							args = append(args, stdlib)
+							return composeSelfHostWat(t, bin)
 						}
-						compile := exec.Command(compiler.path, args...)
-						compile.Env = append(os.Environ(), "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
-						if out, err := compile.CombinedOutput(); err != nil {
-							t.Fatalf("compile: %v\n%s", err, out)
-						}
-						if target.target == "wasm32-wasi" {
-							if compiler.name == "primary" {
-								return composeSelfHostWat(t, bin)
-							}
-							return exec.Command("wasmtime", "run", "-S", "inherit-network", bin)
-						}
-						return runX86_64Bin(target.runner, bin)
+						return exec.Command("wasmtime", "run", "-S", "inherit-network", bin)
 					}
-					checkTCPSendBytes(t, compile, compiler.name == "primary" && target.target != "wasm32-wasi")
-					if target.target != "wasm32-wasi" {
-						for _, shut := range []bool{false, true} {
-							program := e2eharness.NativeSocketSendProbe("abc", shut)
-							program = strings.ReplaceAll(program, "tcp_send(", "tcp_send_bytes(")
-							program = strings.ReplaceAll(program, `let data: string = "abc";`, "let data: u8[] = [255u8, 0u8, 128u8];")
-							dir := t.TempDir()
-							src, bin := filepath.Join(dir, "errors.fern"), filepath.Join(dir, "errors")
-							if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
-								t.Fatal(err)
-							}
-							e2eharness.CheckNativeSocketSend(t, compile(src, bin), "\xff\x00\x80", shut)
+					return runX86_64Bin(target.runner, bin)
+				}
+				checkTCPSendBytes(t, compile, compiler.name == "primary" && target.target != "wasm32-wasi")
+				if target.target != "wasm32-wasi" {
+					for _, shut := range []bool{false, true} {
+						program := e2eharness.NativeSocketSendProbe("abc", shut)
+						program = strings.ReplaceAll(program, "tcp_send(", "tcp_send_bytes(")
+						program = strings.ReplaceAll(program, `let data: string = "abc";`, "let data: u8[] = [255u8, 0u8, 128u8];")
+						dir := t.TempDir()
+						src, bin := filepath.Join(dir, "errors.fern"), filepath.Join(dir, "errors")
+						if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+							t.Fatal(err)
 						}
+						e2eharness.CheckNativeSocketSend(t, compile(src, bin), "\xff\x00\x80", shut)
 					}
-				})
-			}
+				}
+			})
 		}
 	}
 	t.Run("bootstrap/interpreter", func(t *testing.T) {

@@ -8,9 +8,10 @@
 // thousands of connections.
 import "std/http";
 import "std/serve";
+import "std/platform";
 import "core/int";
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   if (req.body_len() == 0) {
     return http.ok("hello");
   }

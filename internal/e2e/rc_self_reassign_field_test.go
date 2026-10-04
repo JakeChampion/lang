@@ -93,30 +93,6 @@ function main(): i32 {
 }`
 }
 
-// ssaAccumBumpSrc is the SSA-builder / emitter accumulator shape the self-host
-// actually uses: a struct with a STRING field AND a growing i32[], threaded
-// through a PARAMETER that is self-reassigned each step (`s = s.emit(x)`), then
-// returned. The borrow model kept such a string-bearing param borrowed, so the
-// reassignment-overwrite only flat-dec'd the old value — orphaning the old
-// instruction buffer every step → O(N^2) peak (the `-ssa` OOM). The
-// consumed-threaded-param promotion (computeConsumedParams) deep-drops the old
-// value, restoring O(N). Returns the bump high-water / 64.
-func ssaAccumBumpSrc(n string) string {
-	return `struct Bld { name: string, insts: i32[] }
-function (s: Bld) emit(x: i32): Bld { return Bld { name: s.name, insts: s.insts.append(x) }; }
-function build(s: Bld, n: i32): Bld {
-    let i: i32 = 0;
-    while (i < n) { s = s.emit(i); i = i + 1; }
-    return s;
-}
-function main(): i32 {
-    let before: i32 = (__heap_bump_bytes() as i32);
-    let s: Bld = build(Bld { name: "fn", insts: [] }, ` + n + `);
-    if (s.insts.len() != ` + n + `) { return 200; }
-    return ((__heap_bump_bytes() as i32) - before) / 64;
-}`
-}
-
 // ssaAccumSoundSrc: value-correct + no over-release for the threaded-param
 // string-bearing accumulator (the consumed-param promotion must keep the rc
 // accurate — a still-shared value stays rc>1 and is only flat-dec'd).
@@ -163,18 +139,6 @@ func TestX86_64SelfReassignStringFieldBounded(t *testing.T) {
 	assertSubQuadratic(t, "x86-64-linux", n1, n2)
 }
 
-// The SSA-builder-shaped accumulator (string field + growing i32[], threaded
-// through a self-reassigned parameter) is O(N) and over-release-free — the
-// borrow-inference fix for the `-ssa` OOM.
-func TestX86_64SSAAccumThreadedParam(t *testing.T) {
-	_, n1 := compileAndRunX86_64FreeOn(t, ssaAccumBumpSrc("200"))
-	_, n2 := compileAndRunX86_64FreeOn(t, ssaAccumBumpSrc("400"))
-	assertSubQuadratic(t, "x86-64-linux", n1, n2)
-	if _, code := compileAndRunX86_64FreeOn(t, ssaAccumSoundSrc); code != 0 {
-		t.Errorf("threaded-param accumulator: got %d, want 0 (100/101=value, >0=over-release)", code)
-	}
-}
-
 func TestArm64SelfReassignFieldSound(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, selfReassignFieldSoundSrc); code != 0 {
 		t.Errorf("string-free accumulator: got %d, want 0", code)
@@ -209,19 +173,11 @@ func TestWASMSelfReassignFieldBounded(t *testing.T) {
 	sn2 := runWasm(t, selfReassignStringFieldBumpSrc("400"))
 	assertSubQuadratic(t, "wasm string-field", sn1, sn2)
 	// The threaded-param accumulator (the self-host's actual shape) is
-	// over-release-free on wasm. Its O(N) reclamation is verified on the native
-	// `-ssa` backends (TestX86_64SSAAccumThreadedParam); wasm keeps a separate,
-	// pre-existing function-boundary reclamation limitation for this shape, so
-	// only soundness is pinned here.
+	// over-release-free on wasm. wasm keeps a separate, pre-existing
+	// function-boundary reclamation limitation for this shape, so only
+	// soundness is pinned here.
 	if got := runWasm(t, ssaAccumSoundSrc); got != 0 {
 		t.Errorf("threaded-param accumulator: got %d, want 0 (over-release)", got)
-	}
-}
-
-// arm64 counterpart of the threaded-param SSA accumulator soundness check.
-func TestArm64SSAAccumThreadedParam(t *testing.T) {
-	if _, code := compileAndRunArm64FreeOn(t, ssaAccumSoundSrc); code != 0 {
-		t.Errorf("threaded-param accumulator: got %d, want 0 (over-release)", code)
 	}
 }
 

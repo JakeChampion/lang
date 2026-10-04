@@ -78,18 +78,6 @@ func TestArm64RenameFlagsPrimitives(t *testing.T) {
 	renameFlagsCheckTree(t, dir)
 }
 
-func TestArm64SSARenameFlagsPrimitives(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, renameFlagsSource(dir), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see renameFlagsSource)\n%s", code, stderr)
-	}
-	renameFlagsCheckTree(t, dir)
-}
-
 func TestInterpRenameFlagsPrimitives(t *testing.T) {
 	dir := t.TempDir()
 	if code := runInterpExit(t, renameFlagsSource(dir)); code != 0 {

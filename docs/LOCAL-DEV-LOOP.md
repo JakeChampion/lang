@@ -423,8 +423,9 @@ treating genuine compiler regressions as infra.
 - **125** (`ExitArenaExhausted`) — `__fern_alloc`'s bounds check fired: the
   fixed bump arena is full. A REAL failure, reproducible locally, and almost
   always a leak. 125 is clear of the 128+signal range so nothing can forge it,
-  and under WASI's 126 ceiling so it survives wasmtime. Pinned across all five
-  emitters by `internal/e2e/arena_exit_code_test.go`.
+  and under WASI's 126 ceiling so it survives wasmtime. Pinned across the
+  self-host emitters by `internal/e2e/arena_exit_code_test.go`
+  (`e2eharness.ExitArenaExhausted`).
 - **137** (128+9, SIGKILL) — the host ran out of RAM. Also reads as `signal:
   killed` from the self-host compiler building a driver, or `as`/gcc dying on
   a link. Retry with a smaller budget per the knobs above. This is *total-RAM* pressure, not a
@@ -557,7 +558,7 @@ When editing inference / checker / `Ty` / `EmitState`, edit `asmcore.fern` once
 also provide `asmcore.fern`.
 
 **Two termios tests fail under qemu and pass on real arm64.**
-`TestArm64Termios` and `TestArm64SSATermios` exit 21 locally — a control byte
+`TestArm64Termios` exits 21 locally — a control byte
 written with `termios_set` does not read back through `termios_get` — while
 `TestX86_64Termios` runs the same program on the same pty and passes, and CI's
 arm64 lane, which runs natively, is green. It is qemu-user's ioctl emulation,

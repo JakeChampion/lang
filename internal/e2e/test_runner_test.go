@@ -3960,7 +3960,7 @@ func TestRunnerMockPlatformCannedExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: MockPlatform canned answers", "# pass 9", "# fail 0", "1..9"} {
+	for _, w := range []string{"# Suite: mock_platform.MockPlatform canned answers", "# pass 9", "# fail 0", "1..9"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -3988,7 +3988,7 @@ func TestRunnerHttpRespondExample(t *testing.T) {
 
 // `examples/tests/http_request_builder_test.fern` pins the handler test
 // seam (#9854): a request from `http.request` with its body methods, a
-// `MockPlatform`'s bag, and the HTTP assertions of `std/test` reading the
+// `mock_platform.MockPlatform`'s bag, and the HTTP assertions of `std/test` reading the
 // response back.
 func TestRunnerHttpRequestBuilderExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)

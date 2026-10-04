@@ -40,7 +40,7 @@ Relationship to existing tracks — complementary, not competing:
   complementary in kind: this brief's checker rule proves what code
   *can call*; the filter constrains what the process can do once
   control flow has been *hijacked*. Neither subsumes the other.
-- `PLATFORM-RESEARCH.md`'s `Platform` capability bag governs what the
+- `PLATFORM-RESEARCH.md`'s `platform.Platform` trait governs what the
   *host* offers the *application*; this governs what the
   *application* delegates to its *dependencies*. Its open question 3
   (checker error vs link-time symbol absence) is answered here:

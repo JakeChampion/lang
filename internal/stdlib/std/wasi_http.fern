@@ -8,7 +8,7 @@
 // handles. `serve` is that entry's body: it reads the request out of the
 // host through the wasi:http/types methods — the method variant, the path,
 // the header snapshot, the body stream — into an `HttpRequest`, calls the
-// program's `handle(req, plat)` with a fresh `Platform` bag, and writes the
+// program's `handle(req, plat)` with the host platform, and writes the
 // `HttpResponse` back: headers appended to a fresh `fields`, the status set,
 // the response handed to the outparam, and the body streamed in 4096-byte
 // pieces before finishing it.
@@ -107,7 +107,7 @@ const WRITE_CHUNK: i32 = 4096;
 
 // `serve(request, response_out, handle)` — answer one request: the body of
 // the component's incoming-handler export, with the program's `handle`.
-pub function serve(request: i32, response_out: i32, handle: (HttpRequest, Platform) => HttpResponse): void {
+pub function serve(request: i32, response_out: i32, handle: (HttpRequest, platform.Host) => HttpResponse): void {
   let method: string = method_name(req_method(request));
   let target: string = "/";
   match (req_path(request)) {
@@ -147,7 +147,7 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, Platfo
   // The body's trailers are a future the host settles after the body is
   // finished; nothing reads it yet, so the request's are empty.
   let req: HttpRequest = HttpRequest { method: method, path: path, body: Stream { data: data, pos: 0 }, headers: headers, trailers: HeaderMap { names: [], values: [] } };
-  let resp: HttpResponse = handle(req, platform.platform_new());
+  let resp: HttpResponse = handle(req, platform.host());
   send(response_out, resp);
 }
 

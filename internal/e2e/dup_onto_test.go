@@ -1,11 +1,10 @@
 // `r.dup_onto(fd)` / `w.dup_onto(fd)` end to end on every backend: dup3(2) of
 // the handle's descriptor onto a number the caller chose.
 //
-// What no unit test can assert: four hand-written implementations issue the
-// call. x86-64, arm64-linux and arm64-ssa each emit it from hand-written
+// What no unit test can assert: three hand-written implementations issue the
+// call. x86-64 and arm64-linux each emit it from hand-written
 // assembly with its own frame discipline, its own literal syscall NUMBER and
-// its own handle layout (the fd at [handle] on two of them, [handle+8] on the
-// third); the interpreter goes through Go's syscall package behind a per-OS
+// its own handle layout; the interpreter goes through Go's syscall package behind a per-OS
 // split, because Linux has dup3 and XNU only dup2; and both wasm previews
 // refuse it.
 //
@@ -135,22 +134,6 @@ func TestArm64DupOnto(t *testing.T) {
 	out, code := compileAndRunArm64(t, dupOntoSource(dir, false))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see dupOntoSource)\n%s", code, out)
-	}
-	dupOntoCheckTree(t, dir)
-}
-
-// The arm64 SSA-direct backend is a third hand-written implementation, with
-// its own frame discipline and its own handle layout (the fd at [handle+8]
-// rather than [handle]), so it gets the probe rather than being taken on
-// trust.
-func TestArm64SSADupOnto(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, dupOntoSource(dir, false), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see dupOntoSource)\n%s", code, stderr)
 	}
 	dupOntoCheckTree(t, dir)
 }

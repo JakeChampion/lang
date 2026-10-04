@@ -15,7 +15,7 @@ import (
 // TWO places, and both have to agree with it.
 //
 // builtinStructDecls injects HttpRequest / HttpResponse / HeaderMap /
-// Stream / Platform and friends into every native program. The
+// Stream and friends into every native program. The
 // self-host cannot inject them the same way, so it carries its own
 // copies, and that is where it reads field OFFSETS and the shapes for
 // chained access from:
