@@ -25,8 +25,9 @@ import (
 // `wasmtime serve` with the 200 it sets. The drop is what the cli/run shape
 // never needed: the resource has to be surfaced as a component type for the
 // canon resource.drop, and this is the first composition to do so. The
-// component imports wasi:http/types and what its types alias, not the rest
-// of the world.
+// component imports wasi:http/types alone: the core touches no stream, so
+// wasi:io/streams, which only the body methods it never calls read, is not
+// declared either.
 func TestSelfHostComposeHttpFromProxyWorld(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -69,7 +70,7 @@ func TestSelfHostComposeHttpFromProxyWorld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("component wit: %v\n%s", err, wit)
 	}
-	for _, want := range []string{"export wasi:http/incoming-handler@0.2.0", "import wasi:http/types@0.2.0", "import wasi:io/streams@0.2.0"} {
+	for _, want := range []string{"export wasi:http/incoming-handler@0.2.0", "import wasi:http/types@0.2.0"} {
 		if !strings.Contains(string(wit), want) {
 			t.Errorf("component WIT lacks %q:\n%s", want, wit)
 		}
@@ -77,7 +78,7 @@ func TestSelfHostComposeHttpFromProxyWorld(t *testing.T) {
 	// The world's imports bound the component's: an interface the core
 	// never reaches is not declared, so `wasmtime serve` without `-S
 	// config` takes the component.
-	for _, unused := range []string{"wasi:config/store", "wasi:cli/stdout", "wasi:random/random"} {
+	for _, unused := range []string{"wasi:config/store", "wasi:cli/stdout", "wasi:random/random", "wasi:io/streams"} {
 		if strings.Contains(string(wit), unused) {
 			t.Errorf("component imports %s, which the core never reaches:\n%s", unused, wit)
 		}

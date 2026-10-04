@@ -81,10 +81,9 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 	if !strings.Contains(string(wit), "import wasi:cli/stdout@0.2.0") {
 		t.Errorf("component WIT lacks the stdout import:\n%s", wit)
 	}
-	// An import the world's own aliases target stays (filesystem/types,
-	// the sockets: a later decl reads a type of theirs); one nothing
-	// aliases and the core never reaches is dropped.
-	for _, unused := range []string{"wasi:cli/stderr", "wasi:random/", "wasi:filesystem/preopens"} {
+	// An interface the core never reaches is dropped, whether or not a type
+	// of it is aliased by another interface the core does not reach either.
+	for _, unused := range []string{"wasi:cli/stderr", "wasi:random/", "wasi:filesystem/", "wasi:sockets/", "wasi:clocks/"} {
 		if strings.Contains(string(wit), unused) {
 			t.Errorf("component imports %s, which a stdout core never reaches:\n%s", unused, wit)
 		}
