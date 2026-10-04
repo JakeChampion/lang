@@ -452,14 +452,15 @@ Unsupported constructs refuse the whole function with a reason.
   copied. A dyn box that is none of those concretes holds no view and is kept,
   retagged by a `dyn_as` naming no shape, which the verifier admits only where
   tests refuted every such concrete. A view that is a literal or a retagged
-  string (`ssasem.counted_view`) anchors nothing and is not copied. Three
+  string (`ssasem.counted_view`) anchors nothing and is not copied. Two
   kinds have no copy, and a value holding one is refused by name
   (`ssasem.copy_refusal`): a cell, which is shared storage a copy would split
   (and holds no view in practice, since E049 keeps a reference-typed capture
-  read-only); a function value, whose environment no test in the typed graph
+  read-only), and a function value, whose environment no test in the typed graph
   can find (capture of a view is an escape position STR-VIEW-CONTRACT.md §3
-  step 3 assigns to the checker, #8635); and a type that holds itself, whose
-  copy would have to recurse. A value read out of a map holding views (`get`,
+  step 3 assigns to the checker, #8635). A type that holds itself is copied
+  by a synthesised `__fern_copy_<type>` function that calls itself where the
+  type recurs (`ssasem.copy_helper_func`). A value read out of a map holding views (`get`,
   `get_or`, `values()`) is anchored to the map, and `get_or`'s also to its
   default (`ssasem.map_read_sources`), since its views read the entries'
   bytes. Whether a type holds a view at all is

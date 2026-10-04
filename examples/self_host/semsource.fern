@@ -7740,7 +7740,11 @@ function close_module(all: Produced[], names: util.NameIndex): Produced[] {
 // Every body then carries the whole table, which is what anchors a call's
 // result in the caller's graph, and is verified only then: unanchored, a call
 // result is its own root, which a loop phi it flows back into cannot depend on.
-function anchor_module(all: Produced[], names: string[], verify: boolean): Produced[] {
+// The copy helpers the merge copies call (ssasem.copy_helper_func) follow the
+// rows, each named in `names`.
+struct Anchored { all: Produced[], names: string[] }
+
+function anchor_module(all: Produced[], names: string[], verify: boolean): Anchored {
   let anchors: ssasem.Anchor[] = [];
   let copied: boolean = true;
   while (copied) {
@@ -7776,6 +7780,7 @@ function anchor_module(all: Produced[], names: string[], verify: boolean): Produ
     }
   }
   let out: Produced[] = [];
+  let helpers: CopyHelpers = CopyHelpers { types: [], from: [] };
   let i: i32 = 0;
   while (i < all.len()) {
     let p: Produced = all[i];
@@ -7791,6 +7796,9 @@ function anchor_module(all: Produced[], names: string[], verify: boolean): Produ
       } else {
         if (plan.copies.len() > 0) {
           p = Produced { ...p, func: ssasem.with_merge_copies(p.func, plan.copies) };
+          helpers = with_copy_helpers(helpers, p.func);
+          anchors = helper_anchors(anchors, helpers);
+          p = Produced { ...p, func: ssasem.Func { ...p.func, anchors: anchors } };
         }
         let analysis: ssasem.Analysis = ssasem.analyze(p.func);
         if (!analysis.ok) {
@@ -7803,7 +7811,59 @@ function anchor_module(all: Produced[], names: string[], verify: boolean): Produ
     out = out.append(p);
     i = i + 1;
   }
-  return close_module(out, util.name_index(names));
+  return helper_rows(out, names, helpers, anchors);
+}
+
+// The rows of the copy helpers, after the module's own. A helper's body can
+// call another helper, so the list grows as it is read.
+function helper_rows(out: Produced[], names: string[], helpers: CopyHelpers, anchors: ssasem.Anchor[]): Anchored {
+  let h: i32 = 0;
+  while (h < helpers.types.len()) {
+    let f: ssasem.Func = ssasem.copy_helper_func(helpers.from[h], helpers.types[h]);
+    helpers = with_copy_helpers(helpers, f);
+    anchors = helper_anchors(anchors, helpers);
+    f = ssasem.Func { ...f, anchors: anchors };
+    let p: Produced = Produced { ...refuse(""), ok: true, func: f, modes: [ssaunits.borrow_mode()] };
+    let analysis: ssasem.Analysis = ssasem.analyze(f);
+    if (!analysis.ok) {
+      p = refuse("copy helper fails semantic verification: " + analysis.why);
+    } else {
+      p = Produced { ...p, analysis: Some(analysis) };
+    }
+    out = out.append(p);
+    names = names.append(ssasem.copy_helper(helpers.types[h]));
+    h = h + 1;
+  }
+  return Anchored { all: close_module(out, util.name_index(names)), names: names };
+}
+
+// The copy helpers a module's merge copies call, each with the body whose
+// schemas it is built over.
+struct CopyHelpers { types: typeinfo.Type[], from: ssasem.Func[] }
+
+function with_copy_helpers(h: CopyHelpers, f: ssasem.Func): CopyHelpers {
+  for t in ssasem.copy_helpers_called(f) {
+    let known: boolean = false;
+    for x in h.types {
+      if (semtypes.equal(x, t)) {
+        known = true;
+      }
+    }
+    if (!known) {
+      h = CopyHelpers { types: h.types.append(t), from: h.from.append(f) };
+    }
+  }
+  return h;
+}
+
+// A helper's result is a fresh copy: it anchors nothing.
+function helper_anchors(anchors: ssasem.Anchor[], h: CopyHelpers): ssasem.Anchor[] {
+  for t in h.types {
+    if (!ssasem.anchored(anchors, ssasem.copy_helper(t))) {
+      anchors = anchors.append(ssasem.Anchor { name: ssasem.copy_helper(t), params: [] });
+    }
+  }
+  return anchors;
 }
 
 // Each `return v` of a view becomes `return (v + "") as str`.
@@ -8220,7 +8280,9 @@ function produce_module(mod: parser.Module, verify: boolean, debug_lines: boolea
     names = names.append(r.name);
     at = at + 1;
   }
-  let all: Produced[] = anchor_module(close_module(util.append_all(decls, instances), util.name_index(names)), names, verify);
+  let anchored: Anchored = anchor_module(close_module(util.append_all(decls, instances), util.name_index(names)), names, verify);
+  let all: Produced[] = anchored.all;
+  names = anchored.names;
   if (verify) {
     all = fuse_pipelines(inline_leaves(all, names, mod.funcs), names);
   }

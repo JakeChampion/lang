@@ -199,9 +199,8 @@ function main(): i32 { return hold(pick(1)) + hold((): string => "x"); }
 	}
 
 	// A value holding a view merged past its source is copied there
-	// (ssasem.deep_copy). Two kinds have no copy and are refused by name
-	// (ssasem.copy_refusal): a function value, whose environment no test can
-	// find, and a type that holds itself, whose copy would recurse. A closure
+	// (ssasem.deep_copy). A function value has no copy and is refused by name
+	// (ssasem.copy_refusal): no test can find its environment. A closure
 	// capturing a bare view is refused where it is built; one reaching a view
 	// through a captured record is built and holds that view, and returned
 	// past its source it is refused through Func.envs.
@@ -229,26 +228,6 @@ function g(n: i32): i32 {
 }
 function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
 `, "FERN_SEM_IR: g: a value merged past its source has no copy: a function value (() => i32) has no shape to rebuild its environment by"},
-		{"recursive-enum-merged", `import "std/i32";
-enum L { Cons(str, L), Nil }
-function mk(n: i32): string {
-    let s: string = "ab";
-    let i: i32 = 0;
-    while (i < n) { s = s + "c"; i = i + 1; }
-    return s;
-}
-function two(s: string): L { return Cons(slice_unchecked(s, 0, 1), Cons(slice_unchecked(s, 1, 3), Nil)); }
-function count(l: L): i32 { match (l) { Cons(h, t) => { return h.len() + count(t); }, Nil => { return 0; } } return 0; }
-function g(n: i32): i32 {
-    let l: L = Nil;
-    if (n != 0) {
-        let s: string = mk(n);
-        l = two(s);
-    }
-    return count(l);
-}
-function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
-`, "FERN_SEM_IR: g: a value merged past its source has no copy: L holds itself, so its copy would recurse"},
 		{"closure-over-a-record-returned", `import "std/i32";
 function mk(n: i32): string {
     let s: string = "ab";

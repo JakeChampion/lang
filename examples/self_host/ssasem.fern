@@ -3798,7 +3798,7 @@ pub struct MergeCopy { at: i32, edge: boolean, consumer: i32, slot: i32, value: 
 // (docs/STR-VIEW-CONTRACT.md §5). Both read a body carrying the module's
 // anchor table, through which a call's roots are found.
 pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
-  let s: CopySplice = CopySplice { values: f.values, done: [], id: 0, preds: [], insts: [], next_block: next_block_id(f.graph) };
+  let s: CopySplice = CopySplice { values: f.values, done: [], id: 0, preds: [], insts: [], next_block: next_block_id(f.graph), unfold: false, helpers: [] };
   let made: i32[] = [];
   for _ in copies {
     made = made.append(0 - 1);
@@ -3833,7 +3833,7 @@ pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
     }
     blocks = blocks.append(ssa.SBlock { ...blk, insts: insts, preds: preds });
   }
-  return Func { ...f, values: s.values, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: s.values.len() } };
+  return Func { ...f, values: s.values, calls: with_copy_contracts(f.calls, s.helpers), graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: s.values.len() } };
 }
 
 // A block's predecessors once each original block's terminator has moved to
@@ -3902,7 +3902,9 @@ function with_copied_operands(ins: ssa.SInst, copies: MergeCopy[], made: i32[]):
 
 // A graph being extended: the finished blocks, the open block's id,
 // predecessors and instructions, and the next free block id.
-struct CopySplice { values: typeinfo.Type[], done: ssa.SBlock[], id: i32, preds: i32[], insts: ssa.SInst[], next_block: i32 }
+// `unfold` builds the next value holding itself inline, as its own copy helper
+// does, rather than calling the helper; `helpers` is the helpers called.
+struct CopySplice { values: typeinfo.Type[], done: ssa.SBlock[], id: i32, preds: i32[], insts: ssa.SInst[], next_block: i32, unfold: boolean, helpers: typeinfo.Type[] }
 
 struct Copied { s: CopySplice, value: i32 }
 
@@ -4005,8 +4007,8 @@ function boxes_hold_view(f: Func, rows: EnvRow[], t: typeinfo.Type): boolean {
 // its views, or "" when it can: a `str`, and an array, tuple, record, enum,
 // map or dyn of such. A cell is shared storage, which a copy would split. A
 // function value carries no shape a test could read to find its environment.
-// A type that holds itself would need a copy that recurses, which a splice
-// cannot express. `open` is the nominal and dyn types being copied around `t`.
+// A type that holds itself is copied by a helper calling itself, so its parts
+// are checked once. `open` is the nominal and dyn types being copied around `t`.
 function copy_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
   if (!holds_view(f, t) || is_view(t)) {
     return "";
@@ -4026,10 +4028,10 @@ function copy_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string 
   if (is_map(t)) {
     return map_refusal(f, t, open);
   }
-  for o in open {
-    if (semtypes.equal(o, t)) {
-      return typeinfo.spelling(t) + " holds itself, so its copy would recurse";
-    }
+  // A type holding itself is copied by its helper (copy_helper_func), which
+  // calls itself where the type recurs: its parts are checked on the way in.
+  if (has_type(open, t)) {
+    return "";
   }
   let inner: typeinfo.Type[] = open.append(t);
   if (is_dyn(t)) {
@@ -4155,6 +4157,10 @@ function deep_copy(f: Func, s: CopySplice, v: i32): Copied {
   if let typeinfo.TypeTuple(tup) = t {
     return copy_tuple(f, s, v, t, tup.elements);
   }
+  if (calls_helper(f, s, t)) {
+    return helper_call(s, v, t);
+  }
+  s = CopySplice { ...s, unfold: false };
   if (is_dyn(t)) {
     return copy_dyn(f, s, v, t);
   }
@@ -4360,6 +4366,133 @@ function copy_dyn(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
   let out: i32 = s.values.len();
   let phi: ssa.SInst = ssa.SInst { kind_tag: 8, result: out, args: built, imm: 0, str: "" };
   return Copied { s: CopySplice { ...s, values: s.values.append(t), insts: s.insts.append(phi) }, value: out };
+}
+
+// ---- copying a type that holds itself --------------------------------------
+
+// The function that copies a value of `t`, a type holding itself: an inline
+// copy cannot recurse, so it calls this where `t` recurs.
+pub function copy_helper(t: typeinfo.Type): string {
+  return "__fern_copy_" + type_key(t);
+}
+
+// The copy helpers `f` calls, by the type each copies.
+pub function copy_helpers_called(f: Func): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  for c in f.calls {
+    if (c.params.len() == 1 && c.name == copy_helper(c.params[0])) {
+      out = out.append(c.params[0]);
+    }
+  }
+  return out;
+}
+
+// copy_helper_func is the copy helper for `t`, over the schemas of `f`, the
+// body that needed it: its borrowed parameter rebuilt as `deep_copy` rebuilds
+// a merged value, each `t` inside it copied by a call to itself.
+pub function copy_helper_func(f: Func, t: typeinfo.Type): Func {
+  let param: ssa.SInst = ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" };
+  let s: CopySplice = CopySplice { values: [t], done: [], id: 0, preds: [], insts: [param], next_block: 1, unfold: true, helpers: [] };
+  let c: Copied = deep_copy(f, s, 0);
+  s = sp_close(c.s, ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: c.value });
+  let graph: ssa.SFunc = ssa.SFunc { name: copy_helper(t), nparams: 1, nvals: s.values.len(), blocks: s.done, entry: 0, takes_env: false };
+  return Func { ...f, graph: graph, values: s.values, params: [t], result: t, calls: with_copy_contracts([], s.helpers), envs: [] };
+}
+
+// Whether a copy of `t` is a call to its helper: `t` holds itself, and is not
+// the value the helper being built unfolds.
+function calls_helper(f: Func, s: CopySplice, t: typeinfo.Type): boolean {
+  return !s.unfold && holds_itself(f, t);
+}
+
+function helper_call(s: CopySplice, v: i32, t: typeinfo.Type): Copied {
+  let helpers: typeinfo.Type[] = s.helpers;
+  if (!has_type(helpers, t)) {
+    helpers = helpers.append(t);
+  }
+  return sp_emit(CopySplice { ...s, helpers: helpers }, call(), t, [v], 0, copy_helper(t));
+}
+
+function with_copy_contracts(calls: Contract[], helpers: typeinfo.Type[]): Contract[] {
+  let out: Contract[] = calls;
+  for t in helpers {
+    if (find_contract_in(out, copy_helper(t)) < 0) {
+      out = out.append(Contract { name: copy_helper(t), params: [t], modes: [borrow_mode()], result: t });
+    }
+  }
+  return out;
+}
+
+function has_type(ts: typeinfo.Type[], t: typeinfo.Type): boolean {
+  for x in ts {
+    if (semtypes.equal(x, t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether `t` holds a view-holding value of its own type, which a copy would
+// rebuild without end.
+function holds_itself(f: Func, t: typeinfo.Type): boolean {
+  if (!holds_view(f, t) || is_view(t)) {
+    return false;
+  }
+  return reaches(f, copy_parts(f, t), t, [t]);
+}
+
+function reaches(f: Func, parts: typeinfo.Type[], target: typeinfo.Type, seen: typeinfo.Type[]): boolean {
+  for p in parts {
+    if (holds_view(f, p) && !is_view(p)) {
+      if (semtypes.equal(p, target)) {
+        return true;
+      }
+      if (!has_type(seen, p) && reaches(f, copy_parts(f, p), target, seen.append(p))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// The parts of `t` its copy rebuilds, as `deep_copy` descends into them.
+function copy_parts(f: Func, t: typeinfo.Type): typeinfo.Type[] {
+  if let typeinfo.TypeArray(a) = t {
+    return [a.elem];
+  }
+  if let typeinfo.TypeTuple(tup) = t {
+    return tup.elements;
+  }
+  if (is_map(t)) {
+    return [map_key(t), map_value(t)];
+  }
+  if (is_dyn(t)) {
+    return dyn_view_concretes(f, t);
+  }
+  if let typeinfo.TypeUnion(_) = t {
+    return variant_parts(f, t);
+  }
+  let out: typeinfo.Type[] = [];
+  let r: i32 = semrecords.find(f.records, t);
+  if (r >= 0) {
+    for fl in f.records.list[r].fields {
+      out = out.append(fl.ty);
+    }
+  }
+  return out;
+}
+
+function variant_parts(f: Func, t: typeinfo.Type): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  let at: i32 = semrecords.find_enum(f.enums, t);
+  if (at >= 0) {
+    for v in f.enums[at].variants {
+      for fl in v.fields {
+        out = out.append(fl.ty);
+      }
+    }
+  }
+  return out;
 }
 
 // The view-holding operands to copy, and why one cannot be when an operand
