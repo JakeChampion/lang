@@ -254,6 +254,15 @@ and waits on the task's wait set itself; the self-host's x86-64 and arm64
 output must show the task parked and the plain fetch answered first.
 `TestFetchTaskFallback` is the same program through the Go compiler: no
 park, the plain fetch never runs.
+`TestSelfHostTaskCombinators` is slice 6's gate: `e2eharness.TaskCombinatorsProgram`
+runs a `race_tasks`, a `gather_tasks` and a `with_deadline_tasks` over
+entries that park on timers, and a `gather` over futures, inside a task
+driven by hand, then cancels a second task from outside while its race is
+parked; every entry has a `defer`. The self-host's x86-64 and arm64 output
+must show the race's loser and the deadline's late entry cancelled through
+their defers, the parks the task made, and the outer cancellation reaching
+both children. `TestTaskCombinatorsFallback` is the same program through
+the Go compiler: the entries run in order, nothing is cancelled.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestSelfHostServeConfig` serves through
