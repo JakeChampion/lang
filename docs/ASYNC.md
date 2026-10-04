@@ -360,8 +360,15 @@ blocks; under the blocking fallback each entry runs to its end inside
 A parked frame keeps what it holds: a `str` or byte view read after the
 park still sees its owner, and a closure sharing a mutated scalar with the
 frame still shares it (`TestSelfHostTaskFrame`).
-`docs/NET-P3-SUSPENSION-PLAN.md` is the design and what remains (the sim's
-task driver).
+The simulation drives tasks too: `sim.run_tasks(drv, entries, cancel_at_ms)`
+runs its entries as tasks in virtual time, each move of the clock
+(`Sim.advance_to`, a `poll_ready`, any `wait_any`) a park the driver answers
+when that moment is the earliest any task is due, and `cancel_at_ms[i]` is
+the virtual time task `i` is cancelled at, a scripted disconnect. A handler's
+`plat.http` over a `SimPlatform` parks on the scripted network's latencies
+and, cancelled while it waits, answers `FetchError.Cancelled` — the same bytes
+on every target (`TestSelfHostSimTasks`).
+`docs/NET-P3-SUSPENSION-PLAN.md` is the design.
 
 ## 9. How it works (one paragraph)
 
@@ -382,8 +389,13 @@ that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
   native and a real wasi:io/poll pollable handle on wasm, so an overlapping
   `gather([fetch_future, …])` works everywhere.
 - A task parks only in self-host-compiled code (§8), on x86-64, arm64 and
-  wasm alike. Under the Go compiler the task combinators run their entries
-  one after another.
+  wasm alike. Under the Go compiler the task combinators and `sim.run_tasks`
+  run their entries one after another.
+- A task cancelled while the fetch client resolves a name sees the resolver's
+  `NoReply` (as `FetchError.Dns`), not `Cancelled`: the DNS exchange's waits
+  answer `cancelled()` as a passed deadline. Its connect and read waits
+  report the cancellation (`tcp.Recv.Abandoned`, `net.Interrupted`), which
+  the client maps to `FetchError.Cancelled`.
 - `with_deadline` enforces its deadline on **both** native and wasm: native via
   `poll(2)`'s timeout arg; wasm by appending a real timer pollable
   (`monotonic-clock` `subscribe-duration`) to the poll set each round, so the

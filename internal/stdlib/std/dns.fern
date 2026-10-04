@@ -2181,6 +2181,10 @@ pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Re
       return Err(race.last);
     }
     let woke: i32 = async.wait_any(writable(race.open), wait_window(race, addrs.len(), now, deadline));
+    if (woke == async.cancelled()) {
+      close_attempts(race.open);
+      return Err(net.Interrupted);
+    }
     match (settled(race)) {
       Ok(sock) => {
         let blocking: Result[void, net.NetError] = net.set_nonblocking(sock, false);

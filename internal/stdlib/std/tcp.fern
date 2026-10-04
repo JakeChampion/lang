@@ -7,22 +7,30 @@
 import "std/time";
 import "std/async";
 
-// tcp_recv_deadline(fd, max, deadline) — recv up to `max` bytes,
-// waiting at most `deadline` for the socket to become readable.
-// Returns `Some(chunk)` — the raw bytes, `u8[]`, empty at EOF — when the
-// read completed in time, `None` when the deadline passed first. This is
-// the recv-with-deadline primitive std/fetch's deadline variants are
-// built on. Socket bytes are arbitrary, so they
-// stay `u8[]` rather than `string` (D9, docs/STRINGS-SOTA.md). The wait
-// is `async.wait_any`, so under a scheduler the caller's task parks.
-pub function tcp_recv_deadline(fd: i32, max: i32, deadline: Duration): Option[u8[]] {
+// `Recv` — what `tcp_recv_deadline` answers: `Chunk`, the bytes read, none
+// at the end of the stream; `Elapsed`, the deadline passed with nothing;
+// `Abandoned`, the task waiting was cancelled (`async.cancelled()`) before
+// either.
+pub enum Recv { Chunk(u8[]), Elapsed, Abandoned }
+
+// tcp_recv_deadline(fd, max, deadline) — recv up to `max` bytes, waiting at
+// most `deadline` for the socket to become readable. This is the
+// recv-with-deadline primitive std/fetch's transport is built on. Socket
+// bytes are arbitrary, so they stay `u8[]` rather than `string` (D9,
+// docs/STRINGS-SOTA.md). The wait is `async.wait_any`, so under a scheduler
+// the caller's task parks, and a cancelled task's read is `Abandoned`.
+pub function tcp_recv_deadline(fd: i32, max: i32, deadline: Duration): Recv {
   let wait_ms: i32 = deadline.as_millis() as i32;
   if (wait_ms < 1) {
     wait_ms = 1;
   }
   let set: i32[] = [fd, 1];
-  if (async.wait_any(set, wait_ms) != 0) {
-    return None;
+  let woke: i32 = async.wait_any(set, wait_ms);
+  if (woke == async.cancelled()) {
+    return Abandoned;
   }
-  return Some(tcp_recv(fd, max));
+  if (woke != 0) {
+    return Elapsed;
+  }
+  return Chunk(tcp_recv(fd, max));
 }
