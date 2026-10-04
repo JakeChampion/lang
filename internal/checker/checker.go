@@ -17984,6 +17984,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			callee = c.info.FuncSigs[id.Name]
 		} else {
 			callee = c.checkExpr(n.Callee, s)
+			// A call in callee position has no destination of its own to
+			// settle its literals, so it takes an unannotated binding's
+			// defaults (#11488).
+			if inner, ok := n.Callee.(*ast.Call); ok {
+				if widened := c.widenGenericCallByLiterals(inner); widened != nil {
+					callee = widened
+				}
+			}
 		}
 		ft, ok := callee.(*ast.FuncType)
 		if !ok {
@@ -20493,7 +20501,7 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 		// A polymorphic INTEGER settles to any numeric width, float
 		// included: int-to-float is a legal promotion, and settleFloat
 		// exists for exactly it (`let xs: f64[] = [1, 2]`).
-		if h.Polymorphic || h.Width == 0 {
+		if h.Polymorphic {
 			switch want.(type) {
 			case ast.NumberType, ast.FloatType:
 				return true

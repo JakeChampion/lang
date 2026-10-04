@@ -1298,17 +1298,9 @@ function x86_call_rel32(own buf: i32[], rel: i32): i32[] {
   return x86_le32(buf, rel);
 }
 
-// x86_patch_rel32 overwrites the 4 little-endian rel32 bytes already in
-// `buf` starting at offset `at` (the rel32 field of a previously-emitted
-// branch placeholder). Used to resolve a forward reference once its
-// target offset is known.
-//
-// `own buf` is what makes the patch path linear rather than O(code_len^2).
-// A BORROWED array parameter forces every `.with` down the copy-on-write
-// path — the callee cannot know the caller has no other reader — so each
-// patched branch cloned the whole .text buffer. Every caller must therefore
-// pass a fresh value, another `own` parameter, or a self-reassign
-// `code = x86_patch_rel32(code, …)` (E051).
+// x86_patch_rel32 overwrites the 4 little-endian rel32 bytes at offset `at`
+// of an encoder's raw `i32[]` output. Assembled .text is patched by
+// x86_patch_rel32_bytes at resolve; this is the raw encoder API's form.
 function x86_patch_rel32(own buf: i32[], at: i32, rel: i32): i32[] {
   buf = buf.with(at, rel & 255);
   buf = buf.with(at + 1, rel >> 8 & 255);
@@ -1365,6 +1357,16 @@ pub struct X86Asm {
   lab_names: string[],
   lab_secs: i32[],
   lab_offs: i32[],
+  // The `.file N "path"` table (files[N - 1]) and the `.loc` rows, one entry
+  // per row: the code offset the row starts at, its file number, line and
+  // column, and its flags (1 = prologue_end). The ELF writer's .debug_line
+  // program replays them (#11410).
+  files: string[],
+  loc_offs: i32[],
+  loc_files: i32[],
+  loc_lines: i32[],
+  loc_cols: i32[],
+  loc_flags: i32[],
   // Name index over lab_names, so a lookup is a bucket walk rather than a
   // scan of every label placed so far. lab_head/lab_tail hold the first and
   // last lab_names index in each bucket (-1 when empty) and lab_next chains
@@ -1477,7 +1479,7 @@ function x86_asm_new(): X86Asm {
 // applied to a fresh X86Asm, so nothing in the assembler ever holds a second
 // reference to the struct it is threading.
 function x86_asm_new_for(relaxing: boolean, longs: boolean[]): X86Asm {
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: relaxing, br_long: x86_bools_copy(longs), brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: relaxing, br_long: x86_bools_copy(longs), brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
 }
 
 // x86_asm_new_prepared is the state for a relaxation round over text whose
@@ -1486,7 +1488,7 @@ function x86_asm_new_for(relaxing: boolean, longs: boolean[]): X86Asm {
 // -1) until the round reaches its definition.
 function x86_asm_new_prepared(labs: GasLabels, longs: boolean[]): X86Asm {
   let n: i32 = labs.names.len() + labs.nids;
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, br_long: x86_bools_copy(longs), brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, br_long: x86_bools_copy(longs), brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
 }
 
 // x86_filled is n copies of v.
@@ -6406,7 +6408,75 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
 function x86_gas_directive_ignorable(line: string): boolean {
   return x86_str_starts_with(line, ".globl") || x86_str_starts_with(line, ".weak")
     || x86_str_starts_with(line, ".type") || x86_str_starts_with(line, ".size")
-    || x86_str_starts_with(line, ".file") || x86_str_starts_with(line, ".ident");
+    || x86_str_starts_with(line, ".ident");
+}
+
+// x86_dw_fields splits a directive line on blanks: the directive, then its
+// operands.
+function x86_dw_fields(line: string): string[] {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < line.len()) {
+    while (i < line.len() && (line[i] == b' ' || line[i] == b'\t')) {
+      i = i + 1;
+    }
+    let start: i32 = i;
+    while (i < line.len() && line[i] != b' ' && line[i] != b'\t') {
+      i = i + 1;
+    }
+    if (i > start) {
+      out = out.append(slice_unchecked(line, start, i) + "");
+    }
+  }
+  return out;
+}
+
+// x86_file_entry records `.file N "path"` as files[N - 1].
+function x86_file_entry(own a: X86Asm, line: string): X86Asm {
+  let f: string[] = x86_dw_fields(line);
+  if (f.len() < 3) {
+    return a;
+  }
+  let n: i32 = x86_gas_atoi(f[1]);
+  let q1: i32 = x86_str_indexof(line, "\"");
+  let q2: i32 = line.len() - 1;
+  while (q2 > q1 && line[q2] != b'"') {
+    q2 = q2 - 1;
+  }
+  if (n < 1 || q1 < 0 || q2 <= q1) {
+    return a;
+  }
+  let files: string[] = a.files;
+  while (files.len() < n) {
+    files = files.append("");
+  }
+  return X86Asm { ...a, files: files.with(n - 1, slice_unchecked(line, q1 + 1, q2) + "") };
+}
+
+// x86_loc_row records `.loc FILE LINE COL [prologue_end]` at the current
+// code offset.
+function x86_loc_row(own a: X86Asm, line: string): X86Asm {
+  let f: string[] = x86_dw_fields(line);
+  if (f.len() < 3) {
+    return a;
+  }
+  let col: i32 = 0;
+  if (f.len() > 3) {
+    col = x86_gas_atoi(f[3]);
+  }
+  let flags: i32 = 0;
+  let i: i32 = 3;
+  while (i < f.len()) {
+    if (f[i] == "prologue_end") {
+      flags = 1;
+    }
+    i = i + 1;
+  }
+  return X86Asm {
+    ...a,
+    loc_offs: a.loc_offs.append(buf_len(a.code)), loc_files: a.loc_files.append(x86_gas_atoi(f[1])),
+    loc_lines: a.loc_lines.append(x86_gas_atoi(f[2])), loc_cols: a.loc_cols.append(col), loc_flags: a.loc_flags.append(flags),
+  };
 }
 
 // x86_gas_align applies .align/.balign (a byte count on x86 GAS) and
@@ -7736,7 +7806,11 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
     }
     // directive: `.…`
     if (line[0] == b'.') {
-      if (x86_str_starts_with(line, ".cfi_")) {
+      if (x86_str_starts_with(line, ".loc ")) {
+        a = x86_loc_row(a, line);
+      } else if (x86_str_starts_with(line, ".file ")) {
+        a = x86_file_entry(a, line);
+      } else if (x86_str_starts_with(line, ".cfi_")) {
         if (section != 0) {
           a = X86Asm { ...a, unknown: a.unknown.append(line + " outside .text") };
         } else {

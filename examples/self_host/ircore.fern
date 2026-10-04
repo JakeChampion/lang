@@ -1353,7 +1353,7 @@ function digest_flags(x: boolean, y: boolean): i32 {
 // A candidate is a declaration of at most inline_leaf_ops() ops besides its
 // local loads and stores (the typed lowering routes every value through a
 // slot, which the SSA lift takes back out, so they are not what a body costs)
-// that is not @noinline, calls nothing — a retain or release is a runtime
+// and its `-g` line marks, that is not @noinline, calls nothing — a retain or release is a runtime
 // helper call here, which a splice would keep and grow the site around — and
 // names no function, and touches its frame only through load/store/tee_local. A caller
 // claiming fip or fbip is left alone, since its claim is verified against its
@@ -1476,10 +1476,11 @@ function inline_leaf(fd: parser.FuncDecl, r: irtables.LowerResult): boolean {
   let k_callc: i32 = ir.kind_id("call_closure_direct");
   let k_const_func: i32 = ir.kind_id("const_func");
   let k_dyn: i32 = ir.kind_id("dyn_dispatch");
+  let k_line: i32 = ir.kind_id("line");
   let work: i32 = 0;
   for o in r.ops {
     let k: i32 = o.kind_tag;
-    if (k != k_load && k != k_store && k != k_tee) {
+    if (k != k_load && k != k_store && k != k_tee && k != k_line) {
       work = work + 1;
     }
     if (work > inline_leaf_ops()) {

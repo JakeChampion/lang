@@ -5418,6 +5418,9 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       return step_none(env2);
     },
     ast.StmtReturn(r) => {
+      if (parser.bare_return(r.value)) {
+        return step_stop(env, v_void());
+      }
       let val: Value = eval_expr(r.value, env);
       return step_stop(env, val);
     },

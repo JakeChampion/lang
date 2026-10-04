@@ -310,7 +310,7 @@ function word_buf(emit_text: boolean): usize {
 // string (written verbatim by write_file), or "" if the assembler hit an
 // instruction it doesn't yet support (the caller reports it and exits 2). The
 // arm64-darwin counterpart is the macho_executable path above.
-function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean): string {
+function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string): string {
   let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-linux", "assembler", p.unknown);
@@ -352,11 +352,13 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean): string 
     // section filter is -1 rather than 0.
     let aend: i32 = pa2.code.len();
     let nosec: i32[] = [];
-    bin = elf.elf_append_symtab(
+    bin = elf.elf_append_debug(
       bin, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), pa2.code.len(),
       elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
       elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
       elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+      cu_name, getcwd(),
+      pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
     );
   }
   return string_from_bytes_unchecked(util.to_u8(bin));
@@ -406,7 +408,7 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
 // x86_resolve fixes .rodata references against the 8-byte-padded .text
 // length, which is exactly this layout. W^X would need the assembler to
 // resolve against a page-aligned data vaddr, as arm64_gas_link does.
-function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean): string {
+function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string): string {
   util.arr_push_cliff_report("x86:emitted", 0);
   let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words(asm, words);
   util.arr_push_cliff_report("x86:assembled", 0);
@@ -441,18 +443,310 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean): string {
     return string_from_bytes_unchecked(bin);
   }
   // `-g`: a static .symtab so nm / a debugger / a profiler can map an
-  // address back to a function. Only .text labels (section 0) become
-  // symbols, and the sizes span to the end of the code, which is what
-  // lets a backtrace attribute an address INSIDE a function rather
-  // than only an exact entry point.
+  // address back to a function, and the DWARF compilation unit over the
+  // same symbols. Only .text labels (section 0) become symbols, and the
+  // sizes span to the end of the code, which is what lets a backtrace
+  // attribute an address INSIDE a function rather than only an exact
+  // entry point.
   let end: i32 = a.text.len();
-  let wide: i32[] = elf.elf_append_symtab(
+  let wide: i32[] = elf.elf_append_debug(
     elf.elf_cat_u8([], bin), elf.elf_text_vaddr_x86(), elf.elf_text_off_x86(), a.text.len(),
     elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
+    cu_name, getcwd(),
+    a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
   );
   return string_from_bytes_unchecked(util.to_u8(wide));
+}
+
+// shared_export_names is -export's comma-separated list, or main without one,
+// as native defaults it.
+function shared_export_names(list: string): string[] {
+  if (list.len() == 0) {
+    return ["main"];
+  }
+  return list.split(",");
+}
+
+// shared_export_refusal names the first export that is not a plain top-level
+// function of the program, "" when every one is: a C caller reaches it by
+// name, so it has to exist, and has to be one function rather than a
+// generic's or a method's family.
+function shared_export_refusal(merged: parser.Module, names: string[]): string {
+  for n in names {
+    let k: i32 = export_func_index(merged, n);
+    if (k < 0) {
+      return "-export " + n + ": the program has no top-level function " + n;
+    }
+    if (merged.funcs[k].all_type_params.len() > 0) {
+      return "-export " + n + ": a generic function has no single body to export";
+    }
+  }
+  return "";
+}
+
+function export_func_index(merged: parser.Module, name: string): i32 {
+  let i: i32 = 0;
+  while (i < merged.funcs.len()) {
+    let f: parser.FuncDecl = merged.funcs[i];
+    if (f.name == name && f.receiver_name == "" && f.import_iface == "" && f.import_wit == "") {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// export_entries is the C-ABI entry of each export, `__fern_export_<name>`,
+// which the shared object's dynamic symbol names. A self-host function takes
+// its arguments on the stack, parameter i at 16 + 8*i(%rbp) of its frame, and
+// returns in %rax; a C caller passes them in the SysV registers and its own
+// stack. The entry pushes each argument where the callee reads it, widened as
+// its type says, and hands an f64 or f32 result back in %xmm0. A Fern f32 is
+// held as the f64 it rounds to, so an f32 crosses as a conversion, not a move.
+function export_entries(merged: parser.Module, names: string[], arm64: boolean): string {
+  let out: string = "";
+  for n in names {
+    let f: parser.FuncDecl = merged.funcs[export_func_index(merged, n)];
+    if (arm64) {
+      out = out + export_entry_arm64(f);
+    } else {
+      out = out + export_entry(f);
+    }
+  }
+  return out;
+}
+
+function export_entry(f: parser.FuncDecl): string {
+  let ints: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
+  // Where each argument arrives: an integer register, an xmm register, or
+  // the caller's stack above the entry's frame record.
+  let srcs: string[] = [];
+  let ni: i32 = 0;
+  let nf: i32 = 0;
+  let stack: i32 = 16;
+  for p in f.params {
+    let fp: boolean = p.type_name == "f64" || p.type_name == "f32";
+    if (fp && nf < 8) {
+      srcs = srcs.append("%xmm" + util.i32_to_string(nf));
+      nf = nf + 1;
+    } else if (!fp && ni < 6) {
+      srcs = srcs.append(ints[ni]);
+      ni = ni + 1;
+    } else {
+      srcs = srcs.append(util.i32_to_string(stack) + "(%rbp)");
+      stack = stack + 8;
+    }
+  }
+  let out: string = "__fern_export_" + f.name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n";
+  let i: i32 = f.params.len() - 1;
+  while (i >= 0) {
+    out = out + export_arg(srcs[i], f.params[i].type_name) + "    pushq %rax\n";
+    i = i - 1;
+  }
+  out = out + "    call __fn_" + f.name + "\n";
+  if (f.ret_type == "f64") {
+    out = out + "    movq %rax, %xmm0\n";
+  } else if (f.ret_type == "f32") {
+    out = out + "    movq %rax, %xmm0\n    cvtsd2ss %xmm0, %xmm0\n";
+  }
+  return out + "    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
+}
+
+// export_arg loads one C argument into %rax as the stack ABI holds a value of
+// type `t`: a narrow integer widened by its signedness, an f32 as the f64 it
+// converts to. %xmm15 is free: SysV passes nothing in it.
+function export_arg(src: string, t: string): string {
+  if (t == "f32") {
+    if (util.str_has_prefix(src, "%xmm")) {
+      return "    cvtss2sd " + src + ", %xmm15\n    movq %xmm15, %rax\n";
+    }
+    return "    movl " + src + ", %eax\n    movd %eax, %xmm15\n    cvtss2sd %xmm15, %xmm15\n    movq %xmm15, %rax\n";
+  }
+  let load: string = "    movq " + src + ", %rax\n";
+  if (t == "i32") {
+    return load + "    movslq %eax, %rax\n";
+  }
+  if (t == "u32") {
+    return load + "    movl %eax, %eax\n";
+  }
+  if (t == "u8" || t == "boolean") {
+    return load + "    movzbl %al, %eax\n";
+  }
+  return load;
+}
+
+// export_entry_arm64 is export_entry for arm64, whose stack ABI reads
+// parameter i from [sp, #16*i] at the callee's stack entry and returns in x0.
+// The AAPCS64 caller passes integers in x0..x7 and FP values in d0..d7 (s0..s7
+// for an f32), the rest on its stack in 8-byte slots above the entry's frame
+// record. x16 and d16 are scratch: the AAPCS64 passes nothing in either.
+function export_entry_arm64(f: parser.FuncDecl): string {
+  let srcs: string[] = [];
+  let ni: i32 = 0;
+  let nf: i32 = 0;
+  let stack: i32 = 16;
+  for p in f.params {
+    let fp: boolean = p.type_name == "f64" || p.type_name == "f32";
+    if (fp && nf < 8) {
+      srcs = srcs.append(util.i32_to_string(nf));
+      nf = nf + 1;
+    } else if (!fp && ni < 8) {
+      srcs = srcs.append(util.i32_to_string(ni));
+      ni = ni + 1;
+    } else {
+      srcs = srcs.append("[x29, #" + util.i32_to_string(stack) + "]");
+      stack = stack + 8;
+    }
+  }
+  let n: i32 = f.params.len();
+  let out: string = "__fern_export_" + f.name + ":\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
+  if (n > 0) {
+    out = out + "    sub sp, sp, #" + util.i32_to_string(16 * n) + "\n";
+  }
+  let i: i32 = 0;
+  while (i < n) {
+    out = out + export_arg_arm64(srcs[i], f.params[i].type_name) + "    str x16, [sp, #" + util.i32_to_string(16 * i) + "]\n";
+    i = i + 1;
+  }
+  out = out + "    bl __fn_" + f.name + "\n";
+  if (f.ret_type == "f64") {
+    out = out + "    fmov d0, x0\n";
+  } else if (f.ret_type == "f32") {
+    out = out + "    fmov d0, x0\n    fcvt s0, d0\n";
+  }
+  return out + "    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n";
+}
+
+// export_arg_arm64 loads one AAPCS64 argument into x16 as the stack ABI holds
+// a value of type `t`. `src` is a register number, or a caller-stack operand.
+function export_arg_arm64(src: string, t: string): string {
+  if (util.str_has_prefix(src, "[")) {
+    if (t == "f32") {
+      return "    ldr s16, " + src + "\n    fcvt d16, s16\n    fmov x16, d16\n";
+    }
+    return "    ldr x16, " + src + "\n" + export_widen_arm64("x16", "w16", t);
+  }
+  if (t == "f64") {
+    return "    fmov x16, d" + src + "\n";
+  }
+  if (t == "f32") {
+    return "    fcvt d16, s" + src + "\n    fmov x16, d16\n";
+  }
+  return export_widen_arm64("x" + src, "w" + src, t);
+}
+
+// export_widen_arm64 moves x (w its low half) into x16, widened as `t` says.
+function export_widen_arm64(x: string, w: string, t: string): string {
+  if (t == "i32") {
+    return "    sxtw x16, " + w + "\n";
+  }
+  if (t == "u32") {
+    return "    mov w16, " + w + "\n";
+  }
+  if (t == "u8" || t == "boolean") {
+    return "    and x16, " + x + ", #255\n";
+  }
+  if (x == "x16") {
+    return "";
+  }
+  return "    mov x16, " + x + "\n";
+}
+
+// arm64_elf_shared is x86_elf_shared for the arm64 targets: the W^X PIE
+// image, linked at base 0 with the data on the first page past the code, and
+// every absolute data word arm64_gas_rebase_offs lists relocated
+// (R_AARCH64_RELATIVE) rather than by the _start loop, which a library never
+// runs.
+function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string): string {
+  let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals(target, "assembler", p.unknown);
+  }
+  let text_len: i32 = p.asm.code.len();
+  let tv: i32 = elf.elf_text_off_so(true);
+  let hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
+  let hv: i32 = elf.elf_eh_hdr_off_so(true, text_len);
+  let ev: i32 = elf.elf_eh_frame_off_so(true, text_len, hdr_len);
+  let eh: i32[] = arm64_native.arm64_eh_frame(p, tv as i64, ev as i64);
+  let hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, tv as i64, ev as i64, hv as i64);
+  let dv: i32 = elf.elf_data_off_so_wx(text_len, hdr.len(), eh.len());
+  p = arm64_native.arm64_gas_link(p, tv as i64, dv as i64);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals(target, "linker", p.unknown);
+  }
+  let rel_offs: i32[] = [];
+  let rel_adds: i64[] = [];
+  for off in arm64_native.arm64_gas_rebase_offs(p) {
+    rel_offs = rel_offs.append(dv + off);
+    rel_adds = rel_adds.append(le64_at(p.data, off));
+  }
+  let pa: arm64_native.Arm64Asm = p.asm;
+  let nosec: i32[] = [];
+  let sym_names: string[] = elf.elf_func_sym_names(pa.lab_names, pa.lab_offs, nosec, 0 - 1, text_len);
+  let sym_offs: i32[] = elf.elf_func_sym_offs(pa.lab_names, pa.lab_offs, nosec, 0 - 1, text_len);
+  let sym_sizes: i32[] = elf.elf_func_sym_sizes(pa.lab_names, pa.lab_offs, nosec, 0 - 1, text_len);
+  let vals: i32[] = [];
+  let sizes: i32[] = [];
+  for n in names {
+    let k: i32 = util.index_of_str(sym_names, "__fern_export_" + n);
+    vals = vals.append(tv + sym_offs[k]);
+    sizes = sizes.append(sym_sizes[k]);
+  }
+  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), true, pa.code, hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  return string_from_bytes_unchecked(util.to_u8(so));
+}
+
+// x86_elf_shared links the emitted program into a shared object: the image
+// x86_elf_binary writes, loaded at base 0, whose absolute data words the
+// loader relocates (R_X86_64_RELATIVE) and whose .dynsym names each export's
+// C-ABI entry by the Fern name, the symbol dlsym looks up.
+function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string): string {
+  let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words(asm, words);
+  let tv: i32 = elf.elf_text_off_so(false);
+  a = x86_native.x86_resolve_data(a, tv);
+  if (a.unknown.len() > 0) {
+    eprint("fern: -target x86-64: in-process assembler could not encode: " + a.unknown[0]);
+    return "";
+  }
+  let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
+  let hv: i32 = elf.elf_eh_hdr_off_so(false, a.text.len());
+  let ev: i32 = elf.elf_eh_frame_off_so(false, a.text.len(), hdr_len);
+  let eh: i32[] = x86_native.x86_eh_frame(a, tv as i64, ev as i64);
+  let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv as i64, ev as i64, hv as i64);
+  // Every patched `.quad` holds base-0 address + 0, so the word itself is
+  // the addend its RELATIVE relocation adds the load base to.
+  let data_at: i32 = tv + x86_native.x86_data_base(a, a.text.len());
+  let rel_offs: i32[] = [];
+  let rel_adds: i64[] = [];
+  for off in a.dfix_offs {
+    rel_offs = rel_offs.append(data_at + off);
+    rel_adds = rel_adds.append(le64_at(a.rodata, off));
+  }
+  let end: i32 = a.text.len();
+  let sym_names: string[] = elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
+  let sym_offs: i32[] = elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
+  let sym_sizes: i32[] = elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
+  let vals: i32[] = [];
+  let sizes: i32[] = [];
+  for n in names {
+    let k: i32 = util.index_of_str(sym_names, "__fern_export_" + n);
+    vals = vals.append(tv + sym_offs[k]);
+    sizes = sizes.append(sym_sizes[k]);
+  }
+  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), false, elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  return string_from_bytes_unchecked(util.to_u8(so));
+}
+
+function le64_at(b: i32[], off: i32): i64 {
+  let v: i64 = 0;
+  let j: i32 = 7;
+  while (j >= 0) {
+    v = v << 8 as i64 | b[off + j] as i64;
+    j = j - 1;
+  }
+  return v;
 }
 
 // ImportQueue is the breadth-first import worklist: each path paired with the
@@ -535,6 +829,19 @@ function sanitize_warning(target: string): string {
   return "fern: warning: -sanitize has no effect on -target " + target + " (the detectors are native x86-64 and arm64, the leak census also wasm); this build carries no checks";
 }
 
+// dw_file_table is the `.file N "path"` table a -g build's `.loc` rows index
+// (#11410): 1 the entry module and k + 2 the k-th imported module
+// (util.pos_file_index), every module listed whether or not a row names it.
+function dw_file_table(entry: string, files: string[]): string {
+  let o: string = "    .file 1 \"" + entry + "\"\n";
+  let k: i32 = 0;
+  while (k < files.len()) {
+    o = o + "    .file " + util.i32_to_string(k + 2) + " \"" + files[k] + "\"\n";
+    k = k + 1;
+  }
+  return o;
+}
+
 // flag_after_entry refuses a driver flag written after the entry file, in
 // native's words (#8465): Go's flag package stops at the first positional,
 // so reading the flag here would make the two engines read one command line
@@ -548,6 +855,7 @@ function flag_after_entry(a: string): i32 {
 
 function usage(): i32 {
   eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module|command-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]");
+  eprint("       fern -shared [-export NAME,...] -o OUT.so <entry.fern> [stdlib-root]  (a shared object exporting the named functions, main by default)");
   eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)");
   eprint("       fern -targets                                (list supported targets + capabilities)");
   eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)");
@@ -2524,6 +2832,10 @@ function run(): i32 {
   // -sanitize: the heap memory-safety detectors together, as native's flag;
   // FERN_SANITIZE is the other way to turn them on.
   let sanitize_flag: boolean = false;
+  // -shared: a shared object exporting the -export functions (main without
+  // one) through C-ABI entries, rather than an executable (#11483).
+  let shared: boolean = false;
+  let export_list: string = "";
   // `-cover` (or FERN_COVER=1) instruments the program with line and branch
   // counters it reports to stderr at exit (cover.fern).
   let cover_on: boolean = false;
@@ -2585,14 +2897,30 @@ function run(): i32 {
       cover_on = true;
     } else if (a == "-g") {
       // A static symbol table naming the functions: `.symtab` in the ELF
-      // targets' images (#6637), LC_SYMTAB in arm64-darwin's (#11409).
+      // targets' images (#6637), LC_SYMTAB in arm64-darwin's (#11409), and
+      // in the ELF images the DWARF compilation unit naming them for a
+      // debugger (#11410).
       emit_syms = true;
     } else if (a == "-backtrace" || a == "-backtrace=true" || a == "-backtrace=1") {
       backtrace = true;
     } else if (a == "-backtrace=false" || a == "-backtrace=0") {
       backtrace = false;
-    } else if (a == "-sanitize") {
+    } else if (a == "-sanitize" || a == "-sanitize=true" || a == "-sanitize=1") {
       sanitize_flag = true;
+    } else if (a == "-sanitize=false" || a == "-sanitize=0") {
+      sanitize_flag = false;
+    } else if (a == "-shared" || a == "-shared=true" || a == "-shared=1") {
+      shared = true;
+    } else if (a == "-shared=false" || a == "-shared=0") {
+      shared = false;
+    } else if (a == "-export") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      export_list = av[i];
+    } else if (util.str_has_prefix(a, "-export=")) {
+      export_list = slice_unchecked(a, 8, a.len()) + "";
     } else if (a == "-capabilities") {
       mode_caps = true;
     } else if (a == "-tangle") {
@@ -2782,6 +3110,16 @@ function run(): i32 {
     eprint("fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit");
     return 2;
   }
+  if (shared) {
+    if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android") {
+      eprint("fern: -shared is only supported with -target x86-64, arm64, or arm64-android (got \"" + target + "\")");
+      return 1;
+    }
+    if (out_path.len() == 0 && emit != "asm") {
+      eprint("fern: -shared requires -o OUTPUT.so");
+      return 1;
+    }
+  }
   if (backend != "" && backend != "ssa" && backend != "flat") {
     eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)");
     return 2;
@@ -2958,6 +3296,21 @@ function run(): i32 {
   // Without it the self-host compiles a program native refuses, and the
   // failure lands mid-build as an undefined label or, on wasm, as a
   // host-side instantiation error.
+  // A -shared library's exports are entry points as main is, bound on the
+  // module as a WIT export is: the shake keeps them, the capability gate
+  // judges what they reach, and no pass culls one as unreferenced.
+  let shared_roots: string[] = [];
+  if (shared) {
+    shared_roots = shared_export_names(export_list);
+    let bad: string = shared_export_refusal(merged, shared_roots);
+    if (bad.len() > 0) {
+      eprint("fern: " + bad);
+      return 1;
+    }
+    for n in shared_roots {
+      merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true }) };
+    }
+  }
   if (eprint_findings(capability_findings(merged, target), entry_path, b.files)) {
     return 1;
   }
@@ -3046,7 +3399,11 @@ function run(): i32 {
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
   let full: parser.Module = parser.erase_view_module(typed);
   // The typed semantic lowering, threaded into whichever emit path runs.
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on() } };
+  // `-g` on an ELF target carries the line table: the lowering marks each
+  // statement, the emitter renders the marks as `.loc` rows over the `.file`
+  // table prepended below, and the ELF writer encodes .debug_line (#11410).
+  let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux");
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, debug_lines), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on() } };
   let out_asm: string = "";
   let emit_text: boolean = emit == "asm";
   if (target == "arm64-linux") {
@@ -3069,8 +3426,19 @@ function run(): i32 {
     if (out_asm.len() == 0) {
       return 2;
     }
-    if (!emit_text) {
-      out_asm = arm64_elf_binary(out_asm, buf_take_bytes(recs), emit_syms);
+    if (debug_lines) {
+      out_asm = dw_file_table(entry_path, b.files) + out_asm;
+    }
+    if (shared) {
+      out_asm = export_entries(merged, shared_roots, true) + out_asm;
+    }
+    if (!emit_text && shared) {
+      out_asm = arm64_elf_shared(out_asm, buf_take_bytes(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    } else if (!emit_text) {
+      out_asm = arm64_elf_binary(out_asm, buf_take_bytes(recs), emit_syms, entry_path);
       util.arr_push_cliff_report("arm64:image", 0);
       if (out_asm.len() == 0) {
         return 2;
@@ -3088,7 +3456,15 @@ function run(): i32 {
     if (out_asm.len() == 0) {
       return 2;
     }
-    if (!emit_text) {
+    if (shared) {
+      out_asm = export_entries(merged, shared_roots, true) + out_asm;
+    }
+    if (!emit_text && shared) {
+      out_asm = arm64_elf_shared(out_asm, buf_take_bytes(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    } else if (!emit_text) {
       out_asm = arm64_elf_binary_pie(out_asm, buf_take_bytes(recs));
       if (out_asm.len() == 0) {
         return 2;
@@ -3211,8 +3587,19 @@ function run(): i32 {
     // arm64-linux does and needs nothing on $PATH.
     let recs: usize = word_buf(emit_text);
     out_asm = asm_ir.emit_module_or_error_sub(full, sub, recs);
-    if (!emit_text) {
-      out_asm = x86_elf_binary(out_asm, buf_take_bytes(recs), emit_syms);
+    if (debug_lines && out_asm.len() > 0) {
+      out_asm = dw_file_table(entry_path, b.files) + out_asm;
+    }
+    if (shared && out_asm.len() > 0) {
+      out_asm = export_entries(merged, shared_roots, false) + out_asm;
+    }
+    if (!emit_text && shared) {
+      out_asm = x86_elf_shared(out_asm, buf_take_bytes(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "");
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    } else if (!emit_text) {
+      out_asm = x86_elf_binary(out_asm, buf_take_bytes(recs), emit_syms, entry_path);
       if (out_asm.len() == 0) {
         return 2;
       }

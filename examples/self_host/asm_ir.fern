@@ -222,9 +222,10 @@ function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
 // reversed the args so arg0 (fn) sits on top, i.e. param0 @ 16(%rbp), a_i @
 // (24 + 8i)(%rbp). It marshals fn into %r11 and a0..a{n-1} into the System V
 // integer-arg registers (%rdi/%rsi/%rdx/%rcx), 16-byte-aligns %rsp for the C
-// ABI, and `call *%r11`s the pointer; the callee's result lands in %rax (or
-// %xmm0 for the _f32/_f64 variants) and flows straight back. Mirrors native's
-// emitCCallRuntime, adapted from the register-arg to the stack-arg ABI.
+// ABI, and `call *%r11`s the pointer. The callee's result lands in %rax, or in
+// %xmm0 for the _f32/_f64 variants, which move it to %rax where every Fern
+// result is read, an f32 widened to the f64 a Fern f32 is held as. Mirrors
+// native's emitCCallRuntime, adapted from the register-arg to the stack-arg ABI.
 function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcore.EmitState {
   s = s.write("\n__fn_" + variant + ":\n");
   s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n");
@@ -243,13 +244,20 @@ function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcor
   }
   s = s.write("    andq $-16, %rsp\n");
   s = s.write("    call *%r11\n");
+  if (util.str_has_suffix(variant, "_f32")) {
+    s = s.write("    cvtss2sd %xmm0, %xmm0\n");
+  }
+  if (util.str_has_suffix(variant, "_f32") || util.str_has_suffix(variant, "_f64")) {
+    s = s.write("    movq %xmm0, %rax\n");
+  }
   s = s.write("    movq %rbp, %rsp\n    popq %rbp\n    ret\n");
   return s;
 }
 
 // emit_ccall_shims emits every __c_call variant the module referenced (each
 // registered as `need("ccall:<name>")` by the generic call_direct emit). The
-// body depends only on the arity n; the _f32/_f64 suffixes share it verbatim.
+// body depends on the arity n, and the _f32/_f64 suffixes add the move of the
+// result out of %xmm0.
 function emit_ccall_shims(s: asmcore.EmitState): asmcore.EmitState {
   let arity: i32 = 0;
   while (arity <= 4) {
@@ -7572,7 +7580,7 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
   if (k >= 40 && k <= 60) {
     return true;
   }
-  return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
+  return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11 || k == 35;
 }
 
 // ssa_unsupported names the first instruction this emitter has no selection
@@ -9090,6 +9098,21 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   return ssa_store(reg_of, ins.result, d, s);
 }
 
+// ssa_line_loc renders a source-position marker (ir.op_line, ssa kind 35) as
+// a `.loc` row: the file number the CLI's `.file` table gives the marker's
+// module (util.pos_file_index + 1), its line and its column, and
+// prologue_end on a function's first, which is where a breakpoint on the
+// function belongs. GNU as and the in-process assembler alike turn the rows
+// into .debug_line.
+function ssa_line_loc(ins: ssa.SInst, s: asmcore.EmitState): asmcore.EmitState {
+  let row: string = "    .loc " + util.i32_to_string(util.pos_file_index(ins.imm) + 1) + " " + util.i32_to_string(util.pos_line(ins.imm)) + " " + ins.str;
+  if (s.dw_first) {
+    row = row + " prologue_end";
+    s = asmcore.EmitState { ...s, dw_first: false };
+  }
+  return s.write(row + "\n");
+}
+
 function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
   if (k == 11) {
@@ -9136,6 +9159,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   }
   if (k == 57) {
     return ssa_agg_lit(ins, reg_of, s);
+  }
+  if (k == 35) {
+    return ssa_line_loc(ins, s);
   }
   if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) {
     return s;
@@ -9630,6 +9656,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // block behind its label. prune_dead first takes out the zeros the lift gives
 // every declared local and the loop phis nothing reads.
 function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+  s = asmcore.EmitState { ...s, dw_first: true };
   let f: ssa.SFunc = ssa.register_form(lifted);
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
   let reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));

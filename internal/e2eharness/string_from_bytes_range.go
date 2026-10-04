@@ -42,14 +42,24 @@ function main(): i32 {
     return 0;
 }`
 
-// StringFromBytesRangeTrapProgram asks for a range that ends before it
-// starts, which traps the way an array slice does.
-const StringFromBytesRangeTrapProgram = `function main(): i32 {
+// StringFromBytesRangeTraps are the ranges of a six-byte source that trap the
+// way an array slice does, one per clause of the bounds check: a negative
+// start, an end past the source, and an end before the start.
+var StringFromBytesRangeTraps = []struct{ Name, From, End string }{
+	{"negative start", "0 - 1", "1"},
+	{"end past the source", "0", "7"},
+	{"end before start", "4", "2"},
+}
+
+// StringFromBytesRangeTrapProgram copies bytes[from, end) of a six-byte source.
+func StringFromBytesRangeTrapProgram(from, end string) string {
+	return `function main(): i32 {
     let b: u8[] = [97u8, 98u8, 99u8, 100u8, 101u8, 102u8];
-    let s: string = string_from_bytes_range_unchecked(b, 4, 2);
+    let s: string = string_from_bytes_range_unchecked(b, ` + from + `, ` + end + `);
     print(s);
     return 0;
 }`
+}
 
 var leakcheckLine = regexp.MustCompile(`(?m)^leakcheck: allocs=([0-9]+) frees=([0-9]+) live_bytes=([0-9]+)$`)
 

@@ -12,9 +12,12 @@ the program image as an `i32[]`: it copied the text in a byte at a time
 `elf_program_x86` now builds the ELF and program headers as before, a few
 hundred bytes, and lays the image down in a byte builder. The text goes in
 as one range copy. The unwind data, the padding and the data blob go in a
-byte at a time, and the result is a `u8[]` the CLI writes as it is. Only
-`-g` still widens the image, because `elf_append_symtab` is shared with the
-arm64 writers and takes an `i32[]`.
+byte at a time, and the result is a `u8[]` the CLI writes as it is. Under
+`-g` the image is widened to an `i32[]` for `elf_append_symtab`, which the
+arm64 writers share, and narrowed back to write it. That is one widening and
+one narrowing, as before, when `elf_program_x86` widened the text into its
+`i32[]` image; the only extra work is the text's range copy. Moving
+`elf_append_symtab` to bytes would remove both, for x86 and arm64 alike.
 
 ## Measured
 
