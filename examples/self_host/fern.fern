@@ -9,6 +9,7 @@
 //     fern -target wasm32-wasi <entry>      a wasi:cli/run component
 //     fern -emit asm <entry.fern>           emit the emitter's text instead
 //     fern -emit core-module -target …      a raw wasm core module
+//     fern -emit command-module -target …   the same core, named as the preview-1 command it is
 //     fern -check <entry.fern>              type-check; exit 0 ok / 1 bad
 //     fern -check <DIR>                     check a package, or every
 //                                           member of the workspace it roots
@@ -516,7 +517,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-  eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]");
+  eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module|command-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]");
   eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)");
   eprint("       fern -targets                                (list supported targets + capabilities)");
   eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)");
@@ -2702,8 +2703,21 @@ function run(): i32 {
     eprint("fern: -cover: -target " + target + " has no coverage instrumentation — build for x86-64-linux or arm64-linux, or drop -cover");
     return 2;
   }
+  // Native's `-emit command-module` is a WASI preview-1 command: the core
+  // bytes plus a `_start` that runs main and exits with its value, and an
+  // exported memory — the shape `wasmtime run` and a browser shim run. This
+  // compiler's core module already has both (and exports `main`, #10768), so
+  // the two forms are one artifact here and the spelling is accepted for the
+  // one target native gives it (#11408).
+  if (emit == "command-module") {
+    if (target != "wasm32-wasi") {
+      eprint("fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)");
+      return 2;
+    }
+    emit = "core-module";
+  }
   if (emit.len() > 0 && emit != "asm" && emit != "core-module") {
-    eprint("fern: unknown -emit: " + emit + " (want asm, core-module, or omit it for the target's default output form)");
+    eprint("fern: unknown -emit: " + emit + " (want asm, core-module, command-module, or omit it for the target's default output form)");
     return 2;
   }
   if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
