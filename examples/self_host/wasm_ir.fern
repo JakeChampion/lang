@@ -1736,13 +1736,26 @@ pub function module_uses_task(cache: irtables.LowerResult[]): boolean {
 // wait set a park left (pointer, length, capacity) and the task that was
 // current when this one entered. Every word is 8 bytes, so an i64 or f64 the
 // pass saves keeps its width. Records and save areas are never returned to
-// the allocator; a freed id is reused.
+// the allocator; a freed id is reused, and the blocks are runtime state the
+// program never holds or frees, so the leak census leaves them out as the
+// native emitters' rt_owned_allocs does (#11386): every size here is a
+// multiple of 8, the unit $__fern_alloc rounds to, so the bytes taken back
+// are the bytes it counted.
 pub function task_funcs(): string {
+  let uncount: string = "";
+  if (leak_check_on()) {
+    uncount = "    (global.set $__fern_lc_alloc_count (i64.sub (global.get $__fern_lc_alloc_count) (i64.const 1)))\n"
+      + "    (global.set $__fern_lc_alloc_bytes (i64.sub (global.get $__fern_lc_alloc_bytes) (i64.extend_i32_u (local.get $n))))\n";
+  }
   return "  (global $__fern_task_cur_g (mut i32) (i32.const 0))\n"
     + "  (global $__fern_task_tab (mut i32) (i32.const 0))\n"
     + "  (global $__fern_task_cap (mut i32) (i32.const 0))\n"
-    + "  (func $__fern_task_zalloc (param $n i32) (result i32) (local $p i32)\n"
+    + "  (func $__fern_task_alloc (param $n i32) (result i32) (local $p i32)\n"
     + "    (local.set $p (call $__fern_alloc (local.get $n)))\n"
+    + uncount
+    + "    (local.get $p))\n"
+    + "  (func $__fern_task_zalloc (param $n i32) (result i32) (local $p i32)\n"
+    + "    (local.set $p (call $__fern_task_alloc (local.get $n)))\n"
     + "    (memory.fill (local.get $p) (i32.const 0) (local.get $n))\n"
     + "    (local.get $p))\n"
     + "  (func $__fern_task_rec (param $id i32) (result i32)\n"
@@ -1808,7 +1821,7 @@ pub function task_funcs(): string {
     + "    (local.set $n (i32.load (local.get $set)))\n"
     + "    (local.set $buf (i32.wrap_i64 (i64.load offset=64 (local.get $r))))\n"
     + "    (if (i32.gt_s (local.get $n) (i32.wrap_i64 (i64.load offset=80 (local.get $r)))) (then\n"
-    + "      (local.set $buf (call $__fern_alloc (i32.shl (local.get $n) (i32.const 3))))\n"
+    + "      (local.set $buf (call $__fern_task_alloc (i32.shl (local.get $n) (i32.const 3))))\n"
     + "      (i64.store offset=64 (local.get $r) (i64.extend_i32_u (local.get $buf)))\n"
     + "      (i64.store offset=80 (local.get $r) (i64.extend_i32_s (local.get $n)))))\n"
     + "    (local.set $i (i32.const 0))\n"
@@ -1848,7 +1861,7 @@ pub function task_funcs(): string {
     + "    (local.set $buf (i32.wrap_i64 (i64.load offset=32 (local.get $r))))\n"
     + "    (if (i32.ge_s (local.get $len) (local.get $cap)) (then\n"
     + "      (local.set $cap (select (i32.shl (local.get $cap) (i32.const 1)) (i32.const 64) (i32.gt_s (local.get $cap) (i32.const 0))))\n"
-    + "      (local.set $nbuf (call $__fern_alloc (i32.shl (local.get $cap) (i32.const 3))))\n"
+    + "      (local.set $nbuf (call $__fern_task_alloc (i32.shl (local.get $cap) (i32.const 3))))\n"
     + "      (memory.copy (local.get $nbuf) (local.get $buf) (i32.shl (local.get $len) (i32.const 3)))\n"
     + "      (local.set $buf (local.get $nbuf))\n"
     + "      (i64.store offset=32 (local.get $r) (i64.extend_i32_u (local.get $buf)))\n"
