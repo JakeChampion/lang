@@ -5741,6 +5741,14 @@ function main(): i32 { return take([1, 2, 3]); }`,
 		{"float literals into an i64[] argument", `function total(xs: i64[]): i32 { return xs.len(); }
 function main(): i32 { return total([1.5, 2.5]); }`,
 			"expected i64[], got f64[]"},
+		// A declared i32 VARIABLE is not a literal: storing it into a u8[]
+		// narrows it, which takes an `as u8` as `let x: u8 = b` does (#11392).
+		{"i32 variable into u8[]", `function f(b: i32): i32 { let xs: u8[] = [b]; return xs.len(); }
+function main(): i32 { return f(300); }`,
+			"cannot assign i32[] to variable of type u8[]"},
+		{"i32 variable into a u8[] argument", `function g(b: i32): i32 { return string_from_bytes_unchecked([b]).len(); }
+function main(): i32 { return g(65); }`,
+			"expected u8[], got i32[]"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -5782,6 +5790,10 @@ function main(): i32 { return total([1, 2, 3]); }`,
 		// what it settles to. The first cut rejected this too.
 		`function build[T](): i32 { let local: T[] = [1, 2, 3]; return local.len(); }
 function main(): i32 { return 0; }`,
+		// A literal local is still a literal, and a cast variable is a u8.
+		`function main(): i32 { let k = 5; let xs: u8[] = [k, 1]; return xs.len(); }`,
+		`function f(b: i32): i32 { let xs: u8[] = [b as u8, 2]; return xs.len(); }
+function main(): i32 { return f(3); }`,
 	}
 	for _, src := range srcs {
 		if err := checkSource(t, src); err != nil {

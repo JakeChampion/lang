@@ -20493,7 +20493,7 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 		// A polymorphic INTEGER settles to any numeric width, float
 		// included: int-to-float is a legal promotion, and settleFloat
 		// exists for exactly it (`let xs: f64[] = [1, 2]`).
-		if h.Polymorphic || h.Width == 0 {
+		if h.Polymorphic {
 			switch want.(type) {
 			case ast.NumberType, ast.FloatType:
 				return true
