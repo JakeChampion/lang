@@ -287,8 +287,9 @@ func fernStringLit(src string) string {
 }
 
 // TestSelfHostCheckParseGatesLeadWithPositionX86_64 pins how `-check` prints
-// a parse-marker diagnostic: position first, `L:C: error[P00x]: …`, as every
-// other gate and native print theirs, at native's position. The parse gates
+// a parse-marker diagnostic: the entry's path and then the position,
+// `PATH:L:C: error[P00x]: …`, as every other gate and native print theirs,
+// at native's position. The parse gates
 // alone used to print it last, `error[P001]: … (L:C)`, which a reader of the
 // other lines — or the language server, which publishes the same findings —
 // did not expect.
@@ -298,7 +299,6 @@ func TestSelfHostCheckParseGatesLeadWithPositionX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	driver := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	fernBin := buildLangBinForInterp(t)
-	lead := regexp.MustCompile(`^(\d+):(\d+): error\[P00[12]\]: `)
 	for _, tc := range parseErrPosCases {
 		t.Run(tc.name, func(t *testing.T) {
 			wantLine, wantCol := nativeParsePos(t, fernBin, tc.src)
@@ -312,6 +312,7 @@ func TestSelfHostCheckParseGatesLeadWithPositionX86_64(t *testing.T) {
 			if err := cmd.Run(); err == nil {
 				t.Fatalf("self-host -check accepted the program")
 			}
+			lead := regexp.MustCompile(`^` + regexp.QuoteMeta(p) + `:(\d+):(\d+): error\[P00[12]\]: `)
 			m := lead.FindStringSubmatch(errb.String())
 			if m == nil {
 				t.Fatalf("-check did not lead with the position\nstderr: %q", errb.String())
