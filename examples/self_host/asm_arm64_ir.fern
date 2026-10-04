@@ -2784,9 +2784,9 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
   s = ssa_load_abi_args(reg_of, ins.args, ["x0", "x1", "x2"], s);
   s = ssa_ldst(s, true, "x3", "x0", 8);
   s = ssa_cmp_rr(s, "x2", "x3");
-  s = ssa_trap_guard(s, "b.ls", "__fern_oob_abort");
+  s = ssa_trap_guard(s, "b.ls", "__fern_str_oob_abort");
   s = ssa_cmp_rr(s, "x1", "x2");
-  s = ssa_trap_guard(s, "b.ls", "__fern_oob_abort");
+  s = ssa_trap_guard(s, "b.ls", "__fern_str_oob_abort");
   s = ssa_addsub_rr(s, true, "x2", "x2", "x1");
   s = ssa_ldst0(s, true, "x3", "x0");
   s = ssa_addsub_rr(s, false, "x1", "x3", "x1");
@@ -4866,6 +4866,10 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_map_find") {
     s = s.need("maps");
   }
+  // __fern_slice_abort's body is in the heap block, as __fern_oob_abort's is.
+  if (name == "__fern_slice_abort") {
+    s = s.need("heap");
+  }
   // arr.join(sep) (#5328): mark_arr_str_join sets the arr_str_join + heap
   // needs; the bodies come from asm_arm64.emit_runtime
   // (which asm_arm64_ir reuses verbatim — the arr_str_join block already
@@ -6862,14 +6866,14 @@ function emit_san_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
   s = s.write("    svc #0\n");
-  s = s.write(san_report_exit());
+  s = s.write(san_report_exit(s));
   return s;
 }
 
 // san_report_exit ends a sanitizer report: exit 124, through the backtrace
-// walk unless FERN_BACKTRACE=0.
-function san_report_exit(): string {
-  if (asmcore.backtrace_on()) {
+// walk when the build keeps it.
+function san_report_exit(s: asmcore.EmitState): string {
+  if (s.backtrace) {
     return "    mov x19, #124\n    b __fern_bt_exit\n";
   }
   return "    mov x0, #124\n    mov x8, #93\n    svc #0\n";
@@ -6878,18 +6882,18 @@ function san_report_exit(): string {
 // emit_bt_exit emits __fern_bt_exit: "backtrace:" and then each return
 // address up the frame-pointer chain as "  0x<16 hex>", the native backends'
 // format, and exit with the status in x19. Bounded to 64 frames, and a frame
-// pointer that is not above the stack pointer, not 8-aligned, or not climbing
-// ends the walk rather than faulting the report, as does a return address in
-// the low 64 KiB, which is _start's frame reading the initial stack. Emitted with the quarantine's
-// report, which every sanitizer build carries.
+// pointer below the stack pointer, not 8-aligned, or not climbing ends the
+// walk rather than faulting the report, as does a return address in the low
+// 64 KiB, which is _start's frame reading the initial stack. Emitted with
+// __fern_report, which every build carries.
 function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .rodata\n");
-  s = s.write(".Lsan_bt:\n    .ascii \"backtrace:\\n\"\n");
+  s = s.write(".Lmsg_bt:\n    .ascii \"backtrace:\\n\"\n");
   s = s.write("    .text\n");
   s = s.write("    .globl __fern_bt_exit\n");
   s = s.write("__fern_bt_exit:\n");
-  s = s.write("    adrp x1, .Lsan_bt\n");
-  s = s.write("    add x1, x1, :lo12:.Lsan_bt\n");
+  s = s.write("    adrp x1, .Lmsg_bt\n");
+  s = s.write("    add x1, x1, :lo12:.Lmsg_bt\n");
   s = s.write("    mov x2, #11\n");
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
@@ -6900,7 +6904,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lbt_loop:\n");
   s = s.write("    cbz x21, .Lbt_done\n");
   s = s.write("    cmp x20, x22\n");
-  s = s.write("    b.ls .Lbt_done\n");
+  s = s.write("    b.lo .Lbt_done\n");
   s = s.write("    and x23, x20, #7\n");
   s = s.write("    cbnz x23, .Lbt_done\n");
   s = s.write("    ldr x1, [x20, #8]\n");
@@ -6974,11 +6978,7 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
   s = s.write("    svc #0\n");
-  s = s.write(san_report_exit());
-  if (asmcore.backtrace_on()) {
-    s = emit_bt_exit(s);
-  }
-  return s;
+  return s.write(san_report_exit(s));
 }
 
 // high_heap_probe_on: FERN_HIGH_HEAP=1 raises the arena's mmap hint above
@@ -7471,6 +7471,56 @@ function mov_borrowed_marker(s: asmcore.EmitState, reg: string): asmcore.EmitSta
   return s.write("    movk " + reg + ", #0x424F, lsl #16\n");
 }
 
+// abort_trap emits the trap `label`: it points x1 / x2 at the cause line
+// `text` (laid down in .rodata under `msg`) and branches to __fern_report
+// with the exit status in x0. A `.L` label gets no .globl / .type / .size.
+function abort_trap(s: asmcore.EmitState, label: string, msg: string, text: string, status: i32): asmcore.EmitState {
+  s = s.write("    .section .rodata\n");
+  s = s.write(msg + ":\n    .ascii \"" + text + "\\n\"\n");
+  s = s.write("    .text\n");
+  let sym: boolean = !util.str_has_prefix(label, ".L");
+  if (sym) {
+    s = s.write(".globl " + label + "\n");
+    s = s.write(".type " + label + ", %function\n");
+  }
+  s = s.write(label + ":\n");
+  s = s.write("    adrp x1, " + msg + "\n");
+  s = s.write("    add x1, x1, :lo12:" + msg + "\n");
+  s = s.write("    mov x2, #" + util.i32_to_string(text.len() + 1) + "\n");
+  s = s.write("    mov x0, #" + util.i32_to_string(status) + "\n");
+  s = s.write("    b __fern_report\n");
+  if (sym) {
+    s = s.write(".size " + label + ", .-" + label + "\n");
+  }
+  return s;
+}
+
+// emit_rt_report emits __fern_report(x1 = cause line, x2 = its length, x0 =
+// exit status): write(2) the line, then exit with the status — through
+// __fern_bt_exit's frame-pointer walk when the build keeps the backtrace,
+// which is also where the sanitizer's reports end. The status rides x19,
+// which the walk reads; nothing here returns. darwinize remaps the two
+// syscall numbers for the Mach-O.
+function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .text\n");
+  s = s.write(".globl __fern_report\n");
+  s = s.write(".type __fern_report, %function\n");
+  s = s.write("__fern_report:\n");
+  s = s.write("    mov x19, x0\n");
+  s = s.write("    mov x0, #2\n");
+  s = s.write("    mov x8, #64\n");
+  s = s.write("    svc #0\n");
+  if (s.backtrace) {
+    s = s.write("    b __fern_bt_exit\n");
+    s = s.write(".size __fern_report, .-__fern_report\n");
+    return emit_bt_exit(s);
+  }
+  s = s.write("    mov x0, x19\n");
+  s = s.write("    mov x8, #93\n");
+  s = s.write("    svc #0\n");
+  return s.write(".size __fern_report, .-__fern_report\n");
+}
+
 function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   // 16 GiB heap arena, lazily mmap'd at hint 0x10000000 on the first
   // allocation (mirrors the native arm64 emitAllocRuntime) rather than
@@ -7752,47 +7802,25 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    mov x0, x2\n");
   s = s.write("    ldp x29, x30, [sp], #16\n");
   s = s.write("    ret\n");
-  s = s.write(".Lalloc_oom:\n");
-  s = s.write("    mov x8, #93\n");
   // 125, not 137: 137 is 128+9, what a shell reports for SIGKILL, so an
   // arena trap could not be told apart from the kernel OOM-killer.
   // Lockstep with the native backends' ExitArenaExhausted and asm_ir.
-  s = s.write("    mov x0, #125\n");
-  s = s.write("    svc #0\n");
+  s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", asmcore.msg_oom(), 125);
   s = s.write(".size __fern_alloc, .-__fern_alloc\n");
 
-  // __fern_oob_abort — shared out-of-bounds trap for arr_get / arr_set on
-  // the IR path (asm_arm64_ir.fern kind_tag 88/89). Aborts with exit 134,
-  // matching the x86-64 backend + docs/ARRAY-BOUNDS.md ("an out-of-bounds
-  // index aborts before producing a value; never returns a garbage
-  // value"). A single shared routine keeps each access to a cmp + a b.hs.
-  s = s.write(".globl __fern_oob_abort\n");
-  s = s.write(".type __fern_oob_abort, %function\n");
-  s = s.write("__fern_oob_abort:\n");
-  s = s.write("    mov x8, #93\n");
-  s = s.write("    mov x0, #134\n");
-  s = s.write("    svc #0\n");
-  s = s.write(".size __fern_oob_abort, .-__fern_oob_abort\n");
-
-  // __fern_alloc_size_abort — a raw_alloc or __alloc_u8 size that is negative
-  // as an i32, which is how a helper's `la + lb` looks once it wraps past 2 GiB. The
-  // message and exit 134 match the native backends' allocation-size abort.
-  s = s.write("    .section .rodata\n");
-  s = s.write(".Lalloc_size_msg:\n    .ascii \"fern: allocation size out of range\\n\"\n");
-  s = s.write("    .text\n");
-  s = s.write(".globl __fern_alloc_size_abort\n");
-  s = s.write(".type __fern_alloc_size_abort, %function\n");
-  s = s.write("__fern_alloc_size_abort:\n");
-  s = s.write("    adrp x1, .Lalloc_size_msg\n");
-  s = s.write("    add x1, x1, :lo12:.Lalloc_size_msg\n");
-  s = s.write("    mov x2, #35\n");
-  s = s.write("    mov x0, #2\n");
-  s = s.write("    mov x8, #64\n");
-  s = s.write("    svc #0\n");
-  s = s.write("    mov x8, #93\n");
-  s = s.write("    mov x0, #134\n");
-  s = s.write("    svc #0\n");
-  s = s.write(".size __fern_alloc_size_abort, .-__fern_alloc_size_abort\n");
+  // The fatal aborts (#5538, #11405): each trap names its cause and branches
+  // to __fern_report, so a per-access check stays a cmp + a b.hs to a shared
+  // label. __fern_oob_abort is arr_get / arr_set (kind_tag 88/89),
+  // __fern_str_oob_abort the inline str_slice view, __fern_slice_abort the
+  // __fern_arr_slice bodies' range check, __fern_alloc_size_abort a raw_alloc
+  // or __alloc_u8 size that is negative as an i32, which is how a helper's
+  // `la + lb` looks once it wraps past 2 GiB. Texts and statuses match the
+  // native backends'. __fern_report itself is emitted outside the heap gate
+  // (emit_rt_report), where the sanitizer's reports can reach it too.
+  s = abort_trap(s, "__fern_oob_abort", ".Lmsg_arr_oob", asmcore.msg_arr_oob(), 134);
+  s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", asmcore.msg_str_oob(), 134);
+  s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", asmcore.msg_slice_range(), 134);
+  s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", asmcore.msg_alloc_size(), 134);
 
   // __fern_arr_box(x0 = cap element count) -> x0 = array data
   // pointer. Centralises the array box layout (mirrors the x86-64
@@ -10008,6 +10036,10 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   // __fern_lc_report in every program under FERN_LEAKCHECK, and a heap-free
   // program must still link. Emits nothing when the flag is off.
   s = emit_lc_report(s);
+  // The abort reporter (#11405): OUTSIDE the heap gate for the same reason,
+  // since the sanitizer's reports below end in it and a heap-free program
+  // must still link them.
+  s = emit_rt_report(s);
   // The UAF quarantine's fatal report. Self-contained — its own write(2) +
   // exit(124) rather than the census writer — so FERN_RC_FREE_DEBUG works
   // standalone, without leakcheck. Entry-only, like the census above, and
@@ -10674,7 +10706,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   // a[start:end] — takes `tgt`: its bounds trap is exit(134) through
   // __syscall3, and Darwin's exit is 1 where Linux's is 93.
   if (s.has_need("arr_slice")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice(tgt), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice(), s);
   }
   // The packed-byte twins (asmcore.packed_suffix), for a typed program's u8[].
   if (s.has_need("str_bytes_u8")) {
@@ -10684,7 +10716,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes_u8(), s);
   }
   if (s.has_need("arr_slice_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice_u8(tgt), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice_u8(), s);
   }
   if (s.has_need("random_bytes_u8")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes_u8(tgt), s);
@@ -12298,13 +12330,13 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: 
   if (!g.ok) {
     return "";
   }
-  return emit_module_ir_flat(g.im, g.stab, darwin, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower, recs);
+  return emit_module_ir_flat(g.im, g.stab, darwin, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower, recs, sub.backtrace);
 }
 
-function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwin: boolean, cache: irtables.LowerResult[], base: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[], recs: usize): string {
+function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwin: boolean, cache: irtables.LowerResult[], base: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[], recs: usize, backtrace: boolean): string {
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
-  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: stab, rt_lower: rt, recs: recs }, mod.funcs);
+  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: stab, rt_lower: rt, recs: recs, backtrace: backtrace }, mod.funcs);
   // emit_body takes the runtime-dependency closure itself, ahead of the _start
   // it ends with. The seeds below are marker needs with no declared deps, so
   // they need no second pass.
@@ -12348,14 +12380,14 @@ function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwi
 // `b` is the whole-program registry base (ircore.wp_fn_sigs over all_funcs /
 // all_structs), derived once by the driver and shared by every unit it emits
 // (the arm64 twin of asm_ir.emit_module_ir_unit_flat).
-pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], b: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[]): string {
+pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], b: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[], backtrace: boolean): string {
   mod = parser.infer_ret_types_module(mod);
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
   // layout resolves and a `dyn` dispatch has an arm for every impl (#10891);
   // str_ns namespaces this unit's pools.
-  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt }, all_funcs);
+  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, backtrace: backtrace }, all_funcs);
   // The Display gate for a unit, as asm_ir.emit_module_ir_unit_flat runs it.
   let derrs: util.Diag[] = asmcore.display_errs_module(mod, s);
   if (derrs.len() > 0) {
