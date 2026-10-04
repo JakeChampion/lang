@@ -174,7 +174,7 @@ function learn(g: Graph, cond: i32, truth: boolean, hops: i32): Graph {
   if (c.str == "<=") {
     return fact(g, y, x, !truth, true);
   }
-  if ((c.str == "==" && truth) || (c.str == "!=" && !truth)) {
+  if (c.str == "==" && truth || c.str == "!=" && !truth) {
     return fact(fact(g, x, y, true, false), y, x, true, false);
   }
   return g;
@@ -434,7 +434,7 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
       if (same(g, r.hi, x)) {
         if (is_const(g, r.lo)) {
           let low: i32 = const_value(g, r.lo);
-          if (low >= 0 || (r.strict && low == 0 - 1)) {
+          if (low >= 0 || r.strict && low == 0 - 1) {
             return true;
           }
         } else if (nonneg(g, b, r.lo, assume, steps - 1)) {
@@ -486,7 +486,7 @@ function at_least(g: Graph, b: i32, y: i32, n: i32): boolean {
       let r: Rel = g.rels[k];
       if (same(g, r.hi, y) && is_const(g, r.lo)) {
         let low: i32 = const_value(g, r.lo);
-        if (low >= n || (r.strict && low >= n - 1)) {
+        if (low >= n || r.strict && low >= n - 1) {
           return true;
         }
       }
