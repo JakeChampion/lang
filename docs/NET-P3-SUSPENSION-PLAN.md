@@ -460,10 +460,12 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    slice-1 conformance case flipped to pass (`TestSelfHostServeHandlersOverlap`).
    The stateful loop (`run_with`) still runs its handler to completion:
    its state threads through the handler chain, so a parked handler would
-   hold it from every other request. Still open from this slice: the
+   hold it from every other request. A suspended handler costs the heap
+   about 12 KiB (`TestSelfHostHeldConnectionsHeapBoundX86_64`'s third
+   shape: 64 then 64 more connections, each with a handler parked on the
+   fetch upstream, under a 16 KiB bound). Still open from this slice: the
    two-fetch handler at 4,096 connections in `net-nightly` with p99 against
-   hyper, and bump bytes per suspended handler in the held-connection heap
-   gate.
+   hyper.
 6. **Cancellation semantics. Landed.** `gather_tasks`, `race_tasks` and
    `with_deadline_tasks` run their entries as tasks of the calling task and
    drive them together: the combinator parks on the union of its children's

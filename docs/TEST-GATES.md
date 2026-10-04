@@ -227,11 +227,17 @@ bound of #9853 and #9854: a serve loop whose handler
 answers `__heap_bump_bytes()` holds 64 idle connections, then 64 more, and
 the growth the second batch cost must be under 1 KiB per connection (the
 first batch carries the table's one-time growth, so the bound is on the
-second). It holds two shapes on a server each: connections accepted and
-never used, and connections kept alive after one served request, which is
-the exit criterion's idle keep-alive connection. The self-host's loop costs
-about 560 and 590 bytes per connection respectively. The
-test compiles with the production driver:
+second). It holds three shapes on a server each: connections accepted and
+never used, connections kept alive after one served request, which is
+the exit criterion's idle keep-alive connection, and connections each with
+a request whose handler is parked on the fetch upstream's `/hold` target
+(P3's suspended handler, `docs/NET-P3-SUSPENSION-PLAN.md` §4 slice 5),
+released at the end so every parked handler is seen to answer. The
+self-host's loop costs about 560 and 590 bytes per connection for the
+first two, and about 12 KiB per suspended handler, under a 16 KiB bound:
+the connection's own cost plus the flight, the task's record and save
+area, and the fetch client's request, pooled connection and parked frames.
+The test compiles with the production driver:
 the per-module driver's older lowering keeps an array of arrays it cannot
 prove fresh, so the connection table it rebuilds per accept leaks there
 by that lowering's design, and a gate on it would measure the lowering

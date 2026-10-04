@@ -47,6 +47,99 @@ function main(): i32 {
 `, port)
 }
 
+// HeldSuspendedBytesPerHandler is the bound on the bump-allocator growth
+// the second batch of held connections may cost, per connection, when
+// each connection's handler is parked on its upstream: the connection's
+// own cost plus the flight, the task's record and save area, and the
+// fetch client's request, pooled connection and parked frames. The
+// self-host's loop costs about 12 KiB.
+const HeldSuspendedBytesPerHandler = 16384
+
+// HeldSuspendedServerSource is HeldConnectionsServerSource with a handler
+// that waits on `plat.http` to the fetch upstream's /hold target (through
+// the forward proxy SetFetchProxy names) for every path but /heap, so a
+// connection with a request in flight holds a suspended handler.
+func HeldSuspendedServerSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/time";
+import "std/serve";
+import "std/platform";
+import "std/fetch";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    if (req.path == "/heap") {
+        return http.ok(__heap_bump_bytes().to_string());
+    }
+    match (plat.http(fetch.get("http://8.8.8.8/hold"))) {
+        Ok(resp) => { return http.ok("held " + resp.status.to_string()); },
+        Err(e) => { return http.ok("held err " + e.message()); }
+    }
+}
+
+function main(): i32 {
+    let opts: serve.Config = serve.Config { ...serve.config(), recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0 };
+    return serve.run(%d, opts, handle);
+}
+`, port)
+}
+
+// MeasureHeldSuspended holds two batches of connections to the server at
+// addr, each with a request whose handler is parked on the upstream's
+// /hold target, and answers the bump-allocator growth the second batch
+// cost, per suspended handler. A batch counts as held once the upstream
+// has every handler's request parked. The upstream is then released and
+// every held connection must answer its request, so the parked handlers
+// are shown to resume as well as to fit.
+func MeasureHeldSuspended(t *testing.T, addr string, up *FetchUpstream) (perHandler int64, first, second int64) {
+	t.Helper()
+	held := make([]net.Conn, 0, 2*HeldConnectionsBatch)
+	defer func() {
+		for _, c := range held {
+			c.Close()
+		}
+	}()
+	hold := func() {
+		for i := 0; i < HeldConnectionsBatch; i++ {
+			c, err := net.DialTimeout("tcp", addr, 5*time.Second)
+			if err != nil {
+				t.Fatalf("dial %d: %v", len(held), err)
+			}
+			held = append(held, c)
+			if _, err := io.WriteString(c, "GET /park HTTP/1.1\r\nHost: x\r\n\r\n"); err != nil {
+				t.Fatalf("request on connection %d: %v", len(held), err)
+			}
+		}
+		deadline := time.Now().Add(30 * time.Second)
+		for up.Held() < len(held) {
+			if time.Now().After(deadline) {
+				t.Fatalf("%d handlers parked on the upstream after 30s, want %d", up.Held(), len(held))
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	before := heapBumpBytes(t, addr)
+	hold()
+	after1 := heapBumpBytes(t, addr)
+	hold()
+	after2 := heapBumpBytes(t, addr)
+	first = after1 - before
+	second = after2 - after1
+	up.Release()
+	for i, c := range held {
+		_ = c.SetDeadline(time.Now().Add(30 * time.Second))
+		resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+		if err != nil {
+			t.Fatalf("response on held connection %d after release: %v", i+1, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 || string(body) != "held 200" {
+			t.Fatalf("held connection %d answered %d %q after release, want 200 \"held 200\"", i+1, resp.StatusCode, body)
+		}
+	}
+	return second / HeldConnectionsBatch, first, second
+}
+
 // MeasureHeldConnections holds two batches of idle connections to the
 // server at addr and answers the bump-allocator growth the second batch
 // cost, per connection. With served, each connection carries one request
