@@ -23,10 +23,10 @@ SSA→native emit path that consumes the allocation.
 **The "ultimately replacing the stack-machine backends" endpoint is
 UNSCHEDULED, not cancelled.** `docs/SSA-DECISION.md` leaves the cutover open:
 this document's own finding that speed is the open blocker argues against
-defaulting today, while #8822 — `coreutils/sort.fern` at 4–5x GNU, with
-`-backend ssa` named as the direct answer to its dominant cost — argues for
-funding the coverage work that would let it be measured. The allocator work
-below stands on its own terms either way.
+defaulting today. #8822, which once argued the other way (`sort` at 4–5x
+GNU, with `-backend ssa` named as the answer), is closed: the coverage it
+asked for landed, and `sort` is at or ahead of GNU as the self-host compiler
+builds it. The allocator work below stands on its own terms either way.
 
 ## End state
 

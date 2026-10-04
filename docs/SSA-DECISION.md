@@ -4,7 +4,8 @@
 shelved. On the codegen side, size and correctness are SETTLED in the SSA
 backend's favour — 45.3% of flat's `.text` over the corpus, 286/0 on the run
 differential — and speed is the single remaining blocker on an arm64 default
-flip (#4112 phase 4). The x86-64 side is blocked on coverage instead (#8822).
+flip (#4112 phase 4). The x86-64 side has the same blocker since `sort.fern`
+built under it on 2026-09-16: loop-body code quality, not coverage.
 **Next decision point:** not a date — which of those two tracks to fund.
 **Owner:** compiler / IR.
 
@@ -12,6 +13,9 @@ Read "Where this stands (2026-09-15)" below FIRST. It corrects two things in
 the 2026-09-02 section above: that section says tripwires 1–3 are unfired (one
 has), and it quotes the benchmark geomean as evidence against the backend when
 the ratio runs the other way — 0.92x means SSA is ~8% FASTER on average.
+#8822, which that section cites for tripwire 1, is closed by #11321: as the
+self-host compiler builds it, `sort` is at or ahead of GNU
+(`docs/COREUTILS.md`).
 
 ## The question
 
@@ -385,7 +389,7 @@ else, still to be profiled.
 | backend | disposition |
 | ------- | ----------- |
 | `internal/codegen/wasmssa` | **RETIRED** (#9397). The relooper-era emitter, one fixed page of memory that never grows, and the only SSA backend with no corpus differential — its cover was its own hand-written cases. It existed to satisfy the "keep the layer exercised end-to-end" clause below, which `arm64ssa` now discharges far better. This is independent of the codegen question: the coreutils work is native, wasm is not where a comparison-bound utility runs, and nothing in #8278 or #8822 touches it. `-backend ssa` no longer accepts a wasm target. |
-| `internal/codegen/x86_64ssa` | **KEPT, and its coverage gap is live work.** It is the backend #8822 names as the direct answer to the epic's dominant cost, blocked on 17 undefined call targets in the I/O surface. `arm64ssa` also imports its layout and call-coalescing model, so it could not be cut on its own even if that were wanted. |
+| `internal/codegen/x86_64ssa` | **KEPT.** #8822 named it as the direct answer to `sort`'s per-instruction cost; `sort` has built under it since 2026-09-16, and what it pays there is loop-body code quality ("Measured 2026-09-16" above). `arm64ssa` also imports its layout and call-coalescing model, so it could not be cut on its own even if that were wanted. |
 | `internal/codegen/arm64ssa` | **KEPT and load-bearing**, twice over: the emit target for `internal/semir`'s typed pre-RC ownership pipeline (`-backend typed-ssa`, `cmd/fern/typedssa.go`), and the subject of the coreutils perf stream. Its 281-program corpus differential is what keeps the SSA layer honest end-to-end. |
 
 The self-host mirror — the stack IR is the single self-host production
@@ -411,9 +415,9 @@ not defaulted but is actively measured:
   under-reports rather than refusing to emit.
 - New IR ops / language features are **not** required to land in the SSA
   *emitters*. They ARE required to lift, for the same reason.
-- A gap that blocks a `-backend ssa` build of a real program is logged against
-  #8822, not silently absorbed: the helper-coverage gap is the thing standing
-  between the epic and its measurement.
+- A gap that blocks a `-backend ssa` build of a real program gets an issue of
+  its own, not silent absorption: a program that does not build is one the
+  emitter cannot be measured on.
 
 ## Reconciliation: the native `x86_64ssa` / `arm64ssa` backends (2026-07-03, #4391)
 
