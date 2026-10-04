@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	e2eharness "github.com/jakechampion/lang/internal/e2eharness"
 )
 
 const unitHelpers = `
@@ -361,7 +363,8 @@ func testUnitsIR(t *testing.T, target string) {
 		if err := os.WriteFile(wat, output, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		run = exec.Command(wasmtime, "run", wat)
+		// wasmtime hands the guest no host variable it is not told to.
+		run = exec.Command(wasmtime, "run", "--env", e2eharness.SelfHostVerify, wat)
 	}
 	got, err := run.CombinedOutput()
 	if err != nil || string(got) != want {

@@ -3092,9 +3092,15 @@ function schema_error(f: Func): string {
   if (why != "") {
     return why;
   }
-  why = ssadeps.verify(f.graph, empty_dependencies(f.graph.nvals));
+  why = ssadeps.limits_error(f.graph);
   if (why != "") {
     return why;
+  }
+  if (util.verify_on()) {
+    why = ssadeps.verify(f.graph, empty_dependencies(f.graph.nvals));
+    if (why != "") {
+      return why;
+    }
   }
   if (!semtypes.concrete(f.result, true)) {
     return "unresolved result type";
@@ -3119,6 +3125,9 @@ function schema_error(f: Func): string {
   why = placement_error(f);
   if (why != "") {
     return why;
+  }
+  if (!util.verify_on()) {
+    return "";
   }
   return semrecords.verify(f.records, f.enums);
 }
