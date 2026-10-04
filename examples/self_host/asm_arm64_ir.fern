@@ -5410,7 +5410,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   s = asmcore.with_funcs(s, mod.funcs);
   s = s.write("    .globl _start\n");
   s = s.write("    .text\n");
-  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(mod.funcs), pops: s.kinds.pops };
+  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(mod.funcs), s.kinds.pops);
   ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), cache);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)), leaves: asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache) };
   let fi: i32 = 0;
@@ -5426,6 +5426,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   // Cache entries past the declarations are bodies with no FuncDecl, each
   // naming the symbol it defines.
   s = emit_named_bodies(cache, mod.funcs.len(), s, vgate);
+  irverifygate.report(vgate);
   // Ahead of _start, which gates its envp save on the heap need. close_needs
   // is what turns a root like str_concat into that heap need, so reading it
   // first would leave __fern_envp null in a program that still gets the heap
@@ -5516,7 +5517,7 @@ function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.
 pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.EmitState {
   let m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   let fns: parser.FuncDecl[] = m.funcs;
-  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(fns), pops: s.kinds.pops };
+  let vgate: irverifygate.Gate = irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops);
   let bodies: irtables.LowerResult[] = s.rt_lower(src);
   let i: i32 = 0;
   while (i < fns.len()) {
@@ -12479,7 +12480,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
   // hi<0 "to the end") is byte-identical to the unsharded emit; a partial
   // window lets an oversized module emit across separate processes without
   // any single emit's leak-mode heap crossing the arena ceiling.
-  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(all_funcs), pops: s.kinds.pops };
+  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(all_funcs), s.kinds.pops);
   let hh: i32 = hi;
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();
@@ -12506,6 +12507,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
     fi = fi + 1;
   }
   s = emit_named_bodies(cache, mod.funcs.len(), s, vgate);
+  irverifygate.report(vgate);
   // #4355: admit the replaced-STRING-field arm per type from the
   // WHOLE-PROGRAM read scan (all_funcs — see asm_ir.emit_module_ir_unit_flat's
   // sibling seeding and fnsigs.strfld_reclaim_ok_types_of).

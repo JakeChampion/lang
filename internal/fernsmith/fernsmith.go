@@ -3519,9 +3519,15 @@ func (g *Generator) maybeEmitDefer(b *strings.Builder, sc *scope) bool {
 	}
 	idx := g.ctrlCounter
 	g.ctrlCounter++
+	// A deferred action has no caller to propagate a failure to, so `?`
+	// is refused inside it: the body is generated as if the function
+	// returned no Option or Result.
+	prevRet := g.currentReturnType
+	g.currentReturnType = tI32
 	b.WriteString("defer { ")
 	g.innerStmts(b, newScope(sc), fmt.Sprintf("__df%d", idx), 3)
 	b.WriteString("} ")
+	g.currentReturnType = prevRet
 	return true
 }
 

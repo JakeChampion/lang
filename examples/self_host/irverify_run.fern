@@ -629,7 +629,7 @@ function gate_checks(): i32 {
   // all: it runs on every function of every compile, so a false positive here
   // would refuse valid programs.
   let clean: ir.Op[] = [ir.op_const_i32(1), ir.op_return()];
-  if (irverifygate.verify_problems("f", clean, 0, 1, irverifygate.Gate { sigs: no_sigs(), pops: ir.pops_by_kind() }).len() != 0) {
+  if (irverifygate.verify_problems("f", clean, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind())).len() != 0) {
     return 170;
   }
 
@@ -637,11 +637,11 @@ function gate_checks(): i32 {
   // The stack pass is silent on it (load_local pops nothing either way), so
   // this reaches the gate only through irverify.
   let bad_slot: ir.Op[] = [ir.op_load_local(5), ir.op_return()];
-  if (irverifygate.verify_problems("f", bad_slot, 0, 1, irverifygate.Gate { sigs: no_sigs(), pops: ir.pops_by_kind() }).len() != 1) {
+  if (irverifygate.verify_problems("f", bad_slot, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind())).len() != 1) {
     return 171;
   }
   if (!util.contains(
-    irverify.problem_str(irverifygate.verify_problems("f", bad_slot, 0, 1, irverifygate.Gate { sigs: no_sigs(), pops: ir.pops_by_kind() })[0]),
+    irverify.problem_str(irverifygate.verify_problems("f", bad_slot, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind()))[0]),
     "is outside the frame",
   )) {
     return 172;
@@ -652,11 +652,11 @@ function gate_checks(): i32 {
   // reaches the gate — the direction a merge dropping irverifystack would
   // miss, which is the class the gate was built for.
   let underflow: ir.Op[] = [ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_return()];
-  if (irverifygate.verify_problems("f", underflow, 0, 1, irverifygate.Gate { sigs: no_sigs(), pops: ir.pops_by_kind() }).len() != 1) {
+  if (irverifygate.verify_problems("f", underflow, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind())).len() != 1) {
     return 173;
   }
   if (!util.contains(
-    irverify.problem_str(irverifygate.verify_problems("f", underflow, 0, 1, irverifygate.Gate { sigs: no_sigs(), pops: ir.pops_by_kind() })[0]),
+    irverify.problem_str(irverifygate.verify_problems("f", underflow, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind()))[0]),
     "operand stack underflow",
   )) {
     return 174;
@@ -664,7 +664,7 @@ function gate_checks(): i32 {
 
   // Both at once: the gate reports each pass's findings, structure first.
   let both: ir.Op[] = [ir.op_load_local(5), ir.op_bin("add", 0, false), ir.op_return()];
-  let bps: irverify.Problem[] = irverifygate.verify_problems("f", both, 0, 1, irverifygate.Gate { sigs: no_sigs(), pops: ir.pops_by_kind() });
+  let bps: irverify.Problem[] = irverifygate.verify_problems("f", both, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind()));
   if (bps.len() != 2) {
     return 175;
   }
@@ -681,7 +681,7 @@ function gate_checks(): i32 {
   // if the gate goes back to verifying against an empty signature set.
   let sigs: irverify.NameIndex = irverify.sig_index([irverify.FnSig { name: "takes2", n_params: 2 }]);
   let arity: ir.Op[] = [ir.op_call_direct("takes2", 0), ir.op_return()];
-  let aps: irverify.Problem[] = irverifygate.verify_problems("f", arity, 0, 1, irverifygate.Gate { sigs: sigs, pops: ir.pops_by_kind() });
+  let aps: irverify.Problem[] = irverifygate.verify_problems("f", arity, 0, 1, irverifygate.gate(sigs, ir.pops_by_kind()));
   if (aps.len() != 1) {
     return 178;
   }
@@ -690,7 +690,7 @@ function gate_checks(): i32 {
   }
   // Same stream, no index: clean, so the case above is the index doing the
   // work rather than the op stream being malformed some other way.
-  if (irverifygate.verify_problems("f", arity, 0, 1, irverifygate.Gate { sigs: no_sigs(), pops: ir.pops_by_kind() }).len() != 0) {
+  if (irverifygate.verify_problems("f", arity, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind())).len() != 0) {
     return 180;
   }
   return 0;
@@ -705,7 +705,7 @@ function gate_checks(): i32 {
 // or that the exit code is 4. Reached only via `-refuse`.
 function refuse_probe(): i32 {
   let malformed: ir.Op[] = [ir.op_load_local(5), ir.op_return()];
-  irverifygate.verify_or_refuse("probe", malformed, 0, 1, irverifygate.Gate { sigs: no_sigs(), pops: ir.pops_by_kind() });
+  irverifygate.verify_or_refuse("probe", malformed, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind()));
   // Only reachable under FERN_IR_VERIFY=0: the opt-out must make the gate
   // inert, which is as much of the contract as the refusal is.
   print("irverifygate: inert (FERN_IR_VERIFY=0)");
@@ -968,7 +968,7 @@ function rc_checks(): i32 {
   // ---- the gate runs the ownership half ------------------------------
   // Wiring, not algorithm: a donor mismatch must reach verify_problems, or
   // the pass is correct and never consulted.
-  let gp: irverify.Problem[] = irverifygate.verify_problems("f", selfhost_reuse(1, 2), 0, 8, irverifygate.Gate { sigs: no_sigs(), pops: ir.pops_by_kind() });
+  let gp: irverify.Problem[] = irverifygate.verify_problems("f", selfhost_reuse(1, 2), 0, 8, irverifygate.gate(no_sigs(), ir.pops_by_kind()));
   let seen: boolean = false;
   let gi: i32 = 0;
   while (gi < gp.len()) {

@@ -983,18 +983,25 @@ pub function rt_src_chr(): string {
 // to syscalls whose ARGUMENT and RESULT shape agree across the three, which is
 // why getdirentries64 (a 4th out-param Linux's getdents64 has no equivalent of)
 // is absent — a leaf that diverges in shape needs a per-target body, not a
-// substituted constant. An unknown name returns "-1", which every kernel here
-// rejects with ENOSYS — NOT "0", which is a valid number on two of the three
-// targets (x86-64 `read`, Darwin's indirect-syscall trampoline) and would have
-// made a typo issue a real syscall instead of failing.
+// substituted constant. A name with no row is a compiler bug, reported as one
+// and the compile stopped: the body would otherwise issue a number the kernel
+// rejects with ENOSYS and carry on past the call, which in a forked child
+// runs the parent's code twice (#11417 removed the `exit` rows a subprocess
+// child still asked for).
 pub function sysno(t: string, name: string): string {
+  let n: string = "-1";
   if (t == "x86_64") {
-    return sysno_x86_64(name);
+    n = sysno_x86_64(name);
+  } else if (t == "arm64-darwin") {
+    n = sysno_arm64_darwin(name);
+  } else {
+    n = sysno_arm64_linux(name);
   }
-  if (t == "arm64-darwin") {
-    return sysno_arm64_darwin(name);
+  if (n == "-1") {
+    eprint("error: internal: a runtime body asks for the " + t + " syscall number of " + name + ", which the sysno table has no row for");
+    exit(3);
   }
-  return sysno_arm64_linux(name);
+  return n;
 }
 
 // fern-lint: allow cyclomatic-complexity
@@ -1039,6 +1046,9 @@ function sysno_x86_64(name: string): string {
   }
   if (name == "getrandom") {
     return "318";
+  }
+  if (name == "exit") {
+    return "60";
   }
   if (name == "clock_gettime") {
     return "228";
@@ -1320,6 +1330,9 @@ function sysno_arm64_darwin(name: string): string {
   if (name == "getrandom") {
     return "500";
   }
+  if (name == "exit") {
+    return "1";
+  }
   // XNU has no clock_gettime syscall — gettimeofday(&tv, NULL) is the
   // portable stand-in, and it fills a DIFFERENTLY SHAPED struct (see
   // subsec_off / subsec_per_sec). clock_gettime has no row here on
@@ -1600,6 +1613,9 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "getrandom") {
     return "278";
+  }
+  if (name == "exit") {
+    return "93";
   }
   if (name == "clock_gettime") {
     return "113";

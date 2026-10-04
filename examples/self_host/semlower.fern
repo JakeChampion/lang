@@ -798,9 +798,10 @@ function is_wasm(target: string): boolean {
   return util.str_has_prefix(target, "wasm");
 }
 
-// The module the wasm emit path gates: it lifts inside its own normalisation.
+// The module the wasm emit path gates: it lifts inside its own normalisation,
+// after the same map-to-kernel rewrite ircore's lift runs.
 function wasm_gated(typed: parser.Module): parser.Module {
-  return lift.lift_lambdas_typed(ircore.script_normalized(typed));
+  return lift.lift_lambdas_typed(ircore.script_normalized(ircore.scale_f64_maps_module(typed)));
 }
 
 function substitution_of(im: parser.Module): ircore.Sub {

@@ -240,9 +240,19 @@ function finding_text(f: Finding, entry: string, files: string[]): string {
     return f.path + ":" + util.pos_str("", files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
   }
   if (f.diag.line > 0) {
-    return util.pos_str(entry, files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
+    return util.pos_str(entry_display(entry), files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
   }
   return tag + f.diag.message;
+}
+
+// entry_display is the entry path as a diagnostic names it: the path the
+// command line gave, or `<stdin>` for a program read from stdin, as native
+// spells it.
+function entry_display(entry_path: string): string {
+  if (entry_path == "-") {
+    return "<stdin>";
+  }
+  return entry_path;
 }
 
 // eprint_findings prints each finding and reports whether any rejects the
@@ -1694,10 +1704,7 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
 // todo_warnings lists the entry's remaining `todo` stubs, which an accepted
 // check still reports. An imported module's are not tracked, as native's are not.
 function todo_warnings(sites: parser.TodoSite[], entry_path: string): Finding[] {
-  let name: string = entry_path;
-  if (name == "-") {
-    name = "<stdin>";
-  }
+  let name: string = entry_display(entry_path);
   let out: Finding[] = [];
   for site in sites {
     out = out.append(Finding { diag: util.Diag { code: "", message: "`todo` stub remaining", line: site.line, col: site.col }, warning: true, path: name });

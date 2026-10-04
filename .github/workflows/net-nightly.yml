@@ -1,10 +1,13 @@
 name: Net nightly
 
-# The HTTP throughput record of #9854: once a night, scripts/net-bench
-# loads the Fern hello server, Go's net/http hello, hyper's and h2o's with
-# oha at 64 and 4,096 connections and appends throughput, p50 and p99 per
-# server and count, plus the heap one held connection costs the Fern
-# loop, to the main commit's note under refs/notes/perf.
+# The HTTP throughput record of #9854 and #9857: once a night,
+# scripts/net-bench loads the Fern hello server, Go's net/http hello,
+# hyper's and h2o's, then the Fern and hyper two-fetch servers (a handler
+# fetching an upstream twice per request, the Fern one a single loop
+# built by the self-host compiler), with oha at 64 and 4,096 connections
+# and appends throughput, p50 and p99 per server and count, plus the heap
+# one held connection and one suspended handler cost the Fern loop, to
+# the main commit's note under refs/notes/perf.
 # `scripts/perf-history show net/fern/c64.rps` reads the trend back.
 #
 # RECORDED, NOT GATED, and nightly rather than per pull request: wall-clock

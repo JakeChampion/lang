@@ -11748,7 +11748,7 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   // their own .rodata block then return to .text. A literal-free helper (the
   // str_eq / str_cmp / str_trim bodies) adds none, so
   // this is a no-op for them.
-  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(fns), pops: s.kinds.pops };
+  let vgate: irverifygate.Gate = irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops);
   let lit0: i32 = s.string_lits.len();
   let agg0: i32 = s.const_aggs.len();
   let sh0: i32 = s.shape_lits.len();
@@ -11803,7 +11803,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
   // The IR verify gate's callee-arity index, derived ONCE over the
   // whole-program all_funcs for the reason the registries above are: a
   // per-function rebuild would be O(n^2) on the compiler's own sources.
-  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(all_funcs), pops: s.kinds.pops };
+  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(all_funcs), s.kinds.pops);
   // hi<0 is the "to the end" sentinel; an over-large hi is clamped so a shard
   // window that overshoots the module length can't index past mod.funcs.
   let hh: i32 = hi;
@@ -11840,7 +11840,9 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
   // Cache entries past the declarations are bodies with no FuncDecl, each
   // naming the symbol it defines. `.weak`, so a shard window or a sibling
   // unit that emits the same body co-links to one definition.
-  return emit_named_bodies(cache, mod.funcs.len(), s, vgate);
+  s = emit_named_bodies(cache, mod.funcs.len(), s, vgate);
+  irverifygate.report(vgate);
+  return s;
 }
 
 function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {

@@ -1,0 +1,47 @@
+// The Fern two-fetch server the net-nightly lane loads, P3's exit case
+// (docs/NET-P3-SUSPENSION-PLAN.md §1): one worker whose handler makes
+// two requests in turn to an upstream through `plat.http`, so every
+// connection the load generator holds has a handler parked on the
+// upstream most of the time, and the loop's multiplexing is what the
+// throughput and the p99 measure. scripts/net-bench builds it with the
+// self-host compiler, whose suspension pass is what lets the handler park;
+// the Go compiler's blocking fallback would serve the connections in turn.
+// The upstream is reached through the forward proxy `http_proxy` names,
+// since a handler's fetch refuses a loopback address and the upstream is
+// on one. The caps are lifted for the load generator, one client holding
+// thousands of connections, each with a handler in flight.
+import "std/http";
+import "std/serve";
+import "std/platform";
+import "std/fetch";
+import "core/int";
+
+function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, fetch.FetchError] {
+  let first: HttpResponse = plat.http(fetch.get("http://8.8.8.8/"))?;
+  let second: HttpResponse = plat.http(fetch.get("http://8.8.8.8/"))?;
+  return Ok(http.ok(int.int_to_string(first.status) + " " + int.int_to_string(second.status)));
+}
+
+function port(): i32 {
+  match (env("PORT")) {
+    Some(p) => {
+      match (int.parse_int_radix(p, 10)) {
+        Some(n) => {
+          return n;
+        },
+        None => {
+          return 8080;
+        }
+      }
+    },
+    None => {
+      return 8080;
+    }
+  }
+  return 8080;
+}
+
+function main(): i32 {
+  let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0, max_in_flight: 16384 };
+  return serve.run(port(), opts, handle);
+}

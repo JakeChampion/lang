@@ -207,7 +207,7 @@ function help_text(): string {
 }
 
 // ---- configuration ----------------------------------------------------------
-struct Cfg { columns: i32, across: boolean, merge: boolean, ctrl: boolean, nonprint: boolean, double_space: boolean, date_fmt: timefmt.Format, untabify: boolean, in_tab: i32, in_tab_width: i32, tabify: boolean, out_tab: i32, out_tab_width: i32, form_feed: boolean, header: string, has_header: boolean, page_length: i32, numbering: boolean, num_sep: string, num_digits: i32, num_width: i32, first_line: i32, has_first_line: boolean, offset: i32, nowarn: boolean, sep: string, omit_header: boolean, omit_pagination: boolean, page_width: i32, zone: tz.Zone, truncate: boolean, tab_literal: boolean, num_prefix: i32, first_page: u64, last_page: u64, chars_per_column: i32 }
+struct Cfg { columns: i32, across: boolean, merge: boolean, ctrl: boolean, nonprint: boolean, double_space: boolean, date_fmt: timefmt.Format, untabify: boolean, in_tab: i32, in_tab_width: i32, tabify: boolean, out_tab: i32, out_tab_width: i32, form_feed: boolean, header: string, has_header: boolean, page_length: i32, numbering: boolean, num_sep: i32, num_digits: i32, num_width: i32, first_line: i32, has_first_line: boolean, offset: i32, nowarn: boolean, sep: string, omit_header: boolean, omit_pagination: boolean, page_width: i32, zone: tz.Zone, truncate: boolean, tab_literal: boolean, num_prefix: i32, first_page: u64, last_page: u64, chars_per_column: i32 }
 
 function tab_stop(): i32 {
   return 8;
@@ -218,40 +218,26 @@ function is_print(b: i32): boolean {
   return b >= 32 && b < 127;
 }
 
-function octal3(b: i32): string {
-  let d: string = "01234567";
-  let s: string = "\\";
-  s = s + slice_unchecked(d, b / 64 % 8, b / 64 % 8 + 1);
-  s = s + slice_unchecked(d, b / 8 % 8, b / 8 % 8 + 1);
-  s = s + slice_unchecked(d, b % 8, b % 8 + 1);
-  return s;
-}
-
-function byte_string(b: i32): string {
-  return string_from_bytes_unchecked([b as u8]);
-}
-
-// `clump(b, c)` — the bytes a body byte is printed as and the columns it
-// advances. A backspace is minus one column and every other
+// The columns a body byte advances. A backspace is minus one and every other
 // non-printable is zero, which is what -c and -v replace with an escape
 // whose printed length becomes the width.
-function clump(b: i32, c: Cfg): (string, i32) {
+function clump_width(b: i32, c: Cfg): i32 {
   if (is_print(b)) {
-    return (byte_string(b), 1);
+    return 1;
   }
   if (c.nonprint) {
-    return (octal3(b), 4);
+    return 4;
   }
   if (c.ctrl) {
     if (b < 32 || b == 127) {
-      return ("^" + byte_string(b ^ 64), 2);
+      return 2;
     }
-    return (octal3(b), 4);
+    return 4;
   }
   if (b == 8) {
-    return (byte_string(b), 0 - 1);
+    return 0 - 1;
   }
-  return (byte_string(b), 0);
+  return 0;
 }
 
 // ---- the output line --------------------------------------------------------
@@ -260,10 +246,20 @@ function clump(b: i32, c: Cfg): (string, i32) {
 // next byte lands in and `pend` the generated whitespace not written
 // yet: it is flushed by the next visible byte and DROPPED at the end of
 // the line, which is what trims a row whose last column is absent.
-struct Line { buf: string, pos: i32, pend: i32 }
+struct Line { buf: usize, pos: i32, pend: i32 }
 
 function line_new(): Line {
-  return Line { buf: "", pos: 0, pend: 0 };
+  return Line { buf: buf_new(0), pos: 0, pend: 0 };
+}
+
+function append_bytes(h: usize, bytes: u8[]): void {
+  buf_push_bytes_range(h, bytes, 0, bytes.len());
+}
+
+function take_bytes(h: usize): u8[] {
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return bytes;
 }
 
 // `(l).ws(n, c)` — `n` columns of generated whitespace.
@@ -274,7 +270,8 @@ function (l: Line) ws(n: i32, c: Cfg): Line {
   if (c.tabify) {
     return Line { ...l, pos: l.pos + n, pend: l.pend + n };
   }
-  return Line { ...l, buf: l.buf + " ".repeat(n), pos: l.pos + n };
+  buf_push(l.buf, " ".repeat(n));
+  return Line { ...l, pos: l.pos + n };
 }
 
 // `(l).to(target, c)` — generated whitespace up to column `target`.
@@ -297,7 +294,6 @@ function (l: Line) flush(c: Cfg): Line {
   }
   let p: i32 = l.pos - l.pend;
   let rem: i32 = l.pend;
-  let out: string = "";
   let tw: i32 = c.out_tab_width;
   let stop: boolean = false;
   while (rem > 1 && p >= 0 && !stop) {
@@ -305,21 +301,50 @@ function (l: Line) flush(c: Cfg): Line {
     if (rem < h) {
       stop = true;
     } else {
-      out = out + byte_string(c.out_tab);
+      buf_push_byte(l.buf, c.out_tab);
       p = p + h;
       rem = rem - h;
     }
   }
   if (rem > 0) {
-    out = out + " ".repeat(rem);
+    buf_push(l.buf, " ".repeat(rem));
   }
-  return Line { ...l, buf: l.buf + out, pend: 0 };
+  return Line { ...l, pend: 0 };
 }
 
 // `(l).put(s, width, c)` — visible bytes occupying `width` columns.
 function (l: Line) put(s: string, width: i32, c: Cfg): Line {
   let f: Line = l.flush(c);
-  return Line { ...f, buf: f.buf + s, pos: f.pos + width };
+  buf_push(f.buf, s);
+  return Line { ...f, pos: f.pos + width };
+}
+
+function (l: Line) put_byte(b: i32, width: i32, c: Cfg): Line {
+  let f: Line = l.flush(c);
+  buf_push_byte(f.buf, b);
+  return Line { ...f, pos: f.pos + width };
+}
+
+function (l: Line) put_range(bytes: u8[], from: i32, to: i32, width: i32, c: Cfg): Line {
+  let f: Line = l.flush(c);
+  buf_push_bytes_range(f.buf, bytes, from, to);
+  return Line { ...f, pos: f.pos + width };
+}
+
+function (l: Line) put_clump(b: i32, c: Cfg): Line {
+  let f: Line = l.flush(c);
+  if (is_print(b) || !c.nonprint && !c.ctrl) {
+    buf_push_byte(f.buf, b);
+  } else if (!c.nonprint && c.ctrl && (b < 32 || b == 127)) {
+    buf_push_byte(f.buf, 94);
+    buf_push_byte(f.buf, b ^ 64);
+  } else {
+    buf_push_byte(f.buf, 92);
+    buf_push_byte(f.buf, 48 + b / 64 % 8);
+    buf_push_byte(f.buf, 48 + b / 8 % 8);
+    buf_push_byte(f.buf, 48 + b % 8);
+  }
+  return Line { ...f, pos: f.pos + clump_width(b, c) };
 }
 
 // `(l).space(c)` — one input space. It joins the pending whitespace
@@ -328,7 +353,8 @@ function (l: Line) space(c: Cfg): Line {
   if (c.tabify) {
     return Line { ...l, pos: l.pos + 1, pend: l.pend + 1 };
   }
-  return Line { ...l, buf: l.buf + " ", pos: l.pos + 1 };
+  buf_push_byte(l.buf, 32);
+  return Line { ...l, pos: l.pos + 1 };
 }
 
 // ---- the input --------------------------------------------------------------
@@ -337,97 +363,111 @@ function (l: Line) space(c: Cfg): Line {
 // at a form feed; a form feed that ends an EMPTY line is a page break
 // with no line of its own, which is why a leading one makes a blank
 // page and a trailing one makes no page at all.
-struct Src { r: Reader, name: string, is_stdin: boolean, open: boolean, buf: string, pos: i32, eof: boolean, fatal: boolean, ffpend: i32, ffat: i32, mtime: i64, mnsec: i64 }
+struct Src { r: Reader, name: string, is_stdin: boolean, open: boolean, buf: u8[], pos: i32, eof: boolean, fatal: boolean, nlat: i32, ffat: i32, mtime: i64, mnsec: i64 }
 
 function read_size(): i32 {
   return 65536;
 }
 
 function src_closed(): Src {
-  return Src { r: stdin(), name: "", is_stdin: false, open: false, buf: "", pos: 0, eof: true, fatal: false, ffpend: 0, ffat: 0 - 1, mtime: 0 as i64, mnsec: 0 as i64 };
+  return Src { r: stdin(), name: "", is_stdin: false, open: false, buf: [], pos: 0, eof: true, fatal: false, nlat: 0 - 1, ffat: 0 - 1, mtime: 0 as i64, mnsec: 0 as i64 };
 }
 
 // `src_fill(s)` — more bytes, or eof. A read failure is fatal: GNU stops
 // the whole run on an EISDIR where it only warns about a failed open.
-function src_fill(s0: Src): Src {
-  let s: Src = s0;
-  let rest: string = slice_unchecked(s.buf, s.pos, s.buf.len()) + "";
-  match (s.r.read_chunk(read_size())) {
+function src_fill(s: Src): Src {
+  // src_line calls this only after consuming the previous chunk.
+  match (s.r.read_chunk_bytes(read_size())) {
     Ok(chunk) => {
-      if (chunk.len() == 0) {
-        return Src { ...s, buf: rest, pos: 0, eof: true, ffat: __memchr(rest, 12, 0) };
-      }
-      let buf: string = rest + chunk;
-      return Src { ...s, buf: buf, pos: 0, ffat: __memchr(buf, 12, 0) };
+      return Src { ...s, buf: chunk, pos: 0, eof: chunk.len() == 0, nlat: __memchr_bytes(chunk, 10, 0), ffat: __memchr_bytes(chunk, 12, 0) };
     },
     Err(e) => {
-      gnu.error(gnu.quotef(s.name) + ": " + gnu.io_error_text(e));
-      return Src { ...s, buf: rest, pos: 0, eof: true, fatal: true, ffat: 0 - 1 };
+      let message: string = gnu.io_error_text(e);
+      // WASI can report EBADF when reading a directory descriptor. Identify
+      // the descriptor itself before choosing GNU's directory diagnostic.
+      match (s.r.stat()) {
+        Ok(st) => {
+          if (st.is_dir) {
+            message = "Is a directory";
+          }
+        },
+        Err(_) => {}
+      }
+      gnu.error(gnu.quotef(s.name) + ": " + message);
+      return Src { ...s, buf: [], pos: 0, eof: true, fatal: true, nlat: 0 - 1, ffat: 0 - 1 };
     }
   }
 }
 
-// `src_line(s)` — the next line: (src, found, breaks, text). A form
-// feed always ends a line and, when the text before it is empty, counts
-// as a break of its own; at end of input any breaks that are left are
-// discarded, so a file ending in a form feed does not gain a page.
-function src_line(s0: Src): (Src, boolean, i32, string) {
-  let s: Src = Src { ...s0, ffpend: 0 };
-  let breaks: i32 = s0.ffpend;
-  let carry: string = "";
+// Complete an owned record, appending to its existing builder when it spans
+// chunks. Empty form-feed records need no builder.
+function finish_record(carry: usize, chunk: u8[], from: i32, to: i32): u8[] {
+  if (carry == 0 as usize && from == to) {
+    return [];
+  }
+  let h: usize = carry;
+  if (h == 0 as usize) {
+    h = buf_new(to - from);
+  }
+  buf_push_bytes_range(h, chunk, from, to);
+  return take_bytes(h);
+}
+
+// A record is one input event: a line, a form feed, or EOF. A form feed
+// after text both completes that line and holds its input until the next page.
+// Keeping the events separate prevents one merge column from advancing another.
+struct Record { src: Src, line: boolean, ff: boolean, text: u8[] }
+
+function src_line(s0: Src): Record {
+  let s: Src = s0;
+  let carry: usize = 0 as usize;
   while (true) {
     if (s.pos >= s.buf.len()) {
       if (s.eof) {
-        if (carry.len() > 0) {
-          return (s, true, breaks, carry);
+        if (carry != 0 as usize) {
+          return Record { src: s, line: true, ff: false, text: take_bytes(carry) };
         }
-        return (s, false, breaks, "");
+        return Record { src: s, line: false, ff: false, text: [] };
       }
       s = src_fill(s);
       continue;
     }
-    let nl: i32 = __memchr(s.buf, 10, s.pos);
-    // The next form feed is found once per READ rather than once per
-    // line: a buffer holding none would otherwise be scanned to its end
-    // for every line in it, which is quadratic in the block.
-    if (s.ffat >= 0 && s.ffat < s.pos) {
-      s = Src { ...s, ffat: __memchr(s.buf, 12, s.pos) };
+    // Cache both delimiters: repeated form feeds without a newline must not
+    // rescan the remaining chunk for a newline on every event.
+    if (s.nlat >= 0 && s.nlat < s.pos) {
+      s = Src { ...s, nlat: __memchr_bytes(s.buf, 10, s.pos) };
     }
-    let fd: i32 = s.ffat;
-    let end: i32 = nl;
+    if (s.ffat >= 0 && s.ffat < s.pos) {
+      s = Src { ...s, ffat: __memchr_bytes(s.buf, 12, s.pos) };
+    }
+    let end: i32 = s.nlat;
     let is_ff: boolean = false;
-    if (fd >= 0 && (nl < 0 || fd < nl)) {
-      end = fd;
+    if (s.ffat >= 0 && (end < 0 || s.ffat < end)) {
+      end = s.ffat;
       is_ff = true;
     }
     if (end < 0) {
-      carry = carry + slice_unchecked(s.buf, s.pos, s.buf.len());
+      if (carry == 0 as usize) {
+        carry = buf_new(s.buf.len() - s.pos);
+      }
+      buf_push_bytes_range(carry, s.buf, s.pos, s.buf.len());
       s = Src { ...s, pos: s.buf.len() };
       continue;
     }
-    let text: string = carry + slice_unchecked(s.buf, s.pos, end);
+    let text: u8[] = finish_record(carry, s.buf, s.pos, end);
     s = Src { ...s, pos: end + 1 };
-    carry = "";
-    if (!is_ff) {
-      return (s, true, breaks, text);
+    if (is_ff) {
+      // GNU consumes one newline after a form feed, even across reads.
+      if (s.pos >= s.buf.len() && !s.eof) {
+        s = src_fill(s);
+      }
+      if (s.pos < s.buf.len() && s.buf[s.pos] as i32 == 10) {
+        s = Src { ...s, pos: s.pos + 1 };
+      }
     }
-    if (text.len() > 0) {
-      return (Src { ...s, ffpend: 1 }, true, breaks, text);
-    }
-    breaks = breaks + 1;
+    return Record { src: s, line: !is_ff || text.len() > 0, ff: is_ff, text: text };
   }
-  return (s, false, 0, "");
-}
-
-// `trailing_ff(breaks, c)` — what a form feed at the very end of the
-// input leaves behind. There is no page for it to break, so pagination
-// drops it; with -t the byte is ordinary text and ends up on a line of
-// its own, and -T discards it as it discards every other.
-function trailing_ff(breaks: i32, c: Cfg): string {
-  if (breaks <= 0 || !c.omit_header || c.omit_pagination) {
-    return "";
-  }
-  return byte_string(12).repeat(breaks);
+  return Record { src: s, line: false, ff: false, text: [] };
 }
 
 // ---- numbers ----------------------------------------------------------------
@@ -597,7 +637,7 @@ function parse_range(arg: string, what: string): (u64, u64, i32) {
 // The header carries `timefmt.format(-D or "%Y-%m-%d %H:%M", localtime(t))`,
 // where `t` is the FILE's modification time — the wall clock reaches it
 // only for standard input and for -m, which have no one file to ask.
-// The zone is `coreutils/lib/tz.fern`, which is tzset(3): the TZif file
+// The zone is `std/tz`, which is tzset(3): the TZif file
 // $TZ names, the POSIX rule in its footer past the transition table, or
 // a POSIX rule string where $TZ is not a file at all.
 // ---- the header line --------------------------------------------------------
@@ -668,7 +708,7 @@ function put_sep(l0: Line, c: Cfg): Line {
     if (b == 32 || b == 9 && c.truncate && c.sep.len() == 1) {
       l = l.space(c);
     } else {
-      l = l.put(byte_string(b), 1, c);
+      l = l.put_byte(b, 1, c);
     }
     k = k + 1;
   }
@@ -711,7 +751,8 @@ function put_tab(l0: Line, c: Cfg, cs: i32, span: i32, b: i32): (Line, i32) {
     return (l.to(target, c), target);
   }
   let f: Line = l.flush(c);
-  return (Line { ...f, buf: f.buf + byte_string(b), pos: target }, target);
+  buf_push_byte(f.buf, b);
+  return (Line { ...f, pos: target }, target);
 }
 
 // `put_number(l, c, cs, n)` — the line-number field: the counter right
@@ -725,20 +766,16 @@ function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
   }
   let l: Line = l0.to(cs + c.num_digits - s.len(), c);
   l = l.put(s, s.len(), c);
-  if (c.num_sep == "\t") {
+  if (c.num_sep == 9) {
     let target: i32 = cs + c.num_width;
     if (c.columns > 1 && !c.tab_literal) {
       return l.to(target, c);
     }
     let f: Line = l.flush(c);
-    return Line { ...f, buf: f.buf + "\t", pos: target };
+    buf_push_byte(f.buf, 9);
+    return Line { ...f, pos: target };
   }
-  let k: i32 = 0;
-  while (k < c.num_sep.len()) {
-    let r: (string, i32) = clump(c.num_sep[k] as i32, c);
-    l = l.put(r.0, r.1, c);
-    k = k + 1;
-  }
+  l = l.put_clump(c.num_sep, c);
   return l;
 }
 
@@ -747,7 +784,7 @@ function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
 // one, and the text up to the column's own width. The pending
 // whitespace is FLUSHED once the column is positioned, so a column that
 // exists and renders nothing still leaves its gap behind.
-function put_column(l0: Line, c: Cfg, i: i32, txt: string, n: i64, numbered: boolean): Line {
+function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boolean): Line {
   let cs: i32 = col_start(c, i);
   let l: Line = l0;
   if (i == 0) {
@@ -803,7 +840,7 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: string, n: i64, numbered: boo
         }
         j = k + width;
       }
-      l = l.put(slice_unchecked(txt, k, j) + "", width, c);
+      l = l.put_range(txt, k, j, width, c);
       k = j;
       continue;
     }
@@ -823,14 +860,22 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: string, n: i64, numbered: boo
       k = k + 1;
       continue;
     }
-    let cl: (string, i32) = clump(b, c);
-    if (c.truncate && l.pos + cl.1 > limit) {
+    let width: i32 = clump_width(b, c);
+    let start: i32 = text_start;
+    if (numbered && c.truncate && !c.merge) {
+      start = origin;
+    }
+    if (width < 0 && (l.pos <= start || k == 0)) {
+      k = k + 1;
+      continue;
+    }
+    if (c.truncate && l.pos + width > limit) {
       return l;
     }
     if (b == 32) {
       l = l.space(c);
     } else {
-      l = l.put(cl.0, cl.1, c);
+      l = l.put_clump(b, c);
     }
     k = k + 1;
   }
@@ -841,7 +886,7 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: string, n: i64, numbered: boo
 // whitespace is never flushed at the end, so a row whose last column is
 // ABSENT carries no trailing pad; a column that exists and renders
 // nothing still does, because its separator is a byte.
-function row_text(c: Cfg, texts: string[], nums: i64[], numbered: boolean): string {
+function row_text(c: Cfg, texts: u8[][], nums: i64[], numbered: boolean): u8[] {
   let l: Line = line_new();
   if (c.num_prefix > 0 && nums.len() > 0) {
     l = l.to(c.offset, c);
@@ -857,7 +902,8 @@ function row_text(c: Cfg, texts: string[], nums: i64[], numbered: boolean): stri
     l = put_column(l, c, i, texts[i], num, want);
     i = i + 1;
   }
-  return l.buf + "\n";
+  buf_push_byte(l.buf, 10);
+  return take_bytes(l.buf);
 }
 
 // ---- the page ---------------------------------------------------------------
@@ -896,12 +942,12 @@ function column_lengths(n: i32, c: Cfg): i32[] {
   return out;
 }
 
-struct Page { text: string, lines: i32 }
+struct Page { text: u8[], lines: i32 }
 
 // `body_text(c, lines, first_no)` — the rows of one page, and how many
 // output lines they took.
-function body_text(c: Cfg, lines: string[], first_no: i64): Page {
-  let out: string = "";
+function body_text(c: Cfg, lines: u8[][], first_no: i64): Page {
+  let out: usize = buf_new(0);
   let count: i32 = 0;
   let n: i32 = lines.len();
   if (c.columns == 1 && !c.merge) {
@@ -911,20 +957,22 @@ function body_text(c: Cfg, lines: string[], first_no: i64): Page {
     let verbatim: boolean = !c.numbering && c.offset == 0 && !c.ctrl && !c.nonprint && !c.truncate && !c.untabify && !c.tabify;
     let i: i32 = 0;
     while (i < n) {
-      if (verbatim) {
-        out = out + lines[i] + "\n";
+      if (verbatim && __memchr_bytes(lines[i], 8, 0) < 0) {
+        append_bytes(out, lines[i]);
+        buf_push_byte(out, 10);
       } else {
         let l: Line = put_column(line_new(), c, 0, lines[i], wrap32(first_no + i as i64), c.numbering);
-        out = out + l.buf + "\n";
+        append_bytes(out, take_bytes(l.buf));
+        buf_push_byte(out, 10);
       }
       count = count + 1;
       if (c.double_space) {
-        out = out + "\n";
+        buf_push_byte(out, 10);
         count = count + 1;
       }
       i = i + 1;
     }
-    return Page { text: out, lines: count };
+    return Page { text: take_bytes(out), lines: count };
   }
   let rows: i32 = (n + c.columns - 1) / c.columns;
   let lens: i32[] = column_lengths(n, c);
@@ -938,7 +986,7 @@ function body_text(c: Cfg, lines: string[], first_no: i64): Page {
   }
   let r: i32 = 0;
   while (r < rows) {
-    let texts: string[] = [];
+    let texts: u8[][] = [];
     let nums: i64[] = [];
     let col: i32 = 0;
     while (col < c.columns) {
@@ -959,21 +1007,21 @@ function body_text(c: Cfg, lines: string[], first_no: i64): Page {
         col = col + 1;
       }
     }
-    out = out + row_text(c, texts, nums, c.numbering);
+    append_bytes(out, row_text(c, texts, nums, c.numbering));
     count = count + 1;
     if (c.double_space && (r + 1 < rows || !c.omit_header || c.across)) {
-      out = out + "\n";
+      buf_push_byte(out, 10);
       count = count + 1;
     }
     r = r + 1;
   }
-  return Page { text: out, lines: count };
+  return Page { text: take_bytes(out), lines: count };
 }
 
 // `merge_body(c, rows, first_no)` — the rows of a parallel page, which
 // are already laid out one column per FILE.
-function merge_body(c: Cfg, rows: string[], width: i32, first_no: i64): Page {
-  let out: string = "";
+function merge_body(c: Cfg, rows: u8[][], width: i32, row_widths: i32[], first_no: i64): Page {
+  let out: usize = buf_new(0);
   let count: i32 = 0;
   let nrows: i32 = 0;
   if (width > 0) {
@@ -981,45 +1029,58 @@ function merge_body(c: Cfg, rows: string[], width: i32, first_no: i64): Page {
   }
   let r: i32 = 0;
   while (r < nrows) {
-    let texts: string[] = [];
+    let texts: u8[][] = [];
     let nums: i64[] = [];
     let col: i32 = 0;
-    while (col < width) {
+    while (col < row_widths[r]) {
       texts = texts.append(rows[r * width + col]);
       nums = nums.append(wrap32(first_no + r as i64));
       col = col + 1;
     }
-    out = out + row_text(c, texts, nums, c.numbering);
+    append_bytes(out, row_text(c, texts, nums, c.numbering));
     count = count + 1;
     if (c.double_space) {
-      out = out + "\n";
+      buf_push_byte(out, 10);
       count = count + 1;
     }
     r = r + 1;
   }
-  return Page { text: out, lines: count };
+  return Page { text: take_bytes(out), lines: count };
 }
 
 // `page_text(c, body, page, name, t, nsec)` — the header block, the
 // body and whatever closes the page: five blank lines after padding it
 // out, a single form feed, or nothing at all under -t.
-function page_text(c: Cfg, body: Page, page: u64, name: string, t: i64, nsec: i64): string {
+function page_text(c: Cfg, body: Page, page: u64, name: string, t: i64, nsec: i64): u8[] {
   if (c.omit_header) {
     return body.text;
   }
-  let lead: Line = line_new().to(c.offset, c).flush(c);
-  let head: Line = line_new().to(c.offset, c);
+  let lead: Line = line_new();
+  lead = lead.to(c.offset, c);
+  lead = lead.flush(c);
+  let head: Line = line_new();
+  head = head.to(c.offset, c);
   head = head.put(header_text(c, name, t, nsec, page), 0, c);
-  let out: string = lead.buf + "\n\n" + head.buf + "\n\n\n" + body.text;
+  let out: usize = buf_new(body.text.len());
+  append_bytes(out, take_bytes(lead.buf));
+  buf_push(out, "\n\n");
+  append_bytes(out, take_bytes(head.buf));
+  buf_push(out, "\n\n\n");
+  append_bytes(out, body.text);
   if (c.form_feed) {
-    return out + byte_string(12);
+    buf_push_byte(out, 12);
+    return take_bytes(out);
   }
   let body_lines: i32 = c.page_length - 10;
+  if (c.double_space) {
+    body_lines = rows_per_page(c) * 2;
+  }
   let pad: i32 = body_lines - body.lines;
   if (pad > 0) {
-    out = out + "\n".repeat(pad);
+    buf_push(out, "\n".repeat(pad));
   }
-  return out + "\n\n\n\n\n";
+  buf_push(out, "\n\n\n\n\n");
+  return take_bytes(out);
 }
 
 // ---- running one job --------------------------------------------------------
@@ -1034,7 +1095,7 @@ function now_seconds(): i64 {
 // header carries the wall clock and no name.
 function open_src(c: Cfg, name: string): (Src, boolean) {
   if (name == "-") {
-    return (Src { r: stdin(), name: "-", is_stdin: true, open: true, buf: "", pos: 0, eof: false, fatal: false, ffpend: 0, ffat: 0 - 1, mtime: now_seconds(), mnsec: 0 as i64 }, true);
+    return (Src { r: stdin(), name: "-", is_stdin: true, open: true, buf: [], pos: 0, eof: false, fatal: false, nlat: 0 - 1, ffat: 0 - 1, mtime: now_seconds(), mnsec: 0 as i64 }, true);
   }
   let mt: i64 = 0 as i64;
   let ns: i64 = 0 as i64;
@@ -1047,7 +1108,7 @@ function open_src(c: Cfg, name: string): (Src, boolean) {
   }
   match (open_reader(name)) {
     Ok(r) => {
-      return (Src { r: r, name: name, is_stdin: false, open: true, buf: "", pos: 0, eof: false, fatal: false, ffpend: 0, ffat: 0 - 1, mtime: mt, mnsec: ns }, true);
+      return (Src { r: r, name: name, is_stdin: false, open: true, buf: [], pos: 0, eof: false, fatal: false, nlat: 0 - 1, ffat: 0 - 1, mtime: mt, mnsec: ns }, true);
     },
     Err(e) => {
       if (!c.nowarn) {
@@ -1091,10 +1152,9 @@ function page_warning(c: Cfg, pages: u64, o0: io_buffered.BufWriter): io_buffere
 //
 // A form feed ends the page it is read on, EXCEPT when that page had
 // already filled: the break is then the one the page boundary already
-// made, so a `-l` small enough to split the text where the input does
-// gains no blank page. Without pagination there are no breaks to make —
-// -t copies the byte through at the head of the next line and -T drops
-// it.
+// made, so a matching input break adds no blank page. Without headers the
+// break still completes the logical page: -t emits the form feed and -T
+// omits it.
 function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolean): Job {
   let opened: (Src, boolean) = open_src(c, name);
   if (!opened.1) {
@@ -1109,69 +1169,41 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
   let pages: u64 = 0 as u64;
   let line_no: i64 = 1 as i64;
   let rebased: boolean = false;
-  let carry: string = "";
-  let carry_has: boolean = false;
-  let carry_breaks: i32 = 0;
   let stale: boolean = false;
+  let boundary_end: boolean = false;
   let eof: boolean = false;
   let fatal: boolean = false;
-  let tail_ff: string = "";
   let hdr_name: string = name;
   if (s.is_stdin) {
     hdr_name = "";
   }
-
   while (page <= c.last_page) {
-    let lines: string[] = [];
+    let lines: u8[][] = [];
     let broke: boolean = false;
     let first: boolean = true;
-    while (lines.len() < cap && !broke) {
-      if (!carry_has) {
-        if (eof) {
-          break;
-        }
-        let r: (Src, boolean, i32, string) = src_line(s);
-        s = r.0;
-        if (s.fatal) {
-          fatal = true;
-          eof = true;
-          break;
-        }
-        if (!r.1) {
-          eof = true;
-          tail_ff = trailing_ff(r.2, c);
-          break;
-        } else {
-          carry = r.3;
-          carry_breaks = r.2;
-          carry_has = true;
-          if (!paginate) {
-            if (!c.omit_pagination && carry_breaks > 0) {
-              carry = byte_string(12).repeat(carry_breaks) + carry;
-            }
-            carry_breaks = 0;
-          }
-        }
+    while (lines.len() < cap && !broke && !eof) {
+      let record: Record = src_line(s);
+      s = record.src;
+      if (s.fatal) {
+        fatal = true;
+        break;
       }
-      if (first && stale && carry_breaks > 0) {
-        carry_breaks = carry_breaks - 1;
+      if (first && stale && record.ff && !record.line) {
+        first = false;
+        continue;
       }
       first = false;
-      if (carry_breaks > 0) {
-        carry_breaks = carry_breaks - 1;
-        broke = true;
-      } else {
-        lines = lines.append(carry);
-        carry_has = false;
+      if (record.line) {
+        lines = lines.append(record.text);
       }
+      broke = record.ff;
+      eof = !record.line && !record.ff;
     }
-    if (fatal) {
-      break;
-    }
-    if (lines.len() == 0 && !broke && eof) {
+    if (fatal || lines.len() == 0 && !broke && eof) {
       break;
     }
     stale = lines.len() == cap && !broke;
+    boundary_end = broke || lines.len() == cap;
     pages = pages + 1 as u64;
     let printing: boolean = page >= c.first_page;
     if (printing && !rebased) {
@@ -1182,21 +1214,26 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
     }
     if (printing) {
       let body: Page = body_text(c, lines, line_no);
-      o = gnu.put(o, page_text(c, body, page, hdr_name, s.mtime, s.mnsec));
+      o = gnu.check(o.write_bytes(page_text(c, body, page, hdr_name, s.mtime, s.mnsec)));
+      if (!paginate && broke && !c.omit_pagination) {
+        o = gnu.put(o, "\x0c");
+      }
     }
     line_no = wrap32(line_no + lines.len() as i64);
     page = page + 1 as u64;
-    if (eof && !carry_has) {
+    if (eof) {
       break;
     }
-  }
-  if (tail_ff.len() > 0) {
-    o = gnu.put(o, tail_ff);
   }
   if (!s.is_stdin && s.open) {
     s.r.close();
   }
   if (!fatal) {
+    // GNU's page skipper discovers EOF on the page after a full page or
+    // form feed, even though that final empty page has no printed header.
+    if (eof && boundary_end && c.first_page > pages) {
+      pages = pages + 1 as u64;
+    }
     o = page_warning(c, pages, o);
   }
   return Job { o: o, ok: ok && !fatal, fatal: fatal };
@@ -1235,19 +1272,14 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
   if (width == 0) {
     return Job { o: o, ok: ok, fatal: false };
   }
-  let carry_t: string[] = [];
-  let carry_h: boolean[] = [];
-  let carry_b: i32[] = [];
   let eofs: boolean[] = [];
+  let full: boolean[] = [];
   i = 0;
   while (i < width) {
-    carry_t = carry_t.append("");
-    carry_h = carry_h.append(false);
-    carry_b = carry_b.append(0);
     eofs = eofs.append(false);
+    full = full.append(false);
     i = i + 1;
   }
-  let paginate: boolean = !c.omit_header;
   let rows: i32 = rows_per_page(c);
   let page: u64 = 1 as u64;
   let pages: u64 = 0 as u64;
@@ -1256,85 +1288,92 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
   let fatal: boolean = false;
   let now: i64 = now_seconds();
   let alive: boolean = true;
-
   while (page <= c.last_page && alive) {
-    let cells: string[] = [];
+    let held: boolean[] = [];
+    let active: i32 = 0;
+    i = 0;
+    while (i < width) {
+      held = held.append(false);
+      if (!eofs[i]) {
+        active = active + 1;
+      }
+      i = i + 1;
+    }
+    let cells: u8[][] = [];
+    let row_widths: i32[] = [];
     let filled: i32 = 0;
-    let broke: boolean = false;
+    let page_ff: boolean = false;
     let r: i32 = 0;
-    while (r < rows && !broke) {
-      let row: string[] = [];
+    while (r < rows) {
+      let row: u8[][] = [];
       let any: boolean = false;
       let col: i32 = 0;
       while (col < width) {
-        if (!carry_h[col] && !eofs[col]) {
+        let cell: u8[] = [];
+        let present: boolean = false;
+        if (!held[col] && !eofs[col]) {
           let k: i32 = slot[col];
-          let got: (Src, boolean, i32, string) = src_line(srcs[k]);
-          srcs = srcs.with(k, got.0);
-          if (got.0.fatal) {
+          let got: Record = src_line(srcs[k]);
+          if (full[col] && got.ff && !got.line && !got.src.fatal) {
+            got = src_line(got.src);
+          }
+          full = full.with(col, false);
+          srcs = srcs.with(k, got.src);
+          if (got.src.fatal) {
             fatal = true;
-            eofs = eofs.with(col, true);
-          } else if (got.1) {
-            let text: string = got.3;
-            let br: i32 = got.2;
-            if (!paginate) {
-              if (!c.omit_pagination && br > 0) {
-                text = byte_string(12).repeat(br) + text;
-              }
-              br = 0;
-            }
-            carry_t = carry_t.with(col, text);
-            carry_b = carry_b.with(col, br);
-            carry_h = carry_h.with(col, true);
           } else {
-            eofs = eofs.with(col, true);
+            if (got.line) {
+              cell = got.text;
+              any = true;
+              present = true;
+            }
+            if (got.ff) {
+              held = held.with(col, true);
+              page_ff = true;
+              active = active - 1;
+            } else if (!got.line || got.src.eof && got.src.pos >= got.src.buf.len()) {
+              eofs = eofs.with(col, true);
+              active = active - 1;
+            }
           }
         }
-        let cell: string = "";
-        if (carry_h[col]) {
-          if (carry_b[col] > 0) {
-            carry_b = carry_b.with(col, carry_b[col] - 1);
-            broke = true;
-          } else {
-            cell = carry_t[col];
-            carry_h = carry_h.with(col, false);
-            any = true;
-          }
+        if (any && active == 0 && !present) {
+          break;
         }
         row = row.append(cell);
         col = col + 1;
-      }
-      if (fatal) {
-        broke = true;
-      } else if (broke) {
-        let j: i32 = 0;
-        while (j < width) {
-          if (row[j].len() > 0 || !eofs[j]) {
-            if (!carry_h[j] && row[j].len() > 0) {
-              carry_t = carry_t.with(j, row[j]);
-              carry_h = carry_h.with(j, true);
-            }
-          }
-          j = j + 1;
+        if (any && active == 0) {
+          break;
         }
-      } else if (!any) {
-        alive = false;
-        r = rows;
-      } else {
-        let col2: i32 = 0;
-        while (col2 < width) {
+      }
+      if (fatal || !any) {
+        if (!page_ff) {
+          alive = false;
+        }
+        break;
+      }
+      let col2: i32 = 0;
+      row_widths = row_widths.append(row.len());
+      while (col2 < width) {
+        if (col2 < row.len()) {
           cells = cells.append(row[col2]);
-          col2 = col2 + 1;
+        } else {
+          cells = cells.append([]);
         }
-        filled = filled + 1;
-        r = r + 1;
+        col2 = col2 + 1;
       }
+      filled = filled + 1;
+      r = r + 1;
     }
-    if (fatal) {
+    if (fatal || filled == 0 && !page_ff) {
       break;
     }
-    if (filled == 0 && !broke) {
-      break;
+    if (filled == rows) {
+      i = 0;
+      while (i < width) {
+        full = full.with(i, !held[i] && !eofs[i]);
+        i = i + 1;
+      }
     }
     pages = pages + 1 as u64;
     let printing: boolean = page >= c.first_page;
@@ -1345,8 +1384,11 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
       }
     }
     if (printing) {
-      let body: Page = merge_body(c, cells, width, line_no);
-      o = gnu.put(o, page_text(c, body, page, "", now, 0 as i64));
+      let body: Page = merge_body(c, cells, width, row_widths, line_no);
+      o = gnu.check(o.write_bytes(page_text(c, body, page, "", now, 0 as i64)));
+      if (c.omit_header && page_ff && !c.omit_pagination) {
+        o = gnu.put(o, "\x0c");
+      }
     }
     line_no = wrap32(line_no + filled as i64);
     page = page + 1 as u64;
@@ -1444,7 +1486,7 @@ pub function main(): i32 {
   let join: boolean = false;
   let page_length: i32 = 66;
   let numbering: boolean = false;
-  let num_sep: string = "\t";
+  let num_sep: i32 = 9;
   let num_digits: i32 = 5;
   let first_line: i32 = 1;
   let has_first_line: boolean = false;
@@ -1535,7 +1577,7 @@ pub function main(): i32 {
         } else if (m.id == opt_number()) {
           numbering = true;
           let nn: (i32, i32) = char_width(m.value, "n", 9, 5);
-          num_sep = byte_string(nn.0);
+          num_sep = nn.0;
           num_digits = nn.1;
         } else if (m.id == opt_firstline()) {
           first_line = getnum_first_line(m.value);
@@ -1641,7 +1683,7 @@ pub function main(): i32 {
     truncate = false;
   }
   let num_width: i32 = num_digits + 1;
-  if (num_sep == "\t") {
+  if (num_sep == 9) {
     num_width = num_digits + tab_stop() - num_digits % tab_stop();
   }
   // In parallel mode the line number is a prefix of the whole ROW, so
