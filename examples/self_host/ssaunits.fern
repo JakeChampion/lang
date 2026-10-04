@@ -1145,9 +1145,9 @@ function text_lens(f: ssasem.Func): i32[] {
 // Per record, variant or array construction whose every field or element is a
 // narrow scalar constant: "|" and its words, which is a static box's whole
 // content; "" for any other value. An empty array literal is one whatever its
-// element type. A record or variant field may also hold another such box, as
-// the word `@<value>`. A static box's rc is immortal, so its releases and
-// uniqueness tests leave it alone.
+// element type. A field or element may also hold another such box, as the
+// word `@<value>`, or a string literal's static box, as `$<value>`. A static
+// box's rc is immortal, so its releases and uniqueness tests leave it alone.
 //
 // A field's box can be defined in a block visited after the field's, so a pass
 // that left a field waiting on one is repeated once it has placed anything.
@@ -1206,7 +1206,10 @@ function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: strin
   let j: i32 = 0;
   while (j < fields.len()) {
     let w: string = constant_word(defs, ins.args[j], fields[j].ty);
-    if (w == "" && ins.kind_tag != ssasem.array_new()) {
+    if (w == "") {
+      w = literal_word(defs, ins.args[j]);
+    }
+    if (w == "") {
       let at: i32 = placed_box(f, defs, raw, ins.args[j]);
       if (at < 0 || out[at] == "") {
         return BoxWords { text: "", waiting: at >= 0 };
@@ -1223,6 +1226,24 @@ function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: strin
     j = j + 1;
   }
   return BoxWords { text: words, waiting: false };
+}
+
+// A string literal's static box, as `$<value>`, read through copies; "" for
+// anything else.
+function literal_word(defs: ssa.SInst[], v: i32): string {
+  if (v < 0) {
+    return "";
+  }
+  let d: ssa.SInst = defs[v];
+  let hops: i32 = 0;
+  while (d.kind_tag == 7 && d.args.len() == 1 && d.args[0] >= 0 && hops < 16) {
+    d = defs[d.args[0]];
+    hops = hops + 1;
+  }
+  if (d.kind_tag != 5 || d.result < 0) {
+    return "";
+  }
+  return "$" + util.i32_to_string(d.result);
 }
 
 // The construction a field's value is, read through copies, when it is one

@@ -209,8 +209,10 @@ on #4451, as slice 2 was.
    Parse 40 to 37, every append reusing the fresh box the map starts from;
    once slice 1 makes that box static the first append copies it, and the
    two together reach 35.
-3. **An array of string literals is static.** `phrases` joins the constant
-   pool. Serialize 4 to 3.
+3. **An array of string literals is static.** A string literal is a static
+   box, so a field or element holding one is a constant word. `phrases` and
+   any record or array of literals join the constant pool. Done: serialize
+   4 to 3.
 4. **The request target decodes without scratch.** A target with no `%` and
    no dot segment is the range itself, one string. One that needs decoding
    checks its UTF-8 over the bytes, not over a copy. The two strings handed to

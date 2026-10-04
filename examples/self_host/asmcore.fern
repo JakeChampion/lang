@@ -8498,8 +8498,8 @@ pub struct ConstAggPack { state: EmitState, text: string }
 // value's (#9839) is the one-element ARRAY box `arr_make(1, 32)` builds, whose
 // word 0 is the LENGTH and whose sole element is the body's address. An array
 // of scalars packs as `0|` and its elements, and its length is written into
-// word 0 where the block is emitted. A field holding another static box is
-// that box's label, interned here. Shared by both register backends and by
+// word 0 where the block is emitted. A field holding another static box or a
+// string literal is that box's label (const_agg_word). Shared by both register backends and by
 // each one's flat and register arms, so no copy of it can drift from another.
 pub function const_agg_pack(own s: EmitState, packed: string): ConstAggPack {
   let body: string = ir.const_struct_fn_body(packed);
@@ -8515,18 +8515,28 @@ pub function const_agg_pack(own s: EmitState, packed: string): ConstAggPack {
     if (i > 0) {
       text = text + ",";
     }
-    let inner: string = ir.const_struct_ref(vals[i]);
-    if (inner.len() > 0) {
-      let pk: ConstAggPack = const_agg_pack(s, inner);
-      let kout: ConstAggOut = add_const_agg(pk.state, pk.text);
-      s = kout.state;
-      text = text + const_agg_label(s, kout.idx);
-    } else {
-      text = text + vals[i];
-    }
+    let w: ConstAggPack = const_agg_word(s, vals[i]);
+    s = w.state;
+    text = text + w.text;
     i = i + 1;
   }
   return ConstAggPack { state: s, text: text };
+}
+
+// One field word as the block writes it: a number as it is, another static
+// box as its label, interned here, and a string literal as its static box.
+function const_agg_word(own s: EmitState, word: string): ConstAggPack {
+  let inner: string = ir.const_struct_ref(word);
+  if (inner.len() == 0) {
+    return ConstAggPack { state: s, text: word };
+  }
+  if (ir.const_struct_is_str(inner)) {
+    let lit: StringLitOut = add_string_lit(s, ir.const_str_text(inner));
+    return ConstAggPack { state: lit.state, text: str_box_label(lit.state, lit.idx) };
+  }
+  let pk: ConstAggPack = const_agg_pack(s, inner);
+  let kout: ConstAggOut = add_const_agg(pk.state, pk.text);
+  return ConstAggPack { state: kout.state, text: const_agg_label(kout.state, kout.idx) };
 }
 
 // const_agg_shape: the shape label of a packed constant aggregate, and the
@@ -10429,10 +10439,12 @@ pub function emit_str_box_data_from(s: EmitState, first: i32): EmitState {
 // never refcounted, and never reused in place. The cap word is still written so
 // nothing that reads a block's size off data-16 sees garbage, even though the
 // sentinel means no free path can reach it.
-// A packed block's kind: 1 a block that holds no address — an array of
-// scalars, a packed byte array (marked `8|`) or a payloadless option box
+// A packed block's kind: 1 a block whose first word is no address — an
+// array, a packed byte array (marked `8|`) or a payloadless option box
 // (marked `o|`); 2 a record, whose first word is its shape pointer; 3 a
 // function value, a one-element array whose element is the body's address.
+// An array's element and a record's field may still hold an address, which
+// emit_const_agg_refs tabulates.
 pub function const_agg_kind(packed: string): i32 {
   if (packed.len() >= 2 && (packed[0] == b'8' || packed[0] == b'o') && packed[1] == b'|') {
     return 1;
@@ -10531,14 +10543,14 @@ function const_agg_field_label(s: EmitState, idx: i32, vi: i32): string {
   return const_agg_label(s, idx) + "_" + util.i32_to_string(vi);
 }
 
-// The address of every record field that holds another static box's label, one
+// The address of every field or element that holds a static box's label, one
 // word each, for a relocation walk to rebase: word 0 of a record is walked
-// with its block, but a field's word is not.
+// with its block, but no other word is.
 pub function emit_const_agg_refs(s: EmitState): EmitState {
   let i: i32 = 0;
   while (i < s.const_aggs.len()) {
     let e: string = s.const_aggs[i];
-    if (const_agg_kind(e) == 2) {
+    if (const_agg_kind(e) == 2 || ir.const_struct_type(e) == "0") {
       let vals: string[] = ir.const_struct_values(e);
       let vi: i32 = 0;
       while (vi < vals.len()) {
