@@ -467,14 +467,14 @@ func dircolorsCases(t *testing.T) []invocation {
 	cases = append(cases, against(pUnclosedRange, "[a-c", "[b", "b")...)
 	cases = append(cases, against(pDbRange, "con80x25", "con8x2", "conx")...)
 	cases = append(cases, against(pDashInSet, "d", "-", "e", "a")...)
-	cases = append(cases, against(pCollate, "b", "a", "c", "d")...)
-	cases = append(cases, against(pEquiv, "b", "a", "c")...)
+	cases = append(cases, against(pCollate, "b", "a", "c", "d", "a-c]", ".-c]", "[-c]")...)
+	cases = append(cases, against(pEquiv, "b", "a", "c", "ab]", "[b]", "=b]")...)
 	cases = append(cases, against(pPunctRange, "&", "%", "-", ".")...)
 	cases = append(cases, against(pLeadingDot, ".hidden", "x")...)
 	cases = append(cases, against(pEscInSet, "]", `\`, "a", "b")...)
 	cases = append(cases, against(pDashFirst, "-", "a", "b")...)
 	cases = append(cases, against(pDashLast, "-", "a")...)
-	cases = append(cases, against(pMultiCollate, "ab", "a")...)
+	cases = append(cases, against(pMultiCollate, "ab", "a", "a]", "b]", ".]")...)
 	cases = append(cases, against(pBracketInSet, "[", "]")...)
 	cases = append(cases, against(pColorGlob, "xterm-256color", "color", "xterm")...)
 	cases = append(cases, against(pUpperRange, "a", "A")...)
@@ -495,7 +495,55 @@ func dircolorsCases(t *testing.T) []invocation {
 	cases = append(cases, against(pClassRange, "-", "a", "z", "0")...)
 	cases = append(cases, against(pDashRange, ".", "-", "0", "a")...)
 
+	return append(cases, dircolorsByteCases(t)...)
+}
+
+// Config files are byte streams. GNU preserves raw extension and value bytes
+// in both shell output and diagnostics, even in malformed UTF-8 sequences.
+func dircolorsByteCases(t *testing.T) []invocation {
+	t.Helper()
+	dir := t.TempDir()
+	configs := []struct{ name, body string }{
+		{"extension", ".\xff 01;31\n"},
+		{"value", "DIR \xff\x80\xc0\xaf\xed\xa0\x80\xf4\x90\x80\x80\n"},
+		{"escapes", ".\xff'\x80 a\xff:b=\x80^:\\:\n"},
+		{"keyword", "TERM *\n\xff\x80 1\n"},
+		{"ignored keyword", "TERM nomatch\n\xff\x80 1\nTERM linux\nDIR 2\n"},
+		{"missing value", "TERM *\n\xff\x80\n"},
+		{"nul", "DIR \xff\x00ignored\nLINK \x80\n"},
+		{"pattern", "TERM \xff*\nDIR 1\nTERM linux\nLINK \x80\n"},
+		{"class", "TERM [![:\xff:]]\nDIR 1\nTERM linux\nLINK 2\n"},
+		{"unicode", ".€🙂 \xff€\x80\n"},
+		{"no newline", ".\xff \x80"},
+	}
+	for _, n := range []int{4094, 4095, 4096, 8191, 8192, 65534, 65535, 65536} {
+		configs = append(configs, struct{ name, body string }{
+			fmt.Sprintf("boundary %d", n), "DIR " + strings.Repeat("x", n) + "\xe2\x82\xac\xff\nLINK \x80\n",
+		})
+	}
+	var cases []invocation
+	for i, config := range configs {
+		file := dircolorsFile(t, dir, fmt.Sprintf("raw-%d", i), config.body)
+		for _, mode := range []string{"-b", "-c", "--print-ls-colors"} {
+			for _, source := range []string{"file", "stdin"} {
+				inv := invocation{
+					name: "raw " + config.name + " " + mode + " " + source,
+					args: []string{mode, file},
+					env:  dircolorsEnv("/bin/bash", "linux", ""),
+				}
+				if source == "stdin" {
+					inv.args[1] = "-"
+					inv.stdin = config.body
+				}
+				cases = append(cases, inv)
+			}
+		}
+	}
 	return cases
+}
+
+func TestDircolorsBytes(t *testing.T) {
+	requireParity(t, "dircolors", dircolorsByteCases(t))
 }
 
 func TestDircolorsParity(t *testing.T) {

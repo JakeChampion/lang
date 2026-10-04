@@ -18598,15 +18598,18 @@ func (g *generator) emitReadDirLike(sym string, lb string, skipDots bool) {
 	g.emit("test rax, rax")
 	g.emit("js " + L("err"))
 	g.emit("mov r12, rax") // fd
-	// 1 MiB dirent buffer (mirrors the self-host helper's cap).
+	// 1 MiB initial dirent buffer, doubled whenever less than a record's
+	// worth is left. r15 holds the capacity until the drain ends.
 	g.emit("mov edi, 1048576")
 	g.emit("call __fern_alloc")
 	g.emit("mov r13, rax")
 	g.emit("xor r14, r14")
+	g.emit("mov r15d, 1048576")
 	g.label(L("g"))
-	g.emit("mov edx, 1048576")
+	g.emit("mov rdx, r15")
 	g.emit("sub rdx, r14")
-	g.emit("jz " + L("gd"))
+	g.emit("cmp rdx, 2048")
+	g.emit("jb " + L("grow"))
 	g.emit("mov edi, r12d")
 	g.emit("lea rsi, [r13 + r14]")
 	g.emitSyscall(217)
@@ -18614,7 +18617,27 @@ func (g *generator) emitReadDirLike(sym string, lb string, skipDots bool) {
 	g.emit("jle " + L("gd"))
 	g.emit("add r14, rax")
 	g.emit("jmp " + L("g"))
+	g.label(L("grow"))
+	g.emit("lea rdi, [r15 + r15]")
+	g.emit("call __fern_alloc")
+	g.emit("mov [rbp - 56], rax") // new buffer, across the copy and the free
+	g.emit("xor ecx, ecx")
+	g.label(L("gc"))
+	g.emit("cmp rcx, r14")
+	g.emit("jae " + L("gcd"))
+	g.emit("mov r9b, [r13 + rcx]")
+	g.emit("mov [rax + rcx], r9b")
+	g.emit("add rcx, 1")
+	g.emit("jmp " + L("gc"))
+	g.label(L("gcd"))
+	g.emit("mov rdi, r13")
+	g.emit("mov rsi, r15")
+	g.emit("call __fern_free")
+	g.emit("mov r13, [rbp - 56]")
+	g.emit("add r15, r15")
+	g.emit("jmp " + L("g"))
 	g.label(L("gd"))
+	g.emit("mov [rbp - 56], r15") // capacity, for the free after pass 2
 	g.emit("mov edi, r12d")
 	g.emitSyscall(3)
 	// Pass 1: count the entries the listing will hold.
@@ -18708,7 +18731,7 @@ func (g *generator) emitReadDirLike(sym string, lb string, skipDots bool) {
 	g.emit("jmp " + L("p2"))
 	g.label(L("p2d"))
 	g.emit("mov rdi, r13") // the dirent buffer
-	g.emit("mov esi, 1048576")
+	g.emit("mov rsi, [rbp - 56]")
 	g.emit("call __fern_free")
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_rc1")

@@ -108,7 +108,7 @@ pub function is_task_runtime_fn(name: string): boolean {
 // is exact: any OTHER __fern_* / __rc_* call is NOT provided here, so
 // gate refuses the module rather than emitting a call with no body.
 pub function is_fern_helper(name: string): boolean {
-  return name == "__fern_oob_abort" || is_rc_helper(name)
+  return name == "__fern_oob_abort" || name == "__fern_slice_abort" || is_rc_helper(name)
     || is_release_helper(name)
     || is_map_release_helper(name)
     || is_boxed_key_map_release_helper(name)
@@ -363,8 +363,8 @@ pub function is_c_call(name: string): boolean {
 // maps to __fn___fern_arr_dec — the array release that frees at rc==1 via the
 // size-class freelist.
 pub function ir_helper_symbol(name: string): string {
-  if (name == "__fern_oob_abort") {
-    return "__fern_oob_abort";
+  if (name == "__fern_oob_abort" || name == "__fern_slice_abort") {
+    return name;
   }
   if (name == "__fern_rc_inc") {
     return "__fn___fern_rc_inc";
@@ -942,11 +942,14 @@ pub struct Sub {
   // The emit entry's checks already passed on the module this was built for
   // (semlower.driven_annotated), so the entry does not run them again.
   checked: boolean,
+  // Whether a fatal abort's report walks the frame chain (asmcore.EmitState's
+  // backtrace): the environment's default unless the CLI's -backtrace set it.
+  backtrace: boolean,
 }
 
 pub function no_sub(): Sub {
   let none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [] };
-  return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false };
+  return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, backtrace: asmcore.backtrace_on() };
 }
 
 // The register emit's lambda-lifted module: the producer's, erased, when it

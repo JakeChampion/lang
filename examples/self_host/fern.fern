@@ -2480,6 +2480,9 @@ function run(): i32 {
   // compiler — that runs on every build.
   let optimize: boolean = false;
   let emit_syms: boolean = false;
+  // -backtrace: whether a fatal abort walks the frame chain under its cause
+  // line, as native's flag of the same name; FERN_BACKTRACE is the default.
+  let backtrace: boolean = asmcore.backtrace_on();
   // `-cover` (or FERN_COVER=1) instruments the program with line and branch
   // counters it reports to stderr at exit (cover.fern).
   let cover_on: boolean = false;
@@ -2523,6 +2526,10 @@ function run(): i32 {
       // image, which needs its own wiring. Native excludes darwin and
       // android from -g too.
       emit_syms = true;
+    } else if (a == "-backtrace" || a == "-backtrace=true" || a == "-backtrace=1") {
+      backtrace = true;
+    } else if (a == "-backtrace=false" || a == "-backtrace=0") {
+      backtrace = false;
     } else if (a == "-capabilities") {
       mode_caps = true;
     } else if (a == "-tangle") {
@@ -2960,7 +2967,7 @@ function run(): i32 {
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
   let full: parser.Module = parser.erase_view_module(typed);
   // The typed semantic lowering, threaded into whichever emit path runs.
-  let sub: ircore.Sub = semlower.target_substitution(typed, target);
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target), backtrace: backtrace };
   let out_asm: string = "";
   let emit_text: boolean = emit == "asm";
   if (target == "arm64-linux") {
