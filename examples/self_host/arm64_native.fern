@@ -1575,6 +1575,17 @@ function arm64_sxtw(buf: i32[], rd: i32, rn: i32): i32[] {
   return arm64_le32(buf, arm64_sxtw_word(rd, rn));
 }
 
+// arm64_rec_sxtw is the word of `sxtw Xd, Wn`, -1 for operands that are
+// not an x destination and a w source.
+pub function arm64_rec_sxtw(d: string, w: string): i64 {
+  let rd: i32 = arm64_rec_gpr(d);
+  let rn: i32 = arm64_rec_gpr(w);
+  if (rd < 0 || rn < 0 || d[0] != b'x' || w[0] != b'w') {
+    return 0 - 1;
+  }
+  return arm64_sxtw_word(rd, rn);
+}
+
 // arm64_extend_word encodes the sxtb/sxth/uxtb/uxth aliases of SBFM/UBFM:
 // immr=0 and imms=7 (byte) or 15 (halfword). The unsigned pair has no
 // 64-bit form: gas takes `uxtb x0, w1` and emits the W word for it, so `x`
