@@ -11058,6 +11058,56 @@ pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.LowerResult, r
   return d;
 }
 
+// DbgOut is dbg_shaped_vars' result: the state after naming the shapes, and
+// the variables.
+pub struct DbgOut { state: EmitState, dbg: DbgVars }
+
+// dbg_shaped_vars is dbg_vars after each enum type's variants are given the
+// label of their shape (`%Name{North=.S3,...}`), the address the link
+// resolves each enumerator's value from.
+pub function dbg_shaped_vars(s: EmitState, fn_label: string, a: ssa.Alloc, r: irtables.LowerResult, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgOut {
+  let st: EmitState = s;
+  let types: string[] = [];
+  for t in r.dbg_types {
+    let one: DbgShape = dbg_shape_type(st, t);
+    st = one.state;
+    types = types.append(one.text);
+  }
+  let shaped: irtables.LowerResult = irtables.LowerResult { ...r, dbg_types: types };
+  return DbgOut { state: st, dbg: dbg_vars(fn_label, a, shaped, repl, seen_vals, seen_slots, locs, npos) };
+}
+
+struct DbgShape { state: EmitState, text: string }
+
+// dbg_shape_type names the shape of each variant in an enum's description.
+function dbg_shape_type(own s: EmitState, t: string): DbgShape {
+  let out: string = "";
+  let enum_at: boolean = false;
+  let i: i32 = 0;
+  while (i < t.len()) {
+    let c: u8 = t[i];
+    if (c == b'%') {
+      enum_at = true;
+    }
+    if (enum_at && (c == b'{' || c == b',')) {
+      let j: i32 = i + 1;
+      while (t[j] != b',' && t[j] != b'}') {
+        j = j + 1;
+      }
+      let name: string = slice_unchecked(t, i + 1, j) + "";
+      let sr: ShapeRefOut = shape_ref(s, name);
+      s = sr.state;
+      out = out + slice_unchecked(t, i, i + 1) + name + "=" + sr.label;
+      i = j;
+    } else {
+      enum_at = enum_at && c != b'}';
+      out = out + slice_unchecked(t, i, i + 1);
+      i = i + 1;
+    }
+  }
+  return DbgShape { state: s, text: out };
+}
+
 // dbg_var adds the rows of variable `i`: one per distinct value its slot held
 // that has a home and a live range inside the function.
 function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.LowerResult, i: i32, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {

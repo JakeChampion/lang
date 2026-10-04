@@ -702,3 +702,150 @@ func TestSelfHostDWARFStructVars(t *testing.T) {
 		}
 	}
 }
+
+const dwarfEnumsSrc = `enum Direction { North, East, South, West }
+struct Heading { dir: Direction, speed: i32 }
+@noinline function turn(d: Direction): i32 {
+    match (d) {
+        North => { return 0; },
+        East => { return 1; },
+        South => { return 2; },
+        West => { return 3; },
+    }
+    return -1;
+}
+@noinline function pace(h: Heading): i32 { return h.speed + turn(h.dir); }
+function main(): i32 {
+    let d: Direction = South;
+    let h: Heading = Heading { dir: West, speed: 5 };
+    return turn(d) + pace(h);
+}
+`
+
+// dwarfVarType is the DW_AT_type of fn's variable or parameter `name`.
+func dwarfVarType(t *testing.T, d *dwarf.Data, fn, name string) dwarf.Type {
+	t.Helper()
+	r := d.Reader()
+	cur := ""
+	for {
+		e, err := r.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e == nil {
+			break
+		}
+		if e.Tag == dwarf.TagSubprogram {
+			cur, _ = e.Val(dwarf.AttrName).(string)
+			continue
+		}
+		if n, _ := e.Val(dwarf.AttrName).(string); cur == fn && n == name && (e.Tag == dwarf.TagVariable || e.Tag == dwarf.TagFormalParameter) {
+			off, ok := e.Val(dwarf.AttrType).(dwarf.Offset)
+			if !ok {
+				t.Fatalf("%s.%s has no DW_AT_type", fn, name)
+			}
+			ty, err := d.Type(off)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return ty
+		}
+	}
+	t.Fatalf("no DIE for %s.%s", fn, name)
+	return nil
+}
+
+// The self-host's answer to internal/e2e's TestDWARFEnumVars (#11410). A
+// payloadless enum value points at a box whose word 0 is its variant's shape:
+// the address of the variant's name. So the variable is a pointer to an
+// 8-byte enumeration whose enumerators are those addresses, and gdb's
+// `print *d` names the variant. Each enumerator's value is checked against
+// the image: the bytes there must spell its name.
+func TestSelfHostDWARFEnumVars(t *testing.T) {
+	cli := newStrictCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "enums.fern")
+	if err := os.WriteFile(src, []byte(dwarfEnumsSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{"North", "East", "South", "West"}
+	bins := map[string]string{}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			out := filepath.Join(dir, "enums-"+target)
+			cmd := runX86_64Bin(cli.runner, cli.bin, "-g", "-target", target, "-o", out, src, cli.stdlib)
+			if o, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("-g build: %v\n%s", err, o)
+			}
+			bins[target] = out
+			f, err := goelf.Open(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			d, err := f.DWARF()
+			if err != nil {
+				t.Fatal(err)
+			}
+			ptr, ok := dwarfVarType(t, d, "turn", "d").(*dwarf.PtrType)
+			if !ok {
+				t.Fatalf("turn.d is not a pointer to its box")
+			}
+			et, ok := ptr.Type.(*dwarf.EnumType)
+			if !ok {
+				t.Fatalf("turn.d points to a %T, want an enum", ptr.Type)
+			}
+			if et.EnumName != "Direction" || et.ByteSize != 8 || len(et.Val) != len(names) {
+				t.Fatalf("enum %s of %d bytes with %v, want Direction of 8 with %v", et.EnumName, et.ByteSize, et.Val, names)
+			}
+			for i, v := range et.Val {
+				if v.Name != names[i] {
+					t.Errorf("enumerator %d is %s, want %s", i, v.Name, names[i])
+				}
+				if got := imageBytes(f, uint64(v.Val), len(v.Name)); string(got) != v.Name {
+					t.Errorf("%s = %#x, where the image holds %q, not its shape", v.Name, v.Val, got)
+				}
+			}
+			heading, ok := dwarfVarType(t, d, "pace", "h").(*dwarf.PtrType)
+			if !ok {
+				t.Fatalf("pace.h is not a pointer to its box")
+			}
+			st, ok := heading.Type.(*dwarf.StructType)
+			if !ok || len(st.Field) != 2 || st.Field[0].Name != "dir" || st.Field[0].ByteOffset != 8 {
+				t.Fatalf("pace.h = %v, want a Heading whose dir is at 8", heading.Type)
+			}
+			if p, ok := st.Field[0].Type.(*dwarf.PtrType); !ok || p.Type != dwarf.Type(et) {
+				t.Errorf("Heading.dir is a %v, want a pointer to the same Direction", st.Field[0].Type)
+			}
+		})
+	}
+
+	gdb, err := exec.LookPath("gdb")
+	if err != nil || runtime.GOARCH != "amd64" || bins["x86-64-linux"] == "" {
+		t.Skip("gdb on an amd64 host reads the x86-64 binary's enum; none here")
+	}
+	o, err := exec.Command(gdb, "-batch", "-ex", "break enums.fern:16", "-ex", "run", "-ex", "print *d", "-ex", "print *h.dir", bins["x86-64-linux"]).CombinedOutput()
+	if err != nil {
+		t.Fatalf("gdb: %v\n%s", err, o)
+	}
+	for _, want := range []string{"= South\n", "= West\n"} {
+		if !strings.Contains(string(o), want) {
+			t.Errorf("gdb did not read %q\n%s", want, o)
+		}
+	}
+}
+
+// imageBytes is the n bytes the image loads at vaddr, nil when no segment
+// holds them.
+func imageBytes(f *goelf.File, vaddr uint64, n int) []byte {
+	for _, p := range f.Progs {
+		if p.Type == goelf.PT_LOAD && vaddr >= p.Vaddr && vaddr+uint64(n) <= p.Vaddr+p.Filesz {
+			b := make([]byte, n)
+			if _, err := p.ReadAt(b, int64(vaddr-p.Vaddr)); err != nil {
+				return nil
+			}
+			return b
+		}
+	}
+	return nil
+}

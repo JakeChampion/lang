@@ -3066,7 +3066,8 @@ function frame(f: ssasem.Func): irtables.LowerResult {
 }
 
 // dbg_type is how a `-g` variable's type is described to the ELF writer, ""
-// for one it cannot describe. A scalar is its spelling. A struct is a pointer
+// for one it cannot describe. A scalar is its spelling, a payloadless enum
+// dbg_enum's spelling. A struct is a pointer
 // to its box, `*Name@size{field:type:offset,...}`, each field in its 8-byte
 // slot after the shape word; fields that cannot be described are left out,
 // and a struct already being described (`open`) is named without its fields.
@@ -3088,7 +3089,31 @@ function dbg_type(f: ssasem.Func, t: typeinfo.Type, open: string[]): string {
     }
     return "*" + name + "@" + util.i32_to_string((f.records.list[at].fields.len() + 1) * 8) + "{" + dbg_members(f, f.records.list[at].fields, open.append(name)) + "}";
   }
+  if let typeinfo.TypeUnion(_) = t {
+    return dbg_enum(f, t, s);
+  }
   return "";
+}
+
+// dbg_enum describes a declared enum whose variants carry nothing,
+// `%Name{North,East,...}`: its value points at a box whose word 0 is the
+// variant's shape, which the emitter names and the link resolves.
+function dbg_enum(f: ssasem.Func, t: typeinfo.Type, s: string): string {
+  let at: i32 = semrecords.find_enum(f.enums, t);
+  if (at < 0 || f.enums[at].layout != semrecords.layout_variant()) {
+    return "";
+  }
+  let out: string = "";
+  for v in f.enums[at].variants {
+    if (v.fields.len() > 0) {
+      return "";
+    }
+    if (out != "") {
+      out = out + ",";
+    }
+    out = out + v.name;
+  }
+  return "%" + dbg_type_name(s) + "{" + out + "}";
 }
 
 // dbg_members is a struct's describable fields as `field:type:offset`.
@@ -3115,7 +3140,7 @@ function dbg_type_name(s: string): string {
   let i: i32 = 0;
   while (i < s.len()) {
     let c: u8 = s[i];
-    if (c == b'@' || c == b'{' || c == b'}' || c == b',' || c == b':' || c == b'|' || c == b'*') {
+    if (c == b'@' || c == b'{' || c == b'}' || c == b',' || c == b':' || c == b'|' || c == b'*' || c == b'%' || c == b'=') {
       out = out + "_";
     } else {
       out = out + slice_unchecked(s, i, i + 1);
