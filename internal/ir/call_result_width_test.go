@@ -1,7 +1,8 @@
 // The result width every call to a backend-provided callee carries.
 //
 // A register-allocating backend reads a call's result width off the callee
-// it compiled. A builtin or a runtime helper has no body, so without a width its result
+// it compiled (ir.ResNarrow and siblings; the Go SSA lift was the reader).
+// A builtin or a runtime helper has no body, so without a width its result
 // is sign-extended from 32 bits — which turns a heap pointer negative (both
 // arenas are based at 0x4_0000_0000, so every address is above 32 bits) and
 // leaves an i64 or an f64 bit pattern with only its low half.

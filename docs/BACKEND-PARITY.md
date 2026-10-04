@@ -572,25 +572,14 @@ Items that are known-broken in some configuration but considered too
 costly (or too speculative) to fix right now. Each entry should have a
 concrete fix plan and a rough scope estimate.
 
-### `termios_get` / `termios_set` are not on x86-64-ssa
-
-Both native emitters carry the two terminal-settings helpers, and `stty`
-(#8382) is built with one.
-
-arm64-ssa emits both, and the handle forms `__method_Reader_termios_get` /
-`__method_Reader_termios_set` with them. x86-64-ssa is further out than the
-pair itself — it has no handle family at all, so `open_writer` is already
-outside it, and the free forms alone would leave `r.termios_get()` broken.
-
 ### Line coverage (`-cover`) is native x86-64 / arm64 and self-host Linux
 
 `-cover` (#5548, `docs/COVERAGE.md`) instruments every executable source line
 and every source-level conditional with counters and dumps the table at exit.
 On native the instrumentation is an IR pass, but each backend still has to emit
 the counter array, the report table, and the exit-seam call — only the x86-64
-and arm64 stack-machine emitters do, matching `-sanitize`'s reach. The Go SSA
-emitters on those same targets do not, so native's reach is per-backend and not
-per-target. The self-host instruments the source instead (`cover.fern`), so
+and arm64 stack-machine emitters do, matching `-sanitize`'s reach. The
+self-host instruments the source instead (`cover.fern`), so
 both of its Linux targets have it through the same emitters every build uses.
 
 `ir.LowerWith` **errors** when `ast.CoverEnabled` is set and the caller did not

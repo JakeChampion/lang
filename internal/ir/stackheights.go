@@ -2,23 +2,19 @@
 //
 // `verifyStack` already computes how many operand-stack entries every
 // op leaves, under either string ABI, because that is the whole point
-// of it. Nothing could read that answer per op, and one consumer badly
-// needs to.
+// of it. Nothing could read that answer per op, and one consumer needs
+// to: the x86-64 emitter's syscall-number scan (`literalSyscallNumbers`)
+// reads the height before each `__syscallN` call to find the op that
+// pushed the number.
 //
-// An SSA lift (`examples/self_host/ssa_lift.fern`) maintains a second model
-// of the same stack, and #7803 is what happens when the two disagree: a two-word string is one
-// entry to the lift and two to the verifier, so the lift's stack runs
-// short and fails at the first op that notices — which is almost never
-// the op that diverged. Two attempts at fixing it by watching an
-// aggregate coverage number did not converge, because the number cannot
-// separate "this fix exposed an older divergence" from "this fix caused
-// one".
-//
-// A per-op height turns that into a localisable question: run both
-// models over the same function and report the FIRST index where they
-// differ. That is the same two-independent-models discipline
-// `verifyprovided.go` applies to helper signatures, pointed at the
-// stack instead.
+// The per-op shape also made a second stack model checkable. The Go SSA
+// lift kept one, and #7803 was the two disagreeing — a two-word string
+// was one entry to the lift and two to the verifier, so the lift's stack
+// ran short and failed at the first op that noticed, which was almost
+// never the op that diverged. Comparing the two per op and reporting the
+// FIRST index where they differ localised it, where an aggregate coverage
+// number could not; that differential went with the lift, and the shape
+// stays for the next model that needs the same check.
 package ir
 
 // StackHeights returns the operand-stack height after each op of every

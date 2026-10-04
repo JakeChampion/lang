@@ -628,10 +628,13 @@ const WidthPtr = -1
 const WidthString = -2
 
 // On an OpCallDirect, Width is the RESULT classification: what the callee
-// leaves in the register the 64-bit backends read its result out of. A
-// backend can read that off the callee for a function the program defines,
-// but a backend-provided builtin or runtime helper has no signature it can
-// reach, so the fact travels on the call instead.
+// leaves in the register a 64-bit register-allocating backend reads its
+// result out of. Such a backend can read that off the callee for a function
+// the program defines, but a backend-provided builtin or runtime helper has
+// no signature it can reach, so the fact travels on the call instead. The
+// stack-machine emitters do not need it; its reader was the Go SSA lift,
+// which went with the Go SSA backends, and ir.Verify keeps the stamp total
+// for the next one.
 //
 // Zero is not a default here: it means unclassified, which ir.Verify
 // rejects on a provided callee. OpCallDirectPair's Width means something
