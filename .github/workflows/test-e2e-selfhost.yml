@@ -485,6 +485,11 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
+      # The tests that compare a utility with GNU's (the tabs and head/tail
+      # byte tests) need the corpus's pinned release, not the image's 9.4.
+      - uses: ./.github/actions/gnu-coreutils
+        with:
+          host: ${{ matrix.host }}
       # The aarch64 shards are the Linux ARM64 jobs that build the stock
       # drivers natively, so the first of them saves that arch's cache.
       - uses: ./.github/actions/selfhost-driver-cache
