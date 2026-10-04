@@ -30,6 +30,14 @@ function test_mixed_unchanged(): test.TestOutcome {
   return test.assert_eq(unicode.to_upper("a1-b2 c3!"), "A1-B2 C3!");
 }
 
+function test_already_folded(): test.TestOutcome {
+  // A string with nothing to remap comes back equal, including empty.
+  return test.assert_true(unicode.to_lower("content-length") == "content-length"
+    && unicode.to_upper("ABC-1 !") == "ABC-1 !"
+    && unicode.to_lower("") == ""
+    && unicode.to_lower("x-Y") == "x-y");
+}
+
 function test_char_level(): test.TestOutcome {
   // 'a'(97) -> 'A'(65); Greek Α(0x391) -> α(0x3B1).
   return test.assert_true((97 as char).to_upper() as i32 == 65
@@ -227,6 +235,7 @@ function main(): i32 {
   r = r.it("greek", test_greek);
   r = r.it("cyrillic", test_cyrillic);
   r = r.it("mixed unchanged", test_mixed_unchanged);
+  r = r.it("already folded", test_already_folded);
   r = r.it("char level", test_char_level);
   r = r.it("sharp-s expands", test_sharp_s_expands);
   r = r.it("eq_ignore_case", test_eq_ignore_case);

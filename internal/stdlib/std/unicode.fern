@@ -286,9 +286,17 @@ function _is_ascii(s: string): boolean {
 
 // _ascii_fold remaps the 26 letters starting at `from` to those starting
 // at `to`, leaving every other byte alone. The fast path for
-// to_upper / to_lower on ASCII input.
+// to_upper / to_lower on ASCII input; a string with no letter to remap
+// comes back as it is.
 function _ascii_fold(s: string, from: i32, to: i32): string {
   let n: i32 = s.len();
+  let first: i32 = 0;
+  while (first < n && (s[first] as i32 < from || s[first] as i32 >= from + 26)) {
+    first = first + 1;
+  }
+  if (first == n) {
+    return s;
+  }
   let buf: u8[] = __alloc_u8(n);
   let i: i32 = 0;
   while (i < n) {
