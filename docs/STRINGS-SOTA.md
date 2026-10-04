@@ -10,9 +10,9 @@ alongside (byte views, scalar/char, paths, symbols, builders).
 
 Epic #5626 is closed, but prerequisite #5714 remains open and its acceptance
 work is incomplete. D9 requires every observable
-`string` to be well-formed UTF-8. The boundaries below have been migrated,
-but the remaining producers listed after the table still prevent that
-invariant from holding across the stdlib.
+`string` to be well-formed UTF-8, subject to the D10 OS-input contract below.
+The producer migrations are implemented; final integrated validation and
+publication remain outstanding.
 
 | Producer | Bytes from | What it does with ill-formed bytes |
 |---|---|---|
@@ -34,6 +34,8 @@ invariant from holding across the stdlib.
 | PEG captures | committed byte ranges | `ok=false` with no captures if a nonempty range splits a scalar; matching and ordered choice remain byte-oriented |
 | `sim.Net.fetch_future` | scheduled parts of a valid body | retains the complete body until the last scheduled resumption, without constructing partial strings |
 | `sim_fetch.Net.sent` | transport writes | owned `u8[]` snapshots, including binary bodies; its shared journal uses explicit ASCII hex |
+| HTTP stream buffers | pending input, chunk-decoder storage and pipelined leftovers | shared `Cell[u8[]]` storage, with immutable snapshots |
+| Coreutils time formats | OS-supplied format bytes | compiled formats retain `u8[]`; text rendering repairs invalid UTF-8, and byte rendering preserves raw output |
 
 HTTP response serialization now has `*_bytes` siblings that preserve the
 body and frame its byte length. The text siblings retain replacement decoding
@@ -55,15 +57,20 @@ matching: replacing `.` in `é` can
 split its encoding, so the checked text result is `None` while the byte
 variant returns the exact output.
 
-One audited gap remains in streamed HTTP request bodies: private pending
-input, chunk-decoder storage and pipelined leftovers use `Cell[string]` to
-hold arbitrary bytes. Their public APIs return bytes, but the private
-storage still violates the invariant. Cycle-free byte-array cells and a
-migration of these buffers are being prepared. D9 must remain open until
-that work and the final target audit pass.
+Streamed HTTP request bodies now retain private buffers in `Cell[u8[]]`.
+Reads return immutable snapshots; overwrites preserve aliases and reclaim
+replaced storage. The regression suite sends every byte value through
+content-length and chunked bodies, followed by another binary request on
+the same connection. Invalid bodies still fail the text API.
 
-The OS text contract remains a deliberate exception, while the sink migration
-is still incomplete:
+The builder migration also exposed raw OS-format consumers in `date`, `du`,
+`ls` and `pr`. Their shared formatter now stores literal byte ranges in an
+owned byte array and has separate text and byte renderers. This preserves
+unknown conversions that split a scalar into parser pieces without making
+partial strings. Raw CLI output matches GNU; text rendering validates only
+after those pieces have been joined.
+
+The OS text contract remains a deliberate exception:
 
 - **`args()`, `environ()`, `env(name)` and `read_line()` are assumed
   UTF-8, not validated** — the D10 position, extended from paths to the
@@ -80,7 +87,7 @@ is still incomplete:
   (#10948): `tcp_send_bytes`, `udp_sendto_bytes` and `write_file_bytes` are
   available; wasi's `stream_write` takes `u8[]`, and Writer's byte methods
   borrow `[u8]`. DNS, `std/tcp` and `std/fetch` use byte paths for binary
-  traffic. The remaining private HTTP storage gap is described above.
+  traffic. Private HTTP stream state also uses owned byte arrays.
 
 Written because #5552 ("stdlib case ops are ASCII-only — add a Unicode
 `std/unicode`") asked a question the codebase can't answer from first
@@ -795,7 +802,7 @@ any byte ≥ 0x80 and delegate to the byte fold when there is none. That's
 what keeps D3 from regressing the CLI/header workloads the constraints
 section of #5552 (rightly) protects.
 
-### D8 - Provide allocation-free `[u8]` views over strings. **IN PROGRESS** (#5632)
+### D8 - Provide allocation-free `[u8]` views over strings. **IMPLEMENTED** (#5632)
 
 Already listed as deferred in `LANGUAGE-DIRECTION.md`. This is Fern's
 `UTF8Span`/`&[u8]` (§2.2), and every parser in the tree — `std/json`,
@@ -823,7 +830,8 @@ Production lowering rejects a returned byte view over local storage.
 The primary `-check` command now uses the same typed source anchors to report
 E063 for array-view escapes and E065 for string-view escapes, including
 generic and imported declarations. See [the diagnostic report](STRING-VIEW-DIAGNOSTICS-2026-10-03.md).
-Final validation and merge remain outstanding.
+The runtime, consumer and diagnostic changes were validated and merged in
+PR #11459.
 
 ### D9 - Guarantee UTF-8 validity on `string`. **IN PROGRESS** (#5634, #5714)
 
@@ -905,13 +913,13 @@ checker and all four backends. `random_bytes` has moved: it returns
 `read_file` keeps its text signature, has its raw sibling
 (`read_file_bytes(path): Result[u8[], IoError]` on every backend), and
 BOTH compilers now validate: interp, x86-64, arm64 (both string ABIs,
-Linux + Darwin), arm64ssa and wasm (preview-1 and -2) on the native
+Linux + Darwin), and wasm (preview-1 and -2) on the native
 side, and the self-host's register lanes (`asmcore.rt_src_utf8_valid`,
 plain Fern) plus its wasm p1/p2 lanes, all return
 `Err(InvalidUtf8(path))` on malformed content — the case D9 predicted
 and nothing emitted is now real on every lane. `tcp_recv(fd, max)`
-returns `u8[]` (#7467). The remaining builder and Reader raw paths are
-listed in the migration audit above.
+returns `u8[]` (#7467). Builder and Reader text boundaries are covered in
+the migration audit above.
 
 `__memchr_bytes(bytes, byte, from)` searches a borrowed `u8[]` without
 allocating or constructing a string. It returns the first matching byte index
@@ -1460,9 +1468,9 @@ Tracked as epic #5626; issue numbers below.
 | 3 | **D2** (#5629) — the `char` type — **DONE** | — | Checker + `std/utf8` + `std/unicode` signatures. Big but mechanical; unblocks honest naming everywhere. |
 | 4 | **D3 + D4** (#5630) — flip the default, full case mapping — **DONE** | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
-| 6 | **D8** (#5632) - `[u8]` string view - **IN PROGRESS** | - | Allocation-free primary runtime, consumer checks and typed frontend escape diagnostics implemented. Finish validation and merge. |
+| 6 | **D8** (#5632) - `[u8]` string view - **IMPLEMENTED** | - | Allocation-free primary runtime, consumer checks and typed frontend escape diagnostics validated and merged. |
 | 7 | **D6** (#5633) — grapheme segmentation — **DONE**; word segmentation followed under #5552 | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `str[]` views (was `string[]` until #5695 was fixed). Word_Break coalesces to 1085 ranges, ~13 KB; a program that does not segment words is byte-identical to one built before it existed. |
-| 8 | **D9** (#5634, #5714): the UTF-8 validity invariant, **IN PROGRESS** | 6 | `s[a:b]` is `Option[str]`; file reads and regex text results validate, ASCII-byte conversion refuses non-ASCII, and RNG output is bytes. Remaining text-typed raw paths still need migration; see the audit at the top. |
+| 8 | **D9** (#5634, #5714): the UTF-8 validity invariant, **IN PROGRESS** | 6 | Producer migrations are implemented, including builder/Reader boundaries, PEG captures and private HTTP buffers. Final integrated validation and publication remain outstanding; see the audit at the top. |
 | 9 | **D10** (#5635) — document the path assumption — **DONE** | — | Doc-only. Stated in `std/path`, `std/io`, and `read_dir`'s builtin signature. |
 
 #5552 as filed maps onto slices 1, 4, 5, 6, 7. Its step 1 (document the

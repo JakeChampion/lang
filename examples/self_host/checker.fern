@@ -13307,8 +13307,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // (n.Args[0].Pos()). An unresolved arg type is skipped.
       if (id.name == "cell_new" && c.args.len() == 1) {
         let cnat: typeinfo.Type = check_expr(c.args[0], s);
-        if (!is_unknown(cnat) && !is_primitive_type(cnat)) {
-          out = out.append(dg_at("E057", "Cell[" + type_label(cnat) + "] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool) or string; a composite/reference type could form a cycle, which immutable data structures forbid", expr_line(c.args[0]), expr_col(c.args[0])));
+        if (!is_unknown(cnat) && !is_primitive_type(cnat) && !is_byte_cell_elem(cnat)) {
+          out = out.append(dg_at("E057", "Cell[" + type_label(cnat) + "] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool), string or u8[]; other element types are not supported because cells must remain cycle-free", expr_line(c.args[0]), expr_col(c.args[0])));
         }
       }
       // E072: a void expression is not a value. Native's only
@@ -19163,10 +19163,12 @@ function e064_annot_diags(an: Annot[], tn: TypeNames, extra_known: string[], tpa
 // e057_cell_elem_ok reports whether a TypeRef is a permitted `Cell[T]`
 // element — the self-host analog of the native isCellElemType
 // (checker.go): a cycle-free scalar (any integer or float width, boolean) or
-// string. Everything else — struct / enum / array / tuple / another Cell /
-// generic instantiation / `str` view — could reconstruct a reference
-// cycle, which the immutable-data model forbids (docs/CELL-TYPE-PLAN.md).
+// string or owned u8[]. Other composites and borrowed views remain outside
+// the supported cycle-free cell elements (docs/CELL-TYPE-PLAN.md).
 function e057_cell_elem_ok(a: parser.TypeRef): boolean {
+  if (a.array_depth == 1 && a.base == "u8" && !a.is_view && !a.is_tuple && !a.is_fn && a.args.len() == 0) {
+    return true;
+  }
   if (a.array_depth > 0 || a.is_tuple || a.args.len() > 0) {
     return false;
   }
@@ -19174,6 +19176,15 @@ function e057_cell_elem_ok(a: parser.TypeRef): boolean {
     return true;
   }
   return a.base == "f32" || a.base == "f64" || a.base == "boolean" || a.base == "string";
+}
+
+function is_byte_cell_elem(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    if let typeinfo.TypeI32(n) = a.elem {
+      return !a.view && n.width == 8 && n.unsigned;
+    }
+  }
+  return false;
 }
 
 // e057_annot_labels_tref walks a parsed annotation and collects the
@@ -19209,7 +19220,7 @@ function e057_annot_diags(type_name: string, line: i32, col: i32): util.Diag[] {
   }
   let labels: string[] = e057_annot_labels_tref(parser.parse_type_ref(type_name));
   for label in labels {
-    out = out.append(dg_at("E057", "Cell[" + label + "] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool) or string; a composite/reference type could form a cycle, which immutable data structures forbid", line, col));
+    out = out.append(dg_at("E057", "Cell[" + label + "] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool), string or u8[]; other element types are not supported because cells must remain cycle-free", line, col));
   }
   return out;
 }

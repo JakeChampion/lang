@@ -366,6 +366,9 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("time-style-format", "-l", "--time-style=+%Y-%m-%d")
 	add("time-style-two-lines", "-l", "--time-style=+NONRECENT\n+RECENT")
 	add("time-style-empty", "-l", "--time-style=+")
+	for _, format := range rawTimeFormats() {
+		add("raw time format "+quote([]byte(format)), "-l", "--time-style=+"+format)
+	}
 	add("time-full-time", "--full-time")
 	add("time-full-time-beats-style", "--full-time", "--time-style=iso")
 	add("time-style-beats-full-time", "--time-style=iso", "--full-time")

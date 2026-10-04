@@ -644,7 +644,7 @@ function parse_range(arg: string, what: string): (u64, u64, i32) {
 // The columns a header field occupies: gnulib measures it with
 // mbswidth, so a control byte is worth nothing and every other byte one.
 // -c and -v never reach the header.
-function header_width(s: string): i32 {
+function header_width(s: [u8]): i32 {
   let w: i32 = 0;
   let i: i32 = 0;
   while (i < s.len()) {
@@ -668,14 +668,14 @@ function header_date_format(has_date: boolean, fmt: string): timefmt.Format {
 // `header_text(c, name, t, nsec, page)` — date, name and `Page N` with
 // the name centred between them. Each gap keeps a space of its own when
 // the three do not fit, so a narrow page OVERFLOWS rather than shrinks.
-function header_text(c: Cfg, name: string, t: i64, nsec: i64, page: u64): string {
-  let date: string = timefmt.format(c.date_fmt, c.zone, t, nsec);
+function header_text(c: Cfg, name: string, t: i64, nsec: i64, page: u64): u8[] {
+  let date: u8[] = timefmt.format_bytes(c.date_fmt, c.zone, t, nsec);
   let nm: string = name;
   if (c.has_header) {
     nm = c.header;
   }
   let tail: string = "Page " + page.to_string();
-  let avail: i32 = c.page_width - header_width(date) - header_width(nm) - tail.len();
+  let avail: i32 = c.page_width - header_width(date) - header_width(nm.as_bytes()) - tail.len();
   let lhs: i32 = avail / 2;
   let rhs: i32 = avail - avail / 2;
   if (lhs < 1) {
@@ -684,7 +684,13 @@ function header_text(c: Cfg, name: string, t: i64, nsec: i64, page: u64): string
   if (rhs < 1) {
     rhs = 1;
   }
-  return date + " ".repeat(lhs) + nm + " ".repeat(rhs) + tail;
+  let h: usize = buf_new(date.len() + nm.len() + tail.len() + lhs + rhs);
+  append_bytes(h, date);
+  buf_push(h, " ".repeat(lhs));
+  buf_push(h, nm);
+  buf_push(h, " ".repeat(rhs));
+  buf_push(h, tail);
+  return take_bytes(h);
 }
 
 // ---- one column -------------------------------------------------------------
@@ -1060,7 +1066,8 @@ function page_text(c: Cfg, body: Page, page: u64, name: string, t: i64, nsec: i6
   lead = lead.flush(c);
   let head: Line = line_new();
   head = head.to(c.offset, c);
-  head = head.put(header_text(c, name, t, nsec, page), 0, c);
+  let header: u8[] = header_text(c, name, t, nsec, page);
+  head = head.put_range(header, 0, header.len(), 0, c);
   let out: usize = buf_new(body.text.len());
   append_bytes(out, take_bytes(lead.buf));
   buf_push(out, "\n\n");

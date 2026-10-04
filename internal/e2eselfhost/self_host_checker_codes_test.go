@@ -2382,6 +2382,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// argument (struct, array, tuple, another cell) is E057, reported
 		// at the argument. Cross-checked against the Go checker.
 		{"cellnew-i32-ok", "function main(): i32 { let c = cell_new(5); return 0; }\n", nil},
+		{"cellnew-bytes-ok", "function main(): i32 { let c = cell_new([255 as u8]); return 0; }\n", nil},
+		{"cellnew-empty-bytes-ok", "function main(): i32 { let a: u8[] = []; let c: Cell[u8[]] = cell_new(a); return 0; }\n", nil},
+		{"cellnew-nested-bytes-bad", "function main(): i32 { let a: u8[][] = [[255 as u8]]; let c = cell_new(a); return 0; }\n", []string{"E057"}},
+		{"cellnew-byte-view-bad", "function f(c: Cell[[u8]]): i32 { return 0; } function main(): i32 { return 0; }\n", []string{"E057"}},
 		{"cellnew-string-ok", "function main(): i32 { let c = cell_new(\"x\"); return 0; }\n", nil},
 		{"cellnew-bool-ok", "function main(): i32 { let c = cell_new(1 < 2); return 0; }\n", nil},
 		{"cellnew-struct-bad", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; let c = cell_new(p); return 0; }\n", []string{"E057"}},
