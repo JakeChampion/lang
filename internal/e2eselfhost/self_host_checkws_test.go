@@ -145,3 +145,31 @@ func TestSelfHostCheckWorkspaceDifferentialX86_64(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfHostCheckDirRefusesUnknownTargetX86_64: `-check DIR -target T`
+// checks every member against T, so a T no descriptor answers for is refused
+// before any member is visited, as it is for a file. The directory form used
+// to be dispatched ahead of the target's validation and checked the whole
+// workspace against nothing.
+func TestSelfHostCheckDirRefusesUnknownTargetX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "fern.fern")
+	driver := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	ws := t.TempDir()
+	writeTree(t, ws, map[string]string{
+		"fern.toml":   "[workspace]\nmembers = [\"a\"]\n",
+		"a/fern.toml": "[package]\nname = \"a\"\n",
+		"a/main.fern": "function main(): i32 {\n  return 0;\n}\n",
+	})
+	for _, arg := range []string{ws, filepath.Join(ws, "a", "main.fern")} {
+		out, err := runX86_64Bin(runner, driver, "-check", "-target", "bogus", arg).CombinedOutput()
+		code := 0
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		}
+		if code != 2 || !strings.Contains(string(out), "unknown -target: bogus") || strings.Contains(string(out), "ok   a") {
+			t.Errorf("-check -target bogus %s: exit %d\n%s\nwant exit 2 refusing the target before checking anything", arg, code, out)
+		}
+	}
+}
