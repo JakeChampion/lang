@@ -157,6 +157,7 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 			t.Fatalf("native interp monomorph: %v\n--- source ---\n%s", err, source)
 		}
 		ip := interp.New()
+		ip.SetDynCoercions(info.DynCoercions)
 		for _, ed := range prog.Enums {
 			ip.RegisterEnum(ed)
 		}
