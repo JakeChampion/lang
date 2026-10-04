@@ -9,16 +9,18 @@ without constructing invalid strings.
 The write ordering, block size selection and sticky-error behavior follow
 the existing GNU compatibility contract. A retained stream value keeps its
 pending bytes when another copy appends or flushes. Short appends use array
-reuse; larger appends use a private builder. Whole text writes lend
-`as_bytes()` to Writer. Partial ranges still copy, and this change makes no
-claim that every write is allocation-free.
+reuse; larger appends use a private builder. Direct writes lend byte views
+to Writer, including subranges of text or raw arrays. Only bytes retained
+in the pending buffer need an owned copy; a direct write never constructs
+a partial string or an owned array for its range.
 
 ## Validation
 
-The shared fixture has 179 cases covering all byte values, NUL, malformed
+The shared fixture has 183 cases covering all byte values, NUL, malformed
 UTF-8, clamped and empty ranges, retained stream aliases, closed descriptors,
 and Unicode across buffer boundaries. Sizes cover the append threshold and
-4096-, 8192- and 65536-byte boundaries.
+4096-, 8192- and 65536-byte boundaries. Four repeated large Unicode writes
+also retain the input string while crossing buffered and direct-write paths.
 
 The current Go Darwin fixture passes in 5.285 seconds. The reproduced primary
 compiler passes the same fixture on Darwin and core WASM, including balanced
@@ -55,7 +57,7 @@ The fresh compiler passes all 179 cases on Darwin and core WASM with balanced
 allocation counts in 2.931 seconds. Its bootstrap takes 35, 27 and 15 seconds;
 stages two and three are identical at 12,878,049 bytes.
 
-## Controlled measurements
+## Measurements before the direct-write follow-up
 
 Both versions use the reproduced primary compiler with SHA-256
 `3f4f3a40bf167dee51cbdc2d90e396cb3999a3bd34ccc741d479d42904d9682a`
@@ -93,6 +95,44 @@ Stdio itself needs no size baseline change. A later main integration crossed
 the compiler path-probe gate. Its separate [size investigation](SELFHOST-PATH-PROBE-SIZE-2026-10-04.md)
 attributes the accumulated compiler growth and removes unused verdict report
 construction before updating that driver's measured baseline.
+
+## Borrowed direct ranges, October 4
+
+The review follow-up removes the temporary owned array from direct subrange
+writes. Text first lends `as_bytes()`, then selects a borrowed byte subview;
+raw input lends its array subview directly. This avoids constructing a
+partial UTF-8 string even when a block boundary splits a character.
+
+The expanded 183-case fixture passes Linux Go and primary target groups in
+0.728 and 41.398 seconds. GNU and primary consumer comparisons pass in
+5.325 and 20.478 seconds, followed by the full Linux unit suite and all lint
+gates. Darwin Go and source-built primary tests pass in 2.602 and 37.010
+seconds. All 366 actual native/core-WASM runs pass in 3.217 seconds with
+balanced allocations and zero live bytes.
+
+Both benchmark versions use the reproduced compiler with SHA-256
+`48efd5540bac3b85b564beb4b49e0c0d3b2b6aea510c1652c0328258909f66fe`
+and its matching standard library. Compiler sources are unchanged by this
+follow-up. The before GNU library is from `74c69bdf8`; only that module
+differs in the after build. Task-owned heavy jobs were idle, but the desktop
+was not isolated. A 131072-byte pilot precedes 8388608 bytes with the same
+exact-output and allocation checks, two warmups and seven alternating samples.
+The new raw-range workloads retain a byte array with one sentinel at each end
+and repeatedly write the interior range.
+
+| Piece | Before median | After median | Before allocations | After allocations |
+| --- | ---: | ---: | ---: | ---: |
+| 7 ASCII bytes | 25.708 ms | 26.380 ms | 11,588 | 11,588 |
+| 7 Unicode bytes | 25.456 ms | 25.506 ms | 11,588 | 11,588 |
+| 4096 ASCII bytes | 3.052 ms | 3.079 ms | 6,180 | 6,180 |
+| 65536 ASCII bytes | 2.885 ms | 2.806 ms | 1,183 | 930 |
+| 4096-byte raw range | 3.461 ms | 3.402 ms | 8,230 | 8,230 |
+| 65536-byte raw range | 2.970 ms | 2.659 ms | 1,188 | 932 |
+
+All timing ranges overlap. The allocation reductions on large direct writes
+are measured; these timing samples do not establish a speedup. Both native
+files occupy 83,089 bytes. Text shrinks from 43,056 to 43,032 bytes, while
+unwind data stays at 7,572 bytes and data at 4,168 bytes. No baseline changes.
 
 This enables byte-oriented consumers such as dircolors. It does not complete
 their conversion or the remaining producer audit for #5714.
