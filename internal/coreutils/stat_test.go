@@ -76,6 +76,7 @@ func statTree(t *testing.T) string {
 	link("f", j("sl"))
 	link("nowhere", j("dangle"))
 	link("sub", j("dirlink"))
+	link("/dev/null", j("devlink"))
 	if err := os.Link(j("f"), j("hard")); err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +118,7 @@ func statTree(t *testing.T) string {
 		}
 	}
 	stamp(j("t-epoch"), 0, 0)
+	stamp(j("t-epoch-frac"), 0, 123456789)
 	stamp(j("t-whole"), 981173106, 0)
 	stamp(j("t-frac"), 981173106, 123456789)
 	stamp(j("t-neg"), -315521755, 0)
@@ -248,6 +250,9 @@ func statCases(t *testing.T) []invocation {
 	// A filesystem that records no birth time prints `-` for %w and 0 for
 	// %W; /proc is one on Linux.
 	add("birth-grid", "-c", "[%w][%W][%.3W][%.9W][%-12W][%30w][%-30w]", "f")
+	for _, name := range []string{"t-epoch", "t-epoch-frac", "t-neg", "t-neg-frac"} {
+		add("birth-"+name, "-c", "[%w][%W][%.3W][%.9W]", name)
+	}
 	add("birth-link", "-c", "%w|%W", "sl")
 	add("birth-link-deref", "-L", "-c", "%w|%W", "sl")
 	for _, name := range []string{"f", "empty", "d", "sl", "dangle", "fifo", "hard", "setuid-setgid-sticky", "/dev/null"} {
@@ -622,6 +627,8 @@ func statCases(t *testing.T) []invocation {
 	add("fs-root", "-f", "-c", "%b|%l|%s", "/")
 	add("fs-file-operand", "-f", "-c", "%b|%l", "f")
 	add("fs-dev", "-f", "-c", "%l|%n", "/dev/null")
+	add("fs-dev-geometry", "-f", "-c", "%s|%l|%n", "/dev/null")
+	add("fs-dev-link", "-f", "-c", "%s|%l|%n", "devlink")
 	add("fs-two-operands", "-f", "-c", "%n|%l", ".", "/")
 	add("fs-missing", "-f", "-c", "%n", "nosuch")
 	add("fs-missing-nonutf8", "-f", "-c", "%n", "no\xffsuch")

@@ -663,9 +663,8 @@ function out_octal(d: Directive, v: u64): string {
 }
 
 // ---- device numbers ---------------------------------------------------------
-// glibc's `major` / `minor`: the low 8 bits and bits 8..19 of the
-// 32-bit legacy encoding, widened to the 64-bit one by the halves
-// above bit 32.
+// Linux splits both components across its 64-bit device number. Darwin's
+// contiguous fields are selected at the rendering sites below.
 function dev_major(dev: u64): u64 {
   return dev >> 8 as u64 & 0xfff as u64 | dev >> 32 as u64 & 0xfffff000 as u64;
 }
@@ -823,6 +822,11 @@ struct Item { name: string, st: FileStat, link: string, is_link: boolean, deref:
 
 struct FsItem { name: string, fs: FsStat }
 
+function darwin_no_birth(st: FileStat): boolean {
+  // gnulib treats a zero second or an invalid fraction as unknown on BSD.
+  return st.btime == 0 as i64 || st.btime_nsec < 0 as i64 || st.btime_nsec >= 1000000000 as i64;
+}
+
 function stat_zero(): FileStat {
   return FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64, btime: 0 as i64, btime_nsec: 0 as i64 };
 }
@@ -882,7 +886,13 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
       dev = st.rdev as u64;
     }
     if (d.mod == 72) {
+      if (target_os() == "darwin") {
+        return (ok_rendered(out_unsigned(d, dev >> 24 as u64 & 0xff as u64)), qi);
+      }
       return (ok_rendered(out_unsigned(d, dev_major(dev))), qi);
+    }
+    if (target_os() == "darwin") {
+      return (ok_rendered(out_unsigned(d, dev & 0xffffff as u64)), qi);
     }
     return (ok_rendered(out_unsigned(d, dev_minor(dev))), qi);
   }
@@ -968,9 +978,15 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
     return (ok_rendered(out_unsigned(d, st.size as u64)), qi);
   }
   if (c == 116) {
+    if (target_os() == "darwin") {
+      return (ok_rendered(out_hex(d, st.rdev as u64 >> 24 as u64 & 0xff as u64)), qi);
+    }
     return (ok_rendered(out_hex(d, dev_major(st.rdev as u64))), qi);
   }
   if (c == 84) {
+    if (target_os() == "darwin") {
+      return (ok_rendered(out_hex(d, st.rdev as u64 & 0xffffff as u64)), qi);
+    }
     return (ok_rendered(out_hex(d, dev_minor(st.rdev as u64))), qi);
   }
   if (c == 117) {
@@ -1000,12 +1016,22 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
   // The birth time; zero is a filesystem that records none, which GNU
   // prints as `-` and, through %W, as 0.
   if (c == 119) {
+    if (target_os() == "darwin") {
+      if (darwin_no_birth(st)) {
+        return (ok_rendered_bytes(out_string(d, "-")), qi);
+      }
+    }
     if (st.btime == 0 as i64 && st.btime_nsec == 0 as i64) {
       return (ok_rendered_bytes(out_string(d, "-")), qi);
     }
     return (ok_rendered_bytes(out_string(d, human_time(z, st.btime, st.btime_nsec))), qi);
   }
   if (c == 87) {
+    if (target_os() == "darwin") {
+      if (darwin_no_birth(st)) {
+        return (ok_rendered(epoch_time(d, 0 as i64, 0 as i64)), qi);
+      }
+    }
     return (ok_rendered(epoch_time(d, st.btime, st.btime_nsec)), qi);
   }
   return (unknown_rendered(), qi);
@@ -1074,6 +1100,10 @@ function render_fs(d: Directive, it: FsItem, qi: Quoting): (Rendered, Quoting) {
     return (ok_rendered(out_unsigned(d, fs.blocks_free as u64)), qi);
   }
   if (c == 108) {
+    if (target_os() == "darwin") {
+      // GNU reads this from statfs, whose Darwin record has no name limit.
+      return (ok_rendered_bytes(out_string(d, "?")), qi);
+    }
     return (ok_rendered(out_unsigned(d, fs.name_max as u64)), qi);
   }
   if (c == 110) {
@@ -1263,15 +1293,56 @@ function do_file(o: io_buffered.BufWriter, pieces: Piece[], device_pieces: Piece
       return (w, !rendered.1, rendered.2, g.1);
     },
     Err(e) => {
-      w = gnu.error_out(w, "cannot statx " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      let action: string = "cannot statx ";
+      if (target_os() == "darwin") {
+        action = "cannot stat ";
+      }
+      w = gnu.error_out(w, action + gnu.quotea(name) + ": " + gnu.io_error_text(e));
       return (w, false, qi, names);
     }
   }
 }
 
+// Darwin's pathconf can reject a device node even though its filesystem
+// has valid geometry. Query the verified mount point in that case. This
+// leaves statfs's length-limit error contract intact and keeps the original
+// operand's error if no alternative query succeeds.
+function fsstat_fallback(name: string, original: IoError): Result[FsStat, IoError] {
+  match (stat(name)) {
+    Ok(st) => {
+      match (mount_point(name, st)) {
+        Some(point) => {
+          match (dev_of(point)) {
+            Some(dev) => {
+              if (dev == st.dev && point != name) {
+                match (statfs(point)) {
+                  Ok(fs) => {
+                    return Ok(fs);
+                  },
+                  Err(_) => {}
+                }
+              }
+            },
+            None => {}
+          }
+        },
+        None => {}
+      }
+    },
+    Err(_) => {}
+  }
+  return Err(original);
+}
+
 function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline: boolean, qi: Quoting, builtin: string): (io_buffered.BufWriter, boolean, Quoting) {
   let w: io_buffered.BufWriter = o;
-  match (statfs(name)) {
+  let probe: Result[FsStat, IoError] = statfs(name);
+  if (target_os() == "darwin") {
+    if let Err(original) = probe {
+      probe = fsstat_fallback(name, original);
+    }
+  }
+  match (probe) {
     Ok(fs) => {
       if (builtin != "") {
         gnu.die(w, builtin, 1);

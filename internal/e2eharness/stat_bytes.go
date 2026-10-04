@@ -87,4 +87,52 @@ func RunStatByteCases(t *testing.T, bin string, runner []string, census func(*te
 			}
 		})
 	}
+	// Device nodes exercise Darwin's mount-point fallback when pathconf
+	// rejects the operand. Keep success, failure and continuation under the
+	// same ownership checks as byte formatting.
+	if err := os.Symlink("/dev/null", filepath.Join(dir, "device-link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+		code int
+	}{
+		{"filesystem file", []string{StatByteFilename}, StatByteFilename, 0},
+		{"filesystem device", []string{"/dev/null"}, "/dev/null", 0},
+		{"filesystem device link", []string{"device-link"}, "device-link", 0},
+		{"filesystem missing", []string{"missing"}, "", 1},
+		{"filesystem continuation", []string{"/dev/null", "missing", "device-link"}, "/dev/nulldevice-link", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			argv := append(append(append([]string{}, runner...), bin), "-f", "--printf", "%n")
+			argv = append(argv, tc.args...)
+			cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "LC_ALL=C")
+			var out, diagnostic bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &out, &diagnostic
+			err := cmd.Run()
+			code := 0
+			if err != nil {
+				if exit, ok := err.(*exec.ExitError); ok {
+					code = exit.ExitCode()
+				} else {
+					t.Fatalf("run: %v\n%s", err, diagnostic.String())
+				}
+			}
+			if code != tc.code || out.String() != tc.want {
+				t.Fatalf("got exit %d, stdout %q; want exit %d, stdout %q\n%s", code, out.String(), tc.code, tc.want, diagnostic.String())
+			}
+			if tc.code != 0 && !strings.Contains(diagnostic.String(), "cannot read file system information for") {
+				t.Fatalf("missing filesystem diagnostic: %s", diagnostic.String())
+			}
+			if census != nil {
+				census(t, diagnostic.String())
+			}
+		})
+	}
 }
