@@ -1752,10 +1752,10 @@ function main(): i32 {
 }
 
 // TestInterpScriptMockPlatform pins std/mock_platform's recording surface
-// (docs/PLATFORM-RESEARCH.md Rec §6). The log lives in a cell the mock and
-// the bag from `as_platform()` share, so `record` mutates through a value
-// rather than returning a new one — which is what lets a handler holding
-// only the bag write into the mock the test still holds.
+// (docs/PLATFORM-RESEARCH.md Rec §6). The log lives in a cell every copy of
+// the mock shares, so `record` mutates through a value rather than returning
+// a new one — which is what lets a handler handed the mock as a
+// `platform.Platform` write into the mock the test still holds.
 func TestInterpScriptMockPlatform(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -1831,7 +1831,7 @@ function main(): i32 {
 			// only ever touches THAT, so nothing reaches the host — the
 			// asserted stdout would carry the eprint'd log line if
 			// `.log` had fallen through to the host path.
-			name: "handler driven through as_platform records its effects",
+			name: "handler handed the mock as its platform records its effects",
 			source: `import "std/mock_platform";
 import "std/platform";
 import "std/http";
