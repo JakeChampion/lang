@@ -290,7 +290,7 @@ pub function need_ops(): string[] {
     "args", "arr_push", "arr_push_f64", "arr_push_i64", "arr_push_owned", "arr_push_owned_i64",
     "arr_push_owned_f64", "env", "environ", "eprint_str", "exit", "fcos", "fexp", "flog",
     "fpow", "fsin", "monotonic_ns", "now_ns", "now_unix_ms", "poll", "print_str", "putchar",
-    "random_bytes", "read_chunk", "read_chunk_bytes", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs",
+    "random_bytes", "read_chunk", "read_chunk_bytes", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache",
     "fd_dup_onto", "reader_seek", "reader_splice", "fd_flags", "writer_truncate", "read_dir",
     "read_dir_all", "read_file", "read_file_bytes", "read_line",
     "reader_close", "remove_dir_all", "remove_file", "create_dir_all", "create_dir",
@@ -2718,6 +2718,7 @@ function fs_import_gates_p2(needs: string[]): GatedImport[] {
     GatedImport { on: need(needs, "truncate") || files_need(needs, ["writer_truncate"]), text: t + "set-size\" (func $desc_set_size (param i32 i64 i32)))" },
     GatedImport { on: files_need(needs, ["fd_fsync"]), text: t + "sync\" (func $desc_sync (param i32 i32)))" },
     GatedImport { on: files_need(needs, ["fd_fdatasync"]), text: t + "sync-data\" (func $desc_sync_data (param i32 i32)))" },
+    GatedImport { on: files_need(needs, ["fd_drop_cache"]), text: t + "advise\" (func $desc_advise (param i32 i64 i64 i32 i32)))" },
     GatedImport { on: need(needs, "set_file_times"), text: t + "set-times-at\" (func $set_times_at (param i32 i32 i32 i32 i32 i64 i32 i32 i64 i32 i32)))" },
     GatedImport { on: need_any(needs, ["create_dir", "create_dir_all", "temp_dir"]), text: t + "create-directory-at\" (func $create_directory_at (param i32 i32 i32 i32)))" },
     GatedImport { on: need_any(needs, ["remove_file", "remove_dir_all"]), text: t + "unlink-file-at\" (func $unlink_file_at (param i32 i32 i32 i32)))" },
@@ -2791,7 +2792,7 @@ function need_preopen_p2(needs: string[]): boolean {
 // core keeps the table these resolve fds through (fd_table_funcs).
 function need_fd_table(needs: string[]): boolean {
   return need_open_file(needs) || need_fd_read(needs) || need_any(needs, [
-    "reader_close", "fd_stat", "fd_fsync", "fd_fdatasync", "reader_seek", "fd_flags", "writer_truncate",
+    "reader_close", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_drop_cache", "reader_seek", "fd_flags", "writer_truncate",
   ]);
 }
 
@@ -2802,7 +2803,7 @@ function need_fd_table(needs: string[]): boolean {
 function component_fs_needs(): string[] {
   return [
     "open_file", "open_with", "reader_close", "read_line", "read_chunk", "read_chunk_bytes",
-    "fd_stat", "fd_fsync", "fd_fdatasync", "reader_seek", "fd_flags", "writer_truncate",
+    "fd_stat", "fd_fsync", "fd_fdatasync", "fd_drop_cache", "reader_seek", "fd_flags", "writer_truncate",
     "stat", "lstat", "read_dir", "read_dir_all", "create_dir", "create_dir_all", "remove_file",
     "remove_dir", "remove_dir_all", "rename", "read_link", "create_symlink", "create_link",
     "truncate", "set_file_times", "temp_dir",
@@ -2869,6 +2870,9 @@ function fd_query_shims(needs: string[], files: boolean): string {
   }
   if (need(needs, "fd_fdatasync")) {
     o = o + desc_shim("fd_datasync", "", files, "desc_sync_data", "", "8", "1");
+  }
+  if (need(needs, "fd_drop_cache")) {
+    o = o + desc_shim("fd_advise", "(param $off i64) (param $len i64) (param $adv i32)", files, "desc_advise", " (local.get $off) (local.get $len) (local.get $adv)", "8", "1");
   }
   if (need(needs, "writer_truncate")) {
     o = o + desc_shim("fd_filestat_set_size", "(param $len i64)", files, "desc_set_size", " (local.get $len)", "8", "1");
@@ -6427,6 +6431,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    call $__fern_fd_fsync\n");
   } else if (o.kind_tag == 300) {  // fd_fdatasync
     parts = parts.append("    call $__fern_fd_fdatasync\n");
+  } else if (o.kind_tag == 366) {  // fd_drop_cache
+    // r.drop_cache(offset, len) -> Option[IoError]: fd and the two i64s are
+    // on the stack in param order.
+    parts = parts.append("    call $__fern_fd_drop_cache\n");
   } else if (o.kind_tag == 301) {  // fd_syncfs
     // Neither preview has a per-filesystem flush, so this one drops the
     // fd and answers Unsupported rather than importing anything.
@@ -6957,7 +6965,7 @@ function emit_str_op_wat(o: ir.Op): string {
   if (o.kind_tag == 361) {
     return "    call $__fern_scan_set_bytes\n";
   }
-  if (o.kind_tag == 366) {
+  if (o.kind_tag == 378) {
     return "    call $__fern_mismatch_bytes\n";
   }
   if (o.kind_tag == 97) {  // str_len
@@ -7379,7 +7387,7 @@ function io_err_field_off(i: i32, slot: i32): string {
 // and neither wants the `need` calls spelled out.
 function needs_fd_sync(needs: string[]): boolean {
   return need(needs, "fd_fsync") || need(needs, "fd_fdatasync") || need(needs, "fd_syncfs")
-    || need(needs, "fd_dup_onto") || need(needs, "reader_splice");
+    || need(needs, "fd_drop_cache") || need(needs, "fd_dup_onto") || need(needs, "reader_splice");
 }
 
 // needs_io_error reports whether the module carries any fs op — the gate on
@@ -8272,6 +8280,9 @@ pub function fd_sync_funcs(needs: string[]): string {
   if (need(needs, "fd_syncfs")) {
     o = o + fd_syncfs_func();
   }
+  if (need(needs, "fd_drop_cache")) {
+    o = o + fd_drop_cache_func();
+  }
   if (need(needs, "fd_dup_onto")) {
     o = o + fd_dup_onto_func();
   }
@@ -8288,6 +8299,11 @@ pub function fd_sync_import(): string {
   return "  (import \"wasi_snapshot_preview1\" \"fd_sync\" (func $fd_sync (param i32) (result i32)))\n";
 }
 
+// fd_advise_import is the preview1 import behind $__fern_fd_drop_cache.
+pub function fd_advise_import(): string {
+  return "  (import \"wasi_snapshot_preview1\" \"fd_advise\" (func $fd_advise (param i32 i64 i64 i32) (result i32)))\n";
+}
+
 pub function fd_datasync_import(): string {
   return "  (import \"wasi_snapshot_preview1\" \"fd_datasync\" (func $fd_datasync (param i32) (result i32)))\n";
 }
@@ -8301,6 +8317,27 @@ pub function fd_sync_func(name: string, imp: string): string {
   o = o + "  (func $__fern_fd_" + name + " (param $fd i32) (result i32)\n";
   o = o + "    (local $err i32) (local $res i32) (local $path i32)\n";
   o = o + "    (local.set $err (call $" + imp + " (local.get $fd)))\n";
+  o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
+  o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
+  o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
+  o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+  o = o + "      (i32.store (local.get $res) (i32.const 0))\n";
+  o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+  o = o + "      (return (local.get $res))))\n";
+  o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+  o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
+  o = o + "    (local.get $res))\n";
+  return o;
+}
+
+// fd_drop_cache_func emits $__fern_fd_drop_cache(fd, off, len) ->
+// Option[IoError]: fd_advise with `dontneed` (4), whose errno becomes
+// Some(IoError) as fd_sync_func's does. The host may ignore the advice.
+pub function fd_drop_cache_func(): string {
+  let o: string = "";
+  o = o + "  (func $__fern_fd_drop_cache (param $fd i32) (param $off i64) (param $len i64) (result i32)\n";
+  o = o + "    (local $err i32) (local $res i32) (local $path i32)\n";
+  o = o + "    (local.set $err (call $fd_advise (local.get $fd) (local.get $off) (local.get $len) (i32.const 4)))\n";
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
   o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
@@ -13522,6 +13559,9 @@ function preview1_imports(needs: string[]): string {
   }
   if (need(needs, "fd_fdatasync")) {
     parts = parts.append(fd_datasync_import());
+  }
+  if (need(needs, "fd_drop_cache")) {
+    parts = parts.append(fd_advise_import());
   }
   if (need(needs, "reader_seek")) {
     parts = parts.append(fd_seek_import());

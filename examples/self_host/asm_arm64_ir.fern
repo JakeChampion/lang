@@ -296,7 +296,7 @@ function emit_mismatch_arm64(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState 
   s = mlo.state;
   s = s.write("    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n");
   s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  if (o.kind_tag == 366) {
+  if (o.kind_tag == 378) {
     s = s.write("    ldr x5, [x0]\n    add x0, x0, #8\n");
     s = s.write("    ldr x6, [x2]\n    add x2, x2, #8\n");
   } else {
@@ -314,7 +314,7 @@ function emit_mismatch_arm64(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState 
   s = s.write("    cmp x4, x6\n    csel x4, x6, x4, gt\n");
   s = s.write("    cmp x4, #0\n    b.ge " + lb + "_nok\n    mov x4, #0\n");
   s = s.write(lb + "_nok:\n");
-  if (o.kind_tag == 366 && !ir.is_packed(o)) {
+  if (o.kind_tag == 378 && !ir.is_packed(o)) {
     s = s.write("    add x8, x0, x1, lsl #3\n    add x9, x2, x3, lsl #3\n    mov x10, #0\n");
     s = s.write(lb + "_slots:\n    cmp x10, x4\n    b.ge " + lb + "_slots_done\n");
     s = s.write("    add x11, x8, x10, lsl #3\n    ldrb w11, [x11]\n    add x14, x9, x10, lsl #3\n    ldrb w14, [x14]\n");
@@ -443,7 +443,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(l_done + ":\n    str x2, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 245 || o.kind_tag == 366) {  // mismatch / mismatch_bytes
+  if (o.kind_tag == 245 || o.kind_tag == 378) {  // mismatch / mismatch_bytes
     return emit_mismatch_arm64(o, s);
   }
   if (o.kind_tag == 234 || o.kind_tag == 360) {  // rmemchr / rmemchr_bytes
@@ -3850,6 +3850,15 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("reader");
     s = s.need("fd_syncfs");
     s = s.write("    bl __fn___fern_fd_syncfs\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 366) {  // fd_drop_cache
+    // [fd, offset, len] with len on top; re-pushed reversed so param[0]
+    // (fd) is lowest.
+    s = s.need("heap");
+    s = s.need("reader");
+    s = s.need("fd_drop_cache");
+    s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+    s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_fd_drop_cache\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 298) {  // sync
     // No operands. sync(2) cannot fail, but its return is pushed for
     // the statement-position drop, as sleep_ns's is.
@@ -5827,7 +5836,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
     "signal_disposition", "access",
     "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
-    "fd_stat", "raw_scratch", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
+    "fd_stat", "raw_scratch", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
   ])) {
     s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size(ctgt, s.has_need("statfs")) + "\n    .section .text\n");
   }
@@ -11943,7 +11952,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "remove_file", "create_dir_all", "create_dir", "remove_dir",
     "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at", "truncate",
     "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times", "read_link",
-    "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
+    "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority",

@@ -789,7 +789,7 @@ pub function op_scan_set_bytes(): Op {
 
 // Borrowed byte-range comparison, with the same clamps as mismatch.
 pub function op_mismatch_bytes(): Op {
-  return op0(366);
+  return op0(378);
 }
 
 // rmemchr (docs/ATLAS-PLATFORM-PLAN.md §3.3, memchr's nominated sibling):
@@ -2126,6 +2126,13 @@ pub function op_fd_fdatasync(): Op {
 
 pub function op_fd_syncfs(): Op {
   return op0(301);
+}
+
+// `fd_drop_cache` pops [fd, offset, len] and pushes Option[IoError]:
+// posix_fadvise(2) with POSIX_FADV_DONTNEED over that range of the handle's
+// file. Backs `r.drop_cache(offset, len)` / `w.drop_cache(offset, len)`.
+pub function op_fd_drop_cache(): Op {
+  return op0(366);
 }
 
 // `fd_dup_onto` pops [fd, newfd] and pushes Option[IoError]: dup3(2) of the
@@ -4214,6 +4221,9 @@ function kind_id_len13(name: string): i32 {
   if (name == "bsd_sum_bytes") {
     return 369;
   }
+  if (name == "fd_drop_cache") {
+    return 366;
+  }
   if (name == "rmemchr_bytes") {
     return 360;
   }
@@ -4277,7 +4287,7 @@ function kind_id_len14(name: string): i32 {
     return 353;
   }
   if (name == "mismatch_bytes") {
-    return 366;
+    return 378;
   }
   if (name == "buf_take_bytes") {
     return 347;
@@ -5399,6 +5409,9 @@ function kind_name_4(id: i32): string {
   if (id == 281) {
     return "writer_truncate";
   }
+  if (id == 366) {
+    return "fd_drop_cache";
+  }
   if (id == 282) {
     return "priority";
   }
@@ -5571,7 +5584,7 @@ pub function kind_name(id: i32): string {
   if (id == 367) {
     return "count_runs_bytes";
   }
-  if (id == 366) {
+  if (id == 378) {
     return "mismatch_bytes";
   }
   if (id == 364) {
@@ -5766,7 +5779,8 @@ function pops3(t: i32): boolean {
     || t == 314  // set_window_size (fd, rows, cols)
     || t == 324  // scan_set (str, from, set)
     || t == 327  // count_runs (str, inside, set)
-    || t == 364 || t == 365 || t == 376 || t == 377;  // setxattr, lsetxattr (path, name, value)
+    || t == 364 || t == 365 || t == 376 || t == 377  // setxattr, lsetxattr (path, name, value)
+    || t == 366;  // fd_drop_cache (fd, offset, len)
 }
 
 // pops_buf is the operand count of one of the capacity-carrying string
@@ -5888,7 +5902,7 @@ function kind_pops(t: i32): i32 {
   if (t == 206) {  // syscall4
     return 5;
   }
-  if (t == 245 || t == 366) {  // mismatch: a, ao, b, bo, n
+  if (t == 245 || t == 378) {  // mismatch: a, ao, b, bo, n
     return 5;
   }
   if (t == 228) {  // syscall5
@@ -8291,9 +8305,9 @@ pub function op_allocates(tag: i32): boolean {
     return true;
   }
   // fd_stat boxes the same pair; reader_seek, reader_splice and fd_flags
-  // box their Result[i64, IoError]; writer_truncate boxes its
-  // Option[IoError].
-  if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330) {
+  // box their Result[i64, IoError]; writer_truncate and fd_drop_cache box
+  // their Option[IoError].
+  if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330 || tag == 366) {
     return true;
   }
   // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr
@@ -8370,7 +8384,7 @@ pub function op_allocates(tag: i32): boolean {
 // than logic: every `||` is one row of a table, there is no path through it to
 // get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 373 || tag == 368 || tag == 369 || tag == 361 || tag == 367 || tag == 366 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
+  return tag == 373 || tag == 368 || tag == 369 || tag == 361 || tag == 367 || tag == 378 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
     || tag == 104 || tag == 105 || tag == 106
     || tag == 107 || tag == 108 || tag == 109
     || tag == 111 || tag == 113 || tag == 98

@@ -21,8 +21,9 @@ on Darwin returns the kernel's range error. WASI still lacks extended
 attributes, so all eight APIs are rejected with the `xattr` capability's E066
 diagnostic. This change does not add raw filesystem path APIs.
 
-The primary compiler appends IR tags 374-377 without renumbering existing
-operations. Its native runtimes support packed byte arrays and the diagnostic
+The primary compiler appends IR tags 374-377 without renumbering published
+operations. Integration preserves main's `fd_drop_cache` tag 366 and moves
+the unpublished `mismatch_bytes` operation to 378. Its native runtimes support packed byte arrays and the diagnostic
 slot representation. Both interpreters implement the raw APIs and strict
 text getters. The Go native changes provide the bootstrap seed needed to
 compile the primary interpreter's new host calls.
@@ -38,7 +39,9 @@ unchanged setter inputs, and following or preserving a final symlink.
 Linux Go and primary x86-64/ARM64 tests pass, including the primary
 interpreter, WASI refusal and balanced native allocation censuses. The full
 Linux unit suite and all lint gates pass. Darwin Go/interpreter and primary
-tests pass, as do the GNU and primary `stat`, SELinux and listing consumers.
+tests pass, as do the GNU and primary `stat`, SELinux, listing and DD consumers.
+Registry, constructor and SSA admission checks cover all 356 operations.
+The raw DD swab corpus crosses the 128 KiB cache-advice batch boundary.
 The consumer run includes the [Darwin metadata corrections](STRING-DARWIN-METADATA-2026-10-04.md).
 
 Fresh Go seeds produce primary compilers with identical bootstrap stages
@@ -46,12 +49,12 @@ two and three on both hosts:
 
 | Host | Compiler bytes | SHA-256 |
 | --- | ---: | --- |
-| arm64 Linux | 12,847,456 | `77f8eb03d820e5e10f9a89f49f9e4637982e6a38611cf6cddc8a36860c267c57` |
-| arm64 Darwin | 13,079,089 | `2f30e5028ddaf50cf150f01b71ee83fac4e301c5cf6d538f03d41f6826fdb14c` |
+| arm64 Linux | 12,849,248 | `ce3fa6bd91675a314e5839dcce5fdcbb94282ed47bfc8b753a73d66d42b82ad1` |
+| arm64 Darwin | 13,079,201 | `ac7c961ac42ba8ca8c8f29d191cb27fa2ea983ed24e830914e9efe62f938d3ec` |
 
 The reproduced Darwin compiler also passes the host-seeded fixture through
 actual native execution with a balanced census, interpreter execution and
-WASI refusal. The integrated source includes main `f4de66fd5`.
+WASI refusal. The integrated source includes main `0c445a1ac`.
 
 The bootstrap pin refresh is still required. The old pin cannot compile the
 newly used host calls. Fresh-seed validation does not replace that refresh

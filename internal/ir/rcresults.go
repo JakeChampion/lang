@@ -200,6 +200,7 @@ var rcResultOwned = map[string]bool{
 	"__fern_fd_stat":                 true,
 	"__fern_fd_fsync":                true,
 	"__fern_fd_fdatasync":            true,
+	"__fern_fd_drop_cache":           true,
 	"__fern_fd_syncfs":               true,
 	"__fern_fd_dup_onto":             true,
 	// The four terminal questions' handle forms. On the natives each is
@@ -356,6 +357,8 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"__method_Writer_fsync":            true, // __fern_fd_fsync
 	"__method_Reader_fdatasync":        true, // __fern_fd_fdatasync
 	"__method_Writer_fdatasync":        true, // __fern_fd_fdatasync
+	"__method_Reader_drop_cache":       true, // __fern_fd_drop_cache
+	"__method_Writer_drop_cache":       true, // __fern_fd_drop_cache
 	"__method_Reader_syncfs":           true, // __fern_fd_syncfs
 	"__method_Writer_syncfs":           true, // __fern_fd_syncfs
 	"__method_Reader_dup_onto":         true, // __fern_fd_dup_onto

@@ -5611,6 +5611,9 @@ function handle_metadata_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowe
   if (op == "syncfs") {
     return Lowered { found: true, r: emit(r, ir.op_fd_syncfs()) };
   }
+  if (op == "drop_cache") {
+    return Lowered { found: true, r: emit(r, ir.op_fd_drop_cache()) };
+  }
   // A handle is its descriptor, so these are the free ops with the receiver
   // as the first operand, as the AST lowering emits them.
   if (op == "isatty") {
@@ -5638,7 +5641,7 @@ function handle_metadata_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowe
 // contract name, "" for any other name.
 function handle_method(name: string): string {
   let methods: string[] = [
-    "stat", "flags", "seek", "fsync", "fdatasync", "syncfs", "isatty", "dup_onto", "window_size",
+    "stat", "flags", "seek", "fsync", "fdatasync", "syncfs", "drop_cache", "isatty", "dup_onto", "window_size",
     "set_window_size", "termios_get", "termios_set",
   ];
   for m in methods {

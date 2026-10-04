@@ -383,6 +383,9 @@ var linuxOnlySysno = map[string]int{
 	// __fern_fd_syncfs branches inline on Darwin rather than reaching
 	// this row.
 	"syncfs": 267,
+	// fadvise64: XNU has no fadvise, so __fern_fd_drop_cache answers
+	// Unsupported on Darwin rather than reaching this row.
+	"fadvise64": 223,
 	// getcwd: current XNU has no __getcwd trap — there is no SYS___getcwd
 	// in the macOS SDK's syscall.h and slot 326, where older XNU carried
 	// it, is empty. This row used to claim Darwin 296, which is
@@ -1188,6 +1191,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesFdSyncfs {
 		g.emitFdCallRuntime("__fern_fd_syncfs", "sfs", "syncfs", nil)
+	}
+	if g.usesFdDropCache {
+		// fadvise64(fd, offset, len, DONTNEED): the offset and length
+		// arrive in x1 and x2, where the call wants them.
+		g.emitFdCallRuntime("__fern_fd_drop_cache", "fdc", "fadvise64", func() {
+			g.emit("mov x3, #4") // POSIX_FADV_DONTNEED
+		})
 	}
 	if g.usesFdDupOnto {
 		// dup3(own_fd, fd, 0). The destination is sign-extended rather
@@ -15688,19 +15698,21 @@ func (g *generator) emitReaderWriterRuntime() {
 
 // emitFdCallRuntime emits one of the helpers that make a single
 // syscall on a handle's descriptor —
-// `__fern_fd_fsync` / `__fern_fd_fdatasync` / `__fern_fd_syncfs` and
-// `__fern_fd_dup_onto` — taking a Reader / Writer handle pointer and
-// answering `Option[IoError]`. They differ only in which syscall the fd
-// goes to and in whether anything beyond it needs setting up, which is
-// what `prep` emits, so one body serves all four, shaped like
-// `__fern_close_fd_box`.
+// `__fern_fd_fsync` / `__fern_fd_fdatasync` / `__fern_fd_syncfs`,
+// `__fern_fd_drop_cache` and `__fern_fd_dup_onto` — taking a Reader /
+// Writer handle pointer and answering `Option[IoError]`. They differ only
+// in which syscall the fd goes to and in whether anything beyond it needs
+// setting up, which is what `prep` emits, so one body serves all five,
+// shaped like `__fern_close_fd_box`.
 //
-// `syncfs` on Darwin is the exception: XNU has no per-filesystem flush,
-// so the fd is checked with fcntl(F_GETFD) — which answers EBADF for a
-// descriptor that is not open, and needs no stat buffer — and the flush
-// is then the whole-machine sync(2). That covers the filesystem the
+// Darwin has two exceptions. XNU has no per-filesystem flush, so for
+// `syncfs` the fd is checked with fcntl(F_GETFD) — which answers EBADF
+// for a descriptor that is not open, and needs no stat buffer — and the
+// flush is then the whole-machine sync(2). That covers the filesystem the
 // descriptor lives on, so the guarantee the caller asked for holds; it
-// simply flushes more than was asked.
+// simply flushes more than was asked. XNU has no fadvise either, and
+// F_NOCACHE is a different request, so `fadvise64` answers Unsupported once
+// lseek has shown the descriptor is seekable (a pipe is ESPIPE, as on Linux).
 func (g *generator) emitFdCallRuntime(sym, lp, call string, prep func()) {
 	g.line("")
 	g.line(".global " + sym)
@@ -15713,7 +15725,20 @@ func (g *generator) emitFdCallRuntime(sym, lp, call string, prep func()) {
 		prep()
 	}
 	g.emit("ldr w0, [x0]") // fd, at offset 0 of the handle
-	if call == "syncfs" && g.darwin {
+	if call == "fadvise64" && g.darwin {
+		// The fd is sought first, so a pipe answers ESPIPE as Linux's
+		// fadvise does.
+		g.emit("mov x1, #0")
+		g.emit("mov x2, #1") // SEEK_CUR
+		g.syscall("lseek")
+		g.emit("tbnz x0, #63, .%s_err", lp)
+		g.emit("mov x0, #8")
+		g.emit("bl __fern_alloc_box")
+		g.emit("mov w1, #5") // IoError::Unsupported
+		g.emit("str w1, [x0]")
+		g.emit("mov x19, x0")
+		g.emit("b .%s_some", lp)
+	} else if call == "syncfs" && g.darwin {
 		g.emit("mov x1, #1") // F_GETFD
 		g.emit("mov x2, #0")
 		g.syscall("fcntl")
@@ -15737,6 +15762,7 @@ func (g *generator) emitFdCallRuntime(sym, lp, call string, prep func()) {
 	}
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0")
+	g.label("." + lp + "_some")
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]") // Some
@@ -16614,6 +16640,7 @@ type generator struct {
 	usesFdSync         bool
 	usesFdDatasync     bool
 	usesFdSyncfs       bool
+	usesFdDropCache    bool
 	usesFdDupOnto      bool
 	usesSync           bool
 	usesAccess         bool
@@ -21406,6 +21433,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__method_Reader_syncfs", "__method_Writer_syncfs":
 			target = "__fern_fd_syncfs"
 			g.usesFdSyncfs = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "__method_Reader_drop_cache", "__method_Writer_drop_cache":
+			target = "__fern_fd_drop_cache"
+			g.usesFdDropCache = true
 			g.usesAlloc = true
 			g.usesIoError = true
 		case "__method_Reader_dup_onto", "__method_Writer_dup_onto":

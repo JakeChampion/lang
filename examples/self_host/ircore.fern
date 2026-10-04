@@ -784,7 +784,7 @@ pub function all_runtime_need_roots(): string[] {
     "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
     "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "lgetxattr", "lgetxattr_bytes", "setxattr", "setxattr_bytes", "lsetxattr", "lsetxattr_bytes",
     "chmod", "chmod_at", "set_file_times", "truncate", "mknod", "chown_at",
-    "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_dup_onto",
+    "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "fd_dup_onto",
     "termios_get", "termios_set",
     "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "reader_splice", "fd_flags",
     "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8",
@@ -1236,7 +1236,7 @@ pub function unit_cache_key(parts: flatten.PerModule[], u: Units, k: UnitKeys, i
   // operations. Old native slice bodies create immortal descriptors; they
   // must not be reused with callers that depend on counted view descriptors.
   // Literal alignment also changes the relative offsets in cached wasm units.
-  return key + "|ir" + lowered_digest(u.caches[idx]) + ":" + k.view + "|runtime=counted-string-views-1,wasm-string-align4-1,tagged-byte-views-1,writer-byte-views-1,byte-consumer-ops-373-1,xattr-bytes-377-1";
+  return key + "|ir" + lowered_digest(u.caches[idx]) + ":" + k.view + "|runtime=counted-string-views-1,wasm-string-align4-1,tagged-byte-views-1,writer-byte-views-1,byte-consumer-ops-378-2,xattr-bytes-377-1";
 }
 
 // struct_table_text spells every struct decl in table order, with each part

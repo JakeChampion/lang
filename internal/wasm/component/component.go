@@ -1936,7 +1936,10 @@ type FsFeatures struct {
 	// per-FILESYSTEM at all, so `syncfs` reaches no import here.
 	Sync     bool // sync
 	SyncData bool // sync-data
-	Stat     bool // stat-at
+	// Advise is `advise` on the descriptor: posix_fadvise's advice over a
+	// byte range, behind a handle's drop_cache.
+	Advise bool // advise
+	Stat   bool // stat-at
 	// StatSelf is `stat` on the descriptor itself — the fstat behind a
 	// Reader / Writer's `.stat()`. It shares stat-at's result record, so
 	// the two are declared together.
@@ -1954,7 +1957,7 @@ type FsFeatures struct {
 func (f FsFeatures) Any() bool {
 	return f.OpenAt || f.Read || f.Write || f.Append ||
 		f.Unlink || f.Mkdir || f.Rmdir || f.Link || f.Symlink || f.Readlink ||
-		f.Rename || f.SetTimes || f.SetSize || f.Sync || f.SyncData ||
+		f.Rename || f.SetTimes || f.SetSize || f.Sync || f.SyncData || f.Advise ||
 		f.Stat || f.StatSelf || f.ReadDir || f.DropDesc
 }
 
@@ -1975,7 +1978,7 @@ func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []b
 		in: inT, out: outT,
 		needIn:       f.Read,
 		needOut:      f.Write || f.Append,
-		needUnit:     f.Unlink || f.Mkdir || f.Rmdir || f.Link || f.Symlink || f.Rename || f.SetTimes || f.SetSize || f.Sync || f.SyncData,
+		needUnit:     f.Unlink || f.Mkdir || f.Rmdir || f.Link || f.Symlink || f.Rename || f.SetTimes || f.SetSize || f.Sync || f.SyncData || f.Advise,
 		needDescType: f.Stat || f.StatSelf || f.ReadDir,
 	})
 	if f.OpenAt {
@@ -2031,6 +2034,9 @@ func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []b
 	}
 	if f.SyncData {
 		fsSyncSelf(b, v, "sync-data")
+	}
+	if f.Advise {
+		fsAdvise(b, v)
 	}
 	return b.body()
 }

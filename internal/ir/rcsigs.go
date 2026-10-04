@@ -568,6 +568,7 @@ var rcInert = map[string]bool{
 	"__fern_reader_splice": true,
 	"__fern_reader_flags":  true, "__fern_writer_flags": true,
 	"__fern_fd_fsync": true, "__fern_fd_fdatasync": true, "__fern_fd_syncfs": true,
+	"__fern_fd_drop_cache":          true,
 	"__fern_fd_dup_onto":            true,
 	"__fern_handle_window_size":     true,
 	"__fern_handle_set_window_size": true,

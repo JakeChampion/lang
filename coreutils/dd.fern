@@ -129,21 +129,22 @@ function conv_sparse(): i32 {
 // it as an input flag only. The rest change the OPEN: `append` through
 // `open_appender`, the others as bits of `open_reader_with` /
 // `open_writer_with`'s flags word (open_flags). `nocache` is not an
-// open flag and is not taken (#9242).
+// open flag: it drops the cached pages of the copied range as it goes
+// (Cache).
 function iflag_names(): string[] {
-  return ["append", "count_bytes", "fullblock", "nonblock", "seek_bytes", "skip_bytes", "direct", "directory", "dsync", "sync", "noatime", "noctty", "nofollow"];
+  return ["append", "count_bytes", "fullblock", "nonblock", "seek_bytes", "skip_bytes", "direct", "directory", "dsync", "sync", "noatime", "noctty", "nofollow", "nocache"];
 }
 
 function iflag_bits(): i32[] {
-  return [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+  return [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, flag_nocache()];
 }
 
 function oflag_names(): string[] {
-  return ["append", "count_bytes", "nonblock", "seek_bytes", "skip_bytes", "direct", "directory", "dsync", "sync", "noatime", "noctty", "nofollow"];
+  return ["append", "count_bytes", "nonblock", "seek_bytes", "skip_bytes", "direct", "directory", "dsync", "sync", "noatime", "noctty", "nofollow", "nocache"];
 }
 
 function oflag_bits(): i32[] {
-  return [1, 2, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+  return [1, 2, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, flag_nocache()];
 }
 
 // open_flags is the open-time part of an iflag/oflag word as
@@ -182,6 +183,10 @@ function flag_seek_bytes(): i32 {
 
 function flag_skip_bytes(): i32 {
   return 32;
+}
+
+function flag_nocache(): i32 {
+  return 8192;
 }
 
 // ---- status= ----------------------------------------------------------------
@@ -975,6 +980,40 @@ function progress_line(bytes: i64, sec: i64): void {
   }
 }
 
+// ---- nocache ----------------------------------------------------------------
+//
+// `iflag=nocache` / `oflag=nocache` drop the cached pages of what the copy
+// has read or written, as GNU's invalidate_cache does: in batches of 128
+// KiB from the offset the side started at, ignoring a failure, and over the
+// rest of the file once the copy ends. A side with no offset to name (a
+// pipe) is left alone.
+struct Cache { on: boolean, start: i64, pending: i64 }
+
+function cache_batch(): i64 {
+  return 131072 as i64;
+}
+
+function cache_at(on: boolean, offset: Result[i64, IoError]): Cache {
+  match (offset) {
+    Ok(o) => {
+      return Cache { on: on, start: o, pending: 0 as i64 };
+    },
+    Err(_) => {
+      return Cache { on: false, start: 0 as i64, pending: 0 as i64 };
+    }
+  }
+}
+
+// cache_advance counts `n` more bytes, and answers whether a batch is due.
+function cache_advance(c: Cache, n: i64): (Cache, boolean) {
+  let next: Cache = Cache { ...c, pending: c.pending + n };
+  return (next, c.on && next.pending >= cache_batch());
+}
+
+function cache_spent(c: Cache): Cache {
+  return Cache { ...c, start: c.start + c.pending, pending: 0 as i64 };
+}
+
 function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: string, started: i64): Run {
   let k: Sink = k0;
   let st: Rec = rec_new(s.cbs as i32, s.conv);
@@ -986,6 +1025,8 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
   let last_tick: i64 = started;
   let progressed: boolean = false;
   let tab: u8[] = translation_table(s.conv);
+  let ic: Cache = cache_at((s.iflag & flag_nocache()) != 0, r.seek(0 as i64, 1));
+  let oc: Cache = cache_at((s.oflag & flag_nocache()) != 0, k0.w.seek(0 as i64, 1));
   while (true) {
     if (s.have_count) {
       if (count_bytes) {
@@ -1020,6 +1061,12 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
     k = Sink { ...k, c: c };
     records = records + 1 as i64;
     bytes_left = bytes_left - got.data.len() as i64;
+    let (ic2, idue) = cache_advance(ic, got.data.len() as i64);
+    ic = ic2;
+    if (idue) {
+      r.drop_cache(ic.start, ic.pending);
+      ic = cache_spent(ic);
+    }
     let conv1: (Swab, u8[]) = convert_record(sw, tab, got.data, s, false);
     sw = conv1.0;
     let piece: u8[] = conv1.1;
@@ -1035,6 +1082,12 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
     }
     if (!k.ok) {
       return Run { c: k.c, status: 1, progressed: progressed };
+    }
+    let (oc2, odue) = cache_advance(oc, piece.len() as i64);
+    oc = oc2;
+    if (odue) {
+      k.w.drop_cache(oc.start, 0 as i64);
+      oc = cache_spent(oc);
     }
     if (s.status == status_progress()) {
       let now: i64 = monotonic_ns();
@@ -1067,6 +1120,12 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
   k = sink_flush(k);
   if (!k.ok || !settle_holes(k)) {
     return Run { c: k.c, status: 1, progressed: progressed };
+  }
+  if (ic.on) {
+    r.drop_cache(ic.start, 0 as i64);
+  }
+  if (oc.on) {
+    k.w.drop_cache(oc.start, 0 as i64);
   }
   let c: Counts = Counts { ...k.c, truncated: st.trunc };
   return Run { c: c, status: status, progressed: progressed };
@@ -1457,6 +1516,7 @@ function help_text(): string {
   out = out + "  fullblock  accumulate full blocks of input (iflag only)\n";
   out = out + "  nonblock  use non-blocking I/O\n";
   out = out + "  noatime   do not update access time\n";
+  out = out + "  nocache   Request to drop cache.  See also oflag=sync\n";
   out = out + "  noctty    do not assign controlling terminal from file\n";
   out = out + "  nofollow  do not follow symlinks\n";
   out = out + "  count_bytes  treat 'count=N' as a byte count (iflag only)\n";
@@ -1699,6 +1759,24 @@ function refuse_combined(conv: i32, group: i32, what: string): void {
   }
 }
 
+// discard_all reports a failed whole-file drop under the side's name, or
+// what GNU calls it when it has none, and answers whether it succeeded.
+function discard_all(res: Option[IoError], name: string, unnamed: string): boolean {
+  match (res) {
+    Some(e) => {
+      let shown: string = name;
+      if (shown.len() == 0) {
+        shown = unnamed;
+      }
+      gnu.error("failed to discard cache for: " + gnu.quotef(shown) + ": " + gnu.io_error_text(e));
+      return false;
+    },
+    None => {
+      return true;
+    }
+  }
+}
+
 // ---- main -------------------------------------------------------------------
 pub function main(): i32 {
   let argv: string[] = args();
@@ -1735,6 +1813,16 @@ pub function main(): i32 {
   let k: Sink = sink_new(w, s.out_name, s.obs as i32, counts_new(), (s.conv & conv_sparse()) != 0);
   let run: Run = copy(r, k, s, scan.bs_given, s.in_name, started);
   let status: i32 = run.status;
+  // `count=0` with `nocache` copies nothing and drops the whole file's
+  // cache instead, the one form whose failure GNU reports.
+  if (s.have_count && s.count == 0 as i64) {
+    if ((s.iflag & flag_nocache()) != 0 && !discard_all(r.drop_cache(0 as i64, 0 as i64), s.in_name, "standard input")) {
+      status = 1;
+    }
+    if ((s.oflag & flag_nocache()) != 0 && !discard_all(w.drop_cache(0 as i64, 0 as i64), s.out_name, "standard output")) {
+      status = 1;
+    }
+  }
   // A `conv=fdatasync` the descriptor cannot answer becomes a full
   // `fsync`: EINVAL there is the descriptor saying it has no data-only
   // sync rather than a failure to report, which is why a run over

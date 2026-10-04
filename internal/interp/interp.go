@@ -709,6 +709,8 @@ func New() *Interp {
 	i.Builtins["__method_Writer_fsync"] = &Builtin{Fn: builtinFsync}
 	i.Builtins["__method_Reader_fdatasync"] = &Builtin{Fn: builtinFdatasync}
 	i.Builtins["__method_Writer_fdatasync"] = &Builtin{Fn: builtinFdatasync}
+	i.Builtins["__method_Reader_drop_cache"] = &Builtin{Fn: builtinDropCache}
+	i.Builtins["__method_Writer_drop_cache"] = &Builtin{Fn: builtinDropCache}
 	i.Builtins["__method_Reader_syncfs"] = &Builtin{Fn: builtinSyncfs}
 	i.Builtins["__method_Writer_syncfs"] = &Builtin{Fn: builtinSyncfs}
 	i.Builtins["__method_Writer_truncate"] = &Builtin{Fn: builtinWriterTruncate}
@@ -3714,6 +3716,38 @@ func builtinFdatasync(i *Interp, args []Value) (Value, error) {
 // a filesystem even when it names nothing fsync can write.
 func builtinSyncfs(i *Interp, args []Value) (Value, error) {
 	return syncMethod(i, "syncfs", args, hostSyncfs)
+}
+
+// errNoFadvise is a host's answer to a drop_cache it has no call for, on
+// a descriptor that could otherwise take one.
+var errNoFadvise = errors.New("no fadvise on this host")
+
+// builtinDropCache answers `r.drop_cache(offset, len)` /
+// `w.drop_cache(offset, len)`: posix_fadvise(2) with POSIX_FADV_DONTNEED
+// over that range of the handle's file, len 0 meaning to the end. A host
+// with no fadvise answers Unsupported.
+func builtinDropCache(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("drop_cache: expected 3 args")
+	}
+	off, ok1 := args[1].(Number)
+	n, ok2 := args[2].(Number)
+	if !ok1 || !ok2 {
+		return nil, fmt.Errorf("drop_cache: offset and length must be numbers")
+	}
+	unsupported := false
+	v, err := syncMethod(i, "drop_cache", args[:1], func(fd int) error {
+		e := hostDropCache(fd, int64(off), int64(n))
+		if errors.Is(e, errNoFadvise) {
+			unsupported = true
+			return nil
+		}
+		return e
+	})
+	if unsupported {
+		return optionSome(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+	}
+	return v, err
 }
 
 // builtinSync answers `sync()`: sync(2), scheduling write-back of every
