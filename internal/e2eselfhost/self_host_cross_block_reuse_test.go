@@ -2,8 +2,9 @@ package e2eselfhost
 
 import "testing"
 
-// A donor dying in one block hands its box to the first construction of the
-// block every path out of it reaches (ssarc.carried_pairs). Each case returns
+// A donor dying in one block hands its box to the first construction of a
+// later block entered only by way of it (ssarc.carried_pairs); a path that
+// leaves that way drops the donor instead. Each case returns
 // a value the interpreter agrees on, runs under the sanitizer and the leak
 // census, and pins how many boxes it allocates: one fewer than without the
 // reuse where the pairing applies, the same where it must not.
@@ -43,6 +44,22 @@ function main(): i32 { return f(); }`, 20, 7},
 		{"record-across-if", `struct P { x: i32, y: i32 }
 function f(n: i32): i32 { let a: P = P { x: n, y: 2 }; let t: i32 = 0; if (a.x > 3) { t = 1; } else { t = 2; } let b: P = P { x: n * 3, y: 4 }; return t + b.x + b.y; }
 function main(): i32 { return f(5) + f(1); }`, 29, 2},
+		// `b` is built in an arm `a`'s block branches into; the path that
+		// skips the arm drops `a` on its way out.
+		{"if-arm-in-loop", `struct P { x: i32, y: i32 }
+function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1 }; let s: i32 = a.x + a.y; if (i > 0) { let b: P = P { x: i, y: 3 }; sum = sum + b.x + b.y; } sum = sum + s; i = i + 1; } return sum; }`, 31, 4},
+		// The same at scale: a box handed on or dropped once per iteration,
+		// never both and never neither.
+		{"if-arm-in-loop-churn", `struct P { x: i32, y: i32 }
+function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 5000000) { let a: P = P { x: i, y: i + 1 }; let s: i32 = a.x + a.y; if (i > 0) { let b: P = P { x: i, y: 3 }; sum = (sum + b.x + b.y) % 1000; } sum = (sum + s) % 1000; i = i + 1; } return sum % 100; }`, 97, 5000000},
+		// The box `b` is built in escapes into `acc`, which holds it past the
+		// iteration.
+		{"if-arm-escaping-recipient", `struct P { x: i32, y: i32 }
+function main(): i32 { let acc: P[] = []; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1 }; let s: i32 = a.x + a.y; if (i > 0) { acc = acc.append(P { x: s, y: 1 }); } i = i + 1; } let sum: i32 = 0; for p in acc { sum = sum + p.x + p.y; } return sum; }`, 18, 5},
+		// A donor shared with `keep` when it is carried: the construction finds
+		// it shared and allocates, and the skipping path only releases it.
+		{"shared-donor", `struct P { x: i32, y: i32 }
+function main(): i32 { let sum: i32 = 0; let keep: P[] = []; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1 }; if (i == 1) { keep = keep.append(a); } let s: i32 = a.x + a.y; if (i > 0) { let b: P = P { x: i, y: 3 }; sum = sum + b.x + b.y; } sum = sum + s; i = i + 1; } return sum + keep[0].x * 10; }`, 41, 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
