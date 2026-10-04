@@ -50,7 +50,7 @@ func TestSelfHostArm64DarwinStdioBytes(t *testing.T) {
 	cli := buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
 	src := e2eharness.WriteStdioByteFixture(t)
 	bin := filepath.Join(t.TempDir(), "stdio-bytes")
-	cmd := exec.Command(cli, "-target", "arm64-darwin", src, e2eharness.SelfHostStdlibRoot(t), "-o", bin)
+	cmd := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, e2eharness.SelfHostStdlibRoot(t))
 	cmd.Env = append(os.Environ(), "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)

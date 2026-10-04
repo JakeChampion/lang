@@ -48,7 +48,7 @@ func TestSelfHostWasmWriteFileReportsFullDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	wat := filepath.Join(work, "main.wat")
-	compile := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", src, stdlibRoot, "-o", wat)
+	compile := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", "-o", wat, src, stdlibRoot)
 	var stderr strings.Builder
 	compile.Stderr = &stderr
 	if err := compile.Run(); err != nil {

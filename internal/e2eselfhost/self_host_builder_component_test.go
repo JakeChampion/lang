@@ -34,7 +34,7 @@ func testBuilderComponents(t *testing.T, compiler string, runner []string, stdli
 				if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
 					t.Fatal(err)
 				}
-				cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", src, stdlib, "-o", bin)
+				cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", "-o", bin, src, stdlib)
 				cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("component compile: %v\n%s", err, out)

@@ -80,7 +80,7 @@ func TestSelfHostArm64DarwinBufferedWriterBytes(t *testing.T) {
 	for _, checked := range []bool{true, false} {
 		t.Run(map[bool]string{true: "checked", false: "plain"}[checked], func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "writer")
-			compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
+			compile := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, stdlib)
 			compile.Env = os.Environ()
 			if checked {
 				compile.Env = append(compile.Env, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")

@@ -119,7 +119,7 @@ existing `FERN_LEAKCHECK` / `FERN_RC_TRACE` ports), so the flag goes to the
 compiler process, not to the program it produces:
 
 ```sh
-FERN_SANITIZE=1 bin/fern-selfhost -target x86-64-linux /ABS/prog.fern $PWD/internal/stdlib -o prog.s
+FERN_SANITIZE=1 bin/fern-selfhost -target x86-64-linux -o prog.s /ABS/prog.fern $PWD/internal/stdlib
 ```
 
 Its reports carry the same frame-pointer backtrace as native's, suppressed by

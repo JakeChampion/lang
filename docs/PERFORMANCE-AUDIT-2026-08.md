@@ -26,8 +26,8 @@ re-measures against the tree it was written on.
 
 ```
 time ./bin/fern -target x86-64-linux examples/self_host/fern.fern > /tmp/n.s
-time ./bin/fern-selfhost -target x86-64-linux -emit asm \
-     $PWD/examples/self_host/fern.fern $PWD/internal/stdlib -o /tmp/s.s
+time ./bin/fern-selfhost -target x86-64-linux -emit asm -o /tmp/s.s \
+     $PWD/examples/self_host/fern.fern $PWD/internal/stdlib
 ```
 
 Both outputs contain the same program: 4,693 functions from the Go emitter,

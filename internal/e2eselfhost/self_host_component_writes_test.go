@@ -30,7 +30,7 @@ func testComponentLongWrites(t *testing.T, compiler string, runner []string, std
 			if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", src, stdlib, "-o", bin)
+			cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", "-o", bin, src, stdlib)
 			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)
@@ -81,7 +81,7 @@ function main(): i32 { write(wasm_ir.component_io_shims([], true, false)); retur
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "shim")
-	cmd := exec.Command(cli, "-target", "arm64-darwin", src, e2eharness.SelfHostStdlibRoot(t), "-o", bin)
+	cmd := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, e2eharness.SelfHostStdlibRoot(t))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("shim compile: %v\n%s", err, out)
 	}

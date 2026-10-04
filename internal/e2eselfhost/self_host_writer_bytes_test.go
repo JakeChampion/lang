@@ -109,7 +109,7 @@ func testWriterBytesComponents(t *testing.T, compiler string, runner []string, s
 			if err := os.WriteFile(src, []byte(text), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			compile := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", src, stdlib, "-o", bin)
+			compile := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", "-o", bin, src, stdlib)
 			compile.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 			if out, err := compile.CombinedOutput(); err != nil {
 				t.Fatalf("component compile: %v\n%s", err, out)
@@ -157,7 +157,7 @@ func TestSelfHostArm64DarwinWriterBytes(t *testing.T) {
 	for _, checked := range []bool{true, false} {
 		t.Run(map[bool]string{true: "checked", false: "plain"}[checked], func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "writer")
-			compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
+			compile := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, stdlib)
 			compile.Env = os.Environ()
 			if checked {
 				compile.Env = append(compile.Env, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1")

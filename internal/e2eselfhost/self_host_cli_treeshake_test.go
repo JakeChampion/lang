@@ -80,7 +80,7 @@ function main(): i32 {
 		t.Fatalf("write program: %v", err)
 	}
 	asmPath := filepath.Join(dir, "ts_stdlib_prog.s")
-	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", prog, stdlib, "-o", asmPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile failed: %v\n%s", err, out)
 	}
 	asmBytes, err := os.ReadFile(asmPath)
@@ -167,7 +167,7 @@ function main(): i32 {
 		t.Fatalf("write program: %v", err)
 	}
 	asmPath := filepath.Join(dir, "ts_drop_prog.s")
-	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", prog, stdlib, "-o", asmPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile failed: %v\n%s", err, out)
 	}
 	asmBytes, err := os.ReadFile(asmPath)
@@ -231,7 +231,7 @@ function main(): i32 {
 		t.Fatalf("write program: %v", err)
 	}
 	asmPath := filepath.Join(dir, "ts_derive_prog.s")
-	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", prog, stdlib, "-o", asmPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile failed: %v\n%s", err, out)
 	}
 	asmBytes, err := os.ReadFile(asmPath)
@@ -317,7 +317,7 @@ function main(): i32 {
 		t.Fatalf("write program: %v", err)
 	}
 	asmPath := filepath.Join(dir, "ts_arith_prog.s")
-	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", prog, stdlib, "-o", asmPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile failed: %v\n%s", err, out)
 	}
 	asmBytes, err := os.ReadFile(asmPath)
@@ -403,7 +403,7 @@ function main(): i32 {
 		t.Fatalf("write program: %v", err)
 	}
 	asmPath := filepath.Join(dir, "ts_display_prog.s")
-	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", prog, stdlib, "-o", asmPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile failed: %v\n%s", err, out)
 	}
 	asmBytes, err := os.ReadFile(asmPath)

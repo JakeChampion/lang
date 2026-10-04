@@ -65,7 +65,7 @@ func TestSelfHostWasmComponentWriter(t *testing.T) {
 				t.Fatalf("native component: %v\n%s", err, out)
 			}
 			got := filepath.Join(dir, tc.name+".wasm")
-			cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", src, cli.stdlib, "-o", got)
+			cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-o", got, src, cli.stdlib)
 			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("self-host component: %v\n%s", err, out)
