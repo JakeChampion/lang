@@ -24,9 +24,9 @@ func TestFramingAllocs(t *testing.T) {
 		target string
 		want   e2eharness.FramingAllocs
 	}{
-		{"x86-64-linux", e2eharness.FramingAllocs{Parse: 68, Serialize: 13}},
-		{"arm64-linux", e2eharness.FramingAllocs{Parse: 82, Serialize: 15}},
-		{"wasm32-wasi", e2eharness.FramingAllocs{Parse: 74, Serialize: 13}},
+		{"x86-64-linux", e2eharness.FramingAllocs{Parse: 54, Serialize: 6}},
+		{"arm64-linux", e2eharness.FramingAllocs{Parse: 66, Serialize: 6}},
+		{"wasm32-wasi", e2eharness.FramingAllocs{Parse: 60, Serialize: 6}},
 	} {
 		t.Run(tc.target, func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "probe")

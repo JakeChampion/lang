@@ -6186,6 +6186,14 @@ function emit_ccall_shim1_arm64(s: asmcore.EmitState, variant: string, n: i32): 
     s = s.write("    ldr x3, [x29, #80]\n");
   }
   s = s.write("    blr x9\n");
+  // An FP result comes back in d0 (s0 for an f32, widened to the f64 a Fern
+  // f32 is held as) and moves to x0, where every Fern result is read.
+  if (util.str_has_suffix(variant, "_f32")) {
+    s = s.write("    fcvt d0, s0\n");
+  }
+  if (util.str_has_suffix(variant, "_f32") || util.str_has_suffix(variant, "_f64")) {
+    s = s.write("    fmov x0, d0\n");
+  }
   s = s.write("    ldp x29, x30, [sp], #16\n    ret\n");
   return s;
 }

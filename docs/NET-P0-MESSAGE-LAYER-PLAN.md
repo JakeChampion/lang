@@ -87,9 +87,11 @@ up.
    parse fell from 69 to 59. The other nine double copies of the 19 are the
    lowercasing in slice 5 and the path decode. Native keeps two copies, since
    its string constructor takes an array.
-4. **Lookups that do not allocate.** The framing rules ask `HeaderMap` for
-   one value or a count. They stop building an array to answer. `append`
-   grows by doubling, not by one.
+4. **Lookups that do not allocate.** The framing rules walk the map by
+   index instead of asking `get_all` for an array, which also stops them
+   lowercasing a literal key on every lookup. The self-host parse fell from
+   59 to 48, and native's from 68 to 54 on x86-64. What `append` costs as the
+   map grows is still to measure.
 5. **Names compared, not lowercased.** `HeaderMap` keeps a name as it came
    off the wire and compares names ASCII-case-insensitively. That removes the
    lowercasing copy per header. HTTP/1.1 field names are case-insensitive, so
@@ -99,8 +101,9 @@ up.
    value, not a stream built over zero bytes.
 7. **The head serializes into the builder.** The status line and fields are
    pushed into the one builder the body goes into, with no intermediate
-   `string`. The framing half of serialize drops from 13 to 2: the builder
-   and its result.
+   `string`. Serialize fell from 13 to 4 on the self-host and to 6 on the Go
+   compiler: the builder, its storage and its result, and the boxes left
+   between the helpers.
 8. **The donor boundary.** What is left after slices 3 to 7 is the
    `HttpRequest` box, its strings, the response box and the wire buffer.
    Those are exactly what #9851 §3.3's handler boundary with a reuse donor

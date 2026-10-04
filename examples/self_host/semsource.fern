@@ -400,22 +400,6 @@ function dyn_set_end(spelling: string, i: i32): i32 {
   return i;
 }
 
-// A type variable reaches the checker as an UNKNOWN naming it: a promoted
-// parameter as "type parameter T", an unpromoted one as the unresolved
-// spelling itself, since parse_func_decl drops an unbounded parameter's name
-// from the declaration. This reads the name back out of either reason.
-function typevar_reason_name(reason: string): string {
-  let promoted: string = "type parameter ";
-  if (reason.len() > promoted.len() && util.str_has_prefix(reason, promoted)) {
-    return slice_unchecked(reason, promoted.len(), reason.len()) + "";
-  }
-  let unresolved: string = "unrecognised type name: ";
-  if (reason.len() > unresolved.len() && util.str_has_prefix(reason, unresolved)) {
-    return slice_unchecked(reason, unresolved.len(), reason.len()) + "";
-  }
-  return "";
-}
-
 // resolved reads a type the checker computed for a body. Inside a template a
 // bare type-variable name the checker could not resolve is that variable, and
 // the binding the body is produced under says what it is — structurally, so a
@@ -432,7 +416,7 @@ function resolved(t: typeinfo.Type, template: boolean, b: ssasem.Binding, scope:
     return t;
   }
   if let typeinfo.TypeUnknown(u) = t {
-    let name: string = typevar_reason_name(u.reason);
+    let name: string = checker.typevar_reason_name(u.reason);
     if (parser.looks_type_var(name)) {
       return ssasem.substitute(typeinfo.TypeErased { name: name }, b);
     }
@@ -501,7 +485,7 @@ function record_variables(name: string, scope: checker.Scope, seen: string[]): s
 function spelled_variables(t: typeinfo.Type, scope: checker.Scope, seen: string[], out: string[]): string[] {
   let name: string = "";
   if let typeinfo.TypeUnknown(u) = t {
-    name = typevar_reason_name(u.reason);
+    name = checker.typevar_reason_name(u.reason);
   }
   if let typeinfo.TypeErased(e) = t {
     name = e.name;
@@ -3146,7 +3130,7 @@ function arm_value(st: ast.Stmt, s: State, ty: typeinfo.Type): Value {
     return value_if(f, s, ty);
   }
   if let ast.StmtReturn(r) = st {
-    if (checker.bare_return(r.value)) {
+    if (parser.bare_return(r.value)) {
       return refused(s, "value block arm has no value");
     }
     let v: Value = expr(r.value, s, ty);
@@ -4182,7 +4166,7 @@ function assign(a: ast.StmtAssign, s: State): State {
 // A bare `return;` carries the parser's `punct:;` sentinel in place of a
 // value, as the checker reads it; the unit literal is the other spelling.
 function ret(r: ast.StmtReturn, s: State): State {
-  if (checker.bare_return(r.value)) {
+  if (parser.bare_return(r.value)) {
     if (!is_void(s.result)) {
       return fail(s, "missing return value");
     }
@@ -5369,7 +5353,7 @@ function coarse_fn_tag_without_contract(fd: parser.FuncDecl): boolean {
 // part of it unknown.
 function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding, contracts: ssasem.Contract[]): typeinfo.Type {
   let (returned, at) = checker.first_returned(fd.body, scope);
-  if (checker.bare_return(returned)) {
+  if (parser.bare_return(returned)) {
     return t_void();
   }
   if (calls_synthesised(returned)) {

@@ -1088,6 +1088,31 @@ func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
 	}
 }
 
+// A generic call in CALLEE position has no destination of its own, so a type
+// parameter only literals bind takes i64 when one has no i32 reading, as an
+// unannotated `let` init does. Left at the i32 default it truncated on native
+// (#11488).
+func TestGenericCallInCalleePositionWidensByLiteral(t *testing.T) {
+	src := `function make[T](seed: T): (i32) => T { return (k: i32): T => seed; }
+function main(): i32 { let b = make(5000000000)(2); return 0; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	main := prog.Funcs[len(prog.Funcs)-1]
+	inner := main.Body.Stmts[0].(*ast.Var).Init.(*ast.Call).Callee.(*ast.Call)
+	got, ok := inner.TypeArgs[0].(ast.NumberType)
+	if !ok || got.NormalWidth() != 64 || !got.IsSigned() || got.Polymorphic {
+		t.Errorf("T = %#v, want i64", inner.TypeArgs[0])
+	}
+	if lit := inner.Args[0].(*ast.NumberLit); lit.Width != 64 {
+		t.Errorf("literal settled at width %d, want 64", lit.Width)
+	}
+}
+
 // An unannotated local bound to a generic struct literal whose type argument
 // only literals bind is a Same[i64] when one of them has no i32 reading, and
 // both field literals settle at i64 (#10453). Typing it Same[i32] truncated the
@@ -5741,6 +5766,14 @@ function main(): i32 { return take([1, 2, 3]); }`,
 		{"float literals into an i64[] argument", `function total(xs: i64[]): i32 { return xs.len(); }
 function main(): i32 { return total([1.5, 2.5]); }`,
 			"expected i64[], got f64[]"},
+		// A declared i32 VARIABLE is not a literal: storing it into a u8[]
+		// narrows it, which takes an `as u8` as `let x: u8 = b` does (#11392).
+		{"i32 variable into u8[]", `function f(b: i32): i32 { let xs: u8[] = [b]; return xs.len(); }
+function main(): i32 { return f(300); }`,
+			"cannot assign i32[] to variable of type u8[]"},
+		{"i32 variable into a u8[] argument", `function g(b: i32): i32 { return string_from_bytes_unchecked([b]).len(); }
+function main(): i32 { return g(65); }`,
+			"expected u8[], got i32[]"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -5782,6 +5815,10 @@ function main(): i32 { return total([1, 2, 3]); }`,
 		// what it settles to. The first cut rejected this too.
 		`function build[T](): i32 { let local: T[] = [1, 2, 3]; return local.len(); }
 function main(): i32 { return 0; }`,
+		// A literal local is still a literal, and a cast variable is a u8.
+		`function main(): i32 { let k = 5; let xs: u8[] = [k, 1]; return xs.len(); }`,
+		`function f(b: i32): i32 { let xs: u8[] = [b as u8, 2]; return xs.len(); }
+function main(): i32 { return f(3); }`,
 	}
 	for _, src := range srcs {
 		if err := checkSource(t, src); err != nil {

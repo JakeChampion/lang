@@ -810,8 +810,7 @@ function main(): i32 {
     d = x86_rodata_label(d, "S0");
     d = x86_rodata_quad(d, 42i64);
     d = x86_resolve(d);
-    if (d.text[0] as i32 != 72 || d.text[1] as i32 != 141 || d.text[2] as i32 != 5) { return 8; }
-    if (d.text.len() != 10 || d.text[3] as i32 != 9 || d.text[4] as i32 != 0 || d.text[5] as i32 != 0 || d.text[6] as i32 != 0) { return 10; }
+    if (d.text.len() != 10 || d.text[0] as i32 != 72 || d.text[1] as i32 != 141 || d.text[2] as i32 != 5 || d.text[3] as i32 != 9 || d.text[4] as i32 != 0 || d.text[5] as i32 != 0 || d.text[6] as i32 != 0) { return 8; }
     if (d.rodata.len() != 8 || d.rodata[0] != 42 || d.rodata[1] != 0 || d.rodata[7] != 0) { return 11; }
     // x86_align8 rounds up to the .text/.rodata boundary.
     if (x86_align8(10) != 16 || x86_align8(16) != 16 || x86_align8(0) != 0) { return 12; }
@@ -855,6 +854,8 @@ function main(): i32 {
     if (x86_label_off(g, "zz") != 676) { return 18; }
     if (x86_label_off(g, "mm") != 325) { return 19; }
     if (x86_label_off(g, "zzz") != (0 - 1)) { return 20; }
+    buf_free(f.code);
+    buf_free(g.code);
     return 0;
 }
 `

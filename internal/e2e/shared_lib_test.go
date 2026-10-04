@@ -17,14 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/checker"
-	x86codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
-	nativeelf "github.com/jakechampion/lang/internal/native/elf"
-	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
-	"github.com/jakechampion/lang/internal/symname"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // TestCLISharedX86Dlopen drives the user-facing `-shared` flag end to end:
@@ -286,8 +279,7 @@ function main(): i32 { return fib10(); }`, 55},
 			// other 13 sites in this file already pass it; this one relied on
 			// main calling the function instead, which stops being true the
 			// moment the call is inlined.
-			asm := compileToX86AsmExports(t, c.src, []string{export})
-			so := sharedLibX86(t, asm, export)
+			so := selfHostSharedX86(t, c.src, export)
 
 			dir := t.TempDir()
 			soPath := filepath.Join(dir, "libfern.so")
@@ -351,8 +343,7 @@ function main(): i32 { return 0; }`, 0, 0, 41, 42},
 		t.Run(c.name, func(t *testing.T) {
 			// Compile with the export as a tree-shake root — jni_answer is
 			// never called by main, exactly like a real JVM-only JNI entry.
-			asm := compileToX86AsmExports(t, c.src, []string{c.fn})
-			so := sharedLibX86(t, asm, c.fn)
+			so := selfHostSharedX86(t, c.src, c.fn)
 			dir := t.TempDir()
 			soPath := filepath.Join(dir, "libfern.so")
 			if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -423,8 +414,7 @@ function run1(env: usize, cls: usize, cb: usize, x: usize): i32 { return __c_cal
 function run4(env: usize, cls: usize, cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { return __c_call4(cb, a, b, c, d) as i32; }
 function main(): i32 { return 0; }`
 	exps := []string{"run0", "run1", "run4"}
-	asm := compileToX86AsmExports(t, src, exps)
-	so := sharedLibX86(t, asm, exps...)
+	so := selfHostSharedX86(t, src, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -483,8 +473,7 @@ function probe1(env: usize, cls: usize, jenv: usize, idx: usize, a0: usize): i32
     return jni.call1(jenv, idx as i32, a0) as i32;
 }
 function main(): i32 { return 0; }`
-	asm := compileToX86AsmExports(t, src, []string{"probe1"})
-	so := sharedLibX86(t, asm, "probe1")
+	so := selfHostSharedX86(t, src, "probe1")
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -543,7 +532,7 @@ function probe_newstr(env: usize, cls: usize, jenv: usize, a0: usize): i32 {
 }
 function main(): i32 { return 0; }`
 	exps := []string{"probe_find", "probe_newstr"}
-	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
+	so := selfHostSharedX86(t, src, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -600,7 +589,7 @@ function probe_gmid(env: usize, cls: usize, jenv: usize, a0: usize, a1: usize, a
 }
 function main(): i32 { return 0; }`
 	exps := []string{"probe_gmid"}
-	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
+	so := selfHostSharedX86(t, src, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -663,7 +652,7 @@ function probe_sfield(env: usize, cls: usize, jenv: usize): i32 {
 }
 function main(): i32 { return 0; }`
 	exps := []string{"probe_field", "probe_smethod", "probe_sfield"}
-	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
+	so := selfHostSharedX86(t, src, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -723,7 +712,7 @@ func TestStdJNICstr(t *testing.T) {
 function probe_cstr(env: usize, cls: usize): usize { return jni.cstr("hello"); }
 function main(): i32 { return 0; }`
 	exps := []string{"probe_cstr"}
-	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
+	so := selfHostSharedX86(t, src, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -799,7 +788,7 @@ function main(): i32 { return 0; }`
 	for i, p := range probes {
 		exps[i] = p.fn
 	}
-	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
+	so := selfHostSharedX86(t, src, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -859,7 +848,7 @@ function g_sint(env: usize, cls: usize, j: usize): i32 { return jni.get_static_i
 function arrlen(env: usize, cls: usize, j: usize, a: usize): i32 { return jni.get_array_length(j, a); }
 function main(): i32 { return 0; }`
 	exps := []string{"g_int", "g_long", "g_obj", "s_int", "g_sint", "arrlen"}
-	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
+	so := selfHostSharedX86(t, src, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -908,13 +897,11 @@ int main(int c, char** v){
 	}
 }
 
-// TestAsBytesInSharedLib guards the PIE/.so fix for s.as_bytes(): a string
-// literal's bytes live in .rodata, which a dlopen'd shared object maps at a
-// high (>32-bit) base. Slice headers store the data pointer in 32 bits, so
-// without the high-pointer copy guard in __method_string_as_bytes the view
-// would alias a truncated, bogus address and read zeroes. Here the export
-// returns the as_bytes data pointer for "hello"; the C side must read back
-// the real bytes. (Regression guard for the bug found while adding cstr.)
+// TestAsBytesInSharedLib reads a string literal's bytes through as_bytes()
+// inside a dlopen'd library, which maps the literal at a high (>32-bit) base:
+// an index past the sixteenth byte must read the real byte, not a truncated
+// address's. A C caller wanting the bytes themselves takes jni.cstr's copy;
+// `as_bytes() as usize` is not a data pointer (docs/RUNTIME-INTRINSICS.md).
 func TestAsBytesInSharedLib(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -923,19 +910,13 @@ func TestAsBytesInSharedLib(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("host is not amd64")
 	}
-	src := `function ab_data(env: usize, cls: usize): usize {
-    let s: string = "hello";
-    let b: [u8] = s.as_bytes();
-    return b as usize;
-}
-function ab_idx(env: usize, cls: usize, i: usize): i32 {
+	src := `function ab_idx(env: usize, cls: usize, i: usize): i32 {
     let s: string = "the quick brown fox";
     let b: [u8] = s.as_bytes();
     return (b[i as i32] as i32);
 }
 function main(): i32 { return 0; }`
-	exps := []string{"ab_data", "ab_idx"}
-	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
+	so := selfHostSharedX86(t, src, "ab_idx")
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -943,14 +924,10 @@ function main(): i32 { return 0; }`
 	}
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
-#include <string.h>
 int main(int c, char** v){
   void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
-  unsigned char* (*pd)(long,long) = (unsigned char*(*)(long,long)) dlsym(h, "ab_data");
   int (*pi)(long,long,long) = (int(*)(long,long,long)) dlsym(h, "ab_idx");
-  if(!pd||!pi) return 101;
-  unsigned char* d = pd(0,0);
-  if(memcmp(d, "hello", 5) != 0){ fprintf(stderr, "as_bytes data = %.5s\n", d); return 1; }
+  if(!pi) return 101;
   /* "the quick brown fox"[16] == 'f' (index past the 32-bit truncation) */
   if(pi(0,0,16) != 'f'){ fprintf(stderr, "idx16 = %d\n", pi(0,0,16)); return 2; }
   return 42;
@@ -992,7 +969,7 @@ function p_double(env: usize, cls: usize, j: usize): i32 { return (jni.get_doubl
 function p_sdouble(env: usize, cls: usize, j: usize): i32 { return (jni.get_static_double_field(j, 0 as usize, 0 as usize) * 4.0) as i32; }
 function main(): i32 { return 0; }`
 	exps := []string{"p_float", "p_double", "p_sdouble"}
-	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
+	so := selfHostSharedX86(t, src, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -1061,7 +1038,7 @@ function check(env: usize, cls: usize): i32 {
 }
 function main(): i32 { return 0; }`
 	exps := []string{"check"}
-	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
+	so := selfHostSharedX86(t, src, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -1119,7 +1096,7 @@ function p_void(env: usize, cls: usize, j: usize, obj: usize, m: usize): i32 {
 }
 function main(): i32 { return 0; }`
 	exps := []string{"p_int", "p_dbl", "p_void"}
-	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
+	so := selfHostSharedX86(t, src, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -1181,7 +1158,7 @@ function p(env: usize, cls: usize, j: usize, obj: usize, m: usize): i32 {
 }
 function main(): i32 { return 0; }`
 	exps := []string{"p"}
-	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
+	so := selfHostSharedX86(t, src, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -1220,61 +1197,204 @@ int main(int c,char**v){
 	}
 }
 
-// sharedLibX86 assembles x86-64 `asm` into a .so exporting `names`, the way
-// `fern -shared` does: .dynsym carries each export's Fern name, resolved
-// against the mangled symbol the backend actually emitted. Getting that pair
-// wrong is an "export is not a defined .text symbol" error, and this file had
-// fifteen hand-rolled copies of the pairing that all broke identically, so
-// every caller shares one implementation of it.
-func sharedLibX86(t *testing.T, asm string, names ...string) []byte {
+// selfHostSharedX86 builds src into an x86-64 shared object with the
+// self-host CLI's -shared, exporting `exports`, and returns its bytes.
+func selfHostSharedX86(t *testing.T, src string, exports ...string) []byte {
 	t.Helper()
-	asmNames := symname.Fns(names)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.SegmentAddrsPIEX86, asmNames)
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	exports := make([]nativeelf.Export, len(names))
-	for i, n := range names {
-		exports[i] = nativeelf.Export{Name: n, Value: ev[asmNames[i]]}
-	}
-	return nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs), exports, "libfern.so")
+	return selfHostShared(t, "x86-64-linux", src, exports...)
 }
 
-func toElfRelocsX86(rs []nativex86.Reloc) []nativeelf.Reloc {
-	out := make([]nativeelf.Reloc, len(rs))
-	for i, r := range rs {
-		out[i] = nativeelf.Reloc{Offset: r.Offset, Addend: r.Addend}
-	}
-	return out
-}
-
-// compileToX86AsmExports compiles src with the Go x86-64 code generator, with
-// extra tree-shake roots (Options.Exports) so the `-shared` exports the program
-// never calls itself survive.
-func compileToX86AsmExports(t *testing.T, src string, exports []string) string {
+// selfHostShared is selfHostSharedX86 for any -shared target.
+func selfHostShared(t *testing.T, target, src string, exports ...string) []byte {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	prog, _, err := modload.Load(srcPath)
+	soPath := filepath.Join(dir, "libfern.so")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", target, "-shared", "-export", strings.Join(exports, ","),
+		"-o", soPath, srcPath, e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("self-host -shared: %v\n%s", err, out)
+	}
+	so, err := os.ReadFile(soPath)
 	if err != nil {
-		t.Fatalf("modload: %v", err)
+		t.Fatal(err)
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
+	return so
+}
+
+// sharedCEntrySrc exercises the C-ABI entry the self-host puts in front of
+// each export: its functions read their arguments from the stack, so the entry
+// moves the C caller's registers there, widening a narrow integer by its sign,
+// converting an f32, carrying an f64 in and back out, and passing on the
+// arguments that arrive on the C caller's stack (sum10 past six on x86-64 and
+// eight on arm64, fsum9 past eight FP registers on both). A string literal
+// and an allocation run inside the library too, so a relocated data word and
+// the lazily mapped heap are both reached under dlopen.
+const sharedCEntrySrc = `function greet(n: i32): i32 { let s: string = "hello" + "!"; return s.len() + n; }
+function neg(x: i32): i32 { return 0 - x; }
+function low(b: u8, w: u32): i64 { return (b as i64) * 100000 + (w as i64); }
+function scale(x: f64, n: i32): f64 { return x * (n as f64); }
+function halve(x: f32): f32 { return x * (0.5 as f32); }
+function sum10(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64, j: i64): i64 { return a + b + c + d + e + f + g * 10 + h * 100 + i * 1000 + j * 10000; }
+function fsum9(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, h: f64, i: f64): f64 { return a + b + c + d + e + f + g + h * 10.0 + i * 100.0; }
+function main(): i32 { return 0; }`
+
+const sharedCEntryLoader = `#include <dlfcn.h>
+#include <stdio.h>
+int main(int c, char** v){
+  void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  int (*greet)(int) = dlsym(h, "greet");
+  int (*neg)(int) = dlsym(h, "neg");
+  long (*low)(long, long) = dlsym(h, "low");
+  double (*scale)(double, int) = dlsym(h, "scale");
+  float (*halve)(float) = dlsym(h, "halve");
+  long (*sum10)(long,long,long,long,long,long,long,long,long,long) = dlsym(h, "sum10");
+  double (*fsum9)(double,double,double,double,double,double,double,double,double) = dlsym(h, "fsum9");
+  if(!greet||!neg||!low||!scale||!halve||!sum10||!fsum9) return 101;
+  printf("%d %d %d %ld %g %g %ld %g\n", greet(4), greet(-10), neg(-7), low(0x1ff05, 0x100000002), scale(1.5, 4), halve(3.0f),
+    sum10(1,2,3,4,5,6,7,8,9,1), fsum9(1,2,3,4,5,6,7,8,9));
+  return 0;
+}`
+
+// sharedCEntryWant: low keeps 0x05 of 0x1ff05 as its u8 and 2 of
+// 0x100000002 as its u32.
+const sharedCEntryWant = "10 -4 7 500002 6 1.5 19891 1008\n"
+
+// sharedCEntryCheck builds sharedCEntrySrc for target, loads it with a
+// loader built by cc and run through runner ("" to run it directly), and
+// checks every export's answer and the image's headers.
+func sharedCEntryCheck(t *testing.T, target, cc, runner string, env []string, machine elf.Machine) {
+	t.Helper()
+	so := selfHostShared(t, target, sharedCEntrySrc, "greet", "neg", "low", "scale", "halve", "sum10", "fsum9")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	info, err := checker.Check(prog)
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(sharedCEntryLoader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(cc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("%s loader: %v\n%s", cc, err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	if runner != "" {
+		cmd = exec.Command(runner, ld, soPath)
+	}
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("check: %v", err)
+		t.Fatalf("loader: %v\n%s", err, out)
 	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
+	if got := string(out); got != sharedCEntryWant {
+		t.Errorf("exports answered %q, want %q", got, sharedCEntryWant)
 	}
-	asm, err := x86codegen.EmitWithOptions(prog, info, x86codegen.Options{Exports: exports})
+	sharedImageCheck(t, so, machine)
+}
+
+// sharedImageCheck holds a shared object to what a loader needs: ET_DYN for
+// the machine, PT_DYNAMIC, a non-executable PT_GNU_STACK, and on arm64 no
+// segment both writable and executable, which Android refuses. Its .bss is
+// zero-fill in memory, not bytes in the file.
+func sharedImageCheck(t *testing.T, so []byte, machine elf.Machine) {
+	t.Helper()
+	f, err := elf.NewFile(bytes.NewReader(so))
 	if err != nil {
-		t.Fatalf("x86_64 emit: %v", err)
+		t.Fatal(err)
 	}
-	return asm
+	if f.Type != elf.ET_DYN || f.Machine != machine {
+		t.Errorf("type/machine = %v/%v, want ET_DYN/%v", f.Type, f.Machine, machine)
+	}
+	var dynamic, stack bool
+	for _, p := range f.Progs {
+		switch p.Type {
+		case elf.PT_DYNAMIC:
+			dynamic = true
+		case elf.PT_GNU_STACK:
+			stack = p.Flags&elf.PF_X == 0
+		case elf.PT_LOAD:
+			if machine == elf.EM_AARCH64 && p.Flags&elf.PF_W != 0 && p.Flags&elf.PF_X != 0 {
+				t.Errorf("a PT_LOAD at %#x is writable and executable", p.Vaddr)
+			}
+		}
+	}
+	if !dynamic || !stack {
+		t.Errorf("PT_DYNAMIC present = %v, non-executable PT_GNU_STACK = %v; a loader needs both", dynamic, stack)
+	}
+	if len(so) > 256<<10 {
+		t.Errorf("a seven-function library is %d bytes; its .bss is being written into the file", len(so))
+	}
+}
+
+func TestSelfHostSharedCEntry(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	sharedCEntryCheck(t, "x86-64-linux", gcc, "", nil, elf.EM_X86_64)
+}
+
+// TestArm64SelfHostSharedCEntry is TestSelfHostSharedCEntry for arm64-linux:
+// natively on an arm64 host, else through the cross gcc and qemu-aarch64 with
+// the aarch64 sysroot as its library prefix.
+func TestArm64SelfHostSharedCEntry(t *testing.T) {
+	gcc, qemu := e2eharness.Arm64Tooling(t)
+	var env []string
+	if qemu != "" {
+		env = []string{"QEMU_LD_PREFIX=/usr/aarch64-linux-gnu"}
+	}
+	sharedCEntryCheck(t, "arm64-linux", gcc, qemu, env, elf.EM_AARCH64)
+}
+
+// TestArm64SelfHostSharedAndroid builds the library Android's
+// System.loadLibrary takes: the arm64 image, W^X, naming the export.
+func TestArm64SelfHostSharedAndroid(t *testing.T) {
+	so := selfHostShared(t, "arm64-android", "function answer(): i32 { return 42; }\nfunction main(): i32 { return answer(); }\n", "answer")
+	sharedImageCheck(t, so, elf.EM_AARCH64)
+	if !bytes.Contains(so, []byte("answer\x00")) {
+		t.Errorf(".dynstr does not contain the export name")
+	}
+}
+
+// TestSelfHostSharedRefusals pins what the self-host's -shared refuses, in
+// native's words where native has them.
+func TestSelfHostSharedRefusals(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte("function id[T](x: T): T { return x; }\nfunction answer(): i32 { return 42; }\nfunction main(): i32 { return id(answer()); }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	so := filepath.Join(dir, "lib.so")
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"no_output", []string{"-shared"}, "fern: -shared requires -o OUTPUT.so"},
+		{"wasm", []string{"-shared", "-target", "wasm32-wasi", "-o", so}, `fern: -shared is only supported with -target x86-64, arm64, or arm64-android (got "wasm32-wasi")`},
+		{"missing", []string{"-shared", "-export", "answer,nope", "-o", so}, "fern: -export nope: the program has no top-level function nope"},
+		{"generic", []string{"-shared", "-export=id", "-o", so}, "fern: -export id: a generic function has no single body to export"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cmd := exec.Command(e2eharness.SelfHostCLI(t), append(c.args, src, e2eharness.SelfHostStdlibRoot(t))...)
+			cmd.Env = e2eharness.ChildEnv()
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("fern %s succeeded; want the refusal %q", strings.Join(c.args, " "), c.want)
+			}
+			if got := strings.TrimSpace(string(out)); got != c.want {
+				t.Errorf("stderr = %q, want %q", got, c.want)
+			}
+		})
+	}
 }
