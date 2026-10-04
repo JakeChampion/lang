@@ -320,14 +320,16 @@ under a 16 GB host:
   (`FERN_BUILD_MEM_BUDGET_MB`, default ~85% of `MemTotal`), so heavy builds
   can't stack past the host's RAM and OOM the run. Two cold driver builds fit a
   16 GB host concurrently; bigger hosts parallelise further up to the budget.
-- Self-host-emitted asm that a test links itself (`CachedLink`; the stage-2
-  self-compile is the big one, >= 8 MB) is **assembled + linked in-process** by
-  the pure-Go assembler (`internal/native/x86_64` + `internal/native/elf`)
-  under the same reservation and a refcounted soft heap cap
-  (`withEmitMemLimit`, `FERN_EMIT_MEMLIMIT_MB`, default 3600; `<= 0` disables),
-  so the Go runtime keeps its heap near the live set instead of letting it
-  double between collections. Any assembler error falls back to the gcc(+lld)
-  path automatically; small program links stay on gcc/bfd unchanged.
+- Self-host-emitted asm that a test links itself (`CachedLink`,
+  `BuildBinArm64`) goes through gcc. A big listing (>= 8 MB; the stage-2
+  self-compile at ~100 MB is the one that matters) links under a reservation
+  sized to GNU as's measured peak (`gccBigLinkWeightMB`: ~6 MB per MB of asm
+  plus 500 MB; 392 MB measured on the x86-64 compiler listing, 590 MB on the
+  arm64 one). Small program links take no reservation.
+- The asm benches' in-process Go emit of `fern.fern` runs under a refcounted
+  soft heap cap (`withEmitMemLimit`, `FERN_EMIT_MEMLIMIT_MB`, default 3600;
+  `<= 0` disables), so the Go runtime keeps its heap near the live set instead
+  of letting it double between collections.
 
 If a build is still OOM-killed, lower `FERN_BUILD_MEM_BUDGET_MB` (fewer builds
 overlap) or `FERN_EMIT_MEMLIMIT_MB`, or re-create the ephemeral

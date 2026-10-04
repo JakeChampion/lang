@@ -6,8 +6,8 @@
 //
 // With `-words` it also dumps each assembled instruction word as hex, one per
 // line, after the summary; with `-data`, each .rodata byte the same way. That makes the assembler's ENCODINGS comparable
-// against the native Go assembler (internal/native/arm64, itself gated against
-// gcc by TestNativeLinkArm64MatchesGccLink) on identical input, with no qemu and
+// against the native Go assembler (internal/native/arm64, itself pinned to GNU
+// as by its *MatchesGNUAs tests) on identical input, with no qemu and
 // no execution — see TestSelfHostArm64AsmEncodingMatchesNative. #6047 was an
 // encoding bug (`[x0, x1]` assembled as `[x0, #1]`, because the index register
 // was read as an immediate) that produced a perfectly runnable binary printing

@@ -516,9 +516,9 @@ code, 1.4 MB past the span — builds and runs again.
 Coverage, because no lane had built this driver for this target (the x86
 self-host shards skip arm64 for want of a cross toolchain, the aarch64
 shards do not build this driver, so CI was green on the commit that broke
-it): `TestSelfHostArm64ModloadNativeBuild` builds it for arm64 and runs
-it, needing no aarch64 toolchain at all since the assembler and linker are
-pure Go. `TestVeneerRealImm26Ceiling` runs a program with a genuinely
+it): `TestSelfHostArm64ModloadNativeBuild` builds it for arm64, needing no
+aarch64 toolchain since the assembler and linker are pure Go, and runs it
+where the cross toolchain and qemu are installed. `TestVeneerRealImm26Ceiling` runs a program with a genuinely
 >128 MB span between a call and its callee, and the rest of
 `internal/native/arm64/veneer_test.go` exercises anchoring, dedupe, and
 index remapping against a shortened span.

@@ -82,7 +82,8 @@ func TestSegmentMapMatchesAssembler(t *testing.T) {
 
 // TestSegmentMapGateSeesCalls checks the scan matches: if the call shape or the
 // naming changes and the regex stops matching, every check above passes
-// vacuously.
+// vacuously. The floor is the tree's current site count, which falls as the
+// native backends retire (#4451): lower it with the sites a PR deletes.
 func TestSegmentMapGateSeesCalls(t *testing.T) {
 	n := 0
 	err := filepath.WalkDir("../../..", func(path string, d fs.DirEntry, err error) error {
@@ -108,7 +109,7 @@ func TestSegmentMapGateSeesCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n < 15 {
+	if n < 13 {
 		t.Fatalf("the scan found only %d segment-map call sites — the pattern has gone stale, which makes TestSegmentMapMatchesAssembler vacuous", n)
 	}
 }
