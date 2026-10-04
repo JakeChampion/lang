@@ -775,8 +775,9 @@ func RcGeneratedDropNames() []string {
 }
 
 // RcReleases reports whether a call to name gives up the caller's unit
-// on its counted operand — the question `verifyrc.go` asks. RcMove counts: the operand's unit is gone,
-// and what comes back is a different unit on the result.
+// on its counted operand — the question `verifyrc.go` asks. RcMove counts:
+// the operand's unit is gone, and what comes back is a different unit on
+// the result.
 func RcReleases(name string) (operand int, ok bool) {
 	sig, found := RcHelperSig(name)
 	if !found {
