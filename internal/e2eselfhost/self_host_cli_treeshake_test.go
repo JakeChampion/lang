@@ -439,3 +439,66 @@ function main(): i32 {
 		t.Errorf("display program exited %d, want 0", code)
 	}
 }
+
+// TestSelfHostTreeshakeFieldReadKeepsNoMethodX86_64 pins that a field read
+// names no method. The shake keeps a method by its simple name when a call
+// spells it (`x.eq(...)` keeps every `*.eq`), and it once kept one for a bare
+// field read too: a struct with a field named `connect`, read but never
+// called, kept every `connect` method in the program, fetch's socket
+// transport among them, and a wasi-http handler failed E066 on the sockets
+// that transport reaches. A method is never a value in Fern, so a read
+// cannot reach one; a call through the same spelling still keeps it.
+func TestSelfHostTreeshakeFieldReadKeepsNoMethodX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading CLI test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlib, err := filepath.Abs(filepath.Join("..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	const src = `struct Bounds { probe: i32 }
+struct Dialer { tries: i32 }
+function (d: Dialer) probe(): i32 {
+    return d.tries + 41;
+}
+struct Pinger { n: i32 }
+function (p: Pinger) ping(): i32 {
+    return p.n * 2;
+}
+function main(): i32 {
+    let b: Bounds = Bounds { probe: 3 };
+    let p: Pinger = Pinger { n: b.probe };
+    return p.ping();
+}
+`
+	prog := filepath.Join(dir, "ts_field_read.fern")
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatalf("write program: %v", err)
+	}
+	asmPath := filepath.Join(dir, "ts_field_read.s")
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", prog, stdlib, "-o", asmPath).CombinedOutput(); err != nil {
+		t.Fatalf("self-host compile failed: %v\n%s", err, out)
+	}
+	asmBytes, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatalf("read asm: %v", err)
+	}
+	labels := strings.Join(fnLabels(string(asmBytes)), " ")
+	if strings.Contains(labels, "probe") {
+		t.Errorf("Dialer.probe is emitted, but the program only reads the field `probe`:\n%s", labels)
+	}
+	if !strings.Contains(labels, "ping") {
+		t.Errorf("Pinger.ping is NOT emitted, but main calls it:\n%s", labels)
+	}
+	bin := buildBin(t, gcc, dir, "ts_field_read", string(asmBytes))
+	run := exec.Command(bin)
+	_ = run.Run()
+	if code := run.ProcessState.ExitCode(); code != 6 {
+		t.Errorf("program exited %d, want 6", code)
+	}
+}
