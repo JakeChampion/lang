@@ -1892,7 +1892,7 @@ answer is `Result[HttpResponse, FetchError]`.
   peer has closed shows itself only after the request is written, and an
   idempotent request that finds it closed is sent once more on a new one.
   `idle()` keeps up to 64 connections for 90 s each, `idle_limited(max,
-  idle_ms)` sets both, and `sockets_with(pool)` dials with a given pool.
+  idle)` sets both, the second a `Duration`, and `sockets_with(pool)` dials with a given pool.
   `send` keeps a pool for the one call (so a redirect back to the same
   origin is followed on its connection) and closes it after; a caller that
   holds a `Sockets` across `send_on` calls reuses across them and closes
