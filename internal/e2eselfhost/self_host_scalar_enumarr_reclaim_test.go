@@ -66,9 +66,11 @@ function main(): i32 {
 		},
 		{
 			// The literal flavor — it never consulted the walk gate at all;
-			// only the element-admission fallback flips it.
+			// only the element-admission fallback flips it. `idt` keeps the
+			// array a heap box around its static elements.
 			name: "scalar_literal",
 			src: `enum Tag { Box(i32), Nil }
+function idt(t: Tag): Tag { return t; }
 function round(src: Tag[], i: i32): i32 {
     let t: i32 = 0;
     let e: Tag = src[0];
@@ -79,7 +81,7 @@ function round(src: Tag[], i: i32): i32 {
     return (t + i - i) % 101;
 }
 function main(): i32 {
-    let keep: Tag[] = [Tag.Box(5), Tag.Nil];
+    let keep: Tag[] = [Tag.Box(5), idt(Tag.Nil)];
     let acc: i32 = 0;
     let i: i32 = 0;
     while (i < 100) { acc = acc + round(keep, i); i = i + 1; }
