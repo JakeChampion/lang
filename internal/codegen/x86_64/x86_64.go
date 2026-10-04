@@ -1350,6 +1350,10 @@ type generator struct {
 	// emitted `.rodata` section is deterministic.
 	stringLabel map[string]string
 	stringOrder []string
+	// constArrayLabel / constArrayOrder are the same scheme for the
+	// static arrays OpConstArray names, keyed by ir.ConstArrayKey.
+	constArrayLabel map[string]string
+	constArrayOrder []ir.Op
 	// funcs maps a top-level function name to its AST
 	// declaration. Populated at Emit time so OpMakeEnv /
 	// OpMakeClosure can look up the hoisted function's
@@ -3885,6 +3889,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// in sync as SSO follow-ups change the layout.
 		g.pop() // rax = str ptr
 		g.emitStrLen("eax", "rax")
+		g.push()
+
+	case ir.OpConstArray:
+		g.emit(fmt.Sprintf("lea rax, [rip + %s]", g.internConstArray(op)))
 		g.push()
 
 	case ir.OpEnumSentinel:
@@ -7840,6 +7848,22 @@ func (g *generator) internString(s string) string {
 	return lbl
 }
 
+// internConstArray returns the .rodata label of op's static array, one per
+// distinct content.
+func (g *generator) internConstArray(op ir.Op) string {
+	key := ir.ConstArrayKey(op)
+	if lbl, ok := g.constArrayLabel[key]; ok {
+		return lbl
+	}
+	if g.constArrayLabel == nil {
+		g.constArrayLabel = map[string]string{}
+	}
+	lbl := fmt.Sprintf(".LConstArr_%d", len(g.constArrayOrder))
+	g.constArrayLabel[key] = lbl
+	g.constArrayOrder = append(g.constArrayOrder, op)
+	return lbl
+}
+
 // dynVtableLabel returns the GAS symbol for the (trait-set, concrete)
 // `dyn Trait` vtable cell. Single-trait keys are Fern identifiers, so the
 // joined symbol is a valid assembler label as-is. A merged multi-trait
@@ -7941,7 +7965,7 @@ func (g *generator) emitDataSections() {
 	}
 	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes || g.usesRemoveDirAll || g.usesHostname || g.usesUnameField || g.usesGetcwd || g.usesStrBuilder
 	needsEnumSentinels := len(g.enumSentinelTags) > 0
-	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty || ast.LeakCheckEnabled || ast.RcTrace || len(g.coverSites) > 0 {
+	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty || len(g.constArrayOrder) > 0 || ast.LeakCheckEnabled || ast.RcTrace || len(g.coverSites) > 0 {
 		g.line("")
 		g.line(".section .rodata")
 		g.emitCoverTable()
@@ -8003,6 +8027,19 @@ func (g *generator) emitDataSections() {
 			g.line("\t.4byte 0")          // length = 0
 			g.label(".LArr_Empty")
 			g.line("\t.byte 0")
+		}
+		for _, op := range g.constArrayOrder {
+			// The .LArr_Empty header with the element count as cap and
+			// length, then the elements.
+			g.line(".align 16")
+			g.line("\t.4byte 0")
+			g.line(fmt.Sprintf("\t.4byte %d", op.I32))
+			g.line("\t.4byte 0x80000000")
+			g.line(fmt.Sprintf("\t.4byte %d", op.I32))
+			g.label(g.constArrayLabel[ir.ConstArrayKey(op)])
+			for _, row := range ir.ConstArrayByteRows(op) {
+				g.line("\t.byte " + row)
+			}
 		}
 		if needsEnumSentinels {
 			// Per-tag enum sentinels. One 4-byte symbol per

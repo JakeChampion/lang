@@ -36,10 +36,10 @@ Of the serializer's 17, `http.ok` builds the response and accounts for 4;
 that is the handler's cost. The other 13 are framing. The head is built as a
 `string` by five concatenations and then copied into the builder.
 
-The native column has one cause of its own. Every read of a `const` array
-allocates a fresh copy of it on native: 100 reads of a four-element `u8[]`
-constant cost 100 allocations, where the self-host costs 0. `std/http`'s
-`NOT_TCHAR` and `FIELD_CTL` scans pay it per header.
+The native column had one cause of its own, which slice 2 removed. Every
+read of a `const` array allocated a fresh copy of it on native: 100 reads of
+a four-element `u8[]` constant cost 100 allocations, where the self-host
+costs 0. `std/http`'s `NOT_TCHAR` and `FIELD_CTL` scans paid it per header.
 
 The `fip` codec of `docs/FIP-HTTP-CODEC.md` is the same work at 0 on both
 compilers. Rerun on the self-host at the same commit, its baseline variant
@@ -81,6 +81,10 @@ up.
 2. **Native: a `const` array is static.** A read of a `const` array reads one
    immortal copy instead of building a new one. This is a native bugfix,
    referenced on #4451, with its own issue, allocation-count test and PR.
+   Done for #11471: the new `const.arr` op places each constant scalar
+   array once in static data. The Go compiler's parse fell from 50 to 43
+   allocations per request on x86-64, 60 to 53 on arm64 and 56 to 49 on
+   wasm; the serialize stayed at 6.
 3. **One copy per kept string.** `string_from_bytes_range_unchecked` copies a
    byte range straight into a string, so the method, path, version and each
    header name and value cost one allocation instead of two. The self-host

@@ -48,6 +48,7 @@
 package wasmbin
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math"
 
@@ -485,6 +486,32 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		return off
 	}
 
+	// OpConstArray's static arrays, one per distinct content: the heap
+	// array header with rc 0x80000000 and the element count as cap and
+	// length, then the elements, the data address 16-aligned as a heap
+	// array's is.
+	constArrays := map[string]int{}
+	internConstArray := func(op ir.Op) int {
+		key := ir.ConstArrayKey(op)
+		if off, ok := constArrays[key]; ok {
+			return off
+		}
+		for (stringNextOff+16)%16 != 0 {
+			dataBytes = append(dataBytes, 0)
+			stringNextOff++
+		}
+		n := uint32(op.I32)
+		dataBytes = binary.LittleEndian.AppendUint32(dataBytes, 0)
+		dataBytes = binary.LittleEndian.AppendUint32(dataBytes, n)
+		dataBytes = binary.LittleEndian.AppendUint32(dataBytes, 0x80000000)
+		dataBytes = binary.LittleEndian.AppendUint32(dataBytes, n)
+		off := stringNextOff + 16
+		constArrays[key] = off
+		dataBytes = append(dataBytes, op.Str...)
+		stringNextOff = off + len(op.Str)
+		return off
+	}
+
 	// `dyn Trait` vtable interning. Each (trait, concrete) pair gets one
 	// table in the data segment: an array of i32 function-TABLE indices
 	// (positions in prog.Funcs), one slot per non-associated trait method
@@ -546,6 +573,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		internClosure:      internClosure,
 		closuresBaseAddr:   closuresBase,
 		internEnumSentinel: internEnumSentinel,
+		internConstArray:   internConstArray,
 		internVtable:       internVtable,
 		closureTargets:     closureTargets,
 		funcByName:         funcByName,
@@ -1800,6 +1828,9 @@ type emitCtx struct {
 	// Used by OpEnumSentinel — the returned offset is the
 	// "heap pointer" for a payloadless enum variant.
 	internEnumSentinel func(int32) int
+	// internConstArray returns the data-segment address of an
+	// OpConstArray's static array, interning per content.
+	internConstArray func(ir.Op) int
 	// fn is the current function being walked. emitBody sets and
 	// clears it. Slot-aware ops (OpLoadLocal / OpStoreLocal /
 	// OpTeeLocal) consult slotType(fn, op.I32) to decide whether
@@ -2631,6 +2662,8 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	case ir.OpMatchTag:
 		// Stack: [ptr]. Tag is at offset 0. Just an i32.load.
 		return memory.InstI32Load(body, 2, 0), nil
+	case ir.OpConstArray:
+		return inst.InstI32Const(body, int32(ctx.internConstArray(op))), nil
 	case ir.OpEnumSentinel:
 		// Push the address of the shared 4-byte cell holding
 		// this tag value. OpMatchTag's i32.load reads the tag

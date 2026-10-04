@@ -1481,6 +1481,19 @@ func (g *generator) emitDataSections() {
 		g.label(".LArr_Empty")
 		g.line(`	.byte 0`)
 	}
+	for _, op := range g.constArrayOrder {
+		// The .LArr_Empty header with the element count as cap and
+		// length, then the elements.
+		g.line(`.align 4`)
+		g.line(`	.4byte 0`)
+		g.line(fmt.Sprintf("\t.4byte %d", op.I32))
+		g.line(`	.4byte 0x80000000`)
+		g.line(fmt.Sprintf("\t.4byte %d", op.I32))
+		g.label(g.constArrayLabel[ir.ConstArrayKey(op)])
+		for _, row := range ir.ConstArrayByteRows(op) {
+			g.line("\t.byte " + row)
+		}
+	}
 	if len(g.enumSentinelTags) > 0 {
 		// Per-tag enum sentinels. One 4-byte symbol per unique
 		// tag value referenced by any payloadless-variant
@@ -15988,6 +16001,22 @@ func (g *generator) internString(s string) string {
 	return lbl
 }
 
+// internConstArray returns the read-only label of op's static array, one per
+// distinct content.
+func (g *generator) internConstArray(op ir.Op) string {
+	key := ir.ConstArrayKey(op)
+	if lbl, ok := g.constArrayLabel[key]; ok {
+		return lbl
+	}
+	if g.constArrayLabel == nil {
+		g.constArrayLabel = map[string]string{}
+	}
+	lbl := fmt.Sprintf(".LConstArr_%d", len(g.constArrayOrder))
+	g.constArrayLabel[key] = lbl
+	g.constArrayOrder = append(g.constArrayOrder, op)
+	return lbl
+}
+
 // dynVtableLabel returns the GAS symbol for the (trait-set, concrete)
 // `dyn Trait` vtable cell. Single-trait keys are Fern identifiers, so the
 // joined symbol is a valid assembler label as-is. A merged multi-trait
@@ -16108,6 +16137,10 @@ type generator struct {
 	// `.rodata` section is deterministic.
 	stringLabel map[string]string
 	stringOrder []string
+	// constArrayLabel / constArrayOrder are the same scheme for the
+	// static arrays OpConstArray names, keyed by ir.ConstArrayKey.
+	constArrayLabel map[string]string
+	constArrayOrder []ir.Op
 	// funcs maps a top-level function name (including
 	// closureconv-hoisted closures) to its AST declaration.
 	// OpMakeClosure / OpMakeEnv read this to find the
@@ -20568,6 +20601,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// and let emitStrLen branch on the LSB-tagged inline flag.
 		g.pop()
 		g.emitStrLen("w0", "x0")
+		g.push()
+
+	case ir.OpConstArray:
+		g.adrpAdd("x0", g.internConstArray(op))
 		g.push()
 
 	case ir.OpEnumSentinel:
