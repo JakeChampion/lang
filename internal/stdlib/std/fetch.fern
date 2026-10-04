@@ -571,21 +571,21 @@ pub trait Transport {
 }
 
 // `Idle` — the connections a transport keeps for the next request to the
-// same place: at most `max` of them, none reused once idle past `idle_ms`.
+// same place: at most `max` of them, none reused once idle past `idle`.
 // A cell holds only a scalar or a string, so `rows` is the table, a
 // connection a line of its key, number and the nanosecond it went idle.
-pub struct Idle { rows: Cell[string], max: i32, idle_ms: i32 }
+pub struct Idle { rows: Cell[string], max: i32, idle: Duration }
 
 // `idle()` — an empty pool keeping up to 64 connections, each for 90 s
 // (Go's `IdleConnTimeout`).
 pub function idle(): Idle {
-  return idle_limited(64, 90000);
+  return idle_limited(64, time.duration_seconds(90 as i64));
 }
 
-// `idle_limited(max, idle_ms)` — an empty pool keeping up to `max`
-// connections, each for `idle_ms`; a `max` of 0 keeps none.
-pub function idle_limited(max: i32, idle_ms: i32): Idle {
-  return Idle { rows: cell_new(""), max: max, idle_ms: idle_ms };
+// `idle_limited(max, idle)` — an empty pool keeping up to `max`
+// connections, each for `idle`; a `max` of 0 keeps none.
+pub function idle_limited(max: i32, idle: Duration): Idle {
+  return Idle { rows: cell_new(""), max: max, idle: idle };
 }
 
 // `close_idle(tr)` — every connection `tr` keeps for reuse closed.
@@ -651,7 +651,7 @@ function __park[T: Transport](tr: T, key: string, conn: i32): void {
 function __live_rows[T: Transport](tr: T): string[] {
   let pool: Idle = tr.idle();
   let now: i64 = tr.now_ns();
-  let bound: i64 = pool.idle_ms as i64 * 1000000;
+  let bound: i64 = pool.idle.as_nanos();
   let out: string[] = [];
   for row in __idle_rows(pool) {
     if (now - __idle_since(row) > bound) {
