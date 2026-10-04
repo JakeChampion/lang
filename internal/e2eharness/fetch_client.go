@@ -84,6 +84,13 @@ func (up *FetchUpstream) serve(c net.Conn) {
 		serveKept(c, p)
 		return
 	}
+	if originPath(target) == "/slow" {
+		// The upstream a blocking-handler conformance case waits on: the
+		// answer arrives SlowUpstreamDelay after the request.
+		time.Sleep(SlowUpstreamDelay)
+		_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nslow"))
+		return
+	}
 	host := headerValue(head, "Host")
 	redirect := func(status int, location string) []byte {
 		return []byte(fmt.Sprintf("HTTP/1.1 %d Elsewhere\r\nLocation: %s\r\nContent-Length: 0\r\n\r\n", status, location))
@@ -218,16 +225,24 @@ func (up *FetchUpstream) serve(c net.Conn) {
 	_, _ = c.Write(resp)
 }
 
-// keptPath is the kept target `target` names, in origin form or the
-// absolute form a client writes to a forward proxy, or "".
-func keptPath(target string) string {
-	path := target
+// SlowUpstreamDelay is how long the upstream's /slow target waits before
+// answering.
+const SlowUpstreamDelay = 100 * time.Millisecond
+
+// originPath is the path of `target`, written in origin form or in the
+// absolute form a client writes to a forward proxy.
+func originPath(target string) string {
 	if rest, ok := strings.CutPrefix(target, "http://"); ok {
 		if i := strings.Index(rest, "/"); i >= 0 {
-			path = rest[i:]
+			return rest[i:]
 		}
 	}
-	if path == "/kept" || path == "/kept-redir" {
+	return target
+}
+
+// keptPath is the kept target `target` names, in either form, or "".
+func keptPath(target string) string {
+	if path := originPath(target); path == "/kept" || path == "/kept-redir" {
 		return path
 	}
 	return ""

@@ -233,6 +233,12 @@ in asmcore is `TestSelfHostRawOwnerAfterLastRead`'s, below);
 `TestSelfHostSupervisedServeReusePortWorkers` serves
 through two workers binding their own `SO_REUSEPORT` listeners and prove
 a replacement worker binds anew after a trap.
+`TestSelfHostServeBlockingHandlerStallsWorker` is the blocking-handler
+conformance case of #9851 §5: a one-worker server whose handler waits on
+`plat.http` to an upstream answering after 100 ms, and a hello on a second
+connection measured against it. It pins what P1 documented, the hello
+waiting out the upstream, and #9857 flips it to the hello arriving inside
+the wait.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestSelfHostServeConfig` serves through
