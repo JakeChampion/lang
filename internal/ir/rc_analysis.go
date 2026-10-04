@@ -3962,7 +3962,20 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// lg.append(v)`) makes both halves reclaimable, and the plain
 				// helper's non-retaining copy then let both walk-drops release
 				// the same elements (#3457).
-				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
+				//
+				// A borrowed-parameter receiver does not taint the result
+				// (#11487): the grow helper counts its result on both arms,
+				// and the in-place arm's other count is the caller's, which
+				// outlives this frame. A receiver this frame owns keeps the
+				// taint: if it escaped, its flat dec can leave the result's
+				// release as the last one.
+				if len(x.Args) == 0 {
+					return false
+				}
+				if rid, ok := x.Args[0].(*ast.Ident); ok && b.borrowedParam(rid.Name) {
+					return false
+				}
+				return b.rhsTainted(x.Args[0], tainted)
 			case "__alloc_u8":
 				// A fresh zero-filled rc=1 buffer straight from the runtime
 				// allocator (or the static empty sentinel for n==0, which
@@ -4593,6 +4606,22 @@ func (b *builder) arraySetReceiverBorrowed(name string) bool {
 		}
 		return !p.Own && !b.paramOwnedByDefault(p.Type, i) &&
 			(!b.rc.consumedParams[p.Name] || b.isConsumedArrayParam(p.Name))
+	}
+	return false
+}
+
+// borrowedParam reports whether `name` is a parameter on the borrow baseline:
+// not `own`, not owned-by-default and neither promoted nor flag-threaded by
+// computeConsumedParams. Its slot holds only the caller's value: shadowrename
+// gives every other binding a unique name, and a reassigned one is promoted or
+// flag-threaded (a TRMC function, which computeConsumedParams skips, cannot
+// rebind a parameter).
+func (b *builder) borrowedParam(name string) bool {
+	for i, p := range b.fn.Params {
+		if p.Name == name {
+			return !p.Own && !b.paramOwnedByDefault(p.Type, i) &&
+				!b.rc.consumedParams[p.Name] && !b.rc.flagThreadedParams[p.Name]
+		}
 	}
 	return false
 }
