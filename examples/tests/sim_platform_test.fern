@@ -21,8 +21,7 @@ const MS: i64 = 1000000;
 // A network where `example.test` listens after 5 ms and answers "hi" 20 ms
 // after each request, keeping the connection.
 function __net(d: sim.Sim): sim_fetch.Net {
-  return sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 5)
-    .route(ORIGIN, 80, "/", [sim_fetch.reply(200, "hi").after(20).kept()]);
+  return sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 5).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "hi").after(20).kept()]);
 }
 
 function __plat(seed: i64): sim_platform.SimPlatform {
@@ -143,8 +142,7 @@ function test_randomness_is_the_seeds(): test.TestOutcome {
 
 function test_http_reaches_global_addresses_only(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).host("internal.test", ["10.0.0.1"]).listen("10.0.0.1", 80, 1)
-    .route("10.0.0.1", 80, "/", [sim_fetch.reply(200, "secret")]);
+  let n: sim_fetch.Net = __net(d).host("internal.test", ["10.0.0.1"]).listen("10.0.0.1", 80, 1).route("10.0.0.1", 80, "/", [sim_fetch.reply(200, "secret")]);
   let p: sim_platform.SimPlatform = sim_platform.new(d, n);
   let open: string = __message(p.http(fetch.get("http://example.test/")));
   if (open != "status 200") {
