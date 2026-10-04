@@ -10,9 +10,10 @@ import (
 )
 
 // wordsDriver emits one program for a native target twice, once as text alone
-// and once handing the assembler encoded instructions where the emitter has a
-// record form, and assembles both. The two must produce the same code and
-// data: a record is only ever the encoding its text would have assembled to.
+// and once handing the assembler records where the emitter has a form for
+// them (encoded instructions, label ids, branches by id), and assembles both.
+// The two must produce the same code and data: a record is only ever what
+// its text would have assembled to.
 const wordsDriver = `import "./parser"; import "./lexer"; import "./checker"; import "./asm_arm64_ir"; import "./arm64_native";
 import "./asm_ir"; import "./x86_native"; import "./util";
 import "./modloader"; import "./flatten"; import "./treeshake"; import "./semlower";
@@ -26,6 +27,19 @@ function first_diff(a: i32[], b: i32[]): i32 {
     }
     if (a.len() != b.len()) { return n; }
     return 0 - 1;
+}
+// marks counts the record lines of the mixed text: the lines a marker byte
+// (1 to 5) starts, each one record the assembler takes in place of text.
+function marks(text: string): i32 {
+    let n: i32 = 0;
+    let at_start: boolean = true;
+    let i: i32 = 0;
+    while (i < text.len()) {
+        if (at_start && text[i] >= 1 && text[i] <= 5) { n = n + 1; }
+        at_start = text[i] == b'\n';
+        i = i + 1;
+    }
+    return n;
 }
 function report(records: i32, code: i32, unknown: string[], code_diff: i32, data_diff: i32): void {
     print("records " + util.i32_to_string(records));
@@ -55,7 +69,7 @@ function main(): i32 {
         let words: u8[] = buf_take_bytes(recs);
         let a = arm64_native.arm64_gas_program(text);
         let b = arm64_native.arm64_gas_program_words(mixed, words);
-        report(words.len() / 8, a.asm.code.len() / 4, b.unknown, first_diff(a.asm.code, b.asm.code), first_diff(a.data, b.data));
+        report(marks(mixed), a.asm.code.len() / 4, b.unknown, first_diff(a.asm.code, b.asm.code), first_diff(a.data, b.data));
         return 0;
     }
     let xtext: string = asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize);
@@ -63,13 +77,7 @@ function main(): i32 {
     let xwords: u8[] = buf_take_bytes(recs);
     let xa = x86_native.x86_gas_assemble(xtext);
     let xb = x86_native.x86_gas_assemble_words(xmixed, xwords);
-    let n: i32 = 0;
-    let i: i32 = 0;
-    while (i < xwords.len()) {
-        n = n + 1;
-        i = i + 1 + xwords[i] as i32;
-    }
-    report(n, xa.code.len(), xb.unknown, first_diff(xa.code, xb.code), first_diff(xa.rodata, xb.rodata));
+    report(marks(xmixed), xa.code.len(), xb.unknown, first_diff(xa.code, xb.code), first_diff(xa.rodata, xb.rodata));
     return 0;
 }
 `

@@ -1993,6 +1993,26 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
 		Result: ast.VoidType{},
 	}
+	// The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4): a record per
+	// task, the current task, the park that unwinds it, and the words its
+	// scheduler reads back. std/async's Task API is written over them. Only
+	// the self-host compiler suspends; here they take the blocking fallback,
+	// so no task is ever current and a park is never reached.
+	i32T := ast.NumberType{}
+	for name, sig := range map[string]*ast.FuncType{
+		"__task_new":           {Params: []ast.Type{}, Result: i32T},
+		"__task_free":          {Params: []ast.Type{i32T}, Result: ast.VoidType{}},
+		"__task_cur":           {Params: []ast.Type{}, Result: i32T},
+		"__task_enter":         {Params: []ast.Type{i32T, i32T}, Result: ast.VoidType{}},
+		"__task_leave":         {Params: []ast.Type{}, Result: i32T},
+		"__task_park":          {Params: []ast.Type{ast.ArrayType{Elem: i32T}, i32T}, Result: i32T},
+		"__task_wait":          {Params: []ast.Type{i32T}, Result: ast.ArrayType{Elem: i32T}},
+		"__task_timeout":       {Params: []ast.Type{i32T}, Result: i32T},
+		"__task_set_ready":     {Params: []ast.Type{i32T, i32T}, Result: ast.VoidType{}},
+		"__task_set_cancelled": {Params: []ast.Type{i32T}, Result: ast.VoidType{}},
+	} {
+		c.info.FuncSigs[name] = sig
+	}
 	// f32_bits(x: f32): i32 — reinterprets a 32-bit float as its
 	// IEEE-754 bit pattern. f32_from_bits is the inverse. The pair
 	// is needed by float formatting routines (extracting sign /

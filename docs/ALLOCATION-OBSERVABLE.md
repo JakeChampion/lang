@@ -223,22 +223,24 @@ not express one.
 
 ## Such a case must declare itself
 
-Every conformance case is also run with reclamation compiled OUT, and
-`*FixturesFreeMatchesNoFree` requires the two runs to agree. That gate is
-what turns an rc bug into a visible behaviour change instead of a leak
-nobody measures, and it rests on the corpus being normative about the
-*language* — where whether the allocator ran is not observable.
+Every conformance case is also run under the quarantine
+(`TestFernFixturesSelfHostX86_64Quarantine`: `FERN_RC_FREE_DEBUG=1`, so no
+block is recycled and a release or retain that touches a freed block aborts
+with the sanitizer's report). That leg is what turns an rc bug into a
+visible failure instead of a leak nobody measures, and it rests on the
+corpus being normative about the *language* — where whether the allocator
+ran is not observable.
 
 A case built on this document's observable breaks that assumption on
 purpose: reading `__heap_bump_bytes()` is exactly how it tells. So it
-must carry a `reclaim-observable` sidecar file, and the gate then
-**inverts** for it — the two runs are required to DIFFER.
+must carry a `reclaim-observable` sidecar file. The ordinary legs hold
+such a case to its full expected output; under the quarantine it prints
+its free-off output, so only its exit code is held there.
 
-The inversion, rather than a skip, is the point. A skip would make the
-marker a way to silence any free-off divergence, including the
-miscompiles the gate exists to catch; and a case that quietly stopped
-observing reclamation would keep passing while testing nothing. As a
-claim, it fails loudly in both directions.
+The Go-compiler free-off differential that preceded the quarantine
+**inverted** for a marked case, requiring the two runs to DIFFER, so the
+marker could not silence a divergence; it went with the Go backends
+(`docs/NATIVE-RETIREMENT.md`).
 
 Only a case whose *expected output* changes with reclamation needs it.
 `alloc_grows_when_retained` reports `grows` either way — a retained

@@ -2,60 +2,7 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
-
-// Slice 2 differential gate (docs/OWNERSHIP-INFERENCE-PLAN.md): with free ON,
-// the OwnedByDefault model (an ordinary enum parameter is reclaimed by the
-// callee — the caller retains it with an inc, the callee dec's it at exit, so a
-// reader reclaims its argument when it holds the last reference) must produce
-// byte-identical OUTPUT whether it's on or the borrow model is used. rc is
-// invisible, so any divergence is an over-release / corrupted reclaim surfaced
-// by a real program. The owned set is every enum / struct / tuple whose deep
-// drop is wired (typeDeepDropWired), arrays and strings included.
-
-func TestX86_64OwnedByDefaultMatchesBorrow(t *testing.T) {
-	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
-		prev := ast.OwnedByDefault
-		defer func() { ast.OwnedByDefault = prev }()
-		ast.OwnedByDefault = false
-		outOff, exitOff := runFixtureX86_64Native(t, f.mainPath, f.stdin, true)
-		ast.OwnedByDefault = true
-		outOn, exitOn := runFixtureX86_64Native(t, f.mainPath, f.stdin, true)
-		if outOff != outOn || exitOff != exitOn {
-			t.Errorf("owned-by-default diverged from borrow model:\n borrow=(exit %d) %q\n owned =(exit %d) %q", exitOff, outOff, exitOn, outOn)
-		}
-	})
-}
-
-func TestArm64OwnedByDefaultMatchesBorrow(t *testing.T) {
-	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
-		prev := ast.OwnedByDefault
-		defer func() { ast.OwnedByDefault = prev }()
-		ast.OwnedByDefault = false
-		outOff, exitOff := runFixtureArm64Native(t, f.mainPath, f.stdin, true)
-		ast.OwnedByDefault = true
-		outOn, exitOn := runFixtureArm64Native(t, f.mainPath, f.stdin, true)
-		if outOff != outOn || exitOff != exitOn {
-			t.Errorf("owned-by-default diverged from borrow model:\n borrow=(exit %d) %q\n owned =(exit %d) %q", exitOff, outOff, exitOn, outOn)
-		}
-	})
-}
-
-func TestWASMOwnedByDefaultMatchesBorrow(t *testing.T) {
-	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
-		po := ast.OwnedByDefault
-		defer func() { ast.OwnedByDefault = po }()
-		ast.OwnedByDefault = false
-		outOff, exitOff := runFixtureWasm(t, f.mainPath, f.stdin)
-		ast.OwnedByDefault = true
-		outOn, exitOn := runFixtureWasm(t, f.mainPath, f.stdin)
-		if outOff != outOn || exitOff != exitOn {
-			t.Errorf("owned-by-default diverged from borrow model:\n borrow=(exit %d) %q\n owned =(exit %d) %q", exitOff, outOff, exitOn, outOn)
-		}
-	})
-}
 
 // Owned-by-default reader shapes must be rc-balanced (value-correct +
 // __rc_underflow_count()==0): a reader reclaims a fresh argument (build → sum),

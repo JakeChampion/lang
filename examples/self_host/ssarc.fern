@@ -9,6 +9,7 @@ import "./ssasem";
 import "./ssalayout";
 import "./ssaunits";
 import "./ssabytes";
+import "./suspend";
 import "./semrecords";
 import "./semtypes";
 import "./typeinfo";
@@ -6244,6 +6245,11 @@ function raw_memory_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__free") {
     return Lowered { found: true, r: emit(r, ir.op_free()) };
   }
+  // The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4) are runtime
+  // functions written in Fern, called with the user ABI under `__fern_`.
+  if (util.str_has_prefix(ins.str, "__task_")) {
+    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_" + slice_unchecked(ins.str, 2, ins.str.len()), ins.args.len())) };
+  }
   if (ins.str == "__fern_box_free") {
     return Lowered { found: true, r: box_free(r, ins) };
   }
@@ -6336,6 +6342,7 @@ function raw_floor_ops(): RawOps[] {
     RawOps { name: "__raw_environ", ops: [ir.op_raw_environ()] },
     RawOps { name: "__raw_splice_pipe", ops: [ir.op_raw_splice_pipe()] },
     RawOps { name: "__raw_cover", ops: [ir.op_raw_cover()] },
+    RawOps { name: "__raw_task_state", ops: [ir.op_raw_task_state()] },
     RawOps { name: "__raw_call1", ops: [ir.op_call_indirect(1)] },
     RawOps { name: "__raw_call2", ops: [ir.op_call_indirect(2)] },
     RawOps { name: "__syscall3", ops: [ir.op_syscall3()] },
@@ -6979,7 +6986,9 @@ function place_views(own r: irtables.LowerResult): irtables.LowerResult {
 // by the caller-side bracket.
 // `pure` names the module's functions that reach no observable effect
 // (semlower.pure_rows), the element functions the in-place map may run.
-pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex, view: ssaunits.SchemaView): irtables.LowerResult {
+// `susp` names the module's suspendable rows (suspend.classify); one of them
+// is rewritten to its resumable form before the peepholes.
+pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex, view: ssaunits.SchemaView, susp: suspend.Set): irtables.LowerResult {
   let why: string = validate(f, modes, p, structs, view);
   if (why != "") {
     return empty(why);
@@ -6999,6 +7008,14 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
   e = Emit { ...e, r: aligned_rc(e.r, f) };
   e = Emit { ...e, r: ssabytes.lower_reads(e.r) };
   e = Emit { ...e, r: place_views(e.r) };
+  if (susp.on && susp.rows.has(f.graph.name)) {
+    suspend.dump_if_asked(e.r, "before");
+    e = Emit { ...e, r: suspend.transform(e.r, susp) };
+    suspend.dump_if_asked(e.r, "after");
+    if (!e.r.ok) {
+      return e.r;
+    }
+  }
   let optimized: ir.OptimizedOps = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
   return irtables.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
 }

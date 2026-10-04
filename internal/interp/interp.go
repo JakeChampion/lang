@@ -1479,6 +1479,20 @@ func New() *Interp {
 	// not observe reclamation, exactly as with __heap_bump_bytes.
 	i.Builtins["__heap_mark"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	i.Builtins["__heap_release_to"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	// The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4) in the
+	// blocking fallback: no task is ever current, so std/async's suspend
+	// polls and task_start runs its entry to completion. A park is reached
+	// only with a current task, so it reports the no-task answer.
+	i.Builtins["__task_new"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(1), nil }}
+	i.Builtins["__task_free"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_cur"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	i.Builtins["__task_enter"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_leave"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	i.Builtins["__task_park"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
+	i.Builtins["__task_wait"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return newArray(0), nil }}
+	i.Builtins["__task_timeout"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
+	i.Builtins["__task_set_ready"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_set_cancelled"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
 	i.Builtins["f32_bits"] = &Builtin{Fn: builtinF32Bits}
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}
 	i.Builtins["f64_bits"] = &Builtin{Fn: builtinF64Bits}
@@ -5606,11 +5620,65 @@ func (i *Interp) stdOut(fd int64) io.Writer {
 // builtin exists here only so modules that reference `poll` (std/reactor, and the
 // future real-fd `std/task` reactor) stay compilable + runnable under -interp;
 // real readiness lives on the native backends.
-func builtinPoll(_ *Interp, args []Value) (Value, error) {
+// builtinPoll is `poll(fds, timeout_ms)` over the descriptors behind the
+// handles: a set made for the call, each handle watched for readability,
+// one wait, and the set closed. The index of the first ready handle; -1 at
+// the timeout, for an empty set, for a set holding no handle, and on a
+// host without a reactor floor. A negative token is skipped, as poll(2)
+// skips a negative descriptor.
+func builtinPoll(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("poll: expected 2 args, got %d", len(args))
 	}
-	return Number(-1), nil
+	fds, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("poll: expected array arg 0, got %T", args[0])
+	}
+	timeout, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("poll: expected number arg 1, got %T", args[1])
+	}
+	set, err := reactorCreate()
+	if err != nil {
+		return Number(-1), nil
+	}
+	defer syscall.Close(set)
+	r := &reactor{fd: set, handles: map[int]int64{}}
+	index := map[int]int{}
+	for k, v := range fds.E {
+		handle, ok := v.(Number)
+		if !ok || handle < 0 {
+			continue
+		}
+		raw, ok := i.rawFd(int64(handle))
+		if !ok {
+			continue
+		}
+		if _, seen := index[raw]; seen {
+			continue
+		}
+		if err := r.watch(raw, 1); err != nil {
+			continue
+		}
+		index[raw] = k
+	}
+	if len(index) == 0 {
+		if timeout > 0 {
+			time.Sleep(time.Duration(timeout) * time.Millisecond)
+		}
+		return Number(-1), nil
+	}
+	got, err := r.wait(len(index), int(timeout))
+	if err != nil {
+		return Number(-1), nil
+	}
+	hit := -1
+	for _, e := range got {
+		if k, ok := index[e.raw]; ok && (hit < 0 || k < hit) {
+			hit = k
+		}
+	}
+	return Number(hit), nil
 }
 
 // builtinIsatty answers `isatty(fd)` against the real fd the
