@@ -467,16 +467,16 @@
 # stdio and dyn-integer merges since), and #11397's sources 8118040 (+0.05%).
 # Number from driver-sizes' report on run 37189530175. The other rows stay
 # inside 5%.
-# 2026-10-04: ef49ae0 pin refresh, measured on 43fbcd99f. Source/pin
+# 2026-10-04: ef49ae0 pin refresh, including main 868cd698f. Source/pin
 # attribution: docs/STRING-CONSUMER-DRIVER-SIZES-2026-10-04.md.
-fern.fern/stage2 11757904
-fern.fern 11771280
-asm_load_run.fern 9473352
+fern.fern/stage2 11758720
+fern.fern 11772104
+asm_load_run.fern 9474160
 asm_modload_run.fern 8195000
 asm_ir_run.fern 7933432
 asm_run.fern 7274664
-wasm_ir_run.fern 7385128
-wasm_run.fern 7385752
-wasm_runio_run.fern 7387224
+wasm_ir_run.fern 7385488
+wasm_run.fern 7386112
+wasm_runio_run.fern 7387992
 asm_pathprobe_run.fern 4433136
 checker_modload_run.fern 2649656

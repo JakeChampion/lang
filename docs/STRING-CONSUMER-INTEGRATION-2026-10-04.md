@@ -63,6 +63,16 @@ a merge gate.
 
 ## Validation at publication
 
+The subsequent merge of main `868cd698f` passes the component wait,
+I/O-error path and interpreter xattr tests (55.828 seconds), all Linux
+units, all lint gates and the complete strict driver-size gate. A fresh
+Linux ARM64 bootstrap reaches an identical stage 2 and stage 3 at
+13,065,408 bytes, SHA-256
+`e0fe1c2bed31f5b23306bf6deabbae695b37551fe19ae292041107a9d56f7b0a`.
+Stage 1 differs. This validates the final integrated source locally;
+the Darwin results above describe the preceding candidate, and current-head
+CI remains required before merge.
+
 The frozen integration contains 8,097 files. All 5,736 Go, Fern and golden
 files were compared with the working tree before publication and match.
 

@@ -71,6 +71,14 @@ No runtime checks, target tests or ownership protections are removed.
 
 ## Reproduction
 
+After integrating main `868cd698f`, a fresh Linux ARM64 bootstrap and the
+same complete cross-build measure 11,758,720 bytes for stage 2, 11,772,104
+for the pin-built CLI, 9,474,160 for `asm_load_run`, and 7,385,488,
+7,386,112 and 7,387,992 for the three WASM drivers. The other five rows are
+unchanged. Main adds WASM component wait support and CLI corrections;
+the largest increase from the table above is 824 bytes. All eleven final
+measurements pass the strict gate. The baseline records these final values.
+
 For each source revision and verified published pin, run:
 
 ```sh
