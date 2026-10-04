@@ -72,7 +72,7 @@ func TestSelfHostMachO(t *testing.T) {
 //	536 LC_LOAD_DYLIB(56)  592 LC_MAIN(24)  616 LC_CODE_SIGNATURE(16)
 const machoSelfTestMain = `
 function main(): i32 {
-    let text: i32[] = [1, 2, 3, 4];
+    let text: u8[] = [1, 2, 3, 4];
     let none: i32[] = [];
     let bin: i32[] = macho_executable(text, none, none, "fern", 0, 0, none);
 
@@ -168,7 +168,7 @@ function main(): i32 {
 
     // ---- data variant: text (5 bytes) + data (2 bytes) ----
     // __DATA adds a 152-byte segment+section, so text_off = 32 + 800 = 832.
-    let t2: i32[] = [1, 2, 3, 4, 5];
+    let t2: u8[] = [1, 2, 3, 4, 5];
     let d2: i32[] = [9, 9];
     let b2: i32[] = macho_executable(t2, none, d2, "fern", 0, 0, none);
     // ncmds = 12 @16 (now with __DATA).

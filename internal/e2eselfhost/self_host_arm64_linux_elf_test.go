@@ -47,7 +47,6 @@ func TestSelfHostArm64NativeLinuxElfRuns(t *testing.T) {
 	native := string(mustRead(t, "../../examples/self_host/arm64_native.fern"))
 	elfsrc := string(mustRead(t, "../../examples/self_host/elf.fern"))
 	const driverMain = `
-function to_u8(b: i32[]): u8[] { let o: u8[] = []; let i: i32 = 0; while (i < b.len()) { o = o.append(b[i] as u8); i = i + 1; } return o; }
 function main(): i32 {
     let asm: string = ""; let ok: boolean = false;
     match (read_file("in.s")) { Ok(s) => { asm = s; ok = true; }, Err(e) => { ok = false; } }
@@ -62,13 +61,12 @@ function main(): i32 {
     // W^X two-segment layout (matches fern.fern's arm64_elf_binary): .text
     // R+X, data R+W on the next page boundary.
     let tv: i64 = (elf_text_vaddr_wx()) as i64;
-    let dv: i64 = (elf_data_vaddr_wx(pa.code.len())) as i64;
+    let dv: i64 = (elf_data_vaddr_wx(pa.text.len())) as i64;
     p = arm64_gas_link(p, tv, dv);
     let pa2: Arm64Asm = p.asm;
     let entry_off: i32 = arm64_asm_label_off(pa2, "_start");
     if (entry_off < 0) { entry_off = 0; }
-    let bin: i32[] = elf_image_wx(pa2.code, p.data, elf_em_aarch64(), entry_off, p.bss_size);
-    write(string_from_bytes_unchecked(to_u8(bin)));
+    write(string_from_bytes_unchecked(elf_image_wx(pa2.text, p.data, elf_em_aarch64(), entry_off, p.bss_size)));
     return 0;
 }
 `
@@ -83,7 +81,6 @@ function main(): i32 {
 	// arm64_elf_binary_pie (-target arm64-android). With the arm64 heap now
 	// mmap'd at the low 0x10000000 hint, these run at the kernel-chosen base.
 	const pieDriverMain = `
-function to_u8(b: i32[]): u8[] { let o: u8[] = []; let i: i32 = 0; while (i < b.len()) { o = o.append(b[i] as u8); i = i + 1; } return o; }
 function main(): i32 {
     let asm: string = ""; let ok: boolean = false;
     match (read_file("in.s")) { Ok(s) => { asm = s; ok = true; }, Err(e) => { ok = false; } }
@@ -92,13 +89,12 @@ function main(): i32 {
     if (p.unknown.len() > 0) { write("UNKNOWN:"); return 0; }
     let pa: Arm64Asm = p.asm;
     let tv: i64 = (elf_text_vaddr_pie()) as i64;
-    let dv: i64 = (elf_data_vaddr_pie(pa.code.len())) as i64;
+    let dv: i64 = (elf_data_vaddr_pie(pa.text.len())) as i64;
     p = arm64_gas_link(p, tv, dv);
     let pa2: Arm64Asm = p.asm;
     let entry_off: i32 = arm64_asm_label_off(pa2, "_start");
     if (entry_off < 0) { entry_off = 0; }
-    let bin: i32[] = elf_image_pie(pa2.code, p.data, elf_em_aarch64(), entry_off, p.bss_size);
-    write(string_from_bytes_unchecked(to_u8(bin)));
+    write(string_from_bytes_unchecked(elf_image_pie(pa2.text, p.data, elf_em_aarch64(), entry_off, p.bss_size)));
     return 0;
 }
 `

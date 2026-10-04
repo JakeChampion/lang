@@ -63,40 +63,40 @@ const arm64GasSelfTestMain = `
 function main(): i32 {
     // mov x0, #42 -> movz -> 0xD2800540 -> 40 05 80 D2
     let a: Arm64Asm = arm64_gas_assemble("mov x0, #42");
-    if (a.code[0] != 64 || a.code[1] != 5 || a.code[2] != 128 || a.code[3] != 210) { return 1; }
+    if (a.text[0] != 64 || a.text[1] != 5 || a.text[2] != 128 || a.text[3] != 210) { return 1; }
     // mov x0, x1 -> movreg -> 0xAA0103E0 -> E0 03 01 AA
     let b: Arm64Asm = arm64_gas_assemble("mov x0, x1");
-    if (b.code[0] != 224 || b.code[1] != 3 || b.code[2] != 1 || b.code[3] != 170) { return 2; }
+    if (b.text[0] != 224 || b.text[1] != 3 || b.text[2] != 1 || b.text[3] != 170) { return 2; }
     // add x0, x1, #5 -> 0x91001420 -> 20 14 00 91
     let c: Arm64Asm = arm64_gas_assemble("add x0, x1, #5");
-    if (c.code[0] != 32 || c.code[1] != 20 || c.code[2] != 0 || c.code[3] != 145) { return 3; }
+    if (c.text[0] != 32 || c.text[1] != 20 || c.text[2] != 0 || c.text[3] != 145) { return 3; }
     // add x0, x1, x2 -> 0x8B020020 -> 20 00 02 8B
     let d: Arm64Asm = arm64_gas_assemble("add x0, x1, x2");
-    if (d.code[0] != 32 || d.code[1] != 0 || d.code[2] != 2 || d.code[3] != 139) { return 4; }
+    if (d.text[0] != 32 || d.text[1] != 0 || d.text[2] != 2 || d.text[3] != 139) { return 4; }
     // cmp x0, x1 -> 0xEB01001F -> 1F 00 01 EB
     let e: Arm64Asm = arm64_gas_assemble("cmp x0, x1");
-    if (e.code[0] != 31 || e.code[1] != 0 || e.code[2] != 1 || e.code[3] != 235) { return 5; }
+    if (e.text[0] != 31 || e.text[1] != 0 || e.text[2] != 1 || e.text[3] != 235) { return 5; }
     // ldr x0, [x1, #8] -> 0xF9400420 -> 20 04 40 F9
     let f: Arm64Asm = arm64_gas_assemble("ldr x0, [x1, #8]");
-    if (f.code[0] != 32 || f.code[1] != 4 || f.code[2] != 64 || f.code[3] != 249) { return 6; }
+    if (f.text[0] != 32 || f.text[1] != 4 || f.text[2] != 64 || f.text[3] != 249) { return 6; }
     // str x0, [x1, #8] -> 0xF9000420 -> 20 04 00 F9
     let g: Arm64Asm = arm64_gas_assemble("str x0, [x1, #8]");
-    if (g.code[0] != 32 || g.code[1] != 4 || g.code[2] != 0 || g.code[3] != 249) { return 7; }
+    if (g.text[0] != 32 || g.text[1] != 4 || g.text[2] != 0 || g.text[3] != 249) { return 7; }
     // svc #0x80 -> 0xD4001001 -> 01 10 00 D4
     let h: Arm64Asm = arm64_gas_assemble("svc #0x80");
-    if (h.code[0] != 1 || h.code[1] != 16 || h.code[2] != 0 || h.code[3] != 212) { return 8; }
+    if (h.text[0] != 1 || h.text[1] != 16 || h.text[2] != 0 || h.text[3] != 212) { return 8; }
     // ret -> 0xD65F03C0 -> C0 03 5F D6
     let i: Arm64Asm = arm64_gas_assemble("ret");
-    if (i.code[0] != 192 || i.code[1] != 3 || i.code[2] != 95 || i.code[3] != 214) { return 9; }
+    if (i.text[0] != 192 || i.text[1] != 3 || i.text[2] != 95 || i.text[3] != 214) { return 9; }
     // forward b.eq end: branch at 0 to off 4 -> 0x54000020 -> 20 00 00 54
     let j: Arm64Asm = arm64_gas_assemble("b.eq end\nend:\n");
-    if (j.code[0] != 32 || j.code[1] != 0 || j.code[2] != 0 || j.code[3] != 84) { return 10; }
+    if (j.text[0] != 32 || j.text[1] != 0 || j.text[2] != 0 || j.text[3] != 84) { return 10; }
     // backward loop: sub at 0, cbnz at 4 targeting 0 (rel -4) -> 0xB5FFFFE1.
     let k: Arm64Asm = arm64_gas_assemble("loop:\nsub x1, x1, #1\ncbnz x1, loop\n");
-    if (k.code[4] != 225 || k.code[5] != 255 || k.code[6] != 255 || k.code[7] != 181) { return 11; }
+    if (k.text[4] != 225 || k.text[5] != 255 || k.text[6] != 255 || k.text[7] != 181) { return 11; }
     // comments + blank lines are ignored; labels with trailing code parse.
     let l: Arm64Asm = arm64_gas_assemble("// a comment\n\n  ret // trailing\n");
-    if (l.code.len() != 4 || l.code[0] != 192) { return 12; }
+    if (l.text.len() != 4 || l.text[0] != 192) { return 12; }
     // exponent parsing (#4342): arm64_parse_f64 mirrors x86_gas_parse_f64 —
     // a spliced-text .double operand like 1e3 must scale by its exponent,
     // not stop at the 'e'.
@@ -128,17 +128,17 @@ function main(): i32 {
     // every array element past [0]. The shift used to be dropped (#6849).
     // add x0, x1, x0, lsl #2 -> 0x8B000820 -> 20 08 00 8B
     let s1: Arm64Asm = arm64_gas_assemble("add x0, x1, x0, lsl #2");
-    if (s1.code[0] != 32 || s1.code[1] != 8 || s1.code[2] != 0 || s1.code[3] != 139) { return 24; }
+    if (s1.text[0] != 32 || s1.text[1] != 8 || s1.text[2] != 0 || s1.text[3] != 139) { return 24; }
     // sub x3, x4, x5, lsl #3 -> 0xCB050C83 -> 83 0C 05 CB
     let s2: Arm64Asm = arm64_gas_assemble("sub x3, x4, x5, lsl #3");
-    if (s2.code[0] != 131 || s2.code[1] != 12 || s2.code[2] != 5 || s2.code[3] != 203) { return 25; }
+    if (s2.text[0] != 131 || s2.text[1] != 12 || s2.text[2] != 5 || s2.text[3] != 203) { return 25; }
     // Extended-register add: the 32-bit-index widening form.
     // add x2, x0, w1, uxtw -> 0x8B214002 -> 02 40 21 8B
     let s3: Arm64Asm = arm64_gas_assemble("add x2, x0, w1, uxtw");
-    if (s3.code[0] != 2 || s3.code[1] != 64 || s3.code[2] != 33 || s3.code[3] != 139) { return 26; }
+    if (s3.text[0] != 2 || s3.text[1] != 64 || s3.text[2] != 33 || s3.text[3] != 139) { return 26; }
     // add x2, x0, w1, sxtw #2 -> 0x8B21C802 -> 02 C8 21 8B
     let s4: Arm64Asm = arm64_gas_assemble("add x2, x0, w1, sxtw #2");
-    if (s4.code[0] != 2 || s4.code[1] != 200 || s4.code[2] != 33 || s4.code[3] != 139) { return 27; }
+    if (s4.text[0] != 2 || s4.text[1] != 200 || s4.text[2] != 33 || s4.text[3] != 139) { return 27; }
     // A fourth operand that names neither a shift nor an extend is RECORDED
     // rather than dropped, and a shifted one is not.
     let u4: Arm64GasProg = arm64_gas_program("add x0, x1, x2, banana #1\n");
@@ -153,40 +153,40 @@ function main(): i32 {
     // ones so a dropped register field cannot pass.
     // ld1 {v0.16b}, [x8] -> 0x4C407100 -> 00 71 40 4C
     let n1: Arm64Asm = arm64_gas_assemble("ld1 {v0.16b}, [x8]");
-    if (n1.code[0] != 0 || n1.code[1] != 113 || n1.code[2] != 64 || n1.code[3] != 76) { return 30; }
+    if (n1.text[0] != 0 || n1.text[1] != 113 || n1.text[2] != 64 || n1.text[3] != 76) { return 30; }
     // ld1 {v3.16b}, [x0] -> 0x4C407003 -> 03 70 40 4C
     let n2: Arm64Asm = arm64_gas_assemble("ld1 {v3.16b}, [x0]");
-    if (n2.code[0] != 3 || n2.code[1] != 112 || n2.code[2] != 64 || n2.code[3] != 76) { return 31; }
+    if (n2.text[0] != 3 || n2.text[1] != 112 || n2.text[2] != 64 || n2.text[3] != 76) { return 31; }
     // cmeq v0.16b, v0.16b, v1.16b -> 0x6E218C00 -> 00 8C 21 6E
     let n3: Arm64Asm = arm64_gas_assemble("cmeq v0.16b, v0.16b, v1.16b");
-    if (n3.code[0] != 0 || n3.code[1] != 140 || n3.code[2] != 33 || n3.code[3] != 110) { return 32; }
+    if (n3.text[0] != 0 || n3.text[1] != 140 || n3.text[2] != 33 || n3.text[3] != 110) { return 32; }
     // cmeq v5.16b, v6.16b, v7.16b -> 0x6E278CC5 -> C5 8C 27 6E
     let n4: Arm64Asm = arm64_gas_assemble("cmeq v5.16b, v6.16b, v7.16b");
-    if (n4.code[0] != 197 || n4.code[1] != 140 || n4.code[2] != 39 || n4.code[3] != 110) { return 33; }
+    if (n4.text[0] != 197 || n4.text[1] != 140 || n4.text[2] != 39 || n4.text[3] != 110) { return 33; }
     // cmlt v0.16b, v0.16b, #0 -> 0x4E20A800 -> 00 A8 20 4E
     let n5: Arm64Asm = arm64_gas_assemble("cmlt v0.16b, v0.16b, #0");
-    if (n5.code[0] != 0 || n5.code[1] != 168 || n5.code[2] != 32 || n5.code[3] != 78) { return 34; }
+    if (n5.text[0] != 0 || n5.text[1] != 168 || n5.text[2] != 32 || n5.text[3] != 78) { return 34; }
     // cmlt v9.16b, v10.16b, #0 -> 0x4E20A949 -> 49 A9 20 4E
     let n6: Arm64Asm = arm64_gas_assemble("cmlt v9.16b, v10.16b, #0");
-    if (n6.code[0] != 73 || n6.code[1] != 169 || n6.code[2] != 32 || n6.code[3] != 78) { return 35; }
+    if (n6.text[0] != 73 || n6.text[1] != 169 || n6.text[2] != 32 || n6.text[3] != 78) { return 35; }
     // shrn v0.8b, v0.8h, #4 -> 0x0F0C8400 -> 00 84 0C 0F
     let n7: Arm64Asm = arm64_gas_assemble("shrn v0.8b, v0.8h, #4");
-    if (n7.code[0] != 0 || n7.code[1] != 132 || n7.code[2] != 12 || n7.code[3] != 15) { return 36; }
+    if (n7.text[0] != 0 || n7.text[1] != 132 || n7.text[2] != 12 || n7.text[3] != 15) { return 36; }
     // shrn v2.8b, v3.8h, #4 -> 0x0F0C8462 -> 62 84 0C 0F
     let n8: Arm64Asm = arm64_gas_assemble("shrn v2.8b, v3.8h, #4");
-    if (n8.code[0] != 98 || n8.code[1] != 132 || n8.code[2] != 12 || n8.code[3] != 15) { return 37; }
+    if (n8.text[0] != 98 || n8.text[1] != 132 || n8.text[2] != 12 || n8.text[3] != 15) { return 37; }
     // The immediate is 16 MINUS the shift, so the two ends of the legal range
     // pin the direction: #1 -> 0x0F0F8400, #8 -> 0x0F088400.
     let n9: Arm64Asm = arm64_gas_assemble("shrn v0.8b, v0.8h, #1");
-    if (n9.code[2] != 15 || n9.code[3] != 15) { return 38; }
+    if (n9.text[2] != 15 || n9.text[3] != 15) { return 38; }
     let n10: Arm64Asm = arm64_gas_assemble("shrn v0.8b, v0.8h, #8");
-    if (n10.code[2] != 8 || n10.code[3] != 15) { return 39; }
+    if (n10.text[2] != 8 || n10.text[3] != 15) { return 39; }
     // dup v1.16b, w1 -> 0x4E010C21 -> 21 0C 01 4E
     let n11: Arm64Asm = arm64_gas_assemble("dup v1.16b, w1");
-    if (n11.code[0] != 33 || n11.code[1] != 12 || n11.code[2] != 1 || n11.code[3] != 78) { return 40; }
+    if (n11.text[0] != 33 || n11.text[1] != 12 || n11.text[2] != 1 || n11.text[3] != 78) { return 40; }
     // dup v11.16b, w12 -> 0x4E010D8B -> 8B 0D 01 4E
     let n12: Arm64Asm = arm64_gas_assemble("dup v11.16b, w12");
-    if (n12.code[0] != 139 || n12.code[1] != 13 || n12.code[2] != 1 || n12.code[3] != 78) { return 41; }
+    if (n12.text[0] != 139 || n12.text[1] != 13 || n12.text[2] != 1 || n12.text[3] != 78) { return 41; }
     // A whole kernel body assembles clean — the five above plus the scalar
     // mask arithmetic they feed.
     let nk: Arm64GasProg = arm64_gas_program("dup v1.16b, w1\nld1 {v0.16b}, [x8]\ncmeq v0.16b, v0.16b, v1.16b\nshrn v0.8b, v0.8h, #4\nfmov x11, d0\nrbit x12, x11\nclz x12, x12\n");
@@ -212,7 +212,7 @@ function main(): i32 {
     if (b5.unknown.len() != 0) { return 47; }
     // cmeq v0.8b, v0.8b, v1.8b -> 0x2E218C00 -> 00 8C 21 2E
     let b5a: Arm64Asm = arm64_gas_assemble("cmeq v0.8b, v0.8b, v1.8b");
-    if (b5a.code[0] != 0 || b5a.code[1] != 140 || b5a.code[2] != 33 || b5a.code[3] != 46) { return 47; }
+    if (b5a.text[0] != 0 || b5a.text[1] != 140 || b5a.text[2] != 33 || b5a.text[3] != 46) { return 47; }
     let b6: Arm64GasProg = arm64_gas_program("ld1 {v0.16b, v1.16b}, [x8]\n");
     if (b6.unknown.len() != 1) { return 48; }
     let b7: Arm64GasProg = arm64_gas_program("ld1 {v0.16b}, [x8, #16]\n");
@@ -227,9 +227,9 @@ function main(): i32 {
     // "movk w4, #0x734F, lsl #16" as the 64-bit MOVK, one bit from what GNU as
     // emits. 0x72AE69E4 (w) and 0xF2AE69E4 (x), little-endian.
     let k1: Arm64Asm = arm64_gas_assemble("movk w4, #29519, lsl #16");
-    if (k1.code[0] != 228 || k1.code[1] != 105 || k1.code[2] != 174 || k1.code[3] != 114) { return 52; }
+    if (k1.text[0] != 228 || k1.text[1] != 105 || k1.text[2] != 174 || k1.text[3] != 114) { return 52; }
     let k2: Arm64Asm = arm64_gas_assemble("movk x4, #29519, lsl #16");
-    if (k2.code[0] != 228 || k2.code[1] != 105 || k2.code[2] != 174 || k2.code[3] != 242) { return 53; }
+    if (k2.text[0] != 228 || k2.text[1] != 105 || k2.text[2] != 174 || k2.text[3] != 242) { return 53; }
     // The three shapes __mismatch adds on top of memchr's five (#8791): the
     // vector eor and cmtst that replace the broadcast compare, and the
     // register-offset load its overlapping trailing window addresses with.
@@ -238,24 +238,24 @@ function main(): i32 {
     // field cannot pass.
     // eor v0.16b, v0.16b, v1.16b -> 0x6E211C00 -> 00 1C 21 6E
     let m1: Arm64Asm = arm64_gas_assemble("eor v0.16b, v0.16b, v1.16b");
-    if (m1.code[0] != 0 || m1.code[1] != 28 || m1.code[2] != 33 || m1.code[3] != 110) { return 54; }
+    if (m1.text[0] != 0 || m1.text[1] != 28 || m1.text[2] != 33 || m1.text[3] != 110) { return 54; }
     // eor v5.16b, v6.16b, v7.16b -> 0x6E271CC5 -> C5 1C 27 6E
     let m2: Arm64Asm = arm64_gas_assemble("eor v5.16b, v6.16b, v7.16b");
-    if (m2.code[0] != 197 || m2.code[1] != 28 || m2.code[2] != 39 || m2.code[3] != 110) { return 55; }
+    if (m2.text[0] != 197 || m2.text[1] != 28 || m2.text[2] != 39 || m2.text[3] != 110) { return 55; }
     // cmtst v0.16b, v0.16b, v0.16b -> 0x4E208C00 -> 00 8C 20 4E
     let m3: Arm64Asm = arm64_gas_assemble("cmtst v0.16b, v0.16b, v0.16b");
-    if (m3.code[0] != 0 || m3.code[1] != 140 || m3.code[2] != 32 || m3.code[3] != 78) { return 56; }
+    if (m3.text[0] != 0 || m3.text[1] != 140 || m3.text[2] != 32 || m3.text[3] != 78) { return 56; }
     // cmtst v9.16b, v10.16b, v11.16b -> 0x4E2B8D49 -> 49 8D 2B 4E
     let m4: Arm64Asm = arm64_gas_assemble("cmtst v9.16b, v10.16b, v11.16b");
-    if (m4.code[0] != 73 || m4.code[1] != 141 || m4.code[2] != 43 || m4.code[3] != 78) { return 57; }
+    if (m4.text[0] != 73 || m4.text[1] != 141 || m4.text[2] != 43 || m4.text[3] != 78) { return 57; }
     // ldr x11, [x8, x14] -> 0xF86E690B -> 0B 69 6E F8. The unscaled register
     // offset, not the lsl #3 form the array loads use: the window offset is a
     // byte count.
     let m5: Arm64Asm = arm64_gas_assemble("ldr x11, [x8, x14]");
-    if (m5.code[0] != 11 || m5.code[1] != 105 || m5.code[2] != 110 || m5.code[3] != 248) { return 58; }
+    if (m5.text[0] != 11 || m5.text[1] != 105 || m5.text[2] != 110 || m5.text[3] != 248) { return 58; }
     // ldr w15, [x9, x14] -> 0xB86E692F -> 2F 69 6E B8
     let m6: Arm64Asm = arm64_gas_assemble("ldr w15, [x9, x14]");
-    if (m6.code[0] != 47 || m6.code[1] != 105 || m6.code[2] != 110 || m6.code[3] != 184) { return 59; }
+    if (m6.text[0] != 47 || m6.text[1] != 105 || m6.text[2] != 110 || m6.text[3] != 184) { return 59; }
     // The whole __mismatch body assembles clean — the vector gather, both
     // overlapping windows and the scalar remainder.
     let mk: Arm64GasProg = arm64_gas_program("ld1 {v0.16b}, [x8]\nld1 {v1.16b}, [x9]\neor v0.16b, v0.16b, v1.16b\ncmtst v0.16b, v0.16b, v0.16b\nshrn v0.8b, v0.8h, #4\nfmov x11, d0\nrbit x11, x11\nclz x11, x11\nlsr x11, x11, #2\ncsel x1, x5, x1, gt\nldr x11, [x8, x14]\nldr w15, [x9, x14]\neor x11, x11, x14\neor w11, w11, w15\nldrb w11, [x8]\n");
@@ -283,7 +283,7 @@ const arm64MachOGasDriverMain = "\n" +
 	"    asm = asm + \"    ret\\n\";\n" +
 	"    let a: Arm64Asm = arm64_gas_assemble(asm);\n" +
 	"    let none: i32[] = [];\n" +
-	"    let bin: i32[] = macho_executable(a.code, none, none, \"fern\", macho_entry_off(a), 0, none);\n" +
+	"    let bin: i32[] = macho_executable(a.text, none, none, \"fern\", macho_entry_off(a), 0, none);\n" +
 	"    write(string_from_bytes_unchecked(to_u8(bin)));\n" +
 	"    return 0;\n" +
 	"}\n"

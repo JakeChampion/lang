@@ -121,9 +121,9 @@ function main(): i32 {
     // arm64 W^X: 4-byte text + 8-byte data. headers = 64 + 3*56 = 232 (the
     // third slot is PT_GNU_EH_FRAME, PT_NULL here); text_end = 236;
     // data_off = page_up(236) = 65536; total = 65544.
-    let t3: i32[] = [0, 0, 128, 210];
+    let t3: u8[] = [0, 0, 128, 210];
     let d3: i32[] = [7, 7, 7, 7, 7, 7, 7, 7];
-    let b3: i32[] = elf_static_executable_data_wx(t3, d3);
+    let b3: u8[] = elf_static_executable_data_wx(t3, d3);
     if (b3.len() != 65536 + 8) { return 28; }
     // e_phnum = 3 @56.
     if (b3[56] != 3 || b3[57] != 0) { return 29; }
@@ -152,7 +152,7 @@ function main(): i32 {
     // and phdr2 becomes PT_GNU_EH_FRAME over the header.
     let h3: i32[] = [1, 27, 3, 59, 0, 0, 0, 0, 0, 0, 0, 0];
     let e3: i32[] = [12, 0, 0, 0, 0, 0, 0, 0, 1, 122, 82, 0, 1, 120, 30, 1];
-    let b8: i32[] = elf_image_wx_unwind(t3, h3, e3, d3, elf_em_aarch64(), 0, 0);
+    let b8: u8[] = elf_image_wx_unwind(t3, h3, e3, d3, elf_em_aarch64(), 0, 0);
     // p_type @176 = 0x6474e550 (LE 80,229,116,100), p_flags @180 = 4.
     if (b8[176] != 80 || b8[177] != 229 || b8[178] != 116 || b8[179] != 100) { return 54; }
     if (b8[180] != 4) { return 55; }
@@ -164,7 +164,7 @@ function main(): i32 {
     if (b8[96] != 8 || b8[97] != 1) { return 58; }
     if (b8[65536] != 7 || b8.len() != 65536 + 8) { return 59; }
     // x86-64 W^X with a 16-byte .bss past the data: p_memsz = p_filesz + bss.
-    let b4: i32[] = elf_static_executable_bss_x86_wx_at(t3, d3, 16, 0);
+    let b4: u8[] = elf_static_executable_bss_x86_wx_at(t3, d3, 16, 0);
     // e_machine = EM_X86_64 (62) @18.
     if (b4[18] != 62 || b4[19] != 0) { return 40; }
     // phdr1 p_filesz = 8 @152, p_memsz = 24 (8 + 16) @160.
@@ -178,14 +178,14 @@ function main(): i32 {
     let bigbss: i32 = 0 - 1610612736;
     // W^X x86 data segment: p_memsz @160 = data.len()(8) + 0xA0000000 =
     // 0xA0000008 (LE 8,0,0,0xA0=160,0,0,0,0) — high word stays 0.
-    let b5: i32[] = elf_static_executable_bss_x86_wx_at(t3, d3, bigbss, 0);
+    let b5: u8[] = elf_static_executable_bss_x86_wx_at(t3, d3, bigbss, 0);
     if (b5[160] != 8 || b5[161] != 0 || b5[162] != 0 || b5[163] != 160) { return 42; }
     if (b5[164] != 0 || b5[165] != 0 || b5[166] != 0 || b5[167] != 0) { return 43; }
     // Same guard on the single-segment contiguous path (production -target
     // arm64 used elf_image_entry_bss): p_memsz @104. body = pad8(4)=8 + 8 data
     // = 16; filesz = 64+56+16 = 136; memsz = 136 + 0xA0000000 = 0xA0000088
     // (LE 0x88=136,0,0,0xA0,0,0,0,0).
-    let body6: i32[] = elf_pad_to_8(elf_cat([], t3));
+    let body6: i32[] = elf_pad_to_8(elf_cat_u8([], t3));
     body6 = elf_cat(body6, d3);
     let b6: i32[] = elf_image_entry_bss(body6, 7, elf_em_aarch64(), 0, bigbss);
     if (b6[104] != 136 || b6[105] != 0 || b6[106] != 0 || b6[107] != 160) { return 44; }
@@ -194,7 +194,7 @@ function main(): i32 {
     // PIE (ET_DYN, base 0): elf_image_pie shares the W^X two-segment layout
     // but with e_type = ET_DYN (3) and a load base of 0. 4-byte text + 8-byte
     // data, no bss. headers = 176; data_off = page_up(180) = 65536.
-    let b7: i32[] = elf_image_pie(t3, d3, elf_em_aarch64(), 0, 0);
+    let b7: u8[] = elf_image_pie(t3, d3, elf_em_aarch64(), 0, 0);
     if (b7.len() != 65536 + 8) { return 46; }
     // e_type = ET_DYN (3) @16.
     if (b7[16] != 3 || b7[17] != 0) { return 47; }
