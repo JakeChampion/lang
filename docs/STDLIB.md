@@ -1837,7 +1837,7 @@ answer is `Result[HttpResponse, FetchError]`.
   `wasm32-wasi-http` the environment's proxy is the host's own to go
   through, and the client reads none.
 - **Responses:** the same `HttpResponse` the server side builds, with
-  `BodyBytes`, headers case-folded and the hop-by-hop fields stripped, a
+  `BodyBytes`, headers as the server spelled them less the hop-by-hop fields, a
   chunked body decoded and its trailers in `trailers`, interim 1xx
   responses stepped over, a bodiless 204 / 304 / HEAD answer honoured.
   The status is data: `(resp).ok_or_status(): Result[HttpResponse, i32]`
@@ -1918,7 +1918,11 @@ entries, and insertion-ordered iteration. Backs `HttpRequest`'s
 
 - `header_map_new()` — empty map.
 - `(h).set(name, value)` / `(h).append(name, value)` — replace vs.
-  add a value under a case-folded key.
+  add a value. A name keeps the spelling it was given, and names compare
+  ASCII-case-insensitively (RFC 9110 §5.1), so `set` replaces any
+  spelling of the name and the entry takes the spelling passed to it.
+  The parser keeps the client's spelling, and the serializer writes each
+  name as the handler spelled it.
 - `(h).get(name): Option[string]` (first value) /
   `(h).get_all(name): string[]` (every value) / `(h).len()`.
 

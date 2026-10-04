@@ -13,7 +13,7 @@
 // the response (`ok_or_status()` turns a status outside 2xx into an
 // `Err`), and `FetchError` is a closed sum over the phase that failed. The
 // response is the same byte-bodied type the server side builds, headers
-// case-folded by `HeaderMap` with the hop-by-hop fields stripped, a
+// in a `HeaderMap` with the hop-by-hop fields stripped, a
 // chunked body decoded and its trailers in `trailers`; `body_text()` is the
 // checked UTF-8 read of a body that came off the wire, which may hold
 // anything. The name is resolved by `std/dns` (a literal address, the
@@ -907,7 +907,8 @@ function __rewrites_to_get(status: i32, method: string): boolean {
   return (status == 301 || status == 302) && method == "POST";
 }
 
-// `__without(h, names)` — `h` less the fields named (case-folded names).
+// `__without(h, names)` — `h` less the fields named, compared
+// ASCII-case-insensitively.
 function __without(h: HeaderMap, names: string[]): HeaderMap {
   let out: HeaderMap = headers.header_map_new();
   let i: i32 = 0;
@@ -922,7 +923,7 @@ function __without(h: HeaderMap, names: string[]): HeaderMap {
 
 function __holds(names: string[], name: string): boolean {
   for n in names {
-    if (n == name) {
+    if (n.eq_ignore_ascii_case(name)) {
       return true;
     }
   }

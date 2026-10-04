@@ -113,7 +113,7 @@ function main(): i32 {
   // The early return makes this structurally true; the assertion pins the
   // contract so a later rewrite that rebuilds rather than returns has to
   // prove it still matches byte for byte.
-  let plain: i32[] = elf.elf_static_executable_bss_x86_wx_at(text, [], 0, 0);
+  let plain: i32[] = elf.elf_cat_u8([], elf.elf_static_executable_bss_x86_wx_at(util.to_u8(text), [], 0, 0));
   let plain_syms: i32[] = elf.elf_append_debug(plain, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), text.len(), no_names, no_offs, no_offs, "p.fern", "/work", no_names, no_offs, no_offs, no_offs, no_offs, no_offs);
   if (!bytes_equal(plain, plain_syms)) {
     return 1;
