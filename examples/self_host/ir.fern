@@ -1126,6 +1126,22 @@ pub function op_lsetxattr(): Op {
   return op0(365);
 }
 
+pub function op_getxattr_bytes(): Op {
+  return op0(374);
+}
+
+pub function op_lgetxattr_bytes(): Op {
+  return op0(375);
+}
+
+pub function op_setxattr_bytes(): Op {
+  return op0(376);
+}
+
+pub function op_lsetxattr_bytes(): Op {
+  return op0(377);
+}
+
 pub function op_rename_noreplace(): Op {
   return op0(356);
 }
@@ -4245,6 +4261,12 @@ function kind_id_len13(name: string): i32 {
 }
 
 function kind_id_len14(name: string): i32 {
+  if (name == "setxattr_bytes") {
+    return 376;
+  }
+  if (name == "getxattr_bytes") {
+    return 374;
+  }
   if (name == "scan_set_bytes") {
     return 361;
   }
@@ -4298,6 +4320,12 @@ function kind_id_len14(name: string): i32 {
 }
 
 function kind_id_len15(name: string): i32 {
+  if (name == "lsetxattr_bytes") {
+    return 377;
+  }
+  if (name == "lgetxattr_bytes") {
+    return 375;
+  }
   if (name == "sum_bytes_array") {
     return 368;
   }
@@ -5468,6 +5496,18 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 377) {
+    return "lsetxattr_bytes";
+  }
+  if (id == 376) {
+    return "setxattr_bytes";
+  }
+  if (id == 375) {
+    return "lgetxattr_bytes";
+  }
+  if (id == 374) {
+    return "getxattr_bytes";
+  }
   if (id == 373) {
     return "crc32_cksum_array";
   }
@@ -5695,7 +5735,7 @@ function pops2_io(t: i32): boolean {
     || t == 237  // access (path, mode)
     || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
     || t == 356 || t == 357  // rename_noreplace, rename_exchange
-    || t == 362 || t == 363  // getxattr, lgetxattr (path, name)
+    || t == 362 || t == 363 || t == 374 || t == 375  // getxattr, lgetxattr (path, name)
     || t == 273  // truncate (path, length)
     || t == 304 || t == 305  // open_reader_with, open_writer_with (path, flags)
     || t == 281  // writer_truncate (fd, length)
@@ -5726,7 +5766,7 @@ function pops3(t: i32): boolean {
     || t == 314  // set_window_size (fd, rows, cols)
     || t == 324  // scan_set (str, from, set)
     || t == 327  // count_runs (str, inside, set)
-    || t == 364 || t == 365;  // setxattr, lsetxattr (path, name, value)
+    || t == 364 || t == 365 || t == 376 || t == 377;  // setxattr, lsetxattr (path, name, value)
 }
 
 // pops_buf is the operand count of one of the capacity-carrying string

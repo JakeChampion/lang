@@ -5862,14 +5862,26 @@ function fs_op_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "getxattr") {
     return Lowered { found: true, r: emit(r, ir.op_getxattr()) };
   }
+  if (ins.str == "getxattr_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_getxattr_bytes())) };
+  }
   if (ins.str == "lgetxattr") {
     return Lowered { found: true, r: emit(r, ir.op_lgetxattr()) };
+  }
+  if (ins.str == "lgetxattr_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_lgetxattr_bytes())) };
   }
   if (ins.str == "setxattr") {
     return Lowered { found: true, r: emit(r, ir.op_setxattr()) };
   }
+  if (ins.str == "setxattr_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_setxattr_bytes())) };
+  }
   if (ins.str == "lsetxattr") {
     return Lowered { found: true, r: emit(r, ir.op_lsetxattr()) };
+  }
+  if (ins.str == "lsetxattr_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_lsetxattr_bytes())) };
   }
   if (ins.str == "rename_noreplace") {
     return Lowered { found: true, r: emit(r, ir.op_rename_noreplace()) };

@@ -3256,8 +3256,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	}
 	// getxattr(path, name): Result[string, IoError] — the value of the
 	// extended attribute `name` on `path`, `getxattr(2)`. The value is
-	// the attribute's bytes verbatim: an SELinux context keeps the NUL
-	// the kernel stores after it. An absent attribute is ENODATA
+	// UTF-8 validated, including NUL: an SELinux context keeps the NUL
+	// the kernel stores after it. Invalid text is InvalidUtf8(path).
+	// An absent attribute is ENODATA
 	// (Darwin's ENOATTR), a filesystem without attributes EOPNOTSUPP,
 	// and the Err carries which. lgetxattr is the same question about
 	// a final symlink itself, the way `lstat` is. Native only: neither
@@ -3289,6 +3290,24 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
 				ast.VoidType{},
 				ast.EnumType{Name: "IoError"},
+			}},
+		}
+	}
+	// Raw siblings preserve arbitrary attribute bytes. The setters borrow
+	// their byte arrays, and the getters return an independently owned array.
+	for _, name := range []string{"getxattr_bytes", "lgetxattr_bytes"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+				ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.EnumType{Name: "IoError"},
+			}},
+		}
+	}
+	for _, name := range []string{"setxattr_bytes", "lsetxattr_bytes"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.StringType{}, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+				ast.VoidType{}, ast.EnumType{Name: "IoError"},
 			}},
 		}
 	}

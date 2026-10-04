@@ -680,7 +680,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesCreateDir || g.usesChdir || g.usesChroot || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
 		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
-		g.usesGetxattr || g.usesLgetxattr || g.usesSetxattr || g.usesLsetxattr ||
+		g.usesGetxattr || g.usesGetxattrBytes || g.usesLgetxattr || g.usesLgetxattrBytes || g.usesSetxattr || g.usesSetxattrBytes || g.usesLsetxattr || g.usesLsetxattrBytes ||
 		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
 		g.usesAlloc = true
@@ -714,7 +714,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
 		g.usesRemoveDirAll ||
 		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
-		g.usesGetxattr || g.usesLgetxattr || g.usesSetxattr || g.usesLsetxattr ||
+		g.usesGetxattr || g.usesGetxattrBytes || g.usesLgetxattr || g.usesLgetxattrBytes || g.usesSetxattr || g.usesSetxattrBytes || g.usesLsetxattr || g.usesLsetxattrBytes ||
 		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt || g.usesReaderWriter {
 		g.usesFree = true
@@ -1120,14 +1120,26 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesGetxattr {
 		g.emitGetxattrRuntime("__fern_getxattr", "gxat", "getxattr", false)
 	}
+	if g.usesGetxattrBytes {
+		g.emitGetxattrRuntime("__fern_getxattr_bytes", "gxatb", "getxattr", false)
+	}
 	if g.usesLgetxattr {
 		g.emitGetxattrRuntime("__fern_lgetxattr", "lgxa", "lgetxattr", true)
+	}
+	if g.usesLgetxattrBytes {
+		g.emitGetxattrRuntime("__fern_lgetxattr_bytes", "lgxab", "lgetxattr", true)
 	}
 	if g.usesSetxattr {
 		g.emitSetxattrRuntime("__fern_setxattr", "sxat", "setxattr", false)
 	}
+	if g.usesSetxattrBytes {
+		g.emitSetxattrRuntime("__fern_setxattr_bytes", "sxatb", "setxattr", false)
+	}
 	if g.usesLsetxattr {
 		g.emitSetxattrRuntime("__fern_lsetxattr", "lsxa", "lsetxattr", true)
+	}
+	if g.usesLsetxattrBytes {
+		g.emitSetxattrRuntime("__fern_lsetxattr_bytes", "lsxab", "lsetxattr", true)
 	}
 	if g.usesRenameExchange {
 		g.emitRenameFlagsRuntime("__fern_rename_exchange", "rnex", false)
@@ -12576,19 +12588,38 @@ func (g *generator) emitGetxattrRuntime(name, tag, sysname string, nofollow bool
 	g.emitFreeNulTermPath2W("x21", "x20")
 	g.emitFreeNulTermPath2W("x23", "x26")
 	g.emit("tbnz x22, #63, .L%s_err", tag)
+	if !strings.HasSuffix(name, "_bytes") {
+		g.emit("mov x0, x24")
+		g.emit("mov x1, x22")
+		g.emit("bl %s", AsmFnName("__fern_utf8_valid"))
+		g.emit("cbnz w0, .L%s_valid", tag)
+		g.emit("mov x22, #%d", -g.eilseq())
+		g.emit("b .L%s_err", tag)
+		g.label(fmt.Sprintf(".L%s_valid", tag))
+	}
 	g.emit("mov x0, x22")
-	g.emit("bl __fern_alloc_rc1")
+	if strings.HasSuffix(name, "_bytes") {
+		g.emit("bl __alloc_u8")
+	} else {
+		g.emit("bl __fern_alloc_rc1")
+	}
 	g.emit("mov x21, x0") // data ptr
 	g.emit("mov x1, x24")
 	g.emit("mov x2, x22")
 	g.emit("bl __fern_memcpy")
 	g.emitFreeScratch2W("x24", xattrSizeMax)
 	// Result.Ok(string): 24-byte box — {tag@0, pad@4, data@8, len@16}.
-	g.emit("mov x0, #24")
+	if strings.HasSuffix(name, "_bytes") {
+		g.emit("mov x0, #16")
+	} else {
+		g.emit("mov x0, #24")
+	}
 	g.emit("bl __fern_alloc_rc1")
-	g.emit("str wzr, [x0]")      // tag = 0 (Ok)
-	g.emit("str x21, [x0, #8]")  // payload data
-	g.emit("str x22, [x0, #16]") // payload len
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str x21, [x0, #8]") // payload data
+	if !strings.HasSuffix(name, "_bytes") {
+		g.emit("str x22, [x0, #16]") // text payload len
+	}
 	g.emit("b .L%s_return", tag)
 
 	g.label(fmt.Sprintf(".L%s_err", tag))
@@ -12644,8 +12675,12 @@ func (g *generator) emitSetxattrRuntime(name, tag, sysname string, nofollow bool
 	g.emitStrDataPtr2W("x23", "x25", "x26", 80)
 	g.emitNulTermPath2W("x23", "x23", "x26")
 	// The value is read in place; an inline one is spilled to the scratch.
-	g.emitStrDataPtr2W("x24", "x24", "x22", 80)
-	g.emitStrLen2W("w3", "x22")
+	if strings.HasSuffix(name, "_bytes") {
+		g.emit("ldur w3, [x24, #-4]")
+	} else {
+		g.emitStrDataPtr2W("x24", "x24", "x22", 80)
+		g.emitStrLen2W("w3", "x22")
+	}
 	g.emit("mov x0, x21")
 	g.emit("mov x1, x23")
 	g.emit("mov x2, x24")
@@ -16626,11 +16661,15 @@ type generator struct {
 	// renameat2 (Darwin: renameatx_np) with a no-replace or exchange flag.
 	usesRenameNoreplace bool
 	// getxattr / lgetxattr over a path and an attribute name.
-	usesGetxattr  bool
-	usesLgetxattr bool
+	usesGetxattr       bool
+	usesGetxattrBytes  bool
+	usesLgetxattr      bool
+	usesLgetxattrBytes bool
 	// setxattr / lsetxattr over a path, an attribute name and a value.
 	usesSetxattr       bool
+	usesSetxattrBytes  bool
 	usesLsetxattr      bool
+	usesLsetxattrBytes bool
 	usesRenameExchange bool
 	// fchmodat / fchmodat2 over a path, a mode and a follow flag.
 	usesChmodAt bool
@@ -17624,7 +17663,7 @@ func (g *generator) prescanOps(ops []ir.Op) {
 			g.usesSleepMs = true
 		case "sleep_ns":
 			g.usesSleepNs = true
-		case "read_file":
+		case "read_file", "getxattr", "lgetxattr":
 			g.needFern("__fern_utf8_valid")
 		}
 	}
@@ -21618,15 +21657,31 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "getxattr":
 			target = "__fern_getxattr"
 			g.usesGetxattr = true
+		case "getxattr_bytes":
+			target = "__fern_getxattr_bytes"
+			g.usesGetxattrBytes = true
+			g.usesAllocU8 = true
+			g.usesArrDec = true
 		case "lgetxattr":
 			target = "__fern_lgetxattr"
 			g.usesLgetxattr = true
+		case "lgetxattr_bytes":
+			target = "__fern_lgetxattr_bytes"
+			g.usesLgetxattrBytes = true
+			g.usesAllocU8 = true
+			g.usesArrDec = true
 		case "setxattr":
 			target = "__fern_setxattr"
 			g.usesSetxattr = true
+		case "setxattr_bytes":
+			target = "__fern_setxattr_bytes"
+			g.usesSetxattrBytes = true
 		case "lsetxattr":
 			target = "__fern_lsetxattr"
 			g.usesLsetxattr = true
+		case "lsetxattr_bytes":
+			target = "__fern_lsetxattr_bytes"
+			g.usesLsetxattrBytes = true
 		case "rename_exchange":
 			target = "__fern_rename_exchange"
 			g.usesRenameExchange = true

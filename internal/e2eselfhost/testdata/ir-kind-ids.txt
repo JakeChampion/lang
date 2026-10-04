@@ -349,3 +349,7 @@ buf_push_bytes_mapped=370
 buf_push_bytes_filtered=371
 buf_push_bytes_expanded=372
 crc32_cksum_array=373
+getxattr_bytes=374
+lgetxattr_bytes=375
+setxattr_bytes=376
+lsetxattr_bytes=377

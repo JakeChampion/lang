@@ -358,12 +358,16 @@ var rcInertBuiltins = map[string]bool{
 	// (path, name) → Result[string]: two borrowed strings in, a fresh
 	// value out. Native-only — E066 refuses both on the wasm worlds
 	// (`xattr`).
-	"getxattr":  true,
-	"lgetxattr": true,
+	"getxattr":        true,
+	"getxattr_bytes":  true,
+	"lgetxattr":       true,
+	"lgetxattr_bytes": true,
 	// (path, name, value) → Result[void]: three borrowed strings in,
 	// nothing retained.
-	"setxattr":  true,
-	"lsetxattr": true,
+	"setxattr":        true,
+	"setxattr_bytes":  true,
+	"lsetxattr":       true,
+	"lsetxattr_bytes": true,
 	// (pid, sig) → Result. Two scalars in and nothing retained.
 	// Native-only — E066 refuses it on both wasm worlds, which have no
 	// process table to name a target in — so it is classified here under

@@ -3749,14 +3749,20 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("rename");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_rename\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 362 || o.kind_tag == 363) {  // rename_noreplace, rename_exchange, getxattr, lgetxattr
+  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 362 || o.kind_tag == 363 || o.kind_tag == 374 || o.kind_tag == 375) {  // rename_noreplace, rename_exchange, getxattr, lgetxattr
     let op: string = ir.kind_name(o.kind_tag);
+    if (o.kind_tag >= 374 && ir.is_packed(o)) {
+      op = op + "_u8";
+    }
     s = s.need("heap");
     s = s.need(op);
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_" + op + "\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 364 || o.kind_tag == 365) {  // setxattr, lsetxattr
+  } else if (o.kind_tag == 364 || o.kind_tag == 365 || o.kind_tag == 376 || o.kind_tag == 377) {  // setxattr, lsetxattr
     // [pathbox, namebox, valuebox] with the value on top.
     let op: string = ir.kind_name(o.kind_tag);
+    if (o.kind_tag >= 374 && ir.is_packed(o)) {
+      op = op + "_u8";
+    }
     s = s.need("heap");
     s = s.need(op);
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
@@ -10432,8 +10438,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("lstat")) {
       fs_src = fs_src + " " + asmcore.rt_src_lstat(tgt);
     }
+    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr")) {
+      fs_src = fs_src + " " + asmcore.rt_src_utf8_valid();
+    }
     if (s.has_need("read_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_utf8_valid() + " " + asmcore.rt_src_read_file(tgt);
+      fs_src = fs_src + " " + asmcore.rt_src_read_file(tgt);
     }
     if (s.has_need("read_file_bytes")) {
       fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes(tgt, false);
@@ -10488,6 +10497,30 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     if (s.has_need("rename")) {
       fs_src = fs_src + " " + asmcore.rt_src_rename(tgt);
+    }
+    if (s.has_need("getxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes(tgt, true, false);
+    }
+    if (s.has_need("getxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes(tgt, true, true);
+    }
+    if (s.has_need("lgetxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes(tgt, false, false);
+    }
+    if (s.has_need("lgetxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes(tgt, false, true);
+    }
+    if (s.has_need("setxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes(tgt, true, false);
+    }
+    if (s.has_need("setxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes(tgt, true, true);
+    }
+    if (s.has_need("lsetxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes(tgt, false, false);
+    }
+    if (s.has_need("lsetxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes(tgt, false, true);
     }
     if (s.has_need("getxattr")) {
       fs_src = fs_src + " " + asmcore.rt_src_getxattr(tgt, true);
@@ -11908,7 +11941,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec",
     "remove_file", "create_dir_all", "create_dir", "remove_dir",
-    "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr", "chmod", "chmod_at", "truncate",
+    "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at", "truncate",
     "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times", "read_link",
     "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
     "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",

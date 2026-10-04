@@ -2389,7 +2389,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "stat", "lstat", "statfs", "access", "read_file",
     "read_file_bytes", "read_file_bytes_u8", "remove_file", "create_dir_all", "create_dir",
-    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr", "chmod", "chmod_at",
+    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
@@ -2408,7 +2408,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "str_read_line", "strbuf", "buf", "reader",
     "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
     "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
-    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr", "chmod", "chmod_at",
+    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs",
@@ -9864,16 +9864,22 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_rename\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("rename");
-  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 362 || o.kind_tag == 363) {  // rename_noreplace, rename_exchange, getxattr, lgetxattr
+  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 362 || o.kind_tag == 363 || o.kind_tag == 374 || o.kind_tag == 375) {  // rename_noreplace, rename_exchange, getxattr, lgetxattr
     let op: string = ir.kind_name(o.kind_tag);
+    if (o.kind_tag >= 374 && ir.is_packed(o)) {
+      op = op + "_u8";
+    }
     s = s.write("    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_" + op + "\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need(op);
-  } else if (o.kind_tag == 364 || o.kind_tag == 365) {  // setxattr, lsetxattr
+  } else if (o.kind_tag == 364 || o.kind_tag == 365 || o.kind_tag == 376 || o.kind_tag == 377) {  // setxattr, lsetxattr
     // [pathbox, namebox, valuebox] with the value on top; re-pushed reversed
     // so param[0] (path) is lowest.
     let op: string = ir.kind_name(o.kind_tag);
+    if (o.kind_tag >= 374 && ir.is_packed(o)) {
+      op = op + "_u8";
+    }
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_" + op + "\n    addq $24, %rsp\n    pushq %rax\n");
     s = s.need("heap");
@@ -12241,8 +12247,11 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("access")) {
       fs_src = fs_src + " " + asmcore.rt_src_access("x86_64");
     }
+    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr")) {
+      fs_src = fs_src + " " + asmcore.rt_src_utf8_valid();
+    }
     if (s.has_need("read_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_utf8_valid() + " " + asmcore.rt_src_read_file("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_read_file("x86_64");
     }
     if (s.has_need("read_file_bytes")) {
       fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86_64", false);
@@ -12285,6 +12294,30 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("rename")) {
       fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64");
+    }
+    if (s.has_need("getxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", true, false);
+    }
+    if (s.has_need("getxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", true, true);
+    }
+    if (s.has_need("lgetxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", false, false);
+    }
+    if (s.has_need("lgetxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", false, true);
+    }
+    if (s.has_need("setxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", true, false);
+    }
+    if (s.has_need("setxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", true, true);
+    }
+    if (s.has_need("lsetxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", false, false);
+    }
+    if (s.has_need("lsetxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", false, true);
     }
     if (s.has_need("getxattr")) {
       fs_src = fs_src + " " + asmcore.rt_src_getxattr("x86_64", true);

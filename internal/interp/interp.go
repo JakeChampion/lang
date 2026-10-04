@@ -1563,6 +1563,10 @@ func New() *Interp {
 	i.Builtins["lgetxattr"] = &Builtin{Fn: builtinLgetxattr}
 	i.Builtins["setxattr"] = &Builtin{Fn: builtinSetxattr}
 	i.Builtins["lsetxattr"] = &Builtin{Fn: builtinLsetxattr}
+	i.Builtins["getxattr_bytes"] = &Builtin{Fn: builtinGetxattrBytes}
+	i.Builtins["lgetxattr_bytes"] = &Builtin{Fn: builtinLgetxattrBytes}
+	i.Builtins["setxattr_bytes"] = &Builtin{Fn: builtinSetxattrBytes}
+	i.Builtins["lsetxattr_bytes"] = &Builtin{Fn: builtinLsetxattrBytes}
 	i.Builtins["umask"] = &Builtin{Fn: builtinUmask}
 	i.Builtins["priority"] = &Builtin{Fn: builtinPriority}
 	i.Builtins["set_priority"] = &Builtin{Fn: builtinSetPriority}
@@ -4379,14 +4383,22 @@ func builtinReadLink(_ *Interp, args []Value) (Value, error) {
 // builtinGetxattr reads an extended attribute's value, following a final
 // symlink; builtinLgetxattr asks about the link itself.
 func builtinGetxattr(_ *Interp, args []Value) (Value, error) {
-	return xattrResult("getxattr", args, true)
+	return xattrResult("getxattr", args, true, false)
 }
 
 func builtinLgetxattr(_ *Interp, args []Value) (Value, error) {
-	return xattrResult("lgetxattr", args, false)
+	return xattrResult("lgetxattr", args, false, false)
 }
 
-func xattrResult(name string, args []Value, follow bool) (Value, error) {
+func builtinGetxattrBytes(_ *Interp, args []Value) (Value, error) {
+	return xattrResult("getxattr_bytes", args, true, true)
+}
+
+func builtinLgetxattrBytes(_ *Interp, args []Value) (Value, error) {
+	return xattrResult("lgetxattr_bytes", args, false, true)
+}
+
+func xattrResult(name string, args []Value, follow, raw bool) (Value, error) {
 	p, err := pathArgs(name, args, 2)
 	if err != nil {
 		return nil, err
@@ -4394,6 +4406,17 @@ func xattrResult(name string, args []Value, follow bool) (Value, error) {
 	v, err := getxattrBytes(p[0], p[1], follow)
 	if err != nil {
 		return resultErr(classifyIoError(p[0], err)), nil
+	}
+	if raw {
+		out := newArray(len(v))
+		for i, b := range v {
+			out.E[i] = Number(b)
+		}
+		return resultOk(out), nil
+	}
+	if !utf8.Valid(v) {
+		return resultErr(&Enum{EnumName: "IoError", VariantName: "InvalidUtf8", Index: 3,
+			Payloads: []Value{String(p[0])}}), nil
 	}
 	return resultOk(String(v)), nil
 }
@@ -4414,6 +4437,33 @@ func setxattrResult(name string, args []Value, follow bool) (Value, error) {
 		return nil, err
 	}
 	return ioResult(p[0], setxattrBytes(p[0], p[1], []byte(p[2]), follow)), nil
+}
+
+func builtinSetxattrBytes(_ *Interp, args []Value) (Value, error) {
+	return setxattrBytesResult("setxattr_bytes", args, true)
+}
+
+func builtinLsetxattrBytes(_ *Interp, args []Value) (Value, error) {
+	return setxattrBytesResult("lsetxattr_bytes", args, false)
+}
+
+func setxattrBytesResult(name string, args []Value, follow bool) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("%s: expected 3 args, got %d", name, len(args))
+	}
+	p, err := pathArgs(name, args[:2], 2)
+	if err != nil {
+		return nil, err
+	}
+	content, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected byte array, got %T", name, args[2])
+	}
+	data := make([]byte, len(content.E))
+	for n, value := range content.E {
+		data[n] = byte(value.(Number))
+	}
+	return ioResult(p[0], setxattrBytes(p[0], p[1], data, follow)), nil
 }
 
 // builtinRename moves a directory entry. Nothing is copied and an
