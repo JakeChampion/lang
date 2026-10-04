@@ -1019,8 +1019,8 @@ function arm64_bl(buf: i32[], rel: i32): i32[] {
 // It is the arm64 counterpart of X86Asm in x86_native.fern. Branch
 // displacements are PC-relative to the branch instruction itself, so a
 // fixup records the instruction's byte offset and resolve patches with
-// rel = target_off - instr_off. fix_kinds distinguishes the immediate
-// field: 0 = imm26 (b / bl), 1 = imm19 (b.cond / cbz / cbnz).
+// rel = target_off - instr_off. A fixup's kind names the immediate field
+// (arm64_branch_keep).
 
 pub struct Arm64Asm {
   // The code goes into a builder; arm64_asm_resolve takes it into `text` and
@@ -1050,13 +1050,16 @@ pub struct Arm64Asm {
   lab_head: i32[],
   lab_next: i32[],
   lab_tail: i32[],
-  fix_offs: i32[],
+  // The forward fixups, one u64 each in a builder (0 until the first): the
+  // branch's offset in the low 32 bits, and in the high 32 its target shifted
+  // left three, its kind (arm64_branch_keep) in bits 2:1, and bit 0 set when
+  // the target is a name, the target then indexing fix_names rather than
+  // being a label id.
+  fixq: usize,
   fix_names: string[],
-  fix_kinds: i32[],
   // A label defined by id (the \x04 record) is placed in lid_offs[id], -1
-  // until it is; a fixup to one carries its id in fix_ids, -1 for a name.
+  // until it is.
   lid_offs: i32[],
-  fix_ids: i32[],
   // Branch targets arm64_asm_resolve could not find. Collected there rather
   // than rescanned afterwards: resolve already looks every fixup name up, and
   // a second pass over both tables would be quadratic on a real program.
@@ -1143,7 +1146,7 @@ function arm64_asm_vacant(): Arm64Asm {
   return Arm64Asm {
     code: 0 as usize, text: [], patq: 0 as usize, lab_names: [], lab_offs: [], files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [],
     lab_head: arm64_empty_buckets(), lab_next: [], lab_tail: arm64_empty_buckets(),
-    fix_offs: [], fix_names: [], fix_kinds: [], lid_offs: [], fix_ids: [], unres: [], oor: [],
+    fixq: 0 as usize, fix_names: [], lid_offs: [], unres: [], oor: [],
   };
 }
 
@@ -1275,12 +1278,28 @@ function arm64_asm_fixup_or_patch(own a: Arm64Asm, name: string, kind: i32): Arm
     }
     a = arm64_queue_patch(a, at, kind, target - at);
   } else {
-    a = Arm64Asm { ...a, fix_offs: a.fix_offs.append(at) };
+    let ref: i32 = a.fix_names.len();
     a = Arm64Asm { ...a, fix_names: a.fix_names.append(name) };
-    a = Arm64Asm { ...a, fix_kinds: a.fix_kinds.append(kind) };
-    a = Arm64Asm { ...a, fix_ids: a.fix_ids.append(0 - 1) };
+    a = arm64_queue_fixup(a, at, ref << 3 | kind << 1 | 1);
   }
   return a;
+}
+
+// arm64_queue_fixup records a forward fixup at `at` whose high word is `hi`.
+function arm64_queue_fixup(own a: Arm64Asm, at: i32, hi: i32): Arm64Asm {
+  if (a.fixq == 0 as usize) {
+    a = Arm64Asm { ...a, fixq: buf_new(8192) };
+  }
+  buf_push_u64(a.fixq, (hi as i64 << 32 | at as i64 & 4294967295i64) as u64);
+  return a;
+}
+
+// arm64_fix_count is how many forward fixups are queued.
+function arm64_fix_count(a: Arm64Asm): i32 {
+  if (a.fixq == 0 as usize) {
+    return 0;
+  }
+  return buf_len(a.fixq) / 8;
 }
 
 // arm64_asm_label_id places label id `id` at the current offset.
@@ -1306,10 +1325,7 @@ function arm64_asm_fixup_id(own a: Arm64Asm, id: i32, kind: i32): Arm64Asm {
   let at: i32 = buf_len(a.code) - 4;
   let target: i32 = arm64_lid_off(a, id);
   if (target < 0) {
-    a = Arm64Asm { ...a, fix_offs: a.fix_offs.append(at) };
-    a = Arm64Asm { ...a, fix_names: a.fix_names.append("") };
-    a = Arm64Asm { ...a, fix_kinds: a.fix_kinds.append(kind) };
-    return Arm64Asm { ...a, fix_ids: a.fix_ids.append(id) };
+    return arm64_queue_fixup(a, at, id << 3 | kind << 1);
   }
   let bits: i32 = arm64_branch_field_bits(kind);
   if (!arm64_rel_fits(target - at, bits)) {
@@ -1357,12 +1373,13 @@ function arm64_asm_cbnz(own a: Arm64Asm, rt: i32, name: string, w: boolean): Arm
   return arm64_asm_fixup_or_patch(a, name, 1);
 }
 
-// arm64_fixup_name names fixup i for a message: its label, or `#id`.
-function arm64_fixup_name(a: Arm64Asm, i: i32): string {
-  if (a.fix_ids[i] >= 0) {
-    return "#" + arm64_gas_dec(a.fix_ids[i]);
+// arm64_fixup_name names a fixup's target for a message: its label, or
+// `#id`.
+function arm64_fixup_name(a: Arm64Asm, hi: i32): string {
+  if ((hi & 1) != 0) {
+    return a.fix_names[hi >> 3];
   }
-  return a.fix_names[i];
+  return "#" + arm64_gas_dec(hi >> 3);
 }
 
 // arm64_asm_resolve takes the code out of its builder, applies the queued
@@ -1388,12 +1405,23 @@ function arm64_asm_resolve(own a: Arm64Asm): Arm64Asm {
       q = q + 8;
     }
   }
+  let fq: u8[] = [];
+  if (a.fixq != 0 as usize) {
+    fq = buf_take_bytes(a.fixq);
+    buf_free(a.fixq);
+    a = Arm64Asm { ...a, fixq: 0 as usize };
+  }
   let i: i32 = 0;
-  while (i < a.fix_offs.len()) {
-    let at: i32 = a.fix_offs[i];
-    let target: i32 = arm64_lid_off(a, a.fix_ids[i]);
-    if (a.fix_ids[i] < 0) {
-      target = arm64_asm_label_off(a, a.fix_names[i]);
+  let nf: i32 = fq.len();
+  while (i < nf) {
+    let at: i32 = fq[i] as i32 | fq[i + 1] as i32 << 8 | fq[i + 2] as i32 << 16 | fq[i + 3] as i32 << 24;
+    let hi: i32 = fq[i + 4] as i32 | fq[i + 5] as i32 << 8 | fq[i + 6] as i32 << 16 | fq[i + 7] as i32 << 24;
+    let kind: i32 = hi >> 1 & 3;
+    let target: i32 = 0 - 1;
+    if ((hi & 1) != 0) {
+      target = arm64_asm_label_off(a, a.fix_names[hi >> 3]);
+    } else {
+      target = arm64_lid_off(a, hi >> 3);
     }
     if (target < 0) {
       // A target that was never defined used to be patched as if the -1
@@ -1404,19 +1432,18 @@ function arm64_asm_resolve(own a: Arm64Asm): Arm64Asm {
       // the placeholder alone; arm64_gas_program folds these into the
       // refusal list, so the CLI reports the label instead of emitting a
       // binary that traps.
-      a = Arm64Asm { ...a, unres: a.unres.append(arm64_fixup_name(a, i)) };
-      i = i + 1;
+      a = Arm64Asm { ...a, unres: a.unres.append(arm64_fixup_name(a, hi)) };
+      i = i + 8;
       continue;
     }
-    let rbits: i32 = arm64_branch_field_bits(a.fix_kinds[i]);
+    let rbits: i32 = arm64_branch_field_bits(kind);
     if (!arm64_rel_fits(target - at, rbits)) {
-      a = Arm64Asm { ...a, oor: a.oor.append(arm64_oor_note(arm64_fixup_name(a, i), target - at, rbits)) };
-      i = i + 1;
+      a = Arm64Asm { ...a, oor: a.oor.append(arm64_oor_note(arm64_fixup_name(a, hi), target - at, rbits)) };
+      i = i + 8;
       continue;
     }
-    let kind: i32 = a.fix_kinds[i];
     code = arm64_patch_bytes(code, at, arm64_branch_keep(kind), arm64_branch_field(kind, target - at));
-    i = i + 1;
+    i = i + 8;
   }
   return Arm64Asm { ...a, text: code };
 }
