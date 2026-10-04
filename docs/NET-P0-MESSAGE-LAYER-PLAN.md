@@ -191,19 +191,17 @@ In this order, one PR each. Compiler slices are self-host first. A Go-compiler
 twin is a needless-allocation bugfix under `docs/NATIVE-FREEZE.md`, referenced
 on #4451, as slice 2 was.
 
-1. **A record field may hold a static box.** `[]` was already a static box,
-   but the self-host's static-box plan admitted only scalar fields, so
-   `HeaderMap { names: [], values: [] }` was built per call. A field now
-   holds another static box's address, so every `header_map_new()` is one
-   static box. Done: parse 40 to 37. That is one more than the 2 boxes
-   above, because the parse's own map starts from the static box too.
+1. **An empty array literal is a constant.** The self-host's static-box plan
+   treats `[]` as constant, so a record whose fields are all constants,
+   `HeaderMap { names: [], values: [] }` among them, is one static box.
+   Removes the 2 `header_map_new()` boxes. Parse 40 to 38.
 2. **`h = h.append(…)` reuses `h`'s box.** At every call in the parse the
    caller's `h` dies at the call, and the Go compiler already writes the
    spread `HeaderMap { ...h, … }` into it; the self-host takes a fresh box.
    The slice finds which half the self-host is missing, ownership passing
    into the receiver or the spread pairing with an owned receiver
-   (`docs/REUSE-CONTRACT.md` R3), and fixes it there. The first append
-   copies the static box, so this removes the other 2. Parse 37 to 35.
+   (`docs/REUSE-CONTRACT.md` R3), and fixes it there. Removes 3. Parse 38
+   to 35.
 3. **An array of string literals is static.** `phrases` joins the constant
    pool. Serialize 4 to 3.
 4. **The request target decodes without scratch.** A target with no `%` and
