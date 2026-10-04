@@ -1925,6 +1925,23 @@ buffer as bytes or validate it as text. Extraction leaves the writer usable.
   failures are sticky. A partial record accumulated before a failure is
   returned once, with the error already available on the returned cursor.
 
+`LineReader` provides validated UTF-8 records through the same cursor pattern.
+Construct it with `line_reader_new(reader, term, chunk_size)` and close the
+borrowed reader after use.
+
+- `(lr).next_line(): (Option[string], LineReader)` validates each complete
+  record, including its terminator or final unterminated tail. Scalars may
+  span physical reads without producing an error.
+- `(lr).next_chunk()` returns complete scalars. It retains an incomplete
+  suffix for the next call and may read again when a scalar exceeds the read
+  size. Returned chunk boundaries can differ from physical read boundaries.
+- Both operations preserve unread bytes when switching between them. Every
+  returned string remains valid after later reads or closing the reader.
+- Malformed or truncated UTF-8 stops the cursor with `InvalidUtf8("")`
+  available through `(lr).error()`. An earlier I/O failure takes precedence.
+  A valid partial line preceding an I/O failure is returned once. `None`
+  without an error means EOF. Use `ByteLineReader` for arbitrary bytes.
+
 ### `std/time`
 
 Date/time module shaped after jiff / NodaTime, backing the
