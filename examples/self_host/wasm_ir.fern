@@ -684,6 +684,10 @@ pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
           vals = vals.append(r.ops[i].str);
         }
       }
+      // alloc_u8's zero-length answer, the empty byte array.
+      if (r.ops[i].kind_tag == 77 && util.index_of_str(vals, empty_bytes_const()) < 0) {
+        vals = vals.append(empty_bytes_const());
+      }
       i = i + 1;
     }
     fi = fi + 1;
@@ -6831,7 +6835,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // needs the full-width store (#4375 item 2).
     parts = parts.append("    i64.store\n    i32.const 0\n");
   } else if (o.kind_tag == 77) {  // alloc_u8
-    parts = emit_wasm_alloc_u8(arrtmp, eltmp, parts);
+    parts = emit_wasm_alloc_u8(cagg_vals, ns, arrtmp, eltmp, parts);
   } else if (o.kind_tag == 76) {  // alloc
     // stack: n -> bump-alloc n raw bytes, push the pointer (core/map's
     // __alloc). $__fern_alloc is the wasm bump allocator (heap_alloc_helpers).
@@ -18739,17 +18743,26 @@ function emit_wasm_heap_bump_bytes(cagg_vals: string[], str_vals: string[], part
   return parts;
 }
 
-function emit_wasm_alloc_u8(arrtmp: i32, eltmp: i32, parts: string[]): string[] {
+// The packed empty byte array, a constant block like any other.
+function empty_bytes_const(): string {
+  return ir.op_const_bytes("").str;
+}
+
+function emit_wasm_alloc_u8(cagg_vals: string[], ns: string, arrtmp: i32, eltmp: i32, parts: string[]): string[] {
   // stack: n -> a fresh packed u8[] of n bytes (the typed lowering marks
   // every alloc_u8 ir.packed): the [len@0, cap@4] header arr_make writes,
   // its bytes cleared, since a block off the free list keeps its last
-  // owner's bytes and the builtin promises zeros.
+  // owner's bytes and the builtin promises zeros. n == 0 is the static
+  // empty array, whose capacity 0 makes a push grow into a fresh box.
   parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+  parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.eqz\n    if (result i32)\n");
+  parts = emit_wasm_const_struct(cagg_vals, ns, ir.op_const_bytes(""), parts);
+  parts = parts.append("    else\n");
   parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.const 1\n    call $__fern_arr_elems\n    local.set " + util.i32_to_string(arrtmp) + "\n");
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    i32.const 0\n    local.get " + util.i32_to_string(eltmp) + "\n    memory.fill\n");
-  parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
+  parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    end\n");
 
   return parts;
 }
