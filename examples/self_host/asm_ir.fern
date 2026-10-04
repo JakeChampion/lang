@@ -222,9 +222,10 @@ function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
 // reversed the args so arg0 (fn) sits on top, i.e. param0 @ 16(%rbp), a_i @
 // (24 + 8i)(%rbp). It marshals fn into %r11 and a0..a{n-1} into the System V
 // integer-arg registers (%rdi/%rsi/%rdx/%rcx), 16-byte-aligns %rsp for the C
-// ABI, and `call *%r11`s the pointer; the callee's result lands in %rax (or
-// %xmm0 for the _f32/_f64 variants) and flows straight back. Mirrors native's
-// emitCCallRuntime, adapted from the register-arg to the stack-arg ABI.
+// ABI, and `call *%r11`s the pointer. The callee's result lands in %rax, or in
+// %xmm0 for the _f32/_f64 variants, which move it to %rax where every Fern
+// result is read, an f32 widened to the f64 a Fern f32 is held as. Mirrors
+// native's emitCCallRuntime, adapted from the register-arg to the stack-arg ABI.
 function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcore.EmitState {
   s = s.write("\n__fn_" + variant + ":\n");
   s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n");
@@ -243,13 +244,20 @@ function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcor
   }
   s = s.write("    andq $-16, %rsp\n");
   s = s.write("    call *%r11\n");
+  if (util.str_has_suffix(variant, "_f32")) {
+    s = s.write("    cvtss2sd %xmm0, %xmm0\n");
+  }
+  if (util.str_has_suffix(variant, "_f32") || util.str_has_suffix(variant, "_f64")) {
+    s = s.write("    movq %xmm0, %rax\n");
+  }
   s = s.write("    movq %rbp, %rsp\n    popq %rbp\n    ret\n");
   return s;
 }
 
 // emit_ccall_shims emits every __c_call variant the module referenced (each
 // registered as `need("ccall:<name>")` by the generic call_direct emit). The
-// body depends only on the arity n; the _f32/_f64 suffixes share it verbatim.
+// body depends on the arity n, and the _f32/_f64 suffixes add the move of the
+// result out of %xmm0.
 function emit_ccall_shims(s: asmcore.EmitState): asmcore.EmitState {
   let arity: i32 = 0;
   while (arity <= 4) {
