@@ -12,10 +12,11 @@ import "testing"
 // released where it dies rather than held for a construction that no longer
 // takes it. An empty array literal is one static box too: leaf's record
 // allocates and its args do not, and later's push onto those args makes the
-// allocation the literal no longer does. later's update counts its base, so it
-// writes into leaf's fresh box rather than taking another. An unsigned literal arrives as its
-// source text: u_small's 12 is placed, and u_big's 3000000000, past 2^31,
-// is left to the heap, where its word is written at the field's width.
+// allocation the literal no longer does. later's update counts its base, so
+// it writes into leaf's fresh box rather than taking another. An unsigned
+// literal arrives as its source text: u_small's 12 is placed, and u_big's
+// 3000000000, past 2^31, is left to the heap, where its word is written at
+// the field's width.
 const staticBoxProgram = `struct P { x: i32, y: i32, on: boolean }
 struct TInt { width: i32, signed: boolean }
 struct TVoid {}

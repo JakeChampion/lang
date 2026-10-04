@@ -12,7 +12,9 @@ import "testing"
 const ownParamNestedMatchSrc = `enum Box { Arr(i32[]), Nil }
 enum Other { Thing(i32[]), Nothing }
 
-// Each payload goes through id, so the boxes are built on the heap rather than placed as constants.
+// Each payload goes through id, so the boxes are built on the heap rather than
+// placed as constants: a program that never allocates leaves the census at
+// zero and could not show the double free.
 function id(xs: i32[]): i32[] { return xs; }
 
 @noinline function two(own b: Box, own o: Other): i32 {
