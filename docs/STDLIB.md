@@ -1673,11 +1673,16 @@ points that run a handler under it.
   `supervise_with_shutdown(port, cfg, init, handler, shutdown)`
   take the hook of the `_shutdown` entries, which each worker's loop calls
   on its way out. Where there is no fork (the interpreter) every one of
-  them serves single-process. A worker runs one handler at a time to
-  completion, so a handler that blocks (a sleep, a slow upstream fetch)
-  holds every other connection on that worker until it returns; workers,
-  not connections, absorb slow handlers until #9857 multiplexes them
-  (`TestSelfHostSupervisedServeHandlerStallsItsWorker` pins the stall).
+  them serves single-process. A worker runs one handler at a time, and
+  what a waiting handler costs it depends on the compiler: built by the
+  self-host compiler, a handler that waits on `plat.http` or on a streamed
+  request body parks, and the worker serves its other connections until
+  the wait is answered (`TestSelfHostServeHandlersOverlap`;
+  `docs/NET-P3-SUSPENSION-PLAN.md`); built by the Go compiler, every wait
+  blocks and the handler holds the worker until it returns. A handler
+  that computes holds its worker either way
+  (`TestSelfHostSupervisedServeHandlerStallsItsWorker`), so workers, not
+  connections, absorb CPU-bound handlers.
 - `__port_from_env(name, fallback)` — env-var port lookup used
   by the auto-`main`-from-`handle()` synthesis so handler-shaped
   programs can be tuned via `PORT=N ./bin`. That synthesis serves
@@ -2095,6 +2100,13 @@ Each method needs its target capability (`internal/platforms`), so
 what a handler may call depends on where it is going: the `wasi-http`
 proxy world grants log / now / random / config / fetch, and `.env` is an
 E066 there.
+
+Under std/serve's loop a handler's `plat.http` is a wait the loop can
+park: in a self-host-built server the handler's call chain saves itself
+at the wait and the worker serves its other connections until the
+upstream answers, up to `Config.max_in_flight` parked handlers at once
+(`docs/ASYNC.md` §8, `docs/NET-P3-SUSPENSION-PLAN.md`); in a Go-built
+server the same call blocks the worker.
 
 ```
 import "std/platform";
