@@ -11632,9 +11632,9 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
 // renderer's, and through it to gas.
 //
 // Offsets are recorded as .text byte offsets at the point the directive is
-// seen. Neither self-host assembler moves code after parsing — the x86 one
-// re-emits to a fixpoint rather than remapping, the arm64 one flushes its
-// literal pool inline — so no remap step exists here.
+// seen. The recorder never moves them: the x86 assembler's branch relaxation
+// remaps them itself (x86_relax_apply), and the arm64 one flushes its literal
+// pool inline, so its code never moves.
 
 // DWARF call-frame opcodes. Only the ones this module emits.
 function cfi_op_nop(): i32 {
