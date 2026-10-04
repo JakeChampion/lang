@@ -25,6 +25,11 @@ the Fern language. Provides:
 
    Or set an explicit path via the `fern.serverPath` setting.
 
+   The self-host compiler is a server too: `fern -lsp STDLIB-ROOT` publishes
+   `fern -check`'s diagnostics and formats as `fern -fmt` does, without the
+   cursor features below. Point `fern.serverPath` at that `fern` binary and set
+   `fern.serverArgs` to `["-lsp", "/path/to/internal/stdlib"]`.
+
 2. Build + install the extension:
 
    ```bash
@@ -41,6 +46,7 @@ the Fern language. Provides:
 | Setting             | Default     | Meaning                                     |
 | ------------------- | ----------- | ------------------------------------------- |
 | `fern.serverPath`   | `fern-lsp`  | Path to the binary. Absolute or on PATH.    |
+| `fern.serverArgs`   | `[]`        | Arguments passed to the server.             |
 | `fern.trace.server` | `off`       | LSP trace level. `messages` or `verbose`.   |
 
 ## Commands

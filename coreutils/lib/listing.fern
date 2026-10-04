@@ -1581,12 +1581,19 @@ function widths_new(): Widths {
   return Widths { inode: 0, blocks: 0, nlink: 0, owner: 0, group: 0, author: 0, context: 0, size: 0, major: 0, minor: 0, time: 0, pad: false };
 }
 
-// glibc's `major` / `minor` over the 64-bit encoding.
+// Darwin packs an 8-bit major above a 24-bit minor; Linux splits both
+// components across its 64-bit device number.
 pub function dev_major(dev: u64): u64 {
+  if (target_os() == "darwin") {
+    return dev >> 24 as u64 & 0xff as u64;
+  }
   return dev >> 8 as u64 & 0xfff as u64 | dev >> 32 as u64 & 0xfffff000 as u64;
 }
 
 pub function dev_minor(dev: u64): u64 {
+  if (target_os() == "darwin") {
+    return dev & 0xffffff as u64;
+  }
   return dev & 0xff as u64 | dev >> 12 as u64 & 0xffffff00 as u64;
 }
 

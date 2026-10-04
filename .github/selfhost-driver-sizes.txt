@@ -434,6 +434,11 @@
 # constant a phi merges or a block returns now loads on its edge with no home
 # of its own, a further 0.7%. Measured with TestSelfHostWarmStockDriver, the
 # gate's own path; fern.fern, which the pin builds, stays inside 5%.
+# 2026-10-03: asm_pathprobe_run 3965592 -> 4172000 (+5.2%), main's growth
+# since that refresh: the same bytes build from main at a4d8eba1, and #11323,
+# whose run reported it, changes no file in the driver's closure. The other
+# rows stay inside 5%. Number pasted from driver-sizes' own report on run
+# 37158896327.
 # 2026-10-04: pathprobe's historical CI source 89c212ac under its original
 # 7d8ea4e pin reproduces 3965592 bytes. The current c891 pin on that source
 # gives 3901208 bytes; current main gives 4172000. Stdio adds no compiler or
