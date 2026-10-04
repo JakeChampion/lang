@@ -24,8 +24,10 @@ type FetchUpstream struct {
 	Port  int
 	Port2 int
 
-	mu   sync.Mutex
-	hits map[string]int
+	mu      sync.Mutex
+	hits    map[string]int
+	held    int
+	release chan struct{}
 }
 
 // StartFetchUpstream listens twice on the loopback interface and serves
@@ -33,7 +35,7 @@ type FetchUpstream struct {
 // be had is a failure, not a skip: every networking lane has one.
 func StartFetchUpstream(t *testing.T) *FetchUpstream {
 	t.Helper()
-	up := &FetchUpstream{hits: map[string]int{}}
+	up := &FetchUpstream{hits: map[string]int{}, release: make(chan struct{})}
 	listen := func() int {
 		ln, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
 		if err != nil {
@@ -82,6 +84,10 @@ func (up *FetchUpstream) serve(c net.Conn) {
 	method, target := parts[0], parts[1]
 	if p := keptPath(target); p != "" {
 		serveKept(c, p)
+		return
+	}
+	if originPath(target) == "/hold" {
+		up.hold(c)
 		return
 	}
 	if originPath(target) == "/slow" {
@@ -223,6 +229,35 @@ func (up *FetchUpstream) serve(c net.Conn) {
 		resp = []byte("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
 	}
 	_, _ = c.Write(resp)
+}
+
+// hold parks the connection until Release, then answers it. It is the
+// upstream a handler stays suspended on for as long as a test needs.
+func (up *FetchUpstream) hold(c net.Conn) {
+	up.mu.Lock()
+	up.held++
+	release := up.release
+	up.mu.Unlock()
+	_ = c.SetDeadline(time.Time{})
+	<-release
+	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+	_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nheld"))
+}
+
+// Held is how many /hold connections are parked since the last Release.
+func (up *FetchUpstream) Held() int {
+	up.mu.Lock()
+	defer up.mu.Unlock()
+	return up.held
+}
+
+// Release answers every parked /hold connection.
+func (up *FetchUpstream) Release() {
+	up.mu.Lock()
+	close(up.release)
+	up.release = make(chan struct{})
+	up.held = 0
+	up.mu.Unlock()
 }
 
 // SlowUpstreamDelay is how long the upstream's /slow target waits before
