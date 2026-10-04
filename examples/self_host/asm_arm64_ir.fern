@@ -10953,7 +10953,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("lstat")) {
       fs_src = fs_src + " " + asmcore.rt_src_lstat(tgt);
     }
-    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr")) {
+    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr") || s.has_need("reader")) {
       fs_src = fs_src + " " + asmcore.rt_src_utf8_valid();
     }
     if (s.has_need("read_file")) {

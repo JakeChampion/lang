@@ -664,6 +664,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// the bundle's transitive deps (alloc, memcpy, the IoError
 	// box helper) whenever the bundle itself is pulled in.
 	if g.usesReaderWriter {
+		g.needFern("__fern_utf8_valid")
 		g.usesIoError = true
 		g.usesMemcpy = true
 		g.usesAlloc = true
@@ -20118,6 +20119,11 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("push r14")       // exact-size data ptr on a short read
 	g.emit("mov ebx, [rdi]") // fd
 	g.emit("mov r12, rsi")   // n
+	g.emit("test esi, esi")
+	g.emit("jns .Lrrc_size_ok")
+	g.emit("mov ebx, 22") // EINVAL, before allocating a negative size.
+	g.emit("jmp .Lrrc_err_box")
+	g.label(".Lrrc_size_ok")
 	// L2 rc-header layout (see __fern_strcat): payload = n data + NUL slack so
 	// the box class matches __fern_str_dec's length+1 free.
 	g.emit("lea edi, [r12 + 1]")
@@ -20152,6 +20158,14 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov r13, r14")
 	g.emit("mov r12, rbx")
 	g.label(".Lrrc_some")
+	g.emit("mov rdi, r13")
+	g.emit("mov rsi, r12")
+	g.emit("call " + AsmFnName("__fern_utf8_valid"))
+	g.emit("test eax, eax")
+	g.emit("jnz .Lrrc_valid")
+	g.emit("mov rax, -84") // Synthetic EILSEQ maps to InvalidUtf8("").
+	g.emit("jmp .Lrrc_err")
+	g.label(".Lrrc_valid")
 	g.emit("mov [r13 - 4], r12d")         // length prefix at data-4
 	g.emit("mov byte ptr [r13 + r12], 0") // trailing NUL within alloc
 	g.emit("mov edi, 16")
@@ -20179,6 +20193,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov rdi, r13")
 	g.emit("lea esi, [r12 + 1]")
 	g.emit("call __fern_box_free")
+	g.label(".Lrrc_err_box")
 	g.emit("mov edi, ebx")
 	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
 	g.emit("call __fern_io_error")

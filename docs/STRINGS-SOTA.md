@@ -1143,9 +1143,14 @@ in [the byte-line report](STRING-BYTE-LINES-2026-10-02.md). The full unit suite
 and all lint gates pass.
 
 The Fern interpreter also supports raw stdin reads; its file-handle opening
-remains unsupported. The existing `Reader.read_chunk` remains text-typed and
-unchecked pending migration of its binary consumers. The new method does not
-establish the string invariant by itself.
+remains unsupported. `Reader.read_chunk(n): Result[string, IoError]` validates
+the bytes returned by one physical read. Malformed or incomplete UTF-8
+returns `InvalidUtf8("")` and consumes those bytes. It does not carry a partial
+scalar into a later call or read beyond `n`; use the buffered `LineReader`
+when scalars may cross input chunks. Binary consumers use `read_chunk_bytes`.
+Valid text retains embedded NUL. Negative sizes fail before reading, and
+zero-sized reads, EOF, closed handles and host I/O failures retain their
+normal distinctions.
 
 `Writer.write_bytes(bytes): Option[IoError]` and
 `Writer.write_some_bytes(bytes): Result[i64, IoError]` borrow a byte view `[u8]`

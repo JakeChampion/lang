@@ -643,6 +643,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// The helpers written in Fern (internal/fernrt) go through emitFunc like
 	// any other function, and before the gates below: emitting one sets the
 	// use-flags for what it calls, exactly as a user function does.
+	if g.usesReaderWriter {
+		g.needFern("__fern_utf8_valid")
+	}
 	for _, name := range g.fernHelpers {
 		decl, irFn, err := fernrt.Func(name, g.fernTarget())
 		if err != nil {
@@ -15497,8 +15500,14 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("str x21, [sp, #32]")
-	g.emit("ldr w19, [x0]") // fd
-	g.emit("mov x20, x1")   // n
+	g.emit("ldr w19, [x0]")      // fd
+	g.emit("mov x20, x1")        // n
+	g.emit("str x20, [sp, #40]") // reserve size for a rejected short read
+	g.emit("cmp w1, #0")
+	g.emit("bge .Lrrc2w_size_ok")
+	g.emit("mov x19, #22") // EINVAL before allocating.
+	g.emit("b .Lrrc2w_err_box")
+	g.label(".Lrrc2w_size_ok")
 	g.emit("mov x0, x20")
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov x21, x0") // = base+8
@@ -15510,6 +15519,14 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("blt .Lrrc2w_err")
 	g.emit("beq .Lrrc2w_eof")
 	g.emit("mov x20, x0") // x20 = bytes read
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x20")
+	g.emit("bl %s", AsmFnName("__fern_utf8_valid"))
+	g.emit("cbnz w0, .Lrrc2w_valid")
+	g.emit("ldr x20, [sp, #40]")
+	g.emit("mov x0, #-%d", g.eilseq())
+	g.emit("b .Lrrc2w_err")
+	g.label(".Lrrc2w_valid")
 	// Ok(string) 24-byte box.
 	g.emit("mov x0, #24")
 	g.emit("bl __fern_alloc_rc1")
@@ -15543,6 +15560,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov x0, x21")
 	g.emit("mov x1, x20")
 	g.emit("bl __fern_box_free")
+	g.label(".Lrrc2w_err_box")
 	g.emit("mov x0, x19")
 	if ast.UseTwoWordStrings(8) {
 		g.emit("mov x1, xzr")

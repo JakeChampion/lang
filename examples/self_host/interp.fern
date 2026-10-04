@@ -22,6 +22,7 @@ import "./lexer";
 import "./parser";
 import "./util";
 import "./astwalk";
+import "std/utf8";
 
 // =================== VALUES ====================
 
@@ -1437,9 +1438,19 @@ function reader_method(rs: VStruct, name: string, args: Value[]): Value {
       }
     }
   }
-  match (r.read_chunk(vint_bits(args[0]))) {
+  // Define the current text boundary even when stage0 built this interpreter
+  // with its older, unchecked read_chunk runtime. The raw API also owns the
+  // negative-size and I/O-error contract.
+  match (r.read_chunk_bytes(vint_bits(args[0]))) {
     Ok(chunk) => {
-      return v_variant("Ok", [v_string(chunk)]);
+      match (utf8.from_bytes(chunk)) {
+        Some(text) => {
+          return v_variant("Ok", [v_string(text)]);
+        },
+        None => {
+          return v_variant("Err", [io_error_value(InvalidUtf8(""))]);
+        }
+      }
     },
     Err(e) => {
       return v_variant("Err", [io_error_value(e)]);

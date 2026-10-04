@@ -3544,7 +3544,7 @@ pub function rt_src_putchar(t: string): string {
 // EOF answers the .rodata empty literal rather than allocating a zero-length
 // block for it.
 pub function rt_src_reader_read_chunk(t: string): string {
-  return "function __fern_reader_read_chunk(fd: i32, n: i32): Result[string, IoError] { let p: usize = __raw_alloc(n); let r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (r == n) { return Ok(__raw_string(p, n)); } if (r <= 0) { let short: string = __raw_string(p, n); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } return Ok(\"\"); } let q: usize = __raw_alloc(r); __memcpy(q, p, r); let full: string = __raw_string(p, n); return Ok(__raw_string(q, r)); }";
+  return "function __fern_reader_read_chunk(fd: i32, n: i32): Result[string, IoError] { if (n < 0) { return Err(__fern_io_error(22, \"\")); } let p: usize = __raw_alloc(n); let r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (r > 0 && __fern_utf8_valid(p, r) == 0) { let invalid: string = __raw_string(p, n); return Err(InvalidUtf8(\"\")); } if (r == n) { return Ok(__raw_string(p, n)); } if (r <= 0) { let short: string = __raw_string(p, n); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } return Ok(\"\"); } let q: usize = __raw_alloc(r); __memcpy(q, p, r); let full: string = __raw_string(p, n); return Ok(__raw_string(q, r)); }";
 }
 
 // Scratch is owned as an array throughout, including the error path. Full

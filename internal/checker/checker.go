@@ -3894,9 +3894,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	}
 	optionString := ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}}
 	registerStructMethod("Reader", "read_line", nil, optionString)
-	// read_chunk reports what read(2) reports: the bytes, an empty
-	// string at end of input, or the failure. `Option` could not tell
-	// EOF from EISDIR, and a streaming utility needs to (#8700).
+	// read_chunk validates one physical read as UTF-8, returning InvalidUtf8
+	// for malformed or incomplete scalars. It consumes the bytes even on
+	// rejection. Buffered text uses LineReader; raw input uses the byte method.
+	// Empty text means EOF (or a zero-size request); I/O failures are errors.
 	registerStructMethod("Reader", "read_chunk", []ast.Type{ast.NumberType{}},
 		ast.EnumType{Name: "Result", Args: []ast.Type{ast.StringType{}, ioErrType}})
 	// Raw reads preserve every byte, including partial UTF-8 sequences.

@@ -12773,7 +12773,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("access")) {
       fs_src = fs_src + " " + asmcore.rt_src_access("x86_64");
     }
-    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr")) {
+    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr") || s.has_need("reader")) {
       fs_src = fs_src + " " + asmcore.rt_src_utf8_valid();
     }
     if (s.has_need("read_file")) {

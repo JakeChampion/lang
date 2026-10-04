@@ -5216,6 +5216,13 @@ func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("Reader.read_chunk: expected 2 args")
 	}
+	size, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("Reader.read_chunk: size must be a number")
+	}
+	if size < 0 {
+		return resultErr(classifyIoError("", syscall.EINVAL)), nil
+	}
 	r, err := readerStream(i, args[0])
 	if errors.Is(err, errClosedHandle) {
 		return resultErr(ioErrorOther("", syscall.EBADF)), nil
@@ -5223,14 +5230,13 @@ func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	size, ok := args[1].(Number)
-	if !ok {
-		return nil, fmt.Errorf("Reader.read_chunk: size must be a number")
-	}
 	buf := make([]byte, int(size))
 	n, rerr := r.Read(buf)
 	if n == 0 && rerr != nil && !errors.Is(rerr, io.EOF) {
 		return resultErr(classifyIoError("", rerr)), nil
+	}
+	if !utf8.Valid(buf[:n]) {
+		return resultErr(ioErrorOfErrno("", syscall.EILSEQ)), nil
 	}
 	return resultOk(String(string(buf[:n]))), nil
 }
