@@ -197,11 +197,15 @@ on #4451, as slice 2 was.
    Removes the 2 `header_map_new()` boxes. Parse 40 to 38.
 2. **`h = h.append(…)` reuses `h`'s box.** At every call in the parse the
    caller's `h` dies at the call, and the Go compiler already writes the
-   spread `HeaderMap { ...h, … }` into it; the self-host takes a fresh box.
-   The slice finds which half the self-host is missing, ownership passing
-   into the receiver or the spread pairing with an owned receiver
-   (`docs/REUSE-CONTRACT.md` R3), and fixes it there. Removes 3. Parse 38
-   to 35.
+   spread `HeaderMap { ...h, … }` into it; the self-host took a fresh box.
+   The self-host's ownership inference counted a parameter only when
+   something anchored to it was carried out, and an update that replaces
+   every reference field carries out nothing of its base. Done: a record
+   update now carries its base, so `h` is counted and the update pairs with
+   its box (`docs/rc-log/2026-10-04-b-an-update-carries-its-base.md`).
+   Parse 40 to 37, every append reusing the fresh box the map starts from;
+   once slice 1 makes that box static the first append copies it, and the
+   two together reach 35.
 3. **An array of string literals is static.** `phrases` joins the constant
    pool. Serialize 4 to 3.
 4. **The request target decodes without scratch.** A target with no `%` and

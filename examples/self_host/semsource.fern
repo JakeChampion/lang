@@ -1389,18 +1389,19 @@ function place_fields(w: Written, sig: checker.StructSig, base: i32): Written {
   return Written { s: s, ids: ids, at: w.at };
 }
 
-function built_record(w: Written, ty: typeinfo.Type): Value {
+function built_record(w: Written, ty: typeinfo.Type, base: i32): Value {
   if (!w.s.ok) {
     return Value { s: w.s, id: 0 - 1 };
   }
-  return define(w.s, ssasem.record_new(), w.ids, 0, "", ty);
+  return define(w.s, ssasem.record_new(), w.ids, base, "", ty);
 }
 
 // An update names the base first, then the fields it replaces in written
 // order, and reads the rest off the base — the order semir.build_record
 // lowers this shape in. A projection is a borrow anchored to the base, and
 // the construction takes its own unit of every reference field, so the base
-// stays live to the construction and is released after it.
+// stays live to the construction and is released after it. The construction
+// names its base (ssasem.update_base).
 function record_update(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
   let ty: typeinfo.Type = record_type(sl.type_name, s);
   let sig: checker.StructSig = record_sig(ty, s);
@@ -1415,7 +1416,7 @@ function record_update(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
   if (!semtypes.equal(s.values[base.id], ty)) {
     return refused(s, "record base type");
   }
-  return built_record(place_fields(written_fields(sl, sig, s), sig, base.id), ty);
+  return built_record(place_fields(written_fields(sl, sig, s), sig, base.id), ty, base.id + 1);
 }
 
 function field_slot(sig: checker.StructSig, name: string): i32 {
@@ -1457,7 +1458,7 @@ function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
   if (sig.name.len() == 0 || sl.field_values.len() != sig.field_types.len()) {
     return refused(s, "unsupported record literal");
   }
-  return built_record(place_fields(written_fields(sl, sig, s), sig, 0 - 1), ty);
+  return built_record(place_fields(written_fields(sl, sig, s), sig, 0 - 1), ty, 0);
 }
 
 // A literal's type is the struct it names: record_schema admits only a

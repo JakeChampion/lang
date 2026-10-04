@@ -171,6 +171,18 @@ pub function record_new(): i32 {
   return 0 - 5;
 }
 
+// A record update names its base in `imm`, the base's value plus one, and a
+// plain literal leaves 0. The base is not an operand, since the construction
+// reads only the fields it keeps off it, but an update consumes the base's
+// box where it can, so whether the base is carried out is a question about
+// the update and not about its operands.
+pub function update_base(ins: ssa.SInst): i32 {
+  if (ins.kind_tag == record_new() && ins.imm > 0) {
+    return ins.imm - 1;
+  }
+  return 0 - 1;
+}
+
 pub function record_get(): i32 {
   return 0 - 6;
 }
@@ -4933,6 +4945,10 @@ function mapped_list(map: i32[], vs: i32[]): i32[] {
 }
 
 function mapped_inst(map: i32[], ins: ssa.SInst): ssa.SInst {
+  let base: i32 = update_base(ins);
+  if (base >= 0) {
+    return ssa.SInst { ...ins, args: mapped_list(map, ins.args), imm: mapped(map, base) + 1 };
+  }
   return ssa.SInst { ...ins, args: mapped_list(map, ins.args) };
 }
 
