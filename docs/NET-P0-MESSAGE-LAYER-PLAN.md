@@ -101,8 +101,9 @@ up.
    value, not a stream built over zero bytes.
 7. **The head serializes into the builder.** The status line and fields are
    pushed into the one builder the body goes into, with no intermediate
-   `string`. The framing half of serialize drops from 13 to 2: the builder
-   and its result.
+   `string`. Serialize fell from 13 to 4 on the self-host and to 6 on the Go
+   compiler: the builder, its storage and its result, and the boxes left
+   between the helpers.
 8. **The donor boundary.** What is left after slices 3 to 7 is the
    `HttpRequest` box, its strings, the response box and the wire buffer.
    Those are exactly what #9851 §3.3's handler boundary with a reuse donor
