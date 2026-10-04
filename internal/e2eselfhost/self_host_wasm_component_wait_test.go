@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
@@ -40,39 +39,43 @@ func TestSelfHostWasmComponentWaits(t *testing.T) {
 		return comp
 	}
 
+	// Each sleep is timed inside the guest, on the monotonic clock, so the
+	// host's startup cannot stand in for a sleep that returned at once.
 	t.Run("sleep", func(t *testing.T) {
 		comp := component(t, "sleep", `function main(): i32 {
+    let t0: i64 = monotonic_ns();
     sleep_ms(80 as i64);
-    sleep_ns(1000000 as i64);
+    let t1: i64 = monotonic_ns();
+    sleep_ns(5000000 as i64);
+    let t2: i64 = monotonic_ns();
+    if (t1 - t0 < 80000000 as i64) { print("sleep_ms returned early"); return 1; }
+    if (t2 - t1 < 5000000 as i64) { print("sleep_ns returned early"); return 2; }
     print("ok");
     return 0;
 }
 `)
-		start := time.Now()
 		out, err := exec.Command("wasmtime", "run", comp).CombinedOutput()
-		if err != nil {
-			t.Fatalf("wasmtime run: %v\n%s", err, out)
-		}
-		if got := strings.TrimSpace(string(out)); got != "ok" {
-			t.Fatalf("stdout %q, want \"ok\"", got)
-		}
-		if elapsed := time.Since(start); elapsed < 80*time.Millisecond {
-			t.Fatalf("the component ran %v, less than the 80 ms it sleeps", elapsed)
+		if got := strings.TrimSpace(string(out)); err != nil || got != "ok" {
+			t.Fatalf("stdout %q (%v), want \"ok\"", got, err)
 		}
 	})
 
 	// poll over an empty set with no timeout is the program native's
-	// TestPollEmptySetInterpWasm builds: no other I/O, so the no-I/O framing
-	// used to refuse it. Its verdict is whatever native's component reports.
+	// TestPollEmptySetInterpWasm builds, its only host contact the poll, so
+	// the no-I/O framing used to refuse it. Its verdict is printed rather
+	// than returned: a run export collapses any non-zero main to exit 1,
+	// which a component that never instantiated would match.
 	t.Run("poll_empty_set", func(t *testing.T) {
-		const src = `function main(): i32 {
+		const src = `import "core/int";
+
+function main(): i32 {
     let fds: i32[] = [];
-    return poll(fds, 0);
+    print(int.int_to_string(poll(fds, 0)));
+    return 0;
 }
 `
 		comp := component(t, "poll", src)
-		got := exec.Command("wasmtime", "run", comp)
-		gotOut, _ := got.CombinedOutput()
+		gotOut, gerr := exec.Command("wasmtime", "run", comp).CombinedOutput()
 		native := buildFernCLIBin(t)
 		dir := t.TempDir()
 		path := filepath.Join(dir, "poll.fern")
@@ -83,17 +86,21 @@ func TestSelfHostWasmComponentWaits(t *testing.T) {
 		if out, err := exec.Command(native, "-target", "wasm32-wasi", "-o", ncomp, path).CombinedOutput(); err != nil {
 			t.Fatalf("native component build: %v\n%s", err, out)
 		}
-		want := exec.Command("wasmtime", "run", ncomp)
-		wantOut, _ := want.CombinedOutput()
-		if got.ProcessState.ExitCode() != want.ProcessState.ExitCode() {
-			t.Fatalf("self-host component exit %d (%s), native's %d (%s)", got.ProcessState.ExitCode(), gotOut, want.ProcessState.ExitCode(), wantOut)
+		wantOut, werr := exec.Command("wasmtime", "run", ncomp).CombinedOutput()
+		if werr != nil || strings.TrimSpace(string(wantOut)) == "" {
+			t.Fatalf("native's component printed no verdict: %v\n%s", werr, wantOut)
+		}
+		if gerr != nil || string(gotOut) != string(wantOut) {
+			t.Fatalf("self-host component printed %q (%v), native's %q", gotOut, gerr, wantOut)
 		}
 	})
 
 	// The probes native's wasm legs run, each printing "ok" or its first
 	// failing check: the reactor floor (reactor_new / reactor_ctl /
-	// reactor_wait), the raw socket controls (sleep_ms over loopback) and the
-	// datagram sockets (udp_sendto with a u8[] payload).
+	// reactor_wait), the raw socket controls (sleep_ms over loopback), the
+	// datagram sockets, and std/net's datagram faces, whose u8[] payloads
+	// reach udp_send_bytes and udp_sendto_bytes. tcpBytesProbe covers the
+	// third typed variant, tcp_send_bytes.
 	for _, p := range []struct {
 		name string
 		src  func() string
@@ -101,6 +108,8 @@ func TestSelfHostWasmComponentWaits(t *testing.T) {
 		{"reactor_floor", e2eharness.ReactorProbe},
 		{"socket_ctl", e2eharness.SocketCtlProbe},
 		{"udp", e2eharness.UdpSocketProbe},
+		{"net_udp", e2eharness.NetUdpProbe},
+		{"tcp_bytes", tcpBytesProbe},
 	} {
 		t.Run(p.name, func(t *testing.T) {
 			comp := component(t, p.name, p.src())
@@ -113,4 +122,50 @@ func TestSelfHostWasmComponentWaits(t *testing.T) {
 			}
 		})
 	}
+}
+
+// tcpBytesProbe sends a u8[] over a loopback connection with tcp_send_bytes
+// and reads it back on the accepted side, printing "ok" or the number of the
+// first failing check. wasi:sockets never blocks, so the accept and the read
+// retry until the peer's side has landed.
+func tcpBytesProbe() string {
+	return `import "core/int";
+
+function fail(n: i32): i32 {
+    print(int.int_to_string(n));
+    return n;
+}
+
+function main(): i32 {
+    let any: u8[] = [0u8, 0u8, 0u8, 0u8];
+    let ln: i32 = tcp_listen_with(any, 0, 4, false);
+    if (ln < 0) { return fail(1); }
+    let c: i32 = tcp_connect(16777343, tcp_local_port(ln));
+    if (c < 0) { return fail(2); }
+    let a: i32 = tcp_accept(ln);
+    let tries: i32 = 0;
+    while (a < 0 && tries < 200) {
+        sleep_ms(5 as i64);
+        a = tcp_accept(ln);
+        tries = tries + 1;
+    }
+    if (a < 0) { return fail(3); }
+    if (tcp_send_bytes(c, [98u8, 121u8, 116u8, 101u8, 115u8]) != 5) { return fail(4); }
+    let buf: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+    let n: i32 = tcp_recv_into(a, buf);
+    tries = 0;
+    while (n < 0 && tries < 200) {
+        sleep_ms(5 as i64);
+        n = tcp_recv_into(a, buf);
+        tries = tries + 1;
+    }
+    if (n != 5) { return fail(5); }
+    if (buf[0] != 98u8 || buf[4] != 115u8) { return fail(6); }
+    tcp_close(a);
+    tcp_close(c);
+    tcp_close(ln);
+    print("ok");
+    return 0;
+}
+`
 }
