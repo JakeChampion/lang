@@ -116,9 +116,9 @@ func TestSelfHostWordsMatchText(t *testing.T) {
 		target string
 		share  int
 	}{
-		// Both sit near 78% on this program, most of the text being the
-		// hand-written runtime; x86 was 46% before its frames, moves and
-		// calls became records.
+		// arm64 sits near 86% on this program and x86 near 80%, most of
+		// the text being the hand-written runtime; x86 was 46% before its
+		// frames, moves and calls became records.
 		{"arm64-linux", 70},
 		{"x86-64-linux", 70},
 	} {
