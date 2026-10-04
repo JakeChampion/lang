@@ -5315,10 +5315,10 @@ function sig_call_type(sig: FuncSig, name: string, c: ast.ExprCall, s: Scope): t
   return sig.ret_type;
 }
 
-// arg_bindings binds a generic call's type variables from its arguments.
+// arg_bindings binds a generic call's type variables from its written type
+// arguments, then from its arguments; the written list wins.
 function arg_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[]) {
-  let bn: string[] = [];
-  let bt: typeinfo.Type[] = [];
+  let (bn, bt) = written_type_bindings(sig, c, s);
   let i: i32 = 0;
   while (i < sig.param_type_names.len() && i < c.args.len()) {
     let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[i]), binding_arg_type(c.args[i], s), sig.type_params, s.type_names(), bn, bt);
@@ -5329,15 +5329,38 @@ function arg_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typei
   return (bn, bt);
 }
 
+// written_type_bindings binds each type parameter to the type argument written
+// in its position (`f[i32](x)`). A list of the wrong length is E040's to report
+// and binds nothing; an argument the type grammar could not read is skipped.
+function written_type_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[]) {
+  let bn: string[] = [];
+  let bt: typeinfo.Type[] = [];
+  if (c.type_args.len() != sig.all_type_params.len()) {
+    return (bn, bt);
+  }
+  let i: i32 = 0;
+  while (i < c.type_args.len()) {
+    if (c.type_args[i].len() > 0) {
+      let wt: typeinfo.Type = type_from_spelling(c.type_args[i], s.type_names());
+      if (!type_contains_unknown(wt)) {
+        bn = bn.append(sig.all_type_params[i]);
+        bt = bt.append(wt);
+      }
+    }
+    i = i + 1;
+  }
+  return (bn, bt);
+}
+
 // call_type_bindings binds a generic call's type variables from its arguments
 // and from what their bounds' impls name. A type parameter every one of whose
 // arguments is an integer literal settles at the widest reading, not the first
-// (#8722 part 4).
+// (#8722 part 4), unless the call wrote its type arguments.
 function call_type_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[]) {
   let (an, at) = arg_bindings(sig, c, s);
   let (bn, bt) = bound_bindings(sig, s, an, at);
   let wbi: i32 = 0;
-  while (wbi < bn.len()) {
+  while (wbi < bn.len() && c.type_args.len() == 0) {
     let (wty, wok) = shared_literal_typevar_width(sig, c, bn[wbi], s);
     if (wok) {
       bt = bt.with(wbi, wty);

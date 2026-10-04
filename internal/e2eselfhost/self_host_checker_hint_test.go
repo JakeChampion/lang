@@ -88,6 +88,13 @@ function main(): i32 { let t = 0; for u in fold(3, [], add) { t = t + u; } retur
 struct Square { s: i32 }
 type Shape = Circle | Square;
 function main(): i32 { let sh: Shape = Circle { r: 1 }; sh = Square { s: 2 }; return 0; }`, 0},
+		// A type argument only the result names is the call's sole binding, so
+		// it holds under `?` as it does for a whole init (#11329).
+		{"written-type-arg-under-try", `struct Item { name: string }
+enum E { Bad }
+function get[T](x: i32): Result[T, E] { return Err(E.Bad); }
+function create(): Result[i32, E] { let item: Item = get[Item](1)?; return Ok(0); }
+function main(): i32 { return 0; }`, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(dir, tc.name+".fern")
