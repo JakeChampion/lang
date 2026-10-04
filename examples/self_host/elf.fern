@@ -694,8 +694,13 @@ function elf_align8_buf(b: i32[]): i32[] {
 // elf_str_bytes appends `s`'s bytes and a NUL. Byte-at-a-time because
 // elf.fern is deliberately import-free.
 function elf_str_bytes(b: i32[], s: string): i32[] {
+  return elf_str_bytes_from(b, s, 0);
+}
+
+// elf_str_bytes_from is elf_str_bytes from byte `start` of `s`.
+function elf_str_bytes_from(b: i32[], s: string, start: i32): i32[] {
   let out: i32[] = b;
-  let i: i32 = 0;
+  let i: i32 = start;
   while (i < s.len()) {
     out = out.append(s[i] as i32);
     i = i + 1;
@@ -733,10 +738,117 @@ function elf_shdr(b: i32[], name_off: i32, sh_type: i32, flags: i64, addr: i64, 
   return out;
 }
 
-// elf_append_symtab appends a static `.symtab` to a finished ELF image,
-// naming each (sym_names[i], sym_offs[i]) as an STT_FUNC / STB_GLOBAL
-// symbol at `text_vaddr + sym_offs[i]`, and adds the section-header table
-// the symbols need to resolve: NULL, .text, .symtab, .strtab, .shstrtab.
+// ---- DWARF v4 (#11410): the compilation unit and its subprograms ----
+//
+// `-g` carries, beside the symbol table, the debug information a debugger
+// needs to name frames and break by function: .debug_abbrev with two
+// abbreviations and .debug_info with one compile_unit DIE spanning .text and
+// one subprogram DIE per symbol, its DW_AT_name the Fern name behind the
+// `__fn_` symbol. Names are inline strings (DW_FORM_string) and addresses
+// absolute (DW_FORM_addr), as native's writer emits them. The line table,
+// the variables and the types are the slices still open on #11410.
+
+// dw_uleb appends a non-negative `v` as unsigned LEB128.
+function dw_uleb(b: i32[], v: i32): i32[] {
+  let out: i32[] = b;
+  let x: i32 = v;
+  let more: boolean = true;
+  while (more) {
+    let c: i32 = x & 127;
+    x = x >> 7;
+    if (x == 0) {
+      more = false;
+    } else {
+      c = c | 128;
+    }
+    out = out.append(c);
+  }
+  return out;
+}
+
+// dw_attr appends one abbreviation attribute: its DW_AT code and DW_FORM.
+function dw_attr(b: i32[], at: i32, form: i32): i32[] {
+  return dw_uleb(dw_uleb(b, at), form);
+}
+
+// elf_debug_abbrev is the fixed abbreviation table: 1 is the compile unit
+// (DW_TAG_compile_unit, children) with producer, language (DW_FORM_data2),
+// name, comp_dir, low_pc and high_pc; 2 the subprogram (DW_TAG_subprogram,
+// no children) with name, low_pc and high_pc.
+function elf_debug_abbrev(): i32[] {
+  let b: i32[] = [];
+  b = dw_uleb(b, 1);
+  b = dw_uleb(b, 17);
+  b = b.append(1);
+  b = dw_attr(b, 37, 8);  // DW_AT_producer, DW_FORM_string
+  b = dw_attr(b, 19, 5);  // DW_AT_language, DW_FORM_data2
+  b = dw_attr(b, 3, 8);  // DW_AT_name
+  b = dw_attr(b, 27, 8);  // DW_AT_comp_dir
+  b = dw_attr(b, 17, 1);  // DW_AT_low_pc, DW_FORM_addr
+  b = dw_attr(b, 18, 1);  // DW_AT_high_pc
+  b = dw_attr(b, 0, 0);
+  b = dw_uleb(b, 2);
+  b = dw_uleb(b, 46);
+  b = b.append(0);
+  b = dw_attr(b, 3, 8);
+  b = dw_attr(b, 17, 1);
+  b = dw_attr(b, 18, 1);
+  b = dw_attr(b, 0, 0);
+  return dw_uleb(b, 0);
+}
+
+// dw_source_name appends the Fern name behind a function symbol, the
+// `__fn_` prefix off as native's symname.Source takes it; any other symbol
+// keeps its name. Debug information describes the source, so a debugger's
+// `break main` and its backtraces read source names.
+function dw_source_name(b: i32[], sym: string): i32[] {
+  if (sym.len() > 5 && sym[0] == b'_' && sym[1] == b'_' && sym[2] == b'f' && sym[3] == b'n' && sym[4] == b'_') {
+    return elf_str_bytes_from(b, sym, 5);
+  }
+  return elf_str_bytes(b, sym);
+}
+
+// elf_debug_info is the .debug_info compilation unit: the DWARF v4 unit
+// header, the compile_unit DIE over [text_vaddr, text_vaddr + text_len),
+// one subprogram DIE per symbol over its extent, and the null DIE that ends
+// the unit's children. `cu_name` is the source as the command line named
+// it and `comp_dir` the directory it was compiled in, which is how a
+// debugger finds the source. The language is DW_LANG_C99: no DWARF code
+// exists for Fern.
+function elf_debug_info(text_vaddr: i32, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[], cu_name: string, comp_dir: string): i32[] {
+  let die: i32[] = [];
+  die = dw_uleb(die, 1);
+  die = elf_str_bytes(die, "fern");
+  die = elf_le16(die, 12);
+  die = elf_str_bytes(die, cu_name);
+  die = elf_str_bytes(die, comp_dir);
+  die = elf_le64(die, text_vaddr as i64);
+  die = elf_le64(die, (text_vaddr + text_len) as i64);
+  let i: i32 = 0;
+  while (i < sym_names.len()) {
+    die = dw_uleb(die, 2);
+    die = dw_source_name(die, sym_names[i]);
+    die = elf_le64(die, (text_vaddr + sym_offs[i]) as i64);
+    die = elf_le64(die, (text_vaddr + sym_offs[i] + sym_sizes[i]) as i64);
+    i = i + 1;
+  }
+  die = dw_uleb(die, 0);
+  let body: i32[] = [];
+  body = elf_le16(body, 4);  // version
+  body = elf_le32(body, 0);  // debug_abbrev_offset
+  body = body.append(8);  // address_size
+  body = elf_cat(body, die);
+  let out: i32[] = elf_le32([], body.len());  // unit_length
+  return elf_cat(out, body);
+}
+
+// elf_append_debug appends what a `-g` image carries beyond its loadable
+// segments to a finished ELF image: a static `.symtab` naming each
+// (sym_names[i], sym_offs[i]) as an STT_FUNC / STB_GLOBAL symbol at
+// `text_vaddr + sym_offs[i]`, the DWARF compilation unit over the same
+// symbols (elf_debug_info), and the section-header table that resolves
+// them: NULL, .text, .symtab, .strtab, .shstrtab, .debug_abbrev,
+// .debug_info. `cu_name` and `comp_dir` are the compilation unit's.
 //
 // `text_off` / `text_len` locate .text within the image, and `text_vaddr`
 // is the address it loads at — all three differ between the single-segment
@@ -751,7 +863,7 @@ function elf_shdr(b: i32[], name_off: i32, sh_type: i32, flags: i64, addr: i64, 
 // section layer safe to land ahead of the `-g` flag: every existing caller
 // keeps a byte-identical image, and not by re-deriving one that ought to
 // match — by not touching it.
-pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[]): i32[] {
+pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[], cu_name: string, comp_dir: string): i32[] {
   if (sym_names.len() == 0) {
     return img;
   }
@@ -780,6 +892,10 @@ pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_
   shstrtab = elf_str_bytes(shstrtab, ".strtab");
   let n_shstrtab: i32 = shstrtab.len();
   shstrtab = elf_str_bytes(shstrtab, ".shstrtab");
+  let n_debug_abbrev: i32 = shstrtab.len();
+  shstrtab = elf_str_bytes(shstrtab, ".debug_abbrev");
+  let n_debug_info: i32 = shstrtab.len();
+  shstrtab = elf_str_bytes(shstrtab, ".debug_info");
 
   let out: i32[] = elf_align8_buf(img);
 
@@ -808,6 +924,12 @@ pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_
   out = elf_cat(out, strtab);
   let shstrtab_off: i32 = out.len();
   out = elf_cat(out, shstrtab);
+  let abbrev: i32[] = elf_debug_abbrev();
+  let abbrev_off: i32 = out.len();
+  out = elf_cat(out, abbrev);
+  let info: i32[] = elf_debug_info(text_vaddr, text_len, sym_names, sym_offs, sym_sizes, cu_name, comp_dir);
+  let info_off: i32 = out.len();
+  out = elf_cat(out, info);
 
   out = elf_align8_buf(out);
   let sh_off: i32 = out.len();
@@ -823,12 +945,16 @@ pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_
   out = elf_shdr(out, n_strtab, 3, zero64, zero64, strtab_off as i64, strtab.len() as i64, 0, 0, 1, zero64);
   // .shstrtab
   out = elf_shdr(out, n_shstrtab, 3, zero64, zero64, shstrtab_off as i64, shstrtab.len() as i64, 0, 0, 1, zero64);
+  // .debug_abbrev / .debug_info — SHT_PROGBITS, not allocated, so the loaded
+  // image is unchanged.
+  out = elf_shdr(out, n_debug_abbrev, 1, zero64, zero64, abbrev_off as i64, abbrev.len() as i64, 0, 0, 1, zero64);
+  out = elf_shdr(out, n_debug_info, 1, zero64, zero64, info_off as i64, info.len() as i64, 0, 0, 1, zero64);
 
   // Point the header at the table just written. e_shoff is 8 bytes at
   // 0x28; an image this size never needs the high word.
   out = elf_patch_le32(out, 40, sh_off);
   out = elf_patch_le16(out, 58, elf_sh_size());  // e_shentsize
-  out = elf_patch_le16(out, 60, 5);  // e_shnum
+  out = elf_patch_le16(out, 60, 7);  // e_shnum
   out = elf_patch_le16(out, 62, 4);  // e_shstrndx = .shstrtab
   return out;
 }
@@ -848,7 +974,7 @@ pub function elf_wx_text_off(): i32 {
 }
 
 // elf_func_syms turns an assembler's parallel label tables into the symbol
-// arrays elf_append_symtab wants, applying native's FuncSyms rule:
+// arrays elf_append_debug wants, applying native's FuncSyms rule:
 //
 //   - a label with an empty name, or one starting with `.`, is INTERNAL —
 //     a branch target, not a function — and is left out;

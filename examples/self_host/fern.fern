@@ -310,7 +310,7 @@ function word_buf(emit_text: boolean): usize {
 // string (written verbatim by write_file), or "" if the assembler hit an
 // instruction it doesn't yet support (the caller reports it and exits 2). The
 // arm64-darwin counterpart is the macho_executable path above.
-function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean): string {
+function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string): string {
   let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-linux", "assembler", p.unknown);
@@ -352,11 +352,12 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean): string 
     // section filter is -1 rather than 0.
     let aend: i32 = pa2.code.len();
     let nosec: i32[] = [];
-    bin = elf.elf_append_symtab(
+    bin = elf.elf_append_debug(
       bin, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), pa2.code.len(),
       elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
       elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
       elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+      cu_name, getcwd(),
     );
   }
   return string_from_bytes_unchecked(util.to_u8(bin));
@@ -406,7 +407,7 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
 // x86_resolve fixes .rodata references against the 8-byte-padded .text
 // length, which is exactly this layout. W^X would need the assembler to
 // resolve against a page-aligned data vaddr, as arm64_gas_link does.
-function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean): string {
+function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string): string {
   util.arr_push_cliff_report("x86:emitted", 0);
   let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words(asm, words);
   util.arr_push_cliff_report("x86:assembled", 0);
@@ -439,16 +440,18 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean): string {
   util.arr_push_cliff_report("x86:image", 0);
   if (emit_syms) {
     // `-g`: a static .symtab so nm / a debugger / a profiler can map an
-    // address back to a function. Only .text labels (section 0) become
-    // symbols, and the sizes span to the end of the code, which is what
-    // lets a backtrace attribute an address INSIDE a function rather
-    // than only an exact entry point.
+    // address back to a function, and the DWARF compilation unit over the
+    // same symbols. Only .text labels (section 0) become symbols, and the
+    // sizes span to the end of the code, which is what lets a backtrace
+    // attribute an address INSIDE a function rather than only an exact
+    // entry point.
     let end: i32 = a.code.len();
-    bin = elf.elf_append_symtab(
+    bin = elf.elf_append_debug(
       bin, elf.elf_text_vaddr_x86(), elf.elf_text_off_x86(), a.code.len(),
       elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
       elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
       elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
+      cu_name, getcwd(),
     );
   }
   return string_from_bytes_unchecked(util.to_u8(bin));
@@ -2584,7 +2587,9 @@ function run(): i32 {
       cover_on = true;
     } else if (a == "-g") {
       // A static symbol table naming the functions: `.symtab` in the ELF
-      // targets' images (#6637), LC_SYMTAB in arm64-darwin's (#11409).
+      // targets' images (#6637), LC_SYMTAB in arm64-darwin's (#11409), and
+      // in the ELF images the DWARF compilation unit naming them for a
+      // debugger (#11410).
       emit_syms = true;
     } else if (a == "-backtrace" || a == "-backtrace=true" || a == "-backtrace=1") {
       backtrace = true;
@@ -3069,7 +3074,7 @@ function run(): i32 {
       return 2;
     }
     if (!emit_text) {
-      out_asm = arm64_elf_binary(out_asm, buf_take_bytes(recs), emit_syms);
+      out_asm = arm64_elf_binary(out_asm, buf_take_bytes(recs), emit_syms, entry_path);
       util.arr_push_cliff_report("arm64:image", 0);
       if (out_asm.len() == 0) {
         return 2;
@@ -3211,7 +3216,7 @@ function run(): i32 {
     let recs: usize = word_buf(emit_text);
     out_asm = asm_ir.emit_module_or_error_sub(full, sub, recs);
     if (!emit_text) {
-      out_asm = x86_elf_binary(out_asm, buf_take_bytes(recs), emit_syms);
+      out_asm = x86_elf_binary(out_asm, buf_take_bytes(recs), emit_syms, entry_path);
       if (out_asm.len() == 0) {
         return 2;
       }

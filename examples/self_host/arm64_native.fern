@@ -11198,7 +11198,7 @@ pub function macho_executable(text: i32[], eh: i32[], data: i32[], ident: string
 // `sym_names` / `sym_offs` are the assembler's .text labels and their offsets
 // (Arm64Asm.lab_names / lab_offs), of which the function labels go into
 // LC_SYMTAB as nlist_64 entries so lldb, nm and a crash backtrace can name a
-// code address (#11409, the Mach-O counterpart of elf_append_symtab). Empty
+// code address (#11409, the Mach-O counterpart of elf_append_debug). Empty
 // arrays write the degenerate LC_SYMTAB a default build has, byte for byte.
 pub function macho_executable_binds(text: i32[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[], sym_names: string[], sym_offs: i32[]): i32[] {
   let text_len: i32 = text.len();

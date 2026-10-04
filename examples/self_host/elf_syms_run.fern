@@ -114,7 +114,7 @@ function main(): i32 {
   // contract so a later rewrite that rebuilds rather than returns has to
   // prove it still matches byte for byte.
   let plain: i32[] = elf.elf_static_executable_bss_x86_wx_at(text, [], 0, 0);
-  let plain_syms: i32[] = elf.elf_append_symtab(plain, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), text.len(), no_names, no_offs, no_offs);
+  let plain_syms: i32[] = elf.elf_append_debug(plain, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), text.len(), no_names, no_offs, no_offs, "p.fern", "/work");
   if (!bytes_equal(plain, plain_syms)) {
     return 1;
   }
@@ -131,17 +131,17 @@ function main(): i32 {
   let names: string[] = ["_start", "helper"];
   let offs: i32[] = [0, 5];
   let sizes: i32[] = [5, 7];
-  let img: i32[] = elf.elf_append_symtab(plain, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), text.len(), names, offs, sizes);
+  let img: i32[] = elf.elf_append_debug(plain, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), text.len(), names, offs, sizes, "p.fern", "/work");
 
   // e_shoff (8 bytes at 0x28) is non-zero, and the section-table
-  // description is the five-section layout.
+  // description is the seven-section layout.
   if (le32_at(img, 40) == 0) {  // e_shoff low word
     return 10;
   }
   if (le16_at(img, 58) != elf.elf_sh_size()) {  // e_shentsize
     return 11;
   }
-  if (le16_at(img, 60) != 5) {  // e_shnum
+  if (le16_at(img, 60) != 7) {  // e_shnum
     return 12;
   }
   if (le16_at(img, 62) != 4) {  // e_shstrndx
@@ -196,6 +196,26 @@ function main(): i32 {
   // Three entries: the reserved null symbol plus the two requested.
   if (le32_at(img, s2 + 32) != 3 * elf.elf_sym_size()) {
     return 27;
+  }
+
+  // Sections 5 and 6 are .debug_abbrev and .debug_info: SHT_PROGBITS(1),
+  // not allocated, and the unit's length word is its section less the word.
+  let s5: i32 = sh_off + 5 * elf.elf_sh_size();
+  if (le32_at(img, s5 + 4) != 1 || le32_at(img, s5 + 8) != 0) {
+    return 50;
+  }
+  let s6: i32 = sh_off + 6 * elf.elf_sh_size();
+  if (le32_at(img, s6 + 4) != 1 || le32_at(img, s6 + 8) != 0) {
+    return 51;
+  }
+  let info_off: i32 = le32_at(img, s6 + 24);
+  let info_size: i32 = le32_at(img, s6 + 32);
+  if (le32_at(img, info_off) != info_size - 4) {  // unit_length
+    return 52;
+  }
+  // The unit header says DWARF 4 and 8-byte addresses.
+  if (le16_at(img, info_off + 4) != 4 || img[info_off + 10] != 8) {
+    return 53;
   }
 
   // ---- 4. the symbols themselves ------------------------------------
