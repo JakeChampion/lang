@@ -81,22 +81,34 @@ pub function str_values(cache: irtables.LowerResult[]): string[] {
     let i: i32 = 0;
     while (i < r.ops.len()) {
       if (r.ops[i].kind_tag == 5) {  // const_str
-        let v: string = r.ops[i].str;
-        let seen: boolean = false;
-        let k: i32 = 0;
-        while (k < vals.len()) {
-          if (vals[k] == v) {
-            seen = true;
-          }
-          k = k + 1;
-        }
-        if (!seen) {
-          vals = vals.append(v);
-        }
+        vals = intern_str(vals, r.ops[i].str);
+      }
+      if (r.ops[i].kind_tag == 218) {  // const_struct
+        vals = nested_strs(vals, r.ops[i].str);
       }
       i = i + 1;
     }
     fi = fi + 1;
+  }
+  return vals;
+}
+
+function intern_str(vals: string[], v: string): string[] {
+  if (util.index_of_str(vals, v) >= 0) {
+    return vals;
+  }
+  return vals.append(v);
+}
+
+// The string literals a constant's words hold, at any depth.
+function nested_strs(vals: string[], packed: string): string[] {
+  for v in ir.const_struct_values(packed) {
+    let inner: string = ir.const_struct_ref(v);
+    if (ir.const_struct_is_str(inner)) {
+      vals = intern_str(vals, ir.const_str_text(inner));
+    } else if (inner.len() > 0) {
+      vals = nested_strs(vals, inner);
+    }
   }
   return vals;
 }
@@ -700,7 +712,7 @@ function intern_const_agg(vals: string[], packed: string): string[] {
   }
   for v in ir.const_struct_values(packed) {
     let inner: string = ir.const_struct_ref(v);
-    if (inner.len() > 0) {
+    if (inner.len() > 0 && !ir.const_struct_is_str(inner)) {
       vals = intern_const_agg(vals, inner);
     }
   }
@@ -13676,7 +13688,7 @@ function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab,
     } else if (ir.const_struct_is_array(cv[i])) {
       body = body + le32_escape(vals.len()) + le32_escape(vals.len());
       for v in vals {
-        body = body + le32_escape(util.lit_to_i32(v));
+        body = body + le32_escape(const_agg_field(sv, cv, v));
       }
       if (vals.len() % 2 == 1) {
         body = body + le32_escape(0);
@@ -13701,10 +13713,13 @@ function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab,
   return util.str_join_chunks(parts);
 }
 
-// A record field's word: its literal, or the address of the static box it
-// holds.
+// A field's or element's word: its literal, or the address of the static box
+// or string literal it holds.
 function const_agg_field(sv: string[], cv: string[], word: string): i32 {
   let inner: string = ir.const_struct_ref(word);
+  if (ir.const_struct_is_str(inner)) {
+    return offset_of_value(sv, ir.const_str_text(inner));
+  }
   if (inner.len() > 0) {
     return const_agg_offset(sv, cv, util.index_of_str(cv, inner)) + 8;
   }

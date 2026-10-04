@@ -2711,6 +2711,49 @@ pub function const_struct_values(packed: string): string[] {
   return out;
 }
 
+// A field word holding string literal `text`'s static box: its packing is
+// `&str` and the text's bytes in hex, which no delimiter can occur in.
+pub function const_str_word(text: string): string {
+  let out: string = "{&str|";
+  let i: i32 = 0;
+  while (i < text.len()) {
+    out = out + hex_digit(text[i] as i32 >> 4) + hex_digit(text[i] as i32 & 15);
+    i = i + 1;
+  }
+  return out + "}";
+}
+
+function hex_digit(d: i32): string {
+  return slice_unchecked("0123456789abcdef", d, d + 1) + "";
+}
+
+pub function const_struct_is_str(packed: string): boolean {
+  return const_struct_type(packed) == "&str";
+}
+
+// The text of a `&str` packing (const_str_word).
+pub function const_str_text(packed: string): string {
+  let vals: string[] = const_struct_values(packed);
+  if (vals.len() == 0) {
+    return "";
+  }
+  let hex: string = vals[0];
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i + 1 < hex.len()) {
+    out = out.append((hex_value(hex[i]) * 16 + hex_value(hex[i + 1])) as u8);
+    i = i + 2;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+function hex_value(c: u8): i32 {
+  if (c >= b'a') {
+    return c as i32 - 87;
+  }
+  return c as i32 - 48;
+}
+
 // The packing of the static box a field word refers to, or "" for a scalar
 // word.
 pub function const_struct_ref(word: string): string {

@@ -74,6 +74,10 @@ func TestSelfHostConstAggregateArm64PIE(t *testing.T) {
 			`struct P { a: i32, b: i32 } function mk(): P { return P { a: 5, b: 9 }; } function dbl(x: i32): i32 { return x * 2; } @noinline function pick(): (i32) => i32 { return dbl; } @noinline function ks(): i32[] { return [3, 1, 4]; } function main(): i32 { let ps: P[] = []; ps = ps.append(mk()); let f: (i32) => i32 = pick(); return f(ps[0].a) + ps[0].b + ps.len() + ks()[2]; }`, 24},
 		// A record field holding another static box is an absolute address
 		// in a field word, which the walk rebases through its own table.
+		// An array of string literals holds each literal's static box, an
+		// absolute address in an element word; reading the text derefs it.
+		{"array_of_string_literals",
+			`@noinline function ks(): string[] { return ["ab", "c,d"]; } function main(): i32 { let k: string[] = ks(); if (k[1] == "c,d" && k[0] == "ab") { return 23; } return 1; }`, 23},
 		{"record_holding_static_boxes",
 			`struct In { a: i32, xs: i32[] } struct Out { k: i32, i: In, e: string[] } @noinline function mk(): Out { return Out { k: 3, i: In { a: 5, xs: [7, 11] }, e: [] }; } function main(): i32 { let o: Out = mk(); return o.k + o.i.a + o.i.xs[1] + o.e.len(); }`, 19},
 	}
