@@ -1572,9 +1572,9 @@ function fc_pio2_reduce(prefix: string): string {
     + "    mulsd %xmm0, %xmm1\n"
     + "    roundsd $0, %xmm1, %xmm1\n"
     + "    cvttsd2si %xmm1, %rax\n"
-    + "    movsd %xmm1, %xmm2\n" + fc_ld("%xmm3", ".Lfc_pio2h")
+    + "    movapd %xmm1, %xmm2\n" + fc_ld("%xmm3", ".Lfc_pio2h")
     + "    mulsd %xmm3, %xmm2\n    subsd %xmm2, %xmm0\n"
-    + "    movsd %xmm1, %xmm2\n" + fc_ld("%xmm3", ".Lfc_pio2m")
+    + "    movapd %xmm1, %xmm2\n" + fc_ld("%xmm3", ".Lfc_pio2m")
     + "    mulsd %xmm3, %xmm2\n    subsd %xmm2, %xmm0\n"
     + fc_ld("%xmm3", ".Lfc_pio2l")
     + "    mulsd %xmm3, %xmm1\n    subsd %xmm1, %xmm0\n"
@@ -1835,6 +1835,11 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
 // register-register only, so every coefficient is LOADED into a scratch xmm
 // where native uses a rip-relative memory operand. Same arithmetic, same bits.
 //
+// Register copies are movapd, and cvtsi2sd's destination is zeroed first:
+// movsd between registers and cvtsi2sd write only the low lane and keep the
+// rest, so each would wait on whatever last wrote that register, which in a
+// loop is the previous call (#11320).
+//
 // Arg in %xmm0 (pow also %xmm1), result in %xmm0. %rax/%rcx/%rdx and %xmm0-7
 // are clobbered — all caller-saved under SysV.
 function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState {
@@ -2085,9 +2090,9 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
   // the end of the double anyway; dropping them keeps the conversion inside
   // the signed range cvtsi2sd works in.
   s = s.write("    shrq $11, %rdi\n");
-  s = s.write("    cvtsi2sd %rsi, %xmm1\n");
+  s = s.write("    xorps %xmm1, %xmm1\n    cvtsi2sd %rsi, %xmm1\n");
   s = s.write(fc_ld("%xmm4", ".Lfc_2m62") + "    mulsd %xmm4, %xmm1\n");
-  s = s.write("    cvtsi2sd %rdi, %xmm2\n");
+  s = s.write("    xorps %xmm2, %xmm2\n    cvtsi2sd %rdi, %xmm2\n");
   s = s.write(fc_ld("%xmm4", ".Lfc_2m115") + "    mulsd %xmm4, %xmm2\n");
   s = s.write("    addsd %xmm2, %xmm1\n");
   s = s.write("    xorpd %xmm3, %xmm1\n");
@@ -2096,7 +2101,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
   s = s.write("    negq %rax\n");
   s = s.write(".Lfph_nn:\n");
   s = s.write("    andq $3, %rax\n");
-  s = s.write("    movsd %xmm1, %xmm0\n");
+  s = s.write("    movapd %xmm1, %xmm0\n");
   s = s.write(fc_ld("%xmm4", ".Lfc_pio2hi") + "    mulsd %xmm4, %xmm0\n");
   s = s.write(fc_ld("%xmm4", ".Lfc_pio2lo") + "    mulsd %xmm4, %xmm1\n");
   s = s.write("    addsd %xmm1, %xmm0\n");
@@ -2107,8 +2112,8 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
   // than once per quadrant arm.
   //   z = r*r; v = z*r; sin = r + v*(S1 + z*(S2+z*(S3+z*(S4+z*(S5+z*S6)))))
   s = s.write("__fern_ksin:\n");
-  s = s.write("    movsd %xmm0, %xmm1\n    mulsd %xmm0, %xmm1\n");  // z
-  s = s.write("    movsd %xmm1, %xmm2\n    mulsd %xmm0, %xmm2\n");  // v = z*r
+  s = s.write("    movapd %xmm0, %xmm1\n    mulsd %xmm0, %xmm1\n");  // z
+  s = s.write("    movapd %xmm1, %xmm2\n    mulsd %xmm0, %xmm2\n");  // v = z*r
   s = s.write(fc_ld("%xmm3", ".Lfc_s6"));
   s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm4", ".Lfc_s5"));
   s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm4", ".Lfc_s4"));
@@ -2123,7 +2128,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
   // The (1-w)-hz rewrite recovers the bits 1-hz threw away; computing
   // 1 - hz + z*z*p directly loses them and costs ~2 ulp.
   s = s.write("__fern_kcos:\n");
-  s = s.write("    movsd %xmm0, %xmm1\n    mulsd %xmm0, %xmm1\n");  // z
+  s = s.write("    movapd %xmm0, %xmm1\n    mulsd %xmm0, %xmm1\n");  // z
   s = s.write(fc_ld("%xmm3", ".Lfc_c6"));
   s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c5"));
   s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c4"));
@@ -2131,12 +2136,12 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
   s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c2"));
   s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c1"));
   s = s.write("    mulsd %xmm1, %xmm3\n    mulsd %xmm1, %xmm3\n");  // z*(z*p)
-  s = s.write("    movsd %xmm1, %xmm4\n" + fc_ld("%xmm2", ".Lfc_half") + "    mulsd %xmm2, %xmm4\n");  // hz
+  s = s.write("    movapd %xmm1, %xmm4\n" + fc_ld("%xmm2", ".Lfc_half") + "    mulsd %xmm2, %xmm4\n");  // hz
   s = s.write(fc_ld("%xmm5", ".Lfc_one") + "    subsd %xmm4, %xmm5\n");  // w = 1-hz
   s = s.write(fc_ld("%xmm6", ".Lfc_one") + "    subsd %xmm5, %xmm6\n");  // 1-w
   s = s.write("    subsd %xmm4, %xmm6\n");  // (1-w)-hz
   s = s.write("    addsd %xmm3, %xmm6\n");  // + z*z*p
-  s = s.write("    movsd %xmm5, %xmm0\n    addsd %xmm6, %xmm0\n    ret\n");
+  s = s.write("    movapd %xmm5, %xmm0\n    addsd %xmm6, %xmm0\n    ret\n");
 
   // __fern_sin_f64: quadrant 0..3 -> sin r, cos r, -sin r, -cos r. The odd
   // quadrant picks the cos kernel and quadrant >= 2 flips the sign, so exactly
@@ -2186,22 +2191,22 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
   s = s.write(fc_ld("%xmm1", ".Lfc_expunf") + "    ucomisd %xmm1, %xmm0\n    jb .Lfexp_zero\n");
   s = s.write(fc_ld("%xmm1", ".Lfc_invln2") + "    mulsd %xmm0, %xmm1\n");
   s = s.write("    roundsd $0, %xmm1, %xmm1\n    cvttsd2si %xmm1, %rax\n");  // k
-  s = s.write("    movsd %xmm1, %xmm2\n" + fc_ld("%xmm7", ".Lfc_ln2hi") + "    mulsd %xmm7, %xmm2\n");
-  s = s.write("    movsd %xmm0, %xmm3\n    subsd %xmm2, %xmm3\n");  // hi
+  s = s.write("    movapd %xmm1, %xmm2\n" + fc_ld("%xmm7", ".Lfc_ln2hi") + "    mulsd %xmm7, %xmm2\n");
+  s = s.write("    movapd %xmm0, %xmm3\n    subsd %xmm2, %xmm3\n");  // hi
   s = s.write(fc_ld("%xmm7", ".Lfc_ln2lo") + "    mulsd %xmm7, %xmm1\n");  // lo
-  s = s.write("    movsd %xmm3, %xmm0\n    subsd %xmm1, %xmm0\n");  // r
-  s = s.write("    movsd %xmm0, %xmm4\n    mulsd %xmm0, %xmm4\n");  // t
+  s = s.write("    movapd %xmm3, %xmm0\n    subsd %xmm1, %xmm0\n");  // r
+  s = s.write("    movapd %xmm0, %xmm4\n    mulsd %xmm0, %xmm4\n");  // t
   s = s.write(fc_ld("%xmm5", ".Lfc_p5"));
   s = s.write(fc_horner("%xmm5", "%xmm4", "%xmm7", ".Lfc_p4"));
   s = s.write(fc_horner("%xmm5", "%xmm4", "%xmm7", ".Lfc_p3"));
   s = s.write(fc_horner("%xmm5", "%xmm4", "%xmm7", ".Lfc_p2"));
   s = s.write(fc_horner("%xmm5", "%xmm4", "%xmm7", ".Lfc_p1"));
   s = s.write("    mulsd %xmm4, %xmm5\n");  // t*(…)
-  s = s.write("    movsd %xmm0, %xmm6\n    subsd %xmm5, %xmm6\n");  // c
-  s = s.write("    movsd %xmm0, %xmm7\n    mulsd %xmm6, %xmm7\n");  // r*c
+  s = s.write("    movapd %xmm0, %xmm6\n    subsd %xmm5, %xmm6\n");  // c
+  s = s.write("    movapd %xmm0, %xmm7\n    mulsd %xmm6, %xmm7\n");  // r*c
   s = s.write(fc_ld("%xmm2", ".Lfc_two") + "    subsd %xmm6, %xmm2\n");  // 2-c
   s = s.write("    divsd %xmm2, %xmm7\n");
-  s = s.write("    movsd %xmm1, %xmm2\n    subsd %xmm7, %xmm2\n");  // lo - …
+  s = s.write("    movapd %xmm1, %xmm2\n    subsd %xmm7, %xmm2\n");  // lo - …
   s = s.write("    subsd %xmm3, %xmm2\n");  // - hi
   s = s.write(fc_ld("%xmm0", ".Lfc_one") + "    subsd %xmm2, %xmm0\n");
   // 2^k as two half-scales; one exponent field cannot hold the subnormal
@@ -2219,8 +2224,6 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
   // internal/fdlibm/logtab.go documents; instruction for instruction native
   // x86-64's, with each table operand loaded into %xmm1 first. %r8 holds
   // .Lfc_logtab's address throughout, %rdx is 3·i, the row's index in doubles.
-  // Register copies are movapd: movsd merges into the destination's high lane,
-  // which chains each call to registers the previous one left behind.
   s = s.write(".globl __fern_log_f64\n");
   s = s.write(".type __fern_log_f64, @function\n");
   s = s.write("__fern_log_f64:\n");
@@ -2312,7 +2315,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
   s = s.write(".globl __fern_pow_f64\n");
   s = s.write(".type __fern_pow_f64, @function\n");
   s = s.write("__fern_pow_f64:\n");
-  s = s.write("    cvttsd2si %xmm1, %rax\n    cvtsi2sd %rax, %xmm2\n");
+  s = s.write("    cvttsd2si %xmm1, %rax\n    xorps %xmm2, %xmm2\n    cvtsi2sd %rax, %xmm2\n");
   s = s.write("    ucomisd %xmm1, %xmm2\n    jne .Lfpow_general\n");
   // |n|, branch-free: (n ^ (n>>63)) - (n>>63). Re-entered once with a
   // reciprocated base and a negated n; see the overflow retry below.
@@ -2320,7 +2323,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
   s = s.write("    movq %rax, %rcx\n    movq %rax, %rdx\n    sarq $63, %rdx\n");
   s = s.write("    xorq %rdx, %rcx\n    subq %rdx, %rcx\n");
   s = s.write("    cmpq $1074, %rcx\n    ja .Lfpow_general\n");
-  s = s.write(fc_ld("%xmm3", ".Lfc_one") + "    movsd %xmm0, %xmm4\n");
+  s = s.write(fc_ld("%xmm3", ".Lfc_one") + "    movapd %xmm0, %xmm4\n");
   s = s.write(".Lfpow_loop:\n    testq $1, %rcx\n    jz .Lfpow_skip\n");
   s = s.write("    mulsd %xmm4, %xmm3\n");
   s = s.write(".Lfpow_skip:\n    mulsd %xmm4, %xmm4\n    shrq $1, %rcx\n    jnz .Lfpow_loop\n");
@@ -2332,10 +2335,10 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
   // directly, so the retry runs at most once and needs no flag.
   s = s.write("    xorpd %xmm6, %xmm6\n    ucomisd %xmm6, %xmm5\n");
   s = s.write("    jne .Lfpow_recip\n    jp .Lfpow_recip\n");
-  s = s.write(fc_ld("%xmm5", ".Lfc_one") + "    divsd %xmm0, %xmm5\n    movsd %xmm5, %xmm0\n");
+  s = s.write(fc_ld("%xmm5", ".Lfc_one") + "    divsd %xmm0, %xmm5\n    movapd %xmm5, %xmm0\n");
   s = s.write("    negq %rax\n    jmp .Lfpow_retry\n");
-  s = s.write(".Lfpow_recip:\n    movsd %xmm5, %xmm3\n");
-  s = s.write(".Lfpow_done:\n    movsd %xmm3, %xmm0\n    ret\n");
+  s = s.write(".Lfpow_recip:\n    movapd %xmm5, %xmm3\n");
+  s = s.write(".Lfpow_done:\n    movapd %xmm3, %xmm0\n    ret\n");
   // General case: x^y = sign · exp(y·ln|x|). ln is defined only for x > 0, so
   // a negative base is split into a sign and |x| first: for an integral y the
   // sign is (-1)^y, and a non-integral y makes the result NaN. Every |y| >= 2^53
@@ -2354,7 +2357,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
   s = s.write("    movabsq $0x4340000000000000, %rcx\n    cmpq %rcx, %rdx\n    jb .Lfpow_parity\n");
   s = s.write("    movabsq $0x7ff0000000000000, %rcx\n    cmpq %rcx, %rdx\n    jbe .Lfpow_mag\n");  // |y| >= 2^53, finite or ±Inf: an even integer
   s = s.write("    jmp .Lfpow_nan\n");  // y is NaN
-  s = s.write(".Lfpow_parity:\n    cvttsd2si %xmm1, %rdx\n    cvtsi2sd %rdx, %xmm2\n");
+  s = s.write(".Lfpow_parity:\n    cvttsd2si %xmm1, %rdx\n    xorps %xmm2, %xmm2\n    cvtsi2sd %rdx, %xmm2\n");
   s = s.write("    ucomisd %xmm1, %xmm2\n    jne .Lfpow_nan\n");  // y is not an integer
   s = s.write("    testq $1, %rdx\n    jz .Lfpow_mag\n");  // even exponent
   s = s.write("    movabsq $0xbff0000000000000, %rcx\n    movq %rcx, %xmm2\n    movsd %xmm2, 8(%rsp)\n");
