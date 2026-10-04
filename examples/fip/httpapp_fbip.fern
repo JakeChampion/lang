@@ -1,0 +1,1245 @@
+// examples/fip/httpapp_fbip.fern — the FBIP variant of the HTTP-like
+// application pipeline (#9586, experiment 4): the same parse, routes,
+// bounded counter table, limits and answers as `httpapp_fip.fern`, with the
+// response buffer held INSIDE the application state so the data plane is
+// one call, `serve(own app, wire, len): App`, rather than two.
+//
+// This is the ergonomic shape: the state has field names, a response is a
+// field of it, and the driver hands one value in and takes one value out.
+// What it costs is that every response byte is written through a rebuild
+// of the whole `App` — `App { ...app, out: app.out.with(at, b) }` — which
+// the compiler pairs with the box the call consumed and writes in place.
+// Each rebuild is allocation-free; it is not free. `httpapp_fip.fern` threads
+// the response buffer as its own `own` parameter and records the decision
+// in the state instead, and the gap between the two is what this pair is
+// for, as it was for the packet codec (`packet_fbip.fern`).
+//
+// The functions that construct are `fbip`; the byte scanners they lean on
+// are `fip`, as in the other variant.
+import "core/cmp";
+import "std/bench";
+import "std/i32";
+import "std/i64";
+
+// ===================== CAPACITIES AND LIMITS =====================
+
+fip function max_wire(): i32 {
+  return 1024;
+}
+
+fip function max_out(): i32 {
+  return 1024;
+}
+
+// The counter table: 256 slots, open addressing with linear probing over
+// the id's low bits. The workload draws ids from 320 values, so the table
+// fills and the overflow answers 503.
+fip function max_counters(): i32 {
+  return 256;
+}
+
+fip function slot_mask(): i32 {
+  return 255;
+}
+
+fip function id_space(): i32 {
+  return 320;
+}
+
+// A request may carry at most 8 header fields and 240 body bytes.
+fip function max_headers(): i32 {
+  return 8;
+}
+
+fip function max_body(): i32 {
+  return 240;
+}
+
+// ===================== RESPONSE CLASSES =====================
+//
+// Classes 1..6 are the codec's six refusals, every one a 400. 7..11 are the
+// application's answers other than 200.
+fip function cl_ok(): i32 {
+  return 0;
+}
+
+fip function cl_bad_request_line(): i32 {
+  return 1;
+}
+
+fip function cl_no_version(): i32 {
+  return 2;
+}
+
+fip function cl_transfer_encoding(): i32 {
+  return 3;
+}
+
+fip function cl_duplicate_length(): i32 {
+  return 4;
+}
+
+fip function cl_bad_length(): i32 {
+  return 5;
+}
+
+fip function cl_truncated(): i32 {
+  return 6;
+}
+
+fip function cl_not_found(): i32 {
+  return 7;
+}
+
+fip function cl_method(): i32 {
+  return 8;
+}
+
+fip function cl_headers(): i32 {
+  return 9;
+}
+
+fip function cl_body(): i32 {
+  return 10;
+}
+
+fip function cl_full(): i32 {
+  return 11;
+}
+
+// Body kinds a decision records: a literal chosen by the status, bytes
+// copied out of the wire, a decimal integer, or the metrics text.
+fip function body_literal(): i32 {
+  return 0;
+}
+
+fip function body_wire(): i32 {
+  return 1;
+}
+
+fip function body_int(): i32 {
+  return 2;
+}
+
+fip function body_metrics(): i32 {
+  return 3;
+}
+
+fip function cr(): u8 {
+  return 13 as u8;
+}
+
+fip function lf(): u8 {
+  return 10 as u8;
+}
+
+fip function sp(): u8 {
+  return 32 as u8;
+}
+
+fip function colon(): u8 {
+  return 58 as u8;
+}
+
+// ===================== THE STATE =====================
+//
+// Everything the service remembers between requests, plus the decision the
+// last `apply` made. The three arrays are the counter table: `used` marks a
+// live slot, `ids` holds its id, `counts` its value.
+struct App {
+  live: i32,
+  total: i64,
+  seen: i64,
+  served: i64,
+  refused: i64,
+  full: i64,
+  r_class: i32,
+  r_status: i32,
+  r_kind: i32,
+  r_from: i32,
+  r_len: i32,
+  r_value: i32,
+  r_rid_at: i32,
+  r_rid_len: i32,
+  out_len: i32,
+  used: i64[],
+  ids: i64[],
+  counts: i64[],
+  out: u8[],
+}
+
+// ===================== INITIALIZATION (allocating, once) =====================
+
+function zeros_i64(n: i32): i64[] {
+  let xs: i64[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    xs = xs.append(0 as i64);
+    i = i + 1;
+  }
+  return xs;
+}
+
+function zeros_u8(n: i32): u8[] {
+  let xs: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    xs = xs.with(i, 0 as u8);
+    i = i + 1;
+  }
+  return xs;
+}
+
+function new_app(): App {
+  return App {
+    live: 0, total: 0 as i64, seen: 0 as i64, served: 0 as i64, refused: 0 as i64, full: 0 as i64,
+    r_class: 0, r_status: 0, r_kind: 0, r_from: 0, r_len: 0, r_value: 0, r_rid_at: 0, r_rid_len: 0,
+    out_len: 0,
+    used: zeros_i64(max_counters()),
+    ids: zeros_i64(max_counters()),
+    counts: zeros_i64(max_counters()),
+    out: zeros_u8(max_out()),
+  };
+}
+
+// ===================== BYTE HELPERS (fip) =====================
+
+fip function lower(b: u8): u8 {
+  if (b >= 65 as u8 && b <= 90 as u8) {
+    return (b as i32 + 32) as u8;
+  }
+  return b;
+}
+
+// find_crlf is the index of the first CRLF at or after `from` and before
+// `end`, or -1.
+fip function find_crlf(buf: u8[], from: i32, end: i32): i32 {
+  let i: i32 = from;
+  while (i + 1 < end) {
+    if (buf[i] == cr() && buf[i + 1] == lf()) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// find_byte is the index of the first `b` in [from, end), or -1.
+fip function find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
+  let i: i32 = from;
+  while (i < end) {
+    if (buf[i] == b) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// name_is reports whether the header name in buf[from, end) is `lit`,
+// case-insensitively; `lit` is spelled in lower case.
+fip function name_is(buf: u8[], from: i32, end: i32, lit: string): boolean {
+  if (end - from != lit.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < lit.len()) {
+    if (lower(buf[from + i]) != lit[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// bytes_are reports whether buf[from, end) spells `lit` exactly.
+fip function bytes_are(buf: u8[], from: i32, end: i32, lit: string): boolean {
+  if (end - from != lit.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < lit.len()) {
+    if (buf[from + i] != lit[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// starts_with reports whether buf[from, end) begins with `lit`.
+fip function starts_with(buf: u8[], from: i32, end: i32, lit: string): boolean {
+  if (end - from < lit.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < lit.len()) {
+    if (buf[from + i] != lit[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+fip function is_space(b: u8): boolean {
+  return b == sp() || b == 9 as u8;
+}
+
+fip function trim_start(buf: u8[], from: i32, end: i32): i32 {
+  let i: i32 = from;
+  while (i < end && is_space(buf[i])) {
+    i = i + 1;
+  }
+  return i;
+}
+
+fip function trim_end(buf: u8[], from: i32, end: i32): i32 {
+  let e: i32 = end;
+  while (e > from && is_space(buf[e - 1])) {
+    e = e - 1;
+  }
+  return e;
+}
+
+// parse_int is the decimal value in buf[from, end) with std/http's
+// Content-Length acceptance: digits only, non-empty, no i32 overflow; -1
+// refuses. The same function reads the id out of a path.
+fip function parse_int(buf: u8[], from: i32, end: i32): i32 {
+  let s: i32 = trim_start(buf, from, end);
+  let e: i32 = trim_end(buf, s, end);
+  if (e <= s) {
+    return 0 - 1;
+  }
+  let acc: i32 = 0;
+  let i: i32 = s;
+  while (i < e) {
+    let b: i32 = buf[i] as i32;
+    if (b < 48 || b > 57) {
+      return 0 - 1;
+    }
+    let digit: i32 = b - 48;
+    if (acc > 214748364 || acc == 214748364 && digit > 7) {
+      return 0 - 1;
+    }
+    acc = acc * 10 + digit;
+    i = i + 1;
+  }
+  return acc;
+}
+
+// put_str writes `lit` at `at`.
+fip function put_str(own out: u8[], at: i32, lit: string): u8[] {
+  let i: i32 = 0;
+  while (i < lit.len()) {
+    out = out.with(at + i, lit[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// put_bytes copies src[from, from + n) to `at`.
+fip function put_bytes(own out: u8[], at: i32, src: u8[], from: i32, n: i32): u8[] {
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(at + i, src[from + i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// digits is how many decimal digits `n` prints as.
+fip function digits(n: i32): i32 {
+  let d: i32 = 1;
+  let v: i32 = n;
+  while (v >= 10) {
+    v = v / 10;
+    d = d + 1;
+  }
+  return d;
+}
+
+// put_int writes `n` in decimal at `at`, `digits(n)` bytes.
+fip function put_int(own out: u8[], at: i32, n: i32): u8[] {
+  let d: i32 = digits(n);
+  let v: i32 = n;
+  let i: i32 = d - 1;
+  while (i >= 0) {
+    out = out.with(at + i, (48 + v % 10) as u8);
+    v = v / 10;
+    i = i - 1;
+  }
+  return out;
+}
+
+// ===================== THE COUNTER TABLE (fip) =====================
+
+fip function home_slot(id: i32): i32 {
+  return id & slot_mask();
+}
+
+// find_slot is the slot holding `id`, or -1.
+fip function find_slot(app: App, id: i32): i32 {
+  let slot: i32 = home_slot(id);
+  let probes: i32 = 0;
+  while (probes < max_counters()) {
+    if (app.used[slot] == 0 as i64) {
+      return 0 - 1;
+    }
+    if (app.ids[slot] == id as i64) {
+      return slot;
+    }
+    slot = slot + 1 & slot_mask();
+    probes = probes + 1;
+  }
+  return 0 - 1;
+}
+
+// free_slot is the first empty slot at or after the home slot. Only called
+// with live < max_counters(), so one exists.
+fip function free_slot(app: App, id: i32): i32 {
+  let slot: i32 = home_slot(id);
+  while (app.used[slot] != 0 as i64) {
+    slot = slot + 1 & slot_mask();
+  }
+  return slot;
+}
+
+fbip function bump(own app: App, slot: i32): App {
+  let c: i64 = app.counts[slot] + 1 as i64;
+  return App { ...app, counts: app.counts.with(slot, c), total: app.total + 1 as i64 };
+}
+
+fbip function insert(own app: App, slot: i32, id: i32): App {
+  return App {
+    ...app,
+    used: app.used.with(slot, 1 as i64),
+    ids: app.ids.with(slot, id as i64),
+    counts: app.counts.with(slot, 1 as i64),
+    live: app.live + 1,
+    total: app.total + 1 as i64,
+  };
+}
+
+// ===================== THE DECISION (fip) =====================
+
+// decide records what the response will be and tallies it. Everything
+// `frame` needs is in the state after this.
+fbip function decide(own app: App, class: i32, status: i32, kind: i32, from: i32, len: i32, value: i32, rid_at: i32, rid_len: i32): App {
+  let served: i64 = app.served;
+  let refused: i64 = app.refused;
+  if (status == 200) {
+    served = served + 1 as i64;
+  } else {
+    refused = refused + 1 as i64;
+  }
+  return App {
+    ...app,
+    seen: app.seen + 1 as i64,
+    served: served,
+    refused: refused,
+    r_class: class,
+    r_status: status,
+    r_kind: kind,
+    r_from: from,
+    r_len: len,
+    r_value: value,
+    r_rid_at: rid_at,
+    r_rid_len: rid_len,
+  };
+}
+
+// reject is the 400 every refused request gets: no request id, since the
+// request was never parsed far enough to have one.
+fbip function reject(own app: App, class: i32): App {
+  return decide(app, class, 400, body_literal(), 0, 0, 0, 0, 0);
+}
+
+fbip function answer(own app: App, class: i32, status: i32, rid_at: i32, rid_len: i32): App {
+  return decide(app, class, status, body_literal(), 0, 0, 0, rid_at, rid_len);
+}
+
+// counter is `/counter/<id>`: GET reads, POST increments or inserts, and an
+// insert into a full table is the 503.
+fbip function counter(own app: App, wire: u8[], sp1: i32, id_at: i32, id_end: i32, rid_at: i32, rid_len: i32): App {
+  let id: i32 = parse_int(wire, id_at, id_end);
+  if (id < 0 || id >= id_space()) {
+    return answer(app, cl_not_found(), 404, rid_at, rid_len);
+  }
+  let slot: i32 = find_slot(app, id);
+  if (bytes_are(wire, 0, sp1, "GET")) {
+    if (slot < 0) {
+      return answer(app, cl_not_found(), 404, rid_at, rid_len);
+    }
+    let have: i32 = app.counts[slot] as i32;
+    return decide(app, cl_ok(), 200, body_int(), 0, 0, have, rid_at, rid_len);
+  }
+  if (!bytes_are(wire, 0, sp1, "POST")) {
+    return answer(app, cl_method(), 405, rid_at, rid_len);
+  }
+  if (slot >= 0) {
+    app = bump(app, slot);
+    let now: i32 = app.counts[slot] as i32;
+    return decide(app, cl_ok(), 200, body_int(), 0, 0, now, rid_at, rid_len);
+  }
+  if (app.live >= max_counters()) {
+    app = App { ...app, full: app.full + 1 as i64 };
+    return answer(app, cl_full(), 503, rid_at, rid_len);
+  }
+  let free: i32 = free_slot(app, id);
+  app = insert(app, free, id);
+  return decide(app, cl_ok(), 200, body_int(), 0, 0, 1, rid_at, rid_len);
+}
+
+// route is the handler, spelled the same way in the other two variants.
+fbip function route(own app: App, wire: u8[], sp1: i32, path_at: i32, path_end: i32, rid_at: i32, rid_len: i32): App {
+  let get: boolean = bytes_are(wire, 0, sp1, "GET");
+  if (bytes_are(wire, path_at, path_end, "/health")) {
+    if (!get) {
+      return answer(app, cl_method(), 405, rid_at, rid_len);
+    }
+    return answer(app, cl_ok(), 200, rid_at, rid_len);
+  }
+  if (bytes_are(wire, path_at, path_end, "/metrics")) {
+    if (!get) {
+      return answer(app, cl_method(), 405, rid_at, rid_len);
+    }
+    return decide(app, cl_ok(), 200, body_metrics(), 0, 0, 0, rid_at, rid_len);
+  }
+  if (starts_with(wire, path_at, path_end, "/users/")) {
+    if (!get) {
+      return answer(app, cl_method(), 405, rid_at, rid_len);
+    }
+    return decide(app, cl_ok(), 200, body_wire(), path_at + 7, path_end - path_at - 7, 0, rid_at, rid_len);
+  }
+  if (starts_with(wire, path_at, path_end, "/counter/")) {
+    return counter(app, wire, sp1, path_at + 9, path_end, rid_at, rid_len);
+  }
+  return answer(app, cl_not_found(), 404, rid_at, rid_len);
+}
+
+// apply parses the request in wire[0, wire_len), applies the limits, routes
+// it and records the decision. The parse walks the header block once,
+// keeping what the route needs — the field count, the request id's bounds
+// and the body's — as scalars.
+// fern-lint: allow cyclomatic-complexity
+fbip function apply(own app: App, wire: u8[], wire_len: i32): App {
+  let hend: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i + 3 < wire_len) {
+    if (wire[i] == cr() && wire[i + 1] == lf() && wire[i + 2] == cr() && wire[i + 3] == lf()) {
+      hend = i;
+      i = wire_len;
+    }
+    i = i + 1;
+  }
+  if (hend < 0) {
+    return reject(app, cl_truncated());
+  }
+  let body_at: i32 = hend + 4;
+  let line_end: i32 = find_crlf(wire, 0, wire_len);
+
+  // The headers first, as std/http does: a Content-Length problem is
+  // refused before the request line is looked at.
+  let cl: i32 = 0;
+  let cl_seen: i32 = 0;
+  let fields: i32 = 0;
+  let te_seen: boolean = false;
+  let bad_cl: boolean = false;
+  let rid_at: i32 = 0;
+  let rid_len: i32 = 0;
+  let rid_seen: boolean = false;
+  let at: i32 = line_end + 2;
+  if (at > hend) {
+    at = hend;
+  }
+  while (at < hend) {
+    let e: i32 = find_crlf(wire, at, hend);
+    if (e < 0) {
+      e = hend;
+    }
+    let c: i32 = find_byte(wire, at, e, colon());
+    if (c > at) {
+      fields = fields + 1;
+      if (name_is(wire, at, c, "content-length")) {
+        cl_seen = cl_seen + 1;
+        let v: i32 = parse_int(wire, c + 1, e);
+        if (v < 0) {
+          bad_cl = true;
+        }
+        cl = v;
+      }
+      if (name_is(wire, at, c, "transfer-encoding")) {
+        te_seen = true;
+      }
+      if (!rid_seen && name_is(wire, at, c, "x-request-id")) {
+        rid_seen = true;
+        rid_at = trim_start(wire, c + 1, e);
+        rid_len = trim_end(wire, rid_at, e) - rid_at;
+      }
+    }
+    at = e + 2;
+  }
+  if (te_seen) {
+    return reject(app, cl_transfer_encoding());
+  }
+  if (cl_seen > 1) {
+    return reject(app, cl_duplicate_length());
+  }
+  if (cl_seen == 1 && bad_cl) {
+    return reject(app, cl_bad_length());
+  }
+  if (cl_seen == 0) {
+    cl = 0;
+  }
+  if (body_at + cl > wire_len) {
+    return reject(app, cl_truncated());
+  }
+
+  // The request line: method, a space, the path, a space, the rest.
+  let sp1: i32 = find_byte(wire, 0, line_end, sp());
+  if (sp1 < 0) {
+    return reject(app, cl_bad_request_line());
+  }
+  let sp2: i32 = find_byte(wire, sp1 + 1, line_end, sp());
+  if (sp2 < 0) {
+    return reject(app, cl_no_version());
+  }
+
+  // The application's limits, once the request is well formed: too many
+  // fields is the 431, too long a body the 413. Both carry the request id
+  // back, since the request was parsed.
+  if (fields > max_headers()) {
+    return answer(app, cl_headers(), 431, rid_at, rid_len);
+  }
+  if (cl > max_body()) {
+    return answer(app, cl_body(), 413, rid_at, rid_len);
+  }
+  return route(app, wire, sp1, sp1 + 1, sp2, rid_at, rid_len);
+}
+
+// ===================== FRAMING (fbip) =====================
+//
+// Every write goes through `emit`, a rebuild of the state with one byte of
+// its response buffer changed.
+
+fbip function emit(own app: App, at: i32, b: u8): App {
+  return App { ...app, out: app.out.with(at, b) };
+}
+
+fbip function emit_str(own app: App, at: i32, lit: string): App {
+  let i: i32 = 0;
+  while (i < lit.len()) {
+    app = emit(app, at + i, lit[i]);
+    i = i + 1;
+  }
+  return app;
+}
+
+fbip function emit_bytes(own app: App, at: i32, src: u8[], from: i32, n: i32): App {
+  let i: i32 = 0;
+  while (i < n) {
+    app = emit(app, at + i, src[from + i]);
+    i = i + 1;
+  }
+  return app;
+}
+
+fbip function emit_int(own app: App, at: i32, n: i32): App {
+  let d: i32 = digits(n);
+  let v: i32 = n;
+  let i: i32 = d - 1;
+  while (i >= 0) {
+    app = emit(app, at + i, (48 + v % 10) as u8);
+    v = v / 10;
+    i = i - 1;
+  }
+  return app;
+}
+
+fip function reason_len(status: i32): i32 {
+  if (status == 200) {
+    return 2;
+  }
+  if (status == 404) {
+    return 9;
+  }
+  if (status == 405) {
+    return 18;
+  }
+  if (status == 413) {
+    return 17;
+  }
+  if (status == 431) {
+    return 31;
+  }
+  if (status == 503) {
+    return 19;
+  }
+  return 11;
+}
+
+fbip function emit_reason(own app: App, at: i32, status: i32): App {
+  if (status == 200) {
+    return emit_str(app, at, "OK");
+  }
+  if (status == 404) {
+    return emit_str(app, at, "Not Found");
+  }
+  if (status == 405) {
+    return emit_str(app, at, "Method Not Allowed");
+  }
+  if (status == 413) {
+    return emit_str(app, at, "Payload Too Large");
+  }
+  if (status == 431) {
+    return emit_str(app, at, "Request Header Fields Too Large");
+  }
+  if (status == 503) {
+    return emit_str(app, at, "Service Unavailable");
+  }
+  return emit_str(app, at, "Bad Request");
+}
+
+// literal_len / emit_literal are the body a literal-bodied status gets.
+fip function literal_len(status: i32): i32 {
+  if (status == 200) {
+    return 2;
+  }
+  if (status == 404) {
+    return 9;
+  }
+  if (status == 405) {
+    return 18;
+  }
+  if (status == 413) {
+    return 14;
+  }
+  if (status == 431) {
+    return 16;
+  }
+  if (status == 503) {
+    return 18;
+  }
+  return 11;
+}
+
+fbip function emit_literal(own app: App, at: i32, status: i32): App {
+  if (status == 200) {
+    return emit_str(app, at, "ok");
+  }
+  if (status == 404) {
+    return emit_str(app, at, "not found");
+  }
+  if (status == 405) {
+    return emit_str(app, at, "method not allowed");
+  }
+  if (status == 413) {
+    return emit_str(app, at, "body too large");
+  }
+  if (status == 431) {
+    return emit_str(app, at, "too many headers");
+  }
+  if (status == 503) {
+    return emit_str(app, at, "counter table full");
+  }
+  return emit_str(app, at, "bad request");
+}
+
+// The metrics body, one `name value` line per tally:
+//
+//   requests N\nserved N\nrefused N\nfull N\ncounters N\ncounter_total N\n
+fip function metrics_len(app: App): i32 {
+  return 9 + digits(app.seen as i32) + 1
+    + 7 + digits(app.served as i32) + 1
+    + 8 + digits(app.refused as i32) + 1
+    + 5 + digits(app.full as i32) + 1
+    + 9 + digits(app.live) + 1
+    + 14 + digits(app.total as i32) + 1;
+}
+
+fbip function emit_line(own app: App, at: i32, name: string, n: i32): App {
+  app = emit_str(app, at, name);
+  app = emit_int(app, at + name.len(), n);
+  return emit(app, at + name.len() + digits(n), lf());
+}
+
+fbip function emit_metrics(own app: App, at: i32): App {
+  let seen: i32 = app.seen as i32;
+  let served: i32 = app.served as i32;
+  let refused: i32 = app.refused as i32;
+  let full: i32 = app.full as i32;
+  let live: i32 = app.live;
+  let total: i32 = app.total as i32;
+  app = emit_line(app, at, "requests ", seen);
+  at = at + 9 + digits(seen) + 1;
+  app = emit_line(app, at, "served ", served);
+  at = at + 7 + digits(served) + 1;
+  app = emit_line(app, at, "refused ", refused);
+  at = at + 8 + digits(refused) + 1;
+  app = emit_line(app, at, "full ", full);
+  at = at + 5 + digits(full) + 1;
+  app = emit_line(app, at, "counters ", live);
+  at = at + 9 + digits(live) + 1;
+  return emit_line(app, at, "counter_total ", total);
+}
+
+// body_len is how long the decided body is.
+fip function body_len(app: App): i32 {
+  if (app.r_kind == body_wire()) {
+    return app.r_len;
+  }
+  if (app.r_kind == body_int()) {
+    return digits(app.r_value);
+  }
+  if (app.r_kind == body_metrics()) {
+    return metrics_len(app);
+  }
+  return literal_len(app.r_status);
+}
+
+// head_len is how many bytes the response head takes: the status line, the
+// request id header when there is one, the length, `Connection: close` and
+// the blank line.
+fip function head_len(status: i32, rid_len: i32, blen: i32): i32 {
+  let n: i32 = 9 + 3 + 1 + reason_len(status) + 2 + 16 + digits(blen) + 23;
+  if (rid_len > 0) {
+    n = n + 14 + rid_len + 2;
+  }
+  return n;
+}
+
+// emit_head writes the response head std/http would serialise: the status
+// line, the request id header when the request carried one (HeaderMap
+// folds the name to lower case), the length and `Connection: close`.
+fbip function emit_head(own app: App, status: i32, src: u8[], rid_at: i32, rid_len: i32, blen: i32): App {
+  let at: i32 = 0;
+  app = emit_str(app, at, "HTTP/1.1 ");
+  at = at + 9;
+  app = emit_int(app, at, status);
+  at = at + 3;
+  app = emit(app, at, sp());
+  at = at + 1;
+  app = emit_reason(app, at, status);
+  at = at + reason_len(status);
+  app = emit(app, at, cr());
+  app = emit(app, at + 1, lf());
+  at = at + 2;
+  if (rid_len > 0) {
+    app = emit_str(app, at, "x-request-id: ");
+    at = at + 14;
+    app = emit_bytes(app, at, src, rid_at, rid_len);
+    at = at + rid_len;
+    app = emit(app, at, cr());
+    app = emit(app, at + 1, lf());
+    at = at + 2;
+  }
+  app = emit_str(app, at, "Content-Length: ");
+  at = at + 16;
+  app = emit_int(app, at, blen);
+  at = at + digits(blen);
+  return emit_str(app, at, "\r\nConnection: close\r\n\r\n");
+}
+
+// frame writes the decision `apply` recorded into the state's response
+// buffer and records its length.
+fbip function frame(own app: App, wire: u8[]): App {
+  let blen: i32 = body_len(app);
+  let status: i32 = app.r_status;
+  let kind: i32 = app.r_kind;
+  let rid_at: i32 = app.r_rid_at;
+  let rid_len: i32 = app.r_rid_len;
+  let from: i32 = app.r_from;
+  let len: i32 = app.r_len;
+  let value: i32 = app.r_value;
+  let h: i32 = head_len(status, rid_len, blen);
+  app = emit_head(app, status, wire, rid_at, rid_len, blen);
+  if (kind == body_wire()) {
+    app = emit_bytes(app, h, wire, from, len);
+  } else if (kind == body_int()) {
+    app = emit_int(app, h, value);
+  } else if (kind == body_metrics()) {
+    app = emit_metrics(app, h);
+  } else {
+    app = emit_literal(app, h, status);
+  }
+  return App { ...app, out_len: h + blen };
+}
+
+// serve is the whole plane: one value in, one value out.
+fbip function serve(own app: App, wire: u8[], wire_len: i32): App {
+  app = apply(app, wire, wire_len);
+  return frame(app, wire);
+}
+
+// ===================== THE WORKLOAD =====================
+//
+// Identical in the three variants, verbatim, so the runs differ in how the
+// bytes and the state are held and in nothing else. Every 17th request is
+// malformed, cycling through the six refusals; every 23rd carries six extra
+// header fields, for the 431; every 29th that has a body carries 300 bytes,
+// for the 413. The request's length is left in the wire buffer's last four
+// bytes, past anything a request can reach.
+
+fip function wire_len_at(): i32 {
+  return max_wire() - 4;
+}
+
+fip function gen_body_len(n: i64): i32 {
+  if (n % (29 as i64) == 0 as i64) {
+    return 300;
+  }
+  return (n * (37 as i64) % (241 as i64)) as i32;
+}
+
+fip function gen_byte(n: i64, j: i32): u8 {
+  return (((n + j as i64) % (26 as i64)) as i32 + 97) as u8;
+}
+
+fip function corruption(n: i64): i32 {
+  if (n % (17 as i64) != 0 as i64) {
+    return 0 - 1;
+  }
+  return (n / (17 as i64) % (6 as i64)) as i32;
+}
+
+fip function extra_headers(n: i64): boolean {
+  return n % (23 as i64) == 0 as i64;
+}
+
+fip function mix64(n: i64): i64 {
+  let x: i64 = n * (2654435761 as i64);
+  x = x ^ x >> 15 as i64;
+  x = x * (2246822519 as i64);
+  x = x ^ x >> 13 as i64;
+  if (x < 0 as i64) {
+    x = 0 - x;
+  }
+  return x;
+}
+
+// The id a request names: 320 values, drawn by the mixing hash, over a
+// 256-slot table.
+fip function id_of(n: i64): i32 {
+  return (mix64(n) % (id_space() as i64)) as i32;
+}
+
+// Methods 0..3: GET, POST, PUT, DELETE. Only POST and PUT carry a body. On
+// `/counter/<id>` 70% of requests are the POST, 20% the GET and 10% a method
+// the route refuses; everywhere else 95% are the GET.
+fip function method_for(n: i64, p: i32): i32 {
+  let bucket: i32 = (mix64(n + 1 as i64) % (20 as i64)) as i32;
+  if (p == 2) {
+    if (bucket < 14) {
+      return 1;
+    }
+    if (bucket < 18) {
+      return 0;
+    }
+    if (bucket < 19) {
+      return 2;
+    }
+    return 3;
+  }
+  if (bucket < 19) {
+    return 0;
+  }
+  return 1;
+}
+
+fip function method_len(m: i32): i32 {
+  if (m == 0) {
+    return 3;
+  }
+  if (m == 1) {
+    return 4;
+  }
+  if (m == 2) {
+    return 3;
+  }
+  return 6;
+}
+
+fip function put_method(own w: u8[], at: i32, m: i32): u8[] {
+  if (m == 0) {
+    return put_str(w, at, "GET");
+  }
+  if (m == 1) {
+    return put_str(w, at, "POST");
+  }
+  if (m == 2) {
+    return put_str(w, at, "PUT");
+  }
+  return put_str(w, at, "DELETE");
+}
+
+// Paths 0..4: `/health`, `/users/<id>`, `/counter/<id>`, `/metrics`,
+// `/missing/<id>`.
+fip function path_of(n: i64): i32 {
+  return (n % (5 as i64)) as i32;
+}
+
+fip function path_len(p: i32, id: i32): i32 {
+  if (p == 0) {
+    return 7;
+  }
+  if (p == 1) {
+    return 7 + digits(id);
+  }
+  if (p == 2) {
+    return 9 + digits(id);
+  }
+  if (p == 3) {
+    return 8;
+  }
+  return 9 + digits(id);
+}
+
+fip function put_path(own w: u8[], at: i32, p: i32, id: i32): u8[] {
+  if (p == 0) {
+    return put_str(w, at, "/health");
+  }
+  if (p == 1) {
+    w = put_str(w, at, "/users/");
+    return put_int(w, at + 7, id);
+  }
+  if (p == 2) {
+    w = put_str(w, at, "/counter/");
+    return put_int(w, at + 9, id);
+  }
+  if (p == 3) {
+    return put_str(w, at, "/metrics");
+  }
+  w = put_str(w, at, "/missing/");
+  return put_int(w, at + 9, id);
+}
+
+fip function put_crlf(own w: u8[], at: i32): u8[] {
+  w = w.with(at, cr());
+  return w.with(at + 1, lf());
+}
+
+// put_length writes a Content-Length header line for `cl` at `at`.
+fip function length_line_len(cl: i32): i32 {
+  return 16 + digits(cl) + 2;
+}
+
+fip function put_length(own w: u8[], at: i32, cl: i32): u8[] {
+  w = put_str(w, at, "Content-Length: ");
+  w = put_int(w, at + 16, cl);
+  return put_crlf(w, at + 16 + digits(cl));
+}
+
+// build_request writes request `n` into the buffer it is handed and gives
+// it back with the length in its last four bytes. It takes the buffer `own`
+// in every variant: generating the input is the harness, not the service.
+// fern-lint: allow cyclomatic-complexity
+fip function build_request(own w: u8[], n: i64): u8[] {
+  let id: i32 = id_of(n);
+  let p: i32 = path_of(n);
+  let m: i32 = method_for(n, p);
+  let corrupt: i32 = corruption(n);
+  let has_body: boolean = m == 1 || m == 2;
+  let blen: i32 = 0;
+  if (has_body) {
+    blen = gen_body_len(n);
+  }
+  let at: i32 = 0;
+  w = put_method(w, at, m);
+  at = at + method_len(m);
+  if (corrupt != 0) {
+    w = w.with(at, sp());
+    at = at + 1;
+  }
+  w = put_path(w, at, p, id);
+  at = at + path_len(p, id);
+  if (corrupt != 0 && corrupt != 1) {
+    w = w.with(at, sp());
+    at = at + 1;
+  }
+  if (corrupt != 1) {
+    w = put_str(w, at, "HTTP/1.1");
+    at = at + 8;
+  }
+  w = put_crlf(w, at);
+  at = at + 2;
+  w = put_str(w, at, "Host: example.test\r\nUser-Agent: bench/");
+  at = at + 38;
+  let ua: i32 = (n % (61 as i64)) as i32;
+  let j: i32 = 0;
+  while (j < ua) {
+    w = w.with(at + j, 97 as u8);
+    j = j + 1;
+  }
+  at = at + ua;
+  w = put_str(w, at, "\r\nAccept: */*\r\nX-Request-Id: ");
+  at = at + 29;
+  w = put_int(w, at, n as i32);
+  at = at + digits(n as i32);
+  w = put_crlf(w, at);
+  at = at + 2;
+  if (extra_headers(n)) {
+    let x: i32 = 0;
+    while (x < 6) {
+      w = put_str(w, at, "X-Extra-");
+      w = put_int(w, at + 8, x);
+      w = put_str(w, at + 9, ": v\r\n");
+      at = at + 14;
+      x = x + 1;
+    }
+  }
+  if (corrupt == 2) {
+    w = put_str(w, at, "Transfer-Encoding: chunked\r\n");
+    at = at + 28;
+  }
+  if (corrupt == 4) {
+    w = put_str(w, at, "Content-Length: 12a\r\n");
+    at = at + 21;
+  } else if (has_body || corrupt == 3 || corrupt == 5) {
+    let declared: i32 = blen;
+    if (corrupt == 5) {
+      declared = blen + 7;
+    }
+    w = put_length(w, at, declared);
+    at = at + length_line_len(declared);
+    if (corrupt == 3) {
+      w = put_length(w, at, declared);
+      at = at + length_line_len(declared);
+    }
+  }
+  w = put_crlf(w, at);
+  at = at + 2;
+  let k: i32 = 0;
+  while (k < blen) {
+    w = w.with(at + k, gen_byte(n, k));
+    k = k + 1;
+  }
+  at = at + blen;
+  w = w.with(wire_len_at(), (at % 256) as u8);
+  w = w.with(wire_len_at() + 1, (at / 256 % 256) as u8);
+  w = w.with(wire_len_at() + 2, 0 as u8);
+  return w.with(wire_len_at() + 3, 0 as u8);
+}
+
+fip function wire_len_of(w: u8[]): i32 {
+  return w[wire_len_at()] as i32 + w[wire_len_at() + 1] as i32 * 256;
+}
+
+// A running digest over every response byte. Three implementations of one
+// service agree only if this agrees, which is what makes the comparison a
+// differential test rather than three unrelated benchmarks.
+fip function mix(d: i64, b: i32): i64 {
+  let x: i64 = d ^ b as i64;
+  x = x * (1099511628211 as i64);
+  x = x ^ x >> 29 as i64;
+  if (x < 0 as i64) {
+    x = 0 - x;
+  }
+  return x % (1000000007 as i64);
+}
+
+// ===================== DRIVER =====================
+//
+// The driver is NOT `fbip`: it owns the state and the wire buffer, tallies
+// and prints. The response, its length and its class are read out of the
+// state the plane hands back.
+
+function main(): i32 {
+  let batch: i32 = 64;
+  let rounds: i32 = 2000;
+  let wire: u8[] = zeros_u8(max_wire());
+  let app: App = new_app();
+
+  let tally: i64[] = zeros_i64(12);
+  let digest: i64 = 1469598103934665603 as i64;
+  let written: i64 = 0 as i64;
+
+  let samples: i64[] = [];
+  let p: i32 = 0;
+  while (p < rounds) {
+    samples = samples.append(0 as i64);
+    p = p + 1;
+  }
+
+  // One warm round before the mark. Its requests are the first batch's,
+  // so the state starts the measured run the way the other variants' does.
+  let w: i32 = 0;
+  while (w < batch) {
+    wire = build_request(wire, w as i64);
+    app = serve(app, wire, wire_len_of(wire));
+    w = w + 1;
+  }
+
+  let at_allocs: i64 = bench.alloc_count();
+  let at_fresh: i64 = bench.bump_bytes();
+  let started_ns: i64 = monotonic_ns();
+  let r: i32 = 0;
+  while (r < rounds) {
+    let t0: i64 = monotonic_ns();
+    let k: i32 = 0;
+    while (k < batch) {
+      let n: i64 = r as i64 * (batch as i64) + k as i64;
+      wire = build_request(wire, n);
+      app = serve(app, wire, wire_len_of(wire));
+      let len: i32 = app.out_len;
+      let class: i32 = app.r_class;
+      let i: i32 = 0;
+      while (i < len) {
+        digest = mix(digest, app.out[i] as i32);
+        i = i + 1;
+      }
+      written = written + len as i64;
+      tally = tally.with(class, tally[class] + 1 as i64);
+      k = k + 1;
+    }
+    samples = samples.with(r, monotonic_ns() - t0);
+    r = r + 1;
+  }
+  let elapsed_ns: i64 = monotonic_ns() - started_ns;
+  let allocs: i64 = bench.allocs_after(at_allocs);
+  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
+  let requests: i64 = rounds as i64 * (batch as i64);
+  let rejected: i64 = tally[1] + tally[2] + tally[3] + tally[4] + tally[5] + tally[6];
+  let rep: bench.Report = bench.Report {
+    name: "fbip",
+    iterations: rounds,
+    wall_ns: elapsed_ns,
+    samples_ns: cmp.sort(samples),
+    allocs: allocs,
+    fresh_bytes: fresh,
+  };
+  print("{\"variant\":\"fbip\""
+    + ",\"requests\":" + requests.to_string()
+    + ",\"requests_per_round\":" + batch.to_string()
+    + ",\"ok\":" + tally[0].to_string()
+    + ",\"rejected\":" + rejected.to_string()
+    + ",\"bad_request_line\":" + tally[1].to_string()
+    + ",\"no_version\":" + tally[2].to_string()
+    + ",\"transfer_encoding\":" + tally[3].to_string()
+    + ",\"duplicate_length\":" + tally[4].to_string()
+    + ",\"bad_length\":" + tally[5].to_string()
+    + ",\"truncated\":" + tally[6].to_string()
+    + ",\"not_found\":" + tally[7].to_string()
+    + ",\"method_not_allowed\":" + tally[8].to_string()
+    + ",\"too_many_headers\":" + tally[9].to_string()
+    + ",\"body_too_large\":" + tally[10].to_string()
+    + ",\"full\":" + tally[11].to_string()
+    + ",\"counters_live\":" + app.live.to_string()
+    + ",\"counter_total\":" + app.total.to_string()
+    + ",\"digest\":" + digest.to_string()
+    + ",\"response_bytes\":" + written.to_string()
+    + ",\"response_bytes_per_request\":" + (written / requests).to_string()
+    + ",\"steady_allocs\":" + allocs.to_string()
+    + ",\"steady_fresh_bytes\":" + fresh.to_string()
+    + ",\"allocs_per_request_milli\":" + (allocs * (1000 as i64) / requests).to_string()
+    + ",\"fresh_bytes_per_request\":" + (fresh / requests).to_string()
+    + ",\"ns_per_request\":" + (elapsed_ns / requests).to_string()
+    + ",\"requests_per_sec\":" + (requests * 1000000000i64 / elapsed_ns).to_string()
+    + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
+    + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
+    + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
+    + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
+    + ",\"round_max_ns\":" + rep.max_ns().to_string()
+    + "}");
+  return 0;
+}

@@ -119,6 +119,20 @@ response byte, every one of the six refusal classes must fire, and both must
 report a latency tail. `docs/FIP-HTTP-CODEC.md` holds the numbers the gate
 protects. It does not measure throughput: a slower build passes.
 
+### Experiment 4: the HTTP-like application pipeline
+
+`TestFipHttpAppDisciplinesAgreeAndDoNotAllocate` in `internal/e2e` compiles
+`examples/fip/httpapp_baseline.fern`, `httpapp_fbip.fern` and
+`httpapp_fip.fern` for x86-64 and runs all three: the two disciplined planes
+must report zero steady-state allocations over 128,000 requests and the
+baseline must allocate, the three must agree on every answer class, on the
+final counter table and on the digest over every response byte, the table
+must fill and refuse (256 live, a non-zero 503 count), both limits and both
+application errors must fire, every one of the six refusal classes must
+fire, and every variant must report a latency tail. `docs/FIP-HTTP-APP.md`
+holds the numbers the gate protects. It does not measure throughput: a
+slower build passes.
+
 ### The key/value core as a `fip` plane
 
 `TestFipKVDisciplinesAgreeAndDoNotAllocate` in `internal/e2e` compiles
