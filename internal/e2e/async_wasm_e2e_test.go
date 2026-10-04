@@ -32,7 +32,7 @@ function main(): i32 {
     if (r[1] != 15) { return 92; }
     return 42;
 }`
-	if got := runWasmNative(t, src); got != 42 {
+	if got := runWasmResult(t, src); got != 42 {
 		t.Errorf("async.gather over wasm timer pollables: got %d, want 42", got)
 	}
 }
@@ -61,7 +61,7 @@ function main(): i32 {
     if (winner != 1) { return 92; }
     return 42;
 }`
-	if got := runWasmNative(t, src); got != 42 {
+	if got := runWasmResult(t, src); got != 42 {
 		t.Errorf("async.race over wasm timer pollables: got %d, want 42", got)
 	}
 }
@@ -100,7 +100,7 @@ function main(): i32 {
     match (r[1]) { Some(v) => { return 92; }, None => { } }                              // missed it -> None
     return 42;
 }`
-	if got := runWasmNative(t, src); got != 42 {
+	if got := runWasmResult(t, src); got != 42 {
 		t.Errorf("async.with_deadline on wasm: got %d, want 42", got)
 	}
 }
@@ -125,7 +125,7 @@ function main(): i32 {
     if (r[1] != "hi") { return 3; }
     return 42;
 }`
-	if got := runWasmNative(t, src); got != 42 {
+	if got := runWasmResult(t, src); got != 42 {
 		t.Errorf("async.gather over wasm timer pollables (string): got %d, want 42", got)
 	}
 }

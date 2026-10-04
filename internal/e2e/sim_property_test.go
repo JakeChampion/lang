@@ -45,8 +45,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 )
 
 const simImports = `import "std/async";
@@ -197,8 +195,7 @@ func assertSimProgramAgrees(t *testing.T, src string) {
 		}
 	})
 	t.Run("wasm32-wasi", func(t *testing.T) {
-		// std/sim drives the async poll host, so this leg is native (buildNativeComponent).
-		comp := buildNativeComponent(t, src, wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, CliRunResult: true})
+		comp := buildCLIComponent(t, src)
 		got, stderr, ec := runComponent(t, comp, runOpts{})
 		if ec != 0 {
 			t.Fatalf("wasmtime exit = %d\nstdout: %s\nstderr: %s\nsrc:\n%s", ec, got, stderr, src)
