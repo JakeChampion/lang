@@ -235,8 +235,9 @@ var rcBuiltinSigs = map[string]RcSig{
 //     (its own runtime doc), so it retains nothing.
 //   - `string_from_bytes_unchecked` copies the payload into a fresh
 //     string; the argument is borrowed.
-//   - `cell_new` / `__method_Cell_set` hold SCALARS only in v1 (E057),
-//     so there is no count on the slot to move.
+//   - `cell_new` / `__method_Cell_set` lower inline. Their type-aware
+//     lowering retains aliased strings and byte arrays before storing;
+//     there is no additional runtime-call ownership transfer here.
 //   - `__c_call*` hand raw words to a C function, which does not
 //     participate in reference counting at all.
 //   - `__heap_mark` / `__heap_release_to` move the arena's bump
