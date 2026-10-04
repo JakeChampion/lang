@@ -1,0 +1,498 @@
+// Index reads a dominating guard proves in range: an `array_get` or
+// `str_index` whose index the branches into its block show to be at least zero
+// and below the length of what it reads is marked unchecked (`imm` 1), the flag
+// the parser's len-bounded loop pass already sets and every backend honours.
+// It runs on the typed semantic graphs every backend lowers from.
+//
+// A block learns a compare when its only predecessor ends in a two-way `brif`
+// on it: true on the `t` edge, false on the `f` edge. Every block it dominates
+// learns it too. Only compares of two i32 values count, each as `lo < hi` or
+// `lo <= hi`.
+//
+// An index `x` is below `length(b)` when
+//   - a fact says `x < y` and `y` is `length(b)`, or `y` is below it;
+//   - a fact says `x <= y` and `y` is below `length(b)`;
+//   - `x` is `length(b) - c` for a constant `c >= 1`;
+//   - `x` is `y - c` for a constant `c >= 0`, with `y` below `length(b)` and at
+//     least zero where `x` is computed, so the subtraction cannot wrap;
+//   - `x` is a phi whose operands are all below `length(b)`, the phi itself
+//     assumed to be: induction over the loop's trips.
+// An index `x` is at least zero when
+//   - it is a constant at least zero, or a `length`;
+//   - a fact says `c <= x` or `c < x` for a constant `c` that settles it, or
+//     `y <= x` or `y < x` with `y` at least zero;
+//   - `x` is `y + 1` with `y` at least zero and, where `x` is computed, below a
+//     length, so the addition cannot wrap;
+//   - `x` is `length(b) - c` with a fact putting `length(b)` at `c` or more;
+//   - `x` is a phi whose operands are all at least zero, assuming the phi is.
+import "./ssa";
+import "./ssadeps";
+import "./ssasem";
+
+struct Rel { lo: i32, hi: i32, strict: boolean }
+
+// One function indexed for the proofs. `defs[v]` is value v's defining
+// instruction and `home[v]` the position of its block. The facts block b
+// learns from its own edge are `rels[first[b] .. first[b] + count[b]]`. `up[b]`
+// is b when it learns any, else its nearest dominator that does, and -1 when
+// none does; `above[b]` is the nearest strict dominator that does.
+struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[] }
+
+pub function proven_indices(f: ssasem.Func): ssasem.Func {
+  if (!any_checked_index(f)) {
+    return f;
+  }
+  let g: Graph = graph_of(f);
+  if (g.rels.len() == 0) {
+    return f;
+  }
+  let blocks: ssa.SBlock[] = [];
+  let changed: boolean = false;
+  let b: i32 = 0;
+  while (b < f.graph.blocks.len()) {
+    let blk: ssa.SBlock = f.graph.blocks[b];
+    let insts: ssa.SInst[] = [];
+    let marked: boolean = false;
+    for ins in blk.insts {
+      if (checked_index(ins) && g.i32s[ins.args[1]] && proven(g, b, ins.args[1], ins.args[0])) {
+        insts = insts.append(ssa.SInst { ...ins, imm: 1 });
+        marked = true;
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    if (marked) {
+      blk = ssa.SBlock { ...blk, insts: insts };
+      changed = true;
+    }
+    blocks = blocks.append(blk);
+    b = b + 1;
+  }
+  if (!changed) {
+    return f;
+  }
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
+}
+
+function checked_index(ins: ssa.SInst): boolean {
+  return (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.str_index()) && ins.imm == 0 && ins.args.len() == 2;
+}
+
+function any_checked_index(f: ssasem.Func): boolean {
+  for blk in f.graph.blocks {
+    for ins in blk.insts {
+      if (checked_index(ins)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function proven(g: Graph, b: i32, idx: i32, base: i32): boolean {
+  return nonneg(g, b, idx, [], depth()) && below(g, b, idx, base, [], depth());
+}
+
+// How many steps a proof may take: guard chains in real code are short, and
+// the bound keeps a proof's cost independent of the graph's size.
+function depth(): i32 {
+  return 6;
+}
+
+function graph_of(f: ssasem.Func): Graph {
+  let n: i32 = f.values.len();
+  let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let defs: ssa.SInst[] = [];
+  let home: i32[] = [];
+  let i32s: boolean[] = [];
+  let v: i32 = 0;
+  while (v < n) {
+    defs = defs.append(none);
+    home = home.append(0 - 1);
+    i32s = i32s.append(ssasem.is_i32(f.values[v]));
+    v = v + 1;
+  }
+  let nb: i32 = f.graph.blocks.len();
+  let b: i32 = 0;
+  while (b < nb) {
+    for ins in f.graph.blocks[b].insts {
+      if (ins.result >= 0 && ins.result < n) {
+        defs = defs.with(ins.result, ins);
+        home = home.with(ins.result, b);
+      }
+    }
+    b = b + 1;
+  }
+  let g: Graph = Graph { defs: defs, home: home, i32s: i32s, rels: [], first: [], count: [], up: [], above: [] };
+  let at: i32[] = ssadeps.position_of(f.graph);
+  b = 0;
+  while (b < nb) {
+    let blk: ssa.SBlock = f.graph.blocks[b];
+    let before: i32 = g.rels.len();
+    if (blk.preds.len() == 1) {
+      let p: i32 = at[blk.preds[0]];
+      if (p >= 0) {
+        let term: ssa.STerm = f.graph.blocks[p].term;
+        if (term.kind_tag == 3 && term.t != term.f) {
+          g = learn(g, term.cond, term.t == blk.id, 2);
+        }
+      }
+    }
+    g = Graph { ...g, first: g.first.append(before), count: g.count.append(g.rels.len() - before) };
+    b = b + 1;
+  }
+  return with_dominators(g, ssadeps.dominates(f.graph), nb);
+}
+
+// learn adds what knowing `cond` is `truth` says, when `cond` compares two i32
+// values: directly, or through `!`.
+function learn(g: Graph, cond: i32, truth: boolean, hops: i32): Graph {
+  if (cond < 0 || cond >= g.defs.len() || hops <= 0) {
+    return g;
+  }
+  let c: ssa.SInst = g.defs[cond];
+  if (c.kind_tag == 10 && c.str == "!" && c.args.len() == 1) {
+    return learn(g, c.args[0], !truth, hops - 1);
+  }
+  if (c.kind_tag != 9 || c.args.len() != 2) {
+    return g;
+  }
+  let x: i32 = c.args[0];
+  let y: i32 = c.args[1];
+  if (!g.i32s[x] || !g.i32s[y]) {
+    return g;
+  }
+  if (c.str == "<") {
+    return fact(g, x, y, truth, true);
+  }
+  if (c.str == ">=") {
+    return fact(g, x, y, !truth, true);
+  }
+  if (c.str == ">") {
+    return fact(g, y, x, truth, true);
+  }
+  if (c.str == "<=") {
+    return fact(g, y, x, !truth, true);
+  }
+  if ((c.str == "==" && truth) || (c.str == "!=" && !truth)) {
+    return fact(fact(g, x, y, true, false), y, x, true, false);
+  }
+  return g;
+}
+
+// fact records `lo < hi` (`strict`) or `lo <= hi` when `held`, else the
+// converse: `hi <= lo` for a strict relation that failed, `hi < lo` for a weak
+// one.
+function fact(g: Graph, lo: i32, hi: i32, held: boolean, strict: boolean): Graph {
+  if (held) {
+    return Graph { ...g, rels: g.rels.append(Rel { lo: lo, hi: hi, strict: strict }) };
+  }
+  return Graph { ...g, rels: g.rels.append(Rel { lo: hi, hi: lo, strict: !strict }) };
+}
+
+// with_dominators fills `up` and `above` from a walk of the dominator tree in
+// preorder: an ancestor stays on the stack while its interval holds the block.
+function with_dominators(g: Graph, d: ssadeps.Dom, nb: i32): Graph {
+  let up: i32[] = [];
+  let above: i32[] = [];
+  let b: i32 = 0;
+  while (b < nb) {
+    up = up.append(0 - 1);
+    above = above.append(0 - 1);
+    b = b + 1;
+  }
+  // `pre` and `post` share one clock, so a preorder number is below 2 * nb.
+  let order: i32[] = [];
+  while (order.len() < 2 * nb) {
+    order = order.append(0 - 1);
+  }
+  b = 0;
+  while (b < nb) {
+    if (d.pre[b] >= 0 && d.pre[b] < 2 * nb) {
+      order = order.with(d.pre[b], b);
+    }
+    b = b + 1;
+  }
+  let stack: i32[] = [];
+  let sp: i32 = 0;
+  for k in order {
+    if (k < 0) {
+      continue;
+    }
+    while (sp > 0 && !ssadeps.dom_holds(d, k, stack[sp - 1])) {
+      sp = sp - 1;
+    }
+    let inherited: i32 = 0 - 1;
+    if (sp > 0) {
+      inherited = up[stack[sp - 1]];
+    }
+    above = above.with(k, inherited);
+    if (g.count[k] > 0) {
+      up = up.with(k, k);
+    } else {
+      up = up.with(k, inherited);
+    }
+    if (sp < stack.len()) {
+      stack = stack.with(sp, k);
+    } else {
+      stack = stack.append(k);
+    }
+    sp = sp + 1;
+  }
+  return Graph { ...g, up: up, above: above };
+}
+
+// root sees through copies, which name the value they copy.
+function root(g: Graph, v: i32): i32 {
+  let hops: i32 = 0;
+  while (v >= 0 && v < g.defs.len() && g.defs[v].kind_tag == 7 && g.defs[v].args.len() == 1 && hops < 8) {
+    v = g.defs[v].args[0];
+    hops = hops + 1;
+  }
+  return v;
+}
+
+// same reports whether two values are one quantity: the same value, or the
+// same projection of the same values. A field, tuple element, element or
+// length read twice from one value reads the same thing, since every one of
+// them is immutable.
+function same(g: Graph, a: i32, b: i32): boolean {
+  return equal(g, a, b, 4);
+}
+
+function equal(g: Graph, a: i32, b: i32, steps: i32): boolean {
+  a = root(g, a);
+  b = root(g, b);
+  if (a == b) {
+    return true;
+  }
+  if (steps <= 0 || a < 0 || b < 0) {
+    return false;
+  }
+  let da: ssa.SInst = g.defs[a];
+  let db: ssa.SInst = g.defs[b];
+  if (da.kind_tag != db.kind_tag || !projection(da.kind_tag) || da.imm != db.imm || da.str != db.str || da.args.len() != db.args.len()) {
+    return false;
+  }
+  let k: i32 = 0;
+  while (k < da.args.len()) {
+    if (!equal(g, da.args[k], db.args[k], steps - 1)) {
+      return false;
+    }
+    k = k + 1;
+  }
+  return da.args.len() > 0;
+}
+
+function projection(kind: i32): boolean {
+  return kind == ssasem.record_get() || kind == ssasem.tuple_get() || kind == ssasem.length() || kind == ssasem.array_get();
+}
+
+function def_of(g: Graph, v: i32): ssa.SInst {
+  return g.defs[root(g, v)];
+}
+
+function is_const(g: Graph, v: i32): boolean {
+  let r: i32 = root(g, v);
+  return g.defs[r].kind_tag == 1 && g.i32s[r];
+}
+
+function const_value(g: Graph, v: i32): i32 {
+  return def_of(g, v).imm;
+}
+
+function is_length(g: Graph, v: i32): boolean {
+  return def_of(g, v).kind_tag == ssasem.length();
+}
+
+function is_length_of(g: Graph, v: i32, base: i32): boolean {
+  let d: ssa.SInst = def_of(g, v);
+  return d.kind_tag == ssasem.length() && d.args.len() == 1 && same(g, d.args[0], base);
+}
+
+function binary(d: ssa.SInst, op: string): boolean {
+  return d.kind_tag == 9 && d.str == op && d.args.len() == 2;
+}
+
+function assumed(assume: i32[], v: i32): boolean {
+  for a in assume {
+    if (a == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// below reports whether `x` is less than `length(base)` wherever block b runs.
+function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): boolean {
+  if (steps <= 0) {
+    return false;
+  }
+  x = root(g, x);
+  let d: ssa.SInst = g.defs[x];
+  if (binary(d, "-") && is_const(g, d.args[1])) {
+    let c: i32 = const_value(g, d.args[1]);
+    if (c >= 1 && is_length_of(g, d.args[0], base)) {
+      return true;
+    }
+    let at: i32 = g.home[x];
+    if (c >= 0 && below(g, at, d.args[0], base, assume, steps - 1) && nonneg(g, at, d.args[0], [], steps - 1)) {
+      return true;
+    }
+  }
+  if (d.kind_tag == 8 && g.i32s[x]) {
+    if (assumed(assume, x)) {
+      return true;
+    }
+    let inner: i32[] = assume.append(x);
+    let all: boolean = d.args.len() > 0;
+    for o in d.args {
+      if (all && !below(g, g.home[root(g, o)], o, base, inner, steps - 1)) {
+        all = false;
+      }
+    }
+    if (all) {
+      return true;
+    }
+  }
+  if (b < 0) {
+    return false;
+  }
+  let c: i32 = g.up[b];
+  while (c >= 0) {
+    let k: i32 = g.first[c];
+    while (k < g.first[c] + g.count[c]) {
+      let r: Rel = g.rels[k];
+      if (same(g, r.lo, x)) {
+        if (r.strict && is_length_of(g, r.hi, base)) {
+          return true;
+        }
+        if (below(g, b, r.hi, base, assume, steps - 1)) {
+          return true;
+        }
+      }
+      k = k + 1;
+    }
+    c = g.above[c];
+  }
+  return false;
+}
+
+// nonneg reports whether `x` is at least zero wherever block b runs.
+function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
+  if (steps <= 0) {
+    return false;
+  }
+  x = root(g, x);
+  if (is_const(g, x)) {
+    return const_value(g, x) >= 0;
+  }
+  if (is_length(g, x)) {
+    return true;
+  }
+  let d: ssa.SInst = g.defs[x];
+  let at: i32 = g.home[x];
+  if (binary(d, "+")) {
+    let y: i32 = 0 - 1;
+    if (is_const(g, d.args[1]) && const_value(g, d.args[1]) == 1) {
+      y = d.args[0];
+    } else if (is_const(g, d.args[0]) && const_value(g, d.args[0]) == 1) {
+      y = d.args[1];
+    }
+    if (y >= 0 && nonneg(g, at, y, assume, steps - 1) && below_a_length(g, at, y)) {
+      return true;
+    }
+  }
+  if (binary(d, "-") && is_const(g, d.args[1]) && is_length(g, d.args[0])) {
+    if (at_least(g, at, d.args[0], const_value(g, d.args[1]))) {
+      return true;
+    }
+  }
+  if (d.kind_tag == 8 && g.i32s[x]) {
+    if (assumed(assume, x)) {
+      return true;
+    }
+    let inner: i32[] = assume.append(x);
+    let all: boolean = d.args.len() > 0;
+    for o in d.args {
+      if (all && !nonneg(g, g.home[root(g, o)], o, inner, steps - 1)) {
+        all = false;
+      }
+    }
+    if (all) {
+      return true;
+    }
+  }
+  if (b < 0) {
+    return false;
+  }
+  let c: i32 = g.up[b];
+  while (c >= 0) {
+    let k: i32 = g.first[c];
+    while (k < g.first[c] + g.count[c]) {
+      let r: Rel = g.rels[k];
+      if (same(g, r.hi, x)) {
+        if (is_const(g, r.lo)) {
+          let low: i32 = const_value(g, r.lo);
+          if (low >= 0 || (r.strict && low == 0 - 1)) {
+            return true;
+          }
+        } else if (nonneg(g, b, r.lo, assume, steps - 1)) {
+          return true;
+        }
+      }
+      k = k + 1;
+    }
+    c = g.above[c];
+  }
+  return false;
+}
+
+// below_a_length reports whether a fact at block b puts `y` strictly below
+// some length, which caps `y + 1` at the largest i32.
+function below_a_length(g: Graph, b: i32, y: i32): boolean {
+  if (b < 0) {
+    return false;
+  }
+  y = root(g, y);
+  let c: i32 = g.up[b];
+  while (c >= 0) {
+    let k: i32 = g.first[c];
+    while (k < g.first[c] + g.count[c]) {
+      let r: Rel = g.rels[k];
+      if (r.strict && same(g, r.lo, y) && is_length(g, r.hi)) {
+        return true;
+      }
+      k = k + 1;
+    }
+    c = g.above[c];
+  }
+  return false;
+}
+
+// at_least reports whether a fact at block b puts `y` at `n` or more.
+function at_least(g: Graph, b: i32, y: i32, n: i32): boolean {
+  if (n <= 0 && is_length(g, y)) {
+    return true;
+  }
+  if (b < 0) {
+    return false;
+  }
+  y = root(g, y);
+  let c: i32 = g.up[b];
+  while (c >= 0) {
+    let k: i32 = g.first[c];
+    while (k < g.first[c] + g.count[c]) {
+      let r: Rel = g.rels[k];
+      if (same(g, r.hi, y) && is_const(g, r.lo)) {
+        let low: i32 = const_value(g, r.lo);
+        if (low >= n || (r.strict && low >= n - 1)) {
+          return true;
+        }
+      }
+      k = k + 1;
+    }
+    c = g.above[c];
+  }
+  return false;
+}
