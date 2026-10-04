@@ -547,9 +547,10 @@ function __find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
   return -1;
 }
 
-// __bytes_range copies buf[from, end) into a fresh array; __bytes_string
-// is that copy as text. The parser's outputs are owned copies of what the
-// handler keeps, so the wire buffer can be reused once the parse is done.
+// __bytes_range copies buf[from, end) into a fresh array, and __bytes_string
+// copies it into a fresh string. The parser's outputs are owned copies of
+// what the handler keeps, so the wire buffer can be reused once the parse is
+// done.
 function __bytes_range(buf: u8[], from: i32, end: i32): u8[] {
   let out: u8[] = __alloc_u8(end - from);
   let i: i32 = 0;
@@ -561,7 +562,7 @@ function __bytes_range(buf: u8[], from: i32, end: i32): u8[] {
 }
 
 function __bytes_string(buf: u8[], from: i32, end: i32): string {
-  return string_from_bytes_unchecked(__bytes_range(buf, from, end));
+  return string_from_bytes_range_unchecked(buf, from, end);
 }
 
 // HttpLimits — the parser's caps (RFC 9112 §2.3 leaves them to the
@@ -687,7 +688,11 @@ function __field_value(buf: u8[], from: i32, end: i32): Option[string] {
   if (__scan_set_bytes(buf, from, FIELD_CTL) < end) {
     return None;
   }
-  return utf8.from_bytes(__bytes_range(buf, from, end));
+  let v: string = __bytes_string(buf, from, end);
+  if (!utf8.is_valid_utf8(v)) {
+    return None;
+  }
+  return Some(v);
 }
 
 // `__parse_header_bytes(buf, from, end)` — the CRLF-separated header

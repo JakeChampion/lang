@@ -339,31 +339,6 @@ function rc_trace_deep_on(): boolean {
   }
 }
 
-// leak_check_on reports whether FERN_LEAKCHECK is set — the self-host port of
-// ast.LeakCheckEnabled. Counts every alloc and every free (count + bytes) and
-// prints one line at exit:
-//
-//	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
-//
-// The detector half of the pair above: this says a leak happened, the trace
-// says where. Both counters tick in the same __fern_hev_* helpers, off the
-// same rounded size, so the trace's own tallies reproduce this line, except
-// for an in-place string growth: the trace logs it as a free and an alloc,
-// and the census as one block whose bytes grew (str_grow_census).
-function leak_check_on(): boolean {
-  if (asmcore.sanitize_on()) {
-    return true;
-  }
-  match (env("FERN_LEAKCHECK")) {
-    Some(_) => {
-      return true;
-    },
-    None => {
-      return false;
-    }
-  }
-}
-
 // quarantine_rc: the rc-word store a free path writes as it releases the
 // block — ast.RcPoison under the quarantine (nothing pushes the block, so the
 // poison survives to the next toucher), the defensive 0 otherwise.
@@ -396,8 +371,8 @@ function rc_poison(): string {
   return "2129525454";
 }
 
-function quarantine_rc(addr: string): string {
-  if (asmcore.rc_free_debug_on()) {
+function quarantine_rc(addr: string, on: boolean): string {
+  if (on) {
     return "    movl $" + rc_poison() + ", " + addr + "\n";
   }
   return "    movl $0, " + addr + "\n";
@@ -407,8 +382,8 @@ function quarantine_rc(addr: string): string {
 // large POSITIVE value precisely so the immortal (`js`) guard cannot swallow
 // it; only this explicit compare sees it. The abort never returns, so a bare
 // je needs no live-side label.
-function san_poison_check(reg: string): string {
-  if (asmcore.rc_free_debug_on()) {
+function san_poison_check(reg: string, on: boolean): string {
+  if (on) {
     return "    cmpl $" + rc_poison() + ", " + reg + "\n    je __fern_san_abort_uaf\n";
   }
   return "";
@@ -416,13 +391,15 @@ function san_poison_check(reg: string): string {
 
 // hev_on reports whether either heap-event diagnostic is on, i.e. whether the
 // __fern_hev_a / __fern_hev_f hooks and their shared writer are emitted at
-// all. Every emission site below is gated on it, so a build with both flags
-// off is byte-identical to one from a compiler without the feature.
-function hev_on(): boolean {
-  if (rc_trace_on()) {
-    return true;
-  }
-  return leak_check_on();
+// all: the trace (FERN_RC_TRACE), which says where, or the leak census
+// (s.leak_check), which says that a leak happened. Both counters tick in the
+// same helpers off the same rounded size, so the trace's own tallies
+// reproduce the census line, except for an in-place string growth: the trace
+// logs it as a free and an alloc, the census as one block whose bytes grew
+// (str_grow_census). Every emission site below is gated on it, so a build
+// with both off is byte-identical to one from a compiler without the feature.
+function hev_on(s: asmcore.EmitState): boolean {
+  return rc_trace_on() || s.leak_check;
 }
 
 // str_grow_census charges an in-place string growth to the leak census as
@@ -488,7 +465,7 @@ function emit_ir_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: s
   s = s.write("    cmpq $0x10000, %rax\n");  // low-addr guard
   s = s.write("    jb .L" + lbl + "_ret\n");
   s = s.write("    movl -8(%rax), %ecx\n");  // rc
-  s = s.write(san_poison_check("%ecx"));
+  s = s.write(san_poison_check("%ecx", s.rc_free_debug));
   s = s.write("    testl %ecx, %ecx\n");
   s = s.write("    js .L" + lbl + "_ret\n");  // negative = immortal -> skip
   s = s.write("    cmpl $1, %ecx\n");
@@ -510,7 +487,7 @@ function emit_ir_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: s
   s = s.write("    jmp .L" + lbl + "_loop\n");
   s = s.write(".L" + lbl + "_freebuf:\n");
   // buffer free: __fn___fern_arr_dec's rc==1 path (base=arr-16, class=cap+3).
-  s = s.write(quarantine_rc("-8(%rbx)"));
+  s = s.write(quarantine_rc("-8(%rbx)", s.rc_free_debug));
   s = s.write("    movl -16(%rbx), %ecx\n");  // cap
   s = s.write("    addq $3, %rcx\n");  // class = cap + 3 words
   s = s.write("    cmpq $65536, %rcx\n");
@@ -531,7 +508,7 @@ function emit_ir_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: s
   s = s.write("    jmp .L" + lbl + "_ret\n");
   s = s.write(".L" + lbl + "_uf:\n");
   s = s.write("    incl __fern_rc_underflow(%rip)\n");
-  s = s.write(san_underflow_abort());
+  s = s.write(san_underflow_abort(s));
   s = s.write(".L" + lbl + "_ret:\n");
   s = s.write("    ret\n");
   // Large tier (#3425): recycle the >=512 KiB outer buffer (base = arr-16,
@@ -805,7 +782,7 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
 // grow doubles the words, and the copy moves len bytes.
 function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_arr_push_u8:\n");
-  s = s.write(arr_push_fast_u8(".Larr_push_u8_slow"));
+  s = s.write(arr_push_fast_u8(".Larr_push_u8_slow", s.rc_free_debug));
   s = s.write(".Larr_push_u8_slow:\n");
   s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n");
   s = s.write("    movq %rdi, %r12\n    movq %rsi, %r13\n    movq (%r12), %r14\n    movq -16(%r12), %r15\n");
@@ -813,7 +790,7 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Larr_push_u8_grow\n");
   }
   s = s.write("    movl -8(%r12), %ecx\n");
-  s = s.write(san_poison_check("%ecx"));
+  s = s.write(san_poison_check("%ecx", s.rc_free_debug));
   s = s.write("    cmpl $1, %ecx\n    je .Larr_push_u8_rc_ok\n    testl %ecx, %ecx\n    js .Larr_push_u8_rc_ok\n    jmp .Larr_push_u8_grow\n");
   s = s.write(".Larr_push_u8_rc_ok:\n");
   s = s.write("    movq %r15, %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %r14\n    jge .Larr_push_u8_grow\n");
@@ -832,7 +809,7 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movb %r13b, 8(%rax,%r14)\n");
   s = s.write(".Larr_push_u8_ret:\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
   s = s.write("__fern_arr_push_owned_u8:\n");
-  s = s.write(arr_push_fast_u8(".Lapou_slow"));
+  s = s.write(arr_push_fast_u8(".Lapou_slow", s.rc_free_debug));
   s = s.write(".Lapou_slow:\n");
   s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n    movq %rdi, %r12\n");
   if (s.rc_free_debug) {
@@ -842,10 +819,10 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write("    cmpq %rax, %r12\n    je .Lapou_ret\n    cmpq $0x10000, %r12\n    jb .Lapou_ret\n");
   s = s.write("    movl -8(%r12), %ecx\n");
-  s = s.write(san_poison_check("%ecx"));
+  s = s.write(san_poison_check("%ecx", s.rc_free_debug));
   s = s.write("    testl %ecx, %ecx\n    js .Lapou_ret\n    cmpl $1, %ecx\n    jne .Lapou_ret\n");
   s = s.write("    movl -16(%r12), %ecx\n    addq $3, %rcx\n    cmpq $65536, %rcx\n    jae .Lapou_large\n");
-  s = s.write(quarantine_rc("-8(%r12)"));
+  s = s.write(quarantine_rc("-8(%r12)", s.rc_free_debug));
   s = s.write("    leaq -16(%r12), %rdx\n");
   s = hev_free(s, "%rdx", "%rcx");
   if (!s.rc_free_debug) {
@@ -853,14 +830,14 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write(".Lapou_ret:\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
   s = s.write(".Lapou_large:\n");
-  s = s.write(quarantine_rc("-8(%r12)"));
+  s = s.write(quarantine_rc("-8(%r12)", s.rc_free_debug));
   s = s.write("    leaq -16(%r12), %r8\n    leaq 0(,%rcx,8), %rsi\n    pushq %rax\n    call __fern_large_push\n    popq %rax\n    jmp .Lapou_ret\n");
   return s;
 }
 
 // arr_push_fast_u8 is arr_push_fast for a packed u8[]: room is len < cap * 8.
-function arr_push_fast_u8(slow: string): string {
-  if (asmcore.rc_free_debug_on()) {
+function arr_push_fast_u8(slow: string, on: boolean): string {
+  if (on) {
     return "";
   }
   let ok: string = slow + "_ok";
@@ -876,8 +853,8 @@ function arr_push_fast_u8(slow: string): string {
 // owner, or the bit-31 immortal sentinel) takes the value in place, with no frame
 // and no register but %rax, %rcx and %rdx touched. Anything else, and every
 // push under the sanitizer, which checks the count first, goes to `slow`.
-function arr_push_fast(slow: string): string {
-  if (asmcore.rc_free_debug_on()) {
+function arr_push_fast(slow: string, on: boolean): string {
+  if (on) {
     return "";
   }
   let ok: string = slow + "_ok";
@@ -889,7 +866,7 @@ function arr_push_fast(slow: string): string {
 }
 
 function hev_free(s: asmcore.EmitState, ptr: string, words: string): asmcore.EmitState {
-  if (!hev_on()) {
+  if (!hev_on(s)) {
     return s;
   }
   s = s.write("    pushq " + words + "\n");
@@ -912,7 +889,7 @@ function hev_free(s: asmcore.EmitState, ptr: string, words: string): asmcore.Emi
 // the capacity __fern_capw or the large tier rounds the block up to, so
 // live_bytes measures demand, not arena footprint.
 function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
-  if (!hev_on()) {
+  if (!hev_on(s)) {
     return s;
   }
   s = s.write("    .section .bss\n");
@@ -941,12 +918,12 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (rc_trace_on()) {
     s = s.write(".Lhev_pre:\n    .ascii \"rctrace \"\n");
   }
-  if (leak_check_on()) {
+  if (s.leak_check) {
     s = s.write(".Llc_a:\n    .ascii \"leakcheck: allocs=\"\n");
     s = s.write(".Llc_f:\n    .ascii \" frees=\"\n");
     s = s.write(".Llc_l:\n    .ascii \" live_bytes=\"\n");
   }
-  if (asmcore.sanitize_on()) {
+  if (s.sanitize) {
     // Sanitizer diagnostics (#5545). The texts must match the native
     // backends' byte-for-byte: a `fern-sanitizer:` line must not tell you
     // which compiler produced the binary.
@@ -982,7 +959,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $0, %rax\n");
   s = s.write("    movq %rax, __fern_hev_site(%rip)\n");
   s = s.write(".Lhev_a_nosite:\n");
-  if (leak_check_on()) {
+  if (s.leak_check) {
     s = s.write("    movq __fern_lc_alloc_count(%rip), %rax\n");
     s = s.write("    addq $1, %rax\n");
     s = s.write("    movq %rax, __fern_lc_alloc_count(%rip)\n");
@@ -1005,7 +982,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq 120(%rsp), %r13\n");  // words
   s = s.write("    shlq $3, %r13\n");
   s = s.write("    movq $102, %rbx\n");  // 'f'
-  if (leak_check_on()) {
+  if (s.leak_check) {
     s = s.write("    movq __fern_lc_free_count(%rip), %rax\n");
     s = s.write("    addq $1, %rax\n");
     s = s.write("    movq %rax, __fern_lc_free_count(%rip)\n");
@@ -1138,7 +1115,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq $32, %rsp\n");
     s = s.write("    ret\n");
   }
-  if (leak_check_on()) {
+  if (s.leak_check) {
     // __fern_lc_report() — the exit-time summary, called from `_start`'s
     // epilogue and from the `exit` builtin (which bypasses it). Both call
     // sites protect their live exit code with a push/pop across the call,
@@ -1168,7 +1145,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    leaq .Lhev_nl(%rip), %rsi\n");
     s = s.write("    movq $1, %rdx\n");
     s = s.write("    call .Lhev_w\n");
-    if (asmcore.sanitize_on()) {
+    if (s.sanitize) {
       // Sanitizer leak VERDICT (#5545), after the summary. Only a
       // POSITIVE balance is a leak: zero is clean, and a negative one is
       // an over-free, which the over-release detector reports at the
@@ -1233,7 +1210,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    call .Lhev_w\n");
     s = s.write("    addq $48, %rsp\n");
     s = s.write("    ret\n");
-    if (asmcore.sanitize_on()) {
+    if (s.sanitize) {
       // __fern_san_abort() — the sanitizer's fatal report (#5545).
       // Writes the one diagnostic this backend can raise and exits 124.
       //
@@ -1264,8 +1241,8 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
 //
 // Empty when the flag is off, which is what keeps an ordinary build's asm
 // byte-identical to one from a compiler without the mode.
-function san_underflow_abort(): string {
-  if (asmcore.sanitize_on()) {
+function san_underflow_abort(s: asmcore.EmitState): string {
+  if (s.sanitize) {
     return "    call __fern_san_abort\n";
   }
   return "";
@@ -1413,7 +1390,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
 // RETURNS in %rax and reads nothing from it), and the prologue sits ahead of
 // every push so `(%rsp)` is still the return address.
 function hev_shim_site(s: asmcore.EmitState, tag: string): asmcore.EmitState {
-  if (!hev_on()) {
+  if (!hev_on(s)) {
     return s;
   }
   s = s.write("    movq __fern_hev_site(%rip), %rax\n");
@@ -2948,7 +2925,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // not the code that wanted the box — the same limitation the native hook
   // has, and the reason an `a` line naming a shim needs one gdb frame walk
   // to attribute.
-  if (hev_on()) {
+  if (hev_on(s)) {
     s = s.write("__fern_alloc:\n");
     if (s.has_need("alloc_count")) {
       s = s.write("    incq __fern_alloc_count(%rip)\n");
@@ -3139,7 +3116,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // __fern_alloc clobbers only %rax and %rdi, so the capacity rides the stack
   // across it, and that one push aligns the call. A traced build keeps the
   // frame: it names allocation sites by the frame chain.
-  if (hev_on()) {
+  if (hev_on(s)) {
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
   }
@@ -3152,7 +3129,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $1, 8(%rax)\n");
   s = s.write("    movq %rdi, 16(%rax)\n");
   s = s.write("    addq $16, %rax\n");
-  if (hev_on()) {
+  if (hev_on(s)) {
     s = s.write("    leave\n");
   }
   s = s.write("    ret\n");
@@ -3237,7 +3214,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // Byte views retain the untagged descriptor but return their original value.
   s = s.write("    andq $-3, %rax\n");
   s = s.write("    movl -8(%rax), %ecx\n");
-  s = s.write(san_poison_check("%ecx"));
+  s = s.write(san_poison_check("%ecx", s.rc_free_debug));
   s = s.write("    testl %ecx, %ecx\n");
   s = s.write("    js .Lshrcinc_ret\n");
   s = s.write("    addl $1, %ecx\n");
@@ -3265,7 +3242,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // test on purpose: that block is dropped rather than recycled, so it is a
   // leak, not a free, and counting it would hide exactly the thing leakcheck
   // exists to show. %rax is inside this helper's documented clobber set.
-  if (hev_on()) {
+  if (hev_on(s)) {
     s = s.write("    movq %rsi, %rax\n");
     s = s.write("    shrq $3, %rax\n");  // words
     s = s.write("    pushq %rax\n");
@@ -3336,7 +3313,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // rc word of a box freed through __fern_box_free, which a second release
   // then reads as a use-after-free.
   if (s.rc_free_debug) {
-    s = s.write(quarantine_rc("(%rdi)"));
+    s = s.write(quarantine_rc("(%rdi)", s.rc_free_debug));
   }
   s = s.write("    movq %rsi, %rcx\n");
   s = s.write("    shrq $3, %rcx\n");
@@ -3360,21 +3337,21 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmpq $0x10000, %rax\n");
   s = s.write("    jb .Larrdec_ret\n");
   s = s.write("    movl -8(%rax), %ecx\n");
-  s = s.write(san_poison_check("%ecx"));
+  s = s.write(san_poison_check("%ecx", s.rc_free_debug));
   s = s.write("    testl %ecx, %ecx\n");
   s = s.write("    js .Larrdec_ret\n");
   s = s.write("    cmpl $1, %ecx\n");
   s = s.write("    je .Larrdec_free\n");
   s = s.write("    jg .Larrdec_dec\n");
   s = s.write("    incl __fern_rc_underflow(%rip)\n");
-  s = s.write(san_underflow_abort());
+  s = s.write(san_underflow_abort(s));
   s = s.write("    jmp .Larrdec_ret\n");
   s = s.write(".Larrdec_dec:\n");
   s = s.write("    subl $1, %ecx\n");
   s = s.write("    movl %ecx, -8(%rax)\n");
   s = s.write("    jmp .Larrdec_ret\n");
   s = s.write(".Larrdec_free:\n");
-  s = s.write(quarantine_rc("-8(%rax)"));
+  s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
   s = s.write("    movl -16(%rax), %ecx\n");
   s = s.write("    addq $3, %rcx\n");
   s = s.write("    cmpq $65536, %rcx\n");
@@ -3422,7 +3399,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // rc==1 frees the box and any owned data; rc==0 is a double-free, caught by the
   // underflow counter (matching __fn___fern_arr_dec) rather than corrupting the heap.
   s = s.write("    movl -8(%rax), %ecx\n");  // rc
-  s = s.write(san_poison_check("%ecx"));
+  s = s.write(san_poison_check("%ecx", s.rc_free_debug));
   s = s.write("    testl %ecx, %ecx\n");
   s = s.write("    js .Lstrfree_ret\n");  // negative = immortal -> skip
   s = s.write("    cmpl $1, %ecx\n");
@@ -3465,7 +3442,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // The rc-headered block is base = box-8 (24 bytes = class 3). The rc store
   // (0, or the quarantine poison) lands before the push so a re-free reads a
   // dead count, then base goes onto freelist[3].
-  s = s.write(quarantine_rc("-8(%rax)"));
+  s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
   s = s.write("    leaq -8(%rax), %rdx\n");  // base = box-8
   s = hev_free(s, "%rdx", "$3");
   if (!s.rc_free_debug) {
@@ -3498,7 +3475,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    leaq -8(%rax), %rcx\n");  // base = box-8
   s = s.write("    cmpq $65536, %rdx\n");  // large tier -> __fern_large_push
   s = s.write("    jae .Lstrfree_fused_large\n");
-  s = s.write(quarantine_rc("-8(%rax)"));
+  s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
   s = hev_free(s, "%rcx", "%rdx");
   if (!s.rc_free_debug) {
     s = freelist_push(s, "%rcx", "%rdx", "%rsi");
@@ -3507,7 +3484,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // The large tier's own free hook lives inside __fern_large_push, so this arm
   // must NOT emit its own — .Lstrfree_large above is silent for the same reason.
   s = s.write(".Lstrfree_fused_large:\n");
-  s = s.write(quarantine_rc("-8(%rax)"));
+  s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
   s = s.write("    movq %rcx, %r8\n");  // base
   s = s.write("    leaq 0(,%rdx,8), %rsi\n");  // bytes = words*8
   s = s.write("    call __fern_large_push\n");
@@ -3518,7 +3495,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jmp .Lstrfree_ret\n");
   s = s.write(".Lstrfree_uf:\n");
   s = s.write("    incl __fern_rc_underflow(%rip)\n");
-  s = s.write(san_underflow_abort());
+  s = s.write(san_underflow_abort(s));
   s = s.write(".Lstrfree_ret:\n");
   s = s.write("    ret\n");
   // __fern_str_view_free releases counted strings and borrowed-data boxes
@@ -3546,7 +3523,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jb .Lstrvfree_ret\n");
   s = s.write("    cmpq __fern_heap_end(%rip), %rdx\n");
   s = s.write("    jae .Lstrvfree_ret\n");  // base >= heap_end -> not our arena, skip
-  s = s.write(quarantine_rc("-8(%rax)"));
+  s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
   s = hev_free(s, "%rdx", "$3");
   if (!s.rc_free_debug) {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
@@ -3706,7 +3683,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jb .Lshuniq_ret\n");
   s = s.write("    andq $-3, %rcx\n");
   s = s.write("    movl -8(%rcx), %edx\n");
-  s = s.write(san_poison_check("%edx"));
+  s = s.write(san_poison_check("%edx", s.rc_free_debug));
   s = s.write("    testl %edx, %edx\n");
   s = s.write("    js .Lshuniq_ret\n");
   s = s.write("    cmpl $1, %edx\n");
@@ -3731,7 +3708,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0x10000, %rax\n");
     s = s.write("    jb .Laie_ret\n");
     s = s.write("    movl -8(%rax), %ecx\n");  // rc
-    s = s.write(san_poison_check("%ecx"));
+    s = s.write(san_poison_check("%ecx", s.rc_free_debug));
     s = s.write("    testl %ecx, %ecx\n");
     s = s.write("    js .Laie_ret\n");  // immortal buffer: its elements are too
     s = s.write("    movq (%rax), %rsi\n");  // len @ [arr]
@@ -3748,7 +3725,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // Byte views retain the untagged descriptor.
     s = s.write("    andq $-3, %rcx\n");
     s = s.write("    movl -8(%rcx), %edi\n");
-    s = s.write(san_poison_check("%edi"));
+    s = s.write(san_poison_check("%edi", s.rc_free_debug));
     s = s.write("    testl %edi, %edi\n");
     s = s.write("    js .Laie_loop\n");
     s = s.write("    addl $1, -8(%rcx)\n");
@@ -3806,7 +3783,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0x10000, %r8\n");
     s = s.write("    jb .Lsg_ret\n");
     s = s.write("    movl -8(%r8), %ecx\n");  // rc
-    s = s.write(san_poison_check("%ecx"));
+    s = s.write(san_poison_check("%ecx", s.rc_free_debug));
     s = s.write("    cmpl $1, %ecx\n");
     s = s.write("    jne .Lsg_ret\n");
     s = s.write("    cmpl $" + util.i32_to_string(fused_marker()) + ", -4(%r8)\n");
@@ -3852,7 +3829,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    call __fern_hev_a\n");
       s = s.write("    addq $24, %rsp\n");
     }
-    if (leak_check_on()) {
+    if (s.leak_check) {
       s = str_grow_census(s);
     }
     s = s.write(".Lsg_copy:\n");
@@ -3879,7 +3856,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0x10000, %rax\n");
     s = s.write("    jb .Lso_ret\n");
     s = s.write("    movl -8(%rax), %ecx\n");  // rc
-    s = s.write(san_poison_check("%ecx"));
+    s = s.write(san_poison_check("%ecx", s.rc_free_debug));
     s = s.write("    testl %ecx, %ecx\n");
     s = s.write("    js .Lso_view\n");
     s = s.write("    pushq %rax\n");
@@ -4005,7 +3982,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmpq $0x10000, %rcx\n");  // low-addr / SSO sentinel
   s = s.write("    jb .Lsd_ret\n");
   s = s.write("    movl -8(%rcx), %esi\n");  // old rc
-  s = s.write(san_poison_check("%esi"));
+  s = s.write(san_poison_check("%esi", s.rc_free_debug));
   s = s.write("    testl %esi, %esi\n");
   s = s.write("    js .Lsd_ret\n");  // static sentinel (rc<0)
   s = s.write("    cmpl $1, %esi\n");
@@ -4014,7 +3991,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    addq $3, %rsi\n");  // words = cap + 3 (header)
   s = s.write("    cmpq $65536, %rsi\n");
   s = s.write("    jae .Lsd_large\n");  // large tier -> recycle via __fern_large_push
-  s = s.write(quarantine_rc("-8(%rcx)"));
+  s = s.write(quarantine_rc("-8(%rcx)", s.rc_free_debug));
   s = s.write("    leaq -16(%rcx), %rdi\n");  // old box base
   s = hev_free(s, "%rdi", "%rsi");
   if (!s.rc_free_debug) {
@@ -4026,7 +4003,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // words*8) instead of leaking. %rax holds the return value `new` and
   // __fern_large_push clobbers it, so preserve it across the call.
   s = s.write(".Lsd_large:\n");
-  s = s.write(quarantine_rc("-8(%rcx)"));
+  s = s.write(quarantine_rc("-8(%rcx)", s.rc_free_debug));
   s = s.write("    leaq -16(%rcx), %r8\n");  // base = old - 16
   s = s.write("    leaq 0(,%rsi,8), %rsi\n");  // bytes = words*8
   s = s.write("    pushq %rax\n");  // preserve return value (new)
@@ -4221,7 +4198,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lsbgrow_alloc:\n");
     s = s.write("    movq %r12, %rdi\n");
     s = s.write("    call __fern_alloc\n");
-    if (leak_check_on()) {
+    if (s.leak_check) {
       // The builder's buffer is runtime state the program never holds,
       // so the census leaves it out as it left out the .bss reservation
       // it replaced. %r12 is a power of two >= 64 KiB, already 16-rounded.
@@ -4649,14 +4626,14 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("arr_push") || s.has_need("maps")) {
     // __fern_arr_push (transcribed from asm.fern for the IR map path).
     s = s.write("__fern_arr_push:\n");
-    s = s.write(arr_push_fast(".Larr_push_slow"));
+    s = s.write(arr_push_fast(".Larr_push_slow", s.rc_free_debug));
     s = s.write(".Larr_push_slow:\n");
     // An empty receiver with no capacity, the common first append, grows to
     // four slots with nothing to copy, so it needs no frame. A static
     // literal can hold elements at cap 0, hence the length test too. The
     // debug build keeps the frame path, whose rc read checks for poison, and
     // so does a traced one, which names allocation sites by the frame chain.
-    if (!s.rc_free_debug && !hev_on()) {
+    if (!s.rc_free_debug && !hev_on(s)) {
       s = s.write("    cmpq $0, (%rdi)\n");
       s = s.write("    jne .Larr_push_frame\n");
       s = s.write("    cmpq $0, -16(%rdi)\n");
@@ -4691,7 +4668,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // note below, never freed). rc == 1 (sole owner) and the bit-31
     // static/immortal sentinel keep today's in-place fast path.
     s = s.write("    movl -8(%r12), %ecx\n");  // rc word
-    s = s.write(san_poison_check("%ecx"));
+    s = s.write(san_poison_check("%ecx", s.rc_free_debug));
     s = s.write("    cmpl $1, %ecx\n");
     s = s.write("    je .Larr_push_rc_ok\n");
     s = s.write("    testl %ecx, %ecx\n");
@@ -4829,7 +4806,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // without threading a separate need through the union.
   if (s.has_need("arr_push") || s.has_need("maps")) {
     s = s.write("__fern_arr_push_owned:\n");
-    s = s.write(arr_push_fast(".Lapo_slow"));
+    s = s.write(arr_push_fast(".Lapo_slow", s.rc_free_debug));
     s = s.write(".Lapo_slow:\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
@@ -4847,7 +4824,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0x10000, %r12\n");  // grew: free the dead old box %r12
     s = s.write("    jb .Lapo_ret\n");  // low-addr / SSO sentinel
     s = s.write("    movl -8(%r12), %ecx\n");  // old rc
-    s = s.write(san_poison_check("%ecx"));
+    s = s.write(san_poison_check("%ecx", s.rc_free_debug));
     s = s.write("    testl %ecx, %ecx\n");
     s = s.write("    js .Lapo_ret\n");  // static sentinel (rc<0)
     s = s.write("    cmpl $1, %ecx\n");
@@ -4856,7 +4833,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq $3, %rcx\n");  // words = cap + 3 (header)
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Lapo_large\n");  // large tier -> recycle via __fern_large_push
-    s = s.write(quarantine_rc("-8(%r12)"));
+    s = s.write(quarantine_rc("-8(%r12)", s.rc_free_debug));
     s = s.write("    leaq -16(%r12), %rdx\n");  // old box base
     s = hev_free(s, "%rdx", "%rcx");
     if (!s.rc_free_debug) {
@@ -4872,7 +4849,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // `new` and __fern_large_push clobbers it, so preserve it across the call;
     // %r12 is callee-saved.
     s = s.write(".Lapo_large:\n");
-    s = s.write(quarantine_rc("-8(%r12)"));
+    s = s.write(quarantine_rc("-8(%r12)", s.rc_free_debug));
     s = s.write("    leaq -16(%r12), %r8\n");  // base = old - 16
     s = s.write("    leaq 0(,%rcx,8), %rsi\n");  // bytes = words*8
     s = s.write("    pushq %rax\n");  // preserve return value (new)
@@ -5339,43 +5316,40 @@ function ir_bin_asm(tag: i32, width: i32, d: string, r: string): string {
   return ircore.unsupported_op_refuse(tag, "x86-64");
 }
 
-// ir_cmp_jcc names the conditional jump an integer comparison feeds when its
-// result goes straight to a branch: the mnemonic that fires when the comparison
+// ir_cmp_jcc is the conditional jump an integer comparison feeds when its
+// result goes straight to a branch: the one that fires when the comparison
 // holds (when_true) or its inverse. `cmpq %rcx, %rax` has already set the flags,
 // so the signed/unsigned split is the same one ir_bin_asm's setcc family makes.
-function ir_cmp_jcc(tag: i32, when_true: boolean): string {
-  let direct: string = "";
-  let neg: string = "";
+function ir_cmp_jcc(tag: i32, when_true: boolean): i32 {
+  let direct: i32 = J_JAE;  // ge_u
+  let neg: i32 = J_JB;
   if (tag == 35) {
-    direct = "je";
-    neg = "jne";
+    direct = J_JE;
+    neg = J_JNE;
   } else if (tag == 36) {
-    direct = "jne";
-    neg = "je";
+    direct = J_JNE;
+    neg = J_JE;
   } else if (tag == 37) {
-    direct = "jl";
-    neg = "jge";
+    direct = J_JL;
+    neg = J_JGE;
   } else if (tag == 38) {
-    direct = "jle";
-    neg = "jg";
+    direct = J_JLE;
+    neg = J_JG;
   } else if (tag == 39) {
-    direct = "jg";
-    neg = "jle";
+    direct = J_JG;
+    neg = J_JLE;
   } else if (tag == 40) {
-    direct = "jge";
-    neg = "jl";
+    direct = J_JGE;
+    neg = J_JL;
   } else if (tag == 41) {
-    direct = "jb";
-    neg = "jae";
+    direct = J_JB;
+    neg = J_JAE;
   } else if (tag == 42) {
-    direct = "jbe";
-    neg = "ja";
+    direct = J_JBE;
+    neg = J_JA;
   } else if (tag == 43) {
-    direct = "ja";
-    neg = "jbe";
-  } else {  // ge_u
-    direct = "jae";
-    neg = "jb";
+    direct = J_JA;
+    neg = J_JBE;
   }
   if (when_true) {
     return direct;
@@ -6388,7 +6362,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(c_done + ":\n    pushq %r11\n");
     return s;
   }
-  if (o.kind_tag == 368 && !ir.is_packed(o)) {
+  if (o.kind_tag == 380 && !ir.is_packed(o)) {
     let loop_label = asmcore.fresh_label(s);
     let done_label = asmcore.fresh_label(loop_label.state);
     s = done_label.state;
@@ -6746,16 +6720,83 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
   return ssa_mov_rr(s, reg, home);
 }
 
+// The jumps the SSA emitter writes. The low five bits are the kind a branch
+// record carries, the condition code or 16 for jmp; bit 5 picks the jz/jnz
+// spelling of je/jne in the text.
+const J_JB: i32 = 2;
+
+const J_JAE: i32 = 3;
+
+const J_JE: i32 = 4;
+
+const J_JNE: i32 = 5;
+
+const J_JBE: i32 = 6;
+
+const J_JA: i32 = 7;
+
+const J_JS: i32 = 8;
+
+const J_JNS: i32 = 9;
+
+const J_JL: i32 = 12;
+
+const J_JGE: i32 = 13;
+
+const J_JLE: i32 = 14;
+
+const J_JG: i32 = 15;
+
+const J_JMP: i32 = 16;
+
+const J_JZ: i32 = 36;
+
+const J_JNZ: i32 = 37;
+
+// ssa_jump_text is jump `j`'s mnemonic.
+function ssa_jump_text(j: i32): string {
+  if (j == J_JMP) {
+    return "jmp";
+  } else if (j == J_JE) {
+    return "je";
+  } else if (j == J_JNE) {
+    return "jne";
+  } else if (j == J_JZ) {
+    return "jz";
+  } else if (j == J_JNZ) {
+    return "jnz";
+  } else if (j == J_JB) {
+    return "jb";
+  } else if (j == J_JAE) {
+    return "jae";
+  } else if (j == J_JBE) {
+    return "jbe";
+  } else if (j == J_JA) {
+    return "ja";
+  } else if (j == J_JS) {
+    return "js";
+  } else if (j == J_JNS) {
+    return "jns";
+  } else if (j == J_JL) {
+    return "jl";
+  } else if (j == J_JGE) {
+    return "jge";
+  } else if (j == J_JLE) {
+    return "jle";
+  } else if (j == J_JG) {
+    return "jg";
+  }
+  // Not a J_* id: a mnemonic the assembler refuses, not a wrong branch.
+  return "j?" + util.i32_to_string(j);
+}
+
 // ssa_branch jumps to one of the emitter's own labels: by id when records
 // are on (asmcore.Lab), by name in the text.
-function ssa_branch(s: asmcore.EmitState, mnem: string, l: asmcore.Lab): asmcore.EmitState {
+function ssa_branch(s: asmcore.EmitState, j: i32, l: asmcore.Lab): asmcore.EmitState {
   if (s.records()) {
-    let kind: i32 = x86_native.x86_rec_jump_kind(mnem);
-    if (kind >= 0) {
-      return s.lab_ref(kind as i64, l);
-    }
+    return s.lab_ref((j & 31) as i64, l);
   }
-  return s.write("    " + mnem + " " + l.name + "\n");
+  return s.write("    " + ssa_jump_text(j) + " " + l.name + "\n");
 }
 
 // ssa_call_sym calls a function symbol, which keeps its name: the record
@@ -7908,7 +7949,7 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = ssa_zero(s, "%rcx");
     s = ssa_rc_guard(s, p, done, ins.imm != 4);
     s = ssa_rc_is_one(s, rb);
-    s = ssa_branch(s, "jne", done);
+    s = ssa_branch(s, J_JNE, done);
     s = ssa_mov_ir(s, 32, 1i64, "1", "%rcx");
     s = s.lab_def(done);
     s = ssa_mov_rr(s, d, "%rcx");
@@ -7916,11 +7957,11 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   }
   s = ssa_rc_guard(s, p, done, ins.imm != 4);
   if (s.rc_free_debug) {
-    s = ssa_mov_rm(s, 32, true, "%rcx", rb, 0 - 8).write(san_poison_check("%ecx"));
-    s = ssa_branch(ssa_test_rr(s, 32, "%rcx", "%rcx"), "js", done);
+    s = ssa_mov_rm(s, 32, true, "%rcx", rb, 0 - 8).write(san_poison_check("%ecx", s.rc_free_debug));
+    s = ssa_branch(ssa_test_rr(s, 32, "%rcx", "%rcx"), J_JS, done);
     s = ssa_mov_rm(ssa_alu_ir(s, 0, 32, 1i64, "%rcx"), 32, false, "%rcx", rb, 0 - 8);
   } else {
-    s = ssa_branch(ssa_alu_im(s, 7, 32, 0, rb, 0 - 8), "js", done);
+    s = ssa_branch(ssa_alu_im(s, 7, 32, 0, rb, 0 - 8), J_JS, done);
     s = ssa_alu_im(s, 0, 32, 1, rb, 0 - 8);
   }
   s = s.lab_def(done);
@@ -7932,8 +7973,8 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 // string's tag bit, or below the heap floor (every null). `strip` clears the
 // view bit into %rdx, the base the count is read through.
 function ssa_rc_guard(s: asmcore.EmitState, p: string, done: asmcore.Lab, strip: boolean): asmcore.EmitState {
-  s = ssa_branch(ssa_test_bit(s, 1, p), "jnz", done);
-  s = ssa_branch(ssa_cmp_floor(s, p), "jb", done);
+  s = ssa_branch(ssa_test_bit(s, 1, p), J_JNZ, done);
+  s = ssa_branch(ssa_cmp_floor(s, p), J_JB, done);
   if (strip) {
     s = ssa_mov_rr(s, "%rdx", p);
     s = ssa_alu_ir(s, 4, 64, -3i64, "%rdx");
@@ -7976,13 +8017,13 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
   let kept: asmcore.Lab = kn.lab;
   let done: asmcore.Lab = en.lab;
   if (ins.str == "__fern_str_free") {
-    s = ssa_branch(ssa_test_bit(s, 1, p), "jnz", kept);
+    s = ssa_branch(ssa_test_bit(s, 1, p), J_JNZ, kept);
   }
-  s = ssa_branch(ssa_cmp_floor(s, p), "jb", kept);
-  s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, 0 - 8), "jg", dec);
-  s = ssa_branch(ssa_alu_im(s, 7, 32, 0, p, 0 - 8), "js", kept);
+  s = ssa_branch(ssa_cmp_floor(s, p), J_JB, kept);
+  s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, 0 - 8), J_JG, dec);
+  s = ssa_branch(ssa_alu_im(s, 7, 32, 0, p, 0 - 8), J_JS, kept);
   s = ssa_helper_call(ins, reg_of, s);
-  s = ssa_branch(s, "jmp", done).lab_def(dec);
+  s = ssa_branch(s, J_JMP, done).lab_def(dec);
   s = ssa_alu_im(s, 5, 32, 1, p, 0 - 8).lab_def(kept);
   s = ssa_store(reg_of, ins.result, p, s);
   return s.lab_def(done);
@@ -8061,9 +8102,9 @@ function ssa_release_entry(r: irtables.LowerResult, lp: string, s: asmcore.EmitS
   let kn: asmcore.LabNew = asmcore.lab_new(dn.state, lp + "release_kept");
   let sn: asmcore.LabNew = asmcore.lab_new(kn.state, lp + "release_slow");
   s = sn.state;
-  s = ssa_branch(ssa_cmp_floor(s, "%rax"), "jb", kn.lab);
-  s = ssa_branch(ssa_alu_im(s, 7, 32, 1, "%rax", 0 - 8), "jg", dn.lab);
-  s = ssa_branch(ssa_alu_im(s, 7, 32, 0, "%rax", 0 - 8), "jns", sn.lab);
+  s = ssa_branch(ssa_cmp_floor(s, "%rax"), J_JB, kn.lab);
+  s = ssa_branch(ssa_alu_im(s, 7, 32, 1, "%rax", 0 - 8), J_JG, dn.lab);
+  s = ssa_branch(ssa_alu_im(s, 7, 32, 0, "%rax", 0 - 8), J_JNS, sn.lab);
   s = ssa_ret(ssa_zero(s.lab_def(kn.lab), "%rax"));
   s = ssa_ret(ssa_zero(ssa_alu_im(s.lab_def(dn.lab), 5, 32, 1, "%rax", 0 - 8), "%rax"));
   s = s.lab_def(sn.lab);
@@ -8076,7 +8117,7 @@ function ssa_release_entry(r: irtables.LowerResult, lp: string, s: asmcore.EmitS
   }
   let bn: asmcore.LabNew = asmcore.lab_new(s, lp + "release_body");
   s = helper_call_needs("__fern_rc_dec", bn.state);
-  s = ssa_branch(ssa_alu_im(s, 7, 32, 1, "%rax", 0 - 8), "jne", bn.lab);
+  s = ssa_branch(ssa_alu_im(s, 7, 32, 1, "%rax", 0 - 8), J_JNE, bn.lab);
   s = ssa_call_sym(ssa_push_r(s, "%rax"), "__fn_" + asmcore.sanitize_label(drop) + ".r");
   s = ssa_call_sym(ssa_mov_rm0(s, 64, true, "%rax", "%rsp"), ircore.ir_helper_symbol("__fern_rc_dec") + ".r");
   s = ssa_ret(ssa_zero(ssa_pop_r(s, "%rax"), "%rax"));
@@ -8174,13 +8215,13 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   let nn: asmcore.LabNew = asmcore.lab_new(s, lp + "streqn" + n);
   let dn: asmcore.LabNew = asmcore.lab_new(nn.state, lp + "streqd" + n);
   s = dn.state;
-  s = ssa_branch(ssa_alu_rm(ssa_mov_rm(s, 64, true, "%rdx", a, 8), 7, 64, true, "%rdx", b, 8), "jne", nn.lab);
+  s = ssa_branch(ssa_alu_rm(ssa_mov_rm(s, 64, true, "%rdx", a, 8), 7, 64, true, "%rdx", b, 8), J_JNE, nn.lab);
   let lit_a: i32 = fr.lit0[ins.args[0]];
   let lit_b: i32 = fr.lit0[ins.args[1]];
   if (lit_b >= 0) {
-    s = ssa_branch(ssa_alu_im0(ssa_mov_rm0(s, 64, true, "%rdx", a), 7, 8, lit_b, "%rdx"), "jne", nn.lab);
+    s = ssa_branch(ssa_alu_im0(ssa_mov_rm0(s, 64, true, "%rdx", a), 7, 8, lit_b, "%rdx"), J_JNE, nn.lab);
   } else if (lit_a >= 0) {
-    s = ssa_branch(ssa_alu_im0(ssa_mov_rm0(s, 64, true, "%rdx", b), 7, 8, lit_a, "%rdx"), "jne", nn.lab);
+    s = ssa_branch(ssa_alu_im0(ssa_mov_rm0(s, 64, true, "%rdx", b), 7, 8, lit_a, "%rdx"), J_JNE, nn.lab);
   }
   // Equality is symmetric, so the operands may land in %rax and %rsi either
   // way round: whichever is already in one stays, and nothing is overwritten
@@ -8197,7 +8238,7 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   if (y != "%rsi") {
     s = ssa_mov_rr(s, "%rsi", y);
   }
-  s = ssa_branch(ssa_call_sym(s, "__fn___fern_str_eq.r"), "jmp", dn.lab);
+  s = ssa_branch(ssa_call_sym(s, "__fn___fern_str_eq.r"), J_JMP, dn.lab);
   s = ssa_zero(s.lab_def(nn.lab), "%rax").lab_def(dn.lab);
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
@@ -8208,6 +8249,9 @@ function ssa_str_target(op: string): string {
   }
   if (op == "str_from_bytes_u8") {
     return "string_from_bytes_u8";
+  }
+  if (op == "str_from_bytes_range_u8") {
+    return "string_from_bytes_range_u8";
   }
   if (op == "read_chunk") {
     return "reader_read_chunk";
@@ -8290,6 +8334,9 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
   if (op == "str_from_bytes_u8") {
     return s.need("heap").need("str_from_bytes_u8");
   }
+  if (op == "str_from_bytes_range_u8") {
+    return s.need("heap").need("str_from_bytes_range_u8");
+  }
   if (op == "print_str") {
     return s.need("str_print");
   }
@@ -8335,7 +8382,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
   }
   if (ins.str == "exit") {
     s = ssa_load(reg_of, ins.args[0], "%r11", s);
-    if (leak_check_on()) {
+    if (s.leak_check) {
       s = s.write("    pushq %r11\n    call __fern_lc_report\n    popq %r11\n");
     }
     s = s.write("    movq %r11, %rdi\n    movq $60, %rax\n").syscall(60).write("    xorl %eax, %eax\n");
@@ -8720,7 +8767,7 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort\n");
     s = s.write("    addq $24, %rdi\n");
   }
-  if (ins.str == "alloc" && leak_check_on() && s.rt_owned_allocs) {
+  if (ins.str == "alloc" && s.leak_check && s.rt_owned_allocs) {
     s = s.write("    movq %rdi, __fern_lc_rt_req(%rip)\n");
   }
   if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
@@ -8733,7 +8780,7 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   if (ins.str == "raw_alloc") {
     s = s.write("    addq $24, %rax\n");
   }
-  if (ins.str == "alloc" && leak_check_on() && s.rt_owned_allocs) {
+  if (ins.str == "alloc" && s.leak_check && s.rt_owned_allocs) {
     // A runtime-owned block (#11386): take the one the hook just counted
     // back out, at the allocator's 8-byte rounding of the request.
     s = lc_rt_uncount(s, "__fern_lc_alloc_bytes", "__fern_lc_alloc_count");
@@ -8760,7 +8807,7 @@ function lc_rt_uncount(s: asmcore.EmitState, bytes: string, count: string): asmc
 function arr_push_inline(sym: string, l: string, unique: boolean, s: asmcore.EmitState): asmcore.EmitState {
   let ls: ArrPushLabs = arr_push_labs(l, s);
   s = ssa_mov_rm0(ls.state, 64, true, "%rdx", "%rdi");
-  s = ssa_branch(ssa_alu_rm(s, 7, 64, true, "%rdx", "%rdi", 0 - 16), "jge", ls.slow);
+  s = ssa_branch(ssa_alu_rm(s, 7, 64, true, "%rdx", "%rdi", 0 - 16), J_JGE, ls.slow);
   return arr_push_tail(sym, false, ls, unique, s);
 }
 
@@ -8770,7 +8817,7 @@ function arr_push_inline_u8(sym: string, l: string, unique: boolean, s: asmcore.
   let ls: ArrPushLabs = arr_push_labs(l, s);
   s = ssa_mov_rm0(ls.state, 64, true, "%rdx", "%rdi");
   s = ssa_mov_rm(s, 64, true, "%rcx", "%rdi", 0 - 16).write("    shlq $3, %rcx\n");
-  s = ssa_branch(ssa_alu_rr(s, 7, 64, "%rcx", "%rdx"), "jge", ls.slow);
+  s = ssa_branch(ssa_alu_rr(s, 7, 64, "%rcx", "%rdx"), J_JGE, ls.slow);
   return arr_push_tail(sym, true, ls, unique, s);
 }
 
@@ -8796,7 +8843,7 @@ function arr_push_tail(sym: string, packed: boolean, ls: ArrPushLabs, unique: bo
     s = ssa_mov_rmi(s, 64, false, "%rsi", "%rdi", "%rdx", 8, 8);
   }
   s = ssa_mov_rm0(ssa_inc(s, "%rdx"), 64, false, "%rdx", "%rdi");
-  s = ssa_branch(ssa_mov_rr(s, "%rax", "%rdi"), "jmp", ls.end);
+  s = ssa_branch(ssa_mov_rr(s, "%rax", "%rdi"), J_JMP, ls.end);
   return ssa_call_sym(s.lab_def(ls.slow), sym).lab_def(ls.end);
 }
 
@@ -8806,8 +8853,8 @@ function push_count_test(unique: boolean, ls: ArrPushLabs, s: asmcore.EmitState)
   if (unique) {
     return s;
   }
-  s = ssa_branch(ssa_alu_ir(ssa_mov_rm(s, 32, true, "%rcx", "%rdi", 0 - 8), 7, 32, 1i64, "%rcx"), "je", ls.store);
-  return ssa_branch(ssa_test_rr(s, 32, "%rcx", "%rcx"), "jns", ls.slow);
+  s = ssa_branch(ssa_alu_ir(ssa_mov_rm(s, 32, true, "%rcx", "%rdi", 0 - 8), 7, 32, 1i64, "%rcx"), J_JE, ls.store);
+  return ssa_branch(ssa_test_rr(s, 32, "%rcx", "%rcx"), J_JNS, ls.slow);
 }
 
 // ssa_is_rt_call is a kind-50 call that ssa_rt_call emits: neither a
@@ -9287,7 +9334,7 @@ function ssa_jump(fr: SsaFrame, lp: string, to: i32, next: i32, s: asmcore.EmitS
   if (to == next) {
     return s;
   }
-  return ssa_branch(s, "jmp", ssa_blab(fr, lp, to));
+  return ssa_branch(s, J_JMP, ssa_blab(fr, lp, to));
 }
 
 // ssa_brif branches on a value, or on the flags a fused compare left (fu.n
@@ -9322,23 +9369,23 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   if (!stub && t.f == next && !ssa_has_phis(f, fr, t.t)) {
     let tl: asmcore.Lab = ssa_blab(fr, lp, t.t);
     if (fu.n > 0 && fu.tag == 0) {
-      return ssa_branch(ssa_test_rr(s, 64, tr, tr), "jz", tl);
+      return ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JZ, tl);
     }
     if (fu.n > 0) {
       return ssa_branch(s, ir_cmp_jcc(fu.tag, !fu.inverted), tl);
     }
-    return ssa_branch(ssa_test_rr(s, 64, tr, tr), "jnz", tl);
+    return ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JNZ, tl);
   }
   if (fu.n > 0 && fu.tag == 0) {
-    s = ssa_branch(ssa_test_rr(s, 64, tr, tr), "jnz", fl);
+    s = ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JNZ, fl);
   } else if (fu.n > 0) {
     s = ssa_branch(s, ir_cmp_jcc(fu.tag, fu.inverted), fl);
   } else {
-    s = ssa_branch(ssa_test_rr(s, 64, tr, tr), "jz", fl);
+    s = ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JZ, fl);
   }
   s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
   if (stub) {
-    s = ssa_branch(s, "jmp", ssa_blab(fr, lp, t.t));
+    s = ssa_branch(s, J_JMP, ssa_blab(fr, lp, t.t));
     s = ssa_x0_forget(s);
     s = s.lab_def(fl);
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.f, s);
@@ -9385,8 +9432,8 @@ function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string,
   let p: string = ssa_src(reg_of, v, "%r11");
   let jn: asmcore.LabNew = asmcore.lab_new(s, join);
   s = jn.state;
-  s = ssa_branch(ssa_test_bit(s, 1, p), "jnz", jn.lab);
-  s = ssa_branch(ssa_cmp_floor(s, p), "jb", jn.lab);
+  s = ssa_branch(ssa_test_bit(s, 1, p), J_JNZ, jn.lab);
+  s = ssa_branch(ssa_cmp_floor(s, p), J_JB, jn.lab);
   let rb: string = p;
   if (!aligned) {
     s = ssa_alu_ir(ssa_mov_rr(s, "%rdx", p), 4, 64, -3i64, "%rdx");
@@ -9399,7 +9446,7 @@ function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string,
 // when the sanitizer must see the loaded value first.
 function ssa_rc_is_one(s: asmcore.EmitState, rb: string): asmcore.EmitState {
   if (s.rc_free_debug) {
-    s = ssa_mov_rm(s, 32, true, "%rdx", rb, 0 - 8).write(san_poison_check("%edx"));
+    s = ssa_mov_rm(s, 32, true, "%rdx", rb, 0 - 8).write(san_poison_check("%edx", s.rc_free_debug));
     return ssa_alu_ir(s, 7, 32, 1i64, "%rdx");
   }
   return ssa_alu_im(s, 7, 32, 1, rb, 0 - 8);
@@ -9597,7 +9644,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
   // A function with no frame slots that might make no call is emitted into a
   // buffer first, behind a placeholder for its epilogue; its text decides
   // whether it needs %rbp at all.
-  let leaf: boolean = nspill == 0 && ssa_view_count(views) == 0 && !hev_on() && !ssa.calls_out(f);
+  let leaf: boolean = nspill == 0 && ssa_view_count(views) == 0 && !hev_on(s) && !ssa.calls_out(f);
   let epilogue: string = ssa_epilogue_for(saved);
   if (leaf) {
     epilogue = ssa_epilogue_mark();
@@ -9896,7 +9943,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
   } else if (o.kind_tag == 78) {  // free
     // [ptr, size] -> return the raw block to its size class; push dummy 0.
     s = s.write("    popq %rsi\n    popq %rdi\n");
-    let owned: boolean = leak_check_on() && s.rt_owned_allocs;
+    let owned: boolean = s.leak_check && s.rt_owned_allocs;
     if (owned) {
       s = s.write("    movq %rsi, __fern_lc_rt_req(%rip)\n");
     }
@@ -12027,11 +12074,11 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub, recs:
     return "";
   }
   // Every function eligible — emit from the cache (no second lowering).
-  return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower, recs, sub.backtrace);
+  return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower, recs, sub.switches);
 }
 
 // `rt` lowers the runtime helpers this unit appends (asmcore.EmitState.rt_lower).
-pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], b: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[], recs: usize, backtrace: boolean): string {
+pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], b: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[], recs: usize, sw: asmcore.Switches): string {
   // Infer return types for unannotated functions so the IR path's
   // ret-type-keyed call tagging matches what module_with_builtins supplies.
   // (#4394 lever 3: `cache`, when non-empty, is the caller's pre-lowered
@@ -12043,7 +12090,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   let s: asmcore.EmitState = asmcore.new_state();
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
   // layout resolves and a `dyn` dispatch has an arm for every impl (#10891).
-  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs, backtrace: backtrace }, all_funcs);
+  s = asmcore.with_funcs(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs }, sw), all_funcs);
   // A unit never passes emit_module_or_error_sub's check, so the Display gate
   // runs here: a `print(xs)` nothing gives a `to_string` would otherwise hand
   // the string-only runtime helper a raw pointer (#9945).
@@ -12178,14 +12225,14 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
       // Leak summary before the exit syscall (#6068). main's return value
       // is the exit code and is still in %rax, so it is held on the stack
       // across the call rather than relying on a register contract.
-      if (leak_check_on()) {
+      if (s.leak_check) {
         s = s.write("    pushq %rax\n");
         s = s.write("    call __fern_lc_report\n");
         s = ssa_pop_r(s, "%rax");
       }
       s = s.write("    movq %rax, %rdi\n");
     } else {
-      if (leak_check_on()) {
+      if (s.leak_check) {
         s = s.write("    call __fern_lc_report\n");
       }
       s = s.write("    movq $0, %rdi\n");
@@ -12382,7 +12429,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // inside the heap gate — a heap-free program still lowers `exit`, which
   // calls __fern_lc_report, and it must resolve. When neither flag is set
   // this emits nothing at all.
-  if (hev_on()) {
+  if (hev_on(s)) {
     s = s.write("    .text\n");
     s = emit_hev_runtime(s);
   }
@@ -12390,7 +12437,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // it, and under either sanitizer flag, whose reports end in its walk even
   // when the program allocates nothing. A build that has neither carries no
   // reporter.
-  if (needs_heap_runtime(s) || s.rc_free_debug || asmcore.sanitize_on()) {
+  if (needs_heap_runtime(s) || s.rc_free_debug || s.sanitize) {
     s = s.write("    .text\n");
     s = emit_report(s);
   }
@@ -12488,6 +12535,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("str_from_bytes_u8")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes_u8(), s);
+  }
+  if (s.has_need("str_from_bytes_range_u8")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes_range_u8(), s);
   }
   if (s.has_need("str_bytes_u8")) {
     s = s.write("    .text\n");

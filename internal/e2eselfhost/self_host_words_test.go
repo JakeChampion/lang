@@ -29,6 +29,17 @@ function first_diff(a: i32[], b: i32[]): i32 {
     if (a.len() != b.len()) { return n; }
     return 0 - 1;
 }
+function first_diff_u8(a: u8[], b: u8[]): i32 {
+    let n: i32 = a.len();
+    if (b.len() < n) { n = b.len(); }
+    let i: i32 = 0;
+    while (i < n) {
+        if (a[i] != b[i]) { return i; }
+        i = i + 1;
+    }
+    if (a.len() != b.len()) { return n; }
+    return 0 - 1;
+}
 // marks counts the record lines of the mixed text: the lines a marker byte
 // (1 to 5) starts, each one record the assembler takes in place of text.
 function marks(text: string): i32 {
@@ -96,7 +107,7 @@ function main(): i32 {
     let xa = x86_native.x86_gas_assemble(xtext);
     let xb = x86_native.x86_gas_assemble_words(xmixed, xwords);
     let xeh: i32 = first_diff(x86_native.x86_eh_frame(xa, 0 as i64, 0 as i64), x86_native.x86_eh_frame(xb, 0 as i64, 0 as i64));
-    report(marks(xmixed), text_insns(xmixed), xa.code.len(), xb.unknown, first_diff(xa.code, xb.code), first_diff(xa.rodata, xb.rodata), xeh);
+    report(marks(xmixed), text_insns(xmixed), xa.text.len(), xb.unknown, first_diff_u8(xa.text, xb.text), first_diff(xa.rodata, xb.rodata), xeh);
     return 0;
 }
 `

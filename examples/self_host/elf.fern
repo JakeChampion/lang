@@ -110,6 +110,14 @@ pub function elf_cat(buf: i32[], src: i32[]): i32[] {
   return buf;
 }
 
+// elf_cat_u8 is elf_cat for a byte array.
+pub function elf_cat_u8(buf: i32[], src: u8[]): i32[] {
+  for b in src {
+    buf = buf.append(b as i32);
+  }
+  return buf;
+}
+
 // elf_pad_to_8 appends zero bytes until the buffer length is a multiple
 // of 8 (so the data blob lands 8-byte aligned after .text).
 pub function elf_pad_to_8(b: i32[]): i32[] {
@@ -239,8 +247,8 @@ function elf_static_executable_data(text: i32[], data: i32[]): i32[] {
 // elf_static_executable_data_x86 is the x86-64 counterpart of
 // elf_static_executable_data (R+W+X), identical single-segment layout,
 // only e_machine differs (EM_X86_64).
-function elf_static_executable_data_x86(text: i32[], data: i32[]): i32[] {
-  let body: i32[] = elf_cat([], text);
+function elf_static_executable_data_x86(text: u8[], data: i32[]): i32[] {
+  let body: i32[] = elf_cat_u8([], text);
   body = elf_pad_to_8(body);
   body = elf_cat(body, data);
   return elf_image(body, 7, elf_em_x86_64());  // PF_R | PF_W | PF_X
@@ -285,7 +293,7 @@ pub function elf_x86_data_base(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
 // (R+W+X over the whole file, plus `bss` zero-fill past it), PT_GNU_EH_FRAME
 // (or PT_NULL without unwind data), then .text, .eh_frame_hdr, .eh_frame and
 // the data blob at the offsets elf_unwind_end / elf_x86_data_base name.
-pub function elf_program_x86(text: i32[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32): i32[] {
+pub function elf_program_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32): u8[] {
   let has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
   let text_off: i32 = elf_text_off_x86();
   let hdr_off: i32 = 0;
@@ -356,21 +364,38 @@ pub function elf_program_x86(text: i32[], hdr: i32[], eh: i32[], data: i32[], bs
     }
   }
 
-  buf = elf_cat(buf, text);
+  // The headers above are a few hundred bytes; the image is laid down in a
+  // byte builder so .text goes in as one range copy.
+  let img: usize = buf_new(data_off + data.len());
+  elf_push_ints(img, buf);
+  buf_push_bytes_range(img, text, 0, text.len());
   if (has_unwind) {
-    while (buf.len() < hdr_off) {
-      buf = buf.append(0);
-    }
-    buf = elf_cat(buf, hdr);
-    while (buf.len() < eh_off) {
-      buf = buf.append(0);
-    }
-    buf = elf_cat(buf, eh);
+    elf_push_zeros(img, hdr_off - buf_len(img));
+    elf_push_ints(img, hdr);
+    elf_push_zeros(img, eh_off - buf_len(img));
+    elf_push_ints(img, eh);
   }
-  while (buf.len() < data_off) {
-    buf = buf.append(0);
+  elf_push_zeros(img, data_off - buf_len(img));
+  elf_push_ints(img, data);
+  let out: u8[] = buf_take_bytes(img);
+  buf_free(img);
+  return out;
+}
+
+// elf_push_ints appends the bytes of `xs`, one per element, to the builder.
+function elf_push_ints(b: usize, xs: i32[]): void {
+  for x in xs {
+    buf_push_byte(b, x);
   }
-  return elf_cat(buf, data);
+}
+
+// elf_push_zeros appends `n` zero bytes to the builder; none when n <= 0.
+function elf_push_zeros(b: usize, n: i32): void {
+  let i: i32 = 0;
+  while (i < n) {
+    buf_push_byte(b, 0);
+    i = i + 1;
+  }
 }
 
 // ---- W^X two-segment layout ----

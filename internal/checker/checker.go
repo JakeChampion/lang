@@ -4406,6 +4406,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.StringType{},
 	}
+	// `string_from_bytes_range_unchecked(bs, from, end)` — the same
+	// constructor over bs[from, end), copied once; traps (exit 134) on a
+	// range outside bs, like a slice.
+	c.info.FuncSigs["string_from_bytes_range_unchecked"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.StringType{},
+	}
 
 	// `slice_unchecked(s: string, a: i32, b: i32): str` — the byte
 	// slice `s[a:b]` under its accurate name: half-open, byte-indexed,

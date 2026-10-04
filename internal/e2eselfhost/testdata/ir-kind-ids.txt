@@ -355,3 +355,4 @@ setxattr_bytes=376
 lsetxattr_bytes=377
 mismatch_bytes=378
 count_runs_bytes=379
+str_from_bytes_range=380
