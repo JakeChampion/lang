@@ -21808,7 +21808,7 @@ func synthesiseWasiHandle() *ast.FuncDecl {
 //	    return serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle);
 //	}
 //
-// or, for `init(plat: Platform): (serve.Config, S)` beside a handler
+// or, for `init(plat: platform.Platform): (serve.Config, S)` beside a handler
 // threading `S` and a `shutdown(reason, state)` hook:
 //
 //	function main(): i32 {
