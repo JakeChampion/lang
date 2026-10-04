@@ -10871,6 +10871,10 @@ func EmitFloatTranscendentals(w func(string, ...any), fresh func(prefix string) 
 	for _, w := range fdlibm.TwoOverPiBits {
 		line(fmt.Sprintf("\t.quad 0x%016x", w))
 	}
+	label(".Lfc_logtab")
+	for _, w := range fdlibm.LogData() {
+		line(fmt.Sprintf("\t.quad 0x%016x", w))
+	}
 	line(".text")
 
 	// retNaN / retInf / retZero leave the named value in xmm0 and return.
@@ -11197,90 +11201,146 @@ func EmitFloatTranscendentals(w func(string, ...any), fresh func(prefix string) 
 	emit("ret")
 	line(".size __fern_exp_f64, .-__fern_exp_f64")
 
-	// __fern_log_f64(xmm0=x) → ln x (x>0). x = 2^k·m, m normalised to
-	// [sqrt2/2, sqrt2); f = m-1; s = f/(2+f).
-	//   R = t1+t2 over two INDEPENDENT chains in w = z², z = s², so they
-	//   issue in parallel instead of one 7-deep Horner.
-	//   ln x = k·ln2_hi - ((hfsq - (s·(hfsq+R) + k·ln2_lo)) - f)
+	// __fern_log_f64(xmm0=x) → ln x, the table-driven kernel
+	// internal/fdlibm/logtab.go documents. r8 holds .Lfc_logtab's address
+	// throughout; rdx is 3·i, the row's index in doubles. Register copies
+	// are movapd, not movsd: movsd merges into the destination's high lane,
+	// which chains each call to registers the previous one left behind.
 	fn("__fern_log_f64")
+	logMain, logNear1, logSpecial := fresh("logMain"), fresh("logNear1"), fresh("logSpecial")
 	logRet, logNaN, logNegInf := fresh("logRet"), fresh("logNaN"), fresh("logNegInf")
-	logNoScale := fresh("logNoScale")
-	// Domain guards. The bit-twiddling below extracts an exponent
-	// from 0 or +Inf and carries on, so log(0) returned -709.09 and
-	// log(+Inf) returned 709.78 — finite garbage, not the -Inf / +Inf the
-	// values call for. log(-0) == log(0) == -Inf, which the equality
-	// branch already covers.
-	nanGuard(logRet)
-	emit("xorpd xmm1, xmm1")
-	emit("ucomisd xmm0, xmm1")
-	emit("jb " + logNaN)    // x < 0
-	emit("je " + logNegInf) // x == ±0
-	emit("movabs rax, 0x7ff0000000000000")
-	emit("movq xmm1, rax")
-	emit("ucomisd xmm0, xmm1")
-	emit("je " + logRet) // x == +Inf → itself
-	// A subnormal stores exponent 0 — its magnitude is in the mantissa's
-	// leading zeros — so the field below reports the smallest normal
-	// exponent for every one of them. Scale into the normal range and take
-	// the 54 back off k. rdx carries the adjustment; it is dead until the
-	// mantissa mask below.
-	emit("xor edx, edx")
-	ldc("xmm1", ".Lfc_minnorm")
-	emit("ucomisd xmm0, xmm1")
-	emit("jae " + logNoScale)
-	emit("mulsd xmm0, [rip+.Lfc_two54]")
-	emit("mov edx, 54")
-	label(logNoScale)
+	row := func(j int) string { return fmt.Sprintf("[r8+rdx*8+%d]", fdlibm.LogRowsOff+8*j) }
+	near := func(j int) string { return fmt.Sprintf("[r8+%d]", fdlibm.LogNear1Off+8*j) }
+	emit("lea r8, [rip+.Lfc_logtab]")
 	emit("movq rax, xmm0")
+	emit(fmt.Sprintf("movabs rcx, 0x%016x", fdlibm.LogNear1Lo))
+	emit("mov rdx, rax")
+	emit("sub rdx, rcx")
+	emit(fmt.Sprintf("movabs rcx, 0x%016x", fdlibm.LogNear1Hi-fdlibm.LogNear1Lo))
+	emit("cmp rdx, rcx")
+	emit("jb " + logNear1)
 	emit("mov rcx, rax")
 	emit("shr rcx, 52")
-	emit("and rcx, 0x7ff")
-	emit("sub rcx, 1023") // k
-	emit("sub rcx, rdx")
-	emit("movabs rdx, 0xfffffffffffff")
-	emit("and rax, rdx")
-	emit("movabs rdx, 0x3ff0000000000000")
-	emit("or rax, rdx")
-	emit("movq xmm1, rax") // m in [1,2)
-	noAdj := fresh("logNoAdj")
-	ldc("xmm2", ".Lfc_sqrt2")
-	emit("comisd xmm1, xmm2")
-	emit("jb " + noAdj)
-	emit("mulsd xmm1, [rip+.Lfc_half]")
-	emit("add rcx, 1")
-	label(noAdj)
-	emit("subsd xmm1, [rip+.Lfc_one]") // f
-	ldc("xmm2", ".Lfc_two")
-	emit("addsd xmm2, xmm1") // 2+f
-	emit("movsd xmm3, xmm1")
-	emit("divsd xmm3, xmm2") // s
-	emit("movsd xmm4, xmm3")
-	emit("mulsd xmm4, xmm3") // z
-	emit("movsd xmm5, xmm4")
-	emit("mulsd xmm5, xmm4") // w
-	ldc("xmm6", ".Lfc_lg6")
-	horner("xmm6", "xmm5", ".Lfc_lg4")
-	horner("xmm6", "xmm5", ".Lfc_lg2")
-	emit("mulsd xmm6, xmm5") // t1
-	ldc("xmm7", ".Lfc_lg7")
-	horner("xmm7", "xmm5", ".Lfc_lg5")
-	horner("xmm7", "xmm5", ".Lfc_lg3")
-	horner("xmm7", "xmm5", ".Lfc_lg1")
-	emit("mulsd xmm7, xmm4") // t2
-	emit("addsd xmm6, xmm7") // R
-	emit("movsd xmm2, xmm1")
-	emit("mulsd xmm2, xmm1")
-	emit("mulsd xmm2, [rip+.Lfc_half]") // hfsq
-	emit("cvtsi2sd xmm0, rcx")          // kf
-	emit("movsd xmm5, xmm0")
-	emit("mulsd xmm5, [rip+.Lfc_ln2lo]") // k*ln2_lo
-	emit("addsd xmm6, xmm2")             // hfsq+R
-	emit("mulsd xmm6, xmm3")             // s*(hfsq+R)
-	emit("addsd xmm6, xmm5")
-	emit("subsd xmm2, xmm6") // hfsq - (…)
-	emit("subsd xmm2, xmm1") // - f
-	emit("mulsd xmm0, [rip+.Lfc_ln2hi]")
-	emit("subsd xmm0, xmm2")
+	emit("sub rcx, 1")
+	emit("cmp rcx, 0x7fe")
+	emit("jae " + logSpecial) // zero, subnormal, negative, Inf or NaN
+	label(logMain)
+	emit(fmt.Sprintf("movabs rcx, 0x%016x", fdlibm.LogOff))
+	emit("mov rsi, rax")
+	emit("sub rsi, rcx") // tmp
+	emit("mov rcx, rsi")
+	emit("sar rcx, 52")
+	emit("xorps xmm4, xmm4")   // cvtsi2sd writes the low lane only
+	emit("cvtsi2sd xmm4, rcx") // k
+	emit("shl rcx, 52")
+	emit("sub rax, rcx") // bits(z)
+	emit("mov rdx, rsi")
+	emit(fmt.Sprintf("shr rdx, %d", 52-fdlibm.LogTableBits))
+	emit(fmt.Sprintf("and edx, %d", 1<<fdlibm.LogTableBits-1))
+	emit("lea rdx, [rdx+rdx*2]")
+	emit("movq xmm0, rax") // z
+	emit(fmt.Sprintf("shr rax, %d", 51-fdlibm.LogTableBits))
+	emit("or rax, 1")
+	emit(fmt.Sprintf("shl rax, %d", 51-fdlibm.LogTableBits))
+	emit("movq xmm1, rax") // c
+	emit("subsd xmm0, xmm1")
+	emit("mulsd xmm0, " + row(0)) // r
+	emit("movapd xmm2, xmm4")
+	emit("mulsd xmm2, [rip+.Lfc_ln2hi]")
+	emit("addsd xmm2, " + row(1)) // w
+	emit("movapd xmm3, xmm2")
+	emit("addsd xmm3, xmm0") // hi
+	emit("subsd xmm2, xmm3")
+	emit("addsd xmm2, xmm0")
+	emit("mulsd xmm4, [rip+.Lfc_ln2lo]")
+	emit("addsd xmm4, " + row(2))
+	emit("addsd xmm2, xmm4") // lo
+	emit("movapd xmm5, xmm0")
+	emit("mulsd xmm5, xmm0") // r2
+	emit("movapd xmm6, xmm0")
+	emit("mulsd xmm6, [r8+8]")
+	emit("addsd xmm6, [r8]")
+	emit("movapd xmm7, xmm0")
+	emit("mulsd xmm7, [r8+24]")
+	emit("addsd xmm7, [r8+16]")
+	emit("mulsd xmm7, xmm5")
+	emit("addsd xmm6, xmm7") // p
+	emit("movapd xmm7, xmm5")
+	emit("mulsd xmm7, [rip+.Lfc_half]")
+	emit("subsd xmm2, xmm7")
+	emit("mulsd xmm5, xmm0")
+	emit("mulsd xmm5, xmm6")
+	emit("addsd xmm2, xmm5")
+	emit("addsd xmm2, xmm3")
+	emit("movapd xmm0, xmm2")
+	emit("ret")
+	// log1p(r) for r = x - 1, which is exact here.
+	label(logNear1)
+	emit("subsd xmm0, [rip+.Lfc_one]") // r
+	emit("movapd xmm1, xmm0")
+	emit("mulsd xmm1, xmm0") // r2
+	emit("movapd xmm2, xmm0")
+	emit("mulsd xmm2, xmm1") // r3
+	// p = ((B[a] + r*B[a+1]) + r2*B[a+2]) + r3*tail, innermost first.
+	for _, a := range []int{6, 3, 0} {
+		emit("movapd xmm4, xmm0")
+		emit("mulsd xmm4, " + near(a+1))
+		emit("addsd xmm4, " + near(a))
+		emit("movapd xmm5, xmm1")
+		emit("mulsd xmm5, " + near(a+2))
+		emit("addsd xmm4, xmm5")
+		if a == 6 {
+			emit("movapd xmm3, xmm2")
+			emit("mulsd xmm3, " + near(9))
+		} else {
+			emit("mulsd xmm3, xmm2")
+		}
+		emit("addsd xmm3, xmm4")
+	}
+	emit("mulsd xmm3, xmm2") // y
+	emit("movabs rax, 0x41a0000000000000")
+	emit("movq xmm1, rax")
+	emit("mulsd xmm1, xmm0") // r·2^27
+	emit("movapd xmm4, xmm0")
+	emit("addsd xmm4, xmm1")
+	emit("subsd xmm4, xmm1") // rhi
+	emit("movapd xmm5, xmm0")
+	emit("subsd xmm5, xmm4") // rlo
+	emit("movapd xmm6, xmm4")
+	emit("mulsd xmm6, xmm4")
+	emit("mulsd xmm6, [rip+.Lfc_half]") // h
+	emit("movapd xmm7, xmm0")
+	emit("subsd xmm7, xmm6") // hi
+	emit("movapd xmm1, xmm0")
+	emit("subsd xmm1, xmm7")
+	emit("subsd xmm1, xmm6") // lo
+	emit("addsd xmm4, xmm0")
+	emit("mulsd xmm5, [rip+.Lfc_half]")
+	emit("mulsd xmm5, xmm4")
+	emit("subsd xmm1, xmm5")
+	emit("addsd xmm3, xmm1")
+	emit("addsd xmm3, xmm7")
+	emit("movapd xmm0, xmm3")
+	emit("ret")
+	// rax = bits(x), rcx = top-1 with top the sign and exponent.
+	label(logSpecial)
+	emit("mov rdx, rax")
+	emit("add rdx, rdx")
+	emit("jz " + logNegInf) // ±0
+	nanGuard(logRet)
+	emit("test rax, rax")
+	emit("js " + logNaN)
+	emit("cmp rcx, 0x7fe")
+	emit("je " + logRet) // +Inf
+	// Subnormal: scale into the normal range, then take the 52 back off
+	// the exponent field so the reduction's k comes out right.
+	emit("movabs rdx, 0x4330000000000000")
+	emit("movq xmm1, rdx")
+	emit("mulsd xmm0, xmm1")
+	emit("movq rax, xmm0")
+	emit("movabs rdx, 0x0340000000000000")
+	emit("sub rax, rdx")
+	emit("jmp " + logMain)
 	label(logRet)
 	emit("ret")
 	label(logNaN)

@@ -827,6 +827,12 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		m.DataInits = append(m.DataInits, twoOverPiSegment())
 	}
 
+	// The log table's rows → data segment at logTabBase.
+	if helpers.set["__fern_log_f64"] {
+		m.DataOffsets = append(m.DataOffsets, int32(logTabBase))
+		m.DataInits = append(m.DataInits, logTabSegment())
+	}
+
 	// Heap-form strings → data segment. The single segment lives at
 	// stringStart, above the closure-cell pool, so subsequent heap
 	// allocations land after the literals.

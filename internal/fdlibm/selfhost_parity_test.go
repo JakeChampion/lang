@@ -3,6 +3,7 @@ package fdlibm
 import (
 	"fmt"
 	"math"
+	"math/bits"
 	"os"
 	"regexp"
 	"strconv"
@@ -136,10 +137,10 @@ func wasmTranscendentalRegion(t *testing.T) string {
 var wasmConstRe = regexp.MustCompile(`f64\.const (-?[0-9][^)\s]*)`)
 
 // wasmStructural are the values the WAT emitters spell inline that are not
-// fdlibm coefficients — exact small doubles used for a sign flip or an early
-// return, where a transcription error is not possible in the way it is for a
-// 20-digit coefficient.
-var wasmStructural = map[float64]bool{0: true, -1: true}
+// fdlibm coefficients — exact doubles used for a sign flip, an early return or
+// log's splits and subnormal prescale, where a transcription error is not
+// possible in the way it is for a 20-digit coefficient.
+var wasmStructural = map[float64]bool{0: true, -1: true, 0x1p27: true, 0x1p52: true}
 
 // TestSelfHostWasmCoeffsAreTableEntries pins wasm_ir.fern's inline literals.
 // It cannot check order or naming the way the asm emitters allow — the WAT is
@@ -200,6 +201,95 @@ func TestSelfHostWasmTwoOverPiMatches(t *testing.T) {
 		}
 		if uint64(got) != want {
 			t.Errorf("%s 2/pi limb %d = %d (0x%016x), the table's is 0x%016x", selfHostWasm, j, got, uint64(got), want)
+		}
+	}
+}
+
+// TestSelfHostAsmLogTableMatches pins the .Lfc_logtab block both self-host
+// assembly emitters write to LogData, value for value. The block is generated
+// (tools/gen_log_table.py); this catches an emitter whose region was edited
+// by hand or not regenerated.
+func TestSelfHostAsmLogTableMatches(t *testing.T) {
+	want := LogData()
+	for _, path := range []string{selfHostAsmX86, selfHostAsmArm64} {
+		t.Run(path, func(t *testing.T) {
+			src := readSelfHost(t, path)
+			i := strings.Index(src, ".Lfc_logtab:")
+			if i < 0 {
+				t.Fatalf("no .Lfc_logtab label in %s — the extraction pattern has gone stale", path)
+			}
+			end := strings.Index(src[i:], "// <<< generated")
+			if end < 0 {
+				t.Fatalf("no end marker after .Lfc_logtab in %s", path)
+			}
+			ms := quadRe.FindAllStringSubmatch(src[i:i+end], -1)
+			if len(ms) != len(want) {
+				t.Fatalf("%s emits %d values after .Lfc_logtab, LogData has %d", path, len(ms), len(want))
+			}
+			for j, m := range ms {
+				got, err := strconv.ParseUint(strings.TrimPrefix(m[1], "0x"), 16, 64)
+				if err != nil {
+					t.Fatalf("%s log table value %d: %v", path, j, err)
+				}
+				if got != want[j] {
+					t.Errorf("%s log table value %d = 0x%016x, LogData's is 0x%016x", path, j, got, want[j])
+				}
+			}
+		})
+	}
+}
+
+var (
+	wasmLogCoeffRe = regexp.MustCompile(`"(-?[0-9][^"]*)",`)
+	wasmLogRowRe   = regexp.MustCompile(`"((?:\\\\[0-9a-f]{2})+)",`)
+)
+
+// fernFunction returns the body of the named Fern function in src.
+func fernFunction(t *testing.T, src, name string) string {
+	t.Helper()
+	i := strings.Index(src, "pub function "+name+"(")
+	if i < 0 {
+		t.Fatalf("no %s in %s — the extraction pattern has gone stale", name, selfHostWasm)
+	}
+	end := strings.Index(src[i:], "\n}\n")
+	if end < 0 {
+		t.Fatalf("cannot find the end of %s in %s", name, selfHostWasm)
+	}
+	return src[i : i+end]
+}
+
+// TestSelfHostWasmLogTableMatches pins wasm_ir.fern's log_coeffs and
+// log_tab_data, the generated coefficients and data-segment payload its log
+// kernel reads, to LogPoly, LogNear1Poly and LogTable.
+func TestSelfHostWasmLogTableMatches(t *testing.T) {
+	src := readSelfHost(t, selfHostWasm)
+	var coeffs []float64
+	coeffs = append(append(coeffs, LogPoly[:]...), LogNear1Poly[:]...)
+	ms := wasmLogCoeffRe.FindAllStringSubmatch(fernFunction(t, src, "log_coeffs"), -1)
+	if len(ms) != len(coeffs) {
+		t.Fatalf("log_coeffs carries %d values, LogPoly and LogNear1Poly have %d", len(ms), len(coeffs))
+	}
+	for j, m := range ms {
+		if got := parseDouble(t, selfHostWasm, "log_coeffs", m[1]); math.Float64bits(got) != math.Float64bits(coeffs[j]) {
+			t.Errorf("log_coeffs[%d] = %s, the table's is %v", j, m[1], coeffs[j])
+		}
+	}
+	rows := wasmLogRowRe.FindAllStringSubmatch(fernFunction(t, src, "log_tab_data"), -1)
+	if len(rows) != len(LogTable) {
+		t.Fatalf("log_tab_data carries %d rows, LogTable has %d", len(rows), len(LogTable))
+	}
+	for j, m := range rows {
+		hex := strings.ReplaceAll(m[1], `\\`, "")
+		for k, want := range LogTable[j] {
+			b, err := strconv.ParseUint(hex[16*k:16*k+16], 16, 64)
+			if err != nil {
+				t.Fatalf("log_tab_data row %d: %v", j, err)
+			}
+			// The payload is little-endian; the hex reads as big-endian.
+			got := math.Float64frombits(bits.ReverseBytes64(b))
+			if math.Float64bits(got) != math.Float64bits(want) {
+				t.Errorf("log_tab_data row %d value %d = %v, LogTable's is %v", j, k, got, want)
+			}
 		}
 	}
 }

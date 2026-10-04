@@ -540,9 +540,8 @@ function main(): i32 {
 			want: 1,
 		},
 		{
-			// log — fdlibm's __ieee754_log (__log_f64): mantissa normalisation to
-			// [√2/2, √2), s = f/(2+f), the Lg1–Lg7 series in s². log(e) ≈ 1;
-			// within-tolerance → 1.
+			// log — the table-driven __log_f64 (internal/fdlibm/logtab.go).
+			// log(e) ≈ 1; within-tolerance → 1.
 			name: "stdlib_float_log",
 			src: `import "std/float";
 function main(): i32 {
