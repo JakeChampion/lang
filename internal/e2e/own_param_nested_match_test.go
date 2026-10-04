@@ -12,6 +12,9 @@ import "testing"
 const ownParamNestedMatchSrc = `enum Box { Arr(i32[]), Nil }
 enum Other { Thing(i32[]), Nothing }
 
+// Each payload goes through id, so the boxes are built on the heap rather than placed as constants.
+function id(xs: i32[]): i32[] { return xs; }
+
 @noinline function two(own b: Box, own o: Other): i32 {
     match (b) { Arr(a) => { let n = a.len(); match (o) { Thing(c) => { return n + c.len(); }, Nothing => { return n; } } }, Nil => { return 0; } }
     return 0;
@@ -32,8 +35,8 @@ function main(): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
     while (i < 10) {
-        t = t + two(Arr([1, 2, 3]), Thing([4, 5, 6, 7])) + two(Arr([1]), Nothing) + two(Nil, Thing([1]));
-        t = t + guarded(Arr([1, 2]), Thing([4, 5, 6, 7])) + guarded(Arr([1, 2]), Thing([4])) + guarded(Nil, Nothing);
+        t = t + two(Arr(id([1, 2, 3])), Thing(id([4, 5, 6, 7]))) + two(Arr(id([1])), Nothing) + two(Nil, Thing(id([1])));
+        t = t + guarded(Arr(id([1, 2])), Thing(id([4, 5, 6, 7]))) + guarded(Arr(id([1, 2])), Thing(id([4]))) + guarded(Nil, Nothing);
         i = i + 1;
     }
     return t - 278;
