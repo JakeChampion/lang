@@ -711,13 +711,15 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 `, port, closedPort, port)
 }
 
-// FetchHostedWant is what FetchHostedSource answers `/run` with.
-const FetchHostedWant = `plain: 200 [hello] headers: Content-Length=5 X-Up=1 trailers:
+// FetchHostedWant is what FetchHostedSource answers `/run` with. Response
+// header names arrive from the wasi:http host lowercased, whatever the
+// origin sent.
+const FetchHostedWant = `plain: 200 [hello] headers: content-length=5 x-up=1 trailers:
 chunked: 200 [abcde] headers: trailers:
-nobody: 204 [] headers: Content-Length=99 trailers:
-head: 200 [] headers: Content-Length=5 X-Up=1 trailers:
-echo: 201 [ECHO] headers: Content-Length=ECHOLEN trailers:
-put: 201 [PUT] headers: Content-Length=PUTLEN trailers:
+nobody: 204 [] headers: content-length=99 trailers:
+head: 200 [] headers: content-length=5 x-up=1 trailers:
+echo: 201 [ECHO] headers: content-length=ECHOLEN trailers:
+put: 201 [PUT] headers: content-length=PUTLEN trailers:
 numeric: error invalid URL: an IPv4 address that is not four decimal octets
 octal: error invalid URL: an IPv4 address that is not four decimal octets
 short: error invalid URL: an IPv4 address that is not four decimal octets
@@ -726,21 +728,21 @@ big: 312000
 limit: error response body past its limit
 garbage: error protocol: the host read a malformed response
 truncated: error protocol: the response ended before it was complete
-gzip: 200 [hello gzip] headers: X-Up=1 trailers:
+gzip: 200 [hello gzip] headers: x-up=1 trailers:
 gzipbodychunked: 200 [hello gzip] headers: trailers:
 gzipx: 200 [hello gzip] headers: trailers:
 gzipfloor: 60000
 gzipwide: 100000
-gziphead: 200 [] headers: Content-Encoding=gzip Content-Length=GZLEN X-Up=1 trailers:
+gziphead: 200 [] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
 gzipbad: error decode: a gzip body that does not decode: unsupported compressed data: not gzip
 gzipbomb: error decode: a body of 200000 bytes from ONEBOMB encoded, past the 65536 allowed
 gzipcap: error response body past its limit
 gzipdouble: error decode: content codings past the depth of 1
 gzipdeep: 200 [twice] headers: trailers:
-gzipidentity: 200 [<not utf-8>] headers: Content-Encoding=gzip Content-Length=GZLEN X-Up=1 trailers:
-gzipoff: 200 [<not utf-8>] headers: Content-Encoding=gzip Content-Length=GZLEN X-Up=1 trailers:
-br: 200 [raw] headers: Content-Encoding=br Content-Length=3 trailers:
-noencoding: 201 [NOENC] headers: Content-Length=NOENCLEN trailers:
+gzipidentity: 200 [<not utf-8>] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
+gzipoff: 200 [<not utf-8>] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
+br: 200 [raw] headers: content-encoding=br content-length=3 trailers:
+noencoding: 201 [NOENC] headers: content-length=NOENCLEN trailers:
 refused: error connect: Connection refused
 badurl: error invalid URL: no scheme in not a url
 noscheme: error invalid URL: scheme ftp is not http
@@ -750,17 +752,17 @@ crlfvalue: error invalid request: a header value has a byte that cannot be writt
 badname: error invalid request: a header name is not a token
 badmethod: error invalid request: the method is not a token
 filebody: error invalid request: a file body cannot be sent
-redir: 200 [hello] headers: Content-Length=5 X-Up=1 trailers:
-noredir: 302 [] headers: Location=/plain Content-Length=0 trailers:
-chain10: 200 [end] headers: Content-Length=3 trailers:
+redir: 200 [hello] headers: content-length=5 x-up=1 trailers:
+noredir: 302 [] headers: location=/plain content-length=0 trailers:
+chain10: 200 [end] headers: content-length=3 trailers:
 chain11: error redirect: more than 10 redirects
 nolocation: error redirect: a 302 without a Location
 badlocation: error redirect: a Location that is not a URL
-relative: 200 [/rel/plain?q=2] headers: Content-Length=14 trailers:
-post303: 201 [POST303] headers: Content-Length=POST303LEN trailers:
-post307: 201 [POST307] headers: Content-Length=POST307LEN trailers:
-xorigin: 201 [XORIGIN] headers: Content-Length=XORIGINLEN trailers:
-sameorigin: 201 [SAMEORIGIN] headers: Content-Length=SAMEORIGINLEN trailers:
+relative: 200 [/rel/plain?q=2] headers: content-length=14 trailers:
+post303: 201 [POST303] headers: content-length=POST303LEN trailers:
+post307: 201 [POST307] headers: content-length=POST307LEN trailers:
+xorigin: 201 [XORIGIN] headers: content-length=XORIGINLEN trailers:
+sameorigin: 201 [SAMEORIGIN] headers: content-length=SAMEORIGINLEN trailers:
 reset: error protocol: the host read a malformed response
 resetpost: error protocol: the host read a malformed response
 `
