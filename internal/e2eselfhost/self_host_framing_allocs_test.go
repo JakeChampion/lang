@@ -23,9 +23,9 @@ func TestSelfHostFramingAllocs(t *testing.T) {
 		target string
 		want   e2eharness.FramingAllocs
 	}{
-		{"x86-64-linux", e2eharness.FramingAllocs{Parse: 59, Serialize: 13}},
-		{"arm64-linux", e2eharness.FramingAllocs{Parse: 59, Serialize: 13}},
-		{"wasm32-wasi", e2eharness.FramingAllocs{Parse: 59, Serialize: 14}},
+		{"x86-64-linux", e2eharness.FramingAllocs{Parse: 48, Serialize: 13}},
+		{"arm64-linux", e2eharness.FramingAllocs{Parse: 48, Serialize: 13}},
+		{"wasm32-wasi", e2eharness.FramingAllocs{Parse: 48, Serialize: 14}},
 	} {
 		t.Run(tc.target, func(t *testing.T) {
 			out, code := cli.exitOfFile(t, src, tc.target, nil, "FERN_STRICT_IR=1")

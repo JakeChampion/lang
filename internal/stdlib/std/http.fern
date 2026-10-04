@@ -828,15 +828,29 @@ function __find_crlf_crlf(buf: u8[], from: i32, end: i32): i32 {
 // all digits or overflows i32. The overflow is checked before each
 // multiply: the body cap cannot catch a length that has already wrapped
 // to a small nonnegative value.
+// `__field_at(h, key, from)` — the index of the first field named `key` at
+// or after `from`, or -1. `key` is lowercase, as HeaderMap stores names, so
+// the framing rules read the map without building anything.
+function __field_at(h: HeaderMap, key: string, from: i32): i32 {
+  let i: i32 = from;
+  while (i < h.names.len()) {
+    if (h.names[i] == key) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
 function __http_content_length(h: HeaderMap): Option[i32] {
-  let cls: string[] = h.get_all("content-length");
-  if (cls.len() == 0) {
+  let at: i32 = __field_at(h, "content-length", 0);
+  if (at < 0) {
     return Some(0);
   }
-  if (cls.len() > 1) {
+  if (__field_at(h, "content-length", at + 1) >= 0) {
     return None;
   }
-  let value: string = cls[0];
+  let value: string = h.values[at];
   if (value.len() == 0) {
     return None;
   }
@@ -872,8 +886,8 @@ enum __BodyFraming { Length(i32), Chunked }
 // reading of any of them would be a framing disagreement with the next
 // parser on the path.
 function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
-  let te: string[] = h.get_all("transfer-encoding");
-  if (te.len() == 0) {
+  let te: i32 = __field_at(h, "transfer-encoding", 0);
+  if (te < 0) {
     match (__http_content_length(h)) {
       Some(n) => {
         return Ok(Length(n));
@@ -884,10 +898,10 @@ function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
     }
     return Err(400);
   }
-  if (h.get_all("content-length").len() > 0 || te.len() > 1) {
+  if (__field_at(h, "content-length", 0) >= 0 || __field_at(h, "transfer-encoding", te + 1) >= 0) {
     return Err(400);
   }
-  let codings: string[] = te[0].split(",");
+  let codings: string[] = h.values[te].split(",");
   if (!__token_is(codings[codings.len() - 1], "chunked")) {
     return Err(400);
   }
@@ -910,16 +924,17 @@ function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
 // visible ASCII (an empty value is the request-target's authority, and
 // allowed).
 function __host_ok(h: HeaderMap, version: string): boolean {
-  let hosts: string[] = h.get_all("host");
-  if (hosts.len() > 1) {
-    return false;
-  }
-  if (hosts.len() == 0) {
+  let at: i32 = __field_at(h, "host", 0);
+  if (at < 0) {
     return version != "HTTP/1.1";
   }
+  if (__field_at(h, "host", at + 1) >= 0) {
+    return false;
+  }
+  let host: string = h.values[at];
   let i: i32 = 0;
-  while (i < hosts[0].len()) {
-    let b: i32 = hosts[0][i] as i32;
+  while (i < host.len()) {
+    let b: i32 = host[i] as i32;
     if (b < 33 || b > 126) {
       return false;
     }
@@ -1455,14 +1470,15 @@ pub enum HttpFraming { Framed(HttpFramed), Incomplete, Continue, Malformed(i32) 
 // 0 with none, 1 for `100-continue`, 417 for anything else, which this
 // server cannot meet.
 function __expectation(h: HeaderMap): i32 {
-  let expect: string[] = h.get_all("expect");
-  if (expect.len() == 0) {
+  let at: i32 = __field_at(h, "expect", 0);
+  if (at < 0) {
     return 0;
   }
-  for v in expect {
-    if (!__token_is(v, "100-continue")) {
+  while (at >= 0) {
+    if (!__token_is(h.values[at], "100-continue")) {
       return 417;
     }
+    at = __field_at(h, "expect", at + 1);
   }
   return 1;
 }
@@ -2048,8 +2064,9 @@ function __bytes_are(buf: u8[], from: i32, want: string): boolean {
 function __persists(version: string, h: HeaderMap): boolean {
   let close: boolean = false;
   let keep: boolean = false;
-  for v in h.get_all("connection") {
-    for tok in v.split(",") {
+  let at: i32 = __field_at(h, "connection", 0);
+  while (at >= 0) {
+    for tok in h.values[at].split(",") {
       if (__token_is(tok, "close")) {
         close = true;
       }
@@ -2057,6 +2074,7 @@ function __persists(version: string, h: HeaderMap): boolean {
         keep = true;
       }
     }
+    at = __field_at(h, "connection", at + 1);
   }
   if (close) {
     return false;
@@ -2869,7 +2887,7 @@ function __response_payload(buf: u8[], at: i32, h: HeaderMap, status: i32, metho
   if (method == "HEAD" || http_bodiless(status)) {
     return (2, empty, at, none);
   }
-  if (h.get_all("transfer-encoding").len() == 0 && h.get_all("content-length").len() == 0) {
+  if (__field_at(h, "transfer-encoding", 0) < 0 && __field_at(h, "content-length", 0) < 0) {
     if (!eof) {
       return (1, empty, 0, none);
     }
