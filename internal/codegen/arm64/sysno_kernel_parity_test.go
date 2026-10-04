@@ -52,6 +52,7 @@ func TestSyscallNumbersMatchTheKernelTable(t *testing.T) {
 		{"fdatasync", pair("fdatasync"), syscall.SYS_FDATASYNC},
 		{"sync", pair("sync"), syscall.SYS_SYNC},
 		{"syncfs", only("syncfs"), syscall.SYS_SYNCFS},
+		{"fadvise64", only("fadvise64"), syscall.SYS_FADVISE64},
 		{"ftruncate", pair("ftruncate"), syscall.SYS_FTRUNCATE},
 		// dup3 is not adjacent to anything it could be confused with, but
 		// its row carries Darwin's dup2 in the other column, so the Linux

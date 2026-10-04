@@ -7018,6 +7018,7 @@ function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type,
     out = out.append(ssasem.Contract { name: o + ".fsync", params: [h], modes: [v], result: io_error });
     out = out.append(ssasem.Contract { name: o + ".fdatasync", params: [h], modes: [v], result: io_error });
     out = out.append(ssasem.Contract { name: o + ".syncfs", params: [h], modes: [v], result: io_error });
+    out = out.append(ssasem.Contract { name: o + ".drop_cache", params: [h, t_i64(), t_i64()], modes: [v, v, v], result: io_error });
     out = out.append(ssasem.Contract { name: o + ".isatty", params: [h], modes: [v], result: t_bool() });
     out = out.append(ssasem.Contract { name: o + ".dup_onto", params: [h, t_i32()], modes: [v, v], result: io_error });
     i = i + 1;

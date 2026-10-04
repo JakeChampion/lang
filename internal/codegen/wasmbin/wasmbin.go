@@ -2800,6 +2800,8 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"__method_Writer_fsync":            "__fern_fd_fsync",
 	"__method_Reader_fdatasync":        "__fern_fd_fdatasync",
 	"__method_Writer_fdatasync":        "__fern_fd_fdatasync",
+	"__method_Reader_drop_cache":       "__fern_fd_drop_cache",
+	"__method_Writer_drop_cache":       "__fern_fd_drop_cache",
 	"__method_Reader_syncfs":           "__fern_fd_syncfs",
 	"__method_Writer_syncfs":           "__fern_fd_syncfs",
 	"__method_Reader_dup_onto":         "__fern_fd_dup_onto",
