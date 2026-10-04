@@ -52,6 +52,9 @@ import (
 // Every want below was confirmed against the native x86-64 backend. Exit 99 is
 // reserved for __rc_underflow_count().
 //
+// Each P takes its constant array through `id`, which hides the constant from the static-box plan,
+// so the P is allocated rather than placed as a static box.
+//
 // Counts here are ONE block per heap string: #7351 fused the box into the
 // buffer's reserved header. A pre-fusion number quoted in a row note below is
 // twice its pin.
@@ -78,9 +81,10 @@ func structAliasReassignCases() []structAliasReassignCase {
 			// THE REPRO. Base: 80 allocs / 0 frees.
 			name: "struct_alias_reassign",
 			src: `struct P { xs: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
-    let p: P = P { xs: [7, 8] };
-    let keep: P = P { xs: [0] };
+    let p: P = P { xs: id([7, 8]) };
+    let keep: P = P { xs: id([0]) };
     keep = p;
     return keep.xs[0] + keep.xs[keep.xs.len() - 1];
 }
@@ -94,9 +98,10 @@ function round(i: i32): i32 {
 			// over-release: counts alone read 120/120 either way. Native returns 9.
 			name: "reassign_read_back_after_churn",
 			src: `struct P { xs: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
-    let p: P = P { xs: [7, 8] };
-    let keep: P = P { xs: [0] };
+    let p: P = P { xs: id([7, 8]) };
+    let keep: P = P { xs: id([0]) };
     keep = p;
     let j1: i32[] = [111, 222];
     let j2: i32[] = [333, 444];
@@ -110,8 +115,9 @@ function round(i: i32): i32 {
 			// difference was the reassign and not the alias.
 			name: "struct_alias_bind_unchanged",
 			src: `struct P { xs: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
-    let p: P = P { xs: [7, 8] };
+    let p: P = P { xs: id([7, 8]) };
     let keep: P = p;
     return keep.xs[0] + keep.xs[keep.xs.len() - 1];
 }
@@ -137,9 +143,10 @@ function round(i: i32): i32 {
 			// reclaim machinery was never the problem — only the alias was refused.
 			name: "fresh_rhs_reassign_unchanged",
 			src: `struct P { xs: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
-    let keep: P = P { xs: [0] };
-    keep = P { xs: [7, 8] };
+    let keep: P = P { xs: id([0]) };
+    keep = P { xs: id([7, 8]) };
     return keep.xs[0] + keep.xs[keep.xs.len() - 1];
 }
 ` + sarMain,

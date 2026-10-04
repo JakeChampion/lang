@@ -27,15 +27,17 @@ func bdLit(n int) string {
 }
 
 // boxDead4Src: 4 sequentially-dead structs, each holding a size-class array —
-// the box + its array reclaim before the next allocates.
+// the box + its array reclaim before the next allocates. The array goes through
+// `id` so the record of constants is a heap box rather than a static one.
 func boxDead4Src() string {
 	l := bdLit(100)
 	return `struct Box { data: i32[], n: i32 }
+function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
-    let a: Box = Box { data: ` + l + `, n: 1 }; let sa: i32 = a.data[0] + a.n;
-    let b: Box = Box { data: ` + l + `, n: 2 }; let sb: i32 = b.data[0] + b.n;
-    let c: Box = Box { data: ` + l + `, n: 3 }; let sc: i32 = c.data[0] + c.n;
-    let d: Box = Box { data: ` + l + `, n: 4 }; let sd: i32 = d.data[0] + d.n;
+    let a: Box = Box { data: id(` + l + `), n: 1 }; let sa: i32 = a.data[0] + a.n;
+    let b: Box = Box { data: id(` + l + `), n: 2 }; let sb: i32 = b.data[0] + b.n;
+    let c: Box = Box { data: id(` + l + `), n: 3 }; let sc: i32 = c.data[0] + c.n;
+    let d: Box = Box { data: id(` + l + `), n: 4 }; let sd: i32 = d.data[0] + d.n;
     return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
 }`
 }
@@ -43,11 +45,12 @@ function main(): i32 {
 func boxLive4Src() string {
 	l := bdLit(100)
 	return `struct Box { data: i32[], n: i32 }
+function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
-    let a: Box = Box { data: ` + l + `, n: 1 };
-    let b: Box = Box { data: ` + l + `, n: 2 };
-    let c: Box = Box { data: ` + l + `, n: 3 };
-    let d: Box = Box { data: ` + l + `, n: 4 };
+    let a: Box = Box { data: id(` + l + `), n: 1 };
+    let b: Box = Box { data: id(` + l + `), n: 2 };
+    let c: Box = Box { data: id(` + l + `), n: 3 };
+    let d: Box = Box { data: id(` + l + `), n: 4 };
     return (__heap_bump_bytes() as i32) + a.n + b.n + c.n + d.n;
 }`
 }
@@ -75,11 +78,12 @@ function main(): i32 {
 func boxEnumDead4Src() string {
 	l := bdLit(100)
 	return `enum E { Wrap(i32[]), Two(i32, i32) }
+function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
-    let a: E = Wrap(` + l + `); let sa: i32 = match (a) { Wrap(x) => x[0], Two(p, q) => p + q };
-    let b: E = Wrap(` + l + `); let sb: i32 = match (b) { Wrap(x) => x[0], Two(p, q) => p + q };
-    let c: E = Wrap(` + l + `); let sc: i32 = match (c) { Wrap(x) => x[0], Two(p, q) => p + q };
-    let d: E = Wrap(` + l + `); let sd: i32 = match (d) { Wrap(x) => x[0], Two(p, q) => p + q };
+    let a: E = Wrap(id(` + l + `)); let sa: i32 = match (a) { Wrap(x) => x[0], Two(p, q) => p + q };
+    let b: E = Wrap(id(` + l + `)); let sb: i32 = match (b) { Wrap(x) => x[0], Two(p, q) => p + q };
+    let c: E = Wrap(id(` + l + `)); let sc: i32 = match (c) { Wrap(x) => x[0], Two(p, q) => p + q };
+    let d: E = Wrap(id(` + l + `)); let sd: i32 = match (d) { Wrap(x) => x[0], Two(p, q) => p + q };
     return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
 }`
 }
