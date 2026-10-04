@@ -1976,7 +1976,7 @@ pub function http_serialize_response_head(resp: HttpResponse, keep_alive: boolea
 // request does (`body_string`, `cookie`, `headers.get`), so a handler
 // under test sees what it would in a serve loop.
 //
-//     let resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"n\": 1}"), m.as_platform());
+//     let resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"n\": 1}"), m);
 //     return test.assert_status(resp, 201);
 pub function request(method: string, path: string): HttpRequest {
   let empty: u8[] = [];
