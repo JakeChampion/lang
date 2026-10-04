@@ -6814,7 +6814,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // stack: strblock ptr -> copy its bytes onto the builder. Void helper
     // (consumes the arg); push a dummy i32 for the statement-level drop.
     parts = parts.append("    call $__fern_strbuf_append\n    i32.const 0\n");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 368 || o.kind_tag == 369 || o.kind_tag == 370) {  // the buf_* builder
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372) {  // the buf_* builder
     parts = emit_wasm_buf_op(o, parts);
   } else if (o.kind_tag == 119) {  // strbuf_take
     // no args -> snapshot the builder into a fresh string box and reset it
@@ -6927,10 +6927,10 @@ function emit_str_op_wat(o: ir.Op): string {
   if (o.kind_tag == 359) {
     return "    call $__fern_count_byte_bytes\n";
   }
-  if (o.kind_tag == 366) {
+  if (o.kind_tag == 368) {
     return "    call $__fern_sum_bytes_array\n";
   }
-  if (o.kind_tag == 367) {
+  if (o.kind_tag == 369) {
     return "    call $__fern_bsd_sum_bytes\n";
   }
   if (o.kind_tag == 358) {
@@ -6939,13 +6939,13 @@ function emit_str_op_wat(o: ir.Op): string {
   if (o.kind_tag == 360) {
     return "    call $__fern_rmemchr_bytes\n";
   }
-  if (o.kind_tag == 365) {
+  if (o.kind_tag == 367) {
     return "    call $__fern_count_runs_bytes\n";
   }
   if (o.kind_tag == 361) {
     return "    call $__fern_scan_set_bytes\n";
   }
-  if (o.kind_tag == 364) {
+  if (o.kind_tag == 366) {
     return "    call $__fern_mismatch_bytes\n";
   }
   if (o.kind_tag == 97) {  // str_len
@@ -7003,7 +7003,7 @@ function emit_str_op_wat(o: ir.Op): string {
     // by k. A call for memchr's reason.
     return "    call $__fern_scale_f64\n";
   }
-  if (o.kind_tag == 371) {
+  if (o.kind_tag == 373) {
     return "    call $__fern_crc32_cksum_array\n";
   }
   if (o.kind_tag == 309) {  // crc32_cksum
@@ -10079,13 +10079,13 @@ pub function arr_slice_helper(): string {
 // each arm is the bare call; the four void helpers push a dummy i32 for the
 // statement-level drop, the way strbuf_append does.
 function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
-  if (o.kind_tag == 368) {
+  if (o.kind_tag == 370) {
     return parts.append("    call $__fern_buf_push_bytes_mapped\n    i32.const 0\n");
   }
-  if (o.kind_tag == 369) {
+  if (o.kind_tag == 371) {
     return parts.append("    call $__fern_buf_push_bytes_filtered\n    i32.const 0\n");
   }
-  if (o.kind_tag == 370) {
+  if (o.kind_tag == 372) {
     return parts.append("    call $__fern_buf_push_bytes_expanded\n    i32.const 0\n");
   }
   if (o.kind_tag == 347) {

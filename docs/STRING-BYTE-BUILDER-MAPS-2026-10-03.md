@@ -71,3 +71,25 @@ Other macOS services remain active.
 The before/after ranges overlap for all six cases. These measurements
 establish comparable throughput on this corpus, without a general speedup
 claim. The zero-allocation push probe is separate from these timings.
+
+The 2026-10-04 integration preserves all 343 published operation identities
+and has 351 registry entries. The new builder operations use IDs 370-372;
+the other pending operations use 366-369 and 373. Registry, constructor,
+SSA admission and ARM64 instruction-word equivalence checks pass.
+
+On this integrated source, the full primary byte suite, supplemental
+ownership checks, complete unit suite and all lint gates pass. A fresh
+bootstrap reaches identical stages two and three at 12,944,801 bytes,
+SHA-256 `cfefdb7e37f0b59cfeea96cf914779d92b61466455c1d1bfd748bd35eed478b9`.
+That compiler passes the raw-operation corpus on native Darwin, core WASM
+and the interpreter, plus the selected consumer artifact corpus. The native
+Darwin regression suite also passes. The WASM numfmt malformed-argument case
+is skipped because Wasmtime rejects the argument before starting the guest;
+the native case and malformed-input byte cases pass.
+
+Compared with the reproduced Stdio compiler on the same upstream compiler
+source, the consumer compiler adds 40,664 bytes of native code, 1,416 bytes
+of unwind data and 7,936 bytes of static data. Its file grows by 33,632
+bytes. This integration adds the eight raw operations and their runtime and
+dispatch support. No size baseline was changed. The transform timings above
+remain measurements of their originally recorded compiler and source.

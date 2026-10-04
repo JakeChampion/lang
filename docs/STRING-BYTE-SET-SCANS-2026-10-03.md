@@ -9,8 +9,9 @@ Both operations borrow their arrays and allocate nothing.
 
 Packed native arrays reuse the text scan loops with byte-array addressing.
 Unpacked native arrays use bounded slot reads. Primary WASM reads packed
-source and table payloads. Append-only IR IDs 360 and 361 preserve existing
-operation identities; lowering records both arrays as borrowed operands.
+source and table payloads. The current integration uses IR IDs 361 and 367,
+preserving published operation identities; lowering records both arrays as
+borrowed operands. The original measurements below predate that integration.
 The bootstrap implementations provide cross-target parity during migration.
 
 The combined compiler reproduces itself from pinned stage0, with identical

@@ -2239,7 +2239,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "stat", "lstat", "statfs", "access", "read_file",
     "read_file_bytes", "read_file_bytes_u8", "remove_file", "create_dir_all", "create_dir",
-    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "chmod", "chmod_at",
+    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
@@ -2258,7 +2258,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "str_read_line", "strbuf", "buf", "reader",
     "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
     "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
-    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "chmod", "chmod_at",
+    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs",
@@ -5665,7 +5665,7 @@ function emit_mismatch_x86(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let lb: string = mlo.name;
   s = mlo.state;
   s = s.write("    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rax\n");
-  if (o.kind_tag == 364) {
+  if (o.kind_tag == 366) {
     s = s.write("    movq (%rax), %r9\n    addq $8, %rax\n");
     s = s.write("    movq (%rdx), %r10\n    addq $8, %rdx\n");
   } else {
@@ -5683,7 +5683,7 @@ function emit_mismatch_x86(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(lb + "_na:\n    cmpq %r10, %r8\n    jle " + lb + "_nb\n    movq %r10, %r8\n");
   s = s.write(lb + "_nb:\n    cmpq $0, %r8\n    jge " + lb + "_nok\n    xorq %r8, %r8\n");
   s = s.write(lb + "_nok:\n");
-  if (o.kind_tag == 364 && !ir.is_packed(o)) {
+  if (o.kind_tag == 366 && !ir.is_packed(o)) {
     s = s.write("    leaq (%rax,%rsi,8), %rsi\n    leaq (%rdx,%rcx,8), %rcx\n    xorq %rdx, %rdx\n");
     s = s.write(lb + "_slots:\n    cmpq %r8, %rdx\n    jge " + lb + "_slots_done\n");
     s = s.write("    movzbq (%rsi,%rdx,8), %rax\n    movzbq (%rcx,%rdx,8), %rdi\n    cmpq %rdi, %rax\n    jne " + lb + "_slots_done\n");
@@ -6146,7 +6146,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(s_done + ":\n");
     return s;
   }
-  if (o.kind_tag == 329 || o.kind_tag == 367) {  // bsd_sum / bsd_sum_bytes
+  if (o.kind_tag == 329 || o.kind_tag == 369) {  // bsd_sum / bsd_sum_bytes
     // operand stack [box, sum] (sum on top) -> the BSD checksum continued
     // over the string: per byte a 16-bit rotate right by one and an add.
     let blo: asmcore.LabelOut = asmcore.fresh_label(s);
@@ -6155,7 +6155,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let b_done: string = blo2.name;
     s = blo2.state;
     s = s.write("    popq %rcx\n    popq %rax\n");
-    if (o.kind_tag == 367) {
+    if (o.kind_tag == 369) {
       s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
     } else {
       s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
@@ -6163,7 +6163,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movzwq %cx, %rcx\n    xorq %rdx, %rdx\n");
     s = s.write(b_loop + ":\n");
     s = s.write("    cmpq %r8, %rdx\n    jae " + b_done + "\n");
-    if (o.kind_tag == 367 && !ir.is_packed(o)) {
+    if (o.kind_tag == 369 && !ir.is_packed(o)) {
       s = s.write("    movzbq (%rax,%rdx,8), %r10\n");
     } else {
       s = s.write("    movzbq (%rax,%rdx), %r10\n");
@@ -6173,7 +6173,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(b_done + ":\n    movzwq %cx, %rcx\n    pushq %rcx\n");
     return s;
   }
-  if (o.kind_tag == 327 || o.kind_tag == 365) {  // count_runs / count_runs_bytes
+  if (o.kind_tag == 327 || o.kind_tag == 367) {  // count_runs / count_runs_bytes
     // operand stack [box, inside, set] (set on top) -> how many runs of
     // set members begin in the string. The set's length is at (set) and
     // its byte i in the 8-byte slot 8 + i*8; a byte past that length is
@@ -6188,7 +6188,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_done: string = clo3.name;
     s = clo3.state;
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-    if (o.kind_tag == 365) {
+    if (o.kind_tag == 367) {
       s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
     } else {
       s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
@@ -6197,7 +6197,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    xorq %r11, %r11\n    xorq %rcx, %rcx\n    movq (%rdx), %rsi\n");
     s = s.write(c_loop + ":\n");
     s = s.write("    cmpq %r8, %rcx\n    jge " + c_done + "\n");
-    if (o.kind_tag == 365 && !ir.is_packed(o)) {
+    if (o.kind_tag == 367 && !ir.is_packed(o)) {
       s = s.write("    movzbq (%rax,%rcx,8), %r10\n");
     } else {
       s = s.write("    movzbq (%rax,%rcx), %r10\n");
@@ -6211,7 +6211,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(c_done + ":\n    pushq %r11\n");
     return s;
   }
-  if (o.kind_tag == 366 && !ir.is_packed(o)) {
+  if (o.kind_tag == 368 && !ir.is_packed(o)) {
     let loop_label = asmcore.fresh_label(s);
     let done_label = asmcore.fresh_label(loop_label.state);
     s = done_label.state;
@@ -6220,13 +6220,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movzbl (%rdi,%rdx,8), %r8d\n    addl %r8d, %eax\n    addq $1, %rdx\n    jmp " + loop_label.name + "\n");
     return s.write(done_label.name + ":\n    movslq %eax, %rax\n    pushq %rax\n");
   }
-  if (o.kind_tag == 253 || o.kind_tag == 366) {  // sum_bytes / sum_bytes_array
+  if (o.kind_tag == 253 || o.kind_tag == 368) {  // sum_bytes / sum_bytes_array
     // operand stack [box] -> every byte of the string added into a
     // 32-bit accumulator that wraps. A call to the SSE2 helper, emitted
     // once under the "sum_bytes" need; the sum is sign-extended into the
     // slot, since a wrapped sum is a negative i32.
     s = s.need("sum_bytes");
-    if (o.kind_tag == 366) {
+    if (o.kind_tag == 368) {
       s = s.write("    popq %rdi\n    movq (%rdi), %rcx\n    addq $8, %rdi\n    call __fern_sum_bytes_data\n");
     } else {
       s = s.write("    popq %rdi\n    call __fern_sum_bytes\n");
@@ -6234,7 +6234,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movslq %eax, %rax\n    pushq %rax\n");
     return s;
   }
-  if (o.kind_tag == 371 && !ir.is_packed(o)) {
+  if (o.kind_tag == 373 && !ir.is_packed(o)) {
     let loop_label = asmcore.fresh_label(s);
     let done_label = asmcore.fresh_label(loop_label.state);
     s = done_label.state;
@@ -6249,7 +6249,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq $1, %r9\n    jmp " + loop_label.name + "\n");
     return s.write(done_label.name + ":\n    movslq %eax, %rax\n    pushq %rax\n");
   }
-  if (o.kind_tag == 309 || o.kind_tag == 371) {  // crc32_cksum / crc32_cksum_array
+  if (o.kind_tag == 309 || o.kind_tag == 373) {  // crc32_cksum / crc32_cksum_array
     // operand stack [crc, box] (the box on top) -> the incoming CRC-32
     // with the string's bytes folded in.
     //
@@ -6263,7 +6263,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // string last, which is exactly the shape a port copies wrong.
     s = s.need("crc32_cksum");
     s = s.write("    popq %rsi\n    popq %rdi\n");
-    if (o.kind_tag == 371) {
+    if (o.kind_tag == 373) {
       s = s.write("    movq (%rsi), %rdx\n    addq $8, %rsi\n    call __fern_crc32_cksum_data\n");
     } else {
       s = s.write("    call __fern_crc32_cksum\n");
@@ -6335,7 +6335,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(a_done + ":\n    pushq %rdx\n");
     return s;
   }
-  if (o.kind_tag == 245 || o.kind_tag == 364) {  // mismatch / mismatch_bytes
+  if (o.kind_tag == 245 || o.kind_tag == 366) {  // mismatch / mismatch_bytes
     return emit_mismatch_x86(o, s);
   }
   if (o.kind_tag == 104) {  // str_bytes
@@ -9434,6 +9434,14 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_" + op + "\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need(op);
+  } else if (o.kind_tag == 364 || o.kind_tag == 365) {  // setxattr, lsetxattr
+    // [pathbox, namebox, valuebox] with the value on top; re-pushed reversed
+    // so param[0] (path) is lowest.
+    let op: string = ir.kind_name(o.kind_tag);
+    s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
+    s = s.write("    call __fn___fern_" + op + "\n    addq $24, %rsp\n    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need(op);
   } else if (o.kind_tag == 263) {  // create_symlink
     s = s.write("    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_create_symlink\n    addq $16, %rsp\n    pushq %rax\n");
@@ -9576,7 +9584,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("writer_truncate");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 368 || o.kind_tag == 369 || o.kind_tag == 370) {  // the buf_* builder
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372) {  // the buf_* builder
     s = emit_ir_op_buf(o, s);
   } else if (o.kind_tag == 181) {  // sleep_ms
     // [ms] -> nanosleep(ms). Push the syscall return so the
@@ -9619,7 +9627,7 @@ function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let sym: string = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
   s = s.write("    call " + sym + "\n    pushq %rax\n");
   s = s.need("heap");
-  if (o.kind_tag >= 368 && o.kind_tag <= 370) {
+  if (o.kind_tag >= 370 && o.kind_tag <= 372) {
     if (sym != asmcore.buf_helper(o.kind_tag)) {
       s = s.need("buf_bytes_u8");
     } else {
@@ -11847,6 +11855,12 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("lgetxattr")) {
       fs_src = fs_src + " " + asmcore.rt_src_getxattr("x86_64", false);
+    }
+    if (s.has_need("setxattr")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr("x86_64", true);
+    }
+    if (s.has_need("lsetxattr")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr("x86_64", false);
     }
     if (s.has_need("rename_noreplace")) {
       fs_src = fs_src + " " + asmcore.rt_src_rename_noreplace("x86_64");

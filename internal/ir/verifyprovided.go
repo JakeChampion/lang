@@ -428,6 +428,8 @@ var providedSigs = map[string]providedSig{
 	"read_link":                        {2, rWord},
 	"getxattr":                         {4, rWord},
 	"lgetxattr":                        {4, rWord},
+	"setxattr":                         {6, rWord},
+	"lsetxattr":                        {6, rWord},
 	"rename":                           {4, rWord},
 	"rename_noreplace":                 {4, rWord},
 	"rename_exchange":                  {4, rWord},

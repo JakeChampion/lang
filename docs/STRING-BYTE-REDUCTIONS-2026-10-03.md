@@ -8,8 +8,9 @@ kernels for owned buffers while preserving the existing text and view APIs.
 
 Packed native arrays reuse the existing sum and BSD kernels. Unpacked
 native arrays use bounded slot reads; primary WebAssembly reads packed
-bytes. Append-only operation IDs 362 and 363 preserve existing identities.
-Typed lowering records the array operands as borrowed.
+bytes. The current integration uses operation IDs 368 and 369, preserving
+published identities. Typed lowering records the array operands as borrowed.
+The original measurements below predate that integration.
 
 The compiler reproduces itself from pinned stage0. Stages 2 and 3 are
 identical at 12,530,337 bytes, SHA-256

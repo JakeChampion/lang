@@ -3331,6 +3331,22 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// setxattr(path, name, value): Result[void, IoError] — create or
+	// replace the extended attribute `name` on `path` with `value`'s
+	// bytes, `setxattr(2)` with no flags. lsetxattr sets it on a final
+	// symlink itself. The Err carries the kernel's answer verbatim:
+	// EOPNOTSUPP from a filesystem without attributes, EPERM from a
+	// caller who may not write a `security.` one. Native only, like
+	// getxattr (capability `xattr`).
+	for _, name := range []string{"setxattr", "lsetxattr"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.StringType{}, ast.StringType{}, ast.StringType{}},
+			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+				ast.VoidType{},
+				ast.EnumType{Name: "IoError"},
+			}},
+		}
+	}
 	// rename(from, to): Result[void, IoError] — move the directory
 	// entry `from` to `to`, `renameat(AT_FDCWD, from, AT_FDCWD, to)`.
 	// Nothing is copied: the inode keeps its mode, its times and every
