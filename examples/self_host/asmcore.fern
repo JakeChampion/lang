@@ -172,12 +172,15 @@ pub struct EmitState {
   // a substitution or a runtime helper's lowering carries), so a second
   // source bringing the same one does not define it twice.
   named: string[],
-  // rc_free_debug_on(), read once here: the SSA emitters test it at every
-  // rc primitive and call, and an environment walk per instruction showed.
+  // The diagnostic switches (Switches, with_switches), read once here: the
+  // SSA emitters test rc_free_debug at every rc primitive and call, and an
+  // environment walk per instruction showed. The quarantine and the leak
+  // census are on under the sanitizer as well as on their own flags.
   rc_free_debug: boolean,
+  sanitize: boolean,
+  leak_check: boolean,
   // Whether a fatal abort's report walks the frame-pointer chain under its
-  // cause line: backtrace_on() unless the CLI's -backtrace overrode it
-  // (ircore.Sub.backtrace).
+  // cause line.
   backtrace: boolean,
   // rt_owned_allocs: set while the task runtime's functions are being
   // emitted. Their __alloc blocks (the record table, the records, the save
@@ -347,7 +350,9 @@ pub function new_state(): EmitState {
     recs: 0 as usize,
     rt_lower: no_rt_lower,
     named: [],
-    rc_free_debug: rc_free_debug_on(),
+    rc_free_debug: sanitize_on() || rc_free_debug_on(),
+    sanitize: sanitize_on(),
+    leak_check: sanitize_on() || leak_check_on(),
     backtrace: backtrace_on(),
     rt_owned_allocs: false,
     syscalls: [],
@@ -358,7 +363,7 @@ pub function new_state(): EmitState {
 // sanitize_on reports whether FERN_SANITIZE is set — the self-host port of
 // ast.SanitizeEnabled (#5545). One opt-in surface over the heap detectors,
 // so you can reach for it before knowing which check will fire: each
-// backend's leak census (its leak_check_on folds it in), the rc over-release
+// backend's leak census (with_switches folds it in), the rc over-release
 // report, and the use-after-free quarantine below. Both reports end in the
 // native backends' frame-pointer backtrace (backtrace_on).
 //
@@ -437,10 +442,41 @@ pub function backtrace_on(): boolean {
 // reference touches a poisoned block. A quarantined block still counts as a
 // FREE for the census (hev_free runs at the release), so the two detectors
 // compose instead of every correct free reading as a leak.
-pub function rc_free_debug_on(): boolean {
-  if (sanitize_on()) {
-    return true;
+// leak_check_on reports whether FERN_LEAKCHECK is set — the self-host port
+// of ast.LeakCheckEnabled, the leak census on its own: every alloc and every
+// free counted (count + bytes) and one line printed at exit,
+//
+//	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
+//
+// The sanitizer folds it in (with_switches).
+pub function leak_check_on(): boolean {
+  match (env("FERN_LEAKCHECK")) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
   }
+}
+
+// Switches are the diagnostic modes a build is emitted with: the
+// environment's defaults (env_switches) unless the CLI's flags set them,
+// -backtrace over FERN_BACKTRACE and -sanitize over FERN_SANITIZE. They ride
+// ircore.Sub into the emit state.
+pub struct Switches { backtrace: boolean, sanitize: boolean }
+
+pub function env_switches(): Switches {
+  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on() };
+}
+
+// with_switches applies `sw` to the state. The sanitizer turns the leak
+// census and the quarantine on with it, as native's ApplySanitize does.
+pub function with_switches(s: EmitState, sw: Switches): EmitState {
+  return EmitState { ...s, backtrace: sw.backtrace, sanitize: sw.sanitize, leak_check: sw.sanitize || leak_check_on(), rc_free_debug: sw.sanitize || rc_free_debug_on() };
+}
+
+pub function rc_free_debug_on(): boolean {
   match (env("FERN_RC_FREE_DEBUG")) {
     Some(_) => {
       return true;

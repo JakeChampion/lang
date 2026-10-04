@@ -516,6 +516,24 @@ function is_flag(a: string): boolean {
   return a[0] == b'-';
 }
 
+// sanitize_warning is native's note on what a -target's build carries under
+// -sanitize: nothing for the whole mode (both native ISAs), the covered
+// subset where it is partial (wasm has the leak census alone), and "no
+// checks" for a target with no instrumentation.
+function sanitize_warning(target: string): string {
+  if (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-android" || target == "arm64-darwin") {
+    return "";
+  }
+  let census: string = "the leak census only, not the rc over-release or use-after-free detectors";
+  if (target == "wasm32-wasi") {
+    return "fern: warning: -sanitize on -target " + target + " carries " + census;
+  }
+  if (target == "wasm32-wasi-http") {
+    return "fern: warning: -sanitize on -target " + target + " carries " + census + " — and it prints at process exit, which a request handler never reaches";
+  }
+  return "fern: warning: -sanitize has no effect on -target " + target + " (the detectors are native x86-64 and arm64, the leak census also wasm); this build carries no checks";
+}
+
 // flag_after_entry refuses a driver flag written after the entry file, in
 // native's words (#8465): Go's flag package stops at the first positional,
 // so reading the flag here would make the two engines read one command line
@@ -2502,6 +2520,9 @@ function run(): i32 {
   // -backtrace: whether a fatal abort walks the frame chain under its cause
   // line, as native's flag of the same name; FERN_BACKTRACE is the default.
   let backtrace: boolean = asmcore.backtrace_on();
+  // -sanitize: the heap memory-safety detectors together, as native's flag;
+  // FERN_SANITIZE is the other way to turn them on.
+  let sanitize_flag: boolean = false;
   // `-cover` (or FERN_COVER=1) instruments the program with line and branch
   // counters it reports to stderr at exit (cover.fern).
   let cover_on: boolean = false;
@@ -2569,6 +2590,8 @@ function run(): i32 {
       backtrace = true;
     } else if (a == "-backtrace=false" || a == "-backtrace=0") {
       backtrace = false;
+    } else if (a == "-sanitize") {
+      sanitize_flag = true;
     } else if (a == "-capabilities") {
       mode_caps = true;
     } else if (a == "-tangle") {
@@ -2693,6 +2716,16 @@ function run(): i32 {
     }
     eprint(msg + ")");
     return 2;
+  }
+
+  // Say what a -sanitize build carries rather than accepting the flag and
+  // going quiet: silence reads as "sanitizer ran, program is clean", the one
+  // wrong conclusion this mode must never support.
+  if (sanitize_flag) {
+    let warning: string = sanitize_warning(target);
+    if (warning.len() > 0) {
+      eprint(warning);
+    }
   }
 
   // `-lsp` checks the documents an editor sends, so its one positional is
@@ -3012,7 +3045,7 @@ function run(): i32 {
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
   let full: parser.Module = parser.erase_view_module(typed);
   // The typed semantic lowering, threaded into whichever emit path runs.
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target), backtrace: backtrace };
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on() } };
   let out_asm: string = "";
   let emit_text: boolean = emit == "asm";
   if (target == "arm64-linux") {

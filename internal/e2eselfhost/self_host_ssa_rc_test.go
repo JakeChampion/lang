@@ -131,7 +131,7 @@ function main(): i32 {
         at = at + 1;
     }
     if (av[1] == "x86-64-linux") {
-        print(asm_ir.emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, cache, g.base, d.sub.rt_lower, 0 as usize, asmcore.backtrace_on()));
+        print(asm_ir.emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, cache, g.base, d.sub.rt_lower, 0 as usize, asmcore.env_switches()));
     } else if (av[1] == "arm64-linux") {
         strbuf_reset();
         let state = asmcore.new_state();
@@ -140,7 +140,7 @@ function main(): i32 {
         state = asm_arm64_ir.emit_arm64_reclaim_drop_bodies(state);
         state = asm_arm64_ir.emit_ir_runtime(state, false);
         print(strbuf_take());
-    } else { print(wasm_ir.emit_ir_module_mode(g.im, cache, 0, g.base)); }
+    } else { print(wasm_ir.emit_ir_module_mode(g.im, cache, 0, g.base, asmcore.env_switches())); }
     return 0;
 }
 `
