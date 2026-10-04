@@ -18,7 +18,8 @@ import (
 // assemble to the bytes its text assembles to, a named record must be the
 // call or rip-relative address its text assembles to, and a frame's .cfi_*
 // records must render the unwind image their directives render, on both
-// targets.
+// targets; the arm64 sxtw record must be its text's word and refuse the
+// operands sxtw does not take.
 const recordRefusalsDriver = `import "./x86_native"; import "./arm64_native"; import "./util";
 function first_diff(a: i32[], b: i32[]): i32 {
     let n: i32 = a.len();
@@ -202,6 +203,14 @@ function main(): i32 {
         fi = fi + 1;
     }
     print("arm64_named_fixups_text " + util.i32_to_string(pt.pf_sites.len()));
+    // arm64: the sxtw record is the word its text assembles to, and refuses
+    // a w destination or an x source.
+    let sxw: usize = buf_new(16);
+    buf_push_u64(sxw, arm64_native.arm64_rec_sxtw("x9", "w11") as u64);
+    let sxr = arm64_native.arm64_gas_program_words(".text\n\x01\n", buf_take_bytes(sxw));
+    let sxt = arm64_native.arm64_gas_program(".text\n    sxtw x9, w11\n");
+    print("arm64_sxtw " + util.i32_to_string(first_diff(sxr.asm.code, sxt.asm.code)) + " " + util.i32_to_string(sxr.unknown.len() + sxt.unknown.len()) + " " + util.i32_to_string(sxr.asm.code.len()));
+    print("arm64_sxtw_bad " + util.i64_to_string(arm64_native.arm64_rec_sxtw("w9", "w11")) + " " + util.i64_to_string(arm64_native.arm64_rec_sxtw("x9", "x11")) + " " + util.i64_to_string(arm64_native.arm64_rec_sxtw("sp", "w0")));
     // arm64: a pair mode the text fallback cannot spell, and a w register
     // beside sp, are refused rather than encoded.
     print("arm64_pair_mode2 " + util.i64_to_string(arm64_native.arm64_rec_pair(false, 2, "x19", "x20", "sp", 16)));
@@ -273,7 +282,9 @@ func TestSelfHostRecordRefusals(t *testing.T) {
 		"\nx86_undefined_unknown 1\n",
 		"\n  branch to a label id nothing defines\n",
 		"\nx86_defined_unknown 0\n",
-		"\nx86_defined_code 2\n",    // jmp to the next byte is EB 00
+		"\nx86_defined_code 2\n", // jmp to the next byte is EB 00
+		"\narm64_sxtw -1 0 4\n",
+		"\narm64_sxtw_bad -1 -1 -1\n",
 		"\narm64_mark3_unknown 2\n", // the text line, and the word it left unread
 		"\narm64_mark3_code 0\n",
 		"\narm64_mark1_unknown 0\n",
