@@ -146,9 +146,9 @@ func selfHostBin(t *testing.T, util string) string {
 	bin := filepath.Join(selfHostBinDir, util)
 	// The compiler is itself a target binary, so it runs the same way the
 	// utilities do — under the emulator on a cross leg (docs/COREUTILS.md).
-	argv := crossArgv(selfHostCompiler(t), "-target", fernTarget(t),
+	argv := crossArgv(selfHostCompiler(t), "-target", fernTarget(t), "-o", bin,
 		filepath.Join(root, "coreutils", util+".fern"),
-		filepath.Join(root, "internal", "stdlib"), "-o", bin)
+		filepath.Join(root, "internal", "stdlib"))
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -222,9 +222,9 @@ func TestSelfHostMulticallCompilesWhole(t *testing.T) {
 	root := repoRoot(t)
 	srcDir := filepath.Join(root, "coreutils", "multicall")
 	e2eharness.TrackFernSources(t, srcDir, "fern-coreutils.fern")
-	argv := crossArgv(selfHostCompiler(t), "-O", "-target", fernTarget(t),
+	argv := crossArgv(selfHostCompiler(t), "-O", "-target", fernTarget(t), "-o", filepath.Join(t.TempDir(), "fern-coreutils"),
 		filepath.Join(srcDir, "fern-coreutils.fern"),
-		filepath.Join(root, "internal", "stdlib"), "-o", filepath.Join(t.TempDir(), "fern-coreutils"))
+		filepath.Join(root, "internal", "stdlib"))
 	cmd := exec.Command(argv[0], argv[1:]...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile of the multicall binary: %v\n%s", err, out)

@@ -68,7 +68,7 @@ trap 'rm -rf "$TMP"' EXIT
 for f in $(find "$CASES" -name '*.fern' | sort); do
     for tgt in x86-64-linux arm64-linux wasm32-wasi; do
         o="$TMP/out"
-        if "$BIN" -target "$tgt" "$f" "$STD" -o "$o" >/dev/null 2>&1 && [ -s "$o" ]; then
+        if "$BIN" -target "$tgt" -o "$o" "$f" "$STD" >/dev/null 2>&1 && [ -s "$o" ]; then
             printf '%s  %s  %s\n' "$(sha256sum < "$o" | cut -d' ' -f1)" "$tgt" "${f#"$CASES"/}" >> "$OUT"
         else
             printf 'FAILED%058d  %s  %s\n' 0 "$tgt" "${f#"$CASES"/}" >> "$OUT"
