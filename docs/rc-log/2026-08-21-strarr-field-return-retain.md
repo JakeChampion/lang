@@ -57,7 +57,7 @@ same program emitted as `.wat` and run directly reports each verbatim:
 
 ```
 fern -target wasm32-wasi -o prog.wasm p.fern ; wasmtime run prog.wasm   # 41 -> 1
-fern-selfhost -target wasm32-wasi -emit asm p.fern <stdlib> -o p.wat
+fern-selfhost -target wasm32-wasi -emit asm -o p.wat p.fern <stdlib>
 wasmtime run p.wat                                                      # 41 -> 41
 ```
 
