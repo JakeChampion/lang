@@ -290,6 +290,71 @@ deadline. The client maps both to `FetchError.Cancelled`, so a handler's
 the host alike. `TestSelfHostSimTasks` is the deterministic cancellation
 test #9857 asks for, byte-identical on x86-64, arm64 and wasm.
 
+### 3.9 Lazy streaming request bodies
+
+Today a handler starts only on a `Framed` request, the body read whole by
+the loop under the cap and the minimum data rate; `HttpRequest.body` is a
+`Stream { data, pos }` over that buffer. std/stream's own header named the
+next step: the same reader API over a source that pulls bytes on demand.
+
+**The stream pulls.** `Stream` grows a third field, `source:
+Option[BodySource]`, and `BodySource { next: (i32) => Option[u8[]], fault:
+Cell[i32] }` is a checker-injected record like `ChunkProducer` (both
+compilers' builtin tables; `Stream` literals go through
+`stream.stream_from_bytes`). A read that exhausts `data` asks `next(i)` for
+the next chunk and replaces `data` with it, so a streamed body is never
+held whole; `None` ends the stream, and `fault` says why when it ended
+early: 413 past the cap, 408 stalled under the minimum data rate, 400 for
+a chunked body that breaks its rules or a peer that closed short, and
+`async.cancelled()` for a cancelled task. `(s: Stream).fault()` reads it;
+`req.body_string()` maps it onto `BodyError` (each `ToResponse`), so a
+handler written `Result[HttpResponse, BodyError]` refuses a bad upload
+with `?` as it refuses bad UTF-8 today. `body_bytes` and `read_all` drain
+the source; `body_len` answers the declared `Content-Length` for a lazy
+body. An in-memory `Stream` has no source and costs nothing new.
+
+**The handler owns the read side.** Behind `serve.Config.stream_bodies`
+(off by default), a request whose header block is complete and whose body
+framing is valid starts its handler at once, the body not yet arrived: the
+loop hands the source the body bytes it already holds and stops reading
+the connection — it unwatches the descriptor, so a level-triggered reactor
+does not spin on bytes nobody takes — and from then on only the pull reads
+it: `next` parks on `(fd, readable)` with the data-rate deadline as its
+bound (`wait_any`, so the handler's task parks and the worker serves other
+connections), then `tcp_recv_into` bounded by what the framing still owes.
+A `Content-Length` body is read to its length and never past it; a chunked
+body is decoded incrementally by a decoder in std/http with
+`__chunked_walk`'s rules (size line, extensions, the chunk and trailer caps),
+and the bytes it reads past the last chunk — a pipelined request — are the
+flight's leftover, a `Cell[string]` the loop prepends to the connection's
+buffer when the flight answers, as `string_from_bytes_unchecked` carries
+wire bytes elsewhere in the loop. `Expect: 100-continue` is answered by
+the pull before its first wait rather than by the loop on the header block,
+so a handler that refuses the request never invites the body. When the
+source ends the loop watches the descriptor again at the flight's next wake,
+and a body refused (413 mid-stream, 408, 400) ends the connection after the
+response, since the request was not consumed. A disconnect cancels the
+flight as today; the pull's wait answers `cancelled()`, the source faults,
+and the handler winds down through its own exit paths. A declared length
+past the cap is still refused 413 before the handler, framing being known.
+
+The pull is a closure body reaching a park, which is what exercises the
+classifier's indirect-call rule (§3.1) for the first time. Under the Go
+compiler the pull's wait blocks the loop for the body, the blocking
+fallback P3 has everywhere; the wasi-http entry keeps reading the body
+whole (`wasi_http.read_body`), its host-side stream a follow-up outside P3.
+
+Sub-slices, each its own PR: (a) the lazy `Stream` and `BodySource` in
+both compilers with std/stream and std/http reading through them; (b) the
+incremental chunked decoder with its parity against `__chunked_walk` on the
+parser corpora; (c) the loop: `stream_bodies`, the early start, the
+descriptor handoff, leftover, 100-continue, the faults, and the gates — a
+handler summing a slowly sent upload while another connection's hello is
+answered meanwhile, a stalled body answered 408, a chunked body past the
+cap answered 413, a pipelined request after a chunked body still answered,
+a disconnect mid-body cancelling the flight — on the self-host x86-64 and
+arm64 with the Go compiler's twins.
+
 ## 4. Slices
 
 Each slice is one PR with its gates; the self-host suites are primary
@@ -384,10 +449,12 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    is the scripted upstream plus scripted disconnect test, byte-identical
    on x86-64, arm64 and wasm through the self-host compiler, and
    `TestSimTasksFallback` the Go compiler's twin.
-9. **Lazy streaming request bodies.** `BodyStream` pulled inside a handler
-   suspends on the connection's readability; the P1 "bodies are read before
-   the handler runs" restriction is lifted behind a `serve.Config` choice,
-   with the body caps and minimum data rate still enforced by the loop.
+9. **Lazy streaming request bodies (§3.9).** `HttpRequest.body` pulled
+   inside a handler parks on the connection's readability; the P1 "bodies
+   are read before the handler runs" restriction is lifted behind
+   `serve.Config.stream_bodies`, the body cap and the minimum data rate
+   enforced by the pull. Three PRs: the lazy `Stream`, the incremental
+   chunked decoder, the loop with its gates.
 10. **Docs and reference.** `ASYNC.md`, `STDLIB.md` (serve, platform,
     async), the tutorial's handler section, `TEST-GATES.md` rows, and the
     `docs/README.md` entry for this file flipped to [record].
