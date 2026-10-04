@@ -364,14 +364,13 @@ jobs:
       # step runs on shard 0 and the rest on shard 1, to balance the two.
       - name: go test (arm64-darwin native execution)
         if: "!cancelled() && matrix.shard == 1 && steps.gate.outputs.signed != 'true'"
-        # TestArm64DarwinBuilds detects runtime.GOOS=="darwin"
-        # && GOARCH=="arm64" and switches from "verify Mach-O
-        # file format" to "build with native clang+ld64 and
-        # actually run the binary, asserting exit codes". The
-        # other arm64 tests in this file SKIP cleanly when
-        # qemu-aarch64 + aarch64-linux-gnu-gcc aren't present
-        # (which is always the case on macOS). `standard-verbose`
-        # keeps the streamed RUN/PASS/FAIL of the old `-v` run.
+        # The TestArm64Darwin* tests detect runtime.GOOS=="darwin"
+        # && GOARCH=="arm64" and run the arm64-darwin binaries the
+        # self-host compiler emits, asserting exit codes. The other
+        # arm64 tests in the package SKIP cleanly when qemu-aarch64
+        # + aarch64-linux-gnu-gcc aren't present (which is always
+        # the case on macOS). `standard-verbose` keeps the streamed
+        # RUN/PASS/FAIL of the old `-v` run.
         run: |
           gotestsum --format standard-verbose -- -run TestArm64Darwin ./internal/e2e/
 

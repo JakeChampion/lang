@@ -105,9 +105,9 @@ runs:
         restore-keys: |
           gobuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}-
 
-    # Two tests link through `-fuse-ld=lld`: cmd/fern's arm64-darwin
-    # cross-link from Linux (clang + lld's Mach-O backend, TestArm64DarwinBuilds)
-    # and TestSelfHostLinkerAgnosticIRX86_64, which proves the self-host x86-64
+    # Two paths link through `-fuse-ld=lld`: cmd/fern's arm64-darwin
+    # cross-link from Linux (clang + lld's Mach-O backend) and
+    # TestSelfHostLinkerAgnosticIRX86_64, which proves the self-host x86-64
     # output links under lld as well as bfd. Both look for ld.lld under that
     # exact name.
     #

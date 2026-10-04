@@ -3290,8 +3290,10 @@ function kqueue_wait_src(t: string): string {
 // record table and its capacity; a record is twelve words: mode (0 running,
 // 1 unwinding, 2 rewinding), the timeout a parked task gave, the readiness
 // word its scheduler set, the cancelled flag, the save area's pointer, length
-// and capacity in words, the free flag a released id leaves for reuse, and
-// the wait set's pointer, length and capacity in words.
+// and capacity in words, the free flag a released id leaves for reuse, the
+// wait set's pointer, length and capacity in words, and the task that was
+// current when this one entered, which leave makes current again: a task
+// a combinator drives from inside another task nests.
 // park is the one primitive the suspension pass's classifier starts from: a
 // running task parks by flipping to unwinding; a rewinding one lands here
 // again and answers the readiness word, or the cancel mark once cancelled.
@@ -3305,8 +3307,8 @@ pub function rt_src_task(t: string): string {
     + " function __fern_task_free(id: i32): i32 { let rec: usize = __fern_task_rec(id); if (rec != 0 as usize) { __raw_store_ptr(rec, 7, 1 as usize); } let st: usize = __raw_task_state(); let tab: usize = __raw_load_ptr(st, 1); let cap: i32 = __raw_load_ptr(st, 2) as i32; let i: i32 = 1; while (i < cap) { let r: usize = __raw_load_ptr(tab, i); if (r != 0 as usize) { if (__raw_load_ptr(r, 7) == 0 as usize) { return 0; } } i = i + 1; } i = 1; while (i < cap) { let fr: usize = __raw_load_ptr(tab, i); if (fr != 0 as usize) { __fern_task_release(fr); } i = i + 1; } __free(tab, cap * 8); __raw_store_ptr(st, 1, 0 as usize); __raw_store_ptr(st, 2, 0 as usize); return 0; }"
     + " function __fern_task_release(rec: usize): i32 { let save: usize = __raw_load_ptr(rec, 4); if (save != 0 as usize) { __free(save, (__raw_load_ptr(rec, 6) as i32) * 8); } let set: usize = __raw_load_ptr(rec, 8); if (set != 0 as usize) { __free(set, (__raw_load_ptr(rec, 10) as i32) * 8); } __free(rec, 96); return 0; }"
     + " function __fern_task_cur(): i32 { let st: usize = __raw_task_state(); return __raw_load_ptr(st, 0) as i32; }"
-    + " function __fern_task_enter(id: i32, mode: i32): i32 { let st: usize = __raw_task_state(); __raw_store_ptr(st, 0, id as usize); let rec: usize = __fern_task_rec(id); __raw_store_ptr(rec, 0, mode as usize); return 0; }"
-    + " function __fern_task_leave(): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; __raw_store_ptr(st, 0, 0 as usize); if (id == 0) { return 0; } let rec: usize = __fern_task_rec(id); return __raw_load_ptr(rec, 0) as i32; }"
+    + " function __fern_task_enter(id: i32, mode: i32): i32 { let st: usize = __raw_task_state(); let prev: usize = __raw_load_ptr(st, 0); __raw_store_ptr(st, 0, id as usize); let rec: usize = __fern_task_rec(id); __raw_store_ptr(rec, 0, mode as usize); __raw_store_ptr(rec, 11, prev); return 0; }"
+    + " function __fern_task_leave(): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0; } let rec: usize = __fern_task_rec(id); __raw_store_ptr(st, 0, __raw_load_ptr(rec, 11)); return __raw_load_ptr(rec, 0) as i32; }"
     + " function __fern_task_mode(): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0; } let rec: usize = __fern_task_rec(id); return __raw_load_ptr(rec, 0) as i32; }"
     + " function __fern_task_park(set: i32[], timeout_ms: i32): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0 - 1; } let rec: usize = __fern_task_rec(id); let mode: i32 = __raw_load_ptr(rec, 0) as i32; if (mode == 2) { __raw_store_ptr(rec, 0, 0 as usize); if (__raw_load_ptr(rec, 3) != 0 as usize) { return 0 - 2; } return __raw_load_ptr(rec, 2) as i32; } if (__raw_load_ptr(rec, 3) != 0 as usize) { return 0 - 2; } __raw_store_ptr(rec, 0, 1 as usize); __raw_store_ptr(rec, 1, timeout_ms as usize); let n: i32 = set.len(); let buf: usize = __raw_load_ptr(rec, 8); if (n > (__raw_load_ptr(rec, 10) as i32)) { if (buf != 0 as usize) { __free(buf, (__raw_load_ptr(rec, 10) as i32) * 8); } buf = __alloc(n * 8); __raw_store_ptr(rec, 8, buf); __raw_store_ptr(rec, 10, n as usize); } let i: i32 = 0; while (i < n) { __raw_store_ptr(buf, i, set[i] as usize); i = i + 1; } __raw_store_ptr(rec, 9, n as usize); return 0; }"
     + " function __fern_task_wait(id: i32): i32[] { let rec: usize = __fern_task_rec(id); let n: i32 = __raw_load_ptr(rec, 9) as i32; let buf: usize = __raw_load_ptr(rec, 8); let out: i32[] = []; let i: i32 = 0; while (i < n) { out = out.append(__raw_load_ptr(buf, i) as i32); i = i + 1; } return out; }"
@@ -10392,7 +10394,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // owns the definitions.
     "__fern_map_snapshot_col", "__fern_map_snapshot_col_str",
     "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique", "__fn___fern_arr_inc_elems", "__fn___fern_arr_own_elems",
-    "__fn___fern_str_own", "__fn___fern_str_grow", "__fn___fern_getpwuid_name",
+    "__fn___fern_str_own", "__fn___fern_str_grow", "__fn___fern_str_grow_range", "__fn___fern_getpwuid_name",
     "__fn___fern_alloc_reuse",
     "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
     "__fn___fern_i64_to_string", "__fn___fern_u64_to_string",

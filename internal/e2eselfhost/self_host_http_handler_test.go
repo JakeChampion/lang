@@ -211,7 +211,18 @@ function main(): i32 {
 // on separate connections, because the second only answers correctly if the
 // first request's allocations were reclaimed rather than leaked or reused.
 func TestSelfHostHttpHandlerServesX86_64(t *testing.T) {
-	checkSelfHostHttpHandlerServes(t, func(port int) string {
+	checkSelfHostHttpHandlerServes(t, "x86-64-linux", func(port int) string {
+		return fmt.Sprintf("return serve.run(%d, serve.config(), handle);", port)
+	})
+}
+
+// The arm64 leg of the same program, under qemu-aarch64 off arm64 hosts. The
+// task runtime's state block lives in .bss, and the arm64 assembler sizing
+// it short put the heap allocator's globals on top of it (#11377): a handler
+// program that compiled and bound its port, then faulted on the first
+// request, which the x86-64 leg alone could not see.
+func TestSelfHostHttpHandlerServesArm64(t *testing.T) {
+	checkSelfHostHttpHandlerServes(t, "arm64-linux", func(port int) string {
 		return fmt.Sprintf("return serve.run(%d, serve.config(), handle);", port)
 	})
 }
@@ -220,14 +231,27 @@ func TestSelfHostHttpHandlerServesX86_64(t *testing.T) {
 // SO_REUSEPORT on the listener, which reach tcp_listen_with through the
 // self-host's own lowering of the struct spread.
 func TestSelfHostHttpHandlerServesWithOptionsX86_64(t *testing.T) {
-	checkSelfHostHttpHandlerServes(t, func(port int) string {
+	checkSelfHostHttpHandlerServes(t, "x86-64-linux", func(port int) string {
 		return fmt.Sprintf("let opts: serve.Config = serve.Config { ...serve.config(), backlog: 4, reuse_port: true };\n    return serve.run(%d, opts, handle);", port)
 	})
 }
 
-func checkSelfHostHttpHandlerServes(t *testing.T, entry func(port int) string) {
+func checkSelfHostHttpHandlerServes(t *testing.T, target string, entry func(port int) string) {
 	t.Helper()
-	gcc, runner, driverBin := buildModloadDriverX86(t)
+	var gcc, driverBin string
+	var runner, runPrefix, extra []string
+	if target == "arm64-linux" {
+		var qemu string
+		_, runner, driverBin = buildModloadArm64DriverX86(t)
+		gcc, qemu = arm64Tooling(t)
+		if qemu != "" {
+			runPrefix = []string{qemu}
+		}
+		extra = []string{"-target", "arm64-linux"}
+	} else {
+		gcc, runner, driverBin = buildModloadDriverX86(t)
+		runPrefix = runner
+	}
 
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -249,13 +273,18 @@ function main(): i32 {
 }
 `, entry(port))
 
-	asm, progDir := compileSourceModload(t, runner, driverBin, src)
+	asm, progDir := compileSourceModload(t, runner, driverBin, src, extra...)
 	if !strings.Contains(asm, ".Lssa_") {
 		t.Fatal("handler program did not route through the IR path")
 	}
-	bin := buildBin(t, gcc, progDir, "http_serve", asm)
+	var bin string
+	if target == "arm64-linux" {
+		bin = buildBinArm64(t, gcc, progDir, "http_serve", asm)
+	} else {
+		bin = buildBin(t, gcc, progDir, "http_serve", asm)
+	}
 
-	cmd := binCmd(runner, bin)
+	cmd := binCmd(runPrefix, bin)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}

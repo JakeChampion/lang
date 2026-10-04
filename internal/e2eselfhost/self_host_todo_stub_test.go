@@ -5,20 +5,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"testing"
 )
 
-var (
-	selfHostWarningAt = regexp.MustCompile(`^(\d+):(\d+): warning: (.*)$`)
-	nativeWarningAt   = regexp.MustCompile(`:(\d+):(\d+): warning: (.*)$`)
-)
-
 // TestSelfHostCheckWarnsOfTodoStubsX86_64 is the differential for #11351:
-// `-check` warns of every `todo` stub left in the entry module, at the stub,
-// as native's does, and only once the program has passed the gates native
-// passes first. A stub in an imported module is not reported, and `todo` as an
-// ordinary name is not a stub.
+// `-check` warns of every `todo` stub left in the entry module in native's
+// words, the entry named, and only once the program has passed the gates
+// native passes first. A stub in an imported module is not reported, and
+// `todo` as an ordinary name is not a stub.
 func TestSelfHostCheckWarnsOfTodoStubsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -46,7 +40,7 @@ func TestSelfHostCheckWarnsOfTodoStubsX86_64(t *testing.T) {
 			p := filepath.Join(d, "main.fern")
 			ncmd := exec.Command(native, "-check", p)
 			nout, _ := ncmd.CombinedOutput()
-			want := warnings(nout, nativeWarningAt)
+			want := warnings(nout)
 			if len(want) != c.want {
 				t.Fatalf("native reported %d warnings, want %d — the case no longer exercises what it describes:\n%s", len(want), c.want, nout)
 			}
@@ -54,7 +48,7 @@ func TestSelfHostCheckWarnsOfTodoStubsX86_64(t *testing.T) {
 			scmd := runX86_64Bin(runner, driver, "-check", p)
 			scmd.Stderr = &errb
 			_ = scmd.Run()
-			if got := warnings(errb.Bytes(), selfHostWarningAt); !reflect.DeepEqual(got, want) {
+			if got := warnings(errb.Bytes()); !reflect.DeepEqual(got, want) {
 				t.Errorf("self-host warned %q, native %q\nself-host:\n%s\nnative:\n%s", got, want, errb.String(), nout)
 			}
 			if sc, nc := scmd.ProcessState.ExitCode(), ncmd.ProcessState.ExitCode(); sc != nc {
@@ -64,12 +58,12 @@ func TestSelfHostCheckWarnsOfTodoStubsX86_64(t *testing.T) {
 	}
 }
 
-// warnings is each warning line in out as "line:col message".
-func warnings(out []byte, at *regexp.Regexp) []string {
+// warnings is each warning line in out.
+func warnings(out []byte) []string {
 	ws := []string{}
 	for _, line := range bytes.Split(out, []byte("\n")) {
-		if m := at.FindSubmatch(line); m != nil {
-			ws = append(ws, string(m[1])+":"+string(m[2])+" "+string(m[3]))
+		if bytes.Contains(line, []byte(": warning: ")) {
+			ws = append(ws, string(line))
 		}
 	}
 	return ws

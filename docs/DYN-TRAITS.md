@@ -259,11 +259,14 @@ value, which already knows its type. Dispatch is by runtime tag:
   orphan rule guarantees exactly one impl per (trait, type), so the
   lookup is unambiguous.
 
-Primitives (`i32`, `string`, …) impl-ing a trait: in the interpreter
-these are already `Value`s carrying enough tag info (`Number`, `String`)
-to recover a type name, so boxing is a no-op there too. The
+Primitives (`i32`, `string`, …) impl-ing a trait: in the interpreter a
+`String`, `Bool` or `Float` already carries enough to recover its type
+name, so boxing is a no-op for them. A `Number` carries no width, so an
+integer of any type but `i32` is boxed at the coercion site
+(`checker.Info.DynCoercions`, handed over by `SetDynCoercions`) in a
+`DynInt` that keeps the type's name, and dispatch unwraps it (#10194). The
 runtime-type-name helper maps each `Value` kind to the `methodTypeName`
-key (`Number`→`"i32"`/`"i64"`/…, `String`→`"string"`, …).
+key (`Number`→`"i32"`, `DynInt`→its name, `String`→`"string"`, …).
 
 ### 4.2 Compiled backends (follow-up slices)
 

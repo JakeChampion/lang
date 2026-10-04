@@ -9,23 +9,20 @@
 // reached main and crashed the `map_keys_values_header_churn_free` rc-corpus
 // case on the macos-15 runner.
 //
-// arm64codegen.Options.HighHeapProbe raises the hint to 8 GiB, and
-// qemu-aarch64 honours it, so the same address regime is reachable here. The
-// tests below re-run the map half of the rc corpus plus a set of shapes that
-// round-trip a pointer through memory, under that hint. They are ordinary
-// `TestArm64…` tests: the default `go test ./internal/e2e -run TestArm64`
-// selection runs them.
+// FERN_HIGH_HEAP=1 in the compiler's environment raises the hint to 8 GiB,
+// and qemu-aarch64 honours it, so the same address regime is reachable here.
+// The tests below re-run the map half of the rc corpus plus a set of shapes
+// that round-trip a pointer through memory, under that hint. They are
+// ordinary `TestArm64…` tests: the default `go test ./internal/e2e -run
+// TestArm64` selection runs them. TestSelfHostArm64HighHeapProbeRaisesTheHint
+// pins the knob itself.
 package e2e
 
 import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/e2eharness"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 var compileAndRunArm64HighHeap = e2eharness.CompileAndRunArm64HighHeap
@@ -286,45 +283,5 @@ func TestArm64HighHeapRoundTripControl(t *testing.T) {
 				t.Errorf("%s at normal heap: got exit %d, want 0", c.name, code)
 			}
 		})
-	}
-}
-
-// TestArm64HighHeapProbeRaisesTheHint pins the knob itself. Without it the
-// two runs above would be the same run twice and the gate would be vacuous,
-// with nothing to say so.
-func TestArm64HighHeapProbeRaisesTheHint(t *testing.T) {
-	const src = `function main(): i32 { let a: i32[] = [1, 2, 3]; return a[0] - 1; }`
-	prog, _, err := modload.LoadSource(src)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-
-	plain, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{})
-	if err != nil {
-		t.Fatalf("emit (default): %v", err)
-	}
-	high, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{HighHeapProbe: true})
-	if err != nil {
-		t.Fatalf("emit (probe): %v", err)
-	}
-	// 1 << 28 = 0x1000_0000 (256 MiB); 32 << 28 = 0x2_0000_0000 (8 GiB).
-	if !strings.Contains(plain, "mov x13, #1\n") {
-		t.Errorf("default emit does not carry the 0x10000000 arena hint")
-	}
-	if strings.Contains(plain, "mov x13, #32\n") {
-		t.Errorf("default emit carries the high-heap hint")
-	}
-	if !strings.Contains(high, "mov x13, #32\n") {
-		t.Errorf("HighHeapProbe emit does not carry the 8 GiB arena hint")
-	}
-	if strings.Contains(high, "lsl x0, x13, #28") == false {
-		t.Errorf("HighHeapProbe emit lost the hint shift the base feeds")
 	}
 }

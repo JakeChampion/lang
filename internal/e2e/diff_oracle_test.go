@@ -214,6 +214,7 @@ func interpByte(t *testing.T, src string, skipGaps bool) int {
 		t.Fatalf("monomorph: %v\nsrc:\n%s", err, src)
 	}
 	i := interp.New()
+	i.SetDynCoercions(info.DynCoercions)
 	for _, ed := range prog.Enums {
 		i.RegisterEnum(ed)
 	}

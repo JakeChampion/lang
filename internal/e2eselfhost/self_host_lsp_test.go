@@ -521,7 +521,8 @@ func TestSelfHostLSPFormattingMatchesFernLSPX86_64(t *testing.T) {
 }
 
 // checkLine matches one line of `-check` output that names a position in the
-// entry module; a position in another module carries its path first.
+// entry module; a position in another module carries its path first, as a
+// `todo` warning carries the entry's.
 var (
 	checkLine          = regexp.MustCompile(`^(\d+):(\d+): (.*)$`)
 	checkLineElsewhere = regexp.MustCompile(`^\S+:\d+:\d+: `)
@@ -532,7 +533,7 @@ var (
 // from what `-check` prints for the same file: one diagnostic per line, at the
 // line's position converted to LSP's, carrying its code, severity and
 // message. A line in an imported module is not the document's.
-func expectedFromCheck(t *testing.T, src, out string) []lspDiag {
+func expectedFromCheck(t *testing.T, path, src, out string) []lspDiag {
 	t.Helper()
 	lines := strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n")
 	want := []lspDiag{}
@@ -542,7 +543,7 @@ func expectedFromCheck(t *testing.T, src, out string) []lspDiag {
 		}
 		d := lspDiag{Severity: 1, Source: "fern"}
 		rest := line
-		if m := checkLine.FindStringSubmatch(line); m != nil {
+		if m := checkLine.FindStringSubmatch(strings.TrimPrefix(line, path+":")); m != nil {
 			ln, _ := strconv.Atoi(m[1])
 			col, _ := strconv.Atoi(m[2])
 			ch := utf16Column(lines, ln, col)
@@ -669,7 +670,7 @@ func TestSelfHostLSPPublishesCheckFindingsX86_64(t *testing.T) {
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
 			_ = cmd.Run()
-			want := expectedFromCheck(t, d.src, stderr.String())
+			want := expectedFromCheck(t, d.path, d.src, stderr.String())
 			findings += len(want)
 			if have := got[fileURI(d.path)]; !reflect.DeepEqual(have, want) {
 				t.Errorf("published %+v\n-check says %+v\n(-check output: %q)", have, want, stderr.String())

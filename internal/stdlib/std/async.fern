@@ -140,7 +140,12 @@ pub function (d: RealDriver) handle(): i32 {
 }
 
 impl Driver for RealDriver {
+  // Under a task the wait parks on the tokens, so gather / race /
+  // with_deadline inside a handler park the handler (§8 of ASYNC.md).
   function poll_ready(self: RealDriver, toks: i32[], timeout_ms: i32): i32 {
+    if (__task_cur() != 0) {
+      return __park_tokens(toks, timeout_ms);
+    }
     return poll(toks, timeout_ms);
   }
   function now_ns(self: RealDriver): i64 {
@@ -556,6 +561,302 @@ function run_task[T](t: Task[T], mode: i32): TaskStatus[T] {
     return Suspended(Wait { set: __task_wait(t.id), timeout_ms: __task_timeout(t.id) });
   }
   return Done(v);
+}
+
+// __park_tokens(toks, timeout_ms) parks on every token that is a
+// descriptor, readable, and maps the answer back to the token's index; a
+// token of -1 (the native timer slot) has no pair.
+function __park_tokens(toks: i32[], timeout_ms: i32): i32 {
+  let set: i32[] = [];
+  let idxs: i32[] = [];
+  let i: i32 = 0;
+  while (i < toks.len()) {
+    if (toks[i] >= 0) {
+      set = set.append(toks[i]);
+      set = set.append(1);
+      idxs = idxs.append(i);
+    }
+    i = i + 1;
+  }
+  let r: i32 = wait_any(set, timeout_ms);
+  if (r < 0) {
+    return r;
+  }
+  return idxs[r];
+}
+
+// ---- Task combinators ------------------------------------------------
+//
+// `gather_tasks`, `race_tasks` and `with_deadline_tasks` run their entries
+// as tasks and drive them together: a child that parks hands back its wait,
+// the combinator parks on the union of the children's waits, and resumes
+// the child whose pair became ready, or every child whose bound passed. A
+// child the combinator is finished with while it is still parked is
+// cancelled, not abandoned: `task_cancel` runs it on with every wait
+// answering `cancelled()`, so it leaves through its own exit paths and its
+// `defer`s. The calling task being cancelled cancels every child the same
+// way. With no task current the combinator's own wait blocks, and under
+// the blocking fallback each entry runs to its end inside `task_start`, so
+// the entries run one after another in order.
+
+// A child of a combinator: its task, where it stands, and when its wait is
+// due as monotonic nanoseconds, `__no_due()` with no bound.
+struct __Child[T] { task: Task[T], st: TaskStatus[T], due: i64 }
+
+function __no_due(): i64 {
+  let g: i64 = 1000000000 as i64;
+  return g * g * 9;
+}
+
+function __child_due[T](st: TaskStatus[T], now: i64): i64 {
+  match (st) {
+    Suspended(w) => {
+      if (w.timeout_ms < 0) {
+        return __no_due();
+      }
+      return now + w.timeout_ms as i64 * (1000000 as i64);
+    },
+    Done(v) => {
+      return __no_due();
+    },
+    Cancelled => {
+      return __no_due();
+    }
+  }
+}
+
+function __children_start[T](entries: (() => T)[]): __Child[T][] {
+  let kids: __Child[T][] = [];
+  for e in entries {
+    let t: Task[T] = task_new(e);
+    let st: TaskStatus[T] = task_start(t);
+    kids = kids.append(__Child { task: t, st: st, due: __child_due(st, monotonic_ns()) });
+  }
+  return kids;
+}
+
+function __children_parked[T](kids: __Child[T][]): boolean {
+  for k in kids {
+    match (k.st) {
+      Suspended(w) => {
+        return true;
+      },
+      Done(v) => {},
+      Cancelled => {}
+    }
+  }
+  return false;
+}
+
+// The lowest index of a child that is done, -1 with none.
+function __children_done[T](kids: __Child[T][]): i32 {
+  let i: i32 = 0;
+  while (i < kids.len()) {
+    let k: __Child[T] = kids[i];
+    match (k.st) {
+      Done(v) => {
+        return i;
+      },
+      Suspended(w) => {},
+      Cancelled => {}
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function __children_due[T](kids: __Child[T][]): i64 {
+  let due: i64 = __no_due();
+  for k in kids {
+    if (k.due < due) {
+      due = k.due;
+    }
+  }
+  return due;
+}
+
+// Milliseconds from `now` to `due`, rounded up; -1 for no bound.
+function __ms_until(due: i64, now: i64): i32 {
+  if (due >= __no_due()) {
+    return 0 - 1;
+  }
+  if (due <= now) {
+    return 0;
+  }
+  let ms: i64 = (due - now + 999999 as i64) / (1000000 as i64);
+  if (ms > 2147483647 as i64) {
+    return 2147483647;
+  }
+  return ms as i32;
+}
+
+function __child_resume[T](kids: __Child[T][], i: i32, word: i32): __Child[T][] {
+  let k: __Child[T] = kids[i];
+  let st: TaskStatus[T] = task_resume(k.task, word);
+  return kids.with(i, __Child { task: k.task, st: st, due: __child_due(st, monotonic_ns()) });
+}
+
+// Every child still parked is cancelled: it runs on to its end with its
+// waits answering `cancelled()`.
+function __children_cancel[T](kids: __Child[T][]): __Child[T][] {
+  let out: __Child[T][] = [];
+  for k in kids {
+    match (k.st) {
+      Suspended(w) => {
+        let c: TaskStatus[T] = task_cancel(k.task);
+        out = out.append(__Child { task: k.task, st: c, due: __no_due() });
+      },
+      Done(v) => {
+        out = out.append(k);
+      },
+      Cancelled => {
+        out = out.append(k);
+      }
+    }
+  }
+  return out;
+}
+
+function __children_free[T](kids: __Child[T][]): i32 {
+  for k in kids {
+    task_free(k.task);
+  }
+  return 0;
+}
+
+// The union of the parked children's waits as one set, with the child and
+// the pair within its set that each pair of the union came from.
+struct __Union { set: i32[], owner: i32[], at: i32[] }
+
+function __children_union[T](kids: __Child[T][]): __Union {
+  let u: __Union = __Union { set: [], owner: [], at: [] };
+  let i: i32 = 0;
+  while (i < kids.len()) {
+    let k: __Child[T] = kids[i];
+    match (k.st) {
+      Suspended(w) => {
+        let j: i32 = 0;
+        while (j + 1 < w.set.len()) {
+          u = __Union { set: u.set.append(w.set[j]).append(w.set[j + 1]), owner: u.owner.append(i), at: u.at.append(j / 2) };
+          j = j + 2;
+        }
+      },
+      Done(v) => {},
+      Cancelled => {}
+    }
+    i = i + 1;
+  }
+  return u;
+}
+
+// Every child whose bound has passed runs on with -1, the timeout answer.
+function __children_expire[T](kids_in: __Child[T][], now: i64): __Child[T][] {
+  let kids: __Child[T][] = kids_in;
+  let i: i32 = 0;
+  while (i < kids.len()) {
+    if (kids[i].due <= now) {
+      kids = __child_resume(kids, i, 0 - 1);
+    }
+    i = i + 1;
+  }
+  return kids;
+}
+
+// __children_drive(kids, until_ns, first) runs the children on until none
+// is parked, until one is done when `first`, or until `until_ns`
+// (monotonic, `__no_due()` for none) passes; the children still parked at
+// that point, or when the calling task is cancelled, are cancelled.
+function __children_drive[T](kids_in: __Child[T][], until_ns: i64, first: boolean): __Child[T][] {
+  let kids: __Child[T][] = kids_in;
+  while (__children_parked(kids) && !(first && __children_done(kids) >= 0)) {
+    let now: i64 = monotonic_ns();
+    let due: i64 = __children_due(kids);
+    if (due > until_ns) {
+      due = until_ns;
+    }
+    let u: __Union = __children_union(kids);
+    let woke: i32 = wait_any(u.set, __ms_until(due, now));
+    if (woke == cancelled()) {
+      return __children_cancel(kids);
+    }
+    if (woke >= 0) {
+      kids = __child_resume(kids, u.owner[woke], u.at[woke]);
+    } else {
+      now = monotonic_ns();
+      if (now >= until_ns) {
+        return __children_cancel(kids);
+      }
+      kids = __children_expire(kids, now);
+    }
+  }
+  return kids;
+}
+
+// `gather_tasks(entries, on_incomplete)` — run every entry as a task and
+// answer their results in input order; a child that could not finish (the
+// calling task was cancelled) lands `on_incomplete` in its slot.
+pub function gather_tasks[T](entries: (() => T)[], on_incomplete: T): T[] {
+  let kids: __Child[T][] = __children_drive(__children_start(entries), __no_due(), false);
+  let out: T[] = [];
+  for k in kids {
+    match (k.st) {
+      Done(v) => {
+        out = out.append(v);
+      },
+      Suspended(w) => {
+        out = out.append(on_incomplete);
+      },
+      Cancelled => {
+        out = out.append(on_incomplete);
+      }
+    }
+  }
+  let f: i32 = __children_free(kids);
+  return out;
+}
+
+// `race_tasks(entries, none_val)` — run every entry as a task and answer
+// `(index, value)` of the first to finish; the rest are cancelled. Answers
+// `(-1, none_val)` when none finishes (the calling task was cancelled).
+pub function race_tasks[T](entries: (() => T)[], none_val: T): (i32, T) {
+  let kids: __Child[T][] = __children_drive(__children_start(entries), __no_due(), true);
+  let won: i32 = __children_done(kids);
+  let v: T = none_val;
+  if (won >= 0) {
+    let k: __Child[T] = kids[won];
+    match (k.st) {
+      Done(x) => {
+        v = x;
+      },
+      Suspended(w) => {},
+      Cancelled => {}
+    }
+  }
+  let f: i32 = __children_free(__children_cancel(kids));
+  return (won, v);
+}
+
+// `with_deadline_tasks(deadline, entries)` — run every entry as a task and
+// answer `Some(value)` for each that finishes inside `deadline`, `None` for
+// each cancelled at it.
+pub function with_deadline_tasks[T](deadline: Duration, entries: (() => T)[]): Option[T][] {
+  let kids: __Child[T][] = __children_drive(__children_start(entries), monotonic_ns() + deadline.as_nanos(), false);
+  let out: Option[T][] = [];
+  for k in kids {
+    match (k.st) {
+      Done(v) => {
+        out = out.append(Some(v));
+      },
+      Suspended(w) => {
+        out = out.append(None);
+      },
+      Cancelled => {
+        out = out.append(None);
+      }
+    }
+  }
+  let f: i32 = __children_free(kids);
+  return out;
 }
 
 // `wait_any(set, timeout_ms)` — wait for any of the (fd, interest) pairs in
