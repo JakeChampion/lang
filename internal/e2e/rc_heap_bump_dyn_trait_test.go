@@ -17,6 +17,9 @@ import (
 	"testing"
 )
 
+// Every probe here passes its tag through `ids`, which hides the literal from
+// the static-box plan, so each struct behind the `dyn` is a heap box.
+
 // dynTraitBumpGrowthSrc creates + drops a `dyn Shape` over a struct that
 // transitively owns a heap String each iteration. With reclaim the box +
 // the String both free per iteration, so the high-water is bounded.
@@ -26,6 +29,7 @@ trait Shape {
     function area(self: Self): i32;
 }
 struct Boxed { tag: string }
+function ids(s: string): string { return s; }
 impl Shape for Boxed {
     function area(self: Self): i32 { return 1; }
 }
@@ -34,7 +38,7 @@ function main(): i32 {
     let i: i32 = 0;
     let sum: i32 = 0;
     while (i < ` + n + `) {
-        let d: dyn Shape = Boxed { tag: "a heap-allocated string behind dyn" };
+        let d: dyn Shape = Boxed { tag: ids("a heap-allocated string behind dyn") };
         sum = sum + d.area();
         i = i + 1;
     }
@@ -68,6 +72,7 @@ trait Shape {
     function area(self: Self): i32;
 }
 struct Boxed { tag: string }
+function ids(s: string): string { return s; }
 impl Shape for Boxed {
     function area(self: Self): i32 { return 1; }
 }
@@ -75,7 +80,7 @@ function main(): i32 {
     let i: i32 = 0;
     let sum: i32 = 0;
     while (i < 200) {
-        let d: dyn Shape = Boxed { tag: "another heap string for the dyn box" };
+        let d: dyn Shape = Boxed { tag: ids("another heap string for the dyn box") };
         sum = sum + d.area();
         i = i + 1;
     }
@@ -96,6 +101,7 @@ func TestWASMDynTraitMultiTraitDrop(t *testing.T) {
 trait A { function a1(self: Self): i32; }
 trait B { function b1(self: Self): i32; function b2(self: Self): i32; }
 struct Both { tag: string }
+function ids(s: string): string { return s; }
 impl A for Both { function a1(self: Self): i32 { return 1; } }
 impl B for Both {
     function b1(self: Self): i32 { return 2; }
@@ -106,7 +112,7 @@ function main(): i32 {
     let i: i32 = 0;
     let sum: i32 = 0;
     while (i < ` + n + `) {
-        let d: dyn A + B = Both { tag: "string owned behind a multi-trait dyn" };
+        let d: dyn A + B = Both { tag: ids("string owned behind a multi-trait dyn") };
         sum = sum + d.a1() + d.b1() + d.b2();
         i = i + 1;
     }
@@ -136,6 +142,7 @@ trait Shape {
     function area(self: Self): i32;
 }
 struct Boxed { tag: string }
+function ids(s: string): string { return s; }
 impl Shape for Boxed {
     function area(self: Self): i32 { return 7; }
 }
@@ -151,7 +158,7 @@ function main(): i32 {
 	underflow := mk(`let i: i32 = 0;
     let sum: i32 = 0;
     while (i < 200) {
-        let d: dyn Shape = Boxed { tag: "borrowed dyn param string value" };
+        let d: dyn Shape = Boxed { tag: ids("borrowed dyn param string value") };
         sum = sum + use_it(d);
         i = i + 1;
     }
@@ -166,7 +173,7 @@ function main(): i32 {
     let i: i32 = 0;
     let sum: i32 = 0;
     while (i < ` + n + `) {
-        let d: dyn Shape = Boxed { tag: "borrowed dyn param string value" };
+        let d: dyn Shape = Boxed { tag: ids("borrowed dyn param string value") };
         sum = sum + use_it(d);
         i = i + 1;
     }

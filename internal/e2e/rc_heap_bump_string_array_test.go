@@ -16,13 +16,16 @@ import (
 // Soundness is the same invariant + alias gates as slices 1/2: each element's
 // str_dec is is_unique-gated, so a string element aliased into a live local
 // only DECs (the alias keeps its buffer). Heap strings need >15 bytes to
-// escape SSO-inline, so these use 17-char literals.
+// escape SSO-inline, so these use 17-char literals. The first element of each
+// array goes through `ids`, which hides it from the static-box plan, so every
+// array is a heap box.
 
 func strArrLit(n int) string {
 	p := make([]string, n)
 	for i := range p {
 		p[i] = `"aaaaaaaaaaaaaaaaa"` // 17 chars -> heap (past the SSO threshold)
 	}
+	p[0] = "ids(" + p[0] + ")"
 	return "[" + strings.Join(p, ", ") + "]"
 }
 
@@ -30,7 +33,8 @@ func strArrLit(n int) string {
 // (buffer + element strings) before the next allocates.
 func strArrDead4Src() string {
 	l := strArrLit(40)
-	return `function main(): i32 {
+	return `function ids(s: string): string { return s; }
+function main(): i32 {
     let a: string[] = ` + l + `; let sa: i32 = a[0].len();
     let b: string[] = ` + l + `; let sb: i32 = b[0].len();
     let c: string[] = ` + l + `; let sc: i32 = c[0].len();
@@ -41,7 +45,8 @@ func strArrDead4Src() string {
 
 func strArrLive4Src() string {
 	l := strArrLit(40)
-	return `function main(): i32 {
+	return `function ids(s: string): string { return s; }
+function main(): i32 {
     let a: string[] = ` + l + `;
     let b: string[] = ` + l + `;
     let c: string[] = ` + l + `;
@@ -53,13 +58,14 @@ func strArrLive4Src() string {
 // strArrAliasSrc: a string element aliased into `keep` and read AFTER the
 // array's precise drop, with a forced interleaved allocation (junk). The
 // per-element str_dec must only DEC the aliased string (keep survives).
-const strArrAliasSrc = `function main(): i32 {
+const strArrAliasSrc = `function ids(s: string): string { return s; }
+function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
     while (i < 200) {
-        let xs: string[] = ["aaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbb", "ccccccccccccccccc"];
+        let xs: string[] = [ids("aaaaaaaaaaaaaaaaa"), "bbbbbbbbbbbbbbbbb", "ccccccccccccccccc"];
         let keep: string = xs[1];
-        let junk: string[] = ["ddddddddddddddddd", "eeeeeeeeeeeeeeeee", "fffffffffffffffff"];
+        let junk: string[] = [ids("ddddddddddddddddd"), "eeeeeeeeeeeeeeeee", "fffffffffffffffff"];
         acc = acc + keep.len() + xs[0].len() + junk[0].len();
         i = i + 1;
     }

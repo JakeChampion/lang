@@ -90,12 +90,13 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		},
 		{
 			// CONTROL — a literal payload was already credited. Must stay
-			// balanced and unchanged.
+			// balanced and unchanged. `ids` keeps the variant a heap box.
 			name: "ctl_literal_payload",
 			src: `enum R { Full(string), Empty }
+function ids(s: string): string { return s; }
 function round(i: i32): i32 {
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: R = R.Full("x"); t = t + 1; }
+    if (i % 2 == 0) { let o: R = R.Full(ids("x")); t = t + 1; }
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
