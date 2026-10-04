@@ -1243,9 +1243,10 @@ function elf_debug_line(text_vaddr: i32, text_len: i32, files: string[], loc_off
 // symbols (elf_debug_info), the line table (elf_debug_line) when the
 // assembler recorded `.loc` rows, and the section-header table that resolves
 // them: NULL, .text, .symtab, .strtab, .shstrtab, .debug_abbrev,
-// .debug_info and, with rows, .debug_line. `cu_name` and `comp_dir` are the
-// compilation unit's; `files` and the five `loc_*` arrays are the
-// assembler's `.file` table and rows.
+// .debug_info, with rows .debug_line, and with unwind data .debug_frame.
+// `cu_name` and `comp_dir` are the compilation unit's; `files` and the five
+// `loc_*` arrays are the assembler's `.file` table and rows; `frame` is the
+// rendered .debug_frame (cfi_debug_frame).
 //
 // `text_off` / `text_len` locate .text within the image, and `text_vaddr`
 // is the address it loads at — all three differ between the single-segment
@@ -1260,7 +1261,7 @@ function elf_debug_line(text_vaddr: i32, text_len: i32, files: string[], loc_off
 // section layer safe to land ahead of the `-g` flag: every existing caller
 // keeps a byte-identical image, and not by re-deriving one that ought to
 // match — by not touching it.
-pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[], cu_name: string, comp_dir: string, files: string[], loc_offs: i32[], loc_files: i32[], loc_lines: i32[], loc_cols: i32[], loc_flags: i32[]): i32[] {
+pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[], cu_name: string, comp_dir: string, files: string[], loc_offs: i32[], loc_files: i32[], loc_lines: i32[], loc_cols: i32[], loc_flags: i32[], frame: i32[]): i32[] {
   if (sym_names.len() == 0) {
     return img;
   }
@@ -1297,6 +1298,10 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
   let n_debug_line: i32 = shstrtab.len();
   if (lines) {
     shstrtab = elf_str_bytes(shstrtab, ".debug_line");
+  }
+  let n_debug_frame: i32 = shstrtab.len();
+  if (frame.len() > 0) {
+    shstrtab = elf_str_bytes(shstrtab, ".debug_frame");
   }
 
   let out: i32[] = elf_align8_buf(img);
@@ -1338,6 +1343,9 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
   }
   let dline_off: i32 = out.len();
   out = elf_cat(out, dline);
+  out = elf_align8_buf(out);
+  let frame_off: i32 = out.len();
+  out = elf_cat(out, frame);
 
   out = elf_align8_buf(out);
   let sh_off: i32 = out.len();
@@ -1360,7 +1368,11 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
   let nsh: i32 = 7;
   if (lines) {
     out = elf_shdr(out, n_debug_line, 1, zero64, zero64, dline_off as i64, dline.len() as i64, 0, 0, 1, zero64);
-    nsh = 8;
+    nsh = nsh + 1;
+  }
+  if (frame.len() > 0) {
+    out = elf_shdr(out, n_debug_frame, 1, zero64, zero64, frame_off as i64, frame.len() as i64, 0, 0, 8, zero64);
+    nsh = nsh + 1;
   }
 
   // Point the header at the table just written. e_shoff is 8 bytes at
@@ -1387,10 +1399,11 @@ pub function elf_wx_text_off(): i32 {
 }
 
 // elf_func_syms turns an assembler's parallel label tables into the symbol
-// arrays elf_append_debug wants, applying native's FuncSyms rule:
+// arrays elf_append_debug wants:
 //
-//   - a label with an empty name, or one starting with `.`, is INTERNAL —
-//     a branch target, not a function — and is left out;
+//   - a label with an empty name, or with a dot anywhere, is INTERNAL —
+//     a branch target, not a function — and is left out (native's FuncSyms
+//     drops only a leading dot; its emitters write no other dotted label);
 //   - `sec_filter` keeps only labels in one section (.text is 0 for the x86
 //     tables; pass -1 when the assembler records no section, as arm64's does
 //     not);
@@ -1448,18 +1461,29 @@ pub function elf_func_sym_sizes(lab_names: string[], lab_offs: i32[], lab_secs: 
   return out;
 }
 
+function elf_has_dot(s: string): boolean {
+  let i: i32 = 0;
+  while (i < s.len()) {
+    if (s[i] == b'.') {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
 // elf_func_sym_order returns the indices of the labels that become symbols,
-// sorted by offset then name. Insertion sort: a label table is small and
-// already close to offset-ordered, since labels are recorded as code is
-// emitted.
+// sorted by offset then name. A label with a dot anywhere is not a function:
+// `.L…` is local, and `f.r` (a function's register-ABI entry) or
+// `__fern_oob_abort.l0` is a label inside the function before it, which as a
+// symbol would end that function's extent there. Insertion sort: a label
+// table is small and already close to offset-ordered, since labels are
+// recorded as code is emitted.
 function elf_func_sym_order(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32): i32[] {
   let idx: i32[] = [];
   let i: i32 = 0;
   while (i < lab_names.len()) {
-    let keep: boolean = lab_names[i].len() > 0;
-    if (keep && slice_unchecked(lab_names[i], 0, 1) == ".") {
-      keep = false;
-    }
+    let keep: boolean = lab_names[i].len() > 0 && !elf_has_dot(lab_names[i]);
     if (keep && sec_filter >= 0) {
       if (i >= lab_secs.len() || lab_secs[i] != sec_filter) {
         keep = false;

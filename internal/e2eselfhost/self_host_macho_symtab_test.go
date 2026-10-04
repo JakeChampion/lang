@@ -4,6 +4,7 @@ import (
 	"debug/macho"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/symname"
@@ -68,7 +69,7 @@ func TestSelfHostArm64DarwinSymtab(t *testing.T) {
 			t.Errorf("symbol %q @%#x is out of address order after %#x", s.Name, s.Value, prev)
 		}
 		prev = s.Value
-		if s.Name == "" || s.Name[0] == 'L' || s.Name[0] == '.' {
+		if s.Name == "" || s.Name[0] == 'L' || strings.Contains(s.Name, ".") {
 			t.Errorf("local label %q leaked into the symbol table", s.Name)
 		}
 		if s.Sect != 1 || s.Type != 0x0f {
