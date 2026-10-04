@@ -90,4 +90,3 @@ struct Stream { data: u8[], pos: i32 }
 struct HttpRequest { method: string, path: string, body: Stream, headers: HeaderMap, trailers: HeaderMap }
 
 struct HttpResponse { status: i32, body: Body, headers: HeaderMap, trailers: HeaderMap }
-
