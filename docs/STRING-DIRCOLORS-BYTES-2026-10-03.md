@@ -20,31 +20,31 @@ are recorded in [the matcher report](STRING-FNMATCH-BYTES-2026-10-03.md).
 
 ## Validation
 
-The October 4 integration includes matcher `6fda03eb5` and main `dcc065645`.
+The October 4 integration includes matcher repairs `b6891a327` and main
+`0129e5d95`.
 The GNU differential corpus adds 114 raw-input comparisons across file/stdin
 input and three output modes. It covers malformed UTF-8, raw keywords,
 escapes, NUL, unknown classes, missing values and buffer/read boundaries.
 A separate 48-case target corpus pins expected output, including every
 high-bit byte and long records.
 
-Linux Go and primary target matrices pass in 10.908 and 39.610 seconds.
-GNU dircolors/listing comparisons pass in 3.621 seconds, primary comparisons
-in 20.806 seconds, followed by the full unit suite and all lint gates.
-The separate raw-input GNU group passes in 0.689 seconds.
+Linux Go and primary target matrices pass in 17.901 and 59.836 seconds.
+GNU dircolors/listing comparisons pass in 8.245 seconds, primary comparisons
+in 33.954 seconds, followed by the full unit suite and all lint gates.
+The separate raw-input GNU group passes in 1.412 seconds.
 
-Darwin Go targets pass in 9.897 seconds, GNU raw-input/dircolors/listing
-comparisons in 12.950 seconds, primary dircolors/matcher targets in 38.747
-seconds, and primary consumer comparisons in 29.573 seconds. All 5,523
-Go/Fern files match the frozen source. The reproduced compiler passes all
-96 native Darwin/core-WASM artifact runs in 1.403 seconds, with balanced
+Darwin Go targets pass in 10.574 seconds, GNU raw-input/dircolors/listing
+comparisons in 13.060 seconds, primary dircolors/matcher targets in 16.536
+seconds, and primary consumer comparisons in 30.144 seconds. The reproduced
+compiler passes all 96 native Darwin/core-WASM artifact runs in 1.179 seconds, with balanced
 allocations and zero live bytes.
 
 Compiler, standard-library and backend sources are identical to matcher
-`6fda03eb5`, so these actual runs reuse its fresh Darwin fixed point:
-13,128,225 bytes, SHA-256
-`11a977b65e7f17b6791feb06d9f8108f8df9f59bcfa2f6b4a91416f67a803d32`.
-Its three identical stages used the explicit local seed recorded in the
-matcher report. CI on the eventual publication head remains required.
+`b6891a327`, so these actual runs reuse its fresh Darwin fixed point:
+13,144,785 bytes, SHA-256
+`85a30d6664eb5f7ddb1848e9658f212b5b91e2cf0c01bfe8c9d2bc92e9d598b5`.
+Stages 2 and 3 match using the published repository pin recorded in the
+matcher report; stage 1 differs. CI on the eventual publication head remains required.
 
 ## Measurements
 
@@ -64,12 +64,12 @@ two warmups and seven alternating samples writing to `/dev/null`.
 
 | Workload | Before median | After median | Before range | After range |
 | --- | ---: | ---: | ---: | ---: |
-| Small ASCII entries | 52.546 ms | 47.123 ms | 51.217-54.940 ms | 45.526-48.172 ms |
-| Small raw extensions | 42.798 ms | 41.971 ms | 40.683-44.642 ms | 41.336-45.446 ms |
-| Long value | 20.788 ms | 20.829 ms | 20.388-22.408 ms | 20.115-21.971 ms |
-| TERM pattern per entry | 59.053 ms | 57.541 ms | 56.721-61.724 ms | 56.751-59.230 ms |
+| Small ASCII entries | 50.761 ms | 44.239 ms | 49.637-52.656 ms | 43.902-45.471 ms |
+| Small raw extensions | 40.243 ms | 38.545 ms | 39.977-47.976 ms | 38.293-39.542 ms |
+| Long value | 20.962 ms | 20.870 ms | 20.747-22.028 ms | 20.549-21.309 ms |
+| TERM pattern per entry | 58.545 ms | 55.946 ms | 56.373-60.914 ms | 54.831-59.626 ms |
 
-The ASCII-entry ranges are disjoint. The other paired ranges overlap, so
+The ASCII-entry and raw-extension ranges are disjoint. The other paired ranges overlap, so
 these samples do not establish a speedup for those workloads.
 
 | Workload | Before allocations | After allocations | Before live bytes |
@@ -83,7 +83,7 @@ The candidate balances allocations and frees in every workload. The old
 implementation retains one large output body in each full run. Those
 baseline leaks are recorded as failures to release storage.
 
-Both native files occupy 183,873 bytes. Code shrinks from 120,464 to 119,824
+Both native files occupy 183,873 bytes. Code shrinks from 120,176 to 119,536
 bytes, unwind data grows from 11,788 to 12,356 bytes, and data stays at 20,808
 bytes. Combined code and unwind data shrink by 72 bytes. No size baseline
 changes.
@@ -98,22 +98,23 @@ in rotating implementation order. Peak RSS is measured in a separate run.
 
 | Workload | Fern median | GNU median | uutils median |
 | --- | ---: | ---: | ---: |
-| Small ASCII entries | 45.890 ms | 108.645 ms | 212.210 ms |
-| Small raw extensions | 39.196 ms | 109.776 ms | Incorrect output |
-| Long value | 21.905 ms | 31.082 ms | 19.450 ms |
-| TERM pattern per entry | 58.114 ms | 109.925 ms | 326.364 ms |
+| Small ASCII entries | 43.857 ms | 106.895 ms | 210.780 ms |
+| Small raw extensions | 39.401 ms | 114.565 ms | Incorrect output |
+| Long value | 22.667 ms | 32.300 ms | 22.512 ms |
+| TERM pattern per entry | 56.276 ms | 110.048 ms | 326.172 ms |
 
-Fern's timing ranges are below GNU's in all four workloads. Uutils is slower
-on ASCII entries and TERM with disjoint ranges; its long-value range overlaps
-Fern's. For raw extensions, uutils exits successfully but emits 31 bytes
+Fern's timing ranges are below GNU's for ASCII entries, raw extensions and
+TERM. The long-value ranges overlap for all three implementations. Uutils
+is slower on ASCII entries and TERM with disjoint ranges. For raw extensions,
+uutils exits successfully but emits 31 bytes
 rather than the expected 9,437,215, so it is excluded from that timing comparison.
 
 | Workload | Fern peak RSS | GNU peak RSS | uutils peak RSS |
 | --- | ---: | ---: | ---: |
-| Small ASCII entries | 41,713,664 B | 34,914,304 B | 9,977,856 B |
-| Small raw extensions | 46,432,256 B | 68,485,120 B | Excluded |
-| Long value | 34,717,696 B | 45,219,840 B | 10,780,672 B |
-| TERM pattern per entry | 33,259,520 B | 10,289,152 B | 4,128,768 B |
+| Small ASCII entries | 41,713,664 B | 34,390,016 B | 9,551,872 B |
+| Small raw extensions | 46,481,408 B | 69,304,320 B | Excluded |
+| Long value | 34,717,696 B | 33,931,264 B | 10,780,672 B |
+| TERM pattern per entry | 33,259,520 B | 11,272,192 B | 4,177,920 B |
 
 Fern retains the whole input and output while parsing. Faster execution
 does not imply lower peak memory use.

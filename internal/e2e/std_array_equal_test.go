@@ -92,7 +92,7 @@ function main(): i32 {
 				t.Errorf("interp: got exit %d, want %d", got, c.want)
 			}
 			t.Run("x86-64 native", func(t *testing.T) {
-				if _, got := compileAndRunX86Native(t, c.src); got != c.want {
+				if _, got := compileAndRunX86_64(t, c.src); got != c.want {
 					t.Errorf("x86-64 native: got exit %d, want %d", got, c.want)
 				}
 			})

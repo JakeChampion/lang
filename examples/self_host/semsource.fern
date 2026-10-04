@@ -10,6 +10,7 @@ import "./typeinfo";
 import "./semtypes";
 import "./semrecords";
 import "./ssa";
+import "./ssabounds";
 import "./ssasem";
 import "./ssaunits";
 import "./ownership";
@@ -1653,6 +1654,11 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
   if (arith != "") {
     return operator_method(left, [b.right], arith, s);
   }
+  if (b.op == "+" && ssasem.is_string(s.values[left.id])) {
+    if let Some(c) = builtin_slice(b.right, s) {
+      return range_append(left, c, s);
+    }
+  }
   let right: Value = address_widen(expr(b.right, s, want), want);
   s = right.s;
   if (!s.ok) {
@@ -2877,28 +2883,63 @@ function map_construction(e: ast.Expr, c: ast.ExprCall, s: State, expected: type
 // the result is anchored to it and the source must outlive the view. It is a
 // view, as the checker types it, whether the source is owned or a view itself.
 function string_slice(c: ast.ExprCall, s: State): Value {
+  let p: SliceParts = slice_parts(c, s);
+  if (!p.hi.s.ok) {
+    return p.hi;
+  }
+  return define(p.hi.s, ssasem.slice(), [p.src, p.lo, p.hi.id], 0, "", t_str());
+}
+
+// SliceParts is a `slice_unchecked` call's source and bounds, produced in
+// order; `hi` carries the state, or the refusal.
+struct SliceParts { src: i32, lo: i32, hi: Value }
+
+function slice_parts(c: ast.ExprCall, s: State): SliceParts {
   let src: Value = expr(c.args[0], s, typeinfo.unchecked());
   s = src.s;
   if (!s.ok) {
-    return src;
+    return SliceParts { src: 0 - 1, lo: 0 - 1, hi: src };
   }
   if (!ssasem.is_text(s.values[src.id])) {
-    return refused(s, "unsupported call target");
+    return SliceParts { src: 0 - 1, lo: 0 - 1, hi: refused(s, "unsupported call target") };
   }
   let lo: Value = expr(c.args[1], s, t_i32());
   s = lo.s;
   if (!s.ok) {
-    return lo;
+    return SliceParts { src: 0 - 1, lo: 0 - 1, hi: lo };
   }
   let hi: Value = expr(c.args[2], s, t_i32());
   s = hi.s;
   if (!s.ok) {
-    return hi;
+    return SliceParts { src: 0 - 1, lo: 0 - 1, hi: hi };
   }
   if (!is_i32(s.values[lo.id]) || !is_i32(s.values[hi.id])) {
-    return refused(s, "slice bound type");
+    return SliceParts { src: 0 - 1, lo: 0 - 1, hi: refused(s, "slice bound type") };
   }
-  return define(s, ssasem.slice(), [src.id, lo.id, hi.id], 0, "", t_str());
+  return SliceParts { src: src.id, lo: lo.id, hi: hi };
+}
+
+// `acc + slice_unchecked(s, lo, hi)` on a counted string appends the range
+// without building the window (ssasem.append_range).
+function range_append(left: Value, c: ast.ExprCall, s: State): Value {
+  let p: SliceParts = slice_parts(c, s);
+  if (!p.hi.s.ok) {
+    return p.hi;
+  }
+  return define(p.hi.s, ssasem.append_range(), [left.id, p.src, p.lo, p.hi.id], 0, "", t_string());
+}
+
+// The builtin `slice_unchecked` call `e` is, unless a local of that name
+// shadows it.
+function builtin_slice(e: ast.Expr, s: State): Option[ast.ExprCall] {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(id) = c.callee {
+      if (lookup(s, id.name) < 0 && is_slice_call(id.name, c)) {
+        return Some(c);
+      }
+    }
+  }
+  return None;
 }
 
 // A view where a BORROWED `string` parameter is declared: the callee reads
@@ -6583,6 +6624,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo)
   // Before the verifier in anchor_module, so the rewritten graph is the one
   // it checks, and before anything downstream plans ownership over it (#9692).
   f = ssasem.tail_recursion(f, name);
+  f = ssabounds.proven_indices(f);
   return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false, analysis: None, view_escape: 0 }, memo: table.memo };
 }
 

@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -299,6 +300,8 @@ func testProvidedCorpus(t *testing.T, bin string) {
 				results[i].ran = true
 				stage := stageProvidedFixture(t, stdRoot, filepath.Dir(main))
 				cmd := exec.Command(bin, filepath.Join(stage, "main.fern"), "-verifyprovided")
+				var stderr bytes.Buffer
+				cmd.Stderr = &stderr
 				var out []byte
 				// The verifier lowers a whole imported program. Share the
 				// existing process-wide memory budget with driver builds.
@@ -312,7 +315,7 @@ func testProvidedCorpus(t *testing.T, bin string) {
 				}
 				results[i].calls, err = validateProvidedCorpusVerdict(cmd.ProcessState.ExitCode(), string(out))
 				if err != nil {
-					t.Errorf("invalid resolution verdict: %v\n%s", err, out)
+					t.Errorf("invalid resolution verdict: %v\n%s\nstderr:\n%s", err, out, stderr.String())
 				}
 				results[i].modelled, results[i].bodies = parseStackCoverage(string(out))
 			})

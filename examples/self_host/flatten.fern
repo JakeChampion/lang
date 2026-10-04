@@ -1508,7 +1508,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
 function mangle_trait_reqs(reqs: parser.TraitReq[], ctx: RewriteCtx): parser.TraitReq[] {
   let out: parser.TraitReq[] = [];
   for r in reqs {
-    out = out.append(parser.TraitReq { ...r, req_sigs: mangle_sigs(r.req_sigs, ctx), assoc_sigs: mangle_sigs(r.assoc_sigs, ctx) });
+    out = out.append(parser.TraitReq { ...r, req_sigs: mangle_sigs(r.req_sigs, ctx), assoc_sigs: mangle_sigs(r.assoc_sigs, ctx), default_sigs: mangle_sigs(r.default_sigs, ctx) });
   }
   return out;
 }

@@ -295,6 +295,7 @@ func interpStdoutGap(t *testing.T, src string, skipOnGap bool) string {
 		t.Fatalf("monomorph: %v\nsrc:\n%s", err, src)
 	}
 	i := interp.New()
+	i.SetDynCoercions(info.DynCoercions)
 	var buf bytes.Buffer
 	i.Stdout = &buf
 	for _, ed := range prog.Enums {

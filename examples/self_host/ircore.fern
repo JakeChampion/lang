@@ -162,8 +162,10 @@ function is_rc_helper(name: string): boolean {
     // view. ssarc's reads out of a view map column emit it.
     || name == "__fern_str_own"
     // A string append's in-place arm: grows a sole-owned fused box when its
-    // block has room and answers whether it did. Only ssarc emits it.
+    // block has room and answers whether it did; the range form copies a
+    // range of a source string. Only ssarc emits them.
     || name == "__fern_str_grow"
+    || name == "__fern_str_grow_range"
     // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
     // when its cap matches, else freelists it and allocs fresh — so a reuse
     // site guarded by __fern_rc_is_unique degrades instead of corrupting.
