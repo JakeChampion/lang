@@ -53,11 +53,15 @@
 // PPlus), the PEG-native shape. A PStar whose operand matches
 // without consuming input stops rather than spinning.
 //
-// Matching is on raw bytes (like std/regex): multi-byte UTF-8 is
-// matched byte-wise, which is exactly right for the ASCII-shaped
-// formats above.
+// Matching uses byte positions: multi-byte UTF-8 is matched byte-wise.
+// Captures are text. After a successful parse, every nonempty capture
+// must begin and end at character boundaries. Otherwise the result is
+// ok=false with no captures and the furthest byte position reached.
+// This final validation does not retry committed ordered alternatives.
+// An empty capture is valid at any byte position.
 
 import "core/map";
+import "std/utf8";
 
 // Pattern is the pattern algebra — see the module header for the
 // meaning of each variant. Variants are the public construction API.
@@ -405,7 +409,21 @@ function __peg_result(r: i32, st: PegState, input: string): PegResult {
   if (r < 0) {
     return PegResult { ok: false, pos: st.furthest, caps: caps };
   }
+  // The input is valid UTF-8, so nonempty ranges are valid exactly when
+  // both endpoints are character boundaries. Check before creating text
+  // or inserting anything into the result map.
   let i: i32 = 0;
+  while (i < st.tn.len()) {
+    if (st.ts[i] != st.te[i] && (!utf8.is_char_boundary(input, st.ts[i]) || !utf8.is_char_boundary(input, st.te[i]))) {
+      let furthest: i32 = st.furthest;
+      if (r > furthest) {
+        furthest = r;
+      }
+      return PegResult { ok: false, pos: furthest, caps: caps };
+    }
+    i = i + 1;
+  }
+  i = 0;
   while (i < st.tn.len()) {
     // Each capture is materialised with `+ ""`: a bare slice views `input`,
     // which the PegResult this map rides out in outlives.

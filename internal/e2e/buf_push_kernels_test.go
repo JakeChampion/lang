@@ -127,7 +127,7 @@ func runBufPushMappedCorpus(t *testing.T, builtin string, run func(t *testing.T,
 		if c.held != "" {
 			body.WriteString(fmt.Sprintf("    buf_push(b, %s);\n", fernQuote(c.held)))
 		}
-		body.WriteString(fmt.Sprintf("    %s(b, %s, %s);\n    dump(buf_take(b));\n",
+		body.WriteString(fmt.Sprintf("    %s(b, %s, %s);\n    dump(buf_take_bytes(b));\n",
 			builtin, fernQuote(c.s), name))
 		ref := bufPushMappedRef(c.held, c.s, c.table)
 		if builtin == "buf_push_filtered" {
@@ -142,7 +142,7 @@ func runBufPushMappedCorpus(t *testing.T, builtin string, run func(t *testing.T,
 
 	out := run(t, `import "std/i32";
 
-function dump(s: string): void {
+function dump(s: u8[]): void {
     let line: string = "";
     let i: i32 = 0;
     while (i < s.len()) {
@@ -368,7 +368,7 @@ func runBufPushExpandedCorpus(t *testing.T, run func(t *testing.T, src string) s
 		if c.held != "" {
 			body.WriteString(fmt.Sprintf("    buf_push(b, %s);\n", fernQuote(c.held)))
 		}
-		body.WriteString(fmt.Sprintf("    buf_push_expanded(b, %s, %s);\n    dump(buf_take(b));\n",
+		body.WriteString(fmt.Sprintf("    buf_push_expanded(b, %s, %s);\n    dump(buf_take_bytes(b));\n",
 			fernQuote(c.s), name))
 		ref := bufPushExpandedRef(c.held, c.s, c.table)
 		var line strings.Builder
@@ -379,7 +379,7 @@ func runBufPushExpandedCorpus(t *testing.T, run func(t *testing.T, src string) s
 	}
 	out := run(t, `import "std/i32";
 
-function dump(s: string): void {
+function dump(s: u8[]): void {
     let line: string = "";
     let i: i32 = 0;
     while (i < s.len()) {

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/e2eharness"
@@ -26,7 +27,23 @@ func checkReaderTextComponent(t *testing.T, compiler string, runner []string, st
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("requires wasmtime")
 	}
-	bin := filepath.Join(t.TempDir(), "reader.wasm")
+	dir := t.TempDir()
+	// File and Reader text validation share one helper in a component.
+	// Exercise both together so duplicate or missing runtime definitions fail.
+	src = filepath.Join(dir, "mixed.fern")
+	mixed := strings.Replace(f.Source, "function main(): i32 {", `function main(): i32 {
+  match (write_file("valid.txt", "é🙂")) { Err(_) => { return 230; }, Ok(_) => {} }
+  match (read_file("valid.txt")) { Err(_) => { return 231; }, Ok(s) => { if (s != "é🙂") { return 232; } } }
+  match (write_file_bytes("invalid.bin", [255 as u8])) { Err(_) => { return 233; }, Ok(_) => {} }
+  match (read_file("invalid.bin")) {
+    Ok(_) => { return 234; },
+    Err(e) => { match (e) { InvalidUtf8(_) => {}, _ => { return 235; } } }
+  }
+`, 1)
+	if err := os.WriteFile(src, []byte(mixed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "reader.wasm")
 	cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", "-o", bin, src, stdlib)
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -34,7 +51,9 @@ func checkReaderTextComponent(t *testing.T, compiler string, runner []string, st
 	}
 	// Components return through wasi:cli/run without the command module's
 	// exit-time census. Native/core legs below verify allocation balance.
-	f.Check(t, exec.Command("wasmtime", "run", bin))
+	run := exec.Command("wasmtime", "run", "--dir", ".", bin)
+	run.Dir = dir
+	f.Check(t, run)
 }
 
 // Also compile the interpreter with the current backend. The direct CLI

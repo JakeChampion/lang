@@ -119,7 +119,7 @@ const bufPushU64Probe = `function main(): i32 {
         i = i + 1;
     }
     buf_push_u64(b, 0xff00000000000080);
-    let t: string = buf_take(b);
+    let t: u8[] = buf_take_bytes(b);
     if (t.len() != 8) { return 2; }
     if (t[0] != 128) { return 20; }
     if (t[7] != 255) { return 21; }

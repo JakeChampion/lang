@@ -663,6 +663,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// make_handle, stdin/stdout/stderr) ships together. Drag in
 	// the bundle's transitive deps (alloc, memcpy, the IoError
 	// box helper) whenever the bundle itself is pulled in.
+	if g.usesReadLine {
+		g.usesFree = true
+	}
 	if g.usesReaderWriter {
 		g.needFern("__fern_utf8_valid")
 		g.usesIoError = true
@@ -1028,7 +1031,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesStringBytes {
 		g.emitStringBytesRuntime()
 	}
-	if g.usesReadLine {
+	if g.usesReadLine || g.usesReaderWriter {
 		g.emitReadLineRuntime()
 	}
 	if g.usesStdin {
@@ -1258,9 +1261,8 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		// Bundle: open_reader/writer/appender + stdin/stdout/
 		// stderr handle constructors + Reader.read_line /
 		// read_chunk / close + Writer.write / close +
-		// __fern_make_handle + __fern_close_fd_box. Shares
-		// __fern_read_line_buf with the stdin-only read_line
-		// helper (4 KiB scratch).
+		// __fern_make_handle + __fern_close_fd_box. The line reader
+		// shares the growing fd loop with the stdin-only helper.
 		g.emitReaderWriterRuntime()
 	}
 	if g.usesWriterBytes {
@@ -1443,6 +1445,7 @@ type generator struct {
 	// any number of them at once; a builder is the address of its
 	// control block, handed to Fern as a number.
 	usesStrBuilder        bool
+	usesBufText           bool
 	usesBufTakeBytes      bool
 	usesBufPushBytesRange bool
 	// usesNowUnixMs pulls in `__fern_now_unix_ms()` — wall-
@@ -2244,6 +2247,11 @@ func (g *generator) recordUse(target string) {
 		fallthrough
 	case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_bytes_mapped", "buf_push_filtered", "buf_push_bytes_filtered", "buf_push_expanded", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
 		g.usesStrBuilder = true
+		if target == "buf_take" {
+			g.usesBufText = true
+			g.needFern("__fern_buf_text_size")
+			g.needFern("__fern_buf_text_copy")
+		}
 		// Every entry point but buf_len can reach the allocator, the
 		// copier and the freelist through __fern_buf_reserve, so pull the
 		// three in for the whole family rather than per name.
@@ -8150,15 +8158,6 @@ func (g *generator) emitDataSections() {
 			g.label("__fern_args_cache")
 			g.line("\t.quad 0")
 		}
-		if g.usesReadLine || g.usesReaderWriter {
-			// 4 KiB scratch buffer for the byte-by-byte
-			// read loop. Shared by stdin-only
-			// __fern_read_line and the Reader-receiving
-			// __fern_reader_read_line.
-			g.line(".align 8")
-			g.label("__fern_read_line_buf")
-			g.line("\t.space 4096")
-		}
 		if g.usesRcDec || g.usesRcUnderflowCount || g.usesArrDec {
 			// Phase 3 rc-underflow detector counter (i32 in the
 			// low word). __fern_rc_dec bumps it on an over-release;
@@ -13783,46 +13782,58 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.emit("ret")
 	g.line(".size __fern_buf_len, .-__fern_buf_len")
 
-	// __fern_buf_take(H) -> string: the accumulated bytes copied into a
-	// fresh string of their own length; the builder keeps its buffer at
-	// full width with nothing in it. An empty build answers the inline
-	// empty string.
-	g.line("")
-	g.line(".globl __fern_buf_take")
-	g.line(".type __fern_buf_take, @function")
-	g.label("__fern_buf_take")
-	g.emit("push rbp")
-	g.emit("mov rbp, rsp")
-	g.emit("push rbx")
-	g.emit("push r12")
-	g.emit("push r13")
-	g.emit("push r14") // alignment padding for the calls
-	g.emit("mov rbx, rdi")
-	g.emit("mov r12, qword ptr [rbx + 8]")
-	g.emit("test r12, r12")
-	g.emit("jz .Lbuftake_empty")
-	g.emit("lea rdi, [r12 + 1]")
-	g.emit("call __fern_alloc_rc1")
-	g.emit("mov r13, rax")
-	g.emit("mov rdi, r13")
-	g.emit("mov rsi, qword ptr [rbx]")
-	g.emit("mov rdx, r12")
-	g.emit("call __fern_memcpy")
-	g.emitStrLenStore("r12d", "r13")
-	g.emit("mov byte ptr [r13 + r12], 0")
-	g.emit("mov qword ptr [rbx + 8], 0")
-	g.emit("mov rax, r13")
-	g.emit("jmp .Lbuftake_ret")
-	g.label(".Lbuftake_empty")
-	g.emitStrEmpty("rax")
-	g.label(".Lbuftake_ret")
-	g.emit("pop r14")
-	g.emit("pop r13")
-	g.emit("pop r12")
-	g.emit("pop rbx")
-	g.emit("pop rbp")
-	g.emit("ret")
-	g.line(".size __fern_buf_take, .-__fern_buf_take")
+	// Text extraction copies into exact-sized storage and retains builder capacity.
+	if g.usesBufText {
+		g.line("")
+		g.line(".globl __fern_buf_take")
+		g.line(".type __fern_buf_take, @function")
+		g.label("__fern_buf_take")
+		g.emit("push rbp")
+		g.emit("mov rbp, rsp")
+		g.emit("push rbx")
+		g.emit("push r12")
+		g.emit("push r13")
+		g.emit("push r14")
+		g.emit("mov rbx, rdi")
+		g.emit("mov rsi, qword ptr [rbx + 8]")
+		g.emit("test rsi, rsi")
+		g.emit("jz .Lbuftake_empty")
+		g.emit("mov rdi, qword ptr [rbx]")
+		g.emit("call " + AsmFnName("__fern_buf_text_size"))
+		g.emit("mov r14d, eax")
+		g.emit("mov r12d, eax")
+		g.emit("neg r12d")
+		g.emit("test eax, eax")
+		g.emit("cmovns r12d, eax")
+		g.emit("lea rdi, [r12 + 1]")
+		g.emit("call __fern_alloc_rc1")
+		g.emit("mov r13, rax")
+		g.emit("mov rdi, r13")
+		g.emit("mov rsi, qword ptr [rbx]")
+		g.emit("mov rdx, qword ptr [rbx + 8]")
+		g.emit("test r14d, r14d")
+		g.emit("js .Lbuftake_repair")
+		g.emit("call __fern_memcpy")
+		g.emit("jmp .Lbuftake_copied")
+		g.label(".Lbuftake_repair")
+		g.emit("call " + AsmFnName("__fern_buf_text_copy"))
+		g.label(".Lbuftake_copied")
+		g.emitStrLenStore("r12d", "r13")
+		g.emit("mov byte ptr [r13 + r12], 0")
+		g.emit("mov qword ptr [rbx + 8], 0")
+		g.emit("mov rax, r13")
+		g.emit("jmp .Lbuftake_ret")
+		g.label(".Lbuftake_empty")
+		g.emitStrEmpty("rax")
+		g.label(".Lbuftake_ret")
+		g.emit("pop r14")
+		g.emit("pop r13")
+		g.emit("pop r12")
+		g.emit("pop rbx")
+		g.emit("pop rbp")
+		g.emit("ret")
+		g.line(".size __fern_buf_take, .-__fern_buf_take")
+	}
 
 	// __fern_buf_free(H): release the buffer (when the builder still owns
 	// one) and the control block.
@@ -15934,85 +15945,100 @@ func (g *generator) emitStringAsBytesRuntime() {
 	g.line(".size __method_string_as_bytes, .-__method_string_as_bytes")
 }
 
-// emitReadLineRuntime emits `__fern_read_line()` — reads
-// stdin one byte at a time into the 4 KiB
-// `__fern_read_line_buf` (.bss), stops at '\n' (kept in
-// the result) or 4 KiB or EOF/error. Returns
-// Option[string]: Some(line) when at least one byte was
-// read, None when the very first read returned 0 (EOF
-// before any input).
-//
-// Option payload layout matches the IR's PR #267 shape:
-//
-//	Some: [tag=0:4][pad:4][str_ptr:8]   (16 bytes; payload at +8)
-//	None: [tag=1:4][pad:4][0:8]         (the same 16 bytes, payload zeroed)
-//
-// Callee-save rbx / r12 / r13 hold buf base, bytes-read,
-// and stash slots across the inner read syscall + alloc /
-// memcpy calls.
+// emitReadLineRuntime shares one complete-line loop between stdin and Reader.
+// Scratch grows geometrically; only the exact returned string escapes.
 func (g *generator) emitReadLineRuntime() {
 	g.line("")
 	g.line(".globl __fern_read_line")
 	g.line(".type __fern_read_line, @function")
 	g.label("__fern_read_line")
+	g.emit("xor edi, edi")
+	g.emit("jmp __fern_read_line_fd")
+	g.line(".size __fern_read_line, .-__fern_read_line")
+	g.line(".type __fern_read_line_fd, @function")
+	g.label("__fern_read_line_fd")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // buf base
-	g.emit("push r12") // bytes-read counter
-	g.emit("push r13") // stash (str ptr across alloc, etc.)
+	g.emit("push rbx") // fd
+	g.emit("push r12") // scratch
+	g.emit("push r13") // length
+	g.emit("push r14") // capacity
+	g.emit("push r15") // temporary owner / result
 	g.emit("sub rsp, 8")
-	g.emit("lea rbx, [rip + __fern_read_line_buf]")
-	g.emit("xor r12d, r12d") // bytes read = 0
+	g.emit("mov ebx, edi")
+	g.emit("mov r14d, 256")
+	g.emit("mov rdi, r14")
+	g.emit("call __fern_alloc")
+	g.emit("mov r12, rax")
+	g.emit("xor r13d, r13d")
 	g.label(".Lrl_loop")
-	g.emit("cmp r12, 4096")
-	g.emit("jge .Lrl_done")
-	// read(0, buf + r12, 1)
-	g.emit("xor edi, edi")
-	g.emit("lea rsi, [rbx + r12]")
+	g.emit("cmp r13, r14")
+	g.emit("jne .Lrl_read")
+	// The string length is an i32. Refuse a doubled capacity that cannot
+	// be represented, as the other runtime size computations do.
+	g.emit("cmp r14, 1073741824")
+	g.emit("jl .Lrl_grow")
+	g.emitAbort("__fern_msg_alloc_size")
+	g.label(".Lrl_grow")
+	g.emit("lea rdi, [r14 + r14]")
+	g.emit("call __fern_alloc")
+	g.emit("mov r15, rax")
+	g.emit("mov rdi, r15")
+	g.emit("mov rsi, r12")
+	g.emit("mov rdx, r13")
+	g.emit("call __fern_memcpy")
+	g.emit("mov rdi, r12")
+	g.emit("mov rsi, r14")
+	g.emit("call __fern_free")
+	g.emit("mov r12, r15")
+	g.emit("add r14, r14")
+	g.label(".Lrl_read")
+	// A single byte leaves every byte after this line in the descriptor.
+	g.emit("mov edi, ebx")
+	g.emit("lea rsi, [r12 + r13]")
 	g.emit("mov edx, 1")
 	g.emitSyscall(sysRead)
-	// EOF (0) or error (<0) → finish.
 	g.emit("cmp rax, 1")
 	g.emit("jl .Lrl_done")
-	// Examine the just-read byte. r12 not yet incremented;
-	// access via [rbx + r12].
-	g.emit("mov al, [rbx + r12]")
-	g.emit("inc r12")
-	g.emit("cmp al, 10") // '\n'
-	g.emit("je .Lrl_done")
-	g.emit("jmp .Lrl_loop")
+	g.emit("mov al, [r12 + r13]")
+	g.emit("inc r13")
+	g.emit("cmp al, 10")
+	g.emit("jne .Lrl_loop")
 	g.label(".Lrl_done")
-	// EOF before any byte → return None.
-	g.emit("test r12, r12")
+	g.emit("test r13, r13")
 	g.emit("jnz .Lrl_some")
 	g.emitPayloadlessResultBox(1)
-	g.emit("jmp .Lrl_ret")
+	g.emit("jmp .Lrl_release")
 	g.label(".Lrl_some")
-	// L2 rc-header layout (see __fern_strcat): payload = N data + 1 NUL.
-	g.emit("lea edi, [r12 + 1]")
+	// L2 string header and trailing NUL, at the actual line length.
+	g.emit("lea rdi, [r13 + 1]")
 	g.emit("call __fern_alloc_rc1")
-	g.emit("mov r13, rax")           // r13 = data ptr (= base+8)
-	g.emitStrLenStore("r12d", "r13") // length prefix at data-4
-	// memcpy(r13, rbx, r12)
-	g.emit("mov rdi, r13")
-	g.emit("mov rsi, rbx")
-	g.emit("mov rdx, r12")
+	g.emit("mov r15, rax")
+	g.emitStrLenStore("r13d", "r15")
+	g.emit("mov rdi, r15")
+	g.emit("mov rsi, r12")
+	g.emit("mov rdx, r13")
 	g.emit("call __fern_memcpy")
-	// Trailing NUL.
-	g.emit("mov byte ptr [r13 + r12], 0")
-	// Build Option[string]: 16 bytes [tag=0, pad, ptr@+8].
+	g.emit("mov byte ptr [r15 + r13], 0")
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_rc1")
-	g.emit("mov dword ptr [rax], 0") // tag = 0 (Some)
-	g.emit("mov [rax + 8], r13")     // payload at +8 (8-byte slot)
-	g.label(".Lrl_ret")
+	g.emit("mov dword ptr [rax], 0")
+	g.emit("mov [rax + 8], r15")
+	g.label(".Lrl_release")
+	g.emit("mov r15, rax")
+	g.emit("mov rdi, r12")
+	g.emit("mov rsi, r14")
+	g.emit("call __fern_free")
+	g.emit("mov rax, r15")
 	g.emit("add rsp, 8")
+	g.emit("pop r15")
+	g.emit("pop r14")
 	g.emit("pop r13")
 	g.emit("pop r12")
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __fern_read_line, .-__fern_read_line")
+	g.line(".size __fern_read_line_fd, .-__fern_read_line_fd")
 }
 
 // emitStdinRuntime emits `__fern_stdin()` — a 1-instruction
@@ -20043,64 +20069,12 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.line(".size " + e.sym + ", .-" + e.sym)
 	}
 
-	// __fern_reader_read_line(reader_ptr) → Option[string].
-	g.line("")
+	// Reader supplies its fd to the same loop used by bare read_line.
 	g.line(".globl __fern_reader_read_line")
 	g.line(".type __fern_reader_read_line, @function")
 	g.label("__fern_reader_read_line")
-	g.emit("push rbp")
-	g.emit("mov rbp, rsp")
-	g.emit("push rbx")       // fd
-	g.emit("push r12")       // buf base
-	g.emit("push r13")       // bytes_read
-	g.emit("push r14")       // last byte
-	g.emit("mov ebx, [rdi]") // fd
-	g.emit("lea r12, [rip + __fern_read_line_buf]")
-	g.emit("xor r13, r13")
-	g.label(".Lrrl_loop")
-	g.emit("cmp r13, 4096")
-	g.emit("jge .Lrrl_done")
-	g.emit("mov edi, ebx")
-	g.emit("lea rsi, [r12 + r13]")
-	g.emit("mov edx, 1")
-	g.emit("xor eax, eax")
-	g.emitSyscallPreloaded(sysRead)
-	g.emit("cmp rax, 1")
-	g.emit("jl .Lrrl_done")
-	g.emit("movzx r14d, byte ptr [r12 + r13]")
-	g.emit("inc r13")
-	g.emit("cmp r14d, 10")
-	g.emit("je .Lrrl_done")
-	g.emit("jmp .Lrrl_loop")
-	g.label(".Lrrl_done")
-	g.emit("test r13, r13")
-	g.emit("jne .Lrrl_some")
-	g.emitPayloadlessResultBox(1) // None
-	g.emit("jmp .Lrrl_ret")
-	g.label(".Lrrl_some")
-	// L2 rc-header layout (see __fern_strcat): payload = N data + 1 NUL.
-	g.emit("lea rdi, [r13 + 1]")
-	g.emit("call __fern_alloc_rc1")
-	g.emit("mov r14, rax")        // r14 = data ptr (= base+8)
-	g.emit("mov [r14 - 4], r13d") // length prefix at data-4
-	g.emit("mov rdi, r14")
-	g.emit("mov rsi, r12")
-	g.emit("mov rdx, r13")
-	g.emit("call __fern_memcpy")
-	// trailing NUL
-	g.emit("mov byte ptr [r14 + r13], 0")
-	g.emit("mov rbx, r14") // stash str ptr (rbx no longer needed for fd)
-	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_rc1")
-	g.emit("mov dword ptr [rax], 0")
-	g.emit("mov [rax + 8], rbx")
-	g.label(".Lrrl_ret")
-	g.emit("pop r14")
-	g.emit("pop r13")
-	g.emit("pop r12")
-	g.emit("pop rbx")
-	g.emit("pop rbp")
-	g.emit("ret")
+	g.emit("mov edi, [rdi]")
+	g.emit("jmp __fern_read_line_fd")
 	g.line(".size __fern_reader_read_line, .-__fern_reader_read_line")
 
 	// __fern_reader_read_chunk(reader_ptr, n) → Result[string, IoError]:

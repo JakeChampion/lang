@@ -32,7 +32,8 @@ func TestTwoWordIoStringRuntimesUseRcHeaderedAlloc(t *testing.T) {
 	}
 	probes := []probe{
 		{(*generator).emitReadFileRuntime, []string{"__fern_read_file"}},
-		{(*generator).emitReaderWriterRuntime, []string{"__fern_reader_read_line", "__fern_reader_read_chunk"}},
+		{(*generator).emitReadLineRuntime, []string{"__fern_read_line_fd"}},
+		{(*generator).emitReaderWriterRuntime, []string{"__fern_reader_read_chunk"}},
 	}
 
 	for _, p := range probes {
@@ -85,12 +86,12 @@ func TestTwoWordStringProducersLeaveAllocRc1SizeWord(t *testing.T) {
 		{(*generator).emitEnvRuntime, []string{"__fern_env"}},
 		{(*generator).emitStrBufRuntime, []string{"__fern_strbuf_take"}},
 		{(*generator).emitArgsRuntime, []string{"__fern_args"}},
-		{(*generator).emitReadLineRuntime, []string{"__fern_read_line"}},
+		{(*generator).emitReadLineRuntime, []string{"__fern_read_line_fd"}},
 		{(*generator).emitReadFileRuntime, []string{"__fern_read_file"}},
 		{(*generator).emitTempDirRuntime, []string{"__fern_temp_dir"}},
 		{(*generator).emitReadDirRuntime, []string{"__fern_read_dir"}},
 		{(*generator).emitRemoveDirAllRuntime, []string{"__fern_remove_dir_all"}},
-		{(*generator).emitReaderWriterRuntime, []string{"__fern_reader_read_line", "__fern_reader_read_chunk"}},
+		{(*generator).emitReaderWriterRuntime, []string{"__fern_reader_read_chunk"}},
 	}
 	for _, p := range probes {
 		g := &generator{stringLabel: map[string]string{}}

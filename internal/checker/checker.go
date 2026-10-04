@@ -1519,10 +1519,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// builder's buffer is uniquely owned by construction) and no size
 	// class re-derived per call, which is what `s = s + piece` pays.
 	//
-	// buf_take hands the accumulated bytes over as a string WITHOUT
-	// copying them — the buffer is laid out as a string block from the
-	// start — and leaves the builder empty and still usable, so a
-	// flush loop keeps one builder rather than one per line.
+	// buf_take returns independent UTF-8 text, replacing each malformed
+	// maximal subpart with U+FFFD. It drains the builder while retaining
+	// capacity. buf_take_bytes is the byte-exact alternative.
 	//
 	// buf_free releases the buffer and the control block. A builder is
 	// not refcounted and has no drop, so a handle that is never freed

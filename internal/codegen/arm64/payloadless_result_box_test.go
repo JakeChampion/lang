@@ -35,10 +35,9 @@ func TestPayloadlessResultBoxArmsZeroTheirPayloadSlots(t *testing.T) {
 			"__fern_env": {"str xzr, [x0, #8]", "str xzr, [x0, #16]"},
 		}},
 		{(*generator).emitReadLineRuntime, map[string][]string{
-			"__fern_read_line": {"str xzr, [x0, #8]", "str xzr, [x0, #16]"},
+			"__fern_read_line_fd": {"str xzr, [x0, #8]", "str xzr, [x0, #16]"},
 		}},
 		{(*generator).emitReaderWriterRuntime, map[string][]string{
-			"__fern_reader_read_line": {"str xzr, [x0, #8]", "str xzr, [x0, #16]"},
 			// Option[IoError] is one pointer wide, so its box stays 16 bytes.
 			"__fern_writer_write": {"str xzr, [x0, #8]"},
 			"__fern_close_fd_box": {"str xzr, [x0, #8]"},

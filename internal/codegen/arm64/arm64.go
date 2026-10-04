@@ -664,6 +664,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// there) all show up indirectly. usesReaderWriter is set
 	// during per-function emit (above), so we propagate here
 	// before the runtime-gate checks below.
+	if g.usesReadLine {
+		g.usesFree = true
+	}
 	if g.usesReaderWriter {
 		g.usesIoError = true
 		g.usesMemcpy = true
@@ -1036,7 +1039,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesFloatTranscendentals {
 		g.emitFloatTranscendentalsRuntime()
 	}
-	if g.usesReadLine {
+	if g.usesReadLine || g.usesReaderWriter {
 		g.emitReadLineRuntime()
 	}
 	if g.usesStdin {
@@ -1272,8 +1275,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		// Reader / Writer struct constructors (stdin/stdout/
 		// stderr + open_reader/writer/appender) + the method
 		// runtimes (read_line / read_chunk / close / write).
-		// Shares the 4 KiB `__fern_read_line_buf` scratch the
-		// stdin-only read_line used, plus __fern_io_error for
+		// Shares the growing fd loop with stdin-only read_line,
+		// plus __fern_io_error for
 		// the Some(IoError) / None error path.
 		g.emitReaderWriterRuntime()
 	}
@@ -1628,16 +1631,6 @@ func (g *generator) emitDataSections() {
 		g.line(`.align 3`)
 		g.label("__fern_args_cache")
 		g.line(`	.quad 0`)
-	}
-	if g.usesReadLine || g.usesReaderWriter {
-		// 4 KiB scratch buffer for the byte-by-byte read loop.
-		// Shared by stdin-only `__fern_read_line` and the new
-		// Reader-receiving `__fern_reader_read_line`. Both
-		// helpers run a single-byte read until '\n' / 4 KiB /
-		// EOF, so they can't trample each other.
-		g.line(`.align 3`)
-		g.label("__fern_read_line_buf")
-		g.line(`	.space 4096`)
 	}
 	if g.usesStrIdx {
 		// SSO inline strings are held in a 64-bit register and don't
@@ -7580,30 +7573,52 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.emit("ret")
 	g.sizeDirective("__fern_buf_len")
 
-	// __fern_buf_take(H) -> (data, len): hand the accumulated bytes over
-	// as a string without copying them, and leave the builder empty but
-	// still usable — the reserve survives, so the next push allocates
-	// once at full width rather than growing back up. Heap form: the
-	// length word carries the byte count with the inline flag clear.
-	// An empty build answers the canonical inline empty and keeps its
-	// buffer, so a flush that finds nothing costs no allocation.
-	g.line("")
-	g.line(".global __fern_buf_take")
-	g.typeDirective("__fern_buf_take")
-	g.label("__fern_buf_take")
-	g.emit("ldr x1, [x0, #8]")
-	g.emit("cbz x1, .Lbuftake_empty")
-	g.emit("ldr x2, [x0]")
-	g.emit("str xzr, [x0]")
-	g.emit("str xzr, [x0, #8]")
-	g.emit("str xzr, [x0, #16]")
-	g.emit("mov x0, x2")
-	g.emit("ret")
-	g.label(".Lbuftake_empty")
-	g.emit("mov x0, xzr")
-	g.emit("movz x1, #0x8000, lsl #48")
-	g.emit("ret")
-	g.sizeDirective("__fern_buf_take")
+	// Text extraction copies into exact-sized storage and retains builder capacity.
+	if g.usesBufText {
+		g.line("")
+		g.line(".global __fern_buf_take")
+		g.typeDirective("__fern_buf_take")
+		g.label("__fern_buf_take")
+		g.emit("stp x29, x30, [sp, #-64]!")
+		g.emit("mov x29, sp")
+		g.emit("stp x19, x20, [sp, #16]")
+		g.emit("stp x21, x22, [sp, #32]")
+		g.emit("stp x23, x24, [sp, #48]")
+		g.emit("mov x19, x0")
+		g.emit("ldr x21, [x19, #8]")
+		g.emit("cbz x21, .Lbuftake_empty")
+		g.emit("ldr x0, [x19]")
+		g.emit("mov x1, x21")
+		g.emit("bl %s", AsmFnName("__fern_buf_text_size"))
+		g.emit("mov w23, w0")
+		g.emit("cmp w0, #0")
+		g.emit("cneg w20, w0, lt")
+		g.emit("mov x0, x20")
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x22, x0")
+		g.emit("ldr x1, [x19]")
+		g.emit("mov x2, x21")
+		g.emit("tbnz w23, #31, .Lbuftake_repair")
+		g.emit("bl __fern_memcpy")
+		g.emit("b .Lbuftake_copied")
+		g.label(".Lbuftake_repair")
+		g.emit("bl %s", AsmFnName("__fern_buf_text_copy"))
+		g.label(".Lbuftake_copied")
+		g.emit("str xzr, [x19, #8]")
+		g.emit("mov x0, x22")
+		g.emit("mov x1, x20")
+		g.emit("b .Lbuftake_ret")
+		g.label(".Lbuftake_empty")
+		g.emit("mov x0, xzr")
+		g.emit("movz x1, #0x8000, lsl #48")
+		g.label(".Lbuftake_ret")
+		g.emit("ldp x23, x24, [sp, #48]")
+		g.emit("ldp x21, x22, [sp, #32]")
+		g.emit("ldp x19, x20, [sp, #16]")
+		g.emit("ldp x29, x30, [sp], #64")
+		g.emit("ret")
+		g.sizeDirective("__fern_buf_take")
+	}
 
 	// __fern_buf_free(H): release the buffer (when the builder still
 	// owns one) and the control block.
@@ -9305,107 +9320,106 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.line(".ltorg")
 }
 
-// emitReadLineRuntime emits `__fern_read_line()` — reads stdin
-// one byte at a time into the 4 KiB `__fern_read_line_buf`,
-// stops at '\n' (kept in the result) or 4 KiB or EOF/error.
-// Returns Option[string]: Some(line) when at least one byte
-// was read, None when the very first read returned 0 (EOF
-// before any input). Option layout matches the wasm shape:
-//
-//	Some: [tag=0 : 4][string_ptr : 4]   (8 bytes)
-//	None: [tag=1 : 4]                    (4 bytes)
-//
-// Callee-save x19/x20/x21 hold buf base, bytes-read, and the
-// just-read byte across the inner read syscall + alloc/memcpy
-// calls.
+// emitReadLineRuntime shares one complete-line loop between stdin and Reader.
+// Scratch grows geometrically and is released at its allocated capacity.
 func (g *generator) emitReadLineRuntime() {
 	g.line("")
 	g.line(".global __fern_read_line")
 	g.typeDirective("__fern_read_line")
 	g.label("__fern_read_line")
-	twoWord := ast.UseTwoWordStrings(8)
-	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov w0, #0")
+	g.emit("b __fern_read_line_fd")
+	g.sizeDirective("__fern_read_line")
+	g.typeDirective("__fern_read_line_fd")
+	g.label("__fern_read_line_fd")
+	g.emit("stp x29, x30, [sp, #-64]!")
 	g.emit("mov x29, sp")
-	g.emit("stp x19, x20, [sp, #16]")
-	g.emit("str x21, [sp, #32]")
-	g.adrpAdd("x19", "__fern_read_line_buf")
-	g.emit("mov x20, #0") // x20 = bytes read so far
+	g.emit("stp x19, x20, [sp, #16]") // scratch, length
+	g.emit("stp x21, x22, [sp, #32]") // temporary owner, fd
+	g.emit("str x23, [sp, #48]")      // capacity
+	g.emit("mov w22, w0")
+	g.emit("mov x23, #256")
+	g.emit("mov x0, x23")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x19, x0")
+	g.emit("mov x20, #0")
 	g.label(".Lrl_loop")
-	g.emit("cmp x20, #4096")
-	g.emit("bge .Lrl_done")
-	// read(0, buf + x20, 1)
-	g.emit("mov x0, #0")
+	g.emit("cmp x20, x23")
+	g.emit("bne .Lrl_read")
+	g.emit("mov x0, #1073741824")
+	g.emit("cmp x23, x0")
+	g.emit("blt .Lrl_grow")
+	g.emitAbort("__fern_msg_alloc_size")
+	g.label(".Lrl_grow")
+	g.emit("lsl x0, x23, #1")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x21, x0")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x19")
+	g.emit("mov x1, x23")
+	g.emit("bl __fern_free")
+	g.emit("mov x19, x21")
+	g.emit("lsl x23, x23, #1")
+	g.label(".Lrl_read")
+	g.emit("mov w0, w22")
 	g.emit("add x1, x19, x20")
 	g.emit("mov x2, #1")
 	g.syscall("read")
-	// EOF (0) or error (<0) → finish.
 	g.emit("cmp x0, #1")
 	g.emit("blt .Lrl_done")
-	// Examine the byte just read.
-	g.emit("add x21, x19, x20")
-	g.emit("ldrb w21, [x21]")
+	g.emit("ldrb w21, [x19, x20]")
 	g.emit("add x20, x20, #1")
-	g.emit("cmp w21, #10") // '\n'
-	g.emit("beq .Lrl_done")
-	g.emit("b .Lrl_loop")
+	g.emit("cmp w21, #10")
+	g.emit("bne .Lrl_loop")
 	g.label(".Lrl_done")
-	// EOF before any byte → return None.
 	g.emit("cbnz x20, .Lrl_some")
+	twoWord := ast.UseTwoWordStrings(8)
 	if twoWord {
 		g.emitPayloadlessResultBox(24, 1)
 	} else {
 		g.emitPayloadlessResultBox(16, 1)
 	}
-	g.emit("b .Lrl_ret")
+	g.emit("b .Lrl_release")
 	g.label(".Lrl_some")
 	if twoWord {
-		// Two-word heap form via the rc-headered allocator (rc=1 at
-		// data-8, payload size at data-4): the returned Some(string)
-		// is dropped via __fern_str_dec, which reads that header. A
-		// plain __fern_alloc buffer has none — same arm64 two-word
-		// heap-corruption as string_from_bytes_unchecked (#2817). Length lives
-		// in the box len@16 word, so no length prefix is needed.
 		g.emit("mov x0, x20")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("mov x21, x0") // x21 = data ptr (= base+8)
-		// memcpy(x21, x19, x20).
-		g.emit("mov x0, x21")
-		g.emit("mov x1, x19")
-		g.emit("mov x2, x20")
-		g.emit("bl __fern_memcpy")
-		// Wrap as Some(string). 24-byte box: tag@0, pad@4,
-		// data@8, len@16.
-		g.emit("mov x19, x21") // stash data ptr
-		g.emit("mov x0, #24")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("str wzr, [x0]")      // tag = 0 (Some)
-		g.emit("str x19, [x0, #8]")  // data
-		g.emit("str x20, [x0, #16]") // len
-		g.emit("b .Lrl_ret")
 	} else {
-		// L2 rc-header layout — see __fern_strcat. Payload = N data + 1 NUL.
 		g.emit("add x0, x20, #1")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("mov x21, x0")          // x21 = data ptr (= base+8)
-		g.emit("stur w20, [x21, #-4]") // length prefix at data-4
-		g.emit("mov x0, x21")
-		g.emit("mov x1, x19")
-		g.emit("mov x2, x20")
-		g.emit("bl __fern_memcpy")
-		g.emit("add x0, x21, x20")
-		g.emit("strb wzr, [x0]")
-		g.emit("mov x19, x21")
-		g.emit("mov x0, #16")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("str wzr, [x0]")
-		g.emit("str x19, [x0, #8]")
 	}
-	g.label(".Lrl_ret")
-	g.emit("ldr x21, [sp, #32]")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x21, x0")
+	if !twoWord {
+		g.emit("stur w20, [x21, #-4]")
+	}
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_memcpy")
+	if twoWord {
+		g.emit("mov x0, #24")
+	} else {
+		g.emit("strb wzr, [x21, x20]")
+		g.emit("mov x0, #16")
+	}
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]")
+	g.emit("str x21, [x0, #8]")
+	if twoWord {
+		g.emit("str x20, [x0, #16]")
+	}
+	g.label(".Lrl_release")
+	g.emit("mov x21, x0")
+	g.emit("mov x0, x19")
+	g.emit("mov x1, x23")
+	g.emit("bl __fern_free")
+	g.emit("mov x0, x21")
+	g.emit("ldr x23, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ldp x29, x30, [sp], #64")
 	g.emit("ret")
-	g.sizeDirective("__fern_read_line")
+	g.sizeDirective("__fern_read_line_fd")
 	g.line(".ltorg")
 }
 
@@ -15395,91 +15409,13 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.sizeDirective(e.sym)
 	}
 
-	// __fern_reader_read_line(reader_ptr) → Option[string].
-	// Loads fd from [reader_ptr+0], reads byte-by-byte into
-	// the shared `__fern_read_line_buf` until '\n' / 4 KiB /
-	// EOF / error. Returns None on first-byte EOF, Some(line)
-	// otherwise (line includes the trailing '\n' if seen).
-	g.line("")
+	// Reader supplies its fd to the same loop used by bare read_line.
 	g.line(".global __fern_reader_read_line")
 	g.typeDirective("__fern_reader_read_line")
 	g.label("__fern_reader_read_line")
-	g.emit("stp x29, x30, [sp, #-64]!")
-	g.emit("mov x29, sp")
-	g.emit("stp x19, x20, [sp, #16]")
-	g.emit("stp x21, x22, [sp, #32]")
-	g.emit("ldr w22, [x0]") // fd
-	g.adrpAdd("x19", "__fern_read_line_buf")
-	g.emit("mov x20, #0") // bytes_read
-	g.label(".Lrrl_loop")
-	g.emit("cmp x20, #4096")
-	g.emit("bge .Lrrl_done")
-	g.emit("mov w0, w22")
-	g.emit("add x1, x19, x20")
-	g.emit("mov x2, #1")
-	g.syscall("read")
-	g.emit("cmp x0, #1")
-	g.emit("blt .Lrrl_done")
-	g.emit("add x21, x19, x20")
-	g.emit("ldrb w21, [x21]")
-	g.emit("add x20, x20, #1")
-	g.emit("cmp w21, #10") // '\n'
-	g.emit("beq .Lrrl_done")
-	g.emit("b .Lrrl_loop")
-	g.label(".Lrrl_done")
-	g.emit("cbnz x20, .Lrrl_some")
-	// None: a box at the enum's uniform size (see __fern_read_line).
-	if twoWord {
-		g.emitPayloadlessResultBox(24, 1)
-	} else {
-		g.emitPayloadlessResultBox(16, 1)
-	}
-	g.emit("b .Lrrl_ret")
-	g.label(".Lrrl_some")
-	if twoWord {
-		// Heap-form alloc via the rc-headered allocator (rc=1 @data-8, size
-		// @data-4) so the owned Some(string) is reclaimed correctly by
-		// __fern_str_dec; plain __fern_alloc corrupts the heap (#2817 class).
-		g.emit("mov x0, x20")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("mov x21, x0") // = base+8
-		g.emit("mov x0, x21")
-		g.emit("mov x1, x19")
-		g.emit("mov x2, x20")
-		g.emit("bl __fern_memcpy")
-		// Some(string) box: 24 bytes — {tag@0, data@8, len@16}.
-		g.emit("mov x19, x21")
-		g.emit("mov x0, #24")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("str wzr, [x0]")
-		g.emit("str x19, [x0, #8]")
-		g.emit("str x20, [x0, #16]")
-		g.emit("b .Lrrl_ret")
-	} else {
-		// L2 rc-header layout — see __fern_strcat. Payload = N data + 1 NUL.
-		g.emit("add x0, x20, #1")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("mov x21, x0") // x21 = data ptr (= base+8)
-		g.emit("stur w20, [x21, #-4]")
-		g.emit("mov x0, x21")
-		g.emit("mov x1, x19")
-		g.emit("mov x2, x20")
-		g.emit("bl __fern_memcpy")
-		g.emit("add x0, x21, x20")
-		g.emit("strb wzr, [x0]")
-		g.emit("mov x19, x21")
-		g.emit("mov x0, #16")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("str wzr, [x0]")
-		g.emit("str x19, [x0, #8]")
-	}
-	g.label(".Lrrl_ret")
-	g.emit("ldp x21, x22, [sp, #32]")
-	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #64")
-	g.emit("ret")
+	g.emit("ldr w0, [x0]")
+	g.emit("b __fern_read_line_fd")
 	g.sizeDirective("__fern_reader_read_line")
-	g.line(".ltorg")
 
 	// __fern_reader_read_chunk(reader_ptr, n) →
 	// Result[string, IoError]. Single read of up to n bytes:
@@ -16538,6 +16474,7 @@ type generator struct {
 	// builder is the address of its control block, handed to Fern as a
 	// usize. Mirror of the x86_64 backend's emission.
 	usesStrBuilder        bool
+	usesBufText           bool
 	usesBufTakeBytes      bool
 	usesBufPushBytesRange bool
 
@@ -16615,8 +16552,7 @@ type generator struct {
 	// one-byte reader. Returns Option[string]: Some(line)
 	// when at least one byte was read (line preserves its
 	// trailing newline), None when first read returned 0.
-	// Sized at 4 KiB via a .bss buffer; longer lines are
-	// truncated.
+	// Scratch grows until newline or EOF, then is released.
 	usesReadLine bool
 	// usesStdin pulls in a 4-byte `__fern_stdin()` stub that
 	// returns 0. The checker requires `stdin()` to be a
@@ -17717,6 +17653,10 @@ func (g *generator) prescanOps(ops []ir.Op) {
 			continue
 		}
 		switch op.Str {
+		case "buf_take":
+			g.usesBufText = true
+			g.needFern("__fern_buf_text_size")
+			g.needFern("__fern_buf_text_copy")
 		case "args":
 			g.usesArgs = true
 		case "env", "environ":
@@ -21425,8 +21365,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesAlloc = true
 			g.usesMemcpy = true
 		case "read_line":
-			// read_line(): byte-by-byte stdin read into a 4 KiB
-			// .bss buffer; returns Option[string].
+			// read_line(): complete byte-by-byte stdin line read.
 			target = "__fern_read_line"
 			g.usesReadLine = true
 			g.usesAlloc = true

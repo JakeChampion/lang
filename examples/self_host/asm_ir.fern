@@ -4540,47 +4540,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_buf_len:\n");
     s = s.write("    movq 8(%rdi), %rax\n");
     s = s.write("    ret\n");
-    // __fern_buf_take(%rdi = H) -> %rax = string box over a COPY of the
-    // accumulated bytes, sized to them, so the block frees at the class
-    // it was bumped at (#9179); the builder keeps its buffer at full
-    // width with nothing in it. An empty build answers a box over a null
-    // buffer — __fn___fern_str_free's heap guard skips it.
-    s = s.write("__fern_buf_take:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    pushq %rbx\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    pushq %r13\n");
-    s = s.write("    pushq %r14\n");
-    s = s.write("    movq %rdi, %rbx\n");
-    s = s.write("    movq 8(%rbx), %r12\n");  // len
-    s = s.write("    testq %r12, %r12\n");
-    s = s.write("    jz .Lbuftake_empty\n");
-    s = s.write("    movq %r12, %rdi\n");
-    s = s.write("    call __fern_alloc\n");
-    s = s.write("    movq %rax, %r13\n");  // the copy
-    s = s.write("    movq (%rbx), %rsi\n");  // data
-    s = s.write("    movq %r13, %rdx\n");
-    s = s.write("    movq %r12, %rcx\n");
-    s = s.write("    movq %rdx, %rdi\n");
-    s = s.write("    movq %rcx, %rdx\n");
-    s = s.write("    call __fern_memcpy\n");
-    s = s.write("    movq $0, 8(%rbx)\n");
-    s = s.write("    movq %r13, %rdi\n");
-    s = s.write("    movq %r12, %rsi\n");
-    s = s.write("    call __fern_str_box\n");
-    s = s.write("    jmp .Lbuftake_ret\n");
-    s = s.write(".Lbuftake_empty:\n");
-    s = s.write("    movq $0, %rdi\n");
-    s = s.write("    movq $0, %rsi\n");
-    s = s.write("    call __fern_str_box\n");
-    s = s.write(".Lbuftake_ret:\n");
-    s = s.write("    popq %r14\n");
-    s = s.write("    popq %r13\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
-    s = s.write("    popq %rbp\n");
-    s = s.write("    ret\n");
+    // The public builder helper uses registers; the shared Fern text
+    // runtime uses stack arguments. Byte-only programs omit both bodies.
+    if (s.has_need("buf_text")) {
+      s = s.write("__fern_buf_take:\n    pushq %rdi\n    call __fn___fern_buf_take_text\n    addq $8, %rsp\n    ret\n");
+      s = emit_ir_runtime_fern_fn(asmcore.rt_src_buf_text(), s);
+    }
     // __fern_buf_free(%rdi = H): release the buffer (when the builder still
     // owns one) and the control block. A builder is not refcounted and has
     // no drop, so a handle that is never freed leaks, exactly as an fd that
@@ -8633,7 +8598,9 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
   s = ssa_call_sym(s, sym);
   s = s.need("heap");
   s = s.need("buf");
-  if (sym == "__fern_buf_take_bytes") {
+  if (sym == "__fern_buf_take") {
+    s = s.need("buf_text");
+  } else if (sym == "__fern_buf_take_bytes") {
     s = s.need("buf_take_bytes");
   } else if (sym == "__fern_buf_take_bytes_u8") {
     s = s.need("buf_take_bytes_u8");
@@ -10562,6 +10529,9 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
 // handle, the length or the string box for the value ops, and the helper's
 // return as the dummy a statement-level drop takes for the rest.
 function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  if (o.kind_tag == 296) {
+    s = s.need("buf_text");
+  }
   if (o.kind_tag == 347) {
     s = s.need("buf_take_bytes" + asmcore.packed_suffix(ir.is_packed(o)));
   }

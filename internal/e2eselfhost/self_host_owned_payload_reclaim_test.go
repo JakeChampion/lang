@@ -71,9 +71,9 @@ func readChunkDiscardSrc(size, rounds int) string {
 }`, rounds, size)
 }
 
-// readLineDrainSrc drains `rounds` lines. read_line's own buffer is a fixed 256
-// bytes whatever the line length, so the size axis here is the LINE, and the
-// same equality holds: a longer line must not cost more live bytes.
+// readLineDrainSrc drains `rounds` complete lines. Both the returned string
+// and every growth buffer must be reclaimed, so a longer line must not cost
+// more live bytes after the same number of calls.
 func readLineDrainSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
     let r: Reader = stdin();
@@ -174,6 +174,13 @@ func TestSelfHostOwnedPayloadReclaimX86_64(t *testing.T) {
 			wide:     readLineDrainSrc(rounds),
 			inNarrow: lines(3),
 			inWide:   lines(200),
+		},
+		{
+			name:     "read_line_growth",
+			narrow:   readLineDrainSrc(rounds),
+			wide:     readLineDrainSrc(rounds),
+			inNarrow: lines(200),
+			inWide:   lines(8192),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

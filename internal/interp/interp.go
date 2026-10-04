@@ -6226,9 +6226,8 @@ func builtinBufLen(i *Interp, args []Value) (Value, error) {
 	return Number(len(b)), nil
 }
 
-// builtinBufTake hands the accumulated bytes over and leaves the builder
-// empty and still usable, matching the compiled backends: there the
-// buffer becomes the string and the builder re-arms at its reserve.
+// builtinBufTake extracts valid text and leaves the builder empty and usable.
+// Callers retaining arbitrary bytes use builtinBufTakeBytes instead.
 func builtinBufTake(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("buf_take: expected 1 arg (b), got %d", len(args))
@@ -6237,7 +6236,7 @@ func builtinBufTake(i *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := String(b)
+	s := builderText(b)
 	i.bufs[h] = make([]byte, 0, cap(b))
 	return s, nil
 }
