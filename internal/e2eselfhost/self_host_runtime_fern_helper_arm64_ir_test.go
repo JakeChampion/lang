@@ -488,18 +488,29 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	if !strings.Contains(asm, "    svc #0x80\n    b.cc ") {
 		t.Error("darwinize did not emit the errno normalisation after the generic syscall")
 	}
-	// The abort paths: `mov x8, #93` (exit) -> `mov x16, #1`, then the status
-	// load, THEN the trap. Only a sticky pending-syscall survives the line in
-	// between, and exit needs no errno normalisation.
+	// The abort paths (#11405): each trap loads its status and branches to
+	// __fern_report, whose write(2) and exit are the two syscalls darwinize
+	// must remap — `mov x8, #64` -> `mov x16, #4` with the errno fold, and
+	// `mov x8, #93` -> `mov x16, #1`, where only a sticky pending-syscall
+	// survives the status move between the number and the trap, and exit
+	// needs no normalisation.
 	for _, status := range []string{"125", "134"} {
-		if !strings.Contains(asm, "    mov x16, #1\n    mov x0, #"+status+"\n    svc #0x80\n") {
-			t.Errorf("the exit(%s) abort path still traps through the Linux vector on Mach-O", status)
+		if !strings.Contains(asm, "    mov x0, #"+status+"\n    b __fern_report\n") {
+			t.Errorf("the exit(%s) abort path does not branch to __fern_report", status)
 		}
 	}
-	// arr_slice's trap is the OTHER exit path: not the hand-asm abort darwinize
-	// rewrites, but a Fern __syscall3 whose number arrives on the stack. It
-	// therefore goes through the ldr-x16 form above rather than `mov x16, #1`,
-	// and it is the reason asmcore.sysno needed an `exit` row at all.
+	if !strings.Contains(asm, "    mov x0, #2\n    mov x16, #4\n    svc #0x80\n") {
+		t.Error("__fern_report's write(2) still traps through the Linux vector on Mach-O")
+	}
+	if !strings.Contains(asm, "    mov x0, x19\n    mov x16, #1\n    svc #0x80\n") {
+		t.Error("__fern_report's exit still traps through the Linux vector on Mach-O")
+	}
+	if strings.Contains(asm, "mov x8, #93") {
+		t.Error("an exit kept Linux's number register in Mach-O output")
+	}
+	// arr_slice's range check is Fern, and it aborts through the shared trap
+	// rather than an exit syscall of its own, so no exit number reaches the
+	// stack and asmcore.sysno carries no `exit` row.
 	if !strings.Contains(asm, "__fn___fern_arr_slice:") {
 		t.Error("__fn___fern_arr_slice not defined — the Fern helper did not lower for Darwin")
 	}
@@ -544,15 +555,16 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	if strings.Contains(asm, "mov x8, #113") || arm64Imm(asm, "113") {
 		t.Error("a clock issued Linux's clock_gettime (113) in Mach-O output")
 	}
-	// The exit NUMBER is a pushed operand, so a wrong asmcore.sysno row is
-	// invisible everywhere else: darwinize never sees it (it rewrites `mov x8`,
-	// not a stack push), and the Linux leg would stay green. Pin the pair —
-	// Darwin's exit is 1, and 93 (Linux's) must not be what gets pushed.
-	if !matchShape(asm, `\n    mov x[0-9]+, #1\n    mov x[0-9]+, #134\n`) {
-		t.Error("arr_slice's trap does not materialise Darwin's exit number (1) ahead of status 134")
+	if body := extractFuncBody(asm, "__fn___fern_arr_slice"); body != "" {
+		if !strings.Contains(body, "bl __fern_slice_abort\n") {
+			t.Error("arr_slice's range check does not abort through __fern_slice_abort")
+		}
+		if matchShape(body, pushedImm("93")) || matchShape(body, pushedImm("1")) {
+			t.Error("arr_slice pushes an exit number: its abort is the shared trap, not a syscall of its own")
+		}
 	}
-	if matchShape(asm, `\n    mov x[0-9]+, #93\n    mov x[0-9]+, #134\n`) {
-		t.Error("arr_slice's trap pushes Linux's exit number (93) in Mach-O output")
+	if !strings.Contains(asm, "__fern_slice_abort:\n") {
+		t.Error("__fern_slice_abort not defined for Darwin")
 	}
 }
 

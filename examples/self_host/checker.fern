@@ -1024,6 +1024,9 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__fern_rc_dec", params: [p], result: t_void() },
     RawFloorSig { name: "__fern_map_find", params: [p, p, n, p], result: n },
     RawFloorSig { name: "__fern_map_delete", params: [p, p, n, p], result: p },
+    // The slice-range abort the __fern_arr_slice bodies call (#11405): the
+    // emitters' reporter, so it never returns.
+    RawFloorSig { name: "__fern_slice_abort", params: [], result: t_void() },
     RawFloorSig { name: "__syscall3", params: [n, w, w, w], result: w },
     RawFloorSig { name: "__syscall4", params: [n, w, w, w, w], result: w },
     RawFloorSig { name: "__syscall5", params: [n, w, w, w, w, w], result: w },
@@ -12628,8 +12631,9 @@ function tp_receiver(obj: ast.Expr, recv: typeinfo.Type, s: Scope): string {
   return "";
 }
 
-// type_assoc_req resolves a CONCRETE `i32.zero()` / `Point.origin()`: some
-// `impl … for <tyname>` in the module lists `field`, and `field` is not a
+// type_assoc_req resolves a CONCRETE `i32.zero()` / `Point.origin()` /
+// `Box[string].make()`: some `impl … for <tyname>` (by its base name) in the
+// module lists `field`, and `field` is not a
 // receiver method on that type (parse_impl_decl gives an associated function
 // an empty receiver_name, so collect_method_sigs never records it — absence
 // from the method table is what makes it associated). A `self`-taking method
@@ -12637,9 +12641,10 @@ function tp_receiver(obj: ast.Expr, recv: typeinfo.Type, s: Scope): string {
 // type comes from the trait requirement when the impl names a declared trait;
 // an inherent impl resolves with no return type (unknown).
 function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
+  let base: string = util.base_type_name(tyname);
   for imp in s.impls {
-    if (imp.impl_type == tyname && util.has_str(imp.method_names, field)) {
-      if (s.lookup_method(field, tyname).name.len() == 0) {
+    if (imp.impl_type == base && util.has_str(imp.method_names, field)) {
+      if (s.lookup_method(field, base).name.len() == 0) {
         let h: AssocHit = trait_assoc_req(s.trait_reqs, imp.trait_name, field, []);
         if (h.found) {
           return h;

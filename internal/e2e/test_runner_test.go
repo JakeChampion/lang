@@ -4103,7 +4103,9 @@ func TestRunnerHttpResponseBodyShimExample(t *testing.T) {
 // is what a handler does instead of materialising an upload. The
 // pair of "ignores a partial walk" cases pin the other half of the
 // contract — the whole-body readers answer for the buffer, so a
-// second call in a handler does not come back empty.
+// second call in a handler does not come back empty. The sourced cases
+// pull chunks from a BodySource through the same readers, the shape a
+// streamed request body has (docs/NET-P3-SUSPENSION-PLAN.md §3.9).
 func TestRunnerHttpRequestBodyStreamExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/http_request_body_stream_test.fern")
@@ -4118,7 +4120,9 @@ func TestRunnerHttpRequestBodyStreamExample(t *testing.T) {
 		"ok 6 - read_n leaves the remainder",
 		"ok 7 - body_string ignores a partial walk",
 		"ok 10 - a bodyless request reads empty",
-		"# pass 11",
+		"ok 13 - read_line spans a chunk boundary",
+		"ok 18 - a fault is EndedEarly with its status",
+		"# pass 20",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

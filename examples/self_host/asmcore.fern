@@ -175,6 +175,10 @@ pub struct EmitState {
   // rc_free_debug_on(), read once here: the SSA emitters test it at every
   // rc primitive and call, and an environment walk per instruction showed.
   rc_free_debug: boolean,
+  // Whether a fatal abort's report walks the frame-pointer chain under its
+  // cause line: backtrace_on() unless the CLI's -backtrace overrode it
+  // (ircore.Sub.backtrace).
+  backtrace: boolean,
   // rt_owned_allocs: set while the task runtime's functions are being
   // emitted. Their raw_alloc blocks (the record table, the records, the save
   // areas) are runtime state the program never holds or frees, so the leak
@@ -344,6 +348,7 @@ pub function new_state(): EmitState {
     rt_lower: no_rt_lower,
     named: [],
     rc_free_debug: rc_free_debug_on(),
+    backtrace: backtrace_on(),
     rt_owned_allocs: false,
     syscalls: [],
     raw_syscall: "",
@@ -385,9 +390,32 @@ pub function sandbox_on(): boolean {
   }
 }
 
-// backtrace_on reports whether a sanitizer report walks the frame-pointer
-// chain under its cause line: on unless FERN_BACKTRACE=0, as
-// ast.BacktraceEnabled.
+// The fatal aborts' cause lines, without their newline: the native backends'
+// texts (abortMessages), so a program's abort output does not say which
+// compiler built it (#5538).
+pub function msg_arr_oob(): string {
+  return "fern: array index out of range";
+}
+
+pub function msg_str_oob(): string {
+  return "fern: string index out of range";
+}
+
+pub function msg_slice_range(): string {
+  return "fern: slice range out of bounds";
+}
+
+pub function msg_alloc_size(): string {
+  return "fern: allocation size out of range";
+}
+
+pub function msg_oom(): string {
+  return "fern: out of memory (heap arena exhausted)";
+}
+
+// backtrace_on is the -backtrace default: whether a fatal abort's report
+// walks the frame-pointer chain under its cause line. On unless
+// FERN_BACKTRACE=0, as ast.BacktraceEnabled.
 pub function backtrace_on(): boolean {
   match (env("FERN_BACKTRACE")) {
     Some(v) => {
@@ -1001,9 +1029,6 @@ function sysno_x86_64(name: string): string {
   if (name == "getrandom") {
     return "318";
   }
-  if (name == "exit") {
-    return "60";
-  }
   if (name == "clock_gettime") {
     return "228";
   }
@@ -1283,9 +1308,6 @@ function sysno_arm64_darwin(name: string): string {
   // returns 0 rather than a count — see rt_src_random_bytes.
   if (name == "getrandom") {
     return "500";
-  }
-  if (name == "exit") {
-    return "1";
   }
   // XNU has no clock_gettime syscall — gettimeofday(&tv, NULL) is the
   // portable stand-in, and it fills a DIFFERENTLY SHAPED struct (see
@@ -1567,9 +1589,6 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "getrandom") {
     return "278";
-  }
-  if (name == "exit") {
-    return "93";
   }
   if (name == "clock_gettime") {
     return "113";
@@ -5129,22 +5148,16 @@ pub function rt_src_str_replace(): string {
 // marks it borrowed and the caller's array survives; the fresh box comes back
 // at rc=1 from __fern_arr_box.
 //
-// It came last because its construction-time bounds check (#5419) traps, and
-// "abort" is not a Fern expression. It does not need one: the hand-asm's
-// __fern_oob_abort is nothing but exit(134), which the existing __syscall3
-// floor already says — so the only new surface is an `exit` row in sysno
-// (60 / 93 / 1; darwinize's darwin_sysno already maps 93 -> 1). No new
-// intrinsic, no new IR op, no new backend code. That is also why this helper
-// takes a target where reverse / concat do not.
+// Its construction-time bounds check (#5419) traps through
+// __fern_slice_abort, the emitters' slice-range reporter (#11405): a
+// raw-floor signature (checker.raw_floor_sigs) lets a Fern body call it,
+// the way __fern_map_delete calls __fern_map_find.
 //
 // The hand-asm's two traps were UNSIGNED compares (`ja`), which is how a
 // negative bound aborted rather than wrapping the copy loop; Fern's i32
 // compares are signed, so the same condition is spelled with the explicit
 // `< 0` arms. Four separate ifs rather than a chain of `||`, to keep each
-// arm's origin in the hand-asm legible. The trap assigns back into `bad`
-// rather than binding a fresh local: exit(134) does not return, so the value
-// is never read, and a named local would only invite the reader to look for
-// where it is used.
+// arm's origin in the hand-asm legible.
 //
 // The elements move as one block rather than one at a time. An element loop
 // spelled `a[start + i]` reads through the checked path user code does, which
@@ -5160,8 +5173,8 @@ pub function rt_src_str_replace(): string {
 // GiB, which for every array anyone has is one iteration and one compare.
 // Advancing the pointers rather than indexing from the base is what keeps
 // each offset small.
-pub function rt_src_arr_slice(t: string): string {
-  return "function __fern_arr_slice(a: i32[], start: i32, end: i32): i32[] { let n: i32 = a.len(); let bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (start < 0) { bad = 1; } if (start > end) { bad = 1; } if (bad == 1) { bad = __syscall3(" + sysno(t, "exit") + ", 134, 0, 0) as i32; } let m: i32 = end - start; let p: usize = __raw_arr_box(m); let dst: usize = __raw_addr(p, 8); let src: usize = __raw_addr(__raw_arr_ptr(a), 8); let skip: i32 = start; while (skip > 0) { let cs: i32 = skip; if (cs > 134217728) { cs = 134217728; } src = __raw_addr(src, cs * 8); skip = skip - cs; } let left: i32 = m; while (left > 0) { let cc: i32 = left; if (cc > 134217728) { cc = 134217728; } __memcpy(dst, src, cc * 8); dst = __raw_addr(dst, cc * 8); src = __raw_addr(src, cc * 8); left = left - cc; } return __raw_array(p); }";
+pub function rt_src_arr_slice(): string {
+  return "function __fern_arr_slice(a: i32[], start: i32, end: i32): i32[] { let n: i32 = a.len(); let bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (start < 0) { bad = 1; } if (start > end) { bad = 1; } if (bad == 1) { __fern_slice_abort(); } let m: i32 = end - start; let p: usize = __raw_arr_box(m); let dst: usize = __raw_addr(p, 8); let src: usize = __raw_addr(__raw_arr_ptr(a), 8); let skip: i32 = start; while (skip > 0) { let cs: i32 = skip; if (cs > 134217728) { cs = 134217728; } src = __raw_addr(src, cs * 8); skip = skip - cs; } let left: i32 = m; while (left > 0) { let cc: i32 = left; if (cc > 134217728) { cc = 134217728; } __memcpy(dst, src, cc * 8); dst = __raw_addr(dst, cc * 8); src = __raw_addr(src, cc * 8); left = left - cc; } return __raw_array(p); }";
 }
 
 // rt_src_str_cmp backs string ordering (< <= > >=) → __fern_str_cmp(a, b),
@@ -5240,8 +5253,8 @@ pub function rt_src_string_from_bytes_u8(): string {
 
 // A packed slice copies the byte range in one move: its byte count is the
 // element count, so the chunking the word slice needs never applies.
-pub function rt_src_arr_slice_u8(t: string): string {
-  return "function __fern_arr_slice_u8(a: i32[], start: i32, end: i32): i32[] { let n: i32 = a.len(); let bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (start < 0) { bad = 1; } if (start > end) { bad = 1; } if (bad == 1) { bad = __syscall3(" + sysno(t, "exit") + ", 134, 0, 0) as i32; } let m: i32 = end - start; " + packed_box("p", "m") + " __memcpy(__raw_addr(p, 8), __raw_addr(__raw_arr_ptr(a), 8 + start), m); return __raw_array(p); }";
+pub function rt_src_arr_slice_u8(): string {
+  return "function __fern_arr_slice_u8(a: i32[], start: i32, end: i32): i32[] { let n: i32 = a.len(); let bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (start < 0) { bad = 1; } if (start > end) { bad = 1; } if (bad == 1) { __fern_slice_abort(); } let m: i32 = end - start; " + packed_box("p", "m") + " __memcpy(__raw_addr(p, 8), __raw_addr(__raw_arr_ptr(a), 8 + start), m); return __raw_array(p); }";
 }
 
 pub function rt_src_random_bytes_u8(t: string): string {
@@ -8088,6 +8101,14 @@ pub function (s: EmitState) lab_ref(payload: i64, l: Lab): EmitState {
   return s.mark("\x05", "");
 }
 
+// cfi hands over a .cfi_* directive as the \x06 record: its kind and the
+// DWARF register in the low 32 bits, its offset in the high 32 (the
+// assemblers' cfi_record). The caller writes the text when records are off.
+pub function (s: EmitState) cfi(kind: i32, reg: i32, off: i32): EmitState {
+  buf_push_u64(s.recs, ((off as i64 & 4294967295i64) << 32 | reg as i64 << 8 | kind as i64) as u64);
+  return s.mark("\x06", "");
+}
+
 pub function count_locals(body: ast.Stmt[]): i32 {
   let n: i32 = 0;
   let i: i32 = 0;
@@ -10300,6 +10321,9 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // (emit_ir_runtime's heap block), so export it like the other
     // shared helpers or every library unit dangles at the per-module link.
     "__fern_oob_abort",
+    // The string-index trap the inline str_slice emit branches to (#11405),
+    // for the same reason.
+    "__fern_str_oob_abort",
     // The raw_alloc size trap (#8519), for the same reason.
     "__fern_alloc_size_abort",
     // The map free family: a library unit that releases a map it owns

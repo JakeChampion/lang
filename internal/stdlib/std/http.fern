@@ -338,6 +338,7 @@ pub enum BodyError {
   MalformedJson(json.JsonError),
   WrongShape(string),
   NotUtf8,
+  EndedEarly(i32),
 }
 
 impl ToResponse for BodyError {
@@ -345,6 +346,9 @@ impl ToResponse for BodyError {
     match (self) {
       NotUtf8 => {
         return problem(400, "", "body is not valid UTF-8");
+      },
+      EndedEarly(fault) => {
+        return problem(__ended_early_status(fault), "", __ended_early_detail(fault));
       },
       UnsupportedMediaType(ct) => {
         if (ct.len() == 0) {
@@ -361,6 +365,30 @@ impl ToResponse for BodyError {
     }
     return problem(500, "", "");
   }
+}
+
+// `__ended_early_status(fault)` — the status a body that ended early is
+// refused with: the stream's fault when it is one (413 past the cap, 408
+// stalled, 400 malformed or cut short), else 500, for a body abandoned
+// with the task that read it.
+function __ended_early_status(fault: i32): i32 {
+  if (fault >= 400 && fault < 600) {
+    return fault;
+  }
+  return 500;
+}
+
+function __ended_early_detail(fault: i32): string {
+  if (fault == 413) {
+    return "the body is past the limit";
+  }
+  if (fault == 408) {
+    return "the body arrived too slowly";
+  }
+  if (fault == 400) {
+    return "the body was malformed or cut short";
+  }
+  return "the body did not arrive whole";
 }
 
 pub function body_json[T: json.FromJson](req: HttpRequest): Result[T, BodyError] {
@@ -2140,13 +2168,19 @@ pub function (r: HttpRequest) body_stream(): Stream {
 
 // `(r: HttpRequest).body_string()` — the whole body as text, cursor
 // position ignored, or `Err(NotUtf8)` when its bytes are not
-// well-formed UTF-8. The body is the sender's bytes, so this is the
-// boundary D9 (docs/STRINGS-SOTA.md) checks at; the error is
-// `ToResponse` (400), so a handler declared `Result[HttpResponse,
+// well-formed UTF-8, or `Err(EndedEarly(fault))` when a body that
+// arrives as it is read (std/serve's streamed request body) ended early.
+// The body is the sender's bytes, so this is the boundary D9
+// (docs/STRINGS-SOTA.md) checks at; the error is `ToResponse` (400, or
+// the fault's status), so a handler declared `Result[HttpResponse,
 // BodyError]` takes the text with `?`, and `body_bytes` is the body as
 // it came.
 pub function (r: HttpRequest) body_string(): Result[string, BodyError] {
-  match (utf8.from_bytes(r.body.data)) {
+  let (bytes, rest) = __whole_body(r.body);
+  if (rest.fault() != 0) {
+    return Err(EndedEarly(rest.fault()));
+  }
+  match (utf8.from_bytes(bytes)) {
     Some(s) => {
       return Ok(s);
     },
@@ -2157,18 +2191,55 @@ pub function (r: HttpRequest) body_string(): Result[string, BodyError] {
   return Err(NotUtf8);
 }
 
-// `(r: HttpRequest).body_bytes()` — the whole body as a u8
-// array, cursor position ignored.
-pub function (r: HttpRequest) body_bytes(): u8[] {
-  return r.body.data;
+// `__whole_body(s)` — the body from its start, the cursor ignored, and
+// everything a source has still to give.
+function __whole_body(s: Stream): (u8[], Stream) {
+  let from_start: Stream = Stream { ...s, pos: 0 };
+  return from_start.read_all();
 }
 
-// `(r: HttpRequest).body_len()` — body length in bytes. The
-// whole buffer, not `remaining()`: a handler asking a request
-// how big its body is wants the Content-Length answer, not
-// what a partial read has left.
+// `(r: HttpRequest).body_bytes()` — the whole body as a u8 array, cursor
+// position ignored; what arrived of a streamed body that ended early,
+// which `body_string` reports.
+pub function (r: HttpRequest) body_bytes(): u8[] {
+  let (bytes, rest) = __whole_body(r.body);
+  return bytes;
+}
+
+// `(r: HttpRequest).body_len()` — body length in bytes. The whole
+// buffer, not `remaining()`: a handler asking a request how big its body
+// is wants the Content-Length answer, not what a partial read has left.
+// For a streamed body it is the declared `Content-Length`, -1 when the
+// body is chunked and its length unknown.
 pub function (r: HttpRequest) body_len(): i32 {
+  match (r.body.source) {
+    Some(src) => {
+      return __declared_length(r.headers);
+    },
+    None => {
+      return r.body.data.len();
+    }
+  }
   return r.body.data.len();
+}
+
+function __declared_length(h: HeaderMap): i32 {
+  match (h.get("content-length")) {
+    Some(v) => {
+      match (int.parse_int_radix(v.trim(), 10)) {
+        Some(n) => {
+          return n;
+        },
+        None => {
+          return 0 - 1;
+        }
+      }
+    },
+    None => {
+      return 0 - 1;
+    }
+  }
+  return 0 - 1;
 }
 
 // `(r: HttpResponse).body_string()` — the body as text, whichever

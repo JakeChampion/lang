@@ -31,7 +31,7 @@ function main(): i32 {
     emit(http.http_serialize_response_conn_bytes(binary, true));
     emit(http.http_serialize_response_to_bytes("HEAD", binary, false));
     emit(http.http_serialize_response_bytes(http.ok("aé𐐷z")));
-    emit(http.http_serialize_response_bytes(http.stream(200, Stream { data: all, pos: 1 })));
+    emit(http.http_serialize_response_bytes(http.stream(200, Stream { data: all, pos: 1, source: None })));
     emit(http.http_serialize_response_bytes(producer(all)));
     emit(http.http_serialize_response_to_bytes("HEAD", producer(all), false));
     let empty: u8[] = [];

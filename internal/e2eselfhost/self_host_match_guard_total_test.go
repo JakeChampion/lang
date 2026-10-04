@@ -19,6 +19,15 @@ var matchGuardTotalCases = []struct {
 	name string
 	src  string
 }{
+	{"statement_none_closes_chain", `@noinline function choose(v: Option[i32]): i32 {
+    match (v) {
+        Some(g) when g > 5 => { return g * 2; },
+        Some(x) => { return x; },
+        None => { return 37; },
+    }
+}
+function main(): i32 { return choose(None); }
+`}, // 37
 	{"guard_then_plain", `function main(): i32 {
     let v: Option[i32] = Some(5i32);
     let r: i32 = (match (v) { Some(g) when (g > 3i32) => g, Some(x) => x + 100i32, None => 0i32 });

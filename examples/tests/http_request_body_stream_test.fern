@@ -54,6 +54,50 @@ function req_headers_placeholder(): HeaderMap {
   return HeaderMap { names: [], values: [] };
 }
 
+// `scripted(chunks)` — a source answering `chunks` one at a time, then
+// None: a streamed body as std/serve's pull hands it over.
+function scripted(chunks: string[]): BodySource {
+  let at: Cell[i32] = cell_new(0);
+  return BodySource {
+    next: (): Option[u8[]] => {
+      let k: i32 = at.get();
+      if (k >= chunks.len()) {
+        return None;
+      }
+      at.set(k + 1);
+      return Some(chunks[k].bytes());
+    },
+    fault: cell_new(0),
+  };
+}
+
+// `faulting(chunks, status)` — `scripted`, ending in a fault after the
+// last chunk, as a body past its cap or stalled does.
+function faulting(chunks: string[], status: i32): BodySource {
+  let at: Cell[i32] = cell_new(0);
+  let fault: Cell[i32] = cell_new(0);
+  return BodySource {
+    next: (): Option[u8[]] => {
+      let k: i32 = at.get();
+      if (k >= chunks.len()) {
+        fault.set(status);
+        return None;
+      }
+      at.set(k + 1);
+      return Some(chunks[k].bytes());
+    },
+    fault: fault,
+  };
+}
+
+function sourced(src: BodySource, content_length: string): HttpRequest {
+  let h: HeaderMap = HeaderMap { names: [], values: [] };
+  if (content_length.len() > 0) {
+    h = h.set("content-length", content_length);
+  }
+  return HttpRequest { method: "POST", path: "/upload", body: stream.stream_from_source(src), headers: h, trailers: req_headers_placeholder() };
+}
+
 function test_body_stream_carries_the_body(): test.TestOutcome {
   let (all, rest) = parsed("hello").body_stream().read_all_string();
   return test.assert_is_some_eq_string(all, "hello");
@@ -172,6 +216,113 @@ function test_ill_formed_bytes_read_as_replacement(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+function test_sourced_read_all_joins_the_chunks(): test.TestOutcome {
+  let (all, rest) = stream.stream_from_source(scripted(["ab", "cd", "e"])).read_all_string();
+  return test.assert_is_some_eq_string(all, "abcde");
+}
+
+function test_sourced_read_line_spans_chunks(): test.TestOutcome {
+  let s: Stream = stream.stream_from_source(scripted(["al", "pha\r\nbe", "ta\n", "gam", "ma"]));
+  let seen: string = "";
+  let n: i32 = 0;
+  while (n < 5) {
+    let (line, next) = s.read_line();
+    s = next;
+    match (line) {
+      Some(l) => {
+        seen = seen + "[" + l + "]";
+      },
+      None => {
+        n = 5;
+      }
+    }
+    n = n + 1;
+  }
+  return test.assert_eq(seen, "[alpha][beta][gamma]");
+}
+
+function test_sourced_read_n_spans_chunks(): test.TestOutcome {
+  let (head, rest) = stream.stream_from_source(scripted(["ab", "cd", "e"])).read_n(3);
+  let (tail, done) = rest.read_all_string();
+  return test.assert_eq(string_from_bytes_unchecked(head) + "|" + option_text(tail), "abc|de");
+}
+
+function option_text(o: Option[string]): string {
+  match (o) {
+    Some(s) => {
+      return s;
+    },
+    None => {
+      return "<none>";
+    }
+  }
+  return "<none>";
+}
+
+function test_sourced_read_byte_ends(): test.TestOutcome {
+  let s: Stream = stream.stream_from_source(scripted(["x"]));
+  let (first, s2) = s.read_byte();
+  let (second, s3) = s2.read_byte();
+  let got: string = "";
+  match (first) {
+    Some(b) => {
+      got = got + b.to_string();
+    },
+    None => {
+      got = got + "none";
+    }
+  }
+  match (second) {
+    Some(b) => {
+      got = got + "," + b.to_string();
+    },
+    None => {
+      got = got + ",none";
+    }
+  }
+  return test.assert_eq(got, "120,none");
+}
+
+function test_sourced_body_string_drains(): test.TestOutcome {
+  return test.assert_eq(body_text(sourced(scripted(["hel", "lo"]), "5")), "hello");
+}
+
+function test_sourced_body_len_is_declared(): test.TestOutcome {
+  let declared: i32 = sourced(scripted(["hel", "lo"]), "5").body_len();
+  let chunked: i32 = sourced(scripted(["hel", "lo"]), "").body_len();
+  return test.assert_eq(declared.to_string() + "," + chunked.to_string(), "5,-1");
+}
+
+function test_sourced_fault_is_ended_early(): test.TestOutcome {
+  match (sourced(faulting(["par", "tial"], 413), "99").body_string()) {
+    Ok(text) => {
+      return test.fail("read " + text);
+    },
+    Err(e) => {
+      match (e) {
+        EndedEarly(status) => {
+          return test.assert_eq(status, 413);
+        },
+        _ => {
+          return test.fail("not EndedEarly");
+        }
+      }
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_ended_early_to_response(): test.TestOutcome {
+  let stalled: http.BodyError = EndedEarly(408);
+  let abandoned: http.BodyError = EndedEarly(0 - 2);
+  return test.assert_eq(stalled.to_response().status.to_string() + "," + abandoned.to_response().status.to_string(), "408,500");
+}
+
+function test_in_memory_stream_has_no_fault(): test.TestOutcome {
+  let (all, rest) = parsed("hello").body_stream().read_all();
+  return test.assert_eq(rest.fault(), 0);
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("HttpRequest.body as a Stream");
   r = r.it("body_stream carries the body", test_body_stream_carries_the_body);
@@ -185,5 +336,14 @@ function main(): i32 {
   r = r.it("body_bytes matches body_len", test_body_bytes_matches_body_len);
   r = r.it("a bodyless request reads empty", test_bodyless_request_reads_empty);
   r = r.it("ill-formed bytes read as U+FFFD", test_ill_formed_bytes_read_as_replacement);
+  r = r.it("a sourced stream reads every chunk", test_sourced_read_all_joins_the_chunks);
+  r = r.it("read_line spans a chunk boundary", test_sourced_read_line_spans_chunks);
+  r = r.it("read_n spans a chunk boundary", test_sourced_read_n_spans_chunks);
+  r = r.it("read_byte reaches the end of a sourced stream", test_sourced_read_byte_ends);
+  r = r.it("body_string drains a sourced body", test_sourced_body_string_drains);
+  r = r.it("body_len is the declared length of a sourced body", test_sourced_body_len_is_declared);
+  r = r.it("a fault is EndedEarly with its status", test_sourced_fault_is_ended_early);
+  r = r.it("EndedEarly answers the fault's status", test_ended_early_to_response);
+  r = r.it("an in-memory stream has no fault", test_in_memory_stream_has_no_fault);
   return r.finish();
 }

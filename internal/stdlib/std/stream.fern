@@ -1,19 +1,15 @@
-// std/stream — byte-stream value backing the eventual
-// `HttpRequest.body: Stream` migration
+// std/stream — the byte-stream value behind `HttpRequest.body`
 // (docs/STDLIB-DESIGN-RESEARCH.md Rec §1).
 //
-// Phase 1 (this PR): in-memory buffer-backed Stream with a
-// `data: u8[]` payload + a `pos: i32` read cursor. Reads
-// advance the cursor; `.read_all_string()` / `.read_all()`
-// consume the remainder. The buffer is allocated up-front;
-// no lazy / chunked reads yet.
-//
-// Phase 2: replace the buffer with a host-side reader that
-// pulls bytes on demand (wasi:http/incoming-body for
-// wasi-http; TCP socket for std/serve). The lang-side API
-// shape stays identical — handler code written against the
-// Phase 1 surface keeps working under Phase 2 without
-// changes.
+// A Stream is a `data: u8[]` buffer with a `pos: i32` read cursor; reads
+// advance the cursor and `.read_all()` / `.read_all_string()` consume
+// the remainder. A Stream made by `stream_from_source` also carries a
+// `BodySource`: when a read exhausts the buffer it asks the source for
+// the next chunk, which replaces the buffer, so a body that arrives as
+// it is read (std/serve's streamed request body,
+// docs/NET-P3-SUSPENSION-PLAN.md §3.9) is never held whole. The source
+// answers None at its end and on every call after, and its `fault` says
+// why the stream ended early. The reader API is the same either way.
 //
 // `bytes` is `u8[]` throughout the codebase (no separate
 // type alias today). Stream constructors / readers all use
@@ -27,32 +23,84 @@ import "core/int";
 // Stream. The Stream owns the buffer; subsequent reads
 // advance the cursor.
 pub function stream_from_bytes(bs: u8[]): Stream {
-  return Stream { data: bs, pos: 0 };
+  return Stream { data: bs, pos: 0, source: None };
 }
 
 // `stream_from_string(s)` — wrap a string's bytes as a
 // Stream. Cheap byte conversion (`s.bytes()` returns the
 // fresh `u8[]`).
 pub function stream_from_string(s: string): Stream {
-  return Stream { data: s.bytes(), pos: 0 };
+  return Stream { data: s.bytes(), pos: 0, source: None };
 }
 
 // `stream_empty()` — zero-length Stream. Useful as a default
 // / placeholder.
 pub function stream_empty(): Stream {
   let empty: u8[] = [];
-  return Stream { data: empty, pos: 0 };
+  return Stream { data: empty, pos: 0, source: None };
 }
 
-// `(s: Stream).len()` — total byte count of the Stream's
-// backing buffer (independent of the read cursor).
+// `stream_from_source(src)` — a Stream over a source that answers the
+// next chunk on demand: the buffer starts empty, and a read that
+// exhausts it asks `src.next()` for more, which replaces the buffer.
+// `None` ends the stream; `(s).fault()` says why it ended early.
+pub function stream_from_source(src: BodySource): Stream {
+  let empty: u8[] = [];
+  return Stream { data: empty, pos: 0, source: Some(src) };
+}
+
+// `(s: Stream).fault()` — why a sourced stream ended early: an HTTP
+// status (413 past the cap, 408 stalled, 400 malformed or cut short) or
+// `async.cancelled()`; 0 for a stream that reached, or has not reached,
+// its end, and for one with no source.
+pub function (s: Stream) fault(): i32 {
+  match (s.source) {
+    Some(src) => {
+      return src.fault.get();
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+// `__fill(s)` — the stream with bytes to read when it can have them: an
+// exhausted buffer is replaced by the source's next chunk, until one has
+// bytes or the source answers None. A stream with no source is answered
+// as it is.
+function __fill(s: Stream): Stream {
+  let out: Stream = s;
+  while (out.pos >= out.data.len()) {
+    match (out.source) {
+      Some(src) => {
+        match (src.next()) {
+          Some(chunk) => {
+            out = Stream { ...out, data: chunk, pos: 0 };
+          },
+          None => {
+            return out;
+          }
+        }
+      },
+      None => {
+        return out;
+      }
+    }
+  }
+  return out;
+}
+
+// `(s: Stream).len()` — byte count of the Stream's backing buffer
+// (independent of the read cursor): the whole body of an in-memory
+// Stream, the chunk being read of a sourced one.
 pub function (s: Stream) len(): i32 {
   return s.data.len();
 }
 
 // `(s: Stream).remaining()` — bytes between the cursor and
 // the end of the buffer. Zero when the Stream is fully
-// consumed.
+// consumed; a sourced Stream may still have chunks to pull.
 pub function (s: Stream) remaining(): i32 {
   let total: i32 = s.data.len();
   if (s.pos >= total) {
@@ -68,29 +116,28 @@ pub function (s: Stream) is_empty(): boolean {
   return s.pos >= s.data.len();
 }
 
-// `(s: Stream).read_all()` — consume the remaining bytes
-// as a fresh `u8[]`, returning `(bytes, advancedStream)` per
-// the cursor idiom (docs/CURSOR-IDIOM.md). The returned
-// Stream's cursor is at the end of the buffer; rebind it:
-// `let (bytes, s) = s.read_all();`.
-//
-// Phase 2 will fold an IoError into the result once host-
-// side reads can fail; Phase 1's in-memory buffer can't
-// fail so the bare bytes return is fine.
+// `(s: Stream).read_all()` — consume the remaining bytes, and every
+// chunk a source has still to give, as a fresh `u8[]`, returning
+// `(bytes, advancedStream)` per the cursor idiom (docs/CURSOR-IDIOM.md).
+// The returned Stream's cursor is at the end; rebind it: `let (bytes, s)
+// = s.read_all();`, and `s.fault()` says whether a sourced stream ended
+// early.
 pub function (s: Stream) read_all(): (u8[], Stream) {
-  let rem: i32 = s.remaining();
-  if (rem == 0) {
-    let empty: u8[] = [];
-    return (empty, s);
-  }
   let out: u8[] = [];
-  let i: i32 = s.pos;
-  let end: i32 = s.data.len();
-  while (i < end) {
-    out = out.append(s.data[i]);
-    i = i + 1;
+  let cur: Stream = __fill(s);
+  while (cur.pos < cur.data.len()) {
+    if (cur.pos == 0) {
+      out = out.concat(cur.data);
+    } else {
+      let i: i32 = cur.pos;
+      while (i < cur.data.len()) {
+        out = out.append(cur.data[i]);
+        i = i + 1;
+      }
+    }
+    cur = __fill(Stream { ...cur, pos: cur.data.len() });
   }
-  return (out, Stream { ...s, pos: end });
+  return (out, cur);
 }
 
 // `(s: Stream).read_all_string()` consumes and validates the remaining bytes.
@@ -128,11 +175,12 @@ pub function (s: Stream) read_all_string(): (Option[string], Stream) {
 // + a Stream advanced past it, or None + the unchanged
 // Stream when exhausted. Rebind: `let (b, s) = s.read_byte();`.
 pub function (s: Stream) read_byte(): (Option[i32], Stream) {
-  if (s.pos >= s.data.len()) {
-    return (None, s);
+  let cur: Stream = __fill(s);
+  if (cur.pos >= cur.data.len()) {
+    return (None, cur);
   }
-  let b: i32 = s.data[s.pos] as i32;
-  return (Some(b), Stream { ...s, pos: s.pos + 1 });
+  let b: i32 = cur.data[cur.pos] as i32;
+  return (Some(b), Stream { ...cur, pos: cur.pos + 1 });
 }
 
 // `(s: Stream).read_n(n)` — read up to `n` bytes from the
@@ -144,16 +192,20 @@ pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
   if (n <= 0) {
     return (out, s);
   }
-  let pos: i32 = s.pos;
-  let end: i32 = pos + n;
-  if (end > s.data.len()) {
-    end = s.data.len();
+  let cur: Stream = __fill(s);
+  while (out.len() < n && cur.pos < cur.data.len()) {
+    let pos: i32 = cur.pos;
+    let end: i32 = pos + (n - out.len());
+    if (end > cur.data.len()) {
+      end = cur.data.len();
+    }
+    while (pos < end) {
+      out = out.append(cur.data[pos]);
+      pos = pos + 1;
+    }
+    cur = __fill(Stream { ...cur, pos: pos });
   }
-  while (pos < end) {
-    out = out.append(s.data[pos]);
-    pos = pos + 1;
-  }
-  return (out, Stream { ...s, pos: pos });
+  return (out, cur);
 }
 
 // `(s: Stream).read_line()` — read up to and including the
@@ -166,31 +218,41 @@ pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
 // sequence reads as U+FFFD: this reader's None already means
 // end of input, so it has no arm to refuse into.
 pub function (s: Stream) read_line(): (Option[string], Stream) {
-  if (s.pos >= s.data.len()) {
-    return (None, s);
+  let cur: Stream = __fill(s);
+  if (cur.pos >= cur.data.len()) {
+    return (None, cur);
   }
   let line_bytes: u8[] = [];
-  let pos: i32 = s.pos;
-  while (pos < s.data.len()) {
-    let b: i32 = s.data[pos] as i32;
-    pos = pos + 1;
-    if (b == 10) {
-      // \n — strip a trailing \r if present.
-      let n: i32 = line_bytes.len();
-      if (n > 0) {
-        if (line_bytes[n - 1] as i32 == 13) {
-          let stripped: u8[] = [];
-          let i: i32 = 0;
-          while (i < n - 1) {
-            stripped = stripped.append(line_bytes[i]);
-            i = i + 1;
-          }
-          return (Some(utf8.from_bytes_lossy(stripped)), Stream { ...s, pos: pos });
-        }
+  while (true) {
+    let pos: i32 = cur.pos;
+    while (pos < cur.data.len()) {
+      let b: i32 = cur.data[pos] as i32;
+      pos = pos + 1;
+      if (b == 10) {
+        return (Some(utf8.from_bytes_lossy(__without_cr(line_bytes))), Stream { ...cur, pos: pos });
       }
-      return (Some(utf8.from_bytes_lossy(line_bytes)), Stream { ...s, pos: pos });
+      line_bytes = line_bytes.append(b as u8);
     }
-    line_bytes = line_bytes.append(b as u8);
+    cur = __fill(Stream { ...cur, pos: pos });
+    if (cur.pos >= cur.data.len()) {
+      return (Some(utf8.from_bytes_lossy(line_bytes)), cur);
+    }
   }
-  return (Some(utf8.from_bytes_lossy(line_bytes)), Stream { ...s, pos: pos });
+  return (None, cur);
+}
+
+// `__without_cr(line)` — the line without the `\r` a CRLF ending leaves
+// on it.
+function __without_cr(line: u8[]): u8[] {
+  let n: i32 = line.len();
+  if (n == 0 || line[n - 1] as i32 != 13) {
+    return line;
+  }
+  let stripped: u8[] = [];
+  let i: i32 = 0;
+  while (i < n - 1) {
+    stripped = stripped.append(line[i]);
+    i = i + 1;
+  }
+  return stripped;
 }
