@@ -1824,6 +1824,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __scan_set_bytes(bytes, from, set) → i32: __scan_set over a u8[].
+	c.info.FuncSigs["__scan_set_bytes"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __bsd_sum(s, sum) → i32: the BSD checksum `sum -r` keeps, carried in
 	// `sum` and continued over s: per byte, rotate the 16 bits right by one
 	// and add the byte, modulo 2^16. Native runtime surface, carried by the
@@ -3263,6 +3272,44 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// getxattr(path, name): Result[string, IoError] — the value of the
+	// extended attribute `name` on `path`, `getxattr(2)`. The value is
+	// the attribute's bytes verbatim: an SELinux context keeps the NUL
+	// the kernel stores after it. An absent attribute is ENODATA
+	// (Darwin's ENOATTR), a filesystem without attributes EOPNOTSUPP,
+	// and the Err carries which. lgetxattr is the same question about
+	// a final symlink itself, the way `lstat` is. Native only: neither
+	// WASI preview has extended attributes (capability `xattr`).
+	c.info.FuncSigs["getxattr"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	c.info.FuncSigs["lgetxattr"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// setxattr(path, name, value): Result[void, IoError] — create or
+	// replace the extended attribute `name` on `path` with `value`'s
+	// bytes, `setxattr(2)` with no flags. lsetxattr sets it on a final
+	// symlink itself. The Err carries the kernel's answer verbatim:
+	// EOPNOTSUPP from a filesystem without attributes, EPERM from a
+	// caller who may not write a `security.` one. Native only, like
+	// getxattr (capability `xattr`).
+	for _, name := range []string{"setxattr", "lsetxattr"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.StringType{}, ast.StringType{}, ast.StringType{}},
+			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+				ast.VoidType{},
+				ast.EnumType{Name: "IoError"},
+			}},
+		}
+	}
 	// rename(from, to): Result[void, IoError] — move the directory
 	// entry `from` to `to`, `renameat(AT_FDCWD, from, AT_FDCWD, to)`.
 	// Nothing is copied: the inode keeps its mode, its times and every
@@ -3997,7 +4044,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	writeSomeResult := ast.EnumType{Name: "Result", Args: []ast.Type{
 		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
 	registerStructMethod("Writer", "write_some", []ast.Type{ast.StringType{}}, writeSomeResult)
-	bytes := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	bytes := ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}
 	registerStructMethod("Writer", "write_bytes", []ast.Type{bytes}, optionIoErr)
 	registerStructMethod("Writer", "write_some_bytes", []ast.Type{bytes}, writeSomeResult)
 	registerStructMethod("Writer", "close", nil, optionIoErr)
@@ -10704,6 +10751,9 @@ func assignHint(want, got ast.Type) string {
 // conversion has to be written out — otherwise the checker accepts an
 // assignment no backend lowers (#8446). Empty for any other pair.
 func dynElemHint(want, got ast.Type) string {
+	if _, direct := want.(ast.DynTraitType); direct {
+		return ""
+	}
 	pos, ok := dynElemMismatch(want, got)
 	if !ok {
 		return ""
@@ -11262,6 +11312,19 @@ func hoistReceiver(fn *ast.FuncDecl) {
 	fn.Receiver = nil
 }
 
+// receiverDeclares reports whether the hoisted generic method `name` takes
+// type parameter tp from its receiver. A concrete receiver (`u8[]`,
+// `Box[i32]`) declares none, so the receiver's arguments a dispatch stamps
+// must not bind the method's own parameters. True for anything that is not
+// a generic method, which keeps the receiver stamp as it was.
+func (c *checker) receiverDeclares(name, tp string) bool {
+	fn, ok := c.info.GenericFuncs[name]
+	if !ok || fn.MethodRecv == "" || len(fn.Params) == 0 {
+		return true
+	}
+	return typeMentionsParam(fn.Params[0].Type, tp)
+}
+
 // elemDispatchable reports whether an array/slice receiver with this element
 // type can be dispatched to. Call-site dispatch binds the receiver's element
 // in one step, so a nested `T[][]` / `[T][]` element binds T to the INNER
@@ -11360,7 +11423,7 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 // clock). verifyFipAllocs (E068) stays the backstop for what they emit.
 var fipNonAllocBuiltins = map[string]bool{
 	"__memchr": true, "__count_byte_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
-	"__sum_bytes": true, "__scan_set": true, "__bsd_sum": true, "__count_runs": true,
+	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__count_runs": true,
 	"__crc32_cksum": true,
 	"__clz32":       true, "__ctz32": true, "__popcount32": true,
 	"__clz64": true, "__ctz64": true, "__popcount64": true,
@@ -17880,7 +17943,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if len(typeParams) == len(n.TypeArgs) {
 					sub := make(map[string]ast.Type, len(typeParams))
 					for i, tp := range typeParams {
-						sub[tp] = n.TypeArgs[i]
+						if c.receiverDeclares(id.Name, tp) {
+							sub[tp] = n.TypeArgs[i]
+						}
 					}
 					substitutedParams := make([]ast.Type, len(ft.Params))
 					for i, p := range ft.Params {
@@ -17963,7 +18028,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 					// The receiver's arguments are the LEADING parameters.
 					for i, ta := range recvArgs {
-						if i < len(fn.TypeParams) {
+						if i < len(fn.TypeParams) && c.receiverDeclares(id.Name, fn.TypeParams[i]) {
 							sub[fn.TypeParams[i]] = ta
 						}
 					}

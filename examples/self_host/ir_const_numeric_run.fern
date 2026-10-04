@@ -86,7 +86,7 @@ function main(): i32 {
   if (target == "wasm32-wasi") {
     write(wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, sub));
   } else if (target == "arm64-linux") {
-    write(asm_arm64_ir.emit_module_or_error_sub(d.full, false, sub));
+    write(asm_arm64_ir.emit_module_or_error_sub(d.full, false, sub, 0 as usize));
   } else {
     write(asm_ir.emit_module_or_error_sub(d.full, sub));
   }

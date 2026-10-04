@@ -30,6 +30,16 @@ function main(): i32 {
 
 const allocSizeCause = "fern: allocation size out of range"
 
+// Only 128 KiB of input is constructed. The expanded result would be 4 GiB,
+// wrapping to zero in i32; it must be rejected before allocation or copying.
+const replaceWrapsToZeroSrc = `import "std/string";
+function main(): i32 {
+    let s: string = "x".repeat(65536);
+    let replacement: string = "y".repeat(65536);
+    return s.replace("x", replacement).len();
+}
+`
+
 func assertX86SizeAbort(t *testing.T, cli *strictCLI, src string) {
 	t.Helper()
 	bin := buildBin(t, cli.gcc, t.TempDir(), "prog", cli.emit(t, "x86-64-linux", src))
@@ -43,6 +53,7 @@ func TestSelfHostAllocSizeAbortIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	t.Run("alloc-u8-negative-length", func(t *testing.T) { assertX86SizeAbort(t, cli, allocNegativeLengthSrc) })
 	t.Run("repeat-wraps-to-zero", func(t *testing.T) { assertX86SizeAbort(t, cli, repeatWrapsToZeroSrc) })
+	t.Run("replace-wraps-to-zero", func(t *testing.T) { assertX86SizeAbort(t, cli, replaceWrapsToZeroSrc) })
 }
 
 func TestSelfHostAllocSizeAbortIRArm64(t *testing.T) {
@@ -51,10 +62,26 @@ func TestSelfHostAllocSizeAbortIRArm64(t *testing.T) {
 	for name, src := range map[string]string{
 		"alloc-u8-negative-length": allocNegativeLengthSrc,
 		"repeat-wraps-to-zero":     repeatWrapsToZeroSrc,
+		"replace-wraps-to-zero":    replaceWrapsToZeroSrc,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if code, out := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", src)); code != 134 || out != "" {
 				t.Fatalf("arm64: exit %d, stdout %q; want 134 and nothing printed", code, out)
+			}
+		})
+	}
+}
+
+func TestSelfHostTransformSizeAbortWASM(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, tc := range []struct{ name, src string }{
+		{"repeat", repeatWrapsToZeroSrc},
+		{"replace", replaceWrapsToZeroSrc},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, tc.src, "wasm32-wasi")
+			if code == 0 || !strings.Contains(stderr, "unreachable") || strings.Contains(stderr, "out of bounds") {
+				t.Fatalf("want a deliberate size-guard trap before copying, got exit %d\n%s", code, stderr)
 			}
 		})
 	}

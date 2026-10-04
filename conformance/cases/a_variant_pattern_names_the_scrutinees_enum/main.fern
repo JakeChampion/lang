@@ -1,0 +1,31 @@
+// Two imported modules declare a variant named X. An arm's bare `X` names
+// the variant of the scrutinee's enum, whichever module declared it first
+// (#10922).
+import "./ae";
+import "./be";
+
+function blen(v: be.Be): i32 {
+  match (v) {
+    X(s) => {
+      return s.len();
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
+function aval(v: ae.Ae): i32 {
+  match (v) {
+    X(n) => {
+      return n;
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
+function main(): i32 {
+  return blen(be.mk_b()) * 10 + aval(ae.mk_a());
+}
