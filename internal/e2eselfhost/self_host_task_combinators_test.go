@@ -14,7 +14,8 @@ import (
 // §4): the self-host compiler lowers the functions that reach a park to
 // their resumable form, so a hand-driven task parks twice three calls deep
 // and comes back with its locals, and the same functions with no task take
-// the blocking fallback. wasm waits on the task runtime's wasm bodies.
+// the blocking fallback. wasm has no timer_fd; TestSelfHostTaskPortable is
+// the task runtime's wasm gate.
 func TestSelfHostTaskCombinators(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
