@@ -7492,7 +7492,8 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
       } else if (x86_str_starts_with(line, ".quad")) {
         let qop: string = x86_gas_trim(slice_unchecked(line, 6, line.len()));
         if (section == 2) {
-          a = x86_bss_skip(a, 8);  // zero-init quad reserves 8 bytes
+          // One zero-init slot per listed value (#11377).
+          a = x86_bss_skip(a, 8 * x86_gas_split_ops(qop).len());
         } else if (x86_gas_is_symbol(qop)) {
           // `.quad <label>` — an absolute pointer to another
           // symbol. Queued as a relocation; read as a number it

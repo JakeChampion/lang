@@ -650,3 +650,22 @@ function main(): i32 {
     return 0;
 }
 `
+
+// A `.bss` `.quad` with a value list reserves one zero-init slot per value,
+// so the symbols after it keep their own words (#11377); the arm64 twin is
+// TestSelfHostArm64BssValueList.
+const x86BssValueListMain = `
+function main(): i32 {
+    let a: X86Asm = x86_gas_assemble(".bss\nfour: .quad 0, 0, 0, 0\nnext: .quad 0\nlast: .skip 1\n");
+    if (a.bss_size != 41) { return 1; }
+    let n: i32 = x86_label_idx(a, "next");
+    if (n < 0 || a.lab_secs[n] != 2 || a.lab_offs[n] != 32) { return 2; }
+    let l: i32 = x86_label_idx(a, "last");
+    if (l < 0 || a.lab_secs[l] != 2 || a.lab_offs[l] != 40) { return 3; }
+    return 0;
+}
+`
+
+func TestSelfHostX86BssValueList(t *testing.T) {
+	runX86GasWasmSelfTest(t, "x86_bss_value_list", x86BssValueListMain)
+}

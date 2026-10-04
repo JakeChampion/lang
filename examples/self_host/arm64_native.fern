@@ -9281,9 +9281,9 @@ function arm64_gas_data_align(own p: Arm64GasProg, a: i32): Arm64GasProg {
 
 // arm64_gas_bss_directive reserves zero-init space in the .bss region for a
 // directive (no file bytes — it only grows bss_size, the ELF memsz tail).
-// `.skip`/`.zero`/`.space N`, `.quad`/`.word`/`.byte` (zero-init slots), and
-// `.align` are the forms asm_arm64 emits for the heap globals + the 1 GiB
-// `__fern_heap: .skip` reservation.
+// `.skip`/`.zero`/`.space N`, `.quad`/`.word`/`.byte` (zero-init slots, one
+// per listed value), and `.align` are the forms asm_arm64 emits for the heap
+// globals + the 1 GiB `__fern_heap: .skip` reservation.
 function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasProg {
   if (arm64_str_starts_with(line, ".skip") || arm64_str_starts_with(line, ".zero") || arm64_str_starts_with(line, ".space")) {
     let sp: i32 = arm64_str_indexof(line, " ");
@@ -9292,15 +9292,18 @@ function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasPro
     }
     return p;
   }
+  // A value list reserves one slot PER VALUE, so the count is its commas
+  // plus one; reserving one slot for the whole list put every later symbol
+  // on top of the list's tail (#11377).
   if (arm64_str_starts_with(line, ".quad")) {
-    return Arm64GasProg { ...p, bss_size: p.bss_size + 8 };
+    return Arm64GasProg { ...p, bss_size: p.bss_size + 8 * arm64_gas_value_count(line, 5) };
   }
-  if (arm64_str_starts_with(line, ".4byte") || arm64_str_starts_with(line, ".word")) {
-    return Arm64GasProg { ...p, bss_size: p.bss_size + 4 };
+  if (arm64_str_starts_with(line, ".4byte")) {
+    return Arm64GasProg { ...p, bss_size: p.bss_size + 4 * arm64_gas_value_count(line, 6) };
   }
-  // A `.byte` list reserves one byte PER VALUE, so the count is its
-  // commas plus one; reserving one for the whole list shifted every
-  // later symbol.
+  if (arm64_str_starts_with(line, ".word")) {
+    return Arm64GasProg { ...p, bss_size: p.bss_size + 4 * arm64_gas_value_count(line, 5) };
+  }
   if (arm64_str_starts_with(line, ".byte")) {
     return Arm64GasProg { ...p, bss_size: p.bss_size + arm64_gas_value_count(line, 5) };
   }
