@@ -1255,6 +1255,136 @@ function __framed_body(buf: u8[], at: i32, framing: __BodyFraming, version: stri
   return (400, empty, 0, none);
 }
 
+// ---- A chunked body decoded as it arrives ------------------------------
+//
+// `ChunkDecoder` — the chunked walk above, fed the body's bytes as they
+// arrive and answering each chunk's data as soon as it is read, so a body
+// that is streamed to a handler (docs/NET-P3-SUSPENSION-PLAN.md §3.9) is
+// never held whole. Its rules are `__chunked_walk`'s, through the same
+// helpers: the framing budget, the body cap, the extensions, the trailer
+// section and every refusal, so feeding a body in any split answers what
+// the walk answers for the whole. `state` is what the next byte belongs
+// to: 0 a chunk-size line, 1 chunk data with `left` bytes to come, 2 the
+// CRLF after a chunk's data, 3 the trailer section, 4 done; `held` is the
+// framing not yet complete, kept until it is.
+pub struct ChunkDecoder { state: i32, held: u8[], left: i32, budget: i32, room: i32, fields: i32, trailers: HeaderMap }
+
+// `ChunkStep` — what a feed answers: `ChunkData(next, data)`, the data
+// decoded from this feed (none when the feed held framing alone) and the
+// decoder to feed next; `ChunkEnd(data, trailers, rest)` once the body is
+// complete, with the trailer section's fields and the bytes past its end,
+// the next request's; `ChunkRefused(status)` with the walk's status (400
+// malformed framing, 413 a body past its cap, 431 framing or trailers
+// past their budget).
+pub enum ChunkStep { ChunkData(ChunkDecoder, u8[]), ChunkEnd(u8[], HeaderMap, u8[]), ChunkRefused(i32) }
+
+// `chunk_decoder(limits)` — a decoder at the start of a chunked body under
+// `limits`.
+pub function chunk_decoder(limits: HttpLimits): ChunkDecoder {
+  let none: u8[] = [];
+  return ChunkDecoder { state: 0, held: none, left: 0, budget: limits.header_bytes, room: limits.body, fields: limits.header_fields, trailers: headers.header_map_new() };
+}
+
+// `(d: ChunkDecoder).feed(bytes)` — the body's next bytes decoded.
+pub function (d: ChunkDecoder) feed(bytes: u8[]): ChunkStep {
+  let buf: u8[] = bytes;
+  if (d.held.len() > 0) {
+    buf = d.held.concat(bytes);
+  }
+  let none: u8[] = [];
+  let cur: ChunkDecoder = ChunkDecoder { ...d, held: none };
+  let out: u8[] = [];
+  let at: i32 = 0;
+  while (true) {
+    let step: (i32, ChunkDecoder, i32, u8[]) = __chunk_step(cur, buf, at, out);
+    cur = step.1;
+    at = step.2;
+    out = step.3;
+    if (step.0 == 1) {
+      return ChunkData(ChunkDecoder { ...cur, held: __bytes_range(buf, at, buf.len()) }, out);
+    }
+    if (step.0 == 2) {
+      return ChunkEnd(out, cur.trailers, __bytes_range(buf, at, buf.len()));
+    }
+    if (step.0 >= 400) {
+      return ChunkRefused(step.0);
+    }
+  }
+  return ChunkRefused(400);
+}
+
+// `__chunk_step(d, buf, at, out)` — one state's share of `buf` from `at`:
+// `(0, next, at, out)` to go on from `at` in the next state, `(1, ...)`
+// when more bytes are needed first, `(2, ...)` with `at` past the body's
+// end, or the refusing status.
+function __chunk_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, ChunkDecoder, i32, u8[]) {
+  if (d.state == 1) {
+    return __chunk_data_step(d, buf, at, out);
+  }
+  if (d.state == 2) {
+    let crlf: i32 = __crlf_at(buf, at);
+    if (crlf == 0) {
+      return (400, d, at, out);
+    }
+    if (crlf == 1) {
+      return (1, d, at, out);
+    }
+    return (0, ChunkDecoder { ...d, state: 0 }, at + 2, out);
+  }
+  if (d.state == 0) {
+    return __chunk_size_step(d, buf, at, out);
+  }
+  if (d.state == 3) {
+    return __chunk_trailers_step(d, buf, at, out);
+  }
+  return (2, d, at, out);
+}
+
+// The chunk's data, as much of it as `buf` holds, passed on.
+function __chunk_data_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, ChunkDecoder, i32, u8[]) {
+  let take: i32 = d.left;
+  if (take > buf.len() - at) {
+    take = buf.len() - at;
+  }
+  let passed: u8[] = out.concat(__bytes_range(buf, at, at + take));
+  let next: ChunkDecoder = ChunkDecoder { ...d, left: d.left - take };
+  if (next.left > 0) {
+    return (1, next, at + take, passed);
+  }
+  return (0, ChunkDecoder { ...next, state: 2 }, at + take, passed);
+}
+
+// The chunk-size line at `at`, as the walk reads it: the budget charged
+// for the line and the chunk's CRLF, the body cap for its size; the last
+// chunk's line hands over to the trailer section, from its own CRLF, as
+// the walk does.
+function __chunk_size_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, ChunkDecoder, i32, u8[]) {
+  let line: (i32, i32, i32) = __chunk_size_line(buf, at, d.budget, d.room);
+  if (line.0 != 2) {
+    return (line.0, d, at, out);
+  }
+  let data: i32 = line.1 + 2;
+  let size: i32 = line.2;
+  let budget: i32 = d.budget - (data - at) - 2;
+  if (budget < 0) {
+    return (431, d, at, out);
+  }
+  if (size == 0) {
+    return (0, ChunkDecoder { ...d, state: 3, budget: budget }, data - 2, out);
+  }
+  return (0, ChunkDecoder { ...d, state: 1, left: size, budget: budget, room: d.room - size }, data, out);
+}
+
+// The trailer section, `buf[at]` the last chunk's own CRLF.
+function __chunk_trailers_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, ChunkDecoder, i32, u8[]) {
+  let none: i32[] = [];
+  let t: (i32, i32, i32[], HeaderMap) = __chunked_trailers(buf, at + 2, d.budget + 2, none, d.fields);
+  if (t.0 != 2) {
+    return (t.0, d, at, out);
+  }
+  return (2, ChunkDecoder { ...d, state: 4, trailers: t.3 }, t.1, out);
+}
+
 // `http_parse_request_bytes(buf)` parses a full HTTP/1.1 request
 // out of the bytes the caller has read from the wire, as they
 // came: no text bridge. The caller accumulates bytes via

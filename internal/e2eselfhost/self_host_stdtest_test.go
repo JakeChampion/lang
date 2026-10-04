@@ -322,6 +322,8 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		// (a closure over cells), the shape a streamed request body has.
 		{"http_request_body_stream", langSrcAbs(t, "examples/tests/http_request_body_stream_test.fern"), ""},
 		{"http_body_json", langSrcAbs(t, "examples/tests/http_body_json_test.fern"), ""},
+		// The chunked body decoded as it arrives, against the parser's walk.
+		{"http_chunk_decoder", langSrcAbs(t, "examples/tests/http_chunk_decoder_test.fern"), ""},
 		{"http_response_headers_migrated", langSrcAbs(t, "examples/tests/http_response_headers_migrated_test.fern"), ""},
 		{"string_prelude_migrated", langSrcAbs(t, "examples/tests/string_prelude_migrated_test.fern"), ""},
 		{"runner_bench", langSrcAbs(t, "examples/tests/runner_bench_test.fern"), "# bench "},

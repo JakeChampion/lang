@@ -3914,6 +3914,24 @@ func TestRunnerHttpRequestBytesExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/http_chunk_decoder_test.fern` pins `http.ChunkDecoder`
+// against the whole-request parser (docs/NET-P3-SUSPENSION-PLAN.md §3.9):
+// every chunked fixture fed whole, a byte at a time and in uneven pieces
+// answers the parser's data, trailers, remainder or refusing status.
+func TestRunnerHttpChunkDecoderExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/http_chunk_decoder_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: http.ChunkDecoder against the parser", "# pass 15", "# fail 0", "1..15"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/http_body_json_test.fern` pins the typed JSON body
 // (#9854): `http.body_json[T](req)` decoding a derived `FromJson` struct,
 // and the 415 / 400 / 422 answers its three failures carry.
