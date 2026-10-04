@@ -4,6 +4,66 @@
 > go-to-def, completion) and the playground wires it via `cmd/fern-wasm`.
 > Post-MVP performance work is surveyed in `IDE-COMPILATION-RESEARCH.md`
 > and tracked in [#4415](https://github.com/JakeChampion/lang/issues/4415).
+> The self-host compiler serves diagnostics and formatting as `fern -lsp`
+> (#6641) — see the next section; everything below it describes the Go
+> server.
+
+## The self-host server: `fern -lsp`
+
+`fern -lsp [-target T] [-embed DIR] [stdlib-root]` runs the self-host CLI as a
+language server on stdin and stdout. It is #6641's first slice: diagnostics and
+formatting, and none of the cursor features yet.
+
+- **The wire** is `examples/self_host/lsp.fern`. It does Content-Length framing
+  over `stdin()`, JSON-RPC through `std/json`, the UTF-16 position conversion
+  (#8468) and file:// URIs to paths. It knows nothing of the compiler.
+- **Diagnostics are `-check`'s findings.** `fern.fern`'s `check_source` runs
+  `-check` on an entry's text and returns its findings (`Finding`, a
+  `util.Diag` plus whether it is a warning) instead of printing them. `-check`
+  prints that list and the server publishes it, so there is one pipeline, not
+  a copy. A file:// document is checked as the file it names, so its imports
+  resolve from disk beside it. A finding inside an imported module belongs to
+  that module, as in native's workspace mode, and is published only when that
+  module is itself the document checked.
+- **Formatting is `-fmt`'s** (`format_source`). The server refuses an edit
+  under `-fmt -w`'s rule, `fmt_output_is_readable`: no edit when the formatted
+  text would not come back through the formatter as itself.
+- A publish goes out only when a document's diagnostics change, and didClose
+  clears them. The exit codes are the spec's: 0 for `exit` after `shutdown`,
+  1 for `exit` without it, and 2 for input that cannot be framed.
+
+Measured 2026-10-03 on a 4-core x86-64 container: a one-function document with
+no imports re-checks in about 1 ms. One importing `std/string` takes about
+280 ms per change, against native fern-lsp's 120 ms. The difference is
+re-loading and re-checking the stdlib closure on every edit, so caching parsed
+imports between checks is the first step `IDE-COMPILATION-RESEARCH.md`
+describes. Peak RSS stays at 30–31 MB over 100 changes, so each check's memory
+is reclaimed.
+
+`internal/e2eselfhost/self_host_lsp_test.go` gates it (`TEST-GATES.md` has the
+row). It holds the server to two references:
+
+- **`-check`, across the whole conformance corpus.** Every finding in the
+  document is published, at its position, with its code and message, and
+  nothing else is.
+- **native fern-lsp, on a curated corpus.** That corpus covers every placement
+  shape: non-ASCII before a position, CRLF, a positionless refusal, sibling
+  and stdlib imports, document sync, and formatting. It has to be curated,
+  because fern-lsp is not the right oracle everywhere. Its diagnostics skip
+  `-check`'s const fold, so every const use reads as undefined, and it places
+  a visibility error at 0:0 (#11314). Separately, the self-host parser accepts
+  a missing final `}` (#11315). The self-host checker's own gaps reach the
+  server exactly as they reach `-check`; they are tracked where the checker
+  differentials track them.
+
+What the next slices add:
+
+1. Open sibling buffers taking precedence over disk, and publishing findings to
+   every open module a check touched, as native's workspace mode does.
+2. Hover, go-to-definition and completion, over the self-host checker's types.
+3. Imports parsed once and reused across checks.
+4. The playground's in-process server (`fernLsp`) on the self-host wasm build,
+   which is what `cmd/fern-wasm` still carries.
 
 ## Goal
 
@@ -128,9 +188,3 @@ Each step landed as a separate commit on the same branch.
 ## Non-goals (for now)
 
 - Incremental re-checking on edit.
-- Formatting through the LSP (blocked on comment-preserving formatter).
-- Workspace-wide features (find references across files, rename) — the
-  module loader is filesystem-based and the playground is single-file;
-  defer until both stories are clearer.
-- A VS Code extension. The LSP binary is enough; users wire it up via
-  their editor's generic LSP client.
