@@ -268,6 +268,13 @@ the Go compiler: the entries run in order, nothing is cancelled.
 local string, a byte view and a closure sharing a mutated scalar with its
 frame, all read after a park, answer the plain run's figure on x86-64 and
 arm64. `TestTaskFrameFallback` is the Go compiler's twin, with no park.
+`TestSelfHostTaskPortable` is the task runtime's gate on every target
+(`e2eharness.TaskPortableProgram`): the parks nap on a bound alone, so no
+descriptor is needed, and an i64, an f64 and a string are held across them;
+the self-host's x86-64, arm64 and wasm output must show both parks and the
+plain run's figure. The wasm leg embeds `cmd/fern/wit`'s world and adapts
+the module before wasmtime runs it. `TestTaskPortableFallback` is the Go
+compiler's twin.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestSelfHostServeConfig` serves through
