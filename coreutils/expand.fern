@@ -134,12 +134,12 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
   let is_stdin: boolean = false;
   let name: string = "";
   let r: Reader = stdin();
-  let chunk: string = "";
+  let chunk: u8[] = [];
   let pos: i32 = 0;
   let tabat: i32 = 0 - 1;
   let bsat: i32 = 0 - 1;
   let nulat: i32 = 0 - 1;
-  let carry: string = "";
+  let carry: usize = 0 as usize;
   let final: boolean = false;
 
   while (true) {
@@ -147,14 +147,17 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
       if (final) {
         break;
       }
-      chunk = "";
+      chunk = [];
       pos = 0;
       let got: boolean = false;
       while (!got) {
         if (!have_reader) {
           if (fi >= files.len()) {
-            chunk = carry;
-            carry = "";
+            if (carry != 0 as usize) {
+              chunk = buf_take_bytes(carry);
+              buf_free(carry);
+              carry = 0 as usize;
+            }
             final = true;
             got = true;
           } else {
@@ -180,14 +183,25 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
             }
           }
         } else {
-          let piece: string = "";
+          let piece: u8[] = [];
           let read_ok: boolean = true;
-          match (r.read_chunk(read_size())) {
+          match (r.read_chunk_bytes(read_size())) {
             Ok(c) => {
               piece = c;
             },
             Err(e) => {
-              o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
+              let message: string = gnu.io_error_text(e);
+              // WASI may answer EBADF for a directory. Classify the open
+              // descriptor only after a failed read, preserving normal I/O.
+              match (r.stat()) {
+                Ok(st) => {
+                  if (st.is_dir) {
+                    message = "Is a directory";
+                  }
+                },
+                Err(_) => {}
+              }
+              o = gnu.error_out(o, gnu.quotef(name) + ": " + message);
               ok = false;
               read_ok = false;
             }
@@ -195,9 +209,9 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
           if (read_ok && piece.len() > 0) {
             chunk = piece;
             pos = 0;
-            tabat = __memchr(chunk, 9, 0);
-            bsat = __memchr(chunk, 8, 0);
-            nulat = __memchr(chunk, 0, 0);
+            tabat = __memchr_bytes(chunk, 9, 0);
+            bsat = __memchr_bytes(chunk, 8, 0);
+            nulat = __memchr_bytes(chunk, 0, 0);
             got = true;
           } else {
             if (!is_stdin) {
@@ -208,9 +222,9 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
         }
       }
       if (final) {
-        tabat = __memchr(chunk, 9, 0);
-        bsat = __memchr(chunk, 8, 0);
-        nulat = __memchr(chunk, 0, 0);
+        tabat = __memchr_bytes(chunk, 9, 0);
+        bsat = __memchr_bytes(chunk, 8, 0);
+        nulat = __memchr_bytes(chunk, 0, 0);
         if (chunk.len() == 0) {
           break;
         }
@@ -218,10 +232,13 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
       continue;
     }
 
-    let j: i32 = __memchr(chunk, 10, pos);
+    let j: i32 = __memchr_bytes(chunk, 10, pos);
     if (j < 0) {
       if (!final) {
-        carry = carry + slice_unchecked(chunk, pos, chunk.len());
+        if (carry == 0 as usize) {
+          carry = buf_new(chunk.len() - pos);
+        }
+        buf_push_bytes_range(carry, chunk, pos, chunk.len());
         pos = chunk.len();
         continue;
       }
@@ -230,13 +247,15 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
 
     // One line, terminator included. It stays a view into the chunk
     // unless a partial line from an earlier chunk has to be glued on.
-    let buf: string = chunk;
+    let buf: u8[] = chunk;
     let lo: i32 = pos;
     let hi: i32 = j + 1;
-    let carried: boolean = carry.len() > 0;
+    let carried: boolean = carry != 0 as usize;
     if (carried) {
-      buf = carry + slice_unchecked(chunk, pos, j + 1);
-      carry = "";
+      buf_push_bytes_range(carry, chunk, pos, j + 1);
+      buf = buf_take_bytes(carry);
+      buf_free(carry);
+      carry = 0 as usize;
       lo = 0;
       hi = buf.len();
     }
@@ -249,14 +268,14 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
     let ba: i32 = bsat;
     let na: i32 = nulat;
     if (carried) {
-      ta = __memchr(buf, 9, 0);
-      ba = __memchr(buf, 8, 0);
-      na = __memchr(buf, 0, 0);
+      ta = __memchr_bytes(buf, 9, 0);
+      ba = __memchr_bytes(buf, 8, 0);
+      na = __memchr_bytes(buf, 0, 0);
     }
     if (ta < 0 || ta >= hi) {
       // No tab on this line, so nothing on it converts and a backspace
       // has nothing to move the column of.
-      buf_push_range(h, buf, lo, hi);
+      buf_push_bytes_range(h, buf, lo, hi);
     } else {
       let end: i32 = hi;
       if (initial) {
@@ -282,7 +301,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
           k = na;
         }
         if (k > p) {
-          buf_push_range(h, buf, p, k);
+          buf_push_bytes_range(h, buf, p, k);
           column = column + (k - p) as u64;
           p = k;
         }
@@ -295,7 +314,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
           // wcwidth answers 0 for a NUL, so it takes no column at all —
           // the one byte for which the count is not the byte count.
           buf_push_byte(h, c);
-          na = __memchr(buf, 0, p);
+          na = __memchr_bytes(buf, 0, p);
         } else if (c == 8) {
           if (column > 0 as u64) {
             column = column - 1 as u64;
@@ -304,7 +323,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
             idx = idx - 1;
           }
           buf_push_byte(h, c);
-          ba = __memchr(buf, 8, p);
+          ba = __memchr_bytes(buf, 8, p);
         } else {
           // The uniform case is most of them, and it is arithmetic:
           // taking it here keeps the call and its tuple out of the
@@ -342,11 +361,11 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
               }
             }
           }
-          ta = __memchr(buf, 9, p);
+          ta = __memchr_bytes(buf, 9, p);
         }
       }
       if (p < hi) {
-        buf_push_range(h, buf, p, hi);
+        buf_push_bytes_range(h, buf, p, hi);
       }
     }
     // Back to chunk indices, and past anything this line left behind:
@@ -356,13 +375,13 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
     bsat = ba;
     nulat = na;
     if (carried || tabat >= 0 && tabat < pos) {
-      tabat = __memchr(chunk, 9, pos);
+      tabat = __memchr_bytes(chunk, 9, pos);
     }
     if (carried || bsat >= 0 && bsat < pos) {
-      bsat = __memchr(chunk, 8, pos);
+      bsat = __memchr_bytes(chunk, 8, pos);
     }
     if (carried || nulat >= 0 && nulat < pos) {
-      nulat = __memchr(chunk, 0, pos);
+      nulat = __memchr_bytes(chunk, 0, pos);
     }
     if (buf_len(h) >= block_size()) {
       o = o.flush();
