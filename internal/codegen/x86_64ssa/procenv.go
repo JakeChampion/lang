@@ -2,6 +2,7 @@ package x86_64ssa
 
 import (
 	"strconv"
+	"strings"
 
 	nativex86_64 "github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/ir"
@@ -280,16 +281,16 @@ func emitFdStatHelper(name, lp string) func(w func(string, ...any)) {
 }
 
 // emitStatLikeHelper writes the shared body behind stat(path) and the two fd
-// methods: the stat record into a 144-byte frame buffer, projected onto a
-// fresh FileStat box by the same table the flat x86-64 backend reads
-// (nativex86_64.LinuxStatFields), and wrapped in Ok; -errno goes through
+// methods: the statx record into a frame buffer, projected onto a fresh
+// FileStat box by the flat x86-64 backend's own projection
+// (nativex86_64.StatxProjection), and wrapped in Ok; -errno goes through
 // __fern_io_error and comes back in Err. The record box is {rc=1, fields@+8},
 // as arm64ssa's is.
 //
-// fdBased picks newfstatat(AT_FDCWD, pathz, buf, atFlags) over fstat(fd, buf),
-// and with it what the error reports: the path as given, or an empty string
-// when the handle never carried one. atFlags is the newfstatat flag word, 0
-// for stat and AT_SYMLINK_NOFOLLOW for lstat. `lp` prefixes the local labels,
+// fdBased picks statx(fd, "", AT_EMPTY_PATH) over statx(AT_FDCWD, pathz,
+// atFlags), and with it what the error reports: the path as given, or an
+// empty string when the handle never carried one. atFlags is 0 for stat and
+// AT_SYMLINK_NOFOLLOW for lstat. `lp` prefixes the local labels,
 // so the path form and both fd forms can be emitted into one object.
 //
 // rdi = path or handle. rbx = path, r12 = pathz then the FileStat box,
@@ -302,14 +303,19 @@ func emitStatLikeHelper(w func(string, ...any), name, lp string, atFlags int, fd
 	w("\tpush r13")
 	w("\tpush r14")
 	w("\tpush r15")
-	// Five pushes past the return address leave rsp 16-aligned; the 144-byte
-	// statbuf keeps it so.
-	w("\tsub rsp, 144")
+	// Five pushes past the return address leave rsp 16-aligned; the record
+	// and the fd form's "" after it keep it so.
+	w("\tsub rsp, %d", ir.StatxBytes+16)
 	if fdBased {
-		// fstat(fd, statbuf); the fd sits at [handle+8].
+		// statx(fd, "", AT_EMPTY_PATH, mask, statbuf); the fd sits at
+		// [handle+8].
 		w("\tmov edi, dword ptr [rdi + 8]")
-		w("\tmov rsi, rsp")
-		w("\tmov eax, 5")
+		w("\tmov byte ptr [rsp + %d], 0", ir.StatxBytes)
+		w("\tlea rsi, [rsp + %d]", ir.StatxBytes)
+		w("\tmov edx, 4096") // AT_EMPTY_PATH
+		w("\tmov r10d, %d", ir.StatxMask)
+		w("\tmov r8, rsp")
+		w("\tmov eax, 332") // statx
 		w("\tsyscall")
 	} else {
 		w("\tmov rbx, rdi")
@@ -327,29 +333,26 @@ func emitStatLikeHelper(w func(string, ...any), name, lp string, atFlags int, fd
 		w("\tjmp .Lssa_%s_cp", lp)
 		w(".Lssa_%s_cpd:", lp)
 		w("\tmov byte ptr [r12 + r13], 0")
-		// newfstatat(AT_FDCWD, pathz, statbuf, atFlags)
+		// statx(AT_FDCWD, pathz, atFlags, mask, statbuf)
 		w("\tmov edi, -100")
 		w("\tmov rsi, r12")
-		w("\tmov rdx, rsp")
-		if atFlags == 0 {
-			w("\txor r10d, r10d")
-		} else {
-			w("\tmov r10d, %d", atFlags)
-		}
-		w("\tmov eax, 262")
+		w("\tmov edx, %d", atFlags)
+		w("\tmov r10d, %d", ir.StatxMask)
+		w("\tmov r8, rsp")
+		w("\tmov eax, 332") // statx
 		w("\tsyscall")
 	}
 	w("\ttest rax, rax")
 	w("\tjs .Lssa_%s_err", lp)
-	w("\tmov eax, [rsp + 24]") // st_mode
-	w("\tand eax, 61440")      // S_IFMT
+	w("\tmovzx eax, word ptr [rsp + %d]", ir.StatxModeOff)
+	w("\tand eax, 61440") // S_IFMT
 	w("\txor r14d, r14d")
 	w("\tcmp eax, 32768") // S_IFREG
 	w("\tsete r14b")
 	w("\txor r15d, r15d")
 	w("\tcmp eax, 16384") // S_IFDIR
 	w("\tsete r15b")
-	w("\tmov r13, [rsp + 48]") // st_size
+	w("\tmov r13, [rsp + %d]", ir.StatxSizeOff)
 	// The statbuf stays at [rsp] across the allocation, so the rest of the
 	// record is copied out once the box exists.
 	ssaBumpAlloc(w, "rax", strconv.Itoa(8+int(ir.FileStat.Bytes)))
@@ -358,14 +361,12 @@ func emitStatLikeHelper(w func(string, ...any), name, lp string, atFlags int, fd
 	w("\tmov [r12 + %d], r14d", ir.FileStat.IsFile)
 	w("\tmov [r12 + %d], r15d", ir.FileStat.IsDir)
 	w("\tmov [r12 + %d], r13", ir.FileStat.Size)
-	for _, f := range nativex86_64.LinuxStatFields {
-		if f.Width == 4 {
-			w("\tmov r9d, [rsp + %d]", f.Src)
-			w("\tmov [r12 + %d], r9d", f.Box)
+	for _, line := range nativex86_64.StatxProjection("rsp", "r12", ".Lssa_"+lp+"_bt") {
+		if strings.HasSuffix(line, ":") {
+			w("%s", line)
 			continue
 		}
-		w("\tmov r9, [rsp + %d]", f.Src)
-		w("\tmov [r12 + %d], r9", f.Box)
+		w("\t%s", line)
 	}
 	ssaOptionBox(w, 0, "r12")
 	w("\tjmp .Lssa_%s_ret", lp)
@@ -386,7 +387,7 @@ func emitStatLikeHelper(w func(string, ...any), name, lp string, atFlags int, fd
 	w("\tmov r12, rax")
 	ssaOptionBox(w, 1, "r12")
 	w(".Lssa_%s_ret:", lp)
-	w("\tadd rsp, 144")
+	w("\tadd rsp, %d", ir.StatxBytes+16)
 	w("\tpop r15")
 	w("\tpop r14")
 	w("\tpop r13")

@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
@@ -238,8 +236,8 @@ func TestX86_64SanitizeLeakVerdict(t *testing.T) {
 
 func TestX86_64SanitizeDoubleFreeReported(t *testing.T) {
 	_, stderr, code := runSanitizeX86_64(t, sanDoubleFreeSrc)
-	if code != x86_64.ExitSanitizer {
-		t.Errorf("exit=%d, want %d (a sanitizer finding is fatal and has its own status)", code, x86_64.ExitSanitizer)
+	if code != e2eharness.ExitSanitizer {
+		t.Errorf("exit=%d, want %d (a sanitizer finding is fatal and has its own status)", code, e2eharness.ExitSanitizer)
 	}
 	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)") {
 		t.Errorf("stderr does not name the finding: %q", stderr)
@@ -251,8 +249,8 @@ func TestX86_64SanitizeDoubleFreeReported(t *testing.T) {
 
 func TestX86_64SanitizeUseAfterFreeReported(t *testing.T) {
 	_, stderr, code := runSanitizeX86_64(t, sanStaleTouchSrc)
-	if code != x86_64.ExitSanitizer {
-		t.Errorf("exit=%d, want %d", code, x86_64.ExitSanitizer)
+	if code != e2eharness.ExitSanitizer {
+		t.Errorf("exit=%d, want %d", code, e2eharness.ExitSanitizer)
 	}
 	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)") {
 		t.Errorf("stderr does not name the finding: %q", stderr)
@@ -347,8 +345,8 @@ func TestArm64SanitizeQuarantinesFreedBlocks(t *testing.T) {
 
 func TestArm64SanitizeDoubleFreeReported(t *testing.T) {
 	_, stderr, code := runSanitizeArm64(t, sanDoubleFreeSrc)
-	if code != arm64codegen.ExitSanitizer {
-		t.Errorf("exit=%d, want %d", code, arm64codegen.ExitSanitizer)
+	if code != e2eharness.ExitSanitizer {
+		t.Errorf("exit=%d, want %d", code, e2eharness.ExitSanitizer)
 	}
 	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)") {
 		t.Errorf("stderr does not name the finding: %q", stderr)
@@ -360,8 +358,8 @@ func TestArm64SanitizeDoubleFreeReported(t *testing.T) {
 
 func TestArm64SanitizeUseAfterFreeReported(t *testing.T) {
 	_, stderr, code := runSanitizeArm64(t, sanStaleTouchSrc)
-	if code != arm64codegen.ExitSanitizer {
-		t.Errorf("exit=%d, want %d", code, arm64codegen.ExitSanitizer)
+	if code != e2eharness.ExitSanitizer {
+		t.Errorf("exit=%d, want %d", code, e2eharness.ExitSanitizer)
 	}
 	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)") {
 		t.Errorf("stderr does not name the finding: %q", stderr)

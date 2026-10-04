@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // --- The self-host compiler's sanitizer port (#5545) ---------------
@@ -21,13 +23,6 @@ import (
 // What must NOT differ is the text and the exit status: a
 // `fern-sanitizer:` line must not tell you which compiler built the
 // binary. That is what these tests are mostly for.
-
-// sanExitStatus is the status a sanitizer finding exits with, matching
-// x86_64.ExitSanitizer / arm64.ExitSanitizer. Duplicated rather than
-// imported because this package tests the SELF-HOST compiler, whose
-// copy of the number lives in Fern source — an import would assert the
-// Go constant against itself and prove nothing.
-const sanExitStatus = 124
 
 // sanSelfHostCleanSrc: the rc-driven drop-everything loop. Every row is
 // precisely dropped, so a sanitizer run must be silent.
@@ -151,8 +146,8 @@ func TestSelfHostSanitizeLeakVerdictX86_64(t *testing.T) {
 func TestSelfHostSanitizeDoubleFreeReportedX86_64(t *testing.T) {
 	bin, runner := sanSelfHostBuild(t, "san_dfree", sanSelfHostDoubleFreeSrc, []string{"FERN_SANITIZE=1"})
 	stderr, code := hevRun(t, runner, bin)
-	if code != sanExitStatus {
-		t.Errorf("exit=%d, want %d (a sanitizer finding is fatal and has its own status)", code, sanExitStatus)
+	if code != e2eharness.ExitSanitizer {
+		t.Errorf("exit=%d, want %d (a sanitizer finding is fatal and has its own status)", code, e2eharness.ExitSanitizer)
 	}
 	// Byte-for-byte the native backends' text — this is the assertion
 	// that keeps "build it with -sanitize" meaning one thing. The
@@ -239,8 +234,8 @@ func TestSelfHostSanitizeBoxFreeIsQuarantined(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(target+"/"+tc.name, func(t *testing.T) {
 				stderr, code := cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1")
-				if code != sanExitStatus || !strings.Contains(stderr, tc.finding) {
-					t.Errorf("exit=%d stderr=%q, want exit %d naming %q", code, stderr, sanExitStatus, tc.finding)
+				if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, tc.finding) {
+					t.Errorf("exit=%d stderr=%q, want exit %d naming %q", code, stderr, e2eharness.ExitSanitizer, tc.finding)
 				}
 			})
 		}
@@ -263,8 +258,8 @@ func TestSelfHostSanitizeReportCarriesBacktrace(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(target+"/"+tc.name, func(t *testing.T) {
 				stderr, code := cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1")
-				if code != sanExitStatus || !strings.Contains(stderr, tc.finding) {
-					t.Fatalf("exit=%d stderr=%q, want exit %d naming %q", code, stderr, sanExitStatus, tc.finding)
+				if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, tc.finding) {
+					t.Fatalf("exit=%d stderr=%q, want exit %d naming %q", code, stderr, e2eharness.ExitSanitizer, tc.finding)
 				}
 				if !sanBacktraceRe.MatchString(stderr) {
 					t.Errorf("no backtrace under the report: %q", stderr)
@@ -272,8 +267,8 @@ func TestSelfHostSanitizeReportCarriesBacktrace(t *testing.T) {
 			})
 			t.Run(target+"/"+tc.name+"/FERN_BACKTRACE=0", func(t *testing.T) {
 				stderr, code := cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1", "FERN_BACKTRACE=0")
-				if code != sanExitStatus || !strings.Contains(stderr, tc.finding) {
-					t.Fatalf("exit=%d stderr=%q, want exit %d naming %q", code, stderr, sanExitStatus, tc.finding)
+				if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, tc.finding) {
+					t.Fatalf("exit=%d stderr=%q, want exit %d naming %q", code, stderr, e2eharness.ExitSanitizer, tc.finding)
 				}
 				if strings.Contains(stderr, "backtrace:") {
 					t.Errorf("FERN_BACKTRACE=0 still walked: %q", stderr)

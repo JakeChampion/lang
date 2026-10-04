@@ -35,6 +35,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/e2eharness"
+	"github.com/jakechampion/lang/internal/fdlibm"
 )
 
 // maxULP is the bound each finite case must meet. The kernels are fdlibm's,
@@ -73,12 +74,71 @@ var f64UlpInputs = []float64{
 }
 
 // f64UlpPosInputs are the log-only inputs: strictly positive, spanning the
-// smallest normal through the top of the exponent range. math.Log is a usable
-// reference across all of them; the subnormals below it are not here but in
-// f64UlpCases, against literal bit patterns.
+// smallest normal through the top of the exponent range. The subnormals below
+// it are not here but in f64UlpCases, against literal bit patterns.
 var f64UlpPosInputs = []float64{
 	2.2250738585072014e-308, 1e-300, 1e-30, 1e-5, 0.1, 0.5, 0.9, 1, 1.0000001,
 	1.5, 2, 2.718281828459045, 10, 1e5, 1e30, 1e300, math.MaxFloat64,
+}
+
+// logULP is log's bound against the correctly rounded result: the table
+// kernel measures 0.53 ulp from the true value, so it rounds to within one of
+// the correctly rounded double everywhere.
+const logULP = 1
+
+// f64LogInputs is the corpus that gates log's two paths where they are
+// weakest: the band around 1, where the result is as small as the table
+// path's absolute error and the near-1 path takes over, stepped through and
+// probed a few ulp either side of both of its bounds and of 1 itself; and
+// both sides of a spread of the table's subinterval edges, at several
+// exponents.
+func f64LogInputs() []float64 {
+	var xs []float64
+	for j := range 81 {
+		xs = append(xs, 0.92+0.16*float64(j)/80)
+	}
+	for _, b := range []uint64{fdlibm.LogNear1Lo, fdlibm.LogNear1Hi, 0x3ff0000000000000} {
+		x, y := math.Float64frombits(b), math.Float64frombits(b)
+		for range 4 {
+			x, y = math.Nextafter(x, 0), math.Nextafter(y, 2)
+			xs = append(xs, x, y)
+		}
+	}
+	for i := uint64(0); i <= 1<<fdlibm.LogTableBits; i += 9 {
+		edge := fdlibm.LogOff + i<<(52-fdlibm.LogTableBits)
+		for _, k := range []int{-1000, -1, 1, 700} {
+			xs = append(xs, math.Ldexp(math.Float64frombits(edge-1), k), math.Ldexp(math.Float64frombits(edge), k))
+		}
+	}
+	return xs
+}
+
+// refLog computes ln x past double precision and rounds once. x = 2^e*m with
+// m in [1, 2), ln m = 2*atanh((m-1)/(m+1)), and the series converges by at
+// least a factor of 9 per term; 256 bits outlasts the 53 that ln m + e*ln2
+// can cancel for x just above 1.
+func refLog(x float64) float64 {
+	const prec = 256
+	nf := func() *big.Float { return new(big.Float).SetPrec(prec) }
+	frac, e := math.Frexp(x)
+	m := nf().SetFloat64(2 * frac)
+	t := nf().Quo(nf().Sub(m, nf().SetInt64(1)), nf().Add(m, nf().SetInt64(1)))
+	atanh := func(t *big.Float) *big.Float {
+		t2 := nf().Mul(t, t)
+		term, sum := nf().Set(t), nf().Set(t)
+		for n := int64(3); t.Sign() != 0; n += 2 {
+			term.Mul(term, t2)
+			q := nf().Quo(term, nf().SetInt64(n))
+			if q.MantExp(nil) < sum.MantExp(nil)-prec-8 {
+				break
+			}
+			sum.Add(sum, q)
+		}
+		return sum.Mul(sum, nf().SetInt64(2))
+	}
+	ln2 := atanh(nf().Quo(nf().SetInt64(1), nf().SetInt64(3)))
+	out, _ := nf().Add(atanh(t), nf().Mul(ln2, nf().SetInt64(int64(e-1)))).Float64()
+	return out
 }
 
 // ---- the reference ----
@@ -247,8 +307,8 @@ func f64UlpCases() []f64Case {
 	} {
 		cs = append(cs, f64Case{fmt.Sprintf("__exp_f64(%s)", lit(r.x)), math.Float64frombits(r.bits)})
 	}
-	for _, x := range f64UlpPosInputs {
-		cs = append(cs, f64Case{fmt.Sprintf("__log_f64(%s)", lit(x)), math.Log(x)})
+	for _, x := range append(f64UlpPosInputs, f64LogInputs()...) {
+		cs = append(cs, f64Case{fmt.Sprintf("__log_f64(%s)", lit(x)), refLog(x)})
 	}
 	// The subnormal band, where the reduction x = 2^k*m has to prescale
 	// before reading k out of the exponent field — a subnormal stores 0
@@ -472,9 +532,13 @@ func checkF64Output(t *testing.T, backend, out string, cs []f64Case, bound int64
 				bad++
 			}
 		default:
-			if d := ulpDist(got, c.want); d > bound {
+			b := bound
+			if strings.HasPrefix(c.call, "__log_f64") {
+				b = min(b, logULP)
+			}
+			if d := ulpDist(got, c.want); d > b {
 				t.Errorf("%s: %s = %v, want %v (%d ulp, bound %d)",
-					backend, c.call, got, c.want, d, bound)
+					backend, c.call, got, c.want, d, b)
 				bad++
 			}
 			// sin/cos are total on the finite doubles with range [-1, 1], so

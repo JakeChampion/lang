@@ -525,8 +525,8 @@ func buildCreateDirAllBody(idxs map[string]uint32) []byte {
 //
 // path_filestat_get with SYMLINK_FOLLOW into a 64-byte record, then
 // project it onto FileStat. Preview 1 answers dev, ino, nlink, size and
-// the three timestamps; mode, uid, gid, rdev, blksize and blocks it has
-// no field for, and those read zero (see zeroFileStatFields).
+// the three timestamps; mode, uid, gid, rdev, blksize, blocks and the birth
+// time it has no field for, and those read zero (see zeroFileStatFields).
 //
 // Locals after the two params:
 //
@@ -636,7 +636,8 @@ func projectFilestatP1(body []byte, alloc, bufLocal, ftLocal, fsLocal uint32) []
 	body = splitNsTimestamp(body, fsLocal, bufLocal, filestatCtimOff, ir.FileStat.Ctime, ir.FileStat.CtimeNsec)
 	return zeroFileStatFields(body, fsLocal,
 		[]int32{ir.FileStat.Mode, ir.FileStat.UID, ir.FileStat.GID},
-		[]int32{ir.FileStat.Rdev, ir.FileStat.Blksize, ir.FileStat.Blocks})
+		[]int32{ir.FileStat.Rdev, ir.FileStat.Blksize, ir.FileStat.Blocks,
+			ir.FileStat.Btime, ir.FileStat.BtimeNsec})
 }
 
 // buildOpenDirBody assembles __fern_open_dir — the shared "open a
@@ -1995,7 +1996,7 @@ func projectDescriptorStatP2(body []byte, alloc, rbLocal, ftLocal, fsLocal uint3
 	return zeroFileStatFields(body, fsLocal,
 		[]int32{ir.FileStat.Mode, ir.FileStat.UID, ir.FileStat.GID},
 		[]int32{ir.FileStat.Dev, ir.FileStat.Rdev, ir.FileStat.Ino,
-			ir.FileStat.Blksize, ir.FileStat.Blocks})
+			ir.FileStat.Blksize, ir.FileStat.Blocks, ir.FileStat.Btime, ir.FileStat.BtimeNsec})
 }
 
 // ---- preview-2 directory listing ------------------------------------

@@ -33,7 +33,7 @@ func TestWasmPollGuestStorage(t *testing.T) {
 func TestWasmPollLifecycleCensus(t *testing.T) {
 	for _, expr := range []string{"wasm_poll(ps)", "poll(ps, -1)", "poll(ps, 0)", "poll(ps, 5)"} {
 		t.Run(expr, func(t *testing.T) {
-			component := buildLeakCheckComponent(t, e2eharness.WasiPollCensusProbe(expr), false)
+			component := buildLeakCheckCLIComponent(t, e2eharness.WasiPollCensusProbe(expr), false)
 			e2eharness.CheckWasiSocketCensus(t, component)
 		})
 	}
@@ -42,7 +42,7 @@ func TestWasmPollLifecycleCensus(t *testing.T) {
 func TestWasmPollDeadlines(t *testing.T) {
 	for _, tc := range e2eharness.WasiPollDeadlineCases() {
 		t.Run(tc.Name, func(t *testing.T) {
-			component := buildLeakCheckComponent(t, tc.Source, false)
+			component := buildLeakCheckCLIComponent(t, tc.Source, false)
 			e2eharness.CheckWasiSocketCensus(t, component)
 		})
 	}

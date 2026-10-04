@@ -211,7 +211,8 @@ func buildFdStatBodyP2(idxs map[string]uint32) []byte {
 			[]int32{ir.FileStat.Size, ir.FileStat.Dev, ir.FileStat.Rdev,
 				ir.FileStat.Ino, ir.FileStat.Blksize, ir.FileStat.Blocks,
 				ir.FileStat.Atime, ir.FileStat.AtimeNsec, ir.FileStat.Mtime,
-				ir.FileStat.MtimeNsec, ir.FileStat.Ctime, ir.FileStat.CtimeNsec})
+				ir.FileStat.MtimeNsec, ir.FileStat.Ctime, ir.FileStat.CtimeNsec,
+				ir.FileStat.Btime, ir.FileStat.BtimeNsec})
 		body = emitResultOkPtr(body, allocRc1, 8, 9)
 		body = inst.InstReturn(body)
 	}
