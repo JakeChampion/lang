@@ -1,6 +1,6 @@
-// examples/self_host/asm_pathprobe_run.fern — observability driver for the
+// examples/self_host/asm_pathprobe_run.fern: observability driver for the
 // typed lowering's verdict. Reads Fern source from stdin and prints "ir" if
-// the typed lowering produces the whole program (semlower.verdict), or
+// the typed lowering produces the whole program (semlower.verdict_ok), or
 // "refused" if it refuses any declaration or the program fails the checks,
 // since the drivers then refuse the module. It emits NO assembly, so the
 // Go-side gates can assert the verdict without assembling + running.
@@ -11,7 +11,7 @@ import "./semlower";
 
 function main(): i32 {
   let mod: parser.Module = rundriver.parse_stdin("asm_pathprobe_run");
-  if (semlower.verdict(mod, "x86-64-linux").ok) {
+  if (semlower.verdict_ok(mod, "x86-64-linux")) {
     print("ir\n");
   } else {
     print("refused\n");
