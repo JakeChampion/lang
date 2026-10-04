@@ -255,12 +255,16 @@ the program.
 
 ### 3.7 wasm
 
-The transform is target-agnostic, so wasm gets it with the others. Tokens are
-pollables, as `poll` already takes them; the serve loop on wasi:sockets drives
-tasks exactly as native does. The Preview 3 `waitable-set.wait` loop in
-`wasmbin/extern.go` stays stackful for now; once tasks exist, a callback-lifted
-guest that suspends across `waitable-set.wait` is a follow-up on
-`WASI-PREVIEW3-ASYNC-PLAN.md`, not part of P3.
+The transform is target-agnostic, so wasm gets it with the others, and the
+runtime it needs is `wasm_ir.task_funcs`: the WAT twin of `rt_src_task`,
+with the task table, the records and the save area in linear memory and the
+current task in a global. A wait set's descriptors are socket handles,
+subscribed for the wait as `wait_any` does; a park on a bound alone needs
+nothing. The serve loop on wasi:sockets drives tasks exactly as native does.
+The Preview 3 `waitable-set.wait` loop in `wasmbin/extern.go` stays stackful
+for now; once tasks exist, a callback-lifted guest that suspends across
+`waitable-set.wait` is a follow-up on `WASI-PREVIEW3-ASYNC-PLAN.md`, not part
+of P3.
 
 ### 3.8 The sim
 
@@ -290,11 +294,15 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    peepholes on the rows `semlower` marks. Gate: `TestSelfHostTaskScheduler`
    (a function three calls deep parks twice inside a loop and a branch, driven
    by hand, x86-64 and arm64) and `TestTaskSchedulerFallback` (the Go
-   compiler's blocking fallback). The Go compiler, the interp and wasm carry
+   compiler's blocking fallback). The Go compiler and the interp carry
    the primitives in the blocking fallback, so every stdlib module compiles
-   everywhere; the wasm runtime bodies that let a wasm task park are the next
-   slice's, and the classifier's indirect-call rule has no closure body
-   reaching a park yet to exercise it.
+   everywhere. wasm's runtime bodies (`wasm_ir.task_funcs`, the WAT twin of
+   `rt_src_task`, every word 8 bytes so a saved i64 or f64 keeps its width)
+   landed after slice 6: `TestSelfHostTaskPortable` parks the same program
+   on x86-64, arm64 and wasm, composed with `cmd/fern/wit`'s world so the
+   list-returning `wasi:io/poll poll` import lifts. The classifier's
+   indirect-call rule has no closure body reaching a park yet to exercise
+   it.
 3. **Native and interp fallback.** Done with slice 2 for the primitives; the
    differential rows follow with the first stdlib caller of `suspend`.
 4. **The client suspends. Landed.** `async.wait_any(set, timeout_ms)` is
