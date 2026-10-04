@@ -285,6 +285,8 @@ function run(r: irtables.LowerResult, set: Set, given: string[]): Tx {
       t = flush(t);
       let top: i32 = t.carry.len() - 1;
       t = Tx { ...t, out: t.out.append(o), seg: t.carry[top], carry: sub_carry(t.carry, top) };
+    } else if (ir.op_pops(o) < 0) {
+      t = Tx { ...t, why: "suspend: " + r.name + ": " + ir.kind_name(k) + " has no modelled stack effect" };
     } else {
       t = Tx { ...t, seg: t.seg.append(o) };
     }

@@ -5581,7 +5581,7 @@ function pops1_io(t: i32): boolean {
     || t == 169 || t == 233 || t == 171 || t == 172 || t == 173  // read_file, read_file_bytes, read_dir, remove_dir_all, remove_file
     || t == 340  // unix_connect (path)
     || t == 310  // read_dir_all
-    || t == 174 || t == 175 || t == 176 || t == 179 || t == 181  // temp_dir, stat, env, reader_close, sleep_ms
+    || t == 174 || t == 175 || t == 236 || t == 176 || t == 179 || t == 181  // temp_dir, stat, lstat, env, reader_close, sleep_ms
     || t == 266  // sleep_ns
     || t == 168  // read_line (fd)
     || t == 231 || t == 232  // create_dir_all, isatty
