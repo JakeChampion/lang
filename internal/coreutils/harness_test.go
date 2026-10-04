@@ -227,6 +227,10 @@ type invocation struct {
 	// without this their whole corpus passes on a utility that parsed its
 	// operands, printed every line, and made no call. Needs seedTree.
 	ownership bool
+	// context puts each entry's raw `security.selinux` attribute into the
+	// tree comparison, a symlink's own rather than its target's. `chcon`
+	// needs it for the reason `chown` needs ownership. Needs seedTree.
+	context bool
 	// sparse puts each regular file's ALLOCATED BLOCK COUNT into the tree
 	// comparison. Off by default, and for the same reason ownership is: a
 	// block count depends on the filesystem under the test directory, so
@@ -318,6 +322,9 @@ type treeEntry struct {
 	mode    uint32
 	target  string
 	content string
+	// The raw `security.selinux` value, or "" for none or a case that did
+	// not ask.
+	selinux string
 	// "uid:gid", or "" for a case that did not ask. Read with lstat, so a
 	// symlink reports its own rather than its target's — which is the whole
 	// difference between `chown -h` and `chown`.
@@ -1363,10 +1370,11 @@ func ownerOf(t *testing.T, path string, info os.FileInfo) string {
 type treeOpts struct {
 	ownership bool
 	sparse    bool
+	context   bool
 }
 
 func treeOptsOf(inv invocation) treeOpts {
-	return treeOpts{ownership: inv.ownership, sparse: inv.sparse}
+	return treeOpts{ownership: inv.ownership, sparse: inv.sparse, context: inv.context}
 }
 
 func readTree(t *testing.T, root string, opts treeOpts) []treeEntry {
@@ -1485,6 +1493,9 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, o
 		e := treeEntry{name: prefix + rel, kind: treeKind(mode), mode: permBits(mode), blocks: -1}
 		if opts.ownership {
 			e.owner = ownerOf(t, path, info)
+		}
+		if opts.context {
+			e.selinux = entryContext(path)
 		}
 		if was, ok := opened[path]; ok {
 			// Reopened below so the walk could enter it; the mode the
@@ -2246,6 +2257,8 @@ func treeDiff(want, got []treeEntry, wantWho, gotWho string) string {
 			lines = append(lines, fmt.Sprintf("  %s: %s hard-link group %d, %s hard-link group %d", n, wantWho, we.group, gotWho, ge.group))
 		case we.owner != ge.owner:
 			lines = append(lines, fmt.Sprintf("  %s: %s owner %s, %s owner %s", n, wantWho, we.owner, gotWho, ge.owner))
+		case we.selinux != ge.selinux:
+			lines = append(lines, fmt.Sprintf("  %s: %s context %s, %s context %s", n, wantWho, quote([]byte(we.selinux)), gotWho, quote([]byte(ge.selinux))))
 		case we.blocks != ge.blocks:
 			lines = append(lines, fmt.Sprintf("  %s: %s %d blocks, %s %d blocks", n, wantWho, we.blocks, gotWho, ge.blocks))
 		}

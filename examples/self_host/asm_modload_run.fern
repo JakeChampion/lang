@@ -1117,7 +1117,7 @@ function main(): i32 {
         }
         // IR-or-error (#3457 slice 5) — see asm_load_run's arm64 leg.
         let d64: semlower.Driven = semlower.driven(merged_emitted(merged), target);
-        write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub));
+        write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub, 0 as usize));
         return 0;
       }
       // OVER the merged 512-function IR budget: route per-module (each

@@ -10091,6 +10091,8 @@ pub function builtin_function_names(): string[] {
     "rename_noreplace", "rename_exchange",
     // an entry's extended attribute, following a final symlink or not
     "getxattr", "lgetxattr",
+    // create or replace one
+    "setxattr", "lsetxattr",
     // the metadata writes on an entry that already exists: its permission
     // bits (with and without following a final symlink) and its two
     // timestamps
