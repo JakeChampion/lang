@@ -2063,6 +2063,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"match-guard-bool-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has(n) when n > 0 => { return n; }, _ => { return 0; } } }\n", nil},
 		// E015: variant pattern binding count must match the variant's payload count.
 		{"variant-too-many-bindings", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has(a, b) => { return a; }, Nil => { return 0; } } }\n", []string{"E015"}},
+		// A bare payload-less variant name in a GENERIC payload slot is a
+		// binder too: which enum the slot holds comes from the scrutinee's
+		// instantiation (#11368). A variant with a payload is a plain binder.
+		{"generic-slot-payloadless-binder-option", "function f(): Option[IoError] { return None; }\nfunction main(): i32 { match (f()) { Some(Unsupported) => { return 0; }, _ => { return 1; } } }\n", []string{"E015"}},
+		{"generic-slot-payloadless-binder-result", "function f(): Result[i32, IoError] { return Ok(1); }\nfunction main(): i32 { match (f()) { Ok(n) => { return n; }, Err(Interrupted) => { return 0; } } }\n", []string{"E015"}},
+		{"generic-slot-payloadless-binder-user", "enum Box[T] { Full(T), Empty }\nenum C { Red, Blue }\nfunction main(): i32 { let b: Box[C] = Full(Red); match (b) { Full(Blue) => { return 1; }, Empty => { return 0; } } }\n", []string{"E015"}},
+		{"generic-slot-payload-variant-name-binds", "function f(): Option[IoError] { return None; }\nfunction main(): i32 { match (f()) { Some(NotFound) => { return 0; }, _ => { return 1; } } }\n", nil},
 		{"variant-missing-binding", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has => { return 1; }, Nil => { return 0; } } }\n", []string{"E015"}},
 		{"variant-binding-arity-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
 		// E015 continued: a RECORD-form variant (#6676) is destructured by field
