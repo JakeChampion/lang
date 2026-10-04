@@ -9,43 +9,15 @@ import (
 	"testing"
 )
 
-// TestSelfHostIREligibilityProbe exercises the asm_ir_run driver's `-ir-probe`
-// flag, which prints the typed lowering's verdict (semlower.verdict_text)
-// instead of emitting asm: `<name>: ir` for each declaration it produces,
-// `<name>: refused: <why>` for each it refuses, and last the module's line.
-// The cases pin a module produced whole, a refusal with its reason, a program
-// the checks refuse (its diagnostic in place of the rows), a main-less module,
-// and a receiver method keyed by its dispatch label.
-func TestSelfHostIREligibilityProbe(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	// The probe driver = asm_ir_run.fern (writeSelfHostAsmProject copies its
-	// ./-imports; std/io resolves from the real stdlib root).
-	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun")
+type irProbeCase struct {
+	name        string
+	src         string
+	wantVerdict string   // a line the report must contain
+	wantLines   []string // per-function lines the report must contain
+}
 
-	probe := func(t *testing.T, prog string) string {
-		t.Helper()
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, "-ir-probe")
-		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir-probe")...)
-		}
-		cmd.Stdin = bytes.NewReader([]byte(prog))
-		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("probe driver failed for %q: %v", prog, err)
-		}
-		return string(out)
-	}
-
-	cases := []struct {
-		name        string
-		src         string
-		wantVerdict string   // a line the report must contain
-		wantLines   []string // per-function lines the report must contain
-	}{
+func irProbeCases() []irProbeCase {
+	return []irProbeCase{
 		{
 			name:        "pure-i32",
 			src:         "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(2, 3); }",
@@ -92,7 +64,53 @@ func TestSelfHostIREligibilityProbe(t *testing.T) {
 			wantVerdict: "module: IR",
 			wantLines:   []string{"P.get: ir", "main: ir"},
 		},
+		{
+			name:        "generic-template-and-instances",
+			src:         `function id[T](x: T): T { return x; } function main(): i32 { let s = id("hi"); return id(s.len()); }`,
+			wantVerdict: "module: IR",
+			wantLines:   []string{"id: template", "main: ir"},
+		},
+		{
+			name:        "bodyless-import",
+			src:         `@import("test", "external") function external(x: i32): i32; function main(): i32 { return external(7); }`,
+			wantVerdict: "module: IR",
+			wantLines:   []string{"external: extern", "main: ir"},
+		},
 	}
+}
+
+// TestSelfHostIREligibilityProbe exercises the asm_ir_run driver's `-ir-probe`
+// flag, which prints the typed lowering's verdict (semlower.verdict_text)
+// instead of emitting asm: `<name>: ir` for each declaration it produces,
+// `<name>: refused: <why>` for each it refuses, and last the module's line.
+// The cases pin a module produced whole, a refusal with its reason, a program
+// the checks refuse (its diagnostic in place of the rows), a main-less module,
+// and a receiver method keyed by its dispatch label.
+func TestSelfHostIREligibilityProbe(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	// The probe driver = asm_ir_run.fern (writeSelfHostAsmProject copies its
+	// ./-imports; std/io resolves from the real stdlib root).
+	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun")
+
+	probe := func(t *testing.T, prog string) string {
+		t.Helper()
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin, "-ir-probe")
+		} else {
+			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir-probe")...)
+		}
+		cmd.Stdin = bytes.NewReader([]byte(prog))
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("probe driver failed for %q: %v", prog, err)
+		}
+		return string(out)
+	}
+
+	cases := irProbeCases()
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -219,12 +237,55 @@ func TestSelfHostPathProbePrintsRefused(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_pathprobe_run.fern")
 	probe := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-	if got := strings.TrimSpace(string(runCapture(t, gcc, runner, probe, []byte(viewCaptureSrc)))); got != "refused" {
-		t.Errorf("path probe = %q on a refused module, want \"refused\"", got)
+	for _, c := range irProbeCases() {
+		t.Run(c.name, func(t *testing.T) {
+			want := "refused"
+			if c.wantVerdict == "module: IR" {
+				want = "ir"
+			}
+			if got := strings.TrimSpace(string(runCapture(t, gcc, runner, probe, []byte(c.src)))); got != want {
+				t.Errorf("path probe = %q, want %q", got, want)
+			}
+		})
 	}
-	produced := "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(2, 3); }\n"
-	if got := strings.TrimSpace(string(runCapture(t, gcc, runner, probe, []byte(produced)))); got != "ir" {
-		t.Errorf("path probe = %q on a module produced whole, want \"ir\"", got)
+}
+
+// The boolean query must agree with the detailed report after each target's
+// normalisation, including refusals, generic instances and bodyless imports.
+func TestSelfHostVerdictBoolean(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "asm_pathprobe_run.fern")
+	const src = `import "./parser";
+import "./rundriver";
+import "./semlower";
+function main(): i32 {
+  let mod: parser.Module = rundriver.parse_stdin("verdict_boolean");
+  for target in ["x86-64-linux", "arm64-linux", "arm64-darwin", "wasm32-wasi"] {
+    let detailed: semlower.Verdict = semlower.verdict(mod, target);
+    let ok: boolean = semlower.verdict_ok(mod, target);
+    if (ok != detailed.ok) {
+      eprint(target + ": verdict mismatch\n" + semlower.verdict_text(detailed));
+      return 1;
+    }
+    if (ok) { write("ir\n"); } else { write("refused\n"); }
+  }
+  return 0;
+}`
+	if err := os.WriteFile(filepath.Join(dir, "verdict_boolean.fern"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probe := buildSelfHostBin(t, gcc, dir, "verdict_boolean.fern", "verdict_boolean")
+	for _, c := range irProbeCases() {
+		t.Run(c.name, func(t *testing.T) {
+			want := "refused\n"
+			if c.wantVerdict == "module: IR" {
+				want = "ir\n"
+			}
+			if got := string(runCapture(t, gcc, runner, probe, []byte(c.src))); got != strings.Repeat(want, 4) {
+				t.Errorf("target verdicts = %q, want %q", got, strings.Repeat(want, 4))
+			}
+		})
 	}
 }
 
