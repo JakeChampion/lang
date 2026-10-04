@@ -45,6 +45,7 @@ function main(): i32 {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			i := interp.New()
+			i.SetDynCoercions(info.DynCoercions)
 			i.Stdin = io.MultiReader(strings.NewReader(tc.prefix), iotest.ErrReader(syscall.EIO))
 			for _, ed := range prog.Enums {
 				i.RegisterEnum(ed)

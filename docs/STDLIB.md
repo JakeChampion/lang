@@ -2020,6 +2020,17 @@ old `concurrent { … }` / `await` keyword surface.
   form, and the native compiler keeps the blocking fallback, where
   `task_start` runs its entry to completion. `cancelled()` is what a
   cancelled task's waits answer from then on.
+- `gather_tasks(entries, on_incomplete)`, `race_tasks(entries, none_val)`
+  and `with_deadline_tasks(deadline, entries)` — the task combinators: each
+  runs its `() => T` entries as tasks of the calling task and parks on the
+  union of their waits. `gather_tasks` answers every result in order,
+  `race_tasks` the `(index, value)` of the first to finish with the rest
+  cancelled, `with_deadline_tasks` `Some(value)` for each finished in time
+  and `None` for each cancelled at the deadline. A cancelled child leaves
+  through its own exit paths, `defer`s included, and a task that is itself
+  cancelled cancels its children. The `Future` combinators above park too
+  when called inside a task. Under the blocking fallback the entries run to
+  their end in order, so the first wins every race.
 
 ### `std/platform`
 

@@ -134,6 +134,14 @@ graph = ssa.SFunc { name: "byte_view", nparams: 1, nvals: 2, entry: 7, takes_env
 ] };
 `
 
+const semanticAppendRange = `
+params = [st, view, i32t, i32t]; types = [st, view, i32t, i32t, st]; result = st;
+graph = ssa.SFunc { name: "append_range", nparams: 4, nvals: 5, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2), inst(6, 3, [], 3),
+        inst(ssasem.append_range(), 4, [0, 1, 2, 3], 0)], term: ret(4) }
+] };
+`
+
 const semanticViewMutation = `
 let av: typeinfo.Type = typeinfo.TypeArray { elem: i32t, view: true };
 params = [av, i32t, i32t]; types = [av, i32t, i32t, av]; result = av;
@@ -150,6 +158,10 @@ func semanticCases() []struct{ name, change, want string } {
 		{"array-view-cannot-append", semanticViewMutation, "append receiver must own storage"},
 		{"array-view-cannot-update", semanticViewMutation + "graph = change(graph, 3, inst(ssasem.with(), 3, [0, 1, 2], 0));", "with receiver must own storage"},
 		{"array-view-needs-owned-construction", semanticArrayLend + "graph = change(graph, 1, inst(ssasem.array_new(), 1, [], 0));", "array construction must own storage"},
+		{"append-range", semanticAppendRange, ""},
+		{"append-range-arity", semanticAppendRange + "graph = change(graph, 4, inst(ssasem.append_range(), 4, [0, 1, 2], 0));", "append range arity"},
+		{"append-range-view-receiver", semanticAppendRange + "types = types.with(0, view); params = params.with(0, view);", "append range string type"},
+		{"append-range-bound-type", semanticAppendRange + "types = types.with(2, st); params = params.with(2, st);", "append range bound type"},
 		{"byte-view", semanticByteView, ""},
 		{"byte-view-string-view", semanticByteView + "types = [view, bv]; params = [view];", ""},
 		{"byte-view-call", semanticByteView + `calls = [contract("lend", [st], [2], bv)]; anchors = [ssasem.Anchor { name: "lend", params: [0] }]; graph = change(graph, 1, call_inst(1, "lend", [0]));`, ""},

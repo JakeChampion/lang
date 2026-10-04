@@ -15,28 +15,17 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/parser"
-	"github.com/jakechampion/lang/internal/symname"
 )
 
 // First arm64 e2e: `function main(): i32 { return 42; }`
-// validates the toolchain end-to-end. Compiles via the
-// new arm64 backend, links a static -nostdlib ELF with
-// aarch64-linux-gnu-gcc, runs under qemu-aarch64, and
-// confirms the kernel propagates main's return value
-// through `exit_group` to qemu's exit code.
+// validates the toolchain end-to-end. Compiles with the
+// self-host compiler for arm64-linux, runs under
+// qemu-aarch64, and confirms the kernel propagates main's
+// return value through `exit_group` to qemu's exit code.
 func TestArm64ExitCode(t *testing.T) {
 	for _, want := range []int{0, 1, 42, 137, 250} {
 		src := "function main(): i32 { return " + intToString(want) + "; }"
@@ -9471,13 +9460,11 @@ func TestArm64Print(t *testing.T) {
 
 // arm64 args() — materialises argv as a length-prefixed
 // string[]. compileAndRunArm64 doesn't pass extra args, so
-// we drive qemu-aarch64 directly with a fixed argv list and
+// we run the binary with a fixed argv list and
 // check len + each entry. argv[0] is implementation-defined
 // (the binary path under emulation, often `/tmp/...`); we
 // just check that it ends with our binary name.
 func TestArm64Args(t *testing.T) {
-	gcc, qemu := arm64Tooling(t)
-
 	src := `function main(): i32 {
     let a: string[] = args();
     let i: i32 = 0;
@@ -9487,38 +9474,7 @@ func TestArm64Args(t *testing.T) {
     }
     return a.len();
 }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	// Monomorphise generic functions before codegen — the
-	// production driver (cmd/fern) always runs this; the e2e
-	// harness was missing it which only mattered once OpCallDirect
-	// started consulting per-arg types for SysV register allocation
-	// under the two-word string ABI.
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := arm64codegen.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
+	binPath, qemu := compileArm64Bin(t, src)
 	cmd := runArm64Bin(qemu, binPath, "alpha", "beta", "gamma")
 	out, _ := cmd.CombinedOutput()
 	if got, want := cmd.ProcessState.ExitCode(), 4; got != want {
@@ -9717,8 +9673,6 @@ function main(): i32 {
 // closes the listener — tiny TOCTOU window before the binary
 // claims it, acceptable for CI.
 func TestArm64HttpHandler(t *testing.T) {
-	gcc, qemu := arm64Tooling(t)
-
 	// Pick a free port. Close the Go listener immediately so
 	// the lang binary can claim it. Race window is small in
 	// practice.
@@ -9736,45 +9690,7 @@ import "std/platform";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("method=" + req.method + " path=" + req.path + " body-len=" + req.body_len().to_string());
 }`
-
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	// modload (not bare parser.Parse) so std/http + std/serve resolve.
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	// Monomorphise generic functions before codegen — the
-	// production driver (cmd/fern) always runs this; the e2e
-	// harness was missing it which only mattered once OpCallDirect
-	// started consulting per-arg types for SysV register allocation
-	// under the two-word string ABI.
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := arm64codegen.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
-	}
+	binPath, qemu := compileArm64Bin(t, src)
 
 	cmd := runArm64Bin(qemu, binPath)
 	cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
@@ -9841,241 +9757,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 }
 
-// arm64-darwin baseline: native Apple Silicon macOS Mach-O
-// binaries. Compiles via clang --target=arm64-apple-darwin +
-// lld's Mach-O backend; the resulting binary runs natively on
-// Apple Silicon Macs (no Linux container needed). Tests
-// can't execute the binary here (qemu-aarch64 only emulates
-// Linux), so they assert the output is a valid Mach-O 64-bit
-// arm64 executable.
-//
-// All three syscall surfaces the runtime needs are now
-// Darwin-aware: SYS_exit (1), SYS_mmap (197) in __fern_alloc,
-// and the TCP/IO family (socket=97, bind=104, listen=106,
-// accept=30, read=3, write=4, close=6). Each emits via
-// `svc #0x80` with x16=number, and TCP/IO normalises Darwin's
-// C-flag error shape into Linux-style -errno in x0 so the
-// existing callers' `cmp x0, #0; blt` checks work unchanged.
-func TestArm64DarwinBuilds(t *testing.T) {
-	if _, err := exec.LookPath("clang"); err != nil {
-		t.Skip("clang not on PATH; skipping arm64-darwin cross-compile e2e")
-	}
-	// lld is required for Mach-O cross-compilation from Linux,
-	// but on a native macOS arm64 host clang ships with ld64
-	// and we don't need (or want) lld. The macOS CI runner
-	// hits this branch.
-	native := runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
-	if !native {
-		if _, err := exec.LookPath("ld.lld"); err != nil {
-			t.Skip("lld not on PATH; skipping arm64-darwin cross-compile e2e")
-		}
-	}
-
-	cases := []struct {
-		name     string
-		src      string
-		wantExit int
-	}{
-		// Plain return — exercises only SYS_exit.
-		// String concat — exercises SYS_mmap via __fern_alloc.
-		// TCP listen + close — exercises socket/bind/listen/close
-		// syscalls (Darwin numbers + svc #0x80 path).
-		{"tcp", `function main(): i32 {
-    let fd: i32 = tcp_listen(0);
-    if (fd < 0) { return 1; }
-    tcp_close(fd);
-    return 42;
-}`, 42},
-		// Array push — exercises the IR's emitArrayPush
-		// inline lowering (alloc + memcpy + tail store).
-		// push() returns a new array; lang uses value
-		// semantics so the receiver must be reassigned.
-		// Stdout builtins — print(s) lowers to two write(2)s
-		// (string + newline), putchar(c) to a single 1-byte
-		// write. Exercises Darwin write syscall + the
-		// .LLangNewline rodata entry on Mach-O.
-		// exit(code) — direct exit syscall; bypasses main's
-		// normal return path. Verifies the user-supplied code
-		// makes it through Darwin's `mov x16, #1; svc #0x80`
-		// flavour of exit.
-		// args() — argv reader. With no extra args passed by
-		// the harness, argv contains just the binary path, so
-		// argc == 1. Verifies the start-runtime prologue
-		// stashed argc/argv from the kernel-delivered stack.
-		// stdin().read_line() — exercises the .bss buffer +
-		// byte-by-byte read syscall + Option[string] result.
-		// CI runs the binary with no stdin attached, so the
-		// first read returns 0 (EOF) and we get None.
-		// Map[i32, i32] — pointer-width fix exercise. The
-		// Map handle now uses __store_ptr / __load_ptr (8
-		// bytes on arm64) so the buf pointer round-trips
-		// correctly even when macOS hands us heap addresses
-		// above 4 GiB.
-		{"map_i32", `
-import "core/map";
-import "core/map";
-function main(): i32 {
-    let m: Map[i32, i32] = map_new(4);
-    m = m.insert(1, 100);
-    m = m.insert(2, 200);
-    return m.get_or(2, 0);
-}`, 200},
-		// Map[string, i32] — string keys exercise the
-		// pointer-width entry-slot fix. set("world", 99)
-		// writes the string pointer through __store_ptr (8
-		// bytes on arm64), so lookup with the same key
-		// (FNV-1a hash + byte-wise string compare) finds
-		// the entry even when the heap is above 4 GiB. The
-		// returned i32 value is held in x0 untruncated.
-		// Map[i32, string] — string values. get_or returns
-		// the entry's pointer-width V slot via __load_ptr;
-		// the i32-typed return is held in x0 as a full 64-bit
-		// pointer, and len(s) reads s's length prefix at
-		// the correct (high-bit-preserved) address.
-		// Map[string, string] — both key and value are
-		// pointer-width. End-to-end check that the entry
-		// stride doubled to 2*ptr_width on arm64 (16 bytes)
-		// without breaking the bucket arithmetic.
-		// Iteration over Map[string, i32] via has_next /
-		// key / value — accumulates the sum of all values.
-		// Exercises __mapiter_entry_addr's stride math and
-		// the pointer-width key load (even though we don't
-		// inspect keys here, the iterator's address math
-		// must use the same entryStride or it'd walk off).
-		// Delete over a string-keyed map — verifies the
-		// swap-with-last path correctly uses __load_ptr /
-		// __store_ptr on the moved entry's K/V slots. After
-		// removing "b" and "c", get_or("a") still finds the
-		// remaining entry.
-		// Option[string] payload — the Some(s) variant now
-		// stores `s` in a pointer-width payload slot (8
-		// bytes on arm64), so the high 32 bits of macOS
-		// heap pointers survive the match's payload-load.
-		// `len(s)` reads s's length prefix at [s_ptr - 4],
-		// which would trap on a truncated pointer.
-		// User-defined enum with a pointer-typed payload —
-		// same widening as Option[string] but exercises the
-		// full payloadLayout / payloadStore / payloadLoad
-		// triple for a non-prelude variant.
-		// Struct with a string field — exercises ptrW-aware
-		// field offsets and stores. `name` lands at offset
-		// 8 (aligned to 8) on arm64, sandwiched between two
-		// i32 fields, and round-trips a real heap pointer.
-		{"struct_str_field", `struct Person {
-    age: i32,
-    name: string,
-    weight: i32
-}
-function main(): i32 {
-    let p: Person = Person { age: 30, name: "Claude", weight: 100 };
-    return p.name.len() + p.age + p.weight;
-}`, 136},
-		// Array of strings — array literal stride + element
-		// store widened to 8 bytes for pointer-typed elems
-		// on arm64; indexing via __arr_idx_8 picks the
-		// matching `lsl #3` address compute.
-		// Map[string, i32].keys() — the snapshot array is
-		// now ptrW-aware (destStride=8 on arm64 for pointer
-		// K), so iterating the keys() result and calling
-		// len() on each returns valid lengths instead of
-		// segfaulting on truncated pointers.
-		// Map[i32, string].values() — same shape on the V
-		// side. valKind is now tracked at buf+12 so
-		// __map_values_impl picks destStride correctly per-
-		// instance without per-V monomorphisation.
-		// Probe for the arm64-darwin heap-address truncation
-		// bug (BACKEND-PARITY.md "Known limitations"). Map
-		// values are HEAP-allocated strings (built via concat
-		// at runtime), NOT .rodata literals. On macOS the
-		// mmap address hint is ignored and the heap lands at
-		// a high (>4 GiB) address. Declaring the Map runtime's
-		// pointer locals + params as `i32` truncates the high 32
-		// bits of the round-tripped pointer, so the V-side of
-		// every Map helper (and most K-side cases) is `usize`
-		// and the full 8-byte address survives. The
-		// previous `t.Skip` on Darwin has been removed —
-		// macOS CI now exercises this case alongside Linux.
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			// modload.LoadSource (not bare parser.Parse) so the
-			// programs' std/ + core/ imports resolve under no-prelude.
-			prog, _, err := modload.LoadSource(c.src)
-			if err != nil {
-				t.Fatalf("load: %v", err)
-			}
-			if err := constfold.Fold(prog, nil); err != nil {
-				t.Fatalf("constfold: %v", err)
-			}
-			info, err := checker.Check(prog)
-			if err != nil {
-				t.Fatalf("check: %v", err)
-			}
-			asm, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: true})
-			if err != nil {
-				t.Fatalf("emit: %v", err)
-			}
-
-			dir := t.TempDir()
-			asmPath := filepath.Join(dir, "prog.s")
-			binPath := filepath.Join(dir, "prog")
-			if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-				t.Fatalf("write asm: %v", err)
-			}
-			// On macOS arm64 native, the default clang IS the
-			// arm64-apple-darwin clang and ld64 is its default
-			// linker; the cross-compile flags would force an
-			// unnecessary lld dependency. Cross from Linux
-			// requires lld because the host's clang defaults
-			// to ELF.
-			var args []string
-			if native {
-				// Newer ld64 (Xcode 16+ on macOS Sequoia/
-				// Tahoe) refuses dynamic executables without
-				// libSystem.dylib linked. `-nostdlib`
-				// suppresses crt0/libc startup; `-lSystem`
-				// re-adds just the dyld-stub linkage. See
-				// cmd/fern/main.go's linkDarwin for matching
-				// production-driver behaviour.
-				args = []string{"-nostdlib", "-lSystem", asmPath, "-o", binPath}
-			} else {
-				args = []string{
-					"--target=arm64-apple-darwin",
-					"-fuse-ld=lld",
-					"-nostdlib",
-					"-Wl,-arch,arm64",
-					asmPath,
-					"-o", binPath,
-				}
-			}
-			if out, err := exec.Command("clang", args...).CombinedOutput(); err != nil {
-				t.Fatalf("clang Mach-O: %v\n%s\n--- asm ---\n%s", err, out, asm)
-			}
-			out, _ := exec.Command("file", binPath).CombinedOutput()
-			// Linux `file` reports "Mach-O 64-bit arm64 executable";
-			// macOS `file` reports "Mach-O 64-bit executable arm64"
-			// (word order differs). Both are fine — check the three
-			// pieces separately.
-			s := string(out)
-			if !strings.Contains(s, "Mach-O 64-bit") || !strings.Contains(s, "arm64") || !strings.Contains(s, "executable") {
-				t.Errorf("not a Mach-O arm64 executable: %s\n%s", out, asm)
-			}
-			// Cross-compilation hosts can't run the Mach-O —
-			// qemu-aarch64 only speaks the Linux ABI. The
-			// macos-14 CI runner hits this and verifies the
-			// runtime actually behaves correctly.
-			if native {
-				cmd := exec.Command(binPath)
-				_, _ = cmd.CombinedOutput()
-				if got := cmd.ProcessState.ExitCode(); got != c.wantExit {
-					t.Errorf("native exit = %d, want %d\n--- asm ---\n%s", got, c.wantExit, asm)
-				}
-			}
-		})
-	}
-}
-
 // arm64 control flow: while loop, if/else, comparison ops.
 // Verifies OpBlock / OpLoop / OpIf / OpEnd / OpBr / OpBrIf
 // scope tracking + the cbz / cbnz branch idioms.
@@ -10112,19 +9793,10 @@ function main(): i32 {
 	}
 }
 
-// Tail-call optimisation. arm64 now wires `ir.TailCallOptimize`
-// (backported from PR #274's x86-64 first-consumer wire-up).
-// Two assertions:
-//
-//  1. The asm has exactly one `bl sum_to` (the kick-off from
-//     `main`). Without TCO the recursive site would still
-//     emit `bl <self>`; with TCO that site becomes
-//     `b .Lloop_top`.
-//  2. Recursion that would overflow the qemu-aarch64 default
-//     stack returns cleanly with the right value.
+// Tail-call optimisation: recursion that would overflow the
+// qemu-aarch64 default stack returns cleanly with the right
+// value. TestSelfHostTcoIR holds the deeper cases per target.
 func TestArm64TailCall(t *testing.T) {
-	gcc, qemu := arm64Tooling(t)
-
 	src := `function sum_to(n: i32, acc: i32): i32 {
     if (n == 0) { return acc; }
     return sum_to(n - 1, acc + n);
@@ -10132,42 +9804,7 @@ func TestArm64TailCall(t *testing.T) {
 function main(): i32 {
     return sum_to(100000, 0);
 }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	// Monomorphise generic functions before codegen — the
-	// production driver (cmd/fern) always runs this; the e2e
-	// harness was missing it which only mattered once OpCallDirect
-	// started consulting per-arg types for SysV register allocation
-	// under the two-word string ABI.
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := arm64codegen.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	if bl := "bl " + symname.Fn("sum_to"); strings.Count(asm, bl) != 1 {
-		t.Errorf("`%s` appearances = %d, want 1 (only from main); TCO didn't fire", bl, strings.Count(asm, bl))
-	}
-
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
+	binPath, qemu := compileArm64Bin(t, src)
 	cmd := runArm64Bin(qemu, binPath)
 	_, _ = cmd.CombinedOutput()
 	// 5,000,050,000 → i32 (705,082,704) → exit code (mod 256) = 80.
@@ -10970,43 +10607,12 @@ function main(): i32 {
 // back files the program created. Mirrors wasm's runWasmInDir.
 func compileArm64InDir(t *testing.T, src string, seed map[string]string) (stdout string, exitCode int, dir string) {
 	t.Helper()
-	gcc, qemu := arm64Tooling(t)
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	// Monomorphise generic functions before codegen — the
-	// production driver (cmd/fern) always runs this; the e2e
-	// harness was missing it which only mattered once OpCallDirect
-	// started consulting per-arg types for SysV register allocation
-	// under the two-word string ABI.
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := arm64codegen.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
+	binPath, qemu := compileArm64Bin(t, src)
 	dir = t.TempDir()
 	for name, content := range seed {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 			t.Fatalf("seed %s: %v", name, err)
 		}
-	}
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
 	}
 	cmd := runArm64Bin(qemu, binPath)
 	cmd.Dir = dir
@@ -11226,8 +10832,6 @@ func TestArm64FloatBitCast(t *testing.T) {
 }
 
 func TestArm64ReadLine(t *testing.T) {
-	gcc, qemu := arm64Tooling(t)
-
 	src := `function main(): i32 {
     match (stdin().read_line()) {
         Some(_) => { return 1; },
@@ -11235,38 +10839,7 @@ func TestArm64ReadLine(t *testing.T) {
     }
     return 0 - 1;
 }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	// Monomorphise generic functions before codegen — the
-	// production driver (cmd/fern) always runs this; the e2e
-	// harness was missing it which only mattered once OpCallDirect
-	// started consulting per-arg types for SysV register allocation
-	// under the two-word string ABI.
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := arm64codegen.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
+	binPath, qemu := compileArm64Bin(t, src)
 	runCase := func(stdin string, want int) {
 		t.Helper()
 		cmd := runArm64Bin(qemu, binPath)
@@ -11285,8 +10858,6 @@ func TestArm64ReadLine(t *testing.T) {
 // receiver-aware __fern_reader_read_line). Exercises the same
 // .bss buffer + byte loop + Some/None wrap.
 func TestArm64ReadLineBuiltin(t *testing.T) {
-	gcc, qemu := arm64Tooling(t)
-
 	src := `function main(): i32 {
     match (read_line()) {
         Some(_) => { return 1; },
@@ -11294,33 +10865,7 @@ func TestArm64ReadLineBuiltin(t *testing.T) {
     }
     return 0 - 1;
 }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := arm64codegen.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
+	binPath, qemu := compileArm64Bin(t, src)
 	runCase := func(stdin string, want int) {
 		t.Helper()
 		cmd := runArm64Bin(qemu, binPath)

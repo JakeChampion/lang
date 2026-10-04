@@ -443,8 +443,7 @@ func TestX86_64Floats(t *testing.T) {
 // Cheap f64 math intrinsics — abs/sqrt/floor/ceil/trunc lower to
 // SSE one-liners; round is round-half-away-from-zero (matching the
 // interpreter's math.Round and arm64's frinta), implemented via the
-// trunc + exact-frac sequence. Mirrors TestArm64NativeBackendRunsUnderQemu's
-// f64 cases and adds the rounding edge cases x86's roundsd can't do
+// trunc + exact-frac sequence. Adds the rounding edge cases x86's roundsd can't do
 // directly (ties-away on negatives, and the x+0.5 representability
 // trap the naive formula falls into).
 func TestX86_64FloatIntrinsics(t *testing.T) {
@@ -792,8 +791,7 @@ func TestX86_64StringAsBytes(t *testing.T) {
 //  2. Stdin = "hello\n" → first 6 bytes including the
 //     newline land in the buffer → Some(line) → exit 1.
 //
-// Mirrors `TestArm64DarwinBuilds/read_line` for the same
-// Option[string] payload-at-+8 layout.
+// Same Option[string] payload-at-+8 layout as the arm64 read_line tests.
 func TestX86_64ReadLine(t *testing.T) {
 	src := `function main(): i32 {
     match (stdin().read_line()) {
