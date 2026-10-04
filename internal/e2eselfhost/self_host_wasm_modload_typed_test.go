@@ -255,10 +255,9 @@ function main(): i32 { let f: () => i32 = viewer(3); return f(); }
 		}
 	})
 
-	// A type that holds itself, merged past its source, has no copy and is a
-	// typed refusal by name (TestSelfHostSemIRStrict); a dyn holding a view
-	// is copied at the merge since #10909.
-	t.Run("refusal_fails_the_emit", func(t *testing.T) {
+	// Recursive view-bearing types now copy through helpers. Keep the
+	// former refusal as a linked execution test of the copied list.
+	t.Run("recursive_view_merged_past_source_runs", func(t *testing.T) {
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")
 		write(t, entry, `import "std/i32";
@@ -281,9 +280,26 @@ function g(n: i32): i32 {
 }
 function main(): i32 { return g(3) + g(0); }
 `)
-		_, se, code := drive(t, entry, nil, "-per-module-emit", "0")
-		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: g: a value merged past its source has no copy: L holds itself, so its copy would recurse") {
-			t.Fatalf("emit: exit %d, want 3 naming the refusal\n%s", code, se)
+		cacheDir := filepath.Join(proj, "cache")
+		if err := os.Mkdir(cacheDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, se, code := drive(t, entry, nil, "-per-module-emit-all", "-cache-dir", cacheDir); code != 0 {
+			t.Fatalf("emit: exit %d\n%s", code, se)
+		}
+		wat, se, code := drive(t, entry, nil, "-link", "-cache-dir", cacheDir)
+		if code != 0 {
+			t.Fatalf("link: exit %d\n%s", code, se)
+		}
+		watPath := filepath.Join(proj, "recursive.wat")
+		wasmPath := filepath.Join(proj, "recursive.wasm")
+		write(t, watPath, wat)
+		if out, err := exec.Command(wasmtools, "parse", watPath, "-o", wasmPath).CombinedOutput(); err != nil {
+			t.Fatalf("wasm-tools parse: %v\n%s", err, out)
+		}
+		var ee *exec.ExitError
+		if err := exec.Command(wasmtime, "run", wasmPath).Run(); !errors.As(err, &ee) || ee.ExitCode() != 3 {
+			t.Fatalf("linked recursive module: %v, want exit 3", err)
 		}
 	})
 }

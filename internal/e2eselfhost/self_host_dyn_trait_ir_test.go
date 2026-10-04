@@ -218,7 +218,15 @@ func TestSelfHostDynTraitIR(t *testing.T) {
 				if code != tc.expected {
 					t.Fatalf("exited %d, want %d\n%s", code, tc.expected, stderr)
 				}
-				assertBalancedCensus(t, stderr)
+				if tc.name == "downcast-miss" || tc.name == "downcast-multi-miss" {
+					// Both the constant record and the None result are static.
+					allocs, frees, live := leakSummaryOf(t, tc.name, stderr)
+					if allocs != 0 || frees != 0 || live != 0 {
+						t.Fatalf("static downcast miss: allocs=%d frees=%d live=%d, want all zero", allocs, frees, live)
+					}
+				} else {
+					assertBalancedCensus(t, stderr)
+				}
 			})
 		}
 	}

@@ -197,7 +197,8 @@ func TestSelfHostNestedMatchBorrowHazardsX86_64(t *testing.T) {
 		wantFrees int64
 	}{
 		{
-			// Aliased in the same block as the match.
+			// Aliased in the same block as the match. The initial None is
+			// static; each round allocates only the Some box and its array.
 			name: "aliased_beside_the_match",
 			src: `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -217,7 +218,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 300,
+			wantFrees: 200,
 		},
 		{
 			// Aliased AFTER the block — the drop point is the last top-level
@@ -267,7 +268,8 @@ function main(): i32 {
 			wantFrees: 200,
 		},
 		{
-			// Passed to a callee that keeps it.
+			// Passed to a callee that keeps it. The initial None is static;
+			// each round allocates only the Some box and its array.
 			name: "passed_to_a_callee_that_keeps_it",
 			src: `function keepit(o: Option[i32[]]): Option[i32[]] { return o; }
 function round(i: i32): i32 {
@@ -288,7 +290,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 300,
+			wantFrees: 200,
 		},
 		{
 			// The arm BINDING escapes to an outer local.
@@ -356,7 +358,7 @@ function main(): i32 {
 			if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 				t.Fatalf("parse %q: %v", summary, err)
 			}
-			if frees != tc.wantFrees {
+			if allocs != tc.wantFrees || frees != tc.wantFrees || live != 0 {
 				t.Errorf("frees=%d, want exactly %d (allocs=%d live=%d) — a HIGHER count is "+
 					"the escaping value being released under a live reference; a lower one "+
 					"means this probe stopped exercising the path it was written for",

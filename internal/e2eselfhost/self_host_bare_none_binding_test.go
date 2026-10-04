@@ -31,7 +31,12 @@ func TestSelfHostBareNoneBinding(t *testing.T) {
 			if exit != 45 {
 				t.Fatalf("exit = %d, want 45\n%s", exit, stderr)
 			}
-			assertBalancedCensus(t, stderr)
+			// Payloadless Options are static, including a bare None whose
+			// payload type is inferred at its uses. No heap box is needed.
+			allocs, frees, live := leakSummaryOf(t, "bare None binding", stderr)
+			if allocs != 0 || frees != 0 || live != 0 {
+				t.Fatalf("bare None allocated: allocs=%d frees=%d live=%d, want all zero", allocs, frees, live)
+			}
 		})
 	}
 }
