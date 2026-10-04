@@ -11140,7 +11140,10 @@ function variant_pattern_owner(name: string): string {
 // enum's declared type-parameter count, it's E019. Checked at every
 // annotation position: parameter, struct field, return and body `let`. At
 // the last two the Go checker adds an E003 / E002 on the mismatched value as
-// well; this reports the E019 alone.
+// well; this reports the E019 alone. A declaration that shadows a built-in's
+// name is E010 and its arity is not judged, as native's reservedShadows
+// skips it: the built-in's own uses would otherwise count against the
+// shadowing declaration.
 function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
   let out: util.Diag[] = [];
   // An array of an instantiation (`Pair[i32][]`) names the same head.
@@ -11152,9 +11155,10 @@ function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.
     return out;
   }
   let base: string = util.base_type_name(t);
+  let shadows: boolean = parser.is_reserved_struct_name(base) || parser.is_reserved_enum_name(base);
   let tpc: i32 = struct_type_param_count(structs, base);
   if (tpc >= 0) {
-    if (nargs != tpc) {
+    if (nargs != tpc && !shadows) {
       out = out.append(dg_at("E019", "struct " + base + " has " + util.i32_to_string(tpc) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", struct_decl_line(structs, base), struct_decl_col(structs, base)));
     }
     return out;
@@ -11175,7 +11179,7 @@ function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.
     return out;
   }
   for ed in enums {
-    if (ed.name == base && ed.type_params.len() != nargs) {
+    if (ed.name == base && ed.type_params.len() != nargs && !shadows) {
       return out.append(dg_at("E019", "enum " + base + " has " + util.i32_to_string(ed.type_params.len()) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", ed.line, ed.col));
     }
   }

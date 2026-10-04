@@ -9,6 +9,7 @@
 //     fern -target wasm32-wasi <entry>      a wasi:cli/run component
 //     fern -emit asm <entry.fern>           emit the emitter's text instead
 //     fern -emit core-module -target …      a raw wasm core module
+//     fern -emit command-module -target …   the same core, named as the preview-1 command it is
 //     fern -check <entry.fern>              type-check; exit 0 ok / 1 bad
 //     fern -check <DIR>                     check a package, or every
 //                                           member of the workspace it roots
@@ -240,9 +241,19 @@ function finding_text(f: Finding, entry: string, files: string[]): string {
     return f.path + ":" + util.pos_str("", files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
   }
   if (f.diag.line > 0) {
-    return util.pos_str(entry, files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
+    return util.pos_str(entry_display(entry), files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
   }
   return tag + f.diag.message;
+}
+
+// entry_display is the entry path as a diagnostic names it: the path the
+// command line gave, or `<stdin>` for a program read from stdin, as native
+// spells it.
+function entry_display(entry_path: string): string {
+  if (entry_path == "-") {
+    return "<stdin>";
+  }
+  return entry_path;
 }
 
 // eprint_findings prints each finding and reports whether any rejects the
@@ -506,7 +517,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-  eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]");
+  eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module|command-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]");
   eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)");
   eprint("       fern -targets                                (list supported targets + capabilities)");
   eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)");
@@ -1694,10 +1705,7 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
 // todo_warnings lists the entry's remaining `todo` stubs, which an accepted
 // check still reports. An imported module's are not tracked, as native's are not.
 function todo_warnings(sites: parser.TodoSite[], entry_path: string): Finding[] {
-  let name: string = entry_path;
-  if (name == "-") {
-    name = "<stdin>";
-  }
+  let name: string = entry_display(entry_path);
   let out: Finding[] = [];
   for site in sites {
     out = out.append(Finding { diag: util.Diag { code: "", message: "`todo` stub remaining", line: site.line, col: site.col }, warning: true, path: name });
@@ -2695,8 +2703,21 @@ function run(): i32 {
     eprint("fern: -cover: -target " + target + " has no coverage instrumentation — build for x86-64-linux or arm64-linux, or drop -cover");
     return 2;
   }
+  // Native's `-emit command-module` is a WASI preview-1 command: the core
+  // bytes plus a `_start` that runs main and exits with its value, and an
+  // exported memory — the shape `wasmtime run` and a browser shim run. This
+  // compiler's core module already has both (and exports `main`, #10768), so
+  // the two forms are one artifact here and the spelling is accepted for the
+  // one target native gives it (#11408).
+  if (emit == "command-module") {
+    if (target != "wasm32-wasi") {
+      eprint("fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)");
+      return 2;
+    }
+    emit = "core-module";
+  }
   if (emit.len() > 0 && emit != "asm" && emit != "core-module") {
-    eprint("fern: unknown -emit: " + emit + " (want asm, core-module, or omit it for the target's default output form)");
+    eprint("fern: unknown -emit: " + emit + " (want asm, core-module, command-module, or omit it for the target's default output form)");
     return 2;
   }
   if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {

@@ -1563,8 +1563,11 @@ answer, these are the tools, in the order they are usually reached for:
 
   ON by default; observation only, so the emitted code is byte-identical
   either way and a diagnosis made under it is about the same compiler that
-  failed without it. `FERN_IR_VERIFY=0` opts out, which is what a bisect wants
-  when the gate itself is the suspect. It was opt-in until #6994: its stack
+  failed without it. The explicit `FERN_IR_VERIFY=1` also prints native's
+  coverage line (functions verified / modelled by the stack verifier /
+  skipped) once per emitted unit, so a quiet run says how much it looked at
+  (#11412); the default run prints nothing. `FERN_IR_VERIFY=0` opts out, which
+  is what a bisect wants when the gate itself is the suspect. It was opt-in until #6994: its stack
   pass allocated enough inside a WASM-HOSTED compile to reach a latent
   premature free, corrupting the WAT that compiler emitted — a fault the gate
   surfaced rather than caused, and fixed by rc-heading the strings the wasm

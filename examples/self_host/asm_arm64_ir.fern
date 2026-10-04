@@ -1883,6 +1883,11 @@ function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
   return "";
 }
 
+// ssa_sext32 reports the width ops that are `sxtw Xd, Wn`.
+function ssa_sext32(what: string, unsigned: boolean): boolean {
+  return what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned;
+}
+
 // ssa_unary_from selects a width op, `not` or bit count that reads its operand
 // from register `src` and writes `d`, so an operand outside `d` needs no copy
 // into it first; "" for an op this does not cover.
@@ -2111,10 +2116,10 @@ function ssa_load_abi_args(reg_of: i32[], args: i32[], regs: string[], s: asmcor
 // keeps whatever it held. A spilled value still reaches the stack through x0.
 function ssa_push_operand(reg_of: i32[], v: i32, pushed: i32, s: asmcore.EmitState): asmcore.EmitState {
   if (reg_of[v] >= 0) {
-    return s.write("    str " + ssa_reg(reg_of[v]) + ", [sp, #-16]!\n");
+    return ssa_ldst_wb(s, false, true, ssa_reg(reg_of[v]), 0 - 16);
   }
   s = ssa_load_pushed(reg_of, v, "x4", pushed, s);
-  return s.write("    str x4, [sp, #-16]!\n");
+  return ssa_ldst_wb(s, false, true, "x4", 0 - 16);
 }
 
 // ssa_rc_prim renders one rc primitive inline, in the instructions its stub
@@ -2274,7 +2279,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     s = ssa_bl_sym(s, "__fn_" + asmcore.sanitize_label(ins.str));
   }
   if (argc > 0) {
-    s = s.write("    add sp, sp, #" + util.i32_to_string(argc * 16) + "\n");
+    s = ssa_addsub_imm(s, false, "sp", "sp", argc * 16);
   }
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
@@ -2408,9 +2413,9 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     s = ssa_push_operand(reg_of, ins.args[i], (argc - 1 - i) * 16, s);
     i = i - 1;
   }
-  s = s.write("    bl __fn___fern_" + ssa_str_target(ins.str) + "\n");
+  s = ssa_bl_sym(s, "__fn___fern_" + ssa_str_target(ins.str));
   if (argc > 0) {
-    s = s.write("    add sp, sp, #" + util.i32_to_string(argc * 16) + "\n");
+    s = ssa_addsub_imm(s, false, "sp", "sp", argc * 16);
   }
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
@@ -2970,7 +2975,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   s = ssa_load_pushed(reg_of, ins.args[0], "x9", argc * 16, s);
   s = s.write("    blr x9\n");
   if (argc > 0) {
-    s = s.write("    add sp, sp, #" + util.i32_to_string(argc * 16) + "\n");
+    s = ssa_addsub_imm(s, false, "sp", "sp", argc * 16);
   }
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
@@ -3089,11 +3094,28 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
       s = s.write(ir_bin_asm(ir.kind_id(ins.str), ins.imm, "x4", "x5", "x6"));
     }
   } else {
-    let from: string = "";
+    let src: string = "";
     if (reg_of[ins.args[0]] >= 0 && ssa_reg(reg_of[ins.args[0]]) != d) {
-      from = ssa_unary_from(ins.str, ins.imm == 1, ssa_reg(reg_of[ins.args[0]]), d);
+      src = ssa_reg(reg_of[ins.args[0]]);
     }
-    if (from != "") {
+    let sx: i64 = 0 - 1;
+    if (s.records() && ssa_sext32(ins.str, ins.imm == 1)) {
+      let from_reg: string = src;
+      if (from_reg == "") {
+        from_reg = d;
+      }
+      sx = arm64_native.arm64_rec_sxtw(d, ssa_wreg(from_reg));
+    }
+    let from: string = "";
+    if (sx < 0 && src != "") {
+      from = ssa_unary_from(ins.str, ins.imm == 1, src, d);
+    }
+    if (sx >= 0) {
+      if (src == "") {
+        s = ssa_load(reg_of, ins.args[0], d, s);
+      }
+      s = s.word(sx);
+    } else if (from != "") {
       s = s.write(from);
     } else {
       s = ssa_load(reg_of, ins.args[0], d, s);
@@ -3455,18 +3477,17 @@ function ssa_reg_params(f: ssa.SFunc): i32 {
 // pool registers and falls through into `__fn_<name>.r`, where a register-ABI
 // caller enters with them already there. A function with no parameters has
 // one entry.
-function ssa_entry_shim(f: ssa.SFunc, name: string): string {
+function ssa_entry_shim(f: ssa.SFunc, name: string, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ssa_reg_params(f);
   if (k == 0) {
-    return "";
+    return s;
   }
-  let out: string = "";
   let p: i32 = 0;
   while (p < k) {
-    out = out + "    ldr " + ssa_reg(p) + ", [sp, #" + util.i32_to_string(16 * p) + "]\n";
+    s = ssa_ldst(s, true, ssa_reg(p), "sp", 16 * p);
     p = p + 1;
   }
-  return out + "__fn_" + name + ".r:\n";
+  return s.write("__fn_" + name + ".r:\n");
 }
 
 // ssa_reg_helper names the hand-written runtime helpers with a register
@@ -3538,7 +3559,7 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irtab
   let reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s));
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
-  s = s.write(ssa_entry_shim(f, asmcore.sanitize_label(label_name)));
+  s = ssa_entry_shim(f, asmcore.sanitize_label(label_name), s);
   s = ssa_release_entry(r, lp, s);
   s = ssa_pair(s, false, 3, "x29", "x30", 0 - 16);
   s = ssa_cfi(ssa_cfi(ssa_cfi(s, 3, "", 16), 6, "x29", 0 - 16), 6, "x30", 0 - 8);
@@ -5389,7 +5410,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   s = asmcore.with_funcs(s, mod.funcs);
   s = s.write("    .globl _start\n");
   s = s.write("    .text\n");
-  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(mod.funcs), pops: s.kinds.pops };
+  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(mod.funcs), s.kinds.pops);
   ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), cache);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)), leaves: asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache) };
   let fi: i32 = 0;
@@ -5405,6 +5426,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   // Cache entries past the declarations are bodies with no FuncDecl, each
   // naming the symbol it defines.
   s = emit_named_bodies(cache, mod.funcs.len(), s, vgate);
+  irverifygate.report(vgate);
   // Ahead of _start, which gates its envp save on the heap need. close_needs
   // is what turns a root like str_concat into that heap need, so reading it
   // first would leave __fern_envp null in a program that still gets the heap
@@ -5495,7 +5517,7 @@ function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.
 pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.EmitState {
   let m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   let fns: parser.FuncDecl[] = m.funcs;
-  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(fns), pops: s.kinds.pops };
+  let vgate: irverifygate.Gate = irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops);
   let bodies: irtables.LowerResult[] = s.rt_lower(src);
   let i: i32 = 0;
   while (i < fns.len()) {
@@ -12458,7 +12480,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
   // hi<0 "to the end") is byte-identical to the unsharded emit; a partial
   // window lets an oversized module emit across separate processes without
   // any single emit's leak-mode heap crossing the arena ceiling.
-  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(all_funcs), pops: s.kinds.pops };
+  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(all_funcs), s.kinds.pops);
   let hh: i32 = hi;
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();
@@ -12485,6 +12507,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
     fi = fi + 1;
   }
   s = emit_named_bodies(cache, mod.funcs.len(), s, vgate);
+  irverifygate.report(vgate);
   // #4355: admit the replaced-STRING-field arm per type from the
   // WHOLE-PROGRAM read scan (all_funcs — see asm_ir.emit_module_ir_unit_flat's
   // sibling seeding and fnsigs.strfld_reclaim_ok_types_of).

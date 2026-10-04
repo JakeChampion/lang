@@ -25,10 +25,10 @@ var unclosedBraceCases = []struct{ name, src string }{
 	{"before-another-function", "function a(): i32 {\n  return 1;\n\nfunction main(): i32 { return 0; }\n"},
 }
 
-var (
-	selfHostP001At = regexp.MustCompile(`^(\d+):(\d+): error\[P001\]: .*expected "\}"`)
-	nativeP001At   = regexp.MustCompile(`:(\d+):(\d+): error\[P001\]: expected "\}"`)
-)
+// p001At reads the position off either compiler's `path:line:col: error[P001]`
+// line; the self-host's message opens with the enclosing construct, native's
+// with `expected`.
+var p001At = regexp.MustCompile(`:(\d+):(\d+): error\[P001\]: .*expected "\}"`)
 
 // TestSelfHostCheckRejectsUnclosedBraceX86_64 is the differential for
 // #11315: `-check` refuses a program that ends inside a `{`, with P001 at
@@ -48,7 +48,7 @@ func TestSelfHostCheckRejectsUnclosedBraceX86_64(t *testing.T) {
 				t.Fatal(err)
 			}
 			nout, _ := exec.Command(native, "-check", p).CombinedOutput()
-			nm := nativeP001At.FindSubmatch(nout)
+			nm := p001At.FindSubmatch(nout)
 			if nm == nil {
 				t.Fatalf("native reported no `expected \"}\"` for this program, so it cannot be the oracle:\n%s", nout)
 			}
@@ -60,7 +60,7 @@ func TestSelfHostCheckRejectsUnclosedBraceX86_64(t *testing.T) {
 			}
 			var sm [][]byte
 			for _, line := range bytes.Split(errb.Bytes(), []byte("\n")) {
-				if sm = selfHostP001At.FindSubmatch(line); sm != nil {
+				if sm = p001At.FindSubmatch(line); sm != nil {
 					break
 				}
 			}

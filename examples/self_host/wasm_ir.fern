@@ -5577,7 +5577,7 @@ pub function wasm_poll_func(): string {
 // a verdict for a module the emitter does not judge — the same anti-drift rule
 // ir_route_precheck / ir_route_final rest on.
 pub function route_normalized(mod: parser.Module): parser.Module {
-  return lift_lambdas(ircore.script_normalized(mod));
+  return lift_lambdas(ircore.script_normalized(ircore.scale_f64_maps_module(mod)));
 }
 
 // lift_lambdas re-exports lift's lambda-lift pre-pass (closures slice 2a) so
@@ -7415,7 +7415,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   // The IR verify gate's callee-arity index: built once for the whole
   // program, not per function, which is what keeps a ~3000-declaration
   // lookup out of the emit loop's inner cost.
-  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(all_funcs), pops: ir.pops_by_kind() };
+  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(all_funcs), ir.pops_by_kind());
   let parts: string[] = [];
   let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
@@ -7443,6 +7443,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
     parts = parts.append(emit_function_ir_named(ns, cache[xi], cache[xi].name, produced_result_wat(cache[xi]), str_vals, cagg_vals, all_structs, ft, all_funcs, vgate));
     xi = xi + 1;
   }
+  irverifygate.report(vgate);
   return util.str_join_chunks(parts);
 }
 

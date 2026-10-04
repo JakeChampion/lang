@@ -1300,3 +1300,45 @@ func astNodeCount(t *testing.T, src string) (int, error) {
 	}
 	return n, nil
 }
+
+// TestGenDeferBodyHasNoTry: a deferred action has no caller to propagate a
+// failure to, so the checker refuses `?` inside one, and a defer generated in
+// an Option- or Result-returning function must not draw it. Seed 321 is the
+// GenMain program the self-host differential legs first refused for it.
+func TestGenDeferBodyHasNoTry(t *testing.T) {
+	src := fernsmith.GenMain(321)
+	if err := checkGenerated(t, src); err != nil {
+		t.Fatalf("GenMain(321) failed to type-check:\nsrc:\n%s\nerr: %v", src, err)
+	}
+	defers := 0
+	for seed := uint64(0); seed < sweepN(t, 512); seed++ {
+		src := fernsmith.GenMain(seed)
+		for at := strings.Index(src, "defer { "); at >= 0; {
+			depth := 0
+			end := at
+			for end < len(src) {
+				if src[end] == '{' {
+					depth++
+				} else if src[end] == '}' {
+					depth--
+					if depth == 0 {
+						break
+					}
+				}
+				end++
+			}
+			defers++
+			if strings.Contains(src[at:end], "?)") {
+				t.Fatalf("seed=%d: `?` inside a defer body:\n%s", seed, src[at:end+1])
+			}
+			next := strings.Index(src[end:], "defer { ")
+			if next < 0 {
+				break
+			}
+			at = end + next
+		}
+	}
+	if defers == 0 {
+		t.Fatal("no seed generated a defer, so the sweep checked nothing")
+	}
+}
