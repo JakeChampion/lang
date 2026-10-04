@@ -88,6 +88,7 @@
 import "std/async";
 import "std/platform";
 import "std/http";
+import "std/stream";
 import "std/net";
 import "std/time";
 import "std/i64";
@@ -135,9 +136,12 @@ function __recv_deadline_default(): Duration {
 // the path it answers 503 from the signal on (a readiness probe; "" for
 // none), how long the requests in flight get to finish once the
 // listener is closed before the loop gives up on them, the parser's
-// caps on each request (`http.HttpLimits`), and whether the parent's exit
+// caps on each request (`http.HttpLimits`), whether the parent's exit
 // starts that shutdown too (`async.Driver.watch_parent`), which the
-// supervisor sets for its workers.
+// supervisor sets for its workers, and whether a handler starts on its
+// request's header block, its body a Stream that pulls the bytes as the
+// handler reads them (`stream_bodies`, docs/NET-P3-SUSPENSION-PLAN.md
+// §3.9) rather than once the body has arrived whole.
 pub struct Config {
   backlog: i32,
   reuse_port: boolean,
@@ -157,15 +161,16 @@ pub struct Config {
   drain_deadline: Duration,
   limits: http.HttpLimits,
   stop_with_parent: boolean,
+  stream_bodies: boolean,
 }
 
 // config() — the defaults: a backlog of 128, the port held
 // by one listener, the 10 s read deadline, a 130 s keep-alive idle span,
 // 1000 requests per connection, 1024 connections open and 100 of them per
 // client, 1024 handlers parked at once, a worker per processing unit, and
-// the parser's `http_limits()`.
+// the parser's `http_limits()`, bodies read whole before the handler runs.
 pub function config(): Config {
-  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false };
+  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false };
 }
 
 // run(port, opts, handler) — serve `handler` on `port` in this process,
@@ -1483,6 +1488,290 @@ function __serve_expire[D: async.Driver](drv: D, c: __Conns, opts: Config, now: 
   return c;
 }
 
+// ---- Streamed request bodies (docs/NET-P3-SUSPENSION-PLAN.md §3.9) ------
+//
+// With `Config.stream_bodies` a request whose header block has arrived
+// starts its handler at once, its body a Stream that pulls the bytes as
+// the handler reads them. The pull owns the connection's read side until
+// the body ends: it parks on the descriptor under the body's data-rate
+// deadline (the handler's task parks, the worker serves other connections
+// meanwhile), then reads what the framing still owes — a Content-Length
+// body to its length and never past it, a chunked body through
+// `http.ChunkDecoder`, the bytes past its last chunk kept for the loop. The
+// loop hands the pull the body bytes it already holds, leaves the
+// connection unread while the body is live, and takes it back when the
+// flight answers. `Expect: 100-continue` is answered by the pull before its
+// first wait, when no body byte has arrived, so a handler that refuses the
+// request never invites the body. A body that ends early faults the stream
+// (413 past the cap, 408 under the minimum data rate, 400 malformed or cut
+// short, `async.cancelled()` with the task), and the connection does not
+// persist past a response to a request whose body was not read whole.
+
+// __Body — what the loop and a flight's pull share about a streamed body:
+// `state`, 0 while the body is being read, 1 once it ended whole, 2 once
+// it faulted; `rest`, the bytes the pull read past the body, the next
+// request's, for the loop to take back.
+struct __Body { state: Cell[i32], rest: Cell[string] }
+
+// __Pull — a streamed body's reader: the connection; what a Content-Length
+// body still owes (`left`, -1 for a chunked body) or the chunked decoder's
+// state (`dstate`, `dheld`, `dleft`, `dbudget`, `droom`, as
+// `http.ChunkDecoder` holds it, in cells so the pull keeps it across
+// calls); the body bytes handed over at the start, not yet taken
+// (`pending`); the data-rate clock (`since`, 0 until the first wait, and
+// `got`, the bytes read since); whether `100 Continue` is still owed; and
+// the body's shared state and the stream's fault.
+struct __Pull { fd: i32, left: Cell[i32], dstate: Cell[i32], dheld: Cell[string], dleft: Cell[i32], dbudget: Cell[i32], droom: Cell[i32], pending: Cell[string], since: Cell[i64], got: Cell[i32], continue_owed: Cell[i32], opts: Config, body: __Body, fault: Cell[i32] }
+
+// __body_source(fd, head, initial, opts, body) — the source a streamed
+// request's body pulls from.
+function __body_source(fd: i32, head: http.HttpHead, initial: u8[], opts: Config, body: __Body): BodySource {
+  let fault: Cell[i32] = cell_new(0);
+  let owed: i32 = 0;
+  if (head.expects_continue && initial.len() == 0) {
+    owed = 1;
+  }
+  let p: __Pull = __Pull { fd: fd, left: cell_new(head.length), dstate: cell_new(0), dheld: cell_new(""), dleft: cell_new(0), dbudget: cell_new(opts.limits.header_bytes), droom: cell_new(opts.limits.body), pending: cell_new(string_from_bytes_unchecked(initial)), since: cell_new(0 as i64), got: cell_new(0), continue_owed: cell_new(owed), opts: opts, body: body, fault: fault };
+  return BodySource { next: (): Option[u8[]] => __body_next(p), fault: fault };
+}
+
+// __body_next(p) — the body's next bytes: what was handed over first,
+// then what the connection delivers, each decoded under the framing;
+// None once the body ended, whole or early.
+function __body_next(p: __Pull): Option[u8[]] {
+  if (p.body.state.get() != 0) {
+    return None;
+  }
+  if (p.continue_owed.get() == 1) {
+    p.continue_owed.set(0);
+    tcp_send(p.fd, "HTTP/1.1 100 Continue\r\n\r\n");
+  }
+  while (p.body.state.get() == 0) {
+    let bytes: u8[] = __body_take(p);
+    if (bytes.len() > 0) {
+      let out: u8[] = __body_decode(p, bytes);
+      if (out.len() > 0) {
+        return Some(out);
+      }
+    }
+  }
+  return None;
+}
+
+// __body_take(p) — the next raw bytes: the pending ones, else one read
+// after the connection is readable, bounded by what the framing owes;
+// empty with the body faulted when the wait passed the data-rate deadline
+// (408), the task was cancelled, or the peer closed or failed (400).
+function __body_take(p: __Pull): u8[] {
+  let none: u8[] = [];
+  let pending: string = p.pending.get();
+  if (pending.len() > 0) {
+    p.pending.set("");
+    return pending.bytes();
+  }
+  while (true) {
+    let wait_ms: i32 = __body_wait_ms(p);
+    if (wait_ms <= 0) {
+      return __body_fault(p, 408);
+    }
+    let set: i32[] = [p.fd, 1];
+    let woke: i32 = async.wait_any(set, wait_ms);
+    if (woke == async.cancelled()) {
+      return __body_fault(p, async.cancelled());
+    }
+    if (woke < 0) {
+      return __body_fault(p, 408);
+    }
+    let scratch: u8[] = __alloc_u8(__body_recv_size(p));
+    let n: i32 = tcp_recv_into(p.fd, scratch);
+    if (n > 0) {
+      p.got.set(p.got.get() + n);
+      return scratch.take(n);
+    }
+    if (n != 0 - __eagain()) {
+      return __body_fault(p, 400);
+    }
+  }
+  return none;
+}
+
+// __body_wait_ms(p) — how long the pull may wait for the next bytes: what
+// the body has earned under `Config.min_data_rate` from its first wait,
+// the grace plus what its bytes since buy, as `__body_deadline` counts it
+// for a body the loop reads; 0 once that has passed.
+function __body_wait_ms(p: __Pull): i32 {
+  let now: i64 = monotonic_ns();
+  if (p.since.get() == 0 as i64) {
+    p.since.set(now);
+  }
+  let earned: i64 = p.since.get() + p.opts.data_rate_grace.as_nanos();
+  if (p.opts.min_data_rate > 0) {
+    earned = earned + p.got.get() as i64 * (1000000000 as i64) / (p.opts.min_data_rate as i64);
+  }
+  if (earned <= now) {
+    return 0;
+  }
+  let ms: i64 = (earned - now + 999999 as i64) / (1000000 as i64);
+  if (ms > 2147483647 as i64) {
+    return 2147483647;
+  }
+  return ms as i32;
+}
+
+// __body_recv_size(p) — how much one read may take: a scratch buffer's
+// worth, and never past what a Content-Length body still owes, so the
+// next request's bytes are left on the socket.
+function __body_recv_size(p: __Pull): i32 {
+  let left: i32 = p.left.get();
+  if (left >= 0 && left < 4096) {
+    return left;
+  }
+  return 4096;
+}
+
+// __body_decode(p, bytes) — the raw bytes decoded under the framing: a
+// Content-Length body passed on to its length, what lies past it kept
+// for the loop; a chunked body through the decoder. The body's state
+// moves to 1 at its end, 2 on a refusal.
+function __body_decode(p: __Pull, bytes: u8[]): u8[] {
+  let left: i32 = p.left.get();
+  if (left < 0) {
+    return __body_decode_chunked(p, bytes);
+  }
+  if (bytes.len() < left) {
+    p.left.set(left - bytes.len());
+    return bytes;
+  }
+  p.left.set(0);
+  p.body.state.set(1);
+  if (bytes.len() == left) {
+    return bytes;
+  }
+  p.body.rest.set(string_from_bytes_unchecked(__bytes_from(bytes, left)));
+  return bytes.take(left);
+}
+
+function __body_decode_chunked(p: __Pull, bytes: u8[]): u8[] {
+  let d: http.ChunkDecoder = http.ChunkDecoder { state: p.dstate.get(), held: p.dheld.get().bytes(), left: p.dleft.get(), budget: p.dbudget.get(), room: p.droom.get(), fields: p.opts.limits.header_fields, trailers: HeaderMap { names: [], values: [] } };
+  match (d.feed(bytes)) {
+    http.ChunkData(next, data) => {
+      p.dstate.set(next.state);
+      p.dheld.set(string_from_bytes_unchecked(next.held));
+      p.dleft.set(next.left);
+      p.dbudget.set(next.budget);
+      p.droom.set(next.room);
+      return data;
+    },
+    http.ChunkEnd(data, trailers, rest) => {
+      p.body.rest.set(string_from_bytes_unchecked(rest));
+      p.body.state.set(1);
+      return data;
+    },
+    http.ChunkRefused(status) => {
+      return __body_fault(p, status);
+    }
+  }
+  return __body_fault(p, 400);
+}
+
+// __body_fault(p, status) — the body ended early: the stream's fault set,
+// and nothing more to read.
+function __body_fault(p: __Pull, status: i32): u8[] {
+  let none: u8[] = [];
+  p.fault.set(status);
+  p.body.state.set(2);
+  return none;
+}
+
+// __body_live(fl) — whether the flight's pull is still reading its body.
+function __body_live(fl: __Flight): boolean {
+  match (fl.body) {
+    Some(b) => {
+      return b.state.get() == 0;
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// __body_settled(drv, c, at, body) — the connection taken back from a
+// flight's pull as the flight answers: what the pull read past the body
+// goes before what the loop has read since, the loop reads the connection
+// again, and a connection whose body was not read whole does not persist,
+// since what is left of the body would be read as the next request.
+function __body_settled[D: async.Driver](drv: D, c: __Conns, at: i32, body: __Body): __Conns {
+  let rest: string = body.rest.get();
+  if (rest.len() > 0) {
+    c = __Conns { ...c, bufs: c.bufs.with(at, rest.bytes().concat(__bytes_from(c.bufs[at], c.offs[at]))), offs: c.offs.with(at, 0) };
+  }
+  drv.watch(c.fds[at], 1);
+  if (body.state.get() != 1) {
+    return __Conns { ...c, keep: c.keep.with(at, false) };
+  }
+  return c;
+}
+
+// __serve_unframed(drv, c, fls, at, expecting, …) — a request whose body
+// has not arrived: with `stream_bodies` and its header block complete,
+// its handler starts now on a streamed body; otherwise the loop keeps
+// reading, answering `100 Continue` first when the request expects it.
+// `(conns, flights, more, corked, next)` as the burst loop reads them,
+// `more` when a response went out and the next request is framed.
+function __serve_unframed[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, expecting: boolean, start: (http.HttpFramed, boolean, __Stop) => __Started, opts: Config, stop: __Stop, corked: string, count: i32, clk: __Clock, eof: boolean): (__Conns, __Flight[], boolean, string, http.HttpFraming) {
+  if (!opts.stream_bodies || eof) {
+    if (expecting) {
+      c = __serve_continue(drv, c, at, opts);
+    }
+    return (c, fls, false, corked, http.Incomplete);
+  }
+  match (http.http_parse_request_head_from(c.bufs[at], c.offs[at], opts.limits)) {
+    http.Headed(h) => {
+      return __serve_stream(drv, c, fls, at, h, start, opts, stop, corked, count, clk);
+    },
+    http.HeadIncomplete => {
+      return (c, fls, false, corked, http.Incomplete);
+    },
+    http.HeadMalformed(status) => {
+      return (__serve_refuse(drv, c, at, status, opts, clk), fls, false, corked, http.Incomplete);
+    }
+  }
+  return (c, fls, false, corked, http.Incomplete);
+}
+
+// __serve_stream(drv, c, fls, at, h, start, …) — the handler started on
+// the request head `h` through `start` (the loop's `__serve_start` with
+// its handler and platform bound), its body streamed: the body bytes buffered so far are the
+// pull's, the buffer is taken as answered, and the handler runs until it
+// answers or parks. A handler that answers at once is responded to with
+// the connection taken back; one that parks becomes a flight carrying its
+// body's state.
+function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, h: http.HttpHead, start: (http.HttpFramed, boolean, __Stop) => __Started, opts: Config, stop: __Stop, corked: string, count: i32, clk: __Clock): (__Conns, __Flight[], boolean, string, http.HttpFraming) {
+  let fd: i32 = c.fds[at];
+  let buf: u8[] = c.bufs[at];
+  let body: __Body = __Body { state: cell_new(0), rest: cell_new("") };
+  let src: BodySource = __body_source(fd, h, __bytes_from(buf, c.offs[at] + h.len), opts, body);
+  let req: HttpRequest = HttpRequest { ...h.request, body: stream.stream_from_source(src) };
+  let served: i32 = c.served[at] + 1;
+  let keep: boolean = h.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
+  c = __Conns { ...c, offs: c.offs.with(at, buf.len()), served: c.served.with(at, served), backlog: c.backlog.with(at, false), continued: c.continued.with(at, false), keep: c.keep.with(at, keep) };
+  let f: http.HttpFramed = http.HttpFramed { request: req, len: 0, keep_alive: keep, version: h.version };
+  match (start(f, keep, stop)) {
+    HandlerDone(resp) => {
+      c = __body_settled(drv, c, at, body);
+      let tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
+      let answered: (__Conns, boolean, string) = __serve_respond(drv, c, at, __serve_wire(h.request.method, h.version, resp, c.keep[at], clk), opts, count + 1, tail, clk, corked);
+      return (answered.0, fls, answered.1, answered.2, tail);
+    },
+    HandlerParked(fl, w) => {
+      let parked: (__Conns, __Flight[]) = __serve_park(drv, c, fls, at, __flight_watch(drv, __Flight { ...fl, body: Some(body) }, w, monotonic_ns()), corked, opts);
+      return (parked.0, parked.1, false, "", http.Incomplete);
+    }
+  }
+  return (c, fls, false, corked, http.Incomplete);
+}
+
 // __Flight — a handler parked on a connection (docs/NET-P3-SUSPENSION-PLAN.md
 // §3.4): its task; the connection's descriptor; the (fd, interest) pairs it
 // waits on, each watched on the worker's reactor; the monotonic nanosecond
@@ -1492,8 +1781,10 @@ function __serve_expire[D: async.Driver](drv: D, c: __Conns, opts: Config, now: 
 // with a flight takes no further request until the flight answers, so
 // pipelined requests stay in order; what the peer sends meanwhile is read
 // into the buffer, and the end of its stream closes the connection after
-// the response, as it does today.
-struct __Flight { task: async.Task[HttpResponse], fd: i32, set: i32[], due: i64, method: string, version: string, kept: boolean, tail: http.HttpFraming }
+// the response, as it does today — except while the flight's own pull is
+// reading a streamed body (`body`), when the connection is the pull's to
+// read.
+struct __Flight { task: async.Task[HttpResponse], fd: i32, set: i32[], due: i64, method: string, version: string, kept: boolean, tail: http.HttpFraming, body: Option[__Body] }
 
 // __Started — how a handler's first run ended: with its response, or parked
 // on a wait, the flight not yet watching it.
@@ -1516,7 +1807,7 @@ function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, pl
     },
     Suspended(w) => {
       let none: i32[] = [];
-      return HandlerParked(__Flight { task: t, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: f.version, kept: kept, tail: tail }, w);
+      return HandlerParked(__Flight { task: t, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: f.version, kept: kept, tail: tail, body: None }, w);
     },
     Cancelled => {
       async.task_free(t);
@@ -1555,9 +1846,11 @@ function __held_deadline(): i64 {
 
 // __serve_held_event(drv, c, fls, fi, fd, readiness, scratch, opts) — a
 // readiness event on a connection whose flight `fi` is parked: a hang-up
-// cancels the flight and closes the connection; anything else is read into
-// the buffer, the end of the stream remembered, and the read deadline kept
-// lifted.
+// cancels the flight and closes the connection; while the flight's pull is
+// reading a streamed body the connection is its to read, so the loop
+// unwatches it (the pull watches it again when it parks on it) rather than
+// spin on bytes it will not take; anything else is read into the buffer,
+// the end of the stream remembered, and the read deadline kept lifted.
 function __serve_held_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fi: i32, fd: i32, readiness: i32, scratch: u8[], opts: Config): (__Conns, __Flight[]) {
   let at: i32 = __conns_index(c, fd);
   if (at < 0) {
@@ -1566,6 +1859,10 @@ function __serve_held_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[]
   if ((readiness & 4) != 0) {
     __flight_cancel(drv, fls[fi]);
     return (__serve_close(drv, c, at), __flights_remove(fls, fi));
+  }
+  if (__body_live(fls[fi])) {
+    drv.unwatch(fd);
+    return (c, fls);
   }
   let read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
   c = read.0;
@@ -1609,7 +1906,15 @@ function __serve_answer[D: async.Driver](drv: D, c: __Conns, fl: __Flight, resp:
   if (at < 0) {
     return c;
   }
-  let answered: (__Conns, boolean, string) = __serve_respond(drv, c, at, __serve_wire(fl.method, fl.version, resp, fl.kept, clk), opts, __pipeline_burst(), fl.tail, clk, "");
+  let tail: http.HttpFraming = fl.tail;
+  match (fl.body) {
+    Some(b) => {
+      c = __body_settled(drv, c, at, b);
+      tail = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
+    },
+    None => {}
+  }
+  let answered: (__Conns, boolean, string) = __serve_respond(drv, c, at, __serve_wire(fl.method, fl.version, resp, fl.kept && c.keep[at], clk), opts, __pipeline_burst(), tail, clk, "");
   return __serve_finish(drv, answered.0, fl.fd, false);
 }
 
@@ -1807,6 +2112,10 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "" };
+  // The streamed-body start, with the handler and platform bound once:
+  // what `__serve_stream` runs a handler through, holding no platform of
+  // its own (E080 reads a platform parameter as a handler's).
+  let start: (http.HttpFramed, boolean, __Stop) => __Started = (f: http.HttpFramed, kept: boolean, st: __Stop): __Started => __serve_start(handler, plat, f, kept, http.Incomplete, opts, st);
   while (true) {
     let now: i64 = monotonic_ns();
     let events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, now, __least_timeout(__conns_timeout(conns, now), __flights_timeout(flights, now)))));
@@ -1874,11 +2183,26 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
             }
           },
           http.Incomplete => {
-            more = false;
+            let unframed: (__Conns, __Flight[], boolean, string, http.HttpFraming) = __serve_unframed(drv, conns, flights, at, false, start, opts, stop, corked, count, clk, ev.2);
+            conns = unframed.0;
+            flights = unframed.1;
+            more = unframed.2;
+            corked = unframed.3;
+            next = unframed.4;
+            if (more) {
+              count = count + 1;
+            }
           },
           http.Continue => {
-            conns = __serve_continue(drv, conns, at, opts);
-            more = false;
+            let unframed: (__Conns, __Flight[], boolean, string, http.HttpFraming) = __serve_unframed(drv, conns, flights, at, true, start, opts, stop, corked, count, clk, ev.2);
+            conns = unframed.0;
+            flights = unframed.1;
+            more = unframed.2;
+            corked = unframed.3;
+            next = unframed.4;
+            if (more) {
+              count = count + 1;
+            }
           },
           http.Malformed(status) => {
             conns = __serve_refuse(drv, conns, at, status, opts, clk);

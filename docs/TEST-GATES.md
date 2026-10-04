@@ -253,6 +253,16 @@ pipelined on one connection are answered in order, and a client that goes
 away mid-wait leaves the worker serving before and after its upstream
 answers. The Go compiler keeps the blocking fallback, so only the self-host
 build is held to it.
+`TestSelfHostServeStreamBodies` (x86-64, and `…Arm64`) is the streamed
+request body's gate (`e2eharness.StreamBodiesServerSource`,
+`serve.Config.stream_bodies`): an upload sent slowly holds nothing — a
+hello on another connection is answered while the body is still arriving —
+and then the sequential checks: a chunked upload with a request pipelined
+behind it answered in order, a stalled body answered 408, a chunk past the
+cap answered 413, `Expect: 100-continue` invited only when the handler
+reads and never by one that refuses, a client gone mid-body leaving the
+worker serving. `TestServeStreamBodiesSequentialInterp` holds the Go
+compiler's blocking fallback to the sequential checks alone.
 `TestSelfHostTaskScheduler` is the suspension pass's gate
 (`docs/NET-P3-SUSPENSION-PLAN.md` §4, slice 2): `e2eharness.TaskSchedulerProgram`
 parks a task twice, three calls deep, inside a loop and a branch, with a

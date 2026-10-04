@@ -1564,7 +1564,8 @@ points that run a handler under it.
   data_rate_grace, response_min_data_rate, response_data_rate_grace,
   keep_alive_idle, keep_alive_requests, max_connections,
   max_connections_per_ip, max_in_flight, workers, shutdown_grace,
-  readiness_path, drain_deadline, limits, stop_with_parent }` (`config()` is
+  readiness_path, drain_deadline, limits, stop_with_parent, stream_bodies }`
+  (`config()` is
   128, one listener per port, the 10 s deadline, 240 bytes per second after
   5 s for a request body and the same for a response, 130 s, 1000, 1024, 100
   and 1024): the
@@ -1619,7 +1620,18 @@ points that run a handler under it.
   shutdown when the process's parent exits, as a SIGTERM would; each
   worker `supervise` forks has it set, so a supervisor
   killed outright (SIGKILL, a crash) takes its workers down rather than
-  leaving them serving as orphans.
+  leaving them serving as orphans. `stream_bodies` (false) starts a handler
+  on its request's header block rather than once the body has arrived
+  whole: the body is a `Stream` that pulls the bytes as the handler reads
+  them, parking the handler on the connection under the minimum data rate
+  while the loop serves other connections (docs/NET-P3-SUSPENSION-PLAN.md
+  §3.9). The body cap still holds (a declared length past it is refused 413
+  before the handler, a chunked body past it ends the stream with 413), a
+  body under the data rate ends it with 408, `Expect: 100-continue` is
+  answered when the handler first reads, so a handler that refuses never
+  invites the body, and a connection whose body the handler did not read
+  whole closes after the response. A `Stream` that ended early faults
+  (`(s).fault()`); `body_string()` reports it as `EndedEarly`.
   A listener it cannot bind is `serve: cannot listen on port PORT:`
   and the error's text on stderr, and the entry returns 98 (every
   entry, and a supervised worker that binds its own).
