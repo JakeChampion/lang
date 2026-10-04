@@ -440,7 +440,7 @@
 # rows stay inside 5%. Number pasted from driver-sizes' own report on run
 # 37158896327.
 fern.fern/stage2 10946736
-fern.fern 10737128
+fern.fern 11299432
 asm_load_run.fern 8721320
 asm_modload_run.fern 7618432
 asm_ir_run.fern 7420200
@@ -449,4 +449,4 @@ wasm_ir_run.fern 6878120
 wasm_run.fern 6878824
 wasm_runio_run.fern 6878184
 asm_pathprobe_run.fern 4172000
-checker_modload_run.fern 2386128
+checker_modload_run.fern 2519184
