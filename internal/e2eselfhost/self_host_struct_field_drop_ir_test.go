@@ -8,10 +8,13 @@ import "testing"
 // = 1 + 3 = 4. At b's scope exit both the array it solely owns and the struct
 // box are freed. The leakcheck census pins that the field is dropped; the exit
 // code pins that it is not freed twice (a double free corrupts the field read).
+// The array goes through id so it is built on the heap rather than placed as a
+// constant.
 func TestSelfHostStructFieldDrop(t *testing.T) {
 	const prog = `struct Bag { items: i32[], n: i32 }
+function id(xs: i32[]): i32[] { return xs; }
 function use_bag(): i32 {
-    let b: Bag = Bag { items: [1, 2, 3], n: 3 };
+    let b: Bag = Bag { items: id([1, 2, 3]), n: 3 };
     return b.items[0] + b.n;
 }
 function main(): i32 { return use_bag(); }
