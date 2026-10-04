@@ -177,7 +177,7 @@ function main(): i32 {
 // must exempt nothing else: an alias, a return, a call argument or an escaping
 // arm binding keeps the value live past the match.
 //
-// These assert the free COUNT as well as the exit. On the typed lowering every
+// These assert allocation and free counts as well as the exit. On the typed lowering every
 // row reclaims what it allocates; an over-release shows up as a count above
 // that even when the program still exits correctly. A
 // sibling change in #6308 exited correctly on all four of its hazards while
@@ -191,10 +191,10 @@ func TestSelfHostNestedMatchBorrowHazardsX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range []struct {
-		name      string
-		src       string
-		want      int
-		wantFrees int64
+		name       string
+		src        string
+		want       int
+		wantAllocs int64
 	}{
 		{
 			// Aliased in the same block as the match. The initial None is
@@ -217,8 +217,8 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
-			want:      40,
-			wantFrees: 200,
+			want:       40,
+			wantAllocs: 200,
 		},
 		{
 			// Aliased AFTER the block — the drop point is the last top-level
@@ -240,8 +240,8 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
-			want:      40,
-			wantFrees: 200,
+			want:       40,
+			wantAllocs: 200,
 		},
 		{
 			// Returned to the caller from the same function that matches it.
@@ -264,8 +264,8 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
-			want:      40,
-			wantFrees: 200,
+			want:       40,
+			wantAllocs: 200,
 		},
 		{
 			// Passed to a callee that keeps it. The initial None is static;
@@ -289,8 +289,8 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
-			want:      40,
-			wantFrees: 200,
+			want:       40,
+			wantAllocs: 200,
 		},
 		{
 			// The arm BINDING escapes to an outer local.
@@ -310,8 +310,8 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
-			want:      40,
-			wantFrees: 200,
+			want:       40,
+			wantAllocs: 200,
 		},
 		{
 			// The arm binding escapes into a container that outlives the
@@ -332,8 +332,8 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
-			want:      40,
-			wantFrees: 300,
+			want:       40,
+			wantAllocs: 300,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -358,11 +358,9 @@ function main(): i32 {
 			if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 				t.Fatalf("parse %q: %v", summary, err)
 			}
-			if allocs != tc.wantFrees || frees != tc.wantFrees || live != 0 {
-				t.Errorf("frees=%d, want exactly %d (allocs=%d live=%d) — a HIGHER count is "+
-					"the escaping value being released under a live reference; a lower one "+
-					"means this probe stopped exercising the path it was written for",
-					frees, tc.wantFrees, allocs, live)
+			if allocs != tc.wantAllocs || frees != tc.wantAllocs || live != 0 {
+				t.Errorf("allocation census: allocs=%d frees=%d live=%d; want allocs=frees=%d and live=0",
+					allocs, frees, live, tc.wantAllocs)
 			}
 		})
 	}
