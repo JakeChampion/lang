@@ -60,6 +60,11 @@ Darwin, core WASM and the Go interpreter, with zero unmatched x86 allocations.
 The verifier models all 12 regression bodies and resolves 28 calls; the
 original failing generic fixture resolves 1,913 calls in 948 bodies.
 
+The subsequent external branch merge `8984d08c1` adds main `0129e5d95`'s
+retired-backend test cleanup and documentation. It leaves the primary
+compiler and standard library unchanged. Both relocated map-rebinding
+regressions and the full Linux unit suite pass on the combined tree.
+
 The expanded Darwin GNU cp/mv comparison fails 11 subcases. An unchanged
 `dcc065645` snapshot reproduces exactly the same case set: sparse copying,
 reflinks, backup suffixes and trailing-slash/root handling. These are existing

@@ -12,10 +12,7 @@
 package e2e
 
 import (
-	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/symname"
 )
 
 var boundsElisionCases = []struct {
@@ -59,7 +56,7 @@ var boundsElisionCases = []struct {
 func TestX86_64BoundsElisionCorrect(t *testing.T) {
 	for _, tc := range boundsElisionCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, code := compileAndRunX86Native(t, tc.src); code != tc.expected {
+			if _, code := compileAndRunX86_64(t, tc.src); code != tc.expected {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.expected)
 			}
 		})
@@ -88,59 +85,4 @@ func TestWASMBoundsElisionCorrect(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestX86_64BoundsElisionEmitted pins the optimization itself: a `for x in xs`
-// loop and the len-bounded index idiom `while (i < xs.len()) { xs[i] }`
-// (elideLenBoundedChecks, #4380 lever 3) must NOT emit the bounds-check trap
-// (`mov edi, 134` — the emitArrBoundsCheck exit code), while a loop whose
-// guard routes the length through a variable — outside the pass's exact
-// syntactic form — MUST keep it. This guards both directions: the desugar /
-// `_nc` routing regressing to the checked helper, and the elision pass
-// over-firing on shapes it cannot prove.
-func TestX86_64BoundsElisionEmitted(t *testing.T) {
-	forSrc := `function main(): i32 { let xs: i32[] = [10, 20, 30, 40]; let s: i32 = 0; for x in xs { s = s + x; } return s; }`
-	whileSrc := `function main(): i32 { let xs: i32[] = [10, 20, 30, 40]; let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }`
-	capturedSrc := `function main(): i32 { let xs: i32[] = [10, 20, 30, 40]; let n: i32 = xs.len(); let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
-	keptSrc := `function main(): i32 { let xs: i32[] = [10, 20, 30, 40]; let n: i32 = xs.len(); n = n - 1; let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
-
-	forAsm := compileToX86Asm(t, forSrc)
-	if n := strings.Count(mainBody(forAsm), "mov edi, 134"); n != 0 {
-		t.Errorf("for-loop kept %d bounds-check trap(s); want 0 (elided)\n%s", n, mainBody(forAsm))
-	}
-	whileAsm := compileToX86Asm(t, whileSrc)
-	if n := strings.Count(mainBody(whileAsm), "mov edi, 134"); n != 0 {
-		t.Errorf("len-guarded while-index loop kept %d bounds-check trap(s); want 0 (elideLenBoundedChecks)\n%s", n, mainBody(whileAsm))
-	}
-	capturedAsm := compileToX86Asm(t, capturedSrc)
-	if n := strings.Count(mainBody(capturedAsm), "mov edi, 134"); n != 0 {
-		t.Errorf("loop bounded by a captured length kept %d bounds-check trap(s); want 0\n%s", n, mainBody(capturedAsm))
-	}
-	keptAsm := compileToX86Asm(t, keptSrc)
-	if n := strings.Count(mainBody(keptAsm), "mov edi, 134"); n == 0 {
-		t.Errorf("loop bounded by a reassigned length dropped its bounds-check trap; want it kept (n is not the array's length any more)")
-	}
-	// A string in the same idiom drops its check too (the SSO dispatch
-	// stays: it is how the byte address is found, not a check).
-	strSrc := `function main(): i32 { let s: string = "abcd"; let t: i32 = 0; let i: i32 = 0; while (i < s.len()) { t = t + (s[i] as i32); i = i + 1; } return t; }`
-	strAsm := compileToX86Asm(t, strSrc)
-	if n := strings.Count(mainBody(strAsm), "mov edi, 134"); n != 0 {
-		t.Errorf("len-guarded string index loop kept %d bounds-check trap(s); want 0\n%s", n, mainBody(strAsm))
-	}
-}
-
-// mainBody returns the text of main's emitted symbol up to its `.size`
-// directive, so the bounds-trap count isn't polluted by other functions'
-// array accesses.
-func mainBody(asm string) string {
-	sym := symname.Fn("main")
-	i := strings.Index(asm, "\n"+sym+":")
-	if i < 0 {
-		return asm
-	}
-	rest := asm[i:]
-	if j := strings.Index(rest, ".size "+sym); j >= 0 {
-		return rest[:j]
-	}
-	return rest
 }

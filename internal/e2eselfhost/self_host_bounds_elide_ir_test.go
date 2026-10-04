@@ -216,6 +216,9 @@ func TestSelfHostBoundsElideIRX86_64(t *testing.T) {
 	// `n`, which proves nothing about the length. Every program answers 39.
 	noElide := `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let n: i32 = 5; let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
 	for _, d := range []struct{ name, src string }{
+		// `for x in xs` desugars to the same len-bounded read, so it drops the
+		// check too.
+		{"for_in", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; for x in xs { s = s + x; } return s; }`},
 		{"len_guard", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }`},
 		{"cached_len", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let n: i32 = xs.len(); let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`},
 		{"field_path", `struct R { xs: i32[] } function main(): i32 { let r: R = R { xs: [3, 5, 7, 11, 13] }; let s: i32 = 0; let i: i32 = 0; while (i < r.xs.len()) { s = s + r.xs[i]; i = i + 1; } return s; }`},
