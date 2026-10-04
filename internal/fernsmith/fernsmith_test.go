@@ -408,6 +408,9 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"if/else statement":            false,
 		"loop with break":              false,
 		"match statement":              false,
+		"labelled break":               false,
+		"labelled continue":            false,
+		"defer block":                  false,
 		"match guard (when)":           false,
 		"at-binding (@)":               false,
 		"loop with continue":           false,
@@ -610,6 +613,15 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, "match (") && strings.Contains(src, "(__ms") {
 			want["match statement"] = true
+		}
+		if strings.Contains(src, "break __lp") {
+			want["labelled break"] = true
+		}
+		if strings.Contains(src, "continue __lp") {
+			want["labelled continue"] = true
+		}
+		if strings.Contains(src, "defer { ") {
+			want["defer block"] = true
 		}
 		if strings.Contains(src, ") when (") {
 			want["match guard (when)"] = true
@@ -1259,9 +1271,14 @@ func TestParseShard(t *testing.T) {
 	}
 }
 
-// astNodeCount type-checks src and returns the size of its AST. It is the
-// structural size measure the shrink property is stated in; an error means
-// the generated program is not valid, which is itself a contract breach.
+// astNodeCount type-checks src and returns the size of its AST as parsed,
+// before constant folding. It is the structural size measure the shrink
+// property is stated in; an error means the generated program is not valid,
+// which is itself a contract breach. The count has to be taken before the
+// fold: folding deletes the dead arm of an `if` on a literal condition, so
+// a truncation that only simplified `!(true && true)` to `!(!true)` would
+// otherwise read as GROWTH, the kept arm counted against the deleted one,
+// for a step that made the source strictly smaller.
 func astNodeCount(t *testing.T, src string) (int, error) {
 	t.Helper()
 	dir := t.TempDir()
@@ -1273,13 +1290,13 @@ func astNodeCount(t *testing.T, src string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	n := 0
+	ast.WalkProgram(prog, func(ast.Node) bool { n++; return true })
 	if err := constfold.Fold(prog, nil); err != nil {
 		return 0, err
 	}
 	if _, err := checker.Check(prog); err != nil {
 		return 0, err
 	}
-	n := 0
-	ast.WalkProgram(prog, func(ast.Node) bool { n++; return true })
 	return n, nil
 }
