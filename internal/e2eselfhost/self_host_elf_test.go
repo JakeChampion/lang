@@ -101,7 +101,7 @@ function main(): i32 {
     if (bin[120] != 0 || bin[121] != 0 || bin[122] != 128 || bin[123] != 210) { return 20; }
 
     // x86-64 R+W+X data variant: 5-byte text (padded to 8) + 2-byte data.
-    let t2: i32[] = [1, 2, 3, 4, 5];
+    let t2: u8[] = [1, 2, 3, 4, 5];
     let d2: i32[] = [9, 9];
     let b2: i32[] = elf_static_executable_data_x86(t2, d2);
     // body = pad(5 -> 8) + 2 = 10; total = 64 + 56 + 10 = 130.
