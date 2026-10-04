@@ -7,7 +7,10 @@
 // pins the report: a kind added to the registry reaches the register path
 // through the stack machine's arm for it unless its stack effect is unknown,
 // so a new line here is a kind whose pop count op_pops does not model. The
-// three kinds it lists are the ones no lowering produces.
+// three kinds it lists are the ones no lowering produces. A kind the lift
+// admits by name while op_pops does not model it is printed first, as
+// `unmodelled`: the passes that read stack effects (the suspension pass's
+// segments) refuse such an op, so the list stays empty.
 
 import "./ir";
 import "./ssa_lift";
@@ -26,6 +29,8 @@ function main(): i32 {
       if (!ssa_lift.admits(o)) {
         declined = declined + 1;
         out = out + k + " pops=" + util.i32_to_string(ir.op_pops(o)) + " pushes=" + util.i32_to_string(ir.op_pushes(o)) + "\n";
+      } else if (ir.op_pops(o) < 0) {
+        out = out + "unmodelled " + k + "\n";
       }
     }
     id = id + 1;

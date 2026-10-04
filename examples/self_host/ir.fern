@@ -686,6 +686,13 @@ pub function op_raw_splice_pipe(): Op {
   return op0(331);
 }
 
+// raw_task_state: pops nothing → the address of __fern_task_state, the words
+// the task runtime keeps between calls: the current task's id, its record
+// table and that table's capacity (docs/NET-P3-SUSPENSION-PLAN.md §3.4).
+pub function op_raw_task_state(): Op {
+  return op0(367);
+}
+
 // raw_cover: pops nothing → the address of __fern_cov_counters, the word
 // holding the `-cover` counter table's address (zero before the first hit).
 pub function op_raw_cover(): Op {
@@ -4215,6 +4222,9 @@ function kind_id_len14(name: string): i32 {
   if (name == "scan_set_bytes") {
     return 361;
   }
+  if (name == "raw_task_state") {
+    return 367;
+  }
   if (name == "udp_send_bytes") {
     return 354;
   }
@@ -5088,6 +5098,9 @@ function kind_name_4(id: i32): string {
   if (id == 287) {
     return "raw_cover";
   }
+  if (id == 367) {
+    return "raw_task_state";
+  }
   if (id == 208) {
     return "udp_send";
   }
@@ -5520,6 +5533,7 @@ function pops0(t: i32): boolean {
     || t == 207 || t == 211  // raw_environ, proc_fork
     || t == 331  // raw_splice_pipe
     || t == 287  // raw_cover
+    || t == 367  // raw_task_state
     || t == 216 || t == 217 || t == 218  // arr_push_shared_*, const_struct
     || t == 222  // map_hash_seed
     || t == 238 || t == 239 || t == 240  // geteuid, getegid, hostname
@@ -5567,7 +5581,7 @@ function pops1_io(t: i32): boolean {
     || t == 169 || t == 233 || t == 171 || t == 172 || t == 173  // read_file, read_file_bytes, read_dir, remove_dir_all, remove_file
     || t == 340  // unix_connect (path)
     || t == 310  // read_dir_all
-    || t == 174 || t == 175 || t == 176 || t == 179 || t == 181  // temp_dir, stat, env, reader_close, sleep_ms
+    || t == 174 || t == 175 || t == 236 || t == 176 || t == 179 || t == 181  // temp_dir, stat, lstat, env, reader_close, sleep_ms
     || t == 266  // sleep_ns
     || t == 168  // read_line (fd)
     || t == 231 || t == 232  // create_dir_all, isatty
@@ -5800,6 +5814,25 @@ function kind_pops(t: i32): i32 {
 // invariant holds op for op. The exceptions are the ops that are not
 // expressions: the two that consume a value outright, and structured control
 // flow, whose scopes are all void.
+// pure_value_op reports an op that reads its operands and pushes one value
+// with no other effect: a constant, a local load, an element, field, tuple
+// or byte read, a length, or an arithmetic, comparison or conversion op. The
+// suspension pass runs such an op twice when it feeds a call site, once in
+// normal mode and once more on a rewind.
+pub function pure_value_op(o: Op): boolean {
+  let t: i32 = o.kind_tag;
+  if (t == 1 || t == 3 || t == 4 || t == 5 || t == 6 || t == 218 || t == 18) {
+    return true;
+  }
+  if (t == 88 || t == 139 || t == 143 || t == 90 || t == 97 || t == 101) {
+    return true;
+  }
+  if (t == 19 || t == 20) {
+    return false;
+  }
+  return pops2_arith(t) || pops1_conv(t);
+}
+
 pub function op_pushes(o: Op): i32 {
   let t: i32 = o.kind_tag;
   if (t == 19 || t == 159) {  // store_local, drop

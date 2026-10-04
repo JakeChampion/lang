@@ -342,3 +342,4 @@ lgetxattr=363
 setxattr=364
 lsetxattr=365
 fd_drop_cache=366
+raw_task_state=367

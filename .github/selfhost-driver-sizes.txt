@@ -450,8 +450,12 @@
 # 2386128 -> 2520560 (+5.6%), main's growth through the Platform trait merges
 # (#11340, #11343). Numbers from driver-sizes' report on run 37166665810 (main
 # at 492818c4 plus #11345's few checker lines). The other rows stay inside 5%.
-
-fern.fern/stage2 10946736
+# 2026-10-04 — fern.fern/stage2 10946736 -> 11495848 (+5.0%). Main at acf98243
+# builds its stage2 at 11461256 (+4.7%, the Platform trait and checker merges
+# above); #11354's label-id records add the other 34592 bytes (+0.3%), the same
+# share they add to the pin-built fern.fern. Both stage2 figures measured on one
+# host with each tree's own stage1. The other rows stay inside 5%.
+fern.fern/stage2 11495848
 fern.fern 11300776
 asm_load_run.fern 8721320
 asm_modload_run.fern 7618432

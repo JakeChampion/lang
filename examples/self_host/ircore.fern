@@ -93,6 +93,14 @@ function is_array_type(t: string): boolean {
   return slice_unchecked(t, n - 2, n) == "[]";
 }
 
+// is_task_runtime_fn reports whether a call_direct callee is one of the task
+// primitives' runtime functions (asmcore.rt_src_task, wasm_ir's stubs): Fern
+// bodies emitted under __fn_ and called with the user ABI, which is why they
+// are not is_fern_helper's stack-arg helpers.
+pub function is_task_runtime_fn(name: string): boolean {
+  return util.str_has_prefix(name, "__fern_task_");
+}
+
 // is_fern_helper reports whether a call_direct callee is one of the IR
 // runtime helpers the backends actually provide (emit_ir_runtime and its arm64
 // / wasm counterparts). They use the stack-arg ABI and symbols — see
@@ -767,7 +775,7 @@ pub function all_runtime_need_roots(): string[] {
     "signal_mask", "signal_disposition",
     "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "putchar", "random_bytes", "random_i32", "read_file",
     "read_file_bytes",
-    "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp",
+    "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp", "task",
     "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
     "str_read_line", "str_repeat", "str_replace",
     "optarrarr_free", "str_split", "str_trim", "strarrarr_free", "strbuf", "buf",
@@ -1001,7 +1009,7 @@ pub function gate(mod: parser.Module, sub: Sub): Lowered {
     while (j < r.ops.len()) {
       let o: ir.Op = r.ops[j];
       if (o.kind_tag == 149) {  // call_direct
-        if (!is_fern_helper(o.str) && !is_c_call(o.str) && !irtables.sig_reg_has_exact(freg, o.str)) {
+        if (!is_fern_helper(o.str) && !is_c_call(o.str) && !is_task_runtime_fn(o.str) && !irtables.sig_reg_has_exact(freg, o.str)) {
           if (strict_ir_on()) {
             strict_ir_refuse(mod.funcs[i].name + " (call to unknown symbol " + o.str + ")");
           }

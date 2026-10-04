@@ -141,7 +141,6 @@ func CompileSourceModload(t *testing.T, runner []string, driverBin, entrySrc str
 // entry and builtins.
 func WriteSourceModloadProject(t *testing.T, entrySrc string) (progDir string) {
 	t.Helper()
-	const entryPath = "/__fern_source__/main.fern"
 	_, srcs, err := modload.LoadSource(entrySrc)
 	if err != nil {
 		t.Fatalf("modload.LoadSource: %v", err)
@@ -156,7 +155,7 @@ func WriteSourceModloadProject(t *testing.T, entrySrc string) (progDir string) {
 	}
 	seen := map[string]string{}
 	for p, src := range srcs {
-		if p == entryPath {
+		if p == modload.SourceEntry {
 			continue
 		}
 		b := strings.TrimSuffix(filepath.Base(p), ".fern")

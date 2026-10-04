@@ -82,11 +82,9 @@ type fixtureSpec struct {
 
 	// reclaimObservable marks a case whose output is DELIBERATELY different
 	// with reclamation off — a case about the allocator rather than about the
-	// language. The *FixturesFreeMatchesNoFree gates invert for these: instead
-	// of requiring identical output they require DIFFERENT output, so the
-	// marker is a claim to verify rather than a check to skip. A case that
-	// carries it and does not diverge is a failure, which is what stops it
-	// being reached for to silence an unrelated free-off divergence.
+	// language. The quarantine leg (FERN_RC_FREE_DEBUG=1, no block recycled)
+	// holds such a case to its exit code only, since its output there is the
+	// free-off output; every other leg holds the full expected output.
 	reclaimObservable bool
 }
 
@@ -308,6 +306,22 @@ func runFixtureX86_64(t *testing.T, mainPath, stdin string) (string, int) {
 	return runBin(exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...), stdin)
 }
 
+// runFixtureWasm compiles the fixture with the self-host compiler to a
+// wasi:cli/run component and runs it under wasmtime, so a program whose host
+// surface is preview 2 (clocks, sockets, http) finds its imports. It returns
+// the program's stdout and the component's exit status, which is 0 when main
+// returned 0 and 1 otherwise: a component reports ok or err and nothing wider.
+func runFixtureWasm(t *testing.T, mainPath, stdin string) (string, int) {
+	t.Helper()
+	skipIfPreview2Missing(t)
+	comp := filepath.Join(t.TempDir(), "prog.component.wasm")
+	if out, err := e2eharness.SelfHostCompileCmd(t, e2eharness.TargetWasm32Wasi, mainPath, comp).CombinedOutput(); err != nil {
+		t.Fatalf("SELFHOST-COMPILE-FAIL -target wasm32-wasi %s: %v\n%s", mainPath, err, out)
+	}
+	stdout, _, ec := runComponent(t, comp, runOpts{stdin: stdin})
+	return stdout, ec
+}
+
 // runFixtureCompileError runs the front-end (modload → constfold →
 // check) and returns the first error's text plus whether any stage
 // failed. Backend-agnostic: parse / module-load / type errors are the
@@ -370,21 +384,6 @@ func runFixtureLoweringError(mainPath string, ptrW int) (string, loweringStage) 
 		return err.Error(), loweringRejected
 	}
 	return "", loweredCleanly
-}
-
-func linkAsm(t *testing.T, gcc, asm string, flags ...string) string {
-	t.Helper()
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	args := append(append([]string{}, flags...), asmPath, "-o", binPath)
-	if out, err := exec.Command(gcc, args...).CombinedOutput(); err != nil {
-		t.Fatalf("link: %v\n%s\n--- asm ---\n%s", err, out, asm)
-	}
-	return binPath
 }
 
 func readOptionalFile(dir, name string) (string, bool) {

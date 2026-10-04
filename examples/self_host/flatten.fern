@@ -1606,7 +1606,20 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
 // the entry module (whose own decls keep their bare names).
 pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
   let empty: string[] = [];
-  let ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: import_prefixes(mod, ids, pfxs), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
+  // The entry's own decls keep their names, so one sharing an imported
+  // variant's name must still win over it, as an imported module's does (#11143).
+  let own: string[] = collect_decl_names(mod);
+  let ivn: string[] = [];
+  let ivm: string[] = [];
+  let i: i32 = 0;
+  while (i < ivar_names.len()) {
+    if (!util.has_str(own, ivar_names[i])) {
+      ivn = ivn.append(ivar_names[i]);
+      ivm = ivm.append(ivar_mangled[i]);
+    }
+    i = i + 1;
+  }
+  let ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: import_prefixes(mod, ids, pfxs), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, ivar_names: ivn, ivar_mangled: ivm, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
   return rewrite_module_bodies(mod, ctx);
 }
 
