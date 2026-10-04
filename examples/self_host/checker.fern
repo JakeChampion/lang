@@ -18500,7 +18500,6 @@ function e049_cell_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEn
 }
 
 function e049_body_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEnv): util.Diag[] {
-  let vars: NameTy[] = e049_lambda_var_types(fn.body, e049_scope(fn.body));
   let captured: string[] = [];
   for st in fn.body {
     captured = astwalk.fold_stmt_own_pruned(st, captured, e049_lambda_captures, e049_not_into_lambda);
@@ -18511,6 +18510,7 @@ function e049_body_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEn
   if (captured.len() == 0) {
     return [];
   }
+  let vars: NameTy[] = e049_lambda_var_types(fn.body, e049_scope(fn.body));
   let sc: Scope = build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
   return e049_store_walk(fn.body, sc, vars, captured, fn.type_params, mod, []);
 }
@@ -18618,13 +18618,9 @@ function e049_lambda_init_names(stmts: ast.Stmt[]): string[] {
   }
   let out: string[] = [];
   for st in stmts {
-    out = astwalk.fold_stmt_nodes(st, out, at_var, e049_no_expr, e049_not_into_lambda);
+    out = astwalk.fold_stmt_spine(st, out, at_var);
   }
   return out;
-}
-
-function e049_no_expr(e: ast.Expr, own acc: string[]): string[] {
-  return acc;
 }
 
 function e049_store_walk(stmts: ast.Stmt[], sc: Scope, vars: NameTy[], captured: string[], tparams: string[], mod: parser.Module, own out: util.Diag[]): util.Diag[] {
