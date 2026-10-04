@@ -702,7 +702,7 @@ function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     return lift_store(lv, 41, op.i32_imm * 8);
   }
   if (k == "arr_set") {
-    return mark_packed(lift_store(lv, 43, 0), op);
+    return mark_packed(lift_store(lv, 43, op.i32_imm), op);
   }
   if (k == "raw_store_ptr") {
     return lift_store_keep(lv, 53);

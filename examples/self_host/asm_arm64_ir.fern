@@ -2115,7 +2115,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   let c: string = ssa_src(reg_of, ins.args[2], "x6");
   s = ssa_load(reg_of, ins.args[2], c, s);
   s = s.mark_heap();
-  s = s.write("    ldr x7, [" + a + "]\n    cmp " + b + ", x7\n    b.lo 1f\n    b __fern_oob_abort\n1:\n");
+  if (ins.imm != 1) {
+    s = s.write("    ldr x7, [" + a + "]\n    cmp " + b + ", x7\n    b.lo 1f\n    b __fern_oob_abort\n1:\n");
+  }
   if (ins.str == "u8") {
     return s.write("    add x5, " + a + ", " + b + "\n    strb " + ssa_wreg(c) + ", [x5, #8]\n");
   }

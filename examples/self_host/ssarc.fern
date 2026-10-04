@@ -4997,14 +4997,19 @@ function with_update(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
   let scratch: i32 = scratch_base(f);
   r = reserve(r, scratch + 1);
-  r = sole_owned_base(r, f, ins.args[0], scratch);
+  if (p.unique_receivers[ins.result]) {
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_store_local(scratch));
+  } else {
+    r = sole_owned_base(r, f, ins.args[0], scratch);
+  }
   if (ssasem.reference(elem)) {
     r = drop_replaced(r, f, ins, scratch, elem);
   }
   r = emit(r, ir.op_load_local(scratch));
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_load_local(ins.args[2]));
-  r = emit(r, arr_set_op(elem));
+  r = emit(r, with_set_op(p, ins, elem));
   return emit(r, ir.op_load_local(scratch));
 }
 
@@ -5055,8 +5060,17 @@ function with_field(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   r = emit(r, ir.op_load_local(res));
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_load_local(ins.args[2]));
-  r = emit(r, arr_set_op(elem));
+  r = emit(r, with_set_op(p, ins, elem));
   return emit(r, ir.op_load_local(res));
+}
+
+// A with writes a box of its receiver's length, so an index the plan saw
+// checked against the receiver needs no second check.
+function with_set_op(p: ssaunits.Plan, ins: ssa.SInst, elem: typeinfo.Type): ir.Op {
+  if (p.checked_writes[ins.result]) {
+    return ir.in_bounds(arr_set_op(elem));
+  }
+  return arr_set_op(elem);
 }
 
 // R7 of docs/REUSE-CONTRACT.md: a same-shape `map` over an `own` array writes

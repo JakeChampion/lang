@@ -74,7 +74,7 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // `defs` is the definitions table (`definitions`) of the function the plan was
 // planned from, indexed by value; a verifier checking another function
 // derives its own.
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis }
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], checked_writes: boolean[] }
 
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
@@ -378,7 +378,7 @@ function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]):
 }
 
 function bad(why: string): Plan {
-  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why) };
+  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], checked_writes: [] };
 }
 
 pub function refused(why: string): Plan {
@@ -2559,7 +2559,92 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
   if (why != "") {
     return bad(why);
   }
-  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: constants(f, defs), text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis };
+  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: constants(f, defs), text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, defs, steps), checked_writes: checked_writes(f) };
+}
+
+// checked_writes marks, at a `with`'s result, a `with` whose index an element
+// read earlier in the same block already checked against the same receiver.
+function checked_writes(f: ssasem.Func): boolean[] {
+  let out: boolean[] = bits(f.graph.nvals);
+  for b in f.graph.blocks {
+    let i: i32 = 0;
+    while (i < b.insts.len()) {
+      let ins: ssa.SInst = b.insts[i];
+      if (ins.kind_tag == ssasem.with() && read_before(b, i, ins.args[0], ins.args[1])) {
+        out = out.with(ins.result, true);
+      }
+      i = i + 1;
+    }
+  }
+  return out;
+}
+
+function read_before(b: ssa.SBlock, end: i32, arr: i32, index: i32): boolean {
+  let j: i32 = 0;
+  while (j < end) {
+    let r: ssa.SInst = b.insts[j];
+    if (r.kind_tag == ssasem.array_get() && r.args.len() == 2 && r.args[0] == arr && r.args[1] == index) {
+      return true;
+    }
+    j = j + 1;
+  }
+  return false;
+}
+
+// unique_receivers marks, at a `with`'s result, a `with` whose receiver needs
+// no uniqueness test: the result of another `with`, which hands back a box
+// nobody else holds, moved into this one and otherwise only read. A read of an
+// element or the length shares nothing, so the box is still sole-owned.
+function unique_receivers(f: ssasem.Func, defs: ssa.SInst[], steps: Step[]): boolean[] {
+  let out: boolean[] = bits(f.graph.nvals);
+  let held: i32[] = holding_uses(f);
+  for st in steps {
+    if (st.point >= 0) {
+      let ins: ssa.SInst = f.graph.blocks[ssa.block_index(f.graph, st.block)].insts[st.point];
+      if (ins.kind_tag == ssasem.with() && defs[ins.args[0]].kind_tag == ssasem.with() && held[ins.args[0]] == 1
+        && moved_receiver(st, ins.args[0])) {
+        out = out.with(ins.result, true);
+      }
+    }
+  }
+  return out;
+}
+
+function moved_receiver(st: Step, v: i32): boolean {
+  for supply in st.supplies {
+    if (supply.slot == 0 && supply.value == v) {
+      return supply.mode == move_unit();
+    }
+  }
+  return false;
+}
+
+// Per value, its uses other than reading an element or the length: the ones
+// that could hand its box to another holder.
+function holding_uses(f: ssasem.Func): i32[] {
+  let n: i32[] = [];
+  let v: i32 = 0;
+  while (v < f.graph.nvals) {
+    n = n.append(0);
+    v = v + 1;
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      let i: i32 = 0;
+      while (i < ins.args.len()) {
+        let a: i32 = ins.args[i];
+        let read: boolean = i == 0 && (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length());
+        if (a >= 0 && a < n.len() && !read) {
+          n = n.with(a, n[a] + 1);
+        }
+        i = i + 1;
+      }
+    }
+    if (b.term.kind_tag == 1 && b.term.value >= 0 && b.term.value < n.len()) {
+      n = n.with(b.term.value, n[b.term.value] + 1);
+    }
+  }
+  return n;
 }
 
 function entry_kept_of(f: ssasem.Func, a: ssasem.Analysis, b: ssa.SBlock, si: i32, own out: boolean[]): boolean[] {
