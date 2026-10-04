@@ -47,4 +47,7 @@ func TestTranscendentalLabelsResolve(t *testing.T) {
 			t.Errorf("the table does not define .Lfc_%s", c.Name)
 		}
 	}
+	if !defined["logtab"] {
+		t.Error("the table does not define .Lfc_logtab")
+	}
 }

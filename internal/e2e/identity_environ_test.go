@@ -5,17 +5,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/e2eharness"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/parser"
 )
 
 // identitySource asks for all four ids and both lists, and returns a code
@@ -156,29 +149,7 @@ func TestWasmPreview1Environ(t *testing.T) {
     write("ok");
     return 0;
 }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	mod, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{ForceMemorySection: true})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
-	dir := t.TempDir()
-	wasmPath := filepath.Join(dir, "environ.wasm")
-	if err := os.WriteFile(wasmPath, mod, 0o644); err != nil {
-		t.Fatalf("write wasm: %v", err)
-	}
+	wasmPath := e2eharness.CompileSelfHostSource(t, e2eharness.TargetWasm32Wasi, src, nil)
 	cmd := exec.Command("wasmtime", "run",
 		"--env", "FERN_ENVIRON_PROBE=identity-slice",
 		"--env", "FERN_ENVIRON_OTHER=two",

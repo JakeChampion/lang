@@ -3275,6 +3275,43 @@ what `psadbw` / `uaddlp` are for.
 The startup row is the static-binary margin, widened as it is for the seven:
 GNU dlopens libcrypto before it hashes a hundred bytes.
 
+### Both compilers, 2026-10-03, arm64-darwin (GNU coreutils 9.12, uutils 0.6.0) — the self-host build is now the faster one
+
+The whole corpus — 650 rows over 101 utilities, every utility the host's GNU
+tree provides — on Apple Silicon, `fern f9a9e3bf1`, both builds `-O`. The raw
+run is `docs/COREUTILS-BOTH-COMPILERS-2026-10-03.md`. The 2026-09-17 and
+2026-09-22 runs above were Linux x86-64, so only the direction carries across.
+
+| | native build | self-host build |
+|---|---|---|
+| rows faster than GNU | 417 / 628 | **452 / 628** |
+| rows faster than uutils | 485 / 620 | **530 / 620** |
+| median `fern / fern-sh` | — | **1.09x** |
+
+The self-host build is faster than the native build on 455 of 628 comparable
+rows, and the accumulation cliffs the 09-17 run recorded (`tsort` 751x, `tac`
+unfinished, `seq` 7.6x) are gone. So requirement 2 is met on this host: Fern
+built by the compiler that is becoming the default beats GNU on 72% of rows
+and uutils on 85%, more than the native build does.
+
+What is left, in the order it costs:
+
+- 29 rows read the self-host build 1.3-2.8x slower than native, all small
+  file operations of a few milliseconds; timed again directly they are at
+  parity (`cp` of 200 files 25.3 ms under both). Those rows are the bench's
+  seeding inside the timed command and sub-5 ms noise; the ratio columns
+  are not readable there (#11333, closed on that measurement).
+- Both builds lose to GNU's digest and base-encoder kernels (0.07-0.4x), to
+  `fmt` (0.4-0.8x) and to the directory walks of `du` / `ls` / `dir`
+  (0.6-0.9x), as before.
+- On this host specifically: `stat` with user and group names over 4000
+  operands resolves the names per operand (0.13x), `who` over 4000 logins is
+  0.24x, `sync -f` over 200 files is a 56 ms full flush per operand (0.01x),
+  and `hostid` resolves the hostname through NSS (0.07x) (#11335).
+- 22 rows did not run on Darwin under either compiler (`df`, `install -d`,
+  `groups`, `logname`, `tty`, `yes`, and `nice`, which dies with SIGSYS —
+  #11334).
+
 ## The primitives group C is built on
 
 A utility here is blocked on a builtin far more often than on anything about
@@ -3840,14 +3877,15 @@ Darwin answers all three from `getfsstat(2)`, whose `struct statfs` carries
 `f_fstypename`. #9104 is that primitive, shaped as a list rather than a lookup
 because df deduplicates by device across the whole table.
 
-**`stat` cannot report a birth time or — on Darwin — a file system's type
-name.** `stat` and `lstat` lower to `newfstatat(2)`, whose `struct stat` has no
-birth time (#9096), and Darwin's `%T` is `f_fstypename`, a string `FsStat` does
-not carry (#11255). That is `%w`, `%W` and Darwin's `-f %T` — and the DEFAULT
-multi-line block and `--terse` carry one of them, as does `-f` on Darwin, so
-those are refused with a diagnostic naming the field and exit 1. On Linux `%T` is GNU's name for the `f_type`
-magic, from `coreutils/lib/fstype.fern`, and `-f` and `-t -f` are answered. The refusal comes only after the operand has been read,
-so `stat nosuch` still reports `cannot statx` exactly as GNU does.
+**`stat` cannot report — on Darwin — a file system's type name.** Darwin's
+`%T` is `f_fstypename`, a string `FsStat` does not carry (#11255), and the
+default `-f` block carries it, so `-f %T` and that block are refused with a
+diagnostic naming the field and exit 1. On Linux `%T` is GNU's name for the
+`f_type` magic, from `coreutils/lib/fstype.fern`, and `-f` and `-t -f` are
+answered. The refusal comes only after the operand has been read, so `stat
+nosuch` still reports `cannot statx` exactly as GNU does. The birth time is
+FileStat's own (#9096): statx(2) on Linux, `st_birthtimespec` on Darwin, and
+zero where the filesystem records none, which is when GNU prints `-` / `0`.
 
 `%C` reads the file's `security.selinux` attribute the way a libselinux build of
 GNU does, so a kernel with no SELinux answers `?` and ENODATA ("No data
@@ -3856,13 +3894,12 @@ answers ENOTSUP for every file whatever it carries, so `%C` is pinned by
 `TestStatFileContext` against the host's own `lgetxattr(2)` rather than by the
 corpus.
 
-Printing GNU's own "unknown" rendering instead — `-` and `0` for a birth time,
-a zeroed magic number — was the tempting shape and is the one thing that must
-not happen: ext4 on every machine the gate runs on DOES report a birth time,
-so those bytes would be an invention and the corpus would be measuring it. The
-corpus covers the format engine and the two file-system layouts, which it
-measures on `/proc` because every count there is a fixed zero; the file layouts
-arrive with their primitives.
+Printing GNU's own "unknown" rendering instead — a zeroed magic number — was
+the tempting shape for Darwin's `%T` and is the one thing that must not happen:
+those bytes would be an invention and the corpus would be measuring it. The
+corpus covers the format engine, the two file layouts and the two file-system
+layouts, which it measures on `/proc` because every count there is a fixed
+zero.
 
 `QUOTING_STYLE` reaches `%N` and nothing else, and only when the format as
 written holds the two bytes `%N`: `%-N`, an octal-escaped `%` and the default

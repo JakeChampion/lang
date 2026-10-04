@@ -46,11 +46,16 @@ import (
 // Linux arm64 syscall numbers from the asm-generic table.
 // Only what the runtime needs at this stage.
 const (
-	sysRead      = 63
-	sysWrite     = 64
-	sysClose     = 57
-	sysOpenat    = 56
-	sysFstat     = 80
+	sysRead   = 63
+	sysWrite  = 64
+	sysClose  = 57
+	sysOpenat = 56
+	sysFstat  = 80
+	// statx(2), and the flag that makes it describe its dirfd rather
+	// than a path. Linux's stat helpers use it for the birth time
+	// `struct stat` has no field for.
+	sysStatx     = 291
+	atEmptyPath  = 0x1000
 	sysExit      = 93
 	sysExitGroup = 94
 	sysMmap      = 222
@@ -235,7 +240,7 @@ var linuxDarwinSysno = map[string][2]int{
 	// the previous mask returned, and no error return on either.
 	"umask": {166, 60},
 	// getpriority(2) / setpriority(2) — Linux asm-generic 141 / 140,
-	// Darwin BSD 100 / 101. Note the Linux pair is in the opposite
+	// Darwin BSD 100 / 96. Note the Linux pair is in the opposite
 	// order to the numbers x86-64 uses (140 get, 141 set), so neither
 	// backend's table can be copied to the other.
 	//
@@ -245,7 +250,7 @@ var linuxDarwinSysno = map[string][2]int{
 	// errno alone. `emitPriorityRuntime` undoes the bias on Linux
 	// only.
 	"getpriority": {141, 100},
-	"setpriority": {140, 101},
+	"setpriority": {140, 96},
 	// fchmod(2) — Linux 52, Darwin BSD 124. Backs write_file_exec's
 	// mode fixup: openat's mode argument applies only on CREATE, so
 	// writing over a stale output would leave the old mode (#6133).
@@ -8633,6 +8638,10 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	for _, w := range fdlibm.TwoOverPiBits {
 		g.line(fmt.Sprintf("\t.quad 0x%016x", w))
 	}
+	g.label(".Lfc_logtab")
+	for _, w := range fdlibm.LogData() {
+		g.line(fmt.Sprintf("\t.quad 0x%016x", w))
+	}
 	g.line(".text")
 
 	// retBits leaves a literal bit pattern in d0 and returns — an
@@ -8955,93 +8964,132 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("ret")
 	g.sizeDirective("__fern_exp_f64")
 
-	// __fern_log_f64(d0=x) → ln x (x>0). x = 2^k·m, m normalised to
-	// [sqrt2/2, sqrt2); f = m-1; s = f/(2+f).
-	//   R = t1+t2 over two INDEPENDENT chains in w = z², z = s², so they
-	//   issue in parallel instead of as one 7-deep Horner.
-	//   ln x = k·ln2_hi - ((hfsq - (s·(hfsq+R) + k·ln2_lo)) - f)
+	// __fern_log_f64(d0=x) → ln x, the table-driven kernel
+	// internal/fdlibm/logtab.go documents. x9 holds .Lfc_logtab's address
+	// throughout, x12 the coefficient table's.
 	fn("__fern_log_f64")
+	logMain, logNear1, logSpecial := g.freshLabel("logMain"), g.freshLabel("logNear1"), g.freshLabel("logSpecial")
 	logRet, logNaN, logNegInf := g.freshLabel("logRet"), g.freshLabel("logNaN"), g.freshLabel("logNegInf")
-	logNoScale := g.freshLabel("logNoScale")
-	// Domain guards. The bit-twiddling below extracts an exponent
-	// from 0 or +Inf and carries on, so log(0) returned -709.09 and
-	// log(+Inf) returned 709.78 — finite garbage. log(-0) == log(0) ==
-	// -Inf, which the equality branch covers.
-	nanGuard(logRet)
-	g.emit("fmov d1, xzr")
-	g.emit("fcmp d0, d1")
-	g.emit("b.lt %s", logNaN)
-	g.emit("b.eq %s", logNegInf)
-	g.loadImm64("x14", 0x7ff0000000000000)
-	g.emit("fmov d1, x14")
-	g.emit("fcmp d0, d1")
-	g.emit("b.eq %s", logRet) // x == +Inf → itself
 	base()
-	// A subnormal stores exponent 0 — its magnitude is in the mantissa's
-	// leading zeros — so the field below reports the smallest normal
-	// exponent for every one of them. Scale into the normal range and take
-	// the 54 back off k. x13 carries the adjustment; it is dead until the
-	// mantissa mask below.
-	g.emit("mov x13, #0")
-	ldc("d1", "minnorm")
-	g.emit("fcmp d0, d1")
-	g.emit("b.ge %s", logNoScale)
-	ldc("d1", "two54")
-	g.emit("fmul d0, d0, d1")
-	g.emit("mov x13, #54")
-	g.label(logNoScale)
+	g.adrpAdd("x9", ".Lfc_logtab")
 	g.emit("fmov x10, d0")
+	g.loadImm64("x11", fdlibm.LogNear1Lo)
+	g.emit("sub x11, x10, x11")
+	g.loadImm64("x13", fdlibm.LogNear1Hi-fdlibm.LogNear1Lo)
+	g.emit("cmp x11, x13")
+	g.emit("b.lo %s", logNear1)
 	g.emit("lsr x11, x10, #52")
-	g.emit("and x11, x11, #0x7ff")
-	g.emit("sub x11, x11, #1023") // k
-	g.emit("sub x11, x11, x13")
-	g.emit("mov x13, #1")
-	g.emit("lsl x13, x13, #52")
-	g.emit("sub x13, x13, #1")
-	g.emit("and x10, x10, x13") // mantissa
-	g.emit("mov x14, #1023")
-	g.emit("lsl x14, x14, #52")
-	g.emit("orr x10, x10, x14")
-	g.emit("fmov d1, x10") // m in [1,2)
-	noAdj := g.freshLabel("logNoAdj")
-	ldc("d2", "sqrt2")
-	g.emit("fcmp d1, d2")
-	g.emit("b.lt %s", noAdj)
-	ldc("d3", "half")
-	g.emit("fmul d1, d1, d3")
-	g.emit("add x11, x11, #1")
-	g.label(noAdj)
-	ldc("d4", "one")
-	g.emit("fsub d1, d1, d4") // f
-	ldc("d2", "two")
-	g.emit("fadd d2, d2, d1") // 2+f
-	g.emit("fdiv d3, d1, d2") // s
-	g.emit("fmul d4, d3, d3") // z
-	g.emit("fmul d5, d4, d4") // w
-	ldc("d6", "lg6")
-	horner("d6", "d5", "lg4")
-	horner("d6", "d5", "lg2")
-	g.emit("fmul d6, d6, d5") // t1
-	ldc("d7", "lg7")
-	horner("d7", "d5", "lg5")
-	horner("d7", "d5", "lg3")
-	horner("d7", "d5", "lg1")
-	g.emit("fmul d7, d7, d4") // t2
-	g.emit("fadd d6, d6, d7") // R
-	g.emit("fmul d2, d1, d1")
+	g.emit("sub x11, x11, #1")
+	g.emit("cmp x11, #0x7fe")
+	g.emit("b.hs %s", logSpecial) // zero, subnormal, negative, Inf or NaN
+	g.label(logMain)
+	g.loadImm64("x13", fdlibm.LogOff)
+	g.emit("sub x13, x10, x13") // tmp
+	g.emit("asr x15, x13, #52")
+	g.emit("scvtf d4, x15")              // k
+	g.emit("sub x10, x10, x15, lsl #52") // bits(z)
+	g.emit("lsr x14, x13, #%d", 52-fdlibm.LogTableBits)
+	g.emit("and x14, x14, #%d", 1<<fdlibm.LogTableBits-1)
+	g.emit("add x14, x14, x14, lsl #1")
+	g.emit("add x14, x9, x14, lsl #3") // the row, less LogRowsOff
+	g.emit("fmov d0, x10")             // z
+	g.emit("lsr x10, x10, #%d", 51-fdlibm.LogTableBits)
+	g.emit("orr x10, x10, #1")
+	g.emit("lsl x10, x10, #%d", 51-fdlibm.LogTableBits)
+	g.emit("fmov d1, x10") // c
+	g.emit("fsub d0, d0, d1")
+	g.emit("ldr d1, [x14, #%d]", fdlibm.LogRowsOff)
+	g.emit("fmul d0, d0, d1") // r
+	ldc("d2", "ln2hi")
+	g.emit("fmul d2, d4, d2")
+	g.emit("ldr d3, [x14, #%d]", fdlibm.LogRowsOff+8)
+	g.emit("fadd d2, d2, d3") // w
+	g.emit("fadd d3, d2, d0") // hi
+	g.emit("fsub d2, d2, d3")
+	g.emit("fadd d2, d2, d0")
+	ldc("d5", "ln2lo")
+	g.emit("fmul d4, d4, d5")
+	g.emit("ldr d5, [x14, #%d]", fdlibm.LogRowsOff+16)
+	g.emit("fadd d4, d4, d5")
+	g.emit("fadd d2, d2, d4") // lo
+	g.emit("fmul d5, d0, d0") // r2
+	g.emit("ldp d16, d17, [x9]")
+	g.emit("ldp d18, d19, [x9, #16]")
+	g.emit("fmul d6, d0, d17")
+	g.emit("fadd d6, d6, d16")
+	g.emit("fmul d7, d0, d19")
+	g.emit("fadd d7, d7, d18")
+	g.emit("fmul d7, d7, d5")
+	g.emit("fadd d6, d6, d7") // p
 	ldc("d16", "half")
-	g.emit("fmul d2, d2, d16") // hfsq
-	g.emit("scvtf d0, x11")    // kf
-	ldc("d16", "ln2lo")
-	g.emit("fmul d5, d0, d16") // k·ln2_lo
-	g.emit("fadd d6, d6, d2")  // hfsq+R
-	g.emit("fmul d6, d6, d3")  // s·(hfsq+R)
-	g.emit("fadd d6, d6, d5")
-	g.emit("fsub d2, d2, d6") // hfsq - (…)
-	g.emit("fsub d2, d2, d1") // - f
-	ldc("d16", "ln2hi")
-	g.emit("fmul d0, d0, d16")
-	g.emit("fsub d0, d0, d2")
+	g.emit("fmul d7, d5, d16")
+	g.emit("fsub d2, d2, d7")
+	g.emit("fmul d5, d0, d5")
+	g.emit("fmul d5, d5, d6")
+	g.emit("fadd d2, d2, d5")
+	g.emit("fadd d0, d2, d3")
+	g.emit("ret")
+	// log1p(r) for r = x - 1, which is exact here.
+	g.label(logNear1)
+	ldc("d1", "one")
+	g.emit("fsub d0, d0, d1") // r
+	g.emit("fmul d1, d0, d0") // r2
+	g.emit("fmul d2, d0, d1") // r3
+	g.emit("add x11, x9, #%d", fdlibm.LogNear1Off)
+	// p = ((B[a] + r*B[a+1]) + r2*B[a+2]) + r3*tail, innermost first.
+	for _, a := range []int{6, 3, 0} {
+		g.emit("ldp d16, d17, [x11, #%d]", 8*a)
+		g.emit("ldr d18, [x11, #%d]", 8*(a+2))
+		g.emit("fmul d4, d0, d17")
+		g.emit("fadd d4, d4, d16")
+		g.emit("fmul d5, d1, d18")
+		g.emit("fadd d4, d4, d5")
+		if a == 6 {
+			g.emit("ldr d19, [x11, #%d]", 8*9)
+			g.emit("fmul d3, d2, d19")
+		} else {
+			g.emit("fmul d3, d3, d2")
+		}
+		g.emit("fadd d3, d3, d4")
+	}
+	g.emit("fmul d3, d3, d2") // y
+	g.loadImm64("x13", 0x41a0000000000000)
+	g.emit("fmov d1, x13")
+	g.emit("fmul d1, d1, d0") // r·2^27
+	g.emit("fadd d4, d0, d1")
+	g.emit("fsub d4, d4, d1") // rhi
+	g.emit("fsub d5, d0, d4") // rlo
+	ldc("d16", "half")
+	g.emit("fmul d6, d4, d4")
+	g.emit("fmul d6, d6, d16") // h
+	g.emit("fsub d7, d0, d6")  // hi
+	g.emit("fsub d1, d0, d7")
+	g.emit("fsub d1, d1, d6") // lo
+	g.emit("fadd d4, d4, d0")
+	g.emit("fmul d5, d5, d16")
+	g.emit("fmul d5, d5, d4")
+	g.emit("fsub d1, d1, d5")
+	g.emit("fadd d3, d3, d1")
+	g.emit("fadd d0, d3, d7")
+	g.emit("ret")
+	// x10 = bits(x), x11 = top-1 with top the sign and exponent.
+	g.label(logSpecial)
+	g.emit("lsl x13, x10, #1")
+	g.emit("cbz x13, %s", logNegInf) // ±0
+	nanGuard(logRet)
+	g.emit("cmp x10, #0")
+	g.emit("b.lt %s", logNaN)
+	g.emit("cmp x11, #0x7fe")
+	g.emit("b.eq %s", logRet) // +Inf
+	// Subnormal: scale into the normal range, then take the 52 back off
+	// the exponent field so the reduction's k comes out right.
+	g.loadImm64("x13", 0x4330000000000000)
+	g.emit("fmov d1, x13")
+	g.emit("fmul d0, d0, d1")
+	g.emit("fmov x10, d0")
+	g.loadImm64("x13", 0x0340000000000000)
+	g.emit("sub x10, x10, x13")
+	g.emit("b %s", logMain)
 	g.label(logRet)
 	g.emit("ret")
 	g.label(logNaN)
@@ -13516,45 +13564,69 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	g.typeDirective(sym)
 	g.label(sym)
 	// Frame: 96-byte base (fp/lr + x19..x25 + 16-byte inline-
-	// spill scratch at [x29+72]) + 192-byte statbuf at [x29+96]
-	// = 288.
-	g.emit("stp x29, x30, [sp, #-288]!")
+	// spill scratch at [x29+72]) + 256-byte statbuf at [x29+96]
+	// = 352. Linux fills it with `struct statx`, Darwin with its
+	// 144-byte `struct stat`.
+	g.emit("stp x29, x30, [sp, #-352]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("stp x23, x24, [sp, #48]")
 	g.emit("str x25, [sp, #64]")
-	if byFd {
+	switch {
+	case byFd && g.darwin:
 		// fstat(fd, statbuf)
 		g.emit("ldr w0, [x0]")
 		g.emit("add x1, x29, #96")
 		g.syscallFstat()
-	} else {
+	case byFd:
+		// statx(fd, "", AT_EMPTY_PATH, mask, statbuf); the "" is the
+		// unused inline-spill scratch.
+		g.emit("ldr w0, [x0]")
+		g.emit("strb wzr, [x29, #72]")
+		g.emit("add x1, x29, #72")
+		g.emit("mov x2, #%d", atEmptyPath)
+		g.emit("mov x3, #%d", ir.StatxMask)
+		g.emit("add x4, x29, #96")
+		g.emit("mov x8, #%d", sysStatx)
+		g.emit("svc #0")
+	default:
 		g.emit("mov x19, x0") // path_data (original, for io_error)
 		g.emit("mov x20, x1") // path_len (original, for io_error)
 		g.emitStrDataPtr2W("x21", "x19", "x20", 72)
 		g.emitStrLen2W("w22", "x20")
 		g.emitNulTermPath2W("x21", "x21", "x22")
-		// fstatat(AT_FDCWD, pathz, statbuf, atFlags)
 		g.atFdcwd("x0")
 		g.emit("mov x1, x21")
-		g.emit("add x2, x29, #96")
-		g.emit("mov x3, #%d", atFlags)
-		g.syscallFstatat()
+		if g.darwin {
+			// fstatat(AT_FDCWD, pathz, statbuf, atFlags)
+			g.emit("add x2, x29, #96")
+			g.emit("mov x3, #%d", atFlags)
+			g.syscallFstatat()
+		} else {
+			// statx(AT_FDCWD, pathz, atFlags, mask, statbuf)
+			g.emit("mov x2, #%d", atFlags)
+			g.emit("mov x3, #%d", ir.StatxMask)
+			g.emit("add x4, x29, #96")
+			g.emit("mov x8, #%d", sysStatx)
+			g.emit("svc #0")
+		}
 		g.emitFreeNulTermPath2W("x21", "x22")
 	}
 	g.emit("tbnz x0, #63, .L%s_err", lp)
+	sizeOff := ir.StatxSizeOff
 	if g.darwin {
 		g.emit("ldrh w9, [x29, #100]") // st_mode (u16 @ +4)
+		sizeOff = 96
 	} else {
-		g.emit("ldr w9, [x29, #112]") // st_mode (u32 @ +16)
+		g.emit("ldrh w9, [x29, #%d]", 96+ir.StatxModeOff) // stx_mode (u16)
 	}
-	g.emit("and w9, w9, #0xf000")                     // S_IFMT
-	g.emit("cmp w9, #32768")                          // S_IFREG
-	g.emit("cset x23, eq")                            // is_file
-	g.emit("cmp w9, #16384")                          // S_IFDIR
-	g.emit("cset x24, eq")                            // is_dir
-	g.emit("ldr x25, [x29, #%d]", 96+g.statSizeOff()) // st_size
+	g.emit("and w9, w9, #0xf000")             // S_IFMT
+	g.emit("cmp w9, #32768")                  // S_IFREG
+	g.emit("cset x23, eq")                    // is_file
+	g.emit("cmp w9, #16384")                  // S_IFDIR
+	g.emit("cset x24, eq")                    // is_dir
+	g.emit("ldr x25, [x29, #%d]", 96+sizeOff) // size
 	g.emit("mov x0, #%d", ir.FileStat.Bytes)
 	g.emit("bl __fern_alloc_box")
 	g.emit("str w23, [x0]")
@@ -13562,20 +13634,15 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	g.emit("str x25, [x0, #%d]", ir.FileStat.Size)
 	// The statbuf is still live at [x29+96]; the rest of the record is
 	// copied out field by field, widening each to the FileStat slot.
-	for _, f := range g.statFields() {
-		switch f.load {
-		case "h":
-			g.emit("ldrh w9, [x29, #%d]", 96+f.src)
-			g.emit("str w9, [x0, #%d]", f.box)
-		case "w":
-			g.emit("ldr w9, [x29, #%d]", 96+f.src)
-			g.emit("str w9, [x0, #%d]", f.box)
-		case "sw":
-			g.emit("ldrsw x9, [x29, #%d]", 96+f.src)
-			g.emit("str x9, [x0, #%d]", f.box)
-		default:
-			g.emit("ldr x9, [x29, #%d]", 96+f.src)
-			g.emit("str x9, [x0, #%d]", f.box)
+	if g.darwin {
+		g.emitDarwinStatFields()
+	} else {
+		for _, line := range StatxProjection("x29", 96, "x0", ".L"+lp+"_bt") {
+			if strings.HasSuffix(line, ":") {
+				g.label(strings.TrimSuffix(line, ":"))
+				continue
+			}
+			g.emit("%s", line)
 		}
 	}
 	g.emit("mov x21, x0")
@@ -13607,7 +13674,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	g.emit("ldp x23, x24, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #288")
+	g.emit("ldp x29, x30, [sp], #352")
 	g.emit("ret")
 	g.sizeDirective(sym)
 	g.line(".ltorg")
@@ -13958,56 +14025,103 @@ type statField struct {
 	load     string
 }
 
-// statFields is all that differs between the two arm64
-// environments once fstatat has run. Linux's asm-generic `struct stat`
-// is 128 bytes with 32-bit mode / nlink / uid / gid up front and the
-// three timestamps as pairs of 64-bit words from offset 72; Darwin's
-// 64-bit-inode `struct stat` is 144 bytes and shares almost none of
-// that — mode and nlink are 16-bit, dev / rdev / blksize are signed
-// 32-bit, the timestamps are `struct timespec` pairs starting at 32
-// (with st_birthtimespec occupying 80..96, which FileStat has no field
-// for), and size and blocks sit near the end at 96 and 104.
+// darwinStatFields projects Darwin's 64-bit-inode `struct stat` — 144
+// bytes, mode and nlink 16-bit, dev / rdev / blksize signed 32-bit, the
+// timestamps `struct timespec` pairs from 32 with st_birthtimespec at 80,
+// and size and blocks near the end at 96 and 104 — onto FileStat. Linux
+// reads `struct statx` instead (StatxProjection).
 //
 // Getting one of these wrong is silent: every offset here is inside a
 // buffer the kernel filled, so a bad one reads a real number from the
-// wrong field. TestStatFieldsMatchTheKernelLayouts pins both tables.
-func (g *generator) statFields() []statField {
-	if g.darwin {
-		return []statField{
-			{ir.FileStat.Mode, 4, "h"},
-			{ir.FileStat.Nlink, 6, "h"},
-			{ir.FileStat.UID, 16, "w"},
-			{ir.FileStat.GID, 20, "w"},
-			{ir.FileStat.Dev, 0, "sw"},
-			{ir.FileStat.Rdev, 24, "sw"},
-			{ir.FileStat.Ino, 8, "x"},
-			{ir.FileStat.Blksize, 112, "sw"},
-			{ir.FileStat.Blocks, 104, "x"},
-			{ir.FileStat.Atime, 32, "x"},
-			{ir.FileStat.AtimeNsec, 40, "x"},
-			{ir.FileStat.Mtime, 48, "x"},
-			{ir.FileStat.MtimeNsec, 56, "x"},
-			{ir.FileStat.Ctime, 64, "x"},
-			{ir.FileStat.CtimeNsec, 72, "x"},
+// wrong field.
+var darwinStatFields = []statField{
+	{ir.FileStat.Mode, 4, "h"},
+	{ir.FileStat.Nlink, 6, "h"},
+	{ir.FileStat.UID, 16, "w"},
+	{ir.FileStat.GID, 20, "w"},
+	{ir.FileStat.Dev, 0, "sw"},
+	{ir.FileStat.Rdev, 24, "sw"},
+	{ir.FileStat.Ino, 8, "x"},
+	{ir.FileStat.Blksize, 112, "sw"},
+	{ir.FileStat.Blocks, 104, "x"},
+	{ir.FileStat.Atime, 32, "x"},
+	{ir.FileStat.AtimeNsec, 40, "x"},
+	{ir.FileStat.Mtime, 48, "x"},
+	{ir.FileStat.MtimeNsec, 56, "x"},
+	{ir.FileStat.Ctime, 64, "x"},
+	{ir.FileStat.CtimeNsec, 72, "x"},
+	{ir.FileStat.Btime, 80, "x"},
+	{ir.FileStat.BtimeNsec, 88, "x"},
+}
+
+// emitDarwinStatFields copies darwinStatFields out of the statbuf at
+// [x29+96] into the FileStat box at x0.
+func (g *generator) emitDarwinStatFields() {
+	for _, f := range darwinStatFields {
+		switch f.load {
+		case "h":
+			g.emit("ldrh w9, [x29, #%d]", 96+f.src)
+			g.emit("str w9, [x0, #%d]", f.box)
+		case "w":
+			g.emit("ldr w9, [x29, #%d]", 96+f.src)
+			g.emit("str w9, [x0, #%d]", f.box)
+		case "sw":
+			g.emit("ldrsw x9, [x29, #%d]", 96+f.src)
+			g.emit("str x9, [x0, #%d]", f.box)
+		default:
+			g.emit("ldr x9, [x29, #%d]", 96+f.src)
+			g.emit("str x9, [x0, #%d]", f.box)
 		}
 	}
-	return []statField{
-		{ir.FileStat.Mode, 16, "w"},
-		{ir.FileStat.Nlink, 20, "w"},
-		{ir.FileStat.UID, 24, "w"},
-		{ir.FileStat.GID, 28, "w"},
-		{ir.FileStat.Dev, 0, "x"},
-		{ir.FileStat.Rdev, 32, "x"},
-		{ir.FileStat.Ino, 8, "x"},
-		{ir.FileStat.Blksize, 56, "sw"},
-		{ir.FileStat.Blocks, 64, "x"},
-		{ir.FileStat.Atime, 72, "x"},
-		{ir.FileStat.AtimeNsec, 80, "x"},
-		{ir.FileStat.Mtime, 88, "x"},
-		{ir.FileStat.MtimeNsec, 96, "x"},
-		{ir.FileStat.Ctime, 104, "x"},
-		{ir.FileStat.CtimeNsec, 112, "x"},
+}
+
+// StatxProjection returns the instructions that copy the Linux statx record
+// at [base + off] onto the FileStat fields at [box] — every field but
+// is_file, is_dir and size, which the callers already hold. A dev_t is
+// glibc's makedev of its (major, minor) pair, and a birth time the
+// filesystem does not record (STATX_BTIME clear in stx_mask) is stored as
+// zero. Clobbers x9-x12; `lbl` is the one local label it defines. arm64ssa
+// reads it too.
+func StatxProjection(base string, off int32, box, lbl string) []string {
+	var out []string
+	add := func(f string, a ...any) { out = append(out, fmt.Sprintf(f, a...)) }
+	for _, f := range ir.StatxFields {
+		switch f.Load {
+		case 2:
+			add("ldrh w9, [%s, #%d]", base, off+f.Src)
+		case 4:
+			add("ldr w9, [%s, #%d]", base, off+f.Src)
+		default:
+			add("ldr x9, [%s, #%d]", base, off+f.Src)
+		}
+		if f.Store == 4 {
+			add("str w9, [%s, #%d]", box, f.Box)
+		} else {
+			add("str x9, [%s, #%d]", box, f.Box)
+		}
 	}
+	for _, d := range ir.StatxDevs {
+		add("ldr w9, [%s, #%d]", base, off+d.Major)
+		add("ldr w10, [%s, #%d]", base, off+d.Minor)
+		add("ubfiz x11, x9, #8, #12")
+		add("lsr x12, x9, #12")
+		add("orr x11, x11, x12, lsl #44")
+		add("and x12, x10, #0xff")
+		add("orr x11, x11, x12")
+		add("lsr x12, x10, #8")
+		add("orr x11, x11, x12, lsl #20")
+		add("str x11, [%s, #%d]", box, d.Box)
+	}
+	add("mov x9, #0")
+	add("mov x10, #0")
+	add("ldr w11, [%s, #%d]", base, off)
+	add("tbz w11, #11, %s", lbl) // STATX_BTIME
+	add("ldr x9, [%s, #%d]", base, off+ir.StatxBtimeOff)
+	add("ldr w10, [%s, #%d]", base, off+ir.StatxBtimeOff+8)
+	out = append(out, lbl+":")
+	add("str x9, [%s, #%d]", box, ir.FileStat.Btime)
+	add("str x10, [%s, #%d]", box, ir.FileStat.BtimeNsec)
+	return out
 }
 
 // atEaccess materialises AT_EACCESS into reg: 0x200 on Linux, 0x10 on

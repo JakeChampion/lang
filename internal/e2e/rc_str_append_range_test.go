@@ -211,9 +211,11 @@ func TestX86_64StrAppendRangeAllocsCollapse(t *testing.T) {
 	}
 }
 
+// The native backend's leg: the self-host's wasm emitter copies the slice
+// before appending it, so this program allocates per append there (#11327).
 func TestWASMStrAppendRangeAllocsCollapse(t *testing.T) {
 
-	_, stderr, code := runLeakCheckWasm(t, strAppendRangeAllocSrc, false)
+	_, stderr, code := runNativeLeakCheckWasm(t, strAppendRangeAllocSrc)
 	if code != 0 {
 		t.Fatalf("range-append loop exited %d, want 0; stderr=%q", code, stderr)
 	}
