@@ -113,14 +113,16 @@ pub function read_all_stdin(): Result[string, IoError] {
       return Err(e);
     },
     Ok(b) => {
-      // As in utf8.from_bytes, the unchecked representation stays
-      // inside this constructor until validation succeeds.
-      let text: string = buf_take(b);
+      let bytes: u8[] = buf_take_bytes(b);
       buf_free(b);
-      if (utf8.is_valid_utf8(text)) {
-        return Ok(text);
+      match (utf8.from_bytes(bytes)) {
+        Some(text) => {
+          return Ok(text);
+        },
+        None => {
+          return Err(InvalidUtf8("stdin"));
+        }
       }
-      return Err(InvalidUtf8("stdin"));
     }
   }
 }

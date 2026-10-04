@@ -10,9 +10,9 @@ alongside (byte views, scalar/char, paths, symbols, builders).
 
 Epic #5626 is closed, but prerequisite #5714 remains open and its acceptance
 work is incomplete. D9 requires every observable
-`string` to be well-formed UTF-8. The boundaries below have been migrated,
-but the remaining producers listed after the table still prevent that
-invariant from holding across the stdlib.
+`string` to be well-formed UTF-8, subject to the D10 OS-input contract below.
+The producer migrations are implemented; final integrated validation and
+publication remain outstanding.
 
 | Producer | Bytes from | What it does with ill-formed bytes |
 |---|---|---|
@@ -29,6 +29,13 @@ invariant from holding across the stdlib.
 | Regex replacements, splits and captures | byte-oriented matches | `None` when text would be invalid; explicit byte variants preserve raw output |
 | `u8.to_ascii_string` | a byte value | empty text for bytes above 127; ASCII, including NUL, is preserved |
 | `rng_bytes` / `random_bytes` | pseudorandom or system random bytes | owned `u8[]`, with no text conversion |
+| `Reader.read_chunk` | one physical read | `Err(InvalidUtf8(""))`; the consumed bytes are not retried or carried into the next call; `read_chunk_bytes` is raw |
+| `buf_take` | a byte builder | U+FFFD per maximal invalid subpart; drains the builder and retains its capacity; `buf_take_bytes` is raw |
+| PEG captures | committed byte ranges | `ok=false` with no captures if a nonempty range splits a scalar; matching and ordered choice remain byte-oriented |
+| `sim.Net.fetch_future` | scheduled parts of a valid body | retains the complete body until the last scheduled resumption, without constructing partial strings |
+| `sim_fetch.Net.sent` | transport writes | owned `u8[]` snapshots, including binary bodies; its shared journal uses explicit ASCII hex |
+| HTTP stream buffers | pending input, chunk-decoder storage and pipelined leftovers | shared `Cell[u8[]]` storage, with immutable snapshots |
+| Coreutils time formats | OS-supplied format bytes | compiled formats retain `u8[]`; text rendering repairs invalid UTF-8, and byte rendering preserves raw output |
 
 HTTP response serialization now has `*_bytes` siblings that preserve the
 body and frame its byte length. The text siblings retain replacement decoding
@@ -43,16 +50,27 @@ The property test (`examples/tests/utf8_validity_property_test.fern`)
 covers the string methods. The byte-level methods (`reverse_bytes`,
 `shift_byte`, `replace_byte`, `without_byte`) return `u8[]`.
 
-The old `Reader.read_chunk` and builder text extraction still expose
-unchecked raw paths. Their byte-returning siblings now provide migration
-destinations, but binary consumers and the old text contracts still need
-updating. These gaps require implementation and target coverage before
-closing D9. Regex keeps byte-oriented matching: replacing `.` in `é` can
+Reader and builder publication now enforce their text contracts. PEG checks
+committed capture boundaries before constructing any result text, including
+earlier captures overwritten under the same name. Regex keeps byte-oriented
+matching: replacing `.` in `é` can
 split its encoding, so the checked text result is `None` while the byte
 variant returns the exact output.
 
-The OS text contract remains a deliberate exception, while the sink migration
-is still incomplete:
+Streamed HTTP request bodies now retain private buffers in `Cell[u8[]]`.
+Reads return immutable snapshots; overwrites preserve aliases and reclaim
+replaced storage. The regression suite sends every byte value through
+content-length and chunked bodies, followed by another binary request on
+the same connection. Invalid bodies still fail the text API.
+
+The builder migration also exposed raw OS-format consumers in `date`, `du`,
+`ls` and `pr`. Their shared formatter now stores literal byte ranges in an
+owned byte array and has separate text and byte renderers. This preserves
+unknown conversions that split a scalar into parser pieces without making
+partial strings. Raw CLI output matches GNU; text rendering validates only
+after those pieces have been joined.
+
+The OS text contract remains a deliberate exception:
 
 - **`args()`, `environ()`, `env(name)` and `read_line()` are assumed
   UTF-8, not validated** — the D10 position, extended from paths to the
@@ -61,12 +79,15 @@ is still incomplete:
   end-of-file), and a CLI that trapped on a stray byte in its own
   arguments would be worse than one that passed it through. Their
   builtin signatures say so.
-- **Byte sinks now have raw forms, but some callers still construct text**
+  Both bare and `Reader.read_line()` return complete lines, including a
+  trailing newline when present. Storage grows across internal capacity
+  boundaries, so valid input is not split inside a UTF-8 scalar. This does
+  not add validation of malformed OS input.
+- **Byte sinks have raw forms**
   (#10948): `tcp_send_bytes`, `udp_sendto_bytes` and `write_file_bytes` are
   available; wasi's `stream_write` takes `u8[]`, and Writer's byte methods
-  borrow `[u8]`. DNS uses the raw send path. The remaining unchecked
-  conversions in `std/tcp` and `std/fetch` still need migration. Having byte
-  entry points does not establish the invariant for their callers.
+  borrow `[u8]`. DNS, `std/tcp` and `std/fetch` use byte paths for binary
+  traffic. Private HTTP stream state also uses owned byte arrays.
 
 Written because #5552 ("stdlib case ops are ASCII-only — add a Unicode
 `std/unicode`") asked a question the codebase can't answer from first
@@ -464,16 +485,17 @@ buf_push_bytes_range(b, bytes, lo, hi) /
 buf_push_byte(b, x) / buf_len(b) / buf_take(b) / buf_take_bytes(b) / buf_free(b)
 ```
 
-`buf_take` copies the accumulated bytes into a string of exactly their
-length and keeps the buffer on the builder, emptied and still at full
-width. Handing the buffer itself over was zero-copy but freed it at the
-string's length class, which filed every grown block on a freelist the
-builder's next growth never read, so a stream that straddled its flush
-threshold bumped fresh memory per flush (#9179); the copy is a memcpy per
-flush against a write syscall. A builder is not
-refcounted and has no drop — a handle that is never freed leaks, exactly as
-an fd that is never closed does — so programs want `std/io_buffered`'s
-writers rather than these directly.
+`buf_take` returns independently owned, valid UTF-8 text. Valid input is
+copied unchanged; each malformed maximal subpart becomes U+FFFD. For example,
+the incomplete prefix `E2 82` becomes one replacement character, while
+`E0 80 80` becomes three. Appends can split a valid scalar across calls;
+validation happens when the accumulated result is taken.
+
+Extraction resets the byte length and retains the builder's capacity.
+Later appends and freeing the builder do not alter an extracted result.
+Output storage is sized to the repaired text, so its allocation and release
+use the same size class (#9179). A builder has no automatic drop: callers
+must call `buf_free`, or use `std/io_buffered`'s writers to manage it.
 
 `buf_take_bytes(b): u8[]` extracts arbitrary bytes into an independently
 owned array and resets the builder length while retaining its reserve.
@@ -483,8 +505,9 @@ half-open byte range, clamping bounds to the array. Empty or inverted ranges
 append nothing. It reserves once and copies packed arrays in bulk; neither
 appending nor extracting requires an intermediate string.
 Use this path for binary output. It never constructs a string; text callers
-can validate the returned bytes with `std/utf8.from_bytes`. The older
-`buf_take` API still needs a separate validity-contract migration for D9.
+can validate the returned bytes with `std/utf8.from_bytes` when malformed
+input must be rejected rather than replaced. In particular, an I/O API that
+promises `InvalidUtf8` must validate raw bytes before any lossy extraction.
 
 The table-based pushes also accept raw arrays:
 `buf_push_bytes_mapped`, `buf_push_bytes_filtered`, and
@@ -779,7 +802,7 @@ any byte ≥ 0x80 and delegate to the byte fold when there is none. That's
 what keeps D3 from regressing the CLI/header workloads the constraints
 section of #5552 (rightly) protects.
 
-### D8 - Provide allocation-free `[u8]` views over strings. **IN PROGRESS** (#5632)
+### D8 - Provide allocation-free `[u8]` views over strings. **IMPLEMENTED** (#5632)
 
 Already listed as deferred in `LANGUAGE-DIRECTION.md`. This is Fern's
 `UTF8Span`/`&[u8]` (§2.2), and every parser in the tree — `std/json`,
@@ -807,7 +830,8 @@ Production lowering rejects a returned byte view over local storage.
 The primary `-check` command now uses the same typed source anchors to report
 E063 for array-view escapes and E065 for string-view escapes, including
 generic and imported declarations. See [the diagnostic report](STRING-VIEW-DIAGNOSTICS-2026-10-03.md).
-Final validation and merge remain outstanding.
+The runtime, consumer and diagnostic changes were validated and merged in
+PR #11459.
 
 ### D9 - Guarantee UTF-8 validity on `string`. **IN PROGRESS** (#5634, #5714)
 
@@ -828,6 +852,7 @@ recognisers, example programs and test fixtures. By category:
 | Digit assembly | `core/int`, `std/i32`, `std/i64`, `std/float` | No — ASCII it just built |
 | Encoder output | base64/base32/hex **encode**, `url` percent-encode | No: ASCII by construction |
 | Regex output | replacements, splits and captures | Yes: byte matches can split UTF-8 scalars. Text APIs return `Option`; `_bytes` variants preserve raw output. |
+| PEG captures | committed named byte ranges | Yes: byte matches can split UTF-8 scalars. Final capture validation returns `ok=false` and an empty map when any nonempty range splits a character. Empty ranges remain valid. |
 | Text formatting | `json` escape, `ansi`, `table`, `format` | Can contain Unicode; validity depends on preserving complete input scalars, not ASCII output. |
 | Byte-preserving transforms | `std/string` case/pad/trim/repeat/replace | No — reassembles bytes of an already-valid string |
 | Scalar re-encoding | `std/utf8`'s own encoder | No — it just validated the scalar |
@@ -888,13 +913,13 @@ checker and all four backends. `random_bytes` has moved: it returns
 `read_file` keeps its text signature, has its raw sibling
 (`read_file_bytes(path): Result[u8[], IoError]` on every backend), and
 BOTH compilers now validate: interp, x86-64, arm64 (both string ABIs,
-Linux + Darwin), arm64ssa and wasm (preview-1 and -2) on the native
+Linux + Darwin), and wasm (preview-1 and -2) on the native
 side, and the self-host's register lanes (`asmcore.rt_src_utf8_valid`,
 plain Fern) plus its wasm p1/p2 lanes, all return
 `Err(InvalidUtf8(path))` on malformed content — the case D9 predicted
 and nothing emitted is now real on every lane. `tcp_recv(fd, max)`
-returns `u8[]` (#7467). The remaining builder and Reader raw paths are
-listed in the migration audit above.
+returns `u8[]` (#7467). Builder and Reader text boundaries are covered in
+the migration audit above.
 
 `__memchr_bytes(bytes, byte, from)` searches a borrowed `u8[]` without
 allocating or constructing a string. It returns the first matching byte index
@@ -1143,9 +1168,14 @@ in [the byte-line report](STRING-BYTE-LINES-2026-10-02.md). The full unit suite
 and all lint gates pass.
 
 The Fern interpreter also supports raw stdin reads; its file-handle opening
-remains unsupported. The existing `Reader.read_chunk` remains text-typed and
-unchecked pending migration of its binary consumers. The new method does not
-establish the string invariant by itself.
+remains unsupported. `Reader.read_chunk(n): Result[string, IoError]` validates
+the bytes returned by one physical read. Malformed or incomplete UTF-8
+returns `InvalidUtf8("")` and consumes those bytes. It does not carry a partial
+scalar into a later call or read beyond `n`; use the buffered `LineReader`
+when scalars may cross input chunks. Binary consumers use `read_chunk_bytes`.
+Valid text retains embedded NUL. Negative sizes fail before reading, and
+zero-sized reads, EOF, closed handles and host I/O failures retain their
+normal distinctions.
 
 `Writer.write_bytes(bytes): Option[IoError]` and
 `Writer.write_some_bytes(bytes): Result[i64, IoError]` borrow a byte view `[u8]`
@@ -1438,9 +1468,9 @@ Tracked as epic #5626; issue numbers below.
 | 3 | **D2** (#5629) — the `char` type — **DONE** | — | Checker + `std/utf8` + `std/unicode` signatures. Big but mechanical; unblocks honest naming everywhere. |
 | 4 | **D3 + D4** (#5630) — flip the default, full case mapping — **DONE** | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
-| 6 | **D8** (#5632) - `[u8]` string view - **IN PROGRESS** | - | Allocation-free primary runtime, consumer checks and typed frontend escape diagnostics implemented. Finish validation and merge. |
+| 6 | **D8** (#5632) - `[u8]` string view - **IMPLEMENTED** | - | Allocation-free primary runtime, consumer checks and typed frontend escape diagnostics validated and merged. |
 | 7 | **D6** (#5633) — grapheme segmentation — **DONE**; word segmentation followed under #5552 | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `str[]` views (was `string[]` until #5695 was fixed). Word_Break coalesces to 1085 ranges, ~13 KB; a program that does not segment words is byte-identical to one built before it existed. |
-| 8 | **D9** (#5634, #5714): the UTF-8 validity invariant, **IN PROGRESS** | 6 | `s[a:b]` is `Option[str]`; file reads and regex text results validate, ASCII-byte conversion refuses non-ASCII, and RNG output is bytes. Remaining text-typed raw paths still need migration; see the audit at the top. |
+| 8 | **D9** (#5634, #5714): the UTF-8 validity invariant, **IN PROGRESS** | 6 | Producer migrations are implemented, including builder/Reader boundaries, PEG captures and private HTTP buffers. Final integrated validation and publication remain outstanding; see the audit at the top. |
 | 9 | **D10** (#5635) — document the path assumption — **DONE** | — | Doc-only. Stated in `std/path`, `std/io`, and `read_dir`'s builtin signature. |
 
 #5552 as filed maps onto slices 1, 4, 5, 6, 7. Its step 1 (document the

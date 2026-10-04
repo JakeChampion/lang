@@ -606,7 +606,7 @@ pub function decl_field_name_at(structs: irtables.StructTab, struct_name: string
 function str_free_producer_ident(c: ast.ExprCall): boolean {
   match (c.callee) {
     ast.ExprIdent(cid) => {
-      if (cid.name == "chr" || cid.name == "string_from_bytes_unchecked") {
+      if (cid.name == "chr" || cid.name == "string_from_bytes_unchecked" || cid.name == "string_from_bytes_range_unchecked") {
         return true;
       }
       if (cid.name == "str_to_upper" || cid.name == "str_to_lower"

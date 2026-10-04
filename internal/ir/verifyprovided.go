@@ -513,6 +513,8 @@ var providedSigs = map[string]providedSig{
 	"write_file":                       {-1, rWord},
 	"write_file_bytes":                 {-1, rWord},
 	"write_file_exec":                  {-1, rWord},
+
+	"string_from_bytes_range_unchecked": {-1, rString},
 }
 
 // ProvidedCallee reports the verifier's record of a backend-provided

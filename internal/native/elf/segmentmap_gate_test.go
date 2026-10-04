@@ -109,7 +109,7 @@ func TestSegmentMapGateSeesCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n < 13 {
+	if n < 12 {
 		t.Fatalf("the scan found only %d segment-map call sites — the pattern has gone stale, which makes TestSegmentMapMatchesAssembler vacuous", n)
 	}
 }

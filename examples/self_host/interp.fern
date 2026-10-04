@@ -22,6 +22,7 @@ import "./lexer";
 import "./parser";
 import "./util";
 import "./astwalk";
+import "std/utf8";
 
 // =================== VALUES ====================
 
@@ -1380,6 +1381,55 @@ function cell_bytes_value(s: string): Value {
   return v_arr_of(out, "u8");
 }
 
+function cell_set_value(c: VCell, v: Value): Value {
+  if (c.kind == "u8[]") {
+    if let VArr(a) = v {
+      let encoded: Value = cell_bytes_text(a);
+      if let VString(s) = encoded {
+        c.cs.set(s.v);
+        return v_void();
+      }
+      return encoded;
+    }
+    return v_err("Cell.set: the value is not a u8[]");
+  }
+  if (c.kind == "i32" && is_i32_arg(v)) {
+    c.ci.set(vint_bits(v));
+    return v_void();
+  }
+  if (c.kind == "bool") {
+    match (v) {
+      VBool(bb) => {
+        if (bb.v) {
+          c.ci.set(1);
+        } else {
+          c.ci.set(0);
+        }
+        return v_void();
+      },
+      _ => {}
+    }
+  }
+  if (c.kind == "i64" && is_int_like(v)) {
+    c.cl.set(vint_as_i64(v));
+    return v_void();
+  }
+  if (c.kind == "f64" && is_float_like(v)) {
+    c.cf.set(vfloat_as_f64(v));
+    return v_void();
+  }
+  if (c.kind == "string") {
+    match (v) {
+      VString(sv) => {
+        c.cs.set(sv.v);
+        return v_void();
+      },
+      _ => {}
+    }
+  }
+  return v_err("Cell.set: the value is not a " + c.kind);
+}
+
 function cell_method(c: VCell, name: string, args: Value[]): Value {
   if (name == "get") {
     if (args.len() != 0) {
@@ -1406,53 +1456,7 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     if (args.len() != 1) {
       return v_err("Cell.set takes exactly 1 argument");
     }
-    let v: Value = args[0];
-    if (c.kind == "u8[]") {
-      if let VArr(a) = v {
-        let encoded: Value = cell_bytes_text(a);
-        if let VString(s) = encoded {
-          c.cs.set(s.v);
-          return v_void();
-        }
-        return encoded;
-      }
-      return v_err("Cell.set: the value is not a u8[]");
-    }
-    if (c.kind == "i32" && is_i32_arg(v)) {
-      c.ci.set(vint_bits(v));
-      return v_void();
-    }
-    if (c.kind == "bool") {
-      match (v) {
-        VBool(bb) => {
-          if (bb.v) {
-            c.ci.set(1);
-          } else {
-            c.ci.set(0);
-          }
-          return v_void();
-        },
-        _ => {}
-      }
-    }
-    if (c.kind == "i64" && is_int_like(v)) {
-      c.cl.set(vint_as_i64(v));
-      return v_void();
-    }
-    if (c.kind == "f64" && is_float_like(v)) {
-      c.cf.set(vfloat_as_f64(v));
-      return v_void();
-    }
-    if (c.kind == "string") {
-      match (v) {
-        VString(sv) => {
-          c.cs.set(sv.v);
-          return v_void();
-        },
-        _ => {}
-      }
-    }
-    return v_err("Cell.set: the value is not a " + c.kind);
+    return cell_set_value(c, args[0]);
   }
   return v_err("undefined method `" + name + "` on `Cell`");
 }
@@ -1486,7 +1490,7 @@ function reader_method(rs: VStruct, name: string, args: Value[]): Value {
     if (args.len() != 0) {
       return v_err("Reader.read_line takes no arguments");
     }
-    return option_string_value(r.read_line());
+    return option_string_value(read_line_from_host());
   }
   if (args.len() != 1 || !is_i32_arg(args[0])) {
     return v_err("Reader." + name + " takes one integer argument");
@@ -1501,9 +1505,19 @@ function reader_method(rs: VStruct, name: string, args: Value[]): Value {
       }
     }
   }
-  match (r.read_chunk(vint_bits(args[0]))) {
+  // Define the current text boundary even when stage0 built this interpreter
+  // with its older, unchecked read_chunk runtime. The raw API also owns the
+  // negative-size and I/O-error contract.
+  match (r.read_chunk_bytes(vint_bits(args[0]))) {
     Ok(chunk) => {
-      return v_variant("Ok", [v_string(chunk)]);
+      match (utf8.from_bytes(chunk)) {
+        Some(text) => {
+          return v_variant("Ok", [v_string(text)]);
+        },
+        None => {
+          return v_variant("Err", [io_error_value(InvalidUtf8(""))]);
+        }
+      }
     },
     Err(e) => {
       return v_variant("Err", [io_error_value(e)]);
@@ -1519,6 +1533,38 @@ function byte_array_value(bytes: u8[]): Value {
     i = i + 1;
   }
   return v_arr_of(out, "u8");
+}
+
+// Stage0 can still have a bounded text read_line. Read raw bytes here so the
+// installed stage1 interpreter also returns a complete line without consuming
+// any byte after its newline. Keep the D10 OS-text assumption at publication.
+function read_line_from_host(): Option[string] {
+  let r: Reader = stdin();
+  let h: usize = buf_new(256);
+  let done: boolean = false;
+  while (!done) {
+    match (r.read_chunk_bytes(1)) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          done = true;
+        } else {
+          buf_push_byte(h, chunk[0] as i32);
+          if (chunk[0] == 10 as u8) {
+            done = true;
+          }
+        }
+      },
+      Err(_) => {
+        done = true;
+      }
+    }
+  }
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  if (bytes.len() == 0) {
+    return None;
+  }
+  return Some(string_from_bytes_unchecked(bytes));
 }
 
 function call_xattr(name: string, args: Value[]): Value {
@@ -4424,7 +4470,9 @@ function call_buf_read(name: string, h: usize, args: Value[]): Value {
     return v_int(buf_len(h));
   }
   if (name == "buf_take") {
-    return v_string(buf_take(h));
+    // The stage0 that builds this interpreter may still expose raw buf_take.
+    // Publish text through the current decoder after draining the byte API.
+    return v_string(utf8.from_bytes_lossy(buf_take_bytes(h)));
   }
   if (name == "buf_take_bytes") {
     return call_buf_take_bytes(h);
@@ -4602,6 +4650,30 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
       },
       _ => {
         return v_err("string_from_bytes_unchecked: arg must be an array");
+      }
+    }
+  }
+  if (name == "string_from_bytes_range_unchecked") {
+    if (args.len() != 3 || !is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
+      return v_err("string_from_bytes_range_unchecked: expected 3 args (bs, from, end)");
+    }
+    let from: i32 = vint_bits(args[1]);
+    let end: i32 = vint_bits(args[2]);
+    match (args[0]) {
+      VArr(a) => {
+        if (from < 0 || end > a.elements.len() || from > end) {
+          return v_err("string_from_bytes_range_unchecked: range out of bounds");
+        }
+        let raw: u8[] = [];
+        let ri: i32 = from;
+        while (ri < end) {
+          raw = raw.append((vint_bits(a.elements[ri]) & 255) as u8);
+          ri = ri + 1;
+        }
+        return v_string(string_from_bytes_unchecked(raw));
+      },
+      _ => {
+        return v_err("string_from_bytes_range_unchecked: arg must be an array");
       }
     }
   }
@@ -5066,7 +5138,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     if (args.len() != 0) {
       return v_err("read_line takes no arguments");
     }
-    return option_string_value(read_line());
+    return option_string_value(read_line_from_host());
   }
   if (name == "cell_new") {
     if (args.len() != 1) {
@@ -5413,6 +5485,9 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       return step_none(env2);
     },
     ast.StmtReturn(r) => {
+      if (parser.bare_return(r.value)) {
+        return step_stop(env, v_void());
+      }
       let val: Value = eval_expr(r.value, env);
       return step_stop(env, val);
     },

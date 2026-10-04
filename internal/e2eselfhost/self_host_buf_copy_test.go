@@ -83,11 +83,32 @@ func TestSelfHostBufCopy(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, name := range helpers {
+			copyPattern := bulk[target]
 			m := regexp.MustCompile(`(?s)\n` + name + `:\n(.*?)\n\s+ret\n`).FindStringSubmatch(string(asm))
 			if m == nil {
 				t.Fatalf("%s: %s not in the listing", target, name)
 			}
-			if !bulk[target].MatchString(m[0]) {
+			if name == "__fern_buf_take" {
+				// The register-ABI entry now delegates text validation and
+				// copying to the shared Fern helper. Check the delegation and
+				// its whole body, including the path after the empty return.
+				call := regexp.MustCompile(`\n\s+(call|bl) __fn___fern_buf_take_text\n`)
+				if !call.MatchString(m[0]) {
+					t.Fatalf("%s: text extraction does not call its shared helper", target)
+				}
+				m = regexp.MustCompile(`(?s)\n__fn___fern_buf_take_text:\n(.*?)\n\s+\.cfi_endproc`).FindStringSubmatch(string(asm))
+				if m == nil {
+					t.Fatalf("%s: shared text extraction body missing", target)
+				}
+				// Typed IR lowers __memcpy to rep movsb on x86 and to a
+				// word load/store loop on ARM, using its own scratch registers.
+				if target == "x86-64-linux" {
+					copyPattern = regexp.MustCompile(`\n\s+rep movsb\n`)
+				} else {
+					copyPattern = regexp.MustCompile(`\n\s+ldr x[0-9]+, \[x1\], #8\n\s+str x[0-9]+, \[x0\], #8\n`)
+				}
+			}
+			if !copyPattern.MatchString(m[0]) {
 				t.Errorf("%s: %s does not copy in bulk:\n%s", target, name, m[1])
 			}
 		}

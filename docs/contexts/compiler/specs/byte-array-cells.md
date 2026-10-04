@@ -1,6 +1,6 @@
 # Byte-array cells
 
-**Status:** Draft
+**Status:** Implemented; integrated validation in progress
 **Context(s):** Compiler, standard library
 **Date:** 2026-10-04
 
@@ -51,5 +51,5 @@ concurrency primitives and changes to HTTP framing or suspension semantics.
 
 ## Open Questions
 
-None in the contract. Existing lowering and bootstrap compatibility need
-validation before this draft can be considered implemented.
+None in the contract. Target and ownership tests pass; integrated bootstrap
+reproduction and Darwin validation remain pending.

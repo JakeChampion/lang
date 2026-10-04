@@ -460,6 +460,12 @@ pub function op_str_from_bytes(): Op {
   return op0(103);
 }
 
+// `str_from_bytes_range` pops [arr, from, end] → str_from_bytes over
+// arr[from, end), copied once (`string_from_bytes_range_unchecked`).
+pub function op_str_from_bytes_range(): Op {
+  return op0(380);
+}
+
 // `memcpy` pops [dst, src, n] (raw usize pointers + a byte count) → copies n
 // bytes src→dst and pushes a dummy 0 (the `__memcpy(dst, src, n)` builtin is
 // used statement-position, its value discarded). x86-64 emits `rep movsb`,
@@ -704,6 +710,16 @@ pub function op_raw_task_state(): Op {
 // holding the `-cover` counter table's address (zero before the first hit).
 pub function op_raw_cover(): Op {
   return op0(287);
+}
+
+// line: a source-position marker that pops nothing and pushes nothing
+// (#11410). i32_imm is the merged module's line (util.pos_file_index and
+// util.pos_line split it into the file and its line) and i64_imm the column.
+// The lowering emits one ahead of each statement under `-g` for the ELF
+// targets; the register emitters render it as a `.loc` row, and every other
+// pass leaves it alone.
+pub function op_line(line: i32, col: i32): Op {
+  return Op { ...op0(288), i32_imm: line, i64_imm: col as i64 };
 }
 
 // syscall5 (#2649 syscall sub-floor): the 5-arg sibling. Three helpers need it
@@ -2304,9 +2320,9 @@ pub function op_strbuf_take(): Op {
 // The capacity-carrying string builder (#8773) — the same accumulator without
 // the singleton. A handle is the ADDRESS of a 32-byte control block (data ptr,
 // len, cap, reserve), so any number of builders are live at once and they nest.
-// The buffer is allocated as a heap string already is, which is what makes
-// `buf_take` zero-copy: it stamps the length and hands the same pointer back as
-// a string, leaving the builder empty but still ready at its reserve. `buf_new`
+// `buf_take` copies valid UTF-8 text, replacing malformed maximal subparts,
+// and leaves the builder empty with its capacity retained. Raw extraction
+// uses `buf_take_bytes` and preserves every byte. `buf_new`
 // pops a capacity and pushes a handle; `buf_push` / `buf_push_range` /
 // `buf_push_byte` / `buf_push_u64` / `buf_free` are statement ops (pushing a dummy so a
 // statement-level drop balances); `buf_len` and `buf_take` are value ops. All
@@ -3047,7 +3063,7 @@ pub function kind_count(): i32 {
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 288..290, then 311 — 281
+// NEXT FREE EXTENSION ID: 289..290, then 311 — 281
 // (writer_truncate) and 285 (signal_send) were each taken out of order by a
 // branch in flight, as 275..280 and 291..297 were, and the sync family took
 // the 298..301 block reserved for it (re-grep rather than trusting this line
@@ -3129,6 +3145,9 @@ pub function kind_id(name: string): i32 {
   }
   if (n == 20 && name == "buf_push_bytes_range") {
     return 351;
+  }
+  if (n == 20 && name == "str_from_bytes_range") {
+    return 380;
   }
   if (n == 21) {
     return kind_id_len21(name);
@@ -3317,6 +3336,9 @@ function kind_id_len4_g(name: string): i32 {
 }
 
 function kind_id_len4_l(name: string): i32 {
+  if (name == "line") {
+    return 288;
+  }
   if (name == "lt_s") {
     return 37;
   }
@@ -5201,8 +5223,14 @@ function kind_name_4(id: i32): string {
   if (id == 287) {
     return "raw_cover";
   }
+  if (id == 288) {
+    return "line";
+  }
   if (id == 367) {
     return "raw_task_state";
+  }
+  if (id == 380) {
+    return "str_from_bytes_range";
   }
   if (id == 208) {
     return "udp_send";
@@ -5672,6 +5700,7 @@ function pops0(t: i32): boolean {
     || t == 207 || t == 211  // raw_environ, proc_fork
     || t == 331  // raw_splice_pipe
     || t == 287  // raw_cover
+    || t == 288  // line
     || t == 367  // raw_task_state
     || t == 216 || t == 217 || t == 218  // arr_push_shared_*, const_struct
     || t == 222  // map_hash_seed
@@ -5801,7 +5830,7 @@ function pops3(t: i32): boolean {
     || t == 324  // scan_set (str, from, set)
     || t == 327  // count_runs (str, inside, set)
     || t == 364 || t == 365 || t == 376 || t == 377  // setxattr, lsetxattr (path, name, value)
-    || t == 366;  // fd_drop_cache (fd, offset, len)
+    || t == 366 || t == 380;  // fd_drop_cache, str_from_bytes_range
 }
 
 // pops_buf is the operand count of one of the capacity-carrying string
@@ -5975,6 +6004,9 @@ pub function pure_value_op(o: Op): boolean {
 pub function op_pushes(o: Op): i32 {
   let t: i32 = o.kind_tag;
   if (t == 19 || t == 159) {  // store_local, drop
+    return 0;
+  }
+  if (t == 288) {  // line: a marker, nothing in and nothing out
     return 0;
   }
   // The three composite-element writes consume their value outright —
@@ -8238,7 +8270,7 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 76 || tag == 77 || tag == 87 || tag == 92 || tag == 93 || tag == 94 || tag == 95 || tag == 302 || tag == 303) {
     return true;
   }
-  if (tag == 5 || tag == 98 || tag == 102 || tag == 103) {
+  if (tag == 5 || tag == 98 || tag == 102 || tag == 103 || tag == 380) {
     return true;
   }
   // Composite boxes. struct_copy (198) allocates the fresh box a functional
@@ -8424,7 +8456,7 @@ pub function op_allocates(tag: i32): boolean {
 // than logic: every `||` is one row of a table, there is no path through it to
 // get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 373 || tag == 368 || tag == 369 || tag == 361 || tag == 379 || tag == 378 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
+  return tag == 380 || tag == 373 || tag == 368 || tag == 369 || tag == 361 || tag == 379 || tag == 378 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
     || tag == 104 || tag == 105 || tag == 106
     || tag == 107 || tag == 108 || tag == 109
     || tag == 111 || tag == 113 || tag == 98

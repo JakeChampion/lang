@@ -793,7 +793,8 @@ pub function all_runtime_need_roots(): string[] {
     "writer_write", "write_some", "writer_truncate", "subprocess", "crc32_cksum", "sum_bytes",
     // The packed-byte twins a typed program's u8[] calls (asmcore.packed_suffix).
     "alloc_bytes", "arr_push_u8", "buf_u8", "buf_take_bytes", "buf_take_bytes_u8", "str_bytes_u8", "str_from_bytes_u8", "arr_slice_u8",
-    "buf_push_bytes_range", "buf_push_bytes_range_u8",
+    "str_from_bytes_range", "str_from_bytes_range_u8",
+    "buf_push_bytes_range", "buf_push_bytes_range_u8", "buf_text",
     "buf_bytes", "buf_bytes_u8", "random_bytes_u8", "read_file_bytes_u8", "tcp_recv_u8", "tcp_recv_into_u8", "tcp_listen_with_u8",
     "udp_bind_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
     // argv / the host's name / the process's own identity:
@@ -935,14 +936,14 @@ pub struct Sub {
   // The emit entry's checks already passed on the module this was built for
   // (semlower.driven_annotated), so the entry does not run them again.
   checked: boolean,
-  // Whether a fatal abort's report walks the frame chain (asmcore.EmitState's
-  // backtrace): the environment's default unless the CLI's -backtrace set it.
-  backtrace: boolean,
+  // The diagnostic switches the emit state takes (asmcore.with_switches):
+  // the environment's defaults unless the CLI's flags set them.
+  switches: asmcore.Switches,
 }
 
 pub function no_sub(): Sub {
   let none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [] };
-  return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, backtrace: asmcore.backtrace_on() };
+  return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, switches: asmcore.env_switches() };
 }
 
 // The register emit's lambda-lifted module: the producer's, erased, when it
@@ -1352,7 +1353,7 @@ function digest_flags(x: boolean, y: boolean): i32 {
 // A candidate is a declaration of at most inline_leaf_ops() ops besides its
 // local loads and stores (the typed lowering routes every value through a
 // slot, which the SSA lift takes back out, so they are not what a body costs)
-// that is not @noinline, calls nothing — a retain or release is a runtime
+// and its `-g` line marks, that is not @noinline, calls nothing — a retain or release is a runtime
 // helper call here, which a splice would keep and grow the site around — and
 // names no function, and touches its frame only through load/store/tee_local. A caller
 // claiming fip or fbip is left alone, since its claim is verified against its
@@ -1475,10 +1476,11 @@ function inline_leaf(fd: parser.FuncDecl, r: irtables.LowerResult): boolean {
   let k_callc: i32 = ir.kind_id("call_closure_direct");
   let k_const_func: i32 = ir.kind_id("const_func");
   let k_dyn: i32 = ir.kind_id("dyn_dispatch");
+  let k_line: i32 = ir.kind_id("line");
   let work: i32 = 0;
   for o in r.ops {
     let k: i32 = o.kind_tag;
-    if (k != k_load && k != k_store && k != k_tee) {
+    if (k != k_load && k != k_store && k != k_tee && k != k_line) {
       work = work + 1;
     }
     if (work > inline_leaf_ops()) {

@@ -32,6 +32,17 @@ function first_diff(a: i32[], b: i32[]): i32 {
     if (a.len() != b.len()) { return n; }
     return 0 - 1;
 }
+function first_diff_u8(a: u8[], b: u8[]): i32 {
+    let n: i32 = a.len();
+    if (b.len() < n) { n = b.len(); }
+    let i: i32 = 0;
+    while (i < n) {
+        if (a[i] != b[i]) { return i; }
+        i = i + 1;
+    }
+    if (a.len() != b.len()) { return n; }
+    return 0 - 1;
+}
 function pack(id: i32, payload: i64): u8[] {
     let recs: usize = buf_new(16);
     buf_push_u64(recs, (id as i64 << 32 | payload & 4294967295i64) as u64);
@@ -49,7 +60,7 @@ function words_of(b: i32[]): u8[] {
 function rec_vs_text(name: string, b: i32[], text: string): i32 {
     let r = x86_native.x86_gas_assemble_words(".text\n\x01\n", words_of(b));
     let t = x86_native.x86_gas_assemble_words(".text\n    " + text + "\n", buf_take_bytes(buf_new(1)));
-    print(name + " " + util.i32_to_string(first_diff(r.code, t.code)) + " " + util.i32_to_string(r.unknown.len() + t.unknown.len()));
+    print(name + " " + util.i32_to_string(first_diff_u8(r.text, t.text)) + " " + util.i32_to_string(r.unknown.len() + t.unknown.len()));
     return 0;
 }
 // cfi_word packs a .cfi_* record as asmcore's cfi does: the kind and the DWARF
@@ -79,7 +90,7 @@ function main(): i32 {
     let xr = x86_native.x86_gas_assemble_words(".text\nf:\n\x06\n\x01\n\x06\n\x06\n\x01\n\x06\n\x06\n\x01\n\x06\n\x01\n\x06\n\x06\n", buf_take_bytes(cx));
     let xt = x86_native.x86_gas_assemble_words(".text\nf:\n    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n    .cfi_remember_state\n    popq %rbp\n    .cfi_def_cfa %rsp, 8\n    ret\n    .cfi_restore_state\n    .cfi_endproc\n", buf_take_bytes(buf_new(1)));
     let xeh: i32[] = x86_native.x86_eh_frame(xr, 0 as i64, 0 as i64);
-    print("x86_cfi " + util.i32_to_string(first_diff(xeh, x86_native.x86_eh_frame(xt, 0 as i64, 0 as i64))) + " " + util.i32_to_string(first_diff(xr.code, xt.code)) + " " + util.i32_to_string(xr.unknown.len() + xt.unknown.len()));
+    print("x86_cfi " + util.i32_to_string(first_diff(xeh, x86_native.x86_eh_frame(xt, 0 as i64, 0 as i64))) + " " + util.i32_to_string(first_diff_u8(xr.text, xt.text)) + " " + util.i32_to_string(xr.unknown.len() + xt.unknown.len()));
     print("x86_cfi_eh " + util.i32_to_string(xeh.len()));
     let cbad: usize = buf_new(16);
     cfi_word(cbad, 9, 0, 0);
@@ -116,7 +127,7 @@ function main(): i32 {
     bytes_into(nw, x86_native.x86_rec_ret());
     let nr = x86_native.x86_gas_assemble_words(".text\nf:\n\x07g\n\x07g\n\x01\n\x01\ng:\n\x07f\n\x01\n", buf_take_bytes(nw));
     let nt = x86_native.x86_gas_assemble_words(".text\nf:\n    call g\n    leaq g(%rip), %rdi\n    movslq %eax, %rax\n    ret\ng:\n    call f\n    ret\n", buf_take_bytes(buf_new(1)));
-    print("x86_named " + util.i32_to_string(first_diff(nr.code, nt.code)) + " " + util.i32_to_string(nr.unknown.len() + nt.unknown.len()) + " " + util.i32_to_string(nr.code.len()));
+    print("x86_named " + util.i32_to_string(first_diff_u8(nr.text, nt.text)) + " " + util.i32_to_string(nr.unknown.len() + nt.unknown.len()) + " " + util.i32_to_string(nr.text.len()));
     let nm = x86_native.x86_gas_assemble_words(".text\n\x07g\n", buf_take_bytes(buf_new(1)));
     print("x86_named_missing " + util.i32_to_string(nm.unknown.len()));
     let nu = x86_native.x86_gas_assemble_words(".text\n\x07nowhere\n", words_of(x86_native.x86_rec_call()));
@@ -154,14 +165,14 @@ function main(): i32 {
     for x in words_of(x86_native.x86_rec_pop_r(12)) { buf_push_byte(run, x as i32); }
     let rr = x86_native.x86_gas_assemble_words(".text\n\x01\n\x01\n\x04\n\x01\n", buf_take_bytes(run));
     let rt = x86_native.x86_gas_assemble_words(".text\n    pushq %r12\n    movq %rsp, %rbp\nl:\n    popq %r12\n", buf_take_bytes(buf_new(1)));
-    print("x86_run " + util.i32_to_string(first_diff(rr.code, rt.code)) + " " + util.i32_to_string(rr.unknown.len() + rt.unknown.len()) + " " + util.i32_to_string(rr.code.len()));
+    print("x86_run " + util.i32_to_string(first_diff_u8(rr.text, rt.text)) + " " + util.i32_to_string(rr.unknown.len() + rt.unknown.len()) + " " + util.i32_to_string(rr.text.len()));
     // x86: a run the source ends in, its last marker without a newline, is
     // still laid down.
     let trun: usize = buf_new(64);
     for x in words_of(x86_native.x86_rec_push_r(12)) { buf_push_byte(trun, x as i32); }
     for x in words_of(x86_native.x86_rec_mov_rr(64, 5, 4)) { buf_push_byte(trun, x as i32); }
     let tail_run = x86_native.x86_gas_assemble_words(".text\n\x01\n\x01", buf_take_bytes(trun));
-    print("x86_run_tail " + util.i32_to_string(tail_run.unknown.len()) + " " + util.i32_to_string(tail_run.code.len()));
+    print("x86_run_tail " + util.i32_to_string(tail_run.unknown.len()) + " " + util.i32_to_string(tail_run.text.len()));
     // x86: jmp (kind 16) to label id 7 with no definition, then with one.
     let bad = x86_native.x86_gas_assemble_words(".text\n\x05\n", pack(7, 16));
     print("x86_undefined_unknown " + util.i32_to_string(bad.unknown.len()));
@@ -171,7 +182,7 @@ function main(): i32 {
     buf_push_u64(defs, 7 as u64);
     let good = x86_native.x86_gas_assemble_words(".text\n\x05\n\x04\n", buf_take_bytes(defs));
     print("x86_defined_unknown " + util.i32_to_string(good.unknown.len()));
-    print("x86_defined_code " + util.i32_to_string(good.code.len()));
+    print("x86_defined_code " + util.i32_to_string(good.text.len()));
     // arm64: a \x03 line is text, refused as text, and leaves its word unread.
     let nop: usize = buf_new(16);
     buf_push_u64(nop, 3573751839 as u64);

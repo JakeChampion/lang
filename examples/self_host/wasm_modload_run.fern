@@ -241,7 +241,7 @@ function link_missing(l: Linked): boolean {
 // it sits past every unit's literals.
 function link_text(l: Linked, merged: parser.Module): string {
   let rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, l.frt, l.sdt, l.aet, wasm_ir.heap_base_for_units(l.units));
-  return wasm_ir.emit_ir_module_units(l.units, merged, l.needs, l.fn_sigs, rc, 0);
+  return wasm_ir.emit_ir_module_units(l.units, merged, l.needs, l.fn_sigs, rc, 0, asmcore.env_switches());
 }
 
 // Typed is the program the typed lowering built, whole, cut into units by

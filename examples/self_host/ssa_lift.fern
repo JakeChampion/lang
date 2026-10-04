@@ -441,7 +441,7 @@ function prod_mem_kind(k: string): boolean {
 function prod_host_kind(k: string): boolean {
   let host: string[] = [
     "syscall3", "syscall4", "syscall5", "syscall6", "exit", "raw_string", "strbuf_reset", "strbuf_append",
-    "raw_scratch", "raw_environ", "raw_splice_pipe", "raw_cover", "raw_task_state", "raw_addr", "monotonic_ns", "now_unix_ms",
+    "raw_scratch", "raw_environ", "raw_splice_pipe", "raw_cover", "line", "raw_task_state", "raw_addr", "monotonic_ns", "now_unix_ms",
     "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
     "map_new", "strbuf_take", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count",
   ];
@@ -462,6 +462,9 @@ function prod_host_kind(k: string): boolean {
 // load and store at offset 0, a 4-byte one carrying "i32" in `str`; a store
 // leaves the zero the stack machine pushes in its place.
 function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
+  if (k == "line") {
+    return lift_line(op, lv);
+  }
   if (k == "clz" || k == "ctz" || k == "popcount") {
     return lift_pop_push(lv, 1, 10, 0, k + ":" + util.i32_to_string(op.width));
   }
@@ -560,7 +563,7 @@ function prod_call_argc(k: string): i32 {
       return 1;
     }
   }
-  if (k == "arr_slice" || k == "subprocess") {
+  if (k == "arr_slice" || k == "subprocess" || k == "str_from_bytes_range") {
     return 3;
   }
   if (k == "write_file" || k == "write_file_bytes" || k == "write_file_exec" || k == "read_chunk" || k == "read_chunk_bytes" || k == "write_bytes" || k == "write_some_bytes" || k == "writer_write") {
@@ -820,6 +823,16 @@ function lift_pop_push(lv: LiftVals, npop: i32, kind: i32, imm: i32, str: string
   let v: i32 = lv.nvals;
   let insts: ssa.SInst[] = lv.insts.append(ssa.SInst { kind_tag: kind, result: v, args: args, imm: imm, str: str });
   return LiftVals { nvals: v + 1, stack: stack.append(v), insts: insts, ok: true };
+}
+
+// lift_line is the source-position marker (ir.op_line) as ssa kind 35
+// ("line"): imm the merged line, str the column, pushing nothing.
+function lift_line(op: ir.Op, lv: LiftVals): LiftVals {
+  let pushed: LiftVals = lift_pop_push(lv, 0, 35, op.i32_imm, util.i64_to_string(op.i64_imm));
+  if (!pushed.ok) {
+    return pushed;
+  }
+  return LiftVals { ...pushed, stack: drop_last(pushed.stack) };
 }
 
 // lift_store is a store that pushes nothing: st_at pops [box, val], arr_st

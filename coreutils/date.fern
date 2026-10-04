@@ -195,23 +195,23 @@ function rfc_3339_formats(): string[] {
 function adjust_resolution(fmt: string): string {
   let out: string = "";
   let i: i32 = 0;
+  let start: i32 = 0;
   while (i < fmt.len()) {
     if (fmt[i] as i32 == 37) {
       if (i + 2 < fmt.len() && fmt[i + 1] as i32 == 45 && fmt[i + 2] as i32 == 78) {
-        out = out + "%9N";
+        out = out + slice_unchecked(fmt, start, i) + "%9N";
         i = i + 3;
+        start = i;
         continue;
       }
       if (i + 1 < fmt.len() && fmt[i + 1] as i32 == 37) {
-        out = out + "%%";
         i = i + 2;
         continue;
       }
     }
-    out = out + slice_unchecked(fmt, i, i + 1);
     i = i + 1;
   }
-  return out;
+  return out + slice_unchecked(fmt, start, fmt.len());
 }
 
 // What the run prints with: the zone, the TZ value the debug trace
@@ -235,7 +235,8 @@ function show_date(o: io_buffered.BufWriter, s: Show, sec: i64, nsec: i64): (boo
     w = gnu.error_out(w, "time " + gnu.quote(sec.to_string()) + " is out of range");
     return (false, gnu.put(w, "\n"));
   }
-  return (true, gnu.put(w, timefmt.strftime(s.format, s.zone, sec, nsec) + "\n"));
+  w = gnu.put_bytes(w, timefmt.strftime_bytes(s.format, s.zone, sec, nsec));
+  return (true, gnu.put(w, "\n"));
 }
 
 // Emit the trace before buffered stdout, preserving raw failure tails.

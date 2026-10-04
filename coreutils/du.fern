@@ -381,11 +381,12 @@ function wants_line(c: Conf, depth: i32, is_dir: boolean): boolean {
 }
 
 function emit(c: Conf, o: io_buffered.BufWriter, size: u64, tsec: i64, tnsec: i64, display: string): io_buffered.BufWriter {
-  let line: string = blocks.format_size(size, c.block_size, c.suffix, c.human) + "\t";
+  let w: io_buffered.BufWriter = o.write_string(blocks.format_size(size, c.block_size, c.suffix, c.human) + "\t");
   if (c.time_kind != time_none()) {
-    line = line + timefmt.format(c.time_format, c.zone, tsec, tnsec) + "\t";
+    w = w.write_bytes(timefmt.format_bytes(c.time_format, c.zone, tsec, tnsec));
+    w = w.write_string("\t");
   }
-  return o.write_string(line + display + c.terminator);
+  return w.write_string(display + c.terminator);
 }
 
 // `Frame` — a directory whose children are still being walked: where it

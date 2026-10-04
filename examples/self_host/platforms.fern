@@ -484,7 +484,7 @@ pub function core_builtins(): string[] {
     // Darwin asks libSystem's getpwuid(3); the rest answer 0, meaning use
     // the files, which is the truth there (#9815).
     "__getpwuid_name",
-    "map_new", "cell_new", "string_from_bytes_unchecked",
+    "map_new", "cell_new", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
     "slice_unchecked",
     "strbuf_reset", "strbuf_append", "strbuf_take",
     "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64",

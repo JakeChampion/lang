@@ -172,13 +172,19 @@ pub struct EmitState {
   // a substitution or a runtime helper's lowering carries), so a second
   // source bringing the same one does not define it twice.
   named: string[],
-  // rc_free_debug_on(), read once here: the SSA emitters test it at every
-  // rc primitive and call, and an environment walk per instruction showed.
+  // The diagnostic switches (Switches, with_switches), read once here: the
+  // SSA emitters test rc_free_debug at every rc primitive and call, and an
+  // environment walk per instruction showed. The quarantine and the leak
+  // census are on under the sanitizer as well as on their own flags.
   rc_free_debug: boolean,
+  sanitize: boolean,
+  leak_check: boolean,
   // Whether a fatal abort's report walks the frame-pointer chain under its
-  // cause line: backtrace_on() unless the CLI's -backtrace overrode it
-  // (ircore.Sub.backtrace).
+  // cause line.
   backtrace: boolean,
+  // Set at a function's start and cleared by its first `.loc` row, which
+  // carries prologue_end: the address a breakpoint on the function belongs at.
+  dw_first: boolean,
   // rt_owned_allocs: set while the task runtime's functions are being
   // emitted. Their __alloc blocks (the record table, the records, the save
   // areas and wait sets) are runtime state the program never holds or frees,
@@ -311,7 +317,7 @@ pub function new_state(): EmitState {
   let fns: parser.FuncDecl[] = [];
   let lts: Ty[] = [];
   let nd: string[] = [];
-  return EmitState {
+  let s: EmitState = EmitState {
     out: "",
     label_n: 0,
     builtin_i32: util.name_index(builtin_i32_names()),
@@ -347,18 +353,22 @@ pub function new_state(): EmitState {
     recs: 0 as usize,
     rt_lower: no_rt_lower,
     named: [],
-    rc_free_debug: rc_free_debug_on(),
-    backtrace: backtrace_on(),
+    rc_free_debug: false,
+    sanitize: false,
+    leak_check: false,
+    backtrace: false,
+    dw_first: false,
     rt_owned_allocs: false,
     syscalls: [],
     raw_syscall: "",
   };
+  return with_switches(s, env_switches());
 }
 
 // sanitize_on reports whether FERN_SANITIZE is set — the self-host port of
 // ast.SanitizeEnabled (#5545). One opt-in surface over the heap detectors,
 // so you can reach for it before knowing which check will fire: each
-// backend's leak census (its leak_check_on folds it in), the rc over-release
+// backend's leak census (with_switches folds it in), the rc over-release
 // report, and the use-after-free quarantine below. Both reports end in the
 // native backends' frame-pointer backtrace (backtrace_on).
 //
@@ -427,6 +437,40 @@ pub function backtrace_on(): boolean {
   }
 }
 
+// leak_check_on reports whether FERN_LEAKCHECK is set — the self-host port
+// of ast.LeakCheckEnabled, the leak census on its own: every alloc and every
+// free counted (count + bytes) and one line printed at exit,
+//
+//	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
+//
+// The sanitizer folds it in (with_switches).
+pub function leak_check_on(): boolean {
+  match (env("FERN_LEAKCHECK")) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// Switches are the diagnostic modes a build is emitted with: the
+// environment's defaults (env_switches) unless the CLI's flags set them,
+// -backtrace over FERN_BACKTRACE and -sanitize over FERN_SANITIZE. They ride
+// ircore.Sub into the emit state.
+pub struct Switches { backtrace: boolean, sanitize: boolean }
+
+pub function env_switches(): Switches {
+  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on() };
+}
+
+// with_switches applies `sw` to the state. The sanitizer turns the leak
+// census and the quarantine on with it, as native's ApplySanitize does.
+pub function with_switches(s: EmitState, sw: Switches): EmitState {
+  return EmitState { ...s, backtrace: sw.backtrace, sanitize: sw.sanitize, leak_check: sw.sanitize || leak_check_on(), rc_free_debug: sw.sanitize || rc_free_debug_on() };
+}
+
 // rc_free_debug_on reports whether the use-after-free QUARANTINE is on —
 // FERN_RC_FREE_DEBUG, or implied by FERN_SANITIZE (ast.ApplySanitize parity;
 // the native RcFreeDebug port). Under it NOTHING is recycled: every free site
@@ -438,9 +482,6 @@ pub function backtrace_on(): boolean {
 // FREE for the census (hev_free runs at the release), so the two detectors
 // compose instead of every correct free reading as a leak.
 pub function rc_free_debug_on(): boolean {
-  if (sanitize_on()) {
-    return true;
-  }
   match (env("FERN_RC_FREE_DEBUG")) {
     Some(_) => {
       return true;
@@ -3544,7 +3585,7 @@ pub function rt_src_putchar(t: string): string {
 // EOF answers the .rodata empty literal rather than allocating a zero-length
 // block for it.
 pub function rt_src_reader_read_chunk(t: string): string {
-  return "function __fern_reader_read_chunk(fd: i32, n: i32): Result[string, IoError] { let p: usize = __raw_alloc(n); let r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (r == n) { return Ok(__raw_string(p, n)); } if (r <= 0) { let short: string = __raw_string(p, n); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } return Ok(\"\"); } let q: usize = __raw_alloc(r); __memcpy(q, p, r); let full: string = __raw_string(p, n); return Ok(__raw_string(q, r)); }";
+  return "function __fern_reader_read_chunk(fd: i32, n: i32): Result[string, IoError] { if (n < 0) { return Err(__fern_io_error(22, \"\")); } let p: usize = __raw_alloc(n); let r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (r > 0 && __fern_utf8_valid(p, r) == 0) { let invalid: string = __raw_string(p, n); return Err(InvalidUtf8(\"\")); } if (r == n) { return Ok(__raw_string(p, n)); } if (r <= 0) { let short: string = __raw_string(p, n); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } return Ok(\"\"); } let q: usize = __raw_alloc(r); __memcpy(q, p, r); let full: string = __raw_string(p, n); return Ok(__raw_string(q, r)); }";
 }
 
 // Scratch is owned as an array throughout, including the error path. Full
@@ -3589,17 +3630,12 @@ pub function rt_src_reader_close(t: string): string {
 // this call will not return, and it leaves the rest of the stream in the OS for
 // the next call or a child process. `__raw_addr` supplies the moving destination.
 //
-// The 256-byte cap is observable — a longer line comes back truncated, with the
-// remainder left on the stream — so it is preserved exactly.
-//
-// `full` owns the whole 256-byte block once the line is copied out of it, and
-// the frame's reclaim gives it back, so the line handed to the caller is an
-// exact-size copy (#8402). Boxing the block
-// at the line length instead left 256 - len bytes stranded below the freelist
-// class the block landed in, and the EOF path returned None with the block simply
-// lost.
+// Grow the scratch block when full: an internal capacity must not split a line
+// or a UTF-8 scalar. Each replaced block is owned at its allocated capacity so
+// reclaim returns it to the correct size class. The result owns an exact-size
+// copy, including on a short read, and EOF releases the unused scratch block.
 pub function rt_src_read_line(t: string): string {
-  return "function __fern_read_line(fd: i32): Option[string] { let buf: usize = __raw_alloc(256); let len: i32 = 0; let go: i32 = 1; while (go == 1) { if (len >= 256) { go = 0; } else { let r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, __raw_addr(buf, len) as i64, 1) as i32; if (r < 1) { go = 0; } else { let c: i32 = __raw_load8(buf, len); len = len + 1; if (c == 10) { go = 0; } } } } if (len == 0) { let empty: string = __raw_string(buf, 256); return None; } let q: usize = __raw_alloc(len); __memcpy(q, buf, len); let full: string = __raw_string(buf, 256); return Some(__raw_string(q, len)); }";
+  return "function __fern_read_line(fd: i32): Option[string] { let cap: i32 = 256; let buf: usize = __raw_alloc(cap); let len: i32 = 0; let go: i32 = 1; while (go == 1) { if (len == cap) { let grown: usize = __raw_alloc(cap * 2); __memcpy(grown, buf, len); let old: string = __raw_string(buf, cap); buf = grown; cap = cap * 2; } let r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, __raw_addr(buf, len) as i64, 1) as i32; if (r < 1) { go = 0; } else { let c: i32 = __raw_load8(buf, len); len = len + 1; if (c == 10) { go = 0; } } } if (len == 0) { let empty: string = __raw_string(buf, cap); return None; } let q: usize = __raw_alloc(len); __memcpy(q, buf, len); let full: string = __raw_string(buf, cap); return Some(__raw_string(q, len)); }";
 }
 
 // The strerror table (#8265): glibc's text per errno and the errno's number on
@@ -3736,6 +3772,92 @@ pub function rt_src_io_error(t: string): string {
     i = i + 1;
   }
   return src + " " + strerror_unknown_src(t) + " }";
+}
+
+// Text extraction copies into exact-size storage and keeps the builder's
+// capacity. Invalid input uses one replacement per maximal subpart. Size
+// overflow takes the existing raw-allocation trap instead of wrapping.
+pub function rt_src_buf_text(): string {
+  return "function __fern_buf_text_part(data: usize, pos: i32, n: i32): i32 {\n"
+    + "  let lead: i32 = __raw_load8(data, pos);\n"
+    + "  if (lead < 128) { return 1; }\n"
+    + "  let width: i32 = 0;\n"
+    + "  if (lead >= 194 && lead <= 223) { width = 2; }\n"
+    + "  else if (lead >= 224 && lead <= 239) { width = 3; }\n"
+    + "  else if (lead >= 240 && lead <= 244) { width = 4; }\n"
+    + "  let used: i32 = 1;\n"
+    + "  while (used < width && used < n - pos) {\n"
+    + "    let next: i32 = __raw_load8(data, pos + used);\n"
+    + "    if (next < 128 || next > 191) { break; }\n"
+    + "    if (used == 1 && (lead == 224 && next < 160 || lead == 237 && next > 159 || lead == 240 && next < 144 || lead == 244 && next > 143)) { break; }\n"
+    + "    used = used + 1;\n"
+    + "  }\n"
+    + "  if (used == width) { return used; }\n"
+    + "  return 0 - used;\n"
+    + "}\n"
+    + "function __fern_buf_take_text(h: usize): string {\n"
+    + "  let wide: i64 = __load_i64(__raw_addr(h, 8));\n"
+    + "  if (wide < 0 as i64 || wide > 2147483647 as i64) {\n"
+    + "    let failed: usize = __raw_alloc(0 - 1);\n"
+    + "    return __raw_string(failed, 0);\n"
+    + "  }\n"
+    + "  let n: i32 = wide as i32;\n"
+    + "  if (n == 0) { return \"\"; }\n"
+    + "  let data: usize = __raw_load_ptr(h, 0);\n"
+    + "  let total: i64 = wide;\n"
+    + "  let i: i32 = 0;\n"
+    + "  let changed: boolean = false;\n"
+    + "  let mask: u64 = 9259542123273814144 as u64;\n"
+    + "  while (i < n) {\n"
+    + "    if (n - i >= 8) {\n"
+    + "      if ((__load_i64(__raw_addr(data, i)) as u64 & mask) == 0 as u64) {\n"
+    + "        i = i + 8;\n"
+    + "        continue;\n"
+    + "      }\n"
+    + "    }\n"
+    + "    let part: i32 = __fern_buf_text_part(data, i, n);\n"
+    + "    if (part < 0) {\n"
+    + "      total = total + (3 + part) as i64;\n"
+    + "      changed = true;\n"
+    + "      i = i - part;\n"
+    + "    } else { i = i + part; }\n"
+    + "  }\n"
+    + "  if (total > 2147483647 as i64) {\n"
+    + "    let failed: usize = __raw_alloc(0 - 1);\n"
+    + "    return __raw_string(failed, 0);\n"
+    + "  }\n"
+    + "  let length: i32 = total as i32;\n"
+    + "  let out: usize = __raw_alloc(length);\n"
+    + "  if (!changed) {\n"
+    + "    __memcpy(out, data, n);\n"
+    + "  } else {\n"
+    + "    i = 0;\n"
+    + "    let start: i32 = 0;\n"
+    + "    let written: i32 = 0;\n"
+    + "    while (i < n) {\n"
+    + "      if (n - i >= 8) {\n"
+    + "        if ((__load_i64(__raw_addr(data, i)) as u64 & mask) == 0 as u64) {\n"
+    + "          i = i + 8;\n"
+    + "          continue;\n"
+    + "        }\n"
+    + "      }\n"
+    + "      let part: i32 = __fern_buf_text_part(data, i, n);\n"
+    + "      if (part < 0) {\n"
+    + "        __memcpy(__raw_addr(out, written), __raw_addr(data, start), i - start);\n"
+    + "        written = written + (i - start);\n"
+    + "        __raw_store8(out, written, 239);\n"
+    + "        __raw_store8(out, written + 1, 191);\n"
+    + "        __raw_store8(out, written + 2, 189);\n"
+    + "        written = written + 3;\n"
+    + "        i = i - part;\n"
+    + "        start = i;\n"
+    + "      } else { i = i + part; }\n"
+    + "    }\n"
+    + "    __memcpy(__raw_addr(out, written), __raw_addr(data, start), n - start);\n"
+    + "  }\n"
+    + "  __store_i64(__raw_addr(h, 8), 0 as i64);\n"
+    + "  return __raw_string(out, length);\n"
+    + "}\n";
 }
 
 // rt_src_utf8_valid is read_file's strict D9 well-formedness scan (#5714),
@@ -5327,6 +5449,11 @@ function packed_box(name: string, n: string): string {
 
 pub function rt_src_str_bytes_u8(): string {
   return "function __fern_str_bytes_u8(s: string): i32[] { let n: i32 = s.len(); " + packed_box("b", "n") + " __memcpy(__raw_addr(b, 8), __raw_data(s), n); return __raw_array(b); }";
+}
+
+// The range twin copies bytes[from, end) once, with the packed slice's bounds.
+pub function rt_src_string_from_bytes_range_u8(): string {
+  return "function __fern_string_from_bytes_range_u8(a: i32[], from: i32, end: i32): string { let n: i32 = a.len(); let bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (from < 0) { bad = 1; } if (from > end) { bad = 1; } if (bad == 1) { __fern_slice_abort(); } let m: i32 = end - from; let p: usize = __raw_alloc(m); __memcpy(p, __raw_addr(__raw_arr_ptr(a), 8 + from), m); return __raw_string(p, m); }";
 }
 
 pub function rt_src_string_from_bytes_u8(): string {
@@ -7483,6 +7610,7 @@ function builtin_string_names(): string[] {
     "chr",
     "__raw_string",
     "string_from_bytes_unchecked",
+    "string_from_bytes_range_unchecked",
     // buf_take(h) hands the builder's accumulated bytes over as a string.
     "buf_take",
   ];
@@ -8426,6 +8554,10 @@ pub function (s: EmitState) need(name: string): EmitState {
 // (End goal: when the runtime moves into Fern — issue #2649 — this table and
 // close_needs disappear, replaced by the real call graph + the deadcode pass.)
 pub function runtime_need_deps(name: string): string[] {
+  if (name == "buf_text") {
+    let deps: string[] = ["buf"];
+    return deps;
+  }
   // Heap-only deps: the helper's body `call __fern_alloc`s (directly or via
   // __fern_arr_box / a result-box alloc), so marking it pulls in "heap".
   // Note strbuf: the strbuf bundle is emitted as a unit gated on the single
@@ -8445,7 +8577,7 @@ pub function runtime_need_deps(name: string): string[] {
     || name == "random_bytes" || name == "write_file_bytes" || name == "write_file_bytes_u8"
     || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf" || name == "buf"
     || name == "read_file_bytes_u8" || name == "random_bytes_u8" || name == "tcp_recv_u8"
-    || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "arr_slice_u8" || name == "alloc_bytes"
+    || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "str_from_bytes_range_u8" || name == "arr_slice_u8" || name == "alloc_bytes"
     || name == "arr_push" || name == "arr_slice" || name == "str_own" || name == "str_grow"
     || name == "str_case" || name == "str_repeat"
     || name == "str_replace"
@@ -10422,7 +10554,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // The helpers only a typed body calls: the packed-byte twins, a dead
     // string view's release, the raw floor's free and the map hash seed.
     "__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8",
-    "__fn___fern_arr_slice_u8", "__fn___fern_string_from_bytes_u8",
+    "__fn___fern_arr_slice_u8", "__fn___fern_string_from_bytes_u8", "__fn___fern_string_from_bytes_range_u8",
     "__fn___fern_str_view_free", "__fern_raw_free", "__fern_map_hash_seed",
     // xs.reverse() / xs.concat(ys) / a[start:end] (#3457): a LIBRARY module's
     // call resolves against the entry module's single definition, exactly

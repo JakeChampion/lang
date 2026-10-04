@@ -704,6 +704,9 @@ func prCases(t *testing.T) []invocation {
 			args: []string{"-D", spec, f},
 		})
 	}
+	for _, format := range rawTimeFormats() {
+		cases = append(cases, invocation{name: "raw time format " + quote([]byte(format)), args: []string{"-D", format, f}})
+	}
 	// The conversions that read the INSTANT rather than the format get
 	// four more of them: the epoch itself, a date before it, one past
 	// every transition table, and one carrying nanoseconds.

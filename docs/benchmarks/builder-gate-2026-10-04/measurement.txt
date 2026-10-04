@@ -1,0 +1,8 @@
+before arm64-linux 40784
+before x86-64-linux 31616
+before checksum exit 30
+==303== I   refs:      130,864,526
+after arm64-linux 41213
+after x86-64-linux 31942
+after checksum exit 30
+==598== I   refs:      132,536,537

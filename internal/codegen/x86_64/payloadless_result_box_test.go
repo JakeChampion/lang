@@ -26,9 +26,9 @@ func TestPayloadlessResultBoxArmsZeroTheirPayloadSlot(t *testing.T) {
 		syms []string
 	}{
 		{(*generator).emitEnvRuntime, []string{"__fern_env"}},
-		{(*generator).emitReadLineRuntime, []string{"__fern_read_line"}},
+		{(*generator).emitReadLineRuntime, []string{"__fern_read_line_fd"}},
 		{(*generator).emitReaderWriterRuntime, []string{
-			"__fern_reader_read_line", "__fern_writer_write", "__fern_close_fd_box",
+			"__fern_writer_write", "__fern_close_fd_box",
 		}},
 	}
 

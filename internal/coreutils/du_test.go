@@ -656,6 +656,9 @@ func duCases(t *testing.T) []invocation {
 	add("style-format-unknown", "--time-style=+%Q%v%%", "--time", "-s", "d")
 	add("style-format-newline", "--time-style=+line1%nline2%tx", "--time", "-s", "d")
 	add("style-format-trailing-percent", "--time-style=+x%", "--time", "-s", "d")
+	for _, format := range rawTimeFormats() {
+		add("raw time format "+quote([]byte(format)), "--time", "--time-style=+"+format, "-s", "d")
+	}
 
 	// --- -0 --------------------------------------------------------------
 	add("null-total", "-0", "-c", "-s", "a", "b")

@@ -777,6 +777,7 @@ func New() *Interp {
 	// model, so Map operations stay codegen-only for now.
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocU8}
 	i.Builtins["string_from_bytes_unchecked"] = &Builtin{Fn: builtinStringFromBytes}
+	i.Builtins["string_from_bytes_range_unchecked"] = &Builtin{Fn: builtinStringFromBytesRange}
 	i.Builtins["slice_unchecked"] = &Builtin{Fn: builtinSliceUnchecked}
 	// Compiled `s.bytes()` makes an owned copy, while `s.as_bytes()`
 	// aliases the string payload via a slice header. Their raw-memory
@@ -3076,6 +3077,27 @@ func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
 	return String(buf), nil
 }
 
+// `string_from_bytes_range_unchecked(bs, from, end)` — string_from_bytes_unchecked
+// over bs[from, end), with a slice's bounds contract.
+func builtinStringFromBytesRange(in *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: expected 3 args (bs, from, end), got %d", len(args))
+	}
+	arr, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: arg must be array, got %T", args[0])
+	}
+	from, fok := args[1].(Number)
+	end, eok := args[2].(Number)
+	if !fok || !eok {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: bounds must be numbers")
+	}
+	if from < 0 || int(end) > len(arr.E) || from > end {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: range [%d:%d] out of bounds for length %d", int(from), int(end), len(arr.E))
+	}
+	return builtinStringFromBytes(in, []Value{Array{E: arr.E[int(from):int(end)]}})
+}
+
 // `slice_unchecked(s, a, b)` — the byte slice `s[a:b]` as a builtin:
 // same bounds contract as the SliceExpr eval above (error on
 // `a < 0 || b > len || a > b`, the interp's stand-in for the
@@ -5216,6 +5238,13 @@ func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("Reader.read_chunk: expected 2 args")
 	}
+	size, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("Reader.read_chunk: size must be a number")
+	}
+	if size < 0 {
+		return resultErr(classifyIoError("", syscall.EINVAL)), nil
+	}
 	r, err := readerStream(i, args[0])
 	if errors.Is(err, errClosedHandle) {
 		return resultErr(ioErrorOther("", syscall.EBADF)), nil
@@ -5223,14 +5252,13 @@ func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	size, ok := args[1].(Number)
-	if !ok {
-		return nil, fmt.Errorf("Reader.read_chunk: size must be a number")
-	}
 	buf := make([]byte, int(size))
 	n, rerr := r.Read(buf)
 	if n == 0 && rerr != nil && !errors.Is(rerr, io.EOF) {
 		return resultErr(classifyIoError("", rerr)), nil
+	}
+	if !utf8.Valid(buf[:n]) {
+		return resultErr(ioErrorOfErrno("", syscall.EILSEQ)), nil
 	}
 	return resultOk(String(string(buf[:n]))), nil
 }
@@ -6220,9 +6248,8 @@ func builtinBufLen(i *Interp, args []Value) (Value, error) {
 	return Number(len(b)), nil
 }
 
-// builtinBufTake hands the accumulated bytes over and leaves the builder
-// empty and still usable, matching the compiled backends: there the
-// buffer becomes the string and the builder re-arms at its reserve.
+// builtinBufTake extracts valid text and leaves the builder empty and usable.
+// Callers retaining arbitrary bytes use builtinBufTakeBytes instead.
 func builtinBufTake(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("buf_take: expected 1 arg (b), got %d", len(args))
@@ -6231,7 +6258,7 @@ func builtinBufTake(i *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := String(b)
+	s := builderText(b)
 	i.bufs[h] = make([]byte, 0, cap(b))
 	return s, nil
 }

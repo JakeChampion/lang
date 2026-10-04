@@ -1,0 +1,79 @@
+import "../../coreutils/lib/timefmt";
+import "std/tz";
+import "std/utf8";
+
+function equal(a: u8[], b: u8[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function exercise(): i32 {
+  let z: tz.Zone = tz.utc_zone();
+  // Retain the compiled source after replacing the caller's array.
+  let source: u8[] = [255 as u8, 37 as u8, 89 as u8, 226 as u8, 130 as u8];
+  let raw: timefmt.Format = timefmt.compile_bytes(source);
+  source = source.with(0, 65 as u8);
+  let want: u8[] = [255 as u8, 49 as u8, 57 as u8, 55 as u8, 48 as u8, 226 as u8, 130 as u8];
+  let i: i32 = 0;
+  while (i < 8) {
+    if (!equal(timefmt.format_bytes(raw, z, 0, 0), want)) {
+      return 1;
+    }
+    let text: string = timefmt.format(raw, z, 0, 0);
+    if (text != "�1970�" || !utf8.is_valid_utf8(text)) {
+      return 2;
+    }
+    i = i + 1;
+  }
+  // Refused non-ASCII directives split scalars into parser pieces. They
+  // must rejoin before text validation, including width and case flags.
+  let unicode: timefmt.Format = timefmt.compile("é€🙂%Y|%5é|%^8é|%:é");
+  let expected: string = "é€🙂1970|  %5é|    %^8é|%:é";
+  if (timefmt.format(unicode, z, 0, 0) != expected) {
+    return 3;
+  }
+  if (!equal(timefmt.format_bytes(unicode, z, 0, 0), expected.bytes())) {
+    return 4;
+  }
+  // Every byte, including NUL, can pass through the raw format API.
+  let all: u8[] = [];
+  let bytes: u8[] = [];
+  i = 0;
+  while (i < 256) {
+    all = all.append(i as u8);
+    if (i == 37) {
+      all = all.append(i as u8);
+    }
+    bytes = bytes.append(i as u8);
+    i = i + 1;
+  }
+  let compiled: timefmt.Format = timefmt.compile_bytes(all);
+  if (!equal(timefmt.format_bytes(compiled, z, 0, 0), bytes)) {
+    return 5;
+  }
+  if (!utf8.is_valid_utf8(timefmt.format(compiled, z, 0, 0))) {
+    return 6;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let i: i32 = 0;
+  while (i < 8) {
+    let result: i32 = exercise();
+    if (result != 0) {
+      return result;
+    }
+    i = i + 1;
+  }
+  return 0;
+}

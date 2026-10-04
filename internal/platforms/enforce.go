@@ -435,6 +435,8 @@ var coreBuiltins = map[string]bool{
 	"wasm_block":         true,
 	"wasm_poll":          true,
 	"wasm_pollable_drop": true,
+
+	"string_from_bytes_range_unchecked": true,
 }
 
 // CoreBuiltin reports whether the named builtin needs no host — the

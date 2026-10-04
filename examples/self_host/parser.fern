@@ -380,13 +380,15 @@ function block_spans(toks: lexer.Token[]): BlockSpans {
 // `[resource-drop]` import an owned handle is released through.
 pub struct ResourceDecl { name: string, iface: string, wit: string, line: i32, col: i32 }
 
-// ExportBinding records an `@export("iface", "wit-name") function f {…}` binding
-// (P6 — docs/WIT-BRING-YOUR-OWN.md): the function `func_name` implements the WIT
-// world export (iface, wit). The wasm emitter surfaces a core export
-// `iface#wit-name` for each so the Go world-driven composer lifts it. Kept as a
-// Module side-list (like resources) rather than a FuncDecl field to avoid
-// rippling through every FuncDecl literal.
-pub struct ExportBinding { func_name: string, iface: string, wit: string }
+// ExportBinding records a function the outside world calls by name. One from
+// an `@export("iface", "wit-name") function f {…}` binding (P6 —
+// docs/WIT-BRING-YOUR-OWN.md) implements the WIT world export (iface, wit):
+// the wasm emitter surfaces a core export `iface#wit-name` for each so the Go
+// world-driven composer lifts it. One with `c_abi` is a `-shared` library's
+// export, called through a C-ABI entry (fern.fern's export_entry) and with no
+// iface or wit. Kept as a Module side-list (like resources) rather than a
+// FuncDecl field to avoid rippling through every FuncDecl literal.
+pub struct ExportBinding { func_name: string, iface: string, wit: string, c_abi: boolean }
 
 // EnumDecl preserves an enum's name + the names of its variants. The
 // parser desugars each enum into variant structs (pushed to `structs`)
@@ -483,6 +485,15 @@ pub function is_quoted_literal(n: ast.ExprNumber): boolean {
 // variant rather than naming a destination type.
 pub function is_cast_op(op: string): boolean {
   return op.len() > 3 && slice_unchecked(op, 0, 3) == "as_";
+}
+
+// bare_return reports whether a `return`'s value is absent: a bare `return;`
+// leaves the `punct:;` placeholder in the value slot.
+pub function bare_return(e: ast.Expr): boolean {
+  if let ast.ExprUnknown(u) = e {
+    return u.kind == "punct:;";
+  }
+  return is_unit_expr(e);
 }
 
 // is_unit_expr asks the same of any expression.
@@ -10141,7 +10152,7 @@ pub function builtin_function_names(): string[] {
     "wasm_pollable_drop", "wasm_block", "wasm_poll",
     // maps + string builder + bytes.
     "map_new", "__map_new_i32", "strbuf_append", "strbuf_reset",
-    "strbuf_take", "string_from_bytes_unchecked", "slice_unchecked", "chr",
+    "strbuf_take", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "slice_unchecked", "chr",
     // the capacity-carrying string builder (#8773): a handle is the
     // address of its own control block, so any number are live at once.
     "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_len",
@@ -27757,7 +27768,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
           }
           has_inline_hint = false;
           funcs = funcs.append(FuncDecl { ...xfr_func, is_pub: decl_pub, is_package: decl_package });
-          exports = exports.append(ExportBinding { func_name: xfr_func.name, iface: ear_iface, wit: ear_wit });
+          exports = exports.append(ExportBinding { func_name: xfr_func.name, iface: ear_iface, wit: ear_wit, c_abi: false });
         }
         continue;
       }
@@ -28319,7 +28330,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
   let xi: i32 = 0;
   while (xi < from.exports.len()) {
     let xb: ExportBinding = from.exports[xi];
-    nexports = nexports.append(ExportBinding { func_name: prefix + "." + xb.func_name, iface: xb.iface, wit: xb.wit });
+    nexports = nexports.append(ExportBinding { func_name: prefix + "." + xb.func_name, iface: xb.iface, wit: xb.wit, c_abi: xb.c_abi });
     xi = xi + 1;
   }
   let nimpls: ImplInfo[] = into.impls;

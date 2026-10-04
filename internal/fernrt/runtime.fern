@@ -1,3 +1,96 @@
+// Positive widths are valid scalars; negative widths consume a maximal subpart.
+function __fern_buf_text_part(data: usize, left: usize): i32 {
+  let lead: i32 = __load_u8(data);
+  if (lead < 128) {
+    return 1;
+  }
+  let width: i32 = 0;
+  if (lead >= 194 && lead <= 223) {
+    width = 2;
+  } else if (lead >= 224 && lead <= 239) {
+    width = 3;
+  } else if (lead >= 240 && lead <= 244) {
+    width = 4;
+  }
+  let used: i32 = 1;
+  while (used < width && used as usize < left) {
+    let next: i32 = __load_u8(data + used as usize);
+    if (next < 128 || next > 191) {
+      break;
+    }
+    if (used == 1 && (lead == 224 && next < 160 || lead == 237 && next > 159 || lead == 240 && next < 144 || lead == 244 && next > 143)) {
+      break;
+    }
+    used = used + 1;
+  }
+  if (used == width) {
+    return used;
+  }
+  return 0 - used;
+}
+
+// Negative sizes request repair. Counts use i64 so expansion cannot wrap on
+// wasm32. The runtime string floor accepts at most a signed i32 byte count.
+function __fern_buf_text_size(data: usize, n: usize): i32 {
+  if (n > 2147483647 as usize) {
+    exit(134);
+  }
+  let total: i64 = n as i64;
+  let i: usize = 0;
+  let changed: boolean = false;
+  let mask: u64 = 9259542123273814144 as u64;
+  while (i < n) {
+    if (n - i >= 8 && (__load_i64(data + i) as u64 & mask) == 0 as u64) {
+      i = i + 8;
+      continue;
+    }
+    let part: i32 = __fern_buf_text_part(data + i, n - i);
+    if (part < 0) {
+      total = total + (3 + part) as i64;
+      changed = true;
+      i = i + (0 - part) as usize;
+    } else {
+      i = i + part as usize;
+    }
+  }
+  if (total > 2147483647 as i64) {
+    exit(134);
+  }
+  let length: i32 = total as i32;
+  if (changed) {
+    return 0 - length;
+  }
+  return length;
+}
+
+// Copy whole valid runs and replace each malformed maximal subpart once.
+function __fern_buf_text_copy(out: usize, data: usize, n: usize): void {
+  let i: usize = 0;
+  let start: usize = 0;
+  let written: usize = 0;
+  let mask: u64 = 9259542123273814144 as u64;
+  while (i < n) {
+    if (n - i >= 8 && (__load_i64(data + i) as u64 & mask) == 0 as u64) {
+      i = i + 8;
+      continue;
+    }
+    let part: i32 = __fern_buf_text_part(data + i, n - i);
+    if (part < 0) {
+      __memcpy(out + written, data + start, (i - start) as i32);
+      written = written + (i - start);
+      __store_u8(out + written, 239);
+      __store_u8(out + written + 1, 191);
+      __store_u8(out + written + 2, 189);
+      written = written + 3;
+      i = i + (0 - part) as usize;
+      start = i;
+    } else {
+      i = i + part as usize;
+    }
+  }
+  __memcpy(out + written, data + start, (n - start) as i32);
+}
+
 // The native runtime helpers that are written in Fern (#8038). Each function
 // here is emitted under its own name as a runtime symbol by every native
 // backend, so a helper is one source lowered per target rather than a
@@ -1434,6 +1527,29 @@ function __fern_tcp_recv(fd: i32, max: i32): u8[] {
   }
   __arr_set_len(buf, n as i32);
   return buf;
+}
+
+// __fern_string_from_bytes_range(bytes, from, end) is
+// string_from_bytes_unchecked over bytes[from, end). The range is copied into
+// a fresh array and that into the string; a range outside bytes exits 134, as
+// a slice does. The array is written through its address, so the lowering
+// does not see it die and it is released by hand.
+function __fern_string_from_bytes_range(bytes: u8[], from: i32, end: i32): string {
+  if (from < 0 || end > bytes.len() || from > end) {
+    exit(134);
+  }
+  let n: i32 = end - from;
+  let out: u8[] = __alloc_u8(n);
+  let src: usize = bytes as usize + from as usize;
+  let dst: usize = out as usize;
+  let i: i32 = 0;
+  while (i < n) {
+    __store_u8(dst + i as usize, __load_u8(src + i as usize));
+    i = i + 1;
+  }
+  let s: string = string_from_bytes_unchecked(out);
+  __fern_arr_dec(out as usize, 1);
+  return s;
 }
 
 // __fern_tcp_recv_into(fd, buf) reads once into the caller's buffer, up to

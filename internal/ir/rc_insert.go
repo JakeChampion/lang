@@ -286,7 +286,7 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		// rcResultOwned records `__fern_string_from_bytes`), so the argument
 		// temp of `w.write(string_from_bytes_unchecked(bs))` is one owned
 		// buffer per call that nothing else releases (#8403).
-		if cid, ok := x.Callee.(*ast.Ident); ok && (cid.Name == "slice_unchecked" || cid.Name == "string_from_bytes_unchecked") {
+		if cid, ok := x.Callee.(*ast.Ident); ok && (cid.Name == "slice_unchecked" || cid.Name == "string_from_bytes_unchecked" || cid.Name == "string_from_bytes_range_unchecked") {
 			if t, ok := b.exprType(x).(ast.StringType); ok {
 				return t, true
 			}
