@@ -578,7 +578,9 @@ function __park_tokens(toks: i32[], timeout_ms: i32): i32 {
     }
     i = i + 1;
   }
-  let r: i32 = wait_any(set, timeout_ms);
+  // poll_ready calls this only with a current task. Park directly: the
+  // blocking wait_any fallback would also pull native reactors into wasm.
+  let r: i32 = __task_park(set, timeout_ms);
   if (r < 0) {
     return r;
   }
