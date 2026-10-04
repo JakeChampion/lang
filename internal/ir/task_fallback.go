@@ -11,9 +11,16 @@ var taskPrimitiveFallback = map[string]int32{
 	"__task_enter":         0,
 	"__task_leave":         0,
 	"__task_park":          -1,
-	"__task_token":         0,
+	"__task_wait":          0,
+	"__task_timeout":       -1,
 	"__task_set_ready":     0,
 	"__task_set_cancelled": 0,
+}
+
+// taskPrimitiveArray names the primitive whose result is an i32 array: an
+// empty one here, since no task ever parks.
+var taskPrimitiveArray = map[string]bool{
+	"__task_wait": true,
 }
 
 // taskPrimitiveVoid names the primitives whose result is void.

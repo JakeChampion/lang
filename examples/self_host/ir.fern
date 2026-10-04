@@ -5814,6 +5814,25 @@ function kind_pops(t: i32): i32 {
 // invariant holds op for op. The exceptions are the ops that are not
 // expressions: the two that consume a value outright, and structured control
 // flow, whose scopes are all void.
+// pure_value_op reports an op that reads its operands and pushes one value
+// with no other effect: a constant, a local load, an element, field, tuple
+// or byte read, a length, or an arithmetic, comparison or conversion op. The
+// suspension pass runs such an op twice when it feeds a call site, once in
+// normal mode and once more on a rewind.
+pub function pure_value_op(o: Op): boolean {
+  let t: i32 = o.kind_tag;
+  if (t == 1 || t == 3 || t == 4 || t == 5 || t == 6 || t == 218 || t == 18) {
+    return true;
+  }
+  if (t == 88 || t == 139 || t == 143 || t == 90 || t == 97 || t == 101) {
+    return true;
+  }
+  if (t == 19 || t == 20) {
+    return false;
+  }
+  return pops2_arith(t) || pops1_conv(t);
+}
+
 pub function op_pushes(o: Op): i32 {
   let t: i32 = o.kind_tag;
   if (t == 19 || t == 159) {  // store_local, drop

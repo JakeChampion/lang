@@ -293,34 +293,44 @@ a text-typed response would be a `string` that is not well-formed UTF-8
 
 ## 8. Tasks: parking a call chain (self-host compiler)
 
-`async.suspend(tok)` waits for a readiness token. With no task current it is
-a blocking `poll` on the token. Under a scheduler it *parks*: the self-host
+`async.wait_any(set, timeout_ms)` waits for any of the (fd, interest) pairs
+in `set` (1 readable, 2 writable), bounded by `timeout_ms` (-1 for none),
+and answers the index of the pair that became ready or -1 at the timeout.
+With no task current it blocks: one `poll` for a read-only set, a reactor
+made for the call otherwise. Under a scheduler it *parks*: the self-host
 compiler lowers every function that reaches the park to a resumable form, so
 the whole call chain above the wait saves its locals and returns to the
 scheduler, and runs on from the wait when the scheduler resumes it. Nothing
-is written at the call site: a function that calls `suspend`, or calls one
+is written at the call site: a function that calls `wait_any`, or calls one
 that does, is lowered that way by reachability (`examples/self_host/suspend.fern`).
+The fetch client's waits are such calls: `tcp.tcp_recv_deadline`, the DNS
+exchange's receive waits and `dns.connect_race`'s connect wait all go
+through `wait_any`, so a `fetch.send` inside a task parks at each of them.
 
 ```fern
 let t: async.Task[i32] = async.task_new(() => handler());
 let st: async.TaskStatus[i32] = async.task_start(t);
 match (st) {
     Done(v) => { … },
-    Suspended(tok) => { /* wait on tok, then */ st = async.task_resume(t, ready); },
+    Suspended(w) => {
+        // w.set and w.timeout_ms are what the task waits for; here the
+        // scheduler waits on them itself.
+        let woke: i32 = async.wait_any(w.set, w.timeout_ms);
+        st = async.task_resume(t, woke);
+    },
     Cancelled => { … }
 }
 async.task_free(t);
 ```
 
-`task_resume(t, ready)` makes the parked `suspend` answer `ready`;
+`task_resume(t, woke)` makes the parked `wait_any` answer `woke`;
 `task_cancel(t)` runs the task on with every wait answering
 `async.cancelled()` and never parking again, which is how a disconnected
 client's handler winds down through its own control flow (`defer`s
 included). The native compiler keeps the blocking fallback: no task is ever
 current, so `task_start` runs its entry to completion and both paths behave
 as a plain program does. `docs/NET-P3-SUSPENSION-PLAN.md` is the design and
-what remains (the serve loop as the scheduler, the fetch client's waits, the
-wasm runtime bodies).
+what remains (the serve loop as the scheduler, the wasm runtime bodies).
 
 ## 9. How it works (one paragraph)
 

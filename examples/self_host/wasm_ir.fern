@@ -1738,8 +1738,9 @@ pub function task_stub_funcs(): string {
     + "  (func $__fern_task_cur (result i32) (i32.const 0))\n"
     + "  (func $__fern_task_enter (param i32 i32) (result i32) (i32.const 0))\n"
     + "  (func $__fern_task_leave (result i32) (i32.const 0))\n"
-    + "  (func $__fern_task_park (param i32) (result i32) (unreachable))\n"
-    + "  (func $__fern_task_token (param i32) (result i32) (i32.const 0))\n"
+    + "  (func $__fern_task_park (param i32 i32) (result i32) (unreachable))\n"
+    + "  (func $__fern_task_wait (param i32) (result i32) (unreachable))\n"
+    + "  (func $__fern_task_timeout (param i32) (result i32) (i32.const -1))\n"
     + "  (func $__fern_task_set_ready (param i32 i32) (result i32) (i32.const 0))\n"
     + "  (func $__fern_task_set_cancelled (param i32) (result i32) (i32.const 0))\n"
     // What the suspension pass's output calls: the mode is always normal

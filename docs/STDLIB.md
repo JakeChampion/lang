@@ -2002,16 +2002,19 @@ old `concurrent { … }` / `await` keyword surface.
   reparented to init (a subreaper other than init, Linux, hides that),
   -ENOTSUP on wasm; the sim's parent never exits.
   `std/serve`'s serve loops run on it.
-- `Task[T]`, `task_new(entry)`, `task_start(t)`, `task_resume(t, ready)`,
+- `Task[T]`, `task_new(entry)`, `task_start(t)`, `task_resume(t, woke)`,
   `task_cancel(t)`, `task_free(t)`, `TaskStatus[T]` (`Done(T)`,
-  `Suspended(token)`, `Cancelled`) and `suspend(tok)` — a call chain that
-  parks on a readiness token and runs on when its scheduler resumes it
-  (`docs/ASYNC.md` §8, `docs/NET-P3-SUSPENSION-PLAN.md`). `suspend` blocks on
-  the token when no task is current; under a scheduler the self-host
-  compiler lowers every function that reaches it to a resumable form, and
-  the native compiler keeps the blocking fallback, where `task_start` runs
-  its entry to completion. `cancelled()` is what a cancelled task's waits
-  answer from then on.
+  `Suspended(Wait)`, `Cancelled`), `Wait` (`set`, `timeout_ms`) and
+  `wait_any(set, timeout_ms)` — a call chain that parks on a set of (fd,
+  interest) pairs under a bound and runs on when its scheduler resumes it
+  with the index of the ready pair, -1 at the timeout (`docs/ASYNC.md` §8,
+  `docs/NET-P3-SUSPENSION-PLAN.md`). `wait_any` blocks when no task is
+  current, which is how std/tcp's recv-with-deadline and std/dns's connect
+  and exchange waits work in a plain program; under a scheduler the
+  self-host compiler lowers every function that reaches it to a resumable
+  form, and the native compiler keeps the blocking fallback, where
+  `task_start` runs its entry to completion. `cancelled()` is what a
+  cancelled task's waits answer from then on.
 
 ### `std/platform`
 

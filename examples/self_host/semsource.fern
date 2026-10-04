@@ -7399,6 +7399,8 @@ function bit_count_contracts(): ssasem.Contract[] {
 // it and drops it.
 function memory_contracts(): ssasem.Contract[] {
   let v: i32 = ssaunits.value_mode();
+  let b: i32 = ssaunits.borrow_mode();
+  let fds: typeinfo.Type = typeinfo.TypeArray { elem: t_i32(), view: false };
   let out: ssasem.Contract[] = [
     ssasem.Contract { name: "__alloc", params: [t_i32()], modes: [v], result: t_usize() },
     ssasem.Contract { name: "__alloc_u8", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
@@ -7413,8 +7415,9 @@ function memory_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__task_cur", params: [], modes: [], result: t_i32() },
     ssasem.Contract { name: "__task_enter", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
     ssasem.Contract { name: "__task_leave", params: [], modes: [], result: t_i32() },
-    ssasem.Contract { name: "__task_park", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__task_token", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "__task_park", params: [fds, t_i32()], modes: [b, v], result: t_i32() },
+    ssasem.Contract { name: "__task_wait", params: [t_i32()], modes: [v], result: fds },
+    ssasem.Contract { name: "__task_timeout", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "__task_set_ready", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
     ssasem.Contract { name: "__task_set_cancelled", params: [t_i32()], modes: [v], result: t_void() },
     ssasem.Contract { name: "__memcpy", params: [t_usize(), t_usize(), t_i32()], modes: [v, v, v], result: t_void() },

@@ -1974,8 +1974,7 @@ function __join_bytes(chunks: u8[][]): u8[] {
 // real wasi:io/poll pollable handle on wasm — so `poll` (poll(2) /
 // ppoll(2) native, wasi:io/poll.poll on wasm) drives it either way. The
 // continuation captures the connection `c` (it reads the socket, not the
-// woken token, which differs by backend). On interp the `poll` stub
-// means the `Pending` never resolves (consistent with std/async).
+// woken token, which differs by backend).
 pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u8[]] {
   let empty: u8[] = [];
   if (!http.http_target_ok(path)) {
