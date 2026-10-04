@@ -174,12 +174,16 @@ function round(i: i32): i32 {
 			// holds — an over-release the byte counts show as balanced, which is why
 			// `want` carries it rather than the frees column.
 			//
+			// The initial ops array goes through `id`, which hides the constant from the static-box plan,
+			// so the first B is a heap box rather than a static one.
+			//
 			// Confirmed against both oracles: interp and native x86-64 each exit 51.
 			name: "builder_nodeep",
 			src: `struct B { ops: i32[] }
 function (b: B) emit(x: i32): B { return B { ops: b.ops.append(x) }; }
+function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
-    let s: B = B { ops: [1] };
+    let s: B = B { ops: id([1]) };
     s = s.emit(i);
     s = s.emit(i + 1);
     return s.ops.len();

@@ -336,11 +336,12 @@ function main(): i32 {
 			wantFrees: 300,
 		},
 		{
-			// The whole payload box escapes.
+			// The whole payload box escapes. `hp` starts with the round number,
+			// so it is a heap box rather than a static one.
 			name: "whole_payload_struct_escapes",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    let hp: P = P { xs: [0], n: 0 };
+    let hp: P = P { xs: [0], n: i };
     let acc: i32 = 0;
     let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) { Some(p) => { hp = p; acc = p.n; }, None => {} }

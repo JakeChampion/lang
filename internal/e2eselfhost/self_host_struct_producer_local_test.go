@@ -88,10 +88,13 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 200) { t = t +
 			want: 19, allocs: 400, frees: 400,
 		},
 		{
-			// The smallest shape: one rc-array field, no string.
+			// The smallest shape: one rc-array field, no string. The array goes
+			// through `id`, which hides the constant from the static-box plan, so P is a heap
+			// box rather than a static one.
 			name: "minimal_array_field",
 			src: `struct P { xs: i32[] }
-function mk(): P { let p: P = P { xs: [1, 2, 3] }; return p; }
+function id(xs: i32[]): i32[] { return xs; }
+function mk(): P { let p: P = P { xs: id([1, 2, 3]) }; return p; }
 function round(i: i32): i32 { let v: P = mk(); return v.xs.len(); }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 51, allocs: 100, frees: 100,

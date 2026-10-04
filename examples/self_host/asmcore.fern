@@ -8487,7 +8487,7 @@ pub function const_agg_label(s: EmitState, idx: i32): string {
   return ".K" + s.str_ns + "_" + util.i32_to_string(idx);
 }
 
-// ConstAggPack is a constant box's add_const_agg text plus the state the word-0
+// ConstAggPack is a constant box's add_const_agg text plus the state its
 // interning left.
 pub struct ConstAggPack { state: EmitState, text: string }
 
@@ -8497,14 +8497,16 @@ pub struct ConstAggPack { state: EmitState, text: string }
 // value's (#9839) is the one-element ARRAY box `arr_make(1, 32)` builds, whose
 // word 0 is the LENGTH and whose sole element is the body's address. An array
 // of scalars packs as `0|` and its elements, and its length is written into
-// word 0 where the block is emitted. Shared by both register backends and by each one's flat and register arms, so no copy
-// of it can drift from another.
+// word 0 where the block is emitted. A field holding another static box is
+// that box's label, interned here. Shared by both register backends and by
+// each one's flat and register arms, so no copy of it can drift from another.
 pub function const_agg_pack(own s: EmitState, packed: string): ConstAggPack {
   let body: string = ir.const_struct_fn_body(packed);
   if (body.len() > 0) {
     return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) };
   }
   let shp: ShapeRefOut = const_agg_shape(s, packed);
+  s = shp.state;
   let text: string = shp.label + "|";
   let vals: string[] = ir.const_struct_values(packed);
   let i: i32 = 0;
@@ -8512,10 +8514,18 @@ pub function const_agg_pack(own s: EmitState, packed: string): ConstAggPack {
     if (i > 0) {
       text = text + ",";
     }
-    text = text + vals[i];
+    let inner: string = ir.const_struct_ref(vals[i]);
+    if (inner.len() > 0) {
+      let pk: ConstAggPack = const_agg_pack(s, inner);
+      let kout: ConstAggOut = add_const_agg(pk.state, pk.text);
+      s = kout.state;
+      text = text + const_agg_label(s, kout.idx);
+    } else {
+      text = text + vals[i];
+    }
     i = i + 1;
   }
-  return ConstAggPack { state: shp.state, text: text };
+  return ConstAggPack { state: s, text: text };
 }
 
 // const_agg_shape: the shape label of a packed constant aggregate, and the
@@ -10492,12 +10502,54 @@ pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitSta
     st = st.write("    .quad " + shp + "\n");
     let vi: i32 = 0;
     while (vi < vals.len()) {
-      st = st.write("    .quad " + vals[vi] + "\n");
+      st = emit_const_agg_field(st, i, vi, vals[vi]);
       vi = vi + 1;
     }
     i = i + 1;
   }
   return st;
+}
+
+// One field word. One holding a box is labelled for the relocation table.
+function emit_const_agg_field(st: EmitState, idx: i32, vi: i32, word: string): EmitState {
+  if (const_agg_holds_box(word)) {
+    st = st.write(const_agg_field_label(st, idx, vi) + ":\n");
+  }
+  return st.write("    .quad " + word + "\n");
+}
+
+// A field word naming another static box by its label, where every other
+// word is a number.
+function const_agg_holds_box(word: string): boolean {
+  return word.len() > 0 && word[0] == b'.';
+}
+
+// The label on field `vi` of constant `idx` when it holds a box, which a
+// relocation table names in place of an offset expression.
+function const_agg_field_label(s: EmitState, idx: i32, vi: i32): string {
+  return const_agg_label(s, idx) + "_" + util.i32_to_string(vi);
+}
+
+// The address of every record field that holds another static box's label, one
+// word each, for a relocation walk to rebase: word 0 of a record is walked
+// with its block, but a field's word is not.
+pub function emit_const_agg_refs(s: EmitState): EmitState {
+  let i: i32 = 0;
+  while (i < s.const_aggs.len()) {
+    let e: string = s.const_aggs[i];
+    if (const_agg_kind(e) == 2) {
+      let vals: string[] = ir.const_struct_values(e);
+      let vi: i32 = 0;
+      while (vi < vals.len()) {
+        if (const_agg_holds_box(vals[vi])) {
+          s = s.write("    .quad " + const_agg_field_label(s, i, vi) + "\n");
+        }
+        vi = vi + 1;
+      }
+    }
+    i = i + 1;
+  }
+  return s;
 }
 
 // A packed byte constant: its length word, then its bytes padded to whole

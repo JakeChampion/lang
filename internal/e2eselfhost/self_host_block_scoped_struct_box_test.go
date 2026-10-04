@@ -152,6 +152,8 @@ function main(): i32 {
 // Free counts are exact and pinned at what this build produces (every row
 // reclaims all it allocates); `__rc_underflow_count()` is asserted separately,
 // because only the counter tells a safe release from one landing on a live box.
+// An initial `held` takes the round number, so it is a heap box rather than a
+// static one.
 //
 // Every `want` is from `fern -interp`.
 func TestSelfHostBlockScopedStructBoxHazardsX86_64(t *testing.T) {
@@ -196,7 +198,7 @@ function round(r: i32): i32 {
 			name: "aliased_to_an_outer_local",
 			body: `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
-    let held: S = S { xs: [0], n: 0 };
+    let held: S = S { xs: [0], n: r };
     let acc: i32 = 0;
     let i: i32 = 0;
     while (i < 4) {
@@ -238,7 +240,7 @@ function round(r: i32): i32 {
 			body: `struct S { xs: i32[], n: i32 }
 function keepit(s: S): S { return s; }
 function round(r: i32): i32 {
-    let held: S = S { xs: [0], n: 0 };
+    let held: S = S { xs: [0], n: r };
     let acc: i32 = 0;
     let i: i32 = 0;
     while (i < 4) {

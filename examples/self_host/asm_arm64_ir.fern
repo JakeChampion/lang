@@ -5459,7 +5459,9 @@ function emit_arm64_op_dyn_box(o: ir.Op, own s: asmcore.EmitState): asmcore.Emit
 // The regions are walked rather than tabulated: string boxes are a fixed 24-byte
 // stride, a record constant's block carries its own length in the `cap` word
 // the walk strides by, and a function value's block is a fixed 32 bytes. An
-// array of scalars holds no address and sits outside all three. Only the whole-program pool is contiguous and complete,
+// array of scalars holds no address and sits outside all three. A record field
+// holding another static box's address is the one word that is tabulated, in
+// `.Lfern_cref_begin`. Only the whole-program pool is contiguous and complete,
 // which is the only shape `-target arm64-android` produces; a per-module unit
 // (str_ns != "") emits its pool piecewise and gets no loop.
 // reloc_wanted decides, for BOTH the relocation loop and the data it walks,
@@ -5524,12 +5526,30 @@ function emit_ir_reloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
   s = s.write("    add x12, x12, :lo12:.Lfern_cfn_end\n");
   s = s.write(".Lfern_cfn_loop:\n");
   s = s.write("    cmp x11, x12\n");
-  s = s.write("    b.hs .Lfern_reloc_done\n");
+  s = s.write("    b.hs .Lfern_cfn_done\n");
   s = s.write("    ldr x13, [x11, #24]\n");
   s = s.write("    add x13, x13, x9\n");
   s = s.write("    str x13, [x11, #24]\n");
   s = s.write("    add x11, x11, #32\n");
   s = s.write("    b .Lfern_cfn_loop\n");
+  // Record fields holding a static box: a table of their addresses, each
+  // linked unrebased like every word here, so the entry is rebased before
+  // the word it names is.
+  s = s.write(".Lfern_cfn_done:\n");
+  s = s.write("    adrp x11, .Lfern_cref_begin\n");
+  s = s.write("    add x11, x11, :lo12:.Lfern_cref_begin\n");
+  s = s.write("    adrp x12, .Lfern_cref_end\n");
+  s = s.write("    add x12, x12, :lo12:.Lfern_cref_end\n");
+  s = s.write(".Lfern_cref_loop:\n");
+  s = s.write("    cmp x11, x12\n");
+  s = s.write("    b.hs .Lfern_reloc_done\n");
+  s = s.write("    ldr x13, [x11]\n");
+  s = s.write("    add x13, x13, x9\n");
+  s = s.write("    ldr x14, [x13]\n");
+  s = s.write("    add x14, x14, x9\n");
+  s = s.write("    str x14, [x13]\n");
+  s = s.write("    add x11, x11, #8\n");
+  s = s.write("    b .Lfern_cref_loop\n");
   s = s.write(".Lfern_reloc_done:\n");
   return s;
 }
@@ -6326,6 +6346,9 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
     s = s.write("    .align 8\n.Lfern_cfn_begin:\n");
     s = asmcore.emit_const_agg_blocks(s, 0, 3);
     s = s.write("    .section .data\n.Lfern_cfn_end:\n");
+    s = s.write("    .align 8\n.Lfern_cref_begin:\n");
+    s = asmcore.emit_const_agg_refs(s);
+    s = s.write(".Lfern_cref_end:\n");
   } else {
     s = asmcore.emit_const_agg_data(s);
   }
