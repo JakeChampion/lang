@@ -22,17 +22,25 @@ and Unicode across buffer boundaries. Sizes cover the append threshold and
 4096-, 8192- and 65536-byte boundaries. Four repeated large Unicode writes
 also retain the input string while crossing buffered and direct-write paths.
 
-The validated source includes main `0c445a1ac`. The full Linux unit suite,
+The validated PR snapshot is `01fe6a2529`, including main `9c8eb0032`.
+The full Linux unit suite,
 all lint gates, Stdio target groups, and GNU/primary consumer comparisons
 pass, including the df operand-device correction. Darwin Go and source-built
-primary tests pass in 9.971 and 38.773 seconds. The reproduced compiler
-passes all 366 native Darwin/core-WASM corpus runs in 3.017 seconds, with
+primary tests pass in 9.536 and 38.977 seconds. The reproduced compiler
+passes all 366 native Darwin/core-WASM corpus runs in 3.059 seconds, with
 balanced allocations and zero live bytes.
 
-All three bootstrap stages are identical at 12,995,857 bytes, SHA-256
-`27c93618d8c0b4d9eb15a8e3eef3664c4a0e70da18eded1dd842260754649359`.
+The Darwin bootstrap explicitly uses the previously reproduced local compiler
+with SHA-256 `27c93618d8c0b4d9eb15a8e3eef3664c4a0e70da18eded1dd842260754649359`
+as `STAGE0`. All three resulting stages are identical at 13,128,209 bytes,
+SHA-256 `89e577b9ef1315b819cbb198c3c49e8603558fcacd9d60cb40268b36b5c61d52`.
+This is the measured local-seed chain; the repository's pinned-seed bootstrap
+remains a separate CI gate.
 Main's Go SSA retirement and compiler/checker size baselines are retained;
-all three affected driver checks pass the unchanged 5% gate. The benchmark
+all three affected driver checks pass the unchanged 5% gate. The path probe,
+compiler and checker measure 4,283,816, 11,426,392 and 2,532,088 bytes.
+Assembler record parity/refusals, checker codes, scheduler/fetch, IR registry,
+LSP and cache-advice integration checks also pass. The benchmark
 sections below identify their own compiler and source revisions.
 
 ## Measurements before the direct-write follow-up

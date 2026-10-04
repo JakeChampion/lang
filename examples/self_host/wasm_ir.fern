@@ -1720,7 +1720,7 @@ pub function module_calls_direct(cache: irtables.LowerResult[], name: string): b
 }
 
 // module_uses_task reports whether any function calls a task primitive's
-// runtime function, so the stubs below are emitted.
+// runtime function, so task_funcs below is emitted.
 pub function module_uses_task(cache: irtables.LowerResult[]): boolean {
   function is_task_call(o: ir.Op): boolean {  // call_direct
     return o.kind_tag == 149 && ircore.is_task_runtime_fn(o.str);
@@ -1728,30 +1728,158 @@ pub function module_uses_task(cache: irtables.LowerResult[]): boolean {
   return any_op(cache, is_task_call);
 }
 
-// task_stub_funcs is the task runtime on wasm until the suspension pass
-// reaches it (docs/NET-P3-SUSPENSION-PLAN.md §3.7): no task is ever current,
-// so std/async's suspend takes its blocking branch, task_start runs its entry
-// to completion, and a park, which only a current task reaches, traps.
-pub function task_stub_funcs(): string {
-  return "  (func $__fern_task_new (result i32) (i32.const 1))\n"
-    + "  (func $__fern_task_free (param i32) (result i32) (i32.const 0))\n"
-    + "  (func $__fern_task_cur (result i32) (i32.const 0))\n"
-    + "  (func $__fern_task_enter (param i32 i32) (result i32) (i32.const 0))\n"
-    + "  (func $__fern_task_leave (result i32) (i32.const 0))\n"
-    + "  (func $__fern_task_park (param i32 i32) (result i32) (unreachable))\n"
-    + "  (func $__fern_task_wait (param i32) (result i32) (unreachable))\n"
-    + "  (func $__fern_task_timeout (param i32) (result i32) (i32.const -1))\n"
-    + "  (func $__fern_task_set_ready (param i32 i32) (result i32) (i32.const 0))\n"
-    + "  (func $__fern_task_set_cancelled (param i32) (result i32) (i32.const 0))\n"
-    // What the suspension pass's output calls: the mode is always normal
-    // here, so a transformed function never saves or restores a frame.
-    + "  (func $__fern_task_mode (result i32) (i32.const 0))\n"
-    + "  (func $__fern_task_push_w (param i32) (result i32) (unreachable))\n"
-    + "  (func $__fern_task_push_i64 (param i64) (result i32) (unreachable))\n"
-    + "  (func $__fern_task_push_f64 (param f64) (result i32) (unreachable))\n"
-    + "  (func $__fern_task_pop_w (result i32) (unreachable))\n"
-    + "  (func $__fern_task_pop_i64 (result i64) (unreachable))\n"
-    + "  (func $__fern_task_pop_f64 (result f64) (unreachable))\n";
+// task_funcs is the task runtime on wasm, the twin of asmcore.rt_src_task:
+// the current task, a table of records and, per record, the mode (0 running,
+// 1 unwinding, 2 rewinding), the timeout a park gave, the readiness word its
+// scheduler set, the cancelled flag, the save area the suspension pass pushes
+// to and pops from (pointer, length, capacity in words), the free flag, the
+// wait set a park left (pointer, length, capacity) and the task that was
+// current when this one entered. Every word is 8 bytes, so an i64 or f64 the
+// pass saves keeps its width. Records and save areas are never returned to
+// the allocator; a freed id is reused, and the blocks are runtime state the
+// program never holds or frees, so the leak census leaves them out as the
+// native emitters' rt_owned_allocs does (#11386): every size here is a
+// multiple of 8, the unit $__fern_alloc rounds to, so the bytes taken back
+// are the bytes it counted.
+pub function task_funcs(): string {
+  let uncount: string = "";
+  if (leak_check_on()) {
+    uncount = "    (global.set $__fern_lc_alloc_count (i64.sub (global.get $__fern_lc_alloc_count) (i64.const 1)))\n"
+      + "    (global.set $__fern_lc_alloc_bytes (i64.sub (global.get $__fern_lc_alloc_bytes) (i64.extend_i32_u (local.get $n))))\n";
+  }
+  return "  (global $__fern_task_cur_g (mut i32) (i32.const 0))\n"
+    + "  (global $__fern_task_tab (mut i32) (i32.const 0))\n"
+    + "  (global $__fern_task_cap (mut i32) (i32.const 0))\n"
+    + "  (func $__fern_task_alloc (param $n i32) (result i32) (local $p i32)\n"
+    + "    (local.set $p (call $__fern_alloc (local.get $n)))\n"
+    + uncount
+    + "    (local.get $p))\n"
+    + "  (func $__fern_task_zalloc (param $n i32) (result i32) (local $p i32)\n"
+    + "    (local.set $p (call $__fern_task_alloc (local.get $n)))\n"
+    + "    (memory.fill (local.get $p) (i32.const 0) (local.get $n))\n"
+    + "    (local.get $p))\n"
+    + "  (func $__fern_task_rec (param $id i32) (result i32)\n"
+    + "    (i32.wrap_i64 (i64.load (i32.add (global.get $__fern_task_tab) (i32.shl (local.get $id) (i32.const 3))))))\n"
+    + "  (func $__fern_task_new (result i32) (local $id i32) (local $r i32) (local $cap i32) (local $nt i32)\n"
+    + "    (if (i32.eqz (global.get $__fern_task_tab)) (then\n"
+    + "      (global.set $__fern_task_tab (call $__fern_task_zalloc (i32.const 512)))\n"
+    + "      (global.set $__fern_task_cap (i32.const 64))))\n"
+    + "    (local.set $cap (global.get $__fern_task_cap))\n"
+    + "    (local.set $id (i32.const 1))\n"
+    + "    (block $done (loop $scan\n"
+    + "      (br_if $done (i32.ge_s (local.get $id) (local.get $cap)))\n"
+    + "      (local.set $r (call $__fern_task_rec (local.get $id)))\n"
+    + "      (if (i32.eqz (local.get $r)) (then\n"
+    + "        (i64.store (i32.add (global.get $__fern_task_tab) (i32.shl (local.get $id) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 96))))\n"
+    + "        (return (local.get $id))))\n"
+    + "      (if (i64.ne (i64.load offset=56 (local.get $r)) (i64.const 0)) (then\n"
+    + "        (i64.store offset=56 (local.get $r) (i64.const 0))\n"
+    + "        (i64.store (local.get $r) (i64.const 0))\n"
+    + "        (i64.store offset=8 (local.get $r) (i64.const 0))\n"
+    + "        (i64.store offset=16 (local.get $r) (i64.const 0))\n"
+    + "        (i64.store offset=24 (local.get $r) (i64.const 0))\n"
+    + "        (i64.store offset=40 (local.get $r) (i64.const 0))\n"
+    + "        (i64.store offset=72 (local.get $r) (i64.const 0))\n"
+    + "        (return (local.get $id))))\n"
+    + "      (local.set $id (i32.add (local.get $id) (i32.const 1)))\n"
+    + "      (br $scan)))\n"
+    + "    (local.set $nt (call $__fern_task_zalloc (i32.shl (local.get $cap) (i32.const 4))))\n"
+    + "    (memory.copy (local.get $nt) (global.get $__fern_task_tab) (i32.shl (local.get $cap) (i32.const 3)))\n"
+    + "    (global.set $__fern_task_tab (local.get $nt))\n"
+    + "    (global.set $__fern_task_cap (i32.shl (local.get $cap) (i32.const 1)))\n"
+    + "    (i64.store (i32.add (local.get $nt) (i32.shl (local.get $cap) (i32.const 3))) (i64.extend_i32_u (call $__fern_task_zalloc (i32.const 96))))\n"
+    + "    (local.get $cap))\n"
+    + "  (func $__fern_task_free (param $id i32) (result i32) (local $r i32)\n"
+    + "    (local.set $r (call $__fern_task_rec (local.get $id)))\n"
+    + "    (if (local.get $r) (then (i64.store offset=56 (local.get $r) (i64.const 1))))\n"
+    + "    (i32.const 0))\n"
+    + "  (func $__fern_task_cur (result i32) (global.get $__fern_task_cur_g))\n"
+    + "  (func $__fern_task_enter (param $id i32) (param $mode i32) (result i32) (local $r i32)\n"
+    + "    (local.set $r (call $__fern_task_rec (local.get $id)))\n"
+    + "    (i64.store offset=88 (local.get $r) (i64.extend_i32_u (global.get $__fern_task_cur_g)))\n"
+    + "    (global.set $__fern_task_cur_g (local.get $id))\n"
+    + "    (i64.store (local.get $r) (i64.extend_i32_s (local.get $mode)))\n"
+    + "    (i32.const 0))\n"
+    + "  (func $__fern_task_leave (result i32) (local $r i32)\n"
+    + "    (if (i32.eqz (global.get $__fern_task_cur_g)) (then (return (i32.const 0))))\n"
+    + "    (local.set $r (call $__fern_task_rec (global.get $__fern_task_cur_g)))\n"
+    + "    (global.set $__fern_task_cur_g (i32.wrap_i64 (i64.load offset=88 (local.get $r))))\n"
+    + "    (i32.wrap_i64 (i64.load (local.get $r))))\n"
+    + "  (func $__fern_task_mode (result i32)\n"
+    + "    (if (i32.eqz (global.get $__fern_task_cur_g)) (then (return (i32.const 0))))\n"
+    + "    (i32.wrap_i64 (i64.load (call $__fern_task_rec (global.get $__fern_task_cur_g)))))\n"
+    + "  (func $__fern_task_park (param $set i32) (param $timeout i32) (result i32) (local $r i32) (local $n i32) (local $buf i32) (local $i i32)\n"
+    + "    (if (i32.eqz (global.get $__fern_task_cur_g)) (then (return (i32.const -1))))\n"
+    + "    (local.set $r (call $__fern_task_rec (global.get $__fern_task_cur_g)))\n"
+    + "    (if (i64.eq (i64.load (local.get $r)) (i64.const 2)) (then\n"
+    + "      (i64.store (local.get $r) (i64.const 0))\n"
+    + "      (if (i64.ne (i64.load offset=24 (local.get $r)) (i64.const 0)) (then (return (i32.const -2))))\n"
+    + "      (return (i32.wrap_i64 (i64.load offset=16 (local.get $r))))))\n"
+    + "    (if (i64.ne (i64.load offset=24 (local.get $r)) (i64.const 0)) (then (return (i32.const -2))))\n"
+    + "    (i64.store (local.get $r) (i64.const 1))\n"
+    + "    (i64.store offset=8 (local.get $r) (i64.extend_i32_s (local.get $timeout)))\n"
+    + "    (local.set $n (i32.load (local.get $set)))\n"
+    + "    (local.set $buf (i32.wrap_i64 (i64.load offset=64 (local.get $r))))\n"
+    + "    (if (i32.gt_s (local.get $n) (i32.wrap_i64 (i64.load offset=80 (local.get $r)))) (then\n"
+    + "      (local.set $buf (call $__fern_task_alloc (i32.shl (local.get $n) (i32.const 3))))\n"
+    + "      (i64.store offset=64 (local.get $r) (i64.extend_i32_u (local.get $buf)))\n"
+    + "      (i64.store offset=80 (local.get $r) (i64.extend_i32_s (local.get $n)))))\n"
+    + "    (local.set $i (i32.const 0))\n"
+    + "    (block $done (loop $copy\n"
+    + "      (br_if $done (i32.ge_s (local.get $i) (local.get $n)))\n"
+    + "      (i64.store (i32.add (local.get $buf) (i32.shl (local.get $i) (i32.const 3))) (i64.extend_i32_s (i32.load offset=8 (i32.add (local.get $set) (i32.shl (local.get $i) (i32.const 2))))))\n"
+    + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n"
+    + "      (br $copy)))\n"
+    + "    (i64.store offset=72 (local.get $r) (i64.extend_i32_s (local.get $n)))\n"
+    + "    (i32.const 0))\n"
+    + "  (func $__fern_task_wait (param $id i32) (result i32) (local $r i32) (local $n i32) (local $buf i32) (local $out i32) (local $i i32)\n"
+    + "    (local.set $r (call $__fern_task_rec (local.get $id)))\n"
+    + "    (local.set $n (i32.wrap_i64 (i64.load offset=72 (local.get $r))))\n"
+    + "    (local.set $buf (i32.wrap_i64 (i64.load offset=64 (local.get $r))))\n"
+    + "    (local.set $out (call $__fern_arr_box (select (i32.const 32) (i32.shl (local.get $n) (i32.const 2)) (i32.eqz (local.get $n)))))\n"
+    + "    (i32.store (local.get $out) (local.get $n))\n"
+    + "    (i32.store offset=4 (local.get $out) (select (i32.const 4) (local.get $n) (i32.eqz (local.get $n))))\n"
+    + "    (local.set $i (i32.const 0))\n"
+    + "    (block $done (loop $copy\n"
+    + "      (br_if $done (i32.ge_s (local.get $i) (local.get $n)))\n"
+    + "      (i32.store offset=8 (i32.add (local.get $out) (i32.shl (local.get $i) (i32.const 2))) (i32.wrap_i64 (i64.load (i32.add (local.get $buf) (i32.shl (local.get $i) (i32.const 3))))))\n"
+    + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n"
+    + "      (br $copy)))\n"
+    + "    (local.get $out))\n"
+    + "  (func $__fern_task_timeout (param $id i32) (result i32)\n"
+    + "    (i32.wrap_i64 (i64.load offset=8 (call $__fern_task_rec (local.get $id)))))\n"
+    + "  (func $__fern_task_set_ready (param $id i32) (param $w i32) (result i32)\n"
+    + "    (i64.store offset=16 (call $__fern_task_rec (local.get $id)) (i64.extend_i32_s (local.get $w)))\n"
+    + "    (i32.const 0))\n"
+    + "  (func $__fern_task_set_cancelled (param $id i32) (result i32)\n"
+    + "    (i64.store offset=24 (call $__fern_task_rec (local.get $id)) (i64.const 1))\n"
+    + "    (i32.const 0))\n"
+    + "  (func $__fern_task_push64 (param $x i64) (result i32) (local $r i32) (local $len i32) (local $cap i32) (local $buf i32) (local $nbuf i32)\n"
+    + "    (local.set $r (call $__fern_task_rec (global.get $__fern_task_cur_g)))\n"
+    + "    (local.set $len (i32.wrap_i64 (i64.load offset=40 (local.get $r))))\n"
+    + "    (local.set $cap (i32.wrap_i64 (i64.load offset=48 (local.get $r))))\n"
+    + "    (local.set $buf (i32.wrap_i64 (i64.load offset=32 (local.get $r))))\n"
+    + "    (if (i32.ge_s (local.get $len) (local.get $cap)) (then\n"
+    + "      (local.set $cap (select (i32.shl (local.get $cap) (i32.const 1)) (i32.const 64) (i32.gt_s (local.get $cap) (i32.const 0))))\n"
+    + "      (local.set $nbuf (call $__fern_task_alloc (i32.shl (local.get $cap) (i32.const 3))))\n"
+    + "      (memory.copy (local.get $nbuf) (local.get $buf) (i32.shl (local.get $len) (i32.const 3)))\n"
+    + "      (local.set $buf (local.get $nbuf))\n"
+    + "      (i64.store offset=32 (local.get $r) (i64.extend_i32_u (local.get $buf)))\n"
+    + "      (i64.store offset=48 (local.get $r) (i64.extend_i32_s (local.get $cap)))))\n"
+    + "    (i64.store (i32.add (local.get $buf) (i32.shl (local.get $len) (i32.const 3))) (local.get $x))\n"
+    + "    (i64.store offset=40 (local.get $r) (i64.extend_i32_s (i32.add (local.get $len) (i32.const 1))))\n"
+    + "    (i32.const 0))\n"
+    + "  (func $__fern_task_pop64 (result i64) (local $r i32) (local $len i32)\n"
+    + "    (local.set $r (call $__fern_task_rec (global.get $__fern_task_cur_g)))\n"
+    + "    (local.set $len (i32.sub (i32.wrap_i64 (i64.load offset=40 (local.get $r))) (i32.const 1)))\n"
+    + "    (i64.store offset=40 (local.get $r) (i64.extend_i32_s (local.get $len)))\n"
+    + "    (i64.load (i32.add (i32.wrap_i64 (i64.load offset=32 (local.get $r))) (i32.shl (local.get $len) (i32.const 3)))))\n"
+    + "  (func $__fern_task_push_w (param $x i32) (result i32) (call $__fern_task_push64 (i64.extend_i32_u (local.get $x))))\n"
+    + "  (func $__fern_task_push_i64 (param $x i64) (result i32) (call $__fern_task_push64 (local.get $x)))\n"
+    + "  (func $__fern_task_push_f64 (param $x f64) (result i32) (call $__fern_task_push64 (i64.reinterpret_f64 (local.get $x))))\n"
+    + "  (func $__fern_task_pop_w (result i32) (i32.wrap_i64 (call $__fern_task_pop64)))\n"
+    + "  (func $__fern_task_pop_i64 (result i64) (call $__fern_task_pop64))\n"
+    + "  (func $__fern_task_pop_f64 (result f64) (f64.reinterpret_i64 (call $__fern_task_pop64)))\n";
 }
 
 // module_uses_i32_to_string reports whether any function emits the i32.to_string()
@@ -14267,7 +14395,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(reactor_wait_func());
   }
   if (need(needs, "@uses_task")) {
-    parts = parts.append(task_stub_funcs());
+    parts = parts.append(task_funcs());
   }
   if (need(needs, "tcp_recv_into")) {
     parts = parts.append(tcp_recv_into_func());

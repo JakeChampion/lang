@@ -57,7 +57,7 @@ var dynArrViewCases = []struct {
 func TestX86_64DynArrElementViews(t *testing.T) {
 	for _, tc := range dynArrViewCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, code := compileAndRunX86Native(t, tc.src); code != tc.expected {
+			if _, code := compileAndRunX86_64(t, tc.src); code != tc.expected {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.expected)
 			}
 		})

@@ -267,14 +267,6 @@ func StaticExecutableData(text, data []byte) []byte {
 	return staticExecutableData(text, data, emAArch64)
 }
 
-// StaticExecutableDataX86 is the x86-64 counterpart of
-// StaticExecutableData: identical single-segment layout, only the ELF
-// e_machine field differs (EM_X86_64). The x86-64 native assembler lays
-// .text at TextVAddr and .rodata immediately after, same as arm64.
-func StaticExecutableDataX86(text, data []byte) []byte {
-	return staticExecutableData(text, data, emX86_64)
-}
-
 func staticExecutableData(text, data []byte, machine uint16) []byte {
 	body := padTo8(append([]byte(nil), text...))
 	body = append(body, data...)
@@ -324,18 +316,6 @@ func StaticExecutableDataWXEhFrame(text []byte, u Unwind, data []byte) []byte {
 // SegmentAddrsWXEhX86.
 func StaticExecutableDataX86WXEhFrame(text []byte, u Unwind, data []byte) []byte {
 	return imageWX(text, u, data, emX86_64, 0)
-}
-
-// StaticExecutableDataWXEntry is StaticExecutableDataWX with an explicit
-// entry point: entryOff is the byte offset of the entry instruction within
-// .text (e_entry = TextVAddrWX + entryOff). The offset-0 default assumes
-// `_start` is the first thing in .text — true for the Go backends' output,
-// but the SELF-HOST emitters place `_start` after other functions, so a
-// binary linked from their asm with entry 0 starts executing mid-function
-// and crashes. arm64 (EM_AARCH64); an x86-64 sibling can pass emX86_64 to
-// imageWX the day the self-host x86 dialect becomes natively parseable.
-func StaticExecutableDataWXEntry(text, data []byte, entryOff uint64) []byte {
-	return imageWX(text, Unwind{}, data, emAArch64, entryOff)
 }
 
 // Unwind is the pair of sections a runtime unwinder needs: the .eh_frame

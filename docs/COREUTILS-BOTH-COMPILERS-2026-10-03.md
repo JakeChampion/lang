@@ -85,7 +85,11 @@ against the flat emitter's stack slots: `sha512sum` 3.0x, `sha384sum` 3.0x,
 - **`du` / `ls` / `dir`**, 0.6-0.9x on every directory-walk row.
 - **`stat` with user and group names over 4000 operands**: 536 / 458 ms
   against 69 ms — each operand resolves its names again (every other `stat`
-  row is at parity). **`who` over 4000 logins**: 0.21-0.27x.
+  row is at parity; fixed in #11339). The **`who` over 4000 logins** rows
+  (0.21-0.27x) are not a comparison on this host: GNU's `who` on macOS reads
+  utmpx records and ignored the Linux-shaped fixture, printing the live
+  logins instead, so only Fern did the 4000 rows' work — 61% of it the
+  per-row `stat` of `/dev/LINE` GNU also does where it reads the file.
 - **`sync -f` over 200 files**: 11.2 s against 60 ms — a full filesystem
   flush per operand on this host (56 ms each), where GNU's `syncfs` fallback
   here is cheap.

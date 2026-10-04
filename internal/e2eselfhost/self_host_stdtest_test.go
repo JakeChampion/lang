@@ -456,11 +456,10 @@ func runSelfHostDriverStdin(t *testing.T, runner []string, driverBin, src string
 	return out
 }
 
-// buildBinArm64 assembles+links arm64 asm into dir/name and returns its
-// path. Now a thin alias for the harness helper, which routes HUGE asm
-// (the aarch64 stage-2 self-compile, the native-mmc driver) through the
-// in-process native arm64 assembler under a memory-budget reservation
-// and keeps small programs on the aarch64 gcc toolchain unchanged.
+// buildBinArm64 assembles+links arm64 asm into dir/name with the aarch64
+// gcc toolchain and returns its path. A thin alias for the harness helper,
+// which links a HUGE listing (the aarch64 stage-2 self-compile) under a
+// memory-budget reservation.
 func buildBinArm64(t *testing.T, gcc, dir, name, asm string) string {
 	t.Helper()
 	return e2eharness.BuildBinArm64(t, gcc, dir, name, asm)
