@@ -317,6 +317,9 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		// A handler's platform over the simulation: the platform's sim parity
 		// suite.
 		{"sim_platform", langSrcAbs(t, "examples/tests/sim_platform_test.fern"), ""},
+		// The future combinators over Ready futures: the same TAP output
+		// under the self-host's suspension pass as under the interpreter.
+		{"async_combinators", langSrcAbs(t, "examples/tests/async_combinators_test.fern"), ""},
 		{"http_body", langSrcAbs(t, "examples/tests/http_body_test.fern"), ""},
 		// HttpRequest.body as a Stream, in memory and pulled from a source
 		// (a closure over cells), the shape a streamed request body has.

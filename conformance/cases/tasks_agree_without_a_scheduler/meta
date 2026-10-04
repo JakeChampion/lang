@@ -1,0 +1,7 @@
+waiver: harness-limit
+reason: the self-host wasm fixture leg runs the emitted core module under
+  wasmtime as it is, and the naps subscribe to the preview-2 monotonic
+  clock (`wasi:clocks/monotonic-clock subscribe-duration`), an import
+  only a component composed against cmd/fern/wit's world resolves. The
+  same parks on wasm are held by TestSelfHostTaskPortable, which composes
+  that world and adapts the module before wasmtime runs it.

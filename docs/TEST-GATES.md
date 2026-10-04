@@ -304,7 +304,16 @@ descriptor is needed, and an i64, an f64 and a string are held across them;
 the self-host's x86-64, arm64 and wasm output must show both parks and the
 plain run's figure. The wasm leg embeds `cmd/fern/wit`'s world and adapts
 the module before wasmtime runs it. `TestTaskPortableFallback` is the Go
-compiler's twin.
+compiler's twin. `conformance/cases/tasks_agree_without_a_scheduler` is
+the row that holds the two lowerings to one answer: the task combinators
+and a hand-driven task called from `main`, built so nothing depends on
+which entry runs first, the same bytes on the interpreter, the Go
+compiler's x86-64 and arm64 and the self-host's x86-64 and arm64 (the
+self-host wasm fixture leg runs the core module without the preview-2
+clock the naps subscribe to, so that leg is waived to the task-portable
+gate above). What the fallback answers differently by design — park
+counts, a race against a slower first entry, a cancellation from outside —
+stays with each slice's `…Fallback` twin.
 `TestSelfHostSimTasks` is the sim's task gate (`e2eharness.SimTasksProgram`):
 three handlers' `plat.http` calls over a `SimPlatform` run as tasks under
 `sim.run_tasks`, parking in virtual time, one cancelled while it waits; the
@@ -396,8 +405,9 @@ listener handed in through `LISTEN_FDS` is served. The scenarios are
 `TestSelfHostSupervisedServeWorkersServeSideBySide` pins two workers over
 one listener answering side by side and surviving one worker's death, and
 `TestSelfHostSupervisedServeHandlerStallsItsWorker` the converse on one
-worker: a request behind /slow waits for it, the pin
-#9857's multiplexing has to turn;
+worker: a request behind a /slow that computes for 1.5 s waits for it,
+since a park needs a wait and a busy handler has none (the waiting
+handler's case is `TestSelfHostServeHandlersOverlap` above);
 `TestSelfHostSupervisedServeOneWorkerPerCPU` counts the default worker set
 against the processing units, and
 `TestSelfHostSupervisedServeShutsDownAfterBurst` requires every one of four workers to exit on SIGTERM after a burst of
