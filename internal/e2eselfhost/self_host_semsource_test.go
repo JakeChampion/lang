@@ -17,6 +17,8 @@ import (
 // physical RC lowering inside an otherwise AST-lowered program on every target.
 
 const semsourcePrintFixture = `
+import "std/string";
+import "core/map";
 function alias(xs: i32[][], own ys: i32[]): i32[] {
     let a: i32[] = xs[0];
     let b: i32[] = a;
@@ -58,7 +60,6 @@ function window(s: string, lo: i32, hi: i32): Option[str] { return s[lo:hi]; }
 // same failure rebuilt at this body's own result type, so nothing joins and
 // the value is the success payload on the edge left open.
 function unwrapped(o: Option[i32]): Option[i32] { let v: i32 = o?; return Some(v + 1); }
-function refused_call(n: i32): i32 { return abs(n); }
 function float_literal(): f64 { return 1.5; }
 // The unsigned widths: the u64 occupies the i64's slot and the u32 the i32's, and
 // each takes the operator forms that read no sign bit. A u32 literal past 2^31
@@ -83,7 +84,7 @@ function ordered(a: string, b: str): i32 {
 // The checker's E052 refuses this body; the print driver annotates without
 // checking it, and the live end is the unreachable terminator a checked
 // body's desugared total match leaves behind.
-function ends_unreachable(n: i32): i32 { if (n > 0) { return 1; } }
+function ends_unreachable(o: Option[i32]): i32 { match (o) { Some(n) => { return n; }, None => { return 0; } } }
 function destructure(): i32 { let (a, b) = (1, 2); return a + b; }
 function split_pair(p: (i32, i32[])): i32 { let (_, xs) = p; let (n, ys) = p; return n + xs.len() + ys.len(); }
 function nested_destructure(): i32 { let (a, (b, c)) = (1, (2, 3)); return a + b + c; }
@@ -98,9 +99,9 @@ function caller(n: i32): i32[] {
     let a: i32[] = [n];
     let b: i32[] = callee(a, [n, n]);
     callee(b, a);
-    return callee(b, b);
+    return callee(b, [n]);
 }
-function noop() { return; }
+function noop(): void { return; }
 function void_call(): i32 { noop(); return 1; }
 // The runtime builtins with a contract: the writers and the builder's append
 // read a string, reset and take own nothing, the byte search reads its
@@ -108,7 +109,6 @@ function void_call(): i32 { noop(); return 1; }
 function shout(s: string): i32 { print(s); eprint(s); return s.len(); }
 function built(s: string): i32 { strbuf_reset(); strbuf_append("ab"); strbuf_append(s); let t: string = strbuf_take(); return t.len(); }
 function find_byte(s: string, b: i32): i32 { return __memchr(s, b, 1); }
-function refused_void_value(): i32 { let n: i32 = noop(); return n; }
 function array_length(xs: i32[]): i32 { return xs.len(); }
 // A borrowed receiver's box is not this function's to grow: the push takes a
 // unit the plan retains at the call and hands back a copy, where the counted
@@ -124,7 +124,6 @@ function loop_sum(xs: i32[]): i32 {
     return t;
 }
 @noinline function owned_append(own xs: i32[]): i32[] { return xs.append(1); }
-function refused_transitive(n: i32): i32 { return refused_call(n); }
 struct P { n: i32, xs: i32[] }
 struct Q { name: string, p: P }
 struct G[T] { v: T }
@@ -216,7 +215,7 @@ function same_point(a: char, b: char): boolean { return a == b; }
 // name — which is the unsupported call target the golden pins.
 struct Holder[T] { item: T }
 function (xs: T[]) second_or(d: T): T { if (xs.len() < 2) { return d; } return xs[1]; }
-function (h: Holder[T]) tagged[U](u: U): i32 { return h.item.len(); }
+function (h: Holder[T]) tagged[U](u: U): i32 { return 1; }
 // A method on a generic receiver is a template whose variables the receiver
 // spells; a call instantiates it through the receiver's type.
 function (o: Option[T]) has_it(): boolean { match (o) { Some(_) => { return true; }, None => { return false; } } }
@@ -230,10 +229,6 @@ function via_prim(k: i32): i32 { return k.doubled(); }
 // literal infers nothing at mono time, #10991) leaves the call on its
 // receiver, and the refusal names the written target rather than the folded
 // template the lowering would never find.
-trait ByteOffset { function offset(self: Self): i32; }
-impl ByteOffset for u8 { function offset(self: u8): i32 { return self as i32; } }
-function (xs: [u8]) take[T: ByteOffset](values: T[]): u8 { return xs[0]; }
-function via_cviewm_unbound(s: string): u8 { return s.as_bytes().take([]); }
 // The eleven string methods the AST lowering emits an OP for rather than a
 // call. The receiver is lent to every one; the three that answer text and the
 // two that answer an array hand back a fresh box of the caller's own, and the
@@ -273,11 +268,10 @@ function reread[T](a: T, visit: (i32, T) => T, join: (T, T) => T): T {
 function join_at(a: i32, b: i32): i32 { return a - b; }
 function reread_int(): i32 { return reread(5, add_at, join_at); }
 function reread_own[T](own a: T, visit: (i32, own T) => T, join: (own T, own T) => T): T {
-    return join(visit(1, a), a);
+    return visit(1, a);
 }
 function join_words(own a: string[], own b: string[]): string[] { return a.append(b[0]); }
 function reread_words(): i32 { return reread_own(["q"], own_word, join_words).len(); }
-function reread_ints(): i32 { return reread_own(5, add_at, join_at); }
 // An OWNED parameter abandoned UNCONSUMED is dropped by the instance, which
 // knows its type; a template never had one to drop.
 function abandon[T](own a: T, own b: T): T { return b; }
@@ -407,7 +401,6 @@ function wide_ops(n: i32): i32 {
 }
 
 function float_cast(n: i32): f64 { return n as f64; }
-function refused_mixed_width(b: u8, n: i32): i32 { return b + n; }
 
 // The f64 is a value: literals carry their text, the float operators are the
 // stack IR's own and never wrap, a comparison is a boolean, and a conversion
@@ -420,7 +413,6 @@ function float_ops(x: f64, n: i32): i32 {
     let w: i64 = (y - x) as i64;
     return (w as f64 + 0.5) as i32;
 }
-function refused_float_rem(x: f64): f64 { return x % 2.0; }
 function narrow_float(x: f32): f32 { return x + 1.0; }
 
 // A string view: a slice is one; an owned string bound or passed where a view
@@ -439,10 +431,6 @@ function view_of(s: string): i32 {
 }
 function copy_view(v: str): string { return v + ""; }
 function view_result(s: string): str { return slice_unchecked(s, 0, 1); }
-function copied_view_of_a_local(t: string): str {
-    let s: string = t + "x";
-    return slice_unchecked(s, 0, 1);
-}
 function view_of_either(a: string, b: string, c: boolean): str {
     if (c) { return a; }
     return b;
@@ -571,7 +559,6 @@ function shift_loop(k: i32, n: i32): i32 {
 }
 function eat_text(own w: string): i32 { return w.len(); }
 function apply_text(f: (string) => i32, s: string): i32 { return f(s); }
-function refused_own_value(s: string): i32 { return apply_text(eat_text, s); }
 function text_capture(w: string, n: i32): i32 { return apply_int((x: i32): i32 => { return x + w.len(); }, n); }
 function words_capture(n: i32): i32 {
     let ws: string[] = ["ab"];
@@ -613,7 +600,6 @@ function frag_of(bs: u8[], n: i32): Frag { return Frag { text: string_from_bytes
 function byte_text(b: u8): i32 { return string_from_bytes_unchecked([b]).len(); }
 function rounded(x: f64, n: i32): i32 { return n + wide_low(f64_bits(x)); }
 function wide_low(n: i64): i32 { return (n & 255i64) as i32; }
-function refused_byte_width(b: i32): i32 { return string_from_bytes_unchecked([b]).len(); }
 
 // Cell[T] is a nominal name over a one-element box rather than a declared
 // record, so a cell-typed declared field resolves through its element and the
@@ -638,7 +624,6 @@ function cell_text(s: string): i32 {
     c.set(first + "!");
     return first.len() + c.get().len();
 }
-function refused_cell_value(n: i32): i32 { let c: Cell[i32] = cell_new(n); let k: i32 = c.set(n); return k; }
 // The 32-bit float occupies the f64's slot at single precision: a conversion
 // into it, a literal of it and an operator's result at it are each rounded
 // where they are made, and the bit pair reads and writes that rounded value.
@@ -651,7 +636,7 @@ function narrow_sum(a: f32, b: f32): f32 { return a + b * 0.5; }
 // to mean — native admits it, and E069 is the checker's warning about it.
 function handle_out(h: usize): i64 { return h as i64; }
 function handle_in(n: i64): usize { return n as usize; }
-function built(n: i32): string {
+function built_buf(n: i32): string {
     let b: usize = buf_new(n);
     buf_push(b, "ab");
     buf_push_byte(b, 99);
@@ -764,7 +749,6 @@ function poked(): i32 {
 // A map names no element in its construction, so the destination is the only
 // place its shape is written; a construction reaching a slot that spells none
 // has no shape to take.
-function refused_map_bare(k: string): i32 { return map_new(2).insert(k, 1).get_or(k, 0); }
 // A guard is read after the payload bindings and a false one leaves for the
 // next arm's test; the end of a value-returning body the checker proved
 // unreachable aborts.
@@ -809,8 +793,6 @@ function vb_bare(k: i32): i32 { return (match (Some(k)) { Some(v) => v + 1, None
 function tm_line(k: i32): i32 { let t = (k, 2); return match (t) { (1, b) => b * 10, (a, _) => a }; }
 // An address has no saturating or checked operator: the clamp is at a width
 // the type names, which is the target's, and the native checker refuses it.
-function refused_usize_sat(a: usize, b: usize): usize { return a +| b; }
-function refused_usize_chk(a: usize, b: usize): i32 { match (a *? b) { Some(_) => { return 1; }, None => { return 0; } } }
 // A self-call whose result is a payload of the variant returned is a tail call
 // modulo cons: the loop carries the chain built so far and fills its hole, so
 // no call to the function is left. A bare self-tail call beside one leaves the
@@ -827,7 +809,7 @@ function flipped(m: Swap): Swap { match (m) { Front(n, k) => { return Back(k, fl
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
-import "./parser"; import "./lexer"; import "./util"; import "./lift";
+import "./parser"; import "./lexer"; import "./util"; import "./lift"; import "./checker"; import "./modloader"; import "./flatten";
 function show(p: semsource.Produced): void {
     if (!p.ok) { print("refused " + p.why); return; }
     if (p.template) { print("template instantiated"); return; }
@@ -849,16 +831,38 @@ function show(p: semsource.Produced): void {
 function main(): i32 {
     let src: string = "";
     match (read_file(args()[1])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
-    let parsed = parser.parse_module(lexer.tokenize(src));
+    let entry = parser.parse_module(lexer.tokenize(src));
+    let (loaded, missing) = modloader.load_imports(modloader.no_overlay(), args()[1], entry);
+    if (modloader.report_unresolved(missing, "semsource_print")) {
+        return 2;
+    }
+    let parsed = flatten.bundle(entry, loaded, "");
+    // Gate on the checker as the CLI does, so the fixture cannot hold a
+    // program the language rejects (#10341).
+    let gated: util.Diag[] = checker.build_gate_diags(parsed);
+    if (gated.len() > 0) {
+        eprint(util.format_diags(gated));
+        return 8;
+    }
     // The production pipeline injects the front end's own enum variants
     // (IoError, JsonValue) as declarations before the lambda lift runs;
     // without them a Result's error arm names a union nothing declares.
     let mod = lift.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
-    // Every declaration in order, then every instance the templates were
-    // produced at.
+    // Every declaration the fixture wrote, in order, then every instance its
+    // templates were produced at. The imported modules' are not printed.
     let built = semsource.build_module(mod);
-    for p in built.decls { show(p); }
-    for p in built.instances { show(p); }
+    let keys: string[] = [];
+    let i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].module.len() == 0) {
+            show(built.decls[i]);
+            keys = keys.append(built.decls[i].key);
+        }
+        i = i + 1;
+    }
+    for p in built.instances {
+        if (util.has_str(keys, p.key)) { show(p); }
+    }
     return 0;
 }
 `
@@ -973,10 +977,7 @@ func TestSelfHostSemanticSourcePrint(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "semsource_print.fern"), []byte(semsourcePrintDriver), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	fixture := filepath.Join(dir, "fixture.fern")
-	if err := os.WriteFile(fixture, []byte(semsourcePrintFixture), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	fixture := semsourceProgram(t, semsourcePrintFixture)
 	driver := buildSelfHostBin(t, gcc, dir, "semsource_print.fern", "semsource-print")
 	got, err := runX86_64Bin(runner, driver, fixture).CombinedOutput()
 	if err != nil {
