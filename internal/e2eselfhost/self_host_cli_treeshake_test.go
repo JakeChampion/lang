@@ -481,7 +481,7 @@ function main(): i32 {
 		t.Fatalf("write program: %v", err)
 	}
 	asmPath := filepath.Join(dir, "ts_field_read.s")
-	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", prog, stdlib, "-o", asmPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile failed: %v\n%s", err, out)
 	}
 	asmBytes, err := os.ReadFile(asmPath)
