@@ -1613,8 +1613,8 @@ function x86_bss_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   return x86_place_label(a, idx, 2, off);
 }
 
-// x86_bss_skip advances the .bss size by `n` bytes (a `.skip`/`.quad`/
-// `.align` reservation in the .bss section).
+// x86_bss_skip advances the .bss size by `n` bytes (a `.skip`, data
+// directive or `.align` reservation in the .bss section).
 function x86_bss_skip(own a: X86Asm, n: i32): X86Asm {
   a = X86Asm { ...a, bss_size: a.bss_size + n };
   return a;
@@ -7412,6 +7412,30 @@ function x86_rodata_bytes(own a: X86Asm, brest: string): X86Asm {
   return X86Asm { ...a, rodata: rodata };
 }
 
+// x86_gas_data_width is the bytes one value of a data directive occupies,
+// 0 for a line that is not one.
+function x86_gas_data_width(line: string): i32 {
+  if (x86_str_starts_with(line, ".quad") || x86_str_starts_with(line, ".double")) {
+    return 8;
+  }
+  if (x86_str_starts_with(line, ".long")) {
+    return 4;
+  }
+  if (x86_str_starts_with(line, ".byte")) {
+    return 1;
+  }
+  return 0;
+}
+
+// x86_gas_values is a data directive's comma-separated operands, trimmed.
+function x86_gas_values(line: string): string[] {
+  let start: i32 = 0;
+  while (start < line.len() && line[start] != b' ' && line[start] != b'\t') {
+    start = start + 1;
+  }
+  return x86_gas_split_ops(x86_gas_trim(slice_unchecked(line, start, line.len())));
+}
+
 // x86_gas_assemble_pass_prepared assembles one relaxation round from the
 // already-parsed lines.
 function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: boolean[], cache: EncCache, nmemo: i32, words: u8[]): AsmRound {
@@ -7489,45 +7513,45 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
         section = 2;
       } else if (line == ".data") {
         section = 1;
+      } else if (section == 2 && x86_gas_data_width(line) > 0) {
+        // A data directive in .bss reserves its width for EVERY value it
+        // lists: `.quad 0, 0, 0, 0` is 32 bytes, and reserving one slot
+        // laid the next .bss symbol over the other three (#11377).
+        a = x86_bss_skip(a, x86_gas_data_width(line) * x86_gas_values(line).len());
       } else if (x86_str_starts_with(line, ".quad")) {
-        let qop: string = x86_gas_trim(slice_unchecked(line, 6, line.len()));
-        if (section == 2) {
-          a = x86_bss_skip(a, 8);  // zero-init quad reserves 8 bytes
-        } else if (x86_gas_is_symbol(qop)) {
-          // `.quad <label>` — an absolute pointer to another
-          // symbol. Queued as a relocation; read as a number it
-          // would be 0.
-          a = x86_rodata_quad_sym_at(a, qop, pline.ref_idx);
-        } else {
-          // Parsed as i64, not i32: a `.quad` holds the full 64-bit
-          // value, and reading it narrow lost both ends. A negative
-          // one came back zero-extended (a const-struct `i32` field of
-          // -5 read as 4294967291, #6458) and anything past 2^32
-          // simply truncated.
-          a = x86_rodata_quad(a, x86_gas_atoi64(qop));
+        let qvals: string[] = x86_gas_values(line);
+        let qi: i32 = 0;
+        while (qi < qvals.len()) {
+          if (x86_gas_is_symbol(qvals[qi])) {
+            // `.quad <label>` — an absolute pointer to another symbol.
+            // Queued as a relocation; read as a number it would be 0.
+            // The prepare pass resolved a lone operand's entry; one in a
+            // list resolves by name.
+            let qref: i32 = 0 - 1;
+            if (qvals.len() == 1) {
+              qref = pline.ref_idx;
+            }
+            a = x86_rodata_quad_sym_at(a, qvals[qi], qref);
+          } else {
+            // Parsed as i64, not i32: a `.quad` holds the full 64-bit
+            // value, and reading it narrow lost both ends. A negative
+            // one came back zero-extended (a const-struct `i32` field of
+            // -5 read as 4294967291, #6458) and anything past 2^32
+            // simply truncated.
+            a = x86_rodata_quad(a, x86_gas_atoi64(qvals[qi]));
+          }
+          qi = qi + 1;
         }
       } else if (x86_str_starts_with(line, ".long")) {
         // `.long a, b, …`: each comma-separated value as 4 little-endian
         // bytes. The IR emitters lay an f64 constant down as two `.long`
         // halves (exact bits, so the encoding is assembler-independent —
-        // see const_f64). Splitting the comma list keeps a single
-        // labelled directive; ignoring it (the pre-#5434 behaviour)
-        // silently dropped the 8 rodata bytes and shifted everything
-        // after — the SH-005 hazard class.
-        let lrest: string = x86_gas_trim(slice_unchecked(line, 6, line.len()));
-        let ltok: string = "";
-        let lci: i32 = 0;
-        while (lci < lrest.len()) {
-          if (lrest[lci] == b',') {
-            a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(x86_gas_trim(ltok))) };
-            ltok = "";
-          } else {
-            ltok = ltok + slice_unchecked(lrest, lci, lci + 1);
-          }
-          lci = lci + 1;
-        }
-        if (x86_gas_trim(ltok).len() > 0) {
-          a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(x86_gas_trim(ltok))) };
+        // see const_f64).
+        let lvals: string[] = x86_gas_values(line);
+        let lv: i32 = 0;
+        while (lv < lvals.len()) {
+          a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(lvals[lv])) };
+          lv = lv + 1;
         }
       } else if (x86_str_starts_with(line, ".double")) {
         a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, f64_bits(x86_gas_parse_f64(x86_gas_trim(slice_unchecked(line, 8, line.len()))))) };

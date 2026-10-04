@@ -49,7 +49,7 @@ func TestLambdaTryOpPropagatesToTheLambda(t *testing.T) {
 		{"annotated", lambdaTryAnnotatedSrc},
 	} {
 		t.Run(src.name+"/x86-64", func(t *testing.T) {
-			out, code := compileAndRunX86Native(t, src.text)
+			out, code := compileAndRunX86_64(t, src.text)
 			if code != lambdaTryWant {
 				t.Errorf("exit %d, want %d\n%s", code, lambdaTryWant, strings.TrimSpace(out))
 			}

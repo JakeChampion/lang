@@ -218,10 +218,12 @@ pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias
 // a bounded type parameter may still call it through the trait.
 // provided is every method name the trait declares — abstract, defaulted, or
 // associated — the set a bound on a type parameter makes callable.
+// default_sigs is the signature of each defaulted method, its body dropped:
+// a `dyn` of the trait dispatches to it as to a required one.
 // `module` is the bundle prefix of the module that declared the trait, "" for
 // the program's own module; it is what a qualified `@derive(cmp.Eq)` resolves
 // against, since `trait_name` is simplified past any qualifier.
-pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[], module: string }
+pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[], module: string, default_sigs: FuncDecl[] }
 
 // TraitDecl is the `trait` block as WRITTEN, retained for the formatter
 // (#6773) and, since it is the only record of a trait's TYPE PARAMETERS, for
@@ -10650,6 +10652,34 @@ function tp_index(name: string, tparams: string[]): i32 {
 
 // type_ends_arr reports whether a type string ends with the `[]`
 // array suffix.
+// elem_spelling is the element of an array spelling `t[]`. A callable
+// element loses the group fn_tag_spelling wraps it in: `(() => T)[]` is an
+// array of `() => T`, not of a one-tuple.
+pub function elem_spelling(arr: string): string {
+  let el: string = slice_unchecked(arr, 0, arr.len() - 2) + "";
+  if (el.len() < 2 || el[0] != b'(' || el[el.len() - 1] != b')') {
+    return el;
+  }
+  let depth: i32 = 0;
+  let i: i32 = 0;
+  while (i < el.len()) {
+    if (el[i] == b'(') {
+      depth = depth + 1;
+    } else if (el[i] == b')') {
+      depth = depth - 1;
+      if (depth == 0 && i < el.len() - 1) {
+        return el;
+      }
+    }
+    i = i + 1;
+  }
+  let inner: string = slice_unchecked(el, 1, el.len() - 1) + "";
+  if (parse_type_ref(inner).is_fn) {
+    return inner;
+  }
+  return el;
+}
+
 function type_ends_arr(s: string): boolean {
   if (s.len() < 2) {
     return false;
@@ -11870,8 +11900,14 @@ function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, 
   while (i < fd.params.len()) {
     if (i < args.len()) {
       let ct: string = mono_infer(args[i], env, funcs);
+      // An array or view of callables unifies as its spelling, so the
+      // variables in the callables' signature bind from the argument's.
+      let pattern: string = fd.params[i].type_name;
+      if (pattern != "fn" && is_fn_contract_tag(pattern) && fd.params[i].fn_ret.len() > 0) {
+        pattern = fn_tag_spelling(pattern, fd.params[i].fn_ret, fd.params[i].fn_param_types);
+      }
       if (ct.len() > 0) {
-        binds = bind_unify(fd.params[i].type_name, ct, vars, binds);
+        binds = bind_unify(pattern, ct, vars, binds);
       } else {
         binds = variant_arg_binds(fd.params[i].type_name, args[i], env, funcs, vars, binds);
       }
@@ -13375,7 +13411,7 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
       let ety: string = "";
       let ity: string = mono_infer(fr.iter, env, funcs);
       if (type_ends_arr(ity)) {
-        ety = slice_unchecked(ity, 0, ity.len() - 2) + "";
+        ety = elem_spelling(ity);
         if (mono_ty_mentions_var(ety)) {
           ety = "";
         }
@@ -13429,10 +13465,13 @@ function mono_stmts(stmts: ast.Stmt[], env: MEnv, funcs: MFns, ins: Insts, ret_t
 }
 
 // env_from_params seeds an MEnv with a function's parameter types. A fn-typed
-// param coarsens to "fn" with its return type held in fn_ret; it is encoded as
-// "fn => <ret>" (the me_env_from_params encoding) so lambda_ret_of can bind a
-// callee's return-position type var from a fn PARAM passed on (`map_values(f)`
-// calling `__om_map_values(t, f)` with `f: (V) => W`).
+// param coarsens to "fn", "fn[]" or "[fn]" with its signature held in the
+// fn_ret / fn_param_types sidecars; the env holds the spelling rebuilt from
+// them, so lambda_ret_of can bind a callee's return-position type var from a
+// fn PARAM passed on (`map_values(f)` calling `__om_map_values(t, f)` with
+// `f: (V) => W`), and an array of callables passed on binds the callee's
+// variable the same way (`drive(start(entries))` with
+// `entries: (() => T)[]`).
 function env_from_params(params: ast.ParamDecl[]): MEnv {
   return bind_params(MEnv { mnames: [], mtypes: [] }, params);
 }
@@ -13444,7 +13483,7 @@ function bind_params(env: MEnv, params: ast.ParamDecl[]): MEnv {
   let i: i32 = 0;
   while (i < params.len()) {
     let pt: string = params[i].type_name;
-    if (pt == "fn" && params[i].fn_ret.len() > 0) {
+    if (is_fn_contract_tag(pt) && params[i].fn_ret.len() > 0) {
       pt = fn_tag_spelling(pt, params[i].fn_ret, params[i].fn_param_types);
     }
     e = e.ebind(params[i].name, pt);
@@ -14100,7 +14139,7 @@ pub function looks_type_var(s: string): boolean {
 // a view nested inside that element.
 pub function array_method_element(spelling: string): string {
   if (type_ends_arr(spelling)) {
-    return slice_unchecked(spelling, 0, spelling.len() - 2) + "";
+    return elem_spelling(spelling);
   }
   if (spelling_is_view(spelling)) {
     return render_type_ref(parse_type_ref(spelling).args[0]);
@@ -15642,6 +15681,29 @@ function ms_call(c: ast.ExprCall, env: MEnv, gstructs: StructDecl[], funcs: MFns
     }
   }
   let mdecl: i32 = method_decl_at(c.callee, env, funcs);
+  // `xs.append(x)` and `xs.with(i, x)` type their element argument by the
+  // receiver's element, as the checker does, so a generic-struct literal
+  // written there keys its clone from the array when its field values
+  // cannot (a closure-typed field has no spelling to infer from).
+  let elem_dest: string = "";
+  let elem_at: i32 = 0 - 1;
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (fa.field == "append" || fa.field == "with") {
+      let rt: string = mono_infer(fa.obj, env, funcs);
+      if (type_ends_arr(rt)) {
+        let el: string = slice_unchecked(rt, 0, rt.len() - 2) + "";
+        if (!mono_ty_mentions_var(el)) {
+          let em: TyIns = mg_ty(el, gstructs, cur);
+          cur = em.mins;
+          elem_dest = em.ty;
+          elem_at = 0;
+          if (fa.field == "with") {
+            elem_at = 1;
+          }
+        }
+      }
+    }
+  }
   let nargs: ast.Expr[] = [];
   let i: i32 = 0;
   while (i < c.args.len()) {
@@ -15656,6 +15718,9 @@ function ms_call(c: ast.ExprCall, env: MEnv, gstructs: StructDecl[], funcs: MFns
       let pm: TyIns = mg_ty(pty, gstructs, cur);
       cur = pm.mins;
       dest = pm.ty;
+    }
+    if (i == elem_at) {
+      dest = elem_dest;
     }
     let ra: RExpr = ms_expr_to(c.args[i], dest, env, gstructs, funcs, cur);
     cur = ra.rins;
@@ -15835,7 +15900,7 @@ function ms_elem_ty(t: string, gstructs: StructDecl[], funcs: MFns): string {
   if (!type_ends_arr(t)) {
     return "";
   }
-  let el: string = slice_unchecked(t, 0, t.len() - 2) + "";
+  let el: string = elem_spelling(t);
   if (ms_concrete_ty(el, gstructs, funcs)) {
     return el;
   }
@@ -23611,7 +23676,7 @@ pub function erase_view_module(mod: Module): Module {
   }
   let reqs: TraitReq[] = [];
   for tr in mod.trait_reqs {
-    reqs = reqs.append(TraitReq { ...tr, req_sigs: erase_view_funcs(tr.req_sigs), assoc_sigs: erase_view_funcs(tr.assoc_sigs) });
+    reqs = reqs.append(TraitReq { ...tr, req_sigs: erase_view_funcs(tr.req_sigs), assoc_sigs: erase_view_funcs(tr.assoc_sigs), default_sigs: erase_view_funcs(tr.default_sigs) });
   }
   let tdecls: TraitDecl[] = [];
   for td in mod.trait_decls {
@@ -26482,6 +26547,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
   let required_sigs: FuncDecl[] = [];
   let assoc_sigs: FuncDecl[] = [];
   let provided: string[] = [];
+  let default_sigs: FuncDecl[] = [];
   let supertraits: string[] = [];
   // The written form, for the formatter: every method in source order (an
   // empty body marks an abstract one), the supertraits with any `mod.`
@@ -26585,6 +26651,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
         // is treated as abstract — it would synthesise a no-op.)
         if (fr_func.body.len() > 0) {
           defaults = defaults.append(TraitDefault { trait_name: simple, method: fr_func });
+          default_sigs = default_sigs.append(FuncDecl { ...fr_func, body: [] });
         } else {
           // Abstract (body-less) signature: a REQUIRED method every
           // impl must provide (#4347 E021). Bodied defaults above are
@@ -26603,7 +26670,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
       p = p.advance();
     }
   }
-  return (defaults, TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "" }, TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types, is_package: false }, trait_bad, p);
+  return (defaults, TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "", default_sigs: default_sigs }, TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types, is_package: false }, trait_bad, p);
 }
 
 // skip_decl_modifier consumes a contextual declaration modifier `name`
@@ -27902,8 +27969,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       // Retain the trait's required (abstract) method set for E021 (#4347).
       // Retain a trait's requirement record when it has abstract methods
       // OR supertraits — a supertrait-only trait (`trait Num: Add + …{}`)
-      // has no methods but still drives the E021 supertrait-impl check.
-      if (tpr_req.methods.len() > 0 || tpr_req.supertraits.len() > 0 || tpr_req.assoc_sigs.len() > 0) {
+      // has no methods but still drives the E021 supertrait-impl check —
+      // OR defaults, which a `dyn` of the trait calls.
+      if (tpr_req.methods.len() > 0 || tpr_req.supertraits.len() > 0 || tpr_req.assoc_sigs.len() > 0 || tpr_req.default_sigs.len() > 0) {
         trait_reqs = trait_reqs.append(tpr_req);
       }
       continue;

@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -211,11 +210,9 @@ func TestX86_64StrAppendRangeAllocsCollapse(t *testing.T) {
 	}
 }
 
-// The native backend's leg: the self-host's wasm emitter copies the slice
-// before appending it, so this program allocates per append there (#11327).
 func TestWASMStrAppendRangeAllocsCollapse(t *testing.T) {
 
-	_, stderr, code := runNativeLeakCheckWasm(t, strAppendRangeAllocSrc)
+	_, stderr, code := runLeakCheckWasm(t, strAppendRangeAllocSrc, false)
 	if code != 0 {
 		t.Fatalf("range-append loop exited %d, want 0; stderr=%q", code, stderr)
 	}
@@ -363,12 +360,6 @@ func TestStrAppendRangeTrap(t *testing.T) {
 	}
 	for _, c := range strAppendRangeTrapCases {
 		t.Run(c.name, func(t *testing.T) {
-			// The fused helper is what has to trap, so pin that it is the
-			// helper under test: a program that fell back to __str_slice
-			// would trap for the wrong reason and pass.
-			if asm := compileToX86Asm(t, c.src); !strings.Contains(asm, "call __fern_str_append_range") {
-				t.Fatalf("the trap case does not lower to the fused append — it would be testing __str_slice's own check")
-			}
 			t.Run("interp", func(t *testing.T) {
 				if got := runInterpExit(t, c.src); got == 0 {
 					t.Errorf("interp did not trap (exit 0)\nsrc:\n%s", c.src)

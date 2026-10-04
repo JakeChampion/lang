@@ -46,7 +46,7 @@ const fipBuiltinsWant = "3464"
 
 func TestFipCallsNonAllocatingBuiltins(t *testing.T) {
 	t.Run("x86-64", func(t *testing.T) {
-		out, code := compileAndRunX86Native(t, fipBuiltinsSrc)
+		out, code := compileAndRunX86_64(t, fipBuiltinsSrc)
 		if code != 0 || strings.TrimSpace(out) != fipBuiltinsWant {
 			t.Fatalf("exit %d, output %q, want 0 and %s (90: the calls allocated)", code, out, fipBuiltinsWant)
 		}

@@ -32,6 +32,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/strerror"
 	"github.com/jakechampion/lang/internal/tty"
 )
@@ -124,6 +125,16 @@ type Float struct {
 	V     float64
 	Width int // 32 or 64
 }
+
+// DynInt is an integer coerced to a `dyn` trait object. A Number carries no
+// width, so the box keeps the name of the integer type the value had, which
+// dyn dispatch reads to find the impl written for that type (#10194).
+type DynInt struct {
+	N        Number
+	TypeName string
+}
+
+func (d DynInt) String() string { return d.N.String() }
 
 // Struct is a heap-allocated record. The map preserves nothing about
 // declaration order — formatting walks the StructDecl when available
@@ -350,10 +361,8 @@ func (c *Closure) String() string {
 // valueTypeName recovers the `methodTypeName` dispatch key from a
 // runtime value — used by `dyn Trait` dynamic dispatch to resolve the
 // concrete `__method_<Type>_<name>` from the receiver's runtime type.
-// The interpreter's Number carries no width, so an integer maps to
-// "i32" (dyn over wider integer types in the interpreter is a known
-// slice-1 limitation; struct / enum / string trait objects — the
-// primary use case — dispatch exactly). See docs/DYN-TRAITS.md §4.1.
+// A Number carries no width: a wider integer reaches dispatch boxed in a
+// DynInt, so a bare one is an i32. See docs/DYN-TRAITS.md §4.1.
 func valueTypeName(v Value) (string, bool) {
 	switch x := v.(type) {
 	case *Struct:
@@ -369,10 +378,20 @@ func valueTypeName(v Value) (string, bool) {
 			return "f64", true
 		}
 		return "f32", true
+	case DynInt:
+		return x.TypeName, true
 	case Number:
 		return "i32", true
 	}
 	return "", false
+}
+
+// dynPayload is the value a `dyn` holds, unboxed from a DynInt.
+func dynPayload(v Value) Value {
+	if d, ok := v.(DynInt); ok {
+		return d.N
+	}
+	return v
 }
 
 // downcastTargetName returns the runtime type-name key for a downcast
@@ -563,6 +582,8 @@ type Interp struct {
 	// name offered by two traits for one type resolves to the trait the
 	// call site named.
 	traitMethods map[string]string
+	// dynSites is the checker's concrete→`dyn` coercion sites (SetDynCoercions).
+	dynSites map[ast.Expr]checker.DynCoercion
 	// arrayGrowCopies counts the elements copied by the array append
 	// growth path. Appending n elements must stay O(n) copies in
 	// total; TestArrayAppendIsAmortised asserts on this counter rather
@@ -7147,7 +7168,28 @@ func valuesEqual(a, b Value) bool {
 	return a == b
 }
 
+// SetDynCoercions hands the interpreter the checker's concrete→`dyn` sites
+// (checker.Info.DynCoercions).
+func (i *Interp) SetDynCoercions(sites map[ast.Expr]checker.DynCoercion) {
+	i.dynSites = sites
+}
+
 func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
+	if i.dynSites == nil {
+		return i.evalBare(e, env)
+	}
+	dc, ok := i.dynSites[e]
+	if !ok || dc.Concrete == "i32" {
+		return i.evalBare(e, env)
+	}
+	v, err := i.evalBare(e, env)
+	if n, isNum := v.(Number); isNum && err == nil {
+		return DynInt{N: n, TypeName: dc.Concrete}, nil
+	}
+	return v, err
+}
+
+func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 	switch x := e.(type) {
 	case *ast.NumberLit:
 		// IsFloat is the checker's record (settleFloat) that a polymorphic
@@ -7914,7 +7956,7 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		if !ok {
 			mangled = "__method_" + tn + "_" + fa.Field
 		}
-		callArgs := append([]Value{recv}, args...)
+		callArgs := append([]Value{dynPayload(recv)}, args...)
 		if b, ok := i.Builtins[mangled]; ok {
 			return b.Fn(i, callArgs)
 		}

@@ -62,6 +62,10 @@ func TestSelfHostConstAggregateArm64PIE(t *testing.T) {
 		// leave the address stale, so the call faulted under a slide.
 		{"function_value_constant",
 			`function dbl(x: i32): i32 { return x * 2; } function inc(x: i32): i32 { return x + 1; } @noinline function pick(k: i32): (i32) => i32 { if (k > 0) { return dbl; } return inc; } function main(): i32 { let f: (i32) => i32 = pick(1); let g: (i32) => i32 = pick(0); return f(20) + g(1); }`, 42},
+		// A dyn value's vtable is a static table of function addresses, the
+		// other constant whose every word is an absolute code pointer.
+		{"dyn_trait_vtable",
+			`trait Shape { function area(self: Self): i32; } struct Sq { s: i32 } impl Shape for Sq { function area(self: Self): i32 { return self.s * self.s; } } function main(): i32 { let d: dyn Shape = Sq { s: 7 }; return d.area(); }`, 49},
 		// All three static kinds in one pool: arrays of scalars, empty and not,
 		// which hold no address and sit outside the walked regions, a record
 		// constant and a function value, each in the region its layout is

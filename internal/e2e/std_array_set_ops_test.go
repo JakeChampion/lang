@@ -71,7 +71,7 @@ function main(): i32 {
 			if got := runInterpByte(t, c.src); got != c.want {
 				t.Errorf("interp: got exit %d, want %d", got, c.want)
 			}
-			if _, got := compileAndRunX86Native(t, c.src); got != c.want {
+			if _, got := compileAndRunX86_64(t, c.src); got != c.want {
 				t.Errorf("x86-64 native: got exit %d, want %d", got, c.want)
 			}
 			if got := compileAndRunWasmbinMain(t, c.src); got != c.want {

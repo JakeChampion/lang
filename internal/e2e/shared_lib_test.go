@@ -17,6 +17,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/checker"
+	x86codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
+	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
 	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
 	"github.com/jakechampion/lang/internal/symname"
@@ -1233,4 +1238,43 @@ func sharedLibX86(t *testing.T, asm string, names ...string) []byte {
 		exports[i] = nativeelf.Export{Name: n, Value: ev[asmNames[i]]}
 	}
 	return nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs), exports, "libfern.so")
+}
+
+func toElfRelocsX86(rs []nativex86.Reloc) []nativeelf.Reloc {
+	out := make([]nativeelf.Reloc, len(rs))
+	for i, r := range rs {
+		out[i] = nativeelf.Reloc{Offset: r.Offset, Addend: r.Addend}
+	}
+	return out
+}
+
+// compileToX86AsmExports compiles src with the Go x86-64 code generator, with
+// extra tree-shake roots (Options.Exports) so the `-shared` exports the program
+// never calls itself survive.
+func compileToX86AsmExports(t *testing.T, src string, exports []string) string {
+	t.Helper()
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	asm, err := x86codegen.EmitWithOptions(prog, info, x86codegen.Options{Exports: exports})
+	if err != nil {
+		t.Fatalf("x86_64 emit: %v", err)
+	}
+	return asm
 }

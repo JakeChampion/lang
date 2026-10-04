@@ -106,7 +106,7 @@ func TestFieldReadModifyWriteWritesInPlace(t *testing.T) {
 	// element read stopped seeing the pre-store value, which would be a
 	// miscompile rather than a missed optimisation; 100 means the counter
 	// never moved and the zeros above meant nothing.
-	out, code := compileAndRunX86Native(t, fieldRmwSrc)
+	out, code := compileAndRunX86_64(t, fieldRmwSrc)
 	if code != 42 {
 		t.Fatalf("exit %d, want 42 — see the source for what each code names\n%s", code, strings.TrimSpace(out))
 	}

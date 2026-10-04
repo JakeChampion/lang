@@ -140,8 +140,8 @@ Asyncify, which applies here unchanged in shape:
 The pass runs on the stack IR after Perceus has emitted its ops, in both
 compilers, so a saved local that owns a reference keeps that reference in the
 save area and the restore puts it back before any `OpRcDec` that names it. No
-RC op is moved. The save area is a heap object owned by the task, which is
-why the two source rules in §3.5 exist.
+RC op is moved. The save area is a heap object owned by the task; §3.5 is
+what that means for a view or a shared capture the frame holds.
 
 Only the suspendable set pays for the transform. The request parse and the
 response serialise in `std/serve` never reach `__suspend` and keep their
@@ -164,15 +164,19 @@ was given), and the entry closure. Its API is three functions:
   returning), which runs its `defer`s and its ordinary exit path, where its
   `OpRcDec`s are, and each caller does the same up to the entry.
 
-`Status` is `Done(result)`, `Suspended(token)` or `Cancelled`. Because a
+`Status` is `Done(result)`, `Suspended(wait)` or `Cancelled`. Because a
 cancelled task leaves through its normal exit paths, cancellation needs no
 separate drop routine per suspend point, and the Perceus accounting of a
 cancelled task is the same accounting as a returned one. What #9856 called
 "resumed once, uncatchable" holds in the form that matters: the task cannot
-block again, and nothing it does can make the scheduler wait on it. A task is never discarded
-without that rewind: `Task`'s drop runs `task_cancel` if the task is still
-suspended, which is what reclaims a `race` loser once slice 6 makes the
-combinators suspend.
+block again, and nothing it does can make the scheduler wait on it. A task
+is never discarded without that rewind by the code that owns one: the serve
+loop cancels a flight whose connection went away, and the task combinators
+(`gather_tasks`, `race_tasks`, `with_deadline_tasks`, slice 6) cancel a
+`race` loser, a child past the deadline, and every child of a task that is
+itself cancelled. Tasks nest for that: a combinator inside a task starts
+its children as tasks of their own, and `__task_leave` makes the enclosing
+task current again.
 
 Only one task runs at a time per worker, so the "current task" the lowering
 consults is a per-execution-context slot in the runtime, beside the allocator
@@ -198,29 +202,33 @@ The serve loop becomes a scheduler:
   `wait_any` calls, and the scheduler watches what the park hands back.
   `Host.reactor` stays the loop's handle for what the worker itself watches.
 
-### 3.5 The two source rules
+### 3.5 What a parked frame keeps (the two source rules, withdrawn)
 
-Both from #9856, both checker errors in both compilers, both over the same
-reachability result as §3.1 (so they run where E080 runs, after
-monomorphisation):
+#9856 asked for two checker rules over the reachability result of §3.1: no
+`str` or `[u8]` view live across a suspension point, since a view is a
+borrowed window onto a buffer a save area cannot keep alive, and no closure
+capturing a mutable local by reference live across one, since a rewound
+frame's locals would be restored copies and the shared cell would split.
+Neither hazard exists in the lowering slice 2 landed, so neither rule does:
 
-- **No `str` or `[u8]` view live across a suspension point.** A view is a
-  borrowed window onto a buffer that the save area cannot keep alive
-  (`STR-VIEW-CONTRACT.md` §5 keeps views out of every field position, and a
-  save area is fields). A local of view type that is live after a call to a
-  suspendable function is refused by name, with the hint to materialise it
-  (`to_string()`, `to_array()`) before the call. A streaming body view is
-  consumed or materialised before the handler suspends.
-- **A closure crossing a suspension point captures by value.** Reference
-  captures share the pointee with the enclosing frame
-  (`CLOSURE-CAPTURE.md`); after a rewind the frame's locals are restored
-  copies, so a shared cell would split. Inside a suspendable function a
-  closure that captures a mutable local by reference and is live across a
-  suspendable call is refused, as the spawn closure is in
-  `MULTICORE-RESEARCH.md` C5.
+- An unwinding frame saves its locals as the words they are and returns
+  without running its exit-path releases, so every reference the frame
+  holds keeps its count in the save area, and the owner a view borrows from
+  survives the park with it. A view whose owner is not a local of some
+  frame on the chain is the general dangling-view hazard the view contract
+  already covers, park or no park.
+- A scalar a closure captures and either side assigns is a heap cell both
+  sides point at (`closureconv.BoxMutatedCaptures`, `cellify_env` in the
+  self-host); the frame's word is the cell's address, which the save area
+  keeps and the rewind restores. A reference capture cannot be reassigned
+  at all (E049).
 
-Slice 7 fixes the codes and the exact wording; the checker-codes
-differential pins both compilers to the same set.
+`TestSelfHostTaskFrame` (`e2eharness.TaskFrameProgram`) pins it: a parked
+function reads a `str` of a parameter's string, a `str` of its own local
+string, a byte view and a counter closure after the park, and answers what
+the plain run answers. A lowering that stopped keeping either would fail
+that gate, and that is the point at which a rule would be worth its
+refusals.
 
 ### 3.6 Which compiler does what
 
@@ -322,14 +330,31 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    two-fetch handler at 4,096 connections in `net-nightly` with p99 against
    hyper, and bump bytes per suspended handler in the held-connection heap
    gate.
-6. **Cancellation semantics.** Cancel-mode rewind runs `defer`s; `Task`'s
-   drop cancels; `gather_on`, `race_on` and `with_deadline_on` suspend on
-   their token set under a scheduler instead of polling, and a `race` loser
-   is cancelled rather than abandoned. `Cancelled` appears at the
-   `with_deadline` slot and the `race` loser. `ASYNC.md` §8 and its
-   limitations list are rewritten.
-7. **The two source rules.** Both checkers, both codes, the differential and
-   the checker-codes rows.
+6. **Cancellation semantics. Landed.** `gather_tasks`, `race_tasks` and
+   `with_deadline_tasks` run their entries as tasks of the calling task and
+   drive them together: the combinator parks on the union of its children's
+   waits and resumes the child whose pair became ready or whose bound
+   passed; a `race` loser, a child past the deadline, and every child of a
+   task that is itself cancelled are cancelled through `task_cancel`, so
+   each leaves through its own exit paths and its `defer`s run. Tasks nest:
+   `__task_enter` keeps the task that was current and `__task_leave` makes
+   it current again. `RealDriver.poll_ready` parks under a task, so the
+   `Future` combinators (`gather`, `race`, `with_deadline`) inside a handler
+   park the handler too. Under the blocking fallback the entries run to
+   their end in order inside `task_start`. Gates: `TestSelfHostTaskCombinators`
+   (`e2eharness.TaskCombinatorsProgram`: a race whose loser is cancelled, a
+   gather, a deadline that cancels the late entry, a future gather, and a
+   task cancelled from outside while its race is parked, every entry with a
+   `defer`) and `TestTaskCombinatorsFallback`. Not in this slice: `Task`'s
+   drop cancelling a still-parked task. `core/mem.Drop` runs inside the drop
+   glue, and running a task's remaining code from there is not a place to
+   run user code; a `Task` dropped while parked keeps its record until
+   `task_free`, and the combinators cancel and free their children
+   themselves.
+7. **The two source rules. Withdrawn (§3.5).** Views and shared mutated
+   captures survive a park as the lowering stands, so no checker rule
+   refuses them; `TestSelfHostTaskFrame` and `TestTaskFrameFallback` pin
+   that instead of a code.
 8. **Sim parity.** `SimPlatform.http` suspends; `sim.run_tasks`; the scripted
    upstream plus scripted disconnect test, byte-identical on x86-64, arm64
    and wasm through the self-host compiler.

@@ -365,8 +365,8 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 // shape the wire conversion has: no diagnostic, one, several, a line with
 // non-ASCII before the position (2- and 4-byte UTF-8: one and two UTF-16
 // units), CRLF line endings, a parse marker, a positionless refusal, a
-// top-level const, imports from a sibling and from the stdlib, and a
-// sibling's private function.
+// top-level const, imports from a sibling and from the stdlib, a sibling's
+// private function, and a warning.
 var lspCases = []struct {
 	name  string
 	files map[string]string // main.fern is the document opened
@@ -395,6 +395,7 @@ var lspCases = []struct {
 		"main.fern": "import \"./lib\";\nfunction main(): i32 {\n  return lib.hidden();\n}\n",
 		"lib.fern":  "function hidden(): i32 { return 1; }\n",
 	}},
+	{"todo-stub", map[string]string{"main.fern": "function f(): i32 {\n  todo;\n}\nfunction main(): i32 {\n  return 0;\n}\n"}},
 }
 
 // TestSelfHostLSPDiagnosticsMatchFernLSPX86_64 is the differential the issue
