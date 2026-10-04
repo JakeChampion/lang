@@ -220,10 +220,10 @@ func TestSelfHostDynTraitIR(t *testing.T) {
 					t.Fatalf("exited %d, want %d\n%s", code, tc.expected, stderr)
 				}
 				if tc.static {
-					// Both the constant record and the None result are static.
+					// Static probes must not allocate or release heap objects.
 					allocs, frees, live := leakSummaryOf(t, tc.name, stderr)
 					if allocs != 0 || frees != 0 || live != 0 {
-						t.Fatalf("static downcast miss: allocs=%d frees=%d live=%d, want all zero", allocs, frees, live)
+						t.Fatalf("static probe: allocs=%d frees=%d live=%d, want all zero", allocs, frees, live)
 					}
 				} else {
 					assertBalancedCensus(t, stderr)

@@ -2358,6 +2358,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"mapnew-get-return-e002-e038", "import \"core/map\";\nfunction f(): Option[i32] { return map_new(8).get(\"x\"); }\nfunction main(): i32 { return 0; }\n", []string{"E002", "E038"}},
 		{"mapnew-get-or-return-e002-e038", "import \"core/map\";\nfunction f(): i32 { return map_new(8).get_or(\"x\", 0); }\nfunction main(): i32 { return 0; }\n", []string{"E002", "E038"}},
 		{"mapnew-iter-annotated-result-e003", "import \"core/map\";\nfunction main(): i32 { let it: MapIter[string, i32] = map_new(8).iter(); return 0; }\n", []string{"E003"}},
+		// Pins without's unbound-key E038; E003 is the tuple-to-Map mismatch,
+		// independent of whether the result preserves unbound columns.
 		{"mapnew-without-annotated-result-e003-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8).without(\"x\"); return m.len(); }\n", []string{"E003", "E038"}},
 		{"mapnew-annotated-chain-clean", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert(\"x\", 5).insert(\"y\", 7); return m.get_or(\"y\", 0) + m.len(); }\n", nil},
 		{"mapnew-local-unbound-key-e038", "import \"core/map\";\nfunction main(): i32 { let m = map_new(2); if (m.has(\"a\")) { return 1; } return 0; }\n", []string{"E038"}},
