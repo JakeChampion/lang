@@ -835,6 +835,35 @@ function main(): i32 {
 		}
 	})
 
+	// A clean check lists the entry's remaining `todo` stubs as warnings and
+	// still exits 0, in native's words: the entry is named, `<stdin>` for `-`,
+	// and an imported module's stubs are not tracked (#11351).
+	t.Run("check-warns-about-todo-stubs", func(t *testing.T) {
+		sub := filepath.Join(dir, "todo_check")
+		writeTree(t, sub, map[string]string{
+			"main.fern": "import \"./lib\";\nfunction f(): i32 {\n  todo;\n}\nfunction g(): i32 { todo(\"later\"); }\nfunction main(): i32 {\n  return lib.h();\n}\n",
+			"lib.fern":  "pub function h(): i32 {\n  return 0;\n}\nfunction unfinished(): i32 {\n  todo;\n}\n",
+		})
+		src, err := os.ReadFile(filepath.Join(sub, "main.fern"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range []struct{ arg, name string }{{"main.fern", "main.fern"}, {"-", "<stdin>"}} {
+			cmd := exec.Command(fernBin, "-check", c.arg)
+			cmd.Dir = sub
+			cmd.Stdin = bytes.NewReader(src)
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			if err := cmd.Run(); err != nil {
+				t.Errorf("-check %s: %v (stderr: %s)", c.arg, err, stderr.String())
+			}
+			want := c.name + ":3:3: warning: `todo` stub remaining\n" + c.name + ":5:21: warning: `todo` stub remaining\n"
+			if stderr.String() != want {
+				t.Errorf("-check %s wrote %q, want %q", c.arg, stderr.String(), want)
+			}
+		}
+	})
+
 	// #8739. The parser is permissive: where it cannot read the source it
 	// plants an ExprUnknown and carries on, so every later pass reasons about
 	// the MARKER. `-check` never ran the gate that turns those markers back
