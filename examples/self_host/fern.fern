@@ -362,6 +362,7 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
     cu_name, getcwd(),
     pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
     arm64_native.arm64_debug_frame(p, elf.elf_text_vaddr_wx() as i64),
+    arm64_var_ranges(pa2),
   );
   return string_from_bytes_unchecked(util.to_u8(wide));
 }
@@ -458,6 +459,7 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
     cu_name, getcwd(),
     a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
     x86_native.x86_debug_frame(a, elf.elf_text_vaddr_x86() as i64),
+    x86_var_ranges(a),
   );
   return string_from_bytes_unchecked(util.to_u8(wide));
 }
@@ -749,6 +751,39 @@ function le64_at(b: i32[], off: i32): i64 {
     j = j - 1;
   }
   return v;
+}
+
+// x86_var_ranges / arm64_var_ranges are the emitters' `-g` variable rows
+// (asmcore.DbgVars) with each range's labels resolved to .text offsets, the
+// form elf_append_debug writes .debug_loc from. A range whose labels did not
+// both land, or that is empty, is dropped.
+function x86_var_ranges(a: x86_native.X86Asm): elf.VarRanges {
+  let out: elf.VarRanges = elf.no_var_ranges();
+  for row in a.dvars {
+    let f: string[] = row.split("|");
+    out = var_range(out, f, x86_native.x86_label_off(a, f[4]), x86_native.x86_label_off(a, f[5]));
+  }
+  return out;
+}
+
+function arm64_var_ranges(a: arm64_native.Arm64Asm): elf.VarRanges {
+  let out: elf.VarRanges = elf.no_var_ranges();
+  for row in a.dvars {
+    let f: string[] = row.split("|");
+    out = var_range(out, f, arm64_native.arm64_asm_label_off(a, f[4]), arm64_native.arm64_asm_label_off(a, f[5]));
+  }
+  return out;
+}
+
+// var_range appends one row `fn|name|type|param|from|to|loc` over [lo, hi).
+function var_range(r: elf.VarRanges, f: string[], lo: i32, hi: i32): elf.VarRanges {
+  if (lo < 0 || hi <= lo) {
+    return r;
+  }
+  return elf.VarRanges {
+    fns: r.fns.append(f[0]), names: r.names.append(f[1]), types: r.types.append(f[2]), params: r.params.append(f[3] == "1"),
+    lo: r.lo.append(lo), hi: r.hi.append(hi), locs: r.locs.append(f[6]),
+  };
 }
 
 // ImportQueue is the breadth-first import worklist: each path paired with the

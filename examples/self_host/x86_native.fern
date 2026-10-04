@@ -1367,6 +1367,9 @@ pub struct X86Asm {
   loc_lines: i32[],
   loc_cols: i32[],
   loc_flags: i32[],
+  // The `.fern_var` rows (asmcore.DbgVars), kept verbatim for the ELF
+  // writer's variable DIEs (#11410).
+  dvars: string[],
   // Name index over lab_names, so a lookup is a bucket walk rather than a
   // scan of every label placed so far. lab_head/lab_tail hold the first and
   // last lab_names index in each bucket (-1 when empty) and lab_next chains
@@ -1475,7 +1478,7 @@ function x86_empty_buckets(): i32[] {
 // x86_asm_new returns an empty assembler state for the raw encoder API,
 // which emits every branch rel32 and never relaxes.
 function x86_asm_new(): X86Asm {
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 // x86_asm_new_prepared is the state for the round over text whose labels
@@ -1484,7 +1487,7 @@ function x86_asm_new(): X86Asm {
 // round reaches its definition.
 function x86_asm_new_prepared(labs: GasLabels): X86Asm {
   let n: i32 = labs.names.len() + labs.nids;
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 // x86_filled is n copies of v.
@@ -7875,6 +7878,8 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, words: u
     if (line[0] == b'.') {
       if (x86_str_starts_with(line, ".loc ")) {
         a = x86_loc_row(a, line);
+      } else if (x86_str_starts_with(line, ".fern_var ")) {
+        a = X86Asm { ...a, dvars: a.dvars.append(slice_unchecked(line, 10, line.len()) + "") };
       } else if (x86_str_starts_with(line, ".file ")) {
         a = x86_file_entry(a, line);
       } else if (x86_str_starts_with(line, ".cfi_")) {

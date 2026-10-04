@@ -1247,6 +1247,33 @@ function ident_start_byte(c: u8): boolean {
   return c >= b'A' && c <= b'Z' || c >= b'a' && c <= b'z' || c == b'_';
 }
 
+// bools is `n` copies of `bit`.
+pub function bools(n: i32, bit: boolean): boolean[] {
+  let out: boolean[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(bit);
+    i = i + 1;
+  }
+  return out;
+}
+
+// is_ident reports whether s is spelled as an identifier: a letter or `_`,
+// then letters, digits and `_`.
+pub function is_ident(s: string): boolean {
+  if (s.len() == 0 || !ident_start_byte(s[0])) {
+    return false;
+  }
+  let i: i32 = 1;
+  while (i < s.len()) {
+    if (!ident_start_byte(s[i]) && !(s[i] >= b'0' && s[i] <= b'9')) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
 // demangle turns a module-mangled name back into the `mod.Name` the reader
 // wrote. `mod__Name` is not a spelling anyone can type, so a hint carrying
 // one names a fix that does not compile.
