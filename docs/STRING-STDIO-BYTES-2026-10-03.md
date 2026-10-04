@@ -89,7 +89,10 @@ allocation reduction is exact; the timing result applies to those workloads.
 Both native benchmark files occupy 83,073 bytes. Code grows from 41,680 to
 42,464 bytes and unwind data from 7,300 to 7,516 bytes; data grows from 4,144
 to 4,168 bytes. The extra paths support raw input, range handling and byte buffering.
-No size baseline changes are needed.
+Stdio itself needs no size baseline change. A later main integration crossed
+the compiler path-probe gate. Its separate [size investigation](SELFHOST-PATH-PROBE-SIZE-2026-10-04.md)
+attributes the accumulated compiler growth and removes unused verdict report
+construction before updating that driver's measured baseline.
 
 This enables byte-oriented consumers such as dircolors. It does not complete
 their conversion or the remaining producer audit for #5714.

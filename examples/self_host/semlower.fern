@@ -848,6 +848,32 @@ pub function verdict(mod: parser.Module, target: string): Verdict {
   return verdict_annotated(checker.annotate_module(mod), target);
 }
 
+// verdict_ok runs the same checks and lowering as verdict without building
+// declaration names and report rows for a caller that needs only the answer.
+pub function verdict_ok(mod: parser.Module, target: string): boolean {
+  let t: Typed = typed_for(checker.annotate_module(mod), target);
+  if (t.errs.len() > 0) {
+    return false;
+  }
+  let im: parser.Module = verdict_module(t.mod, target);
+  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_module(im).structs));
+  let i: i32 = 0;
+  while (i < inf.rows.keep.len()) {
+    if (!inf.rows.keep[i] && inf.rows.why[i].len() > 0) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function verdict_module(mod: parser.Module, target: string): parser.Module {
+  if (is_wasm(target)) {
+    return wasm_gated(mod);
+  }
+  return gated_module(ircore.lift_lambdas_typed(mod));
+}
+
 // verdict_annotated is verdict for a module the caller already checked and
 // annotated (`driven_annotated`).
 pub function verdict_annotated(annotated: parser.Module, target: string): Verdict {
@@ -855,12 +881,7 @@ pub function verdict_annotated(annotated: parser.Module, target: string): Verdic
   if (t.errs.len() > 0) {
     return Verdict { ok: false, errors: t.errs, rows: [] };
   }
-  let im: parser.Module = t.mod;
-  if (is_wasm(target)) {
-    im = wasm_gated(t.mod);
-  } else {
-    im = gated_module(ircore.lift_lambdas_typed(t.mod));
-  }
+  let im: parser.Module = verdict_module(t.mod, target);
   let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_module(im).structs));
   let rows: VerdictRow[] = [];
   let ok: boolean = true;
