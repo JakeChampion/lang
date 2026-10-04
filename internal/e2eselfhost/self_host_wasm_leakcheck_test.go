@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // --- The wasm census (#5362's wasm half, in the self-host) -------------------
@@ -293,5 +295,53 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 		if !strings.Contains(on, want) {
 			t.Errorf("flag-on wat is missing %q", want)
 		}
+	}
+}
+
+// A wasi:cli/run component reports the census too, the form `fern -target
+// wasm32-wasi` writes by default: from its run entry when main returns, and
+// from its exit shim when the program exits. Its stderr is a preview-2 stream
+// whose $fd_write shim allocates, so the line also checks that the report's
+// own writes are not counted in it.
+func TestSelfHostWasmLeakcheckComponent(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping wasm leakcheck component e2e")
+	}
+	for _, tc := range []struct {
+		name, src            string
+		exit                 int
+		allocs, frees, bytes int64
+	}{
+		{"returning", `function main(): i32 { let p: usize = __alloc(24); return 0; }`, 0, 1, 0, 24},
+		{"exiting", `function main(): i32 { let p: usize = __alloc(24); exit(9); return 1; }`, 1, 1, 0, 24},
+		{"printing", "import \"std/i32\";\nfunction main(): i32 { let s: string = \"a\" + 7.to_string(); print(s); return 0; }", 0, 5, 5, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "main.fern")
+			if err := os.WriteFile(src, []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			comp := filepath.Join(dir, "main.wasm")
+			cmd := e2eharness.SelfHostCompileCmd(t, e2eharness.TargetWasm32Wasi, src, comp)
+			cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("compile: %v\n%s", err, out)
+			}
+			run := exec.Command("wasmtime", "run", comp)
+			var stderr bytes.Buffer
+			run.Stderr = &stderr
+			_ = run.Run()
+			if got := run.ProcessState.ExitCode(); got != tc.exit {
+				t.Fatalf("exit %d, want %d; stderr: %s", got, tc.exit, stderr.String())
+			}
+			if n := strings.Count(stderr.String(), "leakcheck: allocs="); n != 1 {
+				t.Fatalf("%d census lines, want exactly 1: %q", n, stderr.String())
+			}
+			var allocs, frees, live int64
+			if _, err := fmtSscan(leakSummaryLine(stderr.String()), &allocs, &frees, &live); err != nil || allocs != tc.allocs || frees != tc.frees || live != tc.bytes {
+				t.Errorf("census %q, want allocs=%d frees=%d live_bytes=%d", leakSummaryLine(stderr.String()), tc.allocs, tc.frees, tc.bytes)
+			}
+		})
 	}
 }

@@ -58,6 +58,6 @@ function main(): i32 {
     }
     return 0;
   }
-  write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, !reactor || wasm_ir.component_needs_host(d.full), d.sub));
+  write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, !reactor || wasm_ir.component_needs_host(d.full, d.sub.switches), d.sub));
   return 0;
 }
