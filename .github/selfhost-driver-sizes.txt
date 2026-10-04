@@ -434,11 +434,18 @@
 # constant a phi merges or a block returns now loads on its edge with no home
 # of its own, a further 0.7%. Measured with TestSelfHostWarmStockDriver, the
 # gate's own path; fern.fern, which the pin builds, stays inside 5%.
-# 2026-10-03 — asm_pathprobe_run 3965592 -> 4172000 (+5.2%), main's growth
+# 2026-10-03: asm_pathprobe_run 3965592 -> 4172000 (+5.2%), main's growth
 # since that refresh: the same bytes build from main at a4d8eba1, and #11323,
 # whose run reported it, changes no file in the driver's closure. The other
 # rows stay inside 5%. Number pasted from driver-sizes' own report on run
 # 37158896327.
+# 2026-10-04: pathprobe's historical CI source 89c212ac under its original
+# 7d8ea4e pin reproduces 3965592 bytes. The current c891 pin on that source
+# gives 3901208 bytes; current main gives 4172000. Stdio adds no compiler or
+# stdlib change. Parser/checker fixes, typed ownership, byte operations and
+# array fusion account for the source growth. Avoiding unused verdict rows
+# saves 2008 bytes; TestSelfHostWarmStockDriver measures 4169992 after the fix.
+# docs/SELFHOST-PATH-PROBE-SIZE-2026-10-04.md records attribution and tests.
 # 2026-10-04 — fern.fern 10737128 -> 11300776 (+5.2%) and checker_modload_run
 # 2386128 -> 2520560 (+5.6%), main's growth through the Platform trait merges
 # (#11340, #11343). Numbers from driver-sizes' report on run 37166665810 (main
@@ -457,5 +464,5 @@ asm_run.fern 6813576
 wasm_ir_run.fern 6878120
 wasm_run.fern 6878824
 wasm_runio_run.fern 6878184
-asm_pathprobe_run.fern 4172000
+asm_pathprobe_run.fern 4169992
 checker_modload_run.fern 2520560
