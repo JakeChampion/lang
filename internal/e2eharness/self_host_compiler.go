@@ -364,6 +364,16 @@ func SelfHostCLI(t testing.TB) string {
 	return currentCLIPath
 }
 
+// WarmSelfHostCLI builds SelfHostCLI now, where this host runs one. A fuzz
+// target calls it before f.Fuzz: Go's fuzz worker panics on any input that
+// runs past ten seconds, and the first input to reach the lazy build would.
+func WarmSelfHostCLI(t testing.TB) {
+	t.Helper()
+	if hostSelfHostTarget() != "" {
+		SelfHostCLI(t)
+	}
+}
+
 // hostSelfHostTarget is the self-host target whose binaries this host runs
 // directly, or "" when there is none.
 func hostSelfHostTarget() string {
