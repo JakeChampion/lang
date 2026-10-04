@@ -23687,6 +23687,75 @@ function tvar_spelling(name: string): string {
   return "0_" + name;
 }
 
+// desugar_trait_params makes a parameter whose type names a trait an anonymous
+// type parameter bounded by it: `f(d: Driver)` becomes `f[T_d: Driver](d: T_d)`
+// and is monomorphised like any generic. `dyn Driver` is the dynamic form, so
+// a bare trait in a parameter type has no other meaning. `traits` holds the
+// spellings that name a trait in this module: its own traits bare, an import's
+// as `alias.Trait`. `spelled` names the new parameter in the `0_` spelling, for
+// a module whose type variables have already been respelled.
+pub function desugar_trait_params(mod: Module, traits: string[], spelled: boolean): Module {
+  if (traits.len() == 0) {
+    return mod;
+  }
+  let funcs: FuncDecl[] = [];
+  for fd in mod.funcs {
+    funcs = funcs.append(desugar_fn_trait_params(fd, traits, spelled));
+  }
+  return Module { ...mod, funcs: funcs };
+}
+
+function desugar_fn_trait_params(fd: FuncDecl, traits: string[], spelled: boolean): FuncDecl {
+  // A trait's methods are not generic, so an impl's method keeps a
+  // trait-typed parameter as written, and it is no type there (E064).
+  if (fd.impl_trait.len() > 0) {
+    return fd;
+  }
+  let params: ast.ParamDecl[] = [];
+  let type_params: string[] = fd.type_params;
+  let bound_traits: string[] = fd.bound_traits;
+  let all_type_params: string[] = fd.all_type_params;
+  for p in fd.params {
+    // The trait itself, with or without type arguments: an array of it or
+    // any other shape is not a trait reference.
+    let tr: TypeRef = parse_type_ref(p.type_name);
+    if (tr.array_depth > 0 || tr.is_tuple || tr.is_fn || tr.is_view || !str_list_contains(traits, tr.base) || str_list_contains(all_type_params, tr.base)) {
+      params = params.append(p);
+      continue;
+    }
+    let tp: string = fresh_trait_param("T_" + p.name, all_type_params, spelled);
+    type_params = type_params.append(tp);
+    bound_traits = bound_traits.append(p.type_name);
+    all_type_params = all_type_params.append(tp);
+    params = params.append(ast.ParamDecl { ...p, type_name: tp });
+  }
+  return FuncDecl { ...fd, params: params, type_params: type_params, bound_traits: bound_traits, all_type_params: all_type_params };
+}
+
+// trait_decl_names is the name of every trait in `traits`.
+pub function trait_decl_names(traits: TraitDecl[]): string[] {
+  let out: string[] = [];
+  for t in traits {
+    out = out.append(t.name);
+  }
+  return out;
+}
+
+// fresh_trait_param is `want`, or `want` with a number appended, whichever no
+// type parameter in `taken` already uses under either spelling.
+function fresh_trait_param(want: string, taken: string[], spelled: boolean): string {
+  let name: string = want;
+  let n: i32 = 1;
+  while (str_list_contains(taken, name) || str_list_contains(taken, "0_" + name)) {
+    name = want + util.i32_to_string(n);
+    n = n + 1;
+  }
+  if (spelled) {
+    return "0_" + name;
+  }
+  return name;
+}
+
 function rename_type_vars_module(mod: Module): Module {
   return respell_type_vars_module(mod, false);
 }
@@ -27922,7 +27991,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     let nothing: string[] = [];
     parsed = substitute_const_refs(parsed, inferred_const_table(funcs, inferred, ConstTable { names: nothing, values: [] }));
     parsed = Module { ...parsed, funcs: settle_const_types(parsed.funcs, structs), inferred_consts: inferred };
-    parsed = desugar_union_aliases(parsed);
+    parsed = desugar_union_aliases(desugar_trait_params(parsed, trait_decl_names(traits), false));
   }
   let settled: Module = settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(parsed))));
   if (!verbatim) {

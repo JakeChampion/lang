@@ -1416,6 +1416,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		c.info.Resources[rd.Name] = rd
 	}
 
+	c.traitNames = desugarTraitParams(prog)
+
 	// Bind receiver type-variables for generic-receiver methods. A
 	// method like `function (b: Box[T]) get(): T` introduces T as an
 	// implicit type parameter, inferred from the receiver at the call
@@ -7993,8 +7995,11 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 }
 
 type checker struct {
-	info   *Info
-	errors []error
+	// traitNames is every declared trait, as a parameter type spells it; set
+	// by desugarTraitParams so E064 can say a misplaced trait is one.
+	traitNames map[string]bool
+	info       *Info
+	errors     []error
 	// Intrinsics are registered by signature identity at their declaration
 	// site, not recognized from a call's spelling by semantic lowering.
 	intrinsicSigs map[*ast.FuncType]IntrinsicKind
@@ -8845,7 +8850,7 @@ func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Pos
 	switch x := t.(type) {
 	case ast.StructType:
 		if !c.knownTypeName(x.Name, params) {
-			c.errfCode(pos, "E064", "unknown type %q%s", x.Name, unknownTypeHint(x.Name))
+			c.errfCode(pos, "E064", "unknown type %q%s", demangle(x.Name), c.unknownTypeHint(x.Name))
 			return
 		}
 		for _, a := range x.Args {
@@ -8853,7 +8858,7 @@ func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Pos
 		}
 	case ast.EnumType:
 		if !c.knownTypeName(x.Name, params) {
-			c.errfCode(pos, "E064", "unknown type %q%s", x.Name, unknownTypeHint(x.Name))
+			c.errfCode(pos, "E064", "unknown type %q%s", demangle(x.Name), c.unknownTypeHint(x.Name))
 			return
 		}
 		for _, a := range x.Args {
@@ -8902,7 +8907,10 @@ func (c *checker) knownTypeName(name string, params map[string]bool) bool {
 
 // unknownTypeHint suggests the right spelling for a handful of common
 // cross-language slips, appended to the E064 message.
-func unknownTypeHint(name string) string {
+func (c *checker) unknownTypeHint(name string) string {
+	if c.traitNames[name] {
+		return fmt.Sprintf(" (`%s` is a trait: a parameter of trait type makes the function generic over it; anywhere else write `dyn %s`)", demangle(name), demangle(name))
+	}
 	switch name {
 	case "bool":
 		return " (did you mean `boolean`?)"
@@ -21725,6 +21733,66 @@ func isDynErrorType(t ast.Type) bool {
 	// Error` is another trait, and every import spelling of std/error's,
 	// aliased or re-exported, mangles to this one name.
 	return d.Traits[0] == "error__Error"
+}
+
+// desugarTraitParams makes a parameter whose type names a trait an anonymous
+// type parameter bounded by it: `f(d: Driver)` becomes `f[T_d: Driver](d: T_d)`
+// and is monomorphised like any generic. `dyn Driver` is the dynamic form, so a
+// bare trait in a parameter type has no other meaning. It returns the set of
+// trait names. The self-host twin is parser.desugar_trait_params.
+func desugarTraitParams(prog *ast.Program) map[string]bool {
+	traits := map[string]bool{}
+	for _, td := range prog.Traits {
+		traits[td.Name] = true
+	}
+	for _, fn := range prog.Funcs {
+		// A trait's methods are not generic, so an impl's method keeps a
+		// trait-typed parameter as written, and it is no type there (E064).
+		if fn.ImplTrait != "" {
+			continue
+		}
+		for i := range fn.Params {
+			// The parser spells a bracketed nominal (`Sink[i32]`) as an
+			// EnumType; an array or any other shape is not a trait reference.
+			var name string
+			var args []ast.Type
+			switch t := fn.Params[i].Type.(type) {
+			case ast.StructType:
+				name, args = t.Name, t.Args
+			case ast.EnumType:
+				name, args = t.Name, t.Args
+			default:
+				continue
+			}
+			if !traits[name] || slices.Contains(fn.TypeParams, name) {
+				continue
+			}
+			tp := freshTraitParam("T_"+fn.Params[i].Name, fn.TypeParams)
+			fn.TypeParams = append(fn.TypeParams, tp)
+			if fn.Bounds == nil {
+				fn.Bounds = map[string][]string{}
+			}
+			fn.Bounds[tp] = []string{name}
+			if len(args) > 0 {
+				if fn.BoundArgs == nil {
+					fn.BoundArgs = map[string][][]ast.Type{}
+				}
+				fn.BoundArgs[tp] = [][]ast.Type{args}
+			}
+			fn.Params[i].Type = ast.StructType{Name: tp}
+		}
+	}
+	return traits
+}
+
+// freshTraitParam is want, or want with a number appended, whichever no name
+// in taken already uses.
+func freshTraitParam(want string, taken []string) string {
+	name := want
+	for n := 1; slices.Contains(taken, name); n++ {
+		name = want + strconv.Itoa(n)
+	}
+	return name
 }
 
 // platformCtorName is the compiler-owned Platform constructor. The `__fern_`
