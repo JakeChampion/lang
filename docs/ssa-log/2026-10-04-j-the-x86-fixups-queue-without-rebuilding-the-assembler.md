@@ -9,7 +9,7 @@ fixup for each branch displacement and rip-relative address, and a branch
 record for each relaxable jcc and jmp. Both lived as parallel arrays on
 `X86Asm` (`fix_offs`, `fix_widths`, `fix_names`, `fix_idx`; `br_offs`,
 `br_names`, `br_idx`, `br_shorts`, `br_n`), and each one queued rebuilt the
-whole 33-field struct to append to four of them. Compiling `checker.fern`
+whole 29-field struct to append to four of them. Compiling `checker.fern`
 queues about 414,000 fixups and 305,000 branch records per round, two
 rounds, at about 200 Ir each: `x86_queue_fixup_at` 93 M and
 `x86_branch_record` 69 M, with the struct drops behind them.

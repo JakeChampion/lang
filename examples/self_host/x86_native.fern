@@ -2023,10 +2023,12 @@ function x86_resolve(own a: X86Asm): X86Asm {
   let fq: u8[] = [];
   if (a.fixq != 0 as usize) {
     fq = buf_take_bytes(a.fixq);
+    buf_free(a.fixq);
     a = X86Asm { ...a, fixq: 0 as usize };
   }
   if (a.brq != 0 as usize) {
     let bq: LeSplit = x86_le32_split(buf_take_bytes(a.brq));
+    buf_free(a.brq);
     a = X86Asm { ...a, brq: 0 as usize, br_offs: bq.lo, br_hi: bq.hi };
   }
   let nfix: i32 = fq.len() / 8;
