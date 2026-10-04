@@ -203,14 +203,19 @@ var nativeMainResult = wasmbin.BuildOptions{ForceMemorySection: true, Preview2WA
 
 // runNativeLeakCheckWasm is runLeakCheckWasm through the native backend, for
 // the range-append fusion the self-host's wasm emitter does not have (#11327).
-// The census flag is read at emit time, so it is set around the build.
+// The flags are read at emit time, so they are set around the build: the
+// census on, freeing on (so an ambient setting cannot make the census lie),
+// and the other detectors off.
 func runNativeLeakCheckWasm(t *testing.T, src string) (string, string, int) {
 	t.Helper()
-	prevLc, prevTrap, prevDbg := ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug
-	t.Cleanup(func() { ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = prevLc, prevTrap, prevDbg })
-	ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = true, false, false
+	prevFree, prevLc, prevTrap, prevDbg := ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug
+	restore := func() {
+		ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = prevFree, prevLc, prevTrap, prevDbg
+	}
+	t.Cleanup(restore)
+	ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = true, true, false, false
 	component := buildNativeComponent(t, src, nativeMainResult)
-	ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = prevLc, prevTrap, prevDbg
+	restore()
 	return runComponent(t, component, runOpts{})
 }
 

@@ -196,8 +196,8 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 		t.Fatalf("leaky exited %d, want 53 — a leak verdict must not move the exit status", exit)
 	}
 	var allocs, frees, live int64
-	if _, err := fmtSscan(leakSummaryLine(stderr), &allocs, &frees, &live); err != nil {
-		t.Fatalf("no census summary under FERN_SANITIZE: %q", stderr)
+	if _, err := fmtSscan(leakSummaryLine(stderr), &allocs, &frees, &live); err != nil || allocs != 100 || frees != 0 || live != 2400 {
+		t.Fatalf("leaky census %q, want allocs=100 frees=0 live_bytes=2400 (one 24-byte block per round, never freed)", leakSummaryLine(stderr))
 	}
 	m := verdict.FindStringSubmatch(stderr)
 	if m == nil {

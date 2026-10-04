@@ -4,9 +4,8 @@ import "testing"
 
 // TestWASMAliasedArraySetCoW: a mutation through one alias of a shared array
 // or map copies rather than writing through, so the other alias keeps its
-// value. The heap here starts at ~1024, which is where an rc helper with a
-// low-address guard skipped its increment and let `ys.with(...)` take the
-// rc==1 in-place path on a shared buffer.
+// value. A retain the runtime skipped would let `ys.with(...)` take the rc==1
+// in-place path on a shared buffer.
 func TestWASMAliasedArraySetCoW(t *testing.T) {
 	cases := []struct {
 		name string
