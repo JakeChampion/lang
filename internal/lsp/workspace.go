@@ -104,8 +104,8 @@ func (s *Server) loadWorkspace(entryPath string) (*ast.Program, *checker.Info, m
 	if prog != nil {
 		info, checkErr = checker.Check(prog)
 	}
-	byFile := splitDiagnosticsByFile(perr, entryPath)
-	for f, ds := range splitDiagnosticsByFile(checkErr, entryPath) {
+	byFile := splitDiagnosticsByFile(perr, entryPath, overrides)
+	for f, ds := range splitDiagnosticsByFile(checkErr, entryPath, overrides) {
 		byFile[f] = append(byFile[f], ds...)
 	}
 	return prog, info, byFile
@@ -118,7 +118,11 @@ func (s *Server) loadWorkspace(entryPath string) (*ast.Program, *checker.Info, m
 // pre-decl checker errors, plus anything the lexer / parser
 // surfaced before modload got around to stamping (shouldn't happen
 // in workspace mode but we'd rather attribute than drop).
-func splitDiagnosticsByFile(err error, entryFallback string) map[string][]Diagnostic {
+//
+// srcs holds the open documents' text by path, which is what a position is
+// converted to UTF-16 against. Only open documents are published, so a file
+// missing from it is never shown.
+func splitDiagnosticsByFile(err error, entryFallback string, srcs map[string]string) map[string][]Diagnostic {
 	out := map[string][]Diagnostic{}
 	if err == nil {
 		return out
@@ -130,7 +134,7 @@ func splitDiagnosticsByFile(err error, entryFallback string) map[string][]Diagno
 				path = v
 			}
 		}
-		out[path] = append(out[path], toDiagnostic("", e))
+		out[path] = append(out[path], toDiagnostic(srcs[path], e))
 	}
 	if es, ok := err.(diag.Errors); ok {
 		for _, e := range es {
