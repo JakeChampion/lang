@@ -125,7 +125,7 @@ function report_diags(diags: util.Diag[], files: string[]): boolean {
       tag = "error[" + d.code + "]: ";
     }
     if (d.line > 0) {
-      eprint(util.pos_str(files, d.line, d.col) + ": " + tag + d.message);
+      eprint(util.pos_str("", files, d.line, d.col) + ": " + tag + d.message);
     } else {
       eprint(tag + d.message);
     }
