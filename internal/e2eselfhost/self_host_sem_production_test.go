@@ -5186,6 +5186,85 @@ function g(n: i32): i32 {
 }
 function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
 `},
+	// A type holding itself, merged past its source: the copy recurses, so it
+	// is a helper calling itself where the type recurs (ssasem.copy_helper_func).
+	{name: "a-recursive-enum-merged-past-its-source-is-copied", atLeast: 4, want: "0|3 0\n", src: `
+import "std/i32";
+enum L { Cons(str, L), Nil }
+function mk(n: i32): string {
+    let s: string = "ab";
+    let i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function two(s: string): L { return Cons(slice_unchecked(s, 0, 1), Cons(slice_unchecked(s, 1, 3), Nil)); }
+function count(l: L): i32 { match (l) { Cons(h, t) => { return h.len() + count(t); }, Nil => { return 0; } } return 0; }
+function g(n: i32): i32 {
+    let l: L = Nil;
+    if (n != 0) {
+        let s: string = mk(n);
+        l = two(s);
+    }
+    return count(l);
+}
+function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
+`},
+	// A record recurring through an array of itself.
+	{name: "a-record-holding-an-array-of-itself-merged-is-copied", atLeast: 4, want: "0|52 35\n", src: `
+import "std/i32";
+struct Tree { name: str, kids: Tree[] }
+function mk(n: i32): string {
+    let s: string = "ab";
+    let i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function grow(s: string): Tree {
+    let leaf: Tree = Tree { name: slice_unchecked(s, 1, 3), kids: [] };
+    return Tree { name: slice_unchecked(s, 0, 1), kids: [leaf, leaf] };
+}
+function weight(t: Tree): i32 {
+    let n: i32 = t.name.len() * 10 + (t.name[0] as i32) - 97;
+    for k in t.kids { n = n + weight(k); }
+    return n;
+}
+function g(n: i32): i32 {
+    let t: Tree = Tree { name: "z", kids: [] };
+    if (n != 0) {
+        let s: string = mk(n);
+        t = grow(s);
+    }
+    let junk: string[] = [];
+    let i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    return weight(t);
+}
+function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
+`},
+	// Two enums holding each other: each helper calls the other's.
+	{name: "mutually-recursive-enums-merged-are-copied", atLeast: 4, want: "0|337 0\n", src: `
+import "std/i32";
+enum A { AV(str, B), AEnd }
+enum B { BV(str, A), BEnd }
+function mk(n: i32): string {
+    let s: string = "ab";
+    let i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function build(s: string): A { return AV(slice_unchecked(s, 0, 2), BV(slice_unchecked(s, 2, 5), AV(slice_unchecked(s, 1, 2), BEnd))); }
+function la(a: A): i32 { match (a) { AV(h, b) => { return h.len() * 100 + lb(b); }, AEnd => { return 0; } } return 0; }
+function lb(b: B): i32 { match (b) { BV(h, a) => { return h.len() * 10 + la(a); }, BEnd => { return 7; } } return 0; }
+function g(n: i32): i32 {
+    let a: A = AEnd;
+    if (n != 0) {
+        let s: string = mk(n);
+        a = build(s);
+    }
+    return la(a);
+}
+function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
+`},
 	// A dyn over several concretes, assigned in a loop from a body-local source: a
 	// record and two enum variants holding views are copied, and a record and a
 	// boxed string holding none are kept, settled by the tests that refute the
