@@ -320,12 +320,12 @@ function main(): i32 {
     // and neither a fixup nor a patch was queued, so nothing downstream will
     // encode it either.
     if (buf_len(a.code) != before + 4) { return 20; }
-    if (a.fix_offs.len() != 0 || a.patq != 0 as usize) { return 21; }
+    if (arm64_fix_count(a) != 0 || a.patq != 0 as usize) { return 21; }
 
     // ---- integration, FORWARD (resolved later) ----
     let b: Arm64Asm = arm64_asm_new();
     b = arm64_asm_tbz(b, arm64_x1(), 0, "ahead");
-    if (b.fix_offs.len() != 1) { return 22; }   // queued, range not yet knowable
+    if (arm64_fix_count(b) != 1) { return 22; }   // queued, range not yet knowable
     let j: i32 = 0;
     while (j < 8200) {
         arm64_push_arr(b.code, arm64_movz([], arm64_x0(), 0, 0, false));
