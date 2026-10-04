@@ -4481,6 +4481,31 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   if (is_buf_builtin(name)) {
     return call_buf_builtin(name, args);
   }
+  if (name == "__clz32" || name == "__ctz32" || name == "__popcount32" || name == "__clz64" || name == "__ctz64" || name == "__popcount64") {
+    if (args.len() != 1) {
+      return v_err(name + ": expected 1 arg");
+    }
+    if (!is_int_like(args[0])) {
+      return v_err(name + ": arg must be an integer");
+    }
+    let bits: u64 = vint_as_i64(args[0]) as u64;
+    if (name == "__clz32") {
+      return v_int(__clz32(bits as u32));
+    }
+    if (name == "__ctz32") {
+      return v_int(__ctz32(bits as u32));
+    }
+    if (name == "__popcount32") {
+      return v_int(__popcount32(bits as u32));
+    }
+    if (name == "__clz64") {
+      return v_int(__clz64(bits));
+    }
+    if (name == "__ctz64") {
+      return v_int(__ctz64(bits));
+    }
+    return v_int(__popcount64(bits));
+  }
   if (name == "__count_byte_bytes") {
     return call_count_byte_bytes(args);
   }
