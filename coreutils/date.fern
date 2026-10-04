@@ -235,7 +235,8 @@ function show_date(o: io_buffered.BufWriter, s: Show, sec: i64, nsec: i64): (boo
     w = gnu.error_out(w, "time " + gnu.quote(sec.to_string()) + " is out of range");
     return (false, gnu.put(w, "\n"));
   }
-  return (true, gnu.put(w, timefmt.strftime(s.format, s.zone, sec, nsec) + "\n"));
+  w = w.write_bytes(timefmt.strftime_bytes(s.format, s.zone, sec, nsec));
+  return (true, gnu.put(w, "\n"));
 }
 
 // Emit the trace before buffered stdout, preserving raw failure tails.
