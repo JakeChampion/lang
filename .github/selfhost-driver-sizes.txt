@@ -434,6 +434,13 @@
 # constant a phi merges or a block returns now loads on its edge with no home
 # of its own, a further 0.7%. Measured with TestSelfHostWarmStockDriver, the
 # gate's own path; fern.fern, which the pin builds, stays inside 5%.
+# 2026-10-04: pathprobe's historical CI source 89c212ac under its original
+# 7d8ea4e pin reproduces 3965592 bytes. The current c891 pin on that source
+# gives 3901208 bytes; current main gives 4172000. Stdio adds no compiler or
+# stdlib change. Parser/checker fixes, typed ownership, byte operations and
+# array fusion account for the source growth. Avoiding unused verdict rows
+# saves 2008 bytes; TestSelfHostWarmStockDriver measures 4169992 after the fix.
+# docs/SELFHOST-PATH-PROBE-SIZE-2026-10-04.md records attribution and tests.
 fern.fern/stage2 10946736
 fern.fern 10737128
 asm_load_run.fern 8721320
@@ -443,5 +450,5 @@ asm_run.fern 6813576
 wasm_ir_run.fern 6878120
 wasm_run.fern 6878824
 wasm_runio_run.fern 6878184
-asm_pathprobe_run.fern 3965592
+asm_pathprobe_run.fern 4169992
 checker_modload_run.fern 2386128
