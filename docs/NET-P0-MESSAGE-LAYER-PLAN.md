@@ -116,11 +116,9 @@ up.
    `string`. Serialize fell from 13 to 4 on the self-host and to 6 on the Go
    compiler: the builder, its storage and its result, and the boxes left
    between the helpers.
-8. **The donor boundary.** What is left after slices 3 to 7 is the
-   `HttpRequest` box, its strings, the response box and the wire buffer.
-   Those are exactly what #9851 §3.3's handler boundary with a reuse donor
-   exists for. It gets its own plan once the gate shows that residue, since
-   the residue sets what the boundary has to donate.
+8. **What is left, then the donor boundary.** §5 attributes the residue
+   after slices 2 to 7. Most of it is not what a donor would provide, so
+   slice 8 is the series in §5.3, with the donor itself last.
 
 ## 4. Exit
 
@@ -128,3 +126,101 @@ Criterion B of #9853 is met when the gate reads 0 for the framing path on
 both compilers with the hello handler, which needs slice 8. Slices 3 to 7
 are each worth landing alone, because every server pays them per request
 whatever its handler does.
+
+## 5. The residue after slices 2 to 7
+
+### 5.1 Measured
+
+One parse and one serialize of the §1 request, traced allocation by
+allocation at `origin/main` d1cfbd282 (`FERN_RC_TRACE=1 FERN_RC_TRACE_DEEP=1`
+on the self-host, `FERN_RC_TRACE=1` on the Go compiler, resolved with
+`addr2line`). The totals are the gate's pins.
+
+| Compiler, target | Parse | Serialize |
+| --- | ---: | ---: |
+| Self-host, every target | 40 | 4 |
+| Go compiler, x86-64 | 43 | 6 |
+| Go compiler, arm64 | 53 | 6 |
+| Go compiler, wasm | 49 | 6 |
+
+Each allocation falls in one of three classes:
+
+- **Kept.** What the handler sees: the request box, its strings, the header
+  map and its arrays, the body. A reuse donor is what removes these.
+- **Wrapper.** The parse's own result, `HttpFramed` and the `Framed` case
+  around it, which the serve loop unpacks at once.
+- **Scratch.** A temporary nothing keeps. A compiler or stdlib fix removes
+  it, with no donor.
+
+The self-host parse is 13 kept, 2 wrapper and 25 scratch:
+
+| Allocations | Scratch | Where |
+| ---: | --- | --- |
+| 3 | `HeaderMap.append` takes a fresh box for `HeaderMap { ...h, … }` and frees the old one: the spread does not reuse the box it consumes | `headers.fern` `append` |
+| 14 | `Option`, `Result`, tuple and `__Head` boxes returned between the head parse's helpers: `Some(v)` per field value, `Ok(h)`, `Ok(p)`, `Ok(joined)`, `Length(n)` and its `Ok`, `__Head` and its `Ok`, the request-line and `__framed_body` tuples, the `line` default tuple, the `Some(0)` length | `__field_value`, `__request_line`, `__head`, `__framed_body`, `__http_content_length` |
+| 2 | `header_map_new()` for a default overwritten before it is read, and for the trailers of a request that has none | `__head`, `__framed_body` |
+| 6 | request-target scratch: the method and path strings built only to pass to `http_request_target`, the decoded `u8[]`, a string copy made only to check its UTF-8, the empty first segment, the segments array | `__request_line`, `__decoded_path`, `__joined_segments` |
+
+The serialize's 4 are the builder's two blocks, the copy `buf_take_bytes`
+makes of its contents, and the `phrases` `string[]` literal in
+`http_status_text`, rebuilt per call because the static constant pool holds
+scalar arrays but not arrays of strings.
+
+The Go compiler's 43 on x86-64 are 8 kept, 2 wrapper and 33 scratch. It
+reuses the `append` box and does not box `Some(v)`, but:
+
+- every `string_from_bytes_range` goes through a temporary `u8[]`, 9 in
+  all;
+- every empty `[]` allocates, 8 in all;
+- the default `Length(0)` is boxed;
+- `http_status_text`'s `codes` literal is not static.
+
+arm64 adds 10 and wasm adds 6, from strings the x86-64 backend keeps inline
+and from per-target boxing of `Some(v)`.
+
+### 5.2 What a donor buys
+
+At most the 13 kept allocations on the self-host, and 8 on the Go
+compiler. The 25 scratch allocations would still be there under a donor, so
+the scratch goes first. Each piece is a fix every program gets, not only a
+server, which is what slice 8 was meant to buy.
+
+### 5.3 Slices
+
+In this order, one PR each. Compiler slices are self-host first. A Go-compiler
+twin is a needless-allocation bugfix under `docs/NATIVE-FREEZE.md`, referenced
+on #4451, as slice 2 was.
+
+1. **An empty array literal is a constant.** The self-host's static-box plan
+   treats `[]` as constant, so a record whose fields are all constants,
+   `HeaderMap { names: [], values: [] }` among them, is one static box.
+   Removes the 2 `header_map_new()` boxes. Parse 40 to 38.
+2. **`h = h.append(…)` reuses `h`'s box.** At every call in the parse the
+   caller's `h` dies at the call, and the Go compiler already writes the
+   spread `HeaderMap { ...h, … }` into it; the self-host takes a fresh box.
+   The slice finds which half the self-host is missing, ownership passing
+   into the receiver or the spread pairing with an owned receiver
+   (`docs/REUSE-CONTRACT.md` R3), and fixes it there. Removes 3. Parse 38
+   to 35.
+3. **An array of string literals is static.** `phrases` joins the constant
+   pool. Serialize 4 to 3.
+4. **The request target decodes without scratch.** A target with no `%` and
+   no dot segment is the range itself, one string. One that needs decoding
+   checks its UTF-8 over the bytes, not over a copy. The two strings handed to
+   `http_request_target` are read as ranges of the buffer. Removes 6. Parse
+   35 to 29.
+5. **The head parse returns by writing, not by boxing.** The helpers that
+   return a tuple, `Option` or `Result` once per request are the 14 rows
+   above. Which fix applies is decided by the first measurement of this
+   slice: a niche `Option` of a pointer, which the Go compiler already has,
+   removes `Some(v)` for every program; the rest is either an unboxed
+   return of a small tuple or enum through the caller's frame, or the
+   `docs/FIP-PACKET-PROTOCOL.md` shape of the parse writing its findings
+   into the state it threads. The compiler fix is preferred where it
+   covers the case, since every caller gains. Removes 14. Parse 29 to 15.
+6. **The donor boundary.** What is left is the kept and wrapper rows and the
+   serialize's builder and copy. The connection record owns a request
+   record and a write buffer. The parse fills the request in place, the
+   handler borrows it, and the response is serialized into the connection's
+   buffer and sent from there. Designed against the residue slices 1 to 5
+   leave, which sets what has to be donated.
