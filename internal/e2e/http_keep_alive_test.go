@@ -37,7 +37,7 @@ func TestArm64DarwinHTTPKeepAlive(t *testing.T) {
 
 // TestWasmHTTPKeepAlive is the same loop against real wasi:sockets.
 func TestWasmHTTPKeepAlive(t *testing.T) {
-	component := buildLeakCheckComponentPrinting(t, e2eharness.WasiHTTPHandlerCensusSource(t, "../..", e2eharness.KeepAliveCycle), false, false)
+	component := buildLeakCheckCLIComponent(t, e2eharness.WasiHTTPHandlerCensusSource(t, "../..", e2eharness.KeepAliveCycle), false)
 	out := e2eharness.RunWasiHTTPKeepAlive(t, component, e2eharness.KeepAliveCycle)
 	allocs, frees, live := leakSummaryIn(t, out)
 	t.Logf("allocs=%d frees=%d live_bytes=%d", allocs, frees, live)

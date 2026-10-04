@@ -3682,7 +3682,8 @@ function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
     out = out + ": " + m.ret_type;
   }
   if (m.body.len() == 0) {
-    return (out + ";\n", f);
+    let (tr, g0) = emit_trailing(f, m.line);
+    return (out + ";" + tr + "\n", g0);
   }
   let (body, g) = print_block(m.body, 1, f);
   return (out + " " + body + "\n", g);

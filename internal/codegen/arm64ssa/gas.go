@@ -1638,6 +1638,10 @@ func emitTranscendentalRodata(w func(string, ...any)) {
 	for _, v := range fdlibm.TwoOverPiBits {
 		w("\t.quad 0x%016x", v)
 	}
+	w(".Lfc_logtab:")
+	for _, v := range fdlibm.LogData() {
+		w("\t.quad 0x%016x", v)
+	}
 	w(".text")
 }
 
@@ -1722,104 +1726,145 @@ func emitExpF64Helper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitLogF64Helper writes __log_f64(x) -> ln x. x = m*2^e with m normalised to
-// [sqrt2/2, sqrt2); f = m-1; s = f/(2+f). R is two INDEPENDENT chains in w = z^2
-// so they issue in parallel rather than as one 7-deep Horner. Domain-guarded:
-// without it log(0) returned -709.09 and log(-1) returned 0, because the bit
-// twiddling below extracts an exponent from 0 or +Inf.
+// emitLogF64Helper writes __log_f64(x) -> ln x, the table-driven kernel
+// internal/fdlibm/logtab.go documents, instruction for instruction the one
+// internal/codegen/arm64 emits. x9 holds .Lfc_logtab's address throughout.
 func emitLogF64Helper(w func(string, ...any)) {
 	ldc := func(reg, lbl string) {
 		w("\tadrp x12, %s", lbl)
 		w("\tadd x12, x12, #:lo12:%s", lbl)
 		w("\tldr %s, [x12]", reg)
 	}
+	imm := func(reg string, v uint64) {
+		op := "movz"
+		for sh := 48; sh >= 0; sh -= 16 {
+			if c := v >> sh & 0xffff; c != 0 {
+				w("\t%s %s, #%d, lsl #%d", op, reg, c, sh)
+				op = "movk"
+			}
+		}
+	}
 	w("")
 	w("%s:", fnLabel("__log_f64"))
 	w("\tfmov d0, x0")
+	w("\tadrp x9, .Lfc_logtab")
+	w("\tadd x9, x9, #:lo12:.Lfc_logtab")
+	imm("x11", fdlibm.LogNear1Lo)
+	w("\tsub x11, x0, x11")
+	imm("x13", fdlibm.LogNear1Hi-fdlibm.LogNear1Lo)
+	w("\tcmp x11, x13")
+	w("\tb.lo .Lssa_log_near1")
+	w("\tmov x10, x0")
+	w("\tlsr x11, x10, #52")
+	w("\tsub x11, x11, #1")
+	w("\tcmp x11, #0x7fe")
+	w("\tb.hs .Lssa_log_special")
+	w(".Lssa_log_main:")
+	imm("x13", fdlibm.LogOff)
+	w("\tsub x13, x10, x13")
+	w("\tasr x15, x13, #52")
+	w("\tscvtf d4, x15")
+	w("\tsub x10, x10, x15, lsl #52")
+	w("\tlsr x14, x13, #%d", 52-fdlibm.LogTableBits)
+	w("\tand x14, x14, #%d", 1<<fdlibm.LogTableBits-1)
+	w("\tadd x14, x14, x14, lsl #1")
+	w("\tadd x14, x9, x14, lsl #3")
+	w("\tfmov d0, x10")
+	w("\tlsr x10, x10, #%d", 51-fdlibm.LogTableBits)
+	w("\torr x10, x10, #1")
+	w("\tlsl x10, x10, #%d", 51-fdlibm.LogTableBits)
+	w("\tfmov d1, x10")
+	w("\tfsub d0, d0, d1")
+	w("\tldr d1, [x14, #%d]", fdlibm.LogRowsOff)
+	w("\tfmul d0, d0, d1")
+	ldc("d2", ".Lfc_ln2hi")
+	w("\tfmul d2, d4, d2")
+	w("\tldr d3, [x14, #%d]", fdlibm.LogRowsOff+8)
+	w("\tfadd d2, d2, d3")
+	w("\tfadd d3, d2, d0")
+	w("\tfsub d2, d2, d3")
+	w("\tfadd d2, d2, d0")
+	ldc("d5", ".Lfc_ln2lo")
+	w("\tfmul d4, d4, d5")
+	w("\tldr d5, [x14, #%d]", fdlibm.LogRowsOff+16)
+	w("\tfadd d4, d4, d5")
+	w("\tfadd d2, d2, d4")
+	w("\tfmul d5, d0, d0")
+	w("\tldp d16, d17, [x9]")
+	w("\tldp d18, d19, [x9, #16]")
+	w("\tfmul d6, d0, d17")
+	w("\tfadd d6, d6, d16")
+	w("\tfmul d7, d0, d19")
+	w("\tfadd d7, d7, d18")
+	w("\tfmul d7, d7, d5")
+	w("\tfadd d6, d6, d7")
+	ldc("d16", ".Lfc_half")
+	w("\tfmul d7, d5, d16")
+	w("\tfsub d2, d2, d7")
+	w("\tfmul d5, d0, d5")
+	w("\tfmul d5, d5, d6")
+	w("\tfadd d2, d2, d5")
+	w("\tfadd d0, d2, d3")
+	w("\tfmov x0, d0")
+	w("\tret")
+	w(".Lssa_log_near1:")
+	ldc("d1", ".Lfc_one")
+	w("\tfsub d0, d0, d1")
+	w("\tfmul d1, d0, d0")
+	w("\tfmul d2, d0, d1")
+	w("\tadd x11, x9, #%d", fdlibm.LogNear1Off)
+	for _, a := range []int{6, 3, 0} {
+		w("\tldp d16, d17, [x11, #%d]", 8*a)
+		w("\tldr d18, [x11, #%d]", 8*(a+2))
+		w("\tfmul d4, d0, d17")
+		w("\tfadd d4, d4, d16")
+		w("\tfmul d5, d1, d18")
+		w("\tfadd d4, d4, d5")
+		if a == 6 {
+			w("\tldr d19, [x11, #%d]", 8*9)
+			w("\tfmul d3, d2, d19")
+		} else {
+			w("\tfmul d3, d3, d2")
+		}
+		w("\tfadd d3, d3, d4")
+	}
+	w("\tfmul d3, d3, d2")
+	imm("x13", 0x41a0000000000000)
+	w("\tfmov d1, x13")
+	w("\tfmul d1, d1, d0")
+	w("\tfadd d4, d0, d1")
+	w("\tfsub d4, d4, d1")
+	w("\tfsub d5, d0, d4")
+	ldc("d16", ".Lfc_half")
+	w("\tfmul d6, d4, d4")
+	w("\tfmul d6, d6, d16")
+	w("\tfsub d7, d0, d6")
+	w("\tfsub d1, d0, d7")
+	w("\tfsub d1, d1, d6")
+	w("\tfadd d4, d4, d0")
+	w("\tfmul d5, d5, d16")
+	w("\tfmul d5, d5, d4")
+	w("\tfsub d1, d1, d5")
+	w("\tfadd d3, d3, d1")
+	w("\tfadd d0, d3, d7")
+	w("\tfmov x0, d0")
+	w("\tret")
+	w(".Lssa_log_special:")
+	w("\tlsl x13, x10, #1")
+	w("\tcbz x13, .Lssa_log_ninf")
 	w("\tfcmp d0, d0")
 	w("\tb.vs .Lssa_log_ret")
-	w("\tfmov d1, xzr")
-	w("\tfcmp d0, d1")
+	w("\tcmp x10, #0")
 	w("\tb.lt .Lssa_log_nan")
-	w("\tb.eq .Lssa_log_ninf")
-	w("\tmovz x14, #32752, lsl #48")
-	w("\tfmov d1, x14")
-	w("\tfcmp d0, d1")
+	w("\tcmp x11, #0x7fe")
 	w("\tb.eq .Lssa_log_ret")
-	// A subnormal stores exponent 0 — its magnitude is in the mantissa's
-	// leading zeros — so the field below reports the smallest normal
-	// exponent for every one of them. Scale into the normal range and take
-	// the 54 back off k. x13 carries the adjustment; it is dead until the
-	// mantissa mask below.
-	w("\tmov x13, #0")
-	ldc("d1", ".Lfc_minnorm")
-	w("\tfcmp d0, d1")
-	w("\tb.ge .Lssa_log_noscale")
-	ldc("d1", ".Lfc_two54")
+	imm("x13", 0x4330000000000000)
+	w("\tfmov d1, x13")
 	w("\tfmul d0, d0, d1")
-	w("\tmov x13, #54")
-	w(".Lssa_log_noscale:")
 	w("\tfmov x10, d0")
-	w("\tlsr x11, x10, #52")
-	w("\tand x11, x11, #0x7ff")
-	w("\tsub x11, x11, #1023")
-	w("\tsub x11, x11, x13")
-	w("\tmov x13, #1")
-	w("\tlsl x13, x13, #52")
-	w("\tsub x13, x13, #1")
-	w("\tand x10, x10, x13")
-	w("\tmov x14, #1023")
-	w("\tlsl x14, x14, #52")
-	w("\torr x10, x10, x14")
-	w("\tfmov d1, x10")
-	ldc("d2", ".Lfc_sqrt2")
-	w("\tfcmp d1, d2")
-	w("\tb.lt .Lssa_log_noadj")
-	ldc("d3", ".Lfc_half")
-	w("\tfmul d1, d1, d3")
-	w("\tadd x11, x11, #1")
-	w(".Lssa_log_noadj:")
-	ldc("d4", ".Lfc_one")
-	w("\tfsub d1, d1, d4")
-	ldc("d2", ".Lfc_two")
-	w("\tfadd d2, d2, d1")
-	w("\tfdiv d3, d1, d2")
-	w("\tfmul d4, d3, d3")
-	w("\tfmul d5, d4, d4")
-	ldc("d6", ".Lfc_lg6")
-	ldc("d20", ".Lfc_lg4")
-	w("\tfmul d6, d6, d5")
-	w("\tfadd d6, d6, d20")
-	ldc("d20", ".Lfc_lg2")
-	w("\tfmul d6, d6, d5")
-	w("\tfadd d6, d6, d20")
-	w("\tfmul d6, d6, d5")
-	ldc("d7", ".Lfc_lg7")
-	ldc("d20", ".Lfc_lg5")
-	w("\tfmul d7, d7, d5")
-	w("\tfadd d7, d7, d20")
-	ldc("d20", ".Lfc_lg3")
-	w("\tfmul d7, d7, d5")
-	w("\tfadd d7, d7, d20")
-	ldc("d20", ".Lfc_lg1")
-	w("\tfmul d7, d7, d5")
-	w("\tfadd d7, d7, d20")
-	w("\tfmul d7, d7, d4")
-	w("\tfadd d6, d6, d7")
-	w("\tfmul d2, d1, d1")
-	ldc("d16", ".Lfc_half")
-	w("\tfmul d2, d2, d16")
-	w("\tscvtf d0, x11")
-	ldc("d16", ".Lfc_ln2lo")
-	w("\tfmul d5, d0, d16")
-	w("\tfadd d6, d6, d2")
-	w("\tfmul d6, d6, d3")
-	w("\tfadd d6, d6, d5")
-	w("\tfsub d2, d2, d6")
-	w("\tfsub d2, d2, d1")
-	ldc("d16", ".Lfc_ln2hi")
-	w("\tfmul d0, d0, d16")
-	w("\tfsub d0, d0, d2")
+	imm("x13", 0x0340000000000000)
+	w("\tsub x10, x10, x13")
+	w("\tb .Lssa_log_main")
 	w(".Lssa_log_ret:")
 	w("\tfmov x0, d0")
 	w("\tret")
@@ -8775,42 +8820,13 @@ func emitArrPushGrowElemHelper(name, tag string, moveForm bool) func(w func(stri
 	}
 }
 
-// linuxStatFields projects Linux's asm-generic `struct stat` — the arm64
-// one, where mode / nlink / uid / gid are 32-bit up front and st_blksize
-// is a signed 32-bit word at 56 — onto FileStat. `narrow` loads a 32-bit
-// field into a 32-bit slot; `sext` sign-extends a signed 32-bit field
-// into a 64-bit slot; neither means a full 64-bit load.
-//
-// `size` is stored separately, before this table runs, because the kind
-// classification already has it in a register.
-var linuxStatFields = []struct {
-	box, src     int32
-	narrow, sext bool
-}{
-	{ir.FileStat.Mode, 16, true, false},
-	{ir.FileStat.Nlink, 20, true, false},
-	{ir.FileStat.UID, 24, true, false},
-	{ir.FileStat.GID, 28, true, false},
-	{ir.FileStat.Dev, 0, false, false},
-	{ir.FileStat.Rdev, 32, false, false},
-	{ir.FileStat.Ino, 8, false, false},
-	{ir.FileStat.Blksize, 56, false, true},
-	{ir.FileStat.Blocks, 64, false, false},
-	{ir.FileStat.Atime, 72, false, false},
-	{ir.FileStat.AtimeNsec, 80, false, false},
-	{ir.FileStat.Mtime, 88, false, false},
-	{ir.FileStat.MtimeNsec, 96, false, false},
-	{ir.FileStat.Ctime, 104, false, false},
-	{ir.FileStat.CtimeNsec, 112, false, false},
-}
-
-// emitStatHelper writes stat(path) -> Result[FileStat, IoError]: fstatat the
+// emitStatHelper writes stat(path) -> Result[FileStat, IoError]: statx the
 // path and report its kind and size. x0 = path (single-word string).
 //
 // Linux-only, like the rest of this emitter, so there are none of the flat
-// backend's darwin branches: fstatat is syscall 79, AT_FDCWD is -100, and the
-// 128-byte asm-generic struct stat is projected onto FileStat by
-// linuxStatFields.
+// backend's darwin branches: statx is syscall 291, AT_FDCWD is -100, and the
+// record is projected onto FileStat by the flat backend's
+// arm64.StatxProjection.
 //
 // Shape follows read_file exactly — the NUL-terminated path copy, the frame
 // statbuf, and the two boxed results — because they are the same contract:
@@ -8821,7 +8837,8 @@ func emitStatHelper(w func(string, ...any)) {
 }
 
 // emitFdStatHelper writes `__method_Reader_stat` / `__method_Writer_stat`
-// (handle) -> Result[FileStat, IoError]: fstat(2) of the fd at [handle+8],
+// (handle) -> Result[FileStat, IoError]: statx(fd, "", AT_EMPTY_PATH) of the
+// fd at [handle+8],
 // projected by the same body as stat(path). The errno is classified
 // against an empty path, as a failed read is.
 func emitFdStatHelper(name, lp string) func(w func(string, ...any)) {
@@ -9049,21 +9066,31 @@ func emitLstatHelper(w func(string, ...any)) {
 	emitStatLikeHelper(w, "lstat", 256, "lstat", false)
 }
 
-// emitStatLikeHelper is the shared body. `atFlags` is fstatat's flags word and
-// `lp` prefixes the local labels so both helpers can live in one object.
+// statFrame is emitStatLikeHelper's frame: 64 bytes of saved registers, the
+// statx record, and 16 more for the fd form's "".
+const statFrame = 64 + ir.StatxBytes + 16
+
+// emitStatLikeHelper is the shared body. `atFlags` is statx's flags word and
+// `lp` prefixes the local labels so both helpers can live in one object. The
+// frame is the saved registers, the statx record at sp+64 and, past it, the
+// "" the fd form names.
 func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp string, byFd bool) {
 	w("")
 	w("%s:", fnLabel(name))
-	w("\tstp x29, x30, [sp, #-256]!")
+	w("\tstp x29, x30, [sp, #-%d]!", statFrame)
 	w("\tmov x29, sp")
 	w("\tstp x19, x20, [sp, #16]")
 	w("\tstp x21, x22, [sp, #32]")
 	w("\tstp x23, x24, [sp, #48]")
 	if byFd {
-		// fstat(fd @ handle+8, statbuf@sp+64)
+		// statx(fd @ handle+8, "", AT_EMPTY_PATH, mask, statbuf@sp+64)
 		w("\tldr w0, [x0, #8]")
-		w("\tadd x1, sp, #64")
-		w("\tmov x8, #80") // fstat
+		w("\tstrb wzr, [sp, #%d]", 64+ir.StatxBytes)
+		w("\tadd x1, sp, #%d", 64+ir.StatxBytes)
+		w("\tmov x2, #4096") // AT_EMPTY_PATH
+		w("\tmov x3, #%d", ir.StatxMask)
+		w("\tadd x4, sp, #64")
+		w("\tmov x8, #291") // statx
 		w("\tsvc #0")
 		w("\ttbnz x0, #63, .Lssa%s_err", lp)
 		emitStatProjection(w, lp)
@@ -9078,19 +9105,20 @@ func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp str
 		w("\tldp x23, x24, [sp, #48]")
 		w("\tldp x21, x22, [sp, #32]")
 		w("\tldp x19, x20, [sp, #16]")
-		w("\tldp x29, x30, [sp], #256")
+		w("\tldp x29, x30, [sp], #%d", statFrame)
 		w("\tret")
 		return
 	}
 	w("\tmov x19, x0") // path
 	emitNulTermPathInline(w, lp)
-	// fstatat(AT_FDCWD, path_nul, statbuf@sp+64, 0).
+	// statx(AT_FDCWD, path_nul, atFlags, mask, statbuf@sp+64).
 	w("\tmov x0, #100")
 	w("\tneg x0, x0") // AT_FDCWD
 	w("\tmov x1, x24")
-	w("\tadd x2, sp, #64")
-	w("\tmov x3, #%d", atFlags)
-	w("\tmov x8, #79") // fstatat
+	w("\tmov x2, #%d", atFlags)
+	w("\tmov x3, #%d", ir.StatxMask)
+	w("\tadd x4, sp, #64")
+	w("\tmov x8, #291") // statx
 	w("\tsvc #0")
 	w("\ttbnz x0, #63, .Lssa%s_err", lp)
 	emitStatProjection(w, lp)
@@ -9103,7 +9131,7 @@ func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp str
 	w("\tldp x23, x24, [sp, #48]")
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
-	w("\tldp x29, x30, [sp], #256")
+	w("\tldp x29, x30, [sp], #%d", statFrame)
 	w("\tret")
 }
 
@@ -9238,9 +9266,9 @@ func emitStatfsHelper(w func(string, ...any)) {
 // statbuf at sp+64 read into a fresh FileStat box, wrapped in Ok, with the
 // Result pointer left in x0.
 func emitStatProjection(w func(string, ...any), lp string) {
-	w("\tldr w9, [sp, #80]")   // st_mode (u32 @ statbuf+16)
-	w("\tldr x22, [sp, #112]") // st_size (i64 @ statbuf+48)
-	w("\tmov w11, #61440")     // S_IFMT
+	w("\tldrh w9, [sp, #%d]", 64+ir.StatxModeOff)
+	w("\tldr x22, [sp, #%d]", 64+ir.StatxSizeOff)
+	w("\tmov w11, #61440") // S_IFMT
 	w("\tand w9, w9, w11")
 	w("\tmov x20, #0")     // is_file
 	w("\tmov w10, #32768") // S_IFREG
@@ -9269,19 +9297,12 @@ func emitStatProjection(w func(string, ...any), lp string) {
 	w("\tstr w20, [x23]")
 	w("\tstr w21, [x23, #4]")
 	w("\tstr x22, [x23, #%d]", ir.FileStat.Size)
-	for _, f := range linuxStatFields {
-		if f.sext {
-			w("\tldrsw x9, [sp, #%d]", 64+f.src)
-			w("\tstr x9, [x23, #%d]", f.box)
+	for _, line := range arm64.StatxProjection("sp", 64, "x23", ".Lssa"+lp+"_bt") {
+		if strings.HasSuffix(line, ":") {
+			w("%s", line)
 			continue
 		}
-		if f.narrow {
-			w("\tldr w9, [sp, #%d]", 64+f.src)
-			w("\tstr w9, [x23, #%d]", f.box)
-			continue
-		}
-		w("\tldr x9, [sp, #%d]", 64+f.src)
-		w("\tstr x9, [x23, #%d]", f.box)
+		w("\t%s", line)
 	}
 	// Result.Ok(FileStat): box {rc=1, tag=0, filestat@+8}.
 	w("\tadrp x3, %s", heapPtrSym)

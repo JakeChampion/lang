@@ -32,7 +32,7 @@ function main(): i32 {
 		{"instant_now_formatted", "s = time.instant_now().format_http_date();"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			component := buildLeakCheckComponentPrinting(t, loop(tc.call), false, false)
+			component := buildLeakCheckCLIComponent(t, loop(tc.call), false)
 			_, stderr, code := runComponent(t, component, runOpts{})
 			allocs, frees, live := leakSummaryIn(t, stderr)
 			if code != 0 || allocs != frees || live != 0 {

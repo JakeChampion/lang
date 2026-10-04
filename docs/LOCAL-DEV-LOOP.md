@@ -423,8 +423,9 @@ treating genuine compiler regressions as infra.
 - **125** (`ExitArenaExhausted`) — `__fern_alloc`'s bounds check fired: the
   fixed bump arena is full. A REAL failure, reproducible locally, and almost
   always a leak. 125 is clear of the 128+signal range so nothing can forge it,
-  and under WASI's 126 ceiling so it survives wasmtime. Pinned across all five
-  emitters by `internal/e2e/arena_exit_code_test.go`.
+  and under WASI's 126 ceiling so it survives wasmtime. Pinned across the
+  self-host emitters by `internal/e2e/arena_exit_code_test.go`
+  (`e2eharness.ExitArenaExhausted`).
 - **137** (128+9, SIGKILL) — the host ran out of RAM. Also reads as `signal:
   killed` from the self-host compiler building a driver, or `as`/gcc dying on
   a link. Retry with a smaller budget per the knobs above. This is *total-RAM* pressure, not a

@@ -13,7 +13,7 @@ func TestWasmUDPLifecycleCensus(t *testing.T) {
 	for _, data := range []string{"", "x", "abcdefgh"} {
 		t.Run(data, func(t *testing.T) {
 			src, received := e2eharness.WasiUDPCensusProbe(t, data)
-			component := buildLeakCheckComponent(t, src, false)
+			component := buildLeakCheckCLIComponent(t, src, false)
 			e2eharness.CheckWasiSocketCensus(t, component)
 			received()
 		})
