@@ -55,13 +55,13 @@ function main(): i32 { return 0; }`)
 	}
 	fn := prog.Funcs[0]
 	// The same spelling in user code must not acquire the intrinsic contract.
-	if got := inferParamCountedRetain(prog, info, nil)[fn.Name]; len(got) != 1 || got[0] {
+	if got := inferParamCountedRetain(prog, info)[fn.Name]; len(got) != 1 || got[0] {
 		t.Fatalf("user method received intrinsic credit: %v", got)
 	}
 	fn.SourceFile = "stdlib://std/string.fern"
 	for name, got := range map[string][]bool{
-		"counted":            inferParamCountedRetain(prog, info, nil)[fn.Name],
-		"no uncounted alias": inferParamNoUncountedAlias(prog, info, nil)[fn.Name],
+		"counted":            inferParamCountedRetain(prog, info)[fn.Name],
+		"no uncounted alias": inferParamNoUncountedAlias(prog, info)[fn.Name],
 	} {
 		if len(got) != 1 || !got[0] {
 			t.Errorf("%s = %v, want [true]", name, got)

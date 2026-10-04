@@ -89,7 +89,7 @@ func TestScanExternImportsAsyncScalar(t *testing.T) {
 // TestScanExternImportsAsyncString pins the string-result case of the async
 // import: `@import(...) async function fetch(): string` lowers to the same raw
 // `(retptr) -> i32 status` async-lower import, plus a wrapper that lifts the
-// return-area (ptr,len) into a Fern string. It pulls in __bytes_to_lang_string
+// return-area (ptr,len) into a Fern string. It pulls in __fern_str_copy
 // (the lift) and cabi_realloc (the lower's realloc option materialises the host
 // bytes in this module's memory), and the wrapper's result is the Fern heap
 // string pair (i32, i32). See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
@@ -124,7 +124,7 @@ func TestScanExternImportsAsyncString(t *testing.T) {
 	if len(w.results) != 2 || w.results[0] != encode.ValtypeI32 || w.results[1] != encode.ValtypeI32 {
 		t.Errorf("wrapper results = %v, want [i32 i32] (Fern heap string)", w.results)
 	}
-	for _, h := range []string{"fetch", "__fern_alloc", "__bytes_to_lang_string", "cabi_realloc"} {
+	for _, h := range []string{"fetch", "__fern_alloc", "__fern_str_copy", "cabi_realloc"} {
 		if !helpers.set[h] {
 			t.Errorf("helper %q not pulled in for the async string import", h)
 		}
@@ -315,7 +315,7 @@ func TestScanExternImportsAsyncMixedMultiParam(t *testing.T) {
 // result quadrant — `@import async function echo(s: string): string`. The raw
 // import flattens to `(ptr, len, retptr) -> i32 status`, the wrapper's result is
 // the Fern heap string pair (i32, i32), and it pulls in the string-lift helpers
-// (__bytes_to_lang_string) AND cabi_realloc (the lower's realloc materialises the
+// (__fern_str_copy) AND cabi_realloc (the lower's realloc materialises the
 // result bytes in this module's memory) on top of the string-param normalisation
 // helpers.
 func TestScanExternImportsAsyncMemParamStringResult(t *testing.T) {
@@ -340,7 +340,7 @@ func TestScanExternImportsAsyncMemParamStringResult(t *testing.T) {
 	if len(w.results) != 2 || w.results[0] != encode.ValtypeI32 || w.results[1] != encode.ValtypeI32 {
 		t.Errorf("wrapper results = %v, want [i32 i32] (Fern heap string)", w.results)
 	}
-	for _, h := range []string{"echo", "__fern_alloc", "__fern_str_len", "__fern_str_byte", "__bytes_to_lang_string", "cabi_realloc"} {
+	for _, h := range []string{"echo", "__fern_alloc", "__fern_str_len", "__fern_str_byte", "__fern_str_copy", "cabi_realloc"} {
 		if !helpers.set[h] {
 			t.Errorf("helper %q not pulled in for the async string-param/string-result import", h)
 		}

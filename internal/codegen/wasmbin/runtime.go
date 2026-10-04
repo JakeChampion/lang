@@ -1352,12 +1352,11 @@ var unconditionalHelperCalls = map[string][]string{
 	// variant's message string is an rc1 block.
 	"__build_io_error": {"__fern_alloc_rc1", "__fern_alloc_box"},
 	"__http_entry": {
-		"__fern_alloc", "__alloc_u8", "__bytes_to_lang_string",
+		"__fern_alloc", "__alloc_u8", "__fern_str_copy", "__fern_str_dec",
 		"__fern_arr_dec", "__free",
 		// emitStrNormalize, for outgoing header names and values.
 		"__fern_str_len", "__fern_str_byte",
 	},
-	"__bytes_to_lang_string":  {"__fern_alloc"},
 	"__fern_str_dec":          {"__fern_box_free"},
 	"__fern_str_rc_dec":       {"__fern_rc_dec"},
 	"__fern_box_free":         {"__free"},
@@ -3580,15 +3579,6 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildHttpEntryBody,
-	},
-	"__bytes_to_lang_string": {
-		// (host_ptr, host_len) → (data, len) — heap-form lang
-		// string built by memcpy'ing the host bytes. Used by the
-		// http_entry wrapper to materialise method / path / body
-		// strings from the canonical-ABI return areas.
-		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
-		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
-		body:    buildBytesToLangStringBody,
 	},
 	"cabi_realloc": {
 		// (orig_ptr, orig_size, align, new_size) → i32 — the

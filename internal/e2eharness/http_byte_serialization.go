@@ -61,7 +61,7 @@ func HTTPByteSerializationOutput() []byte {
 	add := func(status int, body []byte, headOnly, keepAlive, proof bool) {
 		header := fmt.Sprintf("HTTP/1.1 %d %s\r\n", status, http.StatusText(status))
 		if proof {
-			header += "x-proof: ok\r\n"
+			header += "X-Proof: ok\r\n"
 		}
 		bodiless := status < 200 || status == 204 || status == 304
 		if !bodiless {

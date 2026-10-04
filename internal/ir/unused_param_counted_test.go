@@ -65,22 +65,3 @@ func TestUnusedParameterIsCountedRetain(t *testing.T) {
 		})
 	}
 }
-
-// The mirror: a parameter that IS retained uncounted must stay
-// uncredited, so the caller keeps the taint that stops it freeing a
-// value the callee kept a reference to. This is the direction whose
-// failure mode is a use-after-free rather than a leak. The fixture is
-// the bare return — the canonical uncounted hand-out; the
-// pushed-into-a-returned-array shape this test used to hold moved to
-// the credited side when the #7914 element credit made that store
-// counted (TestStringParamPushedElementIsCounted).
-func TestUncountedRetentionStaysUncredited(t *testing.T) {
-	src := `function keep(s: string): string { return s; }`
-	got := paramCountedFor(t, src, "keep")
-	if len(got) != 1 {
-		t.Fatalf("got %d flags, want 1", len(got))
-	}
-	if got[0] {
-		t.Error("a parameter handed out bare must not be credited")
-	}
-}

@@ -454,7 +454,7 @@ All three pieces landed:
   layout); the host materialises the result bytes in the consumer's memory.
 - (b) **wasmbin string lift**: `scanExternImports`' async branch handles a
   `string` result (`buildExternAsyncStringResultWrapper`, pulling in
-  `__bytes_to_lang_string` + `cabi_realloc`; `TestScanExternImportsAsyncString`).
+  `__fern_str_copy` + `cabi_realloc`; `TestScanExternImportsAsyncString`).
 - (c) **e2e**: `TestWasmP3AsyncImportStringFromFern` compiles a real Fern
   `@import async function fetch(): string` + `async function run(): i32 {
   let s = fetch(); return s.len(); }`, composes it against the proven
@@ -560,7 +560,7 @@ task-returns `len + n`), and runs `run()` → **42** (len "hi" = 2, + 40).
 source.** The last param×result quadrant: an async import that BOTH takes a mem
 param AND returns a `string`/numeric-`list<T>` (the HTTP-like `fetch(url) ->
 body` shape). `buildExternAsyncMemParamWrapper` gained a result-kind tail
-(scalar read / `string` lift via `__bytes_to_lang_string` / `list` copy into a
+(scalar read / `string` lift via `__fern_str_copy` / `list` copy into a
 length-prefixed Fern array); `scanExternImports` accepts a scalar/string/list
 result there and pulls in `cabi_realloc` (the lower's realloc materialises the
 result bytes in the consumer's memory — `NeedsRealloc`). The provider side adds

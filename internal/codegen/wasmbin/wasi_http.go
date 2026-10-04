@@ -63,53 +63,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/numeric"
 )
 
-// buildBytesToLangStringBody assembles __bytes_to_lang_string.
-//
-// Signature: (host_ptr, host_len) → (data, len) — a two-word
-// heap-form string built from a host byte buffer.
-//
-// Always allocates a fresh n-byte heap buffer and memory.copys
-// the host bytes in, then returns the (buf, n) pair. The WAT
-// path has an SSO-inline fast path for n ≤ 7 that packs the
-// bytes into the (data, len) i32 directly; the wasmbin slice
-// keeps things simple with a uniform heap copy. Per-request
-// arenas mean the overhead is reclaimed at request boundary.
-//
-// Locals (after the two params):
-//
-//	2: $buf — fresh heap buffer
-func buildBytesToLangStringBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
-
-	var body []byte
-
-	// if host_len == 0: return (0, 0).
-	body = inst.InstLocalGet(body, 1)
-	body = numeric.InstI32Eqz(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	{
-		body = inst.InstI32Const(body, 0)
-		body = inst.InstI32Const(body, 0)
-		body = inst.InstReturn(body)
-	}
-	body = inst.InstEnd(body)
-
-	// $buf = alloc(host_len); memory.copy($buf, host_ptr, host_len).
-	body = inst.InstLocalGet(body, 1)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 2)
-	body = inst.InstLocalGet(body, 0)
-	body = inst.InstLocalGet(body, 1)
-	body = memory.InstMemoryCopy(body)
-
-	// return ($buf, host_len).
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstLocalGet(body, 1)
-
-	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
-	return inst.PutFunctionBody(nil, locals, body)
-}
-
 // buildCabiReallocBody assembles `cabi_realloc`.
 //
 // Signature: (orig_ptr, orig_size, align, new_size) → i32 (new ptr).
@@ -192,7 +145,7 @@ func synthResponse(body []byte, alloc uint32, status int32) []byte {
 //  1. Snapshot arena, alloc 64-byte retptr scratch.
 //  2. Read method via incoming-request.method (variant: short
 //     methods like GET/POST get a dispatch into pre-known
-//     strings, OTHER falls through to a `__bytes_to_lang_string`
+//     strings, OTHER falls through to a `__fern_str_copy`
 //     of the host bytes).
 //  3. Read path-with-query (option<string>). None → empty string.
 //  4. Capture the headers fields handle BEFORE consume (the
@@ -202,7 +155,8 @@ func synthResponse(body []byte, alloc uint32, status int32) []byte {
 //  6. Drop incoming-request.
 //  7. Build the HttpRequest struct (28 bytes + rc header); populate the
 //     HeaderMap from fields.entries via the lang-side
-//     __method_HeaderMap_append.
+//     __method_HeaderMap_append, handing it owned copies of each name
+//     and value.
 //  8. Drop the fields handle.
 //  9. Call `__fern_wasi_handle`, which hands the host platform to the user
 //     `handle(req_struct, plat)`.
@@ -219,9 +173,7 @@ func synthResponse(body []byte, alloc uint32, status int32) []byte {
 // canonical-ABI Other branch (slot 4/8 ptr/len) for every method.
 // The WAT path hardcodes GET/POST/PUT/… via a br_table for
 // pointer-eq speedups; the wasmbin slice uses a uniform
-// __bytes_to_lang_string round-trip for now. Per-request arenas
-// hide the cost. A future PR can land the inline-packed fast
-// paths.
+// __fern_str_copy round-trip for now.
 //
 // Locals (after the 2 params):
 //
@@ -275,18 +227,13 @@ func synthResponse(body []byte, alloc uint32, status int32) []byte {
 //	44: $req_body_arr
 //	45: $req_body_stream
 //	49: $past_cap (the body would pass httpBodyCap)
-//
-// TODO: emit a method-name br_table that pins the
-// common HTTP verbs to pre-interned inline-form string constants
-// for fast pointer-equality compares against user code's `req.method
-// == "GET"`. The wasmbin slice shipped here goes through
-// __bytes_to_lang_string for every method; the result is
-// functionally equivalent but loses the SSO compare seam. Track
-// in the wasi-http parity PR (next in the series).
+//	50: $hdr_name_data   51: $hdr_name_len
+//	52: $hdr_value_data  53: $hdr_value_len
 func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	allocU8 := idxs["__alloc_u8"]
-	bytesToStr := idxs["__bytes_to_lang_string"]
+	strCopy := idxs["__fern_str_copy"]
+	strDec := idxs["__fern_str_dec"]
 	hmAppend, hasHMAppend := idxs["__method_HeaderMap_append"]
 	bodyBytes, hasBodyBytes := idxs["__method_HttpResponse_body_bytes"]
 	handleFn, hasHandle := idxs["__fern_wasi_handle"]
@@ -327,7 +274,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	// HTTP verbs the payload is empty (the verb is implied by the
 	// discriminant). To keep the wasmbin slice compact we always
 	// read the (ptr, len) slot and round-trip through
-	// __bytes_to_lang_string. For Other (disc=9) the host filled
+	// __fern_str_copy. For Other (disc=9) the host filled
 	// the ptr/len with the verb bytes; for known verbs the canonical
 	// ABI still writes a 0-len pair (some hosts fill with the verb
 	// text anyway). The dispatch-by-disc fast paths come in a
@@ -364,7 +311,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalSet(body, 12) // $host_len
 		body = inst.InstLocalGet(body, 11)
 		body = inst.InstLocalGet(body, 12)
-		body = inst.InstCall(body, bytesToStr)
+		body = inst.InstCall(body, strCopy)
 		body = inst.InstLocalSet(body, 6) // $path_len
 		body = inst.InstLocalSet(body, 5) // $path_data
 		body = inst.InstI32Const(body, 0) // dummy result for if (i32)
@@ -727,14 +674,19 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 			body = numeric.InstI32Mul(body)
 			body = numeric.InstI32Add(body)
 			body = inst.InstLocalSet(body, 33)
-			// __method_HeaderMap_append(headers, name_data, name_len, value_data, value_len)
-			body = inst.InstLocalGet(body, 27) // headers struct ptr
-			body = inst.InstLocalGet(body, 33) // entry_addr → name_data
+			// The entry's bytes are the host's canonical-ABI buffers, with
+			// no rc header for a retain to land on: copy each into an owned
+			// string. append borrows both and retains what it keeps, so the
+			// copies are released after the call.
+			body = inst.InstLocalGet(body, 33) // name_data
 			body = memory.InstI32Load(body, 2, 0)
 			body = inst.InstLocalGet(body, 33)
 			body = inst.InstI32Const(body, 4)
 			body = numeric.InstI32Add(body)
 			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstCall(body, strCopy)
+			body = inst.InstLocalSet(body, 51) // name_len
+			body = inst.InstLocalSet(body, 50) // name_data
 			body = inst.InstLocalGet(body, 33)
 			body = inst.InstI32Const(body, 8)
 			body = numeric.InstI32Add(body)
@@ -743,10 +695,27 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 			body = inst.InstI32Const(body, 12)
 			body = numeric.InstI32Add(body)
 			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstCall(body, strCopy)
+			body = inst.InstLocalSet(body, 53) // value_len
+			body = inst.InstLocalSet(body, 52) // value_data
+			// __method_HeaderMap_append(headers, name, value)
+			body = inst.InstLocalGet(body, 27) // headers struct ptr
+			body = inst.InstLocalGet(body, 50)
+			body = inst.InstLocalGet(body, 51)
+			body = inst.InstLocalGet(body, 52)
+			body = inst.InstLocalGet(body, 53)
 			body = inst.InstCall(body, hmAppend)
 			// append now RETURNS the new HeaderMap — rebind
 			// local 27 so the next iteration appends onto it.
 			body = inst.InstLocalSet(body, 27)
+			body = inst.InstLocalGet(body, 50)
+			body = inst.InstLocalGet(body, 51)
+			body = inst.InstCall(body, strDec)
+			body = inst.InstDrop(body)
+			body = inst.InstLocalGet(body, 52)
+			body = inst.InstLocalGet(body, 53)
+			body = inst.InstCall(body, strDec)
+			body = inst.InstDrop(body)
 			// entry_i++
 			body = inst.InstLocalGet(body, 32)
 			body = inst.InstI32Const(body, 1)
@@ -1085,11 +1054,11 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, idxs["__fern_arr_dec"])
 	body = inst.InstDrop(body)
 
-	// 48 i32 locals after the 2 params (slots 2..49). Slot 24
+	// 52 i32 locals after the 2 params (slots 2..53). Slot 24
 	// (formerly $arena_handle) is now unused: per-request memory
 	// is reclaimed by reference counting, not a bump-cursor reset.
 	// Kept allocated to avoid renumbering slots 25..48.
-	locals := inst.PutLocalsOneGroup(nil, 48, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 52, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
@@ -1111,15 +1080,14 @@ func emitEmptyStrArray(body []byte, idxs map[string]uint32, slot uint32) []byte 
 // discriminant to map onto pre-interned inline-form strings for the
 // nine canonical HTTP verbs. wasmbin doesn't have a br_table
 // convenience in inst/, so this slice runs the host bytes through
-// __bytes_to_lang_string unconditionally — functionally equivalent,
-// but the SSO compare seam is lost. Tracked in the parity TODO at
-// the top of the wrapper.
+// __fern_str_copy unconditionally, which inline-packs every verb of
+// seven bytes or fewer.
 //
 // Stack on entry: empty (the caller just made the wasi-http method
 // call; the variant is in mem[retptr..retptr+12]).
 // Stack on exit:  empty.
 func emitMethodDispatch(body []byte, idxs map[string]uint32) []byte {
-	bytesToStr := idxs["__bytes_to_lang_string"]
+	strCopy := idxs["__fern_str_copy"]
 
 	// disc = mem[retptr + 0] (i32, but only bit 0..3 are meaningful)
 	body = inst.InstLocalGet(body, 2)
@@ -1171,7 +1139,7 @@ func emitMethodDispatch(body []byte, idxs map[string]uint32) []byte {
 	body = inst.InstLocalSet(body, 12)
 	body = inst.InstLocalGet(body, 11)
 	body = inst.InstLocalGet(body, 12)
-	body = inst.InstCall(body, bytesToStr)
+	body = inst.InstCall(body, strCopy)
 	body = inst.InstLocalSet(body, 4) // method_len
 	body = inst.InstLocalSet(body, 3) // method_data
 	body = inst.InstEnd(body)         // end outer block

@@ -30,8 +30,8 @@ function test_user_headers_before_auto_block(): test.TestOutcome {
   return test.assert_eq(
     wire,
     "HTTP/1.1 200 OK\r\n"
-      + "x-trace-id: abc123\r\n"
-      + "cache-control: no-store\r\n"
+      + "X-Trace-Id: abc123\r\n"
+      + "Cache-Control: no-store\r\n"
       + "Content-Length: 5\r\n"
       + "Connection: close\r\n"
       + "\r\n"
@@ -80,8 +80,8 @@ function test_duplicate_set_cookie_via_append(): test.TestOutcome {
   return test.assert_eq(
     wire,
     "HTTP/1.1 200 OK\r\n"
-      + "set-cookie: a=1\r\n"
-      + "set-cookie: b=2\r\n"
+      + "Set-Cookie: a=1\r\n"
+      + "Set-Cookie: b=2\r\n"
       + "Content-Length: 2\r\n"
       + "Connection: close\r\n"
       + "\r\n"
@@ -97,7 +97,7 @@ function test_duplicate_set_cookie_both_in_order(): test.TestOutcome {
   let wire: string = http.http_serialize_response(r);
   return test.assert_contains_in_order(
     wire,
-    ["set-cookie: a=1", "set-cookie: b=2"],
+    ["Set-Cookie: a=1", "Set-Cookie: b=2"],
   );
 }
 

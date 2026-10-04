@@ -1724,8 +1724,8 @@ func TestLowerStringReclaimOnNative(t *testing.T) {
 // the retention is COUNTED and the caller's release nets against it (the
 // stored copy stays owned by the buffer, never dangles). The caller therefore
 // reclaims `s` — the behaviour the blanket taint used to block, stranding the
-// buffer once per call. A callee whose retention really is uncounted (a bare
-// `return s`) keeps the taint: TestStringParamPushedThenReturnedBareStaysUncredited.
+// buffer once per call. A callee whose retention really is uncounted keeps the
+// taint: TestStringParamThatIsRetainedStaysUncredited.
 func TestLowerStringPassedToPushRetainingFnIsReclaimedNative(t *testing.T) {
 	p := lowerSourceWith(t, `function keep(s: string): string[] { let xs: string[] = []; return xs.append(s); }
 function build(): i32 {

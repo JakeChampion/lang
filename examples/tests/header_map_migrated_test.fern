@@ -74,6 +74,37 @@ function test_get_all_on_missing_is_empty(): test.TestOutcome {
   return test.assert_eq(h.get_all("Y").len(), 0);
 }
 
+function test_append_keeps_spelling(): test.TestOutcome {
+  let h: HeaderMap = headers.header_map_new();
+  h = h.append("X-Request-ID", "1");
+  return test.assert_eq(h.names[0], "X-Request-ID");
+}
+
+function test_set_takes_callers_spelling(): test.TestOutcome {
+  let h: HeaderMap = headers.header_map_new();
+  h = h.append("content-type", "text/plain");
+  h = h.append("Accept", "*/*");
+  h = h.set("Content-Type", "application/json");
+  if (h.len() != 2) {
+    return test.fail("set added an entry instead of replacing one");
+  }
+  return test.assert_eq_array(h.names, ["Content-Type", "Accept"]);
+}
+
+function test_get_all_ignores_case(): test.TestOutcome {
+  let h: HeaderMap = headers.header_map_new();
+  h = h.append("Via", "a");
+  h = h.append("VIA", "b");
+  h = h.append("via", "c");
+  return test.assert_eq_array(h.get_all("vIa"), ["a", "b", "c"]);
+}
+
+function test_fold_is_ascii_only(): test.TestOutcome {
+  let h: HeaderMap = headers.header_map_new();
+  h = h.append("x-K", "kelvin");
+  return test.assert_is_none_string(h.get("x-k"));
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("HeaderMap (migrated)");
   r = r.it(
@@ -99,6 +130,22 @@ function main(): i32 {
   r = r.it(
     "get_all on missing name is empty",
     test_get_all_on_missing_is_empty,
+  );
+  r = r.it(
+    "append keeps the name's spelling",
+    test_append_keeps_spelling,
+  );
+  r = r.it(
+    "set takes the caller's spelling in place",
+    test_set_takes_callers_spelling,
+  );
+  r = r.it(
+    "get_all ignores case",
+    test_get_all_ignores_case,
+  );
+  r = r.it(
+    "names fold ASCII only",
+    test_fold_is_ascii_only,
   );
   return r.finish();
 }

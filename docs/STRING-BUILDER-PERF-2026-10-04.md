@@ -53,11 +53,11 @@ only the exact output storage and retains the builder's capacity.
 
 The extra code implements the text contract, including malformed input;
 removing it would restore the invalid-string bug. The attribution found no
-growth outside these helpers. The baseline records that required feature
-cost with the existing tolerance unchanged.
+growth outside these helpers. The proposed baseline update recorded that
+required feature cost with the existing tolerance unchanged.
 
 The previous ARM retired-instruction baseline was 160540548, predating
-separate HTTP improvements. The new value also records that earlier gain.
+separate HTTP improvements. The measured value also records that earlier gain.
 The relevant cost of this change is the before/after comparison above,
 not a claimed speedup against the stale baseline. x86-64 retired
 instructions remain within the existing tolerance and that baseline is
@@ -65,3 +65,15 @@ unchanged.
 
 Native primary-compiler builder measurements are tracked separately from
 this deterministic Go-compiler gate.
+
+## Subsequent main integration
+
+Main subsequently merged the header implementation in PR #11500. Its
+baseline supersedes the proposed update above: x86-64 static instructions
+28820 and retired instructions 105296421; ARM64 static instructions 37034
+and retired instructions 123332537. Those values retain the required UTF-8
+decoder and record the separate header optimization. The combined branch
+keeps main's values. The integrated branch reproduced both static counts
+and the ARM64 retired-instruction count exactly. The x86-64 retired count
+remains subject to native x86-64 CI. The historical attribution above
+remains specific to the two stated revisions.

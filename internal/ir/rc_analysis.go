@@ -1240,47 +1240,32 @@ func shadowingNames(fn *ast.FuncDecl, info *checker.Info) map[string]bool {
 }
 
 // inferParamCountedRetain answers the question countedArgTemp asks: may the
-// caller dec a FRESH TEMP immediately after the call? A bare `return p` of a
-// borrowed parameter is refused there, and deliberately — every hazard the
-// refusal tests name is that path's ("crediting it double-frees the caller's
-// temp", "lets the caller free a buffer the result points at").
-func inferParamCountedRetain(prog *ast.Program, info *checker.Info, trmcFuncs map[string]bool) map[string][]bool {
-	return inferParamRetainSummary(prog, info, trmcFuncs, false)
+// caller dec a FRESH TEMP immediately after the call? Yes when everything the
+// callee keeps of the parameter, its result included, holds a count of its
+// own. A bare `return p` does: the return-transfer inc fires (`function
+// handout(a: string): string { return a; }` lowers to `local.load; rc.inc;
+// return`) and nothing can cancel it, since move-on-return needs an owned rc
+// LOCAL and a parameter is never one. Refusing it stranded every fresh temp
+// passed through a pass-through helper, one per call (#11479).
+func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][]bool {
+	return inferParamRetainSummary(prog, info, false)
 }
 
 // inferParamNoUncountedAlias answers the WEAKER question computeFreeEligible's
 // string-argument taint asks: may the caller's own LOCAL keep its scope-exit
-// release? That needs only "the callee retains no UNCOUNTED alias of this
-// parameter", and a bare `return p` satisfies it — the return-transfer inc
-// fires (`function handout(a: string): string { return a; }` lowers to
-// `local.load; rc.inc; return`) and nothing can cancel it, since
-// move-on-return needs an owned rc LOCAL and a parameter is never one. So the
-// caller receives a count of its own and releasing its local leaves the
-// result's intact.
-//
-// Refusing that cost the caller its release: `let out = data; out = f(out);`
-// — every buffer threaded through a helper with a pass-through path — kept
-// the seed's transfer inc with nothing to spend it, one reference per call.
-// `coreutils/dd.fern`'s `out = apply_case(out, tab, s.conv)` stranded a whole
-// 64 KiB read buffer per record: 40.2 ms against GNU's 3.6 on a 64 MiB copy
-// with 37.6 ms of it in system time, because every record's buffer was a
-// fresh mapping. After, 2.2 ms against 2.7 (#9246).
-//
-// Two summaries rather than one relaxed summary, so the stricter table and
-// the refusals pinned on it are untouched.
-func inferParamNoUncountedAlias(prog *ast.Program, info *checker.Info, trmcFuncs map[string]bool) map[string][]bool {
-	return inferParamRetainSummary(prog, info, trmcFuncs, true)
+// release? It additionally credits frame-bound string aliases
+// (frameBoundStringAliases), which retain nothing of their own but whose
+// verdict for a fresh temp is a separate question (#9549).
+func inferParamNoUncountedAlias(prog *ast.Program, info *checker.Info) map[string][]bool {
+	return inferParamRetainSummary(prog, info, true)
 }
 
-func inferParamRetainSummary(prog *ast.Program, info *checker.Info, trmcFuncs map[string]bool, creditBareReturn bool) map[string][]bool {
+func inferParamRetainSummary(prog *ast.Program, info *checker.Info, creditFrameBoundAlias bool) map[string][]bool {
 	// Precompute the shadowed-name set per function once (match / match-expr
-	// bindings that reuse a parameter name), and the consumed-threaded string
-	// params whose entry retain makes a bare `return p` the frame's own
-	// reference rather than the caller's.
+	// bindings that reuse a parameter name).
 	type fnCtx struct {
 		shadowed    map[string]bool
 		ctorCounted func(*ast.Call) bool
-		consumedStr map[string]bool
 	}
 	ctxs := make(map[*ast.FuncDecl]fnCtx, len(prog.Funcs))
 	out := newSummaryTable[[]bool](len(prog.Funcs))
@@ -1289,7 +1274,7 @@ func inferParamRetainSummary(prog *ast.Program, info *checker.Info, trmcFuncs ma
 			continue
 		}
 		sh := shadowingNames(fn, info)
-		ctxs[fn] = fnCtx{sh, variantCtorCountedIn(fn, info, sh), consumedStringParams(fn, info, trmcFuncs)}
+		ctxs[fn] = fnCtx{sh, variantCtorCountedIn(fn, info, sh)}
 		out.vals[fn.Name] = make([]bool, len(fn.Params))
 	}
 	// Least-fixpoint: struct-param crediting consults the summary for the
@@ -1312,7 +1297,7 @@ func inferParamRetainSummary(prog *ast.Program, info *checker.Info, trmcFuncs ma
 		if !ok {
 			return false
 		}
-		sh, ctorCounted, consumedStr := c.shadowed, c.ctorCounted, c.consumedStr
+		sh, ctorCounted := c.shadowed, c.ctorCounted
 		flags := make([]bool, len(fn.Params))
 		for i, p := range fn.Params {
 			// A parameter carrying no heap (i32 / bool / f64 / …) can never
@@ -1331,7 +1316,7 @@ func inferParamRetainSummary(prog *ast.Program, info *checker.Info, trmcFuncs ma
 			}
 			switch pt := p.Type.(type) {
 			case ast.StringType:
-				flags[i] = stringParamCounted(fn, p.Name, out, ctorCounted, consumedStr[p.Name] || creditBareReturn, creditBareReturn)
+				flags[i] = stringParamCounted(fn, p.Name, out, ctorCounted, creditFrameBoundAlias)
 			case ast.ArrayType:
 				flags[i] = arrayParamCounted(fn, p.Name, pt, info, out, ctorCounted)
 			case ast.StructType:
@@ -1801,40 +1786,6 @@ func syncByteCopyRoots(call *ast.Call) []*ast.Ident {
 	return out
 }
 
-// consumedStringParams names the STRING parameters computeConsumedParams
-// promotes to consumed-threaded in `fn`. It is a whole-program PROJECTION of
-// that per-function analysis rather than a duplicate, for the same reason
-// consumedArrayParamPositions is one: ownedByDefaultShape has no StringType
-// arm, so paramOwnedByDefault is always false, paramVerdict is always
-// NotOwnedType (never Borrowed), and the owned-shape skip and the verdict
-// gate it guards cannot fire — leaving exactly the conditions below.
-// TestConsumedStringParamsMatchTheLoweringVerdict pins the agreement.
-func consumedStringParams(fn *ast.FuncDecl, info *checker.Info, trmcFuncs map[string]bool) map[string]bool {
-	out := map[string]bool{}
-	if !ast.RcFreeEnabled || fn.Body == nil || trmcFuncs[fn.Name] {
-		return out
-	}
-	reassigned := map[string]bool{}
-	ast.Walk(fn.Body, func(n ast.Node) bool {
-		if a, ok := n.(*ast.Assign); ok {
-			if id, ok := a.Target.(*ast.Ident); ok {
-				reassigned[id.Name] = true
-			}
-		}
-		return true
-	})
-	for _, p := range fn.Params {
-		if _, isStr := p.Type.(ast.StringType); !isStr {
-			continue
-		}
-		if p.Own || !reassigned[p.Name] || !deepDropWired(info, p.Type) {
-			continue
-		}
-		out[p.Name] = true
-	}
-	return out
-}
-
 // frameBoundStringAliases names `pn` together with the locals that bind it
 // by a bare `let x: string = pn`, transitively. Such a local denotes the
 // parameter's own buffer and changes nothing about who owns it:
@@ -1868,14 +1819,13 @@ func consumedStringParams(fn *ast.FuncDecl, info *checker.Info, trmcFuncs map[st
 //   - never mentioned inside a Lambda: a capture lives as long as the closure
 //     does, which can be longer than the frame.
 //
-// `credit` is inferRetainSummary's creditBareReturn, so the arm is given to
-// paramNoUncountedAlias and withheld from paramCountedRetain. The two ask
+// `credit` is inferRetainSummary's creditFrameBoundAlias, so the arm is given
+// to paramNoUncountedAlias and withheld from paramCountedRetain. The two ask
 // different questions — whether the CALLER'S LOCAL may keep its release, and
 // whether a FRESH TEMP may be dec'd after the call (#9246) — and the leak this
 // closes is entirely the first. TestStringParamThatIsRetainedStaysUncredited
 // and TestStringParamForwardedToARetainingCalleeStaysUncredited hold the
-// stronger summary to the refusal, on the same footing as the bare-return
-// credit this flag already gates. Widening the strong side is a separate
+// stronger summary to the refusal. Widening the strong side is a separate
 // question with a use-after-free on the wrong end of it, and nothing measured
 // here needs it.
 func frameBoundStringAliases(fn *ast.FuncDecl, pn string, credit bool) map[string]bool {
@@ -1935,14 +1885,12 @@ func frameBoundStringAliases(fn *ast.FuncDecl, pn string, credit bool) map[strin
 	return aliases
 }
 
-// stringParamCounted classifies string parameter `pn`. `consumed` says the
-// parameter is consumed-threaded (consumedStringParams), which is what lets a
-// bare `return pn` count as safe.
+// stringParamCounted classifies string parameter `pn`.
 //
 // The occurrences it classifies are those of `pn` and of every local that
 // frame-bound-aliases it: the same buffer under the same ownership, so the
 // same arms decide both — see frameBoundStringAliases.
-func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]bool], ctorCounted func(*ast.Call) bool, consumed, creditFrameBoundAlias bool) bool {
+func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]bool], ctorCounted func(*ast.Call) bool, creditFrameBoundAlias bool) bool {
 	aliases := frameBoundStringAliases(fn, pn, creditFrameBoundAlias)
 	safe := map[*ast.Ident]bool{}
 	seedOK := countedSeedOccurrences(fn)
@@ -1993,20 +1941,16 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 				mark(x.Value)
 			}
 		case *ast.Return:
-			// `return p` on a CONSUMED-THREADED param hands out the frame's
-			// OWN reference: the entry retain is the count move-on-return
-			// transfers to the result, and the sweep then skips the slot. A
-			// borrowed param returned bare has no such count and keeps its
-			// refusal — that is the shape the tier's conservatism is for.
+			// `return p` hands the caller a count of its own: a borrowed
+			// parameter is never an owned local, so the Return lowering takes
+			// the return-transfer inc, and a consumed-threaded one moves the
+			// count its entry retain took (#11479).
 			//
-			// Only the PARAMETER: the entry retain this credit spends is on
-			// the parameter slot, and a frame-bound alias has none of its
-			// own. Returning one hands the caller an uncounted reference,
-			// which is the escape aliasReturnsConfined refuses at lowering.
-			if consumed {
-				if id, ok := x.Value.(*ast.Ident); ok && id.Name == pn {
-					safe[id] = true
-				}
+			// Only the PARAMETER: a frame-bound alias took no count, so
+			// returning one hands the caller an uncounted reference, which
+			// is the escape aliasReturnsConfined refuses at lowering.
+			if id, ok := x.Value.(*ast.Ident); ok && id.Name == pn {
+				safe[id] = true
 			}
 		case *ast.MakeClosure:
 			// MakeEnv retains a borrowed capture into the env, and the
@@ -4022,7 +3966,20 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// lg.append(v)`) makes both halves reclaimable, and the plain
 				// helper's non-retaining copy then let both walk-drops release
 				// the same elements (#3457).
-				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
+				//
+				// A borrowed-parameter receiver does not taint the result
+				// (#11487): the grow helper counts its result on both arms,
+				// and the in-place arm's other count is the caller's, which
+				// outlives this frame. A receiver this frame owns keeps the
+				// taint: if it escaped, its flat dec can leave the result's
+				// release as the last one.
+				if len(x.Args) == 0 {
+					return false
+				}
+				if rid, ok := x.Args[0].(*ast.Ident); ok && b.borrowedParam(rid.Name) {
+					return false
+				}
+				return b.rhsTainted(x.Args[0], tainted)
 			case "__alloc_u8":
 				// A fresh zero-filled rc=1 buffer straight from the runtime
 				// allocator (or the static empty sentinel for n==0, which
@@ -4653,6 +4610,22 @@ func (b *builder) arraySetReceiverBorrowed(name string) bool {
 		}
 		return !p.Own && !b.paramOwnedByDefault(p.Type, i) &&
 			(!b.rc.consumedParams[p.Name] || b.isConsumedArrayParam(p.Name))
+	}
+	return false
+}
+
+// borrowedParam reports whether `name` is a parameter on the borrow baseline:
+// not `own`, not owned-by-default and neither promoted nor flag-threaded by
+// computeConsumedParams. Its slot holds only the caller's value: shadowrename
+// gives every other binding a unique name, and a reassigned one is promoted or
+// flag-threaded (a TRMC function, which computeConsumedParams skips, cannot
+// rebind a parameter).
+func (b *builder) borrowedParam(name string) bool {
+	for i, p := range b.fn.Params {
+		if p.Name == name {
+			return !p.Own && !b.paramOwnedByDefault(p.Type, i) &&
+				!b.rc.consumedParams[p.Name] && !b.rc.flagThreadedParams[p.Name]
+		}
 	}
 	return false
 }

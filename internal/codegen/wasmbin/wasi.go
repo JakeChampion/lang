@@ -1685,7 +1685,7 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 					helpers.add("__fern_str_byte")
 				}
 				if resString {
-					helpers.add("__bytes_to_lang_string")
+					helpers.add("__fern_str_copy")
 					helpers.add("cabi_realloc")
 				}
 				if resList {
@@ -1730,7 +1730,7 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 				}
 				helpers.add(ex.Name)
 				helpers.add("__fern_alloc")
-				helpers.add("__bytes_to_lang_string")
+				helpers.add("__fern_str_copy")
 				helpers.add("cabi_realloc")
 			case isScalarArrayParamType(ret):
 				// list<T> async result (numeric element) lifted into a Fern T[]: the
@@ -1833,7 +1833,7 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			// string / list<u8> result (P4c): canonical return-area lowering.
 			// The raw import gains a trailing return-area pointer and returns
 			// nothing; the Fern name resolves to a wrapper that lifts the host
-			// bytes into a Fern string via __bytes_to_lang_string.
+			// bytes into a Fern string via __fern_str_copy.
 			rawName := ex.Name + "$import"
 			rawParams := append(append([]byte{}, params...), encode.ValtypeI32)
 			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: nil}
@@ -1846,7 +1846,7 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			helpers.add(ex.Name)
 			// Lift + the canonical allocator the host calls back into.
 			helpers.add("__fern_alloc")
-			helpers.add("__bytes_to_lang_string")
+			helpers.add("__fern_str_copy")
 			helpers.add("cabi_realloc")
 		case isScalarArrayParamType(ret):
 			// list<T> result (numeric element) lifted into a Fern T[] (P4c):

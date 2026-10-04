@@ -59,7 +59,7 @@ func TestVariantPayloadStoreIsCountedRetain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	got := inferParamCountedRetain(prog, info, nil)
+	got := inferParamCountedRetain(prog, info)
 	want := map[string][]bool{
 		// Every pointer-shaped param is stored only as a payload: enum, string, array.
 		"wrap":  {true, true, true},

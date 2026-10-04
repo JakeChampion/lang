@@ -675,7 +675,7 @@ func (b *builder) bindingConfinedInAll(region []ast.Node, name string, bt ast.Ty
 }
 
 // bindingReleasableInAll is bindingConfinedInAll over the weaker per-node
-// question bindingReleasableFromBox asks. A guard counts the same as a body: an
+// question matchBindingReleasable asks. A guard counts the same as a body: an
 // alias it takes is balanced by the join's drop whichever arm ends up running,
 // since that drop is emitted once for the whole match.
 func (b *builder) bindingReleasableInAll(region []ast.Node, name string, bt ast.Type) bool {
@@ -686,7 +686,7 @@ func (b *builder) bindingReleasableInAll(region []ast.Node, name string, bt ast.
 		if n == nil {
 			continue
 		}
-		if !b.bindingReleasableFromBox(n, name, bt) {
+		if !b.matchBindingReleasable(n, name, bt) {
 			return false
 		}
 	}
@@ -755,14 +755,10 @@ func (b *builder) emitMapGetScrutineeReclaim(slot int32, plan mapGetReboxPlan) {
 // a per-iteration-fresh `mk()` therefore leaked the whole payload every
 // iteration — the idiomatic lookup-then-read shape, growing without bound.
 //
-// Eligibility is deliberately tighter than the box path's:
-//   - the callee is PROVEN to return a value that aliases no parameter
-//     (returnsNoParamEscape true, not merely present). The box path can lean on
-//     "an aliased return is rc>=2 via the return-transfer inc, and the free is
-//     is_unique-gated"; with no box there is no such inc to lean on, so the
-//     payload's freshness has to be proven outright;
+// Eligibility:
+//   - the caller owns one count of the payload (freshPairFormEnumResultType);
 //   - the binding lets no UNCOUNTED reference out of the arm
-//     (bindingReleasableInArm), so anything that outlives the release holds a
+//     (matchBindingReleasable), so anything that outlives the release holds a
 //     count of its own.
 //
 // The release itself is emitOwnedSlotDrop — the same type-directed deep drop
@@ -775,7 +771,7 @@ func (b *builder) reclaimablePairFormPayload(tag ast.Expr, bt ast.Type, body ast
 	if _, ok := b.freshPairFormEnumResultType(tag); !ok {
 		return false
 	}
-	return b.bindingReleasableInArm(body, name, bt)
+	return b.matchBindingReleasable(body, name, bt)
 }
 
 // freshPairFormEnumResultType reports the enum type of a call whose PAIR-FORM
@@ -874,20 +870,18 @@ func (b *builder) bindingReleasableInArm(body ast.Node, name string, bt ast.Type
 	return b.bindingUsesExcused(body, name, bt, true, false)
 }
 
-// bindingReleasableFromBox is bindingReleasableInArm for a binding that reads
-// a heap box's payload (#10673): `return c` retains it (the Return lowering's
-// return-transfer inc), so the caller holds a reference of its own and the
-// box's deep drop, replayed on the way out, takes the payload back to that
-// one. A pair-form binding IS the count the callee handed over, and its
-// return hands that count on, so the pair-form caller keeps the stricter
-// question.
-func (b *builder) bindingReleasableFromBox(body ast.Node, name string, bt ast.Type) bool {
+// matchBindingReleasable is bindingReleasableInArm for a match payload binding
+// whose release is replayed on the way out of a `return` — the box's deep drop
+// (#10673) or the pair-form payload's slot drop (#11479). `return c` retains
+// the binding (the Return lowering's return-transfer inc), so the caller holds
+// a reference of its own and the release takes the payload back to that one.
+func (b *builder) matchBindingReleasable(body ast.Node, name string, bt ast.Type) bool {
 	return b.bindingUsesExcused(body, name, bt, true, true)
 }
 
 // bindingUsesExcused is the shared walk. `countedAliasOK` admits the alias
 // sites of bindingReleasableInArm on top of the read shapes every caller
-// takes, and `returnCounted` the return of bindingReleasableFromBox.
+// takes, and `returnCounted` the return of matchBindingReleasable.
 func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, countedAliasOK, returnCounted bool) bool {
 	if body == nil {
 		return false

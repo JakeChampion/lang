@@ -106,7 +106,7 @@ function limits(): http.HttpLimits {
 
 function test_extensions_trailers_and_a_pipelined_request(): test.TestOutcome {
   let body: string = "5;ext=\"x\"\r\nhello\r\n06\r\n world\r\n0\r\nX-Sum: 11\r\n\r\nGET /next HTTP/1.1\r\nHost: h\r\n\r\n";
-  return test.assert_eq(agree(body, limits()), "ok:hello world|x-sum=11;|rest=31");
+  return test.assert_eq(agree(body, limits()), "ok:hello world|X-Sum=11;|rest=31");
 }
 
 function test_sizes_with_leading_zeros(): test.TestOutcome {
