@@ -6950,10 +6950,13 @@ function arr_push_fast_u8(slow: string, on: boolean): string {
 // __fern_alloc_bytes(x0 = n) -> a zeroed packed u8[] of n bytes: a box of
 // ceil(n/8) words, whose length word __fern_arr_box writes as that word count
 // and this overwrites with n. It backs the packed alloc_u8 op, which is how the
-// typed lowering emits `__alloc_u8`. A negative n aborts.
+// typed lowering emits `__alloc_u8`. A negative n aborts; n == 0 is the
+// shared empty block.
 function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write(empty_array_block(".Lfern_empty_bytes"));
   s = s.write("__fern_alloc_bytes:\n");
   s = s.write("    tbz w0, #31, .Lfern_alloc_bytes_sized\n    b __fern_alloc_size_abort\n.Lfern_alloc_bytes_sized:\n");
+  s = s.write("    cbz w0, .Lfern_alloc_bytes_empty\n");
   s = s.write("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n");
   s = s.write("    sxtw x19, w0\n    add x0, x19, #7\n    lsr x0, x0, #3\n    mov x20, x0\n");
   s = s.write("    bl __fern_arr_box\n");
@@ -6961,7 +6964,15 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lfern_alloc_bytes_zero:\n    cbz x20, .Lfern_alloc_bytes_done\n    str xzr, [x2], #8\n    sub x20, x20, #1\n    b .Lfern_alloc_bytes_zero\n");
   s = s.write(".Lfern_alloc_bytes_done:\n");
   s = s.write("    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n");
+  s = s.write(".Lfern_alloc_bytes_empty:\n    adrp x0, .Lfern_empty_bytes\n    add x0, x0, :lo12:.Lfern_empty_bytes\n    ret\n");
   return s;
+}
+
+// empty_array_block is an immortal empty array: capacity 0, so a push grows
+// into a fresh box, and rc -1, so the rc helpers skip it and `with` copies.
+// What `__alloc_u8(0)` returns instead of allocating.
+function empty_array_block(label: string): string {
+  return "    .data\n    .balign 8\n    .quad 0\n    .quad -1\n" + label + ":\n    .quad 0\n    .text\n";
 }
 
 // __fern_arr_push_u8 and __fern_arr_push_owned_u8 are __fern_arr_push and
@@ -10151,10 +10162,12 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   // __fern_alloc_u8(x0 = n) → fresh n-element array (cap header,
   // 8-byte slots, returned base+8), its slots cleared: a block off the
   // free list keeps its last owner's bytes.
+  s = s.write(empty_array_block(".Lfern_empty_u8"));
   s = s.write(".globl __fern_alloc_u8\n");
   s = s.write(".type __fern_alloc_u8, %function\n");
   s = s.write("__fern_alloc_u8:\n");
   s = s.write("    tbz w0, #31, .Lfern_alloc_u8_sized\n    b __fern_alloc_size_abort\n.Lfern_alloc_u8_sized:\n");
+  s = s.write("    cbz w0, .Lfern_alloc_u8_empty\n");
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    mov x29, sp\n");
   s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -10172,6 +10185,7 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = s.write("    ldp x19, x20, [sp], #16\n");
   s = s.write("    ldp x29, x30, [sp], #16\n");
   s = s.write("    ret\n");
+  s = s.write(".Lfern_alloc_u8_empty:\n    adrp x0, .Lfern_empty_u8\n    add x0, x0, :lo12:.Lfern_empty_u8\n    ret\n");
   s = s.write(".size __fern_alloc_u8, .-__fern_alloc_u8\n");
 
   // __fern_string_from_bytes and __fern_random_bytes used to live here; both
