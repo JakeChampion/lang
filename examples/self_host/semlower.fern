@@ -29,6 +29,7 @@ import "./semsource";
 import "./ssasem";
 import "./ssarc";
 import "./ssaunits";
+import "./suspend";
 import "./semtypes";
 import "./typeinfo";
 import "./util";
@@ -45,6 +46,7 @@ struct Rows {
   grows: ssaunits.GrowTable,
   // The rows that reach no observable effect (`pure_rows`).
   pure: util.NameIndex,
+  susp: suspend.Set,
   // Each row's unit plan, kept so the plan under the inferred modes can take
   // it back for a row the ownership inference did not move (#9969).
   plans: ssaunits.Plan[],
@@ -169,11 +171,11 @@ function plan_of(p: semsource.Produced, view: ssaunits.SchemaView): ssaunits.Pla
 
 // produced_body lowers a planned function. Every plan is made before any body
 // is lowered, because a caller's bracket reads its callees' plans (`grows`).
-function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex, view: ssaunits.SchemaView): irtables.LowerResult {
+function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex, view: ssaunits.SchemaView, susp: suspend.Set): irtables.LowerResult {
   if (!plan.ok) {
     return declined(plan.why);
   }
-  let r: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, structs, grows, pure, view);
+  let r: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, structs, grows, pure, view, susp);
   if (!r.ok) {
     return declined(r.why);
   }
@@ -203,7 +205,7 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
 // No rows to take back: what makes `rows_planned` plan every row.
 function no_reuse(): Rows {
   let no_names: string[] = [];
-  return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), pure: util.name_index(no_names), plans: [], why: [] };
+  return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), pure: util.name_index(no_names), susp: suspend.none(), plans: [], why: [] };
 }
 
 // Whether row `i`'s plan can be taken from `prev` unchanged. `changed` is
@@ -253,7 +255,7 @@ function rows_planned(mod: parser.Module, built: semsource.Built, prev: Rows, ch
     plans = plans.append(base_plan(prev, changed, i, produced_at(built, mod, i), views[i]));
     i = i + 1;
   }
-  r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), pure: pure_rows(keys, funcs), plans: plans };
+  r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), pure: pure_rows(keys, funcs), susp: suspend.classify(keys, funcs), plans: plans };
   return Planned { r: r, views: views };
 }
 
@@ -294,7 +296,7 @@ function rows_lowered(mod: parser.Module, structs: irtables.StructTab, a_built: 
       p = produced_at(b_built, mod, i);
       pl = b;
     }
-    let body: irtables.LowerResult = produced_body(p, pl.r.plans[i], structs, pl.r.grows, pl.r.pure, pl.views[i]);
+    let body: irtables.LowerResult = produced_body(p, pl.r.plans[i], structs, pl.r.grows, pl.r.pure, pl.views[i], pl.r.susp);
     r = Rows { ...r, body: r.body.append(body), keep: r.keep.append(body.ok), why: r.why.append(refusal(p, body)) };
     i = i + 1;
   }
@@ -871,6 +873,32 @@ pub function verdict(mod: parser.Module, target: string): Verdict {
   return verdict_annotated(checker.annotate_module(mod), target);
 }
 
+// verdict_ok runs the same checks and lowering as verdict without building
+// declaration names and report rows for a caller that needs only the answer.
+pub function verdict_ok(mod: parser.Module, target: string): boolean {
+  let t: Typed = typed_for(checker.annotate_module(mod), target);
+  if (t.errs.len() > 0) {
+    return false;
+  }
+  let im: parser.Module = verdict_module(t.mod, target);
+  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_module(im).structs));
+  let i: i32 = 0;
+  while (i < inf.rows.keep.len()) {
+    if (!inf.rows.keep[i] && inf.rows.why[i].len() > 0) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function verdict_module(mod: parser.Module, target: string): parser.Module {
+  if (is_wasm(target)) {
+    return wasm_gated(mod);
+  }
+  return gated_module(ircore.lift_lambdas_typed(mod));
+}
+
 // verdict_annotated is verdict for a module the caller already checked and
 // annotated (`driven_annotated`).
 pub function verdict_annotated(annotated: parser.Module, target: string): Verdict {
@@ -878,12 +906,7 @@ pub function verdict_annotated(annotated: parser.Module, target: string): Verdic
   if (t.errs.len() > 0) {
     return Verdict { ok: false, errors: t.errs, rows: [] };
   }
-  let im: parser.Module = t.mod;
-  if (is_wasm(target)) {
-    im = wasm_gated(t.mod);
-  } else {
-    im = gated_module(ircore.lift_lambdas_typed(t.mod));
-  }
+  let im: parser.Module = verdict_module(t.mod, target);
   let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_module(im).structs));
   let rows: VerdictRow[] = [];
   let ok: boolean = true;

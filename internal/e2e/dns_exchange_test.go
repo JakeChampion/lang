@@ -75,18 +75,19 @@ func TestDnsPairX86_64(t *testing.T) {
 }
 
 // TestDnsPairInterp is TestDnsPairX86_64 under the interpreter, whose poll
-// is a stub: the paired wait tries every pending socket in turn there, so
-// the AAAA reply that arrives first is read while the A query waits.
+// is a set over the handles' descriptors: the AAAA reply that arrives first
+// is read while the A query waits.
 func TestDnsPairInterp(t *testing.T) {
 	ns := e2eharness.StartFakeNameserver(t, e2eharness.FakeNameserverPair)
 	out, code := runInterpExitCode(t, e2eharness.DnsPairSource(ns.Port))
 	e2eharness.CheckDnsPair(t, ns, out, code)
 }
 
-// TestDnsPairInterpReadsTheReadySocket holds the A reply for ever. Under the
-// interpreter's stub poll only the sweep reads the AAAA reply; a wait on the
-// first pending socket blocks on the A one and never returns (#10942). The
-// run is bounded so that regression is a failure, not a hung package.
+// TestDnsPairInterpReadsTheReadySocket holds the A reply for ever: the
+// paired wait reads the AAAA reply from the socket the interpreter's poll
+// reports ready, where a wait on the first pending socket would block on
+// the A one and never return (#10942). The run is bounded so that regression
+// is a failure, not a hung package.
 func TestDnsPairInterpReadsTheReadySocket(t *testing.T) {
 	ns := e2eharness.StartFakeNameserver(t, e2eharness.FakeNameserverAAAAOnly)
 	bin := buildLangBinForInterp(t)

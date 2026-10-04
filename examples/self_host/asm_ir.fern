@@ -7587,6 +7587,8 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     s = helper_call_needs(ins.str, s);
   } else if (ircore.is_c_call(ins.str)) {
     s = s.need("ccall:" + ins.str);
+  } else if (ircore.is_task_runtime_fn(ins.str)) {
+    s = s.need("task");
   }
   let i: i32 = 0;
   while (i < argc) {
@@ -8202,6 +8204,9 @@ function sym_addr_need(sym: string): string {
   }
   if (sym == "__fern_cov_counters") {
     return "raw_cover";
+  }
+  if (sym == "__fern_task_state") {
+    return "task";
   }
   return "";
 }
@@ -12097,6 +12102,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("raw_cover")) {
     s = s.write("    .section .bss\n    .align 8\n__fern_cov_counters: .quad 0\n    .text\n");
   }
+  if (s.has_need("task")) {
+    s = s.write("    .section .bss\n    .align 8\n__fern_task_state: .quad 0, 0, 0, 0\n    .text\n");
+  }
   // The stdout/stderr leaves (#2649) — plain write(2) calls, allocation-free, so
   // they sit with the clocks rather than in the heap runtime: a program that only
   // prints must still link.
@@ -12521,6 +12529,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("reactor_wait")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_wait("x86_64"), s);
+  }
+  if (s.has_need("task")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_task("x86_64"), s);
   }
   if (s.has_need("tcp_recv_into")) {
     s = s.write("    .text\n");
