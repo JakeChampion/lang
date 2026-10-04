@@ -10,9 +10,11 @@
 //
 // `Platform` is a trait. A parameter typed by it makes the handler generic
 // over it, so each implementation is compiled in statically: `Host`, which
-// std/serve's accept loops and the wasi-http entry hand a handler, and
+// std/serve's accept loops and the wasi-http entry hand a handler,
 // std/mock_platform's `MockPlatform`, which records what a test's handler
-// tried to do. Each keeps its own state as ordinary fields.
+// tried to do, and std/sim_platform's `SimPlatform`, which runs it over
+// the simulation's clock, randomness and scripted network. Each keeps its
+// own state as ordinary fields.
 //
 // The free functions stay: a CLI tool with no handler in sight calls
 // `eprint` / `now_unix_ms` directly and always will.

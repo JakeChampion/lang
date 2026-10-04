@@ -2105,6 +2105,28 @@ as written. A sibling of `std/sim` rather than part of it, so `std/sim`
 keeps the clock and randomness alone; `examples/tests/sim_fetch_test.fern`
 is the client's parity suite.
 
+### `std/sim_platform`
+
+A `platform.Platform` over the simulation: a handler runs on it as it runs
+on the host, in virtual time. `sim_platform.new(d, n)` reads the clock and
+the seeded PRNG of the `sim.Sim` `d` (`now_ms`, `elapsed_ns`,
+`random_i32`), sends `plat.http` over the `sim_fetch.Net` `n` by the
+host's public-only route with the network's pool keeping the connection,
+and answers `env`, `config` and `secret` with what the test set
+(`env_set`, `config_set`, `secret_set`). Every call is recorded as a
+mock's: `calls()` and `reset()` read and clear the log, a secret logged by
+its name alone.
+
+```fern
+let d: sim.Sim = sim.new(1);
+let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", ["93.184.216.34"]).listen("93.184.216.34", 80, 5);
+let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
+plat.config_set("REGION", "eu-west");
+let resp: HttpResponse = handle(req, plat);
+```
+
+`examples/tests/sim_platform_test.fern` is the platform's parity suite.
+
 ### `std/mock_platform`
 
 A `platform.Platform` that records instead of acting. Handed to a handler

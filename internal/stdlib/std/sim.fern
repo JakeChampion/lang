@@ -116,6 +116,15 @@ function __roll(drv: Sim, n: i32): i32 {
   return step.1;
 }
 
+// random_i32() — one draw of 32 bits from the simulation's PRNG, which
+// advances by it: what a sim platform answers `plat.random_i32()` with,
+// so a handler's randomness is the seed's.
+pub function (s: Sim) random_i32(): i32 {
+  let step = rand.rng_next(s.rng.get());
+  s.rng.set(step.0);
+  return step.1 as i32;
+}
+
 // rng_state() — the current PRNG state. Two sims constructed from the
 // same seed have equal states exactly while they have made the same
 // draws in the same order, so a test can assert two runs stayed in
