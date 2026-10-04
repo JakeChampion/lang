@@ -255,6 +255,15 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_descriptor_advise_p2": {
+		// Preview-2: [method]descriptor.advise lowered to
+		//   (self: i32, offset: i64, length: i64, advice: i32,
+		//   retptr: i32) -> (). retptr holds result<_, error-code>.
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[method]descriptor.advise",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI64, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_descriptor_set_size_p2": {
 		// Preview-2: wasi:filesystem/types@0.2.0::
 		//   [method]descriptor.set-size lowered to
@@ -671,6 +680,14 @@ var importSpecs = map[string]importSpec{
 		module:  "wasi_snapshot_preview1",
 		name:    "fd_sync",
 		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_fd_advise": {
+		// (fd, offset: u64, len: u64, advice) -> errno. Advice on how
+		// the range will be used; the host may ignore it.
+		module:  "wasi_snapshot_preview1",
+		name:    "fd_advise",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI64, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 	},
 	"wasi_fd_datasync": {
@@ -2405,6 +2422,13 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_datasync")
 		}
 	}
+	if helpers.set["__fern_fd_drop_cache"] {
+		if opts.Preview2WASI {
+			in.add("wasi_descriptor_advise_p2")
+		} else {
+			in.add("wasi_fd_advise")
+		}
+	}
 	if helpers.set["__fern_reader_seek"] {
 		if opts.Preview2WASI {
 			// SEEK_END needs the size, and the seek itself is a fresh
@@ -3047,6 +3071,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_exit":                    buildExitBodyP2,
 	"__fern_fd_fsync":                buildFdSyncBodyP2("wasi_descriptor_sync_p2"),
 	"__fern_fd_fdatasync":            buildFdSyncBodyP2("wasi_descriptor_sync_data_p2"),
+	"__fern_fd_drop_cache":           buildFdDropCacheBodyP2,
 	"__fern_fd_syncfs":               buildFdSyncfsBody,
 	"__fern_fd_dup_onto":             buildFdDupOntoBody,
 	// The four terminal questions' handle forms answer Unsupported on

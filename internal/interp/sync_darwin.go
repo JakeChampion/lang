@@ -31,3 +31,14 @@ func hostSyncfs(fd int) error {
 	syscall.Sync()
 	return nil
 }
+
+// hostDropCache on XNU, which has no posix_fadvise. fcntl(F_NOCACHE) is a
+// different request — stop caching from now on, not drop what is cached — so
+// the advice is refused. The descriptor is sought first, so a pipe answers
+// ESPIPE as Linux's fadvise does, and as GNU dd reports it here.
+func hostDropCache(fd int, _, _ int64) error {
+	if _, err := syscall.Seek(fd, 0, 1); err != nil {
+		return err
+	}
+	return errNoFadvise
+}

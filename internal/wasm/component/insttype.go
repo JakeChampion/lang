@@ -415,6 +415,21 @@ func fsSyncSelf(b *instTypeBuilder, v fsVocab, method string) {
 		"[method]descriptor."+method)
 }
 
+// fsAdvise declares the `advice` enum and `advise: func(self:
+// borrow<descriptor>, offset: filesize, length: filesize, advice: advice) ->
+// result<_, error-code>`. Case order fixes the discriminants, which match
+// preview 1's: dont-need is 4.
+func fsAdvise(b *instTypeBuilder, v fsVocab) {
+	advice := b.defExport(InnerTypeEnum([]string{
+		"normal", "sequential", "random", "will-need", "dont-need", "no-reuse",
+	}), "advice")
+	b.funcExport(tcpMethodFuncDecl("advise",
+		[]string{"self", "offset", "length", "advice"},
+		[]byte{byte(v.bDesc), CValtypeU64, CValtypeU64, byte(advice)},
+		byte(v.rUnit)),
+		"[method]descriptor.advise")
+}
+
 // fsPathMutator emits one of the path-mutating methods —
 // `unlink-file-at`, `create-directory-at`, `remove-directory-at`. They
 // share a signature exactly: (borrow<descriptor>, string) ->

@@ -3801,14 +3801,17 @@ final extension accounts for the seeks. A handle that cannot seek, a pipe,
 turns sparse off for the rest of the run without a diagnostic. The
 corpus compares block counts for these cases, the only place a hole shows.
 
+`iflag=nocache` / `oflag=nocache` is the handle's `drop_cache(offset,
+len)`, posix_fadvise's DONTNEED: the copy drops the range it read or wrote
+in 128 KiB batches and the rest of the file at the end, ignoring a failure
+as GNU does, and `count=0` drops the whole file, reporting `failed to
+discard cache for:` when that fails (a pipe). XNU has no fadvise, so on
+arm64-darwin the drops answer Unsupported, which only `count=0` reports.
+
 **What dd here does not do yet**, each an accepted-operand gap rather than a
 wrong answer — the name is refused as `invalid conversion` / `invalid
 input flag`, which is itself the divergence:
 
-- `iflag=nocache` / `oflag=nocache` is not an open-time bit at all but a
-  `posix_fadvise(POSIX_FADV_DONTNEED)` made against the open descriptor as
-  the copy proceeds, and Fern has no call for it (#9242 for the seven open
-  bits, which are done; the fadvise is its own item);
 - `oflag=append` together with another open-time flag (`oflag=append,sync`)
   opens through `open_appender`, which takes no flags word, so the second
   flag is dropped there — append is the one open-time bit the
