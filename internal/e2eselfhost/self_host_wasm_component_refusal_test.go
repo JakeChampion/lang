@@ -4,15 +4,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
 // A handle-carrying tuple literal, `(stdout(), true)`, lowers wherever the same
-// tuple built from a named handle does (#9238). And a module the lowering takes
-// whole but a wasm COMPONENT cannot import for is refused by naming the op: the
-// component framing has no preview2 body for sleeping, and the refusal used to
-// be the generic "not IR-eligible", with FERN_STRICT_IR=1 naming nothing.
+// tuple built from a named handle does (#9238). And a sleeping program is a
+// component too: the framing used to refuse it by naming the op (#11411), and
+// before that with the generic "not IR-eligible", FERN_STRICT_IR=1 naming
+// nothing.
 const handleTupleSrc = `function handle_lit(): (Writer, boolean) {
     return (stdout(), true);
 }
@@ -83,15 +82,15 @@ func TestSelfHostHandleTupleLiteralWasm(t *testing.T) {
 		}
 	})
 
-	t.Run("component-names-the-op", func(t *testing.T) {
-		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-o", filepath.Join(dir, "sleep.wasm"), writeSrc(t, "sleep.fern", sleepSrc), cli.stdlib)
+	t.Run("component-sleeps", func(t *testing.T) {
+		comp := filepath.Join(dir, "sleep.wasm")
+		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-o", comp, writeSrc(t, "sleep.fern", sleepSrc), cli.stdlib)
 		cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
-		out, err := cmd.CombinedOutput()
-		if err == nil {
-			t.Fatalf("component build succeeded; want a refusal naming sleep_ms\n%s", out)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("component build: %v\n%s", err, out)
 		}
-		if !strings.Contains(string(out), "sleep_ms is not supported in a wasm component") {
-			t.Fatalf("refusal does not name the op:\n%s", out)
+		if out, err := exec.Command("wasmtime", "run", comp).CombinedOutput(); err != nil {
+			t.Fatalf("wasmtime run: %v\n%s", err, out)
 		}
 	})
 
