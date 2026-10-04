@@ -38,8 +38,9 @@ function main(): i32 {
     let fd: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
     assert(fd >= 0);
     match (tcp.tcp_recv_deadline(fd, 1, time.duration_millis(10i64))) {
-        None => {},
-        Some(_) => { assert(false); }
+        tcp.Elapsed => {},
+        tcp.Chunk(_) => { assert(false); },
+        tcp.Abandoned => { assert(false); }
     }
     assert(tcp_close(fd) == 0);
     return 0;

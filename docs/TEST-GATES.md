@@ -289,6 +289,14 @@ the self-host's x86-64, arm64 and wasm output must show both parks and the
 plain run's figure. The wasm leg embeds `cmd/fern/wit`'s world and adapts
 the module before wasmtime runs it. `TestTaskPortableFallback` is the Go
 compiler's twin.
+`TestSelfHostSimTasks` is the sim's task gate (`e2eharness.SimTasksProgram`):
+three handlers' `plat.http` calls over a `SimPlatform` run as tasks under
+`sim.run_tasks`, parking in virtual time, one cancelled while it waits; the
+self-host's x86-64, arm64 and wasm output must be the same bytes — the
+handlers finishing in virtual-time order, the cancelled one's fetch
+answering `cancelled`. It is the only gate on `FetchError.Cancelled` reaching
+a handler. `TestSimTasksFallback` is the Go compiler's twin: nothing parks,
+the entries run in turn, nothing is cancelled.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestSelfHostServeConfig` serves through
