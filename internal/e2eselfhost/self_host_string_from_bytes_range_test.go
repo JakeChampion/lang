@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,20 +16,26 @@ import (
 func TestSelfHostStringFromBytesRange(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
-	src, trap := filepath.Join(dir, "range.fern"), filepath.Join(dir, "trap.fern")
+	src := filepath.Join(dir, "range.fern")
 	if err := os.WriteFile(src, []byte(e2eharness.StringFromBytesRangeProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(trap, []byte(e2eharness.StringFromBytesRangeTrapProgram), 0o644); err != nil {
-		t.Fatal(err)
+	traps := make([]string, len(e2eharness.StringFromBytesRangeTraps))
+	for i, tc := range e2eharness.StringFromBytesRangeTraps {
+		traps[i] = filepath.Join(dir, fmt.Sprintf("trap%d.fern", i))
+		if err := os.WriteFile(traps[i], []byte(e2eharness.StringFromBytesRangeTrapProgram(tc.From, tc.End)), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Run("interp", func(t *testing.T) {
 		if out, err := runX86_64Bin(cli.runner, cli.bin, "-interp", src, cli.stdlib).CombinedOutput(); err != nil {
 			t.Fatalf("run: %v\n%s", err, out)
 		}
-		cmd := runX86_64Bin(cli.runner, cli.bin, "-interp", trap, cli.stdlib)
-		if out, err := cmd.CombinedOutput(); err == nil {
-			t.Fatalf("backwards range ran to completion:\n%s", out)
+		for i, tc := range e2eharness.StringFromBytesRangeTraps {
+			cmd := runX86_64Bin(cli.runner, cli.bin, "-interp", traps[i], cli.stdlib)
+			if out, err := cmd.CombinedOutput(); err == nil {
+				t.Errorf("%s ran to completion:\n%s", tc.Name, out)
+			}
 		}
 	})
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
@@ -44,8 +51,10 @@ func TestSelfHostStringFromBytesRange(t *testing.T) {
 			if target == "x86-64-linux" {
 				e2eharness.CheckLeakcheckBalanced(t, out)
 			}
-			if out, code := cli.exitOfFile(t, trap, target, nil, "FERN_STRICT_IR=1"); code != 134 {
-				t.Fatalf("backwards range exited %d, want 134:\n%s", code, out)
+			for i, tc := range e2eharness.StringFromBytesRangeTraps {
+				if out, code := cli.exitOfFile(t, traps[i], target, nil, "FERN_STRICT_IR=1"); code != 134 {
+					t.Errorf("%s exited %d, want 134:\n%s", tc.Name, code, out)
+				}
 			}
 		})
 	}

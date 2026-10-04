@@ -549,9 +549,9 @@ function __find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
 }
 
 // __bytes_range copies buf[from, end) into a fresh array, and __bytes_string
-// copies it into a fresh string. The parser's outputs are owned copies of
-// what the handler keeps, so the wire buffer can be reused once the parse is
-// done.
+// copies the same range into a fresh string. The parser's outputs are owned
+// copies of what the handler keeps, so the wire buffer can be reused once the
+// parse is done.
 function __bytes_range(buf: u8[], from: i32, end: i32): u8[] {
   let out: u8[] = __alloc_u8(end - from);
   let i: i32 = 0;
