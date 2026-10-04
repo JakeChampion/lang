@@ -1147,11 +1147,17 @@ pub function pos_file(files: string[], line: i32): string {
   return files[k];
 }
 
-// pos_str renders a position as native does: `path:line:col`, with the path
-// omitted for the entry.
-pub function pos_str(files: string[], line: i32, col: i32): string {
+// pos_str renders a position as native does: `path:line:col`, the path being
+// the entry's own (`entry`, as the command line named it) for a position in
+// the entry module and the imported module's display path otherwise. An empty
+// `entry` leaves an entry position bare, for a driver that has no file to
+// name.
+pub function pos_str(entry: string, files: string[], line: i32, col: i32): string {
   let at: string = i32_to_string(pos_line(line)) + ":" + i32_to_string(col);
   let f: string = pos_file(files, line);
+  if (f.len() == 0) {
+    f = entry;
+  }
   if (f.len() == 0) {
     return at;
   }
@@ -1178,7 +1184,7 @@ pub function format_diags_in(diags: Diag[], files: string[]): string {
     if (i > 0) {
       out = out + "\n";
     }
-    out = out + tag + d.message + " (" + pos_str(files, d.line, d.col) + ")";
+    out = out + tag + d.message + " (" + pos_str("", files, d.line, d.col) + ")";
     i = i + 1;
   }
   return out;
