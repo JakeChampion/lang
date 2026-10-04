@@ -81,10 +81,9 @@ function ordered(a: string, b: str): i32 {
     if (a >= b) { return 3; }
     return 0;
 }
-// The checker's E052 refuses this body; the print driver annotates without
-// checking it, and the live end is the unreachable terminator a checked
-// body's desugared total match leaves behind.
-function ends_unreachable(o: Option[i32]): i32 { match (o) { Some(n) => { return n; }, None => { return 0; } } }
+// A total match tests every variant but the last: once Some fails, None is
+// entered with no test of its own.
+function last_arm_untested(o: Option[i32]): i32 { match (o) { Some(n) => { return n; }, None => { return 0; } } }
 function destructure(): i32 { let (a, b) = (1, 2); return a + b; }
 function split_pair(p: (i32, i32[])): i32 { let (_, xs) = p; let (n, ys) = p; return n + xs.len() + ys.len(); }
 function nested_destructure(): i32 { let (a, (b, c)) = (1, (2, 3)); return a + b + c; }
@@ -225,10 +224,6 @@ function (n: i32) doubled(): i32 { return n * 2; }
 function via_arrm(a: i32[]): i32 { return a.second_or(0); }
 function via_smm(h: Holder[string]): i32 { return h.tagged(true); }
 function via_prim(k: i32): i32 { return k.doubled(); }
-// A concrete receiver's own type variable that no argument binds (the empty
-// literal infers nothing at mono time, #10991) leaves the call on its
-// receiver, and the refusal names the written target rather than the folded
-// template the lowering would never find.
 // The eleven string methods the AST lowering emits an OP for rather than a
 // call. The receiver is lent to every one; the three that answer text and the
 // two that answer an array hand back a fresh box of the caller's own, and the
@@ -258,10 +253,7 @@ function fold_two[T](a: T, visit: (i32, T) => T): T {
 function add_at(n: i32, a: i32): i32 { return a + n; }
 function folded(): i32 { return fold_two(10, add_at); }
 // READING the accumulator after passing it: through a LENDING visitor the
-// instance borrows it twice and retains nothing, at a scalar or a reference;
-// through a CONSUMING one an OWNED accumulator handed over and read again is
-// a retain in the string[] instance and nothing in the i32 one, each instance
-// planning its own.
+// instance borrows it twice and retains nothing, at a scalar or a reference.
 function reread[T](a: T, visit: (i32, T) => T, join: (T, T) => T): T {
     return join(visit(1, a), a);
 }
@@ -593,8 +585,7 @@ function fn_element_array(n: i32): i32 { let fs: ((i32) => i32)[] = [twice_it]; 
 // A free builtin whose result the checker types is a value like any other, so
 // the record literal, array or operator written around the call keeps its own
 // type instead of collapsing to unknown. The byte array such a call is handed
-// carries the element its parameter declares: there is no implicit numeric
-// conversion, so an i32 written into a u8[] literal is refused.
+// carries the element its parameter declares.
 struct Frag { text: string, n: i32 }
 function frag_of(bs: u8[], n: i32): Frag { return Frag { text: string_from_bytes_unchecked(bs), n: n }; }
 function byte_text(b: u8): i32 { return string_from_bytes_unchecked([b]).len(); }
@@ -746,9 +737,6 @@ function poked(): i32 {
     __free(block, 16);
     return read;
 }
-// A map names no element in its construction, so the destination is the only
-// place its shape is written; a construction reaching a slot that spells none
-// has no shape to take.
 // A guard is read after the payload bindings and a false one leaves for the
 // next arm's test; the end of a value-returning body the checker proved
 // unreachable aborts.
@@ -791,8 +779,6 @@ function vb_bare(k: i32): i32 { return (match (Some(k)) { Some(v) => v + 1, None
 // block's leading statements run in the enclosing block and its trailing
 // return reads the local.
 function tm_line(k: i32): i32 { let t = (k, 2); return match (t) { (1, b) => b * 10, (a, _) => a }; }
-// An address has no saturating or checked operator: the clamp is at a width
-// the type names, which is the target's, and the native checker refuses it.
 // A self-call whose result is a payload of the variant returned is a tail call
 // modulo cons: the loop carries the chain built so far and fills its hole, so
 // no call to the function is left. A bare self-tail call beside one leaves the

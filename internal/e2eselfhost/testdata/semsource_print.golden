@@ -317,7 +317,7 @@ func ordered {
 
 modes 2 result i32
 v0:Option[i32] v1:boolean v2:i32 v3:i32
-func ends_unreachable {
+func last_arm_untested {
   b0:
     v0 = param 0
     v1 = variant_is Some v0
