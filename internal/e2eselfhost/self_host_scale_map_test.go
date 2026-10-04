@@ -1,7 +1,9 @@
 package e2eselfhost
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -198,6 +200,78 @@ func TestSelfHostScaleMapX86_64(t *testing.T) {
 			t.Errorf("__fn_bump does not call the map helper, and its element "+
 				"function is an ADD the pass must decline, so the rewritten "+
 				"case's absence check proves nothing:\n%s", body)
+		}
+	})
+}
+
+// The wasm route lifts through its own normalisation, which runs the rewrite
+// before it as the asm routes' lift does (#9933). The kernel is a runtime
+// helper there rather than inlined, so the rewritten body calls
+// `$__fern_scale_f64` where a declined one calls the map helper.
+func TestSelfHostScaleMapWasm(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("the CLI driver takes host filesystem paths as argv")
+	}
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+
+	wat := func(t *testing.T, src string) string {
+		t.Helper()
+		tmp := t.TempDir()
+		in := filepath.Join(tmp, "main.fern")
+		if err := os.WriteFile(in, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join(tmp, "prog.wat")
+		if b, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", in, stdlibRoot, "-o", out).CombinedOutput(); err != nil {
+			t.Fatalf("compile: %v\n%s", err, b)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	watBody := func(t *testing.T, text, name string) string {
+		t.Helper()
+		start := strings.Index(text, "(func $"+name+" ")
+		if start < 0 {
+			t.Fatalf("no function $%s in the emitted module", name)
+		}
+		end := strings.Index(text[start+1:], "\n  (func ")
+		if end < 0 {
+			return text[start:]
+		}
+		return text[start : start+1+end]
+	}
+	const mapCall = "call $__arrm_map__"
+
+	t.Run("rewritten", func(t *testing.T) {
+		if exit, stderr := selfHostCLIRun(t, fernBin, stdlibRoot, scaleMapSrc, "wasm32-wasi"); exit != 42 {
+			t.Errorf("scale map program exited %d, want 42\n%s", exit, stderr)
+		}
+		body := watBody(t, wat(t, scaleMapSrc), "scale2")
+		if strings.Contains(body, mapCall) {
+			t.Errorf("$scale2 still calls the map helper, so the rewrite declined:\n%s", body)
+		}
+		if !strings.Contains(body, "call $__fern_scale_f64") {
+			t.Errorf("$scale2 does not call the scale kernel:\n%s", body)
+		}
+	})
+
+	t.Run("declined-keeps-the-call", func(t *testing.T) {
+		if exit, stderr := selfHostCLIRun(t, fernBin, stdlibRoot, scaleMapKeptSrc, "wasm32-wasi"); exit != 42 {
+			t.Errorf("declined-map program exited %d, want 42\n%s", exit, stderr)
+		}
+		body := watBody(t, wat(t, scaleMapKeptSrc), "bump")
+		if !strings.Contains(body, mapCall) {
+			t.Errorf("$bump does not call the map helper, so the rewritten case's absence check proves nothing:\n%s", body)
 		}
 	})
 }
