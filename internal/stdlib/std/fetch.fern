@@ -68,7 +68,8 @@ import "std/string";
 import "std/async";
 import "std/time";
 // std/tcp — tcp_recv_deadline, the recv-with-deadline primitive behind
-// the inactivity and total timeouts.
+// the inactivity and total timeouts, and `Recv`, what a transport's `read`
+// answers.
 import "std/tcp";
 import "std/http";
 import "std/headers";
@@ -115,9 +116,9 @@ pub enum Phase { Connecting, Inactivity, Total }
 // not; `Decode` for a content coding the client could not undo: more
 // codings than `Decoding.depth`, a body that is not gzip, or one grown
 // past what `Decoding.ratio` allows, the message naming the allowance;
-// `Cancelled` for a request abandoned by its caller, part of the sum so a
-// match written today survives the client growing cancellation; this
-// client does not produce it yet. `FetchError` is `http.ToResponse`, below.
+// `Cancelled` for a request whose task was cancelled while it waited to
+// connect or for the next byte (docs/ASYNC.md §8), the wait answering
+// `async.cancelled()`. `FetchError` is `http.ToResponse`, below.
 pub enum FetchError {
   InvalidUrl(string),
   InvalidRequest(string),
@@ -553,8 +554,10 @@ function __asks_gzip(req: Request): boolean {
 // `connect` races `addrs` as `dns.connect_race` does: a bound that has
 // already passed is `TimedOut` before any attempt, every address refusing
 // is the last refusal, and none connected within the bound is `TimedOut`.
-// `read` answers within `wait_ms`: a chunk, an empty chunk at the end of
-// the stream, or `None` when the wait passed with nothing. `write` answers
+// `read` answers within `wait_ms` as `tcp_recv_deadline` does: a chunk, an
+// empty chunk at the end of the stream, `Elapsed` when the wait passed with
+// nothing, or `Abandoned` when the task reading was cancelled first, which
+// the client reports as `Cancelled`. `write` answers
 // the bytes taken, or a negated errno. `idle` is the transport's pool of
 // connections kept for reuse; the client decides what goes in and comes
 // out of it.
@@ -563,7 +566,7 @@ pub trait Transport {
   function lookup(self: Self, host: string, checked: boolean): Result[Lookup, dns.DnsError];
   function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError];
   function write(self: Self, conn: i32, data: string): i32;
-  function read(self: Self, conn: i32, max: i32, wait_ms: i64): Option[u8[]];
+  function read(self: Self, conn: i32, max: i32, wait_ms: i64): tcp.Recv;
   function close(self: Self, conn: i32): i32;
   function idle(self: Self): Idle;
 }
@@ -763,7 +766,7 @@ impl Transport for Sockets {
   function write(self: Sockets, conn: i32, data: string): i32 {
     return tcp_send(conn, data);
   }
-  function read(self: Sockets, conn: i32, max: i32, wait_ms: i64): Option[u8[]] {
+  function read(self: Sockets, conn: i32, max: i32, wait_ms: i64): tcp.Recv {
     return tcp.tcp_recv_deadline(conn, max, time.duration_millis(wait_ms));
   }
   function close(self: Sockets, conn: i32): i32 {
@@ -1089,6 +1092,9 @@ function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: 
     Err(e) => {
       if (e.eq(net.TimedOut)) {
         return Err(Timeout(Connecting));
+      }
+      if (e.eq(net.Interrupted)) {
+        return Err(FetchError.Cancelled);
       }
       return Err(Connect(e));
     }
@@ -1530,7 +1536,8 @@ function __interim(status: i32): boolean {
 
 // `__recv_bounded(tr, conn, timeouts, started)` — the next chunk of the
 // response within the tighter of the inactivity bound and what is left
-// of the total, or the bound that passed.
+// of the total, the bound that passed, or `Cancelled` when the task reading
+// was cancelled while it waited.
 function __recv_bounded[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started: i64): Result[u8[], FetchError] {
   let ns_per_ms: i64 = 1000000;
   let left_ms: i64 = timeouts.total_ms as i64 - (tr.now_ns() - started) / ns_per_ms;
@@ -1544,11 +1551,14 @@ function __recv_bounded[T: Transport](tr: T, conn: i32, timeouts: Timeouts, star
     bound = Total;
   }
   match (tr.read(conn, 65536, wait_ms)) {
-    Some(chunk) => {
+    Chunk(chunk) => {
       return Ok(chunk);
     },
-    None => {
+    Elapsed => {
       return Err(Timeout(bound));
+    },
+    Abandoned => {
+      return Err(FetchError.Cancelled);
     }
   }
   return Err(Timeout(bound));
