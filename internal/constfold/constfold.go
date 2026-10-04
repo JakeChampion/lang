@@ -134,8 +134,22 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 	// Substitute every Ident reference matching a const name with
 	// the resolved literal. Const decls are then dropped — the rest
 	// of the pipeline runs against a const-free program.
+	// The entry's consts keep their names and no import can name the entry,
+	// so a body from another module sees only the other modules' mangled
+	// consts. Otherwise an entry `const A` would rewrite a library's own `A`
+	// (a variant, say) inside that library (#11143).
+	libValues := map[string]ast.Expr{}
+	for _, cd := range prog.Consts {
+		if v, ok := values[cd.Name]; ok && (prog.EntryModule == "" || cd.SourceModule != prog.EntryModule) {
+			libValues[cd.Name] = v
+		}
+	}
 	sub := substituter{values: values, assets: in.Assets, targetOS: in.TargetOS, targetArch: in.TargetArch}
 	for _, fn := range prog.Funcs {
+		sub.values = values
+		if body := fn.BodyModule(); body != "" && body != prog.EntryModule {
+			sub.values = libValues
+		}
 		// A parameter DEFAULT is not part of the body and sees none of the
 		// parameters: it is pasted into the CALL site. Walk it at top-level
 		// scope, before the body's binders go in. Without this a default was
