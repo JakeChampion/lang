@@ -38,6 +38,36 @@ type ssaBackendProgram struct {
 }
 
 var ssaBackendPrograms = []ssaBackendProgram{
+	// A `.with` on the array the previous one returned skips its uniqueness
+	// test, and a write to an index just read skips its bounds check (#11322).
+	// Each alias here must still see the array as it was, and a write past the
+	// end must still abort where no read checked it.
+	{name: "with_chain", src: `
+function hist(xs: i32[]): i32[] {
+    let counts: i32[] = [0, 0, 0, 0];
+    let i: i32 = 0;
+    while (i < xs.len()) {
+        let d0: i32 = xs[i] & 3;
+        let d1: i32 = (xs[i] >> 2) & 3;
+        counts = counts.with(d0, counts[d0] + 1);
+        counts = counts.with(d1, counts[d1] + 1);
+        i = i + 1;
+    }
+    return counts;
+}
+function main(): i32 {
+    let c: i32[] = hist([1, 5, 9, 15, 4, 0]);
+    let d: i32[] = c.with(0, 100);
+    let kept: i32[] = d;
+    d = d.with(1, 200);
+    let e: i32[] = d.with(2, 7);
+    e = e.with(3, e[3] + 1);
+    if (c[0] != 4 || c[1] != 5 || kept[0] != 100 || kept[1] != c[1] || d[1] != 200 || d[2] != c[2] || e[2] != 7) { return 1; }
+    let far: i32 = e.len() + 1;
+    e = e.with(far, 0);
+    return e[0];
+}
+`},
 	{name: "fact", src: `
 function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); }
 function main(): i32 { return fact(5) - 100; }
@@ -1527,6 +1557,70 @@ function main(): i32 {
 		h.compileWith(t, tg, src, bin, "-backend", "ssa")
 		if _, code := h.runProduced(t, tg, bin); code != 44 {
 			t.Errorf("%s: exit = %d, want 44 (4 + 8 + 32: only the three equal pairs compare equal)", tg.target, code)
+		}
+	}
+}
+
+// A `.with` chain on an array tests uniqueness and bounds once: the first
+// `.with` in each iteration tests its receiver, the loop's phi, and the second
+// takes the box the first handed back, which nothing else holds; each write
+// goes to an index the element read beside it already checked (#11322).
+func TestSelfHostSSAWithChainSettlesOnce(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "with_chain.fern")
+	prog := `function hist(xs: i32[]): i32[] {
+    let counts: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
+    let i: i32 = 0;
+    while (i < xs.len()) {
+        let d0: i32 = xs[i] & 7;
+        let d1: i32 = (xs[i] >> 3) & 7;
+        counts = counts.with(d0, counts[d0] + 1);
+        counts = counts.with(d1, counts[d1] + 1);
+        i = i + 1;
+    }
+    return counts;
+}
+function main(): i32 {
+    let c: i32[] = hist([1, 9, 17, 63, 8, 0]);
+    return c[0] * 10 + c[1];
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The rc-1 compare appears in the uniqueness test and in the copy arm's
+	// release, so one `.with` that tests is two; the bounds aborts are the two
+	// element reads'.
+	shapes := map[string]struct{ unique, oob string }{
+		"x86-64-linux": {"cmpl $1, -8(%r", "jae __fern_oob_abort"},
+		"arm64-linux":  {"cmp w5, #1", "b __fern_oob_abort"},
+	}
+	for _, tg := range h.targets {
+		shape, ok := shapes[tg.target]
+		if !ok {
+			continue
+		}
+		asmPath := filepath.Join(dir, "with_chain-"+tg.target+".s")
+		h.compileWith(t, tg, src, asmPath, "-backend", "ssa", "-emit", "asm")
+		asm, err := os.ReadFile(asmPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fn := functionListing(string(asm), "__fn_hist")
+		if fn == "" {
+			t.Fatalf("%s: no __fn_hist in the listing:\n%s", tg.target, asm)
+		}
+		if n := strings.Count(fn, shape.unique); n != 2 {
+			t.Errorf("%s: hist reads an rc against 1 %d times, want 2 (one uniqueness test and its copy arm's release):\n%s", tg.target, n, fn)
+		}
+		if n := strings.Count(fn, shape.oob); n != 2 {
+			t.Errorf("%s: hist has %d bounds aborts, want 2 (the two element reads):\n%s", tg.target, n, fn)
+		}
+		bin := filepath.Join(dir, "with_chain-"+tg.target)
+		h.compileWith(t, tg, src, bin, "-backend", "ssa")
+		if _, code := h.runProduced(t, tg, bin); code != 45 {
+			t.Errorf("%s: exit = %d, want 45 (c[0] = 4, c[1] = 5)", tg.target, code)
 		}
 	}
 }

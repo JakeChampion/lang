@@ -2188,7 +2188,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   let c: string = ssa_src(reg_of, ins.args[2], "x6");
   s = ssa_load(reg_of, ins.args[2], c, s);
   s = s.mark_heap();
-  s = s.write("    ldr x7, [" + a + "]\n    cmp " + b + ", x7\n    b.lo 1f\n    b __fern_oob_abort\n1:\n");
+  if (ins.imm != 1) {
+    s = s.write("    ldr x7, [" + a + "]\n    cmp " + b + ", x7\n    b.lo 1f\n    b __fern_oob_abort\n1:\n");
+  }
   if (ins.str == "u8") {
     return s.write("    add x5, " + a + ", " + b + "\n    strb " + ssa_wreg(c) + ", [x5, #8]\n");
   }
@@ -4639,7 +4641,7 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_str_own") {
     s = s.need("str_own");
   }
-  if (name == "__fern_str_grow") {
+  if (name == "__fern_str_grow" || name == "__fern_str_grow_range") {
     s = s.need("str_grow");
   }
   if (name == "__fern_getpwuid_name") {
@@ -8273,10 +8275,6 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
-  // __fern_str_grow(a@[sp,#16], b@[sp]) -> 1 once b is appended to a in
-  // place, else 0 with nothing written: the arm64 sibling of the x86-64
-  // body, with the same fused, rc-1 and same-class tests. The leak census sees
-  // one block that grew: its live bytes move and its counts do not.
   // __fern_getpwuid_name(uid@[sp]) -> the address of pw_name in the entry
   // libSystem's getpwuid(3) answers, or 0. Darwin keeps regular accounts in
   // Directory Services, which only libSystem can ask (#9815): the call goes
@@ -8305,10 +8303,35 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     }
     s = s.write("    ret\n");
   }
+  // __fern_str_grow(a@[sp,#16], b@[sp]) -> 1 once b is appended to a in
+  // place, else 0 with nothing written: the arm64 sibling of the x86-64
+  // body, with the same fused, rc-1 and same-class tests. The leak census sees
+  // one block that grew: its live bytes move and its counts do not.
+  // __fern_str_grow_range(a@[sp,#48], s@[sp,#32], lo@[sp,#16], hi@[sp])
+  // appends s's bytes [lo, hi) the same way, and answers 0 for a range
+  // outside s so the caller's slice raises the bounds abort. Both entries
+  // hand the body the source bytes in x1 and their count in x3.
   if (s.has_need("str_grow")) {
     s = s.write("__fn___fern_str_grow:\n");
     s = s.write("    ldr x0, [sp, #16]\n");  // a
     s = s.write("    ldr x1, [sp]\n");  // b
+    s = s.write("    ldr x3, [x1, #8]\n");  // lb
+    s = s.write("    ldr x1, [x1]\n");  // b's data
+    s = s.write("    b .Lsg_body\n");
+    s = s.write("__fn___fern_str_grow_range:\n");
+    s = s.write("    ldr x0, [sp, #48]\n");  // a
+    s = s.write("    ldr x1, [sp, #32]\n");  // s
+    s = s.write("    ldrsw x2, [sp, #16]\n");  // lo
+    s = s.write("    ldrsw x3, [sp]\n");  // hi
+    s = s.write("    tbnz x2, #63, .Lsg_no\n");
+    s = s.write("    ldr x4, [x1, #8]\n");  // s's length
+    s = s.write("    cmp x3, x4\n");
+    s = s.write("    b.gt .Lsg_no\n");
+    s = s.write("    subs x3, x3, x2\n");  // lb
+    s = s.write("    b.lt .Lsg_no\n");
+    s = s.write("    ldr x1, [x1]\n");
+    s = s.write("    add x1, x1, x2\n");  // s's data + lo
+    s = s.write(".Lsg_body:\n");
     s = s.write("    tbnz x0, #0, .Lsg_no\n");
     s = s.write("    mov x9, #0x10000\n");
     s = s.write("    cmp x0, x9\n");
@@ -8318,11 +8341,10 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    cmp w2, #1\n");
     s = s.write("    b.ne .Lsg_no\n");
     s = s.write("    ldur w2, [x0, #-4]\n");
-    s = mov_fused_marker(s, "w3");
-    s = s.write("    cmp w2, w3\n");
+    s = mov_fused_marker(s, "w4");
+    s = s.write("    cmp w2, w4\n");
     s = s.write("    b.ne .Lsg_no\n");
     s = s.write("    ldr x2, [x0, #8]\n");  // la
-    s = s.write("    ldr x3, [x1, #8]\n");  // lb
     s = s.write("    add x4, x2, x3\n");  // grown length
     s = s.write("    lsr x9, x4, #31\n");
     s = s.write("    cbnz x9, .Lsg_no\n");
@@ -8357,7 +8379,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    str x4, [x0, #8]\n");  // len = grown length
     s = s.write("    ldr x5, [x0]\n");
     s = s.write("    add x5, x5, x2\n");  // dst = data + la
-    s = s.write("    ldr x6, [x1]\n");  // src = b's data
+    s = s.write("    mov x6, x1\n");  // src
     s = arm64_copy_bytes(s, CopyRegs { dst: "x5", src: "x6", n: "x3", tmp: "x7", src_end: "x9", dst_end: "x10" }, ".Lsg_w", ".Lsg_t", ".Lsg_b", ".Lsg_d");
     s = s.write("    mov x0, #1\n");
     s = s.write("    ret\n");

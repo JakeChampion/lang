@@ -44,6 +44,7 @@ func TestIOByteLinesPartialReadError(t *testing.T) {
 			}
 			failure := &byteLineReadFailure{}
 			i := interp.New()
+			i.SetDynCoercions(info.DynCoercions)
 			i.Stdin = io.MultiReader(bytes.NewReader(bytes.Repeat([]byte{tc.value}, tc.length)), failure)
 			for _, ed := range prog.Enums {
 				i.RegisterEnum(ed)

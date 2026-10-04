@@ -71,6 +71,7 @@ pub function provided_names(): string[] {
     "__fern_arr_own_elems",
     "__fern_str_own",
     "__fern_str_grow",
+    "__fern_str_grow_range",
     "__fern_rc_underflow_get",
     "__fern_getpwuid_name",
     "__fern_arr_share_inc",

@@ -218,10 +218,12 @@ pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias
 // a bounded type parameter may still call it through the trait.
 // provided is every method name the trait declares — abstract, defaulted, or
 // associated — the set a bound on a type parameter makes callable.
+// default_sigs is the signature of each defaulted method, its body dropped:
+// a `dyn` of the trait dispatches to it as to a required one.
 // `module` is the bundle prefix of the module that declared the trait, "" for
 // the program's own module; it is what a qualified `@derive(cmp.Eq)` resolves
 // against, since `trait_name` is simplified past any qualifier.
-pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[], module: string }
+pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[], module: string, default_sigs: FuncDecl[] }
 
 // TraitDecl is the `trait` block as WRITTEN, retained for the formatter
 // (#6773) and, since it is the only record of a trait's TYPE PARAMETERS, for
@@ -23674,7 +23676,7 @@ pub function erase_view_module(mod: Module): Module {
   }
   let reqs: TraitReq[] = [];
   for tr in mod.trait_reqs {
-    reqs = reqs.append(TraitReq { ...tr, req_sigs: erase_view_funcs(tr.req_sigs), assoc_sigs: erase_view_funcs(tr.assoc_sigs) });
+    reqs = reqs.append(TraitReq { ...tr, req_sigs: erase_view_funcs(tr.req_sigs), assoc_sigs: erase_view_funcs(tr.assoc_sigs), default_sigs: erase_view_funcs(tr.default_sigs) });
   }
   let tdecls: TraitDecl[] = [];
   for td in mod.trait_decls {
@@ -26545,6 +26547,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
   let required_sigs: FuncDecl[] = [];
   let assoc_sigs: FuncDecl[] = [];
   let provided: string[] = [];
+  let default_sigs: FuncDecl[] = [];
   let supertraits: string[] = [];
   // The written form, for the formatter: every method in source order (an
   // empty body marks an abstract one), the supertraits with any `mod.`
@@ -26648,6 +26651,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
         // is treated as abstract — it would synthesise a no-op.)
         if (fr_func.body.len() > 0) {
           defaults = defaults.append(TraitDefault { trait_name: simple, method: fr_func });
+          default_sigs = default_sigs.append(FuncDecl { ...fr_func, body: [] });
         } else {
           // Abstract (body-less) signature: a REQUIRED method every
           // impl must provide (#4347 E021). Bodied defaults above are
@@ -26666,7 +26670,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
       p = p.advance();
     }
   }
-  return (defaults, TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "" }, TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types, is_package: false }, trait_bad, p);
+  return (defaults, TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "", default_sigs: default_sigs }, TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types, is_package: false }, trait_bad, p);
 }
 
 // skip_decl_modifier consumes a contextual declaration modifier `name`
@@ -27965,8 +27969,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       // Retain the trait's required (abstract) method set for E021 (#4347).
       // Retain a trait's requirement record when it has abstract methods
       // OR supertraits — a supertrait-only trait (`trait Num: Add + …{}`)
-      // has no methods but still drives the E021 supertrait-impl check.
-      if (tpr_req.methods.len() > 0 || tpr_req.supertraits.len() > 0 || tpr_req.assoc_sigs.len() > 0) {
+      // has no methods but still drives the E021 supertrait-impl check —
+      // OR defaults, which a `dyn` of the trait calls.
+      if (tpr_req.methods.len() > 0 || tpr_req.supertraits.len() > 0 || tpr_req.assoc_sigs.len() > 0 || tpr_req.default_sigs.len() > 0) {
         trait_reqs = trait_reqs.append(tpr_req);
       }
       continue;
