@@ -21,7 +21,7 @@ func TestSelfHostFipHttpCodecAgreesAndDoesNotAllocate(t *testing.T) {
 			t.Fatal(err)
 		}
 		bin := filepath.Join(dir, "http_"+variant)
-		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", src, cli.stdlib, "-o", bin)
+		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-o", bin, src, cli.stdlib)
 		cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("compile %s: %v\n%s", variant, err, out)

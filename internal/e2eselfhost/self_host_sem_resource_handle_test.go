@@ -38,7 +38,7 @@ func TestSelfHostSemanticResourceHandles(t *testing.T) {
 			t.Fatal(err)
 		}
 		out := filepath.Join(t.TempDir(), "prog.wat")
-		cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", path, stdlibRoot, "-o", out)
+		cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", "-o", out, path, stdlibRoot)
 		cmd.Env = append(os.Environ(), "FERN_SEM_IR_REPORT=1")
 		var stderr strings.Builder
 		cmd.Stderr = &stderr

@@ -28,7 +28,7 @@ func TestSelfHostArm64DarwinASCIIByteText(t *testing.T) {
 				t.Fatal(err)
 			}
 			bin := filepath.Join(t.TempDir(), "ascii")
-			compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
+			compile := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, stdlib)
 			compile.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 			if out, err := compile.CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)

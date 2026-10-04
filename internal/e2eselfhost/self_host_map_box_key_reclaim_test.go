@@ -238,7 +238,7 @@ func runMapBoxKeyReclaim(t *testing.T, runner []string, target string) {
 				t.Fatal(err)
 			}
 			bin := filepath.Join(work, "prog")
-			cmd := exec.Command(fernBin, "-target", target, src, stdlibRoot, "-o", bin)
+			cmd := exec.Command(fernBin, "-target", target, "-o", bin, src, stdlibRoot)
 			var cerr strings.Builder
 			cmd.Stderr = &cerr
 			if err := cmd.Run(); err != nil {

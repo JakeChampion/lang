@@ -73,7 +73,7 @@ func TestSelfHostWasmIOScratchReleased(t *testing.T) {
 				t.Fatal(err)
 			}
 			wasm := filepath.Join(dir, "prog.wasm")
-			build := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-emit", "core-module", src, cli.stdlib, "-o", wasm)
+			build := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-emit", "core-module", "-o", wasm, src, cli.stdlib)
 			build.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 			if out, err := build.CombinedOutput(); err != nil {
 				t.Fatalf("build: %v\n%s", err, out)

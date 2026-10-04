@@ -175,10 +175,10 @@ func selfHostCLIRun(t *testing.T, fernBin, stdlibRoot, src, target string) (int,
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "prog")
-	args := []string{"-target", target, in, stdlibRoot, "-o", out}
+	args := []string{"-target", target, "-o", out, in, stdlibRoot}
 	if target == "wasm32-wasi" {
 		out = filepath.Join(dir, "prog.wat")
-		args = []string{"-target", target, "-emit", "asm", in, stdlibRoot, "-o", out}
+		args = []string{"-target", target, "-emit", "asm", "-o", out, in, stdlibRoot}
 	}
 	cmd := exec.Command(fernBin, args...)
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_LEAKCHECK=1")

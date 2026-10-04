@@ -250,7 +250,7 @@ func TestSelfHostSemanticTrmc(t *testing.T) {
 	// of its own.
 	t.Run("shape", func(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "prog.s")
-		cmd := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", src, stdlibRoot, "-o", out)
+		cmd := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, stdlibRoot)
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {

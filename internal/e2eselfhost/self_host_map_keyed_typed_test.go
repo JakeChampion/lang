@@ -212,10 +212,10 @@ func runMapChurnTyped(t *testing.T, runner []string, target string, programs []m
 				t.Fatal(err)
 			}
 			bin := filepath.Join(work, "prog")
-			args := []string{"-target", target, src, stdlibRoot, "-o", bin}
+			args := []string{"-target", target, "-o", bin, src, stdlibRoot}
 			if target == "wasm32-wasi" {
 				bin = filepath.Join(work, "prog.wat")
-				args = []string{"-target", target, "-emit", "asm", src, stdlibRoot, "-o", bin}
+				args = []string{"-target", target, "-emit", "asm", "-o", bin, src, stdlibRoot}
 			}
 			cmd := exec.Command(fernBin, args...)
 			cmd.Env = append(os.Environ(), "FERN_SEM_IR_REPORT=1")

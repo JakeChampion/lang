@@ -58,7 +58,7 @@ func TestSelfHostWasmI64GlobalEncodesItsOwnType(t *testing.T) {
 		t.Fatal(err)
 	}
 	modPath := filepath.Join(dir, "count.wasm")
-	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", srcPath, stdlibRoot, "-o", modPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", modPath, srcPath, stdlibRoot).CombinedOutput(); err != nil {
 		t.Fatalf("self-host wasm compile: %v\n%s", err, out)
 	}
 	cmd := exec.Command("wasmtime", "run", modPath)
