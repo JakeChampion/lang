@@ -264,6 +264,12 @@ func socketHostBody(operation, moduleName, name string) string {
 	if strings.HasPrefix(moduleName, "wasi:sockets/instance-network@") {
 		return "(i32.const 0)"
 	}
+	if moduleName == "wasi_snapshot_preview1" && name == "fd_write" {
+		// Under the census the exported main reports on its return through
+		// fd_write. Stdio is not a socket resource, so the write succeeds
+		// and the probe reads the census globals itself.
+		return "(i32.const 0)"
+	}
 	if strings.Contains(name, "[resource-drop]") {
 		kind := ""
 		switch {

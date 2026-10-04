@@ -29,7 +29,8 @@ func TestFileStatOffsets(t *testing.T) {
 		Atime: 72, AtimeNsec: 80,
 		Mtime: 88, MtimeNsec: 96,
 		Ctime: 104, CtimeNsec: 112,
-		Bytes: 120,
+		Btime: 120, BtimeNsec: 128,
+		Bytes: 136,
 	}
 	if FileStat != want {
 		t.Errorf("FileStat layout moved:\n\tgot  %+v\n\twant %+v", FileStat, want)

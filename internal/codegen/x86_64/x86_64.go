@@ -242,9 +242,8 @@ const (
 	sysRead  = 0
 	sysWrite = 1
 	sysClose = 3
-	// fstat(2) / lseek(2): x86-64 syscalls 5 / 8, backing the Reader /
-	// Writer `stat` and `seek` methods.
-	sysFstat = 5
+	// lseek(2): x86-64 syscall 8, backing the Reader / Writer `seek`
+	// method.
 	sysLseek = 8
 	// Write-back: fsync(2) / fdatasync(2) on one descriptor, syncfs(2)
 	// on the filesystem holding it, and sync(2) on every filesystem.
@@ -18730,57 +18729,83 @@ func (g *generator) emitReadDirLike(sym string, lb string, skipDots bool) {
 	g.line(".size " + sym + ", .-" + sym)
 }
 
-// LinuxStatField is one FileStat field read out of the Linux x86-64
-// `struct stat`: the box offset, the statbuf offset, and how many bytes
-// to load.
-type LinuxStatField struct {
-	Box, Src, Width int32
-}
+// sysStatx is statx(2) on x86-64, and atEmptyPath the flag that makes it
+// describe its dirfd rather than a path.
+const (
+	sysStatx    = 332
+	atEmptyPath = 0x1000
+)
 
-// LinuxStatFields maps each FileStat field onto the Linux x86-64
-// `struct stat` field it is read from. It is all that makes
-// this target-specific — everything else about the helper is shared,
-// and the x86-64 SSA emitter's stat reads the same table.
-//
-// Two loads are narrower than the field they fill. `st_nlink` is a
-// 64-bit word here (it is 32-bit on arm64 Linux) and FileStat's `nlink`
-// is u32, so the low word is what lands; a link count past 4 billion is
-// not a thing any filesystem produces. Everything else is width-for-
-// width, and the three timestamps happen to sit at the same offsets in
-// both records.
-var LinuxStatFields = []LinuxStatField{
-	{ir.FileStat.Mode, 24, 4},
-	{ir.FileStat.Nlink, 16, 4},
-	{ir.FileStat.UID, 28, 4},
-	{ir.FileStat.GID, 32, 4},
-	{ir.FileStat.Dev, 0, 8},
-	{ir.FileStat.Rdev, 40, 8},
-	{ir.FileStat.Ino, 8, 8},
-	{ir.FileStat.Blksize, 56, 8},
-	{ir.FileStat.Blocks, 64, 8},
-	{ir.FileStat.Atime, 72, 8},
-	{ir.FileStat.AtimeNsec, 80, 8},
-	{ir.FileStat.Mtime, 88, 8},
-	{ir.FileStat.MtimeNsec, 96, 8},
-	{ir.FileStat.Ctime, 104, 8},
-	{ir.FileStat.CtimeNsec, 112, 8},
+// StatxProjection returns the instructions that copy the statx record at
+// [buf] onto the FileStat fields at [box] — every field but is_file, is_dir
+// and size, which the callers already hold in registers. A dev_t is glibc's
+// makedev of its pair, and a birth time the filesystem does not record
+// (STATX_BTIME clear in stx_mask) is stored as zero. Clobbers r8-r11; `lbl`
+// is the one local label it defines.
+func StatxProjection(buf, box, lbl string) []string {
+	var out []string
+	add := func(f string, a ...any) { out = append(out, fmt.Sprintf(f, a...)) }
+	for _, f := range ir.StatxFields {
+		switch f.Load {
+		case 2:
+			add("movzx r9d, word ptr [%s + %d]", buf, f.Src)
+		case 4:
+			add("mov r9d, dword ptr [%s + %d]", buf, f.Src)
+		default:
+			add("mov r9, [%s + %d]", buf, f.Src)
+		}
+		if f.Store == 4 {
+			add("mov dword ptr [%s + %d], r9d", box, f.Box)
+		} else {
+			add("mov [%s + %d], r9", box, f.Box)
+		}
+	}
+	for _, d := range ir.StatxDevs {
+		add("mov r8d, dword ptr [%s + %d]", buf, d.Major)
+		add("mov r9d, dword ptr [%s + %d]", buf, d.Minor)
+		add("mov r10, r8")
+		add("and r10d, 4095")
+		add("shl r10, 8")
+		add("mov r11, r8")
+		add("shr r11, 12")
+		add("shl r11, 44")
+		add("or r10, r11")
+		add("mov r11, r9")
+		add("and r11d, 255")
+		add("or r10, r11")
+		add("mov r11, r9")
+		add("shr r11, 8")
+		add("shl r11, 20")
+		add("or r10, r11")
+		add("mov [%s + %d], r10", box, d.Box)
+	}
+	add("xor r9d, r9d")
+	add("xor r10d, r10d")
+	add("test dword ptr [%s], %d", buf, ir.StatxBtimeBit)
+	add("jz %s", lbl)
+	add("mov r9, [%s + %d]", buf, ir.StatxBtimeOff)
+	add("mov r10d, dword ptr [%s + %d]", buf, ir.StatxBtimeOff+8)
+	out = append(out, lbl+":")
+	add("mov [%s + %d], r9", box, ir.FileStat.Btime)
+	add("mov [%s + %d], r10", box, ir.FileStat.BtimeNsec)
+	return out
 }
 
 // emitStatRuntime emits `__fern_stat(path) →
-// Result[FileStat, IoError]` — newfstatat(AT_FDCWD, path, buf, 0)
-// into a 144-byte stack buffer, projected onto FileStat by
-// LinuxStatFields. The box is ir.FileStat.Bytes from __fern_alloc_box
-// (immortal, same class as the Result boxes).
+// Result[FileStat, IoError]` — statx(AT_FDCWD, path, 0, StatxMask, buf)
+// into a stack buffer, projected onto FileStat by StatxProjection. The box
+// is ir.FileStat.Bytes from __fern_alloc_box (immortal, same class as the
+// Result boxes).
 // System V: rdi = path string value.
 func (g *generator) emitStatRuntime() {
 	g.emitStatLikeRuntime("__fern_stat", 0, "st", false)
 }
 
-// emitFdStatRuntime emits `__fern_fd_stat(handle_ptr)` — fstat(2) of the
-// fd a Reader / Writer holds, projected onto the same FileStat the path
-// helpers build. It is the same body with the path copy replaced by a
-// load of the fd, and the errno classified against an empty path, as a
-// failed read or write is.
+// emitFdStatRuntime emits `__fern_fd_stat(handle_ptr)` — statx(fd, "",
+// AT_EMPTY_PATH) of the fd a Reader / Writer holds, projected onto the same
+// FileStat the path helpers build. It is the same body with the path copy
+// replaced by a load of the fd, and the errno classified against an empty
+// path, as a failed read or write is.
 func (g *generator) emitFdStatRuntime() {
 	g.emitStatLikeRuntime("__fern_fd_stat", 0, "fst", true)
 }
@@ -18851,7 +18876,7 @@ func (g *generator) emitSyncRuntime() {
 }
 
 // emitLstatRuntime emits `__fern_lstat(path)`, which is the same helper with
-// AT_SYMLINK_NOFOLLOW set: newfstatat resolves every component but the last,
+// AT_SYMLINK_NOFOLLOW set: statx resolves every component but the last,
 // so a symlink reports its own st_mode and comes back neither is_file nor
 // is_dir. That three-way answer is what a directory walk needs to choose
 // between recursing, reading and skipping (#7982).
@@ -18859,10 +18884,10 @@ func (g *generator) emitLstatRuntime() {
 	g.emitStatLikeRuntime("__fern_lstat", 256, "lst", false)
 }
 
-// emitStatLikeRuntime is the shared body. `atFlags` is newfstatat's flags word
-// — 0 to follow, AT_SYMLINK_NOFOLLOW (0x100) not to — and `lp` prefixes the
+// emitStatLikeRuntime is the shared body. `atFlags` is statx's flags word —
+// 0 to follow, AT_SYMLINK_NOFOLLOW (0x100) not to — and `lp` prefixes the
 // local labels so the helpers can all be emitted into one object. `byFd`
-// selects fstat(2) of the fd at [rdi] over newfstatat of a path.
+// describes the fd at [rdi] (AT_EMPTY_PATH) rather than a path.
 func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd bool) {
 	g.line("")
 	g.line(".globl " + sym)
@@ -18875,16 +18900,20 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	g.emit("push r13") // path len / IoError box
 	g.emit("push r14") // is_dir
 	g.emit("push r15") // st_size
-	// 6 pushes ⇒ rsp≡8 mod 16; sub 168 realigns — 144-byte stat
-	// buf at [rsp..143] + slots:
-	//   [rbp-56] emitStrDataPtr inline-spill scratch
+	// 6 pushes ⇒ rsp≡8 mod 16; sub 280 realigns — the statx record
+	// at [rsp..255] + slots:
+	//   [rbp-56] emitStrDataPtr inline-spill scratch, or the fd form's ""
 	//   [rbp-64] original path string value (io_error arg)
-	g.emit("sub rsp, 168")
+	g.emit(fmt.Sprintf("sub rsp, %d", ir.StatxBytes+24))
 	if byFd {
-		// fstat(fd, statbuf)
+		// statx(fd, "", AT_EMPTY_PATH, mask, statbuf)
 		g.emit("mov edi, [rdi]")
-		g.emit("mov rsi, rsp")
-		g.emitSyscall(sysFstat)
+		g.emit("mov byte ptr [rbp - 56], 0")
+		g.emit("lea rsi, [rbp - 56]")
+		g.emit(fmt.Sprintf("mov edx, %d", atEmptyPath))
+		g.emit(fmt.Sprintf("mov r10d, %d", ir.StatxMask))
+		g.emit("mov r8, rsp")
+		g.emitSyscall(sysStatx)
 	} else {
 		g.emit("mov [rbp - 64], rdi")
 		g.emitStrLen("r13d", "rdi")
@@ -18903,16 +18932,13 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 		g.emit("jmp .L" + lp + "_cp")
 		g.label(".L" + lp + "_cpd")
 		g.emit("mov byte ptr [rbx + r13], 0")
-		// newfstatat(AT_FDCWD=-100, pathz, statbuf, atFlags)
+		// statx(AT_FDCWD=-100, pathz, atFlags, mask, statbuf)
 		g.emit("mov edi, -100")
 		g.emit("mov rsi, rbx")
-		g.emit("mov rdx, rsp")
-		if atFlags == 0 {
-			g.emit("xor r10d, r10d")
-		} else {
-			g.emit(fmt.Sprintf("mov r10d, %d", atFlags))
-		}
-		g.emitSyscall(262)
+		g.emit(fmt.Sprintf("mov edx, %d", atFlags))
+		g.emit(fmt.Sprintf("mov r10d, %d", ir.StatxMask))
+		g.emit("mov r8, rsp")
+		g.emitSyscall(sysStatx)
 		g.emit("mov r14, rax") // result across the free
 		g.emit("mov rdi, rbx")
 		g.emit("lea rsi, [r13 + 1]")
@@ -18921,15 +18947,15 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	}
 	g.emit("test rax, rax")
 	g.emit("js .L" + lp + "_err")
-	g.emit("mov eax, [rsp + 24]") // st_mode
-	g.emit("and eax, 61440")      // S_IFMT
+	g.emit(fmt.Sprintf("movzx eax, word ptr [rsp + %d]", ir.StatxModeOff))
+	g.emit("and eax, 61440") // S_IFMT
 	g.emit("xor r12d, r12d")
 	g.emit("cmp eax, 32768") // S_IFREG
 	g.emit("sete r12b")
 	g.emit("xor r14d, r14d")
 	g.emit("cmp eax, 16384") // S_IFDIR
 	g.emit("sete r14b")
-	g.emit("mov r15, [rsp + 48]") // st_size
+	g.emit(fmt.Sprintf("mov r15, [rsp + %d]", ir.StatxSizeOff))
 	// The statbuf stays at [rsp] across __fern_alloc_box, so the rest of
 	// the record is copied out after the box exists.
 	g.emit(fmt.Sprintf("mov edi, %d", ir.FileStat.Bytes))
@@ -18937,14 +18963,12 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	g.emit("mov [rax], r12d")
 	g.emit("mov [rax + 4], r14d")
 	g.emit(fmt.Sprintf("mov [rax + %d], r15", ir.FileStat.Size))
-	for _, f := range LinuxStatFields {
-		if f.Width == 4 {
-			g.emit(fmt.Sprintf("mov r9d, [rsp + %d]", f.Src))
-			g.emit(fmt.Sprintf("mov [rax + %d], r9d", f.Box))
+	for _, line := range StatxProjection("rsp", "rax", ".L"+lp+"_bt") {
+		if strings.HasSuffix(line, ":") {
+			g.label(strings.TrimSuffix(line, ":"))
 			continue
 		}
-		g.emit(fmt.Sprintf("mov r9, [rsp + %d]", f.Src))
-		g.emit(fmt.Sprintf("mov [rax + %d], r9", f.Box))
+		g.emit(line)
 	}
 	g.emit("mov r13, rax")
 	g.emit("mov edi, 16")
@@ -18970,7 +18994,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	g.emit("mov [rax + 8], r13")
 
 	g.label(".L" + lp + "_return")
-	g.emit("add rsp, 168")
+	g.emit(fmt.Sprintf("add rsp, %d", ir.StatxBytes+24))
 	g.emit("pop r15")
 	g.emit("pop r14")
 	g.emit("pop r13")
