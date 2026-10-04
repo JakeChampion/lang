@@ -56,7 +56,7 @@ func TestSelfHostArm64DarwinBytePipeline(t *testing.T) {
 	if err := os.WriteFile(src, []byte(e2eharness.BytePipelineProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(cli, "-target", "arm64-darwin", src, e2eharness.SelfHostStdlibRoot(t), "-o", bin)
+	cmd := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, e2eharness.SelfHostStdlibRoot(t))
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)
@@ -76,7 +76,7 @@ func TestSelfHostBytePipelineCoreModule(t *testing.T) {
 	if err := os.WriteFile(src, []byte(e2eharness.BytePipelineProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-emit", "core-module", src, cli.stdlib, "-o", binary)
+	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-emit", "core-module", "-o", binary, src, cli.stdlib)
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("core-module compile: %v\n%s", err, out)

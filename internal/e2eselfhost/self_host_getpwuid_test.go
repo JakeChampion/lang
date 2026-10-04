@@ -54,7 +54,7 @@ func TestSelfHostGetpwuidName(t *testing.T) {
 			t.Fatal(err)
 		}
 		out := filepath.Join(dir, "prog")
-		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "arm64-darwin", src, cli.stdlib, "-o", out)
+		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "arm64-darwin", "-o", out, src, cli.stdlib)
 		if msg, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("self-host -target arm64-darwin: %v\n%s", err, msg)
 		}
@@ -84,7 +84,7 @@ func TestSelfHostArm64DarwinGetpwuidName(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(t.TempDir(), "names")
-	if out, err := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin).CombinedOutput(); err != nil {
+	if out, err := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, stdlib).CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)
 	}
 	got, _ := exec.Command(bin).Output()

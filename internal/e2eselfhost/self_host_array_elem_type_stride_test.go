@@ -168,7 +168,7 @@ func TestSelfHostArrayElemTypeStrideWasm(t *testing.T) {
 			want := arrayElemOracle(t, interpBin, tc.files)
 			mainPath := writeArrayElemCase(t, tc.files)
 			outWat := filepath.Join(filepath.Dir(mainPath), "out.wat")
-			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); cerr != nil {
+			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", "-o", outWat, mainPath, stdlibRoot).CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
 			}
 			rcmd := exec.Command("wasmtime", "run", outWat)
@@ -196,7 +196,7 @@ func TestSelfHostArrayElemTypeStrideX86_64(t *testing.T) {
 			want := arrayElemOracle(t, interpBin, tc.files)
 			mainPath := writeArrayElemCase(t, tc.files)
 			binPath := filepath.Join(filepath.Dir(mainPath), "out.bin")
-			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", mainPath, stdlibRoot, "-o", binPath).CombinedOutput(); cerr != nil {
+			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-o", binPath, mainPath, stdlibRoot).CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
 			}
 			var rcmd *exec.Cmd
@@ -228,7 +228,7 @@ func TestSelfHostArrayElemTypeStrideArm64(t *testing.T) {
 			want := arrayElemOracle(t, interpBin, tc.files)
 			mainPath := writeArrayElemCase(t, tc.files)
 			binPath := filepath.Join(filepath.Dir(mainPath), "out.bin")
-			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "arm64-linux", mainPath, stdlibRoot, "-o", binPath).CombinedOutput(); cerr != nil {
+			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "arm64-linux", "-o", binPath, mainPath, stdlibRoot).CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
 			}
 			rcmd := runArm64Bin(qemu, binPath)

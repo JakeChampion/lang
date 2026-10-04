@@ -348,7 +348,7 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 		t.Fatalf("write main.fern: %v", err)
 	}
 	asmPath := filepath.Join(proj, "out.s")
-	cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath)
+	cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, mainPath, stdlibRoot)
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v (%s)", err, out)

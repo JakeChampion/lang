@@ -27,8 +27,8 @@ func TestSelfHostRetiredArgvBuiltinsUndefined(t *testing.T) {
 			want := `error[E001]: undefined function "` + tc.name + `"`
 			for _, mode := range [][]string{
 				{"-check", src, stdlibRoot},
-				{"-target", "x86-64-linux", "-emit", "asm", src, stdlibRoot, "-o", filepath.Join(t.TempDir(), "out.s")},
-				{"-target", "wasm32-wasi", "-emit", "asm", src, stdlibRoot, "-o", filepath.Join(t.TempDir(), "out.wat")},
+				{"-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(t.TempDir(), "out.s"), src, stdlibRoot},
+				{"-target", "wasm32-wasi", "-emit", "asm", "-o", filepath.Join(t.TempDir(), "out.wat"), src, stdlibRoot},
 			} {
 				out, err := runX86_64Bin(runner, fernBin, mode...).CombinedOutput()
 				if err == nil {

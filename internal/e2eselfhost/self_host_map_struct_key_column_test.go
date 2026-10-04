@@ -111,7 +111,7 @@ func runMapColumnSnapshot(t *testing.T, runner []string, target string) {
 				t.Fatal(err)
 			}
 			out := filepath.Join(work, "prog")
-			cmd := exec.Command(fernBin, "-target", target, src, stdlibRoot, "-o", out)
+			cmd := exec.Command(fernBin, "-target", target, "-o", out, src, stdlibRoot)
 			cmd.Env = append(os.Environ(), "FERN_SANITIZE=1")
 			var stderr strings.Builder
 			cmd.Stderr = &stderr

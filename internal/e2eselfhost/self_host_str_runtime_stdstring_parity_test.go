@@ -128,7 +128,7 @@ func TestSelfHostStrRuntimeStdStringParityX86_64(t *testing.T) {
 			want := selfHostInterpOracle(t, interpBin, tc.src)
 			mainPath := writeSelfHostProgram(t, tc.src)
 			binPath := filepath.Join(filepath.Dir(mainPath), "out.bin")
-			if out, err := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", mainPath, stdlibRoot, "-o", binPath).CombinedOutput(); err != nil {
+			if out, err := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-o", binPath, mainPath, stdlibRoot).CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)
 			}
 			var cmd *exec.Cmd
@@ -158,7 +158,7 @@ func TestSelfHostStrRuntimeStdStringParityArm64(t *testing.T) {
 			want := selfHostInterpOracle(t, interpBin, tc.src)
 			mainPath := writeSelfHostProgram(t, tc.src)
 			binPath := filepath.Join(filepath.Dir(mainPath), "out.bin")
-			if out, err := runX86_64Bin(runner, fernBin, "-target", "arm64-linux", mainPath, stdlibRoot, "-o", binPath).CombinedOutput(); err != nil {
+			if out, err := runX86_64Bin(runner, fernBin, "-target", "arm64-linux", "-o", binPath, mainPath, stdlibRoot).CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)
 			}
 			cmd := runArm64Bin(qemu, binPath)

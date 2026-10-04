@@ -41,7 +41,7 @@ func (c *selfHostCLI) emit(t *testing.T, src, target string, env ...string) stri
 		ext = ".wat"
 	}
 	out := filepath.Join(t.TempDir(), "out"+ext)
-	cmd := runX86_64Bin(c.runner, c.bin, "-target", target, "-emit", "asm", src, c.stdlib, "-o", out)
+	cmd := runX86_64Bin(c.runner, c.bin, "-target", target, "-emit", "asm", "-o", out, src, c.stdlib)
 	cmd.Env = append(os.Environ(), env...)
 	if msg, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host CLI -target %s %s: %v\n%s", target, src, err, msg)
@@ -65,7 +65,7 @@ func (c *selfHostCLI) x86Binary(t *testing.T, src string, env ...string) string 
 func (c *selfHostCLI) arm64Binary(t *testing.T, src string, env ...string) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "prog")
-	cmd := runX86_64Bin(c.runner, c.bin, "-target", "arm64-linux", src, c.stdlib, "-o", bin)
+	cmd := runX86_64Bin(c.runner, c.bin, "-target", "arm64-linux", "-o", bin, src, c.stdlib)
 	cmd.Env = append(os.Environ(), env...)
 	if msg, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host CLI -target arm64-linux %s: %v\n%s", src, err, msg)

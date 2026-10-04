@@ -207,7 +207,7 @@ func semTally(t *testing.T, report string) (int, int) {
 
 // emitAsm compiles src to x86-64 assembly text.
 func emitAsm(compiler, src, stdlibRoot, out string) ([]byte, error) {
-	cmd := exec.Command(compiler, "-target", "x86-64-linux", "-emit", "asm", src, stdlibRoot, "-o", out)
+	cmd := exec.Command(compiler, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, stdlibRoot)
 	if msg, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("%s on %s: %v\n%s", filepath.Base(compiler), filepath.Base(src), err, msg)
 	}

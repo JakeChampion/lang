@@ -21,7 +21,7 @@
 //     least `ndots` dots is asked as it stands before the search domains,
 //     one with fewer after them, and a name ending in a dot only as it
 //     stands.
-//   - `exchange(ns, q, timeout_ms)` is one query to one nameserver: UDP,
+//   - `exchange(ns, q, timeout)` is one query to one nameserver: UDP,
 //     the reply awaited up to the timeout, a reply with another id
 //     ignored, and a truncated reply asked again over TCP;
 //     `exchange_many` sends several queries at once and awaits their
@@ -58,6 +58,7 @@
 // (`udp_*`, `tcp_*`, `poll`), the query id (`random_i32`) and the clock
 // the wait is measured by (`monotonic_ns`).
 import "std/net";
+import "std/time";
 import "std/async";
 import "std/i32";
 import "std/string";
@@ -836,13 +837,13 @@ function strip_comment(line: string, marker: string): string {
 
 // ResolvConf — what the resolver reads off resolv.conf: the nameservers
 // (at most three, as glibc keeps), the search list, `ndots`, the timeout
-// of one try in milliseconds, how many times round the servers, and
-// whether to start each query at the next server (`rotate`).
+// of one try, how many times round the servers, and whether to start each
+// query at the next server (`rotate`).
 pub struct ResolvConf {
   nameservers: net.SocketAddr[],
   search: string[],
   ndots: i32,
-  timeout_ms: i32,
+  timeout: Duration,
   attempts: i32,
   rotate: boolean,
 }
@@ -857,7 +858,7 @@ pub function dns_port(): i32 {
 // timeout, 2 attempts, no rotation.
 pub function resolv_defaults(host: string): ResolvConf {
   let ns: net.SocketAddr[] = [net.socket_addr(net.ipv4_loopback(), dns_port())];
-  return ResolvConf { nameservers: ns, search: host_domain(host), ndots: 1, timeout_ms: 5000, attempts: 2, rotate: false };
+  return ResolvConf { nameservers: ns, search: host_domain(host), ndots: 1, timeout: time.duration_seconds(5 as i64), attempts: 2, rotate: false };
 }
 
 // `parse_resolv_conf(contents, host)` — glibc's res_init over the file.
@@ -950,7 +951,7 @@ function parse_options(f: string[], rc0: ResolvConf): ResolvConf {
     } else if (o.starts_with("ndots:")) {
       rc = ResolvConf { ...rc, ndots: option_value(o, 6, 0, 15, rc.ndots) };
     } else if (o.starts_with("timeout:")) {
-      rc = ResolvConf { ...rc, timeout_ms: option_value(o, 8, 1, 30, rc.timeout_ms / 1000) * 1000 };
+      rc = ResolvConf { ...rc, timeout: time.duration_seconds(option_value(o, 8, 1, 30, (rc.timeout.as_millis() / (1000 as i64)) as i32) as i64) };
     } else if (o.starts_with("attempts:")) {
       rc = ResolvConf { ...rc, attempts: option_value(o, 9, 1, 5, rc.attempts) };
     }
@@ -1081,23 +1082,23 @@ function local_for(ns: net.SocketAddr): net.SocketAddr {
   return net.socket_addr(net.ipv4_unspecified(), 0);
 }
 
-// `exchange(ns, q, timeout_ms)` — one query to one nameserver. The
+// `exchange(ns, q, timeout)` — one query to one nameserver. The
 // message goes over UDP with EDNS0 and the reply is awaited up to the
 // timeout; a datagram that is not a reply to `q` (another id, another
 // question) is ignored and the wait goes on. A truncated reply is asked
 // again over TCP, where the reply is read whole behind its length. A
 // server that stays silent is `NoReply`, one that cannot be reached
 // `Socket(e)`.
-pub function exchange(ns: net.SocketAddr, q: Message, timeout_ms: i32): Result[Message, DnsError] {
-  return exchange_many(ns, [q], timeout_ms)[0];
+pub function exchange(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError] {
+  return exchange_many(ns, [q], timeout)[0];
 }
 
-// `exchange_many(ns, qs, timeout_ms)` — `exchange` for several queries at
+// `exchange_many(ns, qs, timeout)` — `exchange` for several queries at
 // once: each goes on its own socket and the replies are awaited
 // together, so the queries cost one round trip between them rather
 // than one each. The answers are parallel to `qs`.
-pub function exchange_many(ns: net.SocketAddr, qs: Message[], timeout_ms: i32): Result[Message, DnsError][] {
-  let deadline: i64 = now_ms() + timeout_ms as i64;
+pub function exchange_many(ns: net.SocketAddr, qs: Message[], timeout: Duration): Result[Message, DnsError][] {
+  let deadline: i64 = now_ms() + timeout.as_millis();
   let slots: Slot[] = [];
   let i: i32 = 0;
   while (i < qs.len()) {
@@ -1165,7 +1166,7 @@ function slot_result(ns: net.SocketAddr, s: Slot, deadline: i64): Result[Message
   match (s.reply) {
     Some(reply) => {
       if (reply.truncated) {
-        return exchange_tcp(ns, s.q, (deadline - now_ms()) as i32);
+        return exchange_tcp(ns, s.q, time.duration_millis(deadline - now_ms()));
       }
       return Ok(reply);
     },
@@ -1306,15 +1307,15 @@ function take_reply(sock: i32, q: Message): Result[Option[Message], DnsError] {
   return Ok(None);
 }
 
-// `exchange_tcp(ns, q, timeout_ms)` — the query over TCP: the message
+// `exchange_tcp(ns, q, timeout)` — the query over TCP: the message
 // behind a two-byte length, the reply read until its own length is
 // satisfied, each read awaited up to the timeout.
-pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout_ms: i32): Result[Message, DnsError] {
+pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError] {
   let bytes: u8[] = encode(q)?;
   let framed: u8[] = [];
   framed = put16(framed, bytes.len());
   let sock: i32 = send_tcp(ns, framed.concat(bytes))?;
-  let got: Result[u8[], DnsError] = read_framed(sock, now_ms() + timeout_ms as i64);
+  let got: Result[u8[], DnsError] = read_framed(sock, now_ms() + timeout.as_millis());
   tcp_close(sock);
   let reply: Message = decode(got?)?;
   if (reply.id != q.id || !reply.response || !reply.answers_question(q.questions[0])) {
@@ -1411,7 +1412,7 @@ pub function ask_many(conf: ResolvConf, qs: Message[]): Result[Message, DnsError
     while (round < conf.attempts) {
       let k: i32 = 0;
       while (k < n) {
-        asked = ask_server(conf.nameservers[(start + k) % n], qs, asked, conf.timeout_ms);
+        asked = ask_server(conf.nameservers[(start + k) % n], qs, asked, conf.timeout);
         k = k + 1;
       }
       round = round + 1;
@@ -1455,7 +1456,7 @@ function unanswered(a: Asked): boolean {
 }
 
 // The unanswered queries put to one server, their replies noted.
-function ask_server(ns: net.SocketAddr, qs: Message[], asked: Asked[], timeout_ms: i32): Asked[] {
+function ask_server(ns: net.SocketAddr, qs: Message[], asked: Asked[], timeout: Duration): Asked[] {
   let open: i32[] = [];
   let open_qs: Message[] = [];
   let i: i32 = 0;
@@ -1469,7 +1470,7 @@ function ask_server(ns: net.SocketAddr, qs: Message[], asked: Asked[], timeout_m
   if (open.len() == 0) {
     return asked;
   }
-  let replies: Result[Message, DnsError][] = exchange_many(ns, open_qs, timeout_ms);
+  let replies: Result[Message, DnsError][] = exchange_many(ns, open_qs, timeout);
   let out: Asked[] = asked;
   i = 0;
   while (i < open.len()) {
@@ -2112,14 +2113,14 @@ function prefer_true(for_a: boolean, for_b: boolean): i32 {
 // one delay rather than the whole list.
 
 // `DialOptions` — how `connect_race` and `dial` try a name's addresses:
-// `fallback_ms` is how long an attempt runs alone before the next address
+// `fallback` is how long an attempt runs alone before the next address
 // is tried beside it (the connection attempt delay, Go's 300 ms), and
-// `timeout_ms` bounds the whole dial.
-pub struct DialOptions { fallback_ms: i32, timeout_ms: i32 }
+// `timeout` bounds the whole dial.
+pub struct DialOptions { fallback: Duration, timeout: Duration }
 
 // `dial_options()` — 300 ms between attempts and ten seconds in all.
 pub function dial_options(): DialOptions {
-  return DialOptions { fallback_ms: 300, timeout_ms: 10000 };
+  return DialOptions { fallback: time.duration_millis(300 as i64), timeout: time.duration_seconds(10 as i64) };
 }
 
 // `interleave_families(addrs)` — RFC 8305 §4's order: the first address's
@@ -2161,11 +2162,11 @@ struct Attempt { sock: i32 }
 
 // `connect_race(addrs, port, opts)` — a connection to the first of
 // `addrs` at `port` that answers, as the section above says, in the
-// blocking mode `connect` gives: `TimedOut` once `timeout_ms` passes
+// blocking mode `connect` gives: `TimedOut` once `opts.timeout` passes
 // with none connected, the last failure when every address failed,
 // `HostUnreachable` for no addresses.
 pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Result[i32, net.NetError] {
-  let deadline: i64 = now_ms() + opts.timeout_ms as i64;
+  let deadline: i64 = now_ms() + opts.timeout.as_millis();
   let race: Race = Race { open: [], next: 0, due: now_ms(), last: HostUnreachable };
   while (true) {
     let now: i64 = now_ms();
@@ -2236,7 +2237,7 @@ function started(race: Race, addr: net.SocketAddr, opts: DialOptions): Race {
   let next: i32 = race.next + 1;
   match (net.connect_start(addr)) {
     Ok(sock) => {
-      return Race { open: race.open.append(Attempt { sock: sock }), next: next, due: now_ms() + opts.fallback_ms as i64, last: race.last };
+      return Race { open: race.open.append(Attempt { sock: sock }), next: next, due: now_ms() + opts.fallback.as_millis(), last: race.last };
     },
     Err(e) => {
       return Race { ...race, next: next, due: now_ms(), last: e };

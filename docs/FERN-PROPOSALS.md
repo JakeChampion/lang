@@ -169,8 +169,8 @@ every leg. By the end, the file must pass ALL FIVE of these:
 ./bin/fern -interp app.fern                          # the oracle
 ./bin/fern -target x86-64-linux -o /tmp/app     app.fern && /tmp/app
 ./bin/fern -target wasm32-wasi   -o /tmp/app.wasm app.fern && wasmtime run /tmp/app.wasm
-make selfhost-cli && bin/fern-selfhost -target x86-64-linux \
-    /ABS/PATH/app.fern $PWD/internal/stdlib -o /tmp/app-sh && /tmp/app-sh
+make selfhost-cli && bin/fern-selfhost -target x86-64-linux -o /tmp/app-sh \
+    /ABS/PATH/app.fern $PWD/internal/stdlib && /tmp/app-sh
 ```
 
 Flags before the file: `bin/fern` uses Go's `flag` package, which stops parsing

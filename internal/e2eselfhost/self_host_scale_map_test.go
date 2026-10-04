@@ -229,7 +229,7 @@ func TestSelfHostScaleMapWasm(t *testing.T) {
 			t.Fatal(err)
 		}
 		out := filepath.Join(tmp, "prog.wat")
-		if b, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", in, stdlibRoot, "-o", out).CombinedOutput(); err != nil {
+		if b, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", "-o", out, in, stdlibRoot).CombinedOutput(); err != nil {
 			t.Fatalf("compile: %v\n%s", err, b)
 		}
 		b, err := os.ReadFile(out)

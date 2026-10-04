@@ -126,7 +126,7 @@ func TestSelfHostArm64DarwinXattr(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(t.TempDir(), "xattr")
-	if out, err := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin).CombinedOutput(); err != nil {
+	if out, err := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, stdlib).CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)
 	}
 	run := exec.Command(bin)
