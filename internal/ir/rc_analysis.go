@@ -3894,6 +3894,10 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// dec-on-drop balance makes freeing an owned map's storage safe.
 		if id, ok := x.Callee.(*ast.Ident); ok {
 			switch id.Name {
+			case "__method_Cell_get":
+				if isCellBytesGet(x) {
+					return false
+				}
 			case "map_new":
 				return false // fresh owned handle
 			case "__method_Map_get_or":

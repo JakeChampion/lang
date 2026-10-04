@@ -251,6 +251,9 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		if isCellStringGet(x) {
 			return ast.StringType{}, true
 		}
+		if isCellBytesGet(x) {
+			return x.TypeArgs[0], true
+		}
 		// `m.get_or(k, d)` on a Map[K, string]: every lowering of the call
 		// retains the returned buffer so the caller co-owns it alongside
 		// the map's value column (isMapStringGetOr). A BINDING balances
@@ -498,6 +501,9 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	}
 	if !isIdent {
 		return nil, false
+	}
+	if isCellBytesGet(call) {
+		return call.TypeArgs[0], true
 	}
 	if _, ok := b.info.FuncSigs[id.Name]; !ok {
 		return nil, false // not a known function (excludes variant constructors)
@@ -3948,6 +3954,11 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 	// stranded its buffer. The helper self-guards on the cell's own rc, so a
 	// cell two structs share only dec's here.
 	if st, ok := t.(ast.StructType); ok && st.Name == "Cell" {
+		if _, bytes := cellElemOf(st).(ast.ArrayType); bytes {
+			return append(ops,
+				Op{Kind: OpCallDirect, Str: "__drop_arr_arr_1", Width: ResAddr, I32: 1},
+				Op{Kind: OpDrop})
+		}
 		helper, stride := cellDropHelper(cellElemOf(st), ptrW)
 		return append(ops,
 			Op{Kind: OpConstI32, I32: stride},

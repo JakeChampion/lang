@@ -1113,6 +1113,40 @@ function main(): i32 { let b = make(5000000000)(2); return 0; }`
 	}
 }
 
+// A lambda or nested function inside a generic function sees the encloser's
+// type parameters and bounds: `T.make()` and `y.get()` on a captured `T` check
+// there as in the body, and a method the bounds do not provide is still refused
+// (#10404).
+func TestTypeParamBoundsReachClosures(t *testing.T) {
+	const decls = `trait Mk { function make(): Self; function get(self: Self): i32; }
+trait Other { function other(self: Self): i32; }
+struct W { v: i32 }
+impl Mk for W { function make(): W { return W { v: 41 }; } function get(self: W): i32 { return self.v; } }
+function call0(g: () => i32): i32 { return g(); }
+`
+	for _, src := range []string{
+		`function f[T: Mk](y: T): i32 { return call0((): i32 => { return T.make().get() + y.get(); }); }`,
+		`function f[T: Mk](y: T): i32 { function inner(): i32 { return T.make().get() + y.get(); } return inner(); }`,
+		`function f[T: Mk](y: T): i32 { return call0((): i32 => { return call0((): i32 => { return T.make().get(); }); }); }`,
+	} {
+		prog, err := parser.Parse(decls + src + "\nfunction main(): i32 { return f[W](W { v: 1 }); }")
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, err := Check(prog); err != nil {
+			t.Errorf("%s\ncheck: %v", src, err)
+		}
+	}
+	prog, err := parser.Parse(decls + `function f[T: Mk](y: T): i32 { return call0((): i32 => { return y.other(); }); }
+function main(): i32 { return f[W](W { v: 1 }); }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err == nil || !strings.Contains(err.Error(), `no method "other" on type parameter T`) {
+		t.Errorf("a method the bounds lack: got %v, want no method \"other\"", err)
+	}
+}
+
 // An unannotated local bound to a generic struct literal whose type argument
 // only literals bind is a Same[i64] when one of them has no i32 reading, and
 // both field literals settle at i64 (#10453). Typing it Same[i32] truncated the

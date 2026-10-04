@@ -7851,7 +7851,8 @@ func containsString(xs []string, s string) bool {
 // name. Used by the deferred-dispatch path for trait-bounded generics.
 // See docs/TRAITS.md.
 func (c *checker) resolveTraitMethodForParam(paramName, field string) (ast.TraitMethod, string, bool) {
-	if c.current == nil {
+	decl := c.typeParamDecl(paramName)
+	if decl == nil {
 		return ast.TraitMethod{}, "", false
 	}
 	// Expand the bound traits with their supertraits: a `T: Ord` bound
@@ -7860,9 +7861,9 @@ func (c *checker) resolveTraitMethodForParam(paramName, field string) (ast.Trait
 	// A generic-trait bound (`T: From[i32]`) carries type args parallel to
 	// the direct bounds; map each direct trait to its args so the method
 	// signature can be specialised (`from(v: T)` → `from(v: i32)`).
-	direct := c.current.Bounds[paramName]
+	direct := decl.Bounds[paramName]
 	argsFor := map[string][]ast.Type{}
-	if ba := c.current.BoundArgs[paramName]; len(ba) == len(direct) {
+	if ba := decl.BoundArgs[paramName]; len(ba) == len(direct) {
 		for i, tn := range direct {
 			if len(ba[i]) > 0 {
 				argsFor[tn] = ba[i]
@@ -8233,6 +8234,24 @@ type checker struct {
 type captureEntry struct {
 	sink  func(name string, t ast.Type)
 	scope *scope
+	// The function whose body encloses this one; its type parameters
+	// stay in scope (typeParamDecl).
+	outer *ast.FuncDecl
+}
+
+// typeParamDecl is the innermost declaration in scope that binds the type
+// parameter `name`: the function being checked, else one enclosing the
+// lambda or nested function it is. Nil when no enclosing generic binds it.
+func (c *checker) typeParamDecl(name string) *ast.FuncDecl {
+	if c.current != nil && containsString(c.current.TypeParams, name) {
+		return c.current
+	}
+	for i := len(c.captureChain) - 1; i >= 0; i-- {
+		if d := c.captureChain[i].outer; d != nil && containsString(d.TypeParams, name) {
+			return d
+		}
+	}
+	return nil
 }
 
 // resolveTypeNames walks every named-type position the parser may
@@ -8599,10 +8618,9 @@ func orPos(p, fallback ast.Position) ast.Position {
 // Scalars (i32/i64/f64/bool) hold no pointer at all; `string` is a heap
 // buffer of bytes that references no other Fern value, so a Cell[string]
 // can never close a cycle either, and its owning slot participates in
-// the string rc arc (cell_new / get / set / drop retain+release the
-// buffer — docs/CELL-TYPE-PLAN.md, docs/RC-STRINGS-PLAN.md). Composite /
-// reference types (struct / enum / array / tuple / closure / another
-// Cell) stay rejected: those CAN form cycles. An unresolved generic
+// string rc arc. Owned u8[] buffers are equally cycle-free and participate
+// in array RC. Other composite/reference types remain unsupported.
+// An unresolved generic
 // param is allowed through here (there's no v1 generic-Cell use;
 // monomorph-time checking is a follow-up) so generic signatures still
 // resolve.
@@ -8610,6 +8628,10 @@ func isCellElemType(t ast.Type) bool {
 	switch t.(type) {
 	case ast.NumberType, ast.FloatType, ast.BoolType, ast.StringType, ast.ParamType:
 		return true
+	}
+	if a, ok := t.(ast.ArrayType); ok {
+		n, ok := a.Elem.(ast.NumberType)
+		return ok && n.Width == 8 && !n.Signed
 	}
 	return false
 }
@@ -8702,7 +8724,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 					at = sd.P
 				}
 				c.errfCode(at, "E057",
-					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool) or string; a composite/reference type could form a cycle, which immutable data structures forbid",
+					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool), string or u8[]; other element types are not supported because cells must remain cycle-free",
 					args[0])
 			}
 			*slot = ast.StructType{Name: t.Name, Args: args}
@@ -16538,15 +16560,25 @@ func (c *checker) errE040GenericFuncAsValue(p ast.Position, name string, fn *ast
 }
 
 // typeParamsInScope is the set of type-parameter names the enclosing
-// generic declaration binds at the point being checked. Nil inside a
-// non-generic function, where no ParamType can be a real type.
+// generic declarations bind at the point being checked, a lambda or nested
+// function seeing its encloser's. Nil where none does, so no ParamType can be
+// a real type.
 func (c *checker) typeParamsInScope() map[string]bool {
-	if c.current == nil || len(c.current.TypeParams) == 0 {
-		return nil
+	var set map[string]bool
+	add := func(d *ast.FuncDecl) {
+		if d == nil {
+			return
+		}
+		for _, tp := range d.TypeParams {
+			if set == nil {
+				set = map[string]bool{}
+			}
+			set[tp] = true
+		}
 	}
-	set := make(map[string]bool, len(c.current.TypeParams))
-	for _, tp := range c.current.TypeParams {
-		set[tp] = true
+	add(c.current)
+	for _, e := range c.captureChain {
+		add(e.outer)
 	}
 	return set
 }
@@ -16751,7 +16783,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	// Push (sink, scope) for the deeper-lookup chain. The order
 	// matters: outermost-first so the lookup walks from
 	// immediately-enclosing inward, capturing transitively.
-	c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: outer})
+	c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: outer, outer: prev})
 	defer func() {
 		c.current = prev
 		c.captureSink = prevSink
@@ -17505,7 +17537,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			if !isCellElemType(at) {
 				c.errfCode(n.Args[0].Pos(), "E057",
-					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool) or string; a composite/reference type could form a cycle, which immutable data structures forbid",
+					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool), string or u8[]; other element types are not supported because cells must remain cycle-free",
 					at)
 			}
 			n.TypeArgs = []ast.Type{at}
@@ -17554,7 +17586,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// target Ident and re-check resolves the now-concrete
 					// `Concrete.f()` to `__assoc_<Concrete>_f`. Mirrors the
 					// deferred bounded-*method* path below.
-					if c.current != nil && containsString(c.current.TypeParams, tid.Name) {
+					if c.typeParamDecl(tid.Name) != nil {
 						if tm, boundTrait, found := c.resolveTraitMethodForParam(tid.Name, fa.Field); found && tm.Assoc {
 							tp := ast.ParamType{Name: tid.Name}
 							if len(n.Args) != len(tm.Params) {
@@ -19086,7 +19118,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		c.captureOuter = s
-		c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: s})
+		c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: s, outer: prev})
 		c.checkBlock(n.Body, root)
 		c.captureChain = c.captureChain[:len(c.captureChain)-1]
 		c.captureSink = prevSink

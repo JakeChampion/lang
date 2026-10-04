@@ -1,0 +1,62 @@
+{
+  "arm64-linux": {
+    "before": 40784,
+    "after": 41213,
+    "changed": [
+      {
+        "symbol": "__fern_buf_take",
+        "before": 11,
+        "after": 34,
+        "delta": 23
+      },
+      {
+        "symbol": "__fn___fern_buf_text_copy",
+        "before": 0,
+        "after": 160,
+        "delta": 160
+      },
+      {
+        "symbol": "__fn___fern_buf_text_part",
+        "before": 0,
+        "after": 120,
+        "delta": 120
+      },
+      {
+        "symbol": "__fn___fern_buf_text_size",
+        "before": 0,
+        "after": 126,
+        "delta": 126
+      }
+    ]
+  },
+  "x86-64-linux": {
+    "before": 31616,
+    "after": 31942,
+    "changed": [
+      {
+        "symbol": "__fern_buf_take",
+        "before": 29,
+        "after": 40,
+        "delta": 11
+      },
+      {
+        "symbol": "__fn___fern_buf_text_copy",
+        "before": 0,
+        "after": 117,
+        "delta": 117
+      },
+      {
+        "symbol": "__fn___fern_buf_text_part",
+        "before": 0,
+        "after": 101,
+        "delta": 101
+      },
+      {
+        "symbol": "__fn___fern_buf_text_size",
+        "before": 0,
+        "after": 97,
+        "delta": 97
+      }
+    ]
+  }
+}

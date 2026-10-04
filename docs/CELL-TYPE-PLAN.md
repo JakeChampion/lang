@@ -1,6 +1,19 @@
 # Cell[T] — a sanctioned mutable cell for the immutable-data world
 
-Date: 2026-06-07 (updated 2026-06-08).
+Date: 2026-06-07 (byte-array extension drafted 2026-10-04).
+
+The current extension admits **Cell[u8[]]** as another cycle-free element.
+Byte arrays cannot reference cells. Construction retains an aliased array;
+get returns an owned snapshot; set evaluates and retains its replacement
+before releasing the old array; final cell drop releases its slot and box.
+The primary compiler uses typed IR's cell and array ownership operations.
+The bootstrap interpreter encodes its private byte-cell slot as ASCII hex
+so its source remains buildable by the older pin. Compiled applications
+store byte arrays directly. This extension is not yet validated; see
+[the byte-array-cell specification](contexts/compiler/specs/byte-array-cells.md).
+
+The original implementation history follows.
+
 Status: implemented for scalar **and `string`** element types. The Go
 reference compiler does `cell_new` / `get` / `set` + cycle-free E057 + full
 rc reclamation; the self-host backends handle `Cell[string]` for free

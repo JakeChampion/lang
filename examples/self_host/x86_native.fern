@@ -1386,25 +1386,26 @@ pub struct X86Asm {
   // arrived by name alone (the raw encoder API, a rip-relative memory
   // operand), the index then being into fix_names. On the x86_gas_assemble
   // path the label table is built once from the text (x86_gas_label_table)
-  // and every round reads a target through its index instead of hashing its
+  // and the round reads a target through its index instead of hashing its
   // name. A handle, not arrays, so queueing one does not rebuild the struct.
   fixq: usize,
   fix_names: string[],
+  // The fixup entries once x86_take has moved them out of fixq; x86_patch
+  // applies them.
+  fixes: u8[],
   // dfix_idx[i] is the label table index behind dfix_names[i], -1 when none.
-  // Branch relaxation state. br_long[k] pins the k-th relaxable branch
-  // (jcc / jmp to a label, in emission order) to its rel32 form. brq holds
-  // one u64 per branch as fixq does, bit 0 of the high word set when it was
-  // emitted short, and x86_resolve splits it into br_offs (the low words)
-  // and br_hi (the high words) for the relaxation pass to read; by-name
-  // targets go in br_names. x86_gas_assemble emits once with every branch short,
-  // settles br_long on that layout, and emits again.
+  // Branch relaxation state. brq holds one u64 per relaxable branch (jcc /
+  // jmp to a label, in emission order) as fixq does, bit 0 of the high word
+  // set when it was emitted short, and x86_take splits it into br_offs (the
+  // low words) and br_hi (the high words) for the relaxation pass to read;
+  // by-name targets go in br_names. x86_gas_assemble emits every branch
+  // short, settles which must be long on that layout, and rewrites those in
+  // place (x86_relax_apply).
   // relaxing is set only on the x86_gas_assemble path. The raw encoder
   // API (x86_jcc_label and friends, used directly by drivers and the
-  // encode self-tests) keeps its original contract: rel32 always, and a
-  // backward branch patched on the spot. Relaxation needs the whole text
-  // and two rounds, neither of which a single API call has.
+  // encode self-tests) keeps its original contract: rel32 always.
+  // Relaxation needs the whole text, which a single API call does not have.
   relaxing: boolean,
-  br_long: boolean[],
   brq: usize,
   br_offs: i32[],
   br_hi: i32[],
@@ -1423,8 +1424,8 @@ pub struct X86Asm {
   // is the model — see fern.fern's -target arm64-linux check).
   unknown: string[],
   // Call-frame information from `.cfi_*` directives (cfi.fern), rendered
-  // as .eh_frame by x86_eh_frame. Offsets are final: the relaxation
-  // re-emits every pass from scratch, so the last pass's are the bytes'.
+  // as .eh_frame by x86_eh_frame. x86_relax_apply moves its offsets with
+  // the code they describe.
   cfi: CfiState,
   // The .text alignment pads, five words each: the offset before the pad,
   // its width this round, the alignment, the maximum skip (-1 when none) and
@@ -1434,6 +1435,11 @@ pub struct X86Asm {
   // Pairs of a label table index and the pad it directly follows, so the
   // label stays on the pad's far edge whatever width the pad takes.
   pad_labels: i32[],
+  // Four words per pad: how many .loc rows, CFI rules, FDE starts and FDE
+  // ends were recorded before it. A pad the first round laid out empty
+  // shares its offset with what follows it, and these say which side of it
+  // each of those lies on when it widens.
+  pad_marks: i32[],
 }
 
 // x86_label_buckets is the bucket count of the label-name index. Prime, so
@@ -1472,26 +1478,16 @@ function x86_empty_buckets(): i32[] {
 // x86_asm_new returns an empty assembler state for the raw encoder API,
 // which emits every branch rel32 and never relaxes.
 function x86_asm_new(): X86Asm {
-  return x86_asm_new_for(false, []);
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
-// x86_asm_new_for returns an empty assembler state for a relaxation pass:
-// `relaxing` selects the rel8-capable branch emitters and `longs` pins the
-// branches an earlier pass proved cannot reach their target in rel8. The
-// decisions are part of the initial construction rather than an update
-// applied to a fresh X86Asm, so nothing in the assembler ever holds a second
-// reference to the struct it is threading.
-function x86_asm_new_for(relaxing: boolean, longs: boolean[]): X86Asm {
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: relaxing, br_long: x86_bools_copy(longs), brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
-}
-
-// x86_asm_new_prepared is the state for a relaxation round over text whose
-// labels x86_gas_label_table has already indexed: the table's names and
-// buckets are shared, and every label starts unplaced (section and offset
-// -1) until the round reaches its definition.
-function x86_asm_new_prepared(labs: GasLabels, longs: boolean[]): X86Asm {
+// x86_asm_new_prepared is the state for the round over text whose labels
+// x86_gas_label_table has already indexed: the table's names and buckets are
+// shared, and every label starts unplaced (section and offset -1) until the
+// round reaches its definition.
+function x86_asm_new_prepared(labs: GasLabels): X86Asm {
   let n: i32 = labs.names.len() + labs.nids;
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, br_long: x86_bools_copy(longs), brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 // x86_filled is n copies of v.
@@ -1809,16 +1805,6 @@ function x86_le32_split(b: u8[]): LeSplit {
   return LeSplit { lo: lo, hi: hi };
 }
 
-// x86_branch_long reports whether the next relaxable branch must take its
-// rel32 form. The first round has no decisions yet, so every branch past the
-// end of br_long starts short.
-function x86_branch_long(a: X86Asm, k: i32): boolean {
-  if (k >= a.br_long.len()) {
-    return false;
-  }
-  return a.br_long[k];
-}
-
 // x86_branch_record notes the k-th relaxable branch for the relaxation pass:
 // where its displacement sits, what it targets, and whether this pass took
 // the short form.
@@ -1863,8 +1849,7 @@ function x86_jcc_label(own a: X86Asm, cc: i32, name: string): X86Asm {
 // a name the table does not hold), which the round's patch and resolve
 // read in place of the name.
 function x86_jcc_label_at(own a: X86Asm, cc: i32, name: string, idx: i32): X86Asm {
-  let k: i32 = x86_br_count(a);
-  if (a.relaxing && !x86_branch_long(a, k)) {  // 0x70+cc ib
+  if (a.relaxing) {  // 0x70+cc ib
     buf_push_byte(a.code, 112 + (cc & 15));
     buf_push_byte(a.code, 0);  // placeholder rel8
     let at: i32 = buf_len(a.code) - 1;
@@ -1883,8 +1868,7 @@ function x86_jmp_label(own a: X86Asm, name: string): X86Asm {
 }
 
 function x86_jmp_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
-  let k: i32 = x86_br_count(a);
-  if (a.relaxing && !x86_branch_long(a, k)) {  // 0xEB ib
+  if (a.relaxing) {  // 0xEB ib
     buf_push_byte(a.code, 235);
     buf_push_byte(a.code, 0);  // placeholder rel8
     let at: i32 = buf_len(a.code) - 1;
@@ -2025,22 +2009,36 @@ pub function x86_resolve_data(own a: X86Asm, text_vaddr: i32): X86Asm {
 // data image places .rodata at. Call once after emitting the whole
 // program; afterwards a.text + a.rodata are the final sections.
 function x86_resolve(own a: X86Asm): X86Asm {
-  let padded_text: i32 = x86_data_base(a, buf_len(a.code));
-  let bss_base: i32 = padded_text + a.rodata.len();
+  return x86_patch(x86_take(a));
+}
+
+// x86_take moves the code and the queues out of their builders: the code
+// into `text` as it was laid down, the fixups into `fixes`, and the branch
+// records into br_offs and br_hi.
+function x86_take(own a: X86Asm): X86Asm {
   let code: u8[] = buf_take_bytes(a.code);
   buf_free(a.code);
-  a = X86Asm { ...a, code: 0 as usize };
-  let fq: u8[] = [];
+  a = X86Asm { ...a, code: 0 as usize, text: code };
   if (a.fixq != 0 as usize) {
-    fq = buf_take_bytes(a.fixq);
+    let fq: u8[] = buf_take_bytes(a.fixq);
     buf_free(a.fixq);
-    a = X86Asm { ...a, fixq: 0 as usize };
+    a = X86Asm { ...a, fixq: 0 as usize, fixes: fq };
   }
   if (a.brq != 0 as usize) {
     let bq: LeSplit = x86_le32_split(buf_take_bytes(a.brq));
     buf_free(a.brq);
     a = X86Asm { ...a, brq: 0 as usize, br_offs: bq.lo, br_hi: bq.hi };
   }
+  return a;
+}
+
+// x86_patch applies the taken fixups to `text`.
+function x86_patch(own a: X86Asm): X86Asm {
+  let padded_text: i32 = x86_data_base(a, a.text.len());
+  let bss_base: i32 = padded_text + a.rodata.len();
+  let code: u8[] = a.text;
+  let fq: u8[] = a.fixes;
+  a = X86Asm { ...a, text: [], fixes: [] };
   let nfix: i32 = fq.len() / 8;
   let i: i32 = 0;
   while (i < nfix) {
@@ -6600,11 +6598,9 @@ function x86_gas_comment_start(line: string): i32 {
 // x86_gas_assemble assembles GAS (AT&T) text, relaxing branches to their
 // rel8 form wherever the final layout allows it (#7949).
 //
-// The first round emits every relaxable branch short; x86_relax_settle works
-// out from its layout which must be long, the way GNU as would, and a second
-// round assembles with those decisions, so every label offset and fixup is
-// computed fresh and there is nothing to remap. A text whose branches all
-// stay short is final after the first round.
+// One round emits every relaxable branch short; x86_relax_settle works out
+// from that layout which must be long, the way GNU as would, and
+// x86_relax_apply rewrites those in place.
 pub function x86_gas_assemble(src: string): X86Asm {
   return x86_gas_assemble_words(src, []);
 }
@@ -6621,32 +6617,18 @@ pub function x86_gas_assemble(src: string): X86Asm {
 // as an instruction whose last four bytes are a rel32 to the symbol the
 // line names, patched as a call's is.
 pub function x86_gas_assemble_words(src: string, words: u8[]): X86Asm {
-  // Parsed ONCE, not per round. The source does not change between
-  // relaxation rounds, so splitting and re-parsing it each round bought
-  // nothing: what differs between rounds is the byte offsets, and those are
-  // what a round computes. Not the fix for #8146 — the arena limit that
-  // issue tracks is still open and its cause still unidentified.
   let text: GasText = x86_gas_prepare(src, words);
   let pl: GasLine[] = text.lines;
-  // The labels are indexed once as well: a round places them in the same
-  // order, so every reference reads its target through the index rather
-  // than hashing the name again in each round.
+  // Every reference reads its target through the label index rather than
+  // hashing the name.
   let labs: GasLabels = x86_gas_label_table(pl);
   pl = x86_gas_link_labels(pl, labs);
-  // The first round encodes every line and keeps the bytes of the ones the
-  // second round cannot change (EncCache); that round copies those and
-  // encodes only the rest.
-  let first: AsmRound = x86_gas_assemble_pass_prepared(pl, labs, [], EncCache { code: [], at: [], end: [] }, words);
-  let a: X86Asm = first.a;
-  let longs: boolean[] = x86_relax_settle(a);
-  if (!x86_bools_any(longs)) {
-    return a;
+  let a: X86Asm = x86_gas_assemble_pass_prepared(pl, labs, words);
+  let plan: RelaxPlan = x86_relax_settle(a);
+  if (x86_plan_long(plan)) {
+    a = x86_relax_apply(a, plan);
   }
-  a = x86_gas_assemble_pass_prepared(pl, labs, longs, first.cache, words).a;
-  if (x86_bools_differ(x86_relax_grow(a, longs), longs)) {
-    return X86Asm { ...a, unknown: a.unknown.append("internal: branch relaxation did not settle") };
-  }
-  return a;
+  return x86_patch(a);
 }
 
 // The first round's .text layout as relaxation sees it: its relaxable
@@ -6754,7 +6736,7 @@ struct RelaxPass { new_start: i32[], new_size: i32[], prefix: i32[], before: i32
 // reached. Growth is monotone, so the passes are bounded by the event count;
 // failing to settle within it leaves every branch long, which is correct if
 // larger.
-function x86_relax_settle(a: X86Asm): boolean[] {
+function x86_relax_settle(a: X86Asm): RelaxPlan {
   let l: RelaxLayout = x86_relax_layout(a);
   let t: RelaxTargets = x86_relax_targets(a, l);
   let n: i32 = l.ev.len();
@@ -6776,17 +6758,198 @@ function x86_relax_settle(a: X86Asm): boolean[] {
     let r: RelaxStep = x86_relax_pass(a, l, t, st, true);
     st = r.st;
     if (!r.changed) {
-      let longs: boolean[] = [];
-      k = 0;
-      while (k < st.short.len()) {
-        longs = longs.append(!st.short[k]);
-        k = k + 1;
-      }
-      return longs;
+      return RelaxPlan { l: l, st: st };
     }
     iter = iter + 1;
   }
-  return x86_bools_all_true(a.br_offs.len());
+  let longs: boolean[] = [];
+  k = 0;
+  while (k < nb) {
+    longs = longs.append(false);
+    k = k + 1;
+  }
+  let all: RelaxPass = RelaxPass { new_start: [], new_size: [], prefix: [], before: [], short: longs };
+  return RelaxPlan { l: l, st: x86_relax_pass(a, l, t, all, false).st };
+}
+
+// The settled layout: the first round's events, and the positions, sizes and
+// branch forms of the pass that settled them.
+struct RelaxPlan { l: RelaxLayout, st: RelaxPass }
+
+function x86_plan_long(p: RelaxPlan): boolean {
+  for s in p.st.short {
+    if (!s) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// x86_relax_apply rewrites the first round's code to the settled layout: each
+// long branch takes its rel32 form, each pad its settled width, and the
+// labels, fixups, .loc rows and CFI offsets move with the code they sit in.
+// Nothing else in .text depends on the layout, so the result is what a round
+// assembled with the settled forms would lay down.
+function x86_relax_apply(own a: X86Asm, p: RelaxPlan): X86Asm {
+  let l: RelaxLayout = p.l;
+  let st: RelaxPass = p.st;
+  let n: i32 = l.ev.len();
+  let text: u8[] = a.text;
+  a = X86Asm { ...a, text: [] };
+  let out: usize = buf_new(text.len() + 64);
+  let br_ev: i32[] = [];
+  let pad_ev: i32[] = [];
+  let pos: i32 = 0;
+  let i: i32 = 0;
+  while (i < n) {
+    let s: i32 = l.start[i];
+    buf_push_bytes_range(out, text, pos, s);
+    let e: i32 = l.ev[i];
+    if (e < 0) {
+      pad_ev = pad_ev.append(i);
+      x86_push_arr(out, x86_nop_pad([], st.new_size[i]));
+      pos = s + l.size[i];
+    } else {
+      br_ev = br_ev.append(i);
+      if (st.short[e]) {
+        buf_push_bytes_range(out, text, s, s + 2);
+      } else if (text[s] as i32 == 235) {
+        x86_push_arr(out, x86_jmp_rel32([], 0));
+      } else {
+        x86_push_arr(out, x86_jcc_rel32([], text[s] as i32 & 15, 0));
+      }
+      pos = s + 2;
+    }
+    i = i + 1;
+  }
+  buf_push_bytes_range(out, text, pos, text.len());
+  let code: u8[] = buf_take_bytes(out);
+  buf_free(out);
+  // A branch's own rel8 fixup moves with the branch, and becomes a rel32 one
+  // past its long opcode; every other fixup lies inside an instruction, after
+  // every event that starts before it.
+  let fq: u8[] = a.fixes;
+  a = X86Asm { ...a, fixes: [] };
+  let nq: usize = buf_new(fq.len() + 8);
+  let j: i32 = 0;
+  let k: i32 = 0;
+  let f: i32 = 0;
+  let nf: i32 = fq.len();
+  while (f < nf) {
+    let po: i32 = fq[f] as i32 | fq[f + 1] as i32 << 8 | fq[f + 2] as i32 << 16 | fq[f + 3] as i32 << 24;
+    let hi: i32 = fq[f + 4] as i32 | fq[f + 5] as i32 << 8 | fq[f + 6] as i32 << 16 | fq[f + 7] as i32 << 24;
+    if ((hi & 1) != 0) {
+      while (a.br_offs[k] != po) {
+        k = k + 1;
+      }
+      let ei: i32 = br_ev[k];
+      po = st.new_start[ei] + 1;
+      if (!st.short[k]) {
+        hi = hi - 1;
+        if (text[l.start[ei]] as i32 != 235) {
+          po = po + 1;
+        }
+      }
+    } else {
+      while (j < n && l.start[j] < po) {
+        j = j + 1;
+      }
+      po = po + x86_relax_shift(st, j);
+    }
+    buf_push_u64(nq, (hi as i64 << 32 | po as i64 & 4294967295i64) as u64);
+    f = f + 8;
+  }
+  let fixes: u8[] = buf_take_bytes(nq);
+  buf_free(nq);
+  let tails: i32[] = [];
+  j = 0;
+  for t in a.fix_tail_offs {
+    while (j < n && l.start[j] < t) {
+      j = j + 1;
+    }
+    tails = tails.append(t + x86_relax_shift(st, j));
+  }
+  // A .text label moves past every event that starts before it, and one a
+  // pad directly precedes to that pad's far edge.
+  let offs: i32[] = a.lab_offs;
+  a = X86Asm { ...a, lab_offs: [] };
+  let li: i32 = 0;
+  j = 0;
+  while (li < offs.len()) {
+    if (a.lab_secs[li] == 0 && offs[li] >= 0) {
+      j = x86_events_near(l.start, offs[li], j);
+      offs = offs.with(li, offs[li] + x86_relax_shift(st, j));
+    }
+    li = li + 1;
+  }
+  let pl: i32 = 0;
+  while (pl < a.pad_labels.len()) {
+    let pe: i32 = pad_ev[a.pad_labels[pl + 1]];
+    offs = offs.with(a.pad_labels[pl], st.new_start[pe] + st.new_size[pe]);
+    pl = pl + 2;
+  }
+  let cfi: CfiState = a.cfi;
+  let moved: CfiState = CfiState {
+    ...cfi,
+    rule_off: x86_relax_moved(cfi.rule_off, l, st, a.pad_marks, 1),
+    fde_start: x86_relax_moved(cfi.fde_start, l, st, a.pad_marks, 2),
+    fde_end: x86_relax_moved(cfi.fde_end, l, st, a.pad_marks, 3),
+  };
+  let locs: i32[] = x86_relax_moved(a.loc_offs, l, st, a.pad_marks, 0);
+  return X86Asm { ...a, text: code, fixes: fixes, fix_tail_offs: tails, lab_offs: offs, loc_offs: locs, cfi: moved };
+}
+
+// x86_events_near is x86_events_before for an offset near the one that gave
+// `j`. Labels are placed mostly in order, so it steps from there, and
+// searches only when the offset is more than a few events away.
+function x86_events_near(starts: i32[], off: i32, j: i32): i32 {
+  let k: i32 = 0;
+  while (k < 8) {
+    if (j > 0 && starts[j - 1] >= off) {
+      j = j - 1;
+    } else if (j < starts.len() && starts[j] < off) {
+      j = j + 1;
+    } else {
+      return j;
+    }
+    k = k + 1;
+  }
+  return x86_events_before(starts, off);
+}
+
+// x86_relax_shift is how far the settled layout moves an offset that the
+// first `j` events lie before.
+function x86_relax_shift(st: RelaxPass, j: i32): i32 {
+  if (j == 0) {
+    return 0;
+  }
+  return st.prefix[j - 1];
+}
+
+// x86_relax_moved moves offsets recorded in order, of the kind `cat` indexes
+// in pad_marks, to the settled layout. A branch lies before an offset it
+// starts before; a pad lies before the rows recorded after it.
+function x86_relax_moved(xs: i32[], l: RelaxLayout, st: RelaxPass, marks: i32[], cat: i32): i32[] {
+  let out: i32[] = [];
+  let n: i32 = l.ev.len();
+  let j: i32 = 0;
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    while (j < n && x86_relax_before(l, marks, cat, j, xs[i], i)) {
+      j = j + 1;
+    }
+    out = out.append(xs[i] + x86_relax_shift(st, j));
+    i = i + 1;
+  }
+  return out;
+}
+
+function x86_relax_before(l: RelaxLayout, marks: i32[], cat: i32, j: i32, x: i32, i: i32): boolean {
+  let e: i32 = l.ev[j];
+  if (e < 0) {
+    return marks[(0 - e - 1) * 4 + cat] <= i;
+  }
+  return l.start[j] < x;
 }
 
 struct RelaxStep { st: RelaxPass, changed: boolean }
@@ -6883,85 +7046,9 @@ function x86_ints_copy(xs: i32[]): i32[] {
   return out;
 }
 
-function x86_bools_any(xs: boolean[]): boolean {
-  for x in xs {
-    if (x) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// x86_relax_grow is the decisions a round's own layout asks for: every branch
-// it emitted short whose displacement does not fit rel8 is long, and a long
-// one stays long. A settled round asks for the decisions it was assembled with.
-function x86_relax_grow(a: X86Asm, longs: boolean[]): boolean[] {
-  let out: boolean[] = [];
-  let k: i32 = 0;
-  let nb: i32 = a.br_offs.len();
-  while (k < nb) {
-    let pinned: boolean = false;
-    if (k < longs.len()) {
-      pinned = longs[k];
-    }
-    if (!pinned && (a.br_hi[k] & 1) != 0) {
-      let target: i32 = x86_label_target(a, x86_br_name(a, k), x86_br_idx(a, k));
-      // An unresolved target cannot be measured, so it must not stay
-      // short: x86_resolve reports it, and a rel8 placeholder would
-      // hide the report behind a range error instead.
-      if (target < 0) {
-        pinned = true;
-      } else {
-        let rel: i32 = target - (a.br_offs[k] + 1);
-        if (rel < 0 - 128 || rel > 127) {
-          pinned = true;
-        }
-      }
-    }
-    out = out.append(pinned);
-    k = k + 1;
-  }
-  return out;
-}
-
-function x86_bools_differ(x: boolean[], y: boolean[]): boolean {
-  if (x.len() != y.len()) {
-    return true;
-  }
-  let i: i32 = 0;
-  while (i < x.len()) {
-    if (x[i] != y[i]) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
-function x86_bools_copy(xs: boolean[]): boolean[] {
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < xs.len()) {
-    out = out.append(xs[i]);
-    i = i + 1;
-  }
-  return out;
-}
-
-function x86_bools_all_true(n: i32): boolean[] {
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(true);
-    i = i + 1;
-  }
-  return out;
-}
-
 // The arms of x86_gas_emit_op, numbered in the order x86_gas_classify tries
 // them. A line's arm is decided by its mnemonic and operand text alone, so
-// it is decided once, in x86_gas_prepare, and every relaxation round reads
-// it. `ext` carries the arm's table value where it has one:
+// it is decided once, in x86_gas_prepare, and the round reads it. `ext` carries the arm's table value where it has one:
 //   GK_FIXED      the packed fixed byte list
 //   GK_REP        the repeat prefix byte
 //   GK_SETCC      the condition code
@@ -7096,25 +7183,9 @@ const GK_CFI: i32 = 48;
 // symbol its last four bytes reach.
 const GK_NAMED: i32 = 49;
 
-// EncCache is the first round's encoding of every line no later round can
-// change: the code that round produced, and per line the range of it the
-// line's bytes are, or -1 at `at` for a line that is encoded again each
-// round. A line is kept when it names no label and its encoding touched
-// nothing but `code`: a branch, a rip-relative label operand, a `.quad sym`,
-// a directive and a refused line all leave something else behind, and a
-// round reads what they leave. The byte offsets a round computes are what
-// relaxation changes, and these lines' bytes do not depend on them.
-struct EncCache { code: u8[], at: i32[], end: i32[] }
-
-// AsmRound is one relaxation round's result with the cache it filled (the
-// first round) or reused (every later one).
-struct AsmRound { a: X86Asm, cache: EncCache }
-
-// One source line with everything the relaxation fixpoint cannot change
-// already worked out. Only the byte offsets a round computes vary between
-// rounds; the text does not, so this is derived once and every round reads
-// it: the label, the mnemonic and operand split, and the emit arm the
-// mnemonic selects with what that arm reads (x86_gas_classify).
+// One source line with everything that does not depend on byte offsets
+// already worked out: the label, the mnemonic and operand split, and the
+// emit arm the mnemonic selects with what that arm reads (x86_gas_classify).
 struct GasLine {
   label: string,  // the `name:` prefix, or "" when the line has none
   body: string,  // what follows it, comment-stripped and trimmed
@@ -7135,8 +7206,8 @@ struct GasLine {
 struct GasText { lines: GasLine[] }
 
 // The labels of a program, indexed once (x86_gas_label_table): the names in
-// definition order, which is the order every round places them in, so an
-// entry's index is its lab_names index in each round's X86Asm, and the
+// definition order, which is the order the round places them in, so an
+// entry's index is its lab_names index in the round's X86Asm, and the
 // bucket chains x86_label_idx walks (lab_head / lab_tail / lab_next).
 struct GasLabels {
   names: string[],
@@ -7144,7 +7215,7 @@ struct GasLabels {
   tail: i32[],
   next: i32[],
   // How many labels the lines define by id: they take the indexes after the
-  // named ones, id i at names.len() + i, so every round places and reads
+  // named ones, id i at names.len() + i, so the round places and reads
   // them through the same lab_* arrays.
   nids: i32,
 }
@@ -7304,9 +7375,8 @@ function x86_line_memo_added(own m: LineMemo, raw: str, l: GasLine): LineMemo {
 }
 
 // A line is memoable when its bytes can depend on nothing but its text: a
-// branch to a label is relaxed per round, and a %rip operand is queued as a
-// name-based fixup x86_resolve rewrites per round, so neither reaches the
-// replay cache and the memo would hold one entry per such line for nothing.
+// branch to a label and a %rip operand each name a label, so the memo would
+// hold one entry per such line for nothing.
 function x86_line_memoable(l: GasLine): boolean {
   if (l.kind == GK_JCC) {
     return false;
@@ -7760,18 +7830,10 @@ function x86_gas_values(line: string): string[] {
   return x86_gas_split_ops(x86_gas_trim(slice_unchecked(line, start, line.len())));
 }
 
-// x86_gas_assemble_pass_prepared assembles one relaxation round from the
-// already-parsed lines.
-function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: boolean[], cache: EncCache, words: u8[]): AsmRound {
-  let a: X86Asm = x86_asm_new_prepared(labs, longs);
-  // The first round records; a cache with an entry per line replays.
-  let record: boolean = cache.at.len() == 0;
-  let at: i32[] = [];
-  let end: i32[] = [];
-  if (record) {
-    at = x86_filled(pl.len(), 0 - 1);
-    end = x86_filled(pl.len(), 0);
-  }
+// x86_gas_assemble_pass_prepared lays the already-parsed lines down with
+// every relaxable branch short, and takes the result unpatched.
+function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, words: u8[]): X86Asm {
+  let a: X86Asm = x86_asm_new_prepared(labs);
   // The CFI recorder is threaded as its own uniquely-held local and folded
   // into `a` once at the end: recording through the field would append its
   // rule arrays through a shared base and copy them per directive (#8172).
@@ -7915,7 +7977,17 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
         // symbol, at an address `.align 16` no longer reached.
         a = x86_rodata_bytes(a, x86_gas_trim(slice_unchecked(line, 5, line.len())));
       } else if (x86_str_starts_with(line, ".align") || x86_str_starts_with(line, ".balign") || x86_str_starts_with(line, ".p2align")) {
+        let np: i32 = a.pads.len();
         a = x86_gas_align(a, section, line);
+        if (a.pads.len() > np) {
+          // An FDE's end is appended when it opens and set when it closes, so
+          // the ends recorded so far are those of the closed ones.
+          let closed: i32 = cfi.fde_end.len();
+          if (cfi.open) {
+            closed = closed - 1;
+          }
+          a = X86Asm { ...a, pad_marks: a.pad_marks.append(a.loc_offs.len()).append(cfi.rule_off.len()).append(cfi.fde_start.len()).append(closed) };
+        }
       } else if (!x86_gas_directive_ignorable(line)) {
         // Every directive above either lays bytes down or moves a
         // section cursor, so an unrecognised one that silently does
@@ -7925,8 +7997,7 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
       continue;
     }
     if (pline.kind == GK_BYTES) {
-      // A record's bytes depend on nothing a round computes, so it is
-      // read from the words in every round and never cached.
+      // A record's bytes depend on nothing the round computes.
       a = x86_gas_bytes(a, words, pline.ext, pline.run_end);
       continue;
     }
@@ -7935,45 +8006,12 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
       a = x86_queue_rel32_at(a, pline.rest, pline.ref_idx);
       continue;
     }
-    if (!record) {
-      if (cache.at[li - 1] >= 0) {
-        a = x86_replay_bytes(a, cache, li - 1);
-      } else {
-        a = x86_gas_emit_op(a, pline);
-      }
-      continue;
-    }
-    let c0: i32 = buf_len(a.code);
-    let fx0: i32 = x86_fix_count(a);
-    let ft0: i32 = a.fix_tail_offs.len();
-    let br0: i32 = x86_br_count(a);
-    let un0: i32 = a.unknown.len();
-    let df0: i32 = a.dfix_offs.len();
-    let rd0: i32 = a.rodata.len();
-    let bs0: i32 = a.bss_size;
     a = x86_gas_emit_op(a, pline);
-    if (pline.ref_idx < 0 && x86_fix_count(a) == fx0 && a.fix_tail_offs.len() == ft0 && x86_br_count(a) == br0
-      && a.unknown.len() == un0 && a.dfix_offs.len() == df0 && a.rodata.len() == rd0 && a.bss_size == bs0) {
-      at = at.with(li - 1, c0);
-      end = end.with(li - 1, buf_len(a.code));
-    }
   }
   // Fold the recorder in before resolution: the data base sits past the
-  // unwind data, so x86_resolve reads its size through the field.
+  // unwind data, so x86_patch reads its size through the field.
   a = X86Asm { ...a, cfi: cfi };
-  a = x86_resolve(a);
-  if (record) {
-    // Resolution patches fixups only, and a kept line queued none, so its
-    // bytes in the resolved code are the bytes it produced.
-    return AsmRound { a: a, cache: EncCache { code: a.text, at: at, end: end } };
-  }
-  return AsmRound { a: a, cache: cache };
-}
-
-// x86_replay_bytes appends line `i`'s cached bytes.
-function x86_replay_bytes(own a: X86Asm, cache: EncCache, i: i32): X86Asm {
-  buf_push_bytes_range(a.code, cache.code, cache.at[i], cache.end[i]);
-  return a;
+  return x86_take(a);
 }
 
 // ---- call-frame information: `.cfi_*` directives into a .eh_frame image ----

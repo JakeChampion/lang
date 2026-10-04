@@ -2,6 +2,7 @@ package e2eharness
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -51,6 +52,7 @@ function sum_body(req: HttpRequest): HttpResponse {
 }
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/sum") { return sum_body(req); }
+    if (req.path == "/echo") { return http.bytes(200, req.body_bytes()); }
     if (req.path == "/text") {
         match (req.body_string()) {
             Ok(text) => { return http.ok("text " + text.len().to_string()); },
@@ -143,6 +145,7 @@ func CheckStreamBodiesOverlap(t *testing.T, addr string) {
 func CheckStreamBodiesSequential(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
+	checkStreamBodiesBinary(t, addr)
 	// A chunked body in two chunks with a trailer, and a /ok pipelined
 	// behind it in the same write.
 	conn := dialRaw(t, addr)
@@ -251,6 +254,88 @@ func CheckStreamBodiesSequential(t *testing.T, addr string) {
 	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("/ok after a client left mid-body: want 200, got\n%s", resp)
 	}
+}
+
+// Arbitrary bytes survive a suspended pull and a following request in the
+// same read. The echo compares every byte, including malformed UTF-8 and NUL.
+func checkStreamBodiesBinary(t *testing.T, addr string) {
+	t.Helper()
+	body := make([]byte, 1024)
+	for i := range body {
+		body[i] = byte(i)
+	}
+	nextBody := make([]byte, 777)
+	for i := range nextBody {
+		nextBody[i] = byte(255 - i%256)
+	}
+	for _, tc := range []struct {
+		framing string
+		invite  bool
+	}{
+		{"content-length", false}, {"content-length", true},
+		{"chunked", false}, {"chunked", true},
+	} {
+		t.Run(fmt.Sprintf("binary-%s-invite-%t", tc.framing, tc.invite), func(t *testing.T) {
+			conn := dialRaw(t, addr)
+			defer conn.Close()
+			header := fmt.Sprintf("Content-Length: %d\r\n", len(body))
+			if tc.framing == "chunked" {
+				header = "Transfer-Encoding: chunked\r\n"
+			}
+			head := "POST /echo HTTP/1.1\r\nHost: h\r\n" + header
+			reader := bufio.NewReader(conn)
+			var first, tail bytes.Buffer
+			if tc.invite {
+				if _, err := io.WriteString(conn, head+"Expect: 100-continue\r\n\r\n"); err != nil {
+					t.Fatal(err)
+				}
+				interim := readResponseFrom(t, reader, "binary upload invitation")
+				if interim.StatusCode != 100 {
+					t.Fatalf("want 100 before sending the binary body, got %d", interim.StatusCode)
+				}
+			} else {
+				// Header and partial body together exercise the pending buffer.
+				first.WriteString(head + "\r\n")
+			}
+			if tc.framing == "chunked" {
+				fmt.Fprintf(&first, "%x\r\n", len(body))
+			}
+			first.Write(body[:131])
+			tail.Write(body[131:])
+			if tc.framing == "chunked" {
+				tail.WriteString("\r\n0\r\nX-End: yes\r\n\r\n")
+			}
+			fmt.Fprintf(&tail, "POST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", len(nextBody))
+			tail.Write(nextBody)
+			if _, err := conn.Write(first.Bytes()); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(20 * time.Millisecond)
+			if _, err := conn.Write(tail.Bytes()); err != nil {
+				t.Fatal(err)
+			}
+			for i, want := range [][]byte{body, nextBody} {
+				resp := readResponseFrom(t, reader, fmt.Sprintf("binary response %d", i))
+				got, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil || resp.StatusCode != 200 || !bytes.Equal(got, want) {
+					t.Fatalf("binary response %d: status=%d bytes=%d, want 200 and %d exact bytes; error=%v", i, resp.StatusCode, len(got), len(want), err)
+				}
+			}
+		})
+	}
+	t.Run("binary-text-rejected", func(t *testing.T) {
+		conn := dialUpload(t, addr, "/text", len(body))
+		defer conn.Close()
+		if _, err := conn.Write(body); err != nil {
+			t.Fatal(err)
+		}
+		resp := readResponseFrom(t, bufio.NewReader(conn), "invalid UTF-8 text body")
+		defer resp.Body.Close()
+		if resp.StatusCode != 400 {
+			t.Fatalf("invalid UTF-8 text body: want 400, got %d", resp.StatusCode)
+		}
+	})
 }
 
 // dialUpload opens a connection and writes the head of a POST to `path`
