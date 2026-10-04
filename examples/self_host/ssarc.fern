@@ -1333,11 +1333,11 @@ function drops(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func,
 // storage became the result's, so releasing it here would free a live box.
 // `shell` is a box whose payload this step took without emptying its slot
 // (`ssaunits.shell_root`), so its drop releases the box alone.
-function drops_less(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func, links: i32[], taken: i32, took: i32, shell: i32): irtables.LowerResult {
+function drops_less(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func, links: i32[], taken: i32, took: i32, held: i32, shell: i32): irtables.LowerResult {
   for value in step.drops {
     if (value == shell) {
       r = release(r, value, f.values[value], f);
-    } else if (value != taken && value != took) {
+    } else if (value != taken && value != took && value != held) {
       r = drop_linked(r, value, links, f);
     }
   }
@@ -1542,18 +1542,18 @@ function claimed_after(c: Claims, slots: i32, pos: i32): boolean {
   return at >= 0 && c.last[at] > pos;
 }
 
-// Donors handed to a construction in a later block: the donor's box is taken
-// at its drop in block `from` and built into at position `build_at` of block
-// `to`. The frame has one token slot, so the box may sit in it only where
-// nothing else writes it and every path out of `from` reaches the build once:
-// `from` builds nothing from the drop on, the blocks between build nothing and
-// return nowhere, and `from` is the only way into them and into `to`. A path
-// that skipped the build would leak the box, and one that reached it twice
-// would build into it twice.
-struct Carry { from: i32[], drop_at: i32[], donor: i32[], to: i32[], build_at: i32[] }
+// Donors handed to a construction in a later block. The donor dying at
+// `drop_at` in block `from` is held there instead of dropped, and becomes the
+// token of the first construction in block `to`, at `build_at`, as a value
+// dying at a construction does. The blocks on the way build nothing and are
+// entered only from `from` or each other, as `to` is, so the donor reaches the
+// construction at most once per drop; an edge that leaves the way for a block
+// that cannot reach `to` (`exit_from` to `exit_to`, for carry `exit_of`) drops
+// the donor there.
+struct Carry { from: i32[], drop_at: i32[], donor: i32[], to: i32[], build_at: i32[], exit_of: i32[], exit_from: i32[], exit_to: i32[] }
 
 function no_carry(): Carry {
-  return Carry { from: [], drop_at: [], donor: [], to: [], build_at: [] };
+  return Carry { from: [], drop_at: [], donor: [], to: [], build_at: [], exit_of: [], exit_from: [], exit_to: [] };
 }
 
 function first_claim(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): i32 {
@@ -1580,59 +1580,87 @@ function last_claim(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): i32 {
   return 0 - 1;
 }
 
-// The one block every path out of `from` builds in first, or -1: the blocks
-// reached before any construction must build nothing, return nowhere and be
-// entered only from `from` or each other, and so must that block.
-function carry_target(f: ssasem.Func, p: ssaunits.Plan, from: ssa.SBlock): i32 {
-  let between: i32[] = [];
-  let target: i32 = 0 - 1;
+// Where a box dropped in `from` can be carried: the first block that builds,
+// on some path out of `from`, whose way from `from` is entered from nowhere
+// else; the blocks on that way, which build nothing; and the edges that leave
+// them, and `from`, for a block that cannot reach it, where the box goes back.
+struct Route { target: i32, exit_from: i32[], exit_to: i32[] }
+
+function no_route(): Route {
+  return Route { target: 0 - 1, exit_from: [], exit_to: [] };
+}
+
+function carry_route(f: ssasem.Func, p: ssaunits.Plan, from: ssa.SBlock): Route {
+  let ahead: i32[] = [];
+  let builds: i32[] = [];
   let work: i32[] = successors(from.term);
   let next: i32 = 0;
   while (next < work.len()) {
     let id: i32 = work[next];
     next = next + 1;
-    if (id == from.id) {
-      return 0 - 1;
-    }
-    if (id == target || util.index_of_i32(between, id) >= 0) {
+    if (id == from.id || util.index_of_i32(builds, id) >= 0 || util.index_of_i32(ahead, id) >= 0) {
       continue;
     }
     let b: ssa.SBlock = f.graph.blocks[block_index(f.graph, id)];
     if (first_claim(f, p, b) >= 0) {
-      if (target >= 0) {
-        return 0 - 1;
-      }
-      target = id;
+      builds = builds.append(id);
     } else {
-      if (b.term.kind_tag != 2 && b.term.kind_tag != 3) {
-        return 0 - 1;
-      }
-      between = between.append(id);
+      ahead = ahead.append(id);
       for s in successors(b.term) {
         work = work.append(s);
       }
     }
   }
-  if (target < 0) {
-    return 0 - 1;
+  for target in builds {
+    let r: Route = route_to(f, from, ahead, target);
+    if (r.target >= 0) {
+      return r;
+    }
+  }
+  return no_route();
+}
+
+function route_to(f: ssasem.Func, from: ssa.SBlock, ahead: i32[], target: i32): Route {
+  // The blocks ahead that reach the target without passing `from`.
+  let between: i32[] = [];
+  let work: i32[] = f.graph.blocks[block_index(f.graph, target)].preds;
+  let next: i32 = 0;
+  while (next < work.len()) {
+    let id: i32 = work[next];
+    next = next + 1;
+    if (util.index_of_i32(ahead, id) >= 0 && util.index_of_i32(between, id) < 0) {
+      between = between.append(id);
+      for pr in f.graph.blocks[block_index(f.graph, id)].preds {
+        work = work.append(pr);
+      }
+    }
   }
   for id in between.append(target) {
     for pr in f.graph.blocks[block_index(f.graph, id)].preds {
       if (pr != from.id && util.index_of_i32(between, pr) < 0) {
-        return 0 - 1;
+        return no_route();
       }
     }
   }
-  return target;
+  let r: Route = Route { target: target, exit_from: [], exit_to: [] };
+  for id in between.append(from.id) {
+    for s in successors(f.graph.blocks[block_index(f.graph, id)].term) {
+      if (s != target && util.index_of_i32(between, s) < 0) {
+        r = Route { ...r, exit_from: r.exit_from.append(id), exit_to: r.exit_to.append(s) };
+      }
+    }
+  }
+  return r;
 }
 
-function carried_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], off: boolean): Carry {
+function carried_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], off: boolean): Carry {
   let c: Carry = no_carry();
   if (off) {
     return c;
   }
   for b in f.graph.blocks {
-    let target: i32 = carry_target(f, p, b);
+    let route: Route = carry_route(f, p, b);
+    let target: i32 = route.target;
     if (target < 0) {
       continue;
     }
@@ -1646,7 +1674,7 @@ function carried_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], off: bool
       if (b.insts[pos].kind_tag != 6 && b.insts[pos].kind_tag != 8) {
         for d in at(p, idx, b.id, pos, 0 - 1).drops {
           if (donor < 0 && d != b.insts[pos].result && donor_slots(f, b, d) == slots
-            && util.index_of_i32(to.insts[build].args, d) < 0) {
+            && util.index_of_i32(to.insts[build].args, d) < 0 && (d >= links.len() || links[d] < 0)) {
             donor = d;
             drop_at = pos;
           }
@@ -1655,7 +1683,13 @@ function carried_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], off: bool
       pos = pos + 1;
     }
     if (donor >= 0) {
-      c = Carry { from: c.from.append(b.id), drop_at: c.drop_at.append(drop_at), donor: c.donor.append(donor), to: c.to.append(target), build_at: c.build_at.append(build) };
+      let k: i32 = c.to.len();
+      c = Carry { ...c, from: c.from.append(b.id), drop_at: c.drop_at.append(drop_at), donor: c.donor.append(donor), to: c.to.append(target), build_at: c.build_at.append(build) };
+      let e: i32 = 0;
+      while (e < route.exit_from.len()) {
+        c = Carry { ...c, exit_of: c.exit_of.append(k), exit_from: c.exit_from.append(route.exit_from[e]), exit_to: c.exit_to.append(route.exit_to[e]) };
+        e = e + 1;
+      }
     }
   }
   // Two blocks hand to one construction only where one lies between the other
@@ -1670,16 +1704,47 @@ function carried_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], off: bool
       }
     }
     if (seen == 1) {
-      out = Carry { from: out.from.append(c.from[i]), drop_at: out.drop_at.append(c.drop_at[i]), donor: out.donor.append(c.donor[i]), to: out.to.append(c.to[i]), build_at: out.build_at.append(c.build_at[i]) };
+      let k: i32 = out.to.len();
+      out = Carry { ...out, from: out.from.append(c.from[i]), drop_at: out.drop_at.append(c.drop_at[i]), donor: out.donor.append(c.donor[i]), to: out.to.append(c.to[i]), build_at: out.build_at.append(c.build_at[i]) };
+      let e: i32 = 0;
+      while (e < c.exit_of.len()) {
+        if (c.exit_of[e] == i) {
+          out = Carry { ...out, exit_of: out.exit_of.append(k), exit_from: out.exit_from.append(c.exit_from[e]), exit_to: out.exit_to.append(c.exit_to[e]) };
+        }
+        e = e + 1;
+      }
     }
     i = i + 1;
   }
   return out;
 }
 
+// The donor whose way the edge from `from` to `to` leaves, dropped there, or -1.
+function carry_exit(c: Carry, from: i32, to: i32): i32 {
+  let e: i32 = 0;
+  while (e < c.exit_from.len()) {
+    if (c.exit_from[e] == from && c.exit_to[e] == to) {
+      return c.donor[c.exit_of[e]];
+    }
+    e = e + 1;
+  }
+  return 0 - 1;
+}
+
+// The donor held rather than dropped at position `pos` of block `b`, or -1.
+function carry_held(c: Carry, b: i32, pos: i32): i32 {
+  let i: i32 = 0;
+  while (i < c.from.len()) {
+    if (c.from[i] == b && c.drop_at[i] == pos) {
+      return c.donor[i];
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
 function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, off: boolean, carry: Carry): ReusePairs {
   let into: i32 = util.index_of_i32(carry.to, b.id);
-  let out: i32 = util.index_of_i32(carry.from, b.id);
   let tokens: i32[] = [];
   let builds: i32[] = [];
   let selfs: i32[] = [];
@@ -1692,11 +1757,8 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlo
     builds = builds.append(0 - 1);
     selfs = selfs.append(0 - 1);
     let ins: ssa.SInst = b.insts[pos];
-    if (out >= 0 && carry.drop_at[out] == pos) {
-      tokens = tokens.with(pos, carry.donor[out]);
-    }
     if (into >= 0 && carry.build_at[into] == pos) {
-      builds = builds.with(pos, carry.donor[into]);
+      selfs = selfs.with(pos, carry.donor[into]);
     } else if (ins.kind_tag != 6 && ins.kind_tag != 8) {
       let step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
       let claims: i32 = recipient_slots(f, p, ins);
@@ -6681,7 +6743,7 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       if (pairs.tokens[pos] >= 0 && !token_kept(keeps, pos)) {
         r = reuse_token(r, f, pairs.tokens[pos]);
       }
-      r = drops_less(r, step, f, links, pairs.tokens[pos], pairs.selfs[pos], ssaunits.shell_root(f, p, ins));
+      r = drops_less(r, step, f, links, pairs.tokens[pos], pairs.selfs[pos], carry_held(carry, b.id, pos), ssaunits.shell_root(f, p, ins));
     }
     pos = pos + 1;
   }
@@ -6740,7 +6802,12 @@ function rank(f: ssa.SFunc, order: i32[], id: i32): i32 {
 }
 
 function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32, target: i32): Emit {
-  e = Emit { ...e, r: edge(e.r, f, p, e.steps, e.links, f.graph.blocks[order[position]].id, target) };
+  let from: i32 = f.graph.blocks[order[position]].id;
+  e = Emit { ...e, r: edge(e.r, f, p, e.steps, e.links, from, target) };
+  let left: i32 = carry_exit(e.carry, from, target);
+  if (left >= 0) {
+    e = Emit { ...e, r: drop_linked(e.r, left, e.links, f) };
+  }
   let dest: i32 = rank(f.graph, order, target);
   if (dest == position + 1) {
     return e;
@@ -7152,7 +7219,7 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
   let links: i32[] = links_of(f, p, steps);
   let no_reuse: boolean = irtables.reuse_layer_disabled();
   let maps: boolean[] = in_place_maps(f, modes, p, steps, links, pure, no_reuse);
-  let e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links, no_reuse: no_reuse, uses: use_counts(f), maps: maps, carry: carried_pairs(f, p, steps, no_reuse) }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
+  let e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links, no_reuse: no_reuse, uses: use_counts(f), maps: maps, carry: carried_pairs(f, p, steps, links, no_reuse) }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
   if (e.why != "") {
     return empty(e.why);
   }
