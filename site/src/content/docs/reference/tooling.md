@@ -105,7 +105,7 @@ compile + execute the produced binary):
 
 ```bash
 fern -interp my_test.fern        # AST interpreter
-fern my_test.fern -o my_test --run   # compile + run
+fern -o my_test --run my_test.fern   # compile + run
 ```
 
 Output is [TAP-13](https://testanything.org/). Exit code is `0`
