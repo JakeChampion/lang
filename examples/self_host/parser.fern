@@ -10292,12 +10292,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   // Stream backs HttpRequest.body, so it has to be in this table for
   // `req.body.data` to resolve its inner field: without it `body` has no
   // struct shape here and the chained access bails out of the IR path.
-  if (!name_declared(structs, "Stream")) {
-    let stf: StructFieldDecl[] = [];
-    stf = stf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
-    stf = stf.append(StructFieldDecl { name: "pos", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    structs = structs.append(StructDecl { name: "Stream", fields: stf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
-  }
+  structs = add_builtin_stream(structs);
   // ChunkProducer is what a `BodyChunks` carries, so it has to be here for
   // `resp.body`'s payload to resolve its `next` field.
   if (!name_declared(structs, "ChunkProducer")) {
@@ -10364,12 +10359,12 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   // std/io_buffered + std/stream built-ins (registered in the Go checker,
   // not `struct`-declared in source) — same injection pattern as the time
   // types. Field lists mirror checker.go exactly:
-  //   Stream       { data: u8[], pos: i32 }       — byte cursor reader
+  //   Stream       { data: u8[], pos: i32, source: Option[BodySource] }
   //   BytesWriter  { data: u8[] }                 — in-memory write buffer
-  // Both carry a sub-word (u8[]) array field, now leak-safe
+  // Both carry a sub-word (u8[]) array field, leak-safe
   // (is_leaksafe_array_field), so their constructors / methods lower on the
   // IR path.
-  structs = add_builtin_struct2(structs, "Stream", "data", "u8[]", "pos", "i32");
+  structs = add_builtin_stream(structs);
   if (!name_declared(structs, "ChunkProducer")) {
     let cpf: StructFieldDecl[] = [];
     cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32" });
@@ -10401,6 +10396,27 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
 
 // add_builtin_struct2 injects a 2-field built-in struct (guarded by name) —
 // the common shape for the injected time types (sec/nsec, name/offset, …).
+// add_builtin_stream declares Stream and the BodySource a lazy one pulls
+// from, as checker.go's builtinStructDecls does: `Stream { data: u8[], pos:
+// i32, source: Option[BodySource] }` and `BodySource { next: () =>
+// Option[u8[]], fault: Cell[i32] }`.
+function add_builtin_stream(structs: StructDecl[]): StructDecl[] {
+  if (!name_declared(structs, "BodySource")) {
+    let bsf: StructFieldDecl[] = [];
+    bsf = bsf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "" });
+    bsf = bsf.append(StructFieldDecl { name: "fault", type_name: "Cell[i32]", fn_ret: "", fn_param_types: "" });
+    structs = structs.append(StructDecl { name: "BodySource", fields: bsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
+  }
+  if (!name_declared(structs, "Stream")) {
+    let stf: StructFieldDecl[] = [];
+    stf = stf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
+    stf = stf.append(StructFieldDecl { name: "pos", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    stf = stf.append(StructFieldDecl { name: "source", type_name: "Option[BodySource]", fn_ret: "", fn_param_types: "" });
+    structs = structs.append(StructDecl { name: "Stream", fields: stf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
+  }
+  return structs;
+}
+
 function add_builtin_struct2(structs: StructDecl[], name: string, f0: string, t0: string, f1: string, t1: string): StructDecl[] {
   if (struct_declared(structs, name)) {
     return structs;
@@ -20264,7 +20280,7 @@ pub function reserved_enum_tparams(name: string): string[] {
 // against builtinStructDecls() so the two cannot drift.
 pub function is_reserved_struct_name(name: string): boolean {
   let reserved: string[] = [
-    "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Duration", "FileStat",
+    "BodySource", "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
     "MapIter", "ProcessResult",
     "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",

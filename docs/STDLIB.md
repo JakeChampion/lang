@@ -1117,11 +1117,17 @@ serializer.
   body either way. `http_serialize_response_head(resp, keep_alive, framing)`
   is the head alone, the framing line (`Content-Length` or
   `Transfer-Encoding`) the caller's.
-- **Request body:** `HttpRequest.body` is the bytes as they came
-  (`req.body.data`, a `u8[]`); `(req).body_string(): Result[string,
-  BodyError]` is the body as text, `Err(NotUtf8)` when it is not well-formed
-  UTF-8, so a handler declared as `Result[HttpResponse, http.BodyError]`
-  reads `let text: string = req.body_string()?;`.
+- **Request body:** `HttpRequest.body` is a `Stream` over the bytes as
+  they came, or over a source that pulls them as the handler reads
+  (`std/stream`); `(req).body_string(): Result[string, BodyError]` is the
+  whole body as text, `Err(NotUtf8)` when it is not well-formed UTF-8 and
+  `Err(EndedEarly(fault))` when a streamed body ended early (413 past the
+  cap, 408 stalled, 400 malformed or cut short), so a handler declared as
+  `Result[HttpResponse, http.BodyError]` reads `let text: string =
+  req.body_string()?;` and refuses either with the right status.
+  `(req).body_bytes()` is the whole body as it came; `(req).body_len()` its
+  length, the declared `Content-Length` for a streamed body (-1 when
+  chunked).
 - **Typed JSON body:** `body_json[T](req): Result[T, BodyError]` decodes the
   body as a `T: json.FromJson` and tells the failures apart:
   `UnsupportedMediaType(ct)` when the `Content-Type` is not
@@ -1883,11 +1889,16 @@ entries, and insertion-ordered iteration. Backs `HttpRequest`'s
 
 ### `std/stream`
 
-Byte-stream value backing `HttpRequest.body: Stream`. Phase 1 is an
-in-memory buffer-backed `Stream`.
+Byte-stream value backing `HttpRequest.body: Stream`: a `data: u8[]`
+buffer with a `pos` cursor, and for a body that arrives as it is read a
+`BodySource` the reads pull the next chunk from once the buffer is
+exhausted (docs/NET-P3-SUSPENSION-PLAN.md §3.9), so the whole is never
+held. `BodySource { next: () => Option[u8[]], fault: Cell[i32] }`:
+`next` answers None at the end and on every call after, `fault` why the
+stream ended early (an HTTP status, or `async.cancelled()`).
 
 - Constructors: `stream_from_bytes(bs)`, `stream_from_string(s)`,
-  `stream_empty()`.
+  `stream_empty()`, `stream_from_source(src)`.
 - Readers: `(s).read_byte()`, `(s).read_n(n)`, `(s).read_line()`,
   `(s).read_all()`, `(s).read_all_string()`. `read_line` reads an
   ill-formed sequence as U+FFFD, since its `None` means end of input.
@@ -1895,7 +1906,10 @@ in-memory buffer-backed `Stream`.
   bytes. It returns `Some(text)` for valid UTF-8 and `None` for malformed
   bytes, advancing the returned cursor to EOF either way. EOF yields
   `Some("")`. The original value and its bytes remain available.
-- Introspection: `(s).len()`, `(s).remaining()`, `(s).is_empty()`.
+- Introspection: `(s).len()`, `(s).remaining()`, `(s).is_empty()`
+  describe the buffer — the whole body of an in-memory Stream, the chunk
+  being read of a sourced one — and `(s).fault()` is a sourced stream's
+  fault, 0 until it ends early.
 
 ### `std/io_buffered`
 
