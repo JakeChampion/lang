@@ -220,6 +220,8 @@ pub function transform(r: irtables.LowerResult, set: Set): irtables.LowerResult 
     } else if (k == 152 || k == 153 || k == 155 || k == 156) {
       t = flush(t);
       t = Tx { ...t, out: t.out.append(o) };
+    } else if (ir.op_pops(o) < 0) {
+      t = Tx { ...t, why: "suspend: " + r.name + ": " + ir.kind_name(k) + " has no modelled stack effect" };
     } else {
       t = Tx { ...t, seg: t.seg.append(o) };
     }
