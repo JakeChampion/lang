@@ -60,8 +60,11 @@ func TestSimPlatformArm64(t *testing.T) {
 	checkSimPlatformOutput(t, "arm64", out)
 }
 
+// The wasm leg stays on the Go wasm builder with the async programs: std/sim
+// drives the poll host, which the self-host's wasm component does not import
+// (docs/NATIVE-RETIREMENT.md, the wasm async decision on #4451).
 func TestWASMSimPlatform(t *testing.T) {
-	out, code := runFixtureWasm(t, langSrcAbs(t, simPlatformSuite), "")
+	out, _, code := runComponent(t, buildNativeComponent(t, simPlatformSource(t), nativeMainResult), runOpts{})
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\n%s", code, out)
 	}
