@@ -6,8 +6,8 @@ import "std/stream";
 import "std/i32";
 
 // Exercises std/mock_platform's recording seam on every backend: a handler
-// is handed the mock's bag and reaches its capabilities through it, the calls
-// land in the cell the mock and the bag share, and
+// is handed the mock as its Platform and reaches its capabilities through
+// it, the calls land in the mock's log, and
 // `calls()` parses the log back into MockCall values. Nothing here reaches
 // the host — the `.log` lines would go to stderr on a host bag.
 // FEATURE-AUDIT std/mock_platform row.
