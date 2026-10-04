@@ -3275,6 +3275,97 @@ what `psadbw` / `uaddlp` are for.
 The startup row is the static-binary margin, widened as it is for the seven:
 GNU dlopens libcrypto before it hashes a hundred bytes.
 
+### sort under both compilers, 2026-10-03, Linux x86-64 (GNU coreutils 9.4)
+
+#8822's re-measurement on the host its table came from. The bench's
+workloads plus the issue's own two 2M-line inputs, `-O` builds from the
+same source, `LC_ALL=C` for every column, hyperfine over at least 20 runs
+on the 4-core container with nothing else running. GNU is 9.4 rather than
+the pinned 9.12 because this container cannot reach the GNU mirrors; it
+runs at its default parallelism and again with `--parallel=1`. Every
+output was byte-identical to GNU's first.
+
+| workload | fern (ms) | fern-sh (ms) | gnu (ms) | gnu `--parallel=1` (ms) | gnu / fern | gnu / fern-sh | gnu -p1 / fern-sh |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `sort` 500k lines | 102.50 ± 12.80 | 73.10 ± 10.97 | 93.32 ± 5.00 | 183.76 ± 6.95 | 0.91× | 1.28× | 2.51× |
+| `sort -n` 500k numbers | 135.15 ± 14.83 | 91.17 ± 5.62 | 145.97 ± 12.27 | 334.56 ± 15.87 | 1.08× | 1.60× | 3.67× |
+| `sort -k2,2n` 500k lines | 179.40 ± 9.27 | 126.86 ± 10.38 | 150.58 ± 11.10 | 330.74 ± 20.32 | 0.84× | 1.19× | 2.61× |
+| `sort -k1,1` 500k lines | 159.69 ± 14.75 | 114.44 ± 7.80 | 114.45 ± 8.02 | 223.05 ± 22.65 | 0.72× | 1.00× | 1.95× |
+| `sort -u` 500k lines | 115.42 ± 11.65 | 79.34 ± 9.36 | 116.99 ± 7.37 | 196.48 ± 9.82 | 1.01× | 1.47× | 2.48× |
+| `sort -r` 500k lines | 103.72 ± 11.25 | 73.12 ± 10.98 | 99.90 ± 5.29 | 187.71 ± 6.81 | 0.96× | 1.37× | 2.57× |
+| `sort -s` 500k lines | 100.46 ± 7.15 | 76.98 ± 12.83 | 96.30 ± 4.84 | 186.34 ± 7.98 | 0.96× | 1.25× | 2.42× |
+| `sort` 500k lines from a pipe | 122.11 ± 19.95 | 81.09 ± 13.33 | 190.54 ± 8.60 | 188.49 ± 12.92 | 1.56× | 2.35× | 2.32× |
+| `sort` a sorted 500k-line file | 34.60 ± 1.71 | 29.40 ± 2.28 | 45.45 ± 3.64 | 64.59 ± 3.55 | 1.31× | 1.55× | 2.20× |
+| `sort -c` a sorted 500k-line file | 14.16 ± 2.03 | 9.82 ± 1.04 | 10.43 ± 0.72 | 10.61 ± 0.94 | 0.74× | 1.06× | 1.08× |
+| `sort -m` two sorted files | 47.87 ± 6.09 | 35.36 ± 3.17 | 39.38 ± 3.64 | 39.84 ± 3.95 | 0.82× | 1.11× | 1.13× |
+| `sort` 2M lines (#8822's input) | 539.35 ± 35.19 | 365.14 ± 17.90 | 401.22 ± 16.06 | 868.70 ± 25.35 | 0.74× | 1.10× | 2.38× |
+| `sort -n` 2M numbers (#8822's input) | 658.35 ± 25.68 | 450.21 ± 28.52 | 608.71 ± 28.40 | 1557.13 ± 39.43 | 0.92× | 1.35× | 3.46× |
+
+**The self-host build is at or ahead of GNU on every row**, multi-threaded
+GNU included; `-k1,1` is a tie, and `-c` and `-m` are within 11%. Against
+single-threaded GNU it is 1.08–3.67× faster. The native build trails GNU on
+nine rows. #8822 opened at 1.93 s and 4.77 s on its two 2M-line rows, against
+GNU's 0.44 s and 0.86 s; they are 365 ms and 450 ms now. Under callgrind
+`sort -n` over 200k lines is 223 M instructions from the self-host build and
+337 M from the native one, against the issue's 5.57 G.
+
+Most of that is the utility: the per-line numeric key, the key spans found
+once, the mismatch kernel and the word radix above. The three compiler costs
+the issue named are gone from the self-host's x86-64 output too. Locals live
+in registers. A string byte read is five instructions with no small-string
+test: a bounds compare against the length in memory, its branch, the data
+pointer, and the load. And a leaf predicate is spliced into its caller, which
+both compilers now do. Until `ssa.thread_bool_joins`
+(`docs/ssa-log/2026-10-03-r-a-branch-on-a-boolean-join-goes-to-its-arms.md`),
+a spliced `c >= 48 && c <= 57` under a branch cost more than writing the
+test out by hand. `sort.fern` calls its predicates and its packed-line
+accessors again rather than spelling them out. It still reads a byte past a
+span's end inline rather than through `byte_at`, because native splices only
+call-free leaves and a string index is a call there.
+
+What remains in the self-host profile is `radix.by_word` (35% of `sort -n`,
+47% of `sort`): each `counts = counts.with(d, counts[d] + 1)` of its
+histogram tests the array's uniqueness and the index's bounds again,
+although the `.with` before it returned the array unique and nothing changes
+its length. Then `numeric_key` at 22%.
+
+### Both compilers, 2026-10-03, arm64-darwin (GNU coreutils 9.12, uutils 0.6.0) — the self-host build is now the faster one
+
+The whole corpus — 650 rows over 101 utilities, every utility the host's GNU
+tree provides — on Apple Silicon, `fern f9a9e3bf1`, both builds `-O`. The raw
+run is `docs/COREUTILS-BOTH-COMPILERS-2026-10-03.md`. The 2026-09-17 and
+2026-09-22 runs above were Linux x86-64, so only the direction carries across.
+
+| | native build | self-host build |
+|---|---|---|
+| rows faster than GNU | 417 / 628 | **452 / 628** |
+| rows faster than uutils | 485 / 620 | **530 / 620** |
+| median `fern / fern-sh` | — | **1.09x** |
+
+The self-host build is faster than the native build on 455 of 628 comparable
+rows, and the accumulation cliffs the 09-17 run recorded (`tsort` 751x, `tac`
+unfinished, `seq` 7.6x) are gone. So requirement 2 is met on this host: Fern
+built by the compiler that is becoming the default beats GNU on 72% of rows
+and uutils on 85%, more than the native build does.
+
+What is left, in the order it costs:
+
+- 29 rows read the self-host build 1.3-2.8x slower than native, all small
+  file operations of a few milliseconds; timed again directly they are at
+  parity (`cp` of 200 files 25.3 ms under both). Those rows are the bench's
+  seeding inside the timed command and sub-5 ms noise; the ratio columns
+  are not readable there (#11333, closed on that measurement).
+- Both builds lose to GNU's digest and base-encoder kernels (0.07-0.4x), to
+  `fmt` (0.4-0.8x) and to the directory walks of `du` / `ls` / `dir`
+  (0.6-0.9x), as before.
+- On this host specifically: `stat` with user and group names over 4000
+  operands resolves the names per operand (0.13x), `who` over 4000 logins is
+  0.24x, `sync -f` over 200 files is a 56 ms full flush per operand (0.01x),
+  and `hostid` resolves the hostname through NSS (0.07x) (#11335).
+- 22 rows did not run on Darwin under either compiler (`df`, `install -d`,
+  `groups`, `logname`, `tty`, `yes`, and `nice`, which dies with SIGSYS —
+  #11334).
+
 ## The primitives group C is built on
 
 A utility here is blocked on a builtin far more often than on anything about
