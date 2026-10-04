@@ -1336,17 +1336,18 @@ var unconditionalHelperCalls = map[string][]string{
 	"__fern_udp_sendto_bytes": {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__fern_ip_flat"},
 	// A bound datagram socket is closed through udp_close, so it comes
 	// with the socket and tcp_close gains its datagram arm.
-	"__fern_udp_bind":      {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__network_handle", "__fern_udp_close", "__fern_ip_flat"},
-	"__fern_udp_close":     {"__free"},
-	"__fern_udp_connect":   {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__fern_ip_flat"},
-	"__fern_udp_sendto":    {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte", "__fern_ip_flat"},
-	"__fern_udp_recvfrom":  {"__fern_wasi_socket_errno", "__fern_alloc", "__free"},
-	"__fern_reactor_new":   {"__fern_alloc"},
-	"__fern_reactor_ctl":   {"__fern_alloc", "__free"},
-	"__fern_reactor_wait":  {"__fern_alloc", "__free", "cabi_realloc"},
-	"__fern_tcp_recv_into": {"__fern_alloc", "__free", "cabi_realloc"},
-	"__fern_read_file":     {"__fern_utf8_valid"},
-	"__fern_str_copy":      {"__fern_alloc_rc1"},
+	"__fern_udp_bind":          {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__network_handle", "__fern_udp_close", "__fern_ip_flat"},
+	"__fern_udp_close":         {"__free"},
+	"__fern_udp_connect":       {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__fern_ip_flat"},
+	"__fern_udp_sendto":        {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte", "__fern_ip_flat"},
+	"__fern_udp_recvfrom":      {"__fern_wasi_socket_errno", "__fern_alloc", "__free"},
+	"__fern_reactor_new":       {"__fern_alloc"},
+	"__fern_reactor_ctl":       {"__fern_alloc", "__free"},
+	"__fern_reactor_wait":      {"__fern_alloc", "__free", "cabi_realloc"},
+	"__fern_tcp_recv_into":     {"__fern_alloc", "__free", "cabi_realloc"},
+	"__fern_read_file":         {"__fern_utf8_valid"},
+	"__fern_reader_read_chunk": {"__fern_utf8_valid"},
+	"__fern_str_copy":          {"__fern_alloc_rc1"},
 	// The IoError box keeps the static-sentinel header; its Other
 	// variant's message string is an rc1 block.
 	"__build_io_error": {"__fern_alloc_rc1", "__fern_alloc_box"},
@@ -1365,7 +1366,9 @@ var unconditionalHelperCalls = map[string][]string{
 	"strbuf_append":           {"__fern_str_len", "__fern_str_byte", "__fern_alloc"},
 	"strbuf_take":             {"__fern_alloc_rc1"},
 	"buf_new":                 {"__fern_alloc_rc1"},
-	"buf_take":                {"__fern_alloc_rc1"},
+	"buf_take":                {"__fern_alloc_rc1", "__fern_buf_text_size", "__fern_buf_text_copy"},
+	"__fern_buf_text_size":    {"__fern_buf_text_part"},
+	"__fern_buf_text_copy":    {"__fern_buf_text_part"},
 	"buf_take_bytes":          {"__fern_alloc"},
 	"__fern_buf_reserve":      {"__fern_alloc_rc1", "__fern_box_free"},
 	"buf_push":                {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
@@ -5992,7 +5995,7 @@ func buildBufLenBody(_ map[string]uint32) []byte {
 
 // buildBufTakeBody assembles wasm bytes for buf_take.
 //
-// Signature: (h i32) → (data, len). Locals: $len (1), $data (2).
+// Signature: (h i32) → (data, len). Locals: len, data, signed size, source.
 //
 // The accumulated bytes are copied into a fresh __fern_alloc_rc1 block of
 // their own length; the builder keeps its buffer at full width with nothing
@@ -6010,20 +6013,47 @@ func buildBufTakeBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, int32(-0x80000000))
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalTee(body, 4)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, idxs["__fern_buf_text_size"])
+	body = inst.InstLocalTee(body, 3)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalGet(body, 3)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalSet(body, 1)
+	body = inst.InstElse(body)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalSet(body, 1)
+	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalSet(body, 2)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 0)
-	body = memory.InstI32Load(body, 2, 0)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstCall(body, idxs["__fern_buf_text_copy"])
+	body = inst.InstElse(body)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 1)
 	body = memory.InstMemoryCopy(body)
+	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 4)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstLocalGet(body, 1)
-	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32), body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32), body)
 }
 
 // buildBufFreeBody assembles wasm bytes for buf_free.

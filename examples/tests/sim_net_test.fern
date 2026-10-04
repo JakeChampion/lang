@@ -197,8 +197,47 @@ function test_hits_and_wildcard(): test.TestOutcome {
   return test.pass();
 }
 
+function test_unicode_chunk_boundaries(): test.TestOutcome {
+  let body: string = "a¢€🙂\x00z";
+  let split: i32 = 0;
+  while (split <= body.len()) {
+    let d: sim.Sim = sim.new(1);
+    let n: sim.Net = sim.net(d).serve_chunked(1, 80, "/", body, time.duration_millis(5), time.duration_millis(7), [split]);
+    let f: async.Future[string] = n.fetch_future(1, 80, "/");
+    let wakes: i32 = 0;
+    let done: boolean = false;
+    while (!done && wakes < 3) {
+      match (f) {
+        Ready(text) => {
+          if (text != body) {
+            return test.fail("Unicode body changed");
+          }
+          done = true;
+        },
+        Pending(token, resume) => {
+          if (token != 5 + wakes * 7) {
+            return test.fail("chunk time changed");
+          }
+          wakes = wakes + 1;
+          f = resume(token);
+        }
+      }
+    }
+    let expected: i32 = 2;
+    if (split == 0 || split == body.len()) {
+      expected = 1;
+    }
+    if (!done || wakes != expected) {
+      return test.fail("chunk count changed");
+    }
+    split = split + 1;
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/sim net");
+  r = r.it("preserves Unicode across every chunk boundary", test_unicode_chunk_boundaries);
   r = r.it("gather returns bodies in input order", test_gather_input_order);
   r = r.it("race picks the fast endpoint", test_race_picks_fast);
   r = r.it("with_deadline drops only the slow endpoint", test_deadline_drops_only_slow);

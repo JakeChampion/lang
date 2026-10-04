@@ -1519,10 +1519,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// builder's buffer is uniquely owned by construction) and no size
 	// class re-derived per call, which is what `s = s + piece` pays.
 	//
-	// buf_take hands the accumulated bytes over as a string WITHOUT
-	// copying them — the buffer is laid out as a string block from the
-	// start — and leaves the builder empty and still usable, so a
-	// flush loop keeps one builder rather than one per line.
+	// buf_take returns independent UTF-8 text, replacing each malformed
+	// maximal subpart with U+FFFD. It drains the builder while retaining
+	// capacity. buf_take_bytes is the byte-exact alternative.
 	//
 	// buf_free releases the buffer and the control block. A builder is
 	// not refcounted and has no drop, so a handle that is never freed
@@ -3894,9 +3893,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	}
 	optionString := ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}}
 	registerStructMethod("Reader", "read_line", nil, optionString)
-	// read_chunk reports what read(2) reports: the bytes, an empty
-	// string at end of input, or the failure. `Option` could not tell
-	// EOF from EISDIR, and a streaming utility needs to (#8700).
+	// read_chunk validates one physical read as UTF-8, returning InvalidUtf8
+	// for malformed or incomplete scalars. It consumes the bytes even on
+	// rejection. Buffered text uses LineReader; raw input uses the byte method.
+	// Empty text means EOF (or a zero-size request); I/O failures are errors.
 	registerStructMethod("Reader", "read_chunk", []ast.Type{ast.NumberType{}},
 		ast.EnumType{Name: "Result", Args: []ast.Type{ast.StringType{}, ioErrType}})
 	// Raw reads preserve every byte, including partial UTF-8 sequences.

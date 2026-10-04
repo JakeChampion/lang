@@ -29,6 +29,11 @@ invariant from holding across the stdlib.
 | Regex replacements, splits and captures | byte-oriented matches | `None` when text would be invalid; explicit byte variants preserve raw output |
 | `u8.to_ascii_string` | a byte value | empty text for bytes above 127; ASCII, including NUL, is preserved |
 | `rng_bytes` / `random_bytes` | pseudorandom or system random bytes | owned `u8[]`, with no text conversion |
+| `Reader.read_chunk` | one physical read | `Err(InvalidUtf8(""))`; the consumed bytes are not retried or carried into the next call; `read_chunk_bytes` is raw |
+| `buf_take` | a byte builder | U+FFFD per maximal invalid subpart; drains the builder and retains its capacity; `buf_take_bytes` is raw |
+| PEG captures | committed byte ranges | `ok=false` with no captures if a nonempty range splits a scalar; matching and ordered choice remain byte-oriented |
+| `sim.Net.fetch_future` | scheduled parts of a valid body | retains the complete body until the last scheduled resumption, without constructing partial strings |
+| `sim_fetch.Net.sent` | transport writes | owned `u8[]` snapshots, including binary bodies; its shared journal uses explicit ASCII hex |
 
 HTTP response serialization now has `*_bytes` siblings that preserve the
 body and frame its byte length. The text siblings retain replacement decoding
@@ -43,13 +48,19 @@ The property test (`examples/tests/utf8_validity_property_test.fern`)
 covers the string methods. The byte-level methods (`reverse_bytes`,
 `shift_byte`, `replace_byte`, `without_byte`) return `u8[]`.
 
-The old `Reader.read_chunk` and builder text extraction still expose
-unchecked raw paths. Their byte-returning siblings now provide migration
-destinations, but binary consumers and the old text contracts still need
-updating. These gaps require implementation and target coverage before
-closing D9. Regex keeps byte-oriented matching: replacing `.` in `é` can
+Reader and builder publication now enforce their text contracts. PEG checks
+committed capture boundaries before constructing any result text, including
+earlier captures overwritten under the same name. Regex keeps byte-oriented
+matching: replacing `.` in `é` can
 split its encoding, so the checked text result is `None` while the byte
 variant returns the exact output.
+
+One audited gap remains in streamed HTTP request bodies: private pending
+input, chunk-decoder storage and pipelined leftovers use `Cell[string]` to
+hold arbitrary bytes. Their public APIs return bytes, but the private
+storage still violates the invariant. Cycle-free byte-array cells and a
+migration of these buffers are being prepared. D9 must remain open until
+that work and the final target audit pass.
 
 The OS text contract remains a deliberate exception, while the sink migration
 is still incomplete:
@@ -61,12 +72,15 @@ is still incomplete:
   end-of-file), and a CLI that trapped on a stray byte in its own
   arguments would be worse than one that passed it through. Their
   builtin signatures say so.
-- **Byte sinks now have raw forms, but some callers still construct text**
+  Both bare and `Reader.read_line()` return complete lines, including a
+  trailing newline when present. Storage grows across internal capacity
+  boundaries, so valid input is not split inside a UTF-8 scalar. This does
+  not add validation of malformed OS input.
+- **Byte sinks have raw forms**
   (#10948): `tcp_send_bytes`, `udp_sendto_bytes` and `write_file_bytes` are
   available; wasi's `stream_write` takes `u8[]`, and Writer's byte methods
-  borrow `[u8]`. DNS uses the raw send path. The remaining unchecked
-  conversions in `std/tcp` and `std/fetch` still need migration. Having byte
-  entry points does not establish the invariant for their callers.
+  borrow `[u8]`. DNS, `std/tcp` and `std/fetch` use byte paths for binary
+  traffic. The remaining private HTTP storage gap is described above.
 
 Written because #5552 ("stdlib case ops are ASCII-only — add a Unicode
 `std/unicode`") asked a question the codebase can't answer from first
@@ -464,16 +478,17 @@ buf_push_bytes_range(b, bytes, lo, hi) /
 buf_push_byte(b, x) / buf_len(b) / buf_take(b) / buf_take_bytes(b) / buf_free(b)
 ```
 
-`buf_take` copies the accumulated bytes into a string of exactly their
-length and keeps the buffer on the builder, emptied and still at full
-width. Handing the buffer itself over was zero-copy but freed it at the
-string's length class, which filed every grown block on a freelist the
-builder's next growth never read, so a stream that straddled its flush
-threshold bumped fresh memory per flush (#9179); the copy is a memcpy per
-flush against a write syscall. A builder is not
-refcounted and has no drop — a handle that is never freed leaks, exactly as
-an fd that is never closed does — so programs want `std/io_buffered`'s
-writers rather than these directly.
+`buf_take` returns independently owned, valid UTF-8 text. Valid input is
+copied unchanged; each malformed maximal subpart becomes U+FFFD. For example,
+the incomplete prefix `E2 82` becomes one replacement character, while
+`E0 80 80` becomes three. Appends can split a valid scalar across calls;
+validation happens when the accumulated result is taken.
+
+Extraction resets the byte length and retains the builder's capacity.
+Later appends and freeing the builder do not alter an extracted result.
+Output storage is sized to the repaired text, so its allocation and release
+use the same size class (#9179). A builder has no automatic drop: callers
+must call `buf_free`, or use `std/io_buffered`'s writers to manage it.
 
 `buf_take_bytes(b): u8[]` extracts arbitrary bytes into an independently
 owned array and resets the builder length while retaining its reserve.
@@ -483,8 +498,9 @@ half-open byte range, clamping bounds to the array. Empty or inverted ranges
 append nothing. It reserves once and copies packed arrays in bulk; neither
 appending nor extracting requires an intermediate string.
 Use this path for binary output. It never constructs a string; text callers
-can validate the returned bytes with `std/utf8.from_bytes`. The older
-`buf_take` API still needs a separate validity-contract migration for D9.
+can validate the returned bytes with `std/utf8.from_bytes` when malformed
+input must be rejected rather than replaced. In particular, an I/O API that
+promises `InvalidUtf8` must validate raw bytes before any lossy extraction.
 
 The table-based pushes also accept raw arrays:
 `buf_push_bytes_mapped`, `buf_push_bytes_filtered`, and
@@ -828,6 +844,7 @@ recognisers, example programs and test fixtures. By category:
 | Digit assembly | `core/int`, `std/i32`, `std/i64`, `std/float` | No — ASCII it just built |
 | Encoder output | base64/base32/hex **encode**, `url` percent-encode | No: ASCII by construction |
 | Regex output | replacements, splits and captures | Yes: byte matches can split UTF-8 scalars. Text APIs return `Option`; `_bytes` variants preserve raw output. |
+| PEG captures | committed named byte ranges | Yes: byte matches can split UTF-8 scalars. Final capture validation returns `ok=false` and an empty map when any nonempty range splits a character. Empty ranges remain valid. |
 | Text formatting | `json` escape, `ansi`, `table`, `format` | Can contain Unicode; validity depends on preserving complete input scalars, not ASCII output. |
 | Byte-preserving transforms | `std/string` case/pad/trim/repeat/replace | No — reassembles bytes of an already-valid string |
 | Scalar re-encoding | `std/utf8`'s own encoder | No — it just validated the scalar |
@@ -1143,9 +1160,14 @@ in [the byte-line report](STRING-BYTE-LINES-2026-10-02.md). The full unit suite
 and all lint gates pass.
 
 The Fern interpreter also supports raw stdin reads; its file-handle opening
-remains unsupported. The existing `Reader.read_chunk` remains text-typed and
-unchecked pending migration of its binary consumers. The new method does not
-establish the string invariant by itself.
+remains unsupported. `Reader.read_chunk(n): Result[string, IoError]` validates
+the bytes returned by one physical read. Malformed or incomplete UTF-8
+returns `InvalidUtf8("")` and consumes those bytes. It does not carry a partial
+scalar into a later call or read beyond `n`; use the buffered `LineReader`
+when scalars may cross input chunks. Binary consumers use `read_chunk_bytes`.
+Valid text retains embedded NUL. Negative sizes fail before reading, and
+zero-sized reads, EOF, closed handles and host I/O failures retain their
+normal distinctions.
 
 `Writer.write_bytes(bytes): Option[IoError]` and
 `Writer.write_some_bytes(bytes): Result[i64, IoError]` borrow a byte view `[u8]`

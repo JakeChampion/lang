@@ -4615,7 +4615,9 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
   s = ssa_x0_forget(s);
   s = s.mark_heap();
   s = s.need("buf");
-  if (sym == "__fern_buf_take_bytes") {
+  if (sym == "__fern_buf_take") {
+    s = s.need("buf_text");
+  } else if (sym == "__fern_buf_take_bytes") {
     s = s.need("buf_take_bytes");
   } else if (sym == "__fern_buf_take_bytes_u8") {
     s = s.need("buf_take_bytes_u8");
@@ -4756,6 +4758,9 @@ function emit_arm64_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.
 // statement-level drop takes for the rest. buf_new / buf_take allocate and
 // buf_free returns blocks to the freelists, so all seven pull the heap in.
 function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  if (o.kind_tag == 296) {
+    s = s.need("buf_text");
+  }
   if (o.kind_tag == 347) {
     s = s.need("buf_take_bytes" + asmcore.packed_suffix(ir.is_packed(o)));
   }
@@ -8515,43 +8520,12 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldr x0, [x0, #8]\n");
     s = s.write("    ret\n");
     s = s.write(".size __fern_buf_len, .-__fern_buf_len\n");
-    // __fern_buf_take(x0 = H) -> x0 = string box over a COPY of the
-    // accumulated bytes, sized to them, so the block frees at the class
-    // it was bumped at (#9179); the builder keeps its buffer at full
-    // width with nothing in it. An empty build answers a box over a null
-    // buffer — __fn___fern_str_free's low-address guard skips it.
-    s = s.write(".globl __fern_buf_take\n");
-    s = s.write(".type __fern_buf_take, %function\n");
-    s = s.write("__fern_buf_take:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    stp x21, x22, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");
-    s = s.write("    ldr x20, [x19, #8]\n");  // len
-    s = s.write("    cbz x20, .Lbuftake_empty\n");
-    s = s.write("    mov x0, x20\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x21, x0\n");  // the copy
-    s = s.write("    ldr x1, [x19]\n");  // data
-    s = s.write("    mov x3, x21\n");
-    s = s.write("    mov x2, x20\n");
-    s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lbuftake_copy_w", ".Lbuftake_copy_t", ".Lbuftake_copy_b", ".Lbuftake_copy_d");
-    s = s.write("    str xzr, [x19, #8]\n");
-    s = s.write("    mov x0, x21\n");
-    s = s.write("    mov x1, x20\n");
-    s = s.write("    bl __fern_str_box\n");
-    s = s.write("    b .Lbuftake_ret\n");
-    s = s.write(".Lbuftake_empty:\n");
-    s = s.write("    mov x0, #0\n");
-    s = s.write("    mov x1, #0\n");
-    s = s.write("    bl __fern_str_box\n");
-    s = s.write(".Lbuftake_ret:\n");
-    s = s.write("    ldp x21, x22, [sp], #16\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_buf_take, .-__fern_buf_take\n");
+    // The public builder helper uses registers; the shared Fern text
+    // runtime uses stack arguments. Byte-only programs omit both bodies.
+    if (s.has_need("buf_text")) {
+      s = s.write(".globl __fern_buf_take\n.type __fern_buf_take, %function\n__fern_buf_take:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    str x0, [sp, #-16]!\n    bl __fn___fern_buf_take_text\n    add sp, sp, #16\n    ldp x29, x30, [sp], #16\n    ret\n.size __fern_buf_take, .-__fern_buf_take\n");
+      s = emit_ir_runtime_fern_fn(asmcore.rt_src_buf_text(), s);
+    }
     // __fern_buf_free(x0 = H): release the buffer (when the builder still
     // owns one) and the control block. A builder is not refcounted and has
     // no drop, so a handle that is never freed leaks, exactly as an fd that
@@ -10971,7 +10945,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("lstat")) {
       fs_src = fs_src + " " + asmcore.rt_src_lstat(tgt);
     }
-    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr")) {
+    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr") || s.has_need("reader")) {
       fs_src = fs_src + " " + asmcore.rt_src_utf8_valid();
     }
     if (s.has_need("read_file")) {
