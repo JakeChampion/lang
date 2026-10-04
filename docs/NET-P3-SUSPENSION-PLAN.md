@@ -298,18 +298,19 @@ the loop under the cap and the minimum data rate; `HttpRequest.body` is a
 next step: the same reader API over a source that pulls bytes on demand.
 
 **The stream pulls.** `Stream` grows a third field, `source:
-Option[BodySource]`, and `BodySource { next: (i32) => Option[u8[]], fault:
+Option[BodySource]`, and `BodySource { next: () => Option[u8[]], fault:
 Cell[i32] }` is a checker-injected record like `ChunkProducer` (both
 compilers' builtin tables; `Stream` literals go through
-`stream.stream_from_bytes`). A read that exhausts `data` asks `next(i)` for
+`stream.stream_from_bytes`). A read that exhausts `data` asks `next()` for
 the next chunk and replaces `data` with it, so a streamed body is never
 held whole; `None` ends the stream, and `fault` says why when it ended
 early: 413 past the cap, 408 stalled under the minimum data rate, 400 for
 a chunked body that breaks its rules or a peer that closed short, and
 `async.cancelled()` for a cancelled task. `(s: Stream).fault()` reads it;
-`req.body_string()` maps it onto `BodyError` (each `ToResponse`), so a
-handler written `Result[HttpResponse, BodyError]` refuses a bad upload
-with `?` as it refuses bad UTF-8 today. `body_bytes` and `read_all` drain
+`req.body_string()` maps it onto `BodyError.EndedEarly(fault)`
+(`ToResponse` with the fault's status), so a handler written
+`Result[HttpResponse, BodyError]` refuses a bad upload with `?` as it
+refuses bad UTF-8 today. `body_bytes` and `read_all` drain
 the source; `body_len` answers the declared `Content-Length` for a lazy
 body. An in-memory `Stream` has no source and costs nothing new.
 
