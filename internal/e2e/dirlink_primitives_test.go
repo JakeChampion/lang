@@ -146,21 +146,6 @@ func TestArm64DirLinkPrimitives(t *testing.T) {
 	dirLinkCheckTree(t, dir)
 }
 
-// The arm64 SSA-direct backend is a fourth hand-written implementation of the
-// same five syscalls, with its own frame discipline and its own inline heap
-// bump, so it gets the same probe rather than being taken on trust.
-func TestArm64SSADirLinkPrimitives(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, dirLinkSource(dir, true), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see dirLinkSource)\n%s", code, stderr)
-	}
-	dirLinkCheckTree(t, dir)
-}
-
 // The interpreter answers these from Go's syscall package, so it is a fifth
 // implementation and the one an in-language test suite runs under.
 func TestInterpDirLinkPrimitives(t *testing.T) {

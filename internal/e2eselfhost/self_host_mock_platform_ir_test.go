@@ -4,7 +4,7 @@ import "testing"
 
 // mockPlatformIRCases exercise std/mock_platform's recording surface through
 // the self-host IR path on x86-64 + wasm (the `std/mock_platform` row was fully
-// unaudited). `MockPlatform` / `MockCall` are reserved builtin type names, so
+// unaudited). `mock_platform.MockPlatform` / `MockCall` are reserved builtin type names, so
 // the surface is inlined from `internal/stdlib/std/mock_platform.fern` with the
 // types renamed to `MPlat` / `MCall` and the line split hand-rolled (std/string
 // is not imported).

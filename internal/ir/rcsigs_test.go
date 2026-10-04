@@ -151,9 +151,9 @@ func TestRcReleasesAndRcRetainsSplitTheTable(t *testing.T) {
 // `providedSigs` is the verifier's record of exactly those callees, and
 // it covers the BUILTINS as well — `strbuf_append`, the Map methods,
 // the platform surface. A builtin that moves a count and is absent from
-// this file reads to `internal/ssa` as an opaque callee that borrows,
-// which is the unsafe direction: a callee that really consumes comes
-// back Borrowed and nothing says so.
+// this file reads to the rc verifier (`verifyrc.go`) as an opaque callee
+// that borrows, which is the unsafe direction: a callee that really
+// consumes comes back Borrowed and nothing says so.
 //
 // This is the sibling of TestRcSigsCoverEveryRuntimeHelper in
 // internal/codegen/wasmbin, which does the same against the wasm

@@ -1,8 +1,8 @@
 // The write-back family end to end on every backend: `sync()`, and
 // `fsync` / `fdatasync` / `syncfs` on both handle types.
 //
-// What no unit test can assert: five hand-written implementations issue these
-// calls. x86-64, arm64-linux and arm64-ssa each emit the syscall from
+// What no unit test can assert: four hand-written implementations issue these
+// calls. x86-64 and arm64-linux each emit the syscall from
 // hand-written assembly with its own frame discipline and its own literal
 // syscall NUMBER; the interpreter goes through Go's syscall package behind a
 // per-OS split; and wasmbin has two bodies per method over WASI, where syncfs
@@ -192,22 +192,6 @@ func TestArm64Sync(t *testing.T) {
 	out, code := compileAndRunArm64(t, syncSource(dir, false, true))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see syncSource)\n%s", code, out)
-	}
-	syncCheckTree(t, dir)
-}
-
-// The arm64 SSA-direct backend is a third hand-written implementation of the
-// same four syscalls, with its own frame discipline and its own handle layout
-// (the fd at [handle+8] rather than [handle]), so it gets the probe rather
-// than being taken on trust.
-func TestArm64SSASync(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, syncSource(dir, false, true), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see syncSource)\n%s", code, stderr)
 	}
 	syncCheckTree(t, dir)
 }

@@ -12,7 +12,7 @@ import (
 // `st_blksize` are 32-bit, so each widens; the timestamps are named
 // `Atimespec` rather than Linux's `Atim`, which is why this file exists
 // at all rather than one shared unix projection.
-func statFields(info os.FileInfo) rawStat {
+func statFields(info os.FileInfo, _ statOrigin) rawStat {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return rawStat{}
@@ -33,5 +33,7 @@ func statFields(info os.FileInfo) rawStat {
 		mtimeNsec: st.Mtimespec.Nsec,
 		ctime:     st.Ctimespec.Sec,
 		ctimeNsec: st.Ctimespec.Nsec,
+		btime:     st.Birthtimespec.Sec,
+		btimeNsec: st.Birthtimespec.Nsec,
 	}
 }

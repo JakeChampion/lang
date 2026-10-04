@@ -982,11 +982,12 @@ function main(): i32 {
   http: `
 import "std/http";
 import "std/serve";
+import "std/platform";
 // An HTTP handler. Pick the "wasi:http/incoming-handler" world,
 // then hit "Run (wasm)" to send the request on the right through
 // the compiled handler — in-browser, no server. Routes on path +
 // method, reads the body, and sets a response header.
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/hello") {
         // Functional header update: with_header returns a new
         // response with the header set (immutable data structures).

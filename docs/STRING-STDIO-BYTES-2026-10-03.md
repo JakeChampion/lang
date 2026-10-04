@@ -136,3 +136,18 @@ unwind data stays at 7,572 bytes and data at 4,168 bytes. No baseline changes.
 
 This enables byte-oriented consumers such as dircolors. It does not complete
 their conversion or the remaining producer audit for #5714.
+
+## Integration with main, October 4
+
+The merge of `f4de66fd5` retains main's Go SSA retirement and its compiler
+and checker size baselines, alongside this change's measured path-probe
+baseline. All three affected driver checks pass their unchanged 5% gate.
+The full Linux unit suite, all lint gates, Stdio target groups and GNU/primary
+consumer comparisons pass again on the merged source.
+
+A fresh bootstrap reaches identical stages two and three at 12,979,233 bytes,
+SHA-256 `457b5c8d64197757ddd908b69e4d2ebdab65404b64e2146cf4ab262693383034`.
+Darwin Go and source-built primary tests pass in 9.641 and 38.385 seconds.
+The reproduced compiler passes all 366 native/core-WASM corpus runs in
+3.053 seconds with balanced allocations. The earlier benchmark above remains
+a measurement of its stated compiler and source revisions.

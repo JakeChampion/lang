@@ -227,37 +227,6 @@ func TestArm64DarwinChmodAt(t *testing.T) {
 	chmodAtCheckTree(t, dir, fresh, true)
 }
 
-// The arm64 SSA-direct backend builds the same branch in its own hand-written
-// sequence, in its own frame discipline, so it gets the probe rather than
-// being taken on trust.
-func TestArm64SSAChmodAt(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	fresh := chmodAtSeed(t, dir)
-	bin := compileArm64SSA(t, fern, chmodAtSource(dir, false), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see chmodAtSource)\n%s", code, stderr)
-	}
-	chmodAtCheckTree(t, dir, fresh, false)
-}
-
-// The x86-64 SSA-direct backend builds the same branch in its own hand-written
-// sequence, so it gets the probe too.
-func TestX86_64SSAChmodAt(t *testing.T) {
-	qemu := x86QemuOrEmpty(t)
-	fern := buildFernCLI(t)
-	dir := t.TempDir()
-	fresh := chmodAtSeed(t, dir)
-	bin := compileX86_64SSA(t, fern, chmodAtSource(dir, false), os.Environ())
-	code, stderr := runX86_64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see chmodAtSource)\n%s", code, stderr)
-	}
-	chmodAtCheckTree(t, dir, fresh, false)
-}
-
 // The interpreter runs on whichever kernel hosts the test, so its expectation
 // follows the host: Linux refuses the nofollow form on a symlink, Darwin
 // changes the link.

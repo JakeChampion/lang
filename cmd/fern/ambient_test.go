@@ -10,8 +10,9 @@ import (
 // the chain that reaches it and the bag method to call instead.
 func TestCheckRefusesAmbientEffectInHandler(t *testing.T) {
 	entry := writeFern(t, `import "std/http";
+import "std/platform";
 function helper(): void { eprint("hit"); }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     helper();
     return http.ok("");
 }
@@ -34,8 +35,8 @@ function main(): i32 { return 0; }
 func TestCheckAllowsEffectsThroughTheBag(t *testing.T) {
 	entry := writeFern(t, `import "std/http";
 import "std/platform";
-function helper(plat: Platform): void { plat.log("hit"); }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function helper(plat: platform.Platform): void { plat.log("hit"); }
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     helper(plat);
     return http.ok("");
 }

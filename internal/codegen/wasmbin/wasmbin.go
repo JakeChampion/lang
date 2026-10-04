@@ -99,7 +99,7 @@ type EmitOptions struct {
 	ExitWithMainResult bool
 	// HttpHandler emits the `wasi:http/incoming-handler@0.2.0#handle`
 	// export wrapping the user-defined `function handle(req:
-	// HttpRequest, plat: Platform): HttpResponse`. The synthetic
+	// HttpRequest, plat: platform.Platform): HttpResponse`. The synthetic
 	// `__http_entry` helper marshals the canonical-ABI incoming-
 	// request into the user's HttpRequest struct, invokes `handle`,
 	// then streams the HttpResponse back through outgoing-body.
@@ -194,7 +194,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	if opts.HttpHandler {
 		// __http_entry's body alloc()s the request struct, the
 		// HeaderMap parallel arrays, the body accumulator, the
-		// canonical-ABI retptr scratch, the Platform capability
+		// canonical-ABI retptr scratch, the platform
 		// bag, and the response outgoing-body. It also calls
 		// __bytes_to_lang_string for the host-bytes →
 		// lang-string round-trip, and emitStrNormalize for the
@@ -825,6 +825,12 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	if helpers.set["__fern_sin_f64"] || helpers.set["__fern_cos_f64"] {
 		m.DataOffsets = append(m.DataOffsets, int32(twoOverPiBase))
 		m.DataInits = append(m.DataInits, twoOverPiSegment())
+	}
+
+	// The log table's rows → data segment at logTabBase.
+	if helpers.set["__fern_log_f64"] {
+		m.DataOffsets = append(m.DataOffsets, int32(logTabBase))
+		m.DataInits = append(m.DataInits, logTabSegment())
 	}
 
 	// Heap-form strings → data segment. The single segment lives at

@@ -113,9 +113,6 @@ func TestSelfHostIROpConstructorTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A constructor whose name is not its kind's: str_index_nc is str_index
-	// with the bounds check off.
-	alias := map[string]string{"str_index_nc": "str_index"}
 	ctor := regexp.MustCompile(`(?m)^(?:pub )?function op_(\w+)\([^)]*\): Op \{\s*return (?:Op \{\s*\.\.\.)?op0\((\d+)\)`)
 	matches := ctor.FindAllStringSubmatch(string(src), -1)
 	if len(matches) < 200 {
@@ -123,9 +120,6 @@ func TestSelfHostIROpConstructorTags(t *testing.T) {
 	}
 	for _, m := range matches {
 		kind := m[1]
-		if a, ok := alias[kind]; ok {
-			kind = a
-		}
 		want, ok := ids[kind]
 		if !ok {
 			t.Errorf("op_%s: no kind %q in ir-kind-ids.txt", m[1], kind)

@@ -2525,7 +2525,7 @@ func (r *rewriter) rewriteStructNameAt(name string, pos ast.Position) string {
 		// surface a clear "unknown module" error.
 		return name
 	}
-	if r.ownStructs[name] || r.ownEnums[name] {
+	if r.ownStructs[name] || r.ownEnums[name] || r.ownTraits[name] {
 		return r.selfPrefix + name
 	}
 	return name

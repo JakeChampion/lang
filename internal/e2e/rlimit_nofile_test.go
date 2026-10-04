@@ -15,7 +15,6 @@ package e2e
 
 import (
 	"fmt"
-	"os"
 	"syscall"
 	"testing"
 
@@ -64,16 +63,6 @@ func TestArm64RlimitNofile(t *testing.T) {
 	out, code := compileAndRunArm64(t, rlimitSource(softNofile(t)))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 (3 = disagreed with the harness's own getrlimit)\n%s", code, out)
-	}
-}
-
-func TestArm64SSARlimitNofile(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	bin := compileArm64SSA(t, fern, rlimitSource(softNofile(t)), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, t.TempDir(), os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 (3 = disagreed with the harness's own getrlimit)\n%s", code, stderr)
 	}
 }
 

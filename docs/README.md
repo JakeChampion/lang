@@ -100,12 +100,12 @@ so explicitly.
 | `SELFHOST-BSTATE-RECLAIM-PLAN.md` | [plan] | Reclaiming SSA-builder `BState` churn (design-only). |
 | `SELFHOST-VARIANT-PAYLOADS.md` | [plan] | Wide/multi variant payload slots; S6+ residue listed in #4368. |
 | `SELF-HOST-FN-PAYLOAD-VARIANT-GAP.md` | [record] | fn-payload variant gap — resolved on the IR path (#4364/#4722). |
-| `SSA-DECISION.md` | [policy] | SSA shelved for production native backends (2026-05-31). |
+| `SSA-DECISION.md` | [policy] | SSA shelved for the Go native backends (2026-05-31); the backends themselves were deleted in 2026-10 (`NATIVE-RETIREMENT.md`). |
 | `SELFHOST-SSA-DECISION.md` | [policy] | Stack IR is the single production lowering (2026-07-03, #4391). |
 | `SELFHOST-SSA-ALWAYS.md` | [record] | SSA-always-on plan — shelved by the decision above. |
-| `SSA-REGALLOC-PLAN.md` | [plan] | SSA register allocation (experimental `-target arm64-linux -backend ssa`; #4112). |
-| `SSA-CLOSURE-DISPATCH.md` | [plan] | Closure dispatch on the SSA path (#4112). |
-| `SSA-RC-RUNTIME.md` | [plan] | RC runtime helpers on the SSA path (#4112). |
+| `SSA-REGALLOC-PLAN.md` | [plan] | SSA register allocation for the Go arm64 backend (deleted 2026-10; #4112). |
+| `SSA-CLOSURE-DISPATCH.md` | [plan] | Closure dispatch on the Go SSA path (deleted 2026-10; #4112). |
+| `SSA-RC-RUNTIME.md` | [plan] | RC runtime helpers on the Go SSA path (deleted 2026-10; #4112). |
 | `WASM-COMPONENT-GENERATOR.md` | [plan] | Generative component builder for the self-host wasm backend (#4368, poss. subsumed by #4315). |
 
 ## Memory management (goal 2: RC / Perceus / ownership)
@@ -145,6 +145,7 @@ so explicitly.
 | `ASYNC-IMPLEMENTATION-PLAN.md` | [record] | Original async plan; CPS surface parts superseded by the redesign, runtime parts kept. |
 | `ASYNC-IMPLEMENTATION-RESEARCH.md` | [research] | Koka/Lean/Roc async implementation mechanics. |
 | `ASYNC-SELFHOST-IR.md` | [plan] | Async on the self-host IR path — not started. |
+| `NET-P3-SUSPENSION-PLAN.md` | [plan] | Networking P3: inferred suspension — one `__suspend` primitive, an unwind/rewind pass on the stack IR, tasks driven by the serve loop. Not started. |
 | `WASM-REACTOR-PLAN.md` | [record] | wasm reactor on Preview-2 pollables — shipped. |
 | `WASI-PREVIEW2.md` | [record] | Preview-2 component migration — complete; no adapter, no wasm-tools shell-out. |
 | `WASI-PREVIEW3-ASYNC-PLAN.md` | [tracker] | Preview-3 native async: channels done at the ABI level; surface exposure staged. |

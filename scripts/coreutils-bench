@@ -62,6 +62,12 @@
 
 set -euo pipefail
 
+# Every implementation runs in the C locale, the one the parity corpus holds
+# Fern to (internal/coreutils baseEnv). Under a UTF-8 locale GNU sort collates
+# with strcoll where Fern compares bytes, so the two columns would time
+# different work.
+export LC_ALL=C
+
 cd "$(dirname "$0")/.."
 
 report=""

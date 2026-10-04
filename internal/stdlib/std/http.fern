@@ -256,7 +256,7 @@ pub function respond_with[S, E: ToResponse](pair: (S, Result[HttpResponse, E])):
 // `dyn error.Error`: the error's message goes to `plat.log` and the answer
 // is a bare 500 problem, since the message may say more than a client
 // should see. A `handle` declared with that error type is adapted with it.
-pub function respond_error(result: Result[HttpResponse, dyn error.Error], plat: Platform): HttpResponse {
+pub function respond_error(result: Result[HttpResponse, dyn error.Error], plat: platform.Platform): HttpResponse {
   match (result) {
     Ok(r) => {
       return r;
@@ -271,7 +271,7 @@ pub function respond_error(result: Result[HttpResponse, dyn error.Error], plat: 
 
 // `respond_error_with(pair, plat)` — `respond_error` for a state-threading
 // handler.
-pub function respond_error_with[S](pair: (S, Result[HttpResponse, dyn error.Error]), plat: Platform): (S, HttpResponse) {
+pub function respond_error_with[S](pair: (S, Result[HttpResponse, dyn error.Error]), plat: platform.Platform): (S, HttpResponse) {
   return (pair.0, respond_error(pair.1, plat));
 }
 
@@ -324,7 +324,7 @@ impl ToResponse for string {
 // `BodyError` is `ToResponse`, so a handler declared as
 // `Result[HttpResponse, BodyError]` fails with `?`:
 //
-//     function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.BodyError] {
+//     function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, http.BodyError] {
 //         let item: Item = http.body_json[Item](req)?;
 //         return Ok(http.json(item.to_json()));
 //     }
@@ -1321,7 +1321,7 @@ function __header_rules(h: HeaderMap, version: string): i32 {
 // ignored (RFC 9110 §10.1.1): its client cannot read the interim answer.
 function __unframed(kind: i32, h: HeaderMap, version: string): HttpFraming {
   if (kind >= 400) {
-    return Malformed(kind);
+    return HttpFraming.Malformed(kind);
   }
   if (version != "HTTP/1.0" && __expectation(h) == 1) {
     return Continue;
@@ -1376,11 +1376,11 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLi
   from = __past_empty_line(buf, from);
   let first_crlf: i32 = __request_line_end(buf, from, limits.request_line);
   if (first_crlf == -2) {
-    return Malformed(414);
+    return HttpFraming.Malformed(414);
   }
   let headers_end: i32 = __header_block_end(buf, from, limits.header_bytes);
   if (headers_end == -2) {
-    return Malformed(431);
+    return HttpFraming.Malformed(431);
   }
   // What is buffered of the header block, whether or not its end has
   // arrived: the bytes before `from` are answered requests, and the
@@ -1393,7 +1393,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLi
     }
   }
   if (!__crlf_terminated(buf, from, scanned)) {
-    return Malformed(400);
+    return HttpFraming.Malformed(400);
   }
   // The request line (RFC 9112 §3): a method token, a space, a
   // request-target, a space, an HTTP-version. It is refused as soon as
@@ -1402,7 +1402,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLi
   if (first_crlf >= 0) {
     line = __request_line(buf, from, first_crlf);
     if (line.0 != 0) {
-      return Malformed(line.0);
+      return HttpFraming.Malformed(line.0);
     }
   }
   let sp1: i32 = line.1;
@@ -1431,13 +1431,13 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLi
       req_headers = h;
     },
     Err(status) => {
-      return Malformed(status);
+      return HttpFraming.Malformed(status);
     }
   }
   let version: string = __version_of(buf, sp2 + 1);
   let refused: i32 = __header_rules(req_headers, version);
   if (refused > 0) {
-    return Malformed(refused);
+    return HttpFraming.Malformed(refused);
   }
   let framing: __BodyFraming = Length(0);
   match (__http_body_framing(req_headers)) {
@@ -1445,7 +1445,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLi
       framing = f;
     },
     Err(status) => {
-      return Malformed(status);
+      return HttpFraming.Malformed(status);
     }
   }
   let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + headers_len, framing, version, limits);
@@ -1976,7 +1976,7 @@ pub function http_serialize_response_head(resp: HttpResponse, keep_alive: boolea
 // request does (`body_string`, `cookie`, `headers.get`), so a handler
 // under test sees what it would in a serve loop.
 //
-//     let resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"n\": 1}"), m.as_platform());
+//     let resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"n\": 1}"), m);
 //     return test.assert_status(resp, 201);
 pub function request(method: string, path: string): HttpRequest {
   let empty: u8[] = [];
@@ -2049,7 +2049,7 @@ pub function (r: HttpRequest) body_len(): i32 {
 // it is.
 // A `BodyFile` answers "" here: the file is streamed by the serve loop
 // as the response is written, never read by code a handler reaches,
-// since a handler's host effects go through its `Platform` bag (E080).
+// since a handler's host effects go through its platform (E080).
 // The response-side twin of the HttpRequest readers above.
 pub function (r: HttpResponse) body_string(): string {
   match (r.body) {

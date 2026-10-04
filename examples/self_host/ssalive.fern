@@ -267,8 +267,7 @@ function add_local_use(own bits: i64[], defs: i64[], base: i32, value: i32, depe
   return bits;
 }
 
-// This is the self-host counterpart of native SSA's
-// ComputeLivenessWithDependencies. Dependencies must already be transitive
+// Dependencies must already be transitive
 // and available at every use of their key, including uses on phi edges.
 pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
   let why: string = input_error(f, dependencies);

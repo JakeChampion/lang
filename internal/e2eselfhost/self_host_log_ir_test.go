@@ -9,13 +9,9 @@ import (
 )
 
 // TestSelfHostLogIRWasm pins `__log_f64(x)` (the lowering behind std/float's
-// `(x: f64) log()`) on the wasm IR path. Like exp, ln had no wasm instruction or
-// IR runtime (a wasm_eligible exclusion; the wasm AST path defers it too). flog
-// now lowers to op_flog -> $__fern_log_f64, a fresh polynomial runtime: decompose
-// x = m·2^e, normalize m to [√2/2,√2), f = (m−1)/(m+1), ln(m) = 2·(f + f³/3 + … +
-// f¹¹/11) via a Horner polynomial in f², ln(x) = e·ln2 + ln(m) — the wasm sibling
-// of asm_arm64's __fern_log_f64 (same coefficients). Self-contained f64 + i64
-// bit math, no imports/heap.
+// `(x: f64) log()`) on the wasm IR path, where flog lowers to op_flog ->
+// $__fern_log_f64: the table-driven kernel internal/fdlibm/logtab.go documents,
+// reading its rows from the data segment at log_tab_addr().
 //
 // Value-tested (not differential — the wasm AST path has no log to diff against):
 // the program computes ln(x) at a range of inputs (1, e, e², 0.5, 2, 1000) and

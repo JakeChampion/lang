@@ -3,8 +3,7 @@ name: Test e2e differential
 # The seeded differential sweeps whose names start `TestDifferential`:
 # `TestDifferential_PrintableStdout` compares each fernsmith-generated
 # program's stdout from the interpreter against the self-host compiler's
-# x86-64, arm64 and wasm32-wasi builds, and the SSA differentials compare
-# the Go SSA backends. The self-host exit-byte legs
+# x86-64, arm64 and wasm32-wasi builds. The self-host exit-byte legs
 # (`TestDifferential_SelfHost*`) run in test-e2e-selfhost.yml's
 # diff-selfhost job instead, behind FERN_SELFHOST_DIFF.
 #
@@ -80,10 +79,6 @@ jobs:
       - name: go test (differential shard ${{ matrix.shard.index }}/${{ matrix.shard.nshard }})
         env:
           DIFF_ORACLE_SHARD: "${{ matrix.shard.index }}/${{ matrix.shard.nshard }}"
-          # Per-shard artifact dir so multiple shards on the
-          # same runner don't clobber each other's failed-
-          # program asm. `diffOracleArtifactDir()` reads this.
-          DIFF_ORACLE_ARTIFACT_DIR: "${{ runner.temp }}/fern-diff-failures"
         # -timeout is EXPLICIT because Go's default is 10 minutes, which
         # sits inside this lane's own headroom: the sweep is ~9.5 min at
         # one shard against a 25-minute job budget, so a slightly slow
@@ -97,14 +92,3 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
-
-      - name: Upload failing-seed artifacts
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          # Disambiguate per matrix cell so the upload doesn't
-          # collide across the 2-job matrix on the same PR.
-          name: diff-oracle-failures-${{ matrix.host.name }}-shard${{ matrix.shard.index }}
-          path: ${{ runner.temp }}/fern-diff-failures
-          if-no-files-found: ignore
-          retention-days: 7

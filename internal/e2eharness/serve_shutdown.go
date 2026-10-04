@@ -36,7 +36,7 @@ func ServeShutdownSource(port, drainMs int, entry string) string {
 import "std/serve";
 import "std/time";
 import "std/platform";
-function burn(plat: Platform, ns: i64): i32 {
+function burn(plat: platform.Platform, ns: i64): i32 {
     let x: i32 = 12345;
     let until: i64 = plat.elapsed_ns() + ns;
     while (plat.elapsed_ns() < until) {
@@ -48,7 +48,7 @@ function burn(plat: Platform, ns: i64): i32 {
     }
     return x;
 }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/slow") {
         if (burn(plat, 1500000000 as i64) == 0 - 1) { return http.ok("never"); }
         return http.ok("slow");
