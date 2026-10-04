@@ -1,0 +1,717 @@
+// examples/fip/httpapp_baseline.fern — the idiomatic variant of the
+// HTTP-like application pipeline (#9586, experiment 4): the same requests,
+// the same routes, the same bounded counter table and the same answers as
+// `httpapp_fip.fern`, through `std/http`'s parse and serialise and a `Map`
+// for the counters.
+//
+// It is the control. The wire bytes become a string, the parse produces an
+// HttpRequest holding owned copies of the method, the path, every header
+// and the body, the handler reads and writes a `Map[string, i64]` keyed by
+// the id's digits, builds an HttpResponse with a string body, and the
+// serialiser concatenates the reply. Nothing is annotated.
+//
+// The state is threaded as two locals rather than one struct: a map
+// mutator on a field of an owned struct copies the whole map (#11119), and
+// each mutator sits in a function of its own because the analysis that lets
+// one write in place reads the receiver's last use over the whole body.
+import "core/cmp";
+import "std/bench";
+import "std/headers";
+import "std/http";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+// ===================== THE SERVICE =====================
+
+// The counter table holds at most 256 ids; a request may carry at most 8
+// header fields and 240 body bytes.
+function max_counters(): i32 {
+  return 256;
+}
+
+function max_headers(): i32 {
+  return 8;
+}
+
+function max_body(): i32 {
+  return 240;
+}
+
+struct Tallies {
+  total: i64,
+  seen: i64,
+  served: i64,
+  refused: i64,
+  full: i64,
+}
+
+// A Decision is what the route decided, before the map or the tallies move:
+// the status, the body (one of the kinds below), and whether the counter
+// named by `key` is to be created or bumped.
+function body_literal(): i32 {
+  return 0;
+}
+
+function body_text(): i32 {
+  return 1;
+}
+
+function body_metrics(): i32 {
+  return 2;
+}
+
+struct Decision {
+  status: i32,
+  kind: i32,
+  text: string,
+  key: string,
+  create: boolean,
+  bump: boolean,
+}
+
+function decision(status: i32): Decision {
+  return Decision { status: status, kind: body_literal(), text: "", key: "", create: false, bump: false };
+}
+
+function literal_body(status: i32): string {
+  if (status == 200) {
+    return "ok";
+  }
+  if (status == 404) {
+    return "not found";
+  }
+  if (status == 405) {
+    return "method not allowed";
+  }
+  if (status == 413) {
+    return "body too large";
+  }
+  if (status == 431) {
+    return "too many headers";
+  }
+  if (status == 503) {
+    return "counter table full";
+  }
+  return "bad request";
+}
+
+// counter_id is the id named by a `/counter/<id>` path, or -1.
+function counter_id(path: string): i32 {
+  match (slice_unchecked(path, 9, path.len()).to_owned().parse_int()) {
+    Some(id) => {
+      if (id < 0 || id >= id_space()) {
+        return 0 - 1;
+      }
+      return id;
+    },
+    None => {
+      return 0 - 1;
+    }
+  }
+}
+
+// counter is `/counter/<id>`: GET reads, POST increments or creates, and a
+// create into a full table is the 503. The map is only read here.
+function counter(counters: Map[string, i64], req: HttpRequest): Decision {
+  let id: i32 = counter_id(req.path);
+  if (id < 0) {
+    return decision(404);
+  }
+  let key: string = id.to_string();
+  let present: boolean = counters.has(key);
+  if (req.method == "GET") {
+    if (!present) {
+      return decision(404);
+    }
+    return Decision { status: 200, kind: body_text(), text: counters.get_or(key, 0 as i64).to_string(), key: key, create: false, bump: false };
+  }
+  if (req.method != "POST") {
+    return decision(405);
+  }
+  if (present) {
+    return Decision { status: 200, kind: body_text(), text: (counters.get_or(key, 0 as i64) + 1 as i64).to_string(), key: key, create: false, bump: true };
+  }
+  if (counters.len() >= max_counters()) {
+    return decision(503);
+  }
+  return Decision { status: 200, kind: body_text(), text: "1", key: key, create: true, bump: false };
+}
+
+// route is the handler, spelled the same way in the other two variants.
+function route(counters: Map[string, i64], req: HttpRequest): Decision {
+  if (req.headers.len() > max_headers()) {
+    return decision(431);
+  }
+  if (req.body_len() > max_body()) {
+    return decision(413);
+  }
+  let get: boolean = req.method == "GET";
+  if (req.path == "/health") {
+    if (!get) {
+      return decision(405);
+    }
+    return decision(200);
+  }
+  if (req.path == "/metrics") {
+    if (!get) {
+      return decision(405);
+    }
+    return Decision { ...decision(200), kind: body_metrics() };
+  }
+  if (req.path.starts_with("/users/")) {
+    if (!get) {
+      return decision(405);
+    }
+    return Decision { status: 200, kind: body_text(), text: slice_unchecked(req.path, 7, req.path.len()).to_owned(), key: "", create: false, bump: false };
+  }
+  if (req.path.starts_with("/counter/")) {
+    return counter(counters, req);
+  }
+  return decision(404);
+}
+
+// The map after a decision: one mutator per function.
+function create(own counters: Map[string, i64], d: Decision): Map[string, i64] {
+  return counters.insert(d.key, 1 as i64);
+}
+
+function bump(own counters: Map[string, i64], d: Decision): Map[string, i64] {
+  let next: i64 = counters.get_or(d.key, 0 as i64) + 1 as i64;
+  return counters.insert(d.key, next);
+}
+
+function update(own counters: Map[string, i64], d: Decision): Map[string, i64] {
+  if (d.create) {
+    return create(counters, d);
+  }
+  if (d.bump) {
+    return bump(counters, d);
+  }
+  return counters;
+}
+
+function tally(own t: Tallies, d: Decision): Tallies {
+  let total: i64 = t.total;
+  if (d.create || d.bump) {
+    total = total + 1 as i64;
+  }
+  let served: i64 = t.served;
+  let refused: i64 = t.refused;
+  if (d.status == 200) {
+    served = served + 1 as i64;
+  } else {
+    refused = refused + 1 as i64;
+  }
+  let full: i64 = t.full;
+  if (d.status == 503) {
+    full = full + 1 as i64;
+  }
+  return Tallies { total: total, seen: t.seen + 1 as i64, served: served, refused: refused, full: full };
+}
+
+// The metrics body, one `name value` line per tally.
+function metrics(t: Tallies, live: i32): string {
+  return "requests " + t.seen.to_string() + "\n"
+    + "served " + t.served.to_string() + "\n"
+    + "refused " + t.refused.to_string() + "\n"
+    + "full " + t.full.to_string() + "\n"
+    + "counters " + live.to_string() + "\n"
+    + "counter_total " + t.total.to_string() + "\n";
+}
+
+// render is the HttpResponse for a decision, with the request id carried
+// back the way std/serve's handlers do it.
+function render(d: Decision, req: HttpRequest, t: Tallies, live: i32): HttpResponse {
+  let body: string = literal_body(d.status);
+  if (d.kind == body_text()) {
+    body = d.text;
+  } else if (d.kind == body_metrics()) {
+    body = metrics(t, live);
+  }
+  let resp: HttpResponse = http.text(d.status, body);
+  match (req.headers.get("x-request-id")) {
+    Some(v) => {
+      resp = HttpResponse { ...resp, headers: resp.headers.set("X-Request-Id", v) };
+    },
+    None => {}
+  }
+  return resp;
+}
+
+// ===================== GENERATOR HELPERS (fip) =====================
+
+fip function cr(): u8 {
+  return 13 as u8;
+}
+
+fip function lf(): u8 {
+  return 10 as u8;
+}
+
+fip function sp(): u8 {
+  return 32 as u8;
+}
+
+fip function max_wire(): i32 {
+  return 1024;
+}
+
+fip function id_space(): i32 {
+  return 320;
+}
+
+// put_str writes `lit` at `at`.
+fip function put_str(own out: u8[], at: i32, lit: string): u8[] {
+  let i: i32 = 0;
+  while (i < lit.len()) {
+    out = out.with(at + i, lit[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// digits is how many decimal digits `n` prints as.
+fip function digits(n: i32): i32 {
+  let d: i32 = 1;
+  let v: i32 = n;
+  while (v >= 10) {
+    v = v / 10;
+    d = d + 1;
+  }
+  return d;
+}
+
+// put_int writes `n` in decimal at `at`, `digits(n)` bytes.
+fip function put_int(own out: u8[], at: i32, n: i32): u8[] {
+  let d: i32 = digits(n);
+  let v: i32 = n;
+  let i: i32 = d - 1;
+  while (i >= 0) {
+    out = out.with(at + i, (48 + v % 10) as u8);
+    v = v / 10;
+    i = i - 1;
+  }
+  return out;
+}
+
+function zeros_u8(n: i32): u8[] {
+  let xs: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    xs = xs.with(i, 0 as u8);
+    i = i + 1;
+  }
+  return xs;
+}
+
+// ===================== THE WORKLOAD =====================
+//
+// Identical in the three variants, verbatim, so the runs differ in how the
+// bytes and the state are held and in nothing else. Every 17th request is
+// malformed, cycling through the six refusals; every 23rd carries six extra
+// header fields, for the 431; every 29th that has a body carries 300 bytes,
+// for the 413. The request's length is left in the wire buffer's last four
+// bytes, past anything a request can reach.
+
+fip function wire_len_at(): i32 {
+  return max_wire() - 4;
+}
+
+fip function gen_body_len(n: i64): i32 {
+  if (n % (29 as i64) == 0 as i64) {
+    return 300;
+  }
+  return (n * (37 as i64) % (241 as i64)) as i32;
+}
+
+fip function gen_byte(n: i64, j: i32): u8 {
+  return (((n + j as i64) % (26 as i64)) as i32 + 97) as u8;
+}
+
+fip function corruption(n: i64): i32 {
+  if (n % (17 as i64) != 0 as i64) {
+    return 0 - 1;
+  }
+  return (n / (17 as i64) % (6 as i64)) as i32;
+}
+
+fip function extra_headers(n: i64): boolean {
+  return n % (23 as i64) == 0 as i64;
+}
+
+fip function mix64(n: i64): i64 {
+  let x: i64 = n * (2654435761 as i64);
+  x = x ^ x >> 15 as i64;
+  x = x * (2246822519 as i64);
+  x = x ^ x >> 13 as i64;
+  if (x < 0 as i64) {
+    x = 0 - x;
+  }
+  return x;
+}
+
+// The id a request names: 320 values, drawn by the mixing hash, over a
+// 256-slot table.
+fip function id_of(n: i64): i32 {
+  return (mix64(n) % (id_space() as i64)) as i32;
+}
+
+// Methods 0..3: GET, POST, PUT, DELETE. Only POST and PUT carry a body. On
+// `/counter/<id>` 70% of requests are the POST, 20% the GET and 10% a method
+// the route refuses; everywhere else 95% are the GET.
+fip function method_for(n: i64, p: i32): i32 {
+  let bucket: i32 = (mix64(n + 1 as i64) % (20 as i64)) as i32;
+  if (p == 2) {
+    if (bucket < 14) {
+      return 1;
+    }
+    if (bucket < 18) {
+      return 0;
+    }
+    if (bucket < 19) {
+      return 2;
+    }
+    return 3;
+  }
+  if (bucket < 19) {
+    return 0;
+  }
+  return 1;
+}
+
+fip function method_len(m: i32): i32 {
+  if (m == 0) {
+    return 3;
+  }
+  if (m == 1) {
+    return 4;
+  }
+  if (m == 2) {
+    return 3;
+  }
+  return 6;
+}
+
+fip function put_method(own w: u8[], at: i32, m: i32): u8[] {
+  if (m == 0) {
+    return put_str(w, at, "GET");
+  }
+  if (m == 1) {
+    return put_str(w, at, "POST");
+  }
+  if (m == 2) {
+    return put_str(w, at, "PUT");
+  }
+  return put_str(w, at, "DELETE");
+}
+
+// Paths 0..4: `/health`, `/users/<id>`, `/counter/<id>`, `/metrics`,
+// `/missing/<id>`.
+fip function path_of(n: i64): i32 {
+  return (n % (5 as i64)) as i32;
+}
+
+fip function path_len(p: i32, id: i32): i32 {
+  if (p == 0) {
+    return 7;
+  }
+  if (p == 1) {
+    return 7 + digits(id);
+  }
+  if (p == 2) {
+    return 9 + digits(id);
+  }
+  if (p == 3) {
+    return 8;
+  }
+  return 9 + digits(id);
+}
+
+fip function put_path(own w: u8[], at: i32, p: i32, id: i32): u8[] {
+  if (p == 0) {
+    return put_str(w, at, "/health");
+  }
+  if (p == 1) {
+    w = put_str(w, at, "/users/");
+    return put_int(w, at + 7, id);
+  }
+  if (p == 2) {
+    w = put_str(w, at, "/counter/");
+    return put_int(w, at + 9, id);
+  }
+  if (p == 3) {
+    return put_str(w, at, "/metrics");
+  }
+  w = put_str(w, at, "/missing/");
+  return put_int(w, at + 9, id);
+}
+
+fip function put_crlf(own w: u8[], at: i32): u8[] {
+  w = w.with(at, cr());
+  return w.with(at + 1, lf());
+}
+
+// put_length writes a Content-Length header line for `cl` at `at`.
+fip function length_line_len(cl: i32): i32 {
+  return 16 + digits(cl) + 2;
+}
+
+fip function put_length(own w: u8[], at: i32, cl: i32): u8[] {
+  w = put_str(w, at, "Content-Length: ");
+  w = put_int(w, at + 16, cl);
+  return put_crlf(w, at + 16 + digits(cl));
+}
+
+// build_request writes request `n` into the buffer it is handed and gives
+// it back with the length in its last four bytes. It takes the buffer `own`
+// in every variant: generating the input is the harness, not the service.
+// fern-lint: allow cyclomatic-complexity
+fip function build_request(own w: u8[], n: i64): u8[] {
+  let id: i32 = id_of(n);
+  let p: i32 = path_of(n);
+  let m: i32 = method_for(n, p);
+  let corrupt: i32 = corruption(n);
+  let has_body: boolean = m == 1 || m == 2;
+  let blen: i32 = 0;
+  if (has_body) {
+    blen = gen_body_len(n);
+  }
+  let at: i32 = 0;
+  w = put_method(w, at, m);
+  at = at + method_len(m);
+  if (corrupt != 0) {
+    w = w.with(at, sp());
+    at = at + 1;
+  }
+  w = put_path(w, at, p, id);
+  at = at + path_len(p, id);
+  if (corrupt != 0 && corrupt != 1) {
+    w = w.with(at, sp());
+    at = at + 1;
+  }
+  if (corrupt != 1) {
+    w = put_str(w, at, "HTTP/1.1");
+    at = at + 8;
+  }
+  w = put_crlf(w, at);
+  at = at + 2;
+  w = put_str(w, at, "Host: example.test\r\nUser-Agent: bench/");
+  at = at + 38;
+  let ua: i32 = (n % (61 as i64)) as i32;
+  let j: i32 = 0;
+  while (j < ua) {
+    w = w.with(at + j, 97 as u8);
+    j = j + 1;
+  }
+  at = at + ua;
+  w = put_str(w, at, "\r\nAccept: */*\r\nX-Request-Id: ");
+  at = at + 29;
+  w = put_int(w, at, n as i32);
+  at = at + digits(n as i32);
+  w = put_crlf(w, at);
+  at = at + 2;
+  if (extra_headers(n)) {
+    let x: i32 = 0;
+    while (x < 6) {
+      w = put_str(w, at, "X-Extra-");
+      w = put_int(w, at + 8, x);
+      w = put_str(w, at + 9, ": v\r\n");
+      at = at + 14;
+      x = x + 1;
+    }
+  }
+  if (corrupt == 2) {
+    w = put_str(w, at, "Transfer-Encoding: chunked\r\n");
+    at = at + 28;
+  }
+  if (corrupt == 4) {
+    w = put_str(w, at, "Content-Length: 12a\r\n");
+    at = at + 21;
+  } else if (has_body || corrupt == 3 || corrupt == 5) {
+    let declared: i32 = blen;
+    if (corrupt == 5) {
+      declared = blen + 7;
+    }
+    w = put_length(w, at, declared);
+    at = at + length_line_len(declared);
+    if (corrupt == 3) {
+      w = put_length(w, at, declared);
+      at = at + length_line_len(declared);
+    }
+  }
+  w = put_crlf(w, at);
+  at = at + 2;
+  let k: i32 = 0;
+  while (k < blen) {
+    w = w.with(at + k, gen_byte(n, k));
+    k = k + 1;
+  }
+  at = at + blen;
+  w = w.with(wire_len_at(), (at % 256) as u8);
+  w = w.with(wire_len_at() + 1, (at / 256 % 256) as u8);
+  w = w.with(wire_len_at() + 2, 0 as u8);
+  return w.with(wire_len_at() + 3, 0 as u8);
+}
+
+fip function wire_len_of(w: u8[]): i32 {
+  return w[wire_len_at()] as i32 + w[wire_len_at() + 1] as i32 * 256;
+}
+
+fip function out_len_of(o: u8[]): i32 {
+  return o[0] as i32 + o[1] as i32 * 256 + o[2] as i32 * 65536;
+}
+
+// A running digest over every response byte. Three implementations of one
+// service agree only if this agrees, which is what makes the comparison a
+// differential test rather than three unrelated benchmarks.
+fip function mix(d: i64, b: i32): i64 {
+  let x: i64 = d ^ b as i64;
+  x = x * (1099511628211 as i64);
+  x = x ^ x >> 29 as i64;
+  if (x < 0 as i64) {
+    x = 0 - x;
+  }
+  return x % (1000000007 as i64);
+}
+
+// ===================== DRIVER =====================
+//
+// The driver owns the state and the buffers, tallies and prints. A request
+// the parser refuses gets the 400 here, as std/serve's loop would give it.
+
+// fern-lint: allow cyclomatic-complexity
+function main(): i32 {
+  let batch: i32 = 64;
+  let rounds: i32 = 2000;
+  let wire: u8[] = zeros_u8(max_wire());
+  let counters: Map[string, i64] = map_new(512);
+  let t: Tallies = Tallies { total: 0 as i64, seen: 0 as i64, served: 0 as i64, refused: 0 as i64, full: 0 as i64 };
+
+  let ok: i64 = 0 as i64;
+  let rejected: i64 = 0 as i64;
+  let not_found: i64 = 0 as i64;
+  let method: i64 = 0 as i64;
+  let too_many: i64 = 0 as i64;
+  let too_large: i64 = 0 as i64;
+  let full: i64 = 0 as i64;
+  let digest: i64 = 1469598103934665603 as i64;
+  let written: i64 = 0 as i64;
+
+  let samples: i64[] = [];
+  let p: i32 = 0;
+  while (p < rounds) {
+    samples = samples.append(0 as i64);
+    p = p + 1;
+  }
+
+  // One warm round before the mark. Its requests are the first batch's,
+  // so the state starts the measured run the way the other variants' does.
+  let w: i32 = 0;
+  while (w < batch) {
+    wire = build_request(wire, w as i64);
+    match (http.http_parse_request(string_from_bytes_unchecked(wire.take(wire_len_of(wire))))) {
+      Some(req) => {
+        let d: Decision = route(counters, req);
+        counters = update(counters, d);
+        t = tally(t, d);
+        let warm: string = http.http_serialize_response(render(d, req, t, counters.len()));
+      },
+      None => {
+        t = tally(t, decision(400));
+        let warm: string = http.http_serialize_response(http.bad_request("bad request"));
+      }
+    }
+    w = w + 1;
+  }
+
+  let at_allocs: i64 = bench.alloc_count();
+  let at_fresh: i64 = bench.bump_bytes();
+  let started_ns: i64 = monotonic_ns();
+  let r: i32 = 0;
+  while (r < rounds) {
+    let t0: i64 = monotonic_ns();
+    let k: i32 = 0;
+    while (k < batch) {
+      let n: i64 = r as i64 * (batch as i64) + k as i64;
+      wire = build_request(wire, n);
+      let resp: string = "";
+      match (http.http_parse_request(string_from_bytes_unchecked(wire.take(wire_len_of(wire))))) {
+        Some(req) => {
+          let d: Decision = route(counters, req);
+          counters = update(counters, d);
+          t = tally(t, d);
+          resp = http.http_serialize_response(render(d, req, t, counters.len()));
+        },
+        None => {
+          t = tally(t, decision(400));
+          resp = http.http_serialize_response(http.bad_request("bad request"));
+        }
+      }
+      let i: i32 = 0;
+      while (i < resp.len()) {
+        digest = mix(digest, resp[i] as i32);
+        i = i + 1;
+      }
+      written = written + resp.len() as i64;
+      if (resp.starts_with("HTTP/1.1 200 ")) {
+        ok = ok + 1 as i64;
+      } else if (resp.starts_with("HTTP/1.1 400 ")) {
+        rejected = rejected + 1 as i64;
+      } else if (resp.starts_with("HTTP/1.1 404 ")) {
+        not_found = not_found + 1 as i64;
+      } else if (resp.starts_with("HTTP/1.1 405 ")) {
+        method = method + 1 as i64;
+      } else if (resp.starts_with("HTTP/1.1 431 ")) {
+        too_many = too_many + 1 as i64;
+      } else if (resp.starts_with("HTTP/1.1 413 ")) {
+        too_large = too_large + 1 as i64;
+      } else if (resp.starts_with("HTTP/1.1 503 ")) {
+        full = full + 1 as i64;
+      }
+      k = k + 1;
+    }
+    samples = samples.with(r, monotonic_ns() - t0);
+    r = r + 1;
+  }
+  let elapsed_ns: i64 = monotonic_ns() - started_ns;
+  let allocs: i64 = bench.allocs_after(at_allocs);
+  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
+  let requests: i64 = rounds as i64 * (batch as i64);
+  let rep: bench.Report = bench.Report {
+    name: "baseline",
+    iterations: rounds,
+    wall_ns: elapsed_ns,
+    samples_ns: cmp.sort(samples),
+    allocs: allocs,
+    fresh_bytes: fresh,
+  };
+  print("{\"variant\":\"baseline\""
+    + ",\"requests\":" + requests.to_string()
+    + ",\"requests_per_round\":" + batch.to_string()
+    + ",\"ok\":" + ok.to_string()
+    + ",\"rejected\":" + rejected.to_string()
+    + ",\"not_found\":" + not_found.to_string()
+    + ",\"method_not_allowed\":" + method.to_string()
+    + ",\"too_many_headers\":" + too_many.to_string()
+    + ",\"body_too_large\":" + too_large.to_string()
+    + ",\"full\":" + full.to_string()
+    + ",\"counters_live\":" + counters.len().to_string()
+    + ",\"counter_total\":" + t.total.to_string()
+    + ",\"digest\":" + digest.to_string()
+    + ",\"response_bytes\":" + written.to_string()
+    + ",\"response_bytes_per_request\":" + (written / requests).to_string()
+    + ",\"steady_allocs\":" + allocs.to_string()
+    + ",\"steady_fresh_bytes\":" + fresh.to_string()
+    + ",\"allocs_per_request_milli\":" + (allocs * (1000 as i64) / requests).to_string()
+    + ",\"fresh_bytes_per_request\":" + (fresh / requests).to_string()
+    + ",\"ns_per_request\":" + (elapsed_ns / requests).to_string()
+    + ",\"requests_per_sec\":" + (requests * 1000000000i64 / elapsed_ns).to_string()
+    + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
+    + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
+    + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
+    + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
+    + ",\"round_max_ns\":" + rep.max_ns().to_string()
+    + "}");
+  return 0;
+}

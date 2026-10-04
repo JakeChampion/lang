@@ -3359,9 +3359,11 @@ What is left, in the order it costs:
   `fmt` (0.4-0.8x) and to the directory walks of `du` / `ls` / `dir`
   (0.6-0.9x), as before.
 - On this host specifically: `stat` with user and group names over 4000
-  operands resolves the names per operand (0.13x), `who` over 4000 logins is
-  0.24x, `sync -f` over 200 files is a 56 ms full flush per operand (0.01x),
-  and `hostid` resolves the hostname through NSS (0.07x) (#11335).
+  operands resolved the names per operand (0.13x; fixed in #11339), `sync -f`
+  over 200 files is a 56 ms full flush per operand (0.01x), and `hostid`
+  resolves the hostname through NSS (0.07x) (#11335). The `who` rows are not
+  a comparison here: GNU's macOS `who` reads utmpx and ignored the
+  Linux-shaped fixture.
 - 22 rows did not run on Darwin under either compiler (`df`, `install -d`,
   `groups`, `logname`, `tty`, `yes`, and `nice`, which dies with SIGSYS —
   #11334).

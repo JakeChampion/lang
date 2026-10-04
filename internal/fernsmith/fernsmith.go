@@ -2257,14 +2257,24 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 	// a sub-scope so the body's recursive expr might pick it up
 	// — that's the path exercising payload-binding resolution
 	// the wildcard-pattern Color match can't reach.
+	//
+	// Sometimes a guarded `Some` arm comes first — `Some(g) when <bool> =>
+	// e` — whose guard reads the payload binding, and sometimes the plain
+	// `Some` arm is `w @ Some(x)`, binding the whole scrutinee beside the
+	// payload. The plain arm stays, unguarded, so the match is exhaustive
+	// whatever the guard says.
 	if t != tOptI32 {
 		opts := sc.inScope(tOptI32)
 		if len(opts) > 0 {
 			name := opts[g.ch.intN(len(opts))]
-			bind := fmt.Sprintf("__opt_x%d", g.optBindCounter)
+			idx := g.optBindCounter
 			g.optBindCounter++
-			fmt.Fprintf(b, "(match (%s) { Some(%s) => ", name, bind)
+			bind := fmt.Sprintf("__opt_x%d", idx)
+			fmt.Fprintf(b, "(match (%s) { ", name)
+			g.guardedArm(b, sc, "Some", fmt.Sprintf("__opt_g%d", idx), t, depth)
 			innerSome := newScope(sc)
+			g.atBinding(b, innerSome, tOptI32, fmt.Sprintf("__opt_w%d", idx))
+			fmt.Fprintf(b, "Some(%s) => ", bind)
 			innerSome.declare(tI32, bind)
 			g.expr(b, innerSome, t, depth+1)
 			b.WriteString(", None => ")
@@ -2281,11 +2291,15 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 		ress := sc.inScope(tResI32I32)
 		if len(ress) > 0 {
 			name := ress[g.ch.intN(len(ress))]
-			okBind := fmt.Sprintf("__res_ok%d", g.optBindCounter)
-			errBind := fmt.Sprintf("__res_err%d", g.optBindCounter)
+			idx := g.optBindCounter
 			g.optBindCounter++
-			fmt.Fprintf(b, "(match (%s) { Ok(%s) => ", name, okBind)
+			okBind := fmt.Sprintf("__res_ok%d", idx)
+			errBind := fmt.Sprintf("__res_err%d", idx)
+			fmt.Fprintf(b, "(match (%s) { ", name)
+			g.guardedArm(b, sc, "Ok", fmt.Sprintf("__res_g%d", idx), t, depth)
 			innerOk := newScope(sc)
+			g.atBinding(b, innerOk, tResI32I32, fmt.Sprintf("__res_w%d", idx))
+			fmt.Fprintf(b, "Ok(%s) => ", okBind)
 			innerOk.declare(tI32, okBind)
 			g.expr(b, innerOk, t, depth+1)
 			fmt.Fprintf(b, ", Err(%s) => ", errBind)
@@ -2815,6 +2829,40 @@ func (g *Generator) emitI64HighHalf(b *strings.Builder, sc *scope, depth int) {
 
 // boolExpr picks one of: unary `!`, binary `&&`/`||` over booleans,
 // or a numeric comparison whose operand type is drawn fresh.
+// guardedArm sometimes writes a guarded payload arm ahead of a match's
+// plain one:
+//
+//	<variant>(<bind>) when <bool> => <expr>,
+//
+// The guard and the body both see the payload binding as an i32. The
+// caller's plain arm for the same variant follows, so exhaustiveness does
+// not depend on the guard. Exhausted, nothing is written.
+func (g *Generator) guardedArm(b *strings.Builder, sc *scope, variant, bind string, t gtype, depth int) {
+	// Exhaustion convention: `true` here = no guarded arm (smaller output).
+	if g.flip(0.7) {
+		return
+	}
+	inner := newScope(sc)
+	inner.declare(tI32, bind)
+	fmt.Fprintf(b, "%s(%s) when ", variant, bind)
+	g.boolExpr(b, inner, depth+1)
+	b.WriteString(" => ")
+	g.expr(b, inner, t, depth+1)
+	b.WriteString(", ")
+}
+
+// atBinding sometimes prefixes the pattern that follows with `<whole> @ `,
+// binding the whole scrutinee in `inner` as a value of its type `st`
+// beside the pattern's own bindings. Exhausted, nothing is written.
+func (g *Generator) atBinding(b *strings.Builder, inner *scope, st gtype, whole string) {
+	// Exhaustion convention: `true` here = no `@` binding (smaller output).
+	if g.flip(0.7) {
+		return
+	}
+	fmt.Fprintf(b, "%s @ ", whole)
+	inner.declare(st, whole)
+}
+
 func (g *Generator) boolExpr(b *strings.Builder, sc *scope, depth int) {
 	switch g.ch.intN(4) {
 	case 0:
@@ -3315,6 +3363,9 @@ func (g *Generator) maybeEmitControlStmt(b *strings.Builder, sc *scope, retT gty
 	if g.maybeEmitIfLet(b, sc) {
 		return true
 	}
+	if g.maybeEmitMatchStmt(b, sc) {
+		return true
+	}
 	if g.maybeEmitLetElse(b, sc, retT) {
 		return true
 	}
@@ -3468,6 +3519,62 @@ func (g *Generator) maybeEmitIfLet(b *strings.Builder, sc *scope) bool {
 	b.WriteString("} else { ")
 	g.innerStmts(b, newScope(sc), fmt.Sprintf("__il%d_e", idx), 3)
 	b.WriteString("} ")
+	return true
+}
+
+// maybeEmitMatchStmt emits the statement form of a match over an Option or
+// a Result variable, with block arms:
+//
+//	match (<Option[i32]>) { Some(__ms<N>_g) when <bool> => { <stmts> }, __ms<N>_w @ Some(__ms<N>) => { <stmts> }, None => { <stmts> } }
+//	match (<Result[i32, i32]>) { Ok(__ms<N>_g) when <bool> => { <stmts> }, __ms<N>_w @ Ok(__ms<N>) => { <stmts> }, Err(__ms<N>_e) => { <stmts> } }
+//
+// The guarded arm and the `@` binding are each sometimes there; the plain
+// payload arm always is, so the match is exhaustive whatever the guard
+// decides. Each block is a scope of its own holding its arm's bindings.
+// The scrutinee is an in-scope variable for the reason maybeEmitIfLet's is.
+func (g *Generator) maybeEmitMatchStmt(b *strings.Builder, sc *scope) bool {
+	opts := sc.inScope(tOptI32)
+	ress := sc.inScope(tResI32I32)
+	if len(opts) == 0 && len(ress) == 0 {
+		return false
+	}
+	// Exhaustion convention: `true` here = no statement (smaller output).
+	if g.flip(0.9) {
+		return false
+	}
+	idx := g.ctrlCounter
+	g.ctrlCounter++
+	bind := fmt.Sprintf("__ms%d", idx)
+	variant, miss, st := "Some", "None", tOptI32
+	// `true` — the exhausted choice — is the Option form when one is there.
+	if len(opts) > 0 && (len(ress) == 0 || g.flip(0.5)) {
+		fmt.Fprintf(b, "match (%s) { ", opts[g.ch.intN(len(opts))])
+	} else {
+		variant, miss, st = "Ok", fmt.Sprintf("Err(%s_e)", bind), tResI32I32
+		fmt.Fprintf(b, "match (%s) { ", ress[g.ch.intN(len(ress))])
+	}
+	// `true` — the exhausted choice — is no guarded arm.
+	if !g.flip(0.7) {
+		guard := newScope(sc)
+		guard.declare(tI32, bind+"_g")
+		fmt.Fprintf(b, "%s(%s_g) when ", variant, bind)
+		g.boolExpr(b, guard, 0)
+		b.WriteString(" => { ")
+		g.innerStmts(b, guard, bind+"_gb", 3)
+		b.WriteString("}, ")
+	}
+	hit := newScope(sc)
+	g.atBinding(b, hit, st, bind+"_w")
+	fmt.Fprintf(b, "%s(%s) => { ", variant, bind)
+	hit.declare(tI32, bind)
+	g.innerStmts(b, hit, bind+"_h", 3)
+	fmt.Fprintf(b, "}, %s => { ", miss)
+	missScope := newScope(sc)
+	if st == tResI32I32 {
+		missScope.declare(tI32, bind+"_e")
+	}
+	g.innerStmts(b, missScope, bind+"_m", 3)
+	b.WriteString("} } ")
 	return true
 }
 

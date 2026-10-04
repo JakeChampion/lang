@@ -71,7 +71,7 @@ func TestFipCarriesStructStateWithoutAllocating(t *testing.T) {
 	// 90 means the rebuild stopped reusing its donor and the annotation is
 	// no longer worth making; 91-93 mean the loop computed the wrong thing;
 	// 95 means the counter never moves and 90 passed for the wrong reason.
-	out, code := compileAndRunX86Native(t, fipStructStateSrc)
+	out, code := compileAndRunX86_64(t, fipStructStateSrc)
 	if code != 42 {
 		t.Fatalf("exit %d, want 42 — see the source for what each code names\n%s", code, strings.TrimSpace(out))
 	}
