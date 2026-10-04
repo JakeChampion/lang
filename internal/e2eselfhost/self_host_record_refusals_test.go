@@ -15,8 +15,10 @@ import (
 // well-formed twin of each must assemble clean. A named record carrying an
 // adrp or its :lo12: add must queue the page fixup the text arm queues. Each
 // x86 record encoder of the frame, the stack and the memory forms must
-// assemble to the bytes its text assembles to, and a frame's .cfi_* records
-// must render the unwind image their directives render, on both targets.
+// assemble to the bytes its text assembles to, a named record must be the
+// call or rip-relative address its text assembles to, and a frame's .cfi_*
+// records must render the unwind image their directives render, on both
+// targets.
 const recordRefusalsDriver = `import "./x86_native"; import "./arm64_native"; import "./util";
 function first_diff(a: i32[], b: i32[]): i32 {
     let n: i32 = a.len();
@@ -101,8 +103,28 @@ function main(): i32 {
     let aeh: i32[] = arm64_native.arm64_eh_frame(ar, 0 as i64, 0 as i64);
     print("arm64_cfi " + util.i32_to_string(first_diff(aeh, arm64_native.arm64_eh_frame(at, 0 as i64, 0 as i64))) + " " + util.i32_to_string(first_diff(ar.asm.code, at.asm.code)) + " " + util.i32_to_string(ar.unknown.len() + at.unknown.len()));
     print("arm64_cfi_eh " + util.i32_to_string(aeh.len()));
+    // x86: a named record is the call or the rip-relative address its text
+    // assembles to, forward and backward; one without its record, and one
+    // naming a symbol nothing defines, are refused as the text is.
+    let nw: usize = buf_new(64);
+    bytes_into(nw, x86_native.x86_rec_call());
+    bytes_into(nw, x86_native.x86_rec_lea_rip(7));
+    bytes_into(nw, x86_native.x86_rec_movslq_rr(0, 0));
+    bytes_into(nw, x86_native.x86_rec_ret());
+    bytes_into(nw, x86_native.x86_rec_call());
+    bytes_into(nw, x86_native.x86_rec_ret());
+    let nr = x86_native.x86_gas_assemble_words(".text\nf:\n\x07g\n\x07g\n\x01\n\x01\ng:\n\x07f\n\x01\n", buf_take_bytes(nw));
+    let nt = x86_native.x86_gas_assemble_words(".text\nf:\n    call g\n    leaq g(%rip), %rdi\n    movslq %eax, %rax\n    ret\ng:\n    call f\n    ret\n", buf_take_bytes(buf_new(1)));
+    print("x86_named " + util.i32_to_string(first_diff(nr.code, nt.code)) + " " + util.i32_to_string(nr.unknown.len() + nt.unknown.len()) + " " + util.i32_to_string(nr.code.len()));
+    let nm = x86_native.x86_gas_assemble_words(".text\n\x07g\n", buf_take_bytes(buf_new(1)));
+    print("x86_named_missing " + util.i32_to_string(nm.unknown.len()));
+    let nu = x86_native.x86_gas_assemble_words(".text\n\x07nowhere\n", words_of(x86_native.x86_rec_call()));
+    let tu = x86_native.x86_gas_assemble_words(".text\n    call nowhere\n", buf_take_bytes(buf_new(1)));
+    print("x86_named_undefined " + util.i32_to_string(nu.unknown.len() - tu.unknown.len()) + " " + util.i32_to_string(tu.unknown.len()));
     // x86: each record encoder of the frame, the stack and the memory forms
     // assembles to the bytes its text assembles to.
+    rec_vs_text("x86_movslq", x86_native.x86_rec_movslq_rr(0, 3), "movslq %ebx, %rax");
+    rec_vs_text("x86_movslq_hi", x86_native.x86_rec_movslq_rr(9, 10), "movslq %r10d, %r9");
     rec_vs_text("x86_push_r12", x86_native.x86_rec_push_r(12), "pushq %r12");
     rec_vs_text("x86_pop_rbp", x86_native.x86_rec_pop_r(5), "popq %rbp");
     rec_vs_text("x86_push_slot", x86_native.x86_rec_push_m(5, 0 - 24), "pushq -24(%rbp)");
@@ -219,9 +241,14 @@ func TestSelfHostRecordRefusals(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
+		"\nx86_named -1 0 22\n", // e8 rel32, 48 8d 3d rel32, 48 63 c0, c3, e8 rel32, c3
+		"\nx86_named_missing 1\n",
+		"\nx86_named_undefined 0 1\n",
 		"\nx86_cfi -1 -1 0\n",
 		"\nx86_cfi_bad 1\n",
 		"\narm64_cfi -1 -1 0\n",
+		"\nx86_movslq -1 0\n",
+		"\nx86_movslq_hi -1 0\n",
 		"\nx86_push_r12 -1 0\n",
 		"\nx86_pop_rbp -1 0\n",
 		"\nx86_push_slot -1 0\n",

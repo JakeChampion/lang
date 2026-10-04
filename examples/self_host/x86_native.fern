@@ -3785,6 +3785,22 @@ pub function x86_rec_lea_rm(dst: i32, base: i32, disp: i32): i32[] {
   return x86_lea_load([], 64, dst, base, false, 0, 1, disp);
 }
 
+// x86_rec_call is `call sym` and x86_rec_lea_rip `leaq sym(%rip), dst`,
+// each with its rel32 unpatched: the bytes of a named record, whose last
+// four the assembler patches to the symbol.
+pub function x86_rec_call(): i32[] {
+  return x86_call_rel32([], 0);
+}
+
+pub function x86_rec_lea_rip(dst: i32): i32[] {
+  return x86_le32([x86_rex(1, dst, 0, 0), 141, x86_modrm(0, dst, 5)], 0);
+}
+
+// x86_rec_movslq_rr is `movslq src32, dst`.
+pub function x86_rec_movslq_rr(dst: i32, src: i32): i32[] {
+  return x86_movslq_rr([], dst, src);
+}
+
 // x86_rec_mov_rmi is the load `mov disp(base,index,scale), reg` or the
 // store `mov reg, disp(base,index,scale)`.
 pub function x86_rec_mov_rmi(size: i32, load: boolean, reg: i32, base: i32, index: i32, scale: i32, disp: i32): i32[] {
@@ -6422,7 +6438,9 @@ pub function x86_gas_assemble(src: string): X86Asm {
 // next eight bytes of `words` hold; \x05 branches to the label id in the
 // high four of the next eight, by the jump kind in the low four; \x06 is a
 // .cfi_* directive, its kind and register in the low four of the next eight
-// and its offset in the high four (cfi_record).
+// and its offset in the high four (cfi_record); \x07 takes the next record
+// as an instruction whose last four bytes are a rel32 to the symbol the
+// line names, patched as a call's is.
 pub function x86_gas_assemble_words(src: string, words: u8[]): X86Asm {
   // Parsed ONCE, not per round. The source does not change between
   // relaxation rounds, so splitting and re-parsing it each round bought
@@ -6891,6 +6909,10 @@ const GK_LABEL_ID: i32 = 47;
 // its offset in the words, eight bytes cfi_record reads.
 const GK_CFI: i32 = 48;
 
+// A named record: `ext` is the record's start in the words, `rest` the
+// symbol its last four bytes reach.
+const GK_NAMED: i32 = 49;
+
 // EncCache is the first round's encoding of every line no later round can
 // change: the code that round produced, and per line the range of it the
 // line's bytes are, or -1 at `at` for a line that is encoded again each
@@ -7014,7 +7036,7 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
       if (l.lid < labs.nids) {
         ref_idx = labs.names.len() + l.lid;
       }
-    } else if (l.kind == GK_JCC) {
+    } else if (l.kind == GK_JCC || l.kind == GK_NAMED) {
       ref_idx = x86_gas_label_lookup(labs, l.rest);
     } else if (l.kind == GK_BRANCH) {
       if (l.rest.len() == 0 || l.rest[0] != b'*') {
@@ -7376,6 +7398,22 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       pos = pos + 2;
       continue;
     }
+    if (pos < n && src[pos] == 7) {
+      // A named record: the next record of the words, whose last four bytes
+      // are a rel32 to the symbol the line names.
+      let nl7: i32 = __memchr(src, 10, pos);
+      if (nl7 < 0) {
+        nl7 = n;
+      }
+      if (wi < words.len() && wi + 1 + words[wi] as i32 <= words.len()) {
+        out = out.append(GasLine { label: "", body: "\x07", mnem: "", rest: slice_unchecked(src, pos + 1, nl7) + "", kind: GK_NAMED, ext: wi, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1, run_end: 0 });
+        wi = wi + 1 + words[wi] as i32;
+      } else {
+        out = out.append(x86_bytes_line(0 - 1, 0));
+      }
+      pos = nl7 + 1;
+      continue;
+    }
     if (pos < n && (src[pos] == 4 || src[pos] == 5 || src[pos] == 6)) {
       // A label defined by id, a branch to one, or a cfi directive: eight
       // bytes of the words, the id in the low four for a definition and the
@@ -7708,6 +7746,11 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
       // A record's bytes depend on nothing a round computes, so it is
       // read from the words in every round and never cached.
       a = x86_gas_bytes(a, words, pline.ext, pline.run_end);
+      continue;
+    }
+    if (pline.kind == GK_NAMED) {
+      a = x86_gas_bytes(a, words, pline.ext, pline.ext + 1 + words[pline.ext] as i32);
+      a = x86_fixup_or_patch_at(a, pline.rest, pline.ref_idx);
       continue;
     }
     if (!record) {
