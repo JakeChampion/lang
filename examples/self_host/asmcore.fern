@@ -161,6 +161,9 @@ pub struct EmitState {
   // (`word`, `branch`, `bytes`), 0 when the text is the output: each record
   // leaves a marker line in the text, which the assembler replaces with it.
   recs: usize,
+  // The next id lab_new / lab_take hands out: a label an emitter defines and
+  // branches to travels as its id when records are on, by name in the text.
+  nlab: i32,
   // The typed lowering of a runtime helper's source: one body per function it
   // defines, then the drop helpers those bodies carry. The CLI supplies it
   // (semlower.runtime_bodies); a backend never links that pipeline itself.
@@ -330,6 +333,7 @@ pub function new_state(): EmitState {
     reg_entries: irtables.sig_reg_of([]),
     leaves: [],
     capture: 0 as usize,
+    nlab: 0,
     recs: 0 as usize,
     rt_lower: no_rt_lower,
     named: [],
@@ -8004,6 +8008,41 @@ pub function fresh_label(s: EmitState): LabelOut {
   }
   let ns: EmitState = EmitState { ...s, label_n: s.label_n + 1 };
   return LabelOut { state: ns, name: name };
+}
+
+// Lab is a label an emitter defines and branches to: its id for the records
+// and its name for the text. The name is built in both modes, so a branch
+// the records cannot take still has its text.
+pub struct Lab { id: i32, name: string }
+
+pub struct LabNew { state: EmitState, lab: Lab }
+
+// lab_new mints the label `name` with the next id.
+pub function lab_new(s: EmitState, name: string): LabNew {
+  return LabNew { state: EmitState { ...s, nlab: s.nlab + 1 }, lab: Lab { id: s.nlab, name: name } };
+}
+
+// lab_take allocates the next n ids, the first of them `nlab` before the call.
+pub function (s: EmitState) lab_take(n: i32): EmitState {
+  return EmitState { ...s, nlab: s.nlab + n };
+}
+
+// lab_def defines `l` here: as the \x04 record carrying its id when records
+// are on, otherwise as the text `name:`.
+pub function (s: EmitState) lab_def(l: Lab): EmitState {
+  if (s.records()) {
+    buf_push_u64(s.recs, l.id as u64);
+    return s.mark("\x04", "");
+  }
+  return s.write(l.name + ":\n");
+}
+
+// lab_ref hands over a branch to `l` as the \x05 record: the target's id in
+// the high 32 bits and `payload` (the instruction word on arm64, the jump
+// kind on x86) in the low 32. The caller writes the text when records are off.
+pub function (s: EmitState) lab_ref(payload: i64, l: Lab): EmitState {
+  buf_push_u64(s.recs, (l.id as i64 << 32 | payload & 4294967295i64) as u64);
+  return s.mark("\x05", "");
 }
 
 pub function count_locals(body: ast.Stmt[]): i32 {
