@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/fernsmith"
 )
 
@@ -114,6 +115,7 @@ func FuzzGenerate_StdoutAgrees(f *testing.F) {
 		binary.LittleEndian.PutUint64(b[:], seed)
 		f.Add(b[:])
 	}
+	e2eharness.WarmSelfHostCLI(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
 		assertNumProgramAgrees(t, fernsmith.GenPrintableMainBytes(data))
 	})

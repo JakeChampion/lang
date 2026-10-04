@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/fernsmith"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/modload"
@@ -111,6 +112,7 @@ func FuzzGenerate_ExecutionAgrees(f *testing.F) {
 		binary.LittleEndian.PutUint64(b[:], seed)
 		f.Add(b[:])
 	}
+	e2eharness.WarmSelfHostCLI(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
 		src := fernsmith.GenMainBytes(data)
 		expected := runInterpByteOrSkip(t, src)
