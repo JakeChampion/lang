@@ -10,6 +10,7 @@ import "./typeinfo";
 import "./semtypes";
 import "./semrecords";
 import "./ssa";
+import "./ssabounds";
 import "./ssasem";
 import "./ssaunits";
 import "./ownership";
@@ -6623,6 +6624,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo)
   // Before the verifier in anchor_module, so the rewritten graph is the one
   // it checks, and before anything downstream plans ownership over it (#9692).
   f = ssasem.tail_recursion(f, name);
+  f = ssabounds.proven_indices(f);
   return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false, analysis: None, view_escape: 0 }, memo: table.memo };
 }
 

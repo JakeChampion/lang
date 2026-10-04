@@ -353,6 +353,83 @@ pub function arm64_rec_ret(): i64 {
   return arm64_ret_word(30);
 }
 
+// arm64_rec_ldst_reg is `ldr|str Xt, [Xn, Xm, lsl #3]`, the register offset
+// scaled by the access size.
+pub function arm64_rec_ldst_reg(load: boolean, rt: string, base: string, idx: string): i64 {
+  let t: i32 = arm64_rec_gpr(rt);
+  let rn: i32 = arm64_rec_base(base);
+  let rm: i32 = arm64_rec_gpr(idx);
+  if (t < 0 || rn < 0 || rm < 0 || rt[0] != b'x' || idx[0] != b'x') {
+    return 0 - 1;
+  }
+  return arm64_ldst_regext_word(3, load, t, rn, rm, 3, true);
+}
+
+// arm64_rec_ldrb is `ldrb Wt, [Xn, #off]` and arm64_rec_strb `strb Wt,
+// [Xn, #off]`, off a byte offset 0..4095; arm64_rec_ldrb_reg is
+// `ldrb Wt, [Xn, Xm]`.
+pub function arm64_rec_ldrb(rt: string, base: string, off: i32): i64 {
+  let t: i32 = arm64_rec_gpr(rt);
+  let rn: i32 = arm64_rec_base(base);
+  if (t < 0 || rn < 0 || rt[0] != b'w' || off < 0 || off > 4095) {
+    return 0 - 1;
+  }
+  return 0x39400000 | (off & 0xfff) as i64 << 10 | (rn & 31) as i64 << 5 | (t & 31) as i64;
+}
+
+pub function arm64_rec_strb(rt: string, base: string, off: i32): i64 {
+  let t: i32 = arm64_rec_gpr(rt);
+  let rn: i32 = arm64_rec_base(base);
+  if (t < 0 || rn < 0 || rt[0] != b'w' || off < 0 || off > 4095) {
+    return 0 - 1;
+  }
+  return 0x39000000 | (off & 0xfff) as i64 << 10 | (rn & 31) as i64 << 5 | (t & 31) as i64;
+}
+
+pub function arm64_rec_ldrb_reg(rt: string, base: string, idx: string): i64 {
+  let t: i32 = arm64_rec_gpr(rt);
+  let rn: i32 = arm64_rec_base(base);
+  let rm: i32 = arm64_rec_gpr(idx);
+  if (t < 0 || rn < 0 || rm < 0 || rt[0] != b'w' || idx[0] != b'x') {
+    return 0 - 1;
+  }
+  return arm64_ldst_regext_word(0, true, t, rn, rm, 3, false);
+}
+
+// arm64_rec_lsl_imm is `lsl d, n, #sh` on registers of one width.
+pub function arm64_rec_lsl_imm(d: string, n: string, sh: i32): i64 {
+  let rd: i32 = arm64_rec_gpr(d);
+  let rn: i32 = arm64_rec_gpr(n);
+  let top: i32 = 63;
+  if (rd >= 0 && d[0] == b'w') {
+    top = 31;
+  }
+  if (rd < 0 || rn < 0 || d[0] != n[0] || sh < 0 || sh > top) {
+    return 0 - 1;
+  }
+  return arm64_lsl_imm_word(rd, rn, sh, d[0] == b'w');
+}
+
+// arm64_rec_tst_imm is `tst n, #imm` and arm64_rec_and_imm `and d, n, #imm`,
+// for a bitmask immediate the width encodes, as arm64_gas_emit_logical2 and
+// the and-immediate arm encode them.
+pub function arm64_rec_tst_imm(n: string, imm: i64): i64 {
+  let rn: i32 = arm64_rec_gpr(n);
+  if (rn < 0 || !arm64_logical_imm_ok(imm, n[0] == b'w')) {
+    return 0 - 1;
+  }
+  return arm64_logical_imm_word(0xf2000000, n[0] == b'w', 31, rn, imm);
+}
+
+pub function arm64_rec_and_imm(d: string, n: string, imm: i64): i64 {
+  let rd: i32 = arm64_rec_gpr(d);
+  let rn: i32 = arm64_rec_gpr(n);
+  if (rd < 0 || rn < 0 || d[0] != n[0] || !arm64_logical_imm_ok(imm, n[0] == b'w')) {
+    return 0 - 1;
+  }
+  return arm64_logical_imm_word(0x92000000, n[0] == b'w', rd, rn, imm);
+}
+
 // arm64_rec_adrp is `adrp d, sym` with the page delta left for the symbol's
 // fixup; arm64_rec_add_lo12 is its `add d, n, :lo12:sym` half with the low
 // twelve bits left. Both travel as named records (\x02), and the assembler
@@ -1609,6 +1686,10 @@ function arm64_asm_tbnz(own a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64
 // log2 of the access size. This form is what the string-copy loops emit
 // (`ldrb w0, [x0, x1]` — base + index; its absence was #6047).
 function arm64_ldst_regext(buf: i32[], size: i32, load: boolean, rt: i32, rn: i32, rm: i32, option: i32, scaled: boolean): i32[] {
+  return arm64_le32(buf, arm64_ldst_regext_word(size, load, rt, rn, rm, option, scaled));
+}
+
+function arm64_ldst_regext_word(size: i32, load: boolean, rt: i32, rn: i32, rm: i32, option: i32, scaled: boolean): i64 {
   let word: i64 = (size & 3) as i64 << 30 | 0x38200800;
   if (load) {
     word = word | 0x00400000;
@@ -1616,7 +1697,7 @@ function arm64_ldst_regext(buf: i32[], size: i32, load: boolean, rt: i32, rn: i3
   if (scaled) {
     word = word | 0x1000;
   }
-  return arm64_le32(buf, word | (rm & 31) as i64 << 16 | (option & 7) as i64 << 13 | (rn & 31) as i64 << 5 | (rt & 31) as i64);
+  return word | (rm & 31) as i64 << 16 | (option & 7) as i64 << 13 | (rn & 31) as i64 << 5 | (rt & 31) as i64;
 }
 
 // arm64_ldur / arm64_stur encode `ldur/stur Xt, [Xn, #off]` — the unscaled
@@ -1755,6 +1836,10 @@ function arm64_cset(buf: i32[], rd: i32, cond: i32, w32: boolean): i32[] {
 // 64-bit form (base 0xD3400000, N=1 folded in). lsl uses immr=(width-sh),
 // imms=(width-1-sh); lsr uses immr=sh, imms=width-1.
 function arm64_lsl_imm(buf: i32[], rd: i32, rn: i32, sh: i32, w: boolean): i32[] {
+  return arm64_le32(buf, arm64_lsl_imm_word(rd, rn, sh, w));
+}
+
+function arm64_lsl_imm_word(rd: i32, rn: i32, sh: i32, w: boolean): i64 {
   let width: i32 = 64;
   let base: i64 = 0xd3400000;
   if (w) {
@@ -1763,7 +1848,7 @@ function arm64_lsl_imm(buf: i32[], rd: i32, rn: i32, sh: i32, w: boolean): i32[]
   }
   let immr: i64 = (width - sh & width - 1) as i64;
   let imms: i64 = (width - 1 - sh & 63) as i64;
-  return arm64_le32(buf, base | immr << 16 | imms << 10 | (rn & 31) as i64 << 5 | (rd & 31) as i64);
+  return base | immr << 16 | imms << 10 | (rn & 31) as i64 << 5 | (rd & 31) as i64;
 }
 
 function arm64_lsr_imm(buf: i32[], rd: i32, rn: i32, sh: i32, w: boolean): i32[] {
@@ -9405,20 +9490,12 @@ function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasPro
     }
     return p;
   }
-  // A value list reserves one slot PER VALUE, so the count is its commas
-  // plus one; reserving one slot for the whole list put every later symbol
-  // on top of the list's tail (#11377).
-  if (arm64_str_starts_with(line, ".quad")) {
-    return Arm64GasProg { ...p, bss_size: p.bss_size + 8 * arm64_gas_value_count(line, 5) };
-  }
-  if (arm64_str_starts_with(line, ".4byte")) {
-    return Arm64GasProg { ...p, bss_size: p.bss_size + 4 * arm64_gas_value_count(line, 6) };
-  }
-  if (arm64_str_starts_with(line, ".word")) {
-    return Arm64GasProg { ...p, bss_size: p.bss_size + 4 * arm64_gas_value_count(line, 5) };
-  }
-  if (arm64_str_starts_with(line, ".byte")) {
-    return Arm64GasProg { ...p, bss_size: p.bss_size + arm64_gas_value_count(line, 5) };
+  // A data directive reserves its width for EVERY value it lists:
+  // `.quad 0, 0, 0, 0` is 32 bytes, and reserving one slot laid the next
+  // .bss symbols over the other three (#11377).
+  let width: i32 = arm64_gas_data_width(line);
+  if (width > 0) {
+    return Arm64GasProg { ...p, bss_size: p.bss_size + width * arm64_gas_values(line).len() };
   }
   if (arm64_str_starts_with(line, ".align") || arm64_str_starts_with(line, ".p2align") || arm64_str_starts_with(line, ".balign")) {
     let sp2: i32 = arm64_str_indexof(line, " ");
@@ -9450,74 +9527,34 @@ function arm64_gas_bss_off(p: Arm64GasProg, name: string): i32 {
 
 // arm64_gas_data_directive handles a `.`-directive inside a data section.
 function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasProg {
-  if (arm64_str_starts_with(line, ".quad")) {
-    let qtok: string = arm64_gas_trim(slice_unchecked(line, 5, line.len()));
-    // A SYMBOLIC operand (`.quad .S0`) is another symbol's absolute address,
-    // not a number: reserve the 8-byte slot and queue a relocation for
-    // arm64_gas_link, which is the only point the segment addresses exist.
-    // arm64_gas_atoi64 would have returned 0 here, indistinguishable from a
-    // real `.quad 0`.
-    if (!arm64_gas_numeric_tok(qtok)) {
-      p = Arm64GasProg {
-        ...p,
-        dref_offs: p.dref_offs.append(p.data.len()),
-        dref_syms: p.dref_syms.append(qtok),
-      };
-      return arm64_gas_data_le(p, 0, 8);
-    }
-    return arm64_gas_data_le(p, arm64_gas_atoi64(qtok), 8);
-  }
-  if (arm64_str_starts_with(line, ".4byte") || arm64_str_starts_with(line, ".word")) {
-    let off: i32 = 6;
-    if (arm64_str_starts_with(line, ".word")) {
-      off = 5;
-    }
-    return arm64_gas_data_le(p, arm64_gas_atoi64(arm64_gas_trim(slice_unchecked(line, off, line.len()))), 4);
-  }
-  if (arm64_str_starts_with(line, ".long")) {
-    // `.long a, b, …`: each comma-separated value as 4 little-endian bytes.
-    // The IR emitters lay an f64 constant down as two `.long` halves (exact
-    // bits, assembler-independent — see const_f64). Ignoring it (the
-    // pre-#5434 behaviour) silently dropped the 8 rodata bytes.
-    let lrest: string = arm64_gas_trim(slice_unchecked(line, 5, line.len()));
-    let ltok: string = "";
-    let lci: i32 = 0;
-    let lp: Arm64GasProg = p;
-    while (lci < lrest.len()) {
-      if (lrest[lci] == b',') {
-        lp = arm64_gas_data_le(lp, arm64_gas_atoi64(arm64_gas_trim(ltok)), 4);
-        ltok = "";
-      } else {
-        ltok = ltok + slice_unchecked(lrest, lci, lci + 1);
+  // `.quad`, `.4byte` / `.word` / `.long` and `.byte` lay down EVERY
+  // comma-separated value: taking only the first dropped the rest and
+  // shifted every later data symbol. The IR emitters lay an f64 constant
+  // down as two `.long` halves (see const_f64).
+  if (!arm64_str_starts_with(line, ".double")) {
+    let width: i32 = arm64_gas_data_width(line);
+    if (width > 0) {
+      let vals: string[] = arm64_gas_values(line);
+      let vi: i32 = 0;
+      while (vi < vals.len()) {
+        // A SYMBOLIC `.quad` operand (`.quad .S0`) is another symbol's
+        // absolute address, not a number: reserve the slot and queue a
+        // relocation for arm64_gas_link, the only point the segment
+        // addresses exist. Read as a number it would be 0.
+        if (width == 8 && !arm64_gas_numeric_tok(vals[vi])) {
+          p = Arm64GasProg {
+            ...p,
+            dref_offs: p.dref_offs.append(p.data.len()),
+            dref_syms: p.dref_syms.append(vals[vi]),
+          };
+          p = arm64_gas_data_le(p, 0, 8);
+        } else {
+          p = arm64_gas_data_le(p, arm64_gas_atoi64(vals[vi]), width);
+        }
+        vi = vi + 1;
       }
-      lci = lci + 1;
+      return p;
     }
-    if (arm64_gas_trim(ltok).len() > 0) {
-      lp = arm64_gas_data_le(lp, arm64_gas_atoi64(arm64_gas_trim(ltok)), 4);
-    }
-    return lp;
-  }
-  if (arm64_str_starts_with(line, ".byte")) {
-    // Every comma-separated value, the way `.long` above takes them.
-    // Taking only the first laid one byte down for a whole table and
-    // shifted every later data symbol.
-    let brest: string = arm64_gas_trim(slice_unchecked(line, 5, line.len()));
-    let bp: Arm64GasProg = p;
-    let btok: string = "";
-    let bci: i32 = 0;
-    while (bci < brest.len()) {
-      if (brest[bci] == b',') {
-        bp = arm64_gas_data_le(bp, arm64_gas_atoi64(arm64_gas_trim(btok)), 1);
-        btok = "";
-      } else {
-        btok = btok + slice_unchecked(brest, bci, bci + 1);
-      }
-      bci = bci + 1;
-    }
-    if (arm64_gas_trim(btok).len() > 0) {
-      bp = arm64_gas_data_le(bp, arm64_gas_atoi64(arm64_gas_trim(btok)), 1);
-    }
-    return bp;
   }
   if (arm64_str_starts_with(line, ".asciz") || arm64_str_starts_with(line, ".string")) {
     return arm64_gas_data_asciz(p, line);
@@ -9537,18 +9574,28 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasPr
   return p;  // other directives ignored
 }
 
-// arm64_gas_value_count counts the comma-separated values a data directive
-// carries, `from` being the index just past its mnemonic.
-function arm64_gas_value_count(line: string, from: i32): i32 {
-  let n: i32 = 1;
-  let i: i32 = from;
-  while (i < line.len()) {
-    if (line[i] == b',') {
-      n = n + 1;
-    }
-    i = i + 1;
+// arm64_gas_data_width is the bytes one value of a data directive occupies,
+// 0 for a line that is not one.
+function arm64_gas_data_width(line: string): i32 {
+  if (arm64_str_starts_with(line, ".quad") || arm64_str_starts_with(line, ".double")) {
+    return 8;
   }
-  return n;
+  if (arm64_str_starts_with(line, ".4byte") || arm64_str_starts_with(line, ".word") || arm64_str_starts_with(line, ".long")) {
+    return 4;
+  }
+  if (arm64_str_starts_with(line, ".byte")) {
+    return 1;
+  }
+  return 0;
+}
+
+// arm64_gas_values is a data directive's comma-separated operands, trimmed.
+function arm64_gas_values(line: string): string[] {
+  let start: i32 = 0;
+  while (start < line.len() && line[start] != b' ' && line[start] != b'\t') {
+    start = start + 1;
+  }
+  return arm64_gas_operands(slice_unchecked(line, start, line.len()));
 }
 
 // arm64_lit_le64 appends the 8 little-endian bytes of a 64-bit literal-pool

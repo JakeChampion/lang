@@ -921,6 +921,8 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .align 8\n");
   s = s.write("__fern_lc_alloc_bytes: .quad 0\n");
   s = s.write("    .align 8\n");
+  s = s.write("__fern_lc_rt_req: .quad 0\n");
+  s = s.write("    .align 8\n");
   s = s.write("__fern_lc_free_count: .quad 0\n");
   s = s.write("    .align 8\n");
   s = s.write("__fern_lc_free_bytes: .quad 0\n");
@@ -8307,6 +8309,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   if (ins.str == "raw_alloc") {
     s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort\n");
     s = s.write("    addq $24, %rdi\n");
+    if (leak_check_on() && s.rt_owned_allocs) {
+      s = s.write("    movq %rdi, __fern_lc_rt_req(%rip)\n");
+    }
   }
   if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = s.write(arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), ins.imm == 1));
@@ -8317,6 +8322,16 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   }
   if (ins.str == "raw_alloc") {
     s = s.write("    addq $24, %rax\n");
+    if (leak_check_on() && s.rt_owned_allocs) {
+      // A runtime-owned block (#11386): take the one the hook just counted
+      // back out, at the allocator's 8-byte rounding of the request.
+      s = s.write("    movq __fern_lc_rt_req(%rip), %rcx\n");
+      s = s.write("    addq $7, %rcx\n");
+      s = s.write("    shrq $3, %rcx\n");
+      s = s.write("    shlq $3, %rcx\n");
+      s = s.write("    subq %rcx, __fern_lc_alloc_bytes(%rip)\n");
+      s = s.write("    subq $1, __fern_lc_alloc_count(%rip)\n");
+    }
   }
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
@@ -12558,7 +12573,8 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("task")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_task("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_task("x86_64"), asmcore.EmitState { ...s, rt_owned_allocs: true });
+    s = asmcore.EmitState { ...s, rt_owned_allocs: false };
   }
   if (s.has_need("tcp_recv_into")) {
     s = s.write("    .text\n");

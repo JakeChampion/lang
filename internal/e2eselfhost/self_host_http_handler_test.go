@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -137,12 +139,7 @@ function main(): i32 {
 	})
 
 	t.Run("raw-socket-serve", func(t *testing.T) {
-		probe, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("no free TCP port: %v", err)
-		}
-		port := probe.Addr().(*net.TCPAddr).Port
-		probe.Close()
+		port := freeTCPPort(t)
 
 		// std/http is imported to pull in the over-budget closure; the socket
 		// work uses the builtins directly, so no fn value crosses a unit
@@ -211,18 +208,7 @@ function main(): i32 {
 // on separate connections, because the second only answers correctly if the
 // first request's allocations were reclaimed rather than leaked or reused.
 func TestSelfHostHttpHandlerServesX86_64(t *testing.T) {
-	checkSelfHostHttpHandlerServes(t, "x86-64-linux", func(port int) string {
-		return fmt.Sprintf("return serve.run(%d, serve.config(), handle);", port)
-	})
-}
-
-// The arm64 leg of the same program, under qemu-aarch64 off arm64 hosts. The
-// task runtime's state block lives in .bss, and the arm64 assembler sizing
-// it short put the heap allocator's globals on top of it (#11377): a handler
-// program that compiled and bound its port, then faulted on the first
-// request, which the x86-64 leg alone could not see.
-func TestSelfHostHttpHandlerServesArm64(t *testing.T) {
-	checkSelfHostHttpHandlerServes(t, "arm64-linux", func(port int) string {
+	checkSelfHostHttpHandlerServes(t, func(port int) string {
 		return fmt.Sprintf("return serve.run(%d, serve.config(), handle);", port)
 	})
 }
@@ -231,36 +217,42 @@ func TestSelfHostHttpHandlerServesArm64(t *testing.T) {
 // SO_REUSEPORT on the listener, which reach tcp_listen_with through the
 // self-host's own lowering of the struct spread.
 func TestSelfHostHttpHandlerServesWithOptionsX86_64(t *testing.T) {
-	checkSelfHostHttpHandlerServes(t, "x86-64-linux", func(port int) string {
+	checkSelfHostHttpHandlerServes(t, func(port int) string {
 		return fmt.Sprintf("let opts: serve.Config = serve.Config { ...serve.config(), backlog: 4, reuse_port: true };\n    return serve.run(%d, opts, handle);", port)
 	})
 }
 
-func checkSelfHostHttpHandlerServes(t *testing.T, target string, entry func(port int) string) {
+func checkSelfHostHttpHandlerServes(t *testing.T, entry func(port int) string) {
 	t.Helper()
-	var gcc, driverBin string
-	var runner, runPrefix, extra []string
-	if target == "arm64-linux" {
-		var qemu string
-		_, runner, driverBin = buildModloadArm64DriverX86(t)
-		gcc, qemu = arm64Tooling(t)
-		if qemu != "" {
-			runPrefix = []string{qemu}
-		}
-		extra = []string{"-target", "arm64-linux"}
-	} else {
-		gcc, runner, driverBin = buildModloadDriverX86(t)
-		runPrefix = runner
+	gcc, runner, driverBin := buildModloadDriverX86(t)
+	port := freeTCPPort(t)
+	asm, progDir := compileSourceModload(t, runner, driverBin, httpServeSrc(entry(port)))
+	if !strings.Contains(asm, ".Lssa_") {
+		t.Fatal("handler program did not route through the IR path")
 	}
+	checkServes(t, binCmd(runner, buildBin(t, gcc, progDir, "http_serve", asm)), port)
+}
 
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("no free TCP port: %v", err)
+// TestSelfHostHttpHandlerServesArm64 is the same server built for arm64 Linux
+// the way `fern -target arm64-linux -o` builds it, through the self-host's own
+// assembler and ELF writer, and run under qemu-aarch64 off arm64 hosts. Every
+// request runs its handler as a task, whose .bss state block that assembler
+// once sized short, putting the heap allocator's globals on top of it: the
+// server bound its port, then faulted on the first request (#11377). Linking
+// the emitted text with GNU as instead never runs that assembler.
+func TestSelfHostHttpHandlerServesArm64(t *testing.T) {
+	_, qemu := arm64Tooling(t)
+	cli := buildSelfHostCLI(t)
+	port := freeTCPPort(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(httpServeSrc(fmt.Sprintf("return serve.run(%d, serve.config(), handle);", port))), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	port := probe.Addr().(*net.TCPAddr).Port
-	probe.Close()
+	checkServes(t, runArm64Bin(qemu, cli.arm64Binary(t, src)), port)
+}
 
-	src := fmt.Sprintf(`import "std/http";
+func httpServeSrc(mainBody string) string {
+	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
 
@@ -271,20 +263,13 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 function main(): i32 {
     %s
 }
-`, entry(port))
+`, mainBody)
+}
 
-	asm, progDir := compileSourceModload(t, runner, driverBin, src, extra...)
-	if !strings.Contains(asm, ".Lssa_") {
-		t.Fatal("handler program did not route through the IR path")
-	}
-	var bin string
-	if target == "arm64-linux" {
-		bin = buildBinArm64(t, gcc, progDir, "http_serve", asm)
-	} else {
-		bin = buildBin(t, gcc, progDir, "http_serve", asm)
-	}
-
-	cmd := binCmd(runPrefix, bin)
+// checkServes starts the server cmd and makes two requests on separate
+// connections to it on port.
+func checkServes(t *testing.T, cmd *exec.Cmd, port int) {
+	t.Helper()
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}

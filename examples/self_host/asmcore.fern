@@ -175,6 +175,12 @@ pub struct EmitState {
   // rc_free_debug_on(), read once here: the SSA emitters test it at every
   // rc primitive and call, and an environment walk per instruction showed.
   rc_free_debug: boolean,
+  // rt_owned_allocs: set while the task runtime's functions are being
+  // emitted. Their raw_alloc blocks (the record table, the records, the save
+  // areas) are runtime state the program never holds or frees, so the leak
+  // census leaves them out as it leaves out the string builder's buffer
+  // (#11386).
+  rt_owned_allocs: boolean,
   // syscalls: every syscall number an emitted x86-64 `syscall` issues, in
   // ascending order: the seccomp sandbox's allowlist (sandbox_on). Every `syscall` is written by
   // `s.syscall(nr)` or `s.raw_syscall(callee)`, so the set is exact.
@@ -338,6 +344,7 @@ pub function new_state(): EmitState {
     rt_lower: no_rt_lower,
     named: [],
     rc_free_debug: rc_free_debug_on(),
+    rt_owned_allocs: false,
     syscalls: [],
     raw_syscall: "",
   };

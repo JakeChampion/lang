@@ -455,9 +455,15 @@
 # above); #11354's label-id records add the other 34592 bytes (+0.3%), the same
 # share they add to the pin-built fern.fern. Both stage2 figures measured on one
 # host with each tree's own stage1. The other rows stay inside 5%.
+# 2026-10-04 — asm_load_run 8721320 -> 9210104 (+5.6%), main's growth: built
+# with one compiler (dcc06564's stage1), the driver's sources at acf98243 give
+# 9218584 bytes, main at dcc06564 9318928 (+1.09%, the std/net task and client
+# slices #11358, #11367, #11370 and the stdio publication #11318), and #11375's
+# sources 9321944 (+0.03%); the rest was banked inside tolerance before. Number
+# from driver-sizes' report on run 37184091047. The other rows stay inside 5%.
 fern.fern/stage2 11495848
 fern.fern 11300776
-asm_load_run.fern 8721320
+asm_load_run.fern 9210104
 asm_modload_run.fern 7618432
 asm_ir_run.fern 7420200
 asm_run.fern 6813576
