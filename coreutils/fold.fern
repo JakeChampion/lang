@@ -243,6 +243,13 @@ pub function main(): i32 {
 function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32 {
   let o: io_buffered.BufWriter = gnu.out_with(block_size());
   let h: usize = o.handle();
+  // One set scan finds the next special byte without rescanning the rest
+  // of a line separately for each absent control character.
+  let nul: u8 = 0;
+  if (mode == count_columns()) {
+    nul = 1;
+  }
+  let specials: u8[] = [nul, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1];
   let ok: boolean = true;
 
   let fi: i32 = 0;
@@ -250,16 +257,16 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
   let is_stdin: boolean = false;
   let name: string = "";
   let r: Reader = stdin();
-  let chunk: string = "";
+  let chunk: u8[] = [];
   let pos: i32 = 0;
   let specat: i32 = 0 - 1;
-  let carry: string = "";
+  let carry: usize = buf_new(0);
   let tail: boolean = false;
   let done: boolean = false;
 
   while (true) {
     if (pos >= chunk.len()) {
-      chunk = "";
+      chunk = [];
       pos = 0;
       tail = false;
       let got: boolean = false;
@@ -291,9 +298,9 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
             }
           }
         } else {
-          let piece: string = "";
+          let piece: u8[] = [];
           let read_ok: boolean = true;
-          match (r.read_chunk(read_size())) {
+          match (r.read_chunk_bytes(read_size())) {
             Ok(c) => {
               piece = c;
             },
@@ -306,7 +313,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
           if (read_ok && piece.len() > 0) {
             chunk = piece;
             pos = 0;
-            specat = special_at(chunk, 0, mode);
+            specat = special_at(chunk, 0, specials);
             got = true;
           } else {
             if (!is_stdin) {
@@ -315,11 +322,10 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
             have_reader = false;
             // A FILE's last line does not run into the next FILE: the
             // tail goes out here, with no newline added.
-            if (carry.len() > 0) {
-              chunk = carry;
-              carry = "";
+            if (buf_len(carry) > 0) {
+              chunk = buf_take_bytes(carry);
               pos = 0;
-              specat = special_at(chunk, 0, mode);
+              specat = special_at(chunk, 0, specials);
               tail = true;
               got = true;
             }
@@ -332,23 +338,23 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       continue;
     }
 
-    let j: i32 = __memchr(chunk, 10, pos);
+    let j: i32 = __memchr_bytes(chunk, 10, pos);
     if (j < 0) {
       if (!tail) {
-        carry = carry + slice_unchecked(chunk, pos, chunk.len());
+        buf_push_bytes_range(carry, chunk, pos, chunk.len());
         pos = chunk.len();
         continue;
       }
       j = chunk.len() - 1;
     }
 
-    let buf: string = chunk;
+    let buf: u8[] = chunk;
     let lo: i32 = pos;
     let hi: i32 = j + 1;
-    let carried: boolean = carry.len() > 0;
+    let carried: boolean = buf_len(carry) > 0;
     if (carried) {
-      buf = carry + slice_unchecked(chunk, pos, j + 1);
-      carry = "";
+      buf_push_bytes_range(carry, chunk, pos, j + 1);
+      buf = buf_take_bytes(carry);
       lo = 0;
       hi = buf.len();
     }
@@ -377,11 +383,11 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
     let sp: i32 = 0 - 1;
     if (mode != count_bytes_mode()) {
       if (carried) {
-        sp = special_at(buf, lo, mode);
+        sp = special_at(buf, lo, specials);
       } else {
         sp = specat;
         if (sp >= 0 && sp < lo) {
-          sp = special_at(chunk, lo, mode);
+          sp = special_at(chunk, lo, specials);
         }
       }
     }
@@ -407,7 +413,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
           p = run_end;
         } else {
           let cut: i32 = break_before(buf, start, p + room as i32, break_spaces);
-          buf_push_range(h, buf, start, cut);
+          buf_push_bytes_range(h, buf, start, cut);
           buf_push_byte(h, 10);
           start = cut;
           if (cut > p) {
@@ -442,7 +448,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       } else {
         let cut: i32 = break_before(buf, start, p, break_spaces);
         if (cut > start) {
-          buf_push_range(h, buf, start, cut);
+          buf_push_bytes_range(h, buf, start, cut);
           buf_push_byte(h, 10);
           start = cut;
           column = 0 as u64;
@@ -465,24 +471,25 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       }
       if (sp >= 0 && sp < p) {
         if (carried) {
-          sp = special_at(buf, p, mode);
+          sp = special_at(buf, p, specials);
         } else {
-          sp = special_at(chunk, p, mode);
+          sp = special_at(chunk, p, specials);
         }
       }
     }
     // Whatever is left of the line, with the terminator it came with —
     // a file's last line keeps its missing newline missing.
-    buf_push_range(h, buf, start, hi);
+    buf_push_bytes_range(h, buf, start, hi);
 
     if (specat >= 0 && specat < pos) {
-      specat = special_at(chunk, pos, mode);
+      specat = special_at(chunk, pos, specials);
     }
     if (buf_len(h) >= block_size()) {
       o = o.flush();
     }
   }
 
+  buf_free(carry);
   gnu.finish(o);
   if (!ok) {
     return 1;
@@ -495,7 +502,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
 // LAST blank before it, falling back to `limit` when the piece holds no
 // blank at all. The walk back is bounded by the width, which is what
 // GNU's own backward scan over its line buffer is bounded by too.
-function break_before(s: string, start: i32, limit: i32, break_spaces: boolean): i32 {
+function break_before(s: u8[], start: i32, limit: i32, break_spaces: boolean): i32 {
   if (!break_spaces) {
     return limit;
   }
@@ -509,23 +516,12 @@ function break_before(s: string, start: i32, limit: i32, break_spaces: boolean):
   return limit;
 }
 
-// The first byte at or after `from` whose column cost is not one: a tab,
-// a backspace or a carriage return. -1 when the rest holds none.
-function special_at(s: string, from: i32, mode: i32): i32 {
-  let best: i32 = __memchr(s, 9, from);
-  let b: i32 = __memchr(s, 8, from);
-  if (b >= 0 && (best < 0 || b < best)) {
-    best = b;
+// The first byte at or after `from` in the mode's control-byte set.
+// -1 when the rest holds none, matching the cached-position convention.
+function special_at(s: u8[], from: i32, specials: u8[]): i32 {
+  let at: i32 = __scan_set_bytes(s, from, specials);
+  if (at == s.len()) {
+    return 0 - 1;
   }
-  let c: i32 = __memchr(s, 13, from);
-  if (c >= 0 && (best < 0 || c < best)) {
-    best = c;
-  }
-  if (mode == count_columns()) {
-    let z: i32 = __memchr(s, 0, from);
-    if (z >= 0 && (best < 0 || z < best)) {
-      best = z;
-    }
-  }
-  return best;
+  return at;
 }

@@ -15658,6 +15658,12 @@ func (b *builder) callBody(n *ast.Call) error {
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}}}})
 		}
 	}
+	if id.Name == "__bsd_sum_bytes" && len(n.Args) == 2 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_bsd_sum_bytes", Width: ResNarrow, I32: 2,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}}}})
+		}
+	}
 	// __rmemchr(s, byte, from) — __memchr's backward sibling, same
 	// runtime-helper-call shape and the same essential ArgTypes: a
 	// `string` is TWO operand slots on arm64 and wasm and one on x86-64, so
@@ -15682,10 +15688,14 @@ func (b *builder) callBody(n *ast.Call) error {
 	// and therefore the family's smallest ArgTypes, which is still
 	// essential: a `string` is TWO operand slots on arm64 and wasm and one
 	// on x86-64, so a backend popping I32=1 reads the length as the result.
-	if id.Name == "__sum_bytes" && len(n.Args) == 1 {
+	if (id.Name == "__sum_bytes" || id.Name == "__sum_bytes_array") && len(n.Args) == 1 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_sum_bytes", Width: ResNarrow, I32: 1,
-				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}}}})
+			var operand ast.Type = ast.StringType{}
+			if id.Name == "__sum_bytes_array" {
+				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
+			}
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_" + strings.TrimPrefix(id.Name, "__"), Width: ResNarrow, I32: 1,
+				Ext: &OpExt{ArgTypes: []ast.Type{operand}}})
 		}
 	}
 	// __scale_f64(xs, k) — the same runtime-helper-call shape over an ARRAY:
@@ -15710,10 +15720,14 @@ func (b *builder) callBody(n *ast.Call) error {
 	// string's two-slot expansion on arm64 and wasm lands second; a backend
 	// that assumed the family's usual string-first order would read the
 	// incoming CRC as a pointer.
-	if id.Name == "__crc32_cksum" && len(n.Args) == 2 {
+	if (id.Name == "__crc32_cksum" || id.Name == "__crc32_cksum_array") && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_crc32_cksum", Width: ResNarrow, I32: 2,
-				Ext: &OpExt{ArgTypes: []ast.Type{ast.NumberType{}, ast.StringType{}}}})
+			var operand ast.Type = ast.StringType{}
+			if id.Name == "__crc32_cksum_array" {
+				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
+			}
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_" + strings.TrimPrefix(id.Name, "__"), Width: ResNarrow, I32: 2,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.NumberType{}, operand}}})
 		}
 	}
 	// __ascii_run(s, from) — the same runtime-helper-call shape as __memchr
@@ -15727,16 +15741,16 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	// __scan_set(s, from, set) — the same runtime-helper-call shape, with a
 	// u8[] third operand: one pointer slot everywhere, the string one or two.
-	if id.Name == "__scan_set" && len(n.Args) == 3 {
+	if (id.Name == "__scan_set" || id.Name == "__scan_set_bytes") && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_scan_set", Width: ResNarrow, I32: 3,
-				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
-		}
-	}
-	if id.Name == "__scan_set_bytes" && len(n.Args) == 3 {
-		if _, isLocal := b.locals[id.Name]; !isLocal {
-			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_scan_set_bytes", Width: ResNarrow, I32: 3,
-				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
+			var operand ast.Type = ast.StringType{}
+			helper := "__fern_scan_set"
+			if id.Name == "__scan_set_bytes" {
+				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
+				helper = "__fern_scan_set_bytes"
+			}
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: helper, Width: ResNarrow, I32: 3,
+				Ext: &OpExt{ArgTypes: []ast.Type{operand, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
 		}
 	}
 	// __bsd_sum(s, sum) — __count_byte's operand shape.
@@ -15747,10 +15761,16 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// __count_runs(s, inside, set) — __scan_set's operand shape.
-	if id.Name == "__count_runs" && len(n.Args) == 3 {
+	if (id.Name == "__count_runs" || id.Name == "__count_runs_bytes") && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_runs", Width: ResNarrow, I32: 3,
-				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
+			var operand ast.Type = ast.StringType{}
+			helper := "__fern_count_runs"
+			if id.Name == "__count_runs_bytes" {
+				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
+				helper = "__fern_count_runs_bytes"
+			}
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: helper, Width: ResNarrow, I32: 3,
+				Ext: &OpExt{ArgTypes: []ast.Type{operand, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
 		}
 	}
 	// __mismatch(a, ao, b, bo, n) — the same runtime-helper-call shape as its
@@ -15758,10 +15778,16 @@ func (b *builder) callBody(n *ast.Call) error {
 	// under the two-word ABI this call is seven operand slots, not five, and
 	// the two strings are not adjacent, so a backend popping I32=5 reads the
 	// second string's length as `n`.
-	if id.Name == "__mismatch" && len(n.Args) == 5 {
+	if (id.Name == "__mismatch" || id.Name == "__mismatch_bytes") && len(n.Args) == 5 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_mismatch", Width: ResNarrow, I32: 5,
-				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
+			var operand ast.Type = ast.StringType{}
+			helper := "__fern_mismatch"
+			if id.Name == "__mismatch_bytes" {
+				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
+				helper = "__fern_mismatch_bytes"
+			}
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: helper, Width: ResNarrow, I32: 5,
+				Ext: &OpExt{ArgTypes: []ast.Type{operand, ast.NumberType{}, operand, ast.NumberType{}, ast.NumberType{}}}})
 		}
 	}
 	// __heap_mark() / __heap_release_to(mark) — the one-level arena

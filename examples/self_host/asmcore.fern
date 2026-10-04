@@ -655,6 +655,15 @@ pub function dedupe_weak_defs(asm_text: string): string {
 // The register-ABI helper a buffer-builder op calls (#8773), and how many
 // operands it takes, in argument-register order; "" and 0 for any other op.
 pub function buf_helper(kind: i32): string {
+  if (kind == 372) {
+    return "__fern_buf_push_bytes_expanded";
+  }
+  if (kind == 371) {
+    return "__fern_buf_push_bytes_filtered";
+  }
+  if (kind == 370) {
+    return "__fern_buf_push_bytes_mapped";
+  }
   if (kind == 347) {
     return "__fern_buf_take_bytes";
   }
@@ -705,7 +714,7 @@ pub function buf_table_helper(kind: i32, packed: boolean): string {
   if (packed && kind == 351) {
     return "__fern_buf_push_bytes_range_u8";
   }
-  if (packed && (kind == 325 || kind == 326 || kind == 328)) {
+  if (packed && (kind == 325 || kind == 326 || kind == 328 || kind == 370 || kind == 371 || kind == 372)) {
     return buf_helper(kind) + "_u8";
   }
   return buf_helper(kind);
@@ -715,7 +724,7 @@ pub function buf_arity(kind: i32): i32 {
   if (kind == 293 || kind == 351) {
     return 4;
   }
-  if (kind == 325 || kind == 326 || kind == 328) {
+  if (kind == 325 || kind == 326 || kind == 328 || kind == 370 || kind == 371 || kind == 372) {
     return 3;
   }
   if (kind == 292 || kind == 294 || kind == 306) {
@@ -4006,12 +4015,31 @@ pub function rt_src_read_link(t: string): string {
 // getxattr(2) takes a position and an options word as well, and XATTR_NOFOLLOW
 // (1) is its lgetxattr; a Darwin value past the buffer is ERANGE.
 pub function rt_src_getxattr(t: string, follow: boolean): string {
+  return rt_src_xattr_value(t, follow, false, false);
+}
+
+pub function rt_src_getxattr_bytes(t: string, follow: boolean, packed: boolean): string {
+  return rt_src_xattr_value(t, follow, true, packed);
+}
+
+function rt_src_xattr_value(t: string, follow: boolean, raw: boolean, packed: boolean): string {
   let fname: string = "__fern_getxattr";
   let call: string = "lgetxattr";
   if (follow) {
     call = "getxattr";
   } else {
     fname = "__fern_lgetxattr";
+  }
+  let result_type: string = "string";
+  let finish: string = "if (__fern_utf8_valid(buf, n) == 0) { return Err(InvalidUtf8(__fern_path_copy(pathz_own, plen))); } return Ok(__fern_path_copy(buf_own, n));";
+  if (raw) {
+    fname = fname + "_bytes" + packed_suffix(packed);
+    result_type = "i32[]";
+    let spread: string = "let b: usize = __raw_arr_box(n); let k: i32 = 0; while (k < n) { __raw_store_ptr(b, k + 1, __raw_load8(buf, k) as usize); k = k + 1; }";
+    if (packed) {
+      spread = packed_box("b", "n") + " __memcpy(__raw_addr(b, 8), buf, n);";
+    }
+    finish = spread + " return Ok(__raw_array(b));";
   }
   let args: string = "pathz as i64, namez as i64, buf as i64, 65536";
   let sys: string = "__syscall4(" + sysno(t, call) + ", " + args + ")";
@@ -4022,7 +4050,7 @@ pub function rt_src_getxattr(t: string, follow: boolean): string {
     }
     sys = "__syscall6(" + sysno(t, call) + ", " + args + ", 0, " + options + ")";
   }
-  return "function " + fname + "(path: string, name: string): Result[string, IoError] { let nlen: i32 = name.len(); let namez: usize = __raw_alloc(nlen + 1); let j: i32 = 0; while (j < nlen) { __raw_store8(namez, j, name[j] as i32); j = j + 1; } __raw_store8(namez, nlen, 0); let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let buf: usize = __raw_alloc(65536); let n: i32 = " + sys + " as i32; let namez_own: string = __raw_string(namez, nlen + 1); let pathz_own: string = __raw_string(pathz, plen + 1); let buf_own: string = __raw_string(buf, 65536); if (n < 0) { return Err(__fern_io_error(0 - n, __fern_path_copy(pathz_own, plen))); } return Ok(__fern_path_copy(buf_own, n)); }";
+  return "function " + fname + "(path: string, name: string): Result[" + result_type + ", IoError] { let nlen: i32 = name.len(); let namez: usize = __raw_alloc(nlen + 1); let j: i32 = 0; while (j < nlen) { __raw_store8(namez, j, name[j] as i32); j = j + 1; } __raw_store8(namez, nlen, 0); let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let buf: usize = __raw_alloc(65536); let n: i32 = " + sys + " as i32; let namez_own: string = __raw_string(namez, nlen + 1); let pathz_own: string = __raw_string(pathz, plen + 1); let buf_own: string = __raw_string(buf, 65536); if (n < 0) { return Err(__fern_io_error(0 - n, __fern_path_copy(pathz_own, plen))); } " + finish + " }";
 }
 
 // rt_src_setxattr backs `setxattr(path, name, value)` and `lsetxattr(path,
@@ -4031,12 +4059,32 @@ pub function rt_src_getxattr(t: string, follow: boolean): string {
 // Darwin's setxattr(2) takes getxattr's position and options words, and
 // XATTR_NOFOLLOW (1) is its lsetxattr.
 pub function rt_src_setxattr(t: string, follow: boolean): string {
+  return rt_src_xattr_write(t, follow, false, false);
+}
+
+pub function rt_src_setxattr_bytes(t: string, follow: boolean, packed: boolean): string {
+  return rt_src_xattr_write(t, follow, true, packed);
+}
+
+function rt_src_xattr_write(t: string, follow: boolean, raw: boolean, packed: boolean): string {
   let fname: string = "__fern_setxattr";
   let call: string = "lsetxattr";
   if (follow) {
     call = "setxattr";
   } else {
     fname = "__fern_lsetxattr";
+  }
+  let value_type: string = "string";
+  let prep: string = "let vp: usize = __raw_alloc(vlen + 1); let k: i32 = 0; while (k < vlen) { __raw_store8(vp, k, value[k] as i32); k = k + 1; } ";
+  let owner: string = "let vp_own: string = __raw_string(vp, vlen + 1); ";
+  if (raw) {
+    fname = fname + "_bytes" + packed_suffix(packed);
+    value_type = "i32[]";
+    owner = "";
+    prep = "let vp: usize = __raw_addr(__raw_arr_ptr(value), 8); ";
+    if (!packed) {
+      prep = "let raw: usize = __raw_arr_box(vlen / 8 + 1); let scratch: i32[] = __raw_array(raw); let vp: usize = __raw_addr(__raw_arr_ptr(scratch), 8); let k: i32 = 0; while (k < vlen) { __raw_store8(vp, k, value[k]); k = k + 1; } ";
+    }
   }
   let args: string = "pathz as i64, namez as i64, vp as i64, vlen as i64";
   let sys: string = "__syscall5(" + sysno(t, call) + ", " + args + ", 0)";
@@ -4047,7 +4095,7 @@ pub function rt_src_setxattr(t: string, follow: boolean): string {
     }
     sys = "__syscall6(" + sysno(t, call) + ", " + args + ", 0, " + options + ")";
   }
-  return "function " + fname + "(path: string, name: string, value: string): Result[void, IoError] { let vlen: i32 = value.len(); let vp: usize = __raw_alloc(vlen + 1); let k: i32 = 0; while (k < vlen) { __raw_store8(vp, k, value[k] as i32); k = k + 1; } let nlen: i32 = name.len(); let namez: usize = __raw_alloc(nlen + 1); let j: i32 = 0; while (j < nlen) { __raw_store8(namez, j, name[j] as i32); j = j + 1; } __raw_store8(namez, nlen, 0); let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = " + sys + " as i32; let vp_own: string = __raw_string(vp, vlen + 1); let namez_own: string = __raw_string(namez, nlen + 1); let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
+  return "function " + fname + "(path: string, name: string, value: " + value_type + "): Result[void, IoError] { let vlen: i32 = value.len(); " + prep + "let nlen: i32 = name.len(); let namez: usize = __raw_alloc(nlen + 1); let j: i32 = 0; while (j < nlen) { __raw_store8(namez, j, name[j] as i32); j = j + 1; } __raw_store8(namez, nlen, 0); let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = " + sys + " as i32; " + owner + "let namez_own: string = __raw_string(namez, nlen + 1); let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
 }
 
 // rt_src_chmod backs `chmod(path, mode)` (#9059, syscall-leaf) →
@@ -4281,8 +4329,9 @@ pub function rt_src_write_file_mode(t: string, fname: string, mode: string, fixu
 // kernel-immortal bytes in place), it copies because the entry pointer is a high
 // stack address the i32 raw-pointer floor can't offset 64-bit-safely as a Fern
 // value — but __raw_load8(entry, off) offsets in the emitter, so per-byte reads
-// are safe. x86-64-only: it needs no syscall at all, just the __raw_environ op,
-// which the arm64 emitter does not implement yet — that is the whole blocker.
+// are safe on both native emitters. Allocate exactly the value length: the
+// string destructor releases that size, and the copied string needs no NUL.
+// Empty values use the immortal empty string rather than a raw allocation.
 pub function rt_src_env(): string {
   return "function __fern_env(name: string): Option[string] { let nlen: i32 = name.len(); let envp: usize = __raw_environ(); let idx: i32 = 0; let done: i32 = 0; while (done == 0) { let entry: usize = __raw_load_ptr(envp, idx); if (entry == 0) { done = 1; } else { let m: i32 = 1; let k: i32 = 0; while (k < nlen) { if (__raw_load8(entry, k) != (name[k] as i32)) { m = 0; k = nlen; } else { k = k + 1; } } if (m == 1) { if (__raw_load8(entry, nlen) == 61) { let vs: i32 = nlen + 1; let vlen: i32 = 0; while (__raw_load8(entry, vs + vlen) != 0) { vlen = vlen + 1; } if (vlen == 0) { return Some(\"\"); } let vbuf: usize = __raw_alloc(vlen); let c: i32 = 0; while (c < vlen) { __raw_store8(vbuf, c, __raw_load8(entry, vs + c)); c = c + 1; } return Some(__raw_string(vbuf, vlen)); } } idx = idx + 1; } } return None; }";
 }
@@ -7389,7 +7438,7 @@ function builtin_i32_names(): string[] {
     // for both the index and the not-found sentinel; the
     // haystack length it searches is an i32 everywhere.
     "__memchr",
-    "__count_byte_bytes", "__memchr_bytes", "__rmemchr_bytes",
+    "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__rmemchr_bytes",
     // __ascii_run(s, from): the index of the first byte at or
     // after `from` with its high bit set, or the LENGTH if the
     // rest is ASCII (ATLAS-PLATFORM-PLAN §3). i32 either way —
@@ -7403,7 +7452,7 @@ function builtin_i32_names(): string[] {
     "__scan_set", "__scan_set_bytes",
     // __count_runs(s, inside, set): how many runs of `set` members
     // begin in s. i32 for ascii_run's reason.
-    "__count_runs",
+    "__count_runs", "__count_runs_bytes",
     // __bsd_sum(s, sum): the BSD checksum continued over s.
     "__bsd_sum",
     // __rmemchr(s, byte, from): the index of the LAST `byte` at
@@ -7588,10 +7637,13 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "read_link") {
     return ty_result(ty_string());
   }
+  if (id.name == "getxattr_bytes" || id.name == "lgetxattr_bytes") {
+    return ty_result(ty_array_i32());
+  }
   if (id.name == "getxattr" || id.name == "lgetxattr") {
     return ty_result(ty_string());
   }
-  if (id.name == "setxattr" || id.name == "lsetxattr") {
+  if (id.name == "setxattr" || id.name == "lsetxattr" || id.name == "setxattr_bytes" || id.name == "lsetxattr_bytes") {
     return ty_option(ty_unknown());
   }
   // window_size(fd) -> Result[WinSize, IoError]. "unknown" for the same
@@ -8481,7 +8533,7 @@ pub function runtime_need_deps(name: string): string[] {
     let du8: string[] = ["arr_push", "heap"];
     return du8;
   }
-  if (name == "buf_u8") {
+  if (name == "buf_u8" || name == "buf_bytes" || name == "buf_bytes_u8") {
     // The packed-table pushes append into the buffer bundle's handle.
     let dbu8: string[] = ["buf", "heap"];
     return dbu8;
@@ -10438,7 +10490,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_create_dir", "__fn___fern_remove_dir",
     "__fn___fern_create_link", "__fn___fern_create_symlink",
     "__fn___fern_rename", "__fn___fern_rename_noreplace", "__fn___fern_rename_exchange",
-    "__fn___fern_read_link", "__fn___fern_getxattr", "__fn___fern_lgetxattr", "__fn___fern_setxattr", "__fn___fern_lsetxattr", "__fn___fern_umask",
+    "__fn___fern_read_link", "__fn___fern_getxattr", "__fn___fern_getxattr_bytes", "__fn___fern_getxattr_bytes_u8", "__fn___fern_lgetxattr", "__fn___fern_lgetxattr_bytes", "__fn___fern_lgetxattr_bytes_u8", "__fn___fern_setxattr", "__fn___fern_setxattr_bytes", "__fn___fern_setxattr_bytes_u8", "__fn___fern_lsetxattr", "__fn___fern_lsetxattr_bytes", "__fn___fern_lsetxattr_bytes_u8", "__fn___fern_umask",
     "__fn___fern_chmod", "__fn___fern_chmod_at", "__fn___fern_set_file_times", "__fn___fern_truncate",
     "__fn___fern_mknod", "__fn___fern_chown_at",
     "__fn___fern_window_size",
@@ -10451,13 +10503,13 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_strbuf_reset", "__fern_strbuf_take",
     // The capacity-carrying string builder (#8773). __fern_buf_reserve is
     // internal to the bundle — no call crosses a unit boundary to it.
-    "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_filtered", "__fern_buf_push_expanded",
+    "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_bytes_mapped", "__fern_buf_push_bytes_filtered", "__fern_buf_push_filtered", "__fern_buf_push_expanded", "__fern_buf_push_bytes_expanded",
     "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_len", "__fern_buf_take",
     "__fern_buf_free",
     "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8",
     "__fern_buf_push_bytes_range", "__fern_buf_push_bytes_range_u8",
     // crash-only supervision (#5686): the entry owns fork / wait4.
-    "__fn___fern_proc_fork", "__fn___fern_proc_waitpid",
+    "__fern_buf_push_bytes_mapped_u8", "__fern_buf_push_bytes_filtered_u8", "__fern_buf_push_bytes_expanded_u8", "__fn___fern_proc_fork", "__fn___fern_proc_waitpid",
     "__fn___fern_proc_waitpid_nohang", "__fn___fern_proc_exec",
     "__fn___fern_proc_exec_as",
     // one pid's liveness, delivering a signal to one, and this

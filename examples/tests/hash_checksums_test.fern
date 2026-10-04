@@ -124,6 +124,10 @@ function test_bsd_sum(): test.TestOutcome {
   if (s.finish() != 21454) {
     return test.fail("chunked");
   }
+  let array_sum: hash.BsdSum = hash.bsd_sum_new().update_array(msg);
+  if (array_sum.finish() != s.finish() || array_sum.len() != s.len()) {
+    return test.fail("owned-array BSD kernel");
+  }
   if (s.finish() != hash.bsd_sum_of(string_from_bytes_unchecked(msg))) {
     return test.fail("one-shot");
   }
@@ -150,6 +154,10 @@ function test_sysv_sum(): test.TestOutcome {
   s = s.update_bytes(msg[i:10003]);
   if (s.finish() != 29049) {
     return test.fail("chunked");
+  }
+  let array_sum: hash.SysvSum = hash.sysv_sum_new().update_array(msg);
+  if (array_sum.finish() != s.finish() || array_sum.len() != s.len()) {
+    return test.fail("owned-array System V kernel");
   }
   if (s.finish() != hash.sysv_sum_of(string_from_bytes_unchecked(msg))) {
     return test.fail("one-shot");

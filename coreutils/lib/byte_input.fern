@@ -1,0 +1,48 @@
+// Specialize byte-wise parsers for text and raw bytes. Bytes borrows a view
+// within a parser call; Array retains a buffer across repeated comparisons.
+pub trait Input {
+  function byte_count(self: Self): i32;
+  function byte_at(self: Self, at: i32): u8;
+}
+
+impl Input for string {
+  function byte_count(self: string): i32 {
+    return self.len();
+  }
+  function byte_at(self: string, at: i32): u8 {
+    return self[at];
+  }
+}
+
+pub struct Array { data: u8[] }
+
+impl Input for Array {
+  function byte_count(self: Array): i32 {
+    return self.data.len();
+  }
+  function byte_at(self: Array, at: i32): u8 {
+    return self.data[at];
+  }
+}
+
+pub struct Bytes { data: [u8] }
+
+pub struct Range { data: u8[], lo: i32, hi: i32 }
+
+impl Input for Range {
+  function byte_count(self: Range): i32 {
+    return self.hi - self.lo;
+  }
+  function byte_at(self: Range, at: i32): u8 {
+    return self.data[self.lo + at];
+  }
+}
+
+impl Input for Bytes {
+  function byte_count(self: Bytes): i32 {
+    return self.data.len();
+  }
+  function byte_at(self: Bytes, at: i32): u8 {
+    return self.data[at];
+  }
+}

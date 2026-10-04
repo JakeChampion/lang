@@ -30,6 +30,24 @@ pub function bytes_word(text: string, lo: i32, hi: i32): i64 {
   return w;
 }
 
+// Raw-byte counterpart, with the same zero-padded prefix ordering.
+pub function bytes_word_bytes(text: u8[], lo: i32, hi: i32): i64 {
+  if (hi - lo >= 8) {
+    return text[lo] as i64 << 56 as i64 | text[lo + 1] as i64 << 48 as i64 | text[lo + 2] as i64 << 40 as i64 | text[lo + 3] as i64 << 32 as i64 | text[lo + 4] as i64 << 24 as i64 | text[lo + 5] as i64 << 16 as i64 | text[lo + 6] as i64 << 8 as i64 | text[lo + 7] as i64;
+  }
+  let w: i64 = 0 as i64;
+  let b: i32 = 0;
+  while (b < 8) {
+    let x: i32 = 0;
+    if (lo + b < hi) {
+      x = text[lo + b] as i32;
+    }
+    w = w << 8 as i64 | x as i64;
+    b = b + 1;
+  }
+  return w;
+}
+
 // `by_word(idx, words, n, signed, rev)` — `idx`, a permutation of
 // 0..n-1, reordered by the words it indexes, ascending, equal words
 // keeping their order: four passes of sixteen bits from the low end,

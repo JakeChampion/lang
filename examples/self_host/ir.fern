@@ -463,7 +463,7 @@ pub function op_str_from_bytes(): Op {
 // `str_from_bytes_range` pops [arr, from, end] → str_from_bytes over
 // arr[from, end), copied once (`string_from_bytes_range_unchecked`).
 pub function op_str_from_bytes_range(): Op {
-  return op0(368);
+  return op0(380);
 }
 
 // `memcpy` pops [dst, src, n] (raw usize pointers + a byte count) → copies n
@@ -773,6 +773,20 @@ pub function op_count_byte_bytes(): Op {
   return op0(359);
 }
 
+// Borrowed raw-array reductions; packed() selects native byte storage.
+pub function op_sum_bytes_array(): Op {
+  return op0(368);
+}
+
+pub function op_bsd_sum_bytes(): Op {
+  return op0(369);
+}
+
+// Continue the CRC over a borrowed array. packed() selects byte storage.
+pub function op_crc32_cksum_array(): Op {
+  return op0(373);
+}
+
 // Borrowed byte-array scan; packed() selects packed native byte storage.
 pub function op_memchr_bytes(): Op {
   return op0(358);
@@ -783,9 +797,19 @@ pub function op_rmemchr_bytes(): Op {
   return op0(360);
 }
 
-// scan_set over a borrowed byte array: pops [bytes, from, set].
+// Borrowed byte-array set scan; packed() selects native byte storage.
+pub function op_count_runs_bytes(): Op {
+  return op0(379);
+}
+
+// Borrowed byte-array set scan; packed() selects native byte storage.
 pub function op_scan_set_bytes(): Op {
   return op0(361);
+}
+
+// Borrowed byte-range comparison, with the same clamps as mismatch.
+pub function op_mismatch_bytes(): Op {
+  return op0(378);
 }
 
 // rmemchr (docs/ATLAS-PLATFORM-PLAN.md §3.3, memchr's nominated sibling):
@@ -1120,6 +1144,22 @@ pub function op_setxattr(): Op {
 
 pub function op_lsetxattr(): Op {
   return op0(365);
+}
+
+pub function op_getxattr_bytes(): Op {
+  return op0(374);
+}
+
+pub function op_lgetxattr_bytes(): Op {
+  return op0(375);
+}
+
+pub function op_setxattr_bytes(): Op {
+  return op0(376);
+}
+
+pub function op_lsetxattr_bytes(): Op {
+  return op0(377);
 }
 
 pub function op_rename_noreplace(): Op {
@@ -2309,6 +2349,19 @@ pub function op_buf_push_expanded(): Op {
   return op0(328);
 }
 
+// Raw counterparts borrow [handle, u8[], table] with the same table contracts.
+pub function op_buf_push_bytes_mapped(): Op {
+  return op0(370);
+}
+
+pub function op_buf_push_bytes_filtered(): Op {
+  return op0(371);
+}
+
+pub function op_buf_push_bytes_expanded(): Op {
+  return op0(372);
+}
+
 pub function op_buf_push_byte(): Op {
   return op0(294);
 }
@@ -3084,10 +3137,13 @@ pub function kind_id(name: string): i32 {
     return 351;
   }
   if (n == 20 && name == "str_from_bytes_range") {
-    return 368;
+    return 380;
   }
   if (n == 21) {
     return kind_id_len21(name);
+  }
+  if (n == 23) {
+    return kind_id_len23(name);
   }
   return 0;
 }
@@ -4185,6 +4241,9 @@ function kind_id_len12_s(name: string): i32 {
 }
 
 function kind_id_len13(name: string): i32 {
+  if (name == "bsd_sum_bytes") {
+    return 369;
+  }
   if (name == "fd_drop_cache") {
     return 366;
   }
@@ -4235,6 +4294,12 @@ function kind_id_len13(name: string): i32 {
 }
 
 function kind_id_len14(name: string): i32 {
+  if (name == "setxattr_bytes") {
+    return 376;
+  }
+  if (name == "getxattr_bytes") {
+    return 374;
+  }
   if (name == "scan_set_bytes") {
     return 361;
   }
@@ -4246,6 +4311,9 @@ function kind_id_len14(name: string): i32 {
   }
   if (name == "tcp_send_bytes") {
     return 353;
+  }
+  if (name == "mismatch_bytes") {
+    return 378;
   }
   if (name == "buf_take_bytes") {
     return 347;
@@ -4288,6 +4356,15 @@ function kind_id_len14(name: string): i32 {
 }
 
 function kind_id_len15(name: string): i32 {
+  if (name == "lsetxattr_bytes") {
+    return 377;
+  }
+  if (name == "lgetxattr_bytes") {
+    return 375;
+  }
+  if (name == "sum_bytes_array") {
+    return 368;
+  }
   let c: u8 = name[0];
   if (c == b'r' && name == "rename_exchange") {
     return 357;
@@ -4326,6 +4403,9 @@ function kind_id_len15(name: string): i32 {
 }
 
 function kind_id_len16(name: string): i32 {
+  if (name == "count_runs_bytes") {
+    return 379;
+  }
   if (name == "rename_noreplace") {
     return 356;
   }
@@ -4367,6 +4447,9 @@ function kind_id_len16(name: string): i32 {
 }
 
 function kind_id_len17(name: string): i32 {
+  if (name == "crc32_cksum_array") {
+    return 373;
+  }
   let c: u8 = name[0];
   if (c == b's' && name == "set_process_group") {
     return 284;
@@ -4411,7 +4494,20 @@ function kind_id_len19(name: string): i32 {
   return 0;
 }
 
+function kind_id_len23(name: string): i32 {
+  if (name == "buf_push_bytes_filtered") {
+    return 371;
+  }
+  if (name == "buf_push_bytes_expanded") {
+    return 372;
+  }
+  return 0;
+}
+
 function kind_id_len21(name: string): i32 {
+  if (name == "buf_push_bytes_mapped") {
+    return 370;
+  }
   let c: u8 = name[0];
   if (c == b'a' && name == "arr_push_shared_count") {
     return 216;
@@ -5117,7 +5213,7 @@ function kind_name_4(id: i32): string {
   if (id == 367) {
     return "raw_task_state";
   }
-  if (id == 368) {
+  if (id == 380) {
     return "str_from_bytes_range";
   }
   if (id == 208) {
@@ -5445,6 +5541,30 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 377) {
+    return "lsetxattr_bytes";
+  }
+  if (id == 376) {
+    return "setxattr_bytes";
+  }
+  if (id == 375) {
+    return "lgetxattr_bytes";
+  }
+  if (id == 374) {
+    return "getxattr_bytes";
+  }
+  if (id == 373) {
+    return "crc32_cksum_array";
+  }
+  if (id == 370) {
+    return "buf_push_bytes_mapped";
+  }
+  if (id == 371) {
+    return "buf_push_bytes_filtered";
+  }
+  if (id == 372) {
+    return "buf_push_bytes_expanded";
+  }
   if (id == 354) {
     return "udp_send_bytes";
   }
@@ -5459,6 +5579,12 @@ pub function kind_name(id: i32): string {
   }
   if (id == 353) {
     return "tcp_send_bytes";
+  }
+  if (id == 368) {
+    return "sum_bytes_array";
+  }
+  if (id == 369) {
+    return "bsd_sum_bytes";
   }
   if (id == 352) {
     return "write_file_bytes";
@@ -5486,6 +5612,12 @@ pub function kind_name(id: i32): string {
   }
   if (id == 363) {
     return "lgetxattr";
+  }
+  if (id == 379) {
+    return "count_runs_bytes";
+  }
+  if (id == 378) {
+    return "mismatch_bytes";
   }
   if (id == 364) {
     return "setxattr";
@@ -5579,7 +5711,7 @@ function pops1_mem(t: i32): boolean {
     || t == 81 || t == 205 || t == 224  // raw_alloc, raw_scratch, raw_arr_box
     || t == 90 || t == 91  // arr_len, arr_rc
     || t == 97 || t == 103 || t == 104 || t == 345  // str_len, str_from_bytes, str_bytes, str_data
-    || t == 253  // sum_bytes
+    || t == 253 || t == 368  // sum_bytes / sum_bytes_array
     || t == 106 || t == 107 || t == 109  // str_to_upper/lower, str_trim
     || t == 113  // str_lines
     || t == 118  // strbuf_append
@@ -5637,8 +5769,8 @@ function pops2_mem(t: i32): boolean {
     || t == 105 || t == 108  // str_split, str_repeat
     || t == 227  // ascii_run
     || t == 235  // count_byte
-    || t == 329  // bsd_sum
-    || t == 309  // crc32_cksum
+    || t == 329 || t == 369  // bsd_sum / bsd_sum_bytes
+    || t == 309 || t == 373  // crc32_cksum / crc32_cksum_array
     || t == 322  // scale_f64
     || t == 127 || t == 128 || t == 130  // map_get, map_has, map_delete
     || t == 140 || t == 144;  // struct_set, tuple_set
@@ -5649,7 +5781,7 @@ function pops2_io(t: i32): boolean {
     || t == 237  // access (path, mode)
     || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
     || t == 356 || t == 357  // rename_noreplace, rename_exchange
-    || t == 362 || t == 363  // getxattr, lgetxattr (path, name)
+    || t == 362 || t == 363 || t == 374 || t == 375  // getxattr, lgetxattr (path, name)
     || t == 273  // truncate (path, length)
     || t == 304 || t == 305  // open_reader_with, open_writer_with (path, flags)
     || t == 281  // writer_truncate (fd, length)
@@ -5664,7 +5796,7 @@ function pops2_io(t: i32): boolean {
 }
 
 function pops3(t: i32): boolean {
-  return t == 361 || t == 360 || t == 358 || t == 74 || t == 75  // scan_set_bytes, rmemchr_bytes, memchr_bytes, memcpy, memset
+  return t == 379 || t == 361 || t == 360 || t == 358 || t == 74 || t == 75  // scan_set_bytes, rmemchr_bytes, memchr_bytes, memcpy, memset
     || t == 82 || t == 84  // raw_store8, raw_store_ptr
     || t == 89 || t == 96 || t == 102 || t == 111  // arr_set, arr_slice, str_slice, str_replace
     || t == 125 || t == 129  // map_set, map_get_or
@@ -5680,9 +5812,8 @@ function pops3(t: i32): boolean {
     || t == 314  // set_window_size (fd, rows, cols)
     || t == 324  // scan_set (str, from, set)
     || t == 327  // count_runs (str, inside, set)
-    || t == 364 || t == 365  // setxattr, lsetxattr (path, name, value)
-    || t == 366  // fd_drop_cache (fd, offset, len)
-    || t == 368;  // str_from_bytes_range (arr, from, end)
+    || t == 364 || t == 365 || t == 376 || t == 377  // setxattr, lsetxattr (path, name, value)
+    || t == 366 || t == 380;  // fd_drop_cache, str_from_bytes_range
 }
 
 // pops_buf is the operand count of one of the capacity-carrying string
@@ -5702,7 +5833,7 @@ function pops_buf(t: i32): i32 {
   if (t == 306) {
     return 2;
   }
-  if (t == 325 || t == 326 || t == 328) {  // buf_push_mapped / _filtered / _expanded: handle + string + table
+  if (t == 325 || t == 326 || t == 328 || t == 370 || t == 371 || t == 372) {  // buf_push_mapped / _filtered / _expanded: handle + string + table
     return 3;
   }
   if (t < 291 || t > 297) {
@@ -5804,7 +5935,7 @@ function kind_pops(t: i32): i32 {
   if (t == 206) {  // syscall4
     return 5;
   }
-  if (t == 245) {  // mismatch: a, ao, b, bo, n
+  if (t == 245 || t == 378) {  // mismatch: a, ao, b, bo, n
     return 5;
   }
   if (t == 228) {  // syscall5
@@ -8305,7 +8436,7 @@ pub function op_allocates(tag: i32): boolean {
 // than logic: every `||` is one row of a table, there is no path through it to
 // get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 361 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
+  return tag == 380 || tag == 373 || tag == 368 || tag == 369 || tag == 361 || tag == 379 || tag == 378 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
     || tag == 104 || tag == 105 || tag == 106
     || tag == 107 || tag == 108 || tag == 109
     || tag == 111 || tag == 113 || tag == 98

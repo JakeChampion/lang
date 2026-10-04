@@ -28,6 +28,7 @@
 // plus-sticky logic is the same shape at any width. Canonical form: a
 // normal has `m` exactly `mant` bits wide; a subnormal, and zero, has
 // `e` pinned at the format's least exponent.
+import "./byte_input";
 import "std/string";
 import "std/array";
 import "std/u64";
@@ -625,14 +626,14 @@ function no_float(f: Format): Parse {
   return Parse { v: f.zero(false), erange: false, end: 0 };
 }
 
-// Whether `s[i..]` starts with `word` case-insensitively.
-function has_word(s: string, i: i32, word: string): boolean {
-  if (i + word.len() > s.len()) {
+// Whether the bytes at offset i start with word, case-insensitively.
+function has_word[S: byte_input.Input](s: S, i: i32, word: string): boolean {
+  if (i + word.len() > s.byte_count()) {
     return false;
   }
   let k: i32 = 0;
   while (k < word.len()) {
-    if (lower(s[i + k] as i32) != word[k] as i32) {
+    if (lower(s.byte_at(i + k) as i32) != word[k] as i32) {
       return false;
     }
     k = k + 1;
@@ -641,20 +642,20 @@ function has_word(s: string, i: i32, word: string): boolean {
 }
 
 // A decimal exponent, saturating far beyond any magnitude that matters.
-function read_exponent(s: string, i: i32): (i32, i32) {
+function read_exponent[S: byte_input.Input](s: S, i: i32): (i32, i32) {
   let j: i32 = i;
   let neg: boolean = false;
-  if (j < s.len() && (s[j] as i32 == 43 || s[j] as i32 == 45)) {
-    neg = s[j] as i32 == 45;
+  if (j < s.byte_count() && (s.byte_at(j) as i32 == 43 || s.byte_at(j) as i32 == 45)) {
+    neg = s.byte_at(j) as i32 == 45;
     j = j + 1;
   }
-  if (j >= s.len() || !is_digit(s[j] as i32)) {
+  if (j >= s.byte_count() || !is_digit(s.byte_at(j) as i32)) {
     return (0, i);
   }
   let v: i32 = 0;
-  while (j < s.len() && is_digit(s[j] as i32)) {
+  while (j < s.byte_count() && is_digit(s.byte_at(j) as i32)) {
     if (v < 100000000) {
-      v = v * 10 + (s[j] as i32 - 48);
+      v = v * 10 + (s.byte_at(j) as i32 - 48);
     }
     j = j + 1;
   }
@@ -667,14 +668,27 @@ function read_exponent(s: string, i: i32): (i32, i32) {
 // `strtold(f, s)` — glibc's c_strtold: white space, sign, then inf /
 // infinity / nan / nan(chars), a hex float, or a decimal one.
 pub function (f: Format) strtold(s: string): Parse {
-  let n: i32 = s.len();
+  return strtold_input(f, s);
+}
+
+// Parse a raw key without making its unconsumed bytes into text.
+pub function (f: Format) strtold_bytes(s: [u8]): Parse {
+  return strtold_input(f, byte_input.Bytes { data: s });
+}
+
+pub function (f: Format) strtold_array(s: u8[], lo: i32, hi: i32): Parse {
+  return strtold_input(f, byte_input.Range { data: s, lo: lo, hi: hi });
+}
+
+function strtold_input[S: byte_input.Input](f: Format, s: S): Parse {
+  let n: i32 = s.byte_count();
   let i: i32 = 0;
-  while (i < n && is_space(s[i] as i32)) {
+  while (i < n && is_space(s.byte_at(i) as i32)) {
     i = i + 1;
   }
   let neg: boolean = false;
-  if (i < n && (s[i] as i32 == 45 || s[i] as i32 == 43)) {
-    neg = s[i] as i32 == 45;
+  if (i < n && (s.byte_at(i) as i32 == 45 || s.byte_at(i) as i32 == 43)) {
+    neg = s.byte_at(i) as i32 == 45;
     i = i + 1;
   }
   if (has_word(s, i, "inf")) {
@@ -686,21 +700,21 @@ pub function (f: Format) strtold(s: string): Parse {
   }
   if (has_word(s, i, "nan")) {
     i = i + 3;
-    if (i < n && s[i] as i32 == 40) {
+    if (i < n && s.byte_at(i) as i32 == 40) {
       let k: i32 = i + 1;
-      while (k < n && (is_digit(s[k] as i32) || is_alpha(s[k] as i32) || s[k] as i32 == 95)) {
+      while (k < n && (is_digit(s.byte_at(k) as i32) || is_alpha(s.byte_at(k) as i32) || s.byte_at(k) as i32 == 95)) {
         k = k + 1;
       }
-      if (k < n && s[k] as i32 == 41) {
+      if (k < n && s.byte_at(k) as i32 == 41) {
         i = k + 1;
       }
     }
     return Parse { v: nan(neg), erange: false, end: i };
   }
-  if (i + 1 < n && s[i] as i32 == 48 && lower(s[i + 1] as i32) == 120) {
+  if (i + 1 < n && s.byte_at(i) as i32 == 48 && lower(s.byte_at(i + 1) as i32) == 120) {
     let j: i32 = i + 2;
-    let hex_start: boolean = j < n && hex_digit(s[j] as i32) >= 0;
-    if (!hex_start && j + 1 < n && s[j] as i32 == 46 && hex_digit(s[j + 1] as i32) >= 0) {
+    let hex_start: boolean = j < n && hex_digit(s.byte_at(j) as i32) >= 0;
+    if (!hex_start && j + 1 < n && s.byte_at(j) as i32 == 46 && hex_digit(s.byte_at(j + 1) as i32) >= 0) {
       hex_start = true;
     }
     if (hex_start) {
@@ -710,8 +724,8 @@ pub function (f: Format) strtold(s: string): Parse {
   return decimal_float(f, s, i, neg);
 }
 
-function hex_float(f: Format, s: string, start: i32, neg: boolean): Parse {
-  let n: i32 = s.len();
+function hex_float[S: byte_input.Input](f: Format, s: S, start: i32, neg: boolean): Parse {
+  let n: i32 = s.byte_count();
   let i: i32 = start;
   let q: bigint.BigInt = bigint.zero();
   let sixteen: bigint.BigInt = bigint.from_i64(16 as i64);
@@ -719,7 +733,7 @@ function hex_float(f: Format, s: string, start: i32, neg: boolean): Parse {
   let in_frac: boolean = false;
   let any: boolean = false;
   while (i < n) {
-    let b: i32 = s[i] as i32;
+    let b: i32 = s.byte_at(i) as i32;
     if (b == 46 && !in_frac) {
       in_frac = true;
       i = i + 1;
@@ -739,7 +753,7 @@ function hex_float(f: Format, s: string, start: i32, neg: boolean): Parse {
     i = i + 1;
   }
   let exp: i32 = 0;
-  if (i < n && lower(s[i] as i32) == 112) {
+  if (i < n && lower(s.byte_at(i) as i32) == 112) {
     let r: (i32, i32) = read_exponent(s, i + 1);
     if (r.1 > i + 1) {
       exp = r.0;
@@ -753,8 +767,8 @@ function hex_float(f: Format, s: string, start: i32, neg: boolean): Parse {
   return Parse { v: lr.0, erange: lr.1, end: i };
 }
 
-function decimal_float(f: Format, s: string, start: i32, neg: boolean): Parse {
-  let n: i32 = s.len();
+function decimal_float[S: byte_input.Input](f: Format, s: S, start: i32, neg: boolean): Parse {
+  let n: i32 = s.byte_count();
   let i: i32 = start;
   let digits: u8[] = [];
   let frac: i32 = 0;
@@ -762,9 +776,9 @@ function decimal_float(f: Format, s: string, start: i32, neg: boolean): Parse {
   let seen: boolean = false;
   let lead_zero: boolean = true;
   while (i < n) {
-    let b: i32 = s[i] as i32;
+    let b: i32 = s.byte_at(i) as i32;
     if (b == 46 && !in_frac) {
-      if (i + 1 >= n || !is_digit(s[i + 1] as i32)) {
+      if (i + 1 >= n || !is_digit(s.byte_at(i + 1) as i32)) {
         if (!seen) {
           return no_float(f);
         }
@@ -796,7 +810,7 @@ function decimal_float(f: Format, s: string, start: i32, neg: boolean): Parse {
     return no_float(f);
   }
   let exp: i32 = 0;
-  if (i < n && lower(s[i] as i32) == 101) {
+  if (i < n && lower(s.byte_at(i) as i32) == 101) {
     let r: (i32, i32) = read_exponent(s, i + 1);
     if (r.1 > i + 1) {
       exp = r.0;

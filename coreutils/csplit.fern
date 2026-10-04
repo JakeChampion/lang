@@ -200,12 +200,17 @@ function parse_fmt(s: string): Fmt {
   while (i < s.len()) {
     let c: i32 = s[i] as i32;
     if (c != 37) {
-      if (found) {
-        f = Fmt { ...f, post: f.post + byte_str(c) };
-      } else {
-        pre = pre + byte_str(c);
+      let end: i32 = __memchr(s, 37, i);
+      if (end < 0) {
+        end = s.len();
       }
-      i = i + 1;
+      let text: string = slice_unchecked(s, i, end) + "";
+      if (found) {
+        f = Fmt { ...f, post: f.post + text };
+      } else {
+        pre = pre + text;
+      }
+      i = end;
       continue;
     }
     if (i + 1 < s.len() && s[i + 1] as i32 == 37) {
@@ -556,7 +561,12 @@ function digits_value(s: string): i32 {
 //
 // `created` is how many pieces exist, which is also the next piece's
 // number — an elided empty piece gives its number back.
-struct St { r: Reader, buf: string, wpos: i32, soff: i32, wline: i64, sline: i64, eof: boolean, back: i64, out: io_buffered.BufWriter, open: boolean, name: string, written: i64, created: i32, so: io_buffered.BufWriter, s: Settings }
+struct St { r: Reader, buf: u8[], wpos: i32, soff: i32, wline: i64, sline: i64, eof: boolean, back: i64, out: io_buffered.BufWriter, open: boolean, name: string, written: i64, created: i32, so: io_buffered.BufWriter, s: Settings }
+
+function empty_bytes(): u8[] {
+  let empty: u8[] = [];
+  return empty;
+}
 
 function read_size(): i32 {
   return 65536;
@@ -569,13 +579,56 @@ function drain_bytes(): i32 {
   return 65536;
 }
 
-function fill(st: St): St {
-  match (st.r.read_chunk(read_size())) {
+function copy_range(bytes: u8[], lo: i32, hi: i32): u8[] {
+  let buf: usize = buf_new(hi - lo);
+  buf_push_bytes_range(buf, bytes, lo, hi);
+  let result: u8[] = buf_take_bytes(buf);
+  buf_free(buf);
+  return result;
+}
+
+function append_input(bytes: u8[], chunk: u8[]): u8[] {
+  if (bytes.len() == 0) {
+    return chunk;
+  }
+  let buf: usize = buf_new(bytes.len() + chunk.len());
+  buf_push_bytes_range(buf, bytes, 0, bytes.len());
+  buf_push_bytes_range(buf, chunk, 0, chunk.len());
+  let result: u8[] = buf_take_bytes(buf);
+  buf_free(buf);
+  return result;
+}
+
+// Line scans collect a spanning line in one amortized builder. Plain
+// copying still returns after one chunk, so an unbroken tail can stream.
+function fill(st: St, complete_line: boolean): St {
+  match (st.r.read_chunk_bytes(read_size())) {
     Ok(chunk) => {
       if (chunk.len() == 0) {
         return St { ...st, eof: true };
       }
-      return St { ...st, buf: st.buf + chunk };
+      if (!complete_line || __memchr_bytes(chunk, 10, 0) >= 0) {
+        return St { ...st, buf: append_input(st.buf, chunk) };
+      }
+      let carry: usize = buf_new(st.buf.len() + chunk.len());
+      buf_push_bytes_range(carry, st.buf, 0, st.buf.len());
+      buf_push_bytes_range(carry, chunk, 0, chunk.len());
+      while (true) {
+        match (st.r.read_chunk_bytes(read_size())) {
+          Ok(next) => {
+            buf_push_bytes_range(carry, next, 0, next.len());
+            if (next.len() == 0 || __memchr_bytes(next, 10, 0) >= 0) {
+              let result: u8[] = buf_take_bytes(carry);
+              buf_free(carry);
+              return St { ...st, buf: result, eof: next.len() == 0 };
+            }
+          },
+          Err(e) => {
+            buf_free(carry);
+            fatal(st, "read error: " + gnu.io_error_text(e));
+          }
+        }
+      }
     },
     Err(e) => {
       fatal(st, "read error: " + gnu.io_error_text(e));
@@ -591,7 +644,7 @@ function line_end(st: St): (i32, St) {
   let from: i32 = s.soff;
   while (true) {
     if (from < s.buf.len()) {
-      let j: i32 = __memchr(s.buf, 10, from);
+      let j: i32 = __memchr_bytes(s.buf, 10, from);
       if (j >= 0) {
         return (j + 1, s);
       }
@@ -603,7 +656,7 @@ function line_end(st: St): (i32, St) {
       }
       return (0 - 1, s);
     }
-    s = fill(s);
+    s = fill(s, true);
   }
   return (0 - 1, s);
 }
@@ -635,7 +688,7 @@ function line_start(st: St, n: i64): i32 {
   let pos: i32 = st.soff - 1;
   let d: i64 = st.sline - n;
   while (d > 0 as i64) {
-    pos = __rmemchr(st.buf, 10, pos - 1);
+    pos = __rmemchr_bytes(st.buf, 10, pos - 1);
     d = d - 1 as i64;
   }
   return pos + 1;
@@ -649,7 +702,7 @@ function release(st: St, n: i64, cut: i32): St {
   }
   let s: St = st;
   if (s.open) {
-    s = out_put(s, slice_unchecked(s.buf, s.wpos, cut) + "");
+    s = out_put(s, s.wpos, cut);
   }
   return St { ...s, wpos: cut, wline: n };
 }
@@ -660,7 +713,7 @@ function compact(st: St): St {
   if (st.wpos < drain_bytes() || st.wpos * 2 < st.buf.len()) {
     return st;
   }
-  return St { ...st, buf: slice_unchecked(st.buf, st.wpos, st.buf.len()) + "", soff: st.soff - st.wpos, wpos: 0 };
+  return St { ...st, buf: copy_range(st.buf, st.wpos, st.buf.len()), soff: st.soff - st.wpos, wpos: 0 };
 }
 
 // Move the scan cursor forward to line `n`, reading as it goes. False
@@ -676,7 +729,7 @@ function scan_to(st: St, n: i64): (boolean, St) {
     let off: i32 = s.soff;
     let ln: i64 = s.sline;
     while (ln < n) {
-      let j: i32 = __memchr(s.buf, 10, off);
+      let j: i32 = __memchr_bytes(s.buf, 10, off);
       if (j < 0) {
         break;
       }
@@ -697,7 +750,7 @@ function scan_to(st: St, n: i64): (boolean, St) {
       }
       return (false, s);
     }
-    s = fill(drain(s));
+    s = fill(drain(s), true);
   }
   return (true, s);
 }
@@ -728,8 +781,8 @@ function out_open(st: St): St {
   return st;
 }
 
-function out_put(st: St, data: string): St {
-  let w: io_buffered.BufWriter = st.out.write_string(data);
+function out_put(st: St, lo: i32, hi: i32): St {
+  let w: io_buffered.BufWriter = st.out.write_bytes_range(st.buf, lo, hi);
   match (w.error()) {
     Some(e) => {
       gnu.error("write error for " + gnu.quotea(st.name) + ": " + gnu.io_error_text(e));
@@ -737,7 +790,7 @@ function out_put(st: St, data: string): St {
     },
     None => {}
   }
-  return St { ...st, out: w, written: st.written + data.len() as i64 };
+  return St { ...st, out: w, written: st.written + (hi - lo) as i64 };
 }
 
 // gnulib's close_output_file: an empty piece under -z gives its number
@@ -787,14 +840,14 @@ function dump_rest(st: St): St {
   while (true) {
     if (s.wpos < s.buf.len()) {
       if (s.open) {
-        s = out_put(s, slice_unchecked(s.buf, s.wpos, s.buf.len()) + "");
+        s = out_put(s, s.wpos, s.buf.len());
       }
-      s = St { ...s, buf: "", wpos: 0, soff: 0 };
+      s = St { ...s, buf: empty_bytes(), wpos: 0, soff: 0 };
     }
     if (s.eof) {
       return s;
     }
-    s = fill(s);
+    s = fill(s, false);
   }
   return s;
 }
@@ -878,7 +931,7 @@ function head_empty(st: St): (boolean, St) {
     if (s.eof) {
       return (true, s);
     }
-    s = fill(s);
+    s = fill(s, false);
   }
   return (false, s);
 }
@@ -893,7 +946,7 @@ function suppress_line(st: St): St {
     return st;
   }
   if (st.wline < st.sline) {
-    let j: i32 = __memchr(st.buf, 10, st.wpos);
+    let j: i32 = __memchr_bytes(st.buf, 10, st.wpos);
     let end: i32 = st.buf.len();
     if (j >= 0) {
       end = j + 1;
@@ -961,11 +1014,11 @@ function find_match(st: St, p: Pat): (boolean, St) {
     let off: i32 = s.soff;
     let ln: i64 = s.sline;
     while (true) {
-      let j: i32 = __memchr(s.buf, 10, off);
+      let j: i32 = __memchr_bytes(s.buf, 10, off);
       if (j < 0) {
         break;
       }
-      if (p.re.search_range(s.buf, off, j)) {
+      if (p.re.search_range_bytes(s.buf, off, j)) {
         return (true, St { ...s, soff: off, sline: ln });
       }
       off = j + 1;
@@ -974,14 +1027,14 @@ function find_match(st: St, p: Pat): (boolean, St) {
     s = St { ...s, soff: off, sline: ln };
     if (s.eof) {
       if (s.soff < s.buf.len()) {
-        if (p.re.search_range(s.buf, s.soff, s.buf.len())) {
+        if (p.re.search_range_bytes(s.buf, s.soff, s.buf.len())) {
           return (true, s);
         }
         s = St { ...s, soff: s.buf.len(), sline: s.sline + 1 as i64 };
       }
       return (false, s);
     }
-    s = fill(drain(s));
+    s = fill(drain(s), true);
   }
   return (false, s);
 }
@@ -1093,7 +1146,10 @@ pub function main(): i32 {
   let pats: Pat[] = parse_patterns(ops);
   let settings: Settings = Settings { prefix: prefix, fmt: fmt, keep: keep, elide: elide, suppress: suppress, quiet: quiet };
 
-  let st: St = St { r: r0, buf: "", wpos: 0, soff: 0, wline: 1 as i64, sline: 1 as i64, eof: false, back: max_back(pats), out: io_buffered.buf_writer_new(stdout(), 1), open: false, name: "", written: 0 as i64, created: 0, so: gnu.out_new(), s: settings };
+  // Until a piece is open, share stdout's buffer as the inactive writer.
+  // out_open replaces it before any piece write; out_close checks open.
+  let so: io_buffered.BufWriter = gnu.out_new();
+  let st: St = St { r: r0, buf: empty_bytes(), wpos: 0, soff: 0, wline: 1 as i64, sline: 1 as i64, eof: false, back: max_back(pats), out: so, open: false, name: "", written: 0 as i64, created: 0, so: so, s: settings };
 
   let i: i32 = 0;
   while (i < pats.len()) {

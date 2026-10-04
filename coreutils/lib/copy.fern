@@ -517,44 +517,41 @@ function hole_block(src: Info): i32 {
 // One run of the read buffer: `[from, to)`, all zero or not.
 struct Run { to: i32, zero: boolean }
 
-function next_run(data: string, from: i32, bs: i32): Run {
-  let zero: boolean = run_is_zero(data, from, bs);
+function next_run(data: u8[], from: i32, bs: i32, zeros: u8[]): Run {
+  let zero: boolean = run_is_zero(data, from, bs, zeros);
   let at: i32 = from + piece_len(data, from, bs);
-  while (at < data.len() && run_is_zero(data, at, bs) == zero) {
+  while (at < data.len() && run_is_zero(data, at, bs, zeros) == zero) {
     at = at + piece_len(data, at, bs);
   }
   return Run { to: at, zero: zero };
 }
 
-function piece_len(data: string, from: i32, bs: i32): i32 {
+function piece_len(data: u8[], from: i32, bs: i32): i32 {
   if (data.len() - from < bs) {
     return data.len() - from;
   }
   return bs;
 }
 
-function run_is_zero(data: string, from: i32, bs: i32): boolean {
-  let end: i32 = from + piece_len(data, from, bs);
-  let piece: string = slice_unchecked(data, from, end) + "";
-  return __count_byte(piece, 0) == piece.len();
+function run_is_zero(data: u8[], from: i32, bs: i32, zeros: u8[]): boolean {
+  let n: i32 = piece_len(data, from, bs);
+  return __mismatch_bytes(data, from, zeros, 0, n) == n;
 }
 
-function write_all(w: Writer, data: string, from: i32, to: i32): string {
-  let off: i32 = from;
-  while (off < to) {
-    let piece: string = slice_unchecked(data, off, to) + "";
-    match (w.write_some(piece)) {
-      Err(e) => {
-        return gnu.io_error_text(e);
-      },
-      Ok(n) => {
-        if (n == 0 as i64) {
-          off = to;
-        } else {
-          off = off + n as i32;
-        }
-      }
-    }
+function write_all(w: Writer, data: u8[], from: i32, to: i32): string {
+  let piece: u8[] = data;
+  if (from != 0 || to != data.len()) {
+    let h: usize = buf_new(to - from);
+    buf_push_bytes_range(h, data, from, to);
+    piece = buf_take_bytes(h);
+    buf_free(h);
+  }
+  // The writer retries short writes while borrowing the same byte array.
+  match (w.write_bytes(piece)) {
+    Some(e) => {
+      return gnu.io_error_text(e);
+    },
+    None => {}
   }
   return "";
 }
@@ -573,7 +570,7 @@ function flow_fail(f: Flow, err: string): Flow {
 
 // One buffer of the source out: written whole, or with `punch` every run
 // of zero blocks seeked over instead.
-function put_chunk(w: Writer, data: string, punch: boolean, bs: i32, f0: Flow): Flow {
+function put_chunk(w: Writer, data: u8[], punch: boolean, bs: i32, zeros: u8[], f0: Flow): Flow {
   let f: Flow = f0;
   if (!punch) {
     let werr: string = write_all(w, data, 0, data.len());
@@ -584,7 +581,7 @@ function put_chunk(w: Writer, data: string, punch: boolean, bs: i32, f0: Flow): 
   }
   let at: i32 = 0;
   while (at < data.len()) {
-    let run: Run = next_run(data, at, bs);
+    let run: Run = next_run(data, at, bs, zeros);
     if (run.zero) {
       match (w.seek((run.to - at) as i64, 1)) {
         Err(e) => {
@@ -608,7 +605,7 @@ function put_chunk(w: Writer, data: string, punch: boolean, bs: i32, f0: Flow): 
 
 // The bytes from the reader's position to its end, or `limit` of them
 // when `limit` is not negative.
-function put_stream(r: Reader, w: Writer, punch: boolean, bs: i32, limit: i64, f0: Flow): Flow {
+function put_stream(r: Reader, w: Writer, punch: boolean, bs: i32, zeros: u8[], limit: i64, f0: Flow): Flow {
   let f: Flow = f0;
   let left: i64 = limit;
   while (limit < 0 as i64 || left > 0 as i64) {
@@ -616,7 +613,7 @@ function put_stream(r: Reader, w: Writer, punch: boolean, bs: i32, limit: i64, f
     if (limit >= 0 as i64 && left < want as i64) {
       want = left as i32;
     }
-    match (r.read_chunk(want)) {
+    match (r.read_chunk_bytes(want)) {
       Err(e) => {
         return flow_fail(f, gnu.io_error_text(e));
       },
@@ -625,7 +622,7 @@ function put_stream(r: Reader, w: Writer, punch: boolean, bs: i32, limit: i64, f
           return f;
         }
         left = left - data.len() as i64;
-        f = put_chunk(w, data, punch, bs, f);
+        f = put_chunk(w, data, punch, bs, zeros, f);
         if (!f.ok) {
           return f;
         }
@@ -635,18 +632,26 @@ function put_stream(r: Reader, w: Writer, punch: boolean, bs: i32, limit: i64, f
   return f;
 }
 
-// The source by its extents, as GNU's lseek_copy does: SEEK_DATA (3) finds
-// the next byte of data and SEEK_HOLE (4) where that run ends, so a hole is
+// The source by its extents, as GNU's lseek_copy does: SEEK_DATA finds
+// the next byte of data and SEEK_HOLE where that run ends, so a hole is
 // never read. Inside a data run zeros are written as they stand unless
 // `punch` (`--sparse=always`). None when the source cannot be asked — a
 // WASI handle, or a filesystem without the whence — for the caller to fall
 // back on reading everything. ENXIO is SEEK_DATA's "no data from here on".
-function put_extents(r: Reader, w: Writer, punch: boolean, total: i64, bs: i32): Option[Flow] {
+function put_extents(r: Reader, w: Writer, punch: boolean, total: i64, bs: i32, zeros: u8[]): Option[Flow] {
+  // Reader.seek passes native whence values through. Darwin reverses the
+  // two Linux extent constants; confusing them can turn data into holes.
+  let seek_data: i32 = 3;
+  let seek_hole: i32 = 4;
+  if (target_os() == "darwin") {
+    seek_data = 4;
+    seek_hole = 3;
+  }
   let f: Flow = flow_new();
   let pos: i64 = 0 as i64;
   while (pos < total) {
     let data: i64 = total;
-    match (r.seek(pos, 3)) {
+    match (r.seek(pos, seek_data)) {
       Ok(d) => {
         data = d;
       },
@@ -663,7 +668,7 @@ function put_extents(r: Reader, w: Writer, punch: boolean, total: i64, bs: i32):
       break;
     }
     let hole: i64 = total;
-    match (r.seek(data, 4)) {
+    match (r.seek(data, seek_hole)) {
       Ok(h) => {
         hole = h;
       },
@@ -689,7 +694,7 @@ function put_extents(r: Reader, w: Writer, punch: boolean, total: i64, bs: i32):
       },
       Ok(_) => {}
     }
-    f = put_stream(r, w, punch, bs, hole - data, Flow { ...f, ended_in_hole: false });
+    f = put_stream(r, w, punch, bs, zeros, hole - data, Flow { ...f, ended_in_hole: false });
     if (!f.ok) {
       return Some(f);
     }
@@ -708,11 +713,20 @@ function put_extents(r: Reader, w: Writer, punch: boolean, total: i64, bs: i32):
 struct Bytes { ok: boolean, err: string, wrote_hole: boolean, how: string }
 
 function write_data(r: Reader, w: Writer, holes: boolean, punch: boolean, total: i64, bs: i32): Bytes {
+  // Reuse one zero block for bounded comparisons across reads and extents.
+  let zeros: u8[] = [];
+  if (holes) {
+    let n: i32 = bs;
+    if (n > chunk_size()) {
+      n = chunk_size();
+    }
+    zeros = __alloc_u8(n);
+  }
   let f: Flow = flow_new();
   let how: string = "no";
   let done: boolean = false;
   if (holes) {
-    match (put_extents(r, w, punch, total, bs)) {
+    match (put_extents(r, w, punch, total, bs, zeros)) {
       Some(g) => {
         f = g;
         how = "SEEK_HOLE";
@@ -725,7 +739,7 @@ function write_data(r: Reader, w: Writer, holes: boolean, punch: boolean, total:
     if (holes) {
       how = "zero blocks";
     }
-    f = put_stream(r, w, holes, bs, 0 as i64 - 1 as i64, f);
+    f = put_stream(r, w, holes, bs, zeros, 0 as i64 - 1 as i64, f);
   }
   if (!f.ok) {
     return Bytes { ok: false, err: f.err, wrote_hole: f.wrote_hole, how: how };
