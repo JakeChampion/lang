@@ -1287,17 +1287,13 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
   s = s.syscall(1);
-  s = san_report_exit(s);
-  if (asmcore.backtrace_on()) {
-    s = emit_bt_exit(s);
-  }
-  return s;
+  return san_report_exit(s);
 }
 
 // san_report_exit ends a sanitizer report: exit 124, through the backtrace
-// walk unless FERN_BACKTRACE=0.
+// walk when the build keeps it.
 function san_report_exit(s: asmcore.EmitState): asmcore.EmitState {
-  if (asmcore.backtrace_on()) {
+  if (s.backtrace) {
     return s.write("    movq $124, %r15\n    jmp __fern_bt_exit\n");
   }
   return s.write("    movq $124, %rdi\n    movq $60, %rax\n").syscall(60);
@@ -1306,19 +1302,19 @@ function san_report_exit(s: asmcore.EmitState): asmcore.EmitState {
 // emit_bt_exit emits __fern_bt_exit: "backtrace:" and then each return
 // address up the frame-pointer chain as "  0x<16 hex>", the native backends'
 // format, and exit with the status in %r15. Bounded to 64 frames, and a frame
-// pointer that is not above the stack pointer, not 8-aligned, or not climbing
-// ends the walk rather than faulting the report, as does a return address in
-// the low 64 KiB, which is _start's frame reading the initial stack's argc. Emitted with the quarantine's
-// report, which every sanitizer build carries.
+// pointer below the stack pointer, not 8-aligned, or not climbing ends the
+// walk rather than faulting the report, as does a return address in the low
+// 64 KiB, which is _start's frame reading the initial stack's argc. Emitted
+// with __fern_report.
 function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .rodata\n");
-  s = s.write(".Lsan_bt:\n    .ascii \"backtrace:\\n\"\n");
+  s = s.write(".Lmsg_bt:\n    .ascii \"backtrace:\\n\"\n");
   s = s.write("    .section .text\n");
   s = s.write("    .globl __fern_bt_exit\n");
   s = s.write("__fern_bt_exit:\n");
   s = s.write("    andq $-16, %rsp\n");
   s = s.write("    movq %rsp, %r13\n");
-  s = s.write("    leaq .Lsan_bt(%rip), %rsi\n");
+  s = s.write("    leaq .Lmsg_bt(%rip), %rsi\n");
   s = s.write("    movq $11, %rdx\n");
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
@@ -1329,7 +1325,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    testl %r14d, %r14d\n");
   s = s.write("    jz .Lbt_done\n");
   s = s.write("    cmpq %r13, %rbx\n");
-  s = s.write("    jbe .Lbt_done\n");
+  s = s.write("    jb .Lbt_done\n");
   s = s.write("    testq $7, %rbx\n");
   s = s.write("    jnz .Lbt_done\n");
   s = s.write("    movq 8(%rbx), %rsi\n");
@@ -2769,6 +2765,47 @@ function emit_runtime_memcpy(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    ret\n");
 }
 
+// oob_leaf_trap is the array-bounds trap a frameless leaf with n saved
+// registers branches to.
+function oob_leaf_trap(n: i32): string {
+  return "__fern_oob_abort.l" + util.i32_to_string(n);
+}
+
+// abort_trap emits the trap `label`: it points %rsi / %rdx at the cause line
+// `text` (laid down in .rodata under `msg`) and tail-jumps to __fern_report
+// with the exit status in %rdi.
+function abort_trap(s: asmcore.EmitState, label: string, msg: string, text: string, status: i32): asmcore.EmitState {
+  s = s.write("    .section .rodata\n");
+  s = s.write(msg + ":\n    .ascii \"" + text + "\\n\"\n");
+  s = s.write("    .section .text\n");
+  s = s.write(label + ":\n");
+  s = s.write("    leaq " + msg + "(%rip), %rsi\n");
+  s = s.write("    movq $" + util.i32_to_string(text.len() + 1) + ", %rdx\n");
+  s = s.write("    movq $" + util.i32_to_string(status) + ", %rdi\n");
+  s = s.write("    jmp __fern_report\n");
+  return s;
+}
+
+// emit_report emits __fern_report(%rsi = cause line, %rdx = its length,
+// %rdi = exit status): write(2) the line, then exit with the status — through
+// __fern_bt_exit's frame-pointer walk when the build keeps the backtrace,
+// which is also where the sanitizer's reports end. The status rides %r15,
+// which the walk reads; nothing here returns.
+function emit_report(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_report:\n");
+  s = s.write("    movq %rdi, %r15\n");
+  s = s.write("    movq $2, %rdi\n");
+  s = s.write("    movq $1, %rax\n");
+  s = s.syscall(1);
+  if (s.backtrace) {
+    s = s.write("    jmp __fern_bt_exit\n");
+    return emit_bt_exit(s);
+  }
+  s = s.write("    movq %r15, %rdi\n");
+  s = s.write("    movq $60, %rax\n");
+  return s.syscall(60);
+}
+
 function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // .bss: heap bump pointer + arena end, the over-release detector, and the
   // size-classed freelist (65536 classes * 8 bytes). The heap arena itself is
@@ -3046,37 +3083,36 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
   s = s.write("    popq %rbp\n");
   s = s.write("    ret\n");
-  s = s.write(".Lalloc_oom:\n");
-  s = s.write("    movq $60, %rax\n");
   // 125, not 137: 137 is 128+9, what a shell reports for SIGKILL, so an arena
   // trap could not be told apart from the kernel OOM-killer. Opposite causes,
   // opposite fixes. Lockstep with the native backends' ExitArenaExhausted.
-  s = s.write("    movq $125, %rdi\n");
-  s = s.syscall(60);
-  // __fern_oob_abort — shared out-of-bounds trap for arr_get / arr_set.
-  // Aborts with exit 134, matching the native backends + docs/ARRAY-BOUNDS.md
-  // ("an out-of-bounds index aborts before producing a value; never returns a
-  // garbage value"). A single shared routine keeps the per-access check to a
-  // compare + a jae to here, with no per-site label churn.
-  s = s.write("__fern_oob_abort:\n");
-  s = s.write("    movq $60, %rax\n");
-  s = s.write("    movq $134, %rdi\n");
-  s = s.syscall(60);
-  // __fern_alloc_size_abort — a raw_alloc or __alloc_u8 size that is negative
-  // as an i32, which is how a helper's `la + lb` looks once it wraps past 2 GiB. The
-  // message and exit 134 match the native backends' allocation-size abort.
-  s = s.write("    .section .rodata\n");
-  s = s.write(".Lalloc_size_msg:\n    .ascii \"fern: allocation size out of range\\n\"\n");
-  s = s.write("    .section .text\n");
-  s = s.write("__fern_alloc_size_abort:\n");
-  s = s.write("    movq $1, %rax\n");
-  s = s.write("    movq $2, %rdi\n");
-  s = s.write("    leaq .Lalloc_size_msg(%rip), %rsi\n");
-  s = s.write("    movq $35, %rdx\n");
-  s = s.syscall(1);
-  s = s.write("    movq $60, %rax\n");
-  s = s.write("    movq $134, %rdi\n");
-  s = s.syscall(60);
+  s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", asmcore.msg_oom(), 125);
+  // The fatal aborts (#5538, #11405): each trap names its cause and
+  // tail-jumps to __fern_report, so a per-access check stays a compare + a
+  // jae to a shared label. __fern_oob_abort is arr_get / arr_set,
+  // __fern_str_oob_abort the inline str_slice view, __fern_slice_abort the
+  // __fern_arr_slice bodies' range check, __fern_alloc_size_abort a
+  // raw_alloc or __alloc_u8 size that is negative as an i32, which is how a
+  // helper's `la + lb` looks once it wraps past 2 GiB. Texts and statuses
+  // match the native backends'.
+  s = abort_trap(s, "__fern_oob_abort", ".Lmsg_arr_oob", asmcore.msg_arr_oob(), 134);
+  // A leaf with no frame (ssa_needs_frame) traps with %rbp still its caller's
+  // frame and its own return address at 8 * n(%rsp), above the n callee-saved
+  // registers it pushed, so the walk would start a frame too far out and lose
+  // the caller. Its trap goes through the stub for its n, which builds the
+  // frame the leaf did not: the return address copied under a fresh %rbp link.
+  let n: i32 = 0;
+  while (n <= ssa_nsaved()) {
+    s = s.write(oob_leaf_trap(n) + ":\n");
+    s = s.write("    pushq " + util.i32_to_string(8 * n) + "(%rsp)\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    jmp __fern_oob_abort\n");
+    n = n + 1;
+  }
+  s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", asmcore.msg_str_oob(), 134);
+  s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", asmcore.msg_slice_range(), 134);
+  s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", asmcore.msg_alloc_size(), 134);
   // __fern_arr_box(%rdi = cap element count) -> %rax = data ptr (base+16).
   // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
   s = s.write("__fern_arr_box:\n");
@@ -8700,7 +8736,7 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
   s = ssa_load(reg_of, ins.args[0], "%rdx", s);
   s = ssa_load(reg_of, ins.args[1], "%rcx", s);
   s = ssa_load(reg_of, ins.args[2], "%rax", s);
-  s = s.write("    cmpq 8(%rdx), %rax\n    ja __fern_oob_abort\n    cmpq %rax, %rcx\n    ja __fern_oob_abort\n");
+  s = s.write("    cmpq 8(%rdx), %rax\n    ja __fern_str_oob_abort\n    cmpq %rax, %rcx\n    ja __fern_str_oob_abort\n");
   s = s.write("    subq %rcx, %rax\n    addq (%rdx), %rcx\n");
   if (ins.imm == 1) {
     s = s.write("    leaq " + util.i32_to_string(base_off) + "(%rbp), %rdx\n");
@@ -9476,7 +9512,8 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
       s = s.write(ssa_replace_all(text, ssa_epilogue_mark(), ssa_epilogue_for(saved)));
     } else {
       s = ssa_leaf_save(s, saved);
-      s = s.write(ssa_replace_all(text, ssa_epilogue_mark(), ssa_leaf_epilogue(saved)));
+      let leaf_text: string = ssa_replace_all(text, " __fern_oob_abort\n", " __fern_oob_abort.l" + util.i32_to_string(saved.len()) + "\n");
+      s = s.write(ssa_replace_all(leaf_text, ssa_epilogue_mark(), ssa_leaf_epilogue(saved)));
     }
   }
   s = asmcore.EmitState { ...s, ssa_save: 0 };
@@ -10745,7 +10782,7 @@ function emit_ir_op_map_keys(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState 
 // SSA backend's. A call_direct does not imply a need, so without these a
 // call site is emitted against a body the runtime never writes.
 function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (name == "__fern_oob_abort") {
+  if (name == "__fern_oob_abort" || name == "__fern_slice_abort") {
     s = s.need("heap");
   }
   if (name == "__fern_i32_to_string") {
@@ -11821,11 +11858,11 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub, recs:
     return "";
   }
   // Every function eligible — emit from the cache (no second lowering).
-  return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower, recs);
+  return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower, recs, sub.backtrace);
 }
 
 // `rt` lowers the runtime helpers this unit appends (asmcore.EmitState.rt_lower).
-pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], b: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[], recs: usize): string {
+pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], b: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[], recs: usize, backtrace: boolean): string {
   // Infer return types for unannotated functions so the IR path's
   // ret-type-keyed call tagging matches what module_with_builtins supplies.
   // (#4394 lever 3: `cache`, when non-empty, is the caller's pre-lowered
@@ -11837,7 +11874,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   let s: asmcore.EmitState = asmcore.new_state();
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
   // layout resolves and a `dyn` dispatch has an arm for every impl (#10891).
-  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs }, all_funcs);
+  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs, backtrace: backtrace }, all_funcs);
   // A unit never passes emit_module_or_error_sub's check, so the Display gate
   // runs here: a `print(xs)` nothing gives a `to_string` would otherwise hand
   // the string-only runtime helper a raw pointer (#9945).
@@ -11862,6 +11899,12 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // library modules can link their `call __fern_*` externs against them.
   if (is_entry && globl_defs) {
     s = asmcore.emit_runtime_globls(s);
+    // The frameless leaves' bounds traps, x86-64's alone.
+    let n: i32 = 0;
+    while (n <= ssa_nsaved()) {
+      s = s.write(".globl " + oob_leaf_trap(n) + "\n");
+      n = n + 1;
+    }
   }
   // The side-table bases arrive as INDIVIDUAL params (b_*), threaded straight to
   // emit_module_funcs. The strfldok need seeding below recomputes its column
@@ -12174,6 +12217,14 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_hev_runtime(s);
   }
+  // The abort reporter (#11405): with the heap runtime, whose traps jump to
+  // it, and under either sanitizer flag, whose reports end in its walk even
+  // when the program allocates nothing. A build that has neither carries no
+  // reporter.
+  if (needs_heap_runtime(s) || s.rc_free_debug || asmcore.sanitize_on()) {
+    s = s.write("    .text\n");
+    s = emit_report(s);
+  }
   // The UAF quarantine's fatal report. Self-contained — its own write(2) +
   // exit(124) rather than the hev writer — so FERN_RC_FREE_DEBUG works
   // standalone, without leakcheck. Entry-only, like the hev block above.
@@ -12275,7 +12326,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("arr_slice_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice_u8("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice_u8(), s);
   }
   if (s.has_need("random_bytes_u8")) {
     s = s.write("    .text\n");
@@ -12305,7 +12356,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // per-target (asmcore.sysno picks 60 here).
   if (s.has_need("arr_slice")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice(), s);
   }
   // str_split — now a Fern runtime function (#2649), lowered through the IR
   // pipeline: scan for `sep`, append each segment slice (.append() ->
