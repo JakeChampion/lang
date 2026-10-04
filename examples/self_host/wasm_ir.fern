@@ -2352,13 +2352,10 @@ pub function wasm_ir_deferrals_ok(cache: irtables.LowerResult[]): boolean {
   // *_w64 helpers). The cell stores raw 8 bytes, so f64 uses the same helpers
   // as i64/u64 with an f64<->i64 reinterpret at the scalar sites. No exclusion
   // here — the former module_has_wide_map_val_cached gate is retired.
-  // poll has no wasm IR runtime: real readiness on wasm needs the
-  // component-model wasi:io/poll multiplexer (list<pollable>), which the
-  // self-host wasm backend doesn't wire (it is bare core-wasm + WASI
-  // preview1). x86-64 (poll(2)) and arm64 (ppoll(2)) lower it via the IR;
-  // a poll module is refused on wasm. (sleep_ms and sleep_ns, by
-  // contrast, need only a single-clock poll_oneoff and DO lower on the wasm
-  // IR path — see $__fern_sleep_ms / $__fern_sleep_ns.)
+  // poll lowers on the wasm IR path too: $__fern_poll waits on the tokens'
+  // pollables through wasi:io/poll (wasm_poll_func), and sleep_ms / sleep_ns
+  // block on one timer ($__fern_sleep_ms / $__fern_sleep_ns). No exclusion
+  // here.
   // timer_fd is NOT deferred — it is an error endpoint on
   // wasm, rejected before emit by wasm_unsupported_builtin (#4317). It is
   // the native fd-based timerfd, and wasm has no pollable file descriptors;
@@ -2434,8 +2431,7 @@ pub function wasm_ir_deferrals_ok(cache: irtables.LowerResult[]): boolean {
 // functions the IR already calls, or the shims define the preview1 imports
 // their bodies call, so each costs only the import plus the body swap. A core
 // that needs more than a fixed framing wires composes against the fern world
-// (component_framable). The ops still outside are the ones with no preview2
-// body at all — sleep and the poll family.
+// (component_framable).
 //
 // The check is an ALLOWLIST over op-needs and so fails closed: a need added to
 // needs_of later is rejected here until it is listed, rather than silently
@@ -2506,9 +2502,11 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
       i = i + 1;
       continue;
     }
-    // The sockets' bodies are preview-2 on every framing, and poll waits on
-    // their wasi:io/poll pollables and drops them.
-    if (io && (util.has_str(socket_builtins(), n) || n == "poll" || n == "wasm_pollable_drop")) {
+    // The sockets' bodies are preview-2 on every framing, and so are the
+    // timer and pollable ops': poll waits on wasi:io/poll pollables and drops
+    // them, the reactor holds them, and a component's sleep is one timer
+    // pollable held to completion (sleep_body_p2).
+    if (io && (util.has_str(socket_builtins(), n) || util.has_str(wait_builtins(), n))) {
       i = i + 1;
       continue;
     }
@@ -9208,10 +9206,11 @@ pub function map_iter_helpers(): string {
 // poll_oneoff blocks for the timeout. The four constant fields are stored on every
 // call rather than relying on the block's zero-init, so the fill reads as the
 // whole subscription it is.
-pub function sleep_ms_func(): string {
+pub function sleep_ms_func(p2: boolean): string {
   return sleep_body(
     "$__fern_sleep_ms", "ms",
     "(i64.mul (local.get $ms) (i64.const 1000000))",
+    p2,
   );
 }
 
@@ -9221,14 +9220,28 @@ pub function sleep_ms_func(): string {
 // i64.mul, because poll_oneoff already measures that field in nanoseconds. So
 // where the register backends round a sub-microsecond remainder up on Darwin,
 // wasm honours the request exactly. ns <= 0 returns immediately.
-pub function sleep_ns_func(): string {
-  return sleep_body("$__fern_sleep_ns", "ns", "(local.get $ns)");
+pub function sleep_ns_func(p2: boolean): string {
+  return sleep_body("$__fern_sleep_ns", "ns", "(local.get $ns)", p2);
 }
 
 // sleep_body is the shape both sleeps share: guard the count, fill the static
 // subscription, block. `timeout` is the wat for the @24 field in NANOSECONDS,
-// the one place the two differ.
-function sleep_body(name: string, param: string, timeout: string): string {
+// the one place the two differ. A component core (`p2`) has no poll_oneoff,
+// but it has the reactor's own primitives, and a sleep is one of them held
+// to completion: subscribe-duration mints a timer pollable, block waits on
+// it, and the drop returns the handle, without which a program sleeping in a
+// loop grows the host's resource table until it runs out of keys.
+function sleep_body(name: string, param: string, timeout: string, p2: boolean): string {
+  if (p2) {
+    let o2: string = "  (func " + name + " (param $" + param + " i64) (result i32)\n";
+    o2 = o2 + "    (local $p i32)\n";
+    o2 = o2 + "    (if (i64.gt_s (local.get $" + param + ") (i64.const 0)) (then\n";
+    o2 = o2 + "      (local.set $p (call $__fern_wasi_subscribe_duration " + timeout + "))\n";
+    o2 = o2 + "      (call $__fern_wasi_pollable_block (local.get $p))\n";
+    o2 = o2 + "      (call $__fern_wasi_pollable_drop (local.get $p))))\n";
+    o2 = o2 + "    (i32.const 0))\n";
+    return o2;
+  }
   let a: i32 = sleep_scratch_addr();
   let at: string = util.i32_to_string(a);
   let o: string = "  (func " + name + " (param $" + param + " i64) (result i32)\n";
@@ -13635,25 +13648,16 @@ function preview1_imports(needs: string[]): string {
   if (need(needs, "sleep_ms") || need(needs, "sleep_ns")) {
     parts = parts.append(sleep_ms_import());
   }
-  parts = parts.append(preview2_wasi_imports(needs));
+  parts = parts.append(preview2_wasi_imports(needs, false));
   return util.str_join_chunks(parts);
 }
 
 // preview2_wasi_imports are the preview-2 imports the timer-pollable, socket
 // and poll builtins call directly, on the preview-1 command core and the
-// component core alike.
-function preview2_wasi_imports(needs: string[]): string {
+// component core alike. `sleep_p2` is the component core, whose sleeps block
+// on a timer pollable rather than on preview 1's poll_oneoff.
+function preview2_wasi_imports(needs: string[], sleep_p2: boolean): string {
   let parts: string[] = [];
-  // Timer-pollable ops (#4317).
-  if (need(needs, "wasm_timer_pollable")) {
-    parts = parts.append(wasi_subscribe_duration_import());
-  }
-  if (need(needs, "wasm_pollable_drop")) {
-    parts = parts.append(wasi_pollable_drop_import());
-  }
-  if (need(needs, "wasm_block")) {
-    parts = parts.append(wasi_pollable_block_import());
-  }
   // tcp_connect / tcp_close (#4318): the wasi:sockets + stream-drop imports.
   // connect also BLOCKS on the socket's pollable to wait for the connection
   // to establish, so it needs pollable.block / [resource-drop]pollable — but
@@ -13726,39 +13730,23 @@ function preview2_wasi_imports(needs: string[]): string {
   if (need(needs, "udp_recvfrom") || need(needs, "reactor_ctl") || need(needs, "tcp_pollable") && need_udp_socket(needs)) {
     parts = parts.append(wasi_udp_in_subscribe_import());
   }
+  // The pollable primitives each op below calls: the timer, its block, its
+  // drop and the list-typed poll. A duplicate import is an invalid module, so
+  // each is emitted once, for every op that names it.
   let udp_waits: boolean = need_udp_send(needs) || need(needs, "udp_recvfrom");
-  if (udp_waits && !need(needs, "wasm_block") && !need_tcp_connect(needs) && !need(needs, "tcp_accept")) {
-    parts = parts.append(wasi_pollable_block_import());
-  }
-  if (udp_waits && !need(needs, "wasm_pollable_drop") && !need_tcp_connect(needs) && !need(needs, "tcp_accept") && !need(needs, "poll")) {
-    parts = parts.append(wasi_pollable_drop_import());
-  }
-  // The reactor drops the pollables it held and its wait's timer; the
-  // drop comes with it only when no op above has imported it.
-  if (need_any(needs, ["reactor_ctl", "reactor_wait"]) && !udp_waits && !need(needs, "wasm_pollable_drop") && !need_tcp_connect(needs) && !need(needs, "tcp_accept") && !need(needs, "poll")) {
-    parts = parts.append(wasi_pollable_drop_import());
-  }
-  if ((need_tcp_connect(needs) || need(needs, "tcp_accept")) && !need(needs, "wasm_block")) {
-    parts = parts.append(wasi_pollable_block_import());
-  }
-  if ((need_tcp_connect(needs) || need(needs, "tcp_accept")) && !need(needs, "wasm_pollable_drop")) {
-    parts = parts.append(wasi_pollable_drop_import());
-  }
-  // wasm_poll: the LIST-typed wasi:io/poll.poll multiplexer (#4316). Its
-  // helper is heap-backed (it allocates the 8-byte canonical return area), so
-  // the heap gate below folds it in.
-  if (need_any(needs, ["wasm_poll", "poll", "reactor_wait"])) {
-    parts = parts.append(wasi_poll_import());
-  }
-  // poll(fds, timeout) expresses its timeout as a monotonic-clock timer
-  // added to the polled set, so it needs subscribe-duration + the pollable
-  // drop — each only when the module has not already imported it for the
-  // op that owns it, since a duplicate import is invalid.
-  if (need_any(needs, ["poll", "reactor_wait"]) && !need(needs, "wasm_timer_pollable")) {
+  let connects: boolean = need_tcp_connect(needs) || need(needs, "tcp_accept");
+  let sleeps: boolean = sleep_p2 && need_any(needs, ["sleep_ms", "sleep_ns"]);
+  if (need_any(needs, ["wasm_timer_pollable", "poll", "reactor_wait"]) || sleeps) {
     parts = parts.append(wasi_subscribe_duration_import());
   }
-  if (need(needs, "poll") && !need(needs, "wasm_pollable_drop") && !need_tcp_connect(needs) && !need(needs, "tcp_accept")) {
+  if (need(needs, "wasm_block") || udp_waits || connects || sleeps) {
+    parts = parts.append(wasi_pollable_block_import());
+  }
+  if (need_any(needs, ["wasm_pollable_drop", "reactor_ctl", "reactor_wait", "poll"]) || udp_waits || connects || sleeps) {
     parts = parts.append(wasi_pollable_drop_import());
+  }
+  if (need_any(needs, ["wasm_poll", "poll", "reactor_wait"])) {
+    parts = parts.append(wasi_poll_import());
   }
   return util.str_join_chunks(parts);
 }
@@ -13917,7 +13905,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (mode == 2) {
     parts = parts.append(component_io_imports(needs, component_uses_stderr(mod, needs), module_is_proxy(mod)));
-    parts = parts.append(preview2_wasi_imports(needs));
+    parts = parts.append(preview2_wasi_imports(needs, true));
   }
   // WIT `@import` externs. Emitted for EVERY mode: an extern is a declaration
   // in the source, not a property of the framing, and a module that calls one
@@ -14250,14 +14238,15 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "temp_dir")) {
     parts = parts.append(temp_dir_func());
   }
-  // $__fern_sleep_ms(ms): block via poll_oneoff over the static sleep scratch.
-  // Allocation-free, so it does NOT pull in the heap runtime (#9480).
+  // $__fern_sleep_ms(ms): block via poll_oneoff over the static sleep scratch,
+  // or on a timer pollable in a component. Allocation-free, so it does NOT
+  // pull in the heap runtime (#9480).
   if (need(needs, "sleep_ms")) {
-    parts = parts.append(sleep_ms_func());
+    parts = parts.append(sleep_ms_func(mode == 2));
   }
   // $__fern_sleep_ns(ns): the same block, timed in the subscription's own unit.
   if (need(needs, "sleep_ns")) {
-    parts = parts.append(sleep_ns_func());
+    parts = parts.append(sleep_ns_func(mode == 2));
   }
   // wasm_poll returns a list<u32>, which the canonical ABI materialises in
   // GUEST memory via the exported cabi_realloc — without it `component new`
@@ -18131,7 +18120,7 @@ function called_names(mod: parser.Module): Map[string, boolean] {
 //   17 stderr + exit (including assertion failures)
 // HostNeeds is what a program asks of its WASI host, one flag per category
 // the component framings distinguish.
-struct HostNeeds { io: boolean, rd: boolean, wr: boolean, env: boolean, args: boolean, rnd: boolean, clkw: boolean, clkm: boolean, ep: boolean, ex: boolean, net: boolean, fs: boolean }
+struct HostNeeds { io: boolean, rd: boolean, wr: boolean, env: boolean, args: boolean, rnd: boolean, clkw: boolean, clkm: boolean, ep: boolean, ex: boolean, net: boolean, fs: boolean, wait: boolean }
 
 function host_needs(mod: parser.Module): HostNeeds {
   let calls: Map[string, boolean] = called_names(mod);
@@ -18153,6 +18142,7 @@ function host_needs(mod: parser.Module): HostNeeds {
     ex: calls.has("exit"),
     net: calls_any(calls, socket_builtins()),
     fs: calls_any(calls, fs_builtins()),
+    wait: calls_any(calls, wait_builtins()),
   };
 }
 
@@ -18181,8 +18171,19 @@ function fs_builtins(): string[] {
 function socket_builtins(): string[] {
   return [
     "tcp_accept", "tcp_close", "tcp_connect", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
-    "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_recv_into", "tcp_send", "tcp_sendfile", "tcp_socket_ctl",
-    "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_sendto",
+    "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_recv_into", "tcp_send", "tcp_send_bytes", "tcp_sendfile", "tcp_socket_ctl",
+    "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes",
+  ];
+}
+
+// wait_builtins are the timer and pollable builtins: the sleeps, poll over
+// pollables, the reactor and the raw timer-pollable ops. Their bodies import
+// wasi:clocks/monotonic-clock and wasi:io/poll, which no fixed component
+// shape wires, so a program reaching one composes against the fern world.
+function wait_builtins(): string[] {
+  return [
+    "sleep_ms", "sleep_ns", "poll", "wasm_poll", "wasm_timer_pollable", "wasm_block", "wasm_pollable_drop",
+    "reactor_new", "reactor_ctl", "reactor_wait",
   ];
 }
 
@@ -18191,7 +18192,7 @@ function socket_builtins(): string[] {
 // program's own externs.
 pub function component_needs_host(mod: parser.Module): boolean {
   let n: HostNeeds = host_needs(mod);
-  return n.io || n.rd || n.wr || n.env || n.args || n.rnd || n.clkw || n.clkm || n.ep || n.ex || n.net || n.fs;
+  return n.io || n.rd || n.wr || n.env || n.args || n.rnd || n.clkw || n.clkm || n.ep || n.ex || n.net || n.fs || n.wait;
 }
 
 pub function component_shape(mod: parser.Module): i32 {
@@ -18206,7 +18207,7 @@ pub function component_shape(mod: parser.Module): i32 {
   let clkm: boolean = n.clkm;
   let ep: boolean = n.ep;
   let ex: boolean = n.ex;
-  if (n.net || n.fs) {
+  if (n.net || n.fs || n.wait) {
     return 0 - 1;
   }
   // Count distinct non-stdout WASI categories. Single-category programs and
