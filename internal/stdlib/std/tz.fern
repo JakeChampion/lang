@@ -44,6 +44,7 @@
 import "std/string";
 import "std/array";
 import "std/time";
+import "std/utf8";
 
 // ---- the zone ---------------------------------------------------------------
 // `Zone` — a transition table plus the rule that takes over past its
@@ -378,6 +379,8 @@ function read_zone_file(path: string): Option[Zone] {
   }
 }
 
+// Binary TZif data is accepted only when every returned designation and
+// the POSIX footer are valid UTF-8. Invalid text makes the file unusable.
 pub function parse_tzif(bs: u8[]): Option[Zone] {
   let h1: Counts = read_counts(bs, 0);
   if (h1.isut < 0 || h1.type_ < 1) {
@@ -401,7 +404,14 @@ pub function parse_tzif(bs: u8[]): Option[Zone] {
         width = 8;
         let end: i64 = off as i64 + block_bytes(h2, 8);
         if (end <= bs.len() as i64) {
-          footer = read_footer(bs, end as i32);
+          match (read_footer(bs, end as i32)) {
+            Some(text) => {
+              footer = text;
+            },
+            None => {
+              return None;
+            }
+          }
         }
       }
     }
@@ -409,6 +419,12 @@ pub function parse_tzif(bs: u8[]): Option[Zone] {
   if (off as i64 + block_bytes(c, width) > bs.len() as i64) {
     return None;
   }
+  return read_zone_block(bs, c, off, width, footer);
+}
+
+// The caller has checked the complete block's bounds and selected the
+// authoritative table width. Decode its types and transitions together.
+function read_zone_block(bs: u8[], c: Counts, off: i32, width: i32, footer: string): Option[Zone] {
   // The transition times, then the index into the type table that each
   // one selects, then the types themselves.
   let idx_off: i32 = off + c.time * width;
@@ -421,7 +437,14 @@ pub function parse_tzif(bs: u8[]): Option[Zone] {
   while (i < c.type_) {
     offs = offs.append(be32s(bs, type_off + i * 6) as i32);
     isdst = isdst.append(bs[type_off + i * 6 + 4] as i32 != 0);
-    names = names.append(designation(bs, chars_off, c.chars, bs[type_off + i * 6 + 5] as i32));
+    match (designation(bs, chars_off, c.chars, bs[type_off + i * 6 + 5] as i32)) {
+      Some(name) => {
+        names = names.append(name);
+      },
+      None => {
+        return None;
+      }
+    }
     i = i + 1;
   }
   let times: i64[] = [];
@@ -465,9 +488,9 @@ pub function parse_tzif(bs: u8[]): Option[Zone] {
 
 // One entry of the designation table: the NUL-terminated string at
 // `at` bytes into the block of `len` that starts at `base`.
-function designation(bs: u8[], base: i32, len: i32, at: i32): string {
+function designation(bs: u8[], base: i32, len: i32, at: i32): Option[string] {
   if (at < 0 || at >= len) {
-    return "";
+    return Some("");
   }
   let out: u8[] = [];
   let i: i32 = base + at;
@@ -476,15 +499,15 @@ function designation(bs: u8[], base: i32, len: i32, at: i32): string {
     out = out.append(bs[i]);
     i = i + 1;
   }
-  return string_from_bytes_unchecked(out);
+  return utf8.from_bytes(out);
 }
 
 // The footer of a version-2 file: a newline, the rule, a newline. An
 // empty rule (the two newlines with nothing between) means the file
 // says nothing about times past its table.
-function read_footer(bs: u8[], start: i32): string {
+function read_footer(bs: u8[], start: i32): Option[string] {
   if (start >= bs.len() || bs[start] as i32 != 10) {
-    return "";
+    return Some("");
   }
   let i: i32 = start + 1;
   let out: u8[] = [];
@@ -492,7 +515,7 @@ function read_footer(bs: u8[], start: i32): string {
     out = out.append(bs[i]);
     i = i + 1;
   }
-  return string_from_bytes_unchecked(out);
+  return utf8.from_bytes(out);
 }
 
 // ---- the POSIX TZ string ----------------------------------------------------

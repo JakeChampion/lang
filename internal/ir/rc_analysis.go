@@ -1482,8 +1482,11 @@ var copyingBuiltinArgs = map[string][]int{
 	"buf_push":                         {1},
 	"buf_push_range":                   {1},
 	"buf_push_bytes_range":             {1},
+	"buf_push_bytes_mapped":            {1, 2},
 	"buf_push_mapped":                  {1, 2},
+	"buf_push_bytes_filtered":          {1, 2},
 	"buf_push_filtered":                {1, 2},
+	"buf_push_bytes_expanded":          {1, 2},
 	"buf_push_expanded":                {1, 2},
 	"print":                            {0},
 	"write":                            {0},
@@ -1495,6 +1498,8 @@ var copyingBuiltinArgs = map[string][]int{
 	"string_from_bytes_unchecked":      {0},
 	"__memchr":                         {0},
 	"__count_byte_bytes":               {0},
+	"__sum_bytes_array":                {0},
+	"__bsd_sum_bytes":                  {0},
 	"__memchr_bytes":                   {0},
 	"__rmemchr_bytes":                  {0},
 	"__rmemchr":                        {0},
@@ -1506,10 +1511,13 @@ var copyingBuiltinArgs = map[string][]int{
 	"__scale_f64": {0},
 	// The string is the SECOND operand of __crc32_cksum; the first is the
 	// carried CRC word, which owns nothing.
-	"__crc32_cksum": {1},
-	"__mismatch":    {0, 2},
+	"__crc32_cksum":       {1},
+	"__crc32_cksum_array": {1},
+	"__mismatch":          {0, 2},
+	"__mismatch_bytes":    {0, 2},
 	// __scan_set and __count_runs read their string and their set and
 	// return a scalar.
+	"__count_runs_bytes":  {0, 2},
 	"__scan_set":          {0, 2},
 	"__scan_set_bytes":    {0, 2},
 	"__count_runs":        {0, 2},
@@ -1533,6 +1541,8 @@ var copyingBuiltinArgs = map[string][]int{
 	"udp_connect":      {1},
 	"tcp_listen_with":  {0},
 	"tcp_connect_with": {0},
+
+	"string_from_bytes_range_unchecked": {0},
 }
 
 func copyingBuiltinArg(name string, i int) bool {
@@ -3977,7 +3987,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// as __alloc_u8 above: every argument is a scalar (byte
 				// count, fd), so the result cannot alias one.
 				return false
-			case "slice_unchecked", "string_from_bytes_unchecked":
+			case "slice_unchecked", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked":
 				// Copies bytes OUT of its source into a fresh owned
 				// buffer (the __str_slice contract, and copyingBuiltinArgs'
 				// note on string_from_bytes_unchecked), so the source's

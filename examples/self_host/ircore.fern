@@ -782,8 +782,9 @@ pub function all_runtime_need_roots(): string[] {
     // Filesystem + process:
     "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
     "write_file_bytes", "write_file_bytes_u8",
+    "getxattr_bytes_u8", "lgetxattr_bytes_u8", "setxattr_bytes_u8", "lsetxattr_bytes_u8",
     "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
-    "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr",
+    "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "lgetxattr", "lgetxattr_bytes", "setxattr", "setxattr_bytes", "lsetxattr", "lsetxattr_bytes",
     "chmod", "chmod_at", "set_file_times", "truncate", "mknod", "chown_at",
     "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "fd_dup_onto",
     "termios_get", "termios_set",
@@ -792,8 +793,9 @@ pub function all_runtime_need_roots(): string[] {
     "writer_write", "write_some", "writer_truncate", "subprocess", "crc32_cksum", "sum_bytes",
     // The packed-byte twins a typed program's u8[] calls (asmcore.packed_suffix).
     "alloc_bytes", "arr_push_u8", "buf_u8", "buf_take_bytes", "buf_take_bytes_u8", "str_bytes_u8", "str_from_bytes_u8", "arr_slice_u8",
+    "str_from_bytes_range", "str_from_bytes_range_u8",
     "buf_push_bytes_range", "buf_push_bytes_range_u8",
-    "random_bytes_u8", "read_file_bytes_u8", "tcp_recv_u8", "tcp_recv_into_u8", "tcp_listen_with_u8",
+    "buf_bytes", "buf_bytes_u8", "random_bytes_u8", "read_file_bytes_u8", "tcp_recv_u8", "tcp_recv_into_u8", "tcp_listen_with_u8",
     "udp_bind_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
     // argv / the host's name / the process's own identity:
     "hostname", "environ",
@@ -1240,7 +1242,7 @@ pub function unit_cache_key(parts: flatten.PerModule[], u: Units, k: UnitKeys, i
   // operations. Old native slice bodies create immortal descriptors; they
   // must not be reused with callers that depend on counted view descriptors.
   // Literal alignment also changes the relative offsets in cached wasm units.
-  return key + "|ir" + lowered_digest(u.caches[idx]) + ":" + k.view + "|runtime=counted-string-views-1,wasm-string-align4-1,tagged-byte-views-1,writer-byte-views-1";
+  return key + "|ir" + lowered_digest(u.caches[idx]) + ":" + k.view + "|runtime=counted-string-views-1,wasm-string-align4-1,tagged-byte-views-1,writer-byte-views-1,byte-consumer-ops-379-3,xattr-bytes-377-1";
 }
 
 // struct_table_text spells every struct decl in table order, with each part
@@ -1351,7 +1353,7 @@ function digest_flags(x: boolean, y: boolean): i32 {
 // A candidate is a declaration of at most inline_leaf_ops() ops besides its
 // local loads and stores (the typed lowering routes every value through a
 // slot, which the SSA lift takes back out, so they are not what a body costs)
-// that is not @noinline, calls nothing — a retain or release is a runtime
+// and its `-g` line marks, that is not @noinline, calls nothing — a retain or release is a runtime
 // helper call here, which a splice would keep and grow the site around — and
 // names no function, and touches its frame only through load/store/tee_local. A caller
 // claiming fip or fbip is left alone, since its claim is verified against its
@@ -1474,10 +1476,11 @@ function inline_leaf(fd: parser.FuncDecl, r: irtables.LowerResult): boolean {
   let k_callc: i32 = ir.kind_id("call_closure_direct");
   let k_const_func: i32 = ir.kind_id("const_func");
   let k_dyn: i32 = ir.kind_id("dyn_dispatch");
+  let k_line: i32 = ir.kind_id("line");
   let work: i32 = 0;
   for o in r.ops {
     let k: i32 = o.kind_tag;
-    if (k != k_load && k != k_store && k != k_tee) {
+    if (k != k_load && k != k_store && k != k_tee && k != k_line) {
       work = work + 1;
     }
     if (work > inline_leaf_ops()) {

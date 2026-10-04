@@ -31,11 +31,34 @@
 // on stderr, so the parse can keep one, line for line.
 import "std/string";
 import "std/array";
+import "std/utf8";
 import "std/tz";
 
 // `hint` is the offset the parse settled on, the next parse's first
 // guess; `dbg` is the `--debug` commentary, empty unless asked for.
 pub struct Result { ok: boolean, sec: i64, nsec: i64, hint: i64, dbg: string }
+
+// The ordinary trace is valid text. A failed raw parse can additionally
+// report the untouched input tail, which may begin inside a UTF-8 scalar.
+pub struct ByteResult { result: Result, tail: u8[] }
+
+function byte_result(r: Result): ByteResult {
+  return ByteResult { result: r, tail: [] };
+}
+
+function failed_tail(bytes: [u8], start: i32): u8[] {
+  let b: usize = buf_new(bytes.len() - start + 48);
+  buf_push(b, "date: error: parsing failed, stopped at '");
+  let i: i32 = start;
+  while (i < bytes.len()) {
+    buf_push_byte(b, bytes[i] as i32);
+    i = i + 1;
+  }
+  buf_push(b, "'\n");
+  let out: u8[] = buf_take_bytes(b);
+  buf_free(b);
+  return out;
+}
 
 // ---- tokens -----------------------------------------------------------------
 function t_eof(): i32 {
@@ -739,7 +762,7 @@ function lookup_word(w: string, lt: LocalTable): (Tok, string) {
 // ---- the lexer --------------------------------------------------------------
 // `upper(s, start, end)` — the bytes of `s` from `start` to `end`,
 // uppercased, as one string.
-function upper(s: string, start: i32, end: i32): string {
+function upper(s: [u8], start: i32, end: i32): string {
   let h: usize = buf_new(end - start);
   let i: i32 = start;
   while (i < end) {
@@ -750,7 +773,9 @@ function upper(s: string, start: i32, end: i32): string {
     buf_push_byte(h, c);
     i = i + 1;
   }
-  return buf_take(h);
+  let text: string = buf_take(h);
+  buf_free(h);
+  return text;
 }
 
 function with_end(t: Tok, end: i32): Tok {
@@ -762,7 +787,7 @@ function with_end(t: Tok, end: i32): Tok {
 // know, whose spelling comes back beside the list. A `(` opens a
 // comment that runs to its matching `)`; one that never closes
 // swallows the rest of the string silently.
-function lex(s: string, lt: LocalTable): (Tok[], string) {
+function lex(s: [u8], lt: LocalTable): (Tok[], string) {
   let out: Tok[] = [];
   let i: i32 = 0;
   let n: i32 = s.len();
@@ -2209,9 +2234,9 @@ function dst_flag(b: boolean): i32 {
 // of the string, when the quote closes and every backslash escapes a
 // backslash or a quote. Anything else leaves the string as it stands,
 // to fail in the lexer as it does in the original.
-function tz_prefix(s: string): (boolean, string, string) {
+function tz_prefix(s: [u8]): (boolean, string, i32, boolean) {
   if (!(s.len() >= 4 && s[0] as i32 == 84 && s[1] as i32 == 90 && s[2] as i32 == 61 && s[3] as i32 == 34)) {
-    return (false, "", s);
+    return (false, "", 0, true);
   }
   let name: u8[] = [];
   let i: i32 = 4;
@@ -2220,25 +2245,32 @@ function tz_prefix(s: string): (boolean, string, string) {
     if (c == 92) {
       i = i + 1;
       if (i >= s.len() || !(s[i] as i32 == 92 || s[i] as i32 == 34)) {
-        return (false, "", s);
+        return (false, "", 0, true);
       }
       name = name.append(s[i]);
     } else if (c == 34) {
-      return (true, string_from_bytes_unchecked(name), slice_unchecked(s, i + 1, s.len()) + "");
+      match (utf8.from_bytes(name)) {
+        Some(text) => {
+          return (true, text, i + 1, true);
+        },
+        None => {
+          return (false, "", 0, false);
+        }
+      }
     } else {
       name = name.append(s[i]);
     }
     i = i + 1;
   }
-  return (false, "", s);
+  return (false, "", 0, true);
 }
 
-function trim_left(s: string): string {
+function trim_left(s: [u8]): i32 {
   let i: i32 = 0;
   while (i < s.len() && is_space(s[i] as i32)) {
     i = i + 1;
   }
-  return slice_unchecked(s, i, s.len()) + "";
+  return i;
 }
 
 // `parse(text, now_sec, now_nsec, hint)` — the instant `text` names
@@ -2254,21 +2286,42 @@ pub function parse(text: string, now_sec: i64, now_nsec: i64, hint: i64): Result
 // TZ=UTC0), the TZ value the trace names, and the trace itself when
 // `debug` is set.
 pub function parse_full(text: string, z: tz.Zone, tzstring: string, has_tz: boolean, now_sec: i64, now_nsec: i64, hint: i64, debug: boolean): Result {
+  let raw: ByteResult = parse_full_bytes(text.as_bytes(), z, tzstring, has_tz, now_sec, now_nsec, hint, debug);
+  if (raw.tail.len() == 0) {
+    return raw.result;
+  }
+  // The text API cannot expose a diagnostic tail split inside a scalar.
+  return Result { ...raw.result, dbg: raw.result.dbg + utf8.from_bytes_lossy(raw.tail) };
+}
+
+// Parse raw records without manufacturing strings from input fragments.
+pub function parse_full_bytes(text: [u8], z: tz.Zone, tzstring: string, has_tz: boolean, now_sec: i64, now_nsec: i64, hint: i64, debug: boolean): ByteResult {
   let zone: tz.Zone = z;
-  let s: string = trim_left(text);
+  let start: i32 = trim_left(text);
+  let s: [u8] = text[start:];
   let tzs: string = tzstring;
   let has: boolean = has_tz;
   let prefixed: boolean = false;
-  let pre: (boolean, string, string) = tz_prefix(s);
+  let pre: (boolean, string, i32, boolean) = tz_prefix(s);
+  if (!pre.3) {
+    let dbg: string = "";
+    if (debug) {
+      dbg = "date: error: invalid UTF-8 timezone\n";
+    }
+    return byte_result(Result { ok: false, sec: 0, nsec: 0, hint: hint, dbg: dbg });
+  }
   if (pre.0) {
     zone = tz.zone_from_tz(pre.1);
-    s = trim_left(pre.2);
+    s = s[pre.2:];
+    let begin: i32 = trim_left(s);
+    s = s[begin:];
     tzs = pre.1;
     has = true;
     prefixed = true;
   }
+  let midnight: string = "0";
   if (s.len() == 0) {
-    s = "0";
+    s = midnight.as_bytes();
   }
   let now_entry: tz.Entry = zone.entry_at(now_sec);
   let f: tz.Civil = tz.civil_at(now_sec + now_entry.off as i64);
@@ -2282,10 +2335,10 @@ pub function parse_full(text: string, z: tz.Zone, tzstring: string, has_tz: bool
       pc = dline(pc, "error: parsing failed");
     } else {
       if (pc.debug) {
-        pc = dline(pc, "error: parsing failed, stopped at '" + slice_unchecked(s, stop, s.len()) + "'");
+        return ByteResult { result: fail(pc, hint), tail: failed_tail(s, stop) };
       }
     }
-    return fail(pc, hint);
+    return byte_result(fail(pc, hint));
   }
   if (debug) {
     let line: string = "input timezone: ";
@@ -2314,7 +2367,7 @@ pub function parse_full(text: string, z: tz.Zone, tzstring: string, has_tz: bool
   }
   let r: Result = resolve(pc, zone, now_entry.dst, hint);
   if (!r.ok || !debug) {
-    return r;
+    return byte_result(r);
   }
   let out: string = r.dbg;
   if (!has) {
@@ -2327,7 +2380,7 @@ pub function parse_full(text: string, z: tz.Zone, tzstring: string, has_tz: bool
   out = out + "date: final: " + r.sec.to_string() + "." + pad(r.nsec, 9) + " (epoch-seconds)\n";
   out = out + "date: final: " + civil_text(tz.civil_at(r.sec)) + " (UTC)\n";
   out = out + "date: final: " + civil_text(zone.local_fields(r.sec)) + " (UTC" + time_zone_str(zone.offset_at(r.sec) as i64) + ")\n";
-  return Result { ...r, dbg: out };
+  return byte_result(Result { ...r, dbg: out });
 }
 
 // ---- posixtime --------------------------------------------------------------

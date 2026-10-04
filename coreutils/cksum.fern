@@ -148,19 +148,19 @@ function plain_new(sel: i32): Plain {
   return PCrc(hash.cksum_new());
 }
 
-function plain_update(p: Plain, chunk: string): Plain {
+function plain_update(p: Plain, chunk: u8[]): Plain {
   match (p) {
     PCrc(c) => {
-      return PCrc(c.update(chunk));
+      return PCrc(c.update_array(chunk));
     },
     PCrc32(c) => {
-      return PCrc32(c.update(chunk));
+      return PCrc32(c.update_array(chunk));
     },
     PBsd(c) => {
-      return PBsd(c.update(chunk));
+      return PBsd(c.update_array(chunk));
     },
     PSysv(c) => {
-      return PSysv(c.update(chunk));
+      return PSysv(c.update_array(chunk));
     }
   }
 }
@@ -245,7 +245,7 @@ struct PlainSum { fields: string, raw: u8[], err: Option[IoError], failed: boole
 function plain_reader(r: Reader, sel: i32, owned: boolean): PlainSum {
   let p: Plain = plain_new(sel);
   while (true) {
-    match (r.read_chunk(65536)) {
+    match (r.read_chunk_bytes(65536)) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           break;

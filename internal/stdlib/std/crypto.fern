@@ -343,6 +343,12 @@ pub function (h: Md5) update_bytes(chunk: [u8]): Md5 {
   return h;
 }
 
+// Borrow an owned byte buffer through the streaming digest interface.
+pub function (h: Md5) update_array(chunk: u8[]): Md5 {
+  h = __md5_absorb(h, chunk);
+  return h;
+}
+
 pub function (h: Md5) final_bytes(): u8[] {
   let bl: i32 = h.buf_len;
   let plen: i32 = 64;
@@ -721,6 +727,12 @@ pub function (h: Sha1) update(chunk: string): Sha1 {
 }
 
 pub function (h: Sha1) update_bytes(chunk: [u8]): Sha1 {
+  h = __sha1_absorb(h, chunk);
+  return h;
+}
+
+// Borrow an owned byte buffer through the streaming digest interface.
+pub function (h: Sha1) update_array(chunk: u8[]): Sha1 {
   h = __sha1_absorb(h, chunk);
   return h;
 }
@@ -1139,6 +1151,12 @@ pub function (h: Sha256) update(chunk: string): Sha256 {
 }
 
 pub function (h: Sha256) update_bytes(chunk: [u8]): Sha256 {
+  h = __sha256_absorb(h, chunk);
+  return h;
+}
+
+// Borrow an owned byte buffer through the streaming digest interface.
+pub function (h: Sha256) update_array(chunk: u8[]): Sha256 {
   h = __sha256_absorb(h, chunk);
   return h;
 }
@@ -1635,6 +1653,12 @@ pub function (h: Sha512) update(chunk: string): Sha512 {
 }
 
 pub function (h: Sha512) update_bytes(chunk: [u8]): Sha512 {
+  h = __sha512_absorb(h, chunk);
+  return h;
+}
+
+// Borrow an owned byte buffer through the streaming digest interface.
+pub function (h: Sha512) update_array(chunk: u8[]): Sha512 {
   h = __sha512_absorb(h, chunk);
   return h;
 }
@@ -2382,6 +2406,12 @@ pub function (h: Sm3) update(chunk: string): Sm3 {
 }
 
 pub function (h: Sm3) update_bytes(chunk: [u8]): Sm3 {
+  h = __sm3_absorb(h, chunk);
+  return h;
+}
+
+// Borrow an owned byte buffer through the streaming digest interface.
+pub function (h: Sm3) update_array(chunk: u8[]): Sm3 {
   h = __sm3_absorb(h, chunk);
   return h;
 }
@@ -3373,6 +3403,12 @@ pub function (h: Blake2b) update_bytes(chunk: [u8]): Blake2b {
   return h;
 }
 
+// Borrow an owned byte buffer through the streaming digest interface.
+pub function (h: Blake2b) update_array(chunk: u8[]): Blake2b {
+  h = __blake2b_absorb(h, chunk);
+  return h;
+}
+
 pub function (h: Blake2b) final_bytes(): u8[] {
   let bl: i32 = h.buf_len;
   // The tail of the block must be zero; the buffer may hold stale bytes.
@@ -4052,6 +4088,12 @@ pub function (h: Sha3) update(chunk: string): Sha3 {
 }
 
 pub function (h: Sha3) update_bytes(chunk: [u8]): Sha3 {
+  h = __sha3_absorb(h, chunk);
+  return h;
+}
+
+// Borrow an owned byte buffer through the streaming digest interface.
+pub function (h: Sha3) update_array(chunk: u8[]): Sha3 {
   h = __sha3_absorb(h, chunk);
   return h;
 }

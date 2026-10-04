@@ -1457,6 +1457,94 @@ function byte_array_value(bytes: u8[]): Value {
   return v_arr_of(out, "u8");
 }
 
+function call_xattr(name: string, args: Value[]): Value {
+  let reading: boolean = name == "getxattr" || name == "lgetxattr" || name == "getxattr_bytes" || name == "lgetxattr_bytes";
+  let count: i32 = 3;
+  if (reading) {
+    count = 2;
+  }
+  if (args.len() != count) {
+    return v_err(name + ": wrong argument count");
+  }
+  if (!is_string_arg(args[0]) || !is_string_arg(args[1])) {
+    return v_err(name + ": expected path and attribute name strings");
+  }
+  let path: string = vstr_of(args[0]);
+  let attr: string = vstr_of(args[1]);
+  let follow: boolean = name[0] != 108 as u8;
+  if (reading) {
+    if (name == "getxattr_bytes" || name == "lgetxattr_bytes") {
+      let result: Result[u8[], IoError] = Err(Unsupported);
+      if (follow) {
+        result = getxattr_bytes(path, attr);
+      } else {
+        result = lgetxattr_bytes(path, attr);
+      }
+      match (result) {
+        Ok(bytes) => {
+          return v_variant("Ok", [byte_array_value(bytes)]);
+        },
+        Err(e) => {
+          return v_variant("Err", [io_error_value(e)]);
+        }
+      }
+    }
+    let result: Result[string, IoError] = Err(Unsupported);
+    if (follow) {
+      result = getxattr(path, attr);
+    } else {
+      result = lgetxattr(path, attr);
+    }
+    match (result) {
+      Ok(text) => {
+        return v_variant("Ok", [v_string(text)]);
+      },
+      Err(e) => {
+        return v_variant("Err", [io_error_value(e)]);
+      }
+    }
+  }
+  let result: Result[void, IoError] = Err(Unsupported);
+  if (name == "setxattr_bytes" || name == "lsetxattr_bytes") {
+    if let VArr(a) = args[2] {
+      let bytes: u8[] = __alloc_u8(a.elements.len());
+      let i: i32 = 0;
+      while (i < a.elements.len()) {
+        if (!is_i32_arg(a.elements[i])) {
+          return v_err(name + ": expected byte array");
+        }
+        bytes = bytes.with(i, vint_bits(a.elements[i]) as u8);
+        i = i + 1;
+      }
+      if (follow) {
+        result = setxattr_bytes(path, attr, bytes);
+      } else {
+        result = lsetxattr_bytes(path, attr, bytes);
+      }
+    } else {
+      return v_err(name + ": expected byte array");
+    }
+  } else {
+    if (!is_string_arg(args[2])) {
+      return v_err(name + ": expected string value");
+    }
+    let text: string = vstr_of(args[2]);
+    if (follow) {
+      result = setxattr(path, attr, text);
+    } else {
+      result = lsetxattr(path, attr, text);
+    }
+  }
+  match (result) {
+    Ok(_) => {
+      return v_variant("Ok", [v_tuple([])]);
+    },
+    Err(e) => {
+      return v_variant("Err", [io_error_value(e)]);
+    }
+  }
+}
+
 function option_io_error_value(error: Option[IoError]): Value {
   match (error) {
     Some(e) => {
@@ -3815,7 +3903,7 @@ function is_buf_builtin(name: string): boolean {
   if (name == "buf_new" || name == "buf_push" || name == "buf_push_range") {
     return true;
   }
-  if (name == "buf_push_byte" || name == "buf_push_u64" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
+  if (name == "buf_push_byte" || name == "buf_push_u64" || name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
     return true;
   }
   return name == "buf_len" || name == "buf_take" || name == "buf_take_bytes" || name == "buf_free";
@@ -3872,6 +3960,174 @@ function call_count_byte_bytes(args: Value[]): Value {
   return v_err("__count_byte_bytes: first arg must be a byte array");
 }
 
+// Reduce a borrowed byte array with wrapping or seeded BSD arithmetic.
+function call_crc32_cksum_array(args: Value[]): Value {
+  if (args.len() != 2) {
+    return v_err("__crc32_cksum_array: expected 2 args");
+  }
+  if (!is_i32_arg(args[0])) {
+    return v_err("__crc32_cksum_array: crc must be an integer");
+  }
+  if let VArr(a) = args[1] {
+    let crc: i32 = vint_bits(args[0]);
+    for element in a.elements {
+      if (!is_i32_arg(element)) {
+        return v_err("__crc32_cksum_array: elements must be u8");
+      }
+      let b: i32 = vint_bits(element);
+      if (b < 0 || b > 255) {
+        return v_err("__crc32_cksum_array: elements must be u8");
+      }
+      crc = crc ^ b << 24;
+      let k: i32 = 0;
+      while (k < 8) {
+        if (crc < 0) {
+          crc = crc << 1 ^ 0x04c11db7;
+        } else {
+          crc = crc << 1;
+        }
+        k = k + 1;
+      }
+    }
+    return v_int(crc);
+  }
+  return v_err("__crc32_cksum_array: second arg must be an array");
+}
+
+function call_byte_reduction(name: string, args: Value[]): Value {
+  let bsd = name == "__bsd_sum_bytes";
+  let argc = 1;
+  if (bsd) {
+    argc = 2;
+  }
+  if (args.len() != argc) {
+    return v_err(name + ": wrong number of arguments");
+  }
+  if (bsd && !is_i32_arg(args[1])) {
+    return v_err(name + ": seed must be an integer");
+  }
+  match (args[0]) {
+    VArr(a) => {
+      let sum: u32 = 0;
+      if (bsd) {
+        sum = vint_bits(args[1]) as u32 & 0xffff;
+      }
+      let i = 0;
+      while (i < a.elements.len()) {
+        if (bsd) {
+          sum = (sum >> 1 | sum << 15) & 0xffff;
+        }
+        sum = sum + vint_bits(a.elements[i]) as u32;
+        if (bsd) {
+          sum = sum & 0xffff;
+        }
+        i = i + 1;
+      }
+      return v_int(sum as i32);
+    },
+    _ => {
+      return v_err(name + ": input must be an array");
+    }
+  }
+}
+
+function call_byte_set_scan(name: string, args: Value[]): Value {
+  if (args.len() != 3) {
+    return v_err(name + ": expected 3 args (bytes, flag, set)");
+  }
+  if (!is_i32_arg(args[1])) {
+    return v_err(name + ": flag must be an integer");
+  }
+  match (args[0]) {
+    VArr(a) => {
+      match (args[2]) {
+        VArr(set) => {
+          let scan = name == "__scan_set_bytes";
+          let at = 0;
+          let prev = vint_bits(args[1]) != 0;
+          let runs = 0;
+          if (scan) {
+            at = vint_bits(args[1]);
+            if (at < 0) {
+              at = 0;
+            }
+          }
+          while (at < a.elements.len()) {
+            let b = vint_bits(a.elements[at]);
+            let member = b >= 0 && b < set.elements.len() && vint_bits(set.elements[b]) != 0;
+            if (scan && member) {
+              return v_int(at);
+            }
+            if (member && !prev) {
+              runs = runs + 1;
+            }
+            prev = member;
+            at = at + 1;
+          }
+          if (scan) {
+            return v_int(a.elements.len());
+          }
+          return v_int(runs);
+        },
+        _ => {
+          return v_err(name + ": set must be a byte array");
+        }
+      }
+    },
+    _ => {
+      return v_err(name + ": first arg must be a byte array");
+    }
+  }
+}
+
+// Compare borrowed byte ranges after clamping offsets and remaining lengths.
+function call_mismatch_bytes(args: Value[]): Value {
+  if (args.len() != 5) {
+    return v_err("__mismatch_bytes: expected 5 args");
+  }
+  if (!is_i32_arg(args[1]) || !is_i32_arg(args[3]) || !is_i32_arg(args[4])) {
+    return v_err("__mismatch_bytes: bounds must be integers");
+  }
+  if let VArr(a) = args[0] {
+    if let VArr(b) = args[2] {
+      let ao: i32 = vint_bits(args[1]);
+      let bo: i32 = vint_bits(args[3]);
+      let n: i32 = vint_bits(args[4]);
+      if (ao < 0) {
+        ao = 0;
+      }
+      if (ao > a.elements.len()) {
+        ao = a.elements.len();
+      }
+      if (bo < 0) {
+        bo = 0;
+      }
+      if (bo > b.elements.len()) {
+        bo = b.elements.len();
+      }
+      if (n > a.elements.len() - ao) {
+        n = a.elements.len() - ao;
+      }
+      if (n > b.elements.len() - bo) {
+        n = b.elements.len() - bo;
+      }
+      if (n < 0) {
+        n = 0;
+      }
+      let i: i32 = 0;
+      while (i < n) {
+        if (vint_bits(a.elements[ao + i]) != vint_bits(b.elements[bo + i])) {
+          return v_int(i);
+        }
+        i = i + 1;
+      }
+      return v_int(n);
+    }
+    return v_err("__mismatch_bytes: second range must be an array");
+  }
+  return v_err("__mismatch_bytes: first range must be an array");
+}
+
 // Borrow the array and find the first matching byte at or after the start.
 function call_memchr_bytes(args: Value[]): Value {
   if (args.len() != 3) {
@@ -3898,35 +4154,6 @@ function call_memchr_bytes(args: Value[]): Value {
     return v_int(0 - 1);
   }
   return v_err("__memchr_bytes: first arg must be a byte array");
-}
-
-// __scan_set over a byte array: the first byte at or after `from` whose
-// entry in `set` is nonzero, or the array's length.
-function call_scan_set_bytes(args: Value[]): Value {
-  if (args.len() != 3) {
-    return v_err("__scan_set_bytes: expected 3 args (bytes, from, set)");
-  }
-  if (!is_i32_arg(args[1])) {
-    return v_err("__scan_set_bytes: from must be an integer");
-  }
-  if let VArr(a) = args[0] {
-    if let VArr(set) = args[2] {
-      let at: i32 = vint_bits(args[1]);
-      if (at < 0) {
-        at = 0;
-      }
-      while (at < a.elements.len()) {
-        let b: i32 = vint_bits(a.elements[at]);
-        if (b < set.elements.len() && vint_bits(set.elements[b]) != 0) {
-          return v_int(at);
-        }
-        at = at + 1;
-      }
-      return v_int(a.elements.len());
-    }
-    return v_err("__scan_set_bytes: set must be a u8[]");
-  }
-  return v_err("__scan_set_bytes: first arg must be a byte array");
 }
 
 function call_rmemchr_bytes(args: Value[]): Value {
@@ -4018,19 +4245,24 @@ function call_buf_push_table(name: string, h: usize, args: Value[]): Value {
   if (args.len() != 3) {
     return v_err(name + ": expected 3 args (b, s, table)");
   }
-  if (!is_string_arg(args[1])) {
-    return v_err(name + ": expected string arg");
-  }
   match (args[2]) {
     VArr(tv) => {
-      let table: i32[] = [];
-      for e in tv.elements {
-        table = table.append(vint_bits(e) & 255);
+      if (name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded") {
+        if let VArr(src) = args[1] {
+          for e in src.elements {
+            push_table_byte(name, h, vint_bits(e) & 255, tv.elements);
+          }
+          return v_void();
+        }
+        return v_err(name + ": expected u8[] arg");
+      }
+      if (!is_string_arg(args[1])) {
+        return v_err(name + ": expected string arg");
       }
       let s: string = vstr_of(args[1]);
       let i: i32 = 0;
       while (i < s.len()) {
-        push_table_byte(name, h, s[i] as i32, table);
+        push_table_byte(name, h, s[i] as i32, tv.elements);
         i = i + 1;
       }
       return v_void();
@@ -4042,19 +4274,19 @@ function call_buf_push_table(name: string, h: usize, args: Value[]): Value {
 }
 
 // push_table_byte appends what one of those kernels makes of byte `c`.
-function push_table_byte(name: string, h: usize, c: i32, table: i32[]): void {
-  if (name == "buf_push_expanded") {
+function push_table_byte(name: string, h: usize, c: i32, table: Value[]): void {
+  if (name == "buf_push_expanded" || name == "buf_push_bytes_expanded") {
     if (c * 8 + 8 > table.len()) {
       buf_push_byte(h, c);
       return;
     }
-    let n: i32 = table[c * 8];
+    let n: i32 = vint_bits(table[c * 8]) & 255;
     if (n > 7) {
       n = 7;
     }
     let k: i32 = 1;
     while (k <= n) {
-      buf_push_byte(h, table[c * 8 + k]);
+      buf_push_byte(h, vint_bits(table[c * 8 + k]) & 255);
       k = k + 1;
     }
     return;
@@ -4063,13 +4295,13 @@ function push_table_byte(name: string, h: usize, c: i32, table: i32[]): void {
     buf_push_byte(h, c);
     return;
   }
-  if (name == "buf_push_filtered") {
-    if (table[c] == 0) {
+  if (name == "buf_push_filtered" || name == "buf_push_bytes_filtered") {
+    if ((vint_bits(table[c]) & 255) == 0) {
       buf_push_byte(h, c);
     }
     return;
   }
-  buf_push_byte(h, table[c]);
+  buf_push_byte(h, vint_bits(table[c]) & 255);
 }
 
 // The three whole-argument appends: a string's bytes, the low byte of a
@@ -4159,7 +4391,7 @@ function call_buf_builtin(name: string, args: Value[]): Value {
   if (name == "buf_push_bytes_range") {
     return call_buf_push_bytes_range(h, args);
   }
-  if (name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
+  if (name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
     return call_buf_push_table(name, h, args);
   }
   if (name == "buf_push" || name == "buf_push_byte" || name == "buf_push_u64") {
@@ -4309,6 +4541,30 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
       }
     }
   }
+  if (name == "string_from_bytes_range_unchecked") {
+    if (args.len() != 3 || !is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
+      return v_err("string_from_bytes_range_unchecked: expected 3 args (bs, from, end)");
+    }
+    let from: i32 = vint_bits(args[1]);
+    let end: i32 = vint_bits(args[2]);
+    match (args[0]) {
+      VArr(a) => {
+        if (from < 0 || end > a.elements.len() || from > end) {
+          return v_err("string_from_bytes_range_unchecked: range out of bounds");
+        }
+        let raw: u8[] = [];
+        let ri: i32 = from;
+        while (ri < end) {
+          raw = raw.append((vint_bits(a.elements[ri]) & 255) as u8);
+          ri = ri + 1;
+        }
+        return v_string(string_from_bytes_unchecked(raw));
+      },
+      _ => {
+        return v_err("string_from_bytes_range_unchecked: arg must be an array");
+      }
+    }
+  }
   // `slice_unchecked(s, a, b)` — the byte slice `s[a:b]` as a builtin:
   // same bounds contract as the ExprSlice eval (error on OOB, the
   // interp's stand-in for the codegen trap), no char-boundary check
@@ -4337,6 +4593,41 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   if (is_buf_builtin(name)) {
     return call_buf_builtin(name, args);
   }
+  if (name == "__clz32" || name == "__ctz32" || name == "__popcount32" || name == "__clz64" || name == "__ctz64" || name == "__popcount64") {
+    if (args.len() != 1) {
+      return v_err(name + ": expected 1 arg");
+    }
+    if (!is_int_like(args[0])) {
+      return v_err(name + ": arg must be an integer");
+    }
+    let bits: u64 = vint_as_i64(args[0]) as u64;
+    if (name == "__clz32") {
+      return v_int(__clz32(bits as u32));
+    }
+    if (name == "__ctz32") {
+      return v_int(__ctz32(bits as u32));
+    }
+    if (name == "__popcount32") {
+      return v_int(__popcount32(bits as u32));
+    }
+    if (name == "__clz64") {
+      return v_int(__clz64(bits));
+    }
+    if (name == "__ctz64") {
+      return v_int(__ctz64(bits));
+    }
+    return v_int(__popcount64(bits));
+  }
+  if (name == "getxattr" || name == "lgetxattr" || name == "setxattr" || name == "lsetxattr"
+    || name == "getxattr_bytes" || name == "lgetxattr_bytes" || name == "setxattr_bytes" || name == "lsetxattr_bytes") {
+    // The playground interpreter also runs on WASM, where xattr is absent.
+    // Keep native calls out of that target's reachable function set.
+    if (target_arch() == "wasm32") {
+      return v_variant("Err", [io_error_value(Unsupported)]);
+    } else {
+      return call_xattr(name, args);
+    }
+  }
   if (name == "__count_byte_bytes") {
     return call_count_byte_bytes(args);
   }
@@ -4346,8 +4637,17 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   if (name == "__rmemchr_bytes") {
     return call_rmemchr_bytes(args);
   }
-  if (name == "__scan_set_bytes") {
-    return call_scan_set_bytes(args);
+  if (name == "__sum_bytes_array" || name == "__bsd_sum_bytes") {
+    return call_byte_reduction(name, args);
+  }
+  if (name == "__crc32_cksum_array") {
+    return call_crc32_cksum_array(args);
+  }
+  if (name == "__scan_set_bytes" || name == "__count_runs_bytes") {
+    return call_byte_set_scan(name, args);
+  }
+  if (name == "__mismatch_bytes") {
+    return call_mismatch_bytes(args);
   }
   // `__memchr(s, byte, from)` / `__ascii_run(s, from)` — the two scan
   // kernels the compiled backends vectorise, and the byte-search floor

@@ -55,6 +55,9 @@ func ptxCases(t *testing.T) []invocation {
 	sent := ptxFile(t, dir, "sent", "aa bb. cc dd\nee ff\n")
 	sent2 := ptxFile(t, dir, "sent2", "aa bb.  cc dd\nee ff\n")
 	sent3 := ptxFile(t, dir, "sent3", "aa bb.\ncc dd\n")
+	// Distinct keys avoid GNU's address-dependent ordering of equal keys.
+	// This case checks that contexts remain separate across files.
+	distinct := ptxFile(t, dir, "distinct", "gg hh. ii jj\nkk ll\n")
 	closers := ptxFile(t, dir, "closers", "aa bb.\")  cc dd\nee ff\n")
 	tabsep := ptxFile(t, dir, "tabsep", "aa bb.\tcc dd\n")
 	longline := ptxFile(t, dir, "longline",
@@ -250,7 +253,7 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "no fold", args: []string{"-G", "-O", mixedcase}},
 		{name: "ties keep input order", args: []string{"-G", "-O"}, stdin: "zzz the\naaa the\n"},
 		{name: "two files interleave by position", args: []string{"-O", in1, in1}},
-		{name: "contexts do not join across files", args: []string{"-O", sent3, sent}},
+		{name: "contexts do not join across files", args: []string{"-O", sent3, distinct}},
 		{name: "unterminated file does not join the next", args: []string{"-O", joinl, sent}},
 
 		// Width and gap.
@@ -273,6 +276,16 @@ func ptxCases(t *testing.T) []invocation {
 		{name: "width hex", args: []string{"-w", "0x14", in1}},
 		{name: "width octal", args: []string{"-w", "024", in1}},
 		{name: "width binary", args: []string{"-w", "0b10100", in1}},
+		{name: "width binary uppercase", args: []string{"-w", "0B10100", in1}},
+		{name: "width binary signed", args: []string{"-w", "+0b10100", in1}},
+		{name: "gap binary", args: []string{"-g", "0b10", in1}},
+		{name: "gap binary uppercase", args: []string{"-g", "0B10", in1}},
+		{name: "width binary missing digits", args: []string{"-w", "0b", in1}},
+		{name: "width binary invalid digit", args: []string{"-w", "0b102", in1}},
+		{name: "width binary zero", args: []string{"-w", "0b0", in1}},
+		{name: "width binary negative", args: []string{"-w", "-0b1", in1}},
+		{name: "width binary overflow", args: []string{"-w", "0b1" + strings.Repeat("0", 63), in1}},
+		{name: "gap binary suffix", args: []string{"-g", "0b10x", in1}},
 		{name: "gap hex", args: []string{"-g", "0x2", in1}},
 		{name: "width bounds the roff fields", args: []string{"-O", "-w", "20", in1}},
 		{name: "width bounds the tex fields", args: []string{"-T", "-w", "20", in1}},

@@ -238,18 +238,19 @@ function show_date(o: io_buffered.BufWriter, s: Show, sec: i64, nsec: i64): (boo
   return (true, gnu.put(w, timefmt.strftime(s.format, s.zone, sec, nsec) + "\n"));
 }
 
-// `trace(r)` — the debug commentary a parse produced, on stderr. It
-// does not flush stdout first: the original writes it straight to
-// stderr, ahead of output still sitting in the stdout buffer.
-function trace(r: datetime.Result): void {
-  if (r.dbg.len() > 0) {
-    eprint(slice_unchecked(r.dbg, 0, r.dbg.len() - 1) + "");
+// Emit the trace before buffered stdout, preserving raw failure tails.
+function trace_bytes(r: datetime.ByteResult): void {
+  if (r.result.dbg.len() == 0 && r.tail.len() == 0) {
+    return;
   }
+  let w: Writer = stderr();
+  w.write(r.result.dbg);
+  w.write_bytes(r.tail);
 }
 
-function parse(s: Show, text: string, hint: i64): datetime.Result {
+function parse_bytes(s: Show, text: [u8], hint: i64): datetime.ByteResult {
   let ns: i64 = now_ns();
-  return datetime.parse_full(text, s.zone, s.tzstring, s.has_tz, ns / (1000000000 as i64), ns % (1000000000 as i64), hint, s.debug);
+  return datetime.parse_full_bytes(text, s.zone, s.tzstring, s.has_tz, ns / (1000000000 as i64), ns % (1000000000 as i64), hint, s.debug);
 }
 
 // `batch(o, s, name)` — `-f FILE`: each line parsed and printed, a
@@ -272,27 +273,28 @@ function batch(o: io_buffered.BufWriter, s: Show, name: string): (boolean, io_bu
   }
   let ok: boolean = true;
   let hint: i64 = 0;
-  let lr: io_buffered.LineReader = io_buffered.line_reader_new(r, 10, 65536);
+  let lr: io_buffered.ByteLineReader = io_buffered.byte_line_reader_new(r, 10, 65536);
   while (true) {
-    let next: (Option[string], io_buffered.LineReader) = lr.next_line();
+    let next: (Option[u8[]], io_buffered.ByteLineReader) = lr.next_line_bytes();
     lr = next.1;
     match (next.0) {
       Some(full) => {
         // A C string ends at the first NUL, and so does the line.
-        let line: string = full;
-        let nul: i32 = __memchr(line, 0, 0);
+        let line: [u8] = full[:];
+        let nul: i32 = __memchr_bytes(full, 0, 0);
         if (nul >= 0) {
-          line = slice_unchecked(line, 0, nul) + "";
+          line = line[:nul];
         }
-        let res: datetime.Result = parse(s, line, hint);
+        let raw: datetime.ByteResult = parse_bytes(s, line, hint);
+        let res: datetime.Result = raw.result;
         hint = res.hint;
-        trace(res);
+        trace_bytes(raw);
         if (!res.ok) {
-          let bare: string = line;
-          if (bare.len() > 0 && bare[bare.len() - 1] as i32 == 10) {
-            bare = slice_unchecked(bare, 0, bare.len() - 1) + "";
+          let end: i32 = line.len();
+          if (end > 0 && line[end - 1] as i32 == 10) {
+            end = end - 1;
           }
-          w = gnu.error_out(w, "invalid date " + gnu.quote(bare));
+          w = gnu.error_out(w, "invalid date " + gnu.quote_bytes(array.slice(full, 0, end)));
           ok = false;
         } else {
           let shown: (boolean, io_buffered.BufWriter) = show_date(w, s, res.sec, res.nsec);
@@ -519,8 +521,9 @@ pub function main(): i32 {
     if (set_date) {
       shown = set_datestr;
     }
-    let r: datetime.Result = parse(s, shown, 0);
-    trace(r);
+    let raw: datetime.ByteResult = parse_bytes(s, shown.as_bytes(), 0);
+    let r: datetime.Result = raw.result;
+    trace_bytes(raw);
     valid = r.ok;
     when_sec = r.sec;
     when_nsec = r.nsec;

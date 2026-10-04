@@ -164,6 +164,25 @@ pub function (b: BufWriter) write_bytes_range(bytes: u8[], lo: i32, hi: i32): Bu
   return b.settle();
 }
 
+// Translate raw bytes through table[c], keeping bytes past the table's end.
+pub function (b: BufWriter) write_bytes_mapped(bytes: u8[], table: u8[]): BufWriter {
+  buf_push_bytes_mapped(b.buf.h, bytes, table);
+  return b.settle();
+}
+
+// Drop raw bytes with a nonzero table entry; missing entries keep the byte.
+pub function (b: BufWriter) write_bytes_filtered(bytes: u8[], drop: u8[]): BufWriter {
+  buf_push_bytes_filtered(b.buf.h, bytes, drop);
+  return b.settle();
+}
+
+// Expand raw bytes through complete eight-entry records at table[c * 8].
+// The first entry is a length clamped to seven; incomplete records keep c.
+pub function (b: BufWriter) write_bytes_expanded(bytes: u8[], table: u8[]): BufWriter {
+  buf_push_bytes_expanded(b.buf.h, bytes, table);
+  return b.settle();
+}
+
 // `(b).write_range(s, lo, hi)` — append `s[lo:hi]` without building the
 // substring first. The shape every line-oriented utility's output loop is
 // made of, and the reason the builder carries a range push at all.
@@ -489,90 +508,164 @@ pub function (lr: ByteLineReader) next_chunk_bytes(): (Option[u8[]], ByteLineRea
 
 // ---- LineReader ------------------------------------------------------------
 //
-// Lines from a Reader, one per call, read in `chunk_size`-byte
-// chunks. A line INCLUDES its terminating byte when the input had
-// one, so a caller can tell a final unterminated line from a
-// terminated one — cat, wc, nl and the rest of the line utilities
-// all care. The terminator is a parameter because `-z` (NUL-
-// terminated lines) is common in coreutils.
-//
-// A failed read ends the input the way EOF does and is held in `err`
-// for the caller to read back with `.error()` — the same sticky-error
-// contract BufWriter has for writes, and the reason a directory
-// operand is distinguishable from an empty file (#8700).
+// Validated text records, including their terminating byte when present.
+// Physical reads stay in bytes, so a scalar may span any number of reads.
+// Invalid text ends input with InvalidUtf8("") in the sticky error channel.
+// An earlier I/O error takes precedence. Use ByteLineReader for raw records.
 //
 // Cursor idiom (docs/CURSOR-IDIOM.md): `let (line, lr) = lr.next_line();`.
-pub struct LineReader { r: Reader, chunk: string, pos: i32, eof: boolean, term: i32, chunk_size: i32, err: Option[IoError] }
+pub struct LineReader { raw: ByteLineReader }
 
 // `line_reader_new(r, term, chunk_size)` — read lines from `r`
 // ending in byte `term`.
 pub function line_reader_new(r: Reader, term: i32, chunk_size: i32): LineReader {
-  return LineReader { r: r, chunk: "", pos: 0, eof: false, term: term, chunk_size: chunk_size, err: None };
+  return LineReader { raw: byte_line_reader_new(r, term, chunk_size) };
 }
 
 // `(lr).error()` — the read failure that ended the input, if one did.
 pub function (lr: LineReader) error(): Option[IoError] {
-  return lr.err;
+  return lr.raw.error();
 }
 
-// `(lr).next_line()` — the next line, or None at end of input.
-pub function (lr: LineReader) next_line(): (Option[string], LineReader) {
-  let s: LineReader = lr;
-  let tail: string = "";
-  while (true) {
-    let j: i32 = __memchr(s.chunk, s.term, s.pos);
-    if (j >= 0) {
-      let line: string = tail + slice_unchecked(s.chunk, s.pos, j + 1);
-      return (Some(line), LineReader { ...s, pos: j + 1 });
-    }
-    if (s.pos < s.chunk.len()) {
-      tail = tail + slice_unchecked(s.chunk, s.pos, s.chunk.len());
-    }
-    if (s.eof) {
-      s = LineReader { ...s, chunk: "", pos: 0 };
-      if (tail.len() == 0) {
-        return (None, s);
-      }
-      return (Some(tail), s);
-    }
-    match (s.r.read_chunk(s.chunk_size)) {
-      Ok(c) => {
-        if (c.len() == 0) {
-          s = LineReader { ...s, chunk: "", pos: 0, eof: true };
-        } else {
-          s = LineReader { ...s, chunk: c, pos: 0 };
-        }
-      },
-      Err(e) => {
-        s = LineReader { ...s, chunk: "", pos: 0, eof: true, err: Some(e) };
-      }
-    }
-  }
-  return (None, s);
-}
-
-// `(lr).next_chunk()` — the rest of the current chunk plus every
-// following chunk, unsplit, for a caller that has finished with lines
-// and wants the remaining bytes as fast as they arrive. None at end
-// of input.
-pub function (lr: LineReader) next_chunk(): (Option[string], LineReader) {
-  let s: LineReader = lr;
-  if (s.pos < s.chunk.len()) {
-    let rest: string = slice_unchecked(s.chunk, s.pos, s.chunk.len()) + "";
-    return (Some(rest), LineReader { ...s, chunk: "", pos: 0 });
-  }
-  if (s.eof) {
-    return (None, s);
-  }
-  match (s.r.read_chunk(s.chunk_size)) {
-    Ok(c) => {
-      if (c.len() == 0) {
-        return (None, LineReader { ...s, eof: true });
-      }
-      return (Some(c), s);
+function invalid_text_reader(raw: ByteLineReader): LineReader {
+  let err: Option[IoError] = raw.err;
+  match (err) {
+    None => {
+      err = Some(InvalidUtf8(""));
     },
-    Err(e) => {
-      return (None, LineReader { ...s, eof: true, err: Some(e) });
+    Some(_) => {}
+  }
+  return LineReader { raw: ByteLineReader { ...raw, chunk: [], pos: 0, eof: true, err: err } };
+}
+
+// Validate a whole record, after joining any scalar split across reads.
+pub function (lr: LineReader) next_line(): (Option[string], LineReader) {
+  let (line, raw) = lr.raw.next_line_bytes();
+  match (line) {
+    None => {
+      return (None, LineReader { raw: raw });
+    },
+    Some(bytes) => {
+      match (utf8.from_bytes(bytes)) {
+        Some(text) => {
+          return (Some(text), LineReader { raw: raw });
+        },
+        None => {
+          return (None, invalid_text_reader(raw));
+        }
+      }
     }
   }
+  return (None, LineReader { raw: raw });
+}
+
+function text_scalar_width(lead: i32): i32 {
+  if (lead >= 194 && lead <= 223) {
+    return 2;
+  }
+  if (lead >= 224 && lead <= 239) {
+    return 3;
+  }
+  if (lead >= 240 && lead <= 244) {
+    return 4;
+  }
+  return 0;
+}
+
+// Continuation bytes have already been located by text_chunk_end. These
+// tighter second-byte bounds rule out overlong, surrogate and large scalars.
+function text_second_byte_valid(lead: i32, second: i32): boolean {
+  match (lead) {
+    224 => {
+      return second >= 160;
+    },
+    237 => {
+      return second <= 159;
+    },
+    240 => {
+      return second >= 144;
+    },
+    244 => {
+      return second <= 143;
+    },
+    _ => {
+      return true;
+    }
+  }
+  return true;
+}
+
+// Locate a possibly incomplete final scalar. This only chooses where to
+// split a chunk; from_bytes still validates every returned prefix.
+function text_chunk_end(bytes: u8[]): i32 {
+  let n: i32 = bytes.len();
+  if (n == 0) {
+    return 0;
+  }
+  let start: i32 = n - 1;
+  while (start > 0 && n - start <= 3 && bytes[start] >= 128 as u8 && bytes[start] < 192 as u8) {
+    start = start - 1;
+  }
+  let lead: i32 = bytes[start] as i32;
+  let width: i32 = text_scalar_width(lead);
+  if (width == 0 || n - start >= width) {
+    return n;
+  }
+  if (n - start > 1) {
+    let second: i32 = bytes[start + 1] as i32;
+    if (!text_second_byte_valid(lead, second)) {
+      return n;
+    }
+  }
+  return start;
+}
+
+// Return complete scalars and retain an incomplete suffix for the next
+// call. With a small chunk_size, one scalar can require several reads.
+pub function (lr: LineReader) next_chunk(): (Option[string], LineReader) {
+  let (first, raw) = lr.raw.next_chunk_bytes();
+  let bytes: u8[] = [];
+  match (first) {
+    None => {
+      return (None, LineReader { raw: raw });
+    },
+    Some(chunk) => {
+      bytes = chunk;
+    }
+  }
+  while (true) {
+    let end: i32 = text_chunk_end(bytes);
+    if (end > 0) {
+      let prefix: u8[] = bytes;
+      if (end < bytes.len()) {
+        prefix = copy_line_bytes(bytes, 0, end);
+      }
+      match (utf8.from_bytes(prefix)) {
+        None => {
+          return (None, invalid_text_reader(raw));
+        },
+        Some(text) => {
+          if (end < bytes.len()) {
+            raw = ByteLineReader { ...raw, chunk: bytes, pos: end };
+          }
+          return (Some(text), LineReader { raw: raw });
+        }
+      }
+    }
+    let (more, next) = raw.next_chunk_bytes();
+    raw = next;
+    match (more) {
+      None => {
+        return (None, invalid_text_reader(raw));
+      },
+      Some(chunk) => {
+        let b: usize = buf_new(bytes.len() + chunk.len());
+        buf_push_bytes_range(b, bytes, 0, bytes.len());
+        buf_push_bytes_range(b, chunk, 0, chunk.len());
+        bytes = buf_take_bytes(b);
+        buf_free(b);
+      }
+    }
+  }
+  return (None, LineReader { raw: raw });
 }

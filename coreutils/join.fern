@@ -125,10 +125,6 @@ function help_text(): string {
   return out;
 }
 
-function chr(b: i32): string {
-  return string_from_bytes_unchecked([b as u8]);
-}
-
 // SIZE_MAX: the value an out-of-range field number saturates to, and
 // the "not given yet" marker for the two join fields.
 function unset(): u64 {
@@ -199,10 +195,10 @@ function check_off(): i32 {
 // which costs a byte scan of a short line and no allocation at all.
 // The first four fields' bounds are carried too, so a line that has no
 // more than that is printed without a second walk.
-struct Line { text: string, lo: i32, hi: i32, k0: i32, k1: i32, nf: i32, s0: i32, e0: i32, s1: i32, e1: i32, s2: i32, e2: i32, s3: i32, e3: i32 }
+struct Line { text: u8[], lo: i32, hi: i32, k0: i32, k1: i32, nf: i32, s0: i32, e0: i32, s1: i32, e1: i32, s2: i32, e2: i32, s3: i32, e3: i32 }
 
 function blank_line(): Line {
-  return Line { text: "", lo: 0, hi: 0, k0: 0, k1: 0, nf: 0, s0: 0, e0: 0, s1: 0, e1: 0, s2: 0, e2: 0, s3: 0, e3: 0 };
+  return Line { text: [], lo: 0, hi: 0, k0: 0, k1: 0, nf: 0, s0: 0, e0: 0, s1: 0, e1: 0, s2: 0, e2: 0, s3: 0, e3: 0 };
 }
 
 function inline_fields(): i32 {
@@ -264,7 +260,7 @@ function sep_table(eol: i32): u8[] {
 // a newline, which no line can contain, so the whole line is one field.
 // A join field the line does not have is the empty range at `lo`.
 // `seps` is sep_table's set, which ends a default-mode field.
-function make_line(text: string, lo: i32, hi: i32, tab: i32, jf: u64, seps: u8[]): Line {
+function make_line(text: u8[], lo: i32, hi: i32, tab: i32, jf: u64, seps: u8[]): Line {
   let k0: i32 = lo;
   let k1: i32 = lo;
   let s0: i32 = lo;
@@ -310,9 +306,9 @@ function make_line(text: string, lo: i32, hi: i32, tab: i32, jf: u64, seps: u8[]
       f = i;
       let j: i32 = hi;
       if (tab >= 0) {
-        j = __memchr(text, tab, f);
+        j = __memchr_bytes(text, tab, f);
       } else {
-        j = __scan_set(text, f, seps);
+        j = __scan_set_bytes(text, f, seps);
       }
       if (j < 0 || j > hi) {
         j = hi;
@@ -369,7 +365,7 @@ function keycmp(a: Line, b: Line, ic: boolean): i32 {
   return range_cmp(a.text, a.k0, a.k1, b.text, b.k0, b.k1, ic);
 }
 
-function range_cmp(at: string, a0: i32, a1: i32, bt: string, b0: i32, b1: i32, ic: boolean): i32 {
+function range_cmp(at: u8[], a0: i32, a1: i32, bt: u8[], b0: i32, b1: i32, ic: boolean): i32 {
   let la: i32 = a1 - a0;
   let lb: i32 = b1 - b0;
   let n: i32 = la;
@@ -378,7 +374,7 @@ function range_cmp(at: string, a0: i32, a1: i32, bt: string, b0: i32, b1: i32, i
   }
   let i: i32 = 0;
   if (!ic) {
-    i = __mismatch(at, a0, bt, b0, n);
+    i = __mismatch_bytes(at, a0, bt, b0, n);
     if (i < n) {
       if (at[a0 + i] as i32 < bt[b0 + i] as i32) {
         return 0 - 1;
@@ -413,7 +409,7 @@ function range_cmp(at: string, a0: i32, a1: i32, bt: string, b0: i32, b1: i32, i
 // `have` and `line` are the last `next_line` answer; `msg` is a
 // disorder the caller still has to report, so the cursor comes back
 // alone rather than in a tuple with the writer and the run state.
-struct In { r: Reader, is_stdin: boolean, buf: string, pos: i32, eof: boolean, name: string, no: u64, hasprev: boolean, warned: boolean, which: i32, have: boolean, line: Line, msg: string }
+struct In { r: Reader, is_stdin: boolean, buf: u8[], pos: i32, eof: boolean, name: string, no: u64, hasprev: boolean, warned: boolean, which: i32, have: boolean, line: Line, msg: u8[] }
 
 function read_size(): i32 {
   return 65536;
@@ -444,11 +440,11 @@ function needs_order_check(inp: In, o: Opts, unpairable: boolean): boolean {
 
 // `report(inp, o, run, w)` — the disorder `next_line` left in `inp.msg`.
 function report(inp: In, o: Opts, run: Run, w: io_buffered.BufWriter): (In, Run, io_buffered.BufWriter) {
-  let out: io_buffered.BufWriter = gnu.error_out(w, inp.msg);
+  let out: io_buffered.BufWriter = gnu.error_out_bytes(w, inp.msg);
   if (o.check == check_on()) {
     exit(1);
   }
-  return (In { ...inp, warned: true, msg: "" }, Run { ...run, disorder: true }, out);
+  return (In { ...inp, warned: true, msg: [] }, Run { ...run, disorder: true }, out);
 }
 
 // `next_line(...)` — gnulib's get_line: one line, split into fields,
@@ -461,45 +457,72 @@ function next_line(inp: In, o: Opts, unpairable: boolean, w: io_buffered.BufWrit
     jf = o.jf2;
   }
   let cur: In = inp;
+  let data: u8[] = [];
   let lo: i32 = 0;
   let hi: i32 = 0;
   let npos: i32 = 0;
+  let carry: usize = 0 as usize;
   while (true) {
-    let j: i32 = __memchr(cur.buf, o.eol, cur.pos);
+    let j: i32 = __memchr_bytes(cur.buf, o.eol, cur.pos);
     if (j >= 0) {
-      lo = cur.pos;
-      hi = j;
       npos = j + 1;
+      if (carry == 0 as usize) {
+        data = cur.buf;
+        lo = cur.pos;
+        hi = j;
+      } else {
+        buf_push_bytes_range(carry, cur.buf, cur.pos, j);
+        data = buf_take_bytes(carry);
+        buf_free(carry);
+        hi = data.len();
+      }
       break;
     }
     if (cur.eof) {
-      if (cur.pos >= cur.buf.len()) {
-        return In { ...cur, have: false, line: blank_line() };
+      if (carry == 0 as usize) {
+        if (cur.pos >= cur.buf.len()) {
+          return In { ...cur, have: false, line: blank_line() };
+        }
+        data = cur.buf;
+        lo = cur.pos;
+        hi = cur.buf.len();
+      } else {
+        buf_push_bytes_range(carry, cur.buf, cur.pos, cur.buf.len());
+        data = buf_take_bytes(carry);
+        buf_free(carry);
+        hi = data.len();
       }
-      lo = cur.pos;
-      hi = cur.buf.len();
-      npos = hi;
+      npos = cur.buf.len();
       break;
     }
-    let rest: string = slice_unchecked(cur.buf, cur.pos, cur.buf.len()) + "";
-    match (cur.r.read_chunk(read_size())) {
+    if (cur.pos < cur.buf.len()) {
+      if (carry == 0 as usize) {
+        carry = buf_new(read_size());
+      }
+      buf_push_bytes_range(carry, cur.buf, cur.pos, cur.buf.len());
+    }
+    match (cur.r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
-        if (chunk.len() == 0) {
-          cur = In { ...cur, buf: rest, pos: 0, eof: true };
-        } else {
-          cur = In { ...cur, buf: rest + chunk, pos: 0 };
-        }
+        cur = In { ...cur, buf: chunk, pos: 0, eof: chunk.len() == 0 };
       },
       Err(e) => {
+        if (carry != 0 as usize) {
+          buf_free(carry);
+        }
         let w2: io_buffered.BufWriter = gnu.error_out(w, "read error: " + gnu.io_error_text(e));
         exit(1);
       }
     }
   }
-  let l: Line = make_line(cur.buf, lo, hi, o.tab, jf, o.seps);
-  let msg: string = "";
+  let l: Line = make_line(data, lo, hi, o.tab, jf, o.seps);
+  let msg: u8[] = [];
   if (cur.hasprev && needs_order_check(cur, o, unpairable) && keycmp(cur.line, l, o.ignore_case) > 0) {
-    msg = cur.name + ":" + (cur.no + 1 as u64).to_string() + ": is not sorted: " + slice_unchecked(cur.buf, lo, hi) + "";
+    let prefix: string = cur.name + ":" + (cur.no + 1 as u64).to_string() + ": is not sorted: ";
+    let h: usize = buf_new(prefix.len() + hi - lo);
+    buf_push(h, prefix);
+    buf_push_bytes_range(h, data, lo, hi);
+    msg = buf_take_bytes(h);
+    buf_free(h);
   }
   return In { ...cur, pos: npos, no: cur.no + 1 as u64, hasprev: true, have: true, line: l, msg: msg };
 }
@@ -520,7 +543,7 @@ function sep_byte(o: Opts): i32 {
 // line's own fields, which is why -e usually needs one of them.
 function push_range_or_filler(h: usize, l: Line, f0: i32, f1: i32, o: Opts): void {
   if (f1 > f0) {
-    buf_push_range(h, l.text, f0, f1);
+    buf_push_bytes_range(h, l.text, f0, f1);
     return;
   }
   buf_push(h, o.filler);
@@ -548,7 +571,7 @@ function push_field(h: usize, l: Line, n: u64, o: Opts): void {
   let k: i32 = 0;
   if (o.tab >= 0) {
     while (true) {
-      let j: i32 = __memchr(l.text, o.tab, i);
+      let j: i32 = __memchr_bytes(l.text, o.tab, i);
       if (j < 0 || j > hi) {
         j = hi;
       }
@@ -615,7 +638,7 @@ function push_fields(h: usize, l: Line, jf: u64, count: u64, o: Opts): void {
       n = 1;
     } else if (o.tab >= 0) {
       while (n < stop) {
-        let j: i32 = __memchr(l.text, o.tab, i);
+        let j: i32 = __memchr_bytes(l.text, o.tab, i);
         if (j < 0 || j > hi) {
           j = hi;
         }
@@ -1234,16 +1257,16 @@ function glued(argv: string[], g: gnu.Getopt, value: string): boolean {
 function open_input(path: string, which: i32): In {
   let name: string = path;
   if (path == "-") {
-    return In { r: stdin(), is_stdin: true, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, hasprev: false, warned: false, which: which, have: false, line: blank_line(), msg: "" };
+    return In { r: stdin(), is_stdin: true, buf: [], pos: 0, eof: false, name: name, no: 0 as u64, hasprev: false, warned: false, which: which, have: false, line: blank_line(), msg: [] };
   }
   match (open_reader(path)) {
     Ok(f) => {
-      return In { r: f, is_stdin: false, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, hasprev: false, warned: false, which: which, have: false, line: blank_line(), msg: "" };
+      return In { r: f, is_stdin: false, buf: [], pos: 0, eof: false, name: name, no: 0 as u64, hasprev: false, warned: false, which: which, have: false, line: blank_line(), msg: [] };
     },
     Err(e) => {
       gnu.error(gnu.quotef(path) + ": " + gnu.io_error_text(e));
       exit(1);
     }
   }
-  return In { r: stdin(), is_stdin: true, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, hasprev: false, warned: false, which: which, have: false, line: blank_line(), msg: "" };
+  return In { r: stdin(), is_stdin: true, buf: [], pos: 0, eof: false, name: name, no: 0 as u64, hasprev: false, warned: false, which: which, have: false, line: blank_line(), msg: [] };
 }

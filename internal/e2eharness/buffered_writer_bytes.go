@@ -8,8 +8,9 @@ func BufferedWriterBytesOutput() []byte {
 	out = append(out, 0xc3, 0xff, 'a', 0, 0x80, 0xff, 'a')
 	out = append(out, []byte("tail")...)
 	out = append(out, 255, 0, 128, 254, 193, 255, 0, 254, 255, 0, 128, 254)
+	out = append(out, 255, 193, 128, 254, 255, 128, 254, 0, 128, 255, 255)
 	for range 64 {
-		out = append(out, 255, 0, 128, 0)
+		out = append(out, 255, 0, 128, 0, 255, 0, 128, 255, 128, 255, 128)
 	}
 	return out
 }
@@ -36,6 +37,9 @@ function main(): i32 {
   b = b.write_bytes_range(raw, 3, 99);
   b = b.write_bytes_range(raw, 2, 1);
   b = b.write_bytes_range(raw, 0 - 5, 99);
+  b = b.write_bytes_mapped(raw, [193 as u8]);
+  b = b.write_bytes_filtered(raw, [2 as u8]);
+  b = b.write_bytes_expanded([0 as u8, 255 as u8], [3 as u8, 0 as u8, 128 as u8, 255 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8] );
   raw = raw.with(0, 1 as u8);
   if (held[0] != 255 as u8 || raw[0] != 1 as u8) { return 6; }
   b = b.flush();
@@ -54,6 +58,12 @@ function main(): i32 {
       buf_push_byte(seed, 255); buf_push_byte(seed, 0); buf_push_byte(seed, 128);
       fresh = fresh.write_bytes_range(buf_take_bytes(seed), 1, 2);
       fresh = fresh.write_bytes(buf_take_bytes(seed));
+      buf_push_byte(seed, 255); buf_push_byte(seed, 0); buf_push_byte(seed, 128);
+      fresh = fresh.write_bytes_mapped(buf_take_bytes(seed), buf_take_bytes(seed));
+      buf_push_byte(seed, 255); buf_push_byte(seed, 0); buf_push_byte(seed, 128);
+      fresh = fresh.write_bytes_filtered(buf_take_bytes(seed), [1 as u8]);
+      buf_push_byte(seed, 0);
+      fresh = fresh.write_bytes_expanded(buf_take_bytes(seed), [2 as u8, 255 as u8, 128 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8]);
       fresh = fresh.flush();
       if (alias.buffered() != 0) { return 8; }
     }
@@ -64,10 +74,19 @@ function main(): i32 {
   failed = failed.write_string("discarded");
   failed = failed.write_bytes(held);
   failed = failed.write_bytes_range(held, 1, 3);
+  failed = failed.write_bytes_mapped(held, []);
+  failed = failed.write_bytes_filtered(held, []);
+  failed = failed.write_bytes_expanded(held, []);
   buf_push_byte(seed, 255);
   failed = failed.write_bytes(buf_take_bytes(seed));
   buf_push_byte(seed, 255);
   failed = failed.write_bytes_range(buf_take_bytes(seed), 0, 1);
+  buf_push_byte(seed, 255);
+  failed = failed.write_bytes_mapped(buf_take_bytes(seed), buf_take_bytes(seed));
+  buf_push_byte(seed, 255);
+  failed = failed.write_bytes_filtered(buf_take_bytes(seed), buf_take_bytes(seed));
+  buf_push_byte(seed, 255);
+  failed = failed.write_bytes_expanded(buf_take_bytes(seed), buf_take_bytes(seed));
   buf_free(seed);
   if (failed.buffered() != 0) { return 3; }
   match (failed.error()) {

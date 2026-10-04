@@ -315,13 +315,16 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					if op.Str == "__fern_memchr_bytes" {
 						needs.add("__fern_memchr_bytes")
 					}
-				case "__fern_mismatch":
+				case "__fern_mismatch", "__fern_mismatch_bytes":
 					// The two-range comparison kernel. Scalar, so it
 					// reads every byte through str_byte and asks
 					// str_len for each operand's logical length.
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_mismatch")
+					if op.Str == "__fern_mismatch_bytes" {
+						needs.add("__fern_mismatch_bytes")
+					}
 				case "__fern_ascii_run":
 					// The v128 high-bit scan. Same two dependencies
 					// and for the same two reasons.
@@ -364,12 +367,24 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_bsd_sum")
-				case "__fern_count_runs":
+				case "__fern_count_runs", "__fern_count_runs_bytes":
 					// The run count. Scalar, reading every byte through
 					// str_byte as the byte-set scan does.
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_count_runs")
+					if op.Str == "__fern_count_runs_bytes" {
+						needs.add("__fern_count_runs_bytes")
+					}
+				case "__fern_sum_bytes_array", "__fern_bsd_sum_bytes":
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add(op.Str)
+					if op.Str == "__fern_sum_bytes_array" {
+						needs.add("__fern_sum_bytes")
+					} else {
+						needs.add("__fern_bsd_sum")
+					}
 				case "__fern_sum_bytes":
 					// The byte-sum reduction. Scalar, and it reads
 					// every byte through str_byte for the same reason
@@ -381,13 +396,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// The f64 scaling kernel allocates its result.
 					needs.add("__fern_alloc")
 					needs.add("__fern_scale_f64")
-				case "__fern_crc32_cksum":
+				case "__fern_crc32_cksum", "__fern_crc32_cksum_array":
 					// The CRC fold. Bit-at-a-time here: wasm has no
 					// carry-less multiply, so there is nothing for the
 					// native kernels' pclmulqdq / pmull to lower to.
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_crc32_cksum")
+					needs.add(op.Str)
 				case "__fern_print":
 					// fd_write underneath; transitively
 					// pulls in the byte-copy + alloc helpers.
@@ -1052,6 +1068,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_stderr":
 					needs.add("__fern_alloc")
 					needs.add("__fern_stderr")
+				default:
+					if h := callDirectAlias(op.Str); fernrt.Has(h) {
+						needs.add(h)
+					}
 				}
 				// Low-level memory shims the stdlib calls directly
 				// (raw OpCallDirect, no callDirectAlias rewrite).
@@ -1103,7 +1123,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// The string builder. Its callees come from
 					// unconditionalHelperCalls below.
 					needs.add(op.Str)
-				case "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte",
+				case "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_bytes_mapped", "buf_push_filtered", "buf_push_bytes_filtered", "buf_push_expanded", "buf_push_bytes_expanded", "buf_push_byte",
 					"buf_push_u64", "buf_len", "buf_take", "buf_take_bytes", "buf_free":
 					// The capacity-carrying builder, same shape: its
 					// callees come from unconditionalHelperCalls.
@@ -1336,26 +1356,29 @@ var unconditionalHelperCalls = map[string][]string{
 		// emitStrNormalize, for outgoing header names and values.
 		"__fern_str_len", "__fern_str_byte",
 	},
-	"__fern_str_dec":       {"__fern_box_free"},
-	"__fern_str_rc_dec":    {"__fern_rc_dec"},
-	"__fern_box_free":      {"__free"},
-	"__fern_alloc_box":     {"__fern_alloc"},
-	"__fern_alloc_rc1":     {"__fern_alloc"},
-	"strbuf_append":        {"__fern_str_len", "__fern_str_byte", "__fern_alloc"},
-	"strbuf_take":          {"__fern_alloc_rc1"},
-	"buf_new":              {"__fern_alloc_rc1"},
-	"buf_take":             {"__fern_alloc_rc1"},
-	"buf_take_bytes":       {"__fern_alloc"},
-	"__fern_buf_reserve":   {"__fern_alloc_rc1", "__fern_box_free"},
-	"buf_push":             {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_range":       {"__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_bytes_range": {"__fern_buf_reserve"},
-	"buf_push_mapped":      {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_filtered":    {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_expanded":    {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_byte":        {"__fern_buf_reserve"},
-	"buf_push_u64":         {"__fern_buf_reserve"},
-	"buf_free":             {"__fern_box_free"},
+	"__fern_str_dec":          {"__fern_box_free"},
+	"__fern_str_rc_dec":       {"__fern_rc_dec"},
+	"__fern_box_free":         {"__free"},
+	"__fern_alloc_box":        {"__fern_alloc"},
+	"__fern_alloc_rc1":        {"__fern_alloc"},
+	"strbuf_append":           {"__fern_str_len", "__fern_str_byte", "__fern_alloc"},
+	"strbuf_take":             {"__fern_alloc_rc1"},
+	"buf_new":                 {"__fern_alloc_rc1"},
+	"buf_take":                {"__fern_alloc_rc1"},
+	"buf_take_bytes":          {"__fern_alloc"},
+	"__fern_buf_reserve":      {"__fern_alloc_rc1", "__fern_box_free"},
+	"buf_push":                {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_range":          {"__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_bytes_range":    {"__fern_buf_reserve"},
+	"buf_push_bytes_mapped":   {"buf_push_mapped"},
+	"buf_push_mapped":         {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_bytes_filtered": {"buf_push_filtered"},
+	"buf_push_filtered":       {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_bytes_expanded": {"buf_push_expanded"},
+	"buf_push_expanded":       {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_byte":           {"__fern_buf_reserve"},
+	"buf_push_u64":            {"__fern_buf_reserve"},
+	"buf_free":                {"__fern_box_free"},
 	// The slice header is an rc1 block; as_bytes also promotes an inline
 	// string's bytes through the bare allocator.
 	"__slice_make":             {"__fern_alloc_rc1"},
@@ -1752,20 +1775,35 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildCountByteBytesBody,
 	},
+	"__fern_sum_bytes_array": {
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSumBytesArrayBody,
+	},
+	"__fern_bsd_sum_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildBsdSumBytesBody,
+	},
 	"__fern_memchr_bytes": {
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildMemchrBytesBody,
 	},
-	"__fern_rmemchr_bytes": {
-		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
-		results: []byte{encode.ValtypeI32},
-		body:    buildRmemchrBytesBody,
-	},
 	"__fern_scan_set_bytes": {
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildScanSetBytesBody,
+	},
+	"__fern_count_runs_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCountRunsBytesBody,
+	},
+	"__fern_rmemchr_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildRmemchrBytesBody,
 	},
 	"__fern_mismatch": {
 		// (a_data, a_len, ao, b_data, b_len, bo, n) → i32 offset of the
@@ -1773,6 +1811,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildMismatchBody,
+	},
+	"__fern_mismatch_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildMismatchBytesBody,
 	},
 	"__fern_ascii_run": {
 		// (data, len, from) → i32 index of the first high-bit byte, or len.
@@ -1829,6 +1872,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildCrc32CksumBody,
+	},
+	"__fern_crc32_cksum_array": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCrc32CksumArrayBody,
 	},
 	"__fern_print": {
 		// (data, len) → ()
@@ -2314,6 +2362,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: nil,
 		body:    buildBufPushBytesRangeBody,
 	},
+	"buf_push_bytes_mapped": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    func(idxs map[string]uint32) []byte { return buildBufPushBytesTableBody(idxs, "buf_push_mapped") },
+	},
 	"buf_push_mapped": {
 		// (h, data, len, table) → (). Each byte through a u8[] table.
 		params: []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
@@ -2321,12 +2374,22 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: nil,
 		body:    buildBufPushMappedBody,
 	},
+	"buf_push_bytes_filtered": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    func(idxs map[string]uint32) []byte { return buildBufPushBytesTableBody(idxs, "buf_push_filtered") },
+	},
 	"buf_push_filtered": {
 		// (h, data, len, drop) → (). The bytes a u8[] table does not drop.
 		params: []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
 			encode.ValtypeI32},
 		results: nil,
 		body:    buildBufPushFilteredBody,
+	},
+	"buf_push_bytes_expanded": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    func(idxs map[string]uint32) []byte { return buildBufPushBytesTableBody(idxs, "buf_push_expanded") },
 	},
 	"buf_push_expanded": {
 		// (h, data, len, table) → (). Each byte through an 8-byte record.
@@ -5536,11 +5599,24 @@ func buildBufPushRangeBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32), body)
 }
 
+// Raw arrays carry the same byte payload as a heap string. Pass the known
+// array length to the existing kernel without constructing a string value.
+func buildBufPushBytesTableBody(idxs map[string]uint32, kernel string) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, idxs[kernel])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 // buildBufPushMappedBody assembles wasm bytes for buf_push_mapped.
-//
-// Signature: (h, data, len, table i32) → (). Each byte c of the string is
-// appended as table[c], or unchanged when c is past the table's end (its
-// length at table - 4).
+// Signature: (h, data, len, table i32) -> (). Each byte c is appended as
+// table[c], or unchanged when c is past the table's length at table - 4.
 func buildBufPushMappedBody(idxs map[string]uint32) []byte {
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]
@@ -7006,6 +7082,42 @@ func buildMismatchBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+func buildSumBytesArrayBody(idxs map[string]uint32) []byte {
+	return buildByteReductionBody(idxs, false)
+}
+
+func buildCrc32CksumArrayBody(idxs map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstCall(body, idxs["__fern_crc32_cksum"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+func buildBsdSumBytesBody(idxs map[string]uint32) []byte {
+	return buildByteReductionBody(idxs, true)
+}
+
+func buildByteReductionBody(idxs map[string]uint32, bsd bool) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	name := "__fern_sum_bytes"
+	if bsd {
+		body = inst.InstLocalGet(body, 1)
+		name = "__fern_bsd_sum"
+	}
+	body = inst.InstCall(body, idxs[name])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 func buildCountByteBytesBody(idxs map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstLocalGet(body, 0)
@@ -7015,6 +7127,21 @@ func buildCountByteBytesBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstCall(body, idxs["__fern_count_byte"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+func buildMismatchBytesBody(idxs map[string]uint32) []byte {
+	var body []byte
+	for _, at := range []uint32{0, 2} {
+		body = inst.InstLocalGet(body, at)
+		body = inst.InstLocalGet(body, at)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalGet(body, at+1)
+	}
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstCall(body, idxs["__fern_mismatch"])
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
@@ -7041,6 +7168,19 @@ func buildRmemchrBytesBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstCall(body, idxs["__fern_rmemchr"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+func buildCountRunsBytesBody(idxs map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, idxs["__fern_count_runs"])
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

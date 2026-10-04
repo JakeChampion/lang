@@ -293,7 +293,7 @@ pub function elf_x86_data_base(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
 // (R+W+X over the whole file, plus `bss` zero-fill past it), PT_GNU_EH_FRAME
 // (or PT_NULL without unwind data), then .text, .eh_frame_hdr, .eh_frame and
 // the data blob at the offsets elf_unwind_end / elf_x86_data_base name.
-pub function elf_program_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32): i32[] {
+pub function elf_program_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32): u8[] {
   let has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
   let text_off: i32 = elf_text_off_x86();
   let hdr_off: i32 = 0;
@@ -364,21 +364,38 @@ pub function elf_program_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss
     }
   }
 
-  buf = elf_cat_u8(buf, text);
+  // The headers above are a few hundred bytes; the image is laid down in a
+  // byte builder so .text goes in as one range copy.
+  let img: usize = buf_new(data_off + data.len());
+  elf_push_ints(img, buf);
+  buf_push_bytes_range(img, text, 0, text.len());
   if (has_unwind) {
-    while (buf.len() < hdr_off) {
-      buf = buf.append(0);
-    }
-    buf = elf_cat(buf, hdr);
-    while (buf.len() < eh_off) {
-      buf = buf.append(0);
-    }
-    buf = elf_cat(buf, eh);
+    elf_push_zeros(img, hdr_off - buf_len(img));
+    elf_push_ints(img, hdr);
+    elf_push_zeros(img, eh_off - buf_len(img));
+    elf_push_ints(img, eh);
   }
-  while (buf.len() < data_off) {
-    buf = buf.append(0);
+  elf_push_zeros(img, data_off - buf_len(img));
+  elf_push_ints(img, data);
+  let out: u8[] = buf_take_bytes(img);
+  buf_free(img);
+  return out;
+}
+
+// elf_push_ints appends the bytes of `xs`, one per element, to the builder.
+function elf_push_ints(b: usize, xs: i32[]): void {
+  for x in xs {
+    buf_push_byte(b, x);
   }
-  return elf_cat(buf, data);
+}
+
+// elf_push_zeros appends `n` zero bytes to the builder; none when n <= 0.
+function elf_push_zeros(b: usize, n: i32): void {
+  let i: i32 = 0;
+  while (i < n) {
+    buf_push_byte(b, 0);
+    i = i + 1;
+  }
 }
 
 // ---- W^X two-segment layout ----
@@ -702,8 +719,13 @@ function elf_align8_buf(b: i32[]): i32[] {
 // elf_str_bytes appends `s`'s bytes and a NUL. Byte-at-a-time because
 // elf.fern is deliberately import-free.
 function elf_str_bytes(b: i32[], s: string): i32[] {
+  return elf_str_bytes_from(b, s, 0);
+}
+
+// elf_str_bytes_from is elf_str_bytes from byte `start` of `s`.
+function elf_str_bytes_from(b: i32[], s: string, start: i32): i32[] {
   let out: i32[] = b;
-  let i: i32 = 0;
+  let i: i32 = start;
   while (i < s.len()) {
     out = out.append(s[i] as i32);
     i = i + 1;
@@ -741,10 +763,283 @@ function elf_shdr(b: i32[], name_off: i32, sh_type: i32, flags: i64, addr: i64, 
   return out;
 }
 
-// elf_append_symtab appends a static `.symtab` to a finished ELF image,
-// naming each (sym_names[i], sym_offs[i]) as an STT_FUNC / STB_GLOBAL
-// symbol at `text_vaddr + sym_offs[i]`, and adds the section-header table
-// the symbols need to resolve: NULL, .text, .symtab, .strtab, .shstrtab.
+// ---- DWARF v4 (#11410): the compilation unit and its subprograms ----
+//
+// `-g` carries, beside the symbol table, the debug information a debugger
+// needs to name frames and break by function: .debug_abbrev with two
+// abbreviations and .debug_info with one compile_unit DIE spanning .text and
+// one subprogram DIE per symbol, its DW_AT_name the Fern name behind the
+// `__fn_` symbol. Names are inline strings (DW_FORM_string) and addresses
+// absolute (DW_FORM_addr), as native's writer emits them. The line table,
+// the variables and the types are the slices still open on #11410.
+
+// dw_uleb appends a non-negative `v` as unsigned LEB128.
+function dw_uleb(b: i32[], v: i32): i32[] {
+  let out: i32[] = b;
+  let x: i32 = v;
+  let more: boolean = true;
+  while (more) {
+    let c: i32 = x & 127;
+    x = x >> 7;
+    if (x == 0) {
+      more = false;
+    } else {
+      c = c | 128;
+    }
+    out = out.append(c);
+  }
+  return out;
+}
+
+// dw_attr appends one abbreviation attribute: its DW_AT code and DW_FORM.
+function dw_attr(b: i32[], at: i32, form: i32): i32[] {
+  return dw_uleb(dw_uleb(b, at), form);
+}
+
+// dw_sleb appends `v` as signed LEB128.
+function dw_sleb(b: i32[], v: i32): i32[] {
+  let out: i32[] = b;
+  let x: i32 = v;
+  let more: boolean = true;
+  while (more) {
+    let c: i32 = x & 127;
+    x = x >> 7;
+    if (x == 0 && (c & 64) == 0 || x == 0 - 1 && (c & 64) != 0) {
+      more = false;
+    } else {
+      c = c | 128;
+    }
+    out = out.append(c);
+  }
+  return out;
+}
+
+// elf_debug_abbrev is the fixed abbreviation table: 1 is the compile unit
+// (DW_TAG_compile_unit, children) with producer, language (DW_FORM_data2),
+// name, comp_dir, low_pc, high_pc and, with a line table, stmt_list
+// (DW_FORM_sec_offset); 2 the subprogram (DW_TAG_subprogram, no children)
+// with name, low_pc and high_pc.
+function elf_debug_abbrev(lines: boolean): i32[] {
+  let b: i32[] = [];
+  b = dw_uleb(b, 1);
+  b = dw_uleb(b, 17);
+  b = b.append(1);
+  b = dw_attr(b, 37, 8);  // DW_AT_producer, DW_FORM_string
+  b = dw_attr(b, 19, 5);  // DW_AT_language, DW_FORM_data2
+  b = dw_attr(b, 3, 8);  // DW_AT_name
+  b = dw_attr(b, 27, 8);  // DW_AT_comp_dir
+  b = dw_attr(b, 17, 1);  // DW_AT_low_pc, DW_FORM_addr
+  b = dw_attr(b, 18, 1);  // DW_AT_high_pc
+  if (lines) {
+    b = dw_attr(b, 16, 23);  // DW_AT_stmt_list, DW_FORM_sec_offset
+  }
+  b = dw_attr(b, 0, 0);
+  b = dw_uleb(b, 2);
+  b = dw_uleb(b, 46);
+  b = b.append(0);
+  b = dw_attr(b, 3, 8);
+  b = dw_attr(b, 17, 1);
+  b = dw_attr(b, 18, 1);
+  b = dw_attr(b, 0, 0);
+  return dw_uleb(b, 0);
+}
+
+// dw_source_name appends the Fern name behind a function symbol, the
+// `__fn_` prefix off as native's symname.Source takes it; any other symbol
+// keeps its name. Debug information describes the source, so a debugger's
+// `break main` and its backtraces read source names.
+function dw_source_name(b: i32[], sym: string): i32[] {
+  if (sym.len() > 5 && sym[0] == b'_' && sym[1] == b'_' && sym[2] == b'f' && sym[3] == b'n' && sym[4] == b'_') {
+    return elf_str_bytes_from(b, sym, 5);
+  }
+  return elf_str_bytes(b, sym);
+}
+
+// elf_debug_info is the .debug_info compilation unit: the DWARF v4 unit
+// header, the compile_unit DIE over [text_vaddr, text_vaddr + text_len),
+// one subprogram DIE per symbol over its extent, and the null DIE that ends
+// the unit's children. `cu_name` is the source as the command line named
+// it and `comp_dir` the directory it was compiled in, which is how a
+// debugger finds the source. The language is DW_LANG_C99: no DWARF code
+// exists for Fern. With a line table (`lines`) the unit points at it.
+function elf_debug_info(text_vaddr: i32, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[], cu_name: string, comp_dir: string, lines: boolean): i32[] {
+  let die: i32[] = [];
+  die = dw_uleb(die, 1);
+  die = elf_str_bytes(die, "fern");
+  die = elf_le16(die, 12);
+  die = elf_str_bytes(die, cu_name);
+  die = elf_str_bytes(die, comp_dir);
+  die = elf_le64(die, text_vaddr as i64);
+  die = elf_le64(die, (text_vaddr + text_len) as i64);
+  if (lines) {
+    die = elf_le32(die, 0);  // DW_AT_stmt_list: .debug_line offset 0
+  }
+  let i: i32 = 0;
+  while (i < sym_names.len()) {
+    die = dw_uleb(die, 2);
+    die = dw_source_name(die, sym_names[i]);
+    die = elf_le64(die, (text_vaddr + sym_offs[i]) as i64);
+    die = elf_le64(die, (text_vaddr + sym_offs[i] + sym_sizes[i]) as i64);
+    i = i + 1;
+  }
+  die = dw_uleb(die, 0);
+  let body: i32[] = [];
+  body = elf_le16(body, 4);  // version
+  body = elf_le32(body, 0);  // debug_abbrev_offset
+  body = body.append(8);  // address_size
+  body = elf_cat(body, die);
+  let out: i32[] = elf_le32([], body.len());  // unit_length
+  return elf_cat(out, body);
+}
+
+// dw_last_slash is the index of the last '/' in `path`, or -1.
+function dw_last_slash(path: string): i32 {
+  let i: i32 = path.len() - 1;
+  while (i >= 0) {
+    if (path[i] == b'/') {
+      return i;
+    }
+    i = i - 1;
+  }
+  return 0 - 1;
+}
+
+// dw_dir_index returns the include_directories index of `dir`, adding it when
+// new (`dirs` is the table so far; the compilation directory is index 0 and
+// never listed).
+function dw_dir_index(dirs: string[], dir: string): i32 {
+  let i: i32 = 0;
+  while (i < dirs.len()) {
+    if (dirs[i] == dir) {
+      return i + 1;
+    }
+    i = i + 1;
+  }
+  return dirs.len() + 1;
+}
+
+// elf_debug_line encodes the DWARF v4 .debug_line unit as native's writer
+// does: a header listing each file's directory in include_directories and
+// its base name in file_names, in file-number order, as gas lays them out;
+// then ONE sequence over the rows, set_address to the first, per row the
+// file, column and prologue_end changes it needs and the address and line
+// advance as a special opcode where one fits, else advance_pc +
+// advance_line + copy, and finally an advance to the end of .text and
+// end_sequence. Each row's position holds until the next row's address.
+function elf_debug_line(text_vaddr: i32, text_len: i32, files: string[], loc_offs: i32[], loc_files: i32[], loc_lines: i32[], loc_cols: i32[], loc_flags: i32[]): i32[] {
+  // The program parameters: minimum_instruction_length 1,
+  // maximum_operations_per_instruction 1, default_is_stmt 1, line_base -5,
+  // line_range 14, opcode_base 13, and the standard opcodes' operand counts.
+  let hdr: i32[] = [1, 1, 1, 251, 14, 13, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1];
+  let dirs: string[] = [];
+  let file_dir: i32[] = [];
+  let file_name: string[] = [];
+  let fi: i32 = 0;
+  while (fi < files.len()) {
+    let path: string = files[fi];
+    let slash: i32 = dw_last_slash(path);
+    let d: i32 = 0;
+    let name: string = path;
+    if (slash > 0) {
+      let dir: string = slice_unchecked(path, 0, slash) + "";
+      if (dir != ".") {
+        d = dw_dir_index(dirs, dir);
+        if (d > dirs.len()) {
+          dirs = dirs.append(dir);
+        }
+      }
+    }
+    if (slash >= 0) {
+      name = slice_unchecked(path, slash + 1, path.len()) + "";
+    }
+    file_dir = file_dir.append(d);
+    file_name = file_name.append(name);
+    fi = fi + 1;
+  }
+  let di: i32 = 0;
+  while (di < dirs.len()) {
+    hdr = elf_str_bytes(hdr, dirs[di]);
+    di = di + 1;
+  }
+  hdr = hdr.append(0);
+  fi = 0;
+  while (fi < file_name.len()) {
+    hdr = elf_str_bytes(hdr, file_name[fi]);
+    hdr = dw_uleb(hdr, file_dir[fi]);
+    hdr = dw_uleb(hdr, 0);  // mtime
+    hdr = dw_uleb(hdr, 0);  // size
+    fi = fi + 1;
+  }
+  hdr = hdr.append(0);
+
+  let prog: i32[] = [];
+  if (loc_offs.len() > 0) {
+    let addr: i32 = loc_offs[0];
+    let file: i32 = 1;
+    let line: i32 = 1;
+    let col: i32 = 0;
+    prog = prog.append(0);
+    prog = prog.append(9);
+    prog = prog.append(2);  // DW_LNE_set_address
+    prog = elf_le64(prog, (text_vaddr + addr) as i64);
+    let ri: i32 = 0;
+    while (ri < loc_offs.len()) {
+      if (loc_files[ri] != file) {
+        prog = dw_uleb(prog.append(4), loc_files[ri]);  // DW_LNS_set_file
+        file = loc_files[ri];
+      }
+      if (loc_cols[ri] != col) {
+        prog = dw_uleb(prog.append(5), loc_cols[ri]);  // DW_LNS_set_column
+        col = loc_cols[ri];
+      }
+      if ((loc_flags[ri] & 1) != 0) {
+        prog = prog.append(10);  // DW_LNS_set_prologue_end
+      }
+      let addr_adv: i32 = loc_offs[ri] - addr;
+      let line_adv: i32 = loc_lines[ri] - line;
+      let special: i32 = line_adv + 5 + 14 * addr_adv + 13;
+      if (line_adv >= 0 - 5 && line_adv < 9 && special <= 255) {
+        prog = prog.append(special);
+      } else {
+        if (addr_adv > 0) {
+          prog = dw_uleb(prog.append(2), addr_adv);  // DW_LNS_advance_pc
+        }
+        if (line_adv != 0) {
+          prog = dw_sleb(prog.append(3), line_adv);  // DW_LNS_advance_line
+        }
+        prog = prog.append(1);  // DW_LNS_copy
+      }
+      addr = loc_offs[ri];
+      line = loc_lines[ri];
+      ri = ri + 1;
+    }
+    if (text_len > addr) {
+      prog = dw_uleb(prog.append(2), text_len - addr);
+    }
+    prog = prog.append(0);
+    prog = prog.append(1);
+    prog = prog.append(1);  // DW_LNE_end_sequence
+  }
+
+  let body: i32[] = [];
+  body = elf_le16(body, 4);  // version
+  body = elf_le32(body, hdr.len());  // header_length
+  body = elf_cat(body, hdr);
+  body = elf_cat(body, prog);
+  let out: i32[] = elf_le32([], body.len());  // unit_length
+  return elf_cat(out, body);
+}
+
+// elf_append_debug appends what a `-g` image carries beyond its loadable
+// segments to a finished ELF image: a static `.symtab` naming each
+// (sym_names[i], sym_offs[i]) as an STT_FUNC / STB_GLOBAL symbol at
+// `text_vaddr + sym_offs[i]`, the DWARF compilation unit over the same
+// symbols (elf_debug_info), the line table (elf_debug_line) when the
+// assembler recorded `.loc` rows, and the section-header table that resolves
+// them: NULL, .text, .symtab, .strtab, .shstrtab, .debug_abbrev,
+// .debug_info and, with rows, .debug_line. `cu_name` and `comp_dir` are the
+// compilation unit's; `files` and the five `loc_*` arrays are the
+// assembler's `.file` table and rows.
 //
 // `text_off` / `text_len` locate .text within the image, and `text_vaddr`
 // is the address it loads at — all three differ between the single-segment
@@ -759,7 +1054,7 @@ function elf_shdr(b: i32[], name_off: i32, sh_type: i32, flags: i64, addr: i64, 
 // section layer safe to land ahead of the `-g` flag: every existing caller
 // keeps a byte-identical image, and not by re-deriving one that ought to
 // match — by not touching it.
-pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[]): i32[] {
+pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[], cu_name: string, comp_dir: string, files: string[], loc_offs: i32[], loc_files: i32[], loc_lines: i32[], loc_cols: i32[], loc_flags: i32[]): i32[] {
   if (sym_names.len() == 0) {
     return img;
   }
@@ -788,6 +1083,15 @@ pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_
   shstrtab = elf_str_bytes(shstrtab, ".strtab");
   let n_shstrtab: i32 = shstrtab.len();
   shstrtab = elf_str_bytes(shstrtab, ".shstrtab");
+  let n_debug_abbrev: i32 = shstrtab.len();
+  shstrtab = elf_str_bytes(shstrtab, ".debug_abbrev");
+  let n_debug_info: i32 = shstrtab.len();
+  shstrtab = elf_str_bytes(shstrtab, ".debug_info");
+  let lines: boolean = loc_offs.len() > 0;
+  let n_debug_line: i32 = shstrtab.len();
+  if (lines) {
+    shstrtab = elf_str_bytes(shstrtab, ".debug_line");
+  }
 
   let out: i32[] = elf_align8_buf(img);
 
@@ -816,6 +1120,18 @@ pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_
   out = elf_cat(out, strtab);
   let shstrtab_off: i32 = out.len();
   out = elf_cat(out, shstrtab);
+  let abbrev: i32[] = elf_debug_abbrev(lines);
+  let abbrev_off: i32 = out.len();
+  out = elf_cat(out, abbrev);
+  let info: i32[] = elf_debug_info(text_vaddr, text_len, sym_names, sym_offs, sym_sizes, cu_name, comp_dir, lines);
+  let info_off: i32 = out.len();
+  out = elf_cat(out, info);
+  let dline: i32[] = [];
+  if (lines) {
+    dline = elf_debug_line(text_vaddr, text_len, files, loc_offs, loc_files, loc_lines, loc_cols, loc_flags);
+  }
+  let dline_off: i32 = out.len();
+  out = elf_cat(out, dline);
 
   out = elf_align8_buf(out);
   let sh_off: i32 = out.len();
@@ -831,12 +1147,21 @@ pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_
   out = elf_shdr(out, n_strtab, 3, zero64, zero64, strtab_off as i64, strtab.len() as i64, 0, 0, 1, zero64);
   // .shstrtab
   out = elf_shdr(out, n_shstrtab, 3, zero64, zero64, shstrtab_off as i64, shstrtab.len() as i64, 0, 0, 1, zero64);
+  // .debug_abbrev / .debug_info — SHT_PROGBITS, not allocated, so the loaded
+  // image is unchanged.
+  out = elf_shdr(out, n_debug_abbrev, 1, zero64, zero64, abbrev_off as i64, abbrev.len() as i64, 0, 0, 1, zero64);
+  out = elf_shdr(out, n_debug_info, 1, zero64, zero64, info_off as i64, info.len() as i64, 0, 0, 1, zero64);
+  let nsh: i32 = 7;
+  if (lines) {
+    out = elf_shdr(out, n_debug_line, 1, zero64, zero64, dline_off as i64, dline.len() as i64, 0, 0, 1, zero64);
+    nsh = 8;
+  }
 
   // Point the header at the table just written. e_shoff is 8 bytes at
   // 0x28; an image this size never needs the high word.
   out = elf_patch_le32(out, 40, sh_off);
   out = elf_patch_le16(out, 58, elf_sh_size());  // e_shentsize
-  out = elf_patch_le16(out, 60, 5);  // e_shnum
+  out = elf_patch_le16(out, 60, nsh);  // e_shnum
   out = elf_patch_le16(out, 62, 4);  // e_shstrndx = .shstrtab
   return out;
 }
@@ -856,7 +1181,7 @@ pub function elf_wx_text_off(): i32 {
 }
 
 // elf_func_syms turns an assembler's parallel label tables into the symbol
-// arrays elf_append_symtab wants, applying native's FuncSyms rule:
+// arrays elf_append_debug wants, applying native's FuncSyms rule:
 //
 //   - a label with an empty name, or one starting with `.`, is INTERNAL —
 //     a branch target, not a function — and is left out;
