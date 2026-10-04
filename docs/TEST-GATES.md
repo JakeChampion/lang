@@ -189,7 +189,9 @@ of an unknown op, the wasm `-ENOTSUP` answers, and op 8's CPU steering of
 a `SO_REUSEPORT` group: attached on Linux, `-ENOPROTOOPT` where the host
 lacks the option, as qemu-user does, `-ENOTSUP` on Darwin and wasm), and
 `e2eharness.NetSocketOptsProbe` through std/net's `listen_with`,
-`set_nodelay`, `set_keepalive`, `set_nonblocking` and `shutdown`, plus the
+`set_nodelay`, `set_keepalive`, `set_nonblocking`, `read` (the
+`WouldBlock` of an empty non-blocking socket, the bytes written, then
+`Ok(0)` at the end of the stream), `write` and `shutdown`, plus the
 `AddrInUse` a second plain listener and the `ConnectionRefused` a dial of
 the closed port report; `e2eharness.UdpSocketProbe` on the raw `udp_bind`,
 `udp_sendto`, `udp_recvfrom` and `udp_connect` (two sockets on host-picked

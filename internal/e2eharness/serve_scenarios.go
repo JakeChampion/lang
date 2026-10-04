@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -994,7 +995,7 @@ function main(): i32 {
 
 // CheckListenFailure runs a server built from ListenFailureServerSource
 // on a port something else holds: it exits 98, and stderr names the
-// address and the error in words.
+// address it tried and the error in words.
 func CheckListenFailure(t *testing.T, cmd *exec.Cmd, port int) {
 	t.Helper()
 	var stderr strings.Builder
@@ -1013,9 +1014,10 @@ func CheckListenFailure(t *testing.T, cmd *exec.Cmd, port int) {
 	if code := cmd.ProcessState.ExitCode(); code != 98 {
 		t.Errorf("exit code %d, want 98\n--- stderr ---\n%s", code, stderr.String())
 	}
-	want := fmt.Sprintf("serve: cannot listen on port %d: Address already in use", port)
-	if !strings.Contains(stderr.String(), want) {
-		t.Errorf("stderr lacks %q:\n%s", want, stderr.String())
+	// `::` where the host has IPv6, `0.0.0.0` where it has not.
+	want := regexp.MustCompile(fmt.Sprintf(`serve: cannot listen on (\[::\]|0\.0\.0\.0):%d: Address already in use`, port))
+	if !want.MatchString(stderr.String()) {
+		t.Errorf("stderr does not match %q:\n%s", want, stderr.String())
 	}
 }
 
