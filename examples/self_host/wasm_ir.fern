@@ -1741,9 +1741,9 @@ pub function module_uses_task(cache: irtables.LowerResult[]): boolean {
 // native emitters' rt_owned_allocs does (#11386): every size here is a
 // multiple of 8, the unit $__fern_alloc rounds to, so the bytes taken back
 // are the bytes it counted.
-pub function task_funcs(): string {
+pub function task_funcs(lc: boolean): string {
   let uncount: string = "";
-  if (leak_check_on()) {
+  if (lc) {
     uncount = "    (global.set $__fern_lc_alloc_count (i64.sub (global.get $__fern_lc_alloc_count) (i64.const 1)))\n"
       + "    (global.set $__fern_lc_alloc_bytes (i64.sub (global.get $__fern_lc_alloc_bytes) (i64.extend_i32_u (local.get $n))))\n";
   }
@@ -4093,7 +4093,7 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
 // emit_ir_module_units). `base` is the whole-program registry the cache was
 // lowered with; the RC bodies are seeded from it rather than from a second
 // run of the same fixpoints.
-pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, base: fnsigs.FnSigs): string {
+pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, base: fnsigs.FnSigs, sw: asmcore.Switches): string {
   ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), ir_cache);
   let sv: string[] = str_values(ir_cache);
   let cv: string[] = const_agg_values(ir_cache);
@@ -4110,7 +4110,7 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerRes
   }
   return emit_ir_module_units(
     [WasmUnit { ns: "", text: unit, strs: sv, caggs: cv, fns: ft }], mod,
-    needs, indirect_fn_sigs(ir_cache), emit_ir_rc_bodies(mod, ir_cache, base), mode,
+    needs, indirect_fn_sigs(ir_cache), emit_ir_rc_bodies(mod, ir_cache, base), mode, sw,
   );
 }
 
@@ -4196,7 +4196,7 @@ pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: 
     let g: ircore.Lowered = ircore.gate(lm, sub);
     let cache: irtables.LowerResult[] = g.cache;
     if (g.ok && ir_route_final(cache, component, io, module_is_proxy(lm))) {
-      return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.sigs), needs: needs_of(cache) };
+      return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.sigs, sub.switches), needs: needs_of(cache) };
     }
     // A module the lowering took whole but the component framing cannot
     // import for is not an IR bail, so name the op rather than blame the IR.
@@ -12371,33 +12371,17 @@ pub function udivrem_helpers(t: string, suffix: string): string {
   return util.str_join_chunks(parts);
 }
 
-// leak_check_on — FERN_LEAKCHECK read at emit time, the wasm half of the
-// census (#5362; the x86/arm64 self-host precedent). Counts at the
-// allocator's rounded-8 block size on both sides — $__fern_alloc's rounded
-// request and the bsz slot a free site reads are the same number for the
-// same block — so an alloc and its eventual free cancel exactly. FERN_SANITIZE
-// folds it in, as on the register backends: the census is the sanitizer's
-// leak detector, and its verdict line rides on the report.
-function leak_check_on(): boolean {
-  if (asmcore.sanitize_on()) {
-    return true;
-  }
-  match (env("FERN_LEAKCHECK")) {
-    Some(_) => {
-      return true;
-    },
-    None => {
-      return false;
-    }
-  }
-}
-
-// lc_globals: the four census counters. Emitted OUTSIDE the heap gate and
-// once per module, in every mode: the bump sites (heap helpers, any mode)
-// and the mode-0 report both reference them, and a heap-free mode-0 program
-// still reports zeros.
-pub function lc_globals(): string {
-  if (!leak_check_on()) {
+// lc_globals: the four census counters (`lc`, the wasm half of #5362: the
+// leak census, which the sanitizer folds in, its verdict line riding on the
+// report). Emitted OUTSIDE the heap gate and once per module, in every
+// mode: the bump sites (heap helpers, any mode) and the mode-0 report both
+// reference them, and a heap-free mode-0 program still reports zeros. The
+// census counts at the allocator's rounded-8 block size on both sides —
+// $__fern_alloc's rounded request and the bsz slot a free site reads are
+// the same number for the same block — so an alloc and its eventual free
+// cancel exactly.
+pub function lc_globals(lc: boolean): string {
+  if (!lc) {
     return "";
   }
   let o: string = "  (global $__fern_lc_alloc_count (mut i64) (i64.const 0))\n";
@@ -12412,8 +12396,8 @@ pub function lc_globals(): string {
 // alloc too) and into each free path before its bsz slot is overwritten by
 // the freelist next-pointer. `nexpr` is a wat i32 expression for the
 // rounded block size.
-function lc_bump_alloc(nexpr: string): string {
-  if (!leak_check_on()) {
+function lc_bump_alloc(nexpr: string, lc: boolean): string {
+  if (!lc) {
     return "";
   }
   let o: string = "    (global.set $__fern_lc_alloc_count (i64.add (global.get $__fern_lc_alloc_count) (i64.const 1)))\n";
@@ -12421,8 +12405,8 @@ function lc_bump_alloc(nexpr: string): string {
   return o;
 }
 
-function lc_bump_free(nexpr: string): string {
-  if (!leak_check_on()) {
+function lc_bump_free(nexpr: string, lc: boolean): string {
+  if (!lc) {
     return "";
   }
   let o: string = "    (global.set $__fern_lc_free_count (i64.add (global.get $__fern_lc_free_count) (i64.const 1)))\n";
@@ -12478,8 +12462,8 @@ function lc_label(text: string): string {
 // scratch below the data pool (the process is exiting); labels are packed-word
 // stores (lc_label); digits are written backwards by $__fern_lc_wrnum.
 // fd_write's iovec scratch at 0/4 is free at exit.
-pub function lc_report_and_exit_wrapper(): string {
-  if (!leak_check_on()) {
+pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean): string {
+  if (!lc) {
     return "";
   }
   let o: string = "";
@@ -12521,7 +12505,7 @@ pub function lc_report_and_exit_wrapper(): string {
   o = o + lc_label(" live_bytes=");
   o = o + "    (call $__fern_lc_wrnum (i64.sub (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)) (local.get $b))\n";
   o = o + lc_label("\n");
-  if (asmcore.sanitize_on()) {
+  if (sanitize) {
     // The sanitizer's leak verdict, the text the register backends print.
     // Only a POSITIVE balance is a leak: zero is clean, and a negative one
     // is an over-free, a different finding named at the offending dec.
@@ -12544,7 +12528,7 @@ pub function lc_report_and_exit_wrapper(): string {
 // heap_alloc_helpers emits the bump allocator: a `$heap` global starting
 // at `heap_base` (above all static data) and `$__fern_alloc` which bumps
 // it. Shared by string concat and array allocation.
-pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl_base: i32, count: boolean): string {
+pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl_base: i32, count: boolean, lc: boolean): string {
   let hb: string = util.i32_to_string(heap_base);
   let flb: string = util.i32_to_string(fl_base);
   let flc: string = util.i32_to_string(fl_cells);
@@ -12589,7 +12573,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   // linear memory anyway.
   o = o + "    (if (i32.gt_u (local.get $n) (i32.const 2147483647)) (then (unreachable)))\n";
   o = o + "    (local.set $n (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8)))\n";
-  o = o + lc_bump_alloc("(local.get $n)");
+  o = o + lc_bump_alloc("(local.get $n)", lc);
   if (count) {
     // Ahead of both freelist pops and the bump, so a recycled block is
     // counted exactly like a bumped one: the count is of blocks handed
@@ -12705,7 +12689,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o = o + "    (local $cls i32)\n";
   o = o + "    (if (i32.eqz (local.get $base)) (then (return)))\n";
   o = o + "    (local.set $bytes (i32.and (i32.add (local.get $bytes) (i32.const 7)) (i32.const -8)))\n";
-  o = o + lc_bump_free("(local.get $bytes)");
+  o = o + lc_bump_free("(local.get $bytes)", lc);
   o = o + "    (if (i32.lt_u (local.get $bytes) (i32.const 8)) (then (return)))\n";
   o = o + "    (local.set $cls (call $__fern_capw (i32.shr_u (local.get $bytes) (i32.const 3))))\n";
   o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
@@ -12773,7 +12757,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o = o + "    (local.set $base (i32.sub (local.get $t) (i32.const 8)))\n";
   o = o + "    (if (i32.eq (i32.load (i32.add (local.get $base) (i32.const 4))) (local.get $want)) (then\n";
   o = o + "      (return (local.get $t))))\n";
-  o = o + lc_bump_free("(i32.load (i32.add (local.get $base) (i32.const 4)))");
+  o = o + lc_bump_free("(i32.load (i32.add (local.get $base) (i32.const 4)))", lc);
   o = o + "    (local.set $cls (call $__fern_capw (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3))))\n";
   o = o + "    (i32.store (local.get $base) (i32.const 0))\n";
   o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
@@ -12802,7 +12786,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o = o + "    (if (i32.le_s (local.get $rc) (i32.const 0)) (then\n";
   o = o + "      (global.set $__fern_rc_underflow (i32.add (global.get $__fern_rc_underflow) (i32.const 1)))\n";
   o = o + "      (return (local.get $a))))\n";
-  o = o + lc_bump_free("(i32.load (i32.add (local.get $base) (i32.const 4)))");
+  o = o + lc_bump_free("(i32.load (i32.add (local.get $base) (i32.const 4)))", lc);
   o = o + "    (local.set $cls (call $__fern_capw (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3))))\n";
   o = o + "    (i32.store (local.get $base) (i32.const 0))\n";
   o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
@@ -13510,9 +13494,9 @@ pub function arr_push_strided(suffix: string, vty: string, sop: string, stride: 
 // modes — which import nothing at all (no-I/O) or the preview2 stdout/stderr/
 // exit trio instead — skip the whole section wholesale rather than threading a
 // mode flag through sixty individual gates.
-function preview1_imports(needs: string[]): string {
+function preview1_imports(needs: string[], lc: boolean): string {
   let parts: string[] = [];
-  if (leak_check_on()) {
+  if (lc) {
     // Census (#5362): the raw import is renamed so the flag-gated
     // reporting $proc_exit (lc_report_and_exit_wrapper) can define the
     // name every existing call site — the exit op and $_start — uses.
@@ -13527,7 +13511,7 @@ function preview1_imports(needs: string[]): string {
   }
   // print_str / eprint_str / putchar write via WASI fd_write
   // — import it only when the module writes to stdout or stderr.
-  if (leak_check_on() || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || (need(needs, "write_file") || need(needs, "write_file_bytes")) || need(needs, "writer_write") || (need(needs, "write_some") || need(needs, "write_bytes") || need(needs, "write_some_bytes"))) {
+  if (lc || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || (need(needs, "write_file") || need(needs, "write_file_bytes")) || need(needs, "writer_write") || (need(needs, "write_some") || need(needs, "write_bytes") || need(needs, "write_some_bytes"))) {
     parts = parts.append("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
   }
   // read_file / write_file open paths under preopen fd 3: path_open +
@@ -13896,12 +13880,13 @@ pub function heap_base_for_units(units: WasmUnit[]): i32 {
 // mode-independent, which is why the component leg is a fork at two points
 // rather than a second emitter (wasm.fern's AST component path is a full
 // parallel copy; this is not).
-pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: string[], fn_sigs: string[], rc_bodies: string, mode: i32): string {
+pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: string[], fn_sigs: string[], rc_bodies: string, mode: i32, sw: asmcore.Switches): string {
+  let lc: boolean = sw.sanitize || asmcore.leak_check_on();
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   let parts: string[] = [];
   parts = parts.append("(module\n");
   if (mode == 0) {
-    parts = parts.append(preview1_imports(needs));
+    parts = parts.append(preview1_imports(needs, lc));
   }
   if (mode == 2) {
     parts = parts.append(component_io_imports(needs, component_uses_stderr(mod, needs), module_is_proxy(mod)));
@@ -13988,7 +13973,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // Census counters (#5362): outside the heap gate — the mode-0 report and
   // any mode's bump sites reference them, and a heap-free mode-0 program
   // still reports zeros. Empty when FERN_LEAKCHECK is off.
-  parts = parts.append(lc_globals());
+  parts = parts.append(lc_globals(lc));
   // mode 2 folds into the heap gate: the $fd_write shim allocates its
   // canonical-ABI return area through $__fern_alloc, so a component-io core
   // needs the heap even when the program itself never allocates.
@@ -14003,7 +13988,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_all", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect", "tcp_connect_with", "tcp_send", "tcp_send_bytes", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_send_bytes", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
   ])) {
-    parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count")));
+    parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count"), lc));
     parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
   }
   // The preview2 shims stand in for the preview1 imports mode 0 supplies, so
@@ -14379,7 +14364,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(reactor_wait_func());
   }
   if (need(needs, "@uses_task")) {
-    parts = parts.append(task_funcs());
+    parts = parts.append(task_funcs(lc));
   }
   if (need(needs, "tcp_recv_into")) {
     parts = parts.append(tcp_recv_into_func());
@@ -14673,7 +14658,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // Census report + the reporting $proc_exit (#5362). Mode 0 only: the
     // component modes have no preview1 proc_exit to wrap. Empty when the
     // flag is off.
-    parts = parts.append(lc_report_and_exit_wrapper());
+    parts = parts.append(lc_report_and_exit_wrapper(lc, sw.sanitize));
     parts = parts.append("  (func $_start (call $proc_exit (call $main)))\n");
     parts = parts.append(xps);
     // `main` is exported beside `_start` so a host can read its result
@@ -14681,7 +14666,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // outside [0..126), so through `_start` alone a result of 126 or more
     // is unreadable. That call never reaches $proc_exit, so under the census
     // the export reports on its way out.
-    if (leak_check_on()) {
+    if (lc) {
       parts = parts.append("  (func $__fern_main_reporting (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (local.get $r))\n");
       parts = parts.append("  (export \"main\" (func $__fern_main_reporting))\n");
     } else {

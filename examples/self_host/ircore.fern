@@ -934,14 +934,14 @@ pub struct Sub {
   // The emit entry's checks already passed on the module this was built for
   // (semlower.driven_annotated), so the entry does not run them again.
   checked: boolean,
-  // Whether a fatal abort's report walks the frame chain (asmcore.EmitState's
-  // backtrace): the environment's default unless the CLI's -backtrace set it.
-  backtrace: boolean,
+  // The diagnostic switches the emit state takes (asmcore.with_switches):
+  // the environment's defaults unless the CLI's flags set them.
+  switches: asmcore.Switches,
 }
 
 pub function no_sub(): Sub {
   let none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [] };
-  return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, backtrace: asmcore.backtrace_on() };
+  return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, switches: asmcore.env_switches() };
 }
 
 // The register emit's lambda-lifted module: the producer's, erased, when it

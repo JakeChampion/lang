@@ -113,13 +113,13 @@ wasm that reads "the leak census only, not the rc over-release or
 use-after-free detectors"; on an SSA backend, or a target with no
 instrumentation at all, it says the build carries no checks.
 
-The **self-host** compiler reads `FERN_SANITIZE=1` at emit time (there is no
-`-sanitize` flag on its driver; the env var is the surface, matching its
-existing `FERN_LEAKCHECK` / `FERN_RC_TRACE` ports), so the flag goes to the
-compiler process, not to the program it produces:
+The **self-host** compiler takes `-sanitize` as native does, and reads
+`FERN_SANITIZE=1` at emit time (its `FERN_LEAKCHECK` / `FERN_RC_TRACE` ports
+have the same shape), so either goes to the compiler process, not to the
+program it produces; the flag prints the same per-target coverage note:
 
 ```sh
-FERN_SANITIZE=1 bin/fern-selfhost -target x86-64-linux -o prog.s /ABS/prog.fern $PWD/internal/stdlib
+bin/fern-selfhost -sanitize -target x86-64-linux -o prog.s /ABS/prog.fern $PWD/internal/stdlib
 ```
 
 Its reports carry the same frame-pointer backtrace as native's, suppressed by

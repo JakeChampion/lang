@@ -131,17 +131,26 @@ func TestCoreutilsLaneRequestsWasmtime(t *testing.T) {
 	}
 }
 
-// TestCoreutilsLaneHasTheGNUOracle pins the reference the whole corpus is
-// compared against. Every parity case asks a GNU binary what the answer is, so
-// without the built 9.12 oracle the lane either fails wholesale against the
-// image's 9.4 or — worse — reports version differences as Fern's bugs. The
-// build moved here with the package; the units lane no longer needs it.
+// TestCoreutilsLaneHasTheGNUOracle pins the reference every GNU comparison is
+// made against. A parity case asks a GNU binary what the answer is, so without
+// the built 9.12 oracle a lane either fails wholesale against the image's 9.4
+// or — worse — reports version differences as Fern's bugs. The build is one
+// composite action, used by the coreutils lane and by the self-host shards,
+// whose byte tests compare the self-host's utilities with GNU's too.
 func TestCoreutilsLaneHasTheGNUOracle(t *testing.T) {
-	src := workflowSource(t, "test-coreutils.yml")
-	for _, want := range []string{"GNU_COREUTILS_VERSION", "FERN_GNU_COREUTILS", "gnu-coreutils-full-"} {
-		if !strings.Contains(src, want) {
-			t.Errorf("test-coreutils.yml no longer mentions %s; the corpus would be compared against "+
+	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "actions", "gnu-coreutils", "action.yml"))
+	if err != nil {
+		t.Fatalf("read the gnu-coreutils action: %v", err)
+	}
+	for _, want := range []string{"FERN_GNU_COREUTILS", "gnu-coreutils-full-"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("the gnu-coreutils action no longer mentions %s; the comparisons would be made against "+
 				"whatever coreutils the runner image ships (9.4) rather than the pinned oracle", want)
+		}
+	}
+	for _, lane := range []string{"test-coreutils.yml", "test-e2e-selfhost.yml"} {
+		if !strings.Contains(workflowSource(t, lane), "./.github/actions/gnu-coreutils") {
+			t.Errorf("%s no longer uses the gnu-coreutils action, so its GNU comparisons fall back to the image's 9.4", lane)
 		}
 	}
 	units := workflowSource(t, "test-units.yml")
