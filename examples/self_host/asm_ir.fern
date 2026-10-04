@@ -2046,7 +2046,9 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
   // its exponent selects, keeping 128 bits about the binary point — the top
   // two bits are the quadrant and the rest the fraction of x/(pi/2), which
   // stays fully accurate however large x is. Kept in lockstep with the
-  // native x86-64 backend's __fern_rem_pio2_large, register for register.
+  // native x86-64 backend's __fern_rem_pio2_large, register for register,
+  // except that the copy and the two conversions write whole registers here
+  // (movapd, and xorps first) where native writes the low lane.
   s = s.write("__fern_rem_pio2_large:\n");
   s = s.write("    movq %xmm0, %rdx\n");
   s = s.write("    movq %rdx, %r8\n    shrq $63, %r8\n");  // sign of x

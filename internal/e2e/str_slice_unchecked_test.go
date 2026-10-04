@@ -13,12 +13,6 @@
 package e2e
 
 import (
-	"bytes"
-	"errors"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -139,43 +133,6 @@ func TestStrSliceUncheckedArm64(t *testing.T) {
 func TestStrSliceUncheckedWasm(t *testing.T) {
 	if got := compileAndRunWasmbinMain(t, strSliceUncheckedProgram); got != 0 {
 		t.Fatalf("wasm got %d, want 0", got)
-	}
-}
-
-// TestStrSliceUncheckedArm64SSA drives the same program through the CLI's
-// `-backend ssa` path (the SSA-direct arm64 backend), which the in-process
-// compileAndRunArm64 harness does not reach.
-func TestStrSliceUncheckedArm64SSA(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("arm64 -backend ssa not exercised on windows")
-	}
-	qemu := arm64QemuOrEmpty(t)
-	bin := buildFernCLI(t)
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(srcPath, []byte(strSliceUncheckedProgram), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	out := filepath.Join(dir, "prog.bin")
-	emit := exec.Command(bin, "-target", "arm64-linux", "-backend", "ssa", "-o", out, srcPath)
-	var eb bytes.Buffer
-	emit.Stderr = &eb
-	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target arm64-linux -backend ssa: %v\nstderr:\n%s", err, eb.String())
-	}
-	run := runArm64Bin(qemu, out)
-	err := run.Run()
-	got := 0
-	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			got = ee.ExitCode()
-		} else {
-			t.Fatalf("run %s: %v", out, err)
-		}
-	}
-	if got != 0 {
-		t.Fatalf("arm64-ssa got %d, want 0", got)
 	}
 }
 

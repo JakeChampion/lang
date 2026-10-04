@@ -223,7 +223,7 @@ func traceOneFixture(t *testing.T, runner []string, dir string) (int, string, er
 	// re-run against the broken compiler to find that out rather than
 	// assumed: the crash was in examples/proposals/unidiff.fern, and this
 	// corpus is conformance/cases only, where nothing crashed. What caught
-	// it was TestArm64SSABackendDifferential, which runs examples/.
+	// it was the arm64 differential over examples/ (TestExamplesNoCrash* today).
 	//
 	// So this closes the shape of the gap, not that instance of it.
 	// Widening the census to examples/ would close the instance too, and

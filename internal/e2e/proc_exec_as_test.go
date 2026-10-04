@@ -32,9 +32,9 @@ import (
 //
 // The arm64 leg is not redundant with x86-64: arm64 runs the two-word string
 // ABI, where a `string` takes TWO argument slots (so envp arrives in x3, not
-// x2) and a `string[]` element is a 16-byte (data, len) pair. arm64-ssa is a
-// third, independently hand-written helper, and arm64-darwin reaches the same
-// emitter through XNU's execve trap number and its carry-flag error convention.
+// x2) and a `string[]` element is a 16-byte (data, len) pair. arm64-darwin
+// reaches the same emitter through XNU's execve trap number and its carry-flag
+// error convention.
 
 // argv[0] as typed, and an environment built by the caller.
 const procExecAsArgvEnvpSrc = `
@@ -131,16 +131,6 @@ func TestArm64ProcExecAs(t *testing.T) {
 	runProcExecAsChecks(t, "linux", func(t *testing.T, src string) int {
 		_, exit := compileAndRunArm64(t, src)
 		return exit
-	})
-}
-
-func TestArm64SSAProcExecAs(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	runProcExecAsChecks(t, "linux", func(t *testing.T, src string) int {
-		bin := compileArm64SSA(t, fern, src, os.Environ())
-		code, _ := runArm64SSABin(t, qemu, bin, t.TempDir(), os.Environ())
-		return code
 	})
 }
 

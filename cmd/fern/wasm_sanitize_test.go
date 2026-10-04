@@ -131,7 +131,3 @@ func TestSanitizeWarnsWasmCarriesTheCensusOnly(t *testing.T) {
 		t.Errorf("warning still says wasm carries nothing:\n%s", got)
 	}
 }
-
-// TestSanitizeWarnsForSSABackend lives in backend_ssa_stdout_test.go with the
-// rest of the `-backend ssa` CLI surface: the warning is a property of that
-// backend, not of the wasm target it used to be exercised through.
