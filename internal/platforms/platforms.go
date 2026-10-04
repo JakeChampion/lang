@@ -9,7 +9,7 @@
 // per-target descriptor that drives:
 //
 //   - Capability surface (fetch, kv, secrets, log, now, …) —
-//     determines what fields `Platform` gets per target.
+//     determines what a platform can offer a handler per target.
 //   - Handler kinds (fetch, scheduled, alarm, startup, …) —
 //     determines what signatures the user can declare beyond
 //     `handle(req, plat)`.

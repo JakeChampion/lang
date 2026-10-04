@@ -640,7 +640,7 @@ function capability_findings(merged: parser.Module, target: string): Finding[] {
 }
 
 // ambient_findings is every host effect a handler reaches around its
-// `Platform` bag (E080 — ambient.fern). Target-independent, so it runs on
+// platform (E080 — ambient.fern). Target-independent, so it runs on
 // every check and every build, on the bundle before the shake: a handler is
 // judged on what its body reaches.
 function ambient_findings(merged: parser.Module): Finding[] {
@@ -2862,7 +2862,7 @@ function run(): i32 {
   }
 
   // The bag boundary (E080 — ambient.fern): a handler reaching a host
-  // effect around its `Platform`, on either compiler.
+  // effect around its platform, on either compiler.
   if (eprint_findings(ambient_findings(merged), b.files)) {
     return 1;
   }

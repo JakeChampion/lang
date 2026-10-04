@@ -9,6 +9,7 @@ package checker
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -58,6 +59,10 @@ type Info struct {
 	// IntrinsicCalls records resolved semantic identities for the pre-RC IR.
 	// Nil when no supported intrinsic was checked; legacy lowering is unchanged.
 	IntrinsicCalls map[*ast.Call]IntrinsicCall
+	// StatefulHandler reports a `handle` threading process-lifetime state
+	// (state, request, platform). Monomorph drops the generic declaration, so
+	// a target that cannot serve one reads this rather than the program.
+	StatefulHandler bool
 	// BoxedCells names the locals that closureconv.BoxMutatedCaptures
 	// rewrote into 1-element array cells for by-reference scalar capture. Such a
 	// cell is a SHARED MUTABLE reference (the whole point — a closure and the
@@ -608,43 +613,6 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "trailers", Type: ast.StructType{Name: "HeaderMap"}},
 			},
 		},
-		// Platform — the capability bag threaded as the second
-		// parameter of every handler (docs/PLATFORM-RESEARCH.md
-		// Rec §1). `version` is the bag's ABI version, bumped
-		// when a capability lands, so a handler can tell what it
-		// was handed.
-		//
-		// `mode` and `sink` are what make the bag substitutable
-		// (Rec §6). On the host platform mode is 0 and the sink
-		// is an empty cell nothing writes; a MockPlatform hands
-		// over mode 1 and its own cell, and `std/platform`'s
-		// capability methods then append to that cell instead of
-		// performing the effect. The sink is a `Cell[string]`
-		// because a cell is the language's one shared-mutable
-		// box and E057 restricts its element to a scalar or a
-		// string — which is why the effect log is a string the
-		// mock parses back, rather than an array.
-		//
-		// `handle` is the worker-owned runtime handle (#9851 §3.1): the
-		// reactor the serving worker runs on, 0 for a bag built outside
-		// one. Struct fields are frozen after construction and a cell
-		// holds only a scalar or a string, so the mutable per-worker
-		// state a capability needs (idle connections, timers, the sim's
-		// driver) lives behind this handle rather than in the bag.
-		//
-		// Every construction goes through the synthesised
-		// `__fern_platform_new`, std/serve's `__host_platform`, or
-		// std/platform; nothing builds this struct out of raw
-		// memory.
-		{
-			Name: "Platform",
-			Fields: []ast.Param{
-				{Name: "version", Type: ast.NumberType{}},
-				{Name: "mode", Type: ast.NumberType{}},
-				{Name: "sink", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.StringType{}}}},
-				{Name: "handle", Type: ast.NumberType{}},
-			},
-		},
 		// HeaderMap — case-insensitive, multi-valued, insertion-
 		// ordered header bag (docs/STDLIB-DESIGN-RESEARCH.md
 		// Rec §2). Storage is two parallel arrays — `names`
@@ -710,36 +678,6 @@ func builtinStructDecls() []*ast.StructDecl {
 			Name: "BytesWriter",
 			Fields: []ast.Param{
 				{Name: "data", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
-			},
-		},
-		// MockCall + MockPlatform — test-ergonomics helpers for
-		// Tier-C Rec §11 (docs/PLATFORM-RESEARCH.md §6). Today's
-		// Platform is a one-field placeholder; once Phase 2 adds
-		// capability fields (log / fetch / kv / now), MockPlatform
-		// grows matching methods that intercept calls. Phase 1
-		// ships the call-recording infrastructure: tests
-		// instantiate MockPlatform, perform some flow that
-		// records `MockCall { name, args }` entries, then
-		// inspect `(m).calls()` to assert effect ordering /
-		// payload shape.
-		{
-			Name: "MockCall",
-			Fields: []ast.Param{
-				{Name: "name", Type: ast.StringType{}},
-				{Name: "args", Type: ast.StringType{}},
-			},
-		},
-		// MockPlatform — the recording half of the test seam
-		// (docs/PLATFORM-RESEARCH.md Rec §6). One field, and it is
-		// the SAME cell the bag from `as_platform()` carries: the
-		// mock and the handler write one log through two views.
-		// The calls are a string rather than a MockCall[] because
-		// a cell's element must be a scalar or a string (E057);
-		// `std/mock_platform`'s `calls()` parses it back.
-		{
-			Name: "MockPlatform",
-			Fields: []ast.Param{
-				{Name: "sink", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.StringType{}}}},
 			},
 		},
 		// Date/time types (docs/STDLIB-DESIGN-RESEARCH.md
@@ -1182,8 +1120,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		}
 	}
 	// Same shape for the auto-injected structs (Reader,
-	// Writer, HttpRequest, HttpResponse, Platform, HeaderMap,
-	// Stream, BytesWriter, MockCall, MockPlatform, Instant /
+	// Writer, HttpRequest, HttpResponse, HeaderMap,
+	// Stream, BytesWriter, Instant /
 	// Date / Time / DateTime / TimeZone / Zoned / Span /
 	// Duration, Map, MapIter, Url) — same shadow-is-an-error
 	// policy, same monomorph-re-entry handling.
@@ -5269,11 +5207,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	}
 
 	// Auto-main from handle: when the user defines
-	// `function handle(req: HttpRequest, plat: Platform):
+	// `function handle(req: HttpRequest, plat: platform.Platform):
 	// HttpResponse` but no `main()`, synthesise a minimal main
 	// that calls `serve.supervise(port, serve.config(), handle)` after reading PORT
-	// from the environment (default 8080). The serve loop constructs
-	// a Platform per request and threads it through. The same
+	// from the environment (default 8080). The serve loop builds a
+	// `platform.Host` per worker and hands it to every request. The same
 	// source then
 	// compiles for arm64 (CLI-mode native server), wasm
 	// CLI-mode (`--invoke main`), and wasi-http (the
@@ -5283,13 +5221,18 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// Skipped silently when both handle() and main() are
 	// user-defined — don't surprise users who want their
 	// own main alongside the wasi-http handler.
-	// The Platform bag has exactly one constructor, and the compiler owns
-	// it (docs/PLATFORM-RESEARCH.md Rec §2). Synthesised whenever a `handle`
-	// exists — including on wasi-http, where the entry wrapper calls it
-	// rather than building the struct out of raw memory, so a field added
-	// to the bag costs the wrapper nothing.
-	if hasHandleDecl(prog) && findDecl(prog, platformCtorName) == nil {
-		prog.Funcs = append(prog.Funcs, synthesisePlatformCtor())
+	// The wasi-http entry wrapper (internal/codegen/wasmbin/wasi_http.go)
+	// is hand-written wasm, which cannot instantiate a handler generic over
+	// its platform, so it calls a synthesised `__fern_wasi_handle(req)`
+	// that hands `handle` the host platform in Fern. Synthesised whenever a
+	// two-parameter `handle` and std/platform are present; other targets
+	// tree-shake it.
+	if h := findDecl(prog, "handle"); h != nil && h.Receiver == nil && len(h.Params) == 2 &&
+		findDecl(prog, WasiHandleName) == nil && findDecl(prog, "platform__host") != nil {
+		prog.Funcs = append(prog.Funcs, synthesiseWasiHandle())
+	}
+	if h := findDecl(prog, "handle"); h != nil && h.Receiver == nil && len(h.Params) == 3 {
+		c.info.StatefulHandler = true
 	}
 	if hasHandleDecl(prog) && !hasMainDecl(prog) {
 		// A mispaired init/handle has already been reported against the
@@ -21491,7 +21434,7 @@ func isStringLike(t ast.Type) bool {
 }
 
 // hasHandleDecl reports whether the program defines a top-level
-// `function handle(req: HttpRequest, plat: Platform): HttpResponse`
+// `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse`
 // — the Platform-parameter signature shape every wasi-http
 // program targets (docs/PLATFORM-RESEARCH.md Rec §1). The check
 // is purely structural: any top-level FuncDecl named `handle`
@@ -21584,16 +21527,36 @@ func findDecl(prog *ast.Program, name string) *ast.FuncDecl {
 }
 
 // initTakesPlatformOnly reports whether `init` takes nothing, or the
-// platform alone: the two shapes the synthesised main can call.
+// platform alone.
 func initTakesPlatformOnly(init *ast.FuncDecl) bool {
 	if len(init.Params) == 0 {
 		return true
 	}
-	if len(init.Params) != 1 {
+	return len(init.Params) == 1 && IsPlatformParam(init, init.Params[0])
+}
+
+// IsPlatformParam reports whether p is fn's platform parameter: a type
+// parameter bounded by std/platform's trait, which `plat: platform.Platform`
+// desugars to, or the host platform itself.
+func IsPlatformParam(fn *ast.FuncDecl, p ast.Param) bool {
+	var name string
+	switch t := p.Type.(type) {
+	case ast.ParamType:
+		name = t.Name
+	case ast.StructType:
+		name = t.Name
+	default:
 		return false
 	}
-	st, ok := init.Params[0].Type.(ast.StructType)
-	return ok && st.Name == "Platform"
+	if name == "platform__Host" {
+		return true
+	}
+	for _, b := range fn.Bounds[name] {
+		if b == "platform__Platform" {
+			return true
+		}
+	}
+	return false
 }
 
 // isServeConfigType reports whether `t` is std/serve's `Config`. modload
@@ -21609,8 +21572,8 @@ func isServeConfigType(t ast.Type) bool {
 // `(serve.Config, S)`, or neither.
 //
 //	function init(): S
-//	function init(plat: Platform): (serve.Config, S)
-//	function handle(state: S, req: HttpRequest, plat: Platform): (S, HttpResponse)
+//	function init(plat: platform.Platform): (serve.Config, S)
+//	function handle(state: S, req: HttpRequest, plat: platform.Platform): (S, HttpResponse)
 //
 // The state pair is the two-phase lifecycle of docs/PLATFORM-RESEARCH.md
 // Rec §3 — build once at startup, thread through every request — and
@@ -21669,7 +21632,7 @@ func resultHandlerShape(handle *ast.FuncDecl) bool {
 // is renamed to resultHandlerName and a `handle` of the plain shape is
 // synthesised over it,
 //
-//	function handle(req: HttpRequest, plat: Platform): HttpResponse {
+//	function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 //	    return respond(__fern_handle_result(req, plat));
 //	}
 //
@@ -21721,6 +21684,9 @@ func adaptResultHandler(prog *ast.Program) {
 	prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
 		P:          pos,
 		Name:       "handle",
+		TypeParams: slices.Clone(handle.TypeParams),
+		Bounds:     maps.Clone(handle.Bounds),
+		BoundArgs:  maps.Clone(handle.BoundArgs),
 		Params:     params,
 		ReturnType: ret,
 		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{P: pos, Value: call}}},
@@ -21800,50 +21766,37 @@ func freshTraitParam(want string, taken []string) string {
 	return name
 }
 
-// platformCtorName is the compiler-owned Platform constructor. The `__fern_`
+// WasiHandleName is the entry the wasi-http wrapper calls. The `__fern_`
 // prefix is the emitted-runtime-symbol convention, and keeps the name out of
 // any namespace a program can spell.
-const platformCtorName = "__fern_platform_new"
+const WasiHandleName = "__fern_wasi_handle"
 
-// synthesisePlatformCtor builds:
+// synthesiseWasiHandle builds:
 //
-//	function __fern_platform_new(): Platform {
-//	    return Platform { version: 3, mode: 0, sink: cell_new(""), handle: 0 };
+//	function __fern_wasi_handle(req: HttpRequest): HttpResponse {
+//	    return handle(req, platform.host());
 //	}
 //
-// The capability bag built in Fern, where the struct's layout is the
-// compiler's own, rather than in a backend's idea of it. The wasi-http entry
-// wrapper (internal/codegen/wasmbin/wasi_http.go) is the caller that matters:
-// it is hand-written wasm, and it used to allocate the struct and store the
-// field itself, which is a copy of the layout that goes stale the day the bag
-// grows a capability. std/serve's accept loop still writes the literal — it is
-// Fern source the checker re-checks, so it cannot drift silently.
-//
-// The `mode`/`sink` fields carry the mock seam (Rec §6): this is the host
-// bag, so mode 0 and a sink nothing writes. The wasi-http wrapper serves
-// one request per instance with no reactor, so the handle is 0.
-func synthesisePlatformCtor() *ast.FuncDecl {
+// The one place a handler is called from outside Fern. The wrapper serves
+// one request per instance with no reactor, which is what `platform.host()`
+// is; the call instantiates a `handle` generic over its platform at
+// `platform.Host`, as `serve.run` does on the other targets.
+func synthesiseWasiHandle() *ast.FuncDecl {
 	pos := ast.Position{}
-	lit := &ast.StructLit{
-		P:        pos,
-		TypeName: "Platform",
-		Fields: []ast.FieldInit{
-			{Name: "version", Value: &ast.NumberLit{P: pos, Value: 3}},
-			{Name: "mode", Value: &ast.NumberLit{P: pos, Value: 0}},
-			{Name: "sink", Value: &ast.Call{
-				P:      pos,
-				Callee: &ast.Ident{P: pos, Name: "cell_new"},
-				Args:   []ast.Expr{&ast.StringLit{P: pos, Value: ""}},
-			}},
-			{Name: "handle", Value: &ast.NumberLit{P: pos, Value: 0}},
+	call := &ast.Call{
+		P:      pos,
+		Callee: &ast.Ident{P: pos, Name: "handle"},
+		Args: []ast.Expr{
+			&ast.Ident{P: pos, Name: "req"},
+			&ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "platform__host"}},
 		},
 	}
 	return &ast.FuncDecl{
 		P:          pos,
-		Name:       platformCtorName,
-		Params:     nil,
-		ReturnType: ast.StructType{Name: "Platform"},
-		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{P: pos, Value: lit}}},
+		Name:       WasiHandleName,
+		Params:     []ast.Param{{Name: "req", Type: ast.StructType{Name: "HttpRequest"}}},
+		ReturnType: ast.StructType{Name: "HttpResponse"},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{P: pos, Value: call}}},
 	}
 }
 

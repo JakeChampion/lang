@@ -171,8 +171,9 @@ func TestEnforceFsByTarget(t *testing.T) {
 func TestEnforceUnusedImportsDontTrip(t *testing.T) {
 	src := `import "std/http";
 import "std/serve";
+import "std/platform";
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }`
 	prog := prepared(t, src, true)

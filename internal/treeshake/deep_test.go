@@ -138,25 +138,25 @@ function main(): i32 {
 	}
 }
 
-// TestShakeHandleIsEntryPoint — `handle` is an entry point
-// independent of `main`. A function reachable only from `handle`
-// survives even though main never references it, while an
-// unreferenced `dead` is dropped. Pairs handle with a trivial
-// main so the program type-checks without the HTTP-server
+// TestShakeWasiHandleIsEntryPoint — the wasi-http entry
+// (checker.WasiHandleName) is an entry point independent of `main`. A
+// function reachable only from it survives even though main never
+// references it, while an unreferenced `dead` is dropped. Pairs the entry
+// with a trivial main so the program type-checks without the HTTP-server
 // runtime path.
-func TestShakeHandleIsEntryPoint(t *testing.T) {
-	src := `function onlyFromHandle(): i32 { return 7; }
+func TestShakeWasiHandleIsEntryPoint(t *testing.T) {
+	src := `function onlyFromEntry(): i32 { return 7; }
 function dead(): i32 { return 9; }
-function handle(): i32 { return onlyFromHandle(); }
+function ` + checker.WasiHandleName + `(): i32 { return onlyFromEntry(); }
 function main(): i32 { return 0; }`
 	names := runShake(t, src)
-	for _, want := range []string{"handle", "main", "onlyFromHandle"} {
+	for _, want := range []string{checker.WasiHandleName, "main", "onlyFromEntry"} {
 		if !hasName(names, want) {
-			t.Errorf("%s should survive (handle is an entry point): %v", want, names)
+			t.Errorf("%s should survive (the wasi-http entry is an entry point): %v", want, names)
 		}
 	}
 	if hasName(names, "dead") {
-		t.Errorf("dead is reachable from neither main nor handle and should be dropped: %v", names)
+		t.Errorf("dead is reachable from neither main nor the entry and should be dropped: %v", names)
 	}
 }
 

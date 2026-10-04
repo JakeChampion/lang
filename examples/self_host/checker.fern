@@ -5244,8 +5244,15 @@ function sig_call_type(sig: FuncSig, name: string, c: ast.ExprCall, s: Scope): t
     // An unknown PARAM type is an opaque generic parameter (`f[T](x: T)`,
     // where T erases to unknown) — the arg can't be checked against it, so
     // skip rather than mis-flag a mismatch (mirrors the E038 diag pass,
-    // #4346 piece 2). A concrete param is still checked.
-    if (!is_unknown(sig.param_types[i]) && !settles_to(c.args[i], sig.param_types[i], s) && !view_arg_borrow(at, sig.param_types[i]) && !coercible(at, sig.param_types[i], s)) {
+    // #4346 piece 2). A concrete param is still checked. A generic function
+    // named for a callable parameter whose spelling has the callee's own
+    // variables (`twice[A](f: (A) => i32, v: A)`) is checked against the
+    // parameter as the call binds it.
+    let want: typeinfo.Type = sig.param_types[i];
+    if (type_contains_unknown(want) && generic_fn_value_arg(c.args[i], s)) {
+      want = bound_param_dest(c, i, want, s);
+    }
+    if (!is_unknown(want) && !settles_to(c.args[i], want, s) && !view_arg_borrow(at, want) && !coercible(at, want, s)) {
       return t_unknown("arg-type mismatch calling `" + name + "`");
     }
     i = i + 1;
@@ -6764,6 +6771,11 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         _ => {}
       }
       if (is_unknown(t)) {
+        // A generic function named as the value has the declared callable
+        // type when that binds every one of its type parameters.
+        if (generic_fn_value_arg(r.value, s) && settles_to(r.value, s.ret_type, s)) {
+          return CheckResult { scope: s, ty: s.ret_type };
+        }
         return CheckResult { scope: s, ty: t };
       }
       if (!settles_to(r.value, s.ret_type, s) && !coercible(t, s.ret_type, s)) {
@@ -11893,6 +11905,14 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
       return false;
     }
   }
+  // A generic function named as a value settles to the function type
+  // expected of it when that type binds every one of its type parameters;
+  // monomorph instantiates it there.
+  if let typeinfo.TypeFunc(wf) = want {
+    if (generic_fn_value_arg(e, s)) {
+      return fn_value_settles(e, wf, s);
+    }
+  }
   match (want) {
     typeinfo.TypeMap(wm) => {
       return mlit_is_desugared(e) && mlit_entries_settle(e, wm, s);
@@ -14099,6 +14119,23 @@ function fn_value_binds(sig: FuncSig, dest: typeinfo.TypeFunc, s: Scope): (strin
   return (rn, rt);
 }
 
+// fn_value_settles reports whether the callable `want` binds every type
+// parameter of the generic function `e` names, to a known type.
+function fn_value_settles(e: ast.Expr, want: typeinfo.TypeFunc, s: Scope): boolean {
+  if let ast.ExprIdent(id) = e {
+    let sig: FuncSig = s.lookup_sig(id.name);
+    let (bn, bt) = fn_value_binds(sig, want, s);
+    for tp in sig.all_type_params {
+      let at: i32 = util.index_of_str(bn, tp);
+      if (at < 0 || type_contains_unknown(bt[at])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
 // fn_value_bound_diags is E021 for each bounded type parameter whose binding
 // does not implement its bound, as a call binding it would report.
 function fn_value_bound_diags(sig: FuncSig, names: string[], types: typeinfo.Type[], s: Scope, ln: i32, cl: i32): util.Diag[] {
@@ -15402,7 +15439,7 @@ function handler_state_diags(mod: parser.Module): util.Diag[] {
   let returns_state: boolean = false;
   if (init_idx >= 0) {
     let init_fd: parser.FuncDecl = mod.funcs[init_idx];
-    if (init_fd.params.len() > 1 || init_fd.params.len() == 1 && init_fd.params[0].type_name != "Platform") {
+    if (init_fd.params.len() > 1 || init_fd.params.len() == 1 && !parser.is_platform_param(init_fd, 0, parser.std_qualifier(mod, "platform"))) {
       return [dg_at("E075", "`init` takes " + util.i32_to_string(init_fd.params.len()) + " parameters; it takes none, or the platform alone", init_fd.line, init_fd.col)];
     }
     let kind: i32 = parser.init_return_kind(init_fd.ret_type, parser.std_qualifier(mod, "serve"));
@@ -21446,7 +21483,7 @@ function prepared_module(filled: parser.Module): parser.Module {
   // through annotate_module, and both first get each literal local's type
   // (#10123).
   let revalued: parser.Module = pretype_module(settle_literal_locals(filled));
-  // The built-in struct declarations (Platform, Stream, HeaderMap, the
+  // The built-in struct declarations (Stream, HeaderMap, the
   // std/time types, …) are injected into the struct table, not written in any
   // source, so a checker reading `mod.structs` as parsed sees only the
   // reserved NAMES and reports E064 / E021 against every use of one. Native

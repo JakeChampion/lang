@@ -71,7 +71,7 @@ function census_burn(n: i32): i32 {
     }
     return x;
 }
-function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
+function census_handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/chunked" || req.path == "/expect") {
         match (req.body_string()) {
             Ok(text) => { return http.ok(text); },
@@ -87,7 +87,7 @@ function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), Config { ...config(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});
+    return __serve_loop(3, (req: HttpRequest, plat: platform.Host): HttpResponse => census_handle(req, plat), Config { ...config(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});
 }
 `
 }
@@ -630,7 +630,7 @@ func httpHandlerCensusRequests(t *testing.T, addr string, rounds int) {
 func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	t.Helper()
 	src := HTTPHandlerCensusSource(t, root, rounds)
-	const original = "    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), Config { ...config(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});"
+	const original = "    return __serve_loop(3, (req: HttpRequest, plat: platform.Host): HttpResponse => census_handle(req, plat), Config { ...config(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});"
 	if strings.Count(src, original) != 1 {
 		t.Fatal("bounded HTTP entry changed")
 	}
@@ -639,7 +639,7 @@ func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
     let port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 91; }
     print(int.int_to_string(port));
-    let result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), Config { ...config(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});
+    let result: i32 = __serve_loop(listener, (req: HttpRequest, plat: platform.Host): HttpResponse => census_handle(req, plat), Config { ...config(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});
     if (tcp_close(listener) != 0) { return 92; }
     return result;`
 	return strings.Replace(src, original, entry, 1)

@@ -9684,6 +9684,7 @@ func TestArm64TcpListen(t *testing.T) {
 func TestArm64InstantNow(t *testing.T) {
 	_, code := compileAndRunArm64(t, `
 import "std/time";
+import "std/platform";
 function main(): i32 {
     let ts: Instant = time.instant_now();
     if (ts.sec < (1700000000 as i64)) { return 1; }
@@ -9696,7 +9697,7 @@ function main(): i32 {
 }
 
 // End-to-end arm64 HTTP handler. Compiles a program that only
-// defines `function handle(req: HttpRequest, plat: Platform):
+// defines `function handle(req: HttpRequest, plat: platform.Platform):
 // HttpResponse` — the checker synthesises `main()` from it as
 // `serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle)`, and
 // the serve loop constructs a Platform per request before calling
@@ -9731,7 +9732,8 @@ func TestArm64HttpHandler(t *testing.T) {
 	src := `
 import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("method=" + req.method + " path=" + req.path + " body-len=" + req.body_len().to_string());
 }`
 

@@ -316,7 +316,7 @@ func Run(prog *ast.Program, info *checker.Info, extras ...string) {
 	// that compile a single helper like
 	// `function f(): i32 { return 1; }` without a main.
 	enqueue("main")
-	enqueue("handle")
+	enqueue(checker.WasiHandleName)
 	// `__state_init` is the synthesised start function that
 	// runs state-block init expressions at module instantiation
 	// time. Codegen wires it up through the wasm `(start ...)`
@@ -327,7 +327,7 @@ func Run(prog *ast.Program, info *checker.Info, extras ...string) {
 	for _, name := range extras {
 		enqueue(name)
 	}
-	hasEntry := reachable["main"] || reachable["handle"]
+	hasEntry := reachable["main"] || reachable[checker.WasiHandleName]
 	if !hasEntry {
 		for _, fn := range prog.Funcs {
 			enqueue(fn.Name)

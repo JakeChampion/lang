@@ -20,6 +20,7 @@ func StreamingBodyServerSource(port int, path string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "core/int";
+import "std/platform";
 
 function chunk(i: i32): Option[u8[]] {
     if (i >= 5) { return None; }
@@ -32,7 +33,7 @@ function sparse(i: i32): Option[u8[]] {
     return None;
 }
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/big") { return http.file(%q).with_content_type("application/octet-stream"); }
     if (req.path == "/chunks") { return http.chunks(200, chunk).with_content_type("text/plain"); }
     if (req.path == "/sparse") { return http.chunks(200, sparse); }

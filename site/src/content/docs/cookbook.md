@@ -286,7 +286,7 @@ The status is data on the response (`resp.status`, or
 timeout, the protocol. Bodies are bytes, not text: an upstream can serve
 a PNG or a truncated UTF-8 sequence, so `body_text()` is a decode that
 can fail. A handler sends through its bag, `plat.http(req)`, and a
-`MockPlatform` cans the answer with `http_set`. `fetch.fetch_future`
+`mock_platform.MockPlatform` cans the answer with `http_set`. `fetch.fetch_future`
 gives you a future you can hand to `async.gather` to overlap several
 requests on one thread.
 
@@ -299,8 +299,9 @@ when you build for `wasi-http`.
 ```fern
 import "std/http";
 import "std/serve";
+import "std/platform";
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/health") {
         return http.ok("ok");
     }

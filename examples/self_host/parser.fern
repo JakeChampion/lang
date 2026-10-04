@@ -10315,27 +10315,6 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     hsf = hsf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
-  // Platform — the capability bag threaded as every handler's second
-  // parameter, and so a component of every `(HttpRequest, Platform) =>
-  // HttpResponse` signature in std/serve. builtins.fern declares it for the
-  // import-driven driver; this entry covers the paths that never read that
-  // file (asm_load_run's stdlib-root loading), where its absence made
-  // std/serve's __serve_loop bail — and the AST emitter it then fell to could
-  // not emit tcp_listen / poll, so the failure surfaced as a link error
-  // (#5686).
-  // Fields mirror internal/checker/checker.go: `version` is the bag's ABI
-  // version, `mode` + `sink` the mock seam (Rec §6) — a recording bag is
-  // mode 1 over a cell std/platform's capability methods append to — and
-  // `handle` the worker-owned runtime handle (the serving worker's
-  // reactor, 0 outside one).
-  if (!name_declared(structs, "Platform")) {
-    let pltf: StructFieldDecl[] = [];
-    pltf = pltf.append(StructFieldDecl { name: "version", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    pltf = pltf.append(StructFieldDecl { name: "mode", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    pltf = pltf.append(StructFieldDecl { name: "sink", type_name: "Cell[string]", fn_ret: "", fn_param_types: "" });
-    pltf = pltf.append(StructFieldDecl { name: "handle", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    structs = structs.append(StructDecl { name: "Platform", fields: pltf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
-  }
   // std/time's seven date/time types are compiler built-ins (registered in
   // the Go checker, not `struct`-declared in std/time), so the self-host's
   // shape-pointer dispatch + field-offset resolution need their layouts here
@@ -10375,19 +10354,14 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     spf = spf.append(StructFieldDecl { name: "nanos", type_name: "i32", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
-  // std/io_buffered + std/stream + std/mock_platform built-ins (registered
-  // in the Go checker, not `struct`-declared in source) — same injection
-  // pattern as the time types. Field lists mirror checker.go exactly:
+  // std/io_buffered + std/stream built-ins (registered in the Go checker,
+  // not `struct`-declared in source) — same injection pattern as the time
+  // types. Field lists mirror checker.go exactly:
   //   Stream       { data: u8[], pos: i32 }       — byte cursor reader
   //   BytesWriter  { data: u8[] }                 — in-memory write buffer
-  //   MockCall     { name: string, args: string } — recorded call entry
-  //   MockPlatform { sink: Cell[string] }          — call-recording mock
-  // Stream / BytesWriter carry a sub-word (u8[]) array field, now leak-safe
+  // Both carry a sub-word (u8[]) array field, now leak-safe
   // (is_leaksafe_array_field), so their constructors / methods lower on the
-  // IR path. MockPlatform's `sink` is the same cell the bag from
-  // `as_platform()` carries — one effect log, two views. MockCall is two
-  // strings (leaf-safe).
-  structs = add_builtin_struct2(structs, "MockCall", "name", "string", "args", "string");
+  // IR path.
   structs = add_builtin_struct2(structs, "Stream", "data", "u8[]", "pos", "i32");
   if (!name_declared(structs, "ChunkProducer")) {
     let cpf: StructFieldDecl[] = [];
@@ -10398,11 +10372,6 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     let bwf: StructFieldDecl[] = [];
     bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
-  }
-  if (!name_declared(structs, "MockPlatform")) {
-    let mpf: StructFieldDecl[] = [];
-    mpf = mpf.append(StructFieldDecl { name: "sink", type_name: "Cell[string]", fn_ret: "", fn_param_types: "" });
-    structs = structs.append(StructDecl { name: "MockPlatform", fields: mpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // std/url's Url is a compiler built-in (registered in the Go checker, not
   // `struct`-declared in std/url), so the IR path needs its layout to lower
@@ -20245,7 +20214,7 @@ pub function is_reserved_struct_name(name: string): boolean {
   let reserved: string[] = [
     "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
-    "MapIter", "MockCall", "MockPlatform", "Platform", "ProcessResult",
+    "MapIter", "ProcessResult",
     "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
     "Zoned",
   ];
@@ -23732,6 +23701,45 @@ function desugar_fn_trait_params(fd: FuncDecl, traits: string[], spelled: boolea
     params = params.append(ast.ParamDecl { ...p, type_name: tp });
   }
   return FuncDecl { ...fd, params: params, type_params: type_params, bound_traits: bound_traits, all_type_params: all_type_params };
+}
+
+// is_platform_param reports whether parameter `i` of `fd` is its platform: a
+// type parameter bounded by std/platform's trait, which `plat: platform.Platform`
+// desugars to, or the host platform itself. `qual` is what the module imports
+// std/platform as, "" when the names are already mangled (`platform__Host`).
+pub function is_platform_param(fd: FuncDecl, i: i32, qual: string): boolean {
+  let t: string = fd.params[i].type_name;
+  if (t == "platform__Host" || t == "platform.Host" || qual.len() > 0 && t == qual + ".Host") {
+    return true;
+  }
+  let k: i32 = util.index_of_str(fd.type_params, t);
+  if (k < 0 || k >= fd.bound_traits.len()) {
+    return false;
+  }
+  for b in split_plus_bounds(fd.bound_traits[k]) {
+    if (trait_simple_name(b) == "Platform") {
+      return true;
+    }
+  }
+  return false;
+}
+
+// trait_simple_name is a trait bound's name less its module qualifier, in
+// either spelling (`platform.Platform`, `platform__Platform`), and its type
+// arguments.
+pub function trait_simple_name(b: string): string {
+  let base: string = util.base_type_name(b);
+  let i: i32 = base.len();
+  while (i > 0) {
+    if (base[i - 1] == b'.') {
+      return slice_unchecked(base, i, base.len()) + "";
+    }
+    if (i >= 2 && base[i - 1] == b'_' && base[i - 2] == b'_') {
+      return slice_unchecked(base, i, base.len()) + "";
+    }
+    i = i - 1;
+  }
+  return base;
 }
 
 // trait_decl_names is the name of every trait in `traits`.
