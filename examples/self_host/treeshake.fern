@@ -16,7 +16,8 @@
 // over-approximates reachability by NAME: a function is kept if its name
 // appears anywhere reachable as
 //   * an identifier read (`f(...)`, a function value, a mangled call target),
-//   * a field/method name (`x.eq(...)` keeps every `*.eq`),
+//   * a called method's name (`x.eq(...)` keeps every `*.eq`); a field read
+//     names nothing, since a method is never a value,
 //   * the trait method an operator desugars to (`a < b` keeps `*.cmp`,
 //     `a + b` keeps `*.add`, …) — covering operator overloading even if the
 //     `+`→`.add()` rewrite has not run yet,
@@ -186,28 +187,11 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
       }
       return acc.append("neg");
     },
-    ast.ExprFieldAccess(fa) => {
-      // A method/field name (`x.eq`) is a reference: keep every function with
-      // that simple name. An array-method call `arr.<m>(...)` (`.join` /
-      // `.concat` / `.reverse` / `.flat_map` / `.sort_by` / std/array's
-      // distinct, mode, …) dispatches to the auto-discovered
-      // `__method_Array_<m>` helper, but the syntax names only `<m>` — so
-      // without this the helper looks unreachable and gets pruned, bailing
-      // the whole module (the IR path then fails on `i32.<m>`).
-      // `ts_array_method_name` matches those helpers against this bare `<m>`.
-      //
-      // A receiver-rooted method (ts_recv_rooted) whose receiver carries a
-      // stamped named type contributes the qualified root instead, so
-      // `q.to_string()` — the call the checker's Display rewrite spells for
-      // `print(q)` — keeps Q's method and not every type's. A receiver with no
-      // stamp, or a composite one (`dyn Display`, `Map[…]`), stays bare.
-      if (ts_recv_rooted(fa.field)) {
-        let ft: string = util.base_type_name(ts_recv_tag(fa.obj));
-        if (ts_named_tag(ft)) {
-          return acc.append(ts_qualified_root(ft, fa.field));
-        }
+    ast.ExprCall(c) => {
+      if let ast.ExprFieldAccess(fa) = c.callee {
+        return ts_called_method(fa, acc);
       }
-      return acc.append(fa.field);
+      return acc;
     },
     ast.ExprNumber(_) => {
       return acc;
@@ -218,7 +202,7 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
     ast.ExprBool(_) => {
       return acc;
     },
-    ast.ExprCall(_) => {
+    ast.ExprFieldAccess(_) => {
       return acc;
     },
     ast.ExprArray(_) => {
@@ -255,7 +239,31 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
-// ts_names_expr appends every name `e` could REFERENCE (idents, field/method
+// ts_called_method appends what a call through `fa` names: every function
+// with that simple name. An array-method call `arr.<m>(...)` (`.join` /
+// `.concat` / `.reverse` / `.flat_map` / `.sort_by` / std/array's distinct,
+// mode, …) dispatches to the auto-discovered `__method_Array_<m>` helper,
+// but the syntax names only `<m>` — so without this the helper looks
+// unreachable and gets pruned, bailing the whole module (the IR path then
+// fails on `i32.<m>`). `ts_array_method_name` matches those helpers against
+// this bare `<m>`.
+//
+// A receiver-rooted method (ts_recv_rooted) whose receiver carries a stamped
+// named type contributes the qualified root instead, so `q.to_string()` —
+// the call the checker's Display rewrite spells for `print(q)` — keeps Q's
+// method and not every type's. A receiver with no stamp, or a composite one
+// (`dyn Display`, `Map[…]`), stays bare.
+function ts_called_method(fa: ast.ExprFieldAccess, own acc: string[]): string[] {
+  if (ts_recv_rooted(fa.field)) {
+    let ft: string = util.base_type_name(ts_recv_tag(fa.obj));
+    if (ts_named_tag(ft)) {
+      return acc.append(ts_qualified_root(ft, fa.field));
+    }
+  }
+  return acc.append(fa.field);
+}
+
+// ts_names_expr appends every name `e` could REFERENCE (idents, called method
 // names, operator-dispatch methods) to `acc`. Duplicates are fine.
 function ts_names_expr(e: ast.Expr, own acc: string[]): string[] {
   return astwalk.fold_expr(e, acc, ts_name_of);
@@ -489,25 +497,36 @@ function ts_impl_tag(tr: string): string {
 // whose type is a trait-bounded type parameter it is qualified by each bound,
 // reaching the impls of those traits.
 function method_name_of(e: ast.Expr, lt: LocalTypes, own acc: string[]): string[] {
-  if let ast.ExprFieldAccess(fa) = e {
-    if let ast.ExprIdent(id) = fa.obj {
-      let k: i32 = util.index_of_str(lt.names, id.name);
-      if (k >= 0) {
-        let spelled: string = lt.types[k];
-        if (util.str_has_prefix(spelled, "impl ")) {
-          for b in parser.split_plus_bounds(slice_unchecked(spelled, 5, spelled.len()) + "") {
-            acc = acc.append(ts_qualified_root(ts_impl_tag(b), fa.field));
-          }
-          return acc;
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprFieldAccess(fa) = c.callee {
+      acc = typed_method_name_of(fa, lt, acc);
+    }
+    return acc;
+  }
+  return ts_method_name_of(e, acc);
+}
+
+// typed_method_name_of is the method a call through `fa` names: qualified by
+// the receiver's declared type when `fa.obj` is a name bound with one, as
+// method_name_of says, and ts_called_method's spelling otherwise.
+function typed_method_name_of(fa: ast.ExprFieldAccess, lt: LocalTypes, own acc: string[]): string[] {
+  if let ast.ExprIdent(id) = fa.obj {
+    let k: i32 = util.index_of_str(lt.names, id.name);
+    if (k >= 0) {
+      let spelled: string = lt.types[k];
+      if (util.str_has_prefix(spelled, "impl ")) {
+        for b in parser.split_plus_bounds(slice_unchecked(spelled, 5, spelled.len()) + "") {
+          acc = acc.append(ts_qualified_root(ts_impl_tag(b), fa.field));
         }
-        let base: string = util.base_type_name(spelled);
-        if (ts_named_tag(base)) {
-          return acc.append(ts_qualified_root(base, fa.field));
-        }
+        return acc;
+      }
+      let base: string = util.base_type_name(spelled);
+      if (ts_named_tag(base)) {
+        return acc.append(ts_qualified_root(base, fa.field));
       }
     }
   }
-  return ts_method_name_of(e, acc);
+  return ts_called_method(fa, acc);
 }
 
 // free_names is the receiver-less functions `br` names.

@@ -229,11 +229,12 @@ func readFull(c net.Conn, buf []byte) (int, error) {
 // 2 (the address) or 3 (the name).
 func DnsExchangeSource(port int) string {
 	return fmt.Sprintf(`import "std/dns";
+import "std/time";
 import "std/net";
 
 function main(): i32 {
     let ns: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), %d);
-    let conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout_ms: 1000, attempts: 1, rotate: false };
+    let conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout: time.duration_seconds(1 as i64), attempts: 1, rotate: false };
     match (dns.lookup_a(conf, "vm.example.com.")) {
         Ok(xs) => { print(xs[0].to_string()); },
         Err(e) => { print(e.message()); return 2; }
@@ -286,11 +287,12 @@ func CheckDnsExchange(t *testing.T, mode FakeNameserverMode, ns FakeNameserver, 
 // and exits 2.
 func DnsPairSource(port int) string {
 	return fmt.Sprintf(`import "std/dns";
+import "std/time";
 import "std/net";
 
 function main(): i32 {
     let ns: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), %d);
-    let conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout_ms: 1000, attempts: 1, rotate: false };
+    let conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout: time.duration_seconds(1 as i64), attempts: 1, rotate: false };
     match (dns.lookup_addresses(conf, "vm.example.com.")) {
         Ok(xs) => {
             let i: i32 = 0;
@@ -324,12 +326,13 @@ func CheckDnsPair(t *testing.T, ns FakeNameserver, stdout string, exit int) {
 // NAT64 prefixes ipv4only.arpa reveals and prints each as prefix/bits.
 func DnsNat64Source(port int) string {
 	return fmt.Sprintf(`import "std/dns";
+import "std/time";
 import "std/net";
 import "std/i32";
 
 function main(): i32 {
     let ns: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), %d);
-    let conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout_ms: 1000, attempts: 1, rotate: false };
+    let conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout: time.duration_seconds(1 as i64), attempts: 1, rotate: false };
     let ps: dns.Nat64Prefix[] = dns.nat64_prefixes(conf);
     let i: i32 = 0;
     while (i < ps.len()) {
@@ -387,6 +390,7 @@ func StartEchoListener(t *testing.T) int {
 // exits 2 on a failed dial.
 func DnsDialSource(first string, port int) string {
 	return fmt.Sprintf(`import "std/dns";
+import "std/time";
 import "std/net";
 
 function main(): i32 {
@@ -395,7 +399,7 @@ function main(): i32 {
         Some(ip) => { first = ip; },
         None => { return 3; }
     }
-    let opts: dns.DialOptions = dns.DialOptions { fallback_ms: 200, timeout_ms: 5000 };
+    let opts: dns.DialOptions = dns.DialOptions { fallback: time.duration_millis(200 as i64), timeout: time.duration_seconds(5 as i64) };
     match (dns.connect_race([first, net.ipv4_loopback()], %d, opts)) {
         Ok(sock) => {
             tcp_send(sock, "hi");

@@ -1069,6 +1069,7 @@ func FetchDeadlineUpstreams(t *testing.T) (silentPort, livePort int) {
 // the default bounds give a 200 in time. Exit 0 when all three hold.
 func FetchDeadlineSource(silentPort, livePort int) string {
 	return fmt.Sprintf(`import "std/fetch";
+import "std/time";
 function message_of(answer: Result[HttpResponse, fetch.FetchError]): string {
     match (answer) {
         Ok(resp) => { return "answered"; },
@@ -1078,9 +1079,9 @@ function message_of(answer: Result[HttpResponse, fetch.FetchError]): string {
 }
 function main(): i32 {
     let silent: string = "http://127.0.0.1:%[1]d/";
-    let idle: fetch.Timeouts = fetch.Timeouts { connect_ms: 5000, inactivity_ms: 400, total_ms: 5000 };
+    let idle: fetch.Timeouts = fetch.Timeouts { connect: time.duration_seconds(5 as i64), inactivity: time.duration_millis(400 as i64), total: time.duration_seconds(5 as i64) };
     if (message_of(fetch.send(fetch.get(silent).with_timeouts(idle))) != "timed out waiting for the response") { return 1; }
-    let whole: fetch.Timeouts = fetch.Timeouts { connect_ms: 5000, inactivity_ms: 5000, total_ms: 300 };
+    let whole: fetch.Timeouts = fetch.Timeouts { connect: time.duration_seconds(5 as i64), inactivity: time.duration_seconds(5 as i64), total: time.duration_millis(300 as i64) };
     if (message_of(fetch.send(fetch.get(silent).with_timeouts(whole))) != "timed out in all") { return 5; }
     match (fetch.send(fetch.get("http://127.0.0.1:%[2]d/"))) {
         Ok(resp) => {

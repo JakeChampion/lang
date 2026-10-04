@@ -75,7 +75,7 @@ func HeldSuspendedServerSource(port int) string {
     if (req.path == "/heap") {
         return http.ok(__heap_bump_bytes().to_string());
     }
-    let parked: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), inactivity_ms: 300000, total_ms: 600000 };
+    let parked: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), inactivity: time.duration_seconds(300 as i64), total: time.duration_seconds(600 as i64) };
     match (plat.http(fetch.get("http://8.8.8.8/hold").with_timeouts(parked))) {
         Ok(resp) => { return http.ok("held " + resp.status.to_string()); },
         Err(e) => { return http.ok("held err " + e.message()); }
