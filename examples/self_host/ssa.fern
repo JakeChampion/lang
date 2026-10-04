@@ -103,6 +103,11 @@ pub function kind_name(id: i32): string {
   if (id < 0) {
     return semantic_kind_name(id);
   }
+  // line: the source-position marker (#11410), imm the merged module's line
+  // and str its column, no operands and a value nothing reads.
+  if (id == 35) {
+    return "line";
+  }
   if (id == 1) {
     return "const_int";
   }
@@ -337,12 +342,15 @@ function semantic_kind_name(id: i32): string {
 
 // kind_count is the number of registered SInst kinds (ids 1..kind_count()).
 pub function kind_count(): i32 {
-  return 34;
+  return 35;
 }
 
 pub function kind_id(name: string): i32 {
   if (name == "const_int") {
     return 1;
+  }
+  if (name == "line") {
+    return 35;
   }
   if (name == "const_bool") {
     return 2;

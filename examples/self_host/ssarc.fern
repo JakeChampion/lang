@@ -2963,7 +2963,7 @@ function unchecked_str_index(ins: ssa.SInst): boolean {
 }
 
 function value_op(k: i32): boolean {
-  return kind_in([1, 2, 5, 6, 7, 8, ssasem.zero(), ssasem.call(), ssasem.append_range()], k) || ssasem.scalar_op(k) || ssasem.is_function_op(k);
+  return kind_in([1, 2, 5, 6, 7, 8, 35, ssasem.zero(), ssasem.call(), ssasem.append_range()], k) || ssasem.scalar_op(k) || ssasem.is_function_op(k);
 }
 
 function container_op(k: i32): boolean {
@@ -4492,6 +4492,11 @@ function constant_op(k: i32): boolean {
 
 function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irtables.StructTab, defer0: boolean, link: Link, kept: boolean): irtables.LowerResult {
   r = negation_zero(r, f, ins);
+  if (ins.kind_tag == 35) {
+    // The source-position marker: no operands and a value nothing reads, so
+    // neither a load nor the store below.
+    return emit(r, ir.op_line(ins.imm, util.digits_to_i32(ins.str)));
+  }
   if (ins.kind_tag == ssasem.with()) {
     r = with_update(r, f, p, ins, defer0);
     return emit(r, ir.op_store_local(ins.result));

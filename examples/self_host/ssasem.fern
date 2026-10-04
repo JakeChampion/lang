@@ -2927,7 +2927,23 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
   if (scalar_op(kind)) {
     return scalar_error(ins, f, result);
   }
+  if (kind == 35) {
+    return line_error(ins, result);
+  }
   return composite_error(ins, f, result);
+}
+
+// A `-g` line mark (kind 35) stands as a statement: it takes nothing, its
+// result is void, and its line (imm) and column (str) are the position it
+// records.
+function line_error(ins: ssa.SInst, result: typeinfo.Type): string {
+  if (ins.args.len() != 0) {
+    return "line mark arity";
+  }
+  if (!is_void(result)) {
+    return "line mark type";
+  }
+  return "";
 }
 
 // A function type is one word of code address, and the call through one
