@@ -3158,8 +3158,8 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	returnedArrayParams := findReturnedArrayParams(prog, info, returnsNoParamEscape)
 	// Per-callee: string params retained only through counted constructions, so
 	// a caller may release its own reference (see inferParamCountedRetain).
-	paramCountedRetain := inferParamCountedRetain(prog, info, trmcFuncs)
-	paramNoUncountedAlias := inferParamNoUncountedAlias(prog, info, trmcFuncs)
+	paramCountedRetain := inferParamCountedRetain(prog, info)
+	paramNoUncountedAlias := inferParamNoUncountedAlias(prog, info)
 	// Per-callee: which ARRAY params the consumed-threaded promotion claims,
 	// so a call site can release a fresh temp the callee will treat as a
 	// borrow (consumedArrayParamPositions).

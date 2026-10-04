@@ -17,10 +17,9 @@ import (
 // released, a whole buffer per read.
 //
 // The self-slot argument is now credited. A retention the recursion does
-// make still happens at some other occurrence, which still refutes it: the
-// strict summary refuses `pick` for its bare return. The rule reaches only
-// a parameter's own slot, so `stash`, whose recursion swaps its two, stays
-// refused by both.
+// make still happens at some other occurrence, which still refutes it. The
+// rule reaches only a parameter's own slot, so `stash`, whose recursion swaps
+// its two, stays refused by both.
 func TestSelfRecursiveSlotArgumentIsCredited(t *testing.T) {
 	src := `function walk(s: string, i: i32): i32 {
     if (i >= s.len()) { return 0; }
@@ -44,8 +43,8 @@ function main(): i32 { return outer("ab") + pick("c", 2).len() + stash("d", "e",
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	strict := inferParamCountedRetain(prog, info, nil)
-	weak := inferParamNoUncountedAlias(prog, info, nil)
+	strict := inferParamCountedRetain(prog, info)
+	weak := inferParamNoUncountedAlias(prog, info)
 	cases := []struct {
 		fn           string
 		idx          int
@@ -54,7 +53,7 @@ function main(): i32 { return outer("ab") + pick("c", 2).len() + stash("d", "e",
 	}{
 		{"walk", 0, true, true, "read by length and by byte, and passed back into its own slot"},
 		{"outer", 0, true, true, "forwards to walk, which is now credited"},
-		{"pick", 0, false, true, "the bare return is refused by the strict summary only"},
+		{"pick", 0, true, true, "its own slot, and a bare return that takes the return-transfer inc"},
 		{"stash", 0, false, false, "s crosses into t's slot"},
 		{"stash", 1, false, false, "t crosses into s's slot"},
 	}

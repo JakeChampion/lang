@@ -84,6 +84,16 @@ function main(): i32 {
 }`},
 	}
 
+	checkGoCompilerCensusOnEveryTarget(t, shapes,
+		"the payload a returning arm hands back leaks once per match (#11479)")
+}
+
+// checkGoCompilerCensusOnEveryTarget builds each shape with the Go compiler's
+// CLI under FERN_LEAKCHECK for x86-64, arm64 and wasm, runs it, and requires a
+// zero exit and a balanced census. A shape returns 99 for a non-zero
+// __rc_underflow_count() and 1 for a wrong answer.
+func checkGoCompilerCensusOnEveryTarget(t *testing.T, shapes []struct{ name, src string }, leakWhy string) {
+	t.Helper()
 	fern := buildFernCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
@@ -111,16 +121,15 @@ function main(): i32 {
 					var stderr strings.Builder
 					cmd.Stderr = &stderr
 					if err := cmd.Run(); err != nil {
-						t.Fatalf("run: %v — exit 99 is a non-zero __rc_underflow_count(), 1 a wrong total\n%s", err, stderr.String())
+						t.Fatalf("run: %v — exit 99 is a non-zero __rc_underflow_count(), 1 a wrong answer\n%s", err, stderr.String())
 					}
 					allocs, frees, live := leakSummaryIn(t, stderr.String())
 					if allocs == 0 {
 						t.Fatalf("no allocations — the loop is not running")
 					}
 					if allocs != frees || live != 0 {
-						t.Errorf("allocs=%d frees=%d live_bytes=%d, want balanced / 0 — "+
-							"the payload a returning arm hands back leaks once per match (#11479)",
-							allocs, frees, live)
+						t.Errorf("allocs=%d frees=%d live_bytes=%d, want balanced / 0 — %s",
+							allocs, frees, live, leakWhy)
 					}
 				})
 			}

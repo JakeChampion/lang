@@ -50,9 +50,9 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// The refusal that keeps it sound: one counted store does not credit a
-// bare hand-out, because everyOccurrenceSafe is all-or-nothing.
-func TestStringParamSetThenReturnedBareStaysUncredited(t *testing.T) {
+// A counted store alongside a bare hand-out: the return takes the
+// return-transfer inc, so it is counted too (#11479).
+func TestStringParamSetThenReturnedBareIsCounted(t *testing.T) {
 	src := `function put(xs: string[], v: string): string {
     let ys: string[] = xs.with(0, v);
     if (ys.len() > 99) { return "x"; }
@@ -60,9 +60,9 @@ func TestStringParamSetThenReturnedBareStaysUncredited(t *testing.T) {
 }
 function main(): i32 { return 0; }`
 	got := paramCountedFor(t, src, "put")
-	if len(got) == 2 && got[1] {
-		t.Errorf("paramCountedRetain[put] = %v, but `return v` hands out a reference "+
-			"nothing counts", got)
+	if len(got) != 2 || !got[1] {
+		t.Errorf("paramCountedRetain[put] = %v, want [_ true] — the store and the "+
+			"returned parameter each hold a count of their own", got)
 	}
 }
 

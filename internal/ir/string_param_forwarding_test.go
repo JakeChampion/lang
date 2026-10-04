@@ -63,8 +63,8 @@ func TestStringParamForwardedToARetainingCalleeStaysUncredited(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"callee returns it", `function keep(s: string): string { return s; }
-function forward(s: string): string { return keep(s); }`},
+		// "callee returns it" is counted: a bare return takes the
+		// return-transfer inc (TestBareReturnIsCountedInBothRetainSummaries).
 		// "callee stores it in an array it returns" moved to
 		// TestStringParamForwardedToAPushingCalleeIsCounted in
 		// string_param_push_credit_test.go: the push store is a counted
