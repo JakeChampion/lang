@@ -711,8 +711,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 `, port, closedPort, port)
 }
 
-// FetchHostedWant is what FetchHostedSource answers `/run` with. The
-// wasi:http host hands field names back in lowercase.
+// FetchHostedWant is what FetchHostedSource answers `/run` with.
+// The WASI host supplies lowercase field names; HeaderMap preserves that
+// spelling. The native origin's title-cased wire names are checked separately.
 const FetchHostedWant = `plain: 200 [hello] headers: content-length=5 x-up=1 trailers:
 chunked: 200 [abcde] headers: trailers:
 nobody: 204 [] headers: content-length=99 trailers:

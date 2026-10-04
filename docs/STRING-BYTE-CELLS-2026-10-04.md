@@ -59,5 +59,6 @@ also passed on the Go interpreter and the primary compiler's three targets.
 The integrated full unit suite and `make lint-all` passed. Its HTTP static
 and retired instruction counts reproduce the values in the
 [performance attribution](STRING-BUILDER-PERF-2026-10-04.md).
-Bootstrap, Darwin and native performance validation are still in progress.
-This report does not close #5714.
+Linux and Darwin bootstrap fixed points, reproduced native checks and native
+benchmarks are recorded in the [boundary report](STRING-VALIDITY-BOUNDARIES-2026-10-04.md).
+The final main integration and publication gates remain open for #5714.

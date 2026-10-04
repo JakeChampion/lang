@@ -29,12 +29,30 @@ function eagain(): i32 {
     return 11;
 }
 
+// The floor exposes -errno, including an interrupted kernel wait. Keep
+// the original deadline when retrying EINTR (for example, from Go's
+// asynchronous preemption signal in the interpreter).
+function wait_until(r: i32, events: i32[], timeout_ms: i32): i32 {
+    let interrupted: i32 = 0 - 4;
+    if (target_os() == "wasi") { interrupted = 0 - 27; }
+    let deadline: i64 = monotonic_ns() + timeout_ms as i64 * (1000000 as i64);
+    let remaining: i32 = timeout_ms;
+    while (true) {
+        let n: i32 = reactor_wait(r, events, remaining);
+        if (n != interrupted) { return n; }
+        let ns: i64 = deadline - monotonic_ns();
+        if (ns <= (0 as i64)) { return 0; }
+        remaining = ((ns + (999999 as i64)) / (1000000 as i64)) as i32;
+    }
+    return 0;
+}
+
 // One wait that must report want with the readiness bits in ready
 // among its pairs; a host may report a socket ready spuriously, so other
 // pairs are not a failure. Anything else is the failing check.
 function expect_ready(r: i32, want: i32, ready: i32, timeout_ms: i32, check: i32): i32 {
     let events: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
-    let n: i32 = reactor_wait(r, events, timeout_ms);
+    let n: i32 = wait_until(r, events, timeout_ms);
     if (n < 1 || n > 4) { return fail(check); }
     let i: i32 = 0;
     while (i < n) {
@@ -51,13 +69,13 @@ function main(): i32 {
     let one: i32[] = [0];
     if (reactor_wait(r, one, 0) != 0 - einval()) { return fail(3); }
     let events: i32[] = [0, 0, 0, 0];
-    if (reactor_wait(r, events, 20) != 0) { return fail(4); }
+    if (wait_until(r, events, 20) != 0) { return fail(4); }
     let any: u8[] = [0u8, 0u8, 0u8, 0u8];
     let ln: i32 = tcp_listen_with(any, 0, 4, false);
     if (ln < 0) { return fail(5); }
     let port: i32 = tcp_local_port(ln);
     if (reactor_ctl(r, 1, ln, 1) != 0) { return fail(6); }
-    if (reactor_wait(r, events, 20) != 0) { return fail(7); }
+    if (wait_until(r, events, 20) != 0) { return fail(7); }
     // Interest 4 is EPOLLEXCLUSIVE, which the kernel refuses on a
     // modification: asking it of a descriptor already in the set proves
     // the bit reached epoll_ctl rather than being masked off.
@@ -69,7 +87,7 @@ function main(): i32 {
     if (a < 0) { return fail(10); }
     if (reactor_ctl(r, 1, a, 1) != 0) { return fail(11); }
     if (reactor_ctl(r, 2, ln, 0) != 0) { return fail(12); }
-    if (reactor_wait(r, events, 20) != 0) { return fail(13); }
+    if (wait_until(r, events, 20) != 0) { return fail(13); }
     if (tcp_send(c, "hi") != 2) { return fail(14); }
     if (expect_ready(r, a, 1, 2000, 15) != 0) { return 15; }
     let buf: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
@@ -89,7 +107,7 @@ function main(): i32 {
     // is what catches the empty list the host materialises through
     // cabi_realloc (#10608).
     if (tcp_recv_into(a, buf) != 0 - eagain()) { return fail(22); }
-    if (reactor_wait(r, events, 20) != 0) { return fail(23); }
+    if (wait_until(r, events, 20) != 0) { return fail(23); }
     if (tcp_send(a, "yo") != 2) { return fail(29); }
     if (expect_ready(r, c, 1, 2000, 24) != 0) { return 24; }
     let got: u8[] = tcp_recv(c, 8);

@@ -1,0 +1,11 @@
+fern.fern/stage2	11674856
+fern.fern	11673048
+asm_load_run.fern	9519400
+asm_modload_run.fern	8230888
+asm_ir_run.fern	7969376
+asm_run.fern	7305104
+wasm_ir_run.fern	7416344
+wasm_run.fern	7416968
+wasm_runio_run.fern	7418848
+asm_pathprobe_run.fern	4450424
+checker_modload_run.fern	2657328

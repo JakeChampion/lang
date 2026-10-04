@@ -1,0 +1,66 @@
+{
+  "ascii_capture-before": {
+    "bytes": 82881,
+    "sha256": "90b10fb849d3e14cad453591421e33b28dccbef3f663f48772db4249a5705d9a"
+  },
+  "ascii_capture-before-census": {
+    "bytes": 82881,
+    "sha256": "e51f188b048ab4e13149403cd668823e031b898e7c6f4bac8e04d52709e67fc0"
+  },
+  "ascii_capture-after": {
+    "bytes": 99393,
+    "sha256": "b786f68ad4755321c1fab0bcf5e39d1872c5ef695138505f656ce8c17de205b2"
+  },
+  "ascii_capture-after-census": {
+    "bytes": 82881,
+    "sha256": "2e0a06bbf4422db39d6f2e2a1566e4ad705ee72407d1791b83dd3fb769c44c8b"
+  },
+  "unicode_capture-before": {
+    "bytes": 82881,
+    "sha256": "fc92811185de71c718d858bfd8e93013d6dd4402ea58d8a2c22d2c114584070d"
+  },
+  "unicode_capture-before-census": {
+    "bytes": 82881,
+    "sha256": "64e31a8238ec4c445142c64f21e89217ae09dc14ed3bed46c573f2a53688ce3c"
+  },
+  "unicode_capture-after": {
+    "bytes": 99393,
+    "sha256": "b271268a4778045f7120218f4fea8448fa9b89d5a53cca22ce7eac1ad07fbf3c"
+  },
+  "unicode_capture-after-census": {
+    "bytes": 82881,
+    "sha256": "b31db6ea737596dcdbc6e7a1ee765c6b62cc61432b3d7adf73345911387757c9"
+  },
+  "split_capture-before": {
+    "bytes": 82881,
+    "sha256": "a78ca894ad9dab12a75ced827580aa698614a835cedb212a0c380031334664fa"
+  },
+  "split_capture-before-census": {
+    "bytes": 82881,
+    "sha256": "0f12556bee61d5acc06af511a535c569d1c06ca3a73711c75173678f8b005b43"
+  },
+  "split_capture-after": {
+    "bytes": 99409,
+    "sha256": "8b22192ae6154ef1195cab43449c7f4c4c8bf205e3689b6b4c79ec7370cd0869"
+  },
+  "split_capture-after-census": {
+    "bytes": 82897,
+    "sha256": "d2726f38fffb613c86b0e4d2c8285294b50f282a361076a03d2005197b0374e6"
+  },
+  "uncaptured_byte-before": {
+    "bytes": 82881,
+    "sha256": "ece62f843e3f0ccfc5b12251c49be273f265476b7ac8c699c7a73cac795c3165"
+  },
+  "uncaptured_byte-before-census": {
+    "bytes": 82881,
+    "sha256": "d1c4b691b9a1d65071c6df4d7c9acd7b960e36b6b48fe26088c4e90729408084"
+  },
+  "uncaptured_byte-after": {
+    "bytes": 99409,
+    "sha256": "941603c42f22a91f30f5b8e66279a637114d119ca0c371deae0ea0eea9ca3fd2"
+  },
+  "uncaptured_byte-after-census": {
+    "bytes": 82897,
+    "sha256": "df5125bc38cf174e9da1d36fa46814b4a6700aeae6602b5d17ac4b37b5533f9d"
+  }
+}

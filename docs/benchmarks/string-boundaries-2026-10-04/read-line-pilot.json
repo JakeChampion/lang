@@ -1,0 +1,112 @@
+{
+  "iterations": 8,
+  "warmups": 2,
+  "samples": 7,
+  "workloads": {
+    "short_ascii": {
+      "input_bytes": 512,
+      "results": {
+        "before": {
+          "allocations": 32,
+          "returned_pieces": 8,
+          "longest_piece": 64,
+          "samples_ms": [
+            5.7865,
+            4.592584,
+            4.65025,
+            2.991375,
+            3.189375,
+            3.092375,
+            2.826208
+          ],
+          "median_ms": 3.189375
+        },
+        "after": {
+          "allocations": 32,
+          "returned_pieces": 8,
+          "longest_piece": 64,
+          "samples_ms": [
+            5.106083,
+            5.159,
+            4.678041,
+            3.366042,
+            2.979584,
+            2.934833,
+            2.6695
+          ],
+          "median_ms": 3.366042
+        }
+      }
+    },
+    "long_ascii": {
+      "input_bytes": 65544,
+      "results": {
+        "before": {
+          "allocations": 801,
+          "returned_pieces": 264,
+          "longest_piece": 256,
+          "samples_ms": [
+            16.923875,
+            17.286292,
+            17.713,
+            16.737459,
+            16.352584,
+            16.667,
+            16.410125
+          ],
+          "median_ms": 16.737459
+        },
+        "after": {
+          "allocations": 81,
+          "returned_pieces": 8,
+          "longest_piece": 8193,
+          "samples_ms": [
+            16.808209,
+            16.901708,
+            17.137792,
+            17.238375,
+            16.343958,
+            16.357958,
+            15.975791
+          ],
+          "median_ms": 16.808209
+        }
+      }
+    },
+    "long_unicode": {
+      "input_bytes": 65608,
+      "results": {
+        "before": {
+          "allocations": 801,
+          "returned_pieces": 264,
+          "longest_piece": 256,
+          "samples_ms": [
+            16.308459,
+            16.950167,
+            16.402375,
+            16.588292,
+            16.65725,
+            16.625167,
+            16.332042
+          ],
+          "median_ms": 16.588292
+        },
+        "after": {
+          "allocations": 81,
+          "returned_pieces": 8,
+          "longest_piece": 8201,
+          "samples_ms": [
+            16.264875,
+            16.452459,
+            16.465375,
+            16.678459,
+            16.631958,
+            15.863042,
+            16.683292
+          ],
+          "median_ms": 16.465375
+        }
+      }
+    }
+  }
+}
