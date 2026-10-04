@@ -401,12 +401,9 @@ output as a self-contained preview-2 component via the Go encoder
 — no `wasm-tools component new --adapt` shell-out. Lifts `main`
 as a component-level u32-returning function.
 
-End-to-end exit code 42 demo (covered by
-`TestCmdLangComponentWrap`):
-
-    $ fern -target wasm32-wasi -emit core-module -component-wrap -o min.wasm min.fern
-    $ wasmtime run --invoke 'main()' min.wasm
-    42
+The `-component-wrap` flag that exposed it left the CLI when `fern` began
+compiling through the self-host, whose `-target wasm32-wasi` output is already
+an adapter-free wasi:cli/run component (step 6 of `docs/NATIVE-RETIREMENT.md`).
 
 #### What's NOT yet shipped
 

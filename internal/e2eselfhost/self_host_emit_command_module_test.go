@@ -14,8 +14,8 @@ import (
 // core module plus a `_start` that runs main and exits with its value. The
 // self-host's core module is already that shape, so the spelling produces the
 // same bytes as `-emit core-module`, `wasmtime run` exits with main's value,
-// and the form is refused for the other wasm target as native refuses it
-// (#11408).
+// and the form is refused for the other wasm target, and without -o, as native
+// refuses it (#11408).
 func TestSelfHostEmitCommandModule(t *testing.T) {
 	cli := newStrictCLI(t)
 	wasmtime := e2eharness.Wasmtime(t)
@@ -25,7 +25,11 @@ func TestSelfHostEmitCommandModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	build := func(form, target, out string) ([]byte, error) {
-		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", target, "-emit", form, "-o", out, src, cli.stdlib)
+		args := []string{"-target", target, "-emit", form}
+		if out != "" {
+			args = append(args, "-o", out)
+		}
+		cmd := runX86_64Bin(cli.runner, cli.bin, append(args, src, cli.stdlib)...)
 		cmd.Env = childEnv()
 		return cmd.CombinedOutput()
 	}
@@ -51,5 +55,9 @@ func TestSelfHostEmitCommandModule(t *testing.T) {
 	}
 	if out, err := build("command-module", "wasm32-wasi-http", filepath.Join(dir, "http.wasm")); err == nil || !bytes.Contains(out, []byte("not available for -target wasm32-wasi-http")) {
 		t.Errorf("-emit command-module for wasm32-wasi-http: err=%v, want the refusal native gives\n%s", err, out)
+	}
+	// A binary module has nowhere to go without -o; stdout is not it.
+	if out, err := build("command-module", "wasm32-wasi", ""); err == nil || !bytes.Contains(out, []byte("-o OUTPUT")) {
+		t.Errorf("-emit command-module with no -o: err=%v, want a refusal naming -o OUTPUT\n%s", err, out)
 	}
 }

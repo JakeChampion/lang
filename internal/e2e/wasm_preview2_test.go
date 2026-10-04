@@ -59,11 +59,7 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	// Build the lang CLI from this checkout so the test exercises
 	// the in-tree post-process pipeline rather than whatever happens
 	// to be on PATH.
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 
 	componentPath := filepath.Join(dir, "hello.component.wasm")
 	emit := exec.Command(bin,
@@ -140,11 +136,7 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 
 	componentPath := filepath.Join(dir, "echo.component.wasm")
 	emit := exec.Command(bin,
@@ -220,11 +212,7 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 
 	componentPath := filepath.Join(dir, "fs.component.wasm")
 	emit := exec.Command(bin,
@@ -468,11 +456,7 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 
 	componentPath := filepath.Join(dir, "rwf.component.wasm")
 	emit := exec.Command(bin,
@@ -557,11 +541,7 @@ function main(): i32 {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 
 	componentPath := filepath.Join(dir, "echo.component.wasm")
 	emit := exec.Command(bin,
@@ -1607,11 +1587,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 
 	componentPath := filepath.Join(dir, "router.component.wasm")
 	emit := exec.Command(bin,
@@ -1743,11 +1719,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 
 	componentPath := filepath.Join(dir, "router.component.wasm")
 	emit := exec.Command(bin, "-target", "wasm32-wasi-http", "-o", componentPath, srcPath)
@@ -1845,11 +1817,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 
 	componentPath := filepath.Join(dir, "router.component.wasm")
 	emit := exec.Command(bin, "-target", "wasm32-wasi-http", "-o", componentPath, srcPath)
@@ -2189,11 +2157,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 
 	componentPath := filepath.Join(dir, "router.component.wasm")
 	emit := exec.Command(bin, "-target", "wasm32-wasi-http", "-o", componentPath, srcPath)
@@ -2326,11 +2290,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 
 	componentPath := filepath.Join(dir, "caps.component.wasm")
 	emit := exec.Command(bin, "-target", "wasm32-wasi-http", "-o", componentPath, srcPath)

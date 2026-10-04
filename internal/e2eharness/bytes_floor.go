@@ -4,25 +4,12 @@ package e2eharness
 // answers the address of a string's bytes for a string carried inline in
 // its word (spilled into the caller's scratch) and for a heap string, and
 // answers 0 for the inline case when no scratch is given; `__arr_set_len`
-// shortens a byte array to the bytes a read filled. With rawStores the
-// array is filled through its data-pointer cast and `__store_u8`, the way
-// the Go compiler's socket bodies fill a read buffer; without, it is a
-// literal, since the self-host keeps a byte array one word per element.
-// Exit 42 iff every step holds; each failing step has its own code.
-func BytesFloorProbe(rawStores bool) string {
-	fill := `    let b: u8[] = __alloc_u8(4);
-    let bp: usize = b as usize;
-    __store_u8(bp, 104);
-    __store_u8(bp + 1, 105);
-    __store_u8(bp + 2, 106);
-    __store_u8(bp + 3, 107);
-`
-	if !rawStores {
-		fill = `    let b: u8[] = [104u8, 105u8, 106u8, 107u8];
-`
-	}
+// shortens a byte array to the bytes a read filled. Exit 42 iff every step
+// holds; each failing step has its own code.
+func BytesFloorProbe() string {
 	return `function main(): i32 {
-` + fill + `    if (b.len() != 4 || b[0] != 104u8 || b[3] != 107u8) { return 1; }
+    let b: u8[] = [104u8, 105u8, 106u8, 107u8];
+    if (b.len() != 4 || b[0] != 104u8 || b[3] != 107u8) { return 1; }
     __arr_set_len(b, 2);
     if (b.len() != 2 || b[1] != 105u8) { return 2; }
     let scratch: usize = __alloc(16);

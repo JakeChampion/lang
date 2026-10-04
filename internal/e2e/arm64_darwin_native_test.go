@@ -470,22 +470,6 @@ func TestArm64DarwinDwarfSymtab(t *testing.T) {
 	}
 }
 
-// TestArm64DarwinCcOptsOut confirms -cc still routes arm64-darwin through
-// an external toolchain: a failing -cc must make the build fail, proving
-// the default path doesn't shell out. Host-independent.
-func TestArm64DarwinCcOptsOut(t *testing.T) {
-	bin := buildFernCLI(t)
-	dir := t.TempDir()
-	src := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(src, []byte("function main(): i32 { return 0; }\n"), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	out := filepath.Join(dir, "prog")
-	if err := exec.Command(bin, "-target", "arm64-darwin", "-cc", "/bin/false", "-o", out, src).Run(); err == nil {
-		t.Errorf("expected build to fail when -cc points at a failing linker, but it succeeded")
-	}
-}
-
 // TestArm64DarwinEhFrame is the darwin end of #7901: a `fern -target
 // arm64-darwin` build carries a __TEXT,__eh_frame whose FDEs describe the
 // program — one per user function, starting exactly at the function's symbol

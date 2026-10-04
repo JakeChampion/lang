@@ -70,13 +70,10 @@ every native leg, `TestArm64TcpListen`, the `Serve*` and `Fetch*` tests,
 the Darwin lane) and by `TestEveryHelperLowersForEveryTarget` and
 `TestHelpersCallOnlyTheFloorOrEachOther` in `internal/fernrt`.
 
-`TestBytesFloor` runs `e2eharness.BytesFloorProbe` on the same two native
-legs and `TestArm64DarwinBytesFloor` on Apple Silicon: a byte array filled
-through its data pointer and shortened by `__arr_set_len`, and an inline and
-a heap string read through `__str_bytes` with scratch to spill into and
-without. The self-host twins are `TestSelfHostBytesFloorX86_64` and
-`TestSelfHostBytesFloorArm64`, on a literal array, since the self-host's
-`as usize` on a `u8[]` gives the box rather than its first byte (#8799).
+`TestSelfHostBytesFloorX86_64` and `TestSelfHostBytesFloorArm64` run
+`e2eharness.BytesFloorProbe`: a byte array shortened by `__arr_set_len`, and
+an inline and a heap string read through `__str_bytes` with scratch to spill
+into and without.
 The bodies written on the floor, `tcp_recv`, `tcp_send` and `udp_send`, are
 gated by every socket, serve, fetch and udp test that was already on the
 builtins, on every backend.
@@ -88,8 +85,7 @@ to a handler that answers `__heap_bump_bytes()`, and the figure a tenth of
 the way in must be the figure at the last request (under qemu the arm64 leg
 sends 10k). They hold the bump high-water mark still; they do not count
 allocations, which every request still makes (the framing path's, criterion
-B). `TestFramingAllocs` (the Go compiler) and `TestSelfHostFramingAllocs`
-count those: what parsing a hello request and serializing its reply allocate
+B). `TestSelfHostFramingAllocs` counts those: what parsing a hello request and serializing its reply allocate
 per request on x86-64, arm64 and wasm, pinned per target as a ratchet.
 A count above its pin fails as a regression and one below it fails until the
 pin is lowered, so `docs/NET-P0-MESSAGE-LAYER-PLAN.md`'s slices each move

@@ -367,8 +367,8 @@ and reads or writes through the result is layout code, and is correct under
 one compiler only.
 
 The address of a string's bytes has its own spelling on both compilers,
-`__str_bytes(s, scratch)`; native `TestBytesFloor` and
-`TestSelfHostStrBytesEveryTarget` gate it on every target. A `u8[]` has no
+`__str_bytes(s, scratch)`; `TestSelfHostBytesFloorX86_64`,
+`TestSelfHostBytesFloorArm64` and `TestSelfHostStrBytesEveryTarget` gate it. A `u8[]` has no
 portable byte address, because the self-host does not pack it.
 
 ## Worked example — `chr`

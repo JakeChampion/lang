@@ -130,8 +130,9 @@ assembly (`component.BuildAsyncLiftedExportComponent`); (3) the CLI
 surface — `fern -target wasm32-wasi -emit core-module -async-export` produces a component
 exporting `run: async func() -> u32`, run with
 `wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`.
-Tests: `TestWasmP3AsyncExport{Assembly,FromFern}` + `TestCmdLangAsyncExport`
-(CLI-driven, returns 42).
+Tests: `TestWasmP3AsyncExport{Assembly,FromFern,U64FromFern,F64FromFern}`. The
+CLI flag left with step 6 of `docs/NATIVE-RETIREMENT.md`, when `fern` began
+compiling through the self-host; its preview-3 surface is #11530.
 
 **UPDATE — first-class `async` keyword.** `async function foo(): i32 {
 … }` (a contextual modifier, like `fip` — `async` stays usable as an

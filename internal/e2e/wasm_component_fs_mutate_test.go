@@ -63,7 +63,7 @@ func TestCmdLangComponentTempDirRemoveFile(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "fsmut.wasm")
-	build := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-o", compPath, srcPath)
+	build := exec.Command(buildFernCLI(t), "-target", "wasm32-wasi", "-o", compPath, srcPath)
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm (temp_dir + remove_file) failed: %v\n%s", err, out)
@@ -166,7 +166,7 @@ func TestCmdLangComponentStatOnly(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "st.wasm")
-	build := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-o", compPath, srcPath)
+	build := exec.Command(buildFernCLI(t), "-target", "wasm32-wasi", "-o", compPath, srcPath)
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm (stat only) failed: %v\n%s", err, out)
@@ -239,7 +239,7 @@ func TestCmdLangComponentReadAppend(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "ra.wasm")
-	build := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-o", compPath, srcPath)
+	build := exec.Command(buildFernCLI(t), "-target", "wasm32-wasi", "-o", compPath, srcPath)
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm (read + append) failed: %v\n%s", err, out)
@@ -314,7 +314,7 @@ func TestCmdLangComponentReadDirRemoveDirAll(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "rd.wasm")
-	build := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-o", compPath, srcPath)
+	build := exec.Command(buildFernCLI(t), "-target", "wasm32-wasi", "-o", compPath, srcPath)
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm (read_dir + remove_dir_all) failed: %v\n%s", err, out)
@@ -366,7 +366,7 @@ function main(): i32 {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "suite.wasm")
-	build := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-o", compPath, srcPath)
+	build := exec.Command(buildFernCLI(t), "-target", "wasm32-wasi", "-o", compPath, srcPath)
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("a std/test program must build for -target wasm: %v\n%s", err, out)
@@ -376,7 +376,7 @@ function main(): i32 {
 	if err != nil {
 		t.Fatalf("a std/test component must run: %v", err)
 	}
-	interp := exec.Command("go", "run", "./cmd/fern", "-interp", srcPath)
+	interp := exec.Command(buildFernCLI(t), "-interp", srcPath)
 	interp.Dir = projectRoot(t)
 	want, err := interp.Output()
 	if err != nil {
@@ -423,7 +423,7 @@ func TestCmdLangComponentCreateDirAll(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "mkdirp.wasm")
-	build := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-o", compPath, srcPath)
+	build := exec.Command(buildFernCLI(t), "-target", "wasm32-wasi", "-o", compPath, srcPath)
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm (create_dir_all) failed: %v\n%s", err, out)

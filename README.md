@@ -95,9 +95,12 @@ fern -lint examples/                 # lint a tree (fern -lint-rules lists the r
 fern -repl                           # interactive session
 ```
 
-Every native target is assembled and linked in-process, and the Darwin
-binary is ad-hoc code-signed in-process too. Pass `-cc` to opt out to an
-external assembler and linker. `fern -targets` lists every target with the
+A `-target` compile runs the self-hosted compiler, which assembles, links and
+(for Darwin) code-signs in-process with no external toolchain. `fern` uses
+`$FERN_SELFHOST` when set, else a `fern-selfhost` beside it (`make bootstrap`
+installs one), else it builds one on first use from the compiler sources it
+embeds, with the pinned stage0 compiler it downloads and verifies
+(`docs/BOOTSTRAP.md`). The result is cached. `fern -targets` lists every target with the
 capabilities its host provides; `fern -explain E030` explains an error
 code.
 

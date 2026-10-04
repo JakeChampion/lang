@@ -58,27 +58,6 @@ const (
 	arrayPipelineRounds = 20
 )
 
-// buildArrayPipelineInPlace compiles with ownership-aware materialization
-// (#9733) on or off. The off build is what pipeline 3 measured before the pass
-// existed, and keeping it reachable is what lets the premise and the
-// improvement be asserted in the same test rather than one replacing the other.
-func buildArrayPipelineInPlace(t *testing.T, fern, dir, program string, inPlace bool) string {
-	t.Helper()
-	src := langSrcAbs(t, filepath.Join("examples", "array_pipeline", program+".fern"))
-	name := program
-	cmd := exec.Command(fern, "-target", "x86-64-linux", "-o", "", src)
-	if !inPlace {
-		name = program + "_noinplace"
-		cmd.Env = append(os.Environ(), "FERN_NO_ARRAY_INPLACE=1")
-	}
-	bin := filepath.Join(dir, name)
-	cmd.Args[len(cmd.Args)-2] = bin
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("compile %s (in-place=%v): %v\n%s", program, inPlace, err, out)
-	}
-	return bin
-}
-
 // buildArrayPipelineFused compiles one of the baseline programs with array
 // fusion (#9731) on or off. The off build is what this experiment measured
 // before the pass existed, and keeping it reachable is what lets the premise
@@ -238,28 +217,24 @@ func TestArrayPipelineCombinatorsAllocateAndLoopsDoNot(t *testing.T) {
 // buffer.
 //
 // The answer used to be no through the combinator and yes through the loop.
-// #9733 changed it: `own xs` handed to `xs.map(f)` now writes through the
-// donor's buffer, so the combinator reaches the hand-written loop's zero. Both
-// builds are measured — the off build still asserts what pipeline 3 was built
-// to record, so what the pass bought stays visible, and `with_borrowed`
-// remains the control proving OWNERSHIP is what does it rather than the
-// transform firing on anything that looks like a map.
+// #9733 changed it: `own xs` handed to `xs.map(f)` writes through the donor's
+// buffer, so the combinator reaches the hand-written loop's zero, and
+// `with_borrowed` is the control proving OWNERSHIP is what does it rather than
+// the transform firing on anything that looks like a map.
 func TestArrayPipelineOwnMapReusesTheDonor(t *testing.T) {
 	runner := x86NativeRunner(t)
 	fern := buildFernCLI(t)
 	dir := t.TempDir()
-	bin := buildArrayPipelineInPlace(t, fern, dir, "own_map_inplace", true)
-	off := buildArrayPipelineInPlace(t, fern, dir, "own_map_inplace", false)
+	bin := buildArrayPipelineFused(t, fern, dir, "own_map_inplace", true)
 
 	mapOwn := runArrayPipeline(t, bin, "own_map_inplace", "map_own", arrayPipelineN, runner)
 	withOwn := runArrayPipeline(t, bin, "own_map_inplace", "with_own", arrayPipelineN, runner)
 	withBorrowed := runArrayPipeline(t, bin, "own_map_inplace", "with_borrowed", arrayPipelineN, runner)
-	rawMapOwn := runArrayPipeline(t, off, "own_map_inplace", "map_own", arrayPipelineN, runner)
 
-	// Every variant computes the same transform the same number of times,
-	// with the pass and without it. A reuse that changed the answer is the
-	// failure to catch before any allocation number is worth reading.
-	for _, r := range []arrayPipelineReport{withOwn, withBorrowed, rawMapOwn} {
+	// Every variant computes the same transform the same number of times. A
+	// reuse that changed the answer is the failure to catch before any
+	// allocation number is worth reading.
+	for _, r := range []arrayPipelineReport{withOwn, withBorrowed} {
 		if r.Checksum != mapOwn.Checksum {
 			t.Errorf("%s computed %d, the combinator computed %d — the variants are meant to apply the same transform the same number of times",
 				r.Variant, r.Checksum, mapOwn.Checksum)
@@ -273,13 +248,6 @@ func TestArrayPipelineOwnMapReusesTheDonor(t *testing.T) {
 	if withOwn.SteadyAllocs != 0 {
 		t.Errorf("the `fip` in-place loop allocated %d times over %d rounds: E068 accepted the function, so the verifier and the allocator now disagree",
 			withOwn.SteadyAllocs, withOwn.Rounds)
-	}
-
-	// THE PREMISE, with the pass off: rebuilding by append costs an
-	// allocation per round and more.
-	if rawMapOwn.SteadyAllocs <= withOwn.SteadyAllocs {
-		t.Errorf("with ownership-aware materialization OFF, `own xs` through `xs.map(f)` allocated %d times against the in-place loop's %d — pipeline 3 exists to record that gap",
-			rawMapOwn.SteadyAllocs, withOwn.SteadyAllocs)
 	}
 
 	// WHAT IT BOUGHT: the combinator reaches the hand-written loop.

@@ -246,11 +246,7 @@ func TestInterpChmodAt(t *testing.T) {
 // so with the builtin's name and the call site's position.
 func TestWASMChmodAtRefused(t *testing.T) {
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build fern: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 	srcPath := filepath.Join(dir, "cm.fern")
 	src := `function main(): i32 {
     match (chmod_at("f", 420, false)) { Ok(_) => { return 0; }, Err(_) => { return 1; } }
