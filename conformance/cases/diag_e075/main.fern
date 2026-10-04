@@ -10,8 +10,8 @@
 // be accepted silently — the other (a handler taking a state nothing
 // produces) never type-checked, it just reported a call nobody wrote.
 import "std/http";
-import "std/serve";
 import "std/platform";
+import "std/serve";
 
 function init(): i32 {
     return 7;

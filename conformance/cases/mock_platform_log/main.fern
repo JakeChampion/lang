@@ -6,11 +6,10 @@ import "std/stream";
 import "std/i32";
 
 // Exercises std/mock_platform's recording seam across all four native
-// backends: a handler generic over `platform.Platform` is handed the mock
-// itself and reaches its capabilities through it, the calls land in the
-// mock's log, and `calls()` parses the log back into `mock_platform.MockCall`
-// values. Nothing here reaches the host — the `.log` lines would go to stderr
-// on `platform.Host`.
+// backends: a handler is handed the mock as its Platform and reaches its
+// capabilities through it, the calls land in the mock's log, and
+// `calls()` parses the log back into MockCall values. Nothing here reaches
+// the host — the `.log` lines would go to stderr on a host bag.
 // FEATURE-AUDIT std/mock_platform row.
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log("serving " + req.path);
