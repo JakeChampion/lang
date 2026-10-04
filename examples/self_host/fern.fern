@@ -358,6 +358,7 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
       elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
       elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
       cu_name, getcwd(),
+      pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
     );
   }
   return string_from_bytes_unchecked(util.to_u8(bin));
@@ -452,6 +453,7 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
       elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
       elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
       cu_name, getcwd(),
+      a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
     );
   }
   return string_from_bytes_unchecked(util.to_u8(bin));
@@ -535,6 +537,19 @@ function sanitize_warning(target: string): string {
     return "fern: warning: -sanitize on -target " + target + " carries " + census + " — and it prints at process exit, which a request handler never reaches";
   }
   return "fern: warning: -sanitize has no effect on -target " + target + " (the detectors are native x86-64 and arm64, the leak census also wasm); this build carries no checks";
+}
+
+// dw_file_table is the `.file N "path"` table a -g build's `.loc` rows index
+// (#11410): 1 the entry module and k + 2 the k-th imported module
+// (util.pos_file_index), every module listed whether or not a row names it.
+function dw_file_table(entry: string, files: string[]): string {
+  let o: string = "    .file 1 \"" + entry + "\"\n";
+  let k: i32 = 0;
+  while (k < files.len()) {
+    o = o + "    .file " + util.i32_to_string(k + 2) + " \"" + files[k] + "\"\n";
+    k = k + 1;
+  }
+  return o;
 }
 
 // flag_after_entry refuses a driver flag written after the entry file, in
@@ -3050,7 +3065,11 @@ function run(): i32 {
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
   let full: parser.Module = parser.erase_view_module(typed);
   // The typed semantic lowering, threaded into whichever emit path runs.
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on() } };
+  // `-g` on an ELF target carries the line table: the lowering marks each
+  // statement, the emitter renders the marks as `.loc` rows over the `.file`
+  // table prepended below, and the ELF writer encodes .debug_line (#11410).
+  let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux");
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, debug_lines), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on() } };
   let out_asm: string = "";
   let emit_text: boolean = emit == "asm";
   if (target == "arm64-linux") {
@@ -3072,6 +3091,9 @@ function run(): i32 {
     util.arr_push_cliff_report("arm64:emitted", 0);
     if (out_asm.len() == 0) {
       return 2;
+    }
+    if (debug_lines) {
+      out_asm = dw_file_table(entry_path, b.files) + out_asm;
     }
     if (!emit_text) {
       out_asm = arm64_elf_binary(out_asm, buf_take_bytes(recs), emit_syms, entry_path);
@@ -3215,6 +3237,9 @@ function run(): i32 {
     // arm64-linux does and needs nothing on $PATH.
     let recs: usize = word_buf(emit_text);
     out_asm = asm_ir.emit_module_or_error_sub(full, sub, recs);
+    if (debug_lines && out_asm.len() > 0) {
+      out_asm = dw_file_table(entry_path, b.files) + out_asm;
+    }
     if (!emit_text) {
       out_asm = x86_elf_binary(out_asm, buf_take_bytes(recs), emit_syms, entry_path);
       if (out_asm.len() == 0) {

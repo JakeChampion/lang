@@ -1796,7 +1796,7 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
   if (k >= 40 && k <= 60) {
     return true;
   }
-  return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
+  return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11 || k == 35;
 }
 
 // ssa_unsupported names the first instruction this emitter has no selection
@@ -3028,6 +3028,21 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   return ssa_store(reg_of, ins.result, d, s);
 }
 
+// ssa_line_loc renders a source-position marker (ir.op_line, ssa kind 35) as
+// a `.loc` row: the file number the CLI's `.file` table gives the marker's
+// module (util.pos_file_index + 1), its line and its column, and
+// prologue_end on a function's first, which is where a breakpoint on the
+// function belongs. GNU as and the in-process assembler alike turn the rows
+// into .debug_line.
+function ssa_line_loc(ins: ssa.SInst, s: asmcore.EmitState): asmcore.EmitState {
+  let row: string = "    .loc " + util.i32_to_string(util.pos_file_index(ins.imm) + 1) + " " + util.i32_to_string(util.pos_line(ins.imm)) + " " + ins.str;
+  if (s.dw_first) {
+    row = row + " prologue_end";
+    s = asmcore.EmitState { ...s, dw_first: false };
+  }
+  return s.write(row + "\n");
+}
+
 function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
   if (k == 11) {
@@ -3074,6 +3089,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
   }
   if (k == 57) {
     return ssa_agg_lit(ins, reg_of, s);
+  }
+  if (k == 35) {
+    return ssa_line_loc(ins, s);
   }
   if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) {
     return s;
@@ -3562,6 +3580,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // most of them never read; prune_dead takes those out before the allocator
 // sees them.
 function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+  s = asmcore.EmitState { ...s, dw_first: true };
   let f: ssa.SFunc = ssa.register_form(lifted);
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
   let reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s));

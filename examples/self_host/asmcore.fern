@@ -182,6 +182,9 @@ pub struct EmitState {
   // Whether a fatal abort's report walks the frame-pointer chain under its
   // cause line.
   backtrace: boolean,
+  // Set at a function's start and cleared by its first `.loc` row, which
+  // carries prologue_end: the address a breakpoint on the function belongs at.
+  dw_first: boolean,
   // rt_owned_allocs: set while the task runtime's functions are being
   // emitted. Their __alloc blocks (the record table, the records, the save
   // areas and wait sets) are runtime state the program never holds or frees,
@@ -354,6 +357,7 @@ pub function new_state(): EmitState {
     sanitize: sanitize_on(),
     leak_check: sanitize_on() || leak_check_on(),
     backtrace: backtrace_on(),
+    dw_first: false,
     rt_owned_allocs: false,
     syscalls: [],
     raw_syscall: "",

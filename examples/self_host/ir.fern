@@ -706,6 +706,16 @@ pub function op_raw_cover(): Op {
   return op0(287);
 }
 
+// line: a source-position marker that pops nothing and pushes nothing
+// (#11410). i32_imm is the merged module's line (util.pos_file_index and
+// util.pos_line split it into the file and its line) and i64_imm the column.
+// The lowering emits one ahead of each statement under `-g` for the ELF
+// targets; the register emitters render it as a `.loc` row, and every other
+// pass leaves it alone.
+pub function op_line(line: i32, col: i32): Op {
+  return Op { ...op0(288), i32_imm: line, i64_imm: col as i64 };
+}
+
 // syscall5 (#2649 syscall sub-floor): the 5-arg sibling. Three helpers need it
 // and none can be reached without it — arm64 Linux has no `poll` or `fork`, only
 // `ppoll` and `clone`, and XNU has no `nanosleep`, only `select`. All three take
@@ -2994,7 +3004,7 @@ pub function kind_count(): i32 {
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 288..290, then 311 — 281
+// NEXT FREE EXTENSION ID: 289..290, then 311 — 281
 // (writer_truncate) and 285 (signal_send) were each taken out of order by a
 // branch in flight, as 275..280 and 291..297 were, and the sync family took
 // the 298..301 block reserved for it (re-grep rather than trusting this line
@@ -3261,6 +3271,9 @@ function kind_id_len4_g(name: string): i32 {
 }
 
 function kind_id_len4_l(name: string): i32 {
+  if (name == "line") {
+    return 288;
+  }
   if (name == "lt_s") {
     return 37;
   }
@@ -5105,6 +5118,9 @@ function kind_name_4(id: i32): string {
   if (id == 287) {
     return "raw_cover";
   }
+  if (id == 288) {
+    return "line";
+  }
   if (id == 367) {
     return "raw_task_state";
   }
@@ -5540,6 +5556,7 @@ function pops0(t: i32): boolean {
     || t == 207 || t == 211  // raw_environ, proc_fork
     || t == 331  // raw_splice_pipe
     || t == 287  // raw_cover
+    || t == 288  // line
     || t == 367  // raw_task_state
     || t == 216 || t == 217 || t == 218  // arr_push_shared_*, const_struct
     || t == 222  // map_hash_seed
@@ -5843,6 +5860,9 @@ pub function pure_value_op(o: Op): boolean {
 pub function op_pushes(o: Op): i32 {
   let t: i32 = o.kind_tag;
   if (t == 19 || t == 159) {  // store_local, drop
+    return 0;
+  }
+  if (t == 288) {  // line: a marker, nothing in and nothing out
     return 0;
   }
   // The three composite-element writes consume their value outright —
