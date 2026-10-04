@@ -5064,7 +5064,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // type-annotation (e.g. `let m: Map[K, V] = …`)
   // pins them via assignability.
   if (!is_method && is_map_new_name(name)) {
-    return t_map(t_unknown("map_new key"), t_unknown("map_new value"));
+    return t_map(t_unknown(MAP_NEW_KEY), t_unknown(MAP_NEW_VALUE));
   }
   // cell_new(v) builtin — the Cell[T] constructor
   // (docs/CELL-TYPE-PLAN.md). T is the argument's type; the
@@ -13014,6 +13014,37 @@ function display_arg_diags(c: ast.ExprCall, s: Scope): util.Diag[] {
   )];
 }
 
+// The columns of a bare `map_new(n)`, which only a destination binds.
+const MAP_NEW_KEY: string = "map_new key";
+
+const MAP_NEW_VALUE: string = "map_new value";
+
+function unbound_column(t: typeinfo.Type, reason: string): boolean {
+  if let typeinfo.TypeUnknown(u) = t {
+    return u.reason == reason;
+  }
+  return false;
+}
+
+// unbound_map_arg_diags reports E038 for each written key or value argument of
+// a Map method whose column a bare `map_new(n)` left unbound: nothing names K
+// or V there, so the argument has no type to meet. A map literal's own inserts
+// bind the columns from their entries and are exempt.
+function unbound_map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.TypeMap, s: Scope, out: util.Diag[]): util.Diag[] {
+  if (literal_insert(c) || c.args.len() == 0) {
+    return out;
+  }
+  let takes_key: boolean = method == "insert" || method == "get_or" || method == "get" || method == "has" || method == "without";
+  if (takes_key && unbound_column(mt.key, MAP_NEW_KEY)) {
+    out = out.append(dg_at("E038", "argument 1 to \"" + method + "\": expected K, got " + type_label(check_expr(c.args[0], s)), expr_line(c.args[0]), expr_col(c.args[0])));
+  }
+  let takes_value: boolean = (method == "insert" || method == "get_or") && c.args.len() == 2;
+  if (takes_value && unbound_column(mt.value, MAP_NEW_VALUE)) {
+    out = out.append(dg_at("E038", "argument 2 to \"" + method + "\": expected V, got " + type_label(check_expr(c.args[1], s)), expr_line(c.args[1]), expr_col(c.args[1])));
+  }
+  return out;
+}
+
 // E038: `insert`'s key and value must match the map's columns, as `append`'s
 // element does. It stores both, so a `str` view is not lent here (native's
 // storesArgument). A literal's own entries are the E045 check's, apart from
@@ -13474,6 +13505,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (mfa.field == "insert") {
             out = insert_arg_diags(c, mt, s, out);
           }
+          out = unbound_map_arg_diags(c, mfa.field, mt, s, out);
           // E043 (map method existence). methods_in_namespace("Map") is the
           // whole surface — the runtime builtins plus whatever core/map's
           // receiver methods add once it is in the program — so a name that

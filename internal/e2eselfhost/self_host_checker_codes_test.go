@@ -2340,6 +2340,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// `insert` takes the map's columns, as `append` takes the element type.
 		{"map-insert-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = Map { \"k\": 1 }; m = m.insert(2, 3); return m.len(); }\n", []string{"E038"}},
 		{"maplit-insert-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m = Map { \"k\": 1 }; m = m.insert(2, 3); return m.len(); }\n", []string{"E038"}},
+		// A bare `map_new(n)` binds neither column, so a written call handing it
+		// a key or a value has no K or V to meet (#10214). A destination binds
+		// both, and a literal's own inserts bind them from its entries.
+		{"mapnew-chain-unbound-columns-e038", "import \"core/map\";\nfunction main(): i32 { return map_new(2).insert(\"a\", 1).len(); }\n", []string{"E038"}},
+		{"mapnew-local-unbound-key-e038", "import \"core/map\";\nfunction main(): i32 { let m = map_new(2); if (m.has(\"a\")) { return 1; } return 0; }\n", []string{"E038"}},
+		{"mapnew-local-unbound-insert-e038", "import \"core/map\";\nfunction main(): i32 { let m = map_new(2); return m.insert(1, 2).len(); }\n", []string{"E038"}},
+		{"mapnew-annotated-insert-clean", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(2); m = m.insert(\"a\", 1); return m.get_or(\"a\", 0); }\n", nil},
+		{"maplit-written-insert-clean", "import \"core/map\";\nfunction main(): i32 { let m = Map { \"a\": 1 }; return m.insert(\"b\", 2).get_or(\"b\", 0); }\n", nil},
 		// E022: `if let` / `let … else` carry dedicated pattern-binding
 		// diagnostics. The self-host parser desugars both to a StmtMatch
 		// tagged with `origin` ("if_let" / "let_else"); the checker reads
