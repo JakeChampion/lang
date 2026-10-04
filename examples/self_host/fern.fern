@@ -2529,10 +2529,8 @@ function run(): i32 {
     } else if (a == "-cover") {
       cover_on = true;
     } else if (a == "-g") {
-      // Emit a static .symtab into the native binary (#6637). x86-64
-      // Linux only for now: arm64 links through arm64_gas_link's W^X
-      // image, which needs its own wiring. Native excludes darwin and
-      // android from -g too.
+      // A static symbol table naming the functions: `.symtab` in the ELF
+      // targets' images (#6637), LC_SYMTAB in arm64-darwin's (#11409).
       emit_syms = true;
     } else if (a == "-backtrace" || a == "-backtrace=true" || a == "-backtrace=1") {
       backtrace = true;
@@ -3092,7 +3090,15 @@ function run(): i32 {
       // emitter writes the entry after the user's functions.
       let deoff: i32 = arm64_native.macho_entry_off(pa2);
       let dreb: i32[] = arm64_native.arm64_gas_rebase_offs(prog);
-      out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable_binds(pa2.code, deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms)));
+      // `-g`: the function labels into LC_SYMTAB (#11409), as the ELF
+      // targets' .symtab; a default build writes none.
+      let dsym_names: string[] = [];
+      let dsym_offs: i32[] = [];
+      if (emit_syms) {
+        dsym_names = pa2.lab_names;
+        dsym_offs = pa2.lab_offs;
+      }
+      out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable_binds(pa2.code, deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms, dsym_names, dsym_offs)));
       util.arr_push_cliff_report("darwin:image", 0);
     }
   } else if (target == "wasm32-wasi" && emit_text) {

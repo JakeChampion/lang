@@ -10912,10 +10912,11 @@ function macho_rebase_opcodes(seg_idx: i32, offs: i32[]): i32[] {
   return buf;
 }
 
-// macho_symtab writes an LC_SYMTAB, and macho_dysymtab an LC_DYSYMTAB with
-// every index and count zero. dyld requires LC_DYSYMTAB on a two-level
-// image and refuses one that carries it without an LC_SYMTAB, so both are
-// present and degenerate: this writer emits no symbols.
+// macho_symtab writes an LC_SYMTAB, and macho_dysymtab an LC_DYSYMTAB whose
+// every index and count is zero but the local-symbol range, which covers the
+// whole LC_SYMTAB. dyld requires LC_DYSYMTAB on a two-level image and refuses
+// one that carries it without an LC_SYMTAB, so both are present on a default
+// build too, degenerate: no symbols, every field zero.
 function macho_symtab(buf: i32[], symoff: i32, nsyms: i32, stroff: i32, strsize: i32): i32[] {
   buf = macho_le32(buf, 2);  // LC_SYMTAB
   buf = macho_le32(buf, 24);
@@ -10925,10 +10926,108 @@ function macho_symtab(buf: i32[], symoff: i32, nsyms: i32, stroff: i32, strsize:
   return macho_le32(buf, strsize);
 }
 
-function macho_dysymtab(buf: i32[]): i32[] {
+function macho_dysymtab(buf: i32[], nlocal: i32): i32[] {
   buf = macho_le32(buf, 11);  // LC_DYSYMTAB
   buf = macho_le32(buf, 80);
-  return macho_zeros(buf, 72);  // 18 index/count uint32 pairs
+  buf = macho_le32(buf, 0);  // ilocalsym
+  buf = macho_le32(buf, nlocal);  // nlocalsym
+  return macho_zeros(buf, 64);  // extdef/undef ranges, toc, modtab, refsyms, indirect, ext/loc rel
+}
+
+// macho_sym_order selects the labels the `-g` symbol table names and orders
+// them: the function labels, by offset then by name, as nm reads them.
+// Dropped are the empty name, a `.` prefix (hand-written input's ELF-style
+// local) and a bare `L` prefix, the Mach-O temporary label the emitters write
+// for this target (#8065): those are branch targets, not functions.
+function macho_sym_order(names: string[], offs: i32[]): i32[] {
+  let idx: i32[] = [];
+  let i: i32 = 0;
+  while (i < names.len() && i < offs.len()) {
+    let n: string = names[i];
+    if (n.len() > 0 && n[0] != b'.' && n[0] != b'L') {
+      idx = idx.append(i);
+    }
+    i = i + 1;
+  }
+  let a: i32 = 1;
+  while (a < idx.len()) {
+    let cur: i32 = idx[a];
+    let b: i32 = a - 1;
+    while (b >= 0) {
+      let prev: i32 = idx[b];
+      let after: boolean = offs[prev] > offs[cur];
+      if (!after && offs[prev] == offs[cur]) {
+        after = macho_str_gt(names[prev], names[cur]);
+      }
+      if (!after) {
+        b = 0 - 1;
+      } else {
+        idx = idx.with(b + 1, prev);
+        idx = idx.with(b, cur);
+        b = b - 1;
+      }
+    }
+    a = a + 1;
+  }
+  return idx;
+}
+
+// macho_str_gt is a > b bytewise, the order nm sorts equal-address names by.
+function macho_str_gt(a: string, b: string): boolean {
+  let i: i32 = 0;
+  while (i < a.len() && i < b.len()) {
+    if (a[i] != b[i]) {
+      return a[i] > b[i];
+    }
+    i = i + 1;
+  }
+  return a.len() > b.len();
+}
+
+// macho_strtab_len is the string table's length: the empty string at index 0,
+// then each selected name NUL-terminated.
+function macho_strtab_len(names: string[], idx: i32[]): i32 {
+  if (idx.len() == 0) {
+    return 0;
+  }
+  let n: i32 = 1;
+  for i in idx {
+    n = n + names[i].len() + 1;
+  }
+  return n;
+}
+
+// macho_nlists appends one nlist_64 per selected label: n_strx into the
+// string table macho_strtab lays down in the same order, n_type N_SECT|N_EXT
+// (a defined external symbol), n_sect 1 (__text is the first section),
+// n_desc 0, n_value the label's address.
+function macho_nlists(buf: i32[], names: string[], offs: i32[], idx: i32[], text_vaddr: i64): i32[] {
+  let strx: i32 = 1;
+  for i in idx {
+    buf = macho_le32(buf, strx);
+    buf = buf.append(0x0f);
+    buf = buf.append(1);
+    buf = buf.append(0);
+    buf = buf.append(0);
+    buf = macho_le64(buf, text_vaddr + offs[i] as i64);
+    strx = strx + names[i].len() + 1;
+  }
+  return buf;
+}
+
+// macho_strtab appends the string table macho_nlists indexed.
+function macho_strtab(buf: i32[], names: string[], idx: i32[]): i32[] {
+  buf = buf.append(0);
+  for i in idx {
+    let n: string = names[i];
+    let k: i32 = 0;
+    while (k < n.len()) {
+      buf = buf.append(n[k] as i32);
+      k = k + 1;
+    }
+    buf = buf.append(0);
+  }
+  return buf;
 }
 
 // macho_build_version writes LC_BUILD_VERSION declaring the image as
@@ -11091,12 +11190,17 @@ pub function macho_entry_off(a: Arm64Asm): i32 {
 // LC_DYLD_INFO_ONLY rebase stream is how the image asks for that. Pass an
 // empty array when the data blob holds no absolute addresses.
 pub function macho_executable(text: i32[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[]): i32[] {
-  return macho_executable_binds(text, eh, data, ident, entry_off, bss, rebase_offs, [], []);
+  return macho_executable_binds(text, eh, data, ident, entry_off, bss, rebase_offs, [], [], [], []);
 }
 
 // macho_executable_binds is macho_executable plus the `.quad` slots dyld binds
-// to libSystem symbols (arm64_gas_binds).
-pub function macho_executable_binds(text: i32[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[]): i32[] {
+// to libSystem symbols (arm64_gas_binds), and the `-g` symbol table:
+// `sym_names` / `sym_offs` are the assembler's .text labels and their offsets
+// (Arm64Asm.lab_names / lab_offs), of which the function labels go into
+// LC_SYMTAB as nlist_64 entries so lldb, nm and a crash backtrace can name a
+// code address (#11409, the Mach-O counterpart of elf_append_symtab). Empty
+// arrays write the degenerate LC_SYMTAB a default build has, byte for byte.
+pub function macho_executable_binds(text: i32[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[], sym_names: string[], sym_offs: i32[]): i32[] {
   let text_len: i32 = text.len();
   let eh_len: i32 = eh.len();
   let has_eh: boolean = eh_len > 0;
@@ -11124,7 +11228,15 @@ pub function macho_executable_binds(text: i32[], eh: i32[], data: i32[], ident: 
     bind = macho_bind_opcodes(2, bind_offs, bind_syms);
   }
   let linkedit_off: i32 = text_vmsize + data_file_len;
-  let code_limit: i32 = macho_align_up(linkedit_off + rebase.len() + bind.len(), 16);
+  // The symbol table follows the dyld streams: the nlist_64 array 8-aligned,
+  // the string table right after it, and the signature's 16-aligned start
+  // past both, so the signed region covers them (ld64's layout). With no
+  // symbols the two are empty and the signature lands where it always did.
+  let sym_idx: i32[] = macho_sym_order(sym_names, sym_offs);
+  let sym_off: i32 = macho_align_up(linkedit_off + rebase.len() + bind.len(), 8);
+  let str_off: i32 = sym_off + 16 * sym_idx.len();
+  let str_len: i32 = macho_strtab_len(sym_names, sym_idx);
+  let code_limit: i32 = macho_align_up(str_off + str_len, 16);
 
   let base: i64 = macho_base_vaddr();
   let text_vaddr: i64 = base + text_off as i64;
@@ -11193,8 +11305,12 @@ pub function macho_executable_binds(text: i32[], eh: i32[], data: i32[], ident: 
 
   // ---- the dyld command set (see the module comment) ----
   buf = macho_dyld_info(buf, linkedit_off, rebase.len(), linkedit_off + rebase.len(), bind.len());
-  buf = macho_symtab(buf, 0, 0, 0, 0);
-  buf = macho_dysymtab(buf);
+  if (sym_idx.len() == 0) {
+    buf = macho_symtab(buf, 0, 0, 0, 0);
+  } else {
+    buf = macho_symtab(buf, sym_off, sym_idx.len(), str_off, str_len);
+  }
+  buf = macho_dysymtab(buf, sym_idx.len());
   buf = macho_build_version(buf);
   buf = macho_lcstr(buf, 14, macho_dylinker_path());  // LC_LOAD_DYLINKER
   buf = macho_lcstr(buf, 12, macho_libsystem_path());  // LC_LOAD_DYLIB
@@ -11222,6 +11338,11 @@ pub function macho_executable_binds(text: i32[], eh: i32[], data: i32[], ident: 
   }
   buf = macho_cat(buf, rebase);
   buf = macho_cat(buf, bind);
+  if (sym_idx.len() > 0) {
+    buf = macho_pad_to(buf, sym_off);
+    buf = macho_nlists(buf, sym_names, sym_offs, sym_idx, text_vaddr);
+    buf = macho_strtab(buf, sym_names, sym_idx);
+  }
   buf = macho_pad_to(buf, code_limit);
   // buf length is now code_limit; sign it and append the signature.
   let sig: i32[] = macho_code_signature(buf, code_limit, text_vmsize, ident);
