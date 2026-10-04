@@ -214,6 +214,7 @@ general_reuse_struct                                 0
 general_reuse_tuple                                  0
 generic_array_method_chain                           0
 generic_array_methods                                0
+generic_assoc_result_self                            0
 generic_associated_fn                                0
 generic_box                                          0
 generic_call_binds_through_closure_array_param       0

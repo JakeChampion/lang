@@ -1,0 +1,28 @@
+import "std/i32";
+
+// A generic struct's associated function whose result wraps Self takes its
+// instantiation from where the result lands: a `let` annotation or the
+// enclosing function's return type.
+struct Box[T] { v: T }
+
+impl[T] Box[T] {
+    function wrap(v: T): Result[Self, string] {
+        return Ok(Box { v: v });
+    }
+    function wrap_opt(v: T): Option[Self] {
+        return Some(Box { v: v });
+    }
+}
+
+function made(n: i32): Result[Box[i32], string] {
+    return Box.wrap(n);
+}
+
+function main(): i32 {
+    let b: Result[Box[string], string] = Box.wrap("hi");
+    match (b) { Ok(x) => { print(x.v); }, Err(e) => { print(e); } }
+    let o: Option[Box[i32]] = Box.wrap_opt(40);
+    match (o) { Some(y) => { print(y.v.to_string()); }, None => { print("none"); } }
+    match (made(1)) { Ok(z) => { print(z.v.to_string()); }, Err(e) => { print(e); } }
+    return 0;
+}
