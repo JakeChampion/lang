@@ -1177,6 +1177,7 @@ func importLocalName(path string) string {
 func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) {
 	combined := &ast.Program{
 		ModuleImports:     importClosures(loaded),
+		EntryModule:       entryPath,
 		DirectImports:     directImports(loaded),
 		LoadedStdlibPaths: map[string]bool{},
 	}

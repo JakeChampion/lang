@@ -3582,6 +3582,10 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"derive-qualified-field-no-impl", "import \"core/cmp\";\nstruct Q { n: i32 }\n@derive(cmp.Eq)\nstruct P { q: Q }\nfunction main(): i32 { return 0; }\n"},
 		{"derive-aliased-bound-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction same[T: c.Eq](a: T, b: T): boolean { return a.eq(b); }\nfunction main(): i32 { let p: P = P { n: 1 }; if (same(p, p)) { return 3; } return 0; }\n"},
 		{"derive-unknown-qualifier", "@derive(cmp.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
+		// An entry const named like an imported variant shadows it in the
+		// entry and never reaches the importing module's bodies (#11143).
+		{"entry-const-named-like-imported-variant", "import \"std/dns\";\nconst A: i32 = 1;\nfunction main(): i32 { print(A.to_string()); return 0; }\n"},
+		{"entry-const-named-like-imported-variant-e003", "import \"std/dns\";\nconst A: i32 = 1;\nfunction main(): i32 { let s: string = A; return 0; }\n"},
 		// An imported module's struct named without its qualifier (#10965):
 		// E064 on the annotation with E003 beside it, and E043 on the literal,
 		// never a clean pass that the lowering then refuses.
