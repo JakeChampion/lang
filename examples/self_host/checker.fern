@@ -11243,6 +11243,38 @@ function payloadless_binder_diags(pv: ast.PatVariant, structs: StructSig[], unio
   return out;
 }
 
+// generic_binder_diags is payloadless_binder_diags for a slot whose declared
+// type is one of its enum's type variables (`Some(T)`): which enum the slot
+// holds is known only from the scrutinee's instantiation, so the rule runs
+// where the arm is typed. A slot declared at a concrete enum is
+// payloadless_binder_diags' and is skipped here.
+function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  let ss: StructSig = find_variant_sig(s.structs.structs, pv.type_name);
+  let slot: i32 = 0;
+  while (slot < pv.extra_bindings.len() + 1) {
+    let nm: string = pv.binding;
+    if (slot > 0) {
+      nm = pv.extra_bindings[slot - 1];
+    }
+    if let typeinfo.TypeUnion(u) = variant_pattern_payload_type(s, pv.type_name, whole, slot) {
+      let declared: string = "";
+      if (ss.name.len() > 0) {
+        declared = payload_slot_type_name(ss, slot);
+      }
+      let owner: string = union_of_variant(nm, s.unions);
+      if (owner.len() == 0) {
+        owner = mx_builtin_enum_of(nm);
+      }
+      if (nm.len() > 0 && nm != "_" && declared != u.name && owner == u.name && variant_payload_count(nm, s.structs.structs) < 0) {
+        out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + u.name + ", but a bare name in a payload slot is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
+      }
+    }
+    slot = slot + 1;
+  }
+  return out;
+}
+
 // match_stmt_own_lambdas checks the match statements inside any lambda sitting
 // in `st`'s own expressions. match_diags walks STATEMENTS and never entered an
 // expression, so a `match` written inside a lambda body escaped E015 / E026 /
@@ -14865,6 +14897,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
               }
               if (!foreign) {
                 armScope = bind_variant_payloads(armScope, cur, apv, check_expr(m.scrutinee, cur));
+                out = util.append_diags(out, generic_binder_diags(apv, cur, mst, elem.line, elem.col));
               }
             },
             _ => {}
