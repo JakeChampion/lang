@@ -6970,7 +6970,9 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
   e = Emit { ...e, r: ssabytes.lower_reads(e.r) };
   e = Emit { ...e, r: place_views(e.r) };
   if (susp.on && susp.rows.has(f.graph.name)) {
+    suspend.dump_if_asked(e.r, "before");
     e = Emit { ...e, r: suspend.transform(e.r, susp) };
+    suspend.dump_if_asked(e.r, "after");
     if (!e.r.ok) {
       return e.r;
     }
