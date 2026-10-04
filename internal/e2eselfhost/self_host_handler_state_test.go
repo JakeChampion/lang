@@ -20,21 +20,22 @@ func TestSelfHostHandlerStateX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "checker_run.fern")
 	formattedBin := buildSelfHostBin(t, gcc, dir, "checker_run.fern", "checker_run")
 	const decls = `struct serve__Config { backlog: i32 }
+struct platform__Host { reactor: i32 }
 function serve__config(): serve__Config { return serve__Config { backlog: 128 }; }
-function serve____init_platform(): Platform { return Platform { version: 3, mode: 0, sink: cell_new(""), handle: 0 }; }
-function serve__supervise(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function serve__supervise_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
-function serve__supervise_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
-function serve__supervise_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
-function serve__run(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function serve__run_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
-function serve__run_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
-function serve__run_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function serve____init_platform(): platform__Host { return platform__Host { reactor: 0 }; }
+function serve__supervise(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse): i32 { return 0; }
+function serve__supervise_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function serve__supervise_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse)): i32 { return 0; }
+function serve__supervise_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function serve__run(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse): i32 { return 0; }
+function serve__run_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function serve__run_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse)): i32 { return 0; }
+function serve__run_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
 function serve____port_from_env(name: string, def: i32): i32 { return def; }
 `
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
-	const stateless = `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }`
-	const stateful = `function handle(state: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (state, ` + response + `); }`
+	const stateless = `function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }`
+	const stateful = `function handle(state: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) { return (state, ` + response + `); }`
 	const missingState = "handler takes a state parameter, but no `init` produces the state to thread through it"
 	const droppedState = "`init` returns a value, but the handler takes no state parameter to thread it through"
 	const hookNeedsInit = "`shutdown` takes a state parameter, but no `init` produces the state to hand it"
@@ -59,13 +60,13 @@ function serve____port_from_env(name: string, def: i32): i32 { return def; }
 		{"shutdown with state", "function init(): i32 { return 7; }\n" + stateful + "\nfunction shutdown(reason: string, n: i32): void { print(reason); }", ""},
 		{"stateful shutdown without init", stateless + "\nfunction shutdown(reason: string, n: i32): void { print(reason); }", hookNeedsInit},
 		{"stateless shutdown drops the state", "function init(): i32 { return 7; }\n" + stateful + "\nfunction shutdown(reason: string): void { print(reason); }", hookDropsState},
-		{"init takes the platform", "function init(plat: Platform): i32 { return 7; }\n" + stateful, ""},
+		{"init takes the platform", "function init(plat: platform__Host): i32 { return 7; }\n" + stateful, ""},
 		{"init answers the config", "function init(): serve__Config { return serve__config(); }\n" + stateless, ""},
-		{"init answers the config beside the state", "function init(plat: Platform): (serve__Config, i32) { return (serve__config(), 7); }\n" + stateful, ""},
+		{"init answers the config beside the state", "function init(plat: platform__Host): (serve__Config, i32) { return (serve__config(), 7); }\n" + stateful, ""},
 		{"config is not a state", "function init(): serve__Config { return serve__config(); }\n" + stateful, missingState},
-		{"a Config of the program's own is a state", "struct Config { n: i32 }\nfunction init(): Config { return Config { n: 1 }; }\nfunction handle(c: Config, req: HttpRequest, plat: Platform): (Config, HttpResponse) { return (c, " + response + "); }", ""},
+		{"a Config of the program's own is a state", "struct Config { n: i32 }\nfunction init(): Config { return Config { n: 1 }; }\nfunction handle(c: Config, req: HttpRequest, plat: platform__Host): (Config, HttpResponse) { return (c, " + response + "); }", ""},
 		{"state beside the config nobody takes", "function init(): (serve__Config, i32) { return (serve__config(), 7); }\n" + stateless, droppedState},
-		{"init takes two parameters", "function init(plat: Platform, n: i32): i32 { return n; }\n" + stateful, initParams},
+		{"init takes two parameters", "function init(plat: platform__Host, n: i32): i32 { return n; }\n" + stateful, initParams},
 		{"init takes something else", "function init(n: i32): i32 { return n; }\n" + stateful, initParam},
 	}
 	for _, tc := range cases {

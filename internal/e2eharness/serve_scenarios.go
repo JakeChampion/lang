@@ -83,8 +83,9 @@ func ThreadedStateServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "core/int";
+import "std/platform";
 
-function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], HttpResponse) {
+function handle(hits: Map[string, i32], req: HttpRequest, plat: platform.Platform): (Map[string, i32], HttpResponse) {
     let n: i32 = 1;
     match (hits.get(req.path)) {
         Some(prev) => { n = prev + 1; },
@@ -130,7 +131,8 @@ func LargeResponseServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/string";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("x".repeat(%d));
 }
 function main(): i32 {
@@ -179,7 +181,8 @@ func RecvDeadlineServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/time";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
@@ -225,7 +228,8 @@ func TrappingServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "core/int";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/boom") {
         let a: i32[] = [1, 2, 3];
         let i: i32 = a.len() + 5;
@@ -266,7 +270,8 @@ func CheckSurvivesHandlerTrap(t *testing.T, addr, stderrPath string) {
 func ReusePortServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
@@ -405,7 +410,8 @@ func CheckTrapThenShutdownExitsClean(t *testing.T, cmd *exec.Cmd, addr, stderrPa
 func MaxConnectionsFloorServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
@@ -435,7 +441,7 @@ func WorkersServerSource(port int) string {
 import "std/serve";
 import "std/platform";
 import "core/int";
-function burn(plat: Platform, ns: i64): i32 {
+function burn(plat: platform.Platform, ns: i64): i32 {
     let x: i32 = 12345;
     let until: i64 = plat.elapsed_ns() + ns;
     while (plat.elapsed_ns() < until) {
@@ -447,7 +453,7 @@ function burn(plat: Platform, ns: i64): i32 {
     }
     return x;
 }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/boom") {
         let a: i32[] = [1, 2, 3];
         let i: i32 = a.len() + 5;
@@ -520,6 +526,66 @@ func CheckWorkersServeSideBySide(t *testing.T, addr, stderrPath string) {
 	}
 }
 
+// BlockingHandlerServerSource is a one-worker server whose /slow handler
+// waits on `plat.http` to the fetch upstream's /slow target (through the
+// forward proxy SetFetchProxy names, since the upstream is on loopback)
+// while /ok answers at once. It is the networking plan's blocking-handler
+// conformance case (#9851 §5, #9857).
+func BlockingHandlerServerSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/serve";
+import "std/platform";
+import "std/fetch";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    if (req.path == "/slow") {
+        match (plat.http(fetch.get("http://8.8.8.8/slow"))) {
+            Ok(resp) => { return http.ok("slow " + resp.status.to_string()); },
+            Err(e) => { return http.ok("slow err " + e.message()); }
+        }
+    }
+    return http.ok("ok");
+}
+function main(): i32 {
+    return serve.supervise(%d, serve.Config { ...serve.config(), workers: 1 }, handle);
+}
+`, port)
+}
+
+// CheckBlockingHandlerStallsWorker drives BlockingHandlerServerSource and
+// asserts what P1 documented: a handler waiting on an upstream holds its
+// worker, so /ok on a second connection is answered only once /slow's
+// upstream has. P3 (#9857) flips this check to /ok arriving inside the
+// upstream's delay.
+func CheckBlockingHandlerStallsWorker(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
+		t.Fatalf("first /ok: want 200, got\n%s", resp)
+	}
+	slow, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer slow.Close()
+	started := time.Now()
+	if _, err := io.WriteString(slow, "GET /slow HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	// Give the worker time to read /slow and enter its handler before the
+	// second connection arrives.
+	time.Sleep(20 * time.Millisecond)
+	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
+		t.Fatalf("/ok beside /slow: want 200, got\n%s", resp)
+	}
+	if waited := time.Since(started); waited < SlowUpstreamDelay {
+		t.Fatalf("/ok beside /slow took %v, inside the upstream's %v: the worker did not stall on the handler's wait, which this case pins until #9857 lifts it", waited, SlowUpstreamDelay)
+	}
+	b, err := io.ReadAll(slow)
+	if err != nil || !strings.Contains(string(b), "slow 200") {
+		t.Fatalf("/slow itself: %q, %v", b, err)
+	}
+}
+
 // InitStateServerSource is ThreadedStateServerSource with no `main`: an
 // `init(): S` and a state-taking `handle` are the two-phase lifecycle the
 // compilers synthesise a main for, which serves on `PORT` under the
@@ -541,12 +607,13 @@ func initStateServerSource(importLine, qual string) string {
 	return strings.NewReplacer("IMPORT", importLine, "QUAL", qual).Replace(`import "std/http";
 IMPORT
 import "core/int";
+import "std/platform";
 
-function init(plat: Platform): (QUAL.Config, Map[string, i32]) {
+function init(plat: platform.Platform): (QUAL.Config, Map[string, i32]) {
     return (QUAL.Config { ...QUAL.config(), workers: 1 }, map_new(8));
 }
 
-function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], HttpResponse) {
+function handle(hits: Map[string, i32], req: HttpRequest, plat: platform.Platform): (Map[string, i32], HttpResponse) {
     let n: i32 = 1;
     match (hits.get(req.path)) {
         Some(prev) => { n = prev + 1; },
@@ -563,8 +630,9 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[
 func HandleOnlyServerSource() string {
 	return `import "std/http";
 import "std/serve";
+import "std/platform";
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("path=" + req.path);
 }
 `
@@ -600,13 +668,14 @@ func CheckHandleOnly(t *testing.T, addr string) {
 func ResultHandlerServerSource() string {
 	return `import "std/http";
 import "std/serve";
+import "std/platform";
 
 function lookup(path: string): Result[string, http.HttpError] {
     if (path == "/items/1") { return Ok("first"); }
     return Err(http.fail(404, "no item at " + path));
 }
 
-function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.HttpError] {
+function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, http.HttpError] {
     let name: string = lookup(req.path)?;
     return Ok(http.ok(name));
 }
@@ -630,6 +699,7 @@ func DynErrorHandlerAliasedServerSource() string {
 func dynErrorHandlerSource(imp, q string) string {
 	return `import "std/http";
 import "std/serve";
+import "std/platform";
 ` + imp + `
 
 struct NotFound { path: string }
@@ -643,7 +713,7 @@ function lookup(path: string): Result[string, NotFound] {
     return Err(NotFound { path: path });
 }
 
-function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, dyn ` + q + `.Error] {
+function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, dyn ` + q + `.Error] {
     let name: string = lookup(req.path)?;
     return Ok(http.ok(name));
 }
@@ -686,12 +756,13 @@ func StatefulResultHandlerServerSource() string {
 	return `import "std/http";
 import "std/serve";
 import "core/int";
+import "std/platform";
 
-function init(plat: Platform): (serve.Config, Map[string, i32]) {
+function init(plat: platform.Platform): (serve.Config, Map[string, i32]) {
     return (serve.Config { ...serve.config(), workers: 1 }, map_new(8));
 }
 
-function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], Result[HttpResponse, http.HttpError]) {
+function handle(hits: Map[string, i32], req: HttpRequest, plat: platform.Platform): (Map[string, i32], Result[HttpResponse, http.HttpError]) {
     if (req.path == "/boom") { return (hits, Err(http.fail(404, "nothing here"))); }
     let n: i32 = 1;
     match (hits.get(req.path)) {
@@ -746,12 +817,13 @@ func ShutdownHookServerSource() string {
 	return `import "std/http";
 import "std/serve";
 import "core/int";
+import "std/platform";
 
-function init(plat: Platform): (serve.Config, i32) {
+function init(plat: platform.Platform): (serve.Config, i32) {
     return (serve.Config { ...serve.config(), workers: 1 }, 0);
 }
 
-function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
+function handle(hits: i32, req: HttpRequest, plat: platform.Platform): (i32, HttpResponse) {
     return (hits + 1, http.ok("hit " + int.int_to_string(hits + 1)));
 }
 
@@ -857,7 +929,8 @@ func ListenFailureServerSource(port int, supervised bool) string {
 	}
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
@@ -988,7 +1061,8 @@ func CheckFetchDeadline(t *testing.T, cmd *exec.Cmd) {
 func LimitsServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {

@@ -133,7 +133,7 @@ function __real_reactor(d: RealDriver): i32 {
   return r;
 }
 
-// `.handle()` — the driver's reactor as the opaque handle a `Platform`
+// `.handle()` — the driver's reactor as the opaque handle a `platform.Host`
 // carries (`handle`), made on first use like `watch` makes it; negative
 // when the target has no reactor.
 pub function (d: RealDriver) handle(): i32 {

@@ -279,9 +279,9 @@ function arm64_refusals(target: string, stage: string, unknown: string[]): strin
   return "";
 }
 
-// arm64_word_buf is the buffer the arm64 emitter hands encoded words to when
-// the output is a binary, 0 when it is the text.
-function arm64_word_buf(emit_text: boolean): usize {
+// word_buf is the buffer an emitter hands encoded instructions to when the
+// output is a binary, 0 when it is the text.
+function word_buf(emit_text: boolean): usize {
   if (emit_text) {
     return 0 as usize;
   }
@@ -390,9 +390,9 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
 // x86_resolve fixes .rodata references against the 8-byte-padded .text
 // length, which is exactly this layout. W^X would need the assembler to
 // resolve against a page-aligned data vaddr, as arm64_gas_link does.
-function x86_elf_binary(asm: string, emit_syms: boolean): string {
+function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean): string {
   util.arr_push_cliff_report("x86:emitted", 0);
-  let a: x86_native.X86Asm = x86_native.x86_gas_assemble(asm);
+  let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words(asm, words);
   util.arr_push_cliff_report("x86:assembled", 0);
   // Absolute `.quad <label>` pointers need the load address, which the ELF
   // container picks — the analogue of arm64_gas_link's data-vaddr argument.
@@ -640,7 +640,7 @@ function capability_findings(merged: parser.Module, target: string): Finding[] {
 }
 
 // ambient_findings is every host effect a handler reaches around its
-// `Platform` bag (E080 — ambient.fern). Target-independent, so it runs on
+// platform (E080 — ambient.fern). Target-independent, so it runs on
 // every check and every build, on the bundle before the shake: a handler is
 // judged on what its body reaches.
 function ambient_findings(merged: parser.Module): Finding[] {
@@ -2862,7 +2862,7 @@ function run(): i32 {
   }
 
   // The bag boundary (E080 — ambient.fern): a handler reaching a host
-  // effect around its `Platform`, on either compiler.
+  // effect around its platform, on either compiler.
   if (eprint_findings(ambient_findings(merged), b.files)) {
     return 1;
   }
@@ -2955,7 +2955,7 @@ function run(): i32 {
     //
     // The default form is the in-process ELF (arm64_native + elf.fern) —
     // no `.s` + gcc/ld.
-    let recs: usize = arm64_word_buf(emit_text);
+    let recs: usize = word_buf(emit_text);
     out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, recs);
     util.arr_push_cliff_report("arm64:emitted", 0);
     if (out_asm.len() == 0) {
@@ -2975,7 +2975,7 @@ function run(): i32 {
     // the one construct that cares — the startup self-relocation loop — is
     // emitted on both, where ET_EXEC simply computes a zero slide and skips
     // it (#7112).
-    let recs: usize = arm64_word_buf(emit_text);
+    let recs: usize = word_buf(emit_text);
     out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, recs);
     if (out_asm.len() == 0) {
       return 2;
@@ -3093,9 +3093,10 @@ function run(): i32 {
     // own toolchain wants; the default form assembles + links it in-process
     // (x86_native + elf.fern), so it produces a runnable binary like
     // arm64-linux does and needs nothing on $PATH.
-    out_asm = asm_ir.emit_module_or_error_sub(full, sub);
+    let recs: usize = word_buf(emit_text);
+    out_asm = asm_ir.emit_module_or_error_sub(full, sub, recs);
     if (!emit_text) {
-      out_asm = x86_elf_binary(out_asm, emit_syms);
+      out_asm = x86_elf_binary(out_asm, buf_take_bytes(recs), emit_syms);
       if (out_asm.len() == 0) {
         return 2;
       }

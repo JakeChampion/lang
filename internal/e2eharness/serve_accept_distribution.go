@@ -20,10 +20,11 @@ func AcceptDistributionServerSource(port, workers int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/i64";
+import "std/platform";
 function main(): i32 {
     let id: Cell[i64] = cell_new(0 as i64);
     let opts: serve.Config = serve.Config { ...serve.config(), workers: %d, max_connections: 16384, max_connections_per_ip: 0 };
-    return serve.supervise(%d, opts, (req: HttpRequest, plat: Platform): HttpResponse => {
+    return serve.supervise(%d, opts, (req: HttpRequest, plat: platform.Host): HttpResponse => {
         if (id.get() == (0 as i64)) { id.set(monotonic_ns()); }
         return http.ok(id.get().to_string());
     });

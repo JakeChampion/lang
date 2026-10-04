@@ -48,7 +48,10 @@ lowered function it:
    drops what nothing reads (`ssa.prune_dead`), which is the rotate's shifts,
    most of the zeros the lift gives declared locals and the loop-header phis
    nothing reads (the lift gives a header a phi only for the slots the loop's
-   body writes);
+   body writes), then sends each arm of a boolean phi that only a branch
+   reads to that branch's targets, on the arm's own comparison or to the side
+   its constant picks (`ssa.thread_bool_joins`: a predicate spliced into its
+   caller brings its `&&` or `||` as such a phi), and prunes again;
 4. allocates registers with `ssa.regalloc_linear` over two pools: the
    caller-saved registers (x0 and x9 to x15 on arm64; rax, rsi, rdi and r8
    to r10 on x86-64) and, for a value live across a call, the callee-saved

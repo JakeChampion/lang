@@ -51,10 +51,9 @@ row). It holds the server to two references:
   and stdlib imports, document sync, and formatting. It has to be curated,
   because fern-lsp is not the right oracle everywhere. Its diagnostics skip
   `-check`'s const fold, so every const use reads as undefined, and it places
-  a visibility error at 0:0 (#11314). Separately, the self-host parser accepts
-  a missing final `}` (#11315). The self-host checker's own gaps reach the
-  server exactly as they reach `-check`; they are tracked where the checker
-  differentials track them.
+  a visibility error at 0:0 (#11314). The self-host checker's own gaps reach
+  the server exactly as they reach `-check`; they are tracked where the
+  checker differentials track them.
 
 What the next slices add:
 

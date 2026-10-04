@@ -27,7 +27,7 @@ func TestSelfHostWasiHttpPlatformCapabilities(t *testing.T) {
 	dir := t.TempDir()
 	component := compileWasiHttp(t, dir, `import "std/http";
 import "std/platform";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log(f"LOGLINE {req.method} {req.path}");
     if (plat.now_ms() < 1600000000000) {
         return http.text(500, "clock");
@@ -62,7 +62,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	prog := filepath.Join(dir, "env.fern")
 	if err := os.WriteFile(prog, []byte(`import "std/http";
 import "std/platform";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     match (plat.env("X")) { Some(_) => {}, None => {} }
     return http.ok("e");
 }

@@ -44,7 +44,8 @@ func TestReportsEffectsAroundTheBag(t *testing.T) {
 		{
 			name: "every ambient builtin in the body, one violation per capability",
 			src: `import "std/http";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     eprint("hit");
     let a: i64 = now_unix_ms();
     let b: i64 = monotonic_ns();
@@ -55,8 +56,9 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		{
 			name: "an effect one call deeper is the handler's",
 			src: `import "std/http";
+import "std/platform";
 function helper(): void { eprint("deep"); }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     helper();` + handlerTail,
 			want: []string{"eprint@log"},
 		},
@@ -64,7 +66,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			name: "through the bag is not a finding",
 			src: `import "std/http";
 import "std/platform";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log("hit");
     let a: i64 = plat.now_ms();
     match (plat.env("HOME")) { Some(v) => { }, None => { } }` + handlerTail,
@@ -73,7 +75,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		{
 			name: "the bag is found by type, in any position and under any name",
 			src: `import "std/http";
-function route(bag: Platform, req: HttpRequest): HttpResponse {
+import "std/platform";
+function route(bag: platform.Platform, req: HttpRequest): HttpResponse {
     eprint("hit");` + handlerTail,
 			want: []string{"eprint@log"},
 		},
@@ -91,14 +94,16 @@ function main(): i32 { return helper(); }
 		{
 			name: "a builtin with no bag equivalent is still an effect",
 			src: `import "std/http";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let xs: string[] = args();` + handlerTail,
 			want: []string{"args@args"},
 		},
 		{
 			name: "a lambda in the body is walked",
 			src: `import "std/http";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let f: () => void = (): void => { eprint("hit"); };
     f();` + handlerTail,
 			want: []string{"eprint@log"},
@@ -106,17 +111,19 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		{
 			name: "a function value named in the body is followed",
 			src: `import "std/http";
+import "std/platform";
 function noisy(): void { eprint("hit"); }
 function run(f: () => void): void { f(); }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     run(noisy);` + handlerTail,
 			want: []string{"eprint@log"},
 		},
 		{
 			name: "a local spelled like an effectful function is not that function",
 			src: `import "std/http";
+import "std/platform";
 function noisy(): i32 { eprint("hit"); return 1; }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let noisy: i32 = 2;
     let y: i32 = noisy + 1;` + handlerTail,
 			want: nil,
@@ -124,8 +131,9 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		{
 			name: "a local closure spelled like an effectful function is not that function",
 			src: `import "std/http";
+import "std/platform";
 function noisy(): void { eprint("hit"); }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let noisy: () => void = (): void => {};
     noisy();` + handlerTail,
 			want: nil,
@@ -133,8 +141,9 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		{
 			name: "a nested function spelled like an effectful function is not that function",
 			src: `import "std/http";
+import "std/platform";
 function noisy(): void { eprint("hit"); }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     function noisy(): void {}
     noisy();` + handlerTail,
 			want: nil,
@@ -142,7 +151,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		{
 			name: "a nested function's own effects are the handler's",
 			src: `import "std/http";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     function helper(): void { eprint("hit"); }
     helper();` + handlerTail,
 			want: []string{"eprint@log"},
@@ -152,7 +162,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			src: `import "std/http";
 import "std/platform";
 function log(msg: string): void { eprint(msg); }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log("hit");` + handlerTail,
 			want: nil,
 		},
@@ -162,7 +172,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 import "std/platform";
 struct Sink { n: i32 }
 function (s: Sink) log(msg: string): void { eprint(msg); }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log("hit");` + handlerTail,
 			want: nil,
 		},
@@ -172,7 +182,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 import "std/platform";
 struct Sink { n: i32 }
 function (s: Sink) log(msg: string): void { eprint(msg); }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let s: Sink = Sink { n: 1 };
     s.log("hit");` + handlerTail,
 			want: []string{"eprint@log"},
@@ -180,8 +190,9 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		{
 			name: "an array-method helper reached on a typed receiver is followed",
 			src: `import "std/http";
+import "std/platform";
 function __method_Array_noisy(arr: i32[]): void { eprint("hit"); }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let xs: i32[] = [1];
     xs.noisy();` + handlerTail,
 			want: []string{"eprint@log"},
@@ -189,7 +200,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		{
 			name: "a value whose target the walk cannot name charges nothing",
 			src: `import "std/http";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let f: (i32) => i32 = (x: i32): i32 => x + 1;
     let y: i32 = f(1);` + handlerTail,
 			want: nil,
@@ -212,15 +224,16 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // to the builtin, so the reader knows which helper to hand the bag to.
 func TestMessageNamesTheChainAndTheBag(t *testing.T) {
 	vs := enforce(t, `import "std/http";
+import "std/platform";
 function deep(): void { eprint("x"); }
 function mid(): void { deep(); }
-function handle(req: HttpRequest, bag: Platform): HttpResponse {
+function handle(req: HttpRequest, bag: platform.Platform): HttpResponse {
     mid();`+handlerTail)
 	if len(vs) != 1 {
 		t.Fatalf("got %d violations, want 1", len(vs))
 	}
 	msg := vs[0].Message("/__fern_source__/main.fern")
-	for _, want := range []string{"handler `handle`", "reaches `eprint` (`log`)", "bag `bag`", "handle -> mid -> deep -> eprint", "call `bag.log(…)`"} {
+	for _, want := range []string{"handler `handle`", "reaches `eprint` (`log`)", "platform `bag`", "handle -> mid -> deep -> eprint", "call `bag.log(…)`"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message missing %q:\n%s", want, msg)
 		}
@@ -229,7 +242,8 @@ function handle(req: HttpRequest, bag: Platform): HttpResponse {
 		t.Errorf("an entry-module handler must not be reported as declared elsewhere:\n%s", msg)
 	}
 	vs = enforce(t, `import "std/http";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let xs: string[] = args();`+handlerTail)
 	if msg := vs[0].Message("/__fern_source__/main.fern"); !strings.Contains(msg, "nothing on the bag stands in for it") {
 		t.Errorf("a builtin without a bag equivalent should say so:\n%s", msg)
@@ -244,7 +258,7 @@ func TestSuggestionsExistInStdPlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 	methods := map[string]bool{}
-	for _, m := range regexp.MustCompile(`pub function \(plat: Platform\) ([a-z_0-9]+)\(`).FindAllStringSubmatch(string(src), -1) {
+	for _, m := range regexp.MustCompile(`\n  function ([a-z_0-9]+)\(self: Self`).FindAllStringSubmatch(string(src), -1) {
 		methods[m[1]] = true
 	}
 	for builtin, method := range BagMethods() {
@@ -254,14 +268,14 @@ func TestSuggestionsExistInStdPlatform(t *testing.T) {
 	}
 }
 
-// The bag's own methods are the sanctioned route: they reach the builtins
-// by design and are not handlers, even though their receiver is a
-// Platform.
+// A platform's own methods are the sanctioned route: they reach the
+// builtins by design and are not handlers, even though they take the
+// platform.
 func TestBagMethodsAreNotHandlers(t *testing.T) {
 	vs := enforce(t, `import "std/http";
 import "std/platform";
 import "std/fetch";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let answer: Result[HttpResponse, fetch.FetchError] = plat.http(fetch.get("http://127.0.0.1:1/"));`+handlerTail)
 	if len(vs) != 0 {
 		t.Errorf("std/fetch's bag method reported: %+v", vs)

@@ -8,6 +8,7 @@ package ast
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -920,6 +921,7 @@ func CloneExpr(e Expr) Expr {
 		return &c
 	case *Ident:
 		c := *x
+		c.TypeArgs = slices.Clone(x.TypeArgs)
 		return &c
 	case *NumberLit:
 		c := *x
@@ -2128,6 +2130,12 @@ type FloatLit struct {
 type Ident struct {
 	P    Position
 	Name string
+	// TypeArgs instantiates a generic function named as a value
+	// (`apply(measure, x)`, `let f: (Sq) => i32 = measure`): the
+	// checker infers them from the function type the value is wanted
+	// at, and monomorph renames the Ident to that instance and clears
+	// them. Empty on every other Ident.
+	TypeArgs []Type
 	// EnumName, when set, identifies the enum this Ident is a
 	// variant of. Stamped by the checker after resolving a
 	// qualified-variant reference (`Color.Red`) or after picking

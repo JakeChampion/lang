@@ -74,7 +74,7 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // `defs` is the definitions table (`definitions`) of the function the plan was
 // planned from, indexed by value; a verifier checking another function
 // derives its own.
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[] }
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis }
 
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
@@ -378,7 +378,7 @@ function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]):
 }
 
 function bad(why: string): Plan {
-  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [] };
+  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why) };
 }
 
 pub function refused(why: string): Plan {
@@ -2555,7 +2555,7 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
   if (why != "") {
     return bad(why);
   }
-  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: constants(f, defs), text_lens: text_lens(f), analysis: semantic, defs: defs };
+  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: constants(f, defs), text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis };
 }
 
 function entry_kept_of(f: ssasem.Func, a: ssasem.Analysis, b: ssa.SBlock, si: i32, own out: boolean[]): boolean[] {
@@ -2982,7 +2982,7 @@ function verify_block(f: ssasem.Func, bi: i32, p: Plan, idx: i32[][], owned: boo
   return BlockProgress { why: "", count: count };
 }
 
-function same_takes(a: i32[], b: i32[]): boolean {
+function same_i32s(a: i32[], b: i32[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
@@ -3033,20 +3033,27 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   if (why != "") {
     return why;
   }
-  let units: Units = units_of(f, owned_values(f, modes, defs), analysis, defs);
-  let owned: boolean[] = units.owned;
-  if (!same_takes(units.takes, p.takes)) {
-    return "tuple take disagrees with the plan";
-  }
-  if (!same_bits(units.held, p.held)) {
-    return "element hold disagrees with the plan";
-  }
-  if (!same_bits(units.payloads, p.payloads)) {
-    return "payload take disagrees with the plan";
-  }
-  analysis = units_analysis(f, analysis, units);
-  if (!analysis.ok) {
-    return analysis.why;
+  // The plan's units are a function of `f`, the modes and the analysis, so
+  // for the function and modes it was planned with they are its own.
+  let owned: boolean[] = p.owned;
+  if (whole || !same_i32s(modes, p.modes)) {
+    let units: Units = units_of(f, owned_values(f, modes, defs), analysis, defs);
+    owned = units.owned;
+    if (!same_i32s(units.takes, p.takes)) {
+      return "tuple take disagrees with the plan";
+    }
+    if (!same_bits(units.held, p.held)) {
+      return "element hold disagrees with the plan";
+    }
+    if (!same_bits(units.payloads, p.payloads)) {
+      return "payload take disagrees with the plan";
+    }
+    analysis = units_analysis(f, analysis, units);
+    if (!analysis.ok) {
+      return analysis.why;
+    }
+  } else {
+    analysis = p.unit_analysis;
   }
   let reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
   let idx: i32[][] = step_index(p);

@@ -9,14 +9,14 @@ import (
 )
 
 // inferredReuseModules are compiler modules whose emitted code must not depend
-// on whether the second lowering re-planned every row.
+// on whether the lowering under the inferred modes re-planned every row.
 //
 // Every one of them is a module the typed pipeline lowers WHOLE, which is the
-// only configuration the reuse can be reached in: `semlower.inferred_pass`
-// runs the ownership inference only after `lowers_whole_module` says the first
-// pass produced every body, so a mixed module never gets a second lowering at
-// all and cannot exercise this. They are also the modules the self-compile is
-// made of, which is where the saving is worth having.
+// only configuration whose inferred lowering is kept: `semlower.inferred_rows`
+// falls back to the declared modes for a module that does not lower whole
+// under the inference, so a mixed module cannot exercise this. They are also
+// the modules the self-compile is made of, which is where the saving is worth
+// having.
 var inferredReuseModules = []string{
 	// lexer.fern is where the diagnosis was measured and the cheapest failure
 	// to read, so it goes first.
@@ -40,9 +40,9 @@ var inferredReuseModules = []string{
 // TestSelfHostInferredReuseIsIdentical holds the #9969 reuse to byte equality
 // with re-lowering everything.
 //
-// `semlower.rows_of` takes back the plan and the body of every row the
+// `semlower.inferred_rows` keeps the declared plan and body of every row the
 // ownership inference did not move, rather than planning and lowering the whole
-// module a second time. Two claims make that sound, and neither is checkable by
+// module under the inferred modes. Two claims make that sound, and neither is checkable by
 // reading the emitted code for a marker:
 //
 //   - a plan is a function of its row's graph and modes alone, so an unmoved
