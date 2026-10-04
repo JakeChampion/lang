@@ -57,5 +57,8 @@ x86-64, `FERN_LEAKCHECK`. Each update shape runs as 100 calls in a loop.
 | Method changing only a scalar (already counted) | 0 | 0 | 0 |
 | `update-base-is-counted`, 30 updates and a kept-receiver copy | 41 | 12 | n/a |
 | Framing probe parse, every target | 40 | 37 | n/a |
+| `TestSelfHostStaticBoxes` `later_rounds`, per round | 3 | 2 | n/a |
 
-The leak census balances in each run.
+The leak census balances in each run. `later_rounds` is the push onto a static
+`args: []` that `2026-09-27-an-empty-array-literal-is-one-static-box.md`
+counted at three: the update now writes into the record's fresh box.
