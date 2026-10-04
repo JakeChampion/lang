@@ -463,9 +463,13 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    hold it from every other request. A suspended handler costs the heap
    about 12 KiB (`TestSelfHostHeldConnectionsHeapBoundX86_64`'s third
    shape: 64 then 64 more connections, each with a handler parked on the
-   fetch upstream, under a 16 KiB bound). Still open from this slice: the
-   two-fetch handler at 4,096 connections in `net-nightly` with p99 against
-   hyper.
+   fetch upstream, under a 16 KiB bound). The two-fetch handler at 4,096
+   connections is `net-nightly`'s: `scripts/net-bench` loads
+   `scripts/net-bench.d/twofetch.fern`, one loop built by the self-host
+   compiler fetching the Go hello twice per request, beside hyper's
+   `twofetch`, and records throughput, p50 and p99 for both at 64 and
+   4,096 connections every night (`net/fern-twofetch/c4096.p99_us` against
+   `net/hyper-twofetch/c4096.p99_us`).
 6. **Cancellation semantics. Landed.** `gather_tasks`, `race_tasks` and
    `with_deadline_tasks` run their entries as tasks of the calling task and
    drive them together: the combinator parks on the union of its children's

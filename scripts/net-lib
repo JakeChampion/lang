@@ -17,6 +17,7 @@ work="$(mktemp -d)"
 # nginx's workers drop to an unprivileged user and read the files here.
 chmod 755 "$work"
 server_pgid=""
+upstream_pgid=""
 
 # start_server LOG CMD... — CMD in a session of its own, so a supervisor
 # and every worker it forks form one process group, logging to LOG. The
@@ -42,22 +43,38 @@ start_server() {
   server_pgid="$(cat "$work/pgid")"
 }
 
-# stop_server — the group start_server began, sent SIGTERM and then, if it
-# is still there, SIGKILL. The Fern server drains for its shutdown grace
+# stop_group PGID — the process group, sent SIGTERM and then, if it is
+# still there, SIGKILL. The Fern server drains for its shutdown grace
 # after SIGTERM, so the group gets a few seconds before SIGKILL.
+stop_group() {
+  kill -TERM -- "-$1" 2>/dev/null || true
+  local waited=0
+  while kill -0 -- "-$1" 2>/dev/null && [ "$waited" -lt 25 ]; do
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  kill -KILL -- "-$1" 2>/dev/null || true
+}
+# stop_server — the group start_server began last.
 stop_server() {
   if [ -n "$server_pgid" ]; then
-    kill -TERM -- "-$server_pgid" 2>/dev/null || true
-    local waited=0
-    while kill -0 -- "-$server_pgid" 2>/dev/null && [ "$waited" -lt 25 ]; do
-      sleep 0.2
-      waited=$((waited + 1))
-    done
-    kill -KILL -- "-$server_pgid" 2>/dev/null || true
+    stop_group "$server_pgid"
     server_pgid=""
   fi
 }
-trap 'stop_server; rm -rf "$work"' EXIT
+# keep_as_upstream — the server start_server began last stays up as the
+# upstream the next servers reach, stopped by stop_upstream or at exit.
+keep_as_upstream() {
+  upstream_pgid="$server_pgid"
+  server_pgid=""
+}
+stop_upstream() {
+  if [ -n "$upstream_pgid" ]; then
+    stop_group "$upstream_pgid"
+    upstream_pgid=""
+  fi
+}
+trap 'stop_server; stop_upstream; rm -rf "$work"' EXIT
 
 # await_server NAME PORT LOG — once the server answers on PORT, or the
 # run fails with its log.
