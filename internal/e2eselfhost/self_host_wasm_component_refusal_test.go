@@ -71,7 +71,7 @@ func TestSelfHostHandleTupleLiteralWasm(t *testing.T) {
 	// host exits 1, as native's component does.
 	t.Run("component-runs", func(t *testing.T) {
 		comp := filepath.Join(dir, "comp.wasm")
-		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", src, cli.stdlib, "-o", comp)
+		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-o", comp, src, cli.stdlib)
 		cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("component build: %v\n%s", err, out)
@@ -84,7 +84,7 @@ func TestSelfHostHandleTupleLiteralWasm(t *testing.T) {
 	})
 
 	t.Run("component-names-the-op", func(t *testing.T) {
-		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", writeSrc(t, "sleep.fern", sleepSrc), cli.stdlib, "-o", filepath.Join(dir, "sleep.wasm"))
+		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-o", filepath.Join(dir, "sleep.wasm"), writeSrc(t, "sleep.fern", sleepSrc), cli.stdlib)
 		cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 		out, err := cmd.CombinedOutput()
 		if err == nil {
@@ -97,7 +97,7 @@ func TestSelfHostHandleTupleLiteralWasm(t *testing.T) {
 
 	t.Run("core-module-runs", func(t *testing.T) {
 		wasm := filepath.Join(dir, "core.wasm")
-		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-emit", "core-module", src, cli.stdlib, "-o", wasm)
+		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-emit", "core-module", "-o", wasm, src, cli.stdlib)
 		cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("core-module build: %v\n%s", err, out)

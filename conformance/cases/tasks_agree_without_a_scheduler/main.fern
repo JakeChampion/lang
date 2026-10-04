@@ -1,0 +1,103 @@
+// The task combinators called from main, with no scheduler driving it: a
+// program that never depends on which entry runs first answers the same
+// bytes whether its parks suspend (the self-host compiler's transform) or
+// block (the Go compiler's and the interpreter's fallback,
+// docs/NET-P3-SUSPENSION-PLAN.md §3.2). The entries nap through
+// `wait_any` on an empty set under a bound, which no target needs a
+// descriptor for; their naps ascend in input order, so their defers run
+// in that order either way; the race's fastest entry is also its first;
+// and a figure built from an i64, an f64 and a string held across two
+// parks is the plain run's.
+import "std/async";
+import "std/i32";
+import "std/time";
+
+function nap(label: string, ms: i32, v: i32): i32 {
+  defer print("done " + label);
+  let none: i32[] = [];
+  let r: i32 = async.wait_any(none, ms);
+  return v;
+}
+
+function quiet(ms: i32, v: i32): i32 {
+  let none: i32[] = [];
+  let r: i32 = async.wait_any(none, ms);
+  return v;
+}
+
+function show_opt(o: Option[i32]): string {
+  match (o) {
+    Some(v) => {
+      return v.to_string();
+    },
+    None => {
+      return "none";
+    }
+  }
+}
+
+function leaf(n: i32): i32 {
+  let none: i32[] = [];
+  let r: i32 = async.wait_any(none, 1);
+  return r + n;
+}
+
+function mid(n: i32): i64 {
+  let big: i64 = 5000000000i64 + (n as i64);
+  let acc: i32 = 0;
+  let i: i32 = 0;
+  while (i < 2) {
+    acc = acc + leaf(n + i);
+    i = i + 1;
+  }
+  return big + (acc as i64);
+}
+
+function top(n: i32): i32 {
+  let s: string = "held" + n.to_string();
+  let h: f64 = 2.5;
+  let a: i64 = mid(n);
+  return ((a - 5000000000i64) as i32) * 100 + s.len() + ((h * 2.0) as i32);
+}
+
+// held drives a task by hand to its result, waiting out each park's bound
+// itself; how many times it parked is the one thing the two lowerings
+// answer differently, so only the result is printed.
+function held(): i32 {
+  let t: async.Task[i32] = async.task_new(() => top(5));
+  let st: async.TaskStatus[i32] = async.task_start(t);
+  let out: i32 = 0 - 1;
+  let going: boolean = true;
+  while (going) {
+    match (st) {
+      Done(v) => {
+        out = v;
+        going = false;
+      },
+      Suspended(w) => {
+        let woke: i32 = async.wait_any(w.set, w.timeout_ms);
+        st = async.task_resume(t, woke);
+      },
+      Cancelled => {
+        out = 0 - 2;
+        going = false;
+      }
+    }
+  }
+  async.task_free(t);
+  return out;
+}
+
+function main(): i32 {
+  let all: (() => i32)[] = [() => nap("a", 20, 1), () => nap("b", 40, 2), () => nap("c", 60, 3)];
+  let g: i32[] = async.gather_tasks(all, 0 - 1);
+  print("gather " + g[0].to_string() + " " + g[1].to_string() + " " + g[2].to_string());
+  let timed: (() => i32)[] = [() => quiet(20, 7), () => quiet(40, 8)];
+  let d: Option[i32][] = async.with_deadline_tasks(time.duration_millis(2000), timed);
+  print("deadline " + show_opt(d[0]) + " " + show_opt(d[1]));
+  let race: (() => i32)[] = [() => quiet(20, 2), () => quiet(300, 1)];
+  let (w, v) = async.race_tasks(race, 0 - 1);
+  print("race " + w.to_string() + " " + v.to_string());
+  print("held " + held().to_string());
+  return 0;
+}

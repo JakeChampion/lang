@@ -156,7 +156,7 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 		//	wasm trap: wasm `unreachable` instruction executed  → a real failure
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			watPath := filepath.Join(t.TempDir(), "prog.wat")
-			cmd := fixtureCompile(fernBin, "-target", "wasm32-wasi", "-emit", "asm", f.mainPath, stdlibRoot, "-o", watPath)
+			cmd := fixtureCompile(fernBin, "-target", "wasm32-wasi", "-emit", "asm", "-o", watPath, f.mainPath, stdlibRoot)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				failf("self-host compile failed: %v\n%s", err, out)
 				return
@@ -242,7 +242,7 @@ func runSelfHostFixtureLegX86_64(t *testing.T, env []string) {
 		knownFile: "selfhost-x86_64-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			binPath := filepath.Join(t.TempDir(), "prog")
-			cmd := fixtureCompile(fernBin, "-target", "x86-64-linux", f.mainPath, stdlibRoot, "-o", binPath)
+			cmd := fixtureCompile(fernBin, "-target", "x86-64-linux", "-o", binPath, f.mainPath, stdlibRoot)
 			if env != nil {
 				cmd.Env = append(os.Environ(), env...)
 			}
@@ -301,7 +301,7 @@ func TestFernFixturesSelfHostArm64(t *testing.T) {
 		knownFile: "selfhost-arm64-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			binPath := filepath.Join(t.TempDir(), "prog")
-			cmd := fixtureCompile(fernBin, "-target", "arm64-linux", f.mainPath, stdlibRoot, "-o", binPath)
+			cmd := fixtureCompile(fernBin, "-target", "arm64-linux", "-o", binPath, f.mainPath, stdlibRoot)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				// Includes the in-process assembler's own refusal ("hit an
@@ -449,7 +449,7 @@ func strictIRBailSite(fernBin, target string, emit []string, mainPath, stdlibRoo
 		return ""
 	}
 	args := append([]string{"-target", target}, emit...)
-	cmd := exec.Command(fernBin, append(args, mainPath, stdlibRoot, "-o", os.DevNull)...)
+	cmd := exec.Command(fernBin, append(args, "-o", os.DevNull, mainPath, stdlibRoot)...)
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 	out, _ := cmd.CombinedOutput()
 	return "\n--- FERN_STRICT_IR=1 ---\n" + string(out)

@@ -246,7 +246,7 @@ func TestSelfHostErasedWideArrayGateBlindWasm(t *testing.T) {
 			}
 			outWat := filepath.Join(proj, "out.wat")
 			var stderr strings.Builder
-			cmd := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat)
+			cmd := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", "-o", outWat, mainPath, stdlibRoot)
 			cmd.Stderr = &stderr
 			if cerr := cmd.Run(); cerr != nil {
 				t.Fatalf("compile: %v (%s) — a callee that never reads an element uses no stride, so the gate must not refuse it", cerr, stderr.String())
@@ -288,7 +288,7 @@ func TestSelfHostErasedWideArrayFixedWasm(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 			outWat := filepath.Join(proj, "out.wat")
-			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); cerr != nil {
+			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", "-o", outWat, mainPath, stdlibRoot).CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
 			}
 			rcmd := exec.Command("wasmtime", "run", outWat)
@@ -328,7 +328,7 @@ func TestSelfHostErasedWideArrayGateNarrowWasm(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 			outWat := filepath.Join(proj, "out.wat")
-			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); cerr != nil {
+			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", "-o", outWat, mainPath, stdlibRoot).CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
 			}
 			rcmd := exec.Command("wasmtime", "run", outWat)

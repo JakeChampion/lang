@@ -5577,22 +5577,15 @@ pub function wasm_poll_func(): string {
   return o;
 }
 
-// route_normalized is the module the wasm IR route judges and emits: a SCRIPT
-// module desugared into `function main(): i32 { … }`, then lambda-lifted.
+// route_normalized is the module the wasm IR route judges and emits: a script
+// module desugared into `function main(): i32 { … }` (ircore.script_normalized),
+// f64 maps scaled into `__fern_scale_f64` calls (ircore.scale_f64_maps_module),
+// then lambda-lifted. semlower.wasm_gated runs the same stages on the typed
+// module, so the two must change together.
 //
-// Both halves matter and only one was here. A script-shaped module (top-level
-// statements, no `main`) has no entry for the IR emit to lower, so it routed to
-// the legacy AST emitter — which inlines the statements into `_start` itself, and
-// that is precisely the behaviour that made script support a reason wasm.fern
-// could not retire. asmcore.synth_script_main desugars it in the shared frontend
-// and the asm side has routed scripts through the IR path on that basis since
-// #3457 (ircore.script_normalized); the wasm route simply never called it.
-//
-// Function-shaped modules pass through untouched, so this is inert for every
-// program that already has a `main`. Both the emitter (wasm.emit_module_mode) and
-// the `-decide` probe normalise through THIS function, so the probe cannot report
-// a verdict for a module the emitter does not judge — the same anti-drift rule
-// ir_route_precheck / ir_route_final rest on.
+// Both the emitter (wasm.emit_module_mode) and the `-decide` probe normalise
+// through this function, so the probe cannot report a verdict for a module the
+// emitter does not judge.
 pub function route_normalized(mod: parser.Module): parser.Module {
   return lift_lambdas(ircore.script_normalized(ircore.scale_f64_maps_module(mod)));
 }

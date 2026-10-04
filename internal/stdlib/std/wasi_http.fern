@@ -447,9 +447,9 @@ function response_drop(resp: i32): void;
 // `Outgoing` — a request for the host: the method, the authority (the
 // host, with its port when not the scheme's default), whether the scheme
 // is `https`, the request-target, the end-to-end fields, the body, the
-// connect and the inactivity bounds in milliseconds, and the most body
-// bytes the answer may carry.
-pub struct Outgoing { method: string, authority: string, tls: boolean, target: string, headers: HeaderMap, body: u8[], connect_ms: i32, inactivity_ms: i32, body_cap: i32 }
+// connect and the inactivity bounds, and the most body bytes the answer
+// may carry.
+pub struct Outgoing { method: string, authority: string, tls: boolean, target: string, headers: HeaderMap, body: u8[], connect: Duration, inactivity: Duration, body_cap: i32 }
 
 // `OutgoingError` — why the host gave no response: `Code(code)`, the
 // case of the WIT `error-code` the host answered, in its declaration
@@ -538,14 +538,10 @@ function method_index(method: string): i32 {
 // and the inactivity bound on the first byte and between bytes.
 function options_of(o: Outgoing): i32 {
   let opts: i32 = options_new();
-  options_set_connect_timeout(opts, 1, millis_ns(o.connect_ms));
-  options_set_first_byte_timeout(opts, 1, millis_ns(o.inactivity_ms));
-  options_set_between_bytes_timeout(opts, 1, millis_ns(o.inactivity_ms));
+  options_set_connect_timeout(opts, 1, o.connect.as_nanos());
+  options_set_first_byte_timeout(opts, 1, o.inactivity.as_nanos());
+  options_set_between_bytes_timeout(opts, 1, o.inactivity.as_nanos());
   return opts;
-}
-
-function millis_ns(ms: i32): i64 {
-  return ms as i64 * (1000000 as i64);
 }
 
 // await_response blocks on the future until it settles, then reads it:

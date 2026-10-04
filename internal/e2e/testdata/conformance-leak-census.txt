@@ -16,7 +16,12 @@
 # oob_index_write's block is the copy `.with` makes before its bounds check
 # aborts the program. An abort does not unwind, so the copy is still live.
 #
-# Measured 2026-10-03: 562 fixtures, 561 clean.
+# tasks_agree_without_a_scheduler's blocks are the task runtime's pool
+# (asmcore.rt_src_task): the task table, one record per task id in use at
+# once and each record's save area, which a freed id hands to the next task
+# rather than returning to the heap. Three tasks run at once there.
+#
+# Measured 2026-10-04: 569 fixtures, 567 clean.
 a_builtin_method_does_not_see_the_programs_variants  0
 a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
@@ -525,6 +530,7 @@ target_arch_x86_64                                   0
 target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0
+tasks_agree_without_a_scheduler                      7
 tco_sum                                              0
 three_arms_bind_p                                    0
 time_leap                                            0

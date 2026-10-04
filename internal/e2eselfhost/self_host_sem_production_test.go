@@ -111,10 +111,10 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 	if sanitize {
 		target = "x86-64-linux"
 	}
-	args := []string{"-target", target, src, stdlibRoot, "-o", out}
+	args := []string{"-target", target, "-o", out, src, stdlibRoot}
 	if target == "wasm32-wasi" {
 		out = filepath.Join(dir, "prog.wat")
-		args = []string{"-target", target, "-emit", "asm", src, stdlibRoot, "-o", out}
+		args = []string{"-target", target, "-emit", "asm", "-o", out, src, stdlibRoot}
 	}
 	cmd := runX86_64Bin(runner, fernBin, args...)
 	cmd.Env = append(os.Environ(), "FERN_SEM_IR_REPORT=1")
@@ -7708,7 +7708,7 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 func semAllocations(t *testing.T, fernBin, stdlibRoot, src string) int64 {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "prog")
-	cmd := exec.Command(fernBin, "-target", "x86-64-linux", src, stdlibRoot, "-o", out)
+	cmd := exec.Command(fernBin, "-target", "x86-64-linux", "-o", out, src, stdlibRoot)
 	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, output)

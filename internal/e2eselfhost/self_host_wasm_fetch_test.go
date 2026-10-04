@@ -26,7 +26,7 @@ func selfHostWasmFetch(t *testing.T, src string, env ...string) []byte {
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", path, cli.stdlib, "-o", bin)
+	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-o", bin, path, cli.stdlib)
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("component build: %v\n%s", err, out)

@@ -1,6 +1,7 @@
 import "std/http";
-import "std/tcp";
+import "std/serve";
+import "std/platform";
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   return http.ok("Hello, World!");
 }

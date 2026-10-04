@@ -187,34 +187,37 @@ pub function run(port: i32, opts: Config, handler: (HttpRequest, platform.Host) 
 // request in flight was answered, or "drain-deadline" when one was cut
 // off at the drain deadline.
 pub function run_shutdown(port: i32, opts: Config, handler: (HttpRequest, platform.Host) => HttpResponse, shutdown: (string) => void): i32 {
-  let listener: i32 = __serve_listener(port, opts);
-  if (listener < 0) {
-    return __listen_failed(port, listener);
+  let l: __Listen = __serve_listener(port, opts);
+  if (l.fd < 0) {
+    return __listen_failed(l);
   }
-  return __serve_loop(listener, handler, opts, shutdown);
+  return __serve_loop(l.fd, handler, opts, shutdown);
 }
 
 // __serve_listener(port, opts) — the listener a serve loop runs over: the
 // one the process was started with when `LISTEN_FDS` says it has one
 // (descriptor 3, the systemd convention, which is also how a restarted
 // server takes over a socket without a gap), else a fresh one on `port`.
-function __serve_listener(port: i32, opts: Config): i32 {
-  let listener: i32 = __listener_of(port, opts);
+function __serve_listener(port: i32, opts: Config): __Listen {
+  let l: __Listen = __listener_of(port, opts);
   // Non-blocking: a wake-up over a listener workers share can reach
   // more than one of them, and the one that finds nothing to accept
   // must return to its wait rather than block in accept until the next
   // connection, deaf to SIGTERM.
-  if (listener >= 0) {
-    tcp_socket_ctl(listener, 3, 1);
+  if (l.fd >= 0) {
+    tcp_socket_ctl(l.fd, 3, 1);
   }
-  return listener;
+  return l;
 }
 
-// __listen_failed(port, r) — a listener refused with `r` (-errno): the
-// address and the error's text on stderr, and 98, the exit code a serve
-// entry answers for it.
-function __listen_failed(port: i32, r: i32): i32 {
-  eprint("serve: cannot listen on port " + int.int_to_string(port) + ": " + net.error_from_errno(r).message());
+// __Listen — a listener's descriptor, or the -errno that refused it, and
+// the address it was bound to or tried (empty for one inherited).
+struct __Listen { fd: i32, addr: string }
+
+// __listen_failed(l) — a refused listener: the address and the error's
+// text on stderr, and 98, the exit code a serve entry answers for it.
+function __listen_failed(l: __Listen): i32 {
+  eprint("serve: cannot listen on " + l.addr + ": " + net.error_from_errno(l.fd).message());
   return 98;
 }
 
@@ -222,13 +225,13 @@ function __listen_failed(port: i32, r: i32): i32 {
 // or a fresh one on `port`: on `::` for both families, or on `0.0.0.0`
 // where the host has no IPv6 (the family refused, or the address not
 // there to bind) and on wasm, whose `::` listener would be IPv6-only.
-function __listener_of(port: i32, opts: Config): i32 {
+function __listener_of(port: i32, opts: Config): __Listen {
   match (env("LISTEN_FDS")) {
     Some(n) => {
       match (int.parse_int_radix(n, 10)) {
         Some(count) => {
           if (count >= 1) {
-            return 3;
+            return __Listen { fd: 3, addr: "" };
           }
         },
         None => {}
@@ -239,10 +242,10 @@ function __listener_of(port: i32, opts: Config): i32 {
   if (target_os() != "wasi") {
     let both: i32 = tcp_listen_with(__every_v6(), port, opts.backlog, opts.reuse_port);
     if (both >= 0 || !__no_v6(both)) {
-      return both;
+      return __Listen { fd: both, addr: net.socket_addr(net.ipv6_unspecified(), port).to_string() };
     }
   }
-  return tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port);
+  return __Listen { fd: tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port), addr: net.socket_addr(net.ipv4_unspecified(), port).to_string() };
 }
 
 // __no_v6(r) — a `::` listener refused because the host has no IPv6:
@@ -297,11 +300,11 @@ pub function run_with[S](port: i32, opts: Config, init: S, handler: (S, HttpRequ
 // state as the last request left it: where a counter is flushed or a
 // store is closed.
 pub function run_with_shutdown[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), shutdown: (string, S) => void): i32 {
-  let listener: i32 = __serve_listener(port, opts);
-  if (listener < 0) {
-    return __listen_failed(port, listener);
+  let l: __Listen = __serve_listener(port, opts);
+  if (l.fd < 0) {
+    return __listen_failed(l);
   }
-  return __serve_loop_with(listener, init, handler, opts, shutdown);
+  return __serve_loop_with(l.fd, init, handler, opts, shutdown);
 }
 
 // __eagain() — EAGAIN as this target numbers it: what a non-blocking read
@@ -367,7 +370,7 @@ function __recv_scratch(): u8[] {
 // write and how many bytes were pending then; and the peer's address key
 // (`tcp_socket_ctl` op 7; 0 when the host will not say), by which the
 // per-client cap counts.
-struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: string[], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], tails: __Tail[] }
+struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], tails: __Tail[] }
 
 // __Tail — what of a response is still to be produced once its head and
 // the bytes pending have gone: nothing; a file the loop reads as the
@@ -380,7 +383,7 @@ enum __Tail { NoTail, FileTail(Reader, i64), ChunkTail(ChunkProducer, i32, strin
 // __Wire — a response as the loop writes it: the head with whatever body
 // is held whole, the tail still to be produced, and whether the
 // connection may persist after it (a close-delimited body ends it).
-struct __Wire { head: string, tail: __Tail, keep: boolean }
+struct __Wire { head: u8[], tail: __Tail, keep: boolean }
 
 // __Clock — the `Date` every response carries (RFC 9110 §6.6.1),
 // formatted once per second: the wall-clock second it was formatted for,
@@ -422,14 +425,11 @@ function __serve_wire(method: string, version: string, answer: HttpResponse, kee
     BodyChunks(producer) => {
       return __wire_chunks(version, resp, producer, headless, keep_alive);
     },
-    BodyText(s) => {
-      return __Wire { head: http.http_serialize_response_to(method, resp, keep_alive), tail: NoTail, keep: keep_alive };
-    },
     _ => {
-      return __Wire { head: string_from_bytes_unchecked(http.http_serialize_response_to_bytes(method, resp, keep_alive)), tail: NoTail, keep: keep_alive };
+      return __Wire { head: http.http_serialize_response_to_bytes(method, resp, keep_alive), tail: NoTail, keep: keep_alive };
     }
   }
-  return __Wire { head: "", tail: NoTail, keep: false };
+  return __Wire { head: [], tail: NoTail, keep: false };
 }
 
 // __wire_file(method, version, resp, path, headless, keep_alive, clk) — a
@@ -452,15 +452,15 @@ function __wire_file(method: string, version: string, resp: HttpResponse, path: 
       let head: string = http.http_serialize_response_head(resp, keep_alive, "Content-Length: " + size.to_string() + "\r\n");
       if (headless || size == 0 as i64) {
         r.close();
-        return __Wire { head: head, tail: NoTail, keep: keep_alive };
+        return __Wire { head: head.bytes(), tail: NoTail, keep: keep_alive };
       }
-      return __Wire { head: head, tail: FileTail(r, size), keep: keep_alive };
+      return __Wire { head: head.bytes(), tail: FileTail(r, size), keep: keep_alive };
     },
     Err(e) => {
       return __serve_wire(method, version, http.not_found(), keep_alive, clk);
     }
   }
-  return __Wire { head: "", tail: NoTail, keep: false };
+  return __Wire { head: [], tail: NoTail, keep: false };
 }
 
 // __wire_chunks(version, resp, producer, headless, keep_alive) — a chunk
@@ -469,16 +469,16 @@ function __wire_file(method: string, version: string, resp: HttpResponse, path: 
 // it.
 function __wire_chunks(version: string, resp: HttpResponse, producer: ChunkProducer, headless: boolean, keep_alive: boolean): __Wire {
   if (headless) {
-    return __Wire { head: http.http_serialize_response_head(resp, keep_alive, ""), tail: NoTail, keep: keep_alive };
+    return __Wire { head: http.http_serialize_response_head(resp, keep_alive, "").bytes(), tail: NoTail, keep: keep_alive };
   }
   if (version == "HTTP/1.0") {
-    return __Wire { head: http.http_serialize_response_head(resp, false, ""), tail: ChunkTail(producer, 0, ""), keep: false };
+    return __Wire { head: http.http_serialize_response_head(resp, false, "").bytes(), tail: ChunkTail(producer, 0, ""), keep: false };
   }
   let framing: string = "Transfer-Encoding: chunked\r\n";
   if (resp.trailers.names.len() > 0) {
     framing = framing + "Trailer: " + resp.trailers.names.join(", ") + "\r\n";
   }
-  return __Wire { head: http.http_serialize_response_head(resp, keep_alive, framing), tail: ChunkTail(producer, 0, "0\r\n" + http.http_serialize_fields(resp.trailers) + "\r\n"), keep: keep_alive };
+  return __Wire { head: http.http_serialize_response_head(resp, keep_alive, framing).bytes(), tail: ChunkTail(producer, 0, "0\r\n" + http.http_serialize_fields(resp.trailers) + "\r\n"), keep: keep_alive };
 }
 
 // __in_flight(c, at) — whether a response is still going out on the
@@ -530,20 +530,21 @@ function __tail_drop(c: __Conns, at: i32): __Conns {
 // tail is exhausted, and `ok` false when the tail cannot be honoured (a
 // file shorter than the length its head announced, or one that cannot
 // be read), which only closing the connection answers honestly.
-function __tail_piece(c: __Conns, at: i32): (__Conns, string, boolean) {
+function __tail_piece(c: __Conns, at: i32): (__Conns, u8[], boolean) {
+  let none: u8[] = [];
   match (c.tails[at]) {
     NoTail => {
-      return (c, "", true);
+      return (c, none, true);
     },
     FileTail(r, left) => {
       let want: i32 = 65536;
       if (left < want as i64) {
         want = left as i32;
       }
-      match (r.read_chunk(want)) {
+      match (r.read_chunk_bytes(want)) {
         Ok(bytes) => {
           if (bytes.len() == 0) {
-            return (__tail_drop(c, at), "", false);
+            return (__tail_drop(c, at), none, false);
           }
           let rest: i64 = left - bytes.len() as i64;
           if (rest <= 0 as i64) {
@@ -552,10 +553,10 @@ function __tail_piece(c: __Conns, at: i32): (__Conns, string, boolean) {
           return (__Conns { ...c, tails: c.tails.with(at, FileTail(r, rest)) }, bytes, true);
         },
         Err(e) => {
-          return (__tail_drop(c, at), "", false);
+          return (__tail_drop(c, at), none, false);
         }
       }
-      return (c, "", false);
+      return (c, none, false);
     },
     ChunkTail(producer, index, end) => {
       let next: (i32) => Option[u8[]] = producer.next;
@@ -564,23 +565,23 @@ function __tail_piece(c: __Conns, at: i32): (__Conns, string, boolean) {
         match (next(i)) {
           Some(chunk) => {
             if (chunk.len() > 0) {
-              let piece: string = string_from_bytes_unchecked(chunk);
+              let piece: u8[] = chunk;
               if (end.len() > 0) {
-                piece = int.int_to_string_radix(chunk.len(), 16) + "\r\n" + piece + "\r\n";
+                piece = (int.int_to_string_radix(chunk.len(), 16) + "\r\n").bytes().concat(chunk).concat("\r\n".bytes());
               }
               return (__Conns { ...c, tails: c.tails.with(at, ChunkTail(producer, i + 1, end)) }, piece, true);
             }
           },
           None => {
-            return (__Conns { ...c, tails: c.tails.with(at, NoTail) }, end, true);
+            return (__Conns { ...c, tails: c.tails.with(at, NoTail) }, end.bytes(), true);
           }
         }
         i = i + 1;
       }
-      return (c, "", true);
+      return (c, none, true);
     }
   }
-  return (c, "", true);
+  return (c, none, true);
 }
 
 function __conns_index(c: __Conns, fd: i32): i32 {
@@ -596,7 +597,7 @@ function __conns_index(c: __Conns, fd: i32): i32 {
 
 function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32): __Conns {
   let empty: u8[] = [];
-  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), tails: c.tails.append(NoTail) };
+  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), tails: c.tails.append(NoTail) };
 }
 
 // __conns_from_peer(c, peer) — how many open connections the peer holds.
@@ -614,7 +615,7 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
   let fds: i32[] = [];
   let bufs: u8[][] = [];
   let offs: i32[] = [];
-  let pending: string[] = [];
+  let pending: u8[][] = [];
   let deadlines: i64[] = [];
   let keep: boolean[] = [];
   let served: i32[] = [];
@@ -753,12 +754,12 @@ function __bytes_from(buf: u8[], from: i32): u8[] {
   if (n < 0) {
     n = 0;
   }
-  let out: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.with(i, buf[from + i]);
-    i = i + 1;
+  let b: usize = buf_new(n);
+  if (n > 0) {
+    buf_push_bytes_range(b, buf, from, buf.len());
   }
+  let out: u8[] = buf_take_bytes(b);
+  buf_free(b);
   return out;
 }
 
@@ -903,7 +904,7 @@ function __serve_continue[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Co
     return __serve_next(c, at, opts);
   }
   c = __Conns { ...c, continued: c.continued.with(at, true), keep: c.keep.with(at, true) };
-  let sent: (__Conns, __Sent) = __serve_send(drv, c, at, "HTTP/1.1 100 Continue\r\n\r\n", opts);
+  let sent: (__Conns, __Sent) = __serve_send(drv, c, at, "HTTP/1.1 100 Continue\r\n\r\n".bytes(), opts);
   match (sent.1) {
     Partial => {
       return sent.0;
@@ -954,11 +955,11 @@ function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i3
 // burst has answered and not yet written, which goes out in front of this
 // response, and the third result is what is left corked, so one readable
 // event's answers leave in one write (`__corks`).
-function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: __Wire, opts: Config, answered: i32, tail: http.HttpFraming, clk: __Clock, corked: string): (__Conns, boolean, string) {
+function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: __Wire, opts: Config, answered: i32, tail: http.HttpFraming, clk: __Clock, corked: u8[]): (__Conns, boolean, u8[]) {
   c = __Conns { ...c, tails: c.tails.with(at, wire.tail), keep: c.keep.with(at, c.keep[at] && wire.keep) };
-  let payload: string = wire.head;
+  let payload: u8[] = wire.head;
   if (corked.len() > 0) {
-    payload = corked + wire.head;
+    payload = corked.concat(wire.head);
   }
   if (__corks(wire, c.keep[at], answered, tail)) {
     return (c, true, payload);
@@ -967,10 +968,10 @@ function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: __W
   c = sent.0;
   match (sent.1) {
     Partial => {
-      return (c, false, "");
+      return (c, false, []);
     },
     Failed => {
-      return (__serve_close(drv, c, at), false, "");
+      return (__serve_close(drv, c, at), false, []);
     },
     Whole => {}
   }
@@ -978,25 +979,25 @@ function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: __W
   c = produced.0;
   match (produced.1) {
     Partial => {
-      return (c, false, "");
+      return (c, false, []);
     },
     Failed => {
-      return (__serve_close(drv, c, at), false, "");
+      return (__serve_close(drv, c, at), false, []);
     },
     Whole => {}
   }
   if (!c.keep[at]) {
-    return (__serve_close(drv, c, at), false, "");
+    return (__serve_close(drv, c, at), false, []);
   }
   let ready: (__Conns, boolean) = __serve_ready(drv, c, at, opts, tail, clk);
   c = ready.0;
   if (!ready.1) {
-    return (c, false, "");
+    return (c, false, []);
   }
   if (answered >= __pipeline_burst()) {
-    return (__Conns { ...c, backlog: c.backlog.with(at, true) }, false, "");
+    return (__Conns { ...c, backlog: c.backlog.with(at, true) }, false, []);
   }
-  return (c, true, "");
+  return (c, true, []);
 }
 
 // __corks(wire, persists, answered, tail) — whether a response waits to
@@ -1046,7 +1047,7 @@ function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Confi
     },
     Whole => {}
   }
-  let produced: (__Conns, __Sent) = __serve_produce(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts);
+  let produced: (__Conns, __Sent) = __serve_produce(drv, __Conns { ...c, pending: c.pending.with(at, []) }, at, opts);
   c = produced.0;
   match (produced.1) {
     Partial => {
@@ -1064,7 +1065,7 @@ function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Confi
     return (__serve_close(drv, c, at), -1, false);
   }
   let tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
-  let ready: (__Conns, boolean) = __serve_ready(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts, tail, clk);
+  let ready: (__Conns, boolean) = __serve_ready(drv, __Conns { ...c, pending: c.pending.with(at, []) }, at, opts, tail, clk);
   if (!ready.1) {
     return (ready.0, -1, false);
   }
@@ -1155,17 +1156,17 @@ enum __Sent { Whole, Partial, Failed }
 // of reads and gives it what `__drain_deadline` allows; the loop
 // finishes the write on later waits. A write the kernel refuses (the
 // peer is gone) leaves the connection to the caller to close.
-function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: string, opts: Config): (__Conns, __Sent) {
-  let n: i32 = tcp_send(c.fds[at], payload);
+function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: u8[], opts: Config): (__Conns, __Sent) {
+  let n: i32 = tcp_send_bytes(c.fds[at], payload);
   if (n >= payload.len()) {
     return (c, Whole);
   }
   if (n < 0 && n != 0 - __eagain()) {
     return (c, Failed);
   }
-  let rest: string = payload;
+  let rest: u8[] = payload;
   if (n > 0) {
-    rest = slice_unchecked(payload, n, payload.len()).to_owned();
+    rest = __bytes_from(payload, n);
   }
   drv.watch(c.fds[at], 2);
   let first: boolean = c.pending[at].len() == 0;
@@ -1187,7 +1188,7 @@ function __serve_produce[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Con
   if (moved.2) {
     return (c, moved.1);
   }
-  let produced: (__Conns, string, boolean) = __tail_piece(c, at);
+  let produced: (__Conns, u8[], boolean) = __tail_piece(c, at);
   c = produced.0;
   if (!produced.2) {
     return (c, Failed);
@@ -1721,7 +1722,7 @@ function __body_settled[D: async.Driver](drv: D, c: __Conns, at: i32, body: __Bo
 // reading, answering `100 Continue` first when the request expects it.
 // `(conns, flights, more, corked, next)` as the burst loop reads them,
 // `more` when a response went out and the next request is framed.
-function __serve_unframed[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, expecting: boolean, start: (http.HttpFramed, boolean, __Stop) => __Started, opts: Config, stop: __Stop, corked: string, count: i32, clk: __Clock, eof: boolean): (__Conns, __Flight[], boolean, string, http.HttpFraming) {
+function __serve_unframed[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, expecting: boolean, start: (http.HttpFramed, boolean, __Stop) => __Started, opts: Config, stop: __Stop, corked: u8[], count: i32, clk: __Clock, eof: boolean): (__Conns, __Flight[], boolean, u8[], http.HttpFraming) {
   if (!opts.stream_bodies || eof) {
     if (expecting) {
       c = __serve_continue(drv, c, at, opts);
@@ -1749,7 +1750,7 @@ function __serve_unframed[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], 
 // answers or parks. A handler that answers at once is responded to with
 // the connection taken back; one that parks becomes a flight carrying its
 // body's state.
-function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, h: http.HttpHead, start: (http.HttpFramed, boolean, __Stop) => __Started, opts: Config, stop: __Stop, corked: string, count: i32, clk: __Clock): (__Conns, __Flight[], boolean, string, http.HttpFraming) {
+function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, h: http.HttpHead, start: (http.HttpFramed, boolean, __Stop) => __Started, opts: Config, stop: __Stop, corked: u8[], count: i32, clk: __Clock): (__Conns, __Flight[], boolean, u8[], http.HttpFraming) {
   let fd: i32 = c.fds[at];
   let buf: u8[] = c.bufs[at];
   let body: __Body = __Body { state: cell_new(0), rest: cell_new("") };
@@ -1763,12 +1764,12 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
     HandlerDone(resp) => {
       c = __body_settled(drv, c, at, body);
       let tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
-      let answered: (__Conns, boolean, string) = __serve_respond(drv, c, at, __serve_wire(h.request.method, h.version, resp, c.keep[at], clk), opts, count + 1, tail, clk, corked);
+      let answered: (__Conns, boolean, u8[]) = __serve_respond(drv, c, at, __serve_wire(h.request.method, h.version, resp, c.keep[at], clk), opts, count + 1, tail, clk, corked);
       return (answered.0, fls, answered.1, answered.2, tail);
     },
     HandlerParked(fl, w) => {
       let parked: (__Conns, __Flight[]) = __serve_park(drv, c, fls, at, __flight_watch(drv, __Flight { ...fl, body: Some(body) }, w, monotonic_ns()), corked, opts);
-      return (parked.0, parked.1, false, "", http.Incomplete);
+      return (parked.0, parked.1, false, [], http.Incomplete);
     }
   }
   return (c, fls, false, corked, http.Incomplete);
@@ -1823,7 +1824,7 @@ function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, pl
 // since the flight's response comes after it, and the connection's read
 // deadline is lifted while the handler waits. A write the kernel refuses
 // closes the connection and cancels the flight.
-function __serve_park[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, fl: __Flight, corked: string, opts: Config): (__Conns, __Flight[]) {
+function __serve_park[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, fl: __Flight, corked: u8[], opts: Config): (__Conns, __Flight[]) {
   let fd: i32 = c.fds[at];
   if (corked.len() > 0) {
     let sent: (__Conns, __Sent) = __serve_send(drv, c, at, corked, opts);
@@ -1916,7 +1917,7 @@ function __serve_answer[D: async.Driver](drv: D, c: __Conns, fl: __Flight, resp:
     },
     None => {}
   }
-  let answered: (__Conns, boolean, string) = __serve_respond(drv, c, at, __serve_wire(fl.method, fl.version, resp, fl.kept && c.keep[at], clk), opts, __pipeline_burst(), tail, clk, "");
+  let answered: (__Conns, boolean, u8[]) = __serve_respond(drv, c, at, __serve_wire(fl.method, fl.version, resp, fl.kept && c.keep[at], clk), opts, __pipeline_burst(), tail, clk, []);
   return __serve_finish(drv, answered.0, fl.fd, false);
 }
 
@@ -2158,7 +2159,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
       }
       let more: boolean = true;
       let count: i32 = 0;
-      let corked: string = "";
+      let corked: u8[] = [];
       let framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
       while (more) {
         let next: http.HttpFraming = http.Incomplete;
@@ -2169,7 +2170,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
             count = count + 1;
             match (__serve_start(handler, plat, f, took.1, took.2, opts, stop)) {
               HandlerDone(resp) => {
-                let answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, resp, took.1, clk), opts, count, took.2, clk, corked);
+                let answered: (__Conns, boolean, u8[]) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, resp, took.1, clk), opts, count, took.2, clk, corked);
                 conns = answered.0;
                 more = answered.1;
                 corked = answered.2;
@@ -2179,13 +2180,13 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
                 let parked: (__Conns, __Flight[]) = __serve_park(drv, conns, flights, at, __flight_watch(drv, fl, w, monotonic_ns()), corked, opts);
                 conns = parked.0;
                 flights = parked.1;
-                corked = "";
+                corked = [];
                 more = false;
               }
             }
           },
           http.Incomplete => {
-            let unframed: (__Conns, __Flight[], boolean, string, http.HttpFraming) = __serve_unframed(drv, conns, flights, at, false, start, opts, stop, corked, count, clk, ev.2);
+            let unframed: (__Conns, __Flight[], boolean, u8[], http.HttpFraming) = __serve_unframed(drv, conns, flights, at, false, start, opts, stop, corked, count, clk, ev.2);
             conns = unframed.0;
             flights = unframed.1;
             more = unframed.2;
@@ -2196,7 +2197,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
             }
           },
           http.Continue => {
-            let unframed: (__Conns, __Flight[], boolean, string, http.HttpFraming) = __serve_unframed(drv, conns, flights, at, true, start, opts, stop, corked, count, clk, ev.2);
+            let unframed: (__Conns, __Flight[], boolean, u8[], http.HttpFraming) = __serve_unframed(drv, conns, flights, at, true, start, opts, stop, corked, count, clk, ev.2);
             conns = unframed.0;
             flights = unframed.1;
             more = unframed.2;
@@ -2279,7 +2280,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
       }
       let more: boolean = true;
       let count: i32 = 0;
-      let corked: string = "";
+      let corked: u8[] = [];
       let framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
       while (more) {
         let next: http.HttpFraming = http.Incomplete;
@@ -2293,7 +2294,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
               stepped = handler(st, f.request, plat);
             }
             st = stepped.0;
-            let answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, stepped.1, took.1, clk), opts, count, took.2, clk, corked);
+            let answered: (__Conns, boolean, u8[]) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, stepped.1, took.1, clk), opts, count, took.2, clk, corked);
             conns = answered.0;
             more = answered.1;
             corked = answered.2;
@@ -2391,10 +2392,11 @@ function __supervise(port: i32, opts: Config, worker: (i32, Config) => i32): i32
   // its own once forked.
   let listener: i32 = 0 - 1;
   if (!__per_worker_listeners(opts)) {
-    listener = __serve_listener(port, opts);
-    if (listener < 0) {
-      return __listen_failed(port, listener);
+    let l: __Listen = __serve_listener(port, opts);
+    if (l.fd < 0) {
+      return __listen_failed(l);
     }
+    listener = l.fd;
   }
   let workers: i32 = opts.workers;
   if (workers < 1) {
@@ -2480,26 +2482,26 @@ function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, work
     drv.unwatch_signal(15);
     drv.unwatch_signal(2);
     drv.close();
-    let single: i32 = __worker_listener(port, listener, opts);
-    if (single < 0) {
-      return (sup, __listen_failed(port, single));
+    let single: __Listen = __worker_listener(port, listener, opts);
+    if (single.fd < 0) {
+      return (sup, __listen_failed(single));
     }
-    return (sup, worker(single, Config { ...opts, workers: 1 }));
+    return (sup, worker(single.fd, Config { ...opts, workers: 1 }));
   }
   if (pid < 0) {
     return (sup, pid);
   }
   if (pid == 0) {
     drv.close();
-    let own: i32 = __worker_listener(port, listener, opts);
-    if (own < 0) {
-      exit(__listen_failed(port, own));
+    let own: __Listen = __worker_listener(port, listener, opts);
+    if (own.fd < 0) {
+      exit(__listen_failed(own));
     }
     let loop_opts: Config = Config { ...opts, stop_with_parent: true };
     if (listener < 0) {
       loop_opts = Config { ...loop_opts, workers: 1 };
     }
-    exit(worker(own, loop_opts));
+    exit(worker(own.fd, loop_opts));
     return (sup, 0);
   }
   return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()) }, 0 - 1);
@@ -2533,13 +2535,13 @@ function __per_worker_listeners(opts: Config): boolean {
 // the inherited one, or its own beside the other workers' (SO_REUSEPORT,
 // steered by CPU where the host can, which every socket of the group
 // then shares).
-function __worker_listener(port: i32, listener: i32, opts: Config): i32 {
+function __worker_listener(port: i32, listener: i32, opts: Config): __Listen {
   if (listener >= 0) {
-    return listener;
+    return __Listen { fd: listener, addr: "" };
   }
-  let own: i32 = __serve_listener(port, opts);
-  if (own >= 0) {
-    tcp_socket_ctl(own, 8, 0);
+  let own: __Listen = __serve_listener(port, opts);
+  if (own.fd >= 0) {
+    tcp_socket_ctl(own.fd, 8, 0);
   }
   return own;
 }

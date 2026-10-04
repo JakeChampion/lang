@@ -47,7 +47,7 @@ func TestSelfHostArm64DarwinSeededRandomBytes(t *testing.T) {
 	if err := os.WriteFile(src, []byte(e2eharness.SeededRandomBytesProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
+	cmd := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, stdlib)
 	cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)

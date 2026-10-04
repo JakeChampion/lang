@@ -429,7 +429,7 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 			t.Fatalf("write %s: %v", mainPath, werr)
 		}
 		asmPath := filepath.Join(proj, tag+".s")
-		cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath)
+		cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, mainPath, stdlibRoot)
 		cmd.Env = childEnv(append([]string{"FERN_SEM_IR_REPORT=1"}, extraEnv...)...)
 		var report strings.Builder
 		cmd.Stderr = &report

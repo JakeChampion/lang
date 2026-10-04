@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -994,7 +995,7 @@ function main(): i32 {
 
 // CheckListenFailure runs a server built from ListenFailureServerSource
 // on a port something else holds: it exits 98, and stderr names the
-// address and the error in words.
+// address it tried and the error in words.
 func CheckListenFailure(t *testing.T, cmd *exec.Cmd, port int) {
 	t.Helper()
 	var stderr strings.Builder
@@ -1013,9 +1014,10 @@ func CheckListenFailure(t *testing.T, cmd *exec.Cmd, port int) {
 	if code := cmd.ProcessState.ExitCode(); code != 98 {
 		t.Errorf("exit code %d, want 98\n--- stderr ---\n%s", code, stderr.String())
 	}
-	want := fmt.Sprintf("serve: cannot listen on port %d: Address already in use", port)
-	if !strings.Contains(stderr.String(), want) {
-		t.Errorf("stderr lacks %q:\n%s", want, stderr.String())
+	// `::` where the host has IPv6, `0.0.0.0` where it has not.
+	want := regexp.MustCompile(fmt.Sprintf(`serve: cannot listen on (\[::\]|0\.0\.0\.0):%d: Address already in use`, port))
+	if !want.MatchString(stderr.String()) {
+		t.Errorf("stderr does not match %q:\n%s", want, stderr.String())
 	}
 }
 
@@ -1069,6 +1071,7 @@ func FetchDeadlineUpstreams(t *testing.T) (silentPort, livePort int) {
 // the default bounds give a 200 in time. Exit 0 when all three hold.
 func FetchDeadlineSource(silentPort, livePort int) string {
 	return fmt.Sprintf(`import "std/fetch";
+import "std/time";
 function message_of(answer: Result[HttpResponse, fetch.FetchError]): string {
     match (answer) {
         Ok(resp) => { return "answered"; },
@@ -1078,9 +1081,9 @@ function message_of(answer: Result[HttpResponse, fetch.FetchError]): string {
 }
 function main(): i32 {
     let silent: string = "http://127.0.0.1:%[1]d/";
-    let idle: fetch.Timeouts = fetch.Timeouts { connect_ms: 5000, inactivity_ms: 400, total_ms: 5000 };
+    let idle: fetch.Timeouts = fetch.Timeouts { connect: time.duration_seconds(5 as i64), inactivity: time.duration_millis(400 as i64), total: time.duration_seconds(5 as i64) };
     if (message_of(fetch.send(fetch.get(silent).with_timeouts(idle))) != "timed out waiting for the response") { return 1; }
-    let whole: fetch.Timeouts = fetch.Timeouts { connect_ms: 5000, inactivity_ms: 5000, total_ms: 300 };
+    let whole: fetch.Timeouts = fetch.Timeouts { connect: time.duration_seconds(5 as i64), inactivity: time.duration_seconds(5 as i64), total: time.duration_millis(300 as i64) };
     if (message_of(fetch.send(fetch.get(silent).with_timeouts(whole))) != "timed out in all") { return 5; }
     match (fetch.send(fetch.get("http://127.0.0.1:%[2]d/"))) {
         Ok(resp) => {

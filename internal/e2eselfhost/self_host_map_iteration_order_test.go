@@ -125,7 +125,7 @@ func TestSelfHostMapIterationOrderX86_64(t *testing.T) {
 
 	proj := t.TempDir()
 	asmPath := filepath.Join(proj, "out.s")
-	if out, err := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath).CombinedOutput(); err != nil {
+	if out, err := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, mainPath, stdlibRoot).CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v (%s)", err, out)
 	}
 	binPath := filepath.Join(proj, "out.bin")
@@ -151,7 +151,7 @@ func TestSelfHostMapIterationOrderArm64(t *testing.T) {
 
 	proj := t.TempDir()
 	asmPath := filepath.Join(proj, "out.s")
-	if out, err := runX86_64Bin(x86runner, fernBin, "-target", "arm64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath).CombinedOutput(); err != nil {
+	if out, err := runX86_64Bin(x86runner, fernBin, "-target", "arm64-linux", "-emit", "asm", "-o", asmPath, mainPath, stdlibRoot).CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v (%s)", err, out)
 	}
 	asm, err := os.ReadFile(asmPath)
@@ -182,7 +182,7 @@ func TestSelfHostMapIterationOrderWasm(t *testing.T) {
 	proj := t.TempDir()
 	outWat := filepath.Join(proj, "out.wat")
 	var stderr strings.Builder
-	cmd := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat)
+	cmd := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", "-o", outWat, mainPath, stdlibRoot)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("compile: %v (%s)", err, stderr.String())

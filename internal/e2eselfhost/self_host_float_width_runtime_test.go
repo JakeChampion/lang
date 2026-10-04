@@ -70,7 +70,7 @@ if (v.0 + 1.0 == a && v.1 == 2) { return 7; } return 99; }`},
 						t.Fatal(err)
 					}
 					out := filepath.Join(proj, "out.asm")
-					cmd := runX86_64Bin(runner, compiler, "-target", target, "-emit", "asm", main, stdlib, "-o", out)
+					cmd := runX86_64Bin(runner, compiler, "-target", target, "-emit", "asm", "-o", out, main, stdlib)
 					cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 					if output, err := cmd.CombinedOutput(); err != nil {
 						t.Fatalf("compile: %v\n%s", err, output)

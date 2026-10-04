@@ -81,6 +81,20 @@ The bodies written on the floor, `tcp_recv`, `tcp_send` and `udp_send`, are
 gated by every socket, serve, fetch and udp test that was already on the
 builtins, on every backend.
 
+The per-request gates of #9853's exit criterion A: `TestBumpPerRequest`
+(the Go compiler, x86-64 and arm64) and `TestSelfHostBumpPerRequest` (the
+self-host compiler, x86-64) send 100k requests on one keep-alive connection
+to a handler that answers `__heap_bump_bytes()`, and the figure a tenth of
+the way in must be the figure at the last request (under qemu the arm64 leg
+sends 10k). They hold the bump high-water mark still; they do not count
+allocations, which every request still makes (the framing path's, criterion
+B). `TestHTTPHandlerCensus` and its wasm and self-host twins are the leak
+half: a bounded serve loop under `FERN_LEAKCHECK` frees what it allocated.
+`TestServeListenFailure` and `TestSelfHostServeListenFailure` pin a server
+whose port is taken: exit 98 and the reason in words, from the single loop
+and the supervisor. `TestEscapingMatchPayloadIsReclaimed` is #8003's gate,
+the per-request leak of a match on a call result whose payload escapes.
+
 `TestSelfHostArm64DarwinPoll` exercises the self-host kqueue helper with
 inherited pipes and a loopback TCP listener on Apple Silicon. It checks ready,
 timed-out, empty, negative, invalid and duplicate descriptors, the lowest
@@ -175,7 +189,9 @@ of an unknown op, the wasm `-ENOTSUP` answers, and op 8's CPU steering of
 a `SO_REUSEPORT` group: attached on Linux, `-ENOPROTOOPT` where the host
 lacks the option, as qemu-user does, `-ENOTSUP` on Darwin and wasm), and
 `e2eharness.NetSocketOptsProbe` through std/net's `listen_with`,
-`set_nodelay`, `set_keepalive`, `set_nonblocking` and `shutdown`, plus the
+`set_nodelay`, `set_keepalive`, `set_nonblocking`, `read` (the
+`WouldBlock` of an empty non-blocking socket, the bytes written, then
+`Ok(0)` at the end of the stream), `write` and `shutdown`, plus the
 `AddrInUse` a second plain listener and the `ConnectionRefused` a dial of
 the closed port report; `e2eharness.UdpSocketProbe` on the raw `udp_bind`,
 `udp_sendto`, `udp_recvfrom` and `udp_connect` (two sockets on host-picked
@@ -304,7 +320,16 @@ descriptor is needed, and an i64, an f64 and a string are held across them;
 the self-host's x86-64, arm64 and wasm output must show both parks and the
 plain run's figure. The wasm leg embeds `cmd/fern/wit`'s world and adapts
 the module before wasmtime runs it. `TestTaskPortableFallback` is the Go
-compiler's twin.
+compiler's twin. `conformance/cases/tasks_agree_without_a_scheduler` is
+the row that holds the two lowerings to one answer: the task combinators
+and a hand-driven task called from `main`, built so nothing depends on
+which entry runs first, the same bytes on the interpreter, the Go
+compiler's x86-64 and arm64 and the self-host's x86-64 and arm64 (the
+self-host wasm fixture leg runs the core module without the preview-2
+clock the naps subscribe to, so that leg is waived to the task-portable
+gate above). What the fallback answers differently by design — park
+counts, a race against a slower first entry, a cancellation from outside —
+stays with each slice's `…Fallback` twin.
 `TestSelfHostSimTasks` is the sim's task gate (`e2eharness.SimTasksProgram`):
 three handlers' `plat.http` calls over a `SimPlatform` run as tasks under
 `sim.run_tasks`, parking in virtual time, one cancelled while it waits; the
@@ -396,8 +421,9 @@ listener handed in through `LISTEN_FDS` is served. The scenarios are
 `TestSelfHostSupervisedServeWorkersServeSideBySide` pins two workers over
 one listener answering side by side and surviving one worker's death, and
 `TestSelfHostSupervisedServeHandlerStallsItsWorker` the converse on one
-worker: a request behind /slow waits for it, the pin
-#9857's multiplexing has to turn;
+worker: a request behind a /slow that computes for 1.5 s waits for it,
+since a park needs a wait and a busy handler has none (the waiting
+handler's case is `TestSelfHostServeHandlersOverlap` above);
 `TestSelfHostSupervisedServeOneWorkerPerCPU` counts the default worker set
 against the processing units, and
 `TestSelfHostSupervisedServeShutsDownAfterBurst` requires every one of four workers to exit on SIGTERM after a burst of

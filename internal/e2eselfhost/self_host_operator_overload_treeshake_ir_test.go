@@ -110,7 +110,7 @@ func TestSelfHostOperatorOverloadRootsIRX86_64(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 			asmPath := filepath.Join(proj, "out.s")
-			ccmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath)
+			ccmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, mainPath, stdlibRoot)
 			ccmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 			if out, cerr := ccmd.CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)

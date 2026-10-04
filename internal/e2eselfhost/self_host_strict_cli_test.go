@@ -38,7 +38,7 @@ func (c *strictCLI) tryEmit(t *testing.T, target, src string, env ...string) (st
 		t.Fatal(err)
 	}
 	asmPath := filepath.Join(proj, "main.s")
-	cmd := runX86_64Bin(c.runner, c.bin, "-target", target, "-emit", "asm", mainPath, c.stdlib, "-o", asmPath)
+	cmd := runX86_64Bin(c.runner, c.bin, "-target", target, "-emit", "asm", "-o", asmPath, mainPath, c.stdlib)
 	cmd.Env = childEnv(env...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

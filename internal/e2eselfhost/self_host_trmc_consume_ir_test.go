@@ -273,7 +273,7 @@ func TestSelfHostArm64DarwinTrmcConsume(t *testing.T) {
 				t.Fatal(err)
 			}
 			bin := filepath.Join(dir, "main")
-			cmd := exec.Command(cli, "-target", "arm64-darwin", src, e2eharness.SelfHostStdlibRoot(t), "-o", bin)
+			cmd := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, e2eharness.SelfHostStdlibRoot(t))
 			for _, kv := range os.Environ() {
 				if !strings.HasPrefix(kv, "FERN_SANITIZE=") && !strings.HasPrefix(kv, "FERN_RC_FREE_DEBUG=") {
 					cmd.Env = append(cmd.Env, kv)

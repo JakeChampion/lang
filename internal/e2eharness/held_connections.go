@@ -75,7 +75,7 @@ func HeldSuspendedServerSource(port int) string {
     if (req.path == "/heap") {
         return http.ok(__heap_bump_bytes().to_string());
     }
-    let parked: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), inactivity_ms: 300000, total_ms: 600000 };
+    let parked: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), inactivity: time.duration_seconds(300 as i64), total: time.duration_seconds(600 as i64) };
     match (plat.http(fetch.get("http://8.8.8.8/hold").with_timeouts(parked))) {
         Ok(resp) => { return http.ok("held " + resp.status.to_string()); },
         Err(e) => { return http.ok("held err " + e.message()); }
@@ -243,7 +243,7 @@ func heapBumpBytes(t *testing.T, addr string) int64 {
 
 // BumpPerRequestServerSource is a single-loop server whose handler
 // answers the bump allocator's high-water mark, `__heap_bump_bytes()`,
-// with room for 5000 requests on one connection.
+// with room for BumpPerRequestRounds requests on one connection.
 func BumpPerRequestServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -252,17 +252,22 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok(__heap_bump_bytes().to_string());
 }
 function main(): i32 {
-    return serve.run(%d, serve.Config { ...serve.config(), keep_alive_requests: 5000 }, handle);
+    return serve.run(%d, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle);
 }
-`, port)
+`, port, BumpPerRequestRounds+1)
 }
 
+// BumpPerRequestRounds is #9853's per-request count: 100k requests on
+// one keep-alive connection.
+const BumpPerRequestRounds = 100000
+
 // CheckBumpPerRequest drives BumpPerRequestServerSource over one
-// keep-alive connection: once the first requests have warmed the
-// allocator's free lists, requests reuse what earlier ones freed, so the
-// bump high-water mark reported at request 200 is the one reported at
-// request 2000 (#9853's per-request gate, bump half).
-func CheckBumpPerRequest(t *testing.T, addr string) {
+// keep-alive connection for `rounds` requests: once the first tenth have
+// warmed the allocator's free lists, requests reuse what earlier ones
+// freed, so the bump high-water mark reported a tenth of the way in is
+// the one reported at the last request (#9853's per-request gate, bump
+// half).
+func CheckBumpPerRequest(t *testing.T, addr string, rounds int) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
@@ -270,10 +275,11 @@ func CheckBumpPerRequest(t *testing.T, addr string) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Minute))
 	reader := bufio.NewReader(conn)
-	var at200, last string
-	for i := 1; i <= 2000; i++ {
+	warm := rounds / 10
+	var atWarm, last string
+	for i := 1; i <= rounds; i++ {
 		if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: x\r\n\r\n"); err != nil {
 			t.Fatalf("request %d: %v", i, err)
 		}
@@ -284,11 +290,11 @@ func CheckBumpPerRequest(t *testing.T, addr string) {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		last = string(body)
-		if i == 200 {
-			at200 = last
+		if i == warm {
+			atWarm = last
 		}
 	}
-	if last != at200 {
-		t.Fatalf("bump high-water mark %s bytes at request 200 but %s at request 2000: a keep-alive request grows the heap", at200, last)
+	if last != atWarm {
+		t.Fatalf("bump high-water mark %s bytes at request %d but %s at request %d: a keep-alive request grows the heap", atWarm, warm, last, rounds)
 	}
 }

@@ -1366,10 +1366,16 @@ The socket controls are typed faces over the descriptor builtins
   `O_NONBLOCK`, each `Result[(), NetError]`. `TCP_NODELAY` is already on
   for every socket `connect`, `connect_start` and `accept` answer and every
   connection the serve loop accepts, as Go and Node have it; `false` turns
-  Nagle's coalescing back on. A non-blocking `tcp_recv`
-  answers the empty array at once when nothing is queued, and a
-  non-blocking `tcp_send` what the kernel took, or `-EAGAIN` when it had
-  no room.
+  Nagle's coalescing back on. A non-blocking `read` answers `WouldBlock`
+  at once when nothing is queued, and a non-blocking `write` what the
+  kernel took, or `WouldBlock` when it had no room.
+- `read(sock, buf)` — one read from a connected stream into `buf`, up to
+  its length: the byte count, `Ok(0)` at the end of the stream, or the
+  `NetError`. On wasi:sockets every read is non-blocking, so a reader
+  waits for readability first (`async.wait_any`).
+- `write(sock, data)` — `data` written to a connected stream: the bytes
+  accepted (fewer than `data` holds when a non-blocking socket fills), or
+  the `NetError`; a write never raises SIGPIPE.
 - `send_queue(sock)` — how many bytes handed to the socket the peer has
   not acknowledged yet, unsent and in flight alike (`SIOCOUTQ` on Linux,
   `SO_NWRITE` on Darwin), as `Result[i32, NetError]`: how far the peer has
@@ -1464,10 +1470,10 @@ for query ids, `now` for the wait and `reactor` for the race.
   a name with at least `ndots` dots is asked as it stands before the
   search domains, one with fewer after them, a name ending in a dot only
   as it stands.
-- `exchange(ns, q, timeout_ms)` is one query to one nameserver: UDP with
-  EDNS0, a reply to another id or question ignored, a truncated reply
-  asked again over TCP (`exchange_tcp`); `exchange_many(ns, qs,
-  timeout_ms)` sends several at once, each on its own socket, and awaits
+- `exchange(ns, q, timeout)` is one query to one nameserver within a
+  `Duration`: UDP with EDNS0, a reply to another id or question ignored,
+  a truncated reply asked again over TCP (`exchange_tcp`);
+  `exchange_many(ns, qs, timeout)` sends several at once, each on its own socket, and awaits
   the replies as one set. `ask(conf, q)` and `ask_many(conf, qs)` are
   res_send over the nameservers, `attempts` times round, from a rotating
   start under `rotate`; SERVFAIL, REFUSED, silence and an unreachable
@@ -1491,10 +1497,11 @@ for query ids, `now` for the wait and `reactor` for the race.
   `policy_of`, `scope_of` and `common_prefix_len` are the table and the
   measures the rules read; `sort_addresses(dsts)` probes and orders.
 - `connect_race(addrs, port, opts)` is the RFC 8305 dialer: the first
-  address is tried alone for `DialOptions.fallback_ms` (300, Go's
+  address is tried alone for `DialOptions.fallback` (300 ms, Go's
   attempt delay), then the next beside it, and so on, an attempt that
   fails handing its turn to the next at once; the first to connect wins
-  and the rest are closed, `TimedOut` once `timeout_ms` passes.
+  and the rest are closed, `TimedOut` once `DialOptions.timeout` (10 s)
+  passes.
   `interleave_families(addrs)` is §4's order, the families alternating
   from the first address's. `dial(name, port, opts)` resolves and races.
 - `nat64_prefixes(conf)` reads the prefixes a NAT64 translator answers
@@ -1633,8 +1640,9 @@ points that run a handler under it.
   whole closes after the response. A `Stream` that ended early faults
   (`(s).fault()`); `body_string()` reports it as `EndedEarly`. The stateful
   loop (`run_with`) reads bodies whole either way.
-  A listener it cannot bind is `serve: cannot listen on port PORT:`
-  and the error's text on stderr, and the entry returns 98 (every
+  A listener it cannot bind is `serve: cannot listen on ADDR:PORT:` —
+  `[::]` where the host has IPv6, `0.0.0.0` where it has not and on
+  wasm — and the error's text on stderr, and the entry returns 98 (every
   entry, and a supervised worker that binds its own).
   A listener the process was started with (`LISTEN_FDS` at least 1,
   descriptor 3) is served instead of a fresh one.
@@ -1673,11 +1681,16 @@ points that run a handler under it.
   `supervise_with_shutdown(port, cfg, init, handler, shutdown)`
   take the hook of the `_shutdown` entries, which each worker's loop calls
   on its way out. Where there is no fork (the interpreter) every one of
-  them serves single-process. A worker runs one handler at a time to
-  completion, so a handler that blocks (a sleep, a slow upstream fetch)
-  holds every other connection on that worker until it returns; workers,
-  not connections, absorb slow handlers until #9857 multiplexes them
-  (`TestSelfHostSupervisedServeHandlerStallsItsWorker` pins the stall).
+  them serves single-process. A worker runs one handler at a time, and
+  what a waiting handler costs it depends on the compiler: built by the
+  self-host compiler, a handler that waits on `plat.http` or on a streamed
+  request body parks, and the worker serves its other connections until
+  the wait is answered (`TestSelfHostServeHandlersOverlap`;
+  `docs/NET-P3-SUSPENSION-PLAN.md`); built by the Go compiler, every wait
+  blocks and the handler holds the worker until it returns. A handler
+  that computes holds its worker either way
+  (`TestSelfHostSupervisedServeHandlerStallsItsWorker`), so workers, not
+  connections, absorb CPU-bound handlers.
 - `__port_from_env(name, fallback)` — env-var port lookup used
   by the auto-`main`-from-`handle()` synthesis so handler-shaped
   programs can be tuned via `PORT=N ./bin`. That synthesis serves
@@ -1858,8 +1871,8 @@ answer is `Result[HttpResponse, FetchError]`.
   `Protocol`, `BodyLimit` and `Decode`. `(e).message()`. It is
   `http.ToResponse`, so a handler fetching upstream fails with `?`
   (504 / 500 / 502, under "Errors a handler answers with" above).
-- **Timeouts:** `Timeouts { connect_ms, inactivity_ms, total_ms }`,
-  `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
+- **Timeouts:** `Timeouts { connect, inactivity, total }`, each a
+  `Duration`; `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
   whole address race; inactivity is the longest wait for the next byte
   of the response; total runs from the start to the last byte read.
 - **Transport:** the dialled route reaches the network only through
@@ -2115,6 +2128,13 @@ Each method needs its target capability (`internal/platforms`), so
 what a handler may call depends on where it is going: the `wasi-http`
 proxy world grants log / now / random / config / fetch, and `.env` is an
 E066 there.
+
+Under std/serve's loop a handler's `plat.http` is a wait the loop can
+park: in a self-host-built server the handler's call chain saves itself
+at the wait and the worker serves its other connections until the
+upstream answers, up to `Config.max_in_flight` parked handlers at once
+(`docs/ASYNC.md` §8, `docs/NET-P3-SUSPENSION-PLAN.md`); in a Go-built
+server the same call blocks the worker.
 
 ```
 import "std/platform";

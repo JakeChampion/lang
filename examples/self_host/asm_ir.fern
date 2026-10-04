@@ -8752,9 +8752,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   if (ins.str == "raw_alloc") {
     s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort\n");
     s = s.write("    addq $24, %rdi\n");
-    if (leak_check_on() && s.rt_owned_allocs) {
-      s = s.write("    movq %rdi, __fern_lc_rt_req(%rip)\n");
-    }
+  }
+  if (ins.str == "alloc" && leak_check_on() && s.rt_owned_allocs) {
+    s = s.write("    movq %rdi, __fern_lc_rt_req(%rip)\n");
   }
   if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), ins.imm == 1, s);
@@ -8765,18 +8765,26 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   }
   if (ins.str == "raw_alloc") {
     s = s.write("    addq $24, %rax\n");
-    if (leak_check_on() && s.rt_owned_allocs) {
-      // A runtime-owned block (#11386): take the one the hook just counted
-      // back out, at the allocator's 8-byte rounding of the request.
-      s = s.write("    movq __fern_lc_rt_req(%rip), %rcx\n");
-      s = s.write("    addq $7, %rcx\n");
-      s = s.write("    shrq $3, %rcx\n");
-      s = s.write("    shlq $3, %rcx\n");
-      s = s.write("    subq %rcx, __fern_lc_alloc_bytes(%rip)\n");
-      s = s.write("    subq $1, __fern_lc_alloc_count(%rip)\n");
-    }
+  }
+  if (ins.str == "alloc" && leak_check_on() && s.rt_owned_allocs) {
+    // A runtime-owned block (#11386): take the one the hook just counted
+    // back out, at the allocator's 8-byte rounding of the request.
+    s = lc_rt_uncount(s, "__fern_lc_alloc_bytes", "__fern_lc_alloc_count");
   }
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
+// lc_rt_uncount takes one block of the size __fern_lc_rt_req holds, at the
+// allocator's 8-byte rounding, back out of the census counters `bytes` and
+// `count`. Clobbers %rcx.
+function lc_rt_uncount(s: asmcore.EmitState, bytes: string, count: string): asmcore.EmitState {
+  s = s.write("    movq __fern_lc_rt_req(%rip), %rcx\n");
+  s = s.write("    addq $7, %rcx\n");
+  s = s.write("    shrq $3, %rcx\n");
+  s = s.write("    shlq $3, %rcx\n");
+  s = s.write("    subq %rcx, " + bytes + "(%rip)\n");
+  s = s.write("    subq $1, " + count + "(%rip)\n");
+  return s;
 }
 
 // arr_push_inline is arr_push_fast at the call site, calling `sym` only when
@@ -9920,7 +9928,19 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write(ir_memset_asm());
   } else if (o.kind_tag == 78) {  // free
     // [ptr, size] -> return the raw block to its size class; push dummy 0.
-    s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_raw_free\n    pushq $0\n");
+    s = s.write("    popq %rsi\n    popq %rdi\n");
+    let owned: boolean = leak_check_on() && s.rt_owned_allocs;
+    if (owned) {
+      s = s.write("    movq %rsi, __fern_lc_rt_req(%rip)\n");
+    }
+    s = s.write("    call __fern_raw_free\n");
+    if (owned) {
+      // A runtime-owned block (#11386) whose alloc the census never counted:
+      // take its free back out. The task runtime frees only non-null blocks
+      // of a word or more, each of which __fern_raw_free counts.
+      s = lc_rt_uncount(s, "__fern_lc_free_bytes", "__fern_lc_free_count");
+    }
+    s = s.write("    pushq $0\n");
     s = s.need("heap");
   } else if (o.kind_tag == 91) {  // arr_rc
     // pop base; 32-bit refcount field at data-8.

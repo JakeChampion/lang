@@ -27,7 +27,7 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		cmd := runX86_64Bin(runner, fernBin, "-target", target, path, stdlibRoot, "-o", filepath.Join(t.TempDir(), "prog"))
+		cmd := runX86_64Bin(runner, fernBin, "-target", target, "-o", filepath.Join(t.TempDir(), "prog"), path, stdlibRoot)
 		cmd.Env = childEnv(env...)
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
@@ -59,7 +59,7 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 		t.Fatal(err)
 	}
 	strTraitBin := filepath.Join(strTrait, "prog")
-	strTraitBuild := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", filepath.Join(strTrait, "main.fern"), stdlibRoot, "-o", strTraitBin)
+	strTraitBuild := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-o", strTraitBin, filepath.Join(strTrait, "main.fern"), stdlibRoot)
 	strTraitBuild.Env = childEnv()
 	if out, err := strTraitBuild.CombinedOutput(); err != nil {
 		t.Fatalf("an imported trait method on str: %v\n%s", err, out)
@@ -106,7 +106,7 @@ function main(): i32 {
 		t.Fatal(err)
 	}
 	viewBin := filepath.Join(t.TempDir(), "prog")
-	viewBuild := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", viewSrc, stdlibRoot, "-o", viewBin)
+	viewBuild := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-o", viewBin, viewSrc, stdlibRoot)
 	viewBuild.Env = childEnv()
 	if out, err := viewBuild.CombinedOutput(); err != nil {
 		t.Fatalf("a view map value read: %v, want the typed lowering's compile\n%s", err, out)
@@ -128,7 +128,7 @@ function main(): i32 {
 			t.Fatal(err)
 		}
 		bin := filepath.Join(t.TempDir(), "prog")
-		build := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", path, stdlibRoot, "-o", bin)
+		build := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-o", bin, path, stdlibRoot)
 		build.Env = childEnv()
 		if out, err := build.CombinedOutput(); err != nil {
 			t.Fatalf("compile: %v\n%s", err, out)
@@ -189,7 +189,7 @@ function main(): i32 { return hold(pick(1)) + hold((): string => "x"); }
 		t.Fatal(err)
 	}
 	pickAsm := filepath.Join(t.TempDir(), "prog.s")
-	emit := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", pickSrc, stdlibRoot, "-o", pickAsm)
+	emit := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", "-o", pickAsm, pickSrc, stdlibRoot)
 	emit.Env = childEnv()
 	if out, err := emit.CombinedOutput(); err != nil {
 		t.Fatalf("a generic callee's function result: %v\n%s", err, out)
