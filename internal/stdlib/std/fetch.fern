@@ -240,16 +240,15 @@ impl http.ToResponse for FetchError {
 // ---------------------------------------------------------------------------
 // Requests
 
-// `Timeouts` — the bounds on one request, in milliseconds: `connect_ms`
-// on the connect (the whole address race), `inactivity_ms` on the wait
-// for the next byte of the response, `total_ms` on the request from its
-// start to the last byte read.
-pub struct Timeouts { connect_ms: i32, inactivity_ms: i32, total_ms: i32 }
+// `Timeouts` — the bounds on one request: `connect` on the connect (the
+// whole address race), `inactivity` on the wait for the next byte of the
+// response, `total` on the request from its start to the last byte read.
+pub struct Timeouts { connect: Duration, inactivity: Duration, total: Duration }
 
 // `timeouts()` — ten seconds to connect, thirty between bytes, sixty in
 // all.
 pub function timeouts(): Timeouts {
-  return Timeouts { connect_ms: 10000, inactivity_ms: 30000, total_ms: 60000 };
+  return Timeouts { connect: time.duration_seconds(10 as i64), inactivity: time.duration_seconds(30 as i64), total: time.duration_seconds(60 as i64) };
 }
 
 // `Request` — what `send` sends: the method, the URL, the headers
@@ -565,7 +564,7 @@ pub trait Transport {
   function now_ns(self: Self): i64;
   function lookup(self: Self, host: string, checked: boolean): Result[Lookup, dns.DnsError];
   function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError];
-  function write(self: Self, conn: i32, data: string): i32;
+  function write(self: Self, conn: i32, data: u8[]): i32;
   function read(self: Self, conn: i32, max: i32, wait_ms: i64): tcp.Recv;
   function close(self: Self, conn: i32): i32;
   function idle(self: Self): Idle;
@@ -761,10 +760,10 @@ impl Transport for Sockets {
     return Ok(Lookup { dial: dns.synthesized(plain), named: plain, judged: carried });
   }
   function connect(self: Sockets, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError] {
-    return dns.connect_race(addrs, port, dns.DialOptions { ...dns.dial_options(), timeout_ms: timeout_ms });
+    return dns.connect_race(addrs, port, dns.DialOptions { ...dns.dial_options(), timeout: time.duration_millis(timeout_ms as i64) });
   }
-  function write(self: Sockets, conn: i32, data: string): i32 {
-    return tcp_send(conn, data);
+  function write(self: Sockets, conn: i32, data: u8[]): i32 {
+    return tcp_send_bytes(conn, data);
   }
   function read(self: Sockets, conn: i32, max: i32, wait_ms: i64): tcp.Recv {
     return tcp.tcp_recv_deadline(conn, max, time.duration_millis(wait_ms));
@@ -1055,7 +1054,7 @@ function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64,
     conn = __connect(tr, t, req.timeouts, guard)?;
   }
   let body: u8[] = req.body.bytes();
-  let sent: Result[void, FetchError] = __send_all(tr, conn, __head(req, t, body.len()) + string_from_bytes_unchecked(body));
+  let sent: Result[void, FetchError] = __send_all(tr, conn, __head(req, t, body.len()).bytes().concat(body));
   match (sent) {
     Ok(_) => {},
     Err(e) => {
@@ -1085,7 +1084,7 @@ function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64,
 // before the race when any address resolved is not a global one.
 function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: boolean): Result[i32, FetchError] {
   let addrs: net.IpAddr[] = __resolve(tr, t.host, guard)?;
-  match (tr.connect(addrs, t.port, __connect_bound(timeouts))) {
+  match (tr.connect(addrs, t.port, __connect_bound(timeouts).as_millis() as i32)) {
     Ok(conn) => {
       return Ok(conn);
     },
@@ -1103,11 +1102,11 @@ function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: 
 }
 
 // `__connect_bound(timeouts)` — the connect bound, never past the total.
-function __connect_bound(timeouts: Timeouts): i32 {
-  if (timeouts.total_ms < timeouts.connect_ms) {
-    return timeouts.total_ms;
+function __connect_bound(timeouts: Timeouts): Duration {
+  if (timeouts.total.as_nanos() < timeouts.connect.as_nanos()) {
+    return timeouts.total;
   }
-  return timeouts.connect_ms;
+  return timeouts.connect;
 }
 
 // `__resolve(tr, host, guard)` — the addresses of `host` as `tr` reaches
@@ -1150,7 +1149,7 @@ function __global_only(found: Lookup): Result[void, FetchError] {
 // rule there, and this client's block list does not apply.
 function __send_hosted(req: Request, t: __Target): Result[HttpResponse, FetchError] {
   let body: u8[] = req.body.bytes();
-  let o: wasi_http.Outgoing = wasi_http.Outgoing { method: req.method, authority: t.host_field, tls: t.tls, target: t.target, headers: __sent_fields(req, t, body.len()), body: body, connect_ms: __connect_bound(req.timeouts), inactivity_ms: req.timeouts.inactivity_ms, body_cap: req.limits.body };
+  let o: wasi_http.Outgoing = wasi_http.Outgoing { method: req.method, authority: t.host_field, tls: t.tls, target: t.target, headers: __sent_fields(req, t, body.len()), body: body, connect: __connect_bound(req.timeouts), inactivity: req.timeouts.inactivity, body_cap: req.limits.body };
   match (wasi_http.outgoing(o)) {
     Ok(resp) => {
       return __decoded(HttpResponse { ...resp, headers: http.http_end_to_end(resp.headers) }, req);
@@ -1332,12 +1331,18 @@ function __reusable(framed: http.HttpResponseFramed, from: i32, read: i32, eof: 
 }
 
 // `__send_all(tr, conn, payload)` — every byte of `payload` written, or
-// the failure as the transport reported it. The payload is handed over as
-// the bytes it holds; a body is not text, and never read as one.
-function __send_all[T: Transport](tr: T, conn: i32, payload: string): Result[void, FetchError] {
+// the failure as the transport reported it.
+function __send_all[T: Transport](tr: T, conn: i32, payload: u8[]): Result[void, FetchError] {
   let at: i32 = 0;
   while (at < payload.len()) {
-    let n: i32 = tr.write(conn, slice_unchecked(payload, at, payload.len()).to_owned());
+    let rest: u8[] = payload;
+    if (at > 0) {
+      let b: usize = buf_new(payload.len() - at);
+      buf_push_bytes_range(b, payload, at, payload.len());
+      rest = buf_take_bytes(b);
+      buf_free(b);
+    }
+    let n: i32 = tr.write(conn, rest);
     if (n < 0) {
       return Err(Io(net.error_from_errno(0 - n)));
     }
@@ -1540,11 +1545,11 @@ function __interim(status: i32): boolean {
 // was cancelled while it waited.
 function __recv_bounded[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started: i64): Result[u8[], FetchError] {
   let ns_per_ms: i64 = 1000000;
-  let left_ms: i64 = timeouts.total_ms as i64 - (tr.now_ns() - started) / ns_per_ms;
+  let left_ms: i64 = timeouts.total.as_millis() - (tr.now_ns() - started) / ns_per_ms;
   if (left_ms <= 0) {
     return Err(Timeout(Total));
   }
-  let wait_ms: i64 = timeouts.inactivity_ms as i64;
+  let wait_ms: i64 = timeouts.inactivity.as_millis();
   let bound: Phase = Inactivity;
   if (left_ms < wait_ms) {
     wait_ms = left_ms;

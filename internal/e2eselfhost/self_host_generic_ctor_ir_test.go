@@ -371,7 +371,7 @@ func TestSelfHostGenericCtorWasmIR(t *testing.T) {
 			}
 			outWat := filepath.Join(proj, "out.wat")
 			var stderr strings.Builder
-			cmd := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat)
+			cmd := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", "-o", outWat, mainPath, stdlibRoot)
 			cmd.Stderr = &stderr
 			if cerr := cmd.Run(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, stderr.String())

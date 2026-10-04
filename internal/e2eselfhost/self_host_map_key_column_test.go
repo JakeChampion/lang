@@ -246,7 +246,7 @@ func TestSelfHostNarrowMapKeyAnswersX86_64(t *testing.T) {
 
 			asmPath := filepath.Join(dir, "narrow_map_key_"+tc.name+".s")
 			if out, err := exec.Command(cli, "-target", "x86-64-linux", "-emit", "asm",
-				prog, stdlib, "-o", asmPath).CombinedOutput(); err != nil {
+				"-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
 				t.Fatalf("self-host compile failed: %v\n%s", err, out)
 			}
 			asm, err := os.ReadFile(asmPath)

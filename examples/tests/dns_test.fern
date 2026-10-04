@@ -3,6 +3,7 @@ import "std/string";
 import "std/array";
 import "std/net";
 import "std/dns";
+import "std/time";
 
 // examples/tests/dns_test.fern — std/dns over fixture files and RFC 1035
 // messages: the wire codec both ways, with compression pointers and the
@@ -508,7 +509,7 @@ function test_resolv_conf_fixture(): test.TestOutcome {
   if (joined(rc.search) != "corp.example lab.example") {
     return test.fail("search list, trailing dot dropped");
   }
-  if (rc.ndots != 2 || rc.timeout_ms != 3000 || rc.attempts != 4 || !rc.rotate) {
+  if (rc.ndots != 2 || rc.timeout.as_millis() != 3000 as i64 || rc.attempts != 4 || !rc.rotate) {
     return test.fail("the options line");
   }
   return test.pass();
@@ -522,7 +523,7 @@ function test_resolv_conf_defaults(): test.TestOutcome {
   if (joined(rc.search) != "corp.example") {
     return test.fail("the search list is the hostname's domain");
   }
-  if (rc.ndots != 1 || rc.timeout_ms != 5000 || rc.attempts != 2 || rc.rotate) {
+  if (rc.ndots != 1 || rc.timeout.as_millis() != 5000 as i64 || rc.attempts != 2 || rc.rotate) {
     return test.fail("ndots 1, 5 s, 2 attempts, no rotation");
   }
   let bare: dns.ResolvConf = dns.parse_resolv_conf("", "vm");
@@ -537,11 +538,11 @@ function test_resolv_conf_caps(): test.TestOutcome {
   if (joined(rc.search) != "corp") {
     return test.fail("the last of domain / search wins");
   }
-  if (rc.ndots != 15 || rc.timeout_ms != 30000 || rc.attempts != 5) {
+  if (rc.ndots != 15 || rc.timeout.as_millis() != 30000 as i64 || rc.attempts != 5) {
     return test.fail("ndots caps at 15, timeout at 30 s, attempts at 5");
   }
   let low: dns.ResolvConf = dns.parse_resolv_conf("options timeout:0 attempts:0 ndots:x\n", "vm");
-  if (low.timeout_ms != 1000 || low.attempts != 1 || low.ndots != 1) {
+  if (low.timeout.as_millis() != 1000 as i64 || low.attempts != 1 || low.ndots != 1) {
     return test.fail("timeout and attempts floor at 1; a non-number keeps the default");
   }
   let many: dns.ResolvConf = dns.parse_resolv_conf("nameserver 1.1.1.1\nnameserver 2.2.2.2\nnameserver 3.3.3.3\nnameserver 4.4.4.4\n", "vm");
@@ -953,7 +954,7 @@ function test_interleave_families(): test.TestOutcome {
 
 function test_dial_options(): test.TestOutcome {
   let o: dns.DialOptions = dns.dial_options();
-  if (o.fallback_ms != 300 || o.timeout_ms != 10000) {
+  if (o.fallback.as_millis() != 300 as i64 || o.timeout.as_millis() != 10000 as i64) {
     return test.fail("300 ms between attempts, ten seconds in all");
   }
   return test.pass();

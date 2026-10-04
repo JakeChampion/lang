@@ -37,7 +37,7 @@ func testReaderBytesComponent(t *testing.T, compiler string, runner []string, st
 		if err := os.WriteFile(src, []byte(e2eharness.ReaderBytesProgram), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", src, stdlib, "-o", bin)
+		cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", "-o", bin, src, stdlib)
 		cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("component build: %v\n%s", err, out)
@@ -89,7 +89,7 @@ func TestSelfHostArm64DarwinReaderBytes(t *testing.T) {
 	for _, checked := range []bool{true, false} {
 		t.Run(map[bool]string{true: "checked", false: "plain"}[checked], func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "reader")
-			compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
+			compile := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, stdlib)
 			compile.Env = os.Environ()
 			if checked {
 				compile.Env = append(compile.Env, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1")

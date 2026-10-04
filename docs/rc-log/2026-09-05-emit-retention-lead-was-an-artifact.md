@@ -146,7 +146,7 @@ go run ./cmd/fern -target x86-64-linux -o fern_sh examples/self_host/fern.fern
 FERN_LEAKCHECK=1 go run ./cmd/fern -target x86-64-linux -o drv_native \
     examples/self_host/asm_ir_run.fern
 cd examples/self_host && FERN_LEAKCHECK=1 ../../fern_sh -target x86-64-linux \
-    -emit asm asm_ir_run.fern ../../internal/stdlib -o drv_sh.s
+    -emit asm -o drv_sh.s asm_ir_run.fern ../../internal/stdlib
 gcc -nostdlib -no-pie -o drv_selfhost drv_sh.s
 ./drv_native   < examples/self_host/x86_native.fern > /dev/null
 ./drv_selfhost < examples/self_host/x86_native.fern > /dev/null

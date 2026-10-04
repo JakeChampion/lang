@@ -37,7 +37,7 @@ func TestSelfHostWholeCompilerArm64SingleProcessEmit(t *testing.T) {
 	start := time.Now()
 	// The staged copy of fern.fern, so the input is the same bytes the driver
 	// was built from.
-	cmd := exec.Command(fernBin, "-target", "arm64-linux", "-emit", "asm", filepath.Join(dir, "fern.fern"), stdlibRoot, "-o", out)
+	cmd := exec.Command(fernBin, "-target", "arm64-linux", "-emit", "asm", "-o", out, filepath.Join(dir, "fern.fern"), stdlibRoot)
 	if msg, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("the self-host compiler could not emit the whole compiler for arm64 in one process: %v\n%s", err, msg)
 	}

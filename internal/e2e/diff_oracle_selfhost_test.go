@@ -247,7 +247,7 @@ func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, failf failFu
 		t.Fatalf("write src: %v", err)
 	}
 	asmPath := filepath.Join(dir, "prog.s")
-	compile := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", srcPath, stdlibRoot, "-o", asmPath)
+	compile := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, srcPath, stdlibRoot)
 	out, err := compile.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,

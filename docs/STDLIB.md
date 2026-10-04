@@ -1470,10 +1470,10 @@ for query ids, `now` for the wait and `reactor` for the race.
   a name with at least `ndots` dots is asked as it stands before the
   search domains, one with fewer after them, a name ending in a dot only
   as it stands.
-- `exchange(ns, q, timeout_ms)` is one query to one nameserver: UDP with
-  EDNS0, a reply to another id or question ignored, a truncated reply
-  asked again over TCP (`exchange_tcp`); `exchange_many(ns, qs,
-  timeout_ms)` sends several at once, each on its own socket, and awaits
+- `exchange(ns, q, timeout)` is one query to one nameserver within a
+  `Duration`: UDP with EDNS0, a reply to another id or question ignored,
+  a truncated reply asked again over TCP (`exchange_tcp`);
+  `exchange_many(ns, qs, timeout)` sends several at once, each on its own socket, and awaits
   the replies as one set. `ask(conf, q)` and `ask_many(conf, qs)` are
   res_send over the nameservers, `attempts` times round, from a rotating
   start under `rotate`; SERVFAIL, REFUSED, silence and an unreachable
@@ -1497,10 +1497,11 @@ for query ids, `now` for the wait and `reactor` for the race.
   `policy_of`, `scope_of` and `common_prefix_len` are the table and the
   measures the rules read; `sort_addresses(dsts)` probes and orders.
 - `connect_race(addrs, port, opts)` is the RFC 8305 dialer: the first
-  address is tried alone for `DialOptions.fallback_ms` (300, Go's
+  address is tried alone for `DialOptions.fallback` (300 ms, Go's
   attempt delay), then the next beside it, and so on, an attempt that
   fails handing its turn to the next at once; the first to connect wins
-  and the rest are closed, `TimedOut` once `timeout_ms` passes.
+  and the rest are closed, `TimedOut` once `DialOptions.timeout` (10 s)
+  passes.
   `interleave_families(addrs)` is §4's order, the families alternating
   from the first address's. `dial(name, port, opts)` resolves and races.
 - `nat64_prefixes(conf)` reads the prefixes a NAT64 translator answers
@@ -1870,8 +1871,8 @@ answer is `Result[HttpResponse, FetchError]`.
   `Protocol`, `BodyLimit` and `Decode`. `(e).message()`. It is
   `http.ToResponse`, so a handler fetching upstream fails with `?`
   (504 / 500 / 502, under "Errors a handler answers with" above).
-- **Timeouts:** `Timeouts { connect_ms, inactivity_ms, total_ms }`,
-  `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
+- **Timeouts:** `Timeouts { connect, inactivity, total }`, each a
+  `Duration`; `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
   whole address race; inactivity is the longest wait for the next byte
   of the response; total runs from the start to the last byte read.
 - **Transport:** the dialled route reaches the network only through

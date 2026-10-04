@@ -214,7 +214,7 @@ impl fetch.Transport for Net {
     return Ok(fetch.Lookup { dial: found, named: found, judged: found });
   }
   function connect(self: Net, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError] {
-    let fallback_ms: i64 = dns.dial_options().fallback_ms as i64;
+    let fallback_ms: i64 = dns.dial_options().fallback.as_millis();
     let start_ms: i64 = 0;
     let best_ms: i64 = 0 - 1;
     let best: string = "";
@@ -250,7 +250,8 @@ impl fetch.Transport for Net {
     self.conns.set(self.conns.get() + __row(id, best, port, 0 - 1, 0, 0, 0, 1));
     return Ok(id);
   }
-  function write(self: Net, conn: i32, data: string): i32 {
+  function write(self: Net, conn: i32, bytes: u8[]): i32 {
+    let data: string = string_from_bytes_unchecked(bytes);
     let row: string[] = __conn(self, conn);
     if (row.len() == 0 || row[7] != "1") {
       return 0 - 9;

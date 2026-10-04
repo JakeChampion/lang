@@ -516,6 +516,17 @@ function is_flag(a: string): boolean {
   return a[0] == b'-';
 }
 
+// flag_after_entry refuses a driver flag written after the entry file, in
+// native's words (#8465): Go's flag package stops at the first positional,
+// so reading the flag here would make the two engines read one command line
+// two ways. Native's example omits the stdlib root it has no positional for.
+function flag_after_entry(a: string): i32 {
+  eprint("fern: " + a + " comes after the source file, where driver flags are no longer parsed");
+  eprint("  a driver flag goes before FILE; an argument for the program goes after a `--` separator:");
+  eprint("    fern FILE.fern STDLIB -- " + a);
+  return 2;
+}
+
 function usage(): i32 {
   eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module|command-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]");
   eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)");
@@ -2508,9 +2519,31 @@ function run(): i32 {
   let target_given: boolean = false;
 
   let i: i32 = 1;
+  // Set once a `--` has separated the program's arguments from the driver's.
+  let prog_sep: boolean = false;
   while (i < av.len()) {
     let a: string = av[i];
-    if (a == "-check") {
+    if (have_entry) {
+      // Driver flags end at the entry file, as native's do (#8465): a later
+      // `-x` is refused rather than parsed or handed to the program unseen.
+      // The stdlib root follows the entry; the program's own arguments
+      // follow the root, behind a `--` when the first begins with `-`.
+      if (!have_root) {
+        if (is_flag(a)) {
+          return flag_after_entry(a);
+        }
+        pos = pos.append(a);
+        root = a;
+        have_root = true;
+      } else if (prog_args.len() == 0 && !prog_sep && a == "--") {
+        prog_sep = true;
+      } else if (prog_args.len() == 0 && !prog_sep && is_flag(a)) {
+        return flag_after_entry(a);
+      } else {
+        pos = pos.append(a);
+        prog_args = prog_args.append(a);
+      }
+    } else if (a == "-check") {
       mode_check = true;
     } else if (a == "-interp") {
       mode_interp = true;
@@ -2601,15 +2634,8 @@ function run(): i32 {
       return 2;
     } else {
       pos = pos.append(a);
-      if (!have_entry) {
-        entry_path = a;
-        have_entry = true;
-      } else if (!have_root) {
-        root = a;
-        have_root = true;
-      } else {
-        prog_args = prog_args.append(a);
-      }
+      entry_path = a;
+      have_entry = true;
     }
     i = i + 1;
   }

@@ -140,7 +140,7 @@ func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string) (
 		t.Fatalf("write src: %v", err)
 	}
 	binPath := filepath.Join(dir, "prog")
-	compile := exec.Command(fernBin, "-target", "arm64-linux", srcPath, stdlibRoot, "-o", binPath)
+	compile := exec.Command(fernBin, "-target", "arm64-linux", "-o", binPath, srcPath, stdlibRoot)
 	out, err := compile.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
