@@ -2779,7 +2779,7 @@ function abort_trap(s: asmcore.EmitState, label: string, msg: string, text: stri
   s = s.write(msg + ":\n    .ascii \"" + text + "\\n\"\n");
   s = s.write("    .section .text\n");
   s = s.write(label + ":\n");
-  s = s.write("    leaq " + msg + "(%rip), %rsi\n");
+  s = ssa_lea_sym(s, msg, "%rsi");
   s = s.write("    movq $" + util.i32_to_string(text.len() + 1) + ", %rdx\n");
   s = s.write("    movq $" + util.i32_to_string(status) + ", %rdi\n");
   s = s.write("    jmp __fern_report\n");
@@ -6705,9 +6705,25 @@ function ssa_branch(s: asmcore.EmitState, mnem: string, l: asmcore.Lab): asmcore
 // line skips the text path's memo lookup and comment and label scans.
 function ssa_call_sym(s: asmcore.EmitState, name: string): asmcore.EmitState {
   if (s.records()) {
-    return s.mark("\x03", "call " + name);
+    return s.named(x86_native.x86_rec_call(), name);
   }
   return s.write("    call " + name + "\n");
+}
+
+// ssa_lea_sym loads the address of `label` into `dst`.
+function ssa_lea_sym(s: asmcore.EmitState, label: string, dst: string): asmcore.EmitState {
+  if (s.records()) {
+    let d: i32 = ssa_xreg(dst);
+    if (d >= 0) {
+      return s.named(x86_native.x86_rec_lea_rip(d), label);
+    }
+  }
+  return s.write("    leaq " + label + "(%rip), " + dst + "\n");
+}
+
+// ssa_sext32 reports the width ops that are `movslq src32, dst`.
+function ssa_sext32(what: string, unsigned: boolean): boolean {
+  return what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned;
 }
 
 // ssa_blab is block `id`'s label: its id from the function's base, its name
@@ -8580,7 +8596,7 @@ function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (ins.imm == 1) {
     s = s.write("    movq " + ins.str + "(%rip), " + d + "\n");
   } else {
-    s = s.write("    leaq " + ins.str + "(%rip), " + d + "\n");
+    s = ssa_lea_sym(s, ins.str, d);
   }
   return ssa_store(reg_of, ins.result, d, s);
 }
@@ -8925,7 +8941,7 @@ function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): a
   let kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
   s = kout.state;
   let d: string = ssa_dst(reg_of, ins.result);
-  s = s.write("    leaq " + asmcore.const_agg_label(s, kout.idx) + "(%rip), " + d + "\n");
+  s = ssa_lea_sym(s, asmcore.const_agg_label(s, kout.idx), d);
   return ssa_store(reg_of, ins.result, d, s);
 }
 
@@ -8950,7 +8966,7 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
   }
   let d: string = ssa_dst(reg_of, ins.result);
-  s = s.write("    leaq " + label + "(%rip), " + d + "\n");
+  s = ssa_lea_sym(s, label, d);
   return ssa_store(reg_of, ins.result, d, s);
 }
 
@@ -9033,11 +9049,21 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     s = ssa_load(reg_of, ins.args[0], d, s);
     s = ssa_binary(ins, fr, lp, d, s);
   } else {
-    let from: string = "";
+    let src: string = "";
     if (reg_of[ins.args[0]] >= 0 && ssa_reg(reg_of[ins.args[0]]) != d) {
-      from = ssa_unary_from(ins.str, ins.imm == 1, ssa_reg(reg_of[ins.args[0]]), d);
+      src = ssa_reg(reg_of[ins.args[0]]);
     }
-    if (from != "") {
+    let from: string = "";
+    if (src != "") {
+      from = ssa_unary_from(ins.str, ins.imm == 1, src, d);
+    }
+    if (s.records() && ssa_sext32(ins.str, ins.imm == 1) && ssa_xreg(d) >= 0 && (src == "" || ssa_xreg(src) >= 0)) {
+      if (src == "") {
+        s = ssa_load(reg_of, ins.args[0], d, s);
+        src = d;
+      }
+      s = s.bytes(x86_native.x86_rec_movslq_rr(ssa_xreg(d), ssa_xreg(src)));
+    } else if (from != "") {
       s = s.write(from);
     } else {
       s = ssa_load(reg_of, ins.args[0], d, s);
@@ -9404,18 +9430,17 @@ function ssa_reg_params(f: ssa.SFunc): i32 {
 // ssa_reg_params() arguments from the caller's stack into the pool registers
 // and falls through into `__fn_<name>.r`, where a register-ABI caller enters
 // with them already there. A function with no parameters has one entry.
-function ssa_entry_shim(f: ssa.SFunc, name: string): string {
+function ssa_entry_shim(f: ssa.SFunc, name: string, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ssa_reg_params(f);
   if (k == 0) {
-    return "";
+    return s;
   }
-  let out: string = "";
   let p: i32 = 0;
   while (p < k) {
-    out = out + "    movq " + util.i32_to_string(8 + 8 * p) + "(%rsp), " + ssa_reg(p) + "\n";
+    s = ssa_mov_rm(s, 64, true, ssa_reg(p), "%rsp", 8 + 8 * p);
     p = p + 1;
   }
-  return out + "__fn_" + name + ".r:\n";
+  return s.write("__fn_" + name + ".r:\n");
 }
 
 // ssa_reg_helper names the hand-written runtime helpers with a register
@@ -9490,7 +9515,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
   let reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
-  s = s.write(ssa_entry_shim(f, asmcore.sanitize_label(label_name)));
+  s = ssa_entry_shim(f, asmcore.sanitize_label(label_name), s);
   s = ssa_release_entry(r, lp, s);
   let saved: i32[] = ssa_saved_regs(reg_of);
   let save: i32 = 8 * saved.len();
@@ -10573,7 +10598,7 @@ function emit_ir_op_map(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asm
   } else if (o.kind_tag == 127) {  // map_get
     s = s.write("    popq %rsi\n    popq %rdi\n");
     if (o.str != "") {
-      s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n");
+      s = ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(o.str), "%r8");
     } else {
       s = s.write("    xorq %r8, %r8\n");
     }
@@ -10581,7 +10606,7 @@ function emit_ir_op_map(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asm
   } else if (o.kind_tag == 128) {  // map_has
     s = s.write("    popq %rsi\n    popq %rdi\n");
     if (o.str != "") {
-      s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n");
+      s = ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(o.str), "%r8");
     } else {
       s = s.write("    xorq %r8, %r8\n");
     }
@@ -10645,7 +10670,7 @@ function map_fn_address_rax(s: asmcore.EmitState, name: string): asmcore.EmitSta
   if (name == "") {
     return s.write("    xorq %rax, %rax\n");
   }
-  return s.write("    leaq __fn_" + asmcore.sanitize_label(name) + "(%rip), %rax\n");
+  return ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(name), "%rax");
 }
 
 function emit_ir_op_map_read(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
@@ -10710,17 +10735,17 @@ function emit_ir_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   // (#9962); 0 where the op names none. ir.map_op_symbols splits the three.
   let syms: string[] = ir.map_op_symbols(o);
   if (o.i32_imm == 2 && syms[0] != "") {
-    s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[0]) + "(%rip), %r8\n");
+    s = ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(syms[0]), "%r8");
   } else {
     s = s.write("    xorq %r8, %r8\n");
   }
   if (syms[1] != "") {
-    s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[1]) + "(%rip), %r10\n");
+    s = ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(syms[1]), "%r10");
   } else {
     s = s.write("    xorq %r10, %r10\n");
   }
   if (o.i32_imm == 2 && syms[2] != "") {
-    s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[2]) + "(%rip), %r11\n");
+    s = ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(syms[2]), "%r11");
   } else {
     s = s.write("    xorq %r11, %r11\n");
   }
@@ -10780,7 +10805,7 @@ function emit_ir_op_map_get_or(o: ir.Op, i: i32, lp: string, s: asmcore.EmitStat
   let golbl: string = lp + "go" + util.i32_to_string(i);
   s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n");
   if (o.str != "") {
-    s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n");
+    s = ssa_lea_sym(s, "__fn_" + asmcore.sanitize_label(o.str), "%r8");
   } else {
     s = s.write("    xorq %r8, %r8\n");
   }
@@ -11037,7 +11062,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
       let dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
       s = dlit.state;
       let dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-      s = s.write("    leaq " + dlit.label + "(%rip), %rdx\n");
+      s = ssa_lea_sym(s, dlit.label, "%rdx");
       s = s.write("    cmpq %rdx, %rcx\n");
       s = s.write("    jne " + dnext + "\n");
       let dk: i32 = dargc - 1;
@@ -11081,7 +11106,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
           let vlit_name: string = s.struct_decls.decls[dvi].name;
           let vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, vlit_name);
           s = vlit.state;
-          s = s.write("    leaq " + vlit.label + "(%rip), %rdx\n");
+          s = ssa_lea_sym(s, vlit.label, "%rdx");
           s = s.write("    cmpq %rdx, %rcx\n");
           s = s.write("    je " + dehit + "\n");
         }
@@ -11126,7 +11151,7 @@ function emit_ir_op_dyn_box(o: ir.Op, own s: asmcore.EmitState): asmcore.EmitSta
   let dbl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
   s = dbl.state;
   s = s.write("    movq $2, %rdi\n    call __fern_arr_box\n");
-  s = s.write("    leaq " + dbl.label + "(%rip), %rcx\n");
+  s = ssa_lea_sym(s, dbl.label, "%rcx");
   s = s.write("    movq %rcx, (%rax)\n");
   s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
 
@@ -11614,7 +11639,7 @@ function emit_ir_enum_variant_payload_decs(own s: asmcore.EmitState, ety: string
         s = vlo.state;
         let vls: string = util.i32_to_string(vlabel);
         s = s.write("    movq (" + reg + "), %rax\n");  // shape ptr @0
-        s = s.write("    leaq " + vlo.label + "(%rip), %rcx\n");
+        s = ssa_lea_sym(s, vlo.label, "%rcx");
         s = s.write("    cmpq %rcx, %rax\n");
         s = s.write("    jne " + lp + "_v" + vls + "\n");
         let oi: i32 = 0;

@@ -751,6 +751,17 @@ pub function (s: EmitState) bytes(b: i32[]): EmitState {
   return s;
 }
 
+// named hands over an instruction whose last four bytes are a rel32 to the
+// symbol `name`: the \x07 record, the bytes as `bytes` records them and the
+// name on the line, which the assembler patches as it does a call's.
+pub function (s: EmitState) named(b: i32[], name: string): EmitState {
+  buf_push_byte(s.recs, b.len());
+  for x in b {
+    buf_push_byte(s.recs, x);
+  }
+  return s.mark("\x07", name);
+}
+
 // branch hands over a branch word with no displacement, and the label it goes
 // to, which the assembler resolves as it would the text's.
 pub function (s: EmitState) branch(w: i64, label: string): EmitState {
