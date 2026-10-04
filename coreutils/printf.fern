@@ -57,11 +57,44 @@ function emit(p: Pf, s: string): Pf {
   return Pf { ...p, o: p.o.write_string(s) };
 }
 
+function emit_byte(p: Pf, b: i32): Pf {
+  buf_push_byte(p.o.handle(), b);
+  return Pf { ...p, o: p.o.settle() };
+}
+
+// A range can contain partial UTF-8 scalars; only the backing source is text.
+function emit_range(p: Pf, s: string, lo: i32, hi: i32): Pf {
+  if (hi <= lo) {
+    return p;
+  }
+  if (lo == 0 && hi == s.len()) {
+    return emit(p, s);
+  }
+  return Pf { ...p, o: p.o.write_range(s, lo, hi) };
+}
+
 // `diag(p, msg)` — a diagnostic the way error() prints one: stdout is
 // flushed first, and a flush that fails drops what it held.
 function diag(p: Pf, msg: string): Pf {
   let o: io_buffered.BufWriter = p.o.flush();
   gnu.error(msg);
+  return Pf { ...p, o: o };
+}
+
+// Preserve diag's unconditional stdout flush while reporting a raw span.
+function diag_range(p: Pf, prefix: string, s: string, lo: i32, hi: i32, suffix: string): Pf {
+  let o: io_buffered.BufWriter = p.o.flush();
+  let h: usize = buf_new(prefix.len() + hi - lo + suffix.len());
+  buf_push(h, gnu.prog());
+  buf_push(h, ": ");
+  buf_push(h, prefix);
+  buf_push_range(h, s, lo, hi);
+  buf_push(h, suffix);
+  buf_push_byte(h, 10);
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  let w: Writer = stderr();
+  w.write_bytes(bytes);
   return Pf { ...p, o: o };
 }
 
@@ -165,10 +198,6 @@ function lower(b: i32): i32 {
     return b + 32;
   }
   return b;
-}
-
-function byte_str(b: i32): string {
-  return string_from_bytes_unchecked([b as u8]);
 }
 
 function octal3(b: i32): string {
@@ -337,7 +366,7 @@ function print_esc(p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, boolea
     if (digits == 0) {
       fatal(p, "missing hexadecimal number in escape");
     }
-    return (emit(p, byte_str(hex)), j, false);
+    return (emit_byte(p, hex), j, false);
   }
   if (is_octal_digit(c)) {
     let oct: i32 = c - 48;
@@ -351,7 +380,7 @@ function print_esc(p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, boolea
       j = j + 1;
       taken = taken + 1;
     }
-    return (emit(p, byte_str(oct % 256)), j, false);
+    return (emit_byte(p, oct % 256), j, false);
   }
   if (c == 117 || c == 85) {
     let want: i32 = 4;
@@ -369,10 +398,14 @@ function print_esc(p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, boolea
       fatal(p, "missing hexadecimal number in escape");
     }
     if (code >= 55296 as i64 && code <= 57343 as i64) {
-      fatal(p, "invalid universal character name \\" + byte_str(c) + hex_padded(code, want, false));
+      let marker: string = "u";
+      if (c == 85) {
+        marker = "U";
+      }
+      fatal(p, "invalid universal character name \\" + marker + hex_padded(code, want, false));
     }
     if (code < 128 as i64) {
-      return (emit(p, byte_str(code as i32)), j, false);
+      return (emit_byte(p, code as i32), j, false);
     }
     if (code <= 65535 as i64) {
       return (emit(p, "\\u" + hex_padded(code, 4, true)), j, false);
@@ -402,9 +435,9 @@ function print_esc(p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, boolea
     return (p, j, true);
   }
   if (lit >= 0) {
-    return (emit(p, byte_str(lit)), j, false);
+    return (emit_byte(p, lit), j, false);
   }
-  return (emit(p, "\\" + byte_str(c)), j, false);
+  return (emit_byte(emit_byte(p, 92), c), j, false);
 }
 
 function hex_padded(v: i64, width: i32, upper: boolean): string {
@@ -440,7 +473,7 @@ function print_b(p: Pf, s: string): (Pf, boolean) {
       j = n;
     }
     if (j > i) {
-      q = emit(q, slice_unchecked(s, i, j) + "");
+      q = emit_range(q, s, i, j);
     }
     if (j >= n) {
       break;
@@ -543,7 +576,7 @@ function char_constant(s: string): i32 {
 
 function warn_char_rest(p: Pf, s: string): Pf {
   if (s.len() > 2 && !p.posix) {
-    return diag(p, "warning: " + slice_unchecked(s, 2, s.len()) + ": character(s) following character constant have been ignored");
+    return diag_range(p, "warning: ", s, 2, s.len(), ": character(s) following character constant have been ignored");
   }
   return p;
 }
@@ -600,10 +633,6 @@ function none(): i64 {
 // `zeros` a precision wider than the digits calls for — for an integer
 // the digits are all `tail`, for `%e` and `%a` the exponent is.
 struct Field { prefix: string, head: string, zeros: i64, tail: string }
-
-function plain(body: string): Field {
-  return Field { prefix: "", head: "", zeros: 0 as i64, tail: body };
-}
 
 function signed(prefix: string, body: string): Field {
   return Field { prefix: prefix, head: "", zeros: 0 as i64, tail: body };
@@ -697,6 +726,31 @@ function pad(p: Pf, spec: Spec, f: Field, zero_ok: boolean): Pf {
   q = put_part(q, was, f.head);
   q = fill_part(q, was, "0", f.zeros);
   return put_part(q, was, f.tail);
+}
+
+// %s precision and %c select bytes, with the same width/error rules as pad.
+function pad_range(p: Pf, spec: Spec, s: string, lo: i32, hi: i32): Pf {
+  let len: i64 = (hi - lo) as i64;
+  let total: i64 = len;
+  if (spec.width > total) {
+    total = spec.width;
+  }
+  if (total >= ld.overflow_len()) {
+    return Pf { ...p, werr: true };
+  }
+  let fill: i64 = total - len;
+  let was: boolean = stream_failed(p);
+  let q: Pf = p;
+  if (!spec.minus) {
+    q = fill_part(q, was, " ", fill);
+  }
+  if (was || !stream_failed(q)) {
+    q = emit_range(q, s, lo, hi);
+  }
+  if (spec.minus) {
+    q = fill_part(q, was, " ", fill);
+  }
+  return q;
 }
 
 function sign_prefix(spec: Spec, neg: boolean): string {
@@ -982,7 +1036,7 @@ function bad_spec(p: Pf, s: string, from: i32, to: i32): void {
   if (stop > s.len()) {
     stop = s.len();
   }
-  fatal(p, slice_unchecked(s, from, stop) + ": invalid conversion specification");
+  close_stdout(diag_range(p, "", s, from, stop, ": invalid conversion specification"), 1);
 }
 
 // A `*` width: an int, or a fatal diagnostic naming it. An operand the
@@ -1116,18 +1170,18 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
   let arg: string = arg_text(args);
   let given: boolean = arg_present(args);
   if (is_c) {
-    let b: i32 = 0;
-    if (arg.len() > 0) {
-      b = arg[0] as i32;
+    let source: string = arg;
+    if (source.len() == 0) {
+      source = "\x00";
     }
-    return (pad(q, spec, plain(byte_str(b)), false), j + 1, args, false);
+    return (pad_range(q, spec, source, 0, 1), j + 1, args, false);
   }
   if (is_s) {
-    let body: string = arg;
+    let hi: i32 = arg.len();
     if (spec.prec >= 0 as i64 && spec.prec < arg.len() as i64) {
-      body = slice_unchecked(arg, 0, spec.prec as i32) + "";
+      hi = spec.prec as i32;
     }
-    return (pad(q, spec, plain(body), false), j + 1, args, false);
+    return (pad_range(q, spec, arg, 0, hi), j + 1, args, false);
   }
   let lc: i32 = lower(conv);
   if (lc == 102 || lc == 101 || lc == 103 || lc == 97) {
@@ -1158,7 +1212,7 @@ function print_formatted(p: Pf, s: string, a: Args): (Pf, Args, boolean) {
       j = j + 1;
     }
     if (j > i) {
-      q = emit(q, slice_unchecked(s, i, j) + "");
+      q = emit_range(q, s, i, j);
     }
     if (j >= n) {
       break;
@@ -1208,7 +1262,8 @@ pub function main(): i32 {
     let r: (Pf, Args, boolean) = print_formatted(p, format, a);
     p = r.0;
     if (r.2) {
-      close_stdout(p, 0);
+      gnu.close_stdout(p.o, p.werr);
+      return 0;
     }
     let used: i32 = args_consumed(r.1);
     base = base + used;
@@ -1219,6 +1274,6 @@ pub function main(): i32 {
   if (base < argv.len()) {
     p = diag(p, "warning: ignoring excess arguments, starting with " + gnu.quote(argv[base]));
   }
-  close_stdout(p, p.status);
-  return 0;
+  gnu.close_stdout(p.o, p.werr);
+  return p.status;
 }

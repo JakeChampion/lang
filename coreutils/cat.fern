@@ -102,9 +102,9 @@ function help_text(): string {
 // built once by `spell_table`, empty for a byte copied through as it is.
 // `stop` is the set a line's scan stops at: the spelled bytes and the
 // newline. `expand` is every byte's output, -E's `$` included, as the
-// eight-byte records `buf_push_expanded` reads. `tails` is a number's last
+// eight-byte records `buf_push_bytes_expanded` reads. `tails` is a number's last
 // two digits and tab by the hundred (`number_tails`), for -n and -b.
-struct Fmt { number: boolean, nonblank: boolean, squeeze: boolean, ends: boolean, tabs: boolean, np: boolean, spell: string[], stop: u8[], expand: u8[], tails: string }
+struct Fmt { number: boolean, nonblank: boolean, squeeze: boolean, ends: boolean, tabs: boolean, np: boolean, spell: u8[][], stop: u8[], expand: u8[], tails: string }
 
 function is_plain(f: Fmt): boolean {
   return !f.number && !f.nonblank && !f.squeeze && !f.ends && !f.tabs && !f.np;
@@ -124,48 +124,49 @@ function is_squeeze_only(f: Fmt): boolean {
 // for DEL, `M-` and then the same rule on the low seven bits above
 // 127; a tab is `^I` only under -T, and without -v nothing else is
 // touched. Empty when the byte is copied as it is.
-function spelling(b: i32, f: Fmt): string {
+function spelling(b: i32, f: Fmt): u8[] {
   if (b == 9) {
     if (f.tabs) {
-      return "^I";
+      return [b'^', b'I'];
     }
-    return "";
+    return [];
   }
   if (!f.np || b >= 32 && b < 127 || b == 10) {
-    return "";
+    return [];
   }
-  let out: string = "";
-  let c: i32 = b;
-  if (c >= 128) {
-    out = "M-";
-    c = c - 128;
+  if (b >= 128) {
+    let c: i32 = b - 128;
+    if (c < 32) {
+      return [b'M', b'-', b'^', (c + 64) as u8];
+    }
+    if (c == 127) {
+      return [b'M', b'-', b'^', b'?'];
+    }
+    return [b'M', b'-', c as u8];
   }
-  if (c < 32) {
-    return out + "^" + string_from_bytes_unchecked([(c + 64) as u8]);
+  if (b < 32) {
+    return [b'^', (b + 64) as u8];
   }
-  if (c == 127) {
-    return out + "^?";
-  }
-  return out + string_from_bytes_unchecked([c as u8]);
+  return [b'^', b'?'];
 }
 
 function spell_table(f: Fmt): Fmt {
-  let tab: string[] = [];
+  let tab: u8[][] = [];
   let stop: u8[] = __alloc_u8(256);
   let expand: u8[] = __alloc_u8(2048);
   let b: i32 = 0;
   while (b < 256) {
-    let s: string = spelling(b, f);
+    let s: u8[] = spelling(b, f);
     tab = tab.append(s);
     stop = stop.with(b, s.len() as u8);
-    let out: string = s;
+    let out: u8[] = s;
     if (b == 10) {
-      out = "\n";
+      out = [b'\n'];
       if (f.ends) {
-        out = "$\n";
+        out = [b'$', b'\n'];
       }
     } else if (s.len() == 0) {
-      out = string_from_bytes_unchecked([b as u8]);
+      out = [b as u8];
     }
     expand = expand.with(b * 8, out.len() as u8);
     let k: i32 = 0;
@@ -273,7 +274,7 @@ function drain(s: State): State {
 // on the way. The scan is one memchr per line; a body is appended whole,
 // with its newline, unless -v / -T has bytes to spell out or -E puts a
 // `$` before the newline.
-function format_chunk(st: State, chunk: string, f: Fmt): State {
+function format_chunk(st: State, chunk: u8[], f: Fmt): State {
   let s: State = st;
   let w: io_buffered.BufWriter = s.w;
   let h: usize = w.handle();
@@ -306,7 +307,7 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
   }
   let pending_cr: boolean = false;
   while (pos < len) {
-    let nl: i32 = __memchr(chunk, 10, pos);
+    let nl: i32 = __memchr_bytes(chunk, 10, pos);
     let end: i32 = nl;
     if (nl < 0) {
       end = len;
@@ -333,31 +334,32 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
     }
     if (spell) {
       // The stop set holds the newline, so the scan never passes `end`.
-      let i: i32 = __scan_set(chunk, pos, stop);
+      let i: i32 = __scan_set_bytes(chunk, pos, stop);
       while (i < end) {
-        buf_push_range(h, chunk, pos, i);
-        buf_push(h, f.spell[chunk[i] as i32]);
+        buf_push_bytes_range(h, chunk, pos, i);
+        let spelled: u8[] = f.spell[chunk[i] as i32];
+        buf_push_bytes_range(h, spelled, 0, spelled.len());
         pos = i + 1;
-        i = __scan_set(chunk, pos, stop);
+        i = __scan_set_bytes(chunk, pos, stop);
       }
     }
     if (nl < 0) {
       if (cr_mark && chunk[len - 1] as i32 == 13) {
-        buf_push_range(h, chunk, pos, len - 1);
+        buf_push_bytes_range(h, chunk, pos, len - 1);
         pending_cr = true;
       } else {
-        buf_push_range(h, chunk, pos, len);
+        buf_push_bytes_range(h, chunk, pos, len);
       }
       pos = len;
     } else {
       if (cr_mark && nl > pos && chunk[nl - 1] as i32 == 13) {
-        buf_push_range(h, chunk, pos, nl - 1);
+        buf_push_bytes_range(h, chunk, pos, nl - 1);
         buf_push(h, "^M$\n");
       } else if (ends) {
-        buf_push_range(h, chunk, pos, nl);
+        buf_push_bytes_range(h, chunk, pos, nl);
         buf_push(h, "$\n");
       } else {
-        buf_push_range(h, chunk, pos, nl + 1);
+        buf_push_bytes_range(h, chunk, pos, nl + 1);
       }
       at_start = true;
       pos = nl + 1;
@@ -373,17 +375,17 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
 // chunk is one expansion into the builder. A CR under -E without -v
 // depends on the byte after it, so a chunk holding one takes the line
 // rewriter instead.
-function spell_chunk(st: State, chunk: string, f: Fmt): State {
-  if (f.ends && !f.np && (st.pending_cr || __memchr(chunk, 13, 0) >= 0)) {
+function spell_chunk(st: State, chunk: u8[], f: Fmt): State {
+  if (f.ends && !f.np && (st.pending_cr || __memchr_bytes(chunk, 13, 0) >= 0)) {
     return format_chunk(st, chunk, f);
   }
-  return State { ...st, w: gnu.check(st.w.write_expanded(chunk, f.expand)), at_start: chunk[chunk.len() - 1] as i32 == 10 };
+  return State { ...st, w: gnu.check(st.w.write_bytes_expanded(chunk, f.expand)), at_start: chunk[chunk.len() - 1] as i32 == 10 };
 }
 
 // `squeeze_chunk(st, chunk)` — -s with nothing else: a run of
 // non-blank lines is one append, and a blank line is dropped when the
 // one before it was blank too.
-function squeeze_chunk(st: State, chunk: string): State {
+function squeeze_chunk(st: State, chunk: u8[]): State {
   let s: State = st;
   let w: io_buffered.BufWriter = s.w;
   let h: usize = w.handle();
@@ -401,9 +403,9 @@ function squeeze_chunk(st: State, chunk: string): State {
       continue;
     }
     // The run ends with the newline a blank line follows, or the chunk.
-    let q: i32 = __memchr(chunk, 10, pos);
+    let q: i32 = __memchr_bytes(chunk, 10, pos);
     while (q >= 0 && q + 1 < len && chunk[q + 1] as i32 != 10) {
-      q = __memchr(chunk, 10, q + 1);
+      q = __memchr_bytes(chunk, 10, q + 1);
     }
     let end: i32 = len;
     at_start = false;
@@ -411,7 +413,7 @@ function squeeze_chunk(st: State, chunk: string): State {
       end = q + 1;
       at_start = true;
     }
-    buf_push_range(h, chunk, pos, end);
+    buf_push_bytes_range(h, chunk, pos, end);
     prev_blank = false;
     pos = end;
     w = gnu.settle(w);
@@ -503,13 +505,13 @@ function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
     done = splice_all(r);
   }
   while (!done) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           break;
         }
         if (plain) {
-          s = State { ...s, w: gnu.put(s.w, chunk) };
+          s = State { ...s, w: gnu.check(s.w.write_bytes(chunk)) };
         } else if (squeeze_only) {
           s = squeeze_chunk(s, chunk);
         } else if (spell_only) {

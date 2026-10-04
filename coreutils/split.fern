@@ -514,11 +514,12 @@ function suffix_needed(n: u64, base: i32): i32 {
 // writes to.
 struct Out { s: Settings, sfx: Suffix, w: io_buffered.BufWriter, open: boolean, name: string, so: io_buffered.BufWriter, to_stdout: boolean }
 
-// `w` starts as a placeholder over stdout that is never written to:
-// `open` is what says whether it is a real piece, and every writer here
-// calls `out_begin` before `out_put`.
+// Until a piece is open, `w` borrows the stdout buffer as its placeholder.
+// This avoids allocating a separate buffer that never receives output.
+// `open` guards every use and close of the piece writer.
 function out_new(s: Settings, sfx: Suffix, to_stdout: boolean): Out {
-  return Out { s: s, sfx: sfx, w: io_buffered.buf_writer_new(stdout(), 1), open: false, name: "", so: gnu.out_with(65536), to_stdout: to_stdout };
+  let so: io_buffered.BufWriter = gnu.out_with(65536);
+  return Out { s: s, sfx: sfx, w: so, open: false, name: "", so: so, to_stdout: to_stdout };
 }
 
 // The name a piece would take, and the counter moved on. Running out of
@@ -565,14 +566,18 @@ function out_begin(o: Out): Out {
   return next;
 }
 
-function out_put(o: Out, data: string): Out {
-  if (data.len() == 0) {
+function out_put(o: Out, data: u8[]): Out {
+  return out_put_range(o, data, 0, data.len());
+}
+
+function out_put_range(o: Out, data: u8[], lo: i32, hi: i32): Out {
+  if (hi <= lo) {
     return o;
   }
   if (o.to_stdout) {
-    return Out { ...o, so: gnu.put(o.so, data) };
+    return Out { ...o, so: gnu.check(o.so.write_bytes_range(data, lo, hi)) };
   }
-  let w: io_buffered.BufWriter = o.w.write_string(data);
+  let w: io_buffered.BufWriter = o.w.write_bytes_range(data, lo, hi);
   match (w.error()) {
     Some(e) => {
       gnu.error(o.name + ": " + gnu.io_error_text(e));
@@ -606,13 +611,39 @@ function out_finish(o: Out): void {
 // `Src` — the input as a stream of blocks. `mem` is what has already been
 // read (the size probe's prefix, or a whole small input); the Reader
 // supplies the rest once it is drained.
-struct Src { r: Reader, name: string, mem: string, pos: i32, eof: boolean }
+struct Src { r: Reader, name: string, mem: u8[], pos: i32, eof: boolean }
 
-function src_new(r: Reader, name: string): Src {
-  return Src { r: r, name: name, mem: "", pos: 0, eof: false };
+function copy_bytes(bytes: u8[], lo: i32, hi: i32): u8[] {
+  if (lo == 0 && hi == bytes.len()) {
+    return bytes;
+  }
+  let h: usize = buf_new(hi - lo);
+  buf_push_bytes_range(h, bytes, lo, hi);
+  let out: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return out;
 }
 
-function src_mem(r: Reader, name: string, mem: string): Src {
+function join_bytes(left: u8[], right: u8[]): u8[] {
+  if (left.len() == 0) {
+    return right;
+  }
+  if (right.len() == 0) {
+    return left;
+  }
+  let h: usize = buf_new(left.len() + right.len());
+  buf_push_bytes_range(h, left, 0, left.len());
+  buf_push_bytes_range(h, right, 0, right.len());
+  let out: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+function src_new(r: Reader, name: string): Src {
+  return Src { r: r, name: name, mem: [], pos: 0, eof: false };
+}
+
+function src_mem(r: Reader, name: string, mem: u8[]): Src {
   return Src { r: r, name: name, mem: mem, pos: 0, eof: true };
 }
 
@@ -620,29 +651,29 @@ function read_size(): i32 {
   return 65536;
 }
 
-// Up to `n` more bytes, or "" at end of input. A read failure is GNU's
+// Up to `n` more bytes, or an empty array at end of input. A read failure is GNU's
 // `split: NAME: <strerror>` and exit 1 — the same shape whether NAME is
 // an operand or the `-` that stands for stdin.
-function src_read(s: Src, n: i32): (string, Src) {
+function src_read(s: Src, n: i32): (u8[], Src) {
   if (s.pos < s.mem.len()) {
     let end: i32 = s.pos + n;
     if (end > s.mem.len()) {
       end = s.mem.len();
     }
-    let got: string = slice_unchecked(s.mem, s.pos, end) + "";
+    let got: u8[] = copy_bytes(s.mem, s.pos, end);
     let rest: Src = Src { ...s, pos: end };
     if (end >= s.mem.len()) {
-      rest = Src { ...rest, mem: "", pos: 0 };
+      rest = Src { ...rest, mem: [], pos: 0 };
     }
     return (got, rest);
   }
   if (s.eof) {
-    return ("", s);
+    return ([], s);
   }
-  match (s.r.read_chunk(n)) {
+  match (s.r.read_chunk_bytes(n)) {
     Ok(chunk) => {
       if (chunk.len() == 0) {
-        return ("", Src { ...s, eof: true });
+        return ([], Src { ...s, eof: true });
       }
       return (chunk, s);
     },
@@ -651,7 +682,7 @@ function src_read(s: Src, n: i32): (string, Src) {
       exit(1);
     }
   }
-  return ("", s);
+  return ([], s);
 }
 
 // ---- the temporary spool ---------------------------------------------------
@@ -700,7 +731,7 @@ function temp_name(root: string): string {
 // The Reader is opened, and the name removed, before anything is written,
 // as GNU's create_temp_file unlinks at creation: the input never exists
 // under a name, so a signal mid-spool leaves at most an empty file.
-function spool(s: Src, first: string): (Src, i64) {
+function spool(s: Src, first: u8[]): (Src, i64) {
   let root: string = tmp_root();
   let path: string = "";
   let w: Writer = stdout();
@@ -743,11 +774,11 @@ function spool(s: Src, first: string): (Src, i64) {
   drop_spool(path);
   let total: i64 = 0 as i64;
   let buf: io_buffered.BufWriter = io_buffered.buf_writer_new(w, 65536);
-  let block: string = first;
+  let block: u8[] = first;
   let src: Src = s;
   while (block.len() > 0) {
     total = total + block.len() as i64;
-    buf = buf.write_string(block);
+    buf = buf.write_bytes(block);
     match (buf.error()) {
       Some(e) => {
         gnu.error(path + ": " + gnu.io_error_text(e));
@@ -755,7 +786,7 @@ function spool(s: Src, first: string): (Src, i64) {
       },
       None => {}
     }
-    let r: (string, Src) = src_read(src, read_size());
+    let r: (u8[], Src) = src_read(src, read_size());
     block = r.0;
     src = r.1;
   }
@@ -802,8 +833,8 @@ function sized(s: Src, r: Reader): (Src, i64) {
     },
     Err(_) => {}
   }
-  let head: (string, Src) = src_read(s, read_size());
-  let first: string = head.0;
+  let head: (u8[], Src) = src_read(s, read_size());
+  let first: u8[] = head.0;
   let rest: Src = head.1;
   if (rest.eof) {
     return (src_mem(rest.r, rest.name, first), first.len() as i64);
@@ -812,7 +843,7 @@ function sized(s: Src, r: Reader): (Src, i64) {
 }
 
 // ---- the split modes -------------------------------------------------------
-// `-l N`: N records per file. One `__count_byte` decides a whole block —
+// `-l N`: N records per file. One `__count_byte_bytes` decides a whole block —
 // fewer separators in it than are still wanted and it goes out unsplit —
 // so only the block that reaches the count is walked.
 function split_lines(s: Settings, o: Out, src: Src): Out {
@@ -821,36 +852,33 @@ function split_lines(s: Settings, o: Out, src: Src): Out {
   let left: u64 = s.units;
   let started: boolean = false;
   while (true) {
-    let r: (string, Src) = src_read(input, read_size());
-    let block: string = r.0;
+    let r: (u8[], Src) = src_read(input, read_size());
+    let block: u8[] = r.0;
     input = r.1;
     if (block.len() == 0) {
       return out;
     }
     let at: i32 = 0;
+    let here: u64 = __count_byte_bytes(block, s.sep) as u64;
     while (at < block.len()) {
-      let rest: string = block;
-      if (at > 0) {
-        rest = slice_unchecked(block, at, block.len()) + "";
-      }
-      let here: u64 = __count_byte(rest, s.sep) as u64;
       if (!started) {
         out = out_begin(out);
         started = true;
       }
       if (here < left) {
-        out = out_put(out, rest);
+        out = out_put_range(out, block, at, block.len());
         left = left - here;
         at = block.len();
       } else {
         let cut: i32 = at;
         let want: u64 = left;
         while (want > 0 as u64) {
-          cut = __memchr(block, s.sep, cut) + 1;
+          cut = __memchr_bytes(block, s.sep, cut) + 1;
           want = want - 1 as u64;
         }
-        out = out_put(out, slice_unchecked(block, at, cut) + "");
+        out = out_put_range(out, block, at, cut);
         at = cut;
+        here = here - left;
         left = s.units;
         started = false;
       }
@@ -866,8 +894,8 @@ function split_bytes(s: Settings, o: Out, src: Src): Out {
   let left: u64 = s.units;
   let started: boolean = false;
   while (true) {
-    let r: (string, Src) = src_read(input, read_size());
-    let block: string = r.0;
+    let r: (u8[], Src) = src_read(input, read_size());
+    let block: u8[] = r.0;
     input = r.1;
     if (block.len() == 0) {
       return out;
@@ -883,13 +911,13 @@ function split_bytes(s: Settings, o: Out, src: Src): Out {
         if (at == 0) {
           out = out_put(out, block);
         } else {
-          out = out_put(out, slice_unchecked(block, at, block.len()) + "");
+          out = out_put_range(out, block, at, block.len());
         }
         left = left - have;
         at = block.len();
       } else {
         let take: i32 = left as i32;
-        out = out_put(out, slice_unchecked(block, at, at + take) + "");
+        out = out_put_range(out, block, at, at + take);
         at = at + take;
         left = s.units;
         started = false;
@@ -900,14 +928,14 @@ function split_bytes(s: Settings, o: Out, src: Src): Out {
 }
 
 // `-C N`: whole records, up to N bytes per file. The last separator
-// inside the remaining budget is found with one `__rmemchr`, so a file is
+// inside the remaining budget is found with one `__rmemchr_bytes`, so a file is
 // filled in one write rather than one per record; a record longer than N
 // on its own is cut at exactly N, which is the only way a `-C` piece ends
 // mid-record.
 function split_line_bytes(s: Settings, o: Out, src: Src): Out {
   let out: Out = o;
   let input: Src = src;
-  let buf: string = "";
+  let buf: u8[] = [];
   let used: u64 = 0 as u64;
   let started: boolean = false;
   let eof: boolean = false;
@@ -922,14 +950,14 @@ function split_line_bytes(s: Settings, o: Out, src: Src): Out {
     // reading more is what keeps the buffer one record long instead of
     // `-C SIZE` long — with `-C 8M` the other order copies a growing
     // 8 MiB buffer once per read.
-    let j: i32 = __rmemchr(buf, s.sep, hi - 1);
+    let j: i32 = __rmemchr_bytes(buf, s.sep, hi - 1);
     if (j >= 0) {
       if (!started) {
         out = out_begin(out);
         started = true;
       }
-      out = out_put(out, slice_unchecked(buf, 0, j + 1) + "");
-      buf = slice_unchecked(buf, j + 1, buf.len()) + "";
+      out = out_put_range(out, buf, 0, j + 1);
+      buf = copy_bytes(buf, j + 1, buf.len());
       used = used + (j + 1) as u64;
       if (used >= s.units) {
         used = 0 as u64;
@@ -938,18 +966,26 @@ function split_line_bytes(s: Settings, o: Out, src: Src): Out {
       continue;
     }
     if (!eof && buf.len() as u64 < avail) {
+      // A partial record can span many reads. Accumulate it in one builder
+      // and inspect only newly read bytes, rather than recopying and rescanning
+      // the entire prefix on every read.
+      if (buf.len() > 0) {
+        let more: (u8[], Src, boolean) = extend_record(input, buf, avail, s.sep);
+        buf = more.0;
+        input = more.1;
+        eof = more.2;
+        continue;
+      }
       let want: i32 = read_size();
       if (avail - buf.len() as u64 < want as u64) {
         want = (avail - buf.len() as u64) as i32;
       }
-      let r: (string, Src) = src_read(input, want);
+      let r: (u8[], Src) = src_read(input, want);
       input = r.1;
       if (r.0.len() == 0) {
         eof = true;
-      } else if (buf.len() == 0) {
-        buf = r.0;
       } else {
-        buf = buf + r.0;
+        buf = r.0;
       }
       continue;
     }
@@ -976,12 +1012,41 @@ function split_line_bytes(s: Settings, o: Out, src: Src): Out {
       out = out_begin(out);
       started = true;
     }
-    out = out_put(out, slice_unchecked(buf, 0, hi) + "");
-    buf = slice_unchecked(buf, hi, buf.len()) + "";
+    out = out_put_range(out, buf, 0, hi);
+    buf = copy_bytes(buf, hi, buf.len());
     used = 0 as u64;
     started = false;
   }
   return out;
+}
+
+// Extend a separator-free prefix until a record ends, the byte budget is
+// exhausted, or input ends. The builder grows geometrically for long records.
+function extend_record(src: Src, prefix: u8[], budget: u64, sep: i32): (u8[], Src, boolean) {
+  let input: Src = src;
+  let h: usize = buf_new(prefix.len());
+  buf_push_bytes_range(h, prefix, 0, prefix.len());
+  let eof: boolean = false;
+  while (buf_len(h) as u64 < budget) {
+    let left: u64 = budget - buf_len(h) as u64;
+    let want: i32 = read_size();
+    if (left < want as u64) {
+      want = left as i32;
+    }
+    let r: (u8[], Src) = src_read(input, want);
+    input = r.1;
+    if (r.0.len() == 0) {
+      eof = true;
+      break;
+    }
+    buf_push_bytes_range(h, r.0, 0, r.0.len());
+    if (__memchr_bytes(r.0, sep, 0) >= 0) {
+      break;
+    }
+  }
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return (bytes, input, eof);
 }
 
 // ---- `-n` ------------------------------------------------------------------
@@ -1018,7 +1083,7 @@ function split_chunk_bytes(s: Settings, o: Out, src: Src, size: i64): Out {
       if (want < n as u64) {
         n = want as i32;
       }
-      let r: (string, Src) = src_read(input, n);
+      let r: (u8[], Src) = src_read(input, n);
       input = r.1;
       if (r.0.len() == 0) {
         want = 0 as u64;
@@ -1037,7 +1102,7 @@ function split_chunk_bytes(s: Settings, o: Out, src: Src, size: i64): Out {
 
 // `-n l/N` and `-n l/K/N`: chunks that never cut a record. A chunk runs
 // to the first record boundary at or after its byte end, so the bytes
-// before that end need no scanning at all — one `__memchr` per chunk
+// before that end need no scanning at all — one `__memchr_bytes` per chunk
 // finds the boundary.
 //
 // GNU asserts `n <= file_size` here and, with the assertion compiled out,
@@ -1077,7 +1142,7 @@ function split_chunk_lines(s: Settings, o: Out, src: Src, size: i64): Out {
       if (end - pos < n as u64) {
         n = (end - pos) as i32;
       }
-      let r: (string, Src) = src_read(input, n);
+      let r: (u8[], Src) = src_read(input, n);
       input = r.1;
       if (r.0.len() == 0) {
         pos = end;
@@ -1096,14 +1161,14 @@ function split_chunk_lines(s: Settings, o: Out, src: Src, size: i64): Out {
     }
     // Then the tail of the record the byte end landed inside.
     while (!at_boundary && pos < total) {
-      let rr: (string, Src) = src_read(input, read_size());
+      let rr: (u8[], Src) = src_read(input, read_size());
       input = rr.1;
-      let block: string = rr.0;
+      let block: u8[] = rr.0;
       if (block.len() == 0) {
         pos = total;
         at_boundary = true;
       } else {
-        let j: i32 = __memchr(block, s.sep, 0);
+        let j: i32 = __memchr_bytes(block, s.sep, 0);
         let take: i32 = block.len();
         if (j >= 0) {
           take = j + 1;
@@ -1114,12 +1179,12 @@ function split_chunk_lines(s: Settings, o: Out, src: Src, size: i64): Out {
             out = out_begin(out);
             opened = true;
           }
-          out = out_put(out, slice_unchecked(block, 0, take) + "");
+          out = out_put_range(out, block, 0, take);
         }
         ends_sep = block[take - 1] as i32 == s.sep;
         pos = pos + take as u64;
         if (take < block.len()) {
-          input = src_pushback(input, slice_unchecked(block, take, block.len()) + "");
+          input = src_pushback(input, copy_bytes(block, take, block.len()));
         }
       }
     }
@@ -1135,11 +1200,11 @@ function split_chunk_lines(s: Settings, o: Out, src: Src, size: i64): Out {
 }
 
 // Give back bytes read past a record boundary, so the next chunk sees
-// them. The block a `read_chunk` hands over is the only place they can
+// them. The block a `read_chunk_bytes` hands over is the only place they can
 // live; `mem` is empty here because the scan drained it first.
-function src_pushback(s: Src, rest: string): Src {
+function src_pushback(s: Src, rest: u8[]): Src {
   if (s.pos < s.mem.len()) {
-    return Src { ...s, mem: rest + slice_unchecked(s.mem, s.pos, s.mem.len()), pos: 0 };
+    return Src { ...s, mem: join_bytes(rest, copy_bytes(s.mem, s.pos, s.mem.len())), pos: 0 };
   }
   return Src { ...s, mem: rest, pos: 0 };
 }
@@ -1148,14 +1213,10 @@ function src_pushback(s: Src, rest: string): Src {
 // — record i goes to file i mod N — so this is the one `-n` form that
 // streams a pipe without spooling it.
 //
-// A block at a time, not a record at a time. The record ends in the block
-// are found once, and then each output file takes its share in ONE write:
-// every record of the share is one range push into a builder, copied
-// straight out of the block, and the share is taken out of it without
-// another copy. Dealing record by record into per-file buffers is the
-// obvious shape and is 200x slower: a BufWriter read out of an array is
-// aliased by the array, so appending to it copies the whole buffer
-// instead of growing it in place.
+// Find complete record ends once per block, then collect each output's
+// ranges in a reusable builder for one write. An unfinished record goes to
+// its current output immediately, without advancing the slot. One shared
+// builder collects each batch instead of keeping a buffer per output file.
 function split_round(s: Settings, o: Out, src: Src): Out {
   let out: Out = o;
   let input: Src = src;
@@ -1185,42 +1246,29 @@ function split_round(s: Settings, o: Out, src: Src): Out {
   }
   let n: i32 = names.len();
   let slot: i32 = 0;
-  let buf: string = "";
   let share_buf: usize = buf_new(round_block());
-  let eof: boolean = false;
   while (true) {
-    if (!eof) {
-      let rd: (string, Src) = src_read(input, round_block());
-      input = rd.1;
-      if (rd.0.len() == 0) {
-        eof = true;
-      } else if (buf.len() == 0) {
-        buf = rd.0;
-      } else {
-        buf = buf + rd.0;
-      }
-      if (!eof) {
-        continue;
-      }
-    }
+    let rd: (u8[], Src) = src_read(input, round_block());
+    input = rd.1;
+    let buf: u8[] = rd.0;
     if (buf.len() == 0) {
       break;
     }
-    // Record ends inside the buffer. At EOF an unterminated tail is a
-    // record of its own, so it joins the list.
+    // Include the trailing fragment in writes, but advance the slot only
+    // for completed records. The next block may continue that fragment.
     let ends: i32[] = [];
     let at: i32 = 0;
     while (at < buf.len()) {
-      let j: i32 = __memchr(buf, s.sep, at);
+      let j: i32 = __memchr_bytes(buf, s.sep, at);
       if (j < 0) {
         break;
       }
       ends = ends.append(j + 1);
       at = j + 1;
     }
-    if (eof && at < buf.len()) {
+    let completed: i32 = ends.len();
+    if (at < buf.len()) {
       ends = ends.append(buf.len());
-      at = buf.len();
     }
     let k: i32 = 0;
     while (k < n && k < ends.len()) {
@@ -1230,10 +1278,10 @@ function split_round(s: Settings, o: Out, src: Src): Out {
         if (e > 0) {
           from = ends[e - 1];
         }
-        buf_push_range(share_buf, buf, from, ends[e]);
+        buf_push_bytes_range(share_buf, buf, from, ends[e]);
         e = e + n;
       }
-      let share: string = buf_take(share_buf);
+      let share: u8[] = buf_take_bytes(share_buf);
       let target: i32 = (slot + k) % n;
       if (!live[target]) {
         out = out_verbose(out, names[target]);
@@ -1243,15 +1291,7 @@ function split_round(s: Settings, o: Out, src: Src): Out {
       write_fd(ws[target], names[target], share);
       k = k + 1;
     }
-    slot = (slot + ends.len()) % n;
-    if (at < buf.len()) {
-      buf = slice_unchecked(buf, at, buf.len()) + "";
-    } else {
-      buf = "";
-    }
-    if (eof) {
-      break;
-    }
+    slot = (slot + completed) % n;
   }
   buf_free(share_buf);
   let c: i32 = 0;
@@ -1281,26 +1321,21 @@ function split_round_one(s: Settings, o: Out, src: Src): Out {
   let out: Out = o;
   let input: Src = src;
   let slot: u64 = 1 as u64;
-  let buf: string = "";
-  let eof: boolean = false;
   while (true) {
-    if (!eof) {
-      let rd: (string, Src) = src_read(input, read_size());
-      input = rd.1;
-      if (rd.0.len() == 0) {
-        eof = true;
-      } else {
-        buf = buf + rd.0;
-      }
+    let rd: (u8[], Src) = src_read(input, read_size());
+    input = rd.1;
+    let buf: u8[] = rd.0;
+    if (buf.len() == 0) {
+      break;
     }
     let at: i32 = 0;
     while (at < buf.len()) {
-      let j: i32 = __memchr(buf, s.sep, at);
+      let j: i32 = __memchr_bytes(buf, s.sep, at);
       if (j < 0) {
         break;
       }
       if (slot == s.chunk_k) {
-        out = out_put(out, slice_unchecked(buf, at, j + 1) + "");
+        out = out_put_range(out, buf, at, j + 1);
       }
       at = j + 1;
       slot = slot + 1 as u64;
@@ -1308,15 +1343,9 @@ function split_round_one(s: Settings, o: Out, src: Src): Out {
         slot = 1 as u64;
       }
     }
-    if (at > 0) {
-      buf = slice_unchecked(buf, at, buf.len()) + "";
+    if (at < buf.len() && slot == s.chunk_k) {
+      out = out_put_range(out, buf, at, buf.len());
     }
-    if (eof) {
-      break;
-    }
-  }
-  if (buf.len() > 0 && slot == s.chunk_k) {
-    out = out_put(out, buf);
   }
   return out;
 }
@@ -1342,11 +1371,11 @@ function open_out(name: string): Writer {
   return stdout();
 }
 
-function write_fd(w: Writer, name: string, data: string): void {
+function write_fd(w: Writer, name: string, data: u8[]): void {
   if (data.len() == 0) {
     return;
   }
-  match (w.write(data)) {
+  match (w.write_bytes(data)) {
     Some(e) => {
       gnu.error(name + ": " + gnu.io_error_text(e));
       exit(1);

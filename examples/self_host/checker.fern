@@ -736,7 +736,7 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__store_ptr") {
     return t_void();
   }
-  if (argc == 5 && name == "__mismatch") {
+  if (argc == 5 && (name == "__mismatch" || name == "__mismatch_bytes")) {
     return t_i32();
   }
   if (argc == 1 && name == "__sum_bytes") {
@@ -751,7 +751,7 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 3 && (name == "__scan_set" || name == "__scan_set_bytes")) {
     return t_i32();
   }
-  if (argc == 3 && name == "__count_runs") {
+  if (argc == 3 && (name == "__count_runs" || name == "__count_runs_bytes")) {
     return t_i32();
   }
   if (argc == 2 && name == "__bsd_sum") {
@@ -760,13 +760,19 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__count_byte") {
     return t_i32();
   }
-  if (argc == 2 && name == "__crc32_cksum") {
+  if (argc == 2 && (name == "__crc32_cksum" || name == "__crc32_cksum_array")) {
     return t_i32();
   }
   if (argc == 3 && name == "__memchr") {
     return t_i32();
   }
   if (argc == 2 && name == "__count_byte_bytes") {
+    return t_i32();
+  }
+  if (argc == 1 && name == "__sum_bytes_array") {
+    return t_i32();
+  }
+  if (argc == 2 && name == "__bsd_sum_bytes") {
     return t_i32();
   }
   if (argc == 3 && (name == "__memchr_bytes" || name == "__rmemchr_bytes")) {
@@ -932,6 +938,9 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   if (name == "__mismatch") {
     return ([t_string(), t_i32(), t_string(), t_i32(), t_i32()], true);
   }
+  if (name == "__mismatch_bytes") {
+    return ([t_array(t_u8()), t_i32(), t_array(t_u8()), t_i32(), t_i32()], true);
+  }
   if (name == "__sum_bytes") {
     return ([t_string()], true);
   }
@@ -950,6 +959,9 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   if (name == "__count_runs") {
     return ([t_string(), t_i32(), t_array(t_u8())], true);
   }
+  if (name == "__count_runs_bytes") {
+    return ([t_array(t_u8()), t_i32(), t_array(t_u8())], true);
+  }
   if (name == "__bsd_sum") {
     return ([t_string(), t_i32()], true);
   }
@@ -959,10 +971,19 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   if (name == "__crc32_cksum") {
     return ([t_i32(), t_string()], true);
   }
+  if (name == "__crc32_cksum_array") {
+    return ([t_i32(), t_array(t_u8())], true);
+  }
   if (name == "__memchr" || name == "__rmemchr") {
     return ([t_string(), t_i32(), t_i32()], true);
   }
   if (name == "__count_byte_bytes") {
+    return ([t_array(t_u8()), t_i32()], true);
+  }
+  if (name == "__sum_bytes_array") {
+    return ([t_array(t_u8())], true);
+  }
+  if (name == "__bsd_sum_bytes") {
     return ([t_array(t_u8()), t_i32()], true);
   }
   if (name == "__memchr_bytes" || name == "__rmemchr_bytes") {
@@ -4546,6 +4567,9 @@ function builtin_sigs(): string[] {
     "buf_new(i32): usize",
     "buf_push(usize, string): void",
     "buf_push_byte(usize, i32): void",
+    "buf_push_bytes_expanded(usize, u8[], u8[]): void",
+    "buf_push_bytes_filtered(usize, u8[], u8[]): void",
+    "buf_push_bytes_mapped(usize, u8[], u8[]): void",
     "buf_push_bytes_range(usize, u8[], i32, i32): void",
     "buf_push_expanded(usize, string, u8[]): void",
     "buf_push_filtered(usize, string, u8[]): void",
@@ -4567,9 +4591,13 @@ function builtin_sigs(): string[] {
     "create_symlink(string, string): Result[void, IoError]",
     "rename_noreplace(string, string): Result[void, IoError]",
     "getxattr(string, string): Result[string, IoError]",
+    "getxattr_bytes(string, string): Result[u8[], IoError]",
     "lgetxattr(string, string): Result[string, IoError]",
+    "lgetxattr_bytes(string, string): Result[u8[], IoError]",
     "setxattr(string, string, string): Result[void, IoError]",
+    "setxattr_bytes(string, string, u8[]): Result[void, IoError]",
     "lsetxattr(string, string, string): Result[void, IoError]",
+    "lsetxattr_bytes(string, string, u8[]): Result[void, IoError]",
     "rename_exchange(string, string): Result[void, IoError]",
     "env(string): Option[string]",
     "config_get(string): Option[string]",
@@ -4647,6 +4675,7 @@ function builtin_sigs(): string[] {
     "strbuf_reset(): void",
     "strbuf_take(): string",
     "string_from_bytes_unchecked(u8[]): string",
+    "string_from_bytes_range_unchecked(u8[], i32, i32): string",
     "subprocess(string, string[], string): ProcessResult",
     "sync(): void",
     "target_arch(): string",
@@ -15792,10 +15821,10 @@ function registered_intrinsics(): string[] {
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
     "__c_call4", "__c_call4_f32", "__c_call4_f64", "__ceil_f64", "__clz32", "__clz64", "__cos_f64", "__count_byte",
-    "__count_runs", "__crc32_cksum", "__ctz32", "__ctz64", "__exp_f64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
+    "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ctz32", "__ctz64", "__exp_f64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
     "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
     "__getpwuid_name", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8", "__log_f64",
-    "__map_hash_seed", "__memchr", "__count_byte_bytes", "__memchr_bytes", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
+    "__map_hash_seed", "__memchr", "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__pow_f64", "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__scan_set", "__scan_set_bytes", "__sin_f64", "__sqrt_f64", "__store_i32", "__store_i64",
     "__store_ptr", "__store_u8", "__str_bytes", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
@@ -18500,7 +18529,6 @@ function e049_cell_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEn
 }
 
 function e049_body_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEnv): util.Diag[] {
-  let vars: NameTy[] = e049_lambda_var_types(fn.body, e049_scope(fn.body));
   let captured: string[] = [];
   for st in fn.body {
     captured = astwalk.fold_stmt_own_pruned(st, captured, e049_lambda_captures, e049_not_into_lambda);
@@ -18511,6 +18539,7 @@ function e049_body_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEn
   if (captured.len() == 0) {
     return [];
   }
+  let vars: NameTy[] = e049_lambda_var_types(fn.body, e049_scope(fn.body));
   let sc: Scope = build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
   return e049_store_walk(fn.body, sc, vars, captured, fn.type_params, mod, []);
 }
@@ -18575,10 +18604,6 @@ function e049_not_into_lambda(n: ast.Expr): boolean {
   return true;
 }
 
-function e049_no_expr(e: ast.Expr, own acc: boolean): boolean {
-  return acc;
-}
-
 function e049_cat_stmts(a: ast.Stmt[], b: ast.Stmt[]): ast.Stmt[] {
   let out: ast.Stmt[] = a;
   for st in b {
@@ -18591,32 +18616,40 @@ function e049_cat_stmts(a: ast.Stmt[], b: ast.Stmt[]): ast.Stmt[] {
 // type its initialiser has, which e049_scope leaves empty.
 function e049_lambda_var_types(stmts: ast.Stmt[], vars: NameTy[]): NameTy[] {
   let out: NameTy[] = [];
+  let lambdas: string[] = [];
+  let walked: boolean = false;
   for nt in vars {
     let ty: string = nt.ty;
-    if (ty.len() == 0 && e049_var_init_is_lambda(stmts, nt.nm)) {
-      ty = "fn";
+    if (ty.len() == 0) {
+      if (!walked) {
+        lambdas = e049_lambda_init_names(stmts);
+        walked = true;
+      }
+      if (util.has_str(lambdas, nt.nm)) {
+        ty = "fn";
+      }
     }
     out = out.append(NameTy { nm: nt.nm, ty: ty });
   }
   return out;
 }
 
-function e049_var_init_is_lambda(stmts: ast.Stmt[], name: string): boolean {
-  function at_var(st: ast.Stmt, own acc: boolean): boolean {
+// e049_lambda_init_names lists the variables some `let` outside a lambda body
+// initialises with a lambda, in one walk for every variable asked about.
+function e049_lambda_init_names(stmts: ast.Stmt[]): string[] {
+  function at_var(st: ast.Stmt, own acc: string[]): string[] {
     if let ast.StmtVar(v) = st {
-      if (v.name == name) {
-        if let ast.ExprLambda(_) = v.init {
-          return true;
-        }
+      if let ast.ExprLambda(_) = v.init {
+        return acc.append(v.name);
       }
     }
     return acc;
   }
-  let found: boolean = false;
+  let out: string[] = [];
   for st in stmts {
-    found = astwalk.fold_stmt_nodes(st, found, at_var, e049_no_expr, e049_not_into_lambda);
+    out = astwalk.fold_stmt_spine(st, out, at_var);
   }
-  return found;
+  return out;
 }
 
 function e049_store_walk(stmts: ast.Stmt[], sc: Scope, vars: NameTy[], captured: string[], tparams: string[], mod: parser.Module, own out: util.Diag[]): util.Diag[] {
@@ -19591,8 +19624,8 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
 function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
   let out: string[] = [];
   for name in [
-    "__memchr", "__count_byte_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_set_bytes",
-    "__bsd_sum", "__count_runs", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
+    "__memchr", "__mismatch_bytes", "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_set_bytes",
+    "__bsd_sum", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
     "__ctz64", "__popcount64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns",
   ] {
     let declared: boolean = false;
@@ -24095,10 +24128,13 @@ function display_unrewritten(e: ast.Expr, own found: boolean): boolean {
 function unannotated(stmts: ast.Stmt[]): boolean {
   let found: boolean = false;
   for st in stmts {
-    found = astwalk.fold_stmt(st, found, unchecked_capture);
-    found = astwalk.fold_stmt(st, found, display_unrewritten);
+    found = astwalk.fold_stmt(st, found, unchecked_or_unrewritten);
   }
   return found;
+}
+
+function unchecked_or_unrewritten(e: ast.Expr, own found: boolean): boolean {
+  return display_unrewritten(e, unchecked_capture(e, found));
 }
 
 // The parts of `mod` annotate_module has not been through.

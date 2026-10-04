@@ -1,0 +1,66 @@
+import "../lib/bre";
+
+function check_scalar(pattern: string, text: string, n: i32): boolean {
+  let re = bre.bre_compile(pattern);
+  if (re.err.len() != 0 || re.pre.len() != n || re.literal) {
+    return false;
+  }
+  let m = re.exec(text);
+  if (!m.matched || m.end != n) {
+    return false;
+  }
+  let around = "x" + text + "y";
+  let forward = re.search_from(around, 0, around.len());
+  let backward = re.search_back(around, around.len());
+  return forward.0 == 1 && forward.1 == n + 1 && backward.0 == 1 && backward.1 == n + 1 && re.search_range(around, 1, n + 1) && re.search(around);
+}
+
+function main(): i32 {
+  // Quantifiers operate on the final byte, leaving an incomplete scalar
+  // in the required literal prefix. Match a different final byte.
+  if (!check_scalar("é*", "ê", 1)) {
+    return 1;
+  }
+  if (!check_scalar("€*", "₭", 2)) {
+    return 2;
+  }
+  if (!check_scalar("𐀀*", "𐀁", 3)) {
+    return 3;
+  }
+
+  let alt = bre.bre_compile("é*\\|€*");
+  if (alt.err.len() != 0 || alt.pre.len() != 0 || alt.alts.len() != 2) {
+    return 4;
+  }
+  if (!alt.search("xê") || !alt.search("x₭") || alt.search("xyz")) {
+    return 5;
+  }
+  let a = alt.search_from("x₭", 0, 4);
+  if (a.0 != 1 || a.1 != 3) {
+    return 6;
+  }
+  let b = alt.search_back("xêy₭", 7);
+  if (b.0 != 4 || b.1 != 6) {
+    return 7;
+  }
+
+  let literal = bre.bre_compile("^é€𐀀$");
+  if (!literal.literal || !literal.search("é€𐀀") || literal.search("xé€𐀀")) {
+    return 8;
+  }
+  if (!literal.search_range("xé€𐀀y", 1, 10)) {
+    return 9;
+  }
+  let capture = bre.bre_compile("\\(é*\\)\\1").exec("éé");
+  if (!capture.matched || capture.end != 4 || capture.starts[1] != 0 || capture.ends[1] != 2) {
+    return 10;
+  }
+  let empty = bre.bre_compile("");
+  if (!empty.search("") || !empty.search("é")) {
+    return 11;
+  }
+  if (bre.bre_compile("[").err.len() == 0) {
+    return 12;
+  }
+  return 0;
+}

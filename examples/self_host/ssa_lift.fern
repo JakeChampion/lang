@@ -563,7 +563,7 @@ function prod_call_argc(k: string): i32 {
       return 1;
     }
   }
-  if (k == "arr_slice" || k == "subprocess") {
+  if (k == "arr_slice" || k == "subprocess" || k == "str_from_bytes_range") {
     return 3;
   }
   if (k == "write_file" || k == "write_file_bytes" || k == "write_file_exec" || k == "read_chunk" || k == "read_chunk_bytes" || k == "write_bytes" || k == "write_some_bytes" || k == "writer_write") {

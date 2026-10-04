@@ -96,9 +96,8 @@ function order_disabled(): i32 {
 }
 
 // GNU's line order: memcmp over the shorter line's content, then the
-// lengths. Both lines carry the delimiter, so a whole-string equality
-// answers the equal case without walking anything.
-function cmp_lines(a: string, alo: i32, ahi: i32, b: string, blo: i32, bhi: i32): i32 {
+// lengths. Both ranges include the delimiter, which is excluded here.
+function cmp_lines(a: u8[], alo: i32, ahi: i32, b: u8[], blo: i32, bhi: i32): i32 {
   let la: i32 = ahi - alo;
   let lb: i32 = bhi - blo;
   let n: i32 = la;
@@ -106,7 +105,7 @@ function cmp_lines(a: string, alo: i32, ahi: i32, b: string, blo: i32, bhi: i32)
     n = lb;
   }
   n = n - 1;
-  let i: i32 = __mismatch(a, alo, b, blo, n);
+  let i: i32 = __mismatch_bytes(a, alo, b, blo, n);
   if (i < n) {
     if (a[alo + i] as i32 < b[blo + i] as i32) {
       return 0 - 1;
@@ -153,37 +152,42 @@ function status_error(): i32 {
 // readlinebuffer_delim adds when the input ended without one.
 //
 // The block itself is passed and returned here, which retains and
-// releases a 64 KiB string — affordable because this runs once per
-// READ, while the `__memchr` fast path in the merge loop runs once per
+// releases a 64 KiB byte array, once per read. The `__memchr_bytes`
+// fast path in the merge loop runs once per
 // line and touches no block reference at all. Routing every line
 // through a helper like this one instead cost 130 ns a line, four times
 // the whole rest of the loop.
 //
 // Returns (line, chunk, pos, eof, status, error): status is a line, end
 // of input, or a read failure whose strerror text is `error`.
-function next_line_slow(r: Reader, chunk0: string, pos0: i32, eof0: boolean, term: i32): (string, string, i32, boolean, i32, string) {
-  let chunk: string = chunk0;
+function next_line_slow(r: Reader, chunk0: u8[], pos0: i32, eof0: boolean, term: i32): (u8[], u8[], i32, boolean, i32, string) {
+  let chunk: u8[] = chunk0;
   let pos: i32 = pos0;
   let eof: boolean = eof0;
-  let carry: string = "";
+  let carry: usize = buf_new(chunk.len() - pos);
   while (true) {
-    let j: i32 = __memchr(chunk, term, pos);
+    let j: i32 = __memchr_bytes(chunk, term, pos);
     if (j >= 0) {
-      carry = carry + slice_unchecked(chunk, pos, j + 1);
-      return (carry, chunk, j + 1, eof, status_line(), "");
+      buf_push_bytes_range(carry, chunk, pos, j + 1);
+      let line: u8[] = buf_take_bytes(carry);
+      buf_free(carry);
+      return (line, chunk, j + 1, eof, status_line(), "");
     }
     if (pos < chunk.len()) {
-      carry = carry + slice_unchecked(chunk, pos, chunk.len());
+      buf_push_bytes_range(carry, chunk, pos, chunk.len());
       pos = chunk.len();
     }
     if (eof) {
-      if (carry.len() > 0) {
-        carry = carry + string_from_bytes_unchecked([term as u8]);
-        return (carry, chunk, pos, eof, status_line(), "");
+      if (buf_len(carry) > 0) {
+        buf_push_byte(carry, term);
+        let line: u8[] = buf_take_bytes(carry);
+        buf_free(carry);
+        return (line, chunk, pos, eof, status_line(), "");
       }
-      return ("", chunk, pos, eof, status_eof(), "");
+      buf_free(carry);
+      return ([], chunk, pos, eof, status_eof(), "");
     }
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(c) => {
         if (c.len() == 0) {
           eof = true;
@@ -193,11 +197,13 @@ function next_line_slow(r: Reader, chunk0: string, pos0: i32, eof0: boolean, ter
         }
       },
       Err(e) => {
-        return ("", chunk, pos, true, status_error(), gnu.io_error_text(e));
+        buf_free(carry);
+        return ([], chunk, pos, true, status_error(), gnu.io_error_text(e));
       }
     }
   }
-  return ("", chunk, pos, eof, status_eof(), "");
+  buf_free(carry);
+  return ([], chunk, pos, eof, status_eof(), "");
 }
 
 // ---- the merge --------------------------------------------------------------
@@ -324,19 +330,19 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   // one cursor here too.
   let shared: boolean = name1 == "-" && name2 == "-";
 
-  let chunk1: string = "";
+  let chunk1: u8[] = [];
   let pos1: i32 = 0;
   let eof1: boolean = false;
-  let chunk2: string = "";
+  let chunk2: u8[] = [];
   let pos2: i32 = 0;
   let eof2: boolean = false;
 
   // A line is the range `[lo, hi)` of `cur`: the block it was found in,
-  // or a string of its own when it straddled two blocks.
-  let cur1: string = "";
+  // or a byte array of its own when it straddled two blocks.
+  let cur1: u8[] = [];
   let lo1: i32 = 0;
   let hi1: i32 = 0;
-  let cur2: string = "";
+  let cur2: u8[] = [];
   let lo2: i32 = 0;
   let hi2: i32 = 0;
   let have1: boolean = false;
@@ -344,16 +350,16 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   // The two lines before the current one, for the order check GNU makes
   // at end of input: an unpairable line seen late turns the check on
   // after the last pair was already read, so that pair is re-examined.
-  let back1a: string = "";
+  let back1a: u8[] = [];
   let alo1: i32 = 0;
   let ahi1: i32 = 0;
-  let back1b: string = "";
+  let back1b: u8[] = [];
   let blo1: i32 = 0;
   let bhi1: i32 = 0;
-  let back2a: string = "";
+  let back2a: u8[] = [];
   let alo2: i32 = 0;
   let ahi2: i32 = 0;
-  let back2b: string = "";
+  let back2b: u8[] = [];
   let blo2: i32 = 0;
   let bhi2: i32 = 0;
   let read1: i32 = 0;
@@ -398,18 +404,18 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   while (true) {
     if (need1) {
       need1 = false;
-      let line: string = "";
+      let line: u8[] = [];
       let llo: i32 = 0;
       let lhi: i32 = 0;
       let st: i32 = status_line();
-      let j: i32 = __memchr(chunk1, term, pos1);
+      let j: i32 = __memchr_bytes(chunk1, term, pos1);
       if (j >= 0) {
         line = chunk1;
         llo = pos1;
         lhi = j + 1;
         pos1 = j + 1;
       } else {
-        let u: (string, string, i32, boolean, i32, string) = next_line_slow(r1, chunk1, pos1, eof1, term);
+        let u: (u8[], u8[], i32, boolean, i32, string) = next_line_slow(r1, chunk1, pos1, eof1, term);
         line = u.0;
         lhi = line.len();
         chunk1 = u.1;
@@ -433,7 +439,7 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
         have1 = true;
         read1 = read1 + 1;
       } else {
-        cur1 = "";
+        cur1 = [];
         lo1 = 0;
         hi1 = 0;
         have1 = false;
@@ -456,18 +462,18 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     }
     if (need2) {
       need2 = false;
-      let line: string = "";
+      let line: u8[] = [];
       let llo: i32 = 0;
       let lhi: i32 = 0;
       let st: i32 = status_line();
-      let j: i32 = __memchr(chunk2, term, pos2);
+      let j: i32 = __memchr_bytes(chunk2, term, pos2);
       if (j >= 0) {
         line = chunk2;
         llo = pos2;
         lhi = j + 1;
         pos2 = j + 1;
       } else {
-        let u: (string, string, i32, boolean, i32, string) = next_line_slow(r2, chunk2, pos2, eof2, term);
+        let u: (u8[], u8[], i32, boolean, i32, string) = next_line_slow(r2, chunk2, pos2, eof2, term);
         line = u.0;
         lhi = line.len();
         chunk2 = u.1;
@@ -491,7 +497,7 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
         have2 = true;
         read2 = read2 + 1;
       } else {
-        cur2 = "";
+        cur2 = [];
         lo2 = 0;
         hi2 = 0;
         have2 = false;
@@ -543,18 +549,18 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     let wrote: boolean = false;
     if (class == 1) {
       if (show1) {
-        buf_push_range(h, cur1, lo1, hi1);
+        buf_push_bytes_range(h, cur1, lo1, hi1);
         wrote = true;
       }
     } else if (class == 2) {
       if (show2) {
         buf_push(h, pre2);
-        buf_push_range(h, cur2, lo2, hi2);
+        buf_push_bytes_range(h, cur2, lo2, hi2);
         wrote = true;
       }
     } else if (show3) {
       buf_push(h, pre3);
-      buf_push_range(h, cur2, lo2, hi2);
+      buf_push_bytes_range(h, cur2, lo2, hi2);
       wrote = true;
     }
     // GNU checks the stream after every line it WRITES, so a failure
@@ -613,7 +619,7 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     // close reports it after.
     out = gnu.error_out(out, "input is not in sorted order");
     gnu.close_stdout(out, false);
-    exit(1);
+    return 1;
   }
   if (out.buffered() > 0) {
     out = gnu.check(out.flush());

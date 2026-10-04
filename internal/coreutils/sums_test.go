@@ -121,8 +121,9 @@ func newDigestTree(t *testing.T, spec digestSpec) digestTree {
 // digestCases is the corpus of one checksum utility.
 // digestRawName writes the not-valid-UTF-8 fixture for the seven checksum
 // utilities, which share one tree. Where the filesystem refuses the name it
-// creates nothing and returns the path: the two cases that use it carry
-// rawByteName and skip, and the other ninety in the shared corpus still run.
+// creates nothing and returns the path: the CLI-argument case carries
+// rawByteName and skips. Checksum-file names instead have explicit D10
+// boundary-error coverage in TestDigestCheckBytes.
 func digestRawName(t *testing.T, dir, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, rawByteNameFixture)
@@ -293,13 +294,6 @@ func checkCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	okTwo := mk("c.two", refOutput(t, spec.util, tr.a, tr.empty))
 	esc := mk("c.esc", refOutput(t, spec.util, tr.backslash, tr.newline, tr.carriage))
 	escTag := mk("c.esctag", refOutput(t, spec.util, "--tag", tr.backslash, tr.newline, tr.carriage))
-	// Built only where the fixture exists: refOutput runs the reference
-	// binary on tr.raw, which cannot answer for a file the filesystem refused
-	// to create. Its one case carries rawByteName and skips there.
-	rawName := filepath.Join(t.TempDir(), "unused")
-	if rawByteNamesHeld(t) {
-		rawName = mk("c.rawname", refOutput(t, spec.util, tr.raw))
-	}
 	spacedName := mk("c.spaced", refOutput(t, spec.util, tr.spaced))
 
 	fail := mk("c.fail", tr.hex+"  "+tr.a+"\n")
@@ -339,7 +333,6 @@ func checkCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 		{name: "check two files", args: []string{"-c", okTwo}},
 		{name: "check escaped names", args: []string{"-c", esc}},
 		{name: "check escaped tagged names", args: []string{"-c", escTag}},
-		{name: "check a name that is not valid UTF-8", args: []string{"-c", rawName}, rawByteName: true},
 		{name: "check a name with a space", args: []string{"-c", spacedName}},
 		{name: "check mismatch", args: []string{"-c", fail}},
 		{name: "check missing", args: []string{"-c", miss}},

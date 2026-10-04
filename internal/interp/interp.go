@@ -670,8 +670,11 @@ func New() *Interp {
 	i.Builtins["buf_push"] = &Builtin{Fn: builtinBufPush}
 	i.Builtins["buf_push_range"] = &Builtin{Fn: builtinBufPushRange}
 	i.Builtins["buf_push_bytes_range"] = &Builtin{Fn: builtinBufPushBytesRange}
+	i.Builtins["buf_push_bytes_mapped"] = &Builtin{Fn: func(i *Interp, args []Value) (Value, error) { return builtinBufPushBytesTable(i, args, "mapped") }}
 	i.Builtins["buf_push_mapped"] = &Builtin{Fn: builtinBufPushMapped}
+	i.Builtins["buf_push_bytes_filtered"] = &Builtin{Fn: func(i *Interp, args []Value) (Value, error) { return builtinBufPushBytesTable(i, args, "filtered") }}
 	i.Builtins["buf_push_filtered"] = &Builtin{Fn: builtinBufPushFiltered}
+	i.Builtins["buf_push_bytes_expanded"] = &Builtin{Fn: func(i *Interp, args []Value) (Value, error) { return builtinBufPushBytesTable(i, args, "expanded") }}
 	i.Builtins["buf_push_expanded"] = &Builtin{Fn: builtinBufPushExpanded}
 	i.Builtins["buf_push_byte"] = &Builtin{Fn: builtinBufPushByte}
 	i.Builtins["buf_push_u64"] = &Builtin{Fn: builtinBufPushU64}
@@ -774,6 +777,7 @@ func New() *Interp {
 	// model, so Map operations stay codegen-only for now.
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocU8}
 	i.Builtins["string_from_bytes_unchecked"] = &Builtin{Fn: builtinStringFromBytes}
+	i.Builtins["string_from_bytes_range_unchecked"] = &Builtin{Fn: builtinStringFromBytesRange}
 	i.Builtins["slice_unchecked"] = &Builtin{Fn: builtinSliceUnchecked}
 	// Compiled `s.bytes()` makes an owned copy, while `s.as_bytes()`
 	// aliases the string payload via a slice header. Their raw-memory
@@ -901,6 +905,44 @@ func New() *Interp {
 		}
 		return Number(-1), nil
 	}}
+	for _, name := range []string{"__sum_bytes_array", "__bsd_sum_bytes"} {
+		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+			bsd := name == "__bsd_sum_bytes"
+			argc := 1
+			if bsd {
+				argc = 2
+			}
+			if len(args) != argc {
+				return nil, fmt.Errorf("%s: expected %d args, got %d", name, argc, len(args))
+			}
+			bytes, ok := args[0].(Array)
+			if !ok {
+				return nil, fmt.Errorf("%s: expected an array, got %T", name, args[0])
+			}
+			var sum uint32
+			if bsd {
+				seed, ok := args[1].(Number)
+				if !ok {
+					return nil, fmt.Errorf("%s: expected an integer checksum, got %T", name, args[1])
+				}
+				sum = uint32(seed) & 0xffff
+			}
+			for at, value := range bytes.E {
+				b, ok := value.(Number)
+				if !ok || b < 0 || b > 255 {
+					return nil, fmt.Errorf("%s: element %d is not u8", name, at)
+				}
+				if bsd {
+					sum = ((sum >> 1) | (sum << 15)) & 0xffff
+				}
+				sum += uint32(b)
+				if bsd {
+					sum &= 0xffff
+				}
+			}
+			return Number(int32(sum)), nil
+		}}
+	}
 	i.Builtins["__count_byte_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("__count_byte_bytes: expected 2 args, got %d", len(args))
@@ -1000,6 +1042,40 @@ func New() *Interp {
 	// what both ranges actually hold, so the value returned on equality is
 	// the clamped length and a caller's `== n` test correctly fails when it
 	// asked to compare more than was there.
+	i.Builtins["__mismatch_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 5 {
+			return nil, fmt.Errorf("__mismatch_bytes: expected 5 args, got %d", len(args))
+		}
+		a, ok := args[0].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__mismatch_bytes: expected an array, got %T", args[0])
+		}
+		b, ok := args[2].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__mismatch_bytes: expected an array, got %T", args[2])
+		}
+		nums := [3]int{}
+		for k, at := range [3]int{1, 3, 4} {
+			v, ok := args[at].(Number)
+			if !ok {
+				return nil, fmt.Errorf("__mismatch_bytes: expected an integer at %d, got %T", at, args[at])
+			}
+			nums[k] = int(int64(v))
+		}
+		ao, bo := clampOffset(nums[0], len(a.E)), clampOffset(nums[1], len(b.E))
+		n := max(0, min(nums[2], len(a.E)-ao, len(b.E)-bo))
+		for at := 0; at < n; at++ {
+			av, aok := a.E[ao+at].(Number)
+			bv, bok := b.E[bo+at].(Number)
+			if !aok || !bok {
+				return nil, fmt.Errorf("__mismatch_bytes: non-byte element at %d", at)
+			}
+			if av != bv {
+				return Number(at), nil
+			}
+		}
+		return Number(n), nil
+	}}
 	i.Builtins["__mismatch"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 5 {
 			return nil, fmt.Errorf("__mismatch: expected 5 args, got %d", len(args))
@@ -1215,6 +1291,45 @@ func New() *Interp {
 		}
 		return Number(runs), nil
 	}}
+	i.Builtins["__count_runs_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__count_runs_bytes: expected 3 args, got %d", len(args))
+		}
+		s, ok := args[0].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__count_runs_bytes: expected a byte array, got %T", args[0])
+		}
+		inside, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__count_runs_bytes: expected an integer flag, got %T", args[1])
+		}
+		set, ok := args[2].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__count_runs_bytes: expected a u8[] set, got %T", args[2])
+		}
+		prev := int64(inside) != 0
+		runs := 0
+		for idx, value := range s.E {
+			n, ok := value.(Number)
+			if !ok {
+				return nil, fmt.Errorf("__count_runs_bytes: element %d is %T, not u8", idx, value)
+			}
+			c := uint8(n)
+			member := false
+			if int(c) < len(set.E) {
+				e, ok := set.E[c].(Number)
+				if !ok {
+					return nil, fmt.Errorf("__count_runs_bytes: set element %d is %T, not a byte", c, set.E[c])
+				}
+				member = int64(e) != 0
+			}
+			if member && !prev {
+				runs++
+			}
+			prev = member
+		}
+		return Number(runs), nil
+	}}
 	i.Builtins["__scan_set"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("__scan_set: expected 3 args, got %d", len(args))
@@ -1300,31 +1415,50 @@ func New() *Interp {
 	// says what those folds owe, so it spells the definition (poly 0x04C11DB7,
 	// MSB first, no reflection) rather than a table that would have to be
 	// trusted in its own right.
-	i.Builtins["__crc32_cksum"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("__crc32_cksum: expected 2 args, got %d", len(args))
-		}
-		n, ok := args[0].(Number)
-		if !ok {
-			return nil, fmt.Errorf("__crc32_cksum: expected a number crc, got %T", args[0])
-		}
-		s, ok := args[1].(String)
-		if !ok {
-			return nil, fmt.Errorf("__crc32_cksum: expected a string, got %T", args[1])
-		}
-		crc := uint32(int32(n))
-		for _, c := range []byte(string(s)) {
-			crc ^= uint32(c) << 24
-			for k := 0; k < 8; k++ {
-				if crc&0x80000000 != 0 {
-					crc = (crc << 1) ^ 0x04C11DB7
-				} else {
-					crc <<= 1
+	for _, name := range []string{"__crc32_cksum", "__crc32_cksum_array"} {
+		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("%s: expected 2 args, got %d", name, len(args))
+			}
+			n, ok := args[0].(Number)
+			if !ok {
+				return nil, fmt.Errorf("%s: expected a number crc, got %T", name, args[0])
+			}
+			var data []byte
+			if name == "__crc32_cksum_array" {
+				a, ok := args[1].(Array)
+				if !ok {
+					return nil, fmt.Errorf("%s: expected an array, got %T", name, args[1])
+				}
+				data = make([]byte, len(a.E))
+				for at, value := range a.E {
+					b, ok := value.(Number)
+					if !ok || b < 0 || b > 255 {
+						return nil, fmt.Errorf("%s: element %d is not u8", name, at)
+					}
+					data[at] = byte(b)
+				}
+			} else {
+				s, ok := args[1].(String)
+				if !ok {
+					return nil, fmt.Errorf("%s: expected a string, got %T", name, args[1])
+				}
+				data = []byte(string(s))
+			}
+			crc := uint32(int32(n))
+			for _, c := range data {
+				crc ^= uint32(c) << 24
+				for k := 0; k < 8; k++ {
+					if crc&0x80000000 != 0 {
+						crc = (crc << 1) ^ 0x04C11DB7
+					} else {
+						crc <<= 1
+					}
 				}
 			}
-		}
-		return Number(int32(crc)), nil
-	}}
+			return Number(int32(crc)), nil
+		}}
+	}
 	// __arr_push_shared_count(): the rc==1 cliff counter on the compiled
 	// backends — appends that copied a buffer which still had room, so the
 	// copy was bought by an extra reference. The interpreter has no refcounts
@@ -1467,6 +1601,10 @@ func New() *Interp {
 	i.Builtins["lgetxattr"] = &Builtin{Fn: builtinLgetxattr}
 	i.Builtins["setxattr"] = &Builtin{Fn: builtinSetxattr}
 	i.Builtins["lsetxattr"] = &Builtin{Fn: builtinLsetxattr}
+	i.Builtins["getxattr_bytes"] = &Builtin{Fn: builtinGetxattrBytes}
+	i.Builtins["lgetxattr_bytes"] = &Builtin{Fn: builtinLgetxattrBytes}
+	i.Builtins["setxattr_bytes"] = &Builtin{Fn: builtinSetxattrBytes}
+	i.Builtins["lsetxattr_bytes"] = &Builtin{Fn: builtinLsetxattrBytes}
 	i.Builtins["umask"] = &Builtin{Fn: builtinUmask}
 	i.Builtins["priority"] = &Builtin{Fn: builtinPriority}
 	i.Builtins["set_priority"] = &Builtin{Fn: builtinSetPriority}
@@ -2939,6 +3077,27 @@ func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
 	return String(buf), nil
 }
 
+// `string_from_bytes_range_unchecked(bs, from, end)` — string_from_bytes_unchecked
+// over bs[from, end), with a slice's bounds contract.
+func builtinStringFromBytesRange(in *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: expected 3 args (bs, from, end), got %d", len(args))
+	}
+	arr, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: arg must be array, got %T", args[0])
+	}
+	from, fok := args[1].(Number)
+	end, eok := args[2].(Number)
+	if !fok || !eok {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: bounds must be numbers")
+	}
+	if from < 0 || int(end) > len(arr.E) || from > end {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: range [%d:%d] out of bounds for length %d", int(from), int(end), len(arr.E))
+	}
+	return builtinStringFromBytes(in, []Value{Array{E: arr.E[int(from):int(end)]}})
+}
+
 // `slice_unchecked(s, a, b)` — the byte slice `s[a:b]` as a builtin:
 // same bounds contract as the SliceExpr eval above (error on
 // `a < 0 || b > len || a > b`, the interp's stand-in for the
@@ -4315,14 +4474,22 @@ func builtinReadLink(_ *Interp, args []Value) (Value, error) {
 // builtinGetxattr reads an extended attribute's value, following a final
 // symlink; builtinLgetxattr asks about the link itself.
 func builtinGetxattr(_ *Interp, args []Value) (Value, error) {
-	return xattrResult("getxattr", args, true)
+	return xattrResult("getxattr", args, true, false)
 }
 
 func builtinLgetxattr(_ *Interp, args []Value) (Value, error) {
-	return xattrResult("lgetxattr", args, false)
+	return xattrResult("lgetxattr", args, false, false)
 }
 
-func xattrResult(name string, args []Value, follow bool) (Value, error) {
+func builtinGetxattrBytes(_ *Interp, args []Value) (Value, error) {
+	return xattrResult("getxattr_bytes", args, true, true)
+}
+
+func builtinLgetxattrBytes(_ *Interp, args []Value) (Value, error) {
+	return xattrResult("lgetxattr_bytes", args, false, true)
+}
+
+func xattrResult(name string, args []Value, follow, raw bool) (Value, error) {
 	p, err := pathArgs(name, args, 2)
 	if err != nil {
 		return nil, err
@@ -4330,6 +4497,17 @@ func xattrResult(name string, args []Value, follow bool) (Value, error) {
 	v, err := getxattrBytes(p[0], p[1], follow)
 	if err != nil {
 		return resultErr(classifyIoError(p[0], err)), nil
+	}
+	if raw {
+		out := newArray(len(v))
+		for i, b := range v {
+			out.E[i] = Number(b)
+		}
+		return resultOk(out), nil
+	}
+	if !utf8.Valid(v) {
+		return resultErr(&Enum{EnumName: "IoError", VariantName: "InvalidUtf8", Index: 3,
+			Payloads: []Value{String(p[0])}}), nil
 	}
 	return resultOk(String(v)), nil
 }
@@ -4350,6 +4528,33 @@ func setxattrResult(name string, args []Value, follow bool) (Value, error) {
 		return nil, err
 	}
 	return ioResult(p[0], setxattrBytes(p[0], p[1], []byte(p[2]), follow)), nil
+}
+
+func builtinSetxattrBytes(_ *Interp, args []Value) (Value, error) {
+	return setxattrBytesResult("setxattr_bytes", args, true)
+}
+
+func builtinLsetxattrBytes(_ *Interp, args []Value) (Value, error) {
+	return setxattrBytesResult("lsetxattr_bytes", args, false)
+}
+
+func setxattrBytesResult(name string, args []Value, follow bool) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("%s: expected 3 args, got %d", name, len(args))
+	}
+	p, err := pathArgs(name, args[:2], 2)
+	if err != nil {
+		return nil, err
+	}
+	content, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected byte array, got %T", name, args[2])
+	}
+	data := make([]byte, len(content.E))
+	for n, value := range content.E {
+		data[n] = byte(value.(Number))
+	}
+	return ioResult(p[0], setxattrBytes(p[0], p[1], data, follow)), nil
 }
 
 // builtinRename moves a directory entry. Nothing is copied and an
@@ -5799,6 +6004,75 @@ func builtinBufPushRange(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("buf_push_range [%d:%d] out of range for length %d", low, high, slen)
 	}
 	i.bufs[h] = append(b, string(s)[low:high]...)
+	return Void{}, nil
+}
+
+// The raw table pushes read array elements directly; no string is created.
+func builtinBufPushBytesTable(i *Interp, args []Value, mode string) (Value, error) {
+	name := "buf_push_bytes_" + mode
+	if len(args) != 3 {
+		return nil, fmt.Errorf("%s: expected 3 arguments", name)
+	}
+	h, b, err := bufHandle(i, name, args[0])
+	if err != nil {
+		return nil, err
+	}
+	src, ok := args[1].(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected a byte array", name)
+	}
+	table, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected a byte table", name)
+	}
+	entry := func(k int) (byte, error) {
+		v, ok := table.E[k].(Number)
+		if !ok {
+			return 0, fmt.Errorf("%s: table element %d is not a byte", name, k)
+		}
+		return byte(int64(v)), nil
+	}
+	for at, value := range src.E {
+		v, ok := value.(Number)
+		if !ok {
+			return nil, fmt.Errorf("%s: input element %d is not a byte", name, at)
+		}
+		c := byte(int64(v))
+		if mode == "expanded" {
+			start := int(c) * 8
+			if start+8 <= len(table.E) {
+				n, err := entry(start)
+				if err != nil {
+					return nil, err
+				}
+				if n > 7 {
+					n = 7
+				}
+				for k := 1; k <= int(n); k++ {
+					x, err := entry(start + k)
+					if err != nil {
+						return nil, err
+					}
+					b = append(b, x)
+				}
+				continue
+			}
+		} else if int(c) < len(table.E) {
+			x, err := entry(int(c))
+			if err != nil {
+				return nil, err
+			}
+			if mode == "filtered" {
+				if x != 0 {
+					continue
+				}
+			} else {
+				c = x
+			}
+		}
+		b = append(b, c)
+	}
+	i.bufs[h] = b
 	return Void{}, nil
 }
 

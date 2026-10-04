@@ -1436,6 +1436,29 @@ function __fern_tcp_recv(fd: i32, max: i32): u8[] {
   return buf;
 }
 
+// __fern_string_from_bytes_range(bytes, from, end) is
+// string_from_bytes_unchecked over bytes[from, end). The range is copied into
+// a fresh array and that into the string; a range outside bytes exits 134, as
+// a slice does. The array is written through its address, so the lowering
+// does not see it die and it is released by hand.
+function __fern_string_from_bytes_range(bytes: u8[], from: i32, end: i32): string {
+  if (from < 0 || end > bytes.len() || from > end) {
+    exit(134);
+  }
+  let n: i32 = end - from;
+  let out: u8[] = __alloc_u8(n);
+  let src: usize = bytes as usize + from as usize;
+  let dst: usize = out as usize;
+  let i: i32 = 0;
+  while (i < n) {
+    __store_u8(dst + i as usize, __load_u8(src + i as usize));
+    i = i + 1;
+  }
+  let s: string = string_from_bytes_unchecked(out);
+  __fern_arr_dec(out as usize, 1);
+  return s;
+}
+
 // __fern_tcp_recv_into(fd, buf) reads once into the caller's buffer, up to
 // its length: the byte count, 0 at EOF, or -errno (-EAGAIN on a
 // non-blocking socket with nothing to read).

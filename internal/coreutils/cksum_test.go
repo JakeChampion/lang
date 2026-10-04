@@ -541,12 +541,8 @@ func ckCheckCases(t *testing.T, tr ckTree) []invocation {
 		b64Untagged := line(refOutput(t, "cksum", "--base64", "--untagged", "-a", a, tr.a))
 		esc := line(refOutput(t, "cksum", "-a", a, tr.backslash, tr.newline, tr.carriage))
 		escUntagged := line(refOutput(t, "cksum", "--untagged", "-a", a, tr.backslash, tr.newline))
-		// refOutput runs the reference binary on tr.raw, which cannot answer
-		// for a file the filesystem refused to create.
-		rawName := ""
-		if rawByteNamesHeld(t) {
-			rawName = line(refOutput(t, "cksum", "-a", a, tr.raw))
-		}
+		// Invalid checksum-file names are D10 boundary errors, covered for
+		// every algorithm in TestDigestCheckBytes without raw path fixtures.
 
 		add(a+" check tagged", "-c", "-a", a, tagged)
 		add(a+" check untagged", "-c", "-a", a, untagged)
@@ -554,9 +550,6 @@ func ckCheckCases(t *testing.T, tr ckTree) []invocation {
 		add(a+" check base64 untagged", "-c", "-a", a, b64Untagged)
 		add(a+" check escaped names", "-c", "-a", a, esc)
 		add(a+" check escaped untagged names", "-c", "-a", a, escUntagged)
-		if rawName != "" {
-			add(a+" check a name that is not valid UTF-8", "-c", "-a", a, rawName)
-		}
 		add(a+" check tagged without an algorithm", "-c", tagged)
 		add(a+" check untagged without an algorithm", "-c", untagged)
 		add(a+" check base64 without an algorithm", "-c", b64)

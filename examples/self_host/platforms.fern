@@ -368,9 +368,13 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "rename_noreplace", capability: "fsrename" },
     Gate { builtin: "rename_exchange", capability: "fsrename" },
     Gate { builtin: "getxattr", capability: "xattr" },
+    Gate { builtin: "getxattr_bytes", capability: "xattr" },
     Gate { builtin: "lgetxattr", capability: "xattr" },
+    Gate { builtin: "lgetxattr_bytes", capability: "xattr" },
     Gate { builtin: "setxattr", capability: "xattr" },
+    Gate { builtin: "setxattr_bytes", capability: "xattr" },
     Gate { builtin: "lsetxattr", capability: "xattr" },
+    Gate { builtin: "lsetxattr_bytes", capability: "xattr" },
     // How large the terminal on the other end of a descriptor is. A
     // target with no terminal cannot answer: 0x0 is not "there is no
     // terminal" but "the terminal is empty", and a caller laying out
@@ -480,10 +484,10 @@ pub function core_builtins(): string[] {
     // Darwin asks libSystem's getpwuid(3); the rest answer 0, meaning use
     // the files, which is the truth there (#9815).
     "__getpwuid_name",
-    "map_new", "cell_new", "string_from_bytes_unchecked",
+    "map_new", "cell_new", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
     "slice_unchecked",
     "strbuf_reset", "strbuf_append", "strbuf_take",
-    "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64",
+    "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64",
     "buf_len", "buf_take", "buf_take_bytes", "buf_free",
     "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
     "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",

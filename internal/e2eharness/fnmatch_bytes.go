@@ -43,12 +43,17 @@ function main(): i32 {
     if (fnmatch.fnmatch(pats[i], texts[i]) != wants[i]) { return 10 + i; }
     if (fnmatch.fnmatch_bytes(pats[i].as_bytes(), texts[i].as_bytes()) != wants[i]) { return 40 + i; }
     if (fnmatch.fnmatch_bytes_text(pats[i].as_bytes(), texts[i]) != wants[i]) { return 80 + i; }
+    let stored: fnmatch.BytePattern = fnmatch.BytePattern { data: ("x" + pats[i] + "y").bytes(), lo: 1, hi: 1 + pats[i].len() };
+    if (stored.matches(texts[i]) != wants[i]) { return 140 + i; }
     i = i + 1;
   }
   // A malformed UTF-8 class name is invalid even in a negated bracket.
   let bad: u8[] = [91 as u8, 33 as u8, 91 as u8, 58 as u8, 255 as u8, 58 as u8, 93 as u8, 93 as u8];
   if (fnmatch.fnmatch_bytes(bad, [97 as u8])) { return 70; }
   if (fnmatch.fnmatch_bytes_text(bad, "a")) { return 72; }
+  let stored_bad: fnmatch.BytePattern = fnmatch.BytePattern { data: bad, lo: 0, hi: bad.len() };
+  bad = [];
+  if (stored_bad.matches("a")) { return 73; }
   let symbol: u8[] = [91 as u8, 91 as u8, 46 as u8, 255 as u8, 46 as u8, 93 as u8, 93 as u8];
   if (fnmatch.fnmatch_bytes(symbol, [255 as u8]) != collates) { return 71; }
   // GNU's Darwin fallback treats these as an ordinary bracket followed

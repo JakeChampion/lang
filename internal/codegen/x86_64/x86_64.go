@@ -710,7 +710,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
 		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
 		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
-		g.usesGetxattr || g.usesLgetxattr || g.usesSetxattr || g.usesLsetxattr ||
+		g.usesGetxattr || g.usesGetxattrBytes || g.usesLgetxattr || g.usesLgetxattrBytes || g.usesSetxattr || g.usesSetxattrBytes || g.usesLsetxattr || g.usesLsetxattrBytes ||
 		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
 		g.usesFree = true
@@ -1120,14 +1120,26 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesGetxattr {
 		g.emitGetxattrRuntime("__fern_getxattr", "gxat", sysGetxattr)
 	}
+	if g.usesGetxattrBytes {
+		g.emitGetxattrRuntime("__fern_getxattr_bytes", "gxatb", sysGetxattr)
+	}
 	if g.usesLgetxattr {
 		g.emitGetxattrRuntime("__fern_lgetxattr", "lgxa", sysLgetxattr)
+	}
+	if g.usesLgetxattrBytes {
+		g.emitGetxattrRuntime("__fern_lgetxattr_bytes", "lgxab", sysLgetxattr)
 	}
 	if g.usesSetxattr {
 		g.emitSetxattrRuntime("__fern_setxattr", "sxat", sysSetxattr)
 	}
+	if g.usesSetxattrBytes {
+		g.emitSetxattrRuntime("__fern_setxattr_bytes", "sxatb", sysSetxattr)
+	}
 	if g.usesLsetxattr {
 		g.emitSetxattrRuntime("__fern_lsetxattr", "lsxa", sysLsetxattr)
+	}
+	if g.usesLsetxattrBytes {
+		g.emitSetxattrRuntime("__fern_lsetxattr_bytes", "lsxab", sysLsetxattr)
 	}
 	if g.usesRenameExchange {
 		g.emitRenameFlagsRuntime("__fern_rename_exchange", "rnex", renameExchange)
@@ -1372,10 +1384,14 @@ type generator struct {
 	// usesAsciiRun gates the SSE2 high-bit scan kernel (__fern_ascii_run).
 	usesAsciiRun bool
 	// usesMemchr gates the SSE2 byte-search kernel (__fern_memchr).
-	usesMemchr         bool
-	usesCountByteBytes bool
-	usesMemchrBytes    bool
-	usesRmemchrBytes   bool
+	usesMemchr          bool
+	usesCountByteBytes  bool
+	usesSumBytesArray   bool
+	usesCrc32CksumArray bool
+	usesBsdSumBytes     bool
+	usesMemchrBytes     bool
+	usesRmemchrBytes    bool
+	usesMismatchBytes   bool
 	// usesMismatch gates the two-range comparison kernel
 	// (__fern_mismatch), which is __memchr's kernel over a pair of
 	// operands instead of a broadcast needle.
@@ -1389,7 +1405,8 @@ type generator struct {
 	// usesScanSetBytes adds its u8[] entry, __fern_scan_set_bytes.
 	usesScanSetBytes bool
 	// usesCountRuns gates the run-count kernel (__fern_count_runs).
-	usesCountRuns bool
+	usesCountRuns      bool
+	usesCountRunsBytes bool
 	// usesBsdSum gates the BSD checksum kernel (__fern_bsd_sum).
 	usesBsdSum bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
@@ -1855,11 +1872,15 @@ type generator struct {
 	usesRenameNoreplace bool
 	usesRenameExchange  bool
 	// getxattr / lgetxattr over a path and an attribute name.
-	usesGetxattr  bool
-	usesLgetxattr bool
+	usesGetxattr       bool
+	usesGetxattrBytes  bool
+	usesLgetxattr      bool
+	usesLgetxattrBytes bool
 	// setxattr / lsetxattr over a path, an attribute name and a value.
-	usesSetxattr  bool
-	usesLsetxattr bool
+	usesSetxattr       bool
+	usesSetxattrBytes  bool
+	usesLsetxattr      bool
+	usesLsetxattrBytes bool
 	// fchmodat / fchmodat2 over a path, a mode and a follow flag.
 	usesChmodAt bool
 	// truncate(2) over a path and a length.
@@ -2087,18 +2108,30 @@ func (g *generator) recordUse(target string) {
 		g.usesMemchr = true
 	case "__fern_mismatch":
 		g.usesMismatch = true
+	case "__fern_mismatch_bytes":
+		g.usesMismatchBytes = true
+		g.usesMismatch = true
 	case "__fern_rmemchr":
 		g.usesRmemchr = true
+	case "__fern_sum_bytes_array":
+		g.usesSumBytesArray = true
+		g.usesSumBytes = true
+	case "__fern_bsd_sum_bytes":
+		g.usesBsdSumBytes = true
+		g.usesBsdSum = true
 	case "__fern_count_byte_bytes":
 		g.usesCountByteBytes = true
 		g.usesCountByte = true
 	case "__fern_count_byte":
 		g.usesCountByte = true
-	case "__fern_scan_set":
-		g.usesScanSet = true
 	case "__fern_scan_set_bytes":
 		g.usesScanSetBytes = true
 		g.usesScanSet = true
+	case "__fern_scan_set":
+		g.usesScanSet = true
+	case "__fern_count_runs_bytes":
+		g.usesCountRunsBytes = true
+		g.usesCountRuns = true
 	case "__fern_count_runs":
 		g.usesCountRuns = true
 	case "__fern_bsd_sum":
@@ -2108,6 +2141,9 @@ func (g *generator) recordUse(target string) {
 	case "__fern_scale_f64":
 		g.usesScaleF64 = true
 		g.usesAlloc = true // the result is a fresh buffer
+	case "__fern_crc32_cksum_array":
+		g.usesCrc32CksumArray = true
+		g.usesCrc32Cksum = true
 	case "__fern_crc32_cksum":
 		g.usesCrc32Cksum = true
 	case "__fern_heap_bump_bytes":
@@ -2205,7 +2241,7 @@ func (g *generator) recordUse(target string) {
 	case "buf_push_bytes_range":
 		g.usesBufPushBytesRange = true
 		fallthrough
-	case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
+	case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_bytes_mapped", "buf_push_filtered", "buf_push_bytes_filtered", "buf_push_expanded", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
 		g.usesStrBuilder = true
 		// Every entry point but buf_len can reach the allocator, the
 		// copier and the freelist through __fern_buf_reserve, so pull the
@@ -2553,21 +2589,45 @@ func (g *generator) recordUse(target string) {
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "getxattr":
+		g.needFern("__fern_utf8_valid")
 		g.usesGetxattr = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
+	case "getxattr_bytes":
+		g.usesGetxattrBytes = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesIoError = true
+		g.usesAllocU8 = true
+		g.usesArrDec = true
 	case "lgetxattr":
+		g.needFern("__fern_utf8_valid")
 		g.usesLgetxattr = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
+	case "lgetxattr_bytes":
+		g.usesLgetxattrBytes = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesIoError = true
+		g.usesAllocU8 = true
+		g.usesArrDec = true
 	case "setxattr":
 		g.usesSetxattr = true
 		g.usesAlloc = true
 		g.usesIoError = true
+	case "setxattr_bytes":
+		g.usesSetxattrBytes = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "lsetxattr":
 		g.usesLsetxattr = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "lsetxattr_bytes":
+		g.usesLsetxattrBytes = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "rename_exchange":
@@ -4116,10 +4176,16 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_buf_push_range"
 		case "buf_push_bytes_range":
 			target = "__fern_buf_push_bytes_range"
+		case "buf_push_bytes_mapped":
+			target = "__fern_buf_push_bytes_mapped"
 		case "buf_push_mapped":
 			target = "__fern_buf_push_mapped"
+		case "buf_push_bytes_filtered":
+			target = "__fern_buf_push_bytes_filtered"
 		case "buf_push_filtered":
 			target = "__fern_buf_push_filtered"
+		case "buf_push_bytes_expanded":
+			target = "__fern_buf_push_bytes_expanded"
 		case "buf_push_expanded":
 			target = "__fern_buf_push_expanded"
 		case "buf_push_byte":
@@ -4306,12 +4372,20 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_rename_noreplace"
 		case "getxattr":
 			target = "__fern_getxattr"
+		case "getxattr_bytes":
+			target = "__fern_getxattr_bytes"
 		case "lgetxattr":
 			target = "__fern_lgetxattr"
+		case "lgetxattr_bytes":
+			target = "__fern_lgetxattr_bytes"
 		case "setxattr":
 			target = "__fern_setxattr"
+		case "setxattr_bytes":
+			target = "__fern_setxattr_bytes"
 		case "lsetxattr":
 			target = "__fern_lsetxattr"
+		case "lsetxattr_bytes":
+			target = "__fern_lsetxattr_bytes"
 		case "rename_exchange":
 			target = "__fern_rename_exchange"
 		case "chmod":
@@ -4489,6 +4563,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__mapiter_value_impl"
 		case "__method_MapIter_advance":
 			target = "__mapiter_advance_impl"
+		default:
+			if h := ir.CodegenAlias(target); fernrt.Has(h) {
+				target = h
+			}
 		}
 		argc := int(op.I32)
 		extra := g.emitCallArgsLoad(argc)
@@ -11765,6 +11843,11 @@ func (g *generator) emitMemchrRuntime() {
 // reaches either vector loop and neither block is read out of the 8-byte
 // scratch the spill provides.
 func (g *generator) emitMismatchRuntime() {
+	if g.usesMismatchBytes {
+		g.line(".globl __fern_mismatch_bytes")
+		g.label("__fern_mismatch_bytes")
+		g.emit("jmp __fern_mismatch")
+	}
 	g.line("")
 	g.line(".globl __fern_mismatch")
 	g.line(".type __fern_mismatch, @function")
@@ -12217,6 +12300,11 @@ func (g *generator) emitScanSetRuntime() {
 // chain through the sum is the whole cost, and it is one `ror` and one `add`
 // on the 16-bit register a byte.
 func (g *generator) emitBsdSumRuntime() {
+	if g.usesBsdSumBytes {
+		g.line(".global __fern_bsd_sum_bytes")
+		g.label("__fern_bsd_sum_bytes")
+		g.emit("jmp __fern_bsd_sum")
+	}
 	g.line("")
 	g.line(".globl __fern_bsd_sum")
 	g.line(".type __fern_bsd_sum, @function")
@@ -12254,6 +12342,11 @@ func (g *generator) emitBsdSumRuntime() {
 // from 1 to 0, which is the borrow of subtracting the previous flag from
 // the current one. Two bytes a turn, into two counts.
 func (g *generator) emitCountRunsRuntime() {
+	if g.usesCountRunsBytes {
+		g.line(".global __fern_count_runs_bytes")
+		g.label("__fern_count_runs_bytes")
+		g.emit("jmp __fern_count_runs")
+	}
 	g.line("")
 	g.line(".globl __fern_count_runs")
 	g.line(".type __fern_count_runs, @function")
@@ -12461,6 +12554,12 @@ func (g *generator) emitCountByteRuntime() {
 // iterations once per call and needs no Barrett constants, no second reduction
 // path, and no table.
 func (g *generator) emitCrc32CksumRuntime() {
+	if g.usesCrc32CksumArray {
+		g.line(".text")
+		g.line(".global __fern_crc32_cksum_array")
+		g.label("__fern_crc32_cksum_array")
+		g.emit("jmp __fern_crc32_cksum")
+	}
 	g.line("")
 	g.line(".section .rodata")
 	g.line(".align 16")
@@ -12607,6 +12706,11 @@ func (g *generator) emitCrc32Step() {
 // rdi = string. Frame: 16 bytes of emitStrDataPtr scratch, since the operand
 // may be an inline SSO string that has to be spilled to get an address.
 func (g *generator) emitSumBytesRuntime() {
+	if g.usesSumBytesArray {
+		g.line(".global __fern_sum_bytes_array")
+		g.label("__fern_sum_bytes_array")
+		g.emit("jmp __fern_sum_bytes")
+	}
 	g.line("")
 	g.line(".globl __fern_sum_bytes")
 	g.line(".type __fern_sum_bytes, @function")
@@ -13374,6 +13478,9 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.line("")
 	g.line(".globl __fern_buf_push_mapped")
 	g.line(".type __fern_buf_push_mapped, @function")
+	g.line(".globl __fern_buf_push_bytes_mapped")
+	g.line(".type __fern_buf_push_bytes_mapped, @function")
+	g.label("__fern_buf_push_bytes_mapped")
 	g.label("__fern_buf_push_mapped")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
@@ -13461,6 +13568,9 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.line("")
 	g.line(".globl __fern_buf_push_filtered")
 	g.line(".type __fern_buf_push_filtered, @function")
+	g.line(".globl __fern_buf_push_bytes_filtered")
+	g.line(".type __fern_buf_push_bytes_filtered, @function")
+	g.label("__fern_buf_push_bytes_filtered")
 	g.label("__fern_buf_push_filtered")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
@@ -13535,6 +13645,9 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.line("")
 	g.line(".globl __fern_buf_push_expanded")
 	g.line(".type __fern_buf_push_expanded, @function")
+	g.line(".globl __fern_buf_push_bytes_expanded")
+	g.line(".type __fern_buf_push_bytes_expanded, @function")
+	g.label("__fern_buf_push_bytes_expanded")
 	g.label("__fern_buf_push_expanded")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
@@ -17782,12 +17895,28 @@ func (g *generator) emitGetxattrRuntime(name, tag string, sysno int) {
 	g.emit("call __fern_free")
 	g.emit("test r15, r15")
 	g.emit("js .L" + tag + "_err")
+	if !strings.HasSuffix(name, "_bytes") {
+		g.emit("mov rdi, [rbp - 88]")
+		g.emit("mov rsi, r15")
+		g.emit("call " + AsmFnName("__fern_utf8_valid"))
+		g.emit("test eax, eax")
+		g.emit("jnz .L" + tag + "_valid")
+		g.emit("mov r15, -84") // synthetic EILSEQ
+		g.emit("jmp .L" + tag + "_err")
+		g.label(".L" + tag + "_valid")
+	}
 	// L2 rc-header layout: payload = N data bytes + 1 NUL.
-	g.emit("lea edi, [r15 + 1]")
-	g.emit("call __fern_alloc_rc1")
-	g.emit("mov rdi, rax")
-	g.emitStrLenStore("r15d", "rdi")
-	g.emit("mov byte ptr [rdi + r15], 0")
+	if strings.HasSuffix(name, "_bytes") {
+		g.emit("mov rdi, r15")
+		g.emit("call __alloc_u8")
+		g.emit("mov rdi, rax")
+	} else {
+		g.emit("lea edi, [r15 + 1]")
+		g.emit("call __fern_alloc_rc1")
+		g.emit("mov rdi, rax")
+		g.emitStrLenStore("r15d", "rdi")
+		g.emit("mov byte ptr [rdi + r15], 0")
+	}
 	g.emit("mov rsi, [rbp - 88]")
 	g.emit("mov rdx, r15")
 	g.emit("call __fern_memcpy") // rax = dst
@@ -17862,8 +17991,13 @@ func (g *generator) emitSetxattrRuntime(name, tag string, sysno int) {
 	g.emitPathzCopy("r14", "[rbp - 64]", "[rbp - 48]", tag+"2")
 	g.emit("mov [rbp - 80], r13")
 	g.emit("mov rdi, [rbp - 88]")
-	g.emitStrLen("r13d", "rdi")
-	g.emitStrDataPtr("r12", "rdi", "[rbp - 48]")
+	if strings.HasSuffix(name, "_bytes") {
+		g.emit("mov r13d, dword ptr [rdi - 4]")
+		g.emit("mov r12, rdi")
+	} else {
+		g.emitStrLen("r13d", "rdi")
+		g.emitStrDataPtr("r12", "rdi", "[rbp - 48]")
+	}
 	g.emit("mov rdi, rbx")
 	g.emit("mov rsi, r14")
 	g.emit("mov rdx, r12")

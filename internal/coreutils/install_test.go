@@ -207,6 +207,32 @@ func installCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: installSame})
 	}
 
+	// Raw comparisons must preserve both the no-copy result for equal files
+	// and differences beyond the first read, including incomplete final blocks.
+	allBytes := make([]byte, 256)
+	for i := range allBytes {
+		allBytes[i] = byte(i)
+	}
+	raw := strings.Repeat(string(allBytes), 1025) + "\xff\xc0\x80"
+	for _, c := range []struct {
+		name, destination string
+	}{
+		{"compare-raw-equal", raw},
+		{"compare-raw-late-difference", raw[:131073] + "x" + raw[131074:]},
+		{"compare-raw-short-tail", raw[:len(raw)-1]},
+	} {
+		out = append(out, invocation{
+			name: c.name, args: []string{"-v", "-C", "src", "dest"},
+			seedTree: func(t *testing.T, dir string) {
+				seedWrite(t, dir, "src", raw)
+				seedWrite(t, dir, "dest", c.destination)
+				if err := os.Chmod(filepath.Join(dir, "dest"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		})
+	}
+
 	// -s, on a strip program that is deterministic because it does
 	// nothing. A case comparing the bytes a real `strip` leaves would be
 	// pinned to this container's binutils instead of to install.

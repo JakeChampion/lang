@@ -248,6 +248,12 @@ def emit_update(p, struct, tag):
     p("    return h;")
     p("}")
     p("")
+    p("// Borrow an owned byte buffer through the streaming digest interface.")
+    p(f"pub function (h: {struct}) update_array(chunk: u8[]): {struct} {{")
+    p(f"    h = __{tag}_absorb(h, chunk);")
+    p("    return h;")
+    p("}")
+    p("")
 
 
 def sha2_rounds(width, rounds, K, bs0, bs1, ss0, ss1):

@@ -182,6 +182,16 @@ it.
 
 ## How parity is enforced
 
+PTX numeric options follow the target's GNU parser: Linux with C23 integer
+parsing accepts `0b`/`0B` prefixes, while Darwin rejects them. The parity
+corpus retains the same arguments on both sides, including malformed,
+zero, negative and overflowing binary values. GNU's version alone does not
+identify this behavior: a GNU 9.12 build on older glibc can reject binary
+prefixes. Linux validation therefore needs a GNU build with C23 parsing;
+the [glibc integer parsing documentation](https://sourceware.org/glibc/manual/2.39/html_node/Parsing-of-Integers.html)
+describes that grammar. No output normalization or alternate arguments are
+used for these cases.
+
 `internal/coreutils/` is the gate. It is oracle-based: no expected output is
 ever written down. Each case is an invocation (argv, stdin, extra env, where
 stdout goes — captured, closed, or `/dev/full` — for a utility that never

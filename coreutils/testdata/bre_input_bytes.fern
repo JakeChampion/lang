@@ -1,0 +1,59 @@
+import "../lib/bre";
+
+function main(): i32 {
+  let raw: u8[] = [0 as u8, 255 as u8, 195 as u8, 169 as u8, 0 as u8, 97 as u8];
+  let re = bre.bre_compile("é*");
+  let rf = re.search_from_bytes(raw, 0, raw.len());
+  let rb = re.search_back_bytes(raw, raw.len());
+  if (rf.0 != 2 || rf.1 != 4 || rb.0 != rf.0 || rb.1 != rf.1) {
+    return 13;
+  }
+  if (!re.search_bytes(raw) || !re.search_range_bytes(raw, 2, 3)) {
+    return 14;
+  }
+  if (re.search_range_bytes(raw, 0, 2)) {
+    return 15;
+  }
+  let nul = bre.bre_compile("\x00");
+  let z = nul.search_back_bytes(raw, raw.len());
+  if (z.0 != 4 || z.1 != 5) {
+    return 16;
+  }
+  let twice = bre.bre_compile("\\(.\\)\\1");
+  let cm = twice.exec_bytes([255 as u8, 255 as u8]);
+  if (!cm.matched || cm.end != 2 || cm.starts[1] != 0 || cm.ends[1] != 1) {
+    return 17;
+  }
+  let partial = bre.bre_compile("\\(.\\).*\\1").exec("éé");
+  if (!partial.matched || partial.end != 3 || partial.ends[1] != 1) {
+    return 18;
+  }
+  let again = re.search_from_bytes(raw, 0, raw.len());
+  if (again.0 != rf.0 || again.1 != rf.1 || raw[1] as i32 != 255) {
+    return 19;
+  }
+  if (twice.exec_bytes([255 as u8, 254 as u8]).matched) {
+    return 20;
+  }
+  let empty: u8[] = [];
+  if (!bre.bre_compile("").search_bytes(empty) || re.search_bytes(empty)) {
+    return 21;
+  }
+  let letters = bre.bre_compile("[a-z][a-z]*");
+  let block: u8[] = [];
+  let n: i32 = 0;
+  while (n < 97) {
+    block = block.append(255 as u8);
+    n = n + 1;
+    let hit = block.append(97 as u8).append(98 as u8);
+    let m = letters.search_from_bytes(hit, 0, hit.len());
+    if (m.0 != n || m.1 != n + 2 || letters.search_range_bytes(hit, 0, n)) {
+      return 22;
+    }
+    let anchored = bre.bre_compile("^ab$");
+    if (!anchored.search_range_bytes(hit, n, n + 2) || anchored.search_bytes(hit)) {
+      return 23;
+    }
+  }
+  return 0;
+}

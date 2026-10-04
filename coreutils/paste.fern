@@ -65,12 +65,6 @@ function block_size(): i32 {
   return 16384;
 }
 
-function byte_str(b: i32): string {
-  let bs: u8[] = [];
-  bs = bs.append(b as u8);
-  return string_from_bytes_unchecked(bs);
-}
-
 // `collapse(list)` — the `-d` operand with its escapes resolved. The
 // named ones are the seven C escapes plus `\0`; any other backslashed
 // byte is itself, and a list ending in a bare backslash is an error.
@@ -147,20 +141,9 @@ pub function main(): i32 {
       }
     }
   }
-  // The delimiters as the strings they are written as: a NUL entry is
-  // the empty string, since GNU writes nothing for one. Built once so
-  // the output loop never makes a string per delimiter.
-  let bytes: u8[] = collapse(list);
-  let delims: string[] = [];
-  let di: i32 = 0;
-  while (di < bytes.len()) {
-    if (bytes[di] as i32 == 0) {
-      delims = delims.append("");
-    } else {
-      delims = delims.append(byte_str(bytes[di] as i32));
-    }
-    di = di + 1;
-  }
+  // GNU cycles individual bytes, including the bytes of a UTF-8 argument.
+  // A NUL entry advances the cycle without writing a byte.
+  let delims: u8[] = collapse(list);
 
   let files: string[] = g.operands();
   if (files.len() == 0) {
@@ -175,11 +158,10 @@ pub function main(): i32 {
 // `run_serial(files, delims, term)` — one line per FILE, its own lines
 // joined by the delimiters. Even a FILE with nothing in it produces its
 // line delimiter; one that cannot be opened produces nothing at all.
-function run_serial(files: string[], delims: string[], term: i32): i32 {
+function run_serial(files: string[], delims: u8[], term: i32): i32 {
   let o: io_buffered.BufWriter = gnu.out_with(block_size());
   let h: usize = o.handle();
   let ok: boolean = true;
-  let termstr: string = byte_str(term);
 
   let fi: i32 = 0;
   while (fi < files.len()) {
@@ -204,7 +186,7 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
     if (!opened) {
       continue;
     }
-    let chunk: string = "";
+    let chunk: u8[] = [];
     let pos: i32 = 0;
     let eof: boolean = false;
     let di: i32 = 0;
@@ -215,9 +197,9 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
         if (eof) {
           break;
         }
-        let piece: string = "";
+        let piece: u8[] = [];
         let read_ok: boolean = true;
-        match (r.read_chunk(read_size())) {
+        match (r.read_chunk_bytes(read_size())) {
           Ok(c) => {
             piece = c;
           },
@@ -235,7 +217,7 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
         }
         continue;
       }
-      let j: i32 = __memchr(chunk, term, pos);
+      let j: i32 = __memchr_bytes(chunk, term, pos);
       let end: i32 = chunk.len();
       let terminated: boolean = false;
       if (j >= 0) {
@@ -245,7 +227,9 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
       if (terminated || end > pos) {
         if (!in_line) {
           if (!first_line) {
-            buf_push(h, delims[di]);
+            if (delims[di] != 0 as u8) {
+              buf_push_byte(h, delims[di] as i32);
+            }
             di = di + 1;
             if (di >= delims.len()) {
               di = 0;
@@ -254,7 +238,7 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
           first_line = false;
           in_line = true;
         }
-        buf_push_range(h, chunk, pos, end);
+        buf_push_bytes_range(h, chunk, pos, end);
       }
       pos = end;
       if (terminated) {
@@ -265,7 +249,7 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
         o = o.flush();
       }
     }
-    buf_push(h, termstr);
+    buf_push_byte(h, term);
     if (!is_stdin) {
       r.close();
     }
@@ -285,14 +269,13 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
 // one line. `held` is the delimiters of files that have already run
 // out: they are only written once a later file on the same line
 // produces something.
-function run_parallel(files: string[], delims: string[], term: i32): i32 {
+function run_parallel(files: string[], delims: u8[], term: i32): i32 {
   let o: io_buffered.BufWriter = gnu.out_with(block_size());
   let h: usize = o.handle();
   let ok: boolean = true;
-  let termstr: string = byte_str(term);
 
   let rs: Reader[] = [];
-  let chunks: string[] = [];
+  let chunks: u8[][] = [];
   let poss: i32[] = [];
   let eofs: boolean[] = [];
   let live: boolean[] = [];
@@ -331,7 +314,7 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
       stdin_slot = rs.len();
     }
     rs = rs.append(r);
-    chunks = chunks.append("");
+    chunks = chunks.append([]);
     poss = poss.append(0);
     eofs = eofs.append(false);
     i = i + 1;
@@ -341,7 +324,7 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
   while (open_count > 0) {
     let somedone: boolean = false;
     let di: i32 = 0;
-    let held: string = "";
+    let held: u8[] = [];
     i = 0;
     while (i < files.len()) {
       let k: i32 = slot[i];
@@ -354,24 +337,24 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
       if (live[i]) {
         // The usual line: already whole in the chunk this file is on,
         // so it needs neither the refill loop nor the piece loop.
-        let ck: string = chunks[k];
+        let ck: u8[] = chunks[k];
         let cp: i32 = poss[k];
         if (cp < ck.len()) {
-          let w: i32 = __memchr(ck, term, cp);
+          let w: i32 = __memchr_bytes(ck, term, cp);
           if (w >= 0) {
             whole = true;
             produced = true;
             somedone = true;
             if (held.len() > 0) {
-              buf_push(h, held);
-              held = "";
+              buf_push_bytes_range(h, held, 0, held.len());
+              held = [];
             }
             let upto: i32 = w;
             if (i + 1 == files.len()) {
               upto = w + 1;
               took_term = true;
             }
-            buf_push_range(h, ck, cp, upto);
+            buf_push_bytes_range(h, ck, cp, upto);
             poss = poss.with(k, w + 1);
           }
         }
@@ -380,9 +363,9 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
         // Is there anything left at all? The answer decides whether
         // this file still holds a column on this line.
         while (poss[k] >= chunks[k].len() && !eofs[k]) {
-          let piece: string = "";
+          let piece: u8[] = [];
           let read_ok: boolean = true;
-          match (rs[k].read_chunk(read_size())) {
+          match (rs[k].read_chunk_bytes(read_size())) {
             Ok(c) => {
               piece = c;
             },
@@ -403,8 +386,8 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
           produced = true;
           somedone = true;
           if (held.len() > 0) {
-            buf_push(h, held);
-            held = "";
+            buf_push_bytes_range(h, held, 0, held.len());
+            held = [];
           }
           // The line itself, terminator dropped.
           let reading: boolean = true;
@@ -413,9 +396,9 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
               if (eofs[k]) {
                 reading = false;
               } else {
-                let more: string = "";
+                let more: u8[] = [];
                 let read2: boolean = true;
-                match (rs[k].read_chunk(read_size())) {
+                match (rs[k].read_chunk_bytes(read_size())) {
                   Ok(c) => {
                     more = c;
                   },
@@ -433,18 +416,18 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
                 }
               }
             } else {
-              let j: i32 = __memchr(chunks[k], term, poss[k]);
+              let j: i32 = __memchr_bytes(chunks[k], term, poss[k]);
               if (j >= 0) {
                 let upto: i32 = j;
                 if (i + 1 == files.len()) {
                   upto = j + 1;
                   took_term = true;
                 }
-                buf_push_range(h, chunks[k], poss[k], upto);
+                buf_push_bytes_range(h, chunks[k], poss[k], upto);
                 poss = poss.with(k, j + 1);
                 reading = false;
               } else {
-                buf_push_range(h, chunks[k], poss[k], chunks[k].len());
+                buf_push_bytes_range(h, chunks[k], poss[k], chunks[k].len());
                 poss = poss.with(k, chunks[k].len());
               }
             }
@@ -466,12 +449,14 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
         }
         if (i + 1 == files.len()) {
           if (somedone) {
-            buf_push(h, held);
-            held = "";
-            buf_push(h, termstr);
+            buf_push_bytes_range(h, held, 0, held.len());
+            held = [];
+            buf_push_byte(h, term);
           }
         } else {
-          held = held + delims[di];
+          if (delims[di] != 0 as u8) {
+            held = held.append(delims[di]);
+          }
           di = di + 1;
           if (di >= delims.len()) {
             di = 0;
@@ -480,10 +465,10 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
       } else {
         if (i + 1 == files.len()) {
           if (!took_term) {
-            buf_push(h, termstr);
+            buf_push_byte(h, term);
           }
-        } else if (delims[di].len() > 0) {
-          buf_push(h, delims[di]);
+        } else if (delims[di] != 0 as u8) {
+          buf_push_byte(h, delims[di] as i32);
           di = di + 1;
           if (di >= delims.len()) {
             di = 0;

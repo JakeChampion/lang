@@ -39,6 +39,9 @@ func TestByteScanArgTempsAreReleased(t *testing.T) {
 			}
 			bin := filepath.Join(t.TempDir(), "scan")
 			args := []string{"-target", actual, "-o", bin, src}
+			if actual == "wasm32-wasi" {
+				args = append([]string{"-emit", "command-module"}, args...)
+			}
 			compile := exec.Command(fern, args...)
 			compile.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 			if out, err := compile.CombinedOutput(); err != nil {

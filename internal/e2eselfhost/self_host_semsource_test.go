@@ -1378,9 +1378,8 @@ struct Tags { list: Tag[], n: i32 }
     while (i < n) { a = Acc { ...a, xs: a.xs.append(i * i) }; i = i + 1; }
     return a.xs[n - 1];
 }
-// The field HANDED to a callee that appends to it — the x86 assembler's
-// x86_osz(a.code, size) — where the caller reads the record no further
-// through that field: the caller hands the buffer on without a bracket, the
+// The field HANDED to a callee that appends to it, where the caller reads
+// the record no further through that field: the caller hands the buffer on without a bracket, the
 // callee grows it in place, and the caller of THAT frame brackets by the row
 // the closure gave it (acc_via_kept keeps its record, so its length holds).
 @noinline function acc_osz(xs: i32[], size: i32): i32[] {
