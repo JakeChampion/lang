@@ -392,6 +392,23 @@ function main(): i32 {
     // for stays ignorable.
     let ok: X86Asm = x86_gas_assemble("    .globl m\n    .type m,@function\n    .size m,4\n    .weak w\n");
     if (ok.unknown.len() != 0) { return 34; }
+    // A data directive reserves or lays down EVERY value it lists. The task
+    // runtime's four-value .quad state block got one .bss slot, and the next
+    // .bss symbol landed on its other three words (#11377).
+    let bl: X86Asm = x86_gas_assemble("    .section .bss\nfirst: .quad 0, 0, 0, 0\nsecond: .quad 0\nthird: .long 0, 0, 0\nfourth: .byte 0, 0\nend: .skip 1\n");
+    if (bl.bss_size != 55 || bl.rodata.len() != 0 || bl.unknown.len() != 0) { return 104; }
+    let b2: i32 = x86_label_idx(bl, "second");
+    let b4: i32 = x86_label_idx(bl, "fourth");
+    let b5: i32 = x86_label_idx(bl, "end");
+    if (b2 < 0 || bl.lab_secs[b2] != 2 || bl.lab_offs[b2] != 32) { return 105; }
+    if (b4 < 0 || bl.lab_offs[b4] != 52 || b5 < 0 || bl.lab_offs[b5] != 54) { return 106; }
+    let dl: X86Asm = x86_gas_assemble("    .section .rodata\nqs: .quad 1, -2\nls: .long 3, 4\nnext: .quad 5\n");
+    if (dl.rodata.len() != 32 || dl.rodata[0] != 1 || dl.rodata[8] != 254 || dl.rodata[15] != 255) { return 107; }
+    let dn: i32 = x86_label_idx(dl, "next");
+    if (dl.rodata[16] != 3 || dl.rodata[20] != 4 || dl.rodata[24] != 5 || dn < 0 || dl.lab_offs[dn] != 24) { return 108; }
+    // Each symbol in a .quad list is its own relocation.
+    let sl: X86Asm = x86_gas_assemble("    .section .rodata\nt: .quad t, 0, t\n");
+    if (sl.rodata.len() != 24 || sl.dfix_offs.len() != 2 || sl.dfix_offs[0] != 0 || sl.dfix_offs[1] != 16) { return 109; }
     // The packed-SSE2 front end, assembled as the __memchr kernel emits it
     // (docs/ATLAS-PLATFORM-PLAN.md §3): splat, load, compare, gather, scan.
     // The expected bytes are GNU as output for this exact text — the point
