@@ -11250,9 +11250,10 @@ function fresh_struct_lit_types_acc(stmts: ast.Stmt[], name: string, acc: string
 // The self-host IR path has NO return-transfer inc (a callee returning its
 // param hands back an rc==1 alias a runtime rc gate cannot distinguish from a
 // fresh box), so freshness is proven STATICALLY: every return in the callee
-// must be a DIRECT Ok/Err/Some constructor or None — each allocates a fresh
-// rc-headered box (op_opt_make / op_opt_none), so the caller's `?` is the sole
-// owner and a shallow __fern_rc_dec at the consume edge frees exactly once.
+// must be a DIRECT Ok/Err/Some constructor or None — each is a fresh
+// rc-headered box (op_opt_make) or the immortal static block a payloadless one
+// is (op_const_option), so the caller's `?` is the sole owner and a shallow
+// __fern_rc_dec at the consume edge frees exactly once or skips.
 
 // arrenum_producer_enum: the element enum of an array-of-enums producer, or "".
 // The return type is `E[]` for an enum the element walk admits

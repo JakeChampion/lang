@@ -118,7 +118,6 @@ strbuf_reset=117
 strbuf_append=118
 strbuf_take=119
 opt_make=120
-opt_none=121
 opt_tag=122
 opt_payload=123
 map_new=124

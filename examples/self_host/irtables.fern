@@ -1151,7 +1151,7 @@ pub function chk_binary_ops(op: string, kind: string, wide: boolean, lslot: i32,
   }
   ops = chk_overflow(op, kind, uns, w, lslot, rslot, sslot, ops);
   ops = ops.append(ir.op_if(0));
-  ops = ops.append(ir.op_opt_none());
+  ops = ops.append(ir.op_const_option(1));
   ops = ops.append(ir.op_store_local(oslot));
   ops = ops.append(ir.op_else());
   if (is_divrem) {
