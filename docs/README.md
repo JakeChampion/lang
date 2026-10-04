@@ -145,7 +145,7 @@ so explicitly.
 | `ASYNC-IMPLEMENTATION-PLAN.md` | [record] | Original async plan; CPS surface parts superseded by the redesign, runtime parts kept. |
 | `ASYNC-IMPLEMENTATION-RESEARCH.md` | [research] | Koka/Lean/Roc async implementation mechanics. |
 | `ASYNC-SELFHOST-IR.md` | [plan] | Async on the self-host IR path — not started. |
-| `NET-P3-SUSPENSION-PLAN.md` | [plan] | Networking P3: inferred suspension — one `__suspend` primitive, an unwind/rewind pass on the stack IR, tasks driven by the serve loop and the sim. In progress: slices 1–6 and 8 landed, 7 withdrawn, 3's differential rows open; lazy streaming request bodies (§3.9) next. |
+| `NET-P3-SUSPENSION-PLAN.md` | [plan] | Networking P3: inferred suspension — one `__suspend` primitive, an unwind/rewind pass on the stack IR, tasks driven by the serve loop and the sim. In progress: slices 1–6, 8 and 9 landed, 7 withdrawn, 3's differential rows open; slice 10 (docs and reference) next. |
 | `WASM-REACTOR-PLAN.md` | [record] | wasm reactor on Preview-2 pollables — shipped. |
 | `WASI-PREVIEW2.md` | [record] | Preview-2 component migration — complete; no adapter, no wasm-tools shell-out. |
 | `WASI-PREVIEW3-ASYNC-PLAN.md` | [tracker] | Preview-3 native async: channels done at the ABI level; surface exposure staged. |

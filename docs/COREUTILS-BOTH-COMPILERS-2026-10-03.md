@@ -91,8 +91,10 @@ against the flat emitter's stack slots: `sha512sum` 3.0x, `sha384sum` 3.0x,
   logins instead, so only Fern did the 4000 rows' work — 61% of it the
   per-row `stat` of `/dev/LINE` GNU also does where it reads the file.
 - **`sync -f` over 200 files**: 11.2 s against 60 ms — a full filesystem
-  flush per operand on this host (56 ms each), where GNU's `syncfs` fallback
-  here is cheap.
+  flush per operand on this host (56 ms each). GNU has no `syncfs` on
+  macOS and degrades the whole run to one `sync(2)` without opening the
+  operands, so a missing operand is not even an error there; `sync.fern`
+  now does the same on Darwin (#11335).
 - **`hostid`**: 23 ms against 1.6 ms — the hostname resolved through NSS for
   `gethostid`'s address fallback, which GNU answers from the C library.
 - `pr -v` 0.26 / 0.41x, `dd conv=swab` 0.25 / 0.39x, `date -d` 0.16 / 0.38x,

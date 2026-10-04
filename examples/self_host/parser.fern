@@ -11459,6 +11459,25 @@ function infer_inst(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns): str
   return binds_to_key(fd.type_params, full_ret_binds(fd, args, env, funcs, fd.type_params));
 }
 
+// infer_folded_inst is infer_inst for a method folded into a free generic,
+// its receiver at argument 0: a written list names the method's own type
+// parameters, which follow the receiver's, so it binds the trailing ones.
+function infer_folded_inst(fd: FuncDecl, args: ast.Expr[], type_args: string[], env: MEnv, funcs: MFns): string {
+  if (fd.type_params.len() == 0) {
+    return "";
+  }
+  let binds: MEnv = full_ret_binds(fd, args, env, funcs, fd.type_params);
+  let skip: i32 = fd.type_params.len() - type_args.len();
+  let j: i32 = 0;
+  while (skip >= 0 && j < type_args.len()) {
+    if (type_args[j].len() > 0) {
+      binds = bind_unify(fd.type_params[skip + j], type_args[j], fd.type_params, binds);
+    }
+    j = j + 1;
+  }
+  return binds_to_key(fd.type_params, binds);
+}
+
 // explicit_inst_key is the instantiation a call spells itself (`f[i32](x)`),
 // keyed as infer_inst keys one, or "" when the call writes none or not one
 // per type parameter. It is read before the arguments and the destination
@@ -12855,7 +12874,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                 raw = raw.append(c.args[rk]);
                 rk = rk + 1;
               }
-              let ct3: string = infer_inst(funcs.decls[amg], raw, env, funcs);
+              let ct3: string = infer_folded_inst(funcs.decls[amg], raw, c.type_args, env, funcs);
               if (ct3.len() > 0) {
                 let ro: RExpr = mono_expr(fac.obj, env, funcs, cur);
                 cur = ro.rins;
@@ -12887,7 +12906,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                 mraw = mraw.append(c.args[mrk]);
                 mrk = mrk + 1;
               }
-              let mct: string = infer_inst(funcs.decls[mmg], mraw, env, funcs);
+              let mct: string = infer_folded_inst(funcs.decls[mmg], mraw, c.type_args, env, funcs);
               if (mct.len() > 0) {
                 let mro: RExpr = mono_expr(fac.obj, env, funcs, cur);
                 cur = mro.rins;
@@ -12923,7 +12942,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                 sraw = sraw.append(c.args[srk]);
                 srk = srk + 1;
               }
-              let sct: string = infer_inst(funcs.decls[smg], sraw, env, funcs);
+              let sct: string = infer_folded_inst(funcs.decls[smg], sraw, c.type_args, env, funcs);
               if (sct.len() > 0) {
                 let sro: RExpr = mono_expr(fac.obj, env, funcs, cur);
                 cur = sro.rins;
