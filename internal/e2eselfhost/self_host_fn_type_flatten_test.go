@@ -155,7 +155,7 @@ func mustWriteFile(t *testing.T, path, src string) {
 func compileLinkRunX86_64(t *testing.T, gcc string, runner []string, fernBin, stdlibRoot, proj, entry string) int {
 	t.Helper()
 	asmPath := filepath.Join(proj, "out.s")
-	cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", filepath.Join(proj, entry), stdlibRoot, "-o", asmPath)
+	cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, filepath.Join(proj, entry), stdlibRoot)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v (%s)", err, out)
 	}
@@ -178,7 +178,7 @@ func compileRunWasm(t *testing.T, runner []string, fernBin, stdlibRoot, proj, en
 	t.Helper()
 	watPath := filepath.Join(proj, "out.wat")
 	var stderr strings.Builder
-	cmd := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", filepath.Join(proj, entry), stdlibRoot, "-o", watPath)
+	cmd := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", "-o", watPath, filepath.Join(proj, entry), stdlibRoot)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("compile: %v (%s)", err, stderr.String())

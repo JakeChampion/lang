@@ -472,8 +472,7 @@ var rcResultBorrow = map[string]bool{
 	"__str_idx": true, "__str_idx_nc": true,
 
 	// A pointer read out of memory: reachable from the container rather
-	// than identical to it. `ssa.UnitsOf` and `ownership_returns.go`
-	// reach the same conclusion for the OpLoad they lift this to.
+	// than identical to it.
 	"__load_ptr": true,
 
 	// A view straight into argv_buf, with no per-string rc header.

@@ -32,7 +32,7 @@ func TestSelfHostIOAllBytes(t *testing.T) {
 					if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 						t.Fatal(err)
 					}
-					compile := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", src, cli.stdlib, "-o", bin)
+					compile := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-o", bin, src, cli.stdlib)
 					if out, err := compile.CombinedOutput(); err != nil {
 						t.Fatalf("component build: %v\n%s", err, out)
 					}

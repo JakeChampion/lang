@@ -467,27 +467,6 @@ var rcUnmodelled = map[string]string{
 	"__alloc_reuse": "consumes a reuse token, which is a raw block rather than a counted reference",
 }
 
-// rcTypeErasedParams names the parameters of the type-erased helpers in
-// `internal/stdlib/core/map.fern` whose word is a counted reference only
-// where the map's value-kind tag says so, read at runtime: `__map_dec_value`
-// releases its value on the string and array kinds and returns it untouched
-// on the scalar and boxed ones, and `__map_free_val_cell` frees a cell only
-// in a column that has cells. The interprocedural solver reads the releasing
-// paths and calls the parameter consumed, which is the right contract for a
-// caller; a walk over the helper's own body cannot tell the non-releasing
-// paths from a leak, so it classifies the parameter as unknown instead.
-var rcTypeErasedParams = map[string]map[int]string{
-	"__map_dec_value":     {1: "released only where the value kind is a string or an array"},
-	"__map_free_val_cell": {1: "freed only where the value column has cells"},
-}
-
-// RcParamTypeErased reports whether parameter i of name is a word whose
-// unit-ness a runtime tag decides, and why.
-func RcParamTypeErased(name string, i int) (reason string, ok bool) {
-	reason, ok = rcTypeErasedParams[name][i]
-	return reason, ok
-}
-
 // rcInert are the runtime helpers that move no reference count on any
 // operand. Most borrow and compute; the allocators produce an owned
 // result from a size, which is the result axis this table does not

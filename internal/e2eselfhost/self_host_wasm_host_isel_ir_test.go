@@ -66,7 +66,7 @@ func emitCoreModule(t *testing.T, c *strictCLI, src string) string {
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "main.wasm")
-	cmd := runX86_64Bin(c.runner, c.bin, "-target", "wasm32-wasi", "-emit", "core-module", mainPath, c.stdlib, "-o", out)
+	cmd := runX86_64Bin(c.runner, c.bin, "-target", "wasm32-wasi", "-emit", "core-module", "-o", out, mainPath, c.stdlib)
 	cmd.Env = childEnv()
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, b)

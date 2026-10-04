@@ -91,3 +91,46 @@ func TestSelfHostTaskProgramsBalanceTheLeakCensus(t *testing.T) {
 		}
 	}
 }
+
+// TestSelfHostTaskRuntimeKeepsOnlyItsPoolX86_64: the blocks a task program
+// ends with unfreed are exactly the task runtime's pool, which the leak census
+// leaves out: the record table, a record per task live at once, and the save
+// area and wait set of each record that parked. A block that a growth of the
+// table, a save area or a wait set replaces is freed (#11391); the heap
+// trace sees it where the census cannot. The parked task's save area outgrows
+// its first 64 words, and the 100 live tasks outgrow the first table.
+func TestSelfHostTaskRuntimeKeepsOnlyItsPoolX86_64(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, p := range []struct {
+		name, src string
+		pool      int
+	}{
+		{"parks", e2eharness.TaskSchedulerProgram, 4},
+		{"outgrows-the-table", taskPoolProgram, 101},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "main.fern")
+			if err := os.WriteFile(src, []byte(p.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd := runX86_64Bin(cli.runner, cli.x86Binary(t, src, "FERN_STRICT_IR=1", "FERN_RC_TRACE=1"))
+			var errb bytes.Buffer
+			cmd.Stderr = &errb
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("run: %v\nstderr:\n%s", err, errb.String())
+			}
+			evs, _ := parseHev(t, errb.String())
+			live := map[uint64]uint64{}
+			for _, e := range evs {
+				if e.kind == "a" {
+					live[e.ptr] = e.size
+				} else {
+					delete(live, e.ptr)
+				}
+			}
+			if len(live) != p.pool {
+				t.Errorf("%d blocks never freed, want the pool's %d: %v", len(live), p.pool, live)
+			}
+		})
+	}
+}

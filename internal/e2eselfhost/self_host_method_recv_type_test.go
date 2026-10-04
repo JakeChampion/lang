@@ -176,7 +176,7 @@ func TestSelfHostMethodRecvTypeX86_64(t *testing.T) {
 			want := selfHostInterpOracle(t, interpBin, tc.src)
 			mainPath := writeSelfHostProgram(t, tc.src)
 			binPath := filepath.Join(filepath.Dir(mainPath), "out.bin")
-			if out, err := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", mainPath, stdlibRoot, "-o", binPath).CombinedOutput(); err != nil {
+			if out, err := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-o", binPath, mainPath, stdlibRoot).CombinedOutput(); err != nil {
 				t.Fatalf("self-host compile refused the program: %v\n%s", err, out)
 			}
 			var cmd *exec.Cmd
@@ -206,7 +206,7 @@ func TestSelfHostMethodRecvTypeArm64(t *testing.T) {
 			want := selfHostInterpOracle(t, interpBin, tc.src)
 			mainPath := writeSelfHostProgram(t, tc.src)
 			binPath := filepath.Join(filepath.Dir(mainPath), "out.bin")
-			if out, err := runX86_64Bin(runner, fernBin, "-target", "arm64-linux", mainPath, stdlibRoot, "-o", binPath).CombinedOutput(); err != nil {
+			if out, err := runX86_64Bin(runner, fernBin, "-target", "arm64-linux", "-o", binPath, mainPath, stdlibRoot).CombinedOutput(); err != nil {
 				t.Fatalf("self-host compile refused the program: %v\n%s", err, out)
 			}
 			cmd := runArm64Bin(qemu, binPath)
@@ -233,7 +233,7 @@ func TestSelfHostMethodRecvTypeWasm(t *testing.T) {
 			want := selfHostInterpOracle(t, interpBin, tc.src)
 			mainPath := writeSelfHostProgram(t, tc.src)
 			outWat := filepath.Join(filepath.Dir(mainPath), "out.wat")
-			if out, err := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); err != nil {
+			if out, err := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", "-o", outWat, mainPath, stdlibRoot).CombinedOutput(); err != nil {
 				t.Fatalf("self-host compile refused the program: %v\n%s", err, out)
 			}
 			cmd := exec.Command("wasmtime", "run", outWat)

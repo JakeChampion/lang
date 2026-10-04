@@ -22,5 +22,5 @@ func TestSelfHostBumpPerRequest(t *testing.T) {
 	}
 	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1")
 	e2eharness.StartServerProcess(t, runX86_64Bin(cli.runner, bin))
-	e2eharness.CheckBumpPerRequest(t, fmt.Sprintf("127.0.0.1:%d", port))
+	e2eharness.CheckBumpPerRequest(t, fmt.Sprintf("127.0.0.1:%d", port), e2eharness.BumpPerRequestRounds)
 }

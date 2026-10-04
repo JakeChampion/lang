@@ -109,7 +109,7 @@ func TestSelfHostInferredReuseIsIdentical(t *testing.T) {
 func emitSelfHostAsm(t *testing.T, runner []string, fernBin, stdlibRoot, src, tag string, extraEnv []string) []byte {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), tag+".s")
-	cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", src, stdlibRoot, "-o", out)
+	cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, stdlibRoot)
 	cmd.Env = append(os.Environ(), extraEnv...)
 	if combined, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile (%s): %v\n%s", tag, err, combined)

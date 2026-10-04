@@ -2146,13 +2146,24 @@ pub function http_serialize_response_to_bytes(method: string, resp: HttpResponse
     let framing: string = "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n";
     return http_serialize_response_head(resp, keep_alive, framing).bytes();
   }
-  let body: u8[] = resp.body_bytes();
-  let framing: string = "Content-Length: " + int.int_to_string(body.len()) + "\r\n";
+  let text: string = "";
+  let body: u8[] = [];
+  match (resp.body) {
+    BodyText(s) => {
+      text = s;
+    },
+    _ => {
+      body = resp.body_bytes();
+    }
+  }
+  let len: i32 = text.len() + body.len();
+  let framing: string = "Content-Length: " + int.int_to_string(len) + "\r\n";
   let head: string = http_serialize_response_head(resp, keep_alive, framing);
   let prefix: i32 = head.len();
-  assert(body.len() <= 2147483647 - prefix);
-  let builder: usize = buf_new(prefix + body.len());
+  assert(len <= 2147483647 - prefix);
+  let builder: usize = buf_new(prefix + len);
   buf_push(builder, head);
+  buf_push(builder, text);
   buf_push_bytes_range(builder, body, 0, body.len());
   let wire: u8[] = buf_take_bytes(builder);
   buf_free(builder);

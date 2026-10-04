@@ -170,7 +170,7 @@ func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string) (string,
 		t.Fatalf("write src: %v", err)
 	}
 	watPath := filepath.Join(dir, "prog.wat")
-	compile := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", srcPath, stdlibRoot, "-o", watPath)
+	compile := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", "-o", watPath, srcPath, stdlibRoot)
 	out, err := compile.CombinedOutput()
 	if err != nil {
 		return "", 0, fmt.Sprintf("%v\n%s%s", err, out,

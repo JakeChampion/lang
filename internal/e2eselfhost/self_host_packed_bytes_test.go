@@ -281,7 +281,7 @@ func TestSelfHostPackedBytes(t *testing.T) {
 			t.Fatal(err)
 		}
 		out := filepath.Join(dir, "prog.wasm")
-		compile := exec.Command(selfHostBin, "-target", "wasm32-wasi", in, stdlibRoot, "-o", out)
+		compile := exec.Command(selfHostBin, "-target", "wasm32-wasi", "-o", out, in, stdlibRoot)
 		compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1")
 		if msg, err := compile.CombinedOutput(); err != nil {
 			t.Fatalf("compile: %v\n%s", err, msg)
