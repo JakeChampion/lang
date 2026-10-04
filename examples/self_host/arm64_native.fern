@@ -9292,15 +9292,14 @@ function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasPro
     }
     return p;
   }
+  // A list reserves one slot PER VALUE, so the count is its commas plus
+  // one; reserving one for the whole list shifted every later symbol.
   if (arm64_str_starts_with(line, ".quad")) {
-    return Arm64GasProg { ...p, bss_size: p.bss_size + 8 };
+    return Arm64GasProg { ...p, bss_size: p.bss_size + 8 * arm64_gas_value_count(line, 5) };
   }
   if (arm64_str_starts_with(line, ".4byte") || arm64_str_starts_with(line, ".word")) {
-    return Arm64GasProg { ...p, bss_size: p.bss_size + 4 };
+    return Arm64GasProg { ...p, bss_size: p.bss_size + 4 * arm64_gas_value_count(line, 5) };
   }
-  // A `.byte` list reserves one byte PER VALUE, so the count is its
-  // commas plus one; reserving one for the whole list shifted every
-  // later symbol.
   if (arm64_str_starts_with(line, ".byte")) {
     return Arm64GasProg { ...p, bss_size: p.bss_size + arm64_gas_value_count(line, 5) };
   }

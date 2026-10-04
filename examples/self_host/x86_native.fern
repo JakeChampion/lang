@@ -1620,6 +1620,20 @@ function x86_bss_skip(own a: X86Asm, n: i32): X86Asm {
   return a;
 }
 
+// x86_gas_value_count is how many values a directive's comma list holds: a
+// zero-init `.quad 0, 0` reserves a slot for each.
+function x86_gas_value_count(rest: string): i32 {
+  let n: i32 = 1;
+  let i: i32 = 0;
+  while (i < rest.len()) {
+    if (rest[i] == b',') {
+      n = n + 1;
+    }
+    i = i + 1;
+  }
+  return n;
+}
+
 // x86_label_idx returns the index of `name` in the label table, or -1.
 // Walks that name's bucket rather than the whole table: the scan it replaces
 // was 37% of a whole-compiler assemble, one pass over ~14k names per branch
@@ -7492,7 +7506,7 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
       } else if (x86_str_starts_with(line, ".quad")) {
         let qop: string = x86_gas_trim(slice_unchecked(line, 6, line.len()));
         if (section == 2) {
-          a = x86_bss_skip(a, 8);  // zero-init quad reserves 8 bytes
+          a = x86_bss_skip(a, 8 * x86_gas_value_count(qop));
         } else if (x86_gas_is_symbol(qop)) {
           // `.quad <label>` — an absolute pointer to another
           // symbol. Queued as a relocation; read as a number it

@@ -60,6 +60,19 @@ func (c *selfHostCLI) x86Binary(t *testing.T, src string, env ...string) string 
 	return bin
 }
 
+// linked compiles src for target into a binary the self-host CLI links
+// itself (`-o`), with no external assembler or linker.
+func (c *selfHostCLI) linked(t *testing.T, src, target string, env ...string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "prog")
+	cmd := runX86_64Bin(c.runner, c.bin, "-target", target, src, c.stdlib, "-o", bin)
+	cmd.Env = append(os.Environ(), env...)
+	if msg, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("self-host CLI -target %s -o %s: %v\n%s", target, src, err, msg)
+	}
+	return bin
+}
+
 // runWasmCensus runs a WAT module under wasmtime with args, returning its
 // stderr (where the leakcheck census lands) and exit code.
 func runWasmCensus(t *testing.T, wat string, args ...string) (string, int) {
