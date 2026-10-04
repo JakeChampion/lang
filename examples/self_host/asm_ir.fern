@@ -5326,43 +5326,40 @@ function ir_bin_asm(tag: i32, width: i32, d: string, r: string): string {
   return ircore.unsupported_op_refuse(tag, "x86-64");
 }
 
-// ir_cmp_jcc names the conditional jump an integer comparison feeds when its
-// result goes straight to a branch: the mnemonic that fires when the comparison
+// ir_cmp_jcc is the conditional jump an integer comparison feeds when its
+// result goes straight to a branch: the one that fires when the comparison
 // holds (when_true) or its inverse. `cmpq %rcx, %rax` has already set the flags,
 // so the signed/unsigned split is the same one ir_bin_asm's setcc family makes.
-function ir_cmp_jcc(tag: i32, when_true: boolean): string {
-  let direct: string = "";
-  let neg: string = "";
+function ir_cmp_jcc(tag: i32, when_true: boolean): i32 {
+  let direct: i32 = J_JAE;  // ge_u
+  let neg: i32 = J_JB;
   if (tag == 35) {
-    direct = "je";
-    neg = "jne";
+    direct = J_JE;
+    neg = J_JNE;
   } else if (tag == 36) {
-    direct = "jne";
-    neg = "je";
+    direct = J_JNE;
+    neg = J_JE;
   } else if (tag == 37) {
-    direct = "jl";
-    neg = "jge";
+    direct = J_JL;
+    neg = J_JGE;
   } else if (tag == 38) {
-    direct = "jle";
-    neg = "jg";
+    direct = J_JLE;
+    neg = J_JG;
   } else if (tag == 39) {
-    direct = "jg";
-    neg = "jle";
+    direct = J_JG;
+    neg = J_JLE;
   } else if (tag == 40) {
-    direct = "jge";
-    neg = "jl";
+    direct = J_JGE;
+    neg = J_JL;
   } else if (tag == 41) {
-    direct = "jb";
-    neg = "jae";
+    direct = J_JB;
+    neg = J_JAE;
   } else if (tag == 42) {
-    direct = "jbe";
-    neg = "ja";
+    direct = J_JBE;
+    neg = J_JA;
   } else if (tag == 43) {
-    direct = "ja";
-    neg = "jbe";
-  } else {  // ge_u
-    direct = "jae";
-    neg = "jb";
+    direct = J_JA;
+    neg = J_JBE;
   }
   if (when_true) {
     return direct;
@@ -6666,16 +6663,83 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
   return ssa_mov_rr(s, reg, home);
 }
 
+// The jumps the SSA emitter writes. The low five bits are the kind a branch
+// record carries, the condition code or 16 for jmp; bit 5 picks the jz/jnz
+// spelling of je/jne in the text.
+const J_JB: i32 = 2;
+
+const J_JAE: i32 = 3;
+
+const J_JE: i32 = 4;
+
+const J_JNE: i32 = 5;
+
+const J_JBE: i32 = 6;
+
+const J_JA: i32 = 7;
+
+const J_JS: i32 = 8;
+
+const J_JNS: i32 = 9;
+
+const J_JL: i32 = 12;
+
+const J_JGE: i32 = 13;
+
+const J_JLE: i32 = 14;
+
+const J_JG: i32 = 15;
+
+const J_JMP: i32 = 16;
+
+const J_JZ: i32 = 36;
+
+const J_JNZ: i32 = 37;
+
+// ssa_jump_text is jump `j`'s mnemonic.
+function ssa_jump_text(j: i32): string {
+  if (j == J_JMP) {
+    return "jmp";
+  } else if (j == J_JE) {
+    return "je";
+  } else if (j == J_JNE) {
+    return "jne";
+  } else if (j == J_JZ) {
+    return "jz";
+  } else if (j == J_JNZ) {
+    return "jnz";
+  } else if (j == J_JB) {
+    return "jb";
+  } else if (j == J_JAE) {
+    return "jae";
+  } else if (j == J_JBE) {
+    return "jbe";
+  } else if (j == J_JA) {
+    return "ja";
+  } else if (j == J_JS) {
+    return "js";
+  } else if (j == J_JNS) {
+    return "jns";
+  } else if (j == J_JL) {
+    return "jl";
+  } else if (j == J_JGE) {
+    return "jge";
+  } else if (j == J_JLE) {
+    return "jle";
+  } else if (j == J_JG) {
+    return "jg";
+  }
+  // Not a J_* id: a mnemonic the assembler refuses, not a wrong branch.
+  return "j?" + util.i32_to_string(j);
+}
+
 // ssa_branch jumps to one of the emitter's own labels: by id when records
 // are on (asmcore.Lab), by name in the text.
-function ssa_branch(s: asmcore.EmitState, mnem: string, l: asmcore.Lab): asmcore.EmitState {
+function ssa_branch(s: asmcore.EmitState, j: i32, l: asmcore.Lab): asmcore.EmitState {
   if (s.records()) {
-    let kind: i32 = x86_native.x86_rec_jump_kind(mnem);
-    if (kind >= 0) {
-      return s.lab_ref(kind as i64, l);
-    }
+    return s.lab_ref((j & 31) as i64, l);
   }
-  return s.write("    " + mnem + " " + l.name + "\n");
+  return s.write("    " + ssa_jump_text(j) + " " + l.name + "\n");
 }
 
 // ssa_call_sym calls a function symbol, which keeps its name: the record
@@ -7828,7 +7892,7 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = ssa_zero(s, "%rcx");
     s = ssa_rc_guard(s, p, done, ins.imm != 4);
     s = ssa_rc_is_one(s, rb);
-    s = ssa_branch(s, "jne", done);
+    s = ssa_branch(s, J_JNE, done);
     s = ssa_mov_ir(s, 32, 1i64, "1", "%rcx");
     s = s.lab_def(done);
     s = ssa_mov_rr(s, d, "%rcx");
@@ -7837,10 +7901,10 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   s = ssa_rc_guard(s, p, done, ins.imm != 4);
   if (s.rc_free_debug) {
     s = ssa_mov_rm(s, 32, true, "%rcx", rb, 0 - 8).write(san_poison_check("%ecx", s.rc_free_debug));
-    s = ssa_branch(ssa_test_rr(s, 32, "%rcx", "%rcx"), "js", done);
+    s = ssa_branch(ssa_test_rr(s, 32, "%rcx", "%rcx"), J_JS, done);
     s = ssa_mov_rm(ssa_alu_ir(s, 0, 32, 1i64, "%rcx"), 32, false, "%rcx", rb, 0 - 8);
   } else {
-    s = ssa_branch(ssa_alu_im(s, 7, 32, 0, rb, 0 - 8), "js", done);
+    s = ssa_branch(ssa_alu_im(s, 7, 32, 0, rb, 0 - 8), J_JS, done);
     s = ssa_alu_im(s, 0, 32, 1, rb, 0 - 8);
   }
   s = s.lab_def(done);
@@ -7852,8 +7916,8 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 // string's tag bit, or below the heap floor (every null). `strip` clears the
 // view bit into %rdx, the base the count is read through.
 function ssa_rc_guard(s: asmcore.EmitState, p: string, done: asmcore.Lab, strip: boolean): asmcore.EmitState {
-  s = ssa_branch(ssa_test_bit(s, 1, p), "jnz", done);
-  s = ssa_branch(ssa_cmp_floor(s, p), "jb", done);
+  s = ssa_branch(ssa_test_bit(s, 1, p), J_JNZ, done);
+  s = ssa_branch(ssa_cmp_floor(s, p), J_JB, done);
   if (strip) {
     s = ssa_mov_rr(s, "%rdx", p);
     s = ssa_alu_ir(s, 4, 64, -3i64, "%rdx");
@@ -7896,13 +7960,13 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
   let kept: asmcore.Lab = kn.lab;
   let done: asmcore.Lab = en.lab;
   if (ins.str == "__fern_str_free") {
-    s = ssa_branch(ssa_test_bit(s, 1, p), "jnz", kept);
+    s = ssa_branch(ssa_test_bit(s, 1, p), J_JNZ, kept);
   }
-  s = ssa_branch(ssa_cmp_floor(s, p), "jb", kept);
-  s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, 0 - 8), "jg", dec);
-  s = ssa_branch(ssa_alu_im(s, 7, 32, 0, p, 0 - 8), "js", kept);
+  s = ssa_branch(ssa_cmp_floor(s, p), J_JB, kept);
+  s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, 0 - 8), J_JG, dec);
+  s = ssa_branch(ssa_alu_im(s, 7, 32, 0, p, 0 - 8), J_JS, kept);
   s = ssa_helper_call(ins, reg_of, s);
-  s = ssa_branch(s, "jmp", done).lab_def(dec);
+  s = ssa_branch(s, J_JMP, done).lab_def(dec);
   s = ssa_alu_im(s, 5, 32, 1, p, 0 - 8).lab_def(kept);
   s = ssa_store(reg_of, ins.result, p, s);
   return s.lab_def(done);
@@ -7981,9 +8045,9 @@ function ssa_release_entry(r: irtables.LowerResult, lp: string, s: asmcore.EmitS
   let kn: asmcore.LabNew = asmcore.lab_new(dn.state, lp + "release_kept");
   let sn: asmcore.LabNew = asmcore.lab_new(kn.state, lp + "release_slow");
   s = sn.state;
-  s = ssa_branch(ssa_cmp_floor(s, "%rax"), "jb", kn.lab);
-  s = ssa_branch(ssa_alu_im(s, 7, 32, 1, "%rax", 0 - 8), "jg", dn.lab);
-  s = ssa_branch(ssa_alu_im(s, 7, 32, 0, "%rax", 0 - 8), "jns", sn.lab);
+  s = ssa_branch(ssa_cmp_floor(s, "%rax"), J_JB, kn.lab);
+  s = ssa_branch(ssa_alu_im(s, 7, 32, 1, "%rax", 0 - 8), J_JG, dn.lab);
+  s = ssa_branch(ssa_alu_im(s, 7, 32, 0, "%rax", 0 - 8), J_JNS, sn.lab);
   s = ssa_ret(ssa_zero(s.lab_def(kn.lab), "%rax"));
   s = ssa_ret(ssa_zero(ssa_alu_im(s.lab_def(dn.lab), 5, 32, 1, "%rax", 0 - 8), "%rax"));
   s = s.lab_def(sn.lab);
@@ -7996,7 +8060,7 @@ function ssa_release_entry(r: irtables.LowerResult, lp: string, s: asmcore.EmitS
   }
   let bn: asmcore.LabNew = asmcore.lab_new(s, lp + "release_body");
   s = helper_call_needs("__fern_rc_dec", bn.state);
-  s = ssa_branch(ssa_alu_im(s, 7, 32, 1, "%rax", 0 - 8), "jne", bn.lab);
+  s = ssa_branch(ssa_alu_im(s, 7, 32, 1, "%rax", 0 - 8), J_JNE, bn.lab);
   s = ssa_call_sym(ssa_push_r(s, "%rax"), "__fn_" + asmcore.sanitize_label(drop) + ".r");
   s = ssa_call_sym(ssa_mov_rm0(s, 64, true, "%rax", "%rsp"), ircore.ir_helper_symbol("__fern_rc_dec") + ".r");
   s = ssa_ret(ssa_zero(ssa_pop_r(s, "%rax"), "%rax"));
@@ -8094,13 +8158,13 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   let nn: asmcore.LabNew = asmcore.lab_new(s, lp + "streqn" + n);
   let dn: asmcore.LabNew = asmcore.lab_new(nn.state, lp + "streqd" + n);
   s = dn.state;
-  s = ssa_branch(ssa_alu_rm(ssa_mov_rm(s, 64, true, "%rdx", a, 8), 7, 64, true, "%rdx", b, 8), "jne", nn.lab);
+  s = ssa_branch(ssa_alu_rm(ssa_mov_rm(s, 64, true, "%rdx", a, 8), 7, 64, true, "%rdx", b, 8), J_JNE, nn.lab);
   let lit_a: i32 = fr.lit0[ins.args[0]];
   let lit_b: i32 = fr.lit0[ins.args[1]];
   if (lit_b >= 0) {
-    s = ssa_branch(ssa_alu_im0(ssa_mov_rm0(s, 64, true, "%rdx", a), 7, 8, lit_b, "%rdx"), "jne", nn.lab);
+    s = ssa_branch(ssa_alu_im0(ssa_mov_rm0(s, 64, true, "%rdx", a), 7, 8, lit_b, "%rdx"), J_JNE, nn.lab);
   } else if (lit_a >= 0) {
-    s = ssa_branch(ssa_alu_im0(ssa_mov_rm0(s, 64, true, "%rdx", b), 7, 8, lit_a, "%rdx"), "jne", nn.lab);
+    s = ssa_branch(ssa_alu_im0(ssa_mov_rm0(s, 64, true, "%rdx", b), 7, 8, lit_a, "%rdx"), J_JNE, nn.lab);
   }
   // Equality is symmetric, so the operands may land in %rax and %rsi either
   // way round: whichever is already in one stays, and nothing is overwritten
@@ -8117,7 +8181,7 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   if (y != "%rsi") {
     s = ssa_mov_rr(s, "%rsi", y);
   }
-  s = ssa_branch(ssa_call_sym(s, "__fn___fern_str_eq.r"), "jmp", dn.lab);
+  s = ssa_branch(ssa_call_sym(s, "__fn___fern_str_eq.r"), J_JMP, dn.lab);
   s = ssa_zero(s.lab_def(nn.lab), "%rax").lab_def(dn.lab);
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
@@ -8672,7 +8736,7 @@ function lc_rt_uncount(s: asmcore.EmitState, bytes: string, count: string): asmc
 function arr_push_inline(sym: string, l: string, unique: boolean, s: asmcore.EmitState): asmcore.EmitState {
   let ls: ArrPushLabs = arr_push_labs(l, s);
   s = ssa_mov_rm0(ls.state, 64, true, "%rdx", "%rdi");
-  s = ssa_branch(ssa_alu_rm(s, 7, 64, true, "%rdx", "%rdi", 0 - 16), "jge", ls.slow);
+  s = ssa_branch(ssa_alu_rm(s, 7, 64, true, "%rdx", "%rdi", 0 - 16), J_JGE, ls.slow);
   return arr_push_tail(sym, false, ls, unique, s);
 }
 
@@ -8682,7 +8746,7 @@ function arr_push_inline_u8(sym: string, l: string, unique: boolean, s: asmcore.
   let ls: ArrPushLabs = arr_push_labs(l, s);
   s = ssa_mov_rm0(ls.state, 64, true, "%rdx", "%rdi");
   s = ssa_mov_rm(s, 64, true, "%rcx", "%rdi", 0 - 16).write("    shlq $3, %rcx\n");
-  s = ssa_branch(ssa_alu_rr(s, 7, 64, "%rcx", "%rdx"), "jge", ls.slow);
+  s = ssa_branch(ssa_alu_rr(s, 7, 64, "%rcx", "%rdx"), J_JGE, ls.slow);
   return arr_push_tail(sym, true, ls, unique, s);
 }
 
@@ -8708,7 +8772,7 @@ function arr_push_tail(sym: string, packed: boolean, ls: ArrPushLabs, unique: bo
     s = ssa_mov_rmi(s, 64, false, "%rsi", "%rdi", "%rdx", 8, 8);
   }
   s = ssa_mov_rm0(ssa_inc(s, "%rdx"), 64, false, "%rdx", "%rdi");
-  s = ssa_branch(ssa_mov_rr(s, "%rax", "%rdi"), "jmp", ls.end);
+  s = ssa_branch(ssa_mov_rr(s, "%rax", "%rdi"), J_JMP, ls.end);
   return ssa_call_sym(s.lab_def(ls.slow), sym).lab_def(ls.end);
 }
 
@@ -8718,8 +8782,8 @@ function push_count_test(unique: boolean, ls: ArrPushLabs, s: asmcore.EmitState)
   if (unique) {
     return s;
   }
-  s = ssa_branch(ssa_alu_ir(ssa_mov_rm(s, 32, true, "%rcx", "%rdi", 0 - 8), 7, 32, 1i64, "%rcx"), "je", ls.store);
-  return ssa_branch(ssa_test_rr(s, 32, "%rcx", "%rcx"), "jns", ls.slow);
+  s = ssa_branch(ssa_alu_ir(ssa_mov_rm(s, 32, true, "%rcx", "%rdi", 0 - 8), 7, 32, 1i64, "%rcx"), J_JE, ls.store);
+  return ssa_branch(ssa_test_rr(s, 32, "%rcx", "%rcx"), J_JNS, ls.slow);
 }
 
 // ssa_is_rt_call is a kind-50 call that ssa_rt_call emits: neither a
@@ -9199,7 +9263,7 @@ function ssa_jump(fr: SsaFrame, lp: string, to: i32, next: i32, s: asmcore.EmitS
   if (to == next) {
     return s;
   }
-  return ssa_branch(s, "jmp", ssa_blab(fr, lp, to));
+  return ssa_branch(s, J_JMP, ssa_blab(fr, lp, to));
 }
 
 // ssa_brif branches on a value, or on the flags a fused compare left (fu.n
@@ -9234,23 +9298,23 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   if (!stub && t.f == next && !ssa_has_phis(f, fr, t.t)) {
     let tl: asmcore.Lab = ssa_blab(fr, lp, t.t);
     if (fu.n > 0 && fu.tag == 0) {
-      return ssa_branch(ssa_test_rr(s, 64, tr, tr), "jz", tl);
+      return ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JZ, tl);
     }
     if (fu.n > 0) {
       return ssa_branch(s, ir_cmp_jcc(fu.tag, !fu.inverted), tl);
     }
-    return ssa_branch(ssa_test_rr(s, 64, tr, tr), "jnz", tl);
+    return ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JNZ, tl);
   }
   if (fu.n > 0 && fu.tag == 0) {
-    s = ssa_branch(ssa_test_rr(s, 64, tr, tr), "jnz", fl);
+    s = ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JNZ, fl);
   } else if (fu.n > 0) {
     s = ssa_branch(s, ir_cmp_jcc(fu.tag, fu.inverted), fl);
   } else {
-    s = ssa_branch(ssa_test_rr(s, 64, tr, tr), "jz", fl);
+    s = ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JZ, fl);
   }
   s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
   if (stub) {
-    s = ssa_branch(s, "jmp", ssa_blab(fr, lp, t.t));
+    s = ssa_branch(s, J_JMP, ssa_blab(fr, lp, t.t));
     s = ssa_x0_forget(s);
     s = s.lab_def(fl);
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.f, s);
@@ -9297,8 +9361,8 @@ function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string,
   let p: string = ssa_src(reg_of, v, "%r11");
   let jn: asmcore.LabNew = asmcore.lab_new(s, join);
   s = jn.state;
-  s = ssa_branch(ssa_test_bit(s, 1, p), "jnz", jn.lab);
-  s = ssa_branch(ssa_cmp_floor(s, p), "jb", jn.lab);
+  s = ssa_branch(ssa_test_bit(s, 1, p), J_JNZ, jn.lab);
+  s = ssa_branch(ssa_cmp_floor(s, p), J_JB, jn.lab);
   let rb: string = p;
   if (!aligned) {
     s = ssa_alu_ir(ssa_mov_rr(s, "%rdx", p), 4, 64, -3i64, "%rdx");
