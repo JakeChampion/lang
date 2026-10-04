@@ -18500,7 +18500,6 @@ function e049_cell_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEn
 }
 
 function e049_body_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEnv): util.Diag[] {
-  let vars: NameTy[] = e049_lambda_var_types(fn.body, e049_scope(fn.body));
   let captured: string[] = [];
   for st in fn.body {
     captured = astwalk.fold_stmt_own_pruned(st, captured, e049_lambda_captures, e049_not_into_lambda);
@@ -18511,6 +18510,7 @@ function e049_body_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEn
   if (captured.len() == 0) {
     return [];
   }
+  let vars: NameTy[] = e049_lambda_var_types(fn.body, e049_scope(fn.body));
   let sc: Scope = build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
   return e049_store_walk(fn.body, sc, vars, captured, fn.type_params, mod, []);
 }
@@ -18575,10 +18575,6 @@ function e049_not_into_lambda(n: ast.Expr): boolean {
   return true;
 }
 
-function e049_no_expr(e: ast.Expr, own acc: boolean): boolean {
-  return acc;
-}
-
 function e049_cat_stmts(a: ast.Stmt[], b: ast.Stmt[]): ast.Stmt[] {
   let out: ast.Stmt[] = a;
   for st in b {
@@ -18591,32 +18587,40 @@ function e049_cat_stmts(a: ast.Stmt[], b: ast.Stmt[]): ast.Stmt[] {
 // type its initialiser has, which e049_scope leaves empty.
 function e049_lambda_var_types(stmts: ast.Stmt[], vars: NameTy[]): NameTy[] {
   let out: NameTy[] = [];
+  let lambdas: string[] = [];
+  let walked: boolean = false;
   for nt in vars {
     let ty: string = nt.ty;
-    if (ty.len() == 0 && e049_var_init_is_lambda(stmts, nt.nm)) {
-      ty = "fn";
+    if (ty.len() == 0) {
+      if (!walked) {
+        lambdas = e049_lambda_init_names(stmts);
+        walked = true;
+      }
+      if (util.has_str(lambdas, nt.nm)) {
+        ty = "fn";
+      }
     }
     out = out.append(NameTy { nm: nt.nm, ty: ty });
   }
   return out;
 }
 
-function e049_var_init_is_lambda(stmts: ast.Stmt[], name: string): boolean {
-  function at_var(st: ast.Stmt, own acc: boolean): boolean {
+// e049_lambda_init_names lists the variables some `let` outside a lambda body
+// initialises with a lambda, in one walk for every variable asked about.
+function e049_lambda_init_names(stmts: ast.Stmt[]): string[] {
+  function at_var(st: ast.Stmt, own acc: string[]): string[] {
     if let ast.StmtVar(v) = st {
-      if (v.name == name) {
-        if let ast.ExprLambda(_) = v.init {
-          return true;
-        }
+      if let ast.ExprLambda(_) = v.init {
+        return acc.append(v.name);
       }
     }
     return acc;
   }
-  let found: boolean = false;
+  let out: string[] = [];
   for st in stmts {
-    found = astwalk.fold_stmt_nodes(st, found, at_var, e049_no_expr, e049_not_into_lambda);
+    out = astwalk.fold_stmt_spine(st, out, at_var);
   }
-  return found;
+  return out;
 }
 
 function e049_store_walk(stmts: ast.Stmt[], sc: Scope, vars: NameTy[], captured: string[], tparams: string[], mod: parser.Module, own out: util.Diag[]): util.Diag[] {
@@ -24095,10 +24099,13 @@ function display_unrewritten(e: ast.Expr, own found: boolean): boolean {
 function unannotated(stmts: ast.Stmt[]): boolean {
   let found: boolean = false;
   for st in stmts {
-    found = astwalk.fold_stmt(st, found, unchecked_capture);
-    found = astwalk.fold_stmt(st, found, display_unrewritten);
+    found = astwalk.fold_stmt(st, found, unchecked_or_unrewritten);
   }
   return found;
+}
+
+function unchecked_or_unrewritten(e: ast.Expr, own found: boolean): boolean {
+  return display_unrewritten(e, unchecked_capture(e, found));
 }
 
 // The parts of `mod` annotate_module has not been through.
