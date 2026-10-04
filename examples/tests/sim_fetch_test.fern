@@ -345,7 +345,7 @@ function test_gzip_decoded(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [__gzip_answer(__gzip_stored("unzipped text"))]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
-  if (__sent_text(n, 0).index_of("accept-encoding: gzip") < 0) {
+  if (__sent_text(n, 0).index_of("Accept-Encoding: gzip") < 0) {
     return test.fail("the client did not ask for gzip");
   }
   return test.assert_eq(__body(got), "unzipped text");
@@ -563,7 +563,7 @@ function test_proxied(): test.TestOutcome {
   if (!sent.starts_with("GET http://example.test/ HTTP/1.1\r\nHost: example.test\r\n")) {
     return test.fail("request: " + sent);
   }
-  if (sent.index_of("proxy-authorization: Basic dTo=\r\n") < 0) {
+  if (sent.index_of("Proxy-Authorization: Basic dTo=\r\n") < 0) {
     return test.fail("request: " + sent);
   }
   return test.pass();
