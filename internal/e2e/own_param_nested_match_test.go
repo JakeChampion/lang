@@ -32,8 +32,10 @@ function main(): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
     while (i < 10) {
-        t = t + two(Arr([1, 2, 3]), Thing([4, 5, 6, 7])) + two(Arr([1]), Nothing) + two(Nil, Thing([1]));
-        t = t + guarded(Arr([1, 2]), Thing([4, 5, 6, 7])) + guarded(Arr([1, 2]), Thing([4])) + guarded(Nil, Nothing);
+        // Dynamic payloads keep this a heap-ownership probe after constant
+        // arrays and their enum boxes can be emitted as static data.
+        t = t + two(Arr([i, 2, 3]), Thing([i, 5, 6, 7])) + two(Arr([i]), Nothing) + two(Nil, Thing([i]));
+        t = t + guarded(Arr([i, 2]), Thing([i, 5, 6, 7])) + guarded(Arr([i, 2]), Thing([i])) + guarded(Nil, Nothing);
         i = i + 1;
     }
     return t - 278;
