@@ -2506,10 +2506,9 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
       i = i + 1;
       continue;
     }
-    // The sockets', the reactor's and the timer's bodies are preview-2 on
-    // every framing, and poll waits on their wasi:io/poll pollables and drops
-    // them.
-    if (io && (util.has_str(socket_builtins(), n) || util.has_str(component_poll_builtins(), n))) {
+    // The sockets' bodies are preview-2 on every framing, and poll waits on
+    // their wasi:io/poll pollables and drops them.
+    if (io && (util.has_str(socket_builtins(), n) || n == "poll" || n == "wasm_pollable_drop")) {
       i = i + 1;
       continue;
     }
@@ -18189,10 +18188,6 @@ function socket_builtins(): string[] {
     "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_recv_into", "tcp_send", "tcp_sendfile", "tcp_socket_ctl",
     "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_sendto",
   ];
-}
-
-function component_poll_builtins(): string[] {
-  return ["poll", "reactor_new", "reactor_ctl", "reactor_wait", "wasm_block", "wasm_pollable_drop", "wasm_timer_pollable"];
 }
 
 // component_needs_host reports whether a program reaches its WASI host at
