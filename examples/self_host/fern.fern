@@ -1663,15 +1663,23 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): Checked
   if (target_given) {
     bounds = capability_findings(merged, target);
   }
-  bounds = util.append_all(bounds, package_findings(merged, b.pkgs));
-  bounds = util.append_all(bounds, ambient_findings(merged));
+  let grants: Finding[] = util.append_all(package_findings(merged, b.pkgs), ambient_findings(merged));
+  bounds = util.append_all(bounds, grants);
   let fs: Finding[] = util.append_all(errors_of(mt.diags), bounds);
   if (mt.all_well_typed) {
+    // Native lists the stubs once every gate but the target's has passed.
     if (has_error(bounds)) {
+      if (!has_error(grants)) {
+        fs = util.append_all(fs, stub_findings(b.entry));
+      }
       return Checked { findings: fs, files: b.files, ok: false };
     }
     let views: Finding[] = errors_of(semlower.view_escape_diags(merged));
-    return Checked { findings: util.append_all(fs, views), files: b.files, ok: views.len() == 0 };
+    fs = util.append_all(fs, views);
+    if (views.len() == 0) {
+      fs = util.append_all(fs, stub_findings(b.entry));
+    }
+    return Checked { findings: fs, files: b.files, ok: views.len() == 0 };
   }
   // The module is ill-typed but produced no coded diagnostic — an
   // expression collapsed to TypeUnknown on a type the partial checker
@@ -1681,6 +1689,16 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): Checked
     fs = util.append_all(fs, errors_of(checker.ill_typed_hint(merged)));
   }
   return Checked { findings: fs, files: b.files, ok: false };
+}
+
+// stub_findings warns of each `todo` stub left in the entry module. A stub in
+// an imported module is not reported, as native does not report one.
+function stub_findings(entry: parser.Module): Finding[] {
+  let out: Finding[] = [];
+  for site in entry.todo_sites {
+    out = out.append(Finding { diag: util.Diag { code: "", message: "`todo` stub remaining", line: site.line, col: site.col }, warning: true });
+  }
+  return out;
 }
 
 // package_entry returns the entry module to type-check for the package rooted

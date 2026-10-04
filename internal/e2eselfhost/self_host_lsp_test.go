@@ -365,8 +365,8 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 // shape the wire conversion has: no diagnostic, one, several, a line with
 // non-ASCII before the position (2- and 4-byte UTF-8: one and two UTF-16
 // units), CRLF line endings, a parse marker, a positionless refusal, a
-// top-level const, imports from a sibling and from the stdlib, and a
-// sibling's private function.
+// top-level const, imports from a sibling and from the stdlib, a sibling's
+// private function, and a warning.
 var lspCases = []struct {
 	name  string
 	files map[string]string // main.fern is the document opened
@@ -395,6 +395,7 @@ var lspCases = []struct {
 		"main.fern": "import \"./lib\";\nfunction main(): i32 {\n  return lib.hidden();\n}\n",
 		"lib.fern":  "function hidden(): i32 { return 1; }\n",
 	}},
+	{"todo-stub", map[string]string{"main.fern": "function f(): i32 {\n  todo;\n}\nfunction main(): i32 {\n  return 0;\n}\n"}},
 }
 
 // TestSelfHostLSPDiagnosticsMatchFernLSPX86_64 is the differential the issue
@@ -634,8 +635,9 @@ func TestSelfHostLSPPublishesCheckFindingsX86_64(t *testing.T) {
 		"non-ascii/main.fern":    "function main(): i32 {\n  let s: string = \"日本\"; let x: i32 = y;\n  return 0;\n}\n",
 		"in-an-import/main.fern": "import \"./lib\";\nfunction main(): i32 {\n  return lib.f();\n}\n",
 		"in-an-import/lib.fern":  "pub function f(): i32 {\n  return nope;\n}\n",
+		"todo/main.fern":         "function f(): i32 {\n  todo;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
 	})
-	for _, name := range []string{"const", "private", "non-ascii", "in-an-import"} {
+	for _, name := range []string{"const", "private", "non-ascii", "in-an-import", "todo"} {
 		p := filepath.Join(extra, name, "main.fern")
 		b, _ := os.ReadFile(p)
 		docs = append(docs, doc{name, p, string(b)})
