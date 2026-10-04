@@ -852,9 +852,24 @@ function lambda_captures(lam: ast.ExprLambda, fd: parser.FuncDecl): string[] {
   return names;
 }
 
+// capture_tvar is the type variable an erased capture type names, else "".
+function capture_tvar(t: typeinfo.Type): string {
+  if let typeinfo.TypeUnknown(u) = t {
+    let tv: string = checker.typevar_reason_name(u.reason);
+    if (parser.looks_type_var(tv)) {
+      return tv;
+    }
+  }
+  return "";
+}
+
 function lambda_capture_param(lam: ast.ExprLambda, name: string): ast.ParamDecl {
   for cap in lam.captures {
     if (cap.name == name) {
+      let tv: string = capture_tvar(cap.ty);
+      if (tv.len() > 0) {
+        return ast.ParamDecl { ...decltypes.param_from_type(name, cap.ty), type_name: tv };
+      }
       return decltypes.param_from_type(name, cap.ty);
     }
   }
@@ -869,6 +884,10 @@ function lambda_capture_type(lam: ast.ExprLambda, name: string): string {
       }
       if let typeinfo.TypeString(s) = cap.ty {
         return "string";
+      }
+      let tv: string = capture_tvar(cap.ty);
+      if (tv.len() > 0) {
+        return tv;
       }
       return typeinfo.spelling(cap.ty);
     }
@@ -1086,22 +1105,11 @@ struct HoistResult { func: parser.FuncDecl, ok: boolean }
 // heap / code address fits in 32 bits, so a pointer-shaped capture (string,
 // array, struct, enum, Option/Result, tuple, map — and a fn value) occupies the
 // same 32-bit slot as an i32, exactly like a `string[]` element (which also uses
-// the 32-bit arr_get path). Only an 8-byte SCALAR (i64 / u64 / f64) needs a wide
-// slot the box doesn't carry, so those (and an unresolved "") still decline.
+// the 32-bit arr_get path). An 8-byte SCALAR (i64 / u64 / f64), or a type
+// variable an instance may bind to one, needs a wide slot the box doesn't carry,
+// so those (and an unresolved "") decline.
 function cap_slot_ok(t: string): boolean {
-  if (t.len() == 0) {
-    return false;
-  }
-  if (t == "i64") {
-    return false;
-  }
-  if (t == "u64") {
-    return false;
-  }
-  if (t == "f64") {
-    return false;
-  }
-  return true;
+  return t.len() > 0 && !is_wide_cap_type(t) && !parser.looks_type_var(t);
 }
 
 // make_clo_func builds the hoisted body of an escaping/inline closure: a top-
