@@ -570,3 +570,77 @@ func TestUriToPath_RejectsNonFileScheme(t *testing.T) {
 		t.Errorf("expected uriToPath to reject http scheme")
 	}
 }
+
+// openWorkspaceFile writes src to dir/name and opens it on a workspace-mode
+// server, the configuration cmd/fern-lsp runs in.
+func openWorkspaceFile(t *testing.T, dir, name, src string) (*Server, string) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	writeFile(t, path, src)
+	s := NewServer()
+	s.EnableWorkspace()
+	s.SetPublisher(func(string, any) {})
+	uri := pathToURI(path)
+	open, _ := json.Marshal(message{
+		Jsonrpc: "2.0",
+		Method:  "textDocument/didOpen",
+		Params:  jsonRaw(didOpenParams{TextDocument: textDocumentItem{URI: uri, LanguageID: "fern", Text: src}}),
+	})
+	s.HandleMessage(open)
+	return s, uri
+}
+
+// A workspace diagnostic is placed in UTF-16 units like a single-file one
+// (#8468). `"é"` is two bytes and one unit, so `y` is at byte offset 22 and
+// character 21.
+func TestWorkspace_DiagnosticPositionsAreUTF16(t *testing.T) {
+	src := "function main(): i32 {\n  let x: i32 = \"é\" + y;\n  return 0;\n}\n"
+	s, uri := openWorkspaceFile(t, t.TempDir(), "main.fern", src)
+	ds := s.docs[uri].diags
+	if len(ds) != 1 {
+		t.Fatalf("want one diagnostic, got %+v", ds)
+	}
+	if got := ds[0].Range.Start; got.Line != 1 || got.Character != 21 {
+		t.Errorf("diagnostic starts at %+v, want line 1 character 21", got)
+	}
+}
+
+// Workspace formatting formats the document, not the loaded program: that
+// carries the builtin declarations modload injects, and printing it replaced
+// the user's file with them.
+func TestWorkspace_FormattingFormatsTheDocument(t *testing.T) {
+	src := "function main(): i32 {\n\t\treturn 0;\n}\n"
+	s, uri := openWorkspaceFile(t, t.TempDir(), "main.fern", src)
+	edits := runFormatting(s.docs[uri])
+	if len(edits) != 1 {
+		t.Fatalf("want one whole-document edit, got %+v", edits)
+	}
+	if want := "function main(): i32 {\n  return 0;\n}\n"; edits[0].NewText != want {
+		t.Errorf("newText = %q, want %q", edits[0].NewText, want)
+	}
+}
+
+// A clean workspace document publishes an empty diagnostics array: the spec's
+// member is an array, and null is what a client is not written to expect.
+func TestWorkspace_CleanDocumentPublishesEmptyArray(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fern")
+	src := "function main(): i32 { return 0; }\n"
+	writeFile(t, path, src)
+	s := NewServer()
+	s.EnableWorkspace()
+	var published []string
+	s.SetPublisher(func(method string, params any) {
+		b, _ := json.Marshal(params)
+		published = append(published, string(b))
+	})
+	open, _ := json.Marshal(message{
+		Jsonrpc: "2.0",
+		Method:  "textDocument/didOpen",
+		Params:  jsonRaw(didOpenParams{TextDocument: textDocumentItem{URI: pathToURI(path), LanguageID: "fern", Text: src}}),
+	})
+	s.HandleMessage(open)
+	if len(published) != 1 || !strings.Contains(published[0], `"diagnostics":[]`) {
+		t.Errorf("published %q, want one notification with an empty diagnostics array", published)
+	}
+}
