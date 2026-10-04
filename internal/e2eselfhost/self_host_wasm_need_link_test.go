@@ -25,7 +25,7 @@ import "./wasm_ir";
 function unit(o: ir.Op): irtables.LowerResult[] {
     return [irtables.LowerResult { ok: true, why: "", ops: [o], n_locals: 0,
         n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
-        f64_slots: [], str_slots: [], name: "", result_kind: irtables.result_i32() }];
+        f64_slots: [], str_slots: [], name: "", result_kind: irtables.result_i32(), dbg_slots: [], dbg_names: [], dbg_types: [] }];
 }
 
 function main(): i32 {

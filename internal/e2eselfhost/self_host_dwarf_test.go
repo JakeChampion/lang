@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -350,5 +351,222 @@ func TestSelfHostDWARFMultiFile(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// dwarfVarsSrc gives the variables a debugger has to find in every kind of
+// home: f's in registers (and its string parameter, which is described by no
+// DIE), sum's carried round a loop, and many's, which outnumber the
+// registers across the calls between them and so live in frame slots.
+const dwarfVarsSrc = `@noinline function bump(x: i64): i64 { return x + 1; }
+@noinline function f(s: string, n: i32): i32 {
+    let m: i32 = n + 1;
+    let k: i64 = (m as i64) * 3;
+    return m + s.len() + (k as i32);
+}
+@noinline function sum(n: i32): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) {
+        acc = acc + i;
+        i = i + 1;
+    }
+    return acc;
+}
+@noinline function many(a: i64): i64 {
+    let b: i64 = bump(a);
+    let c: i64 = bump(b) + a;
+    let d: i64 = bump(c) + b;
+    let e: i64 = bump(d) + c + a;
+    let g: i64 = bump(e) + d + b + a;
+    let h: i64 = bump(g) + e + c + b + a;
+    let j: i64 = bump(h) + g + d + c + b + a;
+    let k: i64 = bump(j) + h + g + e + d + c + b + a;
+    let l: i64 = bump(k) + j + h + g + e + d + c + b + a;
+    let o: i64 = bump(l) + k + j + h + g + e + d + c + b + a;
+    let p: i64 = bump(o) + l + k + j + h + g + e + d + c + b + a;
+    let q: i64 = bump(p) + o + l + k + j + h + g + e + d + c + b + a;
+    return q + p + o + l + k + j + h + g + e + d + c + b + a;
+}
+function main(): i32 {
+    return f("hi", 41) + sum(10) + (many(1) % 100) as i32;
+}
+`
+
+// dwarfVar is one variable DIE of a subprogram: its tag, type name, and
+// location-list entries as absolute [lo, hi) ranges with their expressions.
+type dwarfVar struct {
+	tag    dwarf.Tag
+	typ    string
+	ranges [][2]uint64
+	exprs  [][]byte
+}
+
+// dwarfVars reads each subprogram's variable children, decoding their
+// location lists from .debug_loc against the unit's low_pc.
+func dwarfVars(t *testing.T, path string) (map[string]map[string]dwarfVar, map[string][2]uint64) {
+	t.Helper()
+	f, err := goelf.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	d, err := f.DWARF()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loc []byte
+	if sec := f.Section(".debug_loc"); sec != nil {
+		if loc, err = sec.Data(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := map[string]map[string]dwarfVar{}
+	subs := map[string][2]uint64{}
+	r := d.Reader()
+	var base uint64
+	fn := ""
+	for {
+		e, err := r.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e == nil {
+			break
+		}
+		switch e.Tag {
+		case dwarf.TagCompileUnit:
+			base, _ = e.Val(dwarf.AttrLowpc).(uint64)
+		case dwarf.TagSubprogram:
+			fn, _ = e.Val(dwarf.AttrName).(string)
+			lo, _ := e.Val(dwarf.AttrLowpc).(uint64)
+			hi, _ := e.Val(dwarf.AttrHighpc).(uint64)
+			subs[fn] = [2]uint64{lo, hi}
+		case dwarf.TagFormalParameter, dwarf.TagVariable:
+			name, _ := e.Val(dwarf.AttrName).(string)
+			v := dwarfVar{tag: e.Tag}
+			if off, ok := e.Val(dwarf.AttrType).(dwarf.Offset); ok {
+				if ty, err := d.Type(off); err == nil {
+					v.typ = ty.String()
+				}
+			}
+			at, ok := e.Val(dwarf.AttrLocation).(int64)
+			if !ok {
+				t.Errorf("%s.%s: DW_AT_location is %T, want a location-list offset", fn, name, e.Val(dwarf.AttrLocation))
+			}
+			for p := int(at); ok && p+16 <= len(loc); {
+				lo := binary.LittleEndian.Uint64(loc[p:])
+				hi := binary.LittleEndian.Uint64(loc[p+8:])
+				if lo == 0 && hi == 0 {
+					break
+				}
+				n := int(binary.LittleEndian.Uint16(loc[p+16:]))
+				v.ranges = append(v.ranges, [2]uint64{base + lo, base + hi})
+				v.exprs = append(v.exprs, loc[p+18:p+18+n])
+				p += 18 + n
+			}
+			if out[fn] == nil {
+				out[fn] = map[string]dwarfVar{}
+			}
+			out[fn][name] = v
+		}
+	}
+	return out, subs
+}
+
+// The self-host's answer to internal/e2e's TestDWARFLocalVars (#11410). A
+// variable's value moves between homes the register allocator picks, so its
+// DW_AT_location is a location list: each entry a range of f's code and the
+// register (DW_OP_reg<n>) or frame slot (DW_OP_breg<fp>) the value is in
+// there. Native's fixed DW_OP_fbreg offsets do not exist here, so this checks
+// the shape on both ISAs, and on an x86-64 host with gdb what the debugger
+// reads at a breakpoint.
+func TestSelfHostDWARFLocalVars(t *testing.T) {
+	cli := newStrictCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "vars.fern")
+	if err := os.WriteFile(src, []byte(dwarfVarsSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wants := map[string]map[string]string{
+		"f":    {"n": "i32", "m": "i32", "k": "i64"},
+		"sum":  {"n": "i32", "acc": "i32", "i": "i32"},
+		"many": {"a": "i64", "b": "i64", "c": "i64", "d": "i64", "e": "i64", "g": "i64", "h": "i64", "j": "i64", "k": "i64", "l": "i64", "o": "i64", "p": "i64", "q": "i64"},
+	}
+	params := map[string]bool{"n": true, "a": true}
+	fp := map[string]byte{"x86-64-linux": 0x76, "arm64-linux": 0x8d}
+	bins := map[string]string{}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			out := filepath.Join(dir, "vars-"+target)
+			cmd := runX86_64Bin(cli.runner, cli.bin, "-g", "-target", target, "-o", out, src, cli.stdlib)
+			if o, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("-g build: %v\n%s", err, o)
+			}
+			bins[target] = out
+			vars, subs := dwarfVars(t, out)
+			if _, ok := vars["f"]["s"]; ok {
+				t.Errorf("f's string parameter s has a DIE; only scalars are described")
+			}
+			spilled := false
+			for fn, want := range wants {
+				for name, typ := range want {
+					v, ok := vars[fn][name]
+					if !ok {
+						t.Errorf("%s: no DIE for %s (have %v)", fn, name, vars[fn])
+						continue
+					}
+					if wantTag := map[bool]dwarf.Tag{true: dwarf.TagFormalParameter, false: dwarf.TagVariable}[params[name]]; v.tag != wantTag {
+						t.Errorf("%s.%s: tag %v, want %v", fn, name, v.tag, wantTag)
+					}
+					if v.typ != typ {
+						t.Errorf("%s.%s: type %q, want %q", fn, name, v.typ, typ)
+					}
+					if len(v.ranges) == 0 {
+						t.Errorf("%s.%s: an empty location list", fn, name)
+					}
+					for i, rg := range v.ranges {
+						if rg[0] >= rg[1] || rg[0] < subs[fn][0] || rg[1] > subs[fn][1] {
+							t.Errorf("%s.%s: range [%#x,%#x) is not inside %s [%#x,%#x)", fn, name, rg[0], rg[1], fn, subs[fn][0], subs[fn][1])
+						}
+						e := v.exprs[i]
+						switch {
+						case len(e) == 1 && e[0] >= 0x50 && e[0] <= 0x6f:
+						case len(e) >= 2 && e[0] == fp[target]:
+							spilled = true
+						default:
+							t.Errorf("%s.%s: location % x is neither DW_OP_reg<n> nor the frame register's DW_OP_breg", fn, name, e)
+						}
+					}
+				}
+			}
+			if !spilled {
+				t.Errorf("no variable of many is in a frame slot; the case no longer exercises a spilled home")
+			}
+		})
+	}
+
+	// What a debugger reads. gdb is the consumer -g serves; where it is
+	// absent the shape checks above still stand.
+	gdb, err := exec.LookPath("gdb")
+	if err != nil || runtime.GOARCH != "amd64" || bins["x86-64-linux"] == "" {
+		t.Skip("gdb on an amd64 host reads the x86-64 binary's variables; none here")
+	}
+	o, err := exec.Command(gdb, "-batch", "-ex", "break vars.fern:5", "-ex", "break vars.fern:12", "-ex", "break vars.fern:29",
+		"-ex", "run", "-ex", "info locals", "-ex", "continue", "-ex", "info locals", "-ex", "delete 2", "-ex", "continue", "-ex", "info args", "-ex", "info locals",
+		bins["x86-64-linux"]).CombinedOutput()
+	if err != nil {
+		t.Fatalf("gdb: %v\n%s", err, o)
+	}
+	got := string(o)
+	for _, want := range []string{
+		"m = 42\nk = 126\n", // f at its return
+		"acc = 0\ni = 0\n",  // sum's first iteration
+		"a = 1\n",           // many's parameter, at its return
+		"b = 2\nc = 4\nd = 7\ne = 13\ng = 24\nh = 45\nj = 84\nk = 181\nl = 362\no = 724\np = 1448\nq = 2896\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("gdb did not read %q\n%s", want, got)
+		}
 	}
 }

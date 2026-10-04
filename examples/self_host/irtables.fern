@@ -1438,6 +1438,12 @@ pub struct LowerResult {
   // every value one machine word ignores it; wasm has to spell the result
   // in the function's type, and guessing is what this replaces.
   result_kind: i32,
+  // Under `-g`, the local slots a source variable is bound to, its name and
+  // its type's spelling, parallel: what a debugger's view of a local is
+  // built from (#11410). One variable has a slot per value it is bound to.
+  dbg_slots: i32[],
+  dbg_names: string[],
+  dbg_types: string[],
 }
 
 // result_from_decl marks a body whose return type is read from its

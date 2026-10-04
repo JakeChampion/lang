@@ -229,7 +229,7 @@ func semanticSource(indices []int) (string, string) {
 		fmt.Fprintf(&source, "function semantic_case_%d(): i32 {\n%s\n%s\n", i, semanticFixture, tc.change)
 		source.WriteString(`
 let before = ssa.print_func(graph);
-let checked = ssasem.analyze(ssasem.Func { envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls });
+let checked = ssasem.analyze(ssasem.Func { envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls });
 if (checked.ok != (checked.why == "") || checked.flow.ok != checked.ok) { return 2; }
 if (before != ssa.print_func(graph)) { return 3; }
 if (!checked.ok && (checked.dependencies.len() != 0 || checked.flow.live_in.len() != 0 || checked.flow.live_out.len() != 0)) { return 4; }
@@ -262,7 +262,7 @@ if (checked.dependencies[6].len() != 0) { return 11; }
 			source.WriteString(`
 if (!checked.ok) { print(checked.why); return 12; }
 if (checked.dependencies[1].len() != 1 || checked.dependencies[1][0] != 0) { return 13; }
-let f = ssasem.Func { envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
+let f = ssasem.Func { envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
 let anchor = ssasem.result_anchor(f, anchors, []);
 if (!ssasem.holds_view(f, result) || anchor.pending) { return 14; }
 `)

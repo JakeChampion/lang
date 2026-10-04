@@ -20,6 +20,7 @@ function empty(why: string): irtables.LowerResult {
     ok: false, why: why, ops: [], n_locals: 0,
     n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
     f64_slots: [], str_slots: [], name: "", result_kind: irtables.result_i32(),
+    dbg_slots: [], dbg_names: [], dbg_types: [],
   };
 }
 
@@ -3036,6 +3037,15 @@ function frame(f: ssasem.Func): irtables.LowerResult {
     ...r, ok: true, n_params: f.params.len(), n_locals: f.graph.nvals,
     name: f.graph.name, result_kind: result_kind(f.result),
   };
+  let di: i32 = 0;
+  while (di < f.dbg_vals.len()) {
+    let v: i32 = f.dbg_vals[di];
+    r = irtables.LowerResult {
+      ...r, dbg_slots: r.dbg_slots.append(v), dbg_names: r.dbg_names.append(f.dbg_names[di]),
+      dbg_types: r.dbg_types.append(typeinfo.spelling(f.values[v])),
+    };
+    di = di + 1;
+  }
   let vi: i32 = 0;
   while (vi < f.values.len()) {
     if let typeinfo.TypeArray(_) = f.values[vi] {
