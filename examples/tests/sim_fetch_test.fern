@@ -2,6 +2,7 @@ import "std/test";
 import "std/sim";
 import "std/sim_fetch";
 import "std/fetch";
+import "std/time";
 import "std/http";
 import "std/hash";
 
@@ -154,7 +155,7 @@ function test_listener_at_zero(): test.TestOutcome {
 // times out whether the address refuses or listens.
 function test_zero_connect_bound(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let zero: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), connect_ms: 0 };
+  let zero: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), connect: time.duration_millis(0 as i64) };
   let refusing: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(refusing, fetch.get("http://example.test/").with_timeouts(zero), __open());
   if (__message(got) != "timed out connecting") {
