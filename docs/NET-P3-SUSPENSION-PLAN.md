@@ -312,11 +312,38 @@ a chunked body that breaks its rules or a peer that closed short, and
 `Result[HttpResponse, BodyError]` refuses a bad upload with `?` as it
 refuses bad UTF-8 today. `body_bytes` and `read_all` drain
 the source; `body_len` answers the declared `Content-Length` for a lazy
-body. An in-memory `Stream` has no source and costs nothing new.
+body (-1 when chunked); `len`, `remaining` and `is_empty` keep describing
+the buffer — the whole body of an in-memory `Stream`, the chunk being read
+of a sourced one — and the reader methods are the truth about a sourced
+stream's end. `fault` holds one of: 0, the framing ran to its end or has
+not yet; 400, 413 or 431, the chunked decoder's refusals (the walk's
+statuses); 408, the data-rate stall; `async.cancelled()` (-2), the task
+was cancelled. `EndedEarly`'s `ToResponse` answers a status it holds and
+500 for the cancellation, which a handler only ever observes on its way
+into a connection the loop has closed. An in-memory `Stream` has no source
+and allocates nothing new, but the readers that contain the `next()` call
+site — `read_n`, `read_all`, `read_byte`, `read_line`, `__fill`, and the
+whole-body readers above them, response serialisation's `BodyStream` arm
+included — are statically transformed by the suspension pass and pay its
+prologue (a mode test, the `ci`/`tc` frame, a guard per segment and site)
+on every call, in memory or not; the hello server's retired-instruction
+count did not move (its body is text) and its static count grew 4.8%,
+which `.github/perf-baseline.txt` re-banks. The three `Stream { data, pos }`
+literals outside std/stream (the wasi-http wrapper, two Go-embedded test
+programs) name the third field.
 
 **The handler owns the read side.** Behind `serve.Config.stream_bodies`
 (off by default), a request whose header block is complete and whose body
-framing is valid starts its handler at once, the body not yet arrived: the
+framing is valid starts its handler at once, the body not yet arrived. The
+parser answers that state through a head-only entry beside the framed
+parse: `http_parse_request_head_from` is `Headed(HttpHead)` — the request
+with an empty body, its length on the wire, persistence, version, declared
+body length (-1 chunked) and whether it expects `100 Continue` —
+`HeadIncomplete`, or `HeadMalformed(status)`, a declared length past the
+cap refused 413 there; the framed parse reads its body behind the same
+head, and `HttpFraming`'s four arms keep their meanings (the loop consults
+the head only on `Incomplete` and `Continue`, where `Continue` no longer
+sends the interim response itself under `stream_bodies`). The
 loop hands the source the body bytes it already holds and stops reading
 the connection — it unwatches the descriptor, so a level-triggered reactor
 does not spin on bytes nobody takes — and from then on only the pull reads
@@ -331,19 +358,34 @@ flight's leftover, a `Cell[string]` the loop prepends to the connection's
 buffer when the flight answers, as `string_from_bytes_unchecked` carries
 wire bytes elsewhere in the loop. `Expect: 100-continue` is answered by
 the pull before its first wait rather than by the loop on the header block,
-so a handler that refuses the request never invites the body. When the
-source ends the loop watches the descriptor again at the flight's next wake,
-and a body refused (413 mid-stream, 408, 400) ends the connection after the
-response, since the request was not consumed. A disconnect cancels the
-flight as today; the pull's wait answers `cancelled()`, the source faults,
-and the handler winds down through its own exit paths. A declared length
-past the cap is still refused 413 before the handler, framing being known.
+so a handler that refuses the request never invites the body. The loop
+and the pull share the body's state — 0 while it is being read, 1 once the
+framing ran to its end, 2 once it faulted — beside the leftover; when the
+flight answers the loop watches the descriptor again, and a connection
+whose state is not 1 does not persist: a refused body (413 mid-stream,
+408, 400, 431) and a body the handler stopped reading early without a
+fault alike, since what is left of it on the socket would otherwise be
+read as the next request. A disconnect cancels the flight as today; the
+pull's wait answers `cancelled()`, the source faults, and the handler winds
+down through its own exit paths. A declared length past the cap is still
+refused 413 before the handler, framing being known. The stateful loop
+(`run_with`) keeps reading bodies whole: its handler runs to completion
+(slice 5), so `stream_bodies` applies to the stateless loops only.
 
 The pull is a closure body reaching a park, which is what exercises the
-classifier's indirect-call rule (§3.1) for the first time. Under the Go
-compiler the pull's wait blocks the loop for the body, the blocking
-fallback P3 has everywhere; the wasi-http entry keeps reading the body
-whole (`wasi_http.read_body`), its host-side stream a follow-up outside P3.
+classifier's indirect-call rule (§3.1) for the first time. The closure is
+built in std/serve and called from std/stream's readers, and that crosses
+no boundary the classifier sees: the self-host lowers the flattened whole
+program as one module (`stream____fill`, `serve____body_source$clo0` are
+rows of the same table), so the pull's lifted body marks every
+call-through-value site and the readers between the handler and the park
+are transformed with it — the emitted assembly of the gate's server shows
+the prologue on `Stream__read_n`, `Stream__read_all`, `stream____fill`,
+`HttpRequest__body_string` and the handler. Under the Go compiler the
+pull's wait blocks the loop for the body, the blocking fallback P3 has
+everywhere; the wasi-http entry keeps reading the body whole (its
+hand-built `Stream` carries the source slot as None), its host-side stream
+a follow-up outside P3.
 
 Sub-slices, each its own PR: (a) the lazy `Stream` and `BodySource` in
 both compilers with std/stream and std/http reading through them; (b) the
@@ -353,8 +395,9 @@ descriptor handoff, leftover, 100-continue, the faults, and the gates — a
 handler summing a slowly sent upload while another connection's hello is
 answered meanwhile, a stalled body answered 408, a chunked body past the
 cap answered 413, a pipelined request after a chunked body still answered,
-a disconnect mid-body cancelling the flight — on the self-host x86-64 and
-arm64 with the Go compiler's twins.
+a disconnect mid-body cancelling the flight, a body the handler stopped
+reading early closing the connection after its response — on the self-host
+x86-64 and arm64 with the Go compiler's twin of the sequential checks.
 
 ## 4. Slices
 
