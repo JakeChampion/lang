@@ -184,7 +184,7 @@ func (s *Server) dispatch(frame []byte, w io.Writer) {
 	_ = writeFrame(w, message{
 		Jsonrpc: "2.0",
 		ID:      msg.ID,
-		Result:  rawOrNull(result),
+		Result:  responseResult(result, rerr),
 		Error:   rerr,
 	})
 }
@@ -268,7 +268,7 @@ func (s *Server) handleInitialize() initializeResult {
 			DocumentFormattingProvider: true,
 			CodeActionProvider:         true,
 		},
-		ServerInfo: &serverInfo{Name: "lang-lsp"},
+		ServerInfo: &serverInfo{Name: "fern-lsp"},
 	}
 }
 
@@ -596,9 +596,6 @@ func (s *Server) updateDoc(uri, src string) []string {
 					continue
 				}
 				newDiags := diagsByFile[otherPath]
-				if newDiags == nil {
-					newDiags = []Diagnostic{}
-				}
 				if !diagnosticsEqual(doc.diags, newDiags) {
 					doc.diags = newDiags
 					affected = append(affected, otherURI)
@@ -686,9 +683,15 @@ func (s *Server) publishDiagnostics(uri string) {
 		return
 	}
 	s.lastDiags[uri] = state.diags
+	// The spec's diagnostics member is an array, and a document with none
+	// can hold a nil slice, which marshals as null.
+	ds := state.diags
+	if ds == nil {
+		ds = []Diagnostic{}
+	}
 	s.publish("textDocument/publishDiagnostics", publishDiagnosticsParams{
 		URI:         uri,
-		Diagnostics: state.diags,
+		Diagnostics: ds,
 	})
 }
 
@@ -770,7 +773,7 @@ func marshalResponse(id json.RawMessage, result any, rerr *rpcError) []byte {
 	m := message{
 		Jsonrpc: "2.0",
 		ID:      id,
-		Result:  rawOrNull(result),
+		Result:  responseResult(result, rerr),
 		Error:   rerr,
 	}
 	b, err := json.Marshal(m)
@@ -788,14 +791,15 @@ func marshalResponse(id json.RawMessage, result any, rerr *rpcError) []byte {
 	return b
 }
 
-// rawOrNull turns a Go value into a json.RawMessage, returning nil
-// if the value is nil (so the JSON serialiser omits the field
-// entirely thanks to omitempty). The two-step Marshal + cast is
-// necessary because json.RawMessage's zero value isn't nil — it's
-// a length-0 byte slice that omitempty still keeps out.
-func rawOrNull(v any) json.RawMessage {
-	if v == nil {
+// responseResult is a response's `result` member. JSON-RPC requires it on
+// every success, so a handler with nothing to say answers `null`; on an
+// error it is nil, which omitempty drops, since the two are exclusive.
+func responseResult(v any, rerr *rpcError) json.RawMessage {
+	if rerr != nil {
 		return nil
+	}
+	if v == nil {
+		return json.RawMessage("null")
 	}
 	b, err := json.Marshal(v)
 	if err != nil {

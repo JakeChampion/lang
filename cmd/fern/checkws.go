@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/jakechampion/lang/internal/manifest"
+	"github.com/jakechampion/lang/internal/platforms"
 )
 
 // runCheckTarget dispatches `fern -check ARG`:
@@ -21,6 +22,9 @@ import (
 // the multi-package self-hosted compiler needs: one command validates
 // lexer / parser / checker / codegen together.
 func runCheckTarget(arg, target string) error {
+	if target != "" && platforms.ForTarget(target) == nil {
+		return errUnknownTarget(target)
+	}
 	if arg == "-" {
 		return runCheck(arg, target)
 	}
@@ -93,4 +97,9 @@ func packageEntry(dir string) (string, error) {
 func fileExists(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && !st.IsDir()
+}
+
+// errUnknownTarget refuses a -target that names no descriptor.
+func errUnknownTarget(target string) error {
+	return fmt.Errorf("unknown target %q — run `fern -targets` for the list (targets are <isa>-<environment>, e.g. arm64-linux, x86-64-linux, wasm32-wasi)", target)
 }
