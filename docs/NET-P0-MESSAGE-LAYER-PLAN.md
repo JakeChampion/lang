@@ -78,11 +78,9 @@ up.
    parse and the serialize of the request in §1, counted separately. It runs
    on both compilers, in `internal/e2eselfhost` with a twin in
    `internal/e2e`, and pins today's counts as a ratchet that may only fall.
-   The probe also prints the per-reference cost of a `const` array, so the
-   native fix in slice 2 has a number to move.
 2. **Native: a `const` array is static.** A read of a `const` array reads one
    immortal copy instead of building a new one. This is a native bugfix,
-   referenced on #4451. Its own issue, test and PR.
+   referenced on #4451, with its own issue, allocation-count test and PR.
 3. **One copy per kept string.** A builtin that copies a byte range straight
    into a string, and a UTF-8 check over a range, so a field value is
    validated in place and copied once. It needs four classifications. This
