@@ -17984,6 +17984,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			callee = c.info.FuncSigs[id.Name]
 		} else {
 			callee = c.checkExpr(n.Callee, s)
+			// A call in callee position has no destination of its own to
+			// settle its literals, so it takes an unannotated binding's
+			// defaults (#11488).
+			if inner, ok := n.Callee.(*ast.Call); ok {
+				if widened := c.widenGenericCallByLiterals(inner); widened != nil {
+					callee = widened
+				}
+			}
 		}
 		ft, ok := callee.(*ast.FuncType)
 		if !ok {

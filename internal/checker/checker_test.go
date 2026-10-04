@@ -1088,6 +1088,31 @@ func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
 	}
 }
 
+// A generic call in CALLEE position has no destination of its own, so a type
+// parameter only literals bind takes i64 when one has no i32 reading, as an
+// unannotated `let` init does. Left at the i32 default it truncated on native
+// (#11488).
+func TestGenericCallInCalleePositionWidensByLiteral(t *testing.T) {
+	src := `function make[T](seed: T): (i32) => T { return (k: i32): T => seed; }
+function main(): i32 { let b = make(5000000000)(2); return 0; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	main := prog.Funcs[len(prog.Funcs)-1]
+	inner := main.Body.Stmts[0].(*ast.Var).Init.(*ast.Call).Callee.(*ast.Call)
+	got, ok := inner.TypeArgs[0].(ast.NumberType)
+	if !ok || got.NormalWidth() != 64 || !got.IsSigned() || got.Polymorphic {
+		t.Errorf("T = %#v, want i64", inner.TypeArgs[0])
+	}
+	if lit := inner.Args[0].(*ast.NumberLit); lit.Width != 64 {
+		t.Errorf("literal settled at width %d, want 64", lit.Width)
+	}
+}
+
 // An unannotated local bound to a generic struct literal whose type argument
 // only literals bind is a Same[i64] when one of them has no i32 reading, and
 // both field literals settle at i64 (#10453). Typing it Same[i32] truncated the
