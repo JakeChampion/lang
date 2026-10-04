@@ -161,6 +161,6 @@ function main(): i32 {
   ];
   let rc_bodies: string = wasm_ir.emit_ir_rc_bodies_from(im, frt, sdt, aet, wasm_ir.heap_base_for_units(units));
 
-  write(wasm_ir.emit_ir_module_units(units, im, needs, fn_sigs, rc_bodies, 0));
+  write(wasm_ir.emit_ir_module_units(units, im, needs, fn_sigs, rc_bodies, 0, asmcore.env_switches()));
   return 0;
 }
