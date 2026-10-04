@@ -65,9 +65,14 @@ jobs:
         with:
           wasmtime: "true"
       - uses: ./.github/actions/selfhost-driver-cache
+      # An execution here is three compiles and a run, about a second, and Go
+      # spends up to -fuzzminimizetime (60s by default) shrinking each input
+      # that finds new coverage, counting none of it as execs. Uncapped, one
+      # interesting input took most of the budget: 34 execs in 60s, against
+      # about 200 at ten minimisation runs per input (#9977).
       - name: fuzz differential execution (both arches)
         if: ${{ !cancelled() }}
-        run: gotestsum --format testname -- -fuzz=FuzzGenerate_ExecutionAgrees -fuzztime=60s -run=^$ ./internal/e2e
+        run: gotestsum --format testname -- -fuzz=FuzzGenerate_ExecutionAgrees -fuzztime=60s -fuzzminimizetime=10x -run=^$ ./internal/e2e
 
       - name: fuzz parse round-trip (arch-independent, x86 only)
         if: ${{ !cancelled() && matrix.host == 'x86_64' }}
