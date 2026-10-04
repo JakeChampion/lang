@@ -86,8 +86,6 @@ TestCpWalkOrder
 TestCsplit
 TestDateParity
 TestDf
-TestDir
-TestDircolorsParity
 TestDu
 TestGroupsParity
 TestHostidParity
@@ -95,7 +93,6 @@ TestIdParity
 TestLinkParity
 TestLnParity
 TestLognameParity
-TestLs
 TestMkdir
 TestMknodParity
 TestMktempRetryExhaustion
@@ -123,5 +120,4 @@ TestTtyParity
 TestUptime
 TestUsersParity
 TestUtmpRecordLayoutMatchesTheHost
-TestVdir
 TestWhoParity
