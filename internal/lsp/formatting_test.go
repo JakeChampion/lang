@@ -22,8 +22,8 @@ func TestFormatting_NormalisesWhitespace(t *testing.T) {
 	if got[0].Range.Start.Line != 0 || got[0].Range.Start.Character != 0 {
 		t.Errorf("edit start = %+v, want (0,0)", got[0].Range.Start)
 	}
-	if got[0].NewText == src {
-		t.Errorf("newText matches input — formatter should normalise whitespace")
+	if want := "function main(): i32 {\n  return 0;\n}\n"; got[0].NewText != want {
+		t.Errorf("newText = %q, want %q", got[0].NewText, want)
 	}
 }
 
@@ -50,18 +50,11 @@ func TestFormatting_PreservesComments(t *testing.T) {
 }
 
 func TestFormatting_AlreadyFormattedReturnsEmpty(t *testing.T) {
-	// Idempotency contract: format → format produces no edits.
+	// Idempotency contract: source `fern -fmt` would leave alone produces
+	// no edits.
 	src := "function main(): i32 {\n  return 0;\n}\n"
-	first := formattingFor(src)
-	if len(first) != 1 {
-		t.Fatalf("first format should produce one edit, got %d", len(first))
-	}
-	// Now format the already-formatted output.
-	s := NewServer()
-	s.updateDoc("file:///t", first[0].NewText)
-	second := runFormatting(s.docs["file:///t"])
-	if len(second) != 0 {
-		t.Errorf("expected no edits on already-formatted source, got %d (%+v)", len(second), second)
+	if got := formattingFor(src); len(got) != 0 {
+		t.Errorf("expected no edits on already-formatted source, got %d (%+v)", len(got), got)
 	}
 }
 

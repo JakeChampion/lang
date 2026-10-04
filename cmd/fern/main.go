@@ -1963,7 +1963,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	}
 
 	if target != "arm64-linux" && target != "arm64-darwin" && target != "arm64-android" && target != "x86-64-linux" {
-		return 1, fmt.Errorf("unknown target %q — run `fern -targets` for the list (targets are <isa>-<environment>, e.g. arm64-linux, x86-64-linux, wasm32-wasi)", target)
+		return 1, errUnknownTarget(target)
 	}
 
 	darwin := target == "arm64-darwin"
