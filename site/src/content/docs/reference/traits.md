@@ -93,6 +93,37 @@ This is exactly how the [test runner](../../tutorial/testing/) types its
 assertions — `assert_eq[T: cmp.Eq + cmp.Display]` accepts any comparable,
 printable value.
 
+### A trait as a parameter type
+
+A parameter whose type is a trait is shorthand for a type parameter bounded
+by it:
+
+```fern
+import "core/cmp";
+
+// The same as `describe[T: cmp.Display](s: T): string`.
+function describe(s: cmp.Display): string {
+    return "<" + s.to_string() + ">";
+}
+
+function main(): i32 {
+    print(describe(42));        // <42>
+    print(describe("pear"));    // <pear>
+    return 0;
+}
+```
+
+Each such parameter gets a type parameter of its own, so in
+`function pair(a: cmp.Display, b: cmp.Display)` the two arguments may be
+different types. Write the type parameter out when two parameters must share
+one, or when the return type names it. The parameter's type is the trait
+itself, with its type arguments when it has them (`s: Sink[i32]`); an array
+of a trait is not it, and a trait's methods are not generic, so inside an
+`impl` the rule does not apply. A trait means this only as a parameter type:
+in a return type, a field or a `let`, write
+[`dyn Trait`](#runtime-dispatch--dyn-trait) for a value of any implementing
+type, or a type parameter.
+
 ## The `core/cmp` foundation
 
 The standard library's [`core/cmp`](../../stdlib/cmp/) module defines the

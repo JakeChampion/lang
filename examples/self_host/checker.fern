@@ -18534,18 +18534,22 @@ function plain_ident(name: string): boolean {
 //   - a bare leaf falls through to the same conservative e064_unknown_bare.
 // The callers restrict this to NON-generic, NON-method decls, so an inner bare
 // name is never an erased type parameter — a genuine typo, matching the oracle.
-function e064_unknown_name(type_name: string, tn: TypeNames, extra_known: string[]): string {
-  return e064_unknown_name_tref(parser.parse_type_ref(type_name), tn, extra_known);
+// e064_unknown_name is the undeclared name `type_name` spells, or "".
+// `extra_known` names the traits and resources the struct / union name sets
+// leave out, which only a generic's base may spell; `tparams` the type
+// parameters in scope, which a bare name may be.
+function e064_unknown_name(type_name: string, tn: TypeNames, extra_known: string[], tparams: string[]): string {
+  return e064_unknown_name_tref(parser.parse_type_ref(type_name), tn, extra_known, tparams);
 }
 
-function e064_unknown_name_tref(tr: parser.TypeRef, tn: TypeNames, extra_known: string[]): string {
+function e064_unknown_name_tref(tr: parser.TypeRef, tn: TypeNames, extra_known: string[], tparams: string[]): string {
   // Array `E[]` → element E (peel one level, keeping the base/args).
   if (tr.array_depth > 0) {
     let elem: parser.TypeRef = parser.elem_type_ref(tr);
-    return e064_unknown_name_tref(elem, tn, extra_known);
+    return e064_unknown_name_tref(elem, tn, extra_known, tparams);
   }
   if (tr.is_view) {
-    return e064_unknown_name_tref(tr.args[0], tn, extra_known);
+    return e064_unknown_name_tref(tr.args[0], tn, extra_known, tparams);
   }
   // Tuple: out of scope for the array/generic-arg widening.
   if (tr.is_tuple) {
@@ -18572,14 +18576,18 @@ function e064_unknown_name_tref(tr: parser.TypeRef, tn: TypeNames, extra_known: 
       }
     }
     for arg in tr.args {
-      let u: string = e064_unknown_name_tref(arg, tn, extra_known);
+      let u: string = e064_unknown_name_tref(arg, tn, extra_known, tparams);
       if (u.len() > 0) {
         return u;
       }
     }
     return "";
   }
-  // Bare leaf: the original conservative identifier check names the type.
+  // Bare leaf: a type parameter in scope, else the original conservative
+  // identifier check names the type.
+  if (util.has_str(tparams, tr.base)) {
+    return "";
+  }
   if (e064_unknown_bare(tr.base, tn)) {
     return tr.base;
   }
@@ -18669,7 +18677,10 @@ function annot_of_expr(e: ast.Expr, own acc: Annot[]): Annot[] {
 // unknown_type_hint suggests the right spelling for the handful of
 // cross-language slips native's checker names, appended to the E064 message.
 // The hint text is inside the differential, so the two must agree verbatim.
-function unknown_type_hint(name: string): string {
+function unknown_type_hint(name: string, traits: string[]): string {
+  if (util.has_str(traits, name)) {
+    return " (`" + util.demangle(name) + "` is a trait: a parameter of trait type makes the function generic over it; anywhere else write `dyn " + util.demangle(name) + "`)";
+  }
   if (name == "bool") {
     return " (did you mean `boolean`?)";
   }
@@ -18692,12 +18703,24 @@ function unknown_type_hint(name: string): string {
 // undefined. The caller restricts this to functions with no type parameters, so
 // a plain identifier that resolves to unknown is a genuine typo, never an
 // erased generic parameter.
-function e064_annot_diags(an: Annot[], tn: TypeNames, extra_known: string[]): util.Diag[] {
+// e064_fn_tparams is every type parameter in scope in `fd`'s signature and
+// body annotations.
+function e064_fn_tparams(fd: parser.FuncDecl): string[] {
+  let out: string[] = fd.all_type_params;
+  for tp in func_scope_tparams(fd) {
+    if (!util.has_str(out, tp)) {
+      out = out.append(tp);
+    }
+  }
+  return out;
+}
+
+function e064_annot_diags(an: Annot[], tn: TypeNames, extra_known: string[], tparams: string[], traits: string[]): util.Diag[] {
   let out: util.Diag[] = [];
   for elem in an {
-    let vu: string = e064_unknown_name(elem.type_name, tn, extra_known);
+    let vu: string = e064_unknown_name(elem.type_name, tn, extra_known, tparams);
     if (vu.len() > 0) {
-      out = out.append(dg_at("E064", "unknown type \"" + vu + "\"" + unknown_type_hint(vu), elem.line, elem.col));
+      out = out.append(dg_at("E064", "unknown type \"" + util.demangle(vu) + "\"" + unknown_type_hint(vu, traits), elem.line, elem.col));
     }
   }
   return out;
@@ -21637,8 +21660,15 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   // names. The Go checker's knownTypeName accepts any declared struct /
   // enum / trait / resource, so the base check must not flag these.
   let e064_extra: string[] = [];
+  // e064_traits spells each trait as a parameter type reaches here: bare for
+  // the entry's own, under the declaring module's prefix for an import's.
+  let e064_traits: string[] = [];
   for trait_req in mod.trait_reqs {
     e064_extra = e064_extra.append(trait_req.trait_name);
+    e064_traits = e064_traits.append(trait_req.trait_name);
+    if (trait_req.module.len() > 0) {
+      e064_traits = e064_traits.append(trait_req.module + "__" + trait_req.trait_name);
+    }
   }
   for imp in mod.impls {
     e064_extra = e064_extra.append(imp.trait_name);
@@ -21649,31 +21679,36 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   // A variant is materialised as a struct, but its name is no type (#10843).
   let e064_tn: TypeNames = with_spellings(type_names(declared_struct_names(mod.structs), union_names, rnames), mod);
   for efn in mod.funcs {
-    // Skip generic functions: unbounded generics (`id[T]`) record their
-    // parameters in all_type_params rather than type_params, so both must
-    // be empty. Methods are skipped too — their receiver may bind type
-    // parameters that aren't in scope for this resolver — and so is an
-    // associated function whose `impl[T] Box[T]` binds them the same way.
-    if (in_focus(focus, efn) && efn.all_type_params.len() == 0 && func_scope_tparams(efn).len() == 0 && efn.receiver_name.len() == 0) {
+    // A generic function's own type parameters are known names in its
+    // signature; the rest of it is checked as any function's is. Methods are
+    // skipped — their receiver may bind type parameters that aren't in scope
+    // for this resolver — and so is an associated function whose
+    // `impl[T] Box[T]` binds them the same way.
+    if (in_focus(focus, efn) && efn.receiver_name.len() == 0) {
+      let efn_tps: string[] = e064_fn_tparams(efn);
       for param in efn.params {
-        let pu: string = e064_unknown_name(param.type_name, e064_tn, e064_extra);
+        let pu: string = e064_unknown_name(param.type_name, e064_tn, e064_extra, efn_tps);
         if (pu.len() > 0) {
-          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + pu + "\"" + unknown_type_hint(pu), efn.line, efn.col));
+          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + util.demangle(pu) + "\"" + unknown_type_hint(pu, e064_traits), efn.line, efn.col));
         }
         // E057 annotation form: a `Cell[<composite>]` anywhere in a
-        // parameter annotation (same conservative non-generic scope,
-        // so a generic's `Cell[T]` is never flagged).
-        body_diags = util.append_diags(body_diags, e057_annot_diags(param.type_name, efn.line, efn.col));
+        // parameter annotation, in a non-generic function only, so a
+        // generic's `Cell[T]` is never flagged.
+        if (efn_tps.len() == 0) {
+          body_diags = util.append_diags(body_diags, e057_annot_diags(param.type_name, efn.line, efn.col));
+        }
       }
-      let ru: string = e064_unknown_name(efn.ret_type, e064_tn, e064_extra);
+      let ru: string = e064_unknown_name(efn.ret_type, e064_tn, e064_extra, efn_tps);
       if (ru.len() > 0) {
-        body_diags = body_diags.append(dg_at("E064", "unknown type \"" + ru + "\"" + unknown_type_hint(ru), efn.line, efn.col));
+        body_diags = body_diags.append(dg_at("E064", "unknown type \"" + util.demangle(ru) + "\"" + unknown_type_hint(ru, e064_traits), efn.line, efn.col));
       }
-      body_diags = util.append_diags(body_diags, e057_annot_diags(efn.ret_type, efn.line, efn.col));
-      // Body `let x: T` annotations (same non-generic scope).
+      // Body `let x: T` annotations.
       let efn_annots: Annot[] = collect_annots(efn.body);
-      body_diags = util.append_diags(body_diags, e064_annot_diags(efn_annots, e064_tn, e064_extra));
-      body_diags = util.append_diags(body_diags, e057_var_annot_diags(efn_annots));
+      body_diags = util.append_diags(body_diags, e064_annot_diags(efn_annots, e064_tn, e064_extra, efn_tps, e064_traits));
+      if (efn_tps.len() == 0) {
+        body_diags = util.append_diags(body_diags, e057_annot_diags(efn.ret_type, efn.line, efn.col));
+        body_diags = util.append_diags(body_diags, e057_var_annot_diags(efn_annots));
+      }
     }
   }
   // E044: a closure capture of a value with no runtime representation, a
@@ -21801,9 +21836,9 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   for esd in mod.structs {
     if (esd.type_params.len() == 0 && esd.enum_owner.len() == 0) {
       for field in esd.fields {
-        let fu: string = e064_unknown_name(field.type_name, e064_tn, e064_extra);
+        let fu: string = e064_unknown_name(field.type_name, e064_tn, e064_extra, esd.type_params);
         if (fu.len() > 0) {
-          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + fu + "\"" + unknown_type_hint(fu), esd.line, esd.col));
+          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + util.demangle(fu) + "\"" + unknown_type_hint(fu, e064_traits), esd.line, esd.col));
         }
         // E057 annotation form for a struct FIELD (`c: Cell[P]`),
         // same non-generic, non-enum-variant scope as E064.
