@@ -353,6 +353,83 @@ pub function arm64_rec_ret(): i64 {
   return arm64_ret_word(30);
 }
 
+// arm64_rec_ldst_reg is `ldr|str Xt, [Xn, Xm, lsl #3]`, the register offset
+// scaled by the access size.
+pub function arm64_rec_ldst_reg(load: boolean, rt: string, base: string, idx: string): i64 {
+  let t: i32 = arm64_rec_gpr(rt);
+  let rn: i32 = arm64_rec_base(base);
+  let rm: i32 = arm64_rec_gpr(idx);
+  if (t < 0 || rn < 0 || rm < 0 || rt[0] != b'x' || idx[0] != b'x') {
+    return 0 - 1;
+  }
+  return arm64_ldst_regext_word(3, load, t, rn, rm, 3, true);
+}
+
+// arm64_rec_ldrb is `ldrb Wt, [Xn, #off]` and arm64_rec_strb `strb Wt,
+// [Xn, #off]`, off a byte offset 0..4095; arm64_rec_ldrb_reg is
+// `ldrb Wt, [Xn, Xm]`.
+pub function arm64_rec_ldrb(rt: string, base: string, off: i32): i64 {
+  let t: i32 = arm64_rec_gpr(rt);
+  let rn: i32 = arm64_rec_base(base);
+  if (t < 0 || rn < 0 || rt[0] != b'w' || off < 0 || off > 4095) {
+    return 0 - 1;
+  }
+  return 0x39400000 | (off & 0xfff) as i64 << 10 | (rn & 31) as i64 << 5 | (t & 31) as i64;
+}
+
+pub function arm64_rec_strb(rt: string, base: string, off: i32): i64 {
+  let t: i32 = arm64_rec_gpr(rt);
+  let rn: i32 = arm64_rec_base(base);
+  if (t < 0 || rn < 0 || rt[0] != b'w' || off < 0 || off > 4095) {
+    return 0 - 1;
+  }
+  return 0x39000000 | (off & 0xfff) as i64 << 10 | (rn & 31) as i64 << 5 | (t & 31) as i64;
+}
+
+pub function arm64_rec_ldrb_reg(rt: string, base: string, idx: string): i64 {
+  let t: i32 = arm64_rec_gpr(rt);
+  let rn: i32 = arm64_rec_base(base);
+  let rm: i32 = arm64_rec_gpr(idx);
+  if (t < 0 || rn < 0 || rm < 0 || rt[0] != b'w' || idx[0] != b'x') {
+    return 0 - 1;
+  }
+  return arm64_ldst_regext_word(0, true, t, rn, rm, 3, false);
+}
+
+// arm64_rec_lsl_imm is `lsl d, n, #sh` on registers of one width.
+pub function arm64_rec_lsl_imm(d: string, n: string, sh: i32): i64 {
+  let rd: i32 = arm64_rec_gpr(d);
+  let rn: i32 = arm64_rec_gpr(n);
+  let top: i32 = 63;
+  if (rd >= 0 && d[0] == b'w') {
+    top = 31;
+  }
+  if (rd < 0 || rn < 0 || d[0] != n[0] || sh < 0 || sh > top) {
+    return 0 - 1;
+  }
+  return arm64_lsl_imm_word(rd, rn, sh, d[0] == b'w');
+}
+
+// arm64_rec_tst_imm is `tst n, #imm` and arm64_rec_and_imm `and d, n, #imm`,
+// for a bitmask immediate the width encodes, as arm64_gas_emit_logical2 and
+// the and-immediate arm encode them.
+pub function arm64_rec_tst_imm(n: string, imm: i64): i64 {
+  let rn: i32 = arm64_rec_gpr(n);
+  if (rn < 0 || !arm64_logical_imm_ok(imm, n[0] == b'w')) {
+    return 0 - 1;
+  }
+  return arm64_logical_imm_word(0xf2000000, n[0] == b'w', 31, rn, imm);
+}
+
+pub function arm64_rec_and_imm(d: string, n: string, imm: i64): i64 {
+  let rd: i32 = arm64_rec_gpr(d);
+  let rn: i32 = arm64_rec_gpr(n);
+  if (rd < 0 || rn < 0 || d[0] != n[0] || !arm64_logical_imm_ok(imm, n[0] == b'w')) {
+    return 0 - 1;
+  }
+  return arm64_logical_imm_word(0x92000000, n[0] == b'w', rd, rn, imm);
+}
+
 // arm64_rec_adrp is `adrp d, sym` with the page delta left for the symbol's
 // fixup; arm64_rec_add_lo12 is its `add d, n, :lo12:sym` half with the low
 // twelve bits left. Both travel as named records (\x02), and the assembler
@@ -1609,6 +1686,10 @@ function arm64_asm_tbnz(own a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64
 // log2 of the access size. This form is what the string-copy loops emit
 // (`ldrb w0, [x0, x1]` — base + index; its absence was #6047).
 function arm64_ldst_regext(buf: i32[], size: i32, load: boolean, rt: i32, rn: i32, rm: i32, option: i32, scaled: boolean): i32[] {
+  return arm64_le32(buf, arm64_ldst_regext_word(size, load, rt, rn, rm, option, scaled));
+}
+
+function arm64_ldst_regext_word(size: i32, load: boolean, rt: i32, rn: i32, rm: i32, option: i32, scaled: boolean): i64 {
   let word: i64 = (size & 3) as i64 << 30 | 0x38200800;
   if (load) {
     word = word | 0x00400000;
@@ -1616,7 +1697,7 @@ function arm64_ldst_regext(buf: i32[], size: i32, load: boolean, rt: i32, rn: i3
   if (scaled) {
     word = word | 0x1000;
   }
-  return arm64_le32(buf, word | (rm & 31) as i64 << 16 | (option & 7) as i64 << 13 | (rn & 31) as i64 << 5 | (rt & 31) as i64);
+  return word | (rm & 31) as i64 << 16 | (option & 7) as i64 << 13 | (rn & 31) as i64 << 5 | (rt & 31) as i64;
 }
 
 // arm64_ldur / arm64_stur encode `ldur/stur Xt, [Xn, #off]` — the unscaled
@@ -1755,6 +1836,10 @@ function arm64_cset(buf: i32[], rd: i32, cond: i32, w32: boolean): i32[] {
 // 64-bit form (base 0xD3400000, N=1 folded in). lsl uses immr=(width-sh),
 // imms=(width-1-sh); lsr uses immr=sh, imms=width-1.
 function arm64_lsl_imm(buf: i32[], rd: i32, rn: i32, sh: i32, w: boolean): i32[] {
+  return arm64_le32(buf, arm64_lsl_imm_word(rd, rn, sh, w));
+}
+
+function arm64_lsl_imm_word(rd: i32, rn: i32, sh: i32, w: boolean): i64 {
   let width: i32 = 64;
   let base: i64 = 0xd3400000;
   if (w) {
@@ -1763,7 +1848,7 @@ function arm64_lsl_imm(buf: i32[], rd: i32, rn: i32, sh: i32, w: boolean): i32[]
   }
   let immr: i64 = (width - sh & width - 1) as i64;
   let imms: i64 = (width - 1 - sh & 63) as i64;
-  return arm64_le32(buf, base | immr << 16 | imms << 10 | (rn & 31) as i64 << 5 | (rd & 31) as i64);
+  return base | immr << 16 | imms << 10 | (rn & 31) as i64 << 5 | (rd & 31) as i64;
 }
 
 function arm64_lsr_imm(buf: i32[], rd: i32, rn: i32, sh: i32, w: boolean): i32[] {

@@ -1174,6 +1174,148 @@ function ssa_ret(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    ret\n");
 }
 
+// The inline helpers' remaining shapes, each a word when records are on and
+// the text it always was otherwise: ssa_ldst0 is `ldr|str reg, [base]`,
+// ssa_ldst_reg `ldr|str reg, [base, idx, lsl #3]`, ssa_ldrb and ssa_strb a
+// byte access at `[base, #off]`, ssa_ldrb0 one at `[base]`, ssa_ldrb_reg one
+// at `[base, idx]`, ssa_lsl `lsl d, n, #sh`, ssa_cmp_rr `cmp a, b`,
+// ssa_addsub_rr `add|sub d, a, b`, and ssa_tst_imm / ssa_and_imm the logical
+// immediates with `text` as the source spells the immediate.
+function ssa_ldst0(s: asmcore.EmitState, load: boolean, reg: string, base: string): asmcore.EmitState {
+  if (s.records()) {
+    let w: i64 = arm64_native.arm64_rec_ldst(load, reg, base, 0);
+    if (w >= 0) {
+      return s.word(w);
+    }
+  }
+  let m: string = "    str ";
+  if (load) {
+    m = "    ldr ";
+  }
+  return s.write(m + reg + ", [" + base + "]\n");
+}
+
+function ssa_ldst_reg(s: asmcore.EmitState, load: boolean, reg: string, base: string, idx: string): asmcore.EmitState {
+  if (s.records()) {
+    let w: i64 = arm64_native.arm64_rec_ldst_reg(load, reg, base, idx);
+    if (w >= 0) {
+      return s.word(w);
+    }
+  }
+  let m: string = "    str ";
+  if (load) {
+    m = "    ldr ";
+  }
+  return s.write(m + reg + ", [" + base + ", " + idx + ", lsl #3]\n");
+}
+
+function ssa_ldrb(s: asmcore.EmitState, reg: string, base: string, off: i32): asmcore.EmitState {
+  if (s.records()) {
+    let w: i64 = arm64_native.arm64_rec_ldrb(reg, base, off);
+    if (w >= 0) {
+      return s.word(w);
+    }
+  }
+  return s.write("    ldrb " + reg + ", [" + base + ", #" + util.i32_to_string(off) + "]\n");
+}
+
+function ssa_ldrb0(s: asmcore.EmitState, reg: string, base: string): asmcore.EmitState {
+  if (s.records()) {
+    let w: i64 = arm64_native.arm64_rec_ldrb(reg, base, 0);
+    if (w >= 0) {
+      return s.word(w);
+    }
+  }
+  return s.write("    ldrb " + reg + ", [" + base + "]\n");
+}
+
+function ssa_strb(s: asmcore.EmitState, reg: string, base: string, off: i32): asmcore.EmitState {
+  if (s.records()) {
+    let w: i64 = arm64_native.arm64_rec_strb(reg, base, off);
+    if (w >= 0) {
+      return s.word(w);
+    }
+  }
+  return s.write("    strb " + reg + ", [" + base + ", #" + util.i32_to_string(off) + "]\n");
+}
+
+function ssa_ldrb_reg(s: asmcore.EmitState, reg: string, base: string, idx: string): asmcore.EmitState {
+  if (s.records()) {
+    let w: i64 = arm64_native.arm64_rec_ldrb_reg(reg, base, idx);
+    if (w >= 0) {
+      return s.word(w);
+    }
+  }
+  return s.write("    ldrb " + reg + ", [" + base + ", " + idx + "]\n");
+}
+
+function ssa_lsl(s: asmcore.EmitState, d: string, n: string, sh: i32): asmcore.EmitState {
+  if (s.records()) {
+    let w: i64 = arm64_native.arm64_rec_lsl_imm(d, n, sh);
+    if (w >= 0) {
+      return s.word(w);
+    }
+  }
+  return s.write("    lsl " + d + ", " + n + ", #" + util.i32_to_string(sh) + "\n");
+}
+
+function ssa_cmp_rr(s: asmcore.EmitState, a: string, b: string): asmcore.EmitState {
+  if (s.records()) {
+    let w: i64 = arm64_native.arm64_rec_addsub_reg(true, true, "", a, b);
+    if (w >= 0) {
+      return s.word(w);
+    }
+  }
+  return s.write("    cmp " + a + ", " + b + "\n");
+}
+
+function ssa_addsub_rr(s: asmcore.EmitState, is_sub: boolean, d: string, a: string, b: string): asmcore.EmitState {
+  if (s.records()) {
+    let w: i64 = arm64_native.arm64_rec_addsub_reg(is_sub, false, d, a, b);
+    if (w >= 0) {
+      return s.word(w);
+    }
+  }
+  let m: string = "    add ";
+  if (is_sub) {
+    m = "    sub ";
+  }
+  return s.write(m + d + ", " + a + ", " + b + "\n");
+}
+
+function ssa_tst_imm(s: asmcore.EmitState, n: string, imm: i64, text: string): asmcore.EmitState {
+  if (s.records()) {
+    let w: i64 = arm64_native.arm64_rec_tst_imm(n, imm);
+    if (w >= 0) {
+      return s.word(w);
+    }
+  }
+  return s.write("    tst " + n + ", #" + text + "\n");
+}
+
+function ssa_and_imm(s: asmcore.EmitState, d: string, n: string, imm: i64, text: string): asmcore.EmitState {
+  if (s.records()) {
+    let w: i64 = arm64_native.arm64_rec_and_imm(d, n, imm);
+    if (w >= 0) {
+      return s.word(w);
+    }
+  }
+  return s.write("    and " + d + ", " + n + ", #" + text + "\n");
+}
+
+// ssa_trap_guard writes `b.<cond> 1f`, `b abort`, `1:` after a compare: the
+// trap the condition skips, through a label id when records are on and the
+// numeric local in text.
+function ssa_trap_guard(s: asmcore.EmitState, mnem: string, abort: string): asmcore.EmitState {
+  if (s.records() && arm64_native.arm64_rec_bcond(mnem) >= 0 && arm64_native.arm64_rec_label(abort)) {
+    let ln: asmcore.LabNew = asmcore.lab_new(s, "1");
+    s = ssa_bcond(ln.state, mnem, ln.lab);
+    s = s.branch(arm64_native.arm64_rec_b(false), abort);
+    return s.lab_def(ln.lab);
+  }
+  return s.write("    " + mnem + " 1f\n    b " + abort + "\n1:\n");
+}
+
 function ssa_slot_off(v: i32): i32 {
   return 0 - 8 * (v + 1);
 }
@@ -1956,7 +2098,7 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   }
   if (ins.str == "__fern_rc_is_unique") {
     let d: string = ssa_dst(reg_of, ins.result);
-    s = s.write("    mov x6, #0\n");
+    s = ssa_mov_imm(s, "x6", "0");
     s = ssa_rc_guard(s, p, done, ins.imm != 4);
     // w7 rather than the arm's own x4/x5/x6: p, the count and the 0/1
     // answer hold all three across the compare, and x7 is not in the home
@@ -1965,7 +2107,7 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.write(san_poison_check("w5", "w7", done.name + "us", s.rc_free_debug));
     s = ssa_cmp_imm(s, "w5", 1);
     s = ssa_bcond(s, "bne", done);
-    s = s.write("    mov x6, #1\n");
+    s = ssa_mov_imm(s, "x6", "1");
     s = s.lab_def(done);
     s = ssa_mov_rr(s, d, "x6");
     return ssa_store(reg_of, ins.result, d, s);
@@ -1989,7 +2131,7 @@ function ssa_rc_guard(s: asmcore.EmitState, p: string, done: asmcore.Lab, strip:
   s = ssa_cmp_floor(s, p);
   s = ssa_bcond(s, "blo", done);
   if (strip) {
-    s = s.write("    and x7, " + p + ", #0xfffffffffffffffd\n");
+    s = ssa_and_imm(s, "x7", p, 0 - 3i64, "0xfffffffffffffffd");
   }
   return s;
 }
@@ -2130,9 +2272,11 @@ function ssa_release_entry(r: irtables.LowerResult, lp: string, s: asmcore.EmitS
   s = ssa_bcond(s, "bgt", dec);
   s = ssa_tbz(s, false, "w5", 31, slow);
   s = s.lab_def(kept);
-  s = s.write("    mov x0, #0\n    ret\n");
+  s = ssa_ret(ssa_mov_imm(s, "x0", "0"));
   s = s.lab_def(dec);
-  s = s.write("    sub w5, w5, #1\n    stur w5, [x0, #-8]\n    mov x0, #0\n    ret\n");
+  s = ssa_addsub_imm(s, true, "w5", "w5", 1);
+  s = ssa_unscaled(s, false, "w5", "x0", 0 - 8);
+  s = ssa_ret(ssa_mov_imm(s, "x0", "0"));
   return s.lab_def(slow);
 }
 
@@ -2150,11 +2294,11 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   let b: string = ssa_src(reg_of, ins.args[1], "x5");
   s = ssa_load(reg_of, ins.args[1], b, s);
   if (k == 41 && ins.str == "i32") {
-    return s.write("    str " + ssa_wreg(b) + ", [" + a + "]\n");
+    return ssa_ldst0(s, false, ssa_wreg(b), a);
   }
   if (k == 41 && ins.str == "u8") {
     if (ins.imm <= 4095) {
-      return s.write("    strb " + ssa_wreg(b) + ", [" + a + ", #" + util.i32_to_string(ins.imm) + "]\n");
+      return ssa_strb(s, ssa_wreg(b), a, ins.imm);
     }
     s = s.write("    movz x17, #" + util.i32_to_string(ins.imm & 65535) + "\n");
     if (ins.imm > 65535) {
@@ -2168,33 +2312,44 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (k == 42) {
     if (ins.imm != 1) {
       s = s.mark_heap();
-      s = s.write("    ldr x6, [" + a + "]\n    cmp " + b + ", x6\n    b.lo 1f\n    b __fern_oob_abort\n1:\n");
+      s = ssa_ldst0(s, true, "x6", a);
+      s = ssa_cmp_rr(s, b, "x6");
+      s = ssa_trap_guard(s, "b.lo", "__fern_oob_abort");
     }
     if (ins.str == "u8") {
-      s = s.write("    add x5, " + a + ", " + b + "\n    ldrb " + ssa_wreg(d) + ", [x5, #8]\n");
+      s = ssa_addsub_rr(s, false, "x5", a, b);
+      s = ssa_ldrb(s, ssa_wreg(d), "x5", 8);
     } else {
-      s = s.write("    add x5, " + b + ", #1\n    ldr " + d + ", [" + a + ", x5, lsl #3]\n");
+      s = ssa_addsub_imm(s, false, "x5", b, 1);
+      s = ssa_ldst_reg(s, true, d, a, "x5");
     }
     return ssa_store(reg_of, ins.result, d, s);
   }
   if (k == 44) {
     s = s.mark_heap();
     if (ins.imm != 1) {
-      s = s.write("    ldr x6, [" + a + ", #8]\n    cmp " + b + ", x6\n    b.lo 1f\n    b __fern_oob_abort\n1:\n");
+      s = ssa_ldst(s, true, "x6", a, 8);
+      s = ssa_cmp_rr(s, b, "x6");
+      s = ssa_trap_guard(s, "b.lo", "__fern_oob_abort");
     }
-    s = s.write("    ldr x6, [" + a + "]\n    ldrb " + ssa_wreg(d) + ", [x6, " + b + "]\n");
+    s = ssa_ldst0(s, true, "x6", a);
+    s = ssa_ldrb_reg(s, ssa_wreg(d), "x6", b);
     return ssa_store(reg_of, ins.result, d, s);
   }
   let c: string = ssa_src(reg_of, ins.args[2], "x6");
   s = ssa_load(reg_of, ins.args[2], c, s);
   s = s.mark_heap();
   if (ins.imm != 1) {
-    s = s.write("    ldr x7, [" + a + "]\n    cmp " + b + ", x7\n    b.lo 1f\n    b __fern_oob_abort\n1:\n");
+    s = ssa_ldst0(s, true, "x7", a);
+    s = ssa_cmp_rr(s, b, "x7");
+    s = ssa_trap_guard(s, "b.lo", "__fern_oob_abort");
   }
   if (ins.str == "u8") {
-    return s.write("    add x5, " + a + ", " + b + "\n    strb " + ssa_wreg(c) + ", [x5, #8]\n");
+    s = ssa_addsub_rr(s, false, "x5", a, b);
+    return ssa_strb(s, ssa_wreg(c), "x5", 8);
   }
-  return s.write("    add x5, " + b + ", #1\n    str " + c + ", [" + a + ", x5, lsl #3]\n");
+  s = ssa_addsub_imm(s, false, "x5", b, 1);
+  return ssa_ldst_reg(s, false, c, a, "x5");
 }
 
 // ssa_str_call is the stack machine's call of a Fern-compiled runtime helper
@@ -2230,17 +2385,35 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   s = ssa_read(reg_of, ins.args[1], "x5", s);
   let b: string = ssa_src(reg_of, ins.args[1], "x5");
   let n: string = util.i32_to_string(ins.result);
-  s = s.write("    ldr x6, [" + a + ", #8]\n    ldr x7, [" + b + ", #8]\n    cmp x6, x7\n    b.ne " + lp + "streqn" + n + "\n");
+  let nn: asmcore.LabNew = asmcore.lab_new(s, lp + "streqn" + n);
+  let dn: asmcore.LabNew = asmcore.lab_new(nn.state, lp + "streqd" + n);
+  s = dn.state;
+  let neq: asmcore.Lab = nn.lab;
+  let done: asmcore.Lab = dn.lab;
+  s = ssa_ldst(s, true, "x6", a, 8);
+  s = ssa_ldst(s, true, "x7", b, 8);
+  s = ssa_cmp_rr(s, "x6", "x7");
+  s = ssa_bcond(s, "b.ne", neq);
   let lit_a: i32 = fr.lit0[ins.args[0]];
   let lit_b: i32 = fr.lit0[ins.args[1]];
-  if (lit_b >= 0) {
-    s = s.write("    ldr x6, [" + a + "]\n    ldrb w6, [x6]\n    cmp w6, #" + util.i32_to_string(lit_b) + "\n    b.ne " + lp + "streqn" + n + "\n");
-  } else if (lit_a >= 0) {
-    s = s.write("    ldr x6, [" + b + "]\n    ldrb w6, [x6]\n    cmp w6, #" + util.i32_to_string(lit_a) + "\n    b.ne " + lp + "streqn" + n + "\n");
+  if (lit_b >= 0 || lit_a >= 0) {
+    let other: string = a;
+    let lit: i32 = lit_b;
+    if (lit_b < 0) {
+      other = b;
+      lit = lit_a;
+    }
+    s = ssa_ldst0(s, true, "x6", other);
+    s = ssa_ldrb0(s, "w6", "x6");
+    s = ssa_cmp_imm(s, "w6", lit);
+    s = ssa_bcond(s, "b.ne", neq);
   }
   s = ssa_parallel_moves([reg_of[ins.args[0]], reg_of[ins.args[1]]], [0, 1], s);
-  s = s.write("    bl __fn___fern_str_eq.r\n    b " + lp + "streqd" + n + "\n");
-  s = s.write(lp + "streqn" + n + ":\n    mov x0, #0\n" + lp + "streqd" + n + ":\n");
+  s = ssa_bl_sym(s, "__fn___fern_str_eq.r");
+  s = ssa_b(s, done);
+  s = s.lab_def(neq);
+  s = ssa_mov_imm(s, "x0", "0");
+  s = s.lab_def(done);
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
@@ -2476,9 +2649,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     }
   }
   if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
-    s = s.write(arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), ins.imm == 1));
+    s = arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), ins.imm == 1, s);
   } else if (util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
-    s = s.write(arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result), ins.imm == 1));
+    s = arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result), ins.imm == 1, s);
   } else {
     s = ssa_bl_sym(s, sym);
   }
@@ -2511,30 +2684,60 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 // arr_push_inline is arr_push_fast at the call site, calling `sym` only when
 // the receiver has no free slot or is shared. `unique` drops the count test:
 // the receiver was just tested unique.
-function arr_push_inline(sym: string, l: string, unique: boolean): string {
-  return "    ldr x2, [x0]\n    ldur x3, [x0, #-16]\n    cmp x2, x3\n    b.ge " + l + "s\n"
-    + push_count_test(unique, l)
-    + l + "o:\n    add x2, x2, #1\n    str x1, [x0, x2, lsl #3]\n    str x2, [x0]\n    b " + l + "e\n"
-    + l + "s:\n    bl " + sym + "\n" + l + "e:\n";
+function arr_push_inline(sym: string, l: string, unique: boolean, s: asmcore.EmitState): asmcore.EmitState {
+  let sn: asmcore.LabNew = asmcore.lab_new(s, l + "s");
+  let on: asmcore.LabNew = asmcore.lab_new(sn.state, l + "o");
+  let en: asmcore.LabNew = asmcore.lab_new(on.state, l + "e");
+  s = en.state;
+  s = ssa_ldst0(s, true, "x2", "x0");
+  s = ssa_unscaled(s, true, "x3", "x0", 0 - 16);
+  s = ssa_cmp_rr(s, "x2", "x3");
+  s = ssa_bcond(s, "b.ge", sn.lab);
+  s = push_count_test(unique, sn.lab, on.lab, s);
+  s = s.lab_def(on.lab);
+  s = ssa_addsub_imm(s, false, "x2", "x2", 1);
+  s = ssa_ldst_reg(s, false, "x1", "x0", "x2");
+  s = ssa_ldst0(s, false, "x2", "x0");
+  s = ssa_b(s, en.lab);
+  s = s.lab_def(sn.lab);
+  s = ssa_bl_sym(s, sym);
+  return s.lab_def(en.lab);
 }
 
 // arr_push_inline_u8 is arr_push_inline for a packed byte array: its
 // capacity is in 8-byte words, so the room test is against cap * 8.
-function arr_push_inline_u8(sym: string, l: string, unique: boolean): string {
-  return "    ldr x2, [x0]\n    ldur x3, [x0, #-16]\n    lsl x3, x3, #3\n    cmp x2, x3\n    b.ge " + l + "s\n"
-    + push_count_test(unique, l)
-    + l + "o:\n    add x3, x0, x2\n    strb w1, [x3, #8]\n    add x2, x2, #1\n    str x2, [x0]\n    b " + l + "e\n"
-    + l + "s:\n    bl " + sym + "\n" + l + "e:\n";
+function arr_push_inline_u8(sym: string, l: string, unique: boolean, s: asmcore.EmitState): asmcore.EmitState {
+  let sn: asmcore.LabNew = asmcore.lab_new(s, l + "s");
+  let on: asmcore.LabNew = asmcore.lab_new(sn.state, l + "o");
+  let en: asmcore.LabNew = asmcore.lab_new(on.state, l + "e");
+  s = en.state;
+  s = ssa_ldst0(s, true, "x2", "x0");
+  s = ssa_unscaled(s, true, "x3", "x0", 0 - 16);
+  s = ssa_lsl(s, "x3", "x3", 3);
+  s = ssa_cmp_rr(s, "x2", "x3");
+  s = ssa_bcond(s, "b.ge", sn.lab);
+  s = push_count_test(unique, sn.lab, on.lab, s);
+  s = s.lab_def(on.lab);
+  s = ssa_addsub_rr(s, false, "x3", "x0", "x2");
+  s = ssa_strb(s, "w1", "x3", 8);
+  s = ssa_addsub_imm(s, false, "x2", "x2", 1);
+  s = ssa_ldst0(s, false, "x2", "x0");
+  s = ssa_b(s, en.lab);
+  s = s.lab_def(sn.lab);
+  s = ssa_bl_sym(s, sym);
+  return s.lab_def(en.lab);
 }
 
 // push_count_test sends a shared receiver (count above 1, not immortal) to the
 // slow path; a receiver already tested unique needs no test.
-function push_count_test(unique: boolean, l: string): string {
+function push_count_test(unique: boolean, slow: asmcore.Lab, ok: asmcore.Lab, s: asmcore.EmitState): asmcore.EmitState {
   if (unique) {
-    return "";
+    return s;
   }
-  return "    ldur w3, [x0, #-8]\n    cmp w3, #1\n    b.eq " + l + "o\n"
-    + "    tbz w3, #31, " + l + "s\n";
+  s = ssa_unscaled(s, true, "w3", "x0", 0 - 8);
+  s = ssa_cmp_imm(s, "w3", 1);
+  s = ssa_bcond(s, "b.eq", ok);
+  return ssa_tbz(s, false, "w3", 31, slow);
 }
 
 // ssa_view_slots gives each frame-resident string view (kind 51, imm 1) the
@@ -2579,18 +2782,31 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
   s = ssa_x0_forget(s);
   s = s.mark_heap();
   s = ssa_load_abi_args(reg_of, ins.args, ["x0", "x1", "x2"], s);
-  s = s.write("    ldr x3, [x0, #8]\n    cmp x2, x3\n    b.ls 1f\n    b __fern_oob_abort\n1:\n    cmp x1, x2\n    b.ls 1f\n    b __fern_oob_abort\n1:\n");
-  s = s.write("    sub x2, x2, x1\n    ldr x3, [x0]\n    add x1, x3, x1\n");
+  s = ssa_ldst(s, true, "x3", "x0", 8);
+  s = ssa_cmp_rr(s, "x2", "x3");
+  s = ssa_trap_guard(s, "b.ls", "__fern_oob_abort");
+  s = ssa_cmp_rr(s, "x1", "x2");
+  s = ssa_trap_guard(s, "b.ls", "__fern_oob_abort");
+  s = ssa_addsub_rr(s, true, "x2", "x2", "x1");
+  s = ssa_ldst0(s, true, "x3", "x0");
+  s = ssa_addsub_rr(s, false, "x1", "x3", "x1");
   if (ins.imm == 1) {
     s = fr_sub_imm(s, "x0", "x29", 0 - base_off);
-    s = s.write("    mov x3, #-1\n    str x3, [x0]\n");
+    s = ssa_mov_imm(s, "x3", "-1");
+    s = ssa_ldst0(s, false, "x3", "x0");
   } else {
-    s = s.write("    stp x1, x2, [sp, #-16]!\n    mov x0, #24\n    bl __fern_alloc\n    ldp x1, x2, [sp], #16\n");
-    s = s.write("    mov w3, #1\n    str w3, [x0]\n");
+    s = ssa_pair(s, false, 3, "x1", "x2", 0 - 16);
+    s = ssa_mov_imm(s, "x0", "24");
+    s = ssa_bl_sym(s, "__fern_alloc");
+    s = ssa_pair(s, true, 1, "x1", "x2", 16);
+    s = ssa_mov_imm(s, "w3", "1");
+    s = ssa_ldst0(s, false, "w3", "x0");
     s = mov_borrowed_marker(s, "w3");
-    s = s.write("    str w3, [x0, #4]\n");
+    s = ssa_ldst(s, false, "w3", "x0", 4);
   }
-  s = s.write("    str x1, [x0, #8]\n    str x2, [x0, #16]\n    add x0, x0, #8\n");
+  s = ssa_ldst(s, false, "x1", "x0", 8);
+  s = ssa_ldst(s, false, "x2", "x0", 16);
+  s = ssa_addsub_imm(s, false, "x0", "x0", 8);
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
@@ -3077,14 +3293,21 @@ function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string,
   s = helper_call_needs("__fern_rc_is_unique", s);
   s = ssa_read(reg_of, v, "x4", s);
   let p: string = ssa_src(reg_of, v, "x4");
-  s = s.write("    tst " + p + ", #1\n    b.ne " + join + "\n    cmp " + p + ", #16, lsl #12\n    b.lo " + join + "\n");
+  let jn: asmcore.LabNew = asmcore.lab_new(s, join);
+  s = jn.state;
+  s = ssa_tst_imm(s, p, 1i64, "1");
+  s = ssa_bcond(s, "b.ne", jn.lab);
+  s = ssa_cmp_floor(s, p);
+  s = ssa_bcond(s, "b.lo", jn.lab);
   let base: string = p;
   if (!aligned) {
-    s = s.write("    and x7, " + p + ", #0xfffffffffffffffd\n");
+    s = ssa_and_imm(s, "x7", p, 0 - 3i64, "0xfffffffffffffffd");
     base = "x7";
   }
-  s = s.write("    ldur w5, [" + base + ", #-8]\n" + san_poison_check("w5", "w7", join + "us", s.rc_free_debug) + "    cmp w5, #1\n" + join + ":\n");
-  return s;
+  s = ssa_unscaled(s, true, "w5", base, 0 - 8);
+  s = s.write(san_poison_check("w5", "w7", join + "us", s.rc_free_debug));
+  s = ssa_cmp_imm(s, "w5", 1);
+  return s.lab_def(jn.lab);
 }
 
 // ssa_rotates reports whether a branch from the block at position `from` to
