@@ -505,10 +505,15 @@ function export_func_index(merged: parser.Module, name: string): i32 {
 // stack. The entry pushes each argument where the callee reads it, widened as
 // its type says, and hands an f64 or f32 result back in %xmm0. A Fern f32 is
 // held as the f64 it rounds to, so an f32 crosses as a conversion, not a move.
-function export_entries(merged: parser.Module, names: string[]): string {
+function export_entries(merged: parser.Module, names: string[], arm64: boolean): string {
   let out: string = "";
   for n in names {
-    out = out + export_entry(merged.funcs[export_func_index(merged, n)]);
+    let f: parser.FuncDecl = merged.funcs[export_func_index(merged, n)];
+    if (arm64) {
+      out = out + export_entry_arm64(f);
+    } else {
+      out = out + export_entry(f);
+    }
   }
   return out;
 }
@@ -572,21 +577,142 @@ function export_arg(src: string, t: string): string {
   return load;
 }
 
+// export_entry_arm64 is export_entry for arm64, whose stack ABI reads
+// parameter i from [sp, #16*i] at the callee's stack entry and returns in x0.
+// The AAPCS64 caller passes integers in x0..x7 and FP values in d0..d7 (s0..s7
+// for an f32), the rest on its stack in 8-byte slots above the entry's frame
+// record. x16 and d16 are scratch: the AAPCS64 passes nothing in either.
+function export_entry_arm64(f: parser.FuncDecl): string {
+  let srcs: string[] = [];
+  let ni: i32 = 0;
+  let nf: i32 = 0;
+  let stack: i32 = 16;
+  for p in f.params {
+    let fp: boolean = p.type_name == "f64" || p.type_name == "f32";
+    if (fp && nf < 8) {
+      srcs = srcs.append(util.i32_to_string(nf));
+      nf = nf + 1;
+    } else if (!fp && ni < 8) {
+      srcs = srcs.append(util.i32_to_string(ni));
+      ni = ni + 1;
+    } else {
+      srcs = srcs.append("[x29, #" + util.i32_to_string(stack) + "]");
+      stack = stack + 8;
+    }
+  }
+  let n: i32 = f.params.len();
+  let out: string = "__fern_export_" + f.name + ":\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
+  if (n > 0) {
+    out = out + "    sub sp, sp, #" + util.i32_to_string(16 * n) + "\n";
+  }
+  let i: i32 = 0;
+  while (i < n) {
+    out = out + export_arg_arm64(srcs[i], f.params[i].type_name) + "    str x16, [sp, #" + util.i32_to_string(16 * i) + "]\n";
+    i = i + 1;
+  }
+  out = out + "    bl __fn_" + f.name + "\n";
+  if (f.ret_type == "f64") {
+    out = out + "    fmov d0, x0\n";
+  } else if (f.ret_type == "f32") {
+    out = out + "    fmov d0, x0\n    fcvt s0, d0\n";
+  }
+  return out + "    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n";
+}
+
+// export_arg_arm64 loads one AAPCS64 argument into x16 as the stack ABI holds
+// a value of type `t`. `src` is a register number, or a caller-stack operand.
+function export_arg_arm64(src: string, t: string): string {
+  if (util.str_has_prefix(src, "[")) {
+    if (t == "f32") {
+      return "    ldr s16, " + src + "\n    fcvt d16, s16\n    fmov x16, d16\n";
+    }
+    return "    ldr x16, " + src + "\n" + export_widen_arm64("x16", "w16", t);
+  }
+  if (t == "f64") {
+    return "    fmov x16, d" + src + "\n";
+  }
+  if (t == "f32") {
+    return "    fcvt d16, s" + src + "\n    fmov x16, d16\n";
+  }
+  return export_widen_arm64("x" + src, "w" + src, t);
+}
+
+// export_widen_arm64 moves x (w its low half) into x16, widened as `t` says.
+function export_widen_arm64(x: string, w: string, t: string): string {
+  if (t == "i32") {
+    return "    sxtw x16, " + w + "\n";
+  }
+  if (t == "u32") {
+    return "    mov w16, " + w + "\n";
+  }
+  if (t == "u8" || t == "boolean") {
+    return "    and x16, " + x + ", #255\n";
+  }
+  if (x == "x16") {
+    return "";
+  }
+  return "    mov x16, " + x + "\n";
+}
+
+// arm64_elf_shared is x86_elf_shared for the arm64 targets: the W^X PIE
+// image, linked at base 0 with the data on the first page past the code, and
+// every absolute data word arm64_gas_rebase_offs lists relocated
+// (R_AARCH64_RELATIVE) rather than by the _start loop, which a library never
+// runs.
+function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string): string {
+  let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals(target, "assembler", p.unknown);
+  }
+  let text_len: i32 = p.asm.code.len();
+  let tv: i32 = elf.elf_text_off_so(true);
+  let hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
+  let hv: i32 = elf.elf_eh_hdr_off_so(true, text_len);
+  let ev: i32 = elf.elf_eh_frame_off_so(true, text_len, hdr_len);
+  let eh: i32[] = arm64_native.arm64_eh_frame(p, tv as i64, ev as i64);
+  let hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, tv as i64, ev as i64, hv as i64);
+  let dv: i32 = elf.elf_data_off_so_wx(text_len, hdr.len(), eh.len());
+  p = arm64_native.arm64_gas_link(p, tv as i64, dv as i64);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals(target, "linker", p.unknown);
+  }
+  let rel_offs: i32[] = [];
+  let rel_adds: i64[] = [];
+  for off in arm64_native.arm64_gas_rebase_offs(p) {
+    rel_offs = rel_offs.append(dv + off);
+    rel_adds = rel_adds.append(le64_at(p.data, off));
+  }
+  let pa: arm64_native.Arm64Asm = p.asm;
+  let nosec: i32[] = [];
+  let sym_names: string[] = elf.elf_func_sym_names(pa.lab_names, pa.lab_offs, nosec, 0 - 1, text_len);
+  let sym_offs: i32[] = elf.elf_func_sym_offs(pa.lab_names, pa.lab_offs, nosec, 0 - 1, text_len);
+  let sym_sizes: i32[] = elf.elf_func_sym_sizes(pa.lab_names, pa.lab_offs, nosec, 0 - 1, text_len);
+  let vals: i32[] = [];
+  let sizes: i32[] = [];
+  for n in names {
+    let k: i32 = util.index_of_str(sym_names, "__fern_export_" + n);
+    vals = vals.append(tv + sym_offs[k]);
+    sizes = sizes.append(sym_sizes[k]);
+  }
+  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), true, pa.code, hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  return string_from_bytes_unchecked(util.to_u8(so));
+}
+
 // x86_elf_shared links the emitted program into a shared object: the image
 // x86_elf_binary writes, loaded at base 0, whose absolute data words the
 // loader relocates (R_X86_64_RELATIVE) and whose .dynsym names each export's
 // C-ABI entry by the Fern name, the symbol dlsym looks up.
 function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string): string {
   let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words(asm, words);
-  let tv: i32 = elf.elf_text_off_so_x86();
+  let tv: i32 = elf.elf_text_off_so(false);
   a = x86_native.x86_resolve_data(a, tv);
   if (a.unknown.len() > 0) {
     eprint("fern: -target x86-64: in-process assembler could not encode: " + a.unknown[0]);
     return "";
   }
   let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
-  let hv: i32 = elf.elf_eh_hdr_off_so_x86(a.text.len());
-  let ev: i32 = elf.elf_eh_frame_off_so_x86(a.text.len(), hdr_len);
+  let hv: i32 = elf.elf_eh_hdr_off_so(false, a.text.len());
+  let ev: i32 = elf.elf_eh_frame_off_so(false, a.text.len(), hdr_len);
   let eh: i32[] = x86_native.x86_eh_frame(a, tv as i64, ev as i64);
   let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv as i64, ev as i64, hv as i64);
   // Every patched `.quad` holds base-0 address + 0, so the word itself is
@@ -609,7 +735,7 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     vals = vals.append(tv + sym_offs[k]);
     sizes = sizes.append(sym_sizes[k]);
   }
-  let so: i32[] = elf.elf_shared_x86(a.text, hdr, eh, a.rodata, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), false, elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
@@ -2989,10 +3115,6 @@ function run(): i32 {
       eprint("fern: -shared is only supported with -target x86-64, arm64, or arm64-android (got \"" + target + "\")");
       return 1;
     }
-    if (target != "x86-64-linux") {
-      eprint("fern: -shared: this compiler builds a shared object for -target x86-64-linux only so far, not " + target + " (#11483)");
-      return 1;
-    }
     if (out_path.len() == 0 && emit != "asm") {
       eprint("fern: -shared requires -o OUTPUT.so");
       return 1;
@@ -3307,7 +3429,15 @@ function run(): i32 {
     if (debug_lines) {
       out_asm = dw_file_table(entry_path, b.files) + out_asm;
     }
-    if (!emit_text) {
+    if (shared) {
+      out_asm = export_entries(merged, shared_roots, true) + out_asm;
+    }
+    if (!emit_text && shared) {
+      out_asm = arm64_elf_shared(out_asm, buf_take_bytes(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    } else if (!emit_text) {
       out_asm = arm64_elf_binary(out_asm, buf_take_bytes(recs), emit_syms, entry_path);
       util.arr_push_cliff_report("arm64:image", 0);
       if (out_asm.len() == 0) {
@@ -3326,7 +3456,15 @@ function run(): i32 {
     if (out_asm.len() == 0) {
       return 2;
     }
-    if (!emit_text) {
+    if (shared) {
+      out_asm = export_entries(merged, shared_roots, true) + out_asm;
+    }
+    if (!emit_text && shared) {
+      out_asm = arm64_elf_shared(out_asm, buf_take_bytes(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    } else if (!emit_text) {
       out_asm = arm64_elf_binary_pie(out_asm, buf_take_bytes(recs));
       if (out_asm.len() == 0) {
         return 2;
@@ -3453,7 +3591,7 @@ function run(): i32 {
       out_asm = dw_file_table(entry_path, b.files) + out_asm;
     }
     if (shared && out_asm.len() > 0) {
-      out_asm = export_entries(merged, shared_roots) + out_asm;
+      out_asm = export_entries(merged, shared_roots, false) + out_asm;
     }
     if (!emit_text && shared) {
       out_asm = x86_elf_shared(out_asm, buf_take_bytes(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "");

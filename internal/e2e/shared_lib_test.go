@@ -1201,13 +1201,19 @@ int main(int c,char**v){
 // self-host CLI's -shared, exporting `exports`, and returns its bytes.
 func selfHostSharedX86(t *testing.T, src string, exports ...string) []byte {
 	t.Helper()
+	return selfHostShared(t, "x86-64-linux", src, exports...)
+}
+
+// selfHostShared is selfHostSharedX86 for any -shared target.
+func selfHostShared(t *testing.T, target, src string, exports ...string) []byte {
+	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	soPath := filepath.Join(dir, "libfern.so")
-	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", "x86-64-linux", "-shared", "-export", strings.Join(exports, ","),
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", target, "-shared", "-export", strings.Join(exports, ","),
 		"-o", soPath, srcPath, e2eharness.SelfHostStdlibRoot(t))
 	cmd.Env = e2eharness.ChildEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -1220,35 +1226,24 @@ func selfHostSharedX86(t *testing.T, src string, exports ...string) []byte {
 	return so
 }
 
-// TestSelfHostSharedCEntry pins the C-ABI entry the self-host puts in front of
+// sharedCEntrySrc exercises the C-ABI entry the self-host puts in front of
 // each export: its functions read their arguments from the stack, so the entry
-// moves the SysV registers there, widening a narrow integer by its sign,
-// carrying an f64 or f32 in from and back out to %xmm0, and passing a seventh and
-// eighth argument on from the C caller's stack. A string literal and an
-// allocation run inside the library too, so a relocated data word and the
-// lazily mapped heap are both reached under dlopen.
-func TestSelfHostSharedCEntry(t *testing.T) {
-	gcc, err := exec.LookPath("gcc")
-	if err != nil {
-		t.Skip("gcc not on PATH")
-	}
-	if runtime.GOARCH != "amd64" {
-		t.Skip("host is not amd64")
-	}
-	src := `function greet(n: i32): i32 { let s: string = "hello" + "!"; return s.len() + n; }
+// moves the C caller's registers there, widening a narrow integer by its sign,
+// converting an f32, carrying an f64 in and back out, and passing on the
+// arguments that arrive on the C caller's stack (sum10 past six on x86-64 and
+// eight on arm64, fsum9 past eight FP registers on both). A string literal
+// and an allocation run inside the library too, so a relocated data word and
+// the lazily mapped heap are both reached under dlopen.
+const sharedCEntrySrc = `function greet(n: i32): i32 { let s: string = "hello" + "!"; return s.len() + n; }
 function neg(x: i32): i32 { return 0 - x; }
 function low(b: u8, w: u32): i64 { return (b as i64) * 100000 + (w as i64); }
 function scale(x: f64, n: i32): f64 { return x * (n as f64); }
 function halve(x: f32): f32 { return x * (0.5 as f32); }
-function sum8(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64): i64 { return a + b + c + d + e + f + g * 10 + h * 100; }
+function sum10(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64, j: i64): i64 { return a + b + c + d + e + f + g * 10 + h * 100 + i * 1000 + j * 10000; }
+function fsum9(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, h: f64, i: f64): f64 { return a + b + c + d + e + f + g + h * 10.0 + i * 100.0; }
 function main(): i32 { return 0; }`
-	so := selfHostSharedX86(t, src, "greet", "neg", "low", "scale", "halve", "sum8")
-	dir := t.TempDir()
-	soPath := filepath.Join(dir, "libfern.so")
-	if err := os.WriteFile(soPath, so, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	loader := `#include <dlfcn.h>
+
+const sharedCEntryLoader = `#include <dlfcn.h>
 #include <stdio.h>
 int main(int c, char** v){
   void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
@@ -1257,36 +1252,64 @@ int main(int c, char** v){
   long (*low)(long, long) = dlsym(h, "low");
   double (*scale)(double, int) = dlsym(h, "scale");
   float (*halve)(float) = dlsym(h, "halve");
-  long (*sum8)(long,long,long,long,long,long,long,long) = dlsym(h, "sum8");
-  if(!greet||!neg||!low||!scale||!halve||!sum8) return 101;
-  printf("%d %d %d %ld %g %g %ld\n", greet(4), greet(-10), neg(-7), low(0x1ff05, 0x100000002), scale(1.5, 4), halve(3.0f), sum8(1,2,3,4,5,6,7,8));
+  long (*sum10)(long,long,long,long,long,long,long,long,long,long) = dlsym(h, "sum10");
+  double (*fsum9)(double,double,double,double,double,double,double,double,double) = dlsym(h, "fsum9");
+  if(!greet||!neg||!low||!scale||!halve||!sum10||!fsum9) return 101;
+  printf("%d %d %d %ld %g %g %ld %g\n", greet(4), greet(-10), neg(-7), low(0x1ff05, 0x100000002), scale(1.5, 4), halve(3.0f),
+    sum10(1,2,3,4,5,6,7,8,9,1), fsum9(1,2,3,4,5,6,7,8,9));
   return 0;
 }`
+
+// sharedCEntryWant: low keeps 0x05 of 0x1ff05 as its u8 and 2 of
+// 0x100000002 as its u32.
+const sharedCEntryWant = "10 -4 7 500002 6 1.5 19891 1008\n"
+
+// sharedCEntryCheck builds sharedCEntrySrc for target, loads it with a
+// loader built by cc and run through runner ("" to run it directly), and
+// checks every export's answer and the image's headers.
+func sharedCEntryCheck(t *testing.T, target, cc, runner string, env []string, machine elf.Machine) {
+	t.Helper()
+	so := selfHostShared(t, target, sharedCEntrySrc, "greet", "neg", "low", "scale", "halve", "sum10", "fsum9")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	cPath := filepath.Join(dir, "loader.c")
-	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+	if err := os.WriteFile(cPath, []byte(sharedCEntryLoader), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ld := filepath.Join(dir, "loader")
-	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
-		t.Fatalf("gcc loader: %v\n%s", err, out)
+	if out, err := exec.Command(cc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("%s loader: %v\n%s", cc, err, out)
 	}
-	out, err := exec.Command(ld, soPath).CombinedOutput()
+	cmd := exec.Command(ld, soPath)
+	if runner != "" {
+		cmd = exec.Command(runner, ld, soPath)
+	}
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("loader: %v\n%s", err, out)
 	}
-	// low: the u8 keeps 0x05 of 0x1ff05 and the u32 keeps 2 of 0x100000002.
-	if got, want := string(out), "10 -4 7 500002 6 1.5 891\n"; got != want {
-		t.Errorf("exports answered %q, want %q", got, want)
+	if got := string(out); got != sharedCEntryWant {
+		t.Errorf("exports answered %q, want %q", got, sharedCEntryWant)
 	}
+	sharedImageCheck(t, so, machine)
+}
 
-	// The image's .bss is zero-fill in memory, not bytes in the file, and no
-	// segment is executable and writable but the program's own.
+// sharedImageCheck holds a shared object to what a loader needs: ET_DYN for
+// the machine, PT_DYNAMIC, a non-executable PT_GNU_STACK, and on arm64 no
+// segment both writable and executable, which Android refuses. Its .bss is
+// zero-fill in memory, not bytes in the file.
+func sharedImageCheck(t *testing.T, so []byte, machine elf.Machine) {
+	t.Helper()
 	f, err := elf.NewFile(bytes.NewReader(so))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Type != elf.ET_DYN {
-		t.Errorf("e_type = %v, want ET_DYN", f.Type)
+	if f.Type != elf.ET_DYN || f.Machine != machine {
+		t.Errorf("type/machine = %v/%v, want ET_DYN/%v", f.Type, f.Machine, machine)
 	}
 	var dynamic, stack bool
 	for _, p := range f.Progs {
@@ -1295,13 +1318,50 @@ int main(int c, char** v){
 			dynamic = true
 		case elf.PT_GNU_STACK:
 			stack = p.Flags&elf.PF_X == 0
+		case elf.PT_LOAD:
+			if machine == elf.EM_AARCH64 && p.Flags&elf.PF_W != 0 && p.Flags&elf.PF_X != 0 {
+				t.Errorf("a PT_LOAD at %#x is writable and executable", p.Vaddr)
+			}
 		}
 	}
 	if !dynamic || !stack {
 		t.Errorf("PT_DYNAMIC present = %v, non-executable PT_GNU_STACK = %v; a loader needs both", dynamic, stack)
 	}
-	if len(so) > 64<<10 {
-		t.Errorf("a five-function library is %d bytes; its .bss is being written into the file", len(so))
+	if len(so) > 256<<10 {
+		t.Errorf("a seven-function library is %d bytes; its .bss is being written into the file", len(so))
+	}
+}
+
+func TestSelfHostSharedCEntry(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	sharedCEntryCheck(t, "x86-64-linux", gcc, "", nil, elf.EM_X86_64)
+}
+
+// TestArm64SelfHostSharedCEntry is TestSelfHostSharedCEntry for arm64-linux:
+// natively on an arm64 host, else through the cross gcc and qemu-aarch64 with
+// the aarch64 sysroot as its library prefix.
+func TestArm64SelfHostSharedCEntry(t *testing.T) {
+	gcc, qemu := e2eharness.Arm64Tooling(t)
+	var env []string
+	if qemu != "" {
+		env = []string{"QEMU_LD_PREFIX=/usr/aarch64-linux-gnu"}
+	}
+	sharedCEntryCheck(t, "arm64-linux", gcc, qemu, env, elf.EM_AARCH64)
+}
+
+// TestArm64SelfHostSharedAndroid builds the library Android's
+// System.loadLibrary takes: the arm64 image, W^X, naming the export.
+func TestArm64SelfHostSharedAndroid(t *testing.T) {
+	so := selfHostShared(t, "arm64-android", "function answer(): i32 { return 42; }\nfunction main(): i32 { return answer(); }\n", "answer")
+	sharedImageCheck(t, so, elf.EM_AARCH64)
+	if !bytes.Contains(so, []byte("answer\x00")) {
+		t.Errorf(".dynstr does not contain the export name")
 	}
 }
 
@@ -1321,7 +1381,6 @@ func TestSelfHostSharedRefusals(t *testing.T) {
 	}{
 		{"no_output", []string{"-shared"}, "fern: -shared requires -o OUTPUT.so"},
 		{"wasm", []string{"-shared", "-target", "wasm32-wasi", "-o", so}, `fern: -shared is only supported with -target x86-64, arm64, or arm64-android (got "wasm32-wasi")`},
-		{"arm64_not_yet", []string{"-shared", "-target", "arm64-linux", "-o", so}, "fern: -shared: this compiler builds a shared object for -target x86-64-linux only so far, not arm64-linux (#11483)"},
 		{"missing", []string{"-shared", "-export", "answer,nope", "-o", so}, "fern: -export nope: the program has no top-level function nope"},
 		{"generic", []string{"-shared", "-export=id", "-o", so}, "fern: -export id: a generic function has no single body to export"},
 	}

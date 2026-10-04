@@ -53,7 +53,7 @@ pub function elf_em_aarch64(): i32 {
 }
 
 // elf_em_x86_64 is EM_X86_64 (e_machine).
-function elf_em_x86_64(): i32 {
+pub function elf_em_x86_64(): i32 {
   return 62;
 }
 
@@ -398,28 +398,45 @@ function elf_push_zeros(b: usize, n: i32): void {
   }
 }
 
-// ---- the x86-64 shared object ----
+// ---- the shared object ----
 //
-// The program image above at load base 0, as ET_DYN, and a second segment
-// past its .bss holding the tables a dynamic loader reads: .rela.dyn (one
-// R_X86_64_RELATIVE per absolute data word), .dynsym and .dynstr naming the
-// exports, a SysV .hash, and .dynamic. Five program headers: the two
-// PT_LOADs, PT_DYNAMIC, PT_GNU_EH_FRAME (PT_NULL without unwind data) and
-// PT_GNU_STACK, without which a loader gives the process an executable stack
-// or refuses the library. Native's writer is internal/native/elf's sharedLib.
+// A program image loaded at base 0 as ET_DYN, and a last segment past its
+// .bss holding the tables a dynamic loader reads: .rela.dyn (one
+// R_*_RELATIVE per absolute data word), .dynsym and .dynstr naming the
+// exports, a SysV .hash, and .dynamic. The image is x86-64's single R+W+X
+// segment, or with `wx` the W^X pair arm64 uses, code R+X and the data blob
+// R+W from the first page past it, which Android requires. Then PT_DYNAMIC,
+// PT_GNU_EH_FRAME (PT_NULL without unwind data) and PT_GNU_STACK, without
+// which a loader gives the process an executable stack or refuses the
+// library. Native's writer is internal/native/elf's sharedLib.
 
-// elf_text_off_so_x86 is .text's file offset, and base-0 address, in the
-// shared object; the unwind sections follow it as elf_program_x86's do.
-pub function elf_text_off_so_x86(): i32 {
-  return elf_eh_size() + 5 * elf_ph_size();
+// elf_so_phnum is the shared object's program header count.
+function elf_so_phnum(wx: boolean): i32 {
+  if (wx) {
+    return 6;
+  }
+  return 5;
 }
 
-pub function elf_eh_hdr_off_so_x86(text_len: i32): i32 {
-  return elf_align4(elf_text_off_so_x86() + text_len);
+// elf_text_off_so is .text's file offset, and base-0 address, in the shared
+// object; the unwind sections follow it as in the executables.
+pub function elf_text_off_so(wx: boolean): i32 {
+  return elf_eh_size() + elf_so_phnum(wx) * elf_ph_size();
 }
 
-pub function elf_eh_frame_off_so_x86(text_len: i32, hdr_len: i32): i32 {
-  return elf_align8(elf_eh_hdr_off_so_x86(text_len) + hdr_len);
+pub function elf_eh_hdr_off_so(wx: boolean, text_len: i32): i32 {
+  return elf_align4(elf_text_off_so(wx) + text_len);
+}
+
+pub function elf_eh_frame_off_so(wx: boolean, text_len: i32, hdr_len: i32): i32 {
+  return elf_align8(elf_eh_hdr_off_so(wx, text_len) + hdr_len);
+}
+
+// elf_data_off_so_wx is where the W^X shared object's data segment starts,
+// file offset and address alike: the first page past the code and unwind
+// data. (x86-64's data follows the code at x86_data_base.)
+pub function elf_data_off_so_wx(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
+  return elf_page_up(elf_unwind_end(elf_text_off_so(true), text_len, hdr_len, eh_len));
 }
 
 // elf_phdr appends one 64-bit program header.
@@ -434,10 +451,6 @@ function elf_phdr(buf: i32[], p_type: i32, flags: i32, off: i32, vaddr: i32, fil
   return elf_le64(buf, align as i64);
 }
 
-function elf_align_page4k(v: i32): i32 {
-  return (v + 4095) / 4096 * 4096;
-}
-
 function elf_pad_to(buf: i32[], off: i32): i32[] {
   while (buf.len() < off) {
     buf = buf.append(0);
@@ -445,13 +458,21 @@ function elf_pad_to(buf: i32[], off: i32): i32[] {
   return buf;
 }
 
-// elf_shared_x86 writes the shared object. rel_offs / rel_adds are the
-// relocated words' addresses and addends; names / vals / sizes each export's
-// symbol name, address and size; soname is DT_SONAME, omitted when empty.
-pub function elf_shared_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, rel_offs: i32[], rel_adds: i64[], names: string[], vals: i32[], sizes: i32[], soname: string): i32[] {
+// elf_shared writes the shared object for `machine`. `data_off` is where the
+// data blob starts (x86-64: past the code at x86_data_base; W^X:
+// elf_data_off_so_wx). rel_offs / rel_adds are the relocated words'
+// addresses and addends; names / vals / sizes each export's symbol name,
+// address and size; soname is DT_SONAME, omitted when empty.
+pub function elf_shared(machine: i32, wx: boolean, text: i32[], hdr: i32[], eh: i32[], data: i32[], data_off: i32, bss: i32, rel_offs: i32[], rel_adds: i64[], names: string[], vals: i32[], sizes: i32[], soname: string): i32[] {
   let has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
-  let text_off: i32 = elf_text_off_so_x86();
-  let data_off: i32 = text_off + elf_x86_data_base(text.len(), hdr.len(), eh.len());
+  let text_off: i32 = elf_text_off_so(wx);
+  let code_end: i32 = elf_unwind_end(text_off, text.len(), hdr.len(), eh.len());
+  let page: i32 = 4096;
+  let rel_type: i32 = 8;  // R_X86_64_RELATIVE
+  if (wx) {
+    page = elf_page_align();
+    rel_type = 1027;  // R_AARCH64_RELATIVE
+  }
 
   let dynstr: i32[] = [0];
   let soname_off: i32 = 0;
@@ -469,8 +490,8 @@ pub function elf_shared_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss:
   // bytes and, in memory, past its .bss; each table's address is its file
   // offset plus `slide`.
   let image_sz: i32 = data_off + data.len();
-  let tab_file: i32 = elf_align_page4k(image_sz);
-  let slide: i32 = elf_align_page4k(image_sz + bss) - tab_file;
+  let tab_file: i32 = (image_sz + page - 1) / page * page;
+  let slide: i32 = (image_sz + bss + page - 1) / page * page - tab_file;
   let rela_off: i32 = tab_file;
   let rela_sz: i32 = rel_offs.len() * 24;
   let sym_off: i32 = elf_align8(rela_off + rela_sz);
@@ -497,7 +518,7 @@ pub function elf_shared_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss:
 
   let buf: i32[] = [127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   buf = elf_le16(buf, 3);  // e_type = ET_DYN
-  buf = elf_le16(buf, elf_em_x86_64());
+  buf = elf_le16(buf, machine);
   buf = elf_le32(buf, 1);
   buf = elf_le64(buf, 0 as i64);  // e_entry: a library has none
   buf = elf_le64(buf, elf_eh_size() as i64);
@@ -505,16 +526,21 @@ pub function elf_shared_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss:
   buf = elf_le32(buf, 0);
   buf = elf_le16(buf, elf_eh_size());
   buf = elf_le16(buf, elf_ph_size());
-  buf = elf_le16(buf, 5);
+  buf = elf_le16(buf, elf_so_phnum(wx));
   buf = elf_le16(buf, 0);
   buf = elf_le16(buf, 0);
   buf = elf_le16(buf, 0);
 
-  buf = elf_phdr(buf, 1, 7, 0, 0, image_sz, image_sz + bss, 4096);  // PT_LOAD, R+W+X, the image and its .bss
-  buf = elf_phdr(buf, 1, 6, tab_file, tab_file + slide, end - tab_file, end - tab_file, 4096);  // PT_LOAD, R+W, the tables
+  if (wx) {
+    buf = elf_phdr(buf, 1, 5, 0, 0, code_end, code_end, page);  // PT_LOAD, R+X, the code
+    buf = elf_phdr(buf, 1, 6, data_off, data_off, data.len(), data.len() + bss, page);  // PT_LOAD, R+W, the data and its .bss
+  } else {
+    buf = elf_phdr(buf, 1, 7, 0, 0, image_sz, image_sz + bss, page);  // PT_LOAD, R+W+X, the image and its .bss
+  }
+  buf = elf_phdr(buf, 1, 6, tab_file, tab_file + slide, end - tab_file, end - tab_file, page);  // PT_LOAD, R+W, the tables
   buf = elf_phdr(buf, 2, 6, dyn_off, dyn_off + slide, dyn_sz, dyn_sz, 8);  // PT_DYNAMIC
   if (has_unwind) {
-    let ho: i32 = elf_eh_hdr_off_so_x86(text.len());
+    let ho: i32 = elf_eh_hdr_off_so(wx, text.len());
     buf = elf_phdr(buf, 1685382480, 4, ho, ho, hdr.len(), hdr.len(), 4);  // PT_GNU_EH_FRAME
   } else {
     buf = elf_pad_to(buf, buf.len() + elf_ph_size());
@@ -523,17 +549,17 @@ pub function elf_shared_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss:
   buf = elf_le32(buf, 6);
   buf = elf_pad_to(buf, buf.len() + 48);
 
-  buf = elf_cat_u8(buf, text);
+  buf = elf_cat(buf, text);
   if (has_unwind) {
-    buf = elf_cat(elf_pad_to(buf, elf_eh_hdr_off_so_x86(text.len())), hdr);
-    buf = elf_cat(elf_pad_to(buf, elf_eh_frame_off_so_x86(text.len(), hdr.len())), eh);
+    buf = elf_cat(elf_pad_to(buf, elf_eh_hdr_off_so(wx, text.len())), hdr);
+    buf = elf_cat(elf_pad_to(buf, elf_eh_frame_off_so(wx, text.len(), hdr.len())), eh);
   }
   buf = elf_cat(elf_pad_to(buf, data_off), data);
   buf = elf_pad_to(buf, rela_off);
   let r: i32 = 0;
   while (r < rel_offs.len()) {
     buf = elf_le64(buf, rel_offs[r] as i64);
-    buf = elf_le64(buf, 8 as i64);  // R_X86_64_RELATIVE
+    buf = elf_le64(buf, rel_type as i64);
     buf = elf_le64(buf, rel_adds[r]);
     r = r + 1;
   }
