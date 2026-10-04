@@ -82,6 +82,7 @@ import (
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/embed"
 	"github.com/jakechampion/lang/internal/fmtsource"
+	"github.com/jakechampion/lang/internal/gates"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/literate"
@@ -97,7 +98,6 @@ import (
 	"github.com/jakechampion/lang/internal/printer"
 	"github.com/jakechampion/lang/internal/ssa"
 	"github.com/jakechampion/lang/internal/symname"
-	"github.com/jakechampion/lang/internal/treeshake"
 	"github.com/jakechampion/lang/internal/tty"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
@@ -1154,10 +1154,8 @@ func formatFile(srcPath string, writeBack, diffMode bool, outPath string) (int, 
 // program has no `main` to call.
 //
 // Stdin support is intentionally simple: read the whole stream into
-// memory, parse + check + interpret as a single file. No imports
-// supported in the stdin case because modload reads files from disk
-// — a file at path "-" doesn't exist. File-path callers go through
-// the full modload pipeline.
+// memory and load it as the entry module, whose std/ and core/ imports
+// resolve; a relative import has no directory to resolve against.
 func runInterp(srcPath string, argv []string) (int, error) {
 	var prog *ast.Program
 	var formatErr func(error) error
@@ -1192,11 +1190,15 @@ func runInterp(srcPath string, argv []string) (int, error) {
 		return 1, formatErr(err)
 	}
 	if srcPath != "-" {
-		if err := enforceCapabilities(srcPath, prog, os.Stderr); err != nil {
+		warns, err := gates.Capabilities(srcPath, prog)
+		for _, w := range warns {
+			fmt.Fprintln(os.Stderr, w.Format(srcPath))
+		}
+		if err != nil {
 			return 1, formatErr(err)
 		}
 	}
-	if errs := enforceAmbient(srcPath, prog); errs != nil {
+	if errs := gates.Ambient(srcPath, prog); errs != nil {
 		return 1, formatErr(errs)
 	}
 	if err := monomorph.Run(prog, info); err != nil {
@@ -1238,107 +1240,9 @@ func runInterp(srcPath string, argv []string) (int, error) {
 	return 0, nil
 }
 
-// runCheck parses srcPath (or stdin when srcPath is "-"), runs the
-// pre-codegen pipeline (constfold + checker + monomorph), and returns
-// nil iff the program type-checks cleanly. Unlike runInterp, this does
-// not require a `main` — library packages should check successfully.
-// Errors come back already formatted with diag.Format so the caller
-// can print them straight to stderr.
-//
-// Stdin form ("-"): the whole stream is read into memory and parsed
-// as a single file with no import resolution (modload reads from
-// disk; the synthetic "-" path has no on-disk source). File-path
-// callers go through the full modload pipeline so transitive imports
-// are checked too.
-// enforceTargetCapabilities runs the platforms Phase 2 gate (E066):
-// reject, before codegen, any call to a runtime builtin the target's
-// descriptor doesn't grant (`subprocess` on wasm, filesystem/tcp/stdin
-// under wasi-http, anything host-mediated under freestanding) — turning
-// mid-build "undefined label"/"unsupported" failures into positioned,
-// `fern explain`-able errors. Tree-shake first so unused imported
-// stdlib wrappers don't trip gates: this mirrors each backend's own
-// pre-shake (same dyn-dispatch roots + -shared exports; backends
-// re-shake idempotently), including wasi-http's drop of the synthesised
-// serve `main` (see internal/codegen/wasmbin/build.go).
-//
-// Returns nil when the target has no descriptor or nothing violates its
-// capability set. NOTE this mutates prog by tree-shaking it.
-func enforceTargetCapabilities(srcPath string, prog *ast.Program, info *checker.Info, target string, shared bool, export string) diag.Errors {
-	if platforms.ForTarget(target) == nil {
-		return nil
-	}
-	if target == "wasm32-wasi-http" {
-		kept := prog.Funcs[:0]
-		for _, fn := range prog.Funcs {
-			if fn.IsSynthesisedHandlerMain {
-				continue
-			}
-			kept = append(kept, fn)
-		}
-		prog.Funcs = kept
-	}
-	// treeshake roots the `dyn Trait` vtable impl methods itself, from the
-	// coercion / downcast sites it reaches. A Drop finalizer it cannot see:
-	// the only caller is drop glue IR lowering synthesises later.
-	extras := append([]string(nil), treeshake.DropImplMethods(info)...)
-	if shared && export != "" {
-		extras = append(extras, strings.Split(export, ",")...)
-	}
-	if target == "wasm32-wasi-http" {
-		extras = append(extras, checker.WasiHandleName, "__method_HeaderMap_append", "__method_HttpResponse_body_bytes")
-	}
-	// WIT-exported functions are entry points the AST walk can't
-	// see — keep them (and what they call) in the scanned set. An
-	// `async function` with a body is the same kind of hidden entry
-	// point: the wasmbin path lifts it as a component-level export
-	// (`-emit core-module`, docs/WASI-PREVIEW3-ASYNC-PLAN.md), so it is
-	// reachable from outside even when nothing in the program calls it.
-	// Body-less `@import async` declarations are imports, not exports,
-	// and are deliberately excluded.
-	for _, fn := range prog.Funcs {
-		if fn.ExportIface != "" || fn.ExportWITName != "" || (fn.Async && fn.ImportIface == "") {
-			extras = append(extras, fn.Name)
-		}
-	}
-	// The shake is here so E066 is judged on the REACHABLE set — an
-	// unreachable call to a builtin the target lacks is not a violation.
-	// Under -cover the program itself must survive it: a function nothing
-	// calls is what a coverage report most needs to name, and codegen only
-	// assigns counter sites to functions it lowers. Enforcement still runs
-	// on the shaken set; the full set is put back for codegen, whose own
-	// shake is gated the same way and whose post-lowering cull drops the
-	// dead code again once its sites are registered.
-	var preShake []*ast.FuncDecl
-	if ast.CoverEnabled {
-		preShake = append([]*ast.FuncDecl(nil), prog.Funcs...)
-		defer func() { prog.Funcs = preShake }()
-	}
-	treeshake.Run(prog, info, extras...)
-	vs := platforms.Enforce(prog, target)
-	if len(vs) == 0 {
-		return nil
-	}
-	var errs diag.Errors
-	for _, v := range vs {
-		ce := &checker.Error{Pos: v.Pos, Msg: v.Message(srcPath), ErrCode: "E066"}
-		// modload stamps the ENTRY module's functions with the entry
-		// source path itself; only those positions index the file the
-		// renderer displays. Violations inside imported modules
-		// (std/…, ./util, …) degrade to a position-less entry — the
-		// message names the function and module instead.
-		if v.FuncModule != "" && v.FuncModule != srcPath {
-			ce.Pos = ast.Position{}
-		}
-		errs = append(errs, ce)
-	}
-	return errs
-}
-
-// runCheck type-checks one entry module. target is the -target value
-// when the user passed one explicitly and "" otherwise: an unrequested
-// check must not start enforcing the arm64 capability set against
-// programs that check clean today, so the gate runs only on an explicit
-// `-check -target NAME`.
+// runCheck loads one entry module ("-" reads stdin) and runs gates.Check on
+// it, printing its warnings. target is the -target value when the user
+// passed one explicitly and "" otherwise.
 func runCheck(srcPath, target string) error {
 	var prog *ast.Program
 	var formatErr func(error) error
@@ -1364,45 +1268,16 @@ func runCheck(srcPath, target string) error {
 		prog = e.prog
 		formatErr = e.format
 	}
-	// A check against a target folds the target's name as a compile does,
-	// so the E066 pass below judges the arm the target takes.
-	targetOS, targetArch := "", ""
-	if d := platforms.ForTarget(target); d != nil {
-		targetOS, targetArch = d.Environment, d.ISA
-	}
-	if err := constfold.FoldWith(prog, constfold.Inputs{Assets: embeddedAssets, TargetOS: targetOS, TargetArch: targetArch}); err != nil {
-		return formatErr(err)
-	}
-	info, err := checker.CheckTarget(prog, target)
-	if err != nil {
-		return formatErr(err)
-	}
-	if srcPath != "-" {
-		if err := enforceCapabilities(srcPath, prog, os.Stderr); err != nil {
-			return formatErr(err)
-		}
-	}
-	if errs := enforceAmbient(srcPath, prog); errs != nil {
-		return formatErr(errs)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		return formatErr(err)
-	}
-	// A clean check still inventories the entry module's remaining
-	// `todo` stubs — warnings on stderr, exit stays 0. Imported
-	// modules' sites aren't tracked (see ast.Program.TodoSites).
+	warns, err := gates.Check(srcPath, prog, target, embeddedAssets)
 	name := srcPath
 	if name == "-" {
 		name = "<stdin>"
 	}
-	for _, site := range prog.TodoSites {
-		fmt.Fprintf(os.Stderr, "%s:%d:%d: warning: `todo` stub remaining\n", name, site.Line, site.Col)
+	for _, w := range warns {
+		fmt.Fprintln(os.Stderr, w.Format(name))
 	}
-	// Last, because it tree-shakes prog.
-	if target != "" {
-		if errs := enforceTargetCapabilities(name, prog, info, target, false, ""); errs != nil {
-			return formatErr(errs)
-		}
+	if err != nil {
+		return formatErr(err)
 	}
 	return nil
 }
@@ -1489,10 +1364,14 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	}
 	// Per-package capability grants (E070 — the manifest-boundary
 	// sibling of the target-boundary E066 pass below).
-	if err := enforceCapabilities(srcPath, prog, os.Stderr); err != nil {
+	warns, err := gates.Capabilities(srcPath, prog)
+	for _, w := range warns {
+		fmt.Fprintln(os.Stderr, w.Format(srcPath))
+	}
+	if err != nil {
 		return 1, e.format(err)
 	}
-	if errs := enforceAmbient(srcPath, prog); errs != nil {
+	if errs := gates.Ambient(srcPath, prog); errs != nil {
 		return 1, e.format(errs)
 	}
 	// -O: drop assert() checks AFTER type-checking (an ill-typed assert
@@ -1515,7 +1394,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// wasi-http's drop of the synthesised serve `main` (see
 	// internal/codegen/wasmbin/build.go). Targets without a descriptor
 	// skip enforcement.
-	if errs := enforceTargetCapabilities(srcPath, prog, info, target, shared, export); errs != nil {
+	if errs := gates.Target(srcPath, prog, info, target, shared, export); errs != nil {
 		return 1, e.format(errs)
 	}
 
