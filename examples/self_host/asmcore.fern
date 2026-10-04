@@ -5316,6 +5316,11 @@ pub function rt_src_str_bytes_u8(): string {
   return "function __fern_str_bytes_u8(s: string): i32[] { let n: i32 = s.len(); " + packed_box("b", "n") + " __memcpy(__raw_addr(b, 8), __raw_data(s), n); return __raw_array(b); }";
 }
 
+// The range twin copies bytes[from, end) once, with the packed slice's bounds.
+pub function rt_src_string_from_bytes_range_u8(): string {
+  return "function __fern_string_from_bytes_range_u8(a: i32[], from: i32, end: i32): string { let n: i32 = a.len(); let bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (from < 0) { bad = 1; } if (from > end) { bad = 1; } if (bad == 1) { __fern_slice_abort(); } let m: i32 = end - from; let p: usize = __raw_alloc(m); __memcpy(p, __raw_addr(__raw_arr_ptr(a), 8 + from), m); return __raw_string(p, m); }";
+}
+
 pub function rt_src_string_from_bytes_u8(): string {
   return "function __fern_string_from_bytes_u8(a: i32[]): string { let n: i32 = a.len(); let p: usize = __raw_alloc(n); __memcpy(p, __raw_addr(__raw_arr_ptr(a), 8), n); return __raw_string(p, n); }";
 }
@@ -7470,6 +7475,7 @@ function builtin_string_names(): string[] {
     "chr",
     "__raw_string",
     "string_from_bytes_unchecked",
+    "string_from_bytes_range_unchecked",
     // buf_take(h) hands the builder's accumulated bytes over as a string.
     "buf_take",
   ];
@@ -8429,7 +8435,7 @@ pub function runtime_need_deps(name: string): string[] {
     || name == "random_bytes" || name == "write_file_bytes" || name == "write_file_bytes_u8"
     || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf" || name == "buf"
     || name == "read_file_bytes_u8" || name == "random_bytes_u8" || name == "tcp_recv_u8"
-    || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "arr_slice_u8" || name == "alloc_bytes"
+    || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "str_from_bytes_range_u8" || name == "arr_slice_u8" || name == "alloc_bytes"
     || name == "arr_push" || name == "arr_slice" || name == "str_own" || name == "str_grow"
     || name == "str_case" || name == "str_repeat"
     || name == "str_replace"
@@ -10406,7 +10412,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // The helpers only a typed body calls: the packed-byte twins, a dead
     // string view's release, the raw floor's free and the map hash seed.
     "__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8",
-    "__fn___fern_arr_slice_u8", "__fn___fern_string_from_bytes_u8",
+    "__fn___fern_arr_slice_u8", "__fn___fern_string_from_bytes_u8", "__fn___fern_string_from_bytes_range_u8",
     "__fn___fern_str_view_free", "__fern_raw_free", "__fern_map_hash_seed",
     // xs.reverse() / xs.concat(ys) / a[start:end] (#3457): a LIBRARY module's
     // call resolves against the entry module's single definition, exactly

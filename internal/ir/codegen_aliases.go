@@ -82,6 +82,9 @@ var CodegenAliases = map[string]string{
 	"tcp_pollable":     "__fern_tcp_pollable",
 	"tcp_listen_with":  "__fern_tcp_listen_with",
 	"tcp_socket_ctl":   "__fern_tcp_socket_ctl",
+
+	// Not a socket builtin, but the same mechanism: one Fern body per target.
+	"string_from_bytes_range_unchecked": "__fern_string_from_bytes_range",
 }
 
 // CodegenAlias resolves one call target through CodegenAliases, returning the

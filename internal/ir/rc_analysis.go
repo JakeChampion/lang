@@ -1548,6 +1548,8 @@ var copyingBuiltinArgs = map[string][]int{
 	"udp_connect":      {1},
 	"tcp_listen_with":  {0},
 	"tcp_connect_with": {0},
+
+	"string_from_bytes_range_unchecked": {0},
 }
 
 func copyingBuiltinArg(name string, i int) bool {
@@ -4033,7 +4035,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// as __alloc_u8 above: every argument is a scalar (byte
 				// count, fd), so the result cannot alias one.
 				return false
-			case "slice_unchecked", "string_from_bytes_unchecked":
+			case "slice_unchecked", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked":
 				// Copies bytes OUT of its source into a fresh owned
 				// buffer (the __str_slice contract, and copyingBuiltinArgs'
 				// note on string_from_bytes_unchecked), so the source's

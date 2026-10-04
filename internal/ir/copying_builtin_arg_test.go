@@ -85,6 +85,17 @@ function main(): i32 { return 0; }`
 	}
 }
 
+func TestCopyingBuiltinStringRangeArgIsCounted(t *testing.T) {
+	src := `function eat(p: u8[]): string {
+    return string_from_bytes_range_unchecked(p, 0, p.len());
+}
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "eat")
+	if len(got) != 1 || !got[0] {
+		t.Fatalf("paramCountedRetain[eat] = %v, want [true]: the string range copy borrows p", got)
+	}
+}
+
 func TestCopyingBuiltinByteRangeArgIsCounted(t *testing.T) {
 	src := `function eat(p: u8[]): i32 {
     let b: usize = buf_new(1);

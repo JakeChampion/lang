@@ -5690,6 +5690,9 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   if (ins.str == "string_from_bytes_unchecked") {
     return emit(r, ir.packed(ir.op_str_from_bytes()));
   }
+  if (ins.str == "string_from_bytes_range_unchecked") {
+    return emit(r, ir.packed(ir.op_str_from_bytes_range()));
+  }
   if (ins.str == "f64_bits") {
     return emit(r, ir.op_f64_bits());
   }

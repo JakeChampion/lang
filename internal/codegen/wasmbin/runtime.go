@@ -1052,6 +1052,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_stderr":
 					needs.add("__fern_alloc")
 					needs.add("__fern_stderr")
+				default:
+					if h := callDirectAlias(op.Str); fernrt.Has(h) {
+						needs.add(h)
+					}
 				}
 				// Low-level memory shims the stdlib calls directly
 				// (raw OpCallDirect, no callDirectAlias rewrite).

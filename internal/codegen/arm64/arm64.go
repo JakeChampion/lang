@@ -18248,7 +18248,7 @@ func returnIsString(g *generator, op ir.Op, name string) bool {
 		// as the length — the silent wrong answer arm64_strbuf_test.go
 		// exists for.
 		return true
-	case "string_from_bytes_unchecked", "__str_slice", "strbuf_take", "hostname",
+	case "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "__str_slice", "strbuf_take", "hostname",
 		"uname_field", "getcwd":
 		// Built-in runtime helpers that return string directly.
 		// NOT in this list: `env` / `read_file` / `read_line` /
@@ -21747,6 +21747,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesSliceMake = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
+		default:
+			if h := ir.CodegenAlias(target); fernrt.Has(h) {
+				target = h
+			}
 		}
 		// Compute the effective operand-stack slot count for
 		// the call: under the two-word ABI, each string arg
