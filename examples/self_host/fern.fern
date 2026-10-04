@@ -359,6 +359,7 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
       elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
       cu_name, getcwd(),
       pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
+      arm64_native.arm64_debug_frame(p, elf.elf_text_vaddr_wx() as i64),
     );
   }
   return string_from_bytes_unchecked(util.to_u8(bin));
@@ -456,6 +457,7 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
     elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     cu_name, getcwd(),
     a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
+    x86_native.x86_debug_frame(a, elf.elf_text_vaddr_x86() as i64),
   );
   return string_from_bytes_unchecked(util.to_u8(wide));
 }

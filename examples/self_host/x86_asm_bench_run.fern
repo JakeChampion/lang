@@ -53,8 +53,8 @@ function main(): i32 {
       b = b + 1;
     }
   }
-  // With `-ehframe`, the .eh_frame and .eh_frame_hdr the program's `.cfi_*`
-  // directives render, at the fixed addresses the differential renders the
+  // With `-ehframe`, the .eh_frame, .eh_frame_hdr and .debug_frame the
+  // program's `.cfi_*` directives render, at the fixed addresses the differential renders the
   // native ones at: .text 0x400000, .eh_frame_hdr 0x400080, .eh_frame
   // 0x400100.
   if (dump_eh) {
@@ -68,6 +68,12 @@ function main(): i32 {
     e = 0;
     while (e < hdr.len()) {
       print("hdr " + e.to_string() + " " + hdr[e].to_string());
+      e = e + 1;
+    }
+    let dbg: i32[] = x86_native.x86_debug_frame(a, 4194304 as i64);
+    e = 0;
+    while (e < dbg.len()) {
+      print("dbg " + e.to_string() + " " + dbg[e].to_string());
       e = e + 1;
     }
   }

@@ -8793,6 +8793,11 @@ pub function arm64_eh_frame(p: Arm64GasProg, text_vaddr: i64, eh_vaddr: i64): i3
   return cfi_eh_frame(p.cfi, cfi_profile_arm64(), text_vaddr, eh_vaddr);
 }
 
+// arm64_debug_frame is the same recording as `-g`'s .debug_frame.
+pub function arm64_debug_frame(p: Arm64GasProg, text_vaddr: i64): i32[] {
+  return cfi_debug_frame(p.cfi, cfi_profile_arm64(), text_vaddr);
+}
+
 // arm64_eh_frame_darwin renders the same recording under the Mach-O profile,
 // which is the shape libunwind's DWARF fallback and lldb are written against.
 pub function arm64_eh_frame_darwin(p: Arm64GasProg, text_vaddr: i64, eh_vaddr: i64): i32[] {
@@ -11019,15 +11024,28 @@ function macho_dysymtab(buf: i32[], nlocal: i32): i32[] {
 
 // macho_sym_order selects the labels the `-g` symbol table names and orders
 // them: the function labels, by offset then by name, as nm reads them.
-// Dropped are the empty name, a `.` prefix (hand-written input's ELF-style
-// local) and a bare `L` prefix, the Mach-O temporary label the emitters write
-// for this target (#8065): those are branch targets, not functions.
+// Dropped are the empty name, a bare `L` prefix, the Mach-O temporary label
+// the emitters write for this target (#8065), and any name with a dot: a `.`
+// prefix (hand-written input's ELF-style local), a function's register-ABI
+// entry `f.r` or a helper's inner `.l0`. Those are branch targets inside a
+// function, and as symbols would end its extent there.
+function macho_has_dot(s: string): boolean {
+  let i: i32 = 0;
+  while (i < s.len()) {
+    if (s[i] == b'.') {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
 function macho_sym_order(names: string[], offs: i32[]): i32[] {
   let idx: i32[] = [];
   let i: i32 = 0;
   while (i < names.len() && i < offs.len()) {
     let n: string = names[i];
-    if (n.len() > 0 && n[0] != b'.' && n[0] != b'L') {
+    if (n.len() > 0 && n[0] != b'L' && !macho_has_dot(n)) {
       idx = idx.append(i);
     }
     i = i + 1;
@@ -12043,6 +12061,14 @@ function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr
     b = cfi_le32(b, s.fde_end[k] - s.fde_start[k]);
   }
   b = cfi_uleb(b, 0);  // augmentation data length
+  b = cfi_fde_rules(b, s, p, k);
+  b = cfi_pad_entry(b, at, p.fde_align);
+  return b;
+}
+
+// cfi_fde_rules appends FDE k's call-frame program: each rule, advanced to
+// the offset it takes effect at.
+function cfi_fde_rules(own b: i32[], s: CfiState, p: CfiProfile, k: i32): i32[] {
   let pc: i32 = s.fde_start[k];
   let r: i32 = s.fde_rule_first[k];
   let end: i32 = s.rule_off.len();
@@ -12059,8 +12085,41 @@ function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr
     }
     r = r + 1;
   }
-  b = cfi_pad_entry(b, at, p.fde_align);
   return b;
+}
+
+// cfi_debug_frame renders the recorded CFI as the .debug_frame of an image
+// whose .text is at text_vaddr: the debugger-facing twin of cfi_eh_frame,
+// as `as` emits it under `.cfi_sections .debug_frame`. The same rules in a
+// different container: the CIE id is 0xffffffff, there is no augmentation,
+// an FDE's CIE pointer is the CIE's section offset (0), initial_location and
+// address_range are 8-byte absolute values, every entry ends on 8, and there
+// is no terminator. Empty when nothing was recorded.
+pub function cfi_debug_frame(s: CfiState, p: CfiProfile, text_vaddr: i64): i32[] {
+  if (cfi_empty(s) || s.open) {
+    return [];
+  }
+  let cie: i32[] = [];
+  cie = cfi_le32(cie, 0 - 1);  // CIE id
+  cie = cie.append(1);  // version
+  cie = cie.append(0);  // augmentation ""
+  cie = cfi_uleb(cie, p.code_align);
+  cie = cfi_sleb(cie, p.data_align);
+  cie = cfi_uleb(cie, p.ra_column);
+  cie = cfi_cat(cie, p.initial);
+  cie = cfi_pad_entry(cie, 0, 8);
+  let out: i32[] = cfi_cat(cfi_le32([], cie.len()), cie);
+  let k: i32 = 0;
+  while (k < s.fde_start.len()) {
+    let b: i32[] = cfi_le32([], 0);  // CIE pointer: the CIE is at offset 0
+    b = cfi_le64_i64(b, text_vaddr + s.fde_start[k] as i64);
+    b = cfi_le64_i64(b, (s.fde_end[k] - s.fde_start[k]) as i64);
+    b = cfi_fde_rules(b, s, p, k);
+    b = cfi_pad_entry(b, out.len(), 8);
+    out = cfi_cat(cfi_le32(out, b.len()), b);
+    k = k + 1;
+  }
+  return out;
 }
 
 // cfi_eh_frame renders the recorded CFI as the .eh_frame of a final image

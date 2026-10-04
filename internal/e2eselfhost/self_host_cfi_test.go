@@ -11,10 +11,11 @@ import (
 
 // The self-host CFI differential: the `.cfi_*` directives a program carries,
 // recorded by the self-host assembler (cfi.fern) and rendered as .eh_frame +
-// .eh_frame_hdr, must be byte-identical to what internal/native/cfi renders
-// for the same program at the same addresses. Native is itself pinned to gas
-// (TestEhFrameMatchesGNUAs and its arm64 twin), so this is what makes a
-// self-host binary's unwind data gas's unwind data.
+// .eh_frame_hdr (and -g's .debug_frame), must be byte-identical to what
+// internal/native/cfi renders for the same program at the same addresses.
+// Native is itself pinned to gas (TestEhFrameMatchesGNUAs and its arm64
+// twin), so this is what makes a self-host binary's unwind data gas's unwind
+// data.
 //
 // Addresses are fixed on both sides — .text 0x400000, .eh_frame_hdr 0x400080,
 // .eh_frame 0x400100 — because an FDE's initial_location is pcrel and the
@@ -26,6 +27,18 @@ const (
 	cfiHdrVAddr  = 0x400080
 	cfiEhVAddr   = 0x400100
 )
+
+// parseDumpLines reads the driver's `<tag> i b` lines into bytes.
+func parseDumpLines(out, tag string) []byte {
+	var b []byte
+	for _, ln := range strings.Split(out, "\n") {
+		var idx, val int
+		if _, err := fmt.Sscanf(ln, tag+" %d %d", &idx, &val); err == nil {
+			b = append(b, byte(val))
+		}
+	}
+	return b
+}
 
 // parseEhDump reads the driver's `eh i b` / `hdr i b` lines.
 func parseEhDump(out string) (eh, hdr []byte) {
@@ -98,6 +111,13 @@ func TestSelfHostCfiMatchesNativeX86_64(t *testing.T) {
 			if string(gotHdr) != string(wantHdr) {
 				t.Errorf(".eh_frame_hdr differs\nself-host % x\nnative    % x", gotHdr, wantHdr)
 			}
+			wantDbg, err := a.DebugFrame(cfiTextVAddr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotDbg := parseDumpLines(out, "dbg"); string(gotDbg) != string(wantDbg) {
+				t.Errorf(".debug_frame differs\nself-host % x\nnative    % x", gotDbg, wantDbg)
+			}
 			if len(wantEh) == 0 {
 				t.Fatal("native rendered no .eh_frame — the case carries no CFI")
 			}
@@ -156,6 +176,13 @@ func TestSelfHostCfiMatchesNativeArm64(t *testing.T) {
 			}
 			if string(gotHdr) != string(wantHdr) {
 				t.Errorf(".eh_frame_hdr differs\nself-host % x\nnative    % x", gotHdr, wantHdr)
+			}
+			wantDbg, err := a.DebugFrame(cfiTextVAddr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotDbg := parseDumpLines(out, "dbg"); string(gotDbg) != string(wantDbg) {
+				t.Errorf(".debug_frame differs\nself-host % x\nnative    % x", gotDbg, wantDbg)
 			}
 			if len(wantEh) == 0 {
 				t.Fatal("native rendered no .eh_frame — the case carries no CFI")

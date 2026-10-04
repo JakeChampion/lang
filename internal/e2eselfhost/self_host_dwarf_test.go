@@ -3,6 +3,7 @@ package e2eselfhost
 import (
 	"debug/dwarf"
 	goelf "debug/elf"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"os/exec"
@@ -244,8 +245,9 @@ func TestSelfHostDWARFLineTable(t *testing.T) {
 
 // The self-host twin of internal/e2e's TestDWARFMultiFile (#11410): the rows
 // of an imported module's function name that module's file, every row has a
-// column, exactly a function's first row is prologue_end, and addr2line
-// resolves a row's address to its file and line.
+// column, exactly a function's first row is prologue_end, addr2line resolves
+// a row's address to its file and line, and .debug_frame has an FDE over
+// each function.
 func TestSelfHostDWARFMultiFile(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
@@ -300,6 +302,54 @@ func TestSelfHostDWARFMultiFile(t *testing.T) {
 					if got := strings.TrimSpace(string(o)); !strings.HasSuffix(got, file+":"+strconv.Itoa(inFn[0].Line)) {
 						t.Errorf("addr2line %#x = %q, want a path ending in %s:%d", inFn[0].Address, got, file, inFn[0].Line)
 					}
+				}
+			}
+
+			// .debug_frame: the debugger-facing container of the unwind
+			// rules, one FDE per function at its exact range.
+			f, err := goelf.Open(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			// An inner label (a register-ABI entry `f.r`) is no symbol of
+			// its own, or the function's extent would end at it.
+			syms, err := f.Symbols()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, s := range syms {
+				if strings.Contains(s.Name, ".") {
+					t.Errorf("inner label %q is a .symtab symbol", s.Name)
+				}
+			}
+			sec := f.Section(".debug_frame")
+			if sec == nil {
+				t.Fatal("no .debug_frame in the -g image")
+			}
+			df, err := sec.Data()
+			if err != nil {
+				t.Fatal(err)
+			}
+			covered := map[uint64]uint64{}
+			for off := 0; off+8 <= len(df); {
+				n := int(binary.LittleEndian.Uint32(df[off:]))
+				if n == 0 {
+					t.Fatalf(".debug_frame has a zero-length entry at %#x; that terminator belongs to .eh_frame", off)
+				}
+				if (off+4+n)%8 != 0 {
+					t.Errorf(".debug_frame entry at %#x ends at %#x, not on 8", off, off+4+n)
+				}
+				if binary.LittleEndian.Uint32(df[off+4:]) != 0xffffffff {
+					lo := binary.LittleEndian.Uint64(df[off+8:])
+					covered[lo] = lo + binary.LittleEndian.Uint64(df[off+16:])
+				}
+				off += 4 + n
+			}
+			for fn := range want {
+				pc := subs[fn]
+				if hi, ok := covered[pc[0]]; !ok || hi != pc[1] {
+					t.Errorf("%s [%#x,%#x): .debug_frame FDE covers [%#x,%#x)", fn, pc[0], pc[1], pc[0], hi)
 				}
 			}
 		})
