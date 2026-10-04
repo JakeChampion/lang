@@ -394,37 +394,13 @@ func CachedLink(t testing.TB, gcc, asm string) string {
 }
 
 // linkSelfHostAsm turns SELF-HOST-emitted asm into a static binary at
-// binPath.
-//
-// Small links (the overwhelming majority — a few-KB `.s` per e2e program)
-// go to gcc/bfd: milliseconds, and they keep the external-toolchain path
-// exercised across the suite. Self-host output is lld-correct since #4081
-// (TestSelfHostLinkerAgnosticIRX86_64 gates it); bfd is just the
-// no-benefit default, not a correctness requirement.
-//
-// HUGE links — the stage-2 self-compile of the whole compiler, ~450 MB of
-// asm — first try the in-process native assembler (nativeLinkX86) under a
-// build-memory reservation sized to its measured footprint. NOTE: the
-// self-host x86-64 emitter currently writes AT&T-syntax asm, which the
-// Intel-only native assembler rejects immediately — so today the stage-2
-// link always takes the gcc fallback below; the native attempt costs
-// microseconds and starts winning the moment the emitted dialect becomes
-// parseable. Either way the big-link gcc path now runs under a
-// reservation too: it ran GNU `as` at ~4.7 GB RSS with NO reservation at
-// all (CachedLink predates the budget), which could stack with a
-// concurrent driver build's peak and OOM a 16 GB host.
+// binPath with gcc/bfd. Self-host output is lld-correct since #4081
+// (TestSelfHostLinkerAgnosticIRX86_64 gates it); bfd is just the no-benefit
+// default, not a correctness requirement. A big listing (the stage-2
+// self-compile of the whole compiler) runs GNU as at a few hundred MB, so
+// it links under a build-memory reservation sized to that peak and cannot
+// stack with a concurrent driver build's; small links stay unreserved.
 func linkSelfHostAsm(gcc, base, key, asm, binPath string) error {
-	if len(asm) >= nativeLinkMinAsmBytes {
-		if err := withBuildMemory(nativeLinkWeightMB(len(asm)), func() error {
-			// The soft heap cap bounds the assembler's own GC overshoot
-			// the same way it bounds the driver emit's.
-			return withEmitMemLimit(func() error {
-				return nativeLinkX86(asm, binPath)
-			})
-		}); err == nil {
-			return nil
-		}
-	}
 	asmPath := filepath.Join(base, key+".s")
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		return err
@@ -435,13 +411,7 @@ func linkSelfHostAsm(gcc, base, key, asm, binPath string) error {
 		}
 		return nil
 	}
-	// Big-asm gcc links (today: every stage-2 self-compile — the self-host
-	// x86-64 emitter writes AT&T syntax, which the Intel-only native
-	// assembler rejects, so the native attempt above always falls through
-	// for them) run GNU `as` at multi-GB RSS. Reserve the estimated peak so
-	// the link can't stack with a concurrent driver build's peak — this
-	// link had NO reservation historically. Small links stay unreserved.
-	if len(asm) >= nativeLinkMinAsmBytes {
+	if len(asm) >= bigLinkMinAsmBytes {
 		return withBuildMemory(gccBigLinkWeightMB(len(asm)), gccLink)
 	}
 	return gccLink()

@@ -38,9 +38,10 @@ import (
 // # Why the native assembler is a valid oracle
 //
 // internal/native/arm64 is what `bin/fern -target arm64-linux` uses in production, and
-// TestNativeLinkArm64MatchesGccLink gates it against gcc's own assembly of the
-// same text. So "self-host agrees with native" transitively means "self-host
-// agrees with gcc", without needing a cross-toolchain on this host.
+// its own tests (TestFuzzEncodingsAgainstGNUAs, TestSymbolAddressingMatchesGNUAs
+// and the rest of the *MatchesGNUAs family) pin its encodings to GNU as's on
+// the same text. So "self-host agrees with native" transitively means
+// "self-host agrees with gcc", without needing a cross-toolchain on this host.
 //
 // # Why the snippet avoids labels, adrp and literal pools
 //

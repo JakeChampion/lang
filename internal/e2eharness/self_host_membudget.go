@@ -117,12 +117,13 @@ func buildMemBudgetMB() int {
 	return b
 }
 
-// The in-process Go assembler (nativeLinkX86 / nativeLinkArm64) allocates
-// heavily on a big `.s`, and at the default GOGC the runtime lets the heap
-// double between collections, so the process's RSS ran to twice the live
-// set. Capping the runtime's soft memory limit (GOMEMLIMIT semantics) during
-// such a build makes the GC keep the heap near the cap instead. Self-host
-// driver builds run in a subprocess and are not affected by it.
+// An in-process Go emit of a big program (the asm benches' fern.fern
+// corpus) allocates heavily, and at the default GOGC the runtime lets the
+// heap double between collections, so the process's RSS ran to twice the
+// live set. Capping the runtime's soft memory limit (GOMEMLIMIT semantics)
+// during such a build makes the GC keep the heap near the cap instead.
+// Self-host driver builds and gcc links run in a subprocess and are not
+// affected by it.
 //
 // The limit is process-wide, so it is REFCOUNTED and scaled: while n
 // heavy builds are active the limit is n * per-build-cap, and when the
