@@ -8,7 +8,7 @@ BINS     := $(addprefix build/,$(EXAMPLES))
 # diagnostics pin line and column, and testdata inputs kept as written.
 LANG_SRCS := $(shell git ls-files '*.fern' | grep -v -e '^conformance/' -e '/testdata/')
 
-.PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest fern-test-cache digest-check
+.PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest fern-test-cache digest-check log-table-check
 
 all: build test
 
@@ -34,6 +34,12 @@ test:
 digest-check:
 	uv run --no-project tools/gen_digests.py --check
 	uv run --no-project python -B -m unittest discover -s tools -p test_gen_digests.py
+
+# The same for the table-driven log's generated data: internal/fdlibm/logtab.go
+# and the regions the three self-host emitters carry.
+log-table-check:
+	uv run --no-project tools/gen_log_table.py --check
+	uv run --no-project python -B -m unittest discover -s tools -p test_gen_log_table.py
 
 vet:
 	go vet ./...
@@ -233,13 +239,14 @@ gofmt-check:
 # (`make -j -k lint-fast`): each is seconds of work and independent of the
 # others. check-sources and fern-test-cache stay apart: the cache probe appends
 # to a source file while it runs, which a concurrent source check would read.
-lint-fast: vet gofmt-check fmt-check deadcode actionlint testnames ci-selftest digest-check
+lint-fast: vet gofmt-check fmt-check deadcode actionlint testnames ci-selftest digest-check log-table-check
 
 lint-all:
 	@status=0; \
 	for gate in "go build ./..." "go vet ./..." "$(MAKE) gofmt-check" "$(MAKE) fmt-check" \
 	            "$(MAKE) check-sources" "$(MAKE) deadcode" "$(MAKE) actionlint" \
-	            "$(MAKE) testnames" "$(MAKE) ci-selftest" "$(MAKE) digest-check" "$(MAKE) freeze"; do \
+	            "$(MAKE) testnames" "$(MAKE) ci-selftest" "$(MAKE) digest-check" "$(MAKE) log-table-check" \
+	            "$(MAKE) freeze"; do \
 		echo "==> $$gate"; \
 		if ! sh -c "$$gate"; then echo "FAILED: $$gate"; status=1; fi; \
 	done; \
