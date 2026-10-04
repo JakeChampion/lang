@@ -58,49 +58,33 @@ func TestArenaExhaustedExitCodeIsNot137(t *testing.T) {
 }
 
 // TestArenaExhaustedExitCodeSelfHostLockstep reads the self-host emitters'
-// sources and checks the status they write into their trap sequences is
+// sources and checks the status their arena trap hands to abort_trap is
 // e2eharness.ExitArenaExhausted. A source scan rather than a compile: the
 // failure this guards against is somebody editing one emitter's literal and
 // not the others — which a scan catches exactly as well.
 func TestArenaExhaustedExitCodeSelfHostLockstep(t *testing.T) {
 	want := e2eharness.ExitArenaExhausted
-	for _, c := range []struct {
-		file  string
-		trap  string // the register the exit status is moved into
-		sites int
-	}{
-		// x86: `movq $<code>, %rdi` before `syscall` (exit = rax 60).
-		{"asm_ir.fern", "%rdi", 1},
-		// arm64: `mov x0, #<code>` before `svc #0` (exit = x8 93).
-		{"asm_arm64_ir.fern", "x0", 1},
-	} {
-		path := filepath.Join("..", "..", "examples", "self_host", c.file)
+	// Both emitters pass the status beside the cause line, so the one call is
+	// the same text in each file.
+	marker := fmt.Sprintf("asmcore.msg_oom(), %d)", want)
+	for _, file := range []string{"asm_ir.fern", "asm_arm64_ir.fern"} {
+		path := filepath.Join("..", "..", "examples", "self_host", file)
 		src, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("read %s: %v", c.file, err)
+			t.Fatalf("read %s: %v", file, err)
 		}
 		text := string(src)
 		// Any remaining 137 in an exit-status position is a missed site.
-		for _, stale := range []string{
-			`movq $137, ` + c.trap,
-			`mov ` + c.trap + `, #137`,
-		} {
+		for _, stale := range []string{`movq $137, %rdi`, `mov x0, #137`, `, 137)`} {
 			if strings.Contains(text, stale) {
 				t.Errorf("%s still exits 137 somewhere (%q) — SIGKILL's status; "+
-					"every arena trap must use %d", c.file, stale, want)
+					"every arena trap must use %d", file, stale, want)
 			}
 		}
-		var marker string
-		if c.trap == "%rdi" {
-			marker = fmt.Sprintf("movq $%d, %%rdi", want)
-		} else {
-			marker = fmt.Sprintf("mov x0, #%d", want)
-		}
-		if n := strings.Count(text, marker); n != c.sites {
-			t.Errorf("%s has %d arena-trap exit sites emitting %q, want %d — "+
-				"a site was added or removed without updating this count, so "+
-				"one of them may be exiting with the wrong status",
-				c.file, n, marker, c.sites)
+		if n := strings.Count(text, marker); n != 1 {
+			t.Errorf("%s has %d arena traps passing %q, want 1 — a site was "+
+				"added or removed, so one of them may be exiting with the "+
+				"wrong status", file, n, marker)
 		}
 	}
 }
