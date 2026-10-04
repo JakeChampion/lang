@@ -4563,6 +4563,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__mapiter_value_impl"
 		case "__method_MapIter_advance":
 			target = "__mapiter_advance_impl"
+		default:
+			if h := ir.CodegenAlias(target); fernrt.Has(h) {
+				target = h
+			}
 		}
 		argc := int(op.I32)
 		extra := g.emitCallArgsLoad(argc)

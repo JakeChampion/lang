@@ -777,6 +777,7 @@ func New() *Interp {
 	// model, so Map operations stay codegen-only for now.
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocU8}
 	i.Builtins["string_from_bytes_unchecked"] = &Builtin{Fn: builtinStringFromBytes}
+	i.Builtins["string_from_bytes_range_unchecked"] = &Builtin{Fn: builtinStringFromBytesRange}
 	i.Builtins["slice_unchecked"] = &Builtin{Fn: builtinSliceUnchecked}
 	// Compiled `s.bytes()` makes an owned copy, while `s.as_bytes()`
 	// aliases the string payload via a slice header. Their raw-memory
@@ -3074,6 +3075,27 @@ func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
 		buf[i] = byte(int64(n) & 0xff)
 	}
 	return String(buf), nil
+}
+
+// `string_from_bytes_range_unchecked(bs, from, end)` — string_from_bytes_unchecked
+// over bs[from, end), with a slice's bounds contract.
+func builtinStringFromBytesRange(in *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: expected 3 args (bs, from, end), got %d", len(args))
+	}
+	arr, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: arg must be array, got %T", args[0])
+	}
+	from, fok := args[1].(Number)
+	end, eok := args[2].(Number)
+	if !fok || !eok {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: bounds must be numbers")
+	}
+	if from < 0 || int(end) > len(arr.E) || from > end {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: range [%d:%d] out of bounds for length %d", int(from), int(end), len(arr.E))
+	}
+	return builtinStringFromBytes(in, []Value{Array{E: arr.E[int(from):int(end)]}})
 }
 
 // `slice_unchecked(s, a, b)` — the byte slice `s[a:b]` as a builtin:

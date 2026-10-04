@@ -55,7 +55,8 @@ function relax_hex(src: string): string {
     if (a.unknown.len() > 0) { return "unknown"; }
     let digits: string = "0123456789abcdef";
     let out: string = "";
-    for b in a.code {
+    for c in a.text {
+        let b: i32 = c as i32;
         out = out + slice_unchecked(digits, b / 16, b / 16 + 1) + slice_unchecked(digits, b % 16, b % 16 + 1);
     }
     return out;

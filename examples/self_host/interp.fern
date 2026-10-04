@@ -4541,6 +4541,30 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
       }
     }
   }
+  if (name == "string_from_bytes_range_unchecked") {
+    if (args.len() != 3 || !is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
+      return v_err("string_from_bytes_range_unchecked: expected 3 args (bs, from, end)");
+    }
+    let from: i32 = vint_bits(args[1]);
+    let end: i32 = vint_bits(args[2]);
+    match (args[0]) {
+      VArr(a) => {
+        if (from < 0 || end > a.elements.len() || from > end) {
+          return v_err("string_from_bytes_range_unchecked: range out of bounds");
+        }
+        let raw: u8[] = [];
+        let ri: i32 = from;
+        while (ri < end) {
+          raw = raw.append((vint_bits(a.elements[ri]) & 255) as u8);
+          ri = ri + 1;
+        }
+        return v_string(string_from_bytes_unchecked(raw));
+      },
+      _ => {
+        return v_err("string_from_bytes_range_unchecked: arg must be an array");
+      }
+    }
+  }
   // `slice_unchecked(s, a, b)` — the byte slice `s[a:b]` as a builtin:
   // same bounds contract as the ExprSlice eval (error on OOB, the
   // interp's stand-in for the codegen trap), no char-boundary check

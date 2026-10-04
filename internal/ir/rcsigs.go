@@ -448,6 +448,8 @@ var rcInertBuiltins = map[string]bool{
 	// not in anything counted.
 	"signal_ignore": true, "signal_default": true,
 	"signal_mask": true, "signal_disposition": true,
+
+	"string_from_bytes_range_unchecked": true,
 }
 
 // rcUnmodelled are helpers that do move counts, and whose movement one

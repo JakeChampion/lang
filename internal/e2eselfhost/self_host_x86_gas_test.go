@@ -117,10 +117,10 @@ function main(): i32 {
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 95; }
     let exp: i32[] = [197, 254, 111, 4, 16, 196, 129, 126, 111, 28, 8, 197, 126, 111, 15, 197, 254, 111, 193, 196, 226, 125, 120, 201, 196, 66, 125, 120, 209, 197, 253, 116, 193, 196, 65, 45, 116, 217, 197, 245, 116, 4, 16, 197, 253, 215, 192, 197, 125, 215, 200, 196, 65, 125, 215, 218, 197, 254, 127, 7, 197, 254, 127, 79, 32, 196, 1, 126, 127, 12, 8, 197, 254, 127, 92, 16, 192, 197, 248, 119];
-    if (a.code.len() != exp.len()) { return 96; }
+    if (a.text.len() != exp.len()) { return 96; }
     let i: i32 = 0;
     while (i < exp.len()) {
-        if (a.code[i] != exp[i]) { return 97; }
+        if (a.text[i] as i32 != exp[i]) { return 97; }
         i = i + 1;
     }
     return 0;
@@ -277,10 +277,10 @@ function main(): i32 {
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 90; }
     let exp: i32[] = [32, 208, 8, 208, 15, 154, 194, 15, 155, 194, 102, 15, 110, 192, 102, 15, 126, 192, 72, 99, 192, 242, 15, 90, 200, 243, 15, 90, 200, 243, 15, 189, 192, 243, 72, 15, 189, 192, 243, 15, 188, 192, 243, 72, 15, 188, 192, 243, 15, 184, 192, 243, 72, 15, 184, 192, 72, 199, 192, 0, 0, 0, 0, 72, 199, 192, 255, 255, 255, 255, 72, 211, 224, 72, 211, 232, 72, 211, 248, 72, 193, 224, 3, 72, 193, 233, 3, 72, 193, 250, 3, 72, 247, 193, 1, 0, 0, 0, 65, 255, 211, 255, 208, 255, 85, 216, 243, 72, 171, 243, 72, 165, 243, 170, 72, 141, 52, 205, 0, 0, 0, 0, 72, 141, 52, 213, 16, 0, 0, 0, 242, 15, 44, 192, 242, 72, 15, 44, 192, 133, 201, 69, 133, 200, 65, 133, 194, 102, 1, 195, 177, 1, 192, 225, 3, 102, 247, 23, 72, 17, 200, 72, 131, 217, 1];
-    if (a.code.len() != exp.len()) { return 91; }
+    if (a.text.len() != exp.len()) { return 91; }
     let i: i32 = 0;
     while (i < exp.len()) {
-        if (a.code[i] != exp[i]) { return i + 1; }
+        if (a.text[i] as i32 != exp[i]) { return i + 1; }
         i = i + 1;
     }
     return 0;
@@ -302,8 +302,8 @@ function main(): i32 {
     // movq $imm, %reg SIGN-extends: REX.W C7 /0 id (48 c7 c0 …), not the
     // zero-extending 32-bit B8+r id this used to assert — which is exactly
     // how "movq $-1, %rax" came to load 4294967295.
-    if (a.code.len() < 14 || a.code[0] != 72 || a.code[1] != 199 || a.code[2] != 192 || a.code[3] != 0) { return 7; }
-    if (a.code[7] != 72 || a.code[8] != 199 || a.code[9] != 193 || a.code[10] != 7) { return 8; }
+    if (a.text.len() < 14 || a.text[0] as i32 != 72 || a.text[1] as i32 != 199 || a.text[2] as i32 != 192 || a.text[3] as i32 != 0) { return 7; }
+    if (a.text[7] as i32 != 72 || a.text[8] as i32 != 199 || a.text[9] as i32 != 193 || a.text[10] as i32 != 7) { return 8; }
     // paren-aware operand split + indexed memory parsing (slice 2j):
     if (x86_gas_top_comma("$0, (%r12,%r15,1)") != 2) { return 9; }
     if (x86_gas_top_comma("(%rax,%rcx,1), %rdx") != 13) { return 10; }
@@ -422,10 +422,10 @@ function main(): i32 {
     let want: i32[] = [102, 15, 110, 201, 102, 15, 96, 201, 102, 15, 97, 201,
         102, 15, 112, 201, 0, 243, 15, 111, 4, 16, 102, 15, 116, 193,
         102, 68, 15, 215, 200, 69, 133, 201, 69, 15, 188, 201];
-    if (vk.code.len() != want.len()) { return 36; }
+    if (vk.text.len() != want.len()) { return 36; }
     let vi: i32 = 0;
     while (vi < want.len()) {
-        if (vk.code[vi] != want[vi]) { return 37; }
+        if (vk.text[vi] as i32 != want[vi]) { return 37; }
         vi = vi + 1;
     }
     // The COMPARISON kernel's front end (#8791). It adds three shapes the
@@ -438,10 +438,10 @@ function main(): i32 {
     let mw: i32[] = [243, 15, 111, 4, 22, 243, 15, 111, 12, 17, 102, 15, 116, 193,
         102, 15, 215, 192, 61, 255, 255, 0, 0, 247, 208, 15, 188, 192,
         72, 139, 4, 62, 72, 51, 4, 57, 72, 15, 188, 192, 72, 193, 232, 3];
-    if (mm.code.len() != mw.len()) { return 55; }
+    if (mm.text.len() != mw.len()) { return 55; }
     let mi: i32 = 0;
     while (mi < mw.len()) {
-        if (mm.code[mi] != mw[mi]) { return 56; }
+        if (mm.text[mi] as i32 != mw[mi]) { return 56; }
         mi = mi + 1;
     }
     // The backward kernel's tail differs from the forward one's by exactly one
@@ -450,10 +450,10 @@ function main(): i32 {
     let vb: X86Asm = x86_gas_assemble("\tbsrl %eax, %ecx\n\tbsrl %r9d, %r9d\n");
     if (vb.unknown.len() != 0) { return 38; }
     let bw: i32[] = [15, 189, 200, 69, 15, 189, 201];
-    if (vb.code.len() != bw.len()) { return 39; }
+    if (vb.text.len() != bw.len()) { return 39; }
     let bi: i32 = 0;
     while (bi < bw.len()) {
-        if (vb.code[bi] != bw[bi]) { return 40; }
+        if (vb.text[bi] as i32 != bw[bi]) { return 40; }
         bi = bi + 1;
     }
     // The 32-bit ALU group over memory operands. #7351 hit this group when its
@@ -471,10 +471,10 @@ function main(): i32 {
     let am: X86Asm = x86_gas_assemble("\tcmpl $1, -4(%rax)\n\taddl %ecx, 8(%rdx)\n\tsubl (%rsi), %eax\n\tcmpl $1, %edx\n\taddl %ecx, %eax\n");
     if (am.unknown.len() != 0) { return 41; }
     let amw: i32[] = [131, 120, 252, 1, 1, 74, 8, 43, 6, 131, 250, 1, 1, 200];
-    if (am.code.len() != amw.len()) { return 42; }
+    if (am.text.len() != amw.len()) { return 42; }
     let ai: i32 = 0;
     while (ai < amw.len()) {
-        if (am.code[ai] != amw[ai]) { return 43; }
+        if (am.text[ai] as i32 != amw[ai]) { return 43; }
         ai = ai + 1;
     }
     return 0;
@@ -488,7 +488,7 @@ function main(): i32 {
     let src: string = ".text\n.globl _start\n_start:\n\tmovq $0, %rax\n\tmovq $7, %rcx\nloop:\n\taddq $6, %rax\n\tsubq $1, %rcx\n\tcmpq $0, %rcx\n\tjne loop\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    let bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
+    let bin: i32[] = elf_static_executable_data_x86(a.text, a.rodata);
     write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
@@ -501,7 +501,7 @@ function main(): i32 {
     let src: string = ".text\n_start:\n\tleaq answer(%rip), %rax\n\tmovq (%rax), %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\nanswer:\n\t.quad 42\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    let bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
+    let bin: i32[] = elf_static_executable_data_x86(a.text, a.rodata);
     write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
@@ -513,7 +513,7 @@ function main(): i32 {
     let src: string = "\tmovq $6, %rax\n\tmovq $7, %rcx\n\timulq %rcx, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
     return 0;
 }
 `
@@ -524,7 +524,7 @@ function main(): i32 {
     let src: string = "\tmovq $5, %rax\n\tincq %rax\n\tshlq $3, %rax\n\tsubq $6, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
     return 0;
 }
 `
@@ -535,7 +535,7 @@ function main(): i32 {
     let src: string = "\tmovq $84, %rax\n\tcqto\n\tmovq $2, %rcx\n\tidivq %rcx\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
     return 0;
 }
 `
@@ -550,7 +550,7 @@ function main(): i32 {
     let src: string = "\tmovabs $0x0123456789abcdef, %rsi\n\tmovabs $0xfedcba9876543210, %rdi\n\tmovq $8, %rcx\n\tshldq %cl, %rdi, %rsi\n\tmovabs $0x23456789abcdeffe, %rax\n\tcmpq %rax, %rsi\n\tjne bad\n\tmovabs $0x0000000100000001, %rax\n\tmovabs $0x0000000100000001, %rcx\n\tmulq %rcx\n\tmovabs $0x0000000200000001, %rcx\n\tcmpq %rcx, %rax\n\tjne bad\n\tcmpq $1, %rdx\n\tjne bad\n\tmovq $-1, %rax\n\tmovq $1, %rcx\n\taddq %rcx, %rax\n\tmovq $5, %rax\n\tmovq $7, %rcx\n\tadcq %rcx, %rax\n\tcmpq $13, %rax\n\tjne bad\n\tmovq $0, %rax\n\tmovq $1, %rcx\n\tsubq %rcx, %rax\n\tmovq $20, %rax\n\tmovq $6, %rcx\n\tsbbq %rcx, %rax\n\tcmpq $13, %rax\n\tjne bad\n\tmovq $42, %rdi\n\tjmp out\nbad:\n\tmovq $1, %rdi\nout:\n\tmovq $60, %rax\n\tsyscall\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
     return 0;
 }
 `
@@ -562,10 +562,10 @@ function main(): i32 {
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 90; }
     let exp: i32[] = [72, 15, 165, 254, 73, 15, 165, 195, 77, 15, 165, 227, 72, 247, 230, 73, 247, 227, 76, 17, 214, 72, 17, 200, 76, 25, 222, 72, 25, 193];
-    if (a.code.len() != exp.len()) { return 91; }
+    if (a.text.len() != exp.len()) { return 91; }
     let i: i32 = 0;
     while (i < exp.len()) {
-        if (a.code[i] != exp[i]) { return i + 1; }
+        if (a.text[i] as i32 != exp[i]) { return i + 1; }
         i = i + 1;
     }
     return 0;
@@ -578,7 +578,7 @@ function main(): i32 {
     let src: string = "\tmovq $6, %r12\n\tmovq $7, %r13\n\timulq %r13, %r12\n\tmovq %r12, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
     return 0;
 }
 `
@@ -594,7 +594,7 @@ function main(): i32 {
     let src: string = ".text\n.globl _start\n_start:\n\tmovabs $17179869184, %rcx\n\tshrq $30, %rcx\n\tbtq $4, %rcx\n\tjc bitok\n\tmovq $1, %rdi\n\tjmp done\nbitok:\n\tincl counter(%rip)\n\tincl counter(%rip)\n\tmovl counter(%rip), %eax\n\tsubq $16, %rsp\n\tmovq $0, 8(%rsp)\n\tmovl $24, 8(%rsp)\n\tmovq 8(%rsp), %rdi\n\taddq %rax, %rdi\n\taddq %rcx, %rdi\n\tcmpq %rcx, 8(%rsp)\n\tja done\n\tmovq $2, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .bss\n.align 8\ncounter: .quad 0\n";
     let a: X86Asm = x86_gas_assemble(src);
     let entry: i32 = x86_label_off(a, "_start");
-    write(string_from_bytes_unchecked(to_u8(elf_program_x86(a.code, [], [], a.rodata, a.bss_size, entry))));
+    write(string_from_bytes_unchecked(elf_program_x86(a.text, [], [], a.rodata, a.bss_size, entry)));
     return 0;
 }
 `
@@ -605,7 +605,7 @@ function main(): i32 {
     let src: string = "\tsubq $16, %rsp\n\tmovq $42, %r8\n\tmovq %r8, (%rsp)\n\tmovq (%rsp), %r9\n\tmovq %r9, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
     return 0;
 }
 `
@@ -616,7 +616,7 @@ function main(): i32 {
     let src: string = "\tsubq $64, %rsp\n\tmovq $42, %rax\n\tmovq $2, %rcx\n\tmovq %rax, (%rsp,%rcx,8)\n\tmovq (%rsp,%rcx,8), %rdi\n\taddq $64, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
     return 0;
 }
 `
@@ -627,7 +627,7 @@ function main(): i32 {
     let src: string = "\tsubq $16, %rsp\n\tmovb $42, (%rsp)\n\tmovzbq (%rsp), %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
     return 0;
 }
 `
@@ -638,7 +638,7 @@ function main(): i32 {
     let src: string = "\tsubq $16, %rsp\n\tmovq $42, %rcx\n\tmovb %cl, (%rsp)\n\tmovzbq (%rsp), %r8\n\tmovq %r8, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
     return 0;
 }
 `
@@ -665,7 +665,7 @@ function main(): i32 {
     let src: string = ".text\n_start:\n\tmovq $43, %rdi\n\tleaq vals(%rip), %rax\n\tmovq (%rax), %rcx\n\tcmpq $-1, %rcx\n\tjne done\n\tmovq 8(%rax), %rcx\n\tcmpq $-5, %rcx\n\tjne done\n\tmovq 16(%rax), %rcx\n\tcmpq $-2147483648, %rcx\n\tjne done\n\tmovq $42, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\nvals:\n\t.quad -1\n\t.quad -5\n\t.quad -2147483648\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
     return 0;
 }
 `
