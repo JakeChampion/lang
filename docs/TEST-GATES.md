@@ -81,6 +81,20 @@ The bodies written on the floor, `tcp_recv`, `tcp_send` and `udp_send`, are
 gated by every socket, serve, fetch and udp test that was already on the
 builtins, on every backend.
 
+The per-request gates of #9853's exit criterion A: `TestBumpPerRequest`
+(the Go compiler, x86-64 and arm64) and `TestSelfHostBumpPerRequest` (the
+self-host compiler, x86-64) send 100k requests on one keep-alive connection
+to a handler that answers `__heap_bump_bytes()`, and the figure a tenth of
+the way in must be the figure at the last request (under qemu the arm64 leg
+sends 10k). They hold the bump high-water mark still; they do not count
+allocations, which every request still makes (the framing path's, criterion
+B). `TestHTTPHandlerCensus` and its wasm and self-host twins are the leak
+half: a bounded serve loop under `FERN_LEAKCHECK` frees what it allocated.
+`TestServeListenFailure` and `TestSelfHostServeListenFailure` pin a server
+whose port is taken: exit 98 and the reason in words, from the single loop
+and the supervisor. `TestEscapingMatchPayloadIsReclaimed` is #8003's gate,
+the per-request leak of a match on a call result whose payload escapes.
+
 `TestSelfHostArm64DarwinPoll` exercises the self-host kqueue helper with
 inherited pipes and a loopback TCP listener on Apple Silicon. It checks ready,
 timed-out, empty, negative, invalid and duplicate descriptors, the lowest
