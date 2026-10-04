@@ -135,7 +135,7 @@ function main(): i32 {
     return t + keep.len();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 500, frees: 500,
+			want: 68, allocs: 350, frees: 350,
 		},
 		{
 			// Its pairwise control.
@@ -148,7 +148,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
     return t + keep.len();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 500, frees: 500,
+			want: 68, allocs: 350, frees: 350,
 		},
 		{
 			// The same shape on an Option of an array of arrays, whose
@@ -270,15 +270,14 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// Positive control. Note allocs=400 against native's 300 — an
-			// allocation-volume divergence that is not this change's (#7351).
+			// Positive control.
 			name: "credited_optaarr",
 			src: `function round(i: i32): i32 {
     let xs: Option[i32[]][] = [Some([i, i + 1]), None];
     return xs.len();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 400, frees: 400,
+			want: 34, allocs: 300, frees: 300,
 		},
 		{
 			// Positive control.
