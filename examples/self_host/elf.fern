@@ -1399,10 +1399,11 @@ pub function elf_wx_text_off(): i32 {
 }
 
 // elf_func_syms turns an assembler's parallel label tables into the symbol
-// arrays elf_append_debug wants, applying native's FuncSyms rule:
+// arrays elf_append_debug wants:
 //
-//   - a label with an empty name, or one starting with `.`, is INTERNAL —
-//     a branch target, not a function — and is left out;
+//   - a label with an empty name, or with a dot anywhere, is INTERNAL —
+//     a branch target, not a function — and is left out (native's FuncSyms
+//     drops only a leading dot; its emitters write no other dotted label);
 //   - `sec_filter` keeps only labels in one section (.text is 0 for the x86
 //     tables; pass -1 when the assembler records no section, as arm64's does
 //     not);
@@ -1460,13 +1461,6 @@ pub function elf_func_sym_sizes(lab_names: string[], lab_offs: i32[], lab_secs: 
   return out;
 }
 
-// elf_func_sym_order returns the indices of the labels that become symbols,
-// sorted by offset then name. A label with a dot anywhere is not a function:
-// `.L…` is local, and `f.r` (a function's register-ABI entry) or
-// `__fern_oob_abort.l0` is a label inside the function before it, which as a
-// symbol would end that function's extent there. Insertion sort: a label
-// table is small and already close to offset-ordered, since labels are
-// recorded as code is emitted.
 function elf_has_dot(s: string): boolean {
   let i: i32 = 0;
   while (i < s.len()) {
@@ -1478,6 +1472,13 @@ function elf_has_dot(s: string): boolean {
   return false;
 }
 
+// elf_func_sym_order returns the indices of the labels that become symbols,
+// sorted by offset then name. A label with a dot anywhere is not a function:
+// `.L…` is local, and `f.r` (a function's register-ABI entry) or
+// `__fern_oob_abort.l0` is a label inside the function before it, which as a
+// symbol would end that function's extent there. Insertion sort: a label
+// table is small and already close to offset-ordered, since labels are
+// recorded as code is emitted.
 function elf_func_sym_order(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32): i32[] {
   let idx: i32[] = [];
   let i: i32 = 0;

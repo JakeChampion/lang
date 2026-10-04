@@ -159,27 +159,18 @@ func dwarfSubprograms(t *testing.T, out string) (map[string][2]uint64, []dwarf.L
 	return subs, rows
 }
 
-// rowsIn is the line-table rows inside a function's code. The self-host
-// emits a function as its register-ABI body, `name.r`, behind a stack-ABI
-// entry, `name`, so the rows of one source function sit in either range.
+// rowsIn is the line-table rows inside a function's code.
 func rowsIn(t *testing.T, subs map[string][2]uint64, rows []dwarf.LineEntry, name string) []dwarf.LineEntry {
 	t.Helper()
-	var out []dwarf.LineEntry
-	found := false
-	for _, n := range []string{name, name + ".r"} {
-		pc, ok := subs[n]
-		if !ok {
-			continue
-		}
-		found = true
-		for _, le := range rows {
-			if le.Address >= pc[0] && le.Address < pc[1] {
-				out = append(out, le)
-			}
-		}
-	}
-	if !found {
+	pc, ok := subs[name]
+	if !ok {
 		t.Fatalf("no subprogram %q (have %v)", name, subs)
+	}
+	var out []dwarf.LineEntry
+	for _, le := range rows {
+		if le.Address >= pc[0] && le.Address < pc[1] {
+			out = append(out, le)
+		}
 	}
 	return out
 }
@@ -332,10 +323,16 @@ func TestSelfHostDWARFMultiFile(t *testing.T) {
 				t.Fatal(err)
 			}
 			covered := map[uint64]uint64{}
-			for off := 0; off+8 <= len(df); {
+			for off := 0; off < len(df); {
+				if off+8 > len(df) {
+					t.Fatalf(".debug_frame ends inside an entry header at %#x", off)
+				}
 				n := int(binary.LittleEndian.Uint32(df[off:]))
 				if n == 0 {
 					t.Fatalf(".debug_frame has a zero-length entry at %#x; that terminator belongs to .eh_frame", off)
+				}
+				if off+4+n > len(df) || (binary.LittleEndian.Uint32(df[off+4:]) != 0xffffffff && n < 20) {
+					t.Fatalf(".debug_frame entry at %#x of length %d does not fit the section (%#x bytes)", off, n, len(df))
 				}
 				if (off+4+n)%8 != 0 {
 					t.Errorf(".debug_frame entry at %#x ends at %#x, not on 8", off, off+4+n)

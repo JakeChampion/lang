@@ -11022,13 +11022,6 @@ function macho_dysymtab(buf: i32[], nlocal: i32): i32[] {
   return macho_zeros(buf, 64);  // extdef/undef ranges, toc, modtab, refsyms, indirect, ext/loc rel
 }
 
-// macho_sym_order selects the labels the `-g` symbol table names and orders
-// them: the function labels, by offset then by name, as nm reads them.
-// Dropped are the empty name, a bare `L` prefix, the Mach-O temporary label
-// the emitters write for this target (#8065), and any name with a dot: a `.`
-// prefix (hand-written input's ELF-style local), a function's register-ABI
-// entry `f.r` or a helper's inner `.l0`. Those are branch targets inside a
-// function, and as symbols would end its extent there.
 function macho_has_dot(s: string): boolean {
   let i: i32 = 0;
   while (i < s.len()) {
@@ -11040,6 +11033,14 @@ function macho_has_dot(s: string): boolean {
   return false;
 }
 
+// macho_sym_order selects the labels the `-g` symbol table names and orders
+// them: the function labels, by offset then by name, as nm reads them.
+// Dropped are the empty name, a bare `L` prefix, the Mach-O temporary label
+// the emitters write for this target (#8065), and any name with a dot. The
+// emitters already rewrite their dotted labels to an `L` prefix
+// (`darwin_retarget_locals`); the dot rule is ELF's, kept for hand-written
+// input, whose dotted labels are branch targets inside a function and as
+// symbols would end its extent there.
 function macho_sym_order(names: string[], offs: i32[]): i32[] {
   let idx: i32[] = [];
   let i: i32 = 0;

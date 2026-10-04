@@ -262,12 +262,13 @@ function main(): i32 {
   }
 
   // ---- 5. the selection rule (native's FuncSyms) ---------------------
-  // `.`-prefixed labels are branch targets, not functions, and an empty
-  // name is not a symbol at all. Section 1 (.rodata) is filtered out when
-  // a section filter is given.
-  let ln: string[] = ["main", ".Lloop", "", "helper", "msg"];
-  let lo: i32[] = [16, 20, 24, 4, 0];
-  let ls: i32[] = [0, 0, 0, 0, 1];
+  // A label with a dot anywhere (`.Lloop`, the register-ABI entry
+  // `helper.r`) is a branch target, not a function, and an empty name is
+  // not a symbol at all. Section 1 (.rodata) is filtered out when a
+  // section filter is given.
+  let ln: string[] = ["main", ".Lloop", "", "helper", "msg", "helper.r"];
+  let lo: i32[] = [16, 20, 24, 4, 0, 8];
+  let ls: i32[] = [0, 0, 0, 0, 1, 0];
   let got: string[] = elf.elf_func_sym_names(ln, lo, ls, 0, 32);
   if (got.len() != 2) {
     return 40;

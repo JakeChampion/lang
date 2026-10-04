@@ -40,19 +40,6 @@ func parseDumpLines(out, tag string) []byte {
 	return b
 }
 
-// parseEhDump reads the driver's `eh i b` / `hdr i b` lines.
-func parseEhDump(out string) (eh, hdr []byte) {
-	for _, ln := range strings.Split(out, "\n") {
-		var idx, val int
-		if _, err := fmt.Sscanf(ln, "eh %d %d", &idx, &val); err == nil {
-			eh = append(eh, byte(val))
-		} else if _, err := fmt.Sscanf(ln, "hdr %d %d", &idx, &val); err == nil {
-			hdr = append(hdr, byte(val))
-		}
-	}
-	return eh, hdr
-}
-
 func TestSelfHostCfiMatchesNativeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
@@ -104,7 +91,7 @@ func TestSelfHostCfiMatchesNativeX86_64(t *testing.T) {
 			if refused := asmRefusals(out); len(refused) > 0 {
 				t.Fatalf("the self-host assembler refused: %v", refused)
 			}
-			gotEh, gotHdr := parseEhDump(out)
+			gotEh, gotHdr := parseDumpLines(out, "eh"), parseDumpLines(out, "hdr")
 			if string(gotEh) != string(wantEh) {
 				t.Errorf(".eh_frame differs\nself-host % x\nnative    % x", gotEh, wantEh)
 			}
@@ -120,6 +107,9 @@ func TestSelfHostCfiMatchesNativeX86_64(t *testing.T) {
 			}
 			if len(wantEh) == 0 {
 				t.Fatal("native rendered no .eh_frame — the case carries no CFI")
+			}
+			if len(wantDbg) == 0 {
+				t.Fatal("native rendered no .debug_frame — the case carries no CFI")
 			}
 		})
 	}
@@ -170,7 +160,7 @@ func TestSelfHostCfiMatchesNativeArm64(t *testing.T) {
 			if refused := asmRefusals(out); len(refused) > 0 {
 				t.Fatalf("the self-host assembler refused: %v", refused)
 			}
-			gotEh, gotHdr := parseEhDump(out)
+			gotEh, gotHdr := parseDumpLines(out, "eh"), parseDumpLines(out, "hdr")
 			if string(gotEh) != string(wantEh) {
 				t.Errorf(".eh_frame differs\nself-host % x\nnative    % x", gotEh, wantEh)
 			}
@@ -186,6 +176,9 @@ func TestSelfHostCfiMatchesNativeArm64(t *testing.T) {
 			}
 			if len(wantEh) == 0 {
 				t.Fatal("native rendered no .eh_frame — the case carries no CFI")
+			}
+			if len(wantDbg) == 0 {
+				t.Fatal("native rendered no .debug_frame — the case carries no CFI")
 			}
 		})
 	}
@@ -241,7 +234,7 @@ func TestSelfHostCfiMatchesNativeArm64Darwin(t *testing.T) {
 			if refused := asmRefusals(out); len(refused) > 0 {
 				t.Fatalf("the self-host assembler refused: %v", refused)
 			}
-			got, _ := parseEhDump(out)
+			got := parseDumpLines(out, "eh")
 			if string(got) != string(want) {
 				t.Errorf("__eh_frame differs\nself-host % x\nnative    % x", got, want)
 			}
