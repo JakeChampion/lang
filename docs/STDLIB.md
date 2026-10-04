@@ -1985,6 +1985,9 @@ that offset.
 - A header count the file cannot hold, a type index past the table or a
   truncated block is a parse failure, never an allocation of the claimed
   size. Reaches `env`, `fs` and `now`.
+- `parse_tzif` validates complete designation strings and the bounded POSIX
+  footer as UTF-8. Malformed text returns `None`; bytes outside those fields
+  do not become strings. Empty or absent fields keep their existing behavior.
 
 ### `std/async`
 
