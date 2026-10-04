@@ -295,7 +295,7 @@ pub function need_ops(): string[] {
     "read_dir_all", "read_file", "read_file_bytes", "read_line",
     "reader_close", "remove_dir_all", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "read_link", "set_file_times",
-    "truncate", "sleep_ms", "sleep_ns", "stat", "lstat", "str_bytes", "str_from_bytes",
+    "truncate", "sleep_ms", "sleep_ns", "stat", "lstat", "str_bytes", "str_from_bytes", "str_from_bytes_range",
     "str_split", "tcp_accept", "tcp_close", "tcp_connect", "tcp_listen", "tcp_listen_with",
     "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_send", "tcp_send_bytes", "tcp_socket_ctl", "temp_dir",
     "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes", "tcp_connect_with", "wasm_block",
@@ -2519,7 +2519,7 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
       || n == "buf_push_mapped" || n == "buf_push_filtered" || n == "buf_push_expanded"
       || n == "buf_push_byte" || n == "buf_push_u64" || n == "buf_len"
       || n == "buf_take" || n == "buf_free"
-      || n == "str_bytes" || n == "str_from_bytes" || n == "fexp"
+      || n == "str_bytes" || n == "str_from_bytes" || n == "str_from_bytes_range" || n == "fexp"
       || n == "flog" || n == "fpow" || n == "fsin" || n == "fcos") {
       i = i + 1;
       continue;
@@ -6742,6 +6742,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == 103) {  // str_from_bytes
     // stack: arr -> $__fern_string_from_bytes(arr) -> string block.
     parts = parts.append("    call $__fern_string_from_bytes\n");
+  } else if (o.kind_tag == 368) {  // str_from_bytes_range
+    parts = parts.append("    call $__fern_string_from_bytes_range\n");
   } else if (o.kind_tag == 219) {  // clz
     // wasm has all six as single opcodes with exactly these zero
     // semantics. The i64 forms produce an i64 count, so wrap to i32.
@@ -10902,6 +10904,22 @@ pub function string_from_bytes_helper(): string {
   return o;
 }
 
+// string_from_bytes_range_helper is $__fern_string_from_bytes over
+// arr[from, end), trapping on a range the packed slice would refuse.
+pub function string_from_bytes_range_helper(): string {
+  let o: string = "";
+  o = o + "  (func $__fern_string_from_bytes_range (param $arr i32) (param $from i32) (param $end i32) (result i32)\n";
+  o = o + "    (local $n i32) (local $s i32)\n";
+  o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $arr))) (then (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (local.get $from) (local.get $end)) (then (unreachable)))\n";
+  o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $from)))\n";
+  o = o + "    (local.set $s (call $__fern_str_box (i32.add (i32.const 4) (local.get $n))))\n";
+  o = o + "    (i32.store (local.get $s) (local.get $n))\n";
+  o = o + "    (memory.copy (i32.add (local.get $s) (i32.const 4)) (i32.add (i32.add (local.get $arr) (i32.const 8)) (local.get $from)) (local.get $n))\n";
+  o = o + "    (local.get $s))\n";
+  return o;
+}
+
 pub function strcat_streq_helpers(): string {
   let o: string = "";
   o = o + "  (func $__fern_strcat (param $a i32) (param $b i32) (result i32)\n";
@@ -14646,6 +14664,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // which module_allocates pulls in via heap_alloc_helpers.
   if (need(needs, "str_from_bytes")) {
     parts = parts.append(string_from_bytes_helper());
+  }
+  if (need(needs, "str_from_bytes_range")) {
+    parts = parts.append(string_from_bytes_range_helper());
   }
   // Function-value support: the $fn<N> call_indirect signature types, the
   // funcref table, and its elem segment (empty for non-closure modules).

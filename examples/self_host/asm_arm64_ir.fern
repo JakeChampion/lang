@@ -2473,6 +2473,9 @@ function ssa_str_target(op: string): string {
   if (op == "str_from_bytes_u8") {
     return "string_from_bytes_u8";
   }
+  if (op == "str_from_bytes_range_u8") {
+    return "string_from_bytes_range_u8";
+  }
   if (op == "read_chunk") {
     return "reader_read_chunk";
   }
@@ -2553,6 +2556,9 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
   }
   if (op == "str_from_bytes_u8") {
     return s.mark_heap().need("str_from_bytes_u8");
+  }
+  if (op == "str_from_bytes_range_u8") {
+    return s.mark_heap().need("str_from_bytes_range_u8");
   }
   if (op == "print_str") {
     return s.need("str_print");
@@ -10805,6 +10811,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   if (s.has_need("str_from_bytes_u8")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes_u8(), s);
+  }
+  if (s.has_need("str_from_bytes_range_u8")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes_range_u8(), s);
   }
   if (s.has_need("arr_slice_u8")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice_u8(), s);

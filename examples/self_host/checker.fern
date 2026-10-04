@@ -4647,6 +4647,7 @@ function builtin_sigs(): string[] {
     "strbuf_reset(): void",
     "strbuf_take(): string",
     "string_from_bytes_unchecked(u8[]): string",
+    "string_from_bytes_range_unchecked(u8[], i32, i32): string",
     "subprocess(string, string[], string): ProcessResult",
     "sync(): void",
     "target_arch(): string",

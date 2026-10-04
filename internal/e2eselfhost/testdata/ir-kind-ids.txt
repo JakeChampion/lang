@@ -343,3 +343,4 @@ setxattr=364
 lsetxattr=365
 fd_drop_cache=366
 raw_task_state=367
+str_from_bytes_range=368

@@ -3880,7 +3880,7 @@ func findTrmcFuncs(prog *ast.Program, info *checker.Info, ptrW int, pairForm map
 // string_from_bytes_unchecked(r.body.data)`) escapes nothing.
 func freshResultBuiltin(name string) bool {
 	switch name {
-	case "map_new", "__alloc_u8", "random_bytes", "tcp_recv", "string_from_bytes_unchecked", "slice_unchecked":
+	case "map_new", "__alloc_u8", "random_bytes", "tcp_recv", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "slice_unchecked":
 		return true
 	}
 	return false

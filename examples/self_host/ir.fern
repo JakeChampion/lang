@@ -460,6 +460,12 @@ pub function op_str_from_bytes(): Op {
   return op0(103);
 }
 
+// `str_from_bytes_range` pops [arr, from, end] → str_from_bytes over
+// arr[from, end), copied once (`string_from_bytes_range_unchecked`).
+pub function op_str_from_bytes_range(): Op {
+  return op0(368);
+}
+
 // `memcpy` pops [dst, src, n] (raw usize pointers + a byte count) → copies n
 // bytes src→dst and pushes a dummy 0 (the `__memcpy(dst, src, n)` builtin is
 // used statement-position, its value discarded). x86-64 emits `rep movsb`,
@@ -3077,6 +3083,9 @@ pub function kind_id(name: string): i32 {
   if (n == 20 && name == "buf_push_bytes_range") {
     return 351;
   }
+  if (n == 20 && name == "str_from_bytes_range") {
+    return 368;
+  }
   if (n == 21) {
     return kind_id_len21(name);
   }
@@ -5108,6 +5117,9 @@ function kind_name_4(id: i32): string {
   if (id == 367) {
     return "raw_task_state";
   }
+  if (id == 368) {
+    return "str_from_bytes_range";
+  }
   if (id == 208) {
     return "udp_send";
   }
@@ -5669,7 +5681,8 @@ function pops3(t: i32): boolean {
     || t == 324  // scan_set (str, from, set)
     || t == 327  // count_runs (str, inside, set)
     || t == 364 || t == 365  // setxattr, lsetxattr (path, name, value)
-    || t == 366;  // fd_drop_cache (fd, offset, len)
+    || t == 366  // fd_drop_cache (fd, offset, len)
+    || t == 368;  // str_from_bytes_range (arr, from, end)
 }
 
 // pops_buf is the operand count of one of the capacity-carrying string
@@ -8106,7 +8119,7 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 76 || tag == 77 || tag == 87 || tag == 92 || tag == 93 || tag == 94 || tag == 95 || tag == 302 || tag == 303) {
     return true;
   }
-  if (tag == 5 || tag == 98 || tag == 102 || tag == 103) {
+  if (tag == 5 || tag == 98 || tag == 102 || tag == 103 || tag == 368) {
     return true;
   }
   // Composite boxes. struct_copy (198) allocates the fresh box a functional
