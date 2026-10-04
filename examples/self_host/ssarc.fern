@@ -4402,18 +4402,13 @@ function wide_payload(t: typeinfo.Type): boolean {
 
 // A builtin union's box is a tag word and one payload word: the tag IS the
 // variant's position in the schema, so a test compares it and a projection
-// reads the single payload without a field index. `op_opt_none` writes the
-// tag at position 1 itself; an Ok carrying `void` is the box at position 0
-// with a zero payload word, as the writers hand it back.
+// reads the single payload without a field index. A variant with no payload
+// (None, or an Ok/Err carrying `void`) is the static box for its tag.
 function option_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, whole: typeinfo.Type): irtables.LowerResult {
   let tag: i32 = variant_tag(f, whole, ins.str);
   if (ins.kind_tag == ssasem.variant_new()) {
-    if (ins.args.len() == 0 && tag == 1) {
-      return emit(r, ir.op_opt_none());
-    }
     if (ins.args.len() == 0) {
-      r = emit(r, ir.op_const_i32(0));
-      return emit(r, ir.op_opt_make(tag));
+      return emit(r, ir.op_const_option(tag));
     }
     let pay: typeinfo.Type = f.values[ins.args[0]];
     if (wide_payload(pay)) {

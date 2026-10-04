@@ -423,7 +423,7 @@ function prod_mem_kind(k: string): boolean {
   let mem: string[] = [
     "struct_get", "struct_set", "tuple_set", "arr_len", "str_len", "str_data", "tuple_get", "opt_tag", "opt_payload",
     "arr_get", "arr_set", "str_index", "const_func", "const_str", "variant_is", "struct_set_shape",
-    "struct_make", "arr_make", "tuple_make", "opt_make", "opt_none", "str_slice",
+    "struct_make", "arr_make", "tuple_make", "opt_make", "str_slice",
     "raw_load_ptr", "raw_store_ptr", "raw_load8", "raw_store8", "struct_copy", "const_struct", "call_indirect",
   ];
   for x in mem {
@@ -733,10 +733,7 @@ function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     return lift_box_make(op.i32_imm, op.i32_imm, 0, "", lv);
   }
   if (k == "opt_make") {
-    return lift_opt_make_prod(op.i32_imm, true, lv);
-  }
-  if (k == "opt_none") {
-    return lift_opt_make_prod(1, false, lv);
+    return lift_opt_make_prod(op.i32_imm, lv);
   }
   if (k == "struct_copy") {
     return lift_struct_copy_prod(op, lv);
@@ -967,17 +964,14 @@ function lift_empty_arr(lv: LiftVals): LiftVals {
 }
 
 // lift_opt_make_prod builds the two-word Option box [tag@0, payload@8] the
-// stack machine builds: opt_make pops the payload, opt_none stores 0.
-function lift_opt_make_prod(tag: i32, has_payload: boolean, lv: LiftVals): LiftVals {
-  let payload: i32 = 0 - 1;
+// stack machine builds from the payload it pops.
+function lift_opt_make_prod(tag: i32, lv: LiftVals): LiftVals {
   let stack: i32[] = lv.stack;
-  if (has_payload) {
-    if (stack.len() < 1) {
-      return LiftVals { ...lv, ok: false };
-    }
-    payload = stack[stack.len() - 1];
-    stack = drop_last(stack);
+  if (stack.len() < 1) {
+    return LiftVals { ...lv, ok: false };
   }
+  let payload: i32 = stack[stack.len() - 1];
+  stack = drop_last(stack);
   let nvals: i32 = lv.nvals;
   let box: i32 = nvals;
   nvals = nvals + 1;
@@ -987,11 +981,6 @@ function lift_opt_make_prod(tag: i32, has_payload: boolean, lv: LiftVals): LiftV
   insts = insts.append(ssa.SInst { kind_tag: 1, result: tv, args: [], imm: tag, str: "" });
   insts = insts.append(ssa.SInst { kind_tag: 41, result: nvals, args: [box, tv], imm: 0, str: "" });
   nvals = nvals + 1;
-  if (payload < 0) {
-    payload = nvals;
-    nvals = nvals + 1;
-    insts = insts.append(ssa.SInst { kind_tag: 1, result: payload, args: [], imm: 0, str: "" });
-  }
   insts = insts.append(ssa.SInst { kind_tag: 41, result: nvals, args: [box, payload], imm: 8, str: "" });
   nvals = nvals + 1;
   return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
