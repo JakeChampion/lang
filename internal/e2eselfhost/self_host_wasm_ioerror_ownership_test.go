@@ -97,7 +97,7 @@ function main(): i32 {
 						t.Fatal(err)
 					}
 					bin := filepath.Join(t.TempDir(), "main.wasm")
-					compile := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", componentSrc, cli.stdlib, "-o", bin)
+					compile := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-o", bin, componentSrc, cli.stdlib)
 					compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 					if out, err := compile.CombinedOutput(); err != nil {
 						t.Fatalf("compile component: %v\n%s", err, out)

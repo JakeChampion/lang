@@ -37,7 +37,7 @@ func TestSelfHostArm64DarwinByteBuilderMaps(t *testing.T) {
 	}
 	t.Run("native", func(t *testing.T) {
 		bin := filepath.Join(t.TempDir(), "range")
-		compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
+		compile := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, stdlib)
 		compile.Env = append(os.Environ(), "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 		if out, err := compile.CombinedOutput(); err != nil {
 			t.Fatalf("compile: %v\n%s", err, out)

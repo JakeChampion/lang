@@ -78,7 +78,7 @@ func testSelfHostArm64DarwinBREBytes(t *testing.T, fixture string) {
 	cli := buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
 	src := breBytesFixture(t, fixture)
 	bin := filepath.Join(t.TempDir(), "bre")
-	cmd := exec.Command(cli, "-target", "arm64-darwin", src, e2eharness.SelfHostStdlibRoot(t), "-o", bin)
+	cmd := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, e2eharness.SelfHostStdlibRoot(t))
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)

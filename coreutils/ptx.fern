@@ -444,7 +444,8 @@ function in_list(list: u8[][], buf: u8[], lo: i32, hi: i32, fold: boolean): bool
 
 // ---- numeric options --------------------------------------------------------
 // GNU's numeric options accept decimal, leading-zero octal and 0x hex.
-// The value must be positive and inside intmax_t; 0b is not a prefix.
+// Linux's C23 parser also accepts 0b/0B; Darwin's parser rejects it.
+// The value must be positive and inside intmax_t.
 function parse_num(v: string, what: string): i64 {
   let i: i32 = 0;
   while (i < v.len() && gnu.is_blank(v[i] as i32)) {
@@ -458,6 +459,9 @@ function parse_num(v: string, what: string): i64 {
   let base: i32 = 10;
   if (i + 1 < v.len() && v[i] as i32 == 48 && (v[i + 1] as i32 == 120 || v[i + 1] as i32 == 88)) {
     base = 16;
+    i = i + 2;
+  } else if (target_os() != "darwin" && i + 1 < v.len() && v[i] as i32 == 48 && (v[i + 1] as i32 == 98 || v[i + 1] as i32 == 66)) {
+    base = 2;
     i = i + 2;
   } else if (i < v.len() && v[i] as i32 == 48) {
     base = 8;

@@ -4596,7 +4596,13 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   }
   if (name == "getxattr" || name == "lgetxattr" || name == "setxattr" || name == "lsetxattr"
     || name == "getxattr_bytes" || name == "lgetxattr_bytes" || name == "setxattr_bytes" || name == "lsetxattr_bytes") {
-    return call_xattr(name, args);
+    // The playground interpreter also runs on WASM, where xattr is absent.
+    // Keep native calls out of that target's reachable function set.
+    if (target_arch() == "wasm32") {
+      return v_variant("Err", [io_error_value(Unsupported)]);
+    } else {
+      return call_xattr(name, args);
+    }
   }
   if (name == "__count_byte_bytes") {
     return call_count_byte_bytes(args);

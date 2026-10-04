@@ -39,7 +39,7 @@ func TestSelfHostCRC32ArrayInterpAndComponent(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("requires wasmtime")
 		}
-		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", src, cli.stdlib, "-o", bin)
+		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-o", bin, src, cli.stdlib)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("component build: %v\n%s", err, out)
 		}
@@ -62,7 +62,7 @@ func TestSelfHostArm64DarwinCRC32Array(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(t.TempDir(), "reduction")
-	compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
+	compile := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, stdlib)
 	compile.Env = append(os.Environ(), "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 	if out, err := compile.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)
