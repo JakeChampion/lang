@@ -1530,6 +1530,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Writer_fsync":            emitFdCallHelper("__method_Writer_fsync", "wfsy", 82, nil),
 	"__method_Reader_fdatasync":        emitFdCallHelper("__method_Reader_fdatasync", "rfds", 83, nil),
 	"__method_Writer_fdatasync":        emitFdCallHelper("__method_Writer_fdatasync", "wfds", 83, nil),
+	"__method_Reader_drop_cache":       emitFdCallHelper("__method_Reader_drop_cache", "rfdc", 223, prepDropCache),
+	"__method_Writer_drop_cache":       emitFdCallHelper("__method_Writer_drop_cache", "wfdc", 223, prepDropCache),
 	"__method_Reader_syncfs":           emitFdCallHelper("__method_Reader_syncfs", "rsfs", 267, nil),
 	"__method_Writer_syncfs":           emitFdCallHelper("__method_Writer_syncfs", "wsfs", 267, nil),
 	"__method_Reader_dup_onto":         emitFdCallHelper("__method_Reader_dup_onto", "rdpo", 24, prepDupOnto),
@@ -3772,6 +3774,13 @@ func emitFdCallHelper(name, lp string, sysno int, prep func(w func(string, ...an
 	}
 }
 
+// prepDropCache sets up fadvise64(fd, offset, len, POSIX_FADV_DONTNEED) for
+// emitFdCallHelper: the offset and length arrive in x1 and x2, where the
+// call wants them.
+func prepDropCache(w func(string, ...any)) {
+	w("\tmov x3, #4")
+}
+
 // prepDupOnto sets up dup3(own_fd, fd, 0) for emitFdCallHelper: the
 // destination arrives in w1 and is sign-extended rather than
 // zero-extended, so a negative one stays negative and answers EBADF.
@@ -4403,6 +4412,8 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Writer_fsync":            {"__fern_io_error"},
 	"__method_Reader_fdatasync":        {"__fern_io_error"},
 	"__method_Writer_fdatasync":        {"__fern_io_error"},
+	"__method_Reader_drop_cache":       {"__fern_io_error"},
+	"__method_Writer_drop_cache":       {"__fern_io_error"},
 	"__method_Reader_syncfs":           {"__fern_io_error"},
 	"__method_Writer_syncfs":           {"__fern_io_error"},
 	"__method_Reader_dup_onto":         {"__fern_io_error"},
@@ -4531,6 +4542,8 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Writer_fsync":            true,
 	"__method_Reader_fdatasync":        true,
 	"__method_Writer_fdatasync":        true,
+	"__method_Reader_drop_cache":       true,
+	"__method_Writer_drop_cache":       true,
 	"__method_Reader_syncfs":           true,
 	"__method_Writer_syncfs":           true,
 	"__method_Reader_dup_onto":         true,

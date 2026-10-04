@@ -31,3 +31,9 @@ func hostSyncfs(fd int) error {
 	syscall.Sync()
 	return nil
 }
+
+// XNU has no posix_fadvise. fcntl(F_NOCACHE) is a different request — stop
+// caching from now on, not drop what is cached — so drop_cache is refused.
+const hostHasDropCache = false
+
+func hostDropCache(int, int64, int64) error { return syscall.ENOTSUP }

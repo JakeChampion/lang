@@ -57,6 +57,13 @@ func emitFdCallHelper(name, tag string, sysno int, prep func(w func(string, ...a
 	}
 }
 
+// prepDropCache sets up fadvise64(fd, offset, len, POSIX_FADV_DONTNEED) for
+// emitFdCallHelper: the offset and length arrive in rsi and rdx, where the
+// call wants them.
+func prepDropCache(w func(string, ...any)) {
+	w("\tmov r10d, 4")
+}
+
 // prepDupOnto sets up dup3(own_fd, fd, 0) for emitFdCallHelper: the
 // destination arrives in esi and is SIGN-extended rather than zero-extended,
 // so a negative one stays negative and answers EBADF.

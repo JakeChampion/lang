@@ -1179,6 +1179,9 @@ function sysno_x86_64(name: string): string {
   if (name == "fdatasync") {
     return "75";
   }
+  if (name == "fadvise64") {
+    return "221";
+  }
   if (name == "sync") {
     return "162";
   }
@@ -1672,6 +1675,9 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "fdatasync") {
     return "83";
+  }
+  if (name == "fadvise64") {
+    return "223";
   }
   if (name == "sync") {
     return "81";
@@ -4475,6 +4481,18 @@ pub function rt_src_fd_syncfs(t: string): string {
   return "function __fern_fd_syncfs(fd: i32): Option[IoError] { let rc: i32 = __syscall3(" + sysno(t, "syncfs") + ", fd as i64, 0, 0) as i32; if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
 }
 
+// rt_src_fd_drop_cache backs `r.drop_cache(offset, len)` /
+// `w.drop_cache(offset, len)` -> Option[IoError]: fadvise64(2) with
+// POSIX_FADV_DONTNEED (4) over that range. XNU has no fadvise, and
+// F_NOCACHE is a different request, so Darwin answers Unsupported.
+pub function rt_src_fd_drop_cache(t: string): string {
+  let head: string = "function __fern_fd_drop_cache(fd: i32, off: i64, n: i64): Option[IoError] { ";
+  if (t == "arm64-darwin") {
+    return head + "return Some(Unsupported); }";
+  }
+  return head + "let rc: i32 = __syscall5(" + sysno(t, "fadvise64") + ", fd as i64, off, n, 4, 0) as i32; if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
+}
+
 // rt_src_fd_dup_onto backs `r.dup_onto(fd)` / `w.dup_onto(fd)` ->
 // Option[IoError]: dup3(2) of the handle's descriptor onto `newfd`, so the
 // handle is reachable as that number too and whatever it named is closed.
@@ -4495,9 +4513,10 @@ pub function rt_src_sync(t: string): string {
   return "function __fern_sync(): i32 { return __syscall3(" + sysno(t, "sync") + ", 0, 0, 0) as i32; }";
 }
 
-// rt_src_sync_family gathers whichever of the four write-back helpers the
-// module actually reached. Both native backends select them identically, so
-// the four `has_need` tests live here once rather than in each emitter.
+// rt_src_sync_family gathers whichever of the write-back helpers, and
+// drop_cache beside them, the module actually reached. Both native backends
+// select them identically, so the `has_need` tests live here once rather than
+// in each emitter.
 pub function rt_src_sync_family(s: EmitState, t: string): string {
   let out: string = "";
   if (s.has_need("fd_fsync")) {
@@ -4508,6 +4527,9 @@ pub function rt_src_sync_family(s: EmitState, t: string): string {
   }
   if (s.has_need("fd_syncfs")) {
     out = out + " " + rt_src_fd_syncfs(t);
+  }
+  if (s.has_need("fd_drop_cache")) {
+    out = out + " " + rt_src_fd_drop_cache(t);
   }
   if (s.has_need("sync")) {
     out = out + " " + rt_src_sync(t);
