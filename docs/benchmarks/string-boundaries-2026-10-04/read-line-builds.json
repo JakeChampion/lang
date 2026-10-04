@@ -1,0 +1,18 @@
+{
+  "before": {
+    "bytes": 33185,
+    "sha256": "3b117a08ac32151b07a34d068fedc32c3b7b8de0040e535d91dc9b2d1d1600ec"
+  },
+  "before-census": {
+    "bytes": 33185,
+    "sha256": "3c6ee4e041d0b36e185f131779e23675c5697d1667d61c6d1a7644b1c95ff8a4"
+  },
+  "after": {
+    "bytes": 33185,
+    "sha256": "5516526981a6d640f9a9152357ccfe986f8833a0315f23bf9ecf6fd8f9d42540"
+  },
+  "after-census": {
+    "bytes": 33185,
+    "sha256": "6bf6a03fc37099335420352a55b1d9cce229c03378c7c1a93f9cd76f77a1bdd4"
+  }
+}

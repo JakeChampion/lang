@@ -572,8 +572,8 @@ pub trait Transport {
 
 // `Idle` — the connections a transport keeps for the next request to the
 // same place: at most `max` of them, none reused once idle past `idle_ms`.
-// A cell holds only a scalar or a string, so `rows` is the table, a
-// connection a line of its key, number and the nanosecond it went idle.
+// `rows` shares the table through Cell[string]: one connection per line,
+// with its key, number and the nanosecond it went idle.
 pub struct Idle { rows: Cell[string], max: i32, idle_ms: i32 }
 
 // `idle()` — an empty pool keeping up to 64 connections, each for 90 s

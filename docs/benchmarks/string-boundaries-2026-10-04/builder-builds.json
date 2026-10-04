@@ -1,0 +1,42 @@
+{
+  "short_ascii-before": {
+    "bytes": 33185,
+    "sha256": "30124035e40f96dbc08463077bccb7eac9ecf82165e6e8b3738e5efa57e12fcc",
+    "sections": "Segment __PAGEZERO: 4294967296 (zero fill) \nSegment __TEXT: 16384\n\tSection __text: 9140\n\tSection __eh_frame: 476\n\ttotal 9616\nSegment __DATA: 1097728\n\tSection __data: 560\n\ttotal 560\nSegment __LINKEDIT: 16384\ntotal 4296097792\n"
+  },
+  "short_ascii-after": {
+    "bytes": 33185,
+    "sha256": "01cdf6702ed99cb95509e31ab2268f9c5c064240ef1180e19440c9beb20a1ef0",
+    "sections": "Segment __PAGEZERO: 4294967296 (zero fill) \nSegment __TEXT: 16384\n\tSection __text: 10396\n\tSection __eh_frame: 612\n\ttotal 11008\nSegment __DATA: 1097728\n\tSection __data: 584\n\ttotal 584\nSegment __LINKEDIT: 16384\ntotal 4296097792\n"
+  },
+  "long_ascii-before": {
+    "bytes": 247841,
+    "sha256": "81a565503ed4dc3cf5ebec8711a5a2710b2aa61a3971cb9749603f2dfb69d22b",
+    "sections": "Segment __PAGEZERO: 4294967296 (zero fill) \nSegment __TEXT: 229376\n\tSection __text: 217376\n\tSection __eh_frame: 484\n\ttotal 217860\nSegment __DATA: 1097728\n\tSection __data: 560\n\ttotal 560\nSegment __LINKEDIT: 16384\ntotal 4296310784\n"
+  },
+  "long_ascii-after": {
+    "bytes": 247841,
+    "sha256": "1e6becab391f7b5c36163b59f9d9f73162b45514f901d8a028132624777b94f0",
+    "sections": "Segment __PAGEZERO: 4294967296 (zero fill) \nSegment __TEXT: 229376\n\tSection __text: 218628\n\tSection __eh_frame: 620\n\ttotal 219248\nSegment __DATA: 1097728\n\tSection __data: 584\n\ttotal 584\nSegment __LINKEDIT: 16384\ntotal 4296310784\n"
+  },
+  "scalars-before": {
+    "bytes": 115745,
+    "sha256": "ff21805109b2ca80741e724c4b657136c30c66b4e60103c1504e4f008ecd8a27",
+    "sections": "Segment __PAGEZERO: 4294967296 (zero fill) \nSegment __TEXT: 98304\n\tSection __text: 88352\n\tSection __eh_frame: 484\n\ttotal 88836\nSegment __DATA: 1097728\n\tSection __data: 560\n\ttotal 560\nSegment __LINKEDIT: 16384\ntotal 4296179712\n"
+  },
+  "scalars-after": {
+    "bytes": 115745,
+    "sha256": "2959128e6f01679b0998272b8a284368ee7945151766727cf51e7767705d372b",
+    "sections": "Segment __PAGEZERO: 4294967296 (zero fill) \nSegment __TEXT: 98304\n\tSection __text: 89604\n\tSection __eh_frame: 620\n\ttotal 90224\nSegment __DATA: 1097728\n\tSection __data: 584\n\ttotal 584\nSegment __LINKEDIT: 16384\ntotal 4296179712\n"
+  },
+  "malformed-before": {
+    "bytes": 82721,
+    "sha256": "17f7704d3a15d47c8cc6f531b5cf14cde4f9678aa67b945b047ecf3f01094aa2",
+    "sections": "Segment __PAGEZERO: 4294967296 (zero fill) \nSegment __TEXT: 65536\n\tSection __text: 49592\n\tSection __eh_frame: 476\n\ttotal 50068\nSegment __DATA: 1097728\n\tSection __data: 560\n\ttotal 560\nSegment __LINKEDIT: 16384\ntotal 4296146944\n"
+  },
+  "malformed-after": {
+    "bytes": 82721,
+    "sha256": "7a500ca8fcdb0a0dbae5a16a5f1ec405d29ad074ce18113e4fb89902f6a66faa",
+    "sections": "Segment __PAGEZERO: 4294967296 (zero fill) \nSegment __TEXT: 65536\n\tSection __text: 50844\n\tSection __eh_frame: 612\n\ttotal 51456\nSegment __DATA: 1097728\n\tSection __data: 584\n\ttotal 584\nSegment __LINKEDIT: 16384\ntotal 4296146944\n"
+  }
+}
