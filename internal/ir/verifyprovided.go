@@ -53,7 +53,6 @@ var providedSigs = map[string]providedSig{
 	"__arr_push_shared_bytes":          {-1, rWord},
 	"__arr_push_shared_count":          {-1, rWord},
 	"__build_io_error":                 {3, rWord},
-	"__bytes_to_lang_string":           {2, rString},
 	"__c_call0":                        {-1, rWord},
 	"__c_call0_f32":                    {-1, rFloat},
 	"__c_call0_f64":                    {-1, rFloat},

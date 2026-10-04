@@ -1331,32 +1331,31 @@ var unconditionalHelperCalls = map[string][]string{
 	// variant's message string is an rc1 block.
 	"__build_io_error": {"__fern_alloc_rc1", "__fern_alloc_box"},
 	"__http_entry": {
-		"__fern_alloc", "__alloc_u8", "__bytes_to_lang_string",
+		"__fern_alloc", "__alloc_u8", "__fern_str_copy", "__fern_str_dec",
 		"__fern_arr_dec", "__free",
 		// emitStrNormalize, for outgoing header names and values.
 		"__fern_str_len", "__fern_str_byte",
 	},
-	"__bytes_to_lang_string": {"__fern_alloc"},
-	"__fern_str_dec":         {"__fern_box_free"},
-	"__fern_str_rc_dec":      {"__fern_rc_dec"},
-	"__fern_box_free":        {"__free"},
-	"__fern_alloc_box":       {"__fern_alloc"},
-	"__fern_alloc_rc1":       {"__fern_alloc"},
-	"strbuf_append":          {"__fern_str_len", "__fern_str_byte", "__fern_alloc"},
-	"strbuf_take":            {"__fern_alloc_rc1"},
-	"buf_new":                {"__fern_alloc_rc1"},
-	"buf_take":               {"__fern_alloc_rc1"},
-	"buf_take_bytes":         {"__fern_alloc"},
-	"__fern_buf_reserve":     {"__fern_alloc_rc1", "__fern_box_free"},
-	"buf_push":               {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_range":         {"__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_bytes_range":   {"__fern_buf_reserve"},
-	"buf_push_mapped":        {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_filtered":      {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_expanded":      {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_byte":          {"__fern_buf_reserve"},
-	"buf_push_u64":           {"__fern_buf_reserve"},
-	"buf_free":               {"__fern_box_free"},
+	"__fern_str_dec":       {"__fern_box_free"},
+	"__fern_str_rc_dec":    {"__fern_rc_dec"},
+	"__fern_box_free":      {"__free"},
+	"__fern_alloc_box":     {"__fern_alloc"},
+	"__fern_alloc_rc1":     {"__fern_alloc"},
+	"strbuf_append":        {"__fern_str_len", "__fern_str_byte", "__fern_alloc"},
+	"strbuf_take":          {"__fern_alloc_rc1"},
+	"buf_new":              {"__fern_alloc_rc1"},
+	"buf_take":             {"__fern_alloc_rc1"},
+	"buf_take_bytes":       {"__fern_alloc"},
+	"__fern_buf_reserve":   {"__fern_alloc_rc1", "__fern_box_free"},
+	"buf_push":             {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_range":       {"__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_bytes_range": {"__fern_buf_reserve"},
+	"buf_push_mapped":      {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_filtered":    {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_expanded":    {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_byte":        {"__fern_buf_reserve"},
+	"buf_push_u64":         {"__fern_buf_reserve"},
+	"buf_free":             {"__fern_box_free"},
 	// The slice header is an rc1 block; as_bytes also promotes an inline
 	// string's bytes through the bare allocator.
 	"__slice_make":             {"__fern_alloc_rc1"},
@@ -3514,15 +3513,6 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildHttpEntryBody,
-	},
-	"__bytes_to_lang_string": {
-		// (host_ptr, host_len) → (data, len) — heap-form lang
-		// string built by memcpy'ing the host bytes. Used by the
-		// http_entry wrapper to materialise method / path / body
-		// strings from the canonical-ABI return areas.
-		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
-		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
-		body:    buildBytesToLangStringBody,
 	},
 	"cabi_realloc": {
 		// (orig_ptr, orig_size, align, new_size) → i32 — the
