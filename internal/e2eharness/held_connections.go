@@ -27,24 +27,32 @@ const HeldConnectionsBytesPerConnection = 1024
 const HeldConnectionsBatch = 64
 
 // HeldConnectionsServerSource is a server on `port` whose handler answers
-// the bump allocator's high-water mark in bytes, with a read deadline long
-// enough that the held connections stay open while it is measured and no
-// per-client cap, since both batches come from this host.
+// the bump allocator's high-water mark in bytes.
 func HeldConnectionsServerSource(port int) string {
+	return heldConnectionsServer(port, "", `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    return http.ok(__heap_bump_bytes().to_string());
+}`)
+}
+
+// heldConnectionsServer is the held-connection servers' shared shape:
+// `handler` serving on `port` under a read deadline long enough that an
+// idle held connection stays open while it is measured (a parked one
+// holds under the loop's own held deadline instead) and no per-client cap,
+// since both batches come from this host and the default cap would close
+// the second on accept.
+func heldConnectionsServer(port int, imports, handler string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/time";
 import "std/serve";
 import "std/platform";
-
-function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-    return http.ok(__heap_bump_bytes().to_string());
-}
+%s
+%s
 
 function main(): i32 {
     let opts: serve.Config = serve.Config { ...serve.config(), recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0 };
     return serve.run(%d, opts, handle);
 }
-`, port)
+`, imports, handler, port)
 }
 
 // HeldSuspendedBytesPerHandler is the bound on the bump-allocator growth
@@ -58,29 +66,21 @@ const HeldSuspendedBytesPerHandler = 16384
 // HeldSuspendedServerSource is HeldConnectionsServerSource with a handler
 // that waits on `plat.http` to the fetch upstream's /hold target (through
 // the forward proxy SetFetchProxy names) for every path but /heap, so a
-// connection with a request in flight holds a suspended handler.
+// connection with a request in flight holds a suspended handler. The
+// request's bounds sit far above the measurement's own guards, so a
+// handler that answers early is the upstream's doing, never the client
+// giving up on the park.
 func HeldSuspendedServerSource(port int) string {
-	return fmt.Sprintf(`import "std/http";
-import "std/time";
-import "std/serve";
-import "std/platform";
-import "std/fetch";
-
-function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+	return heldConnectionsServer(port, `import "std/fetch";`, `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/heap") {
         return http.ok(__heap_bump_bytes().to_string());
     }
-    match (plat.http(fetch.get("http://8.8.8.8/hold"))) {
+    let parked: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), inactivity_ms: 300000, total_ms: 600000 };
+    match (plat.http(fetch.get("http://8.8.8.8/hold").with_timeouts(parked))) {
         Ok(resp) => { return http.ok("held " + resp.status.to_string()); },
         Err(e) => { return http.ok("held err " + e.message()); }
     }
-}
-
-function main(): i32 {
-    let opts: serve.Config = serve.Config { ...serve.config(), recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0 };
-    return serve.run(%d, opts, handle);
-}
-`, port)
+}`)
 }
 
 // MeasureHeldSuspended holds two batches of connections to the server at
