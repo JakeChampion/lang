@@ -407,6 +407,9 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"loop read before .with":       false,
 		"if/else statement":            false,
 		"loop with break":              false,
+		"match statement":              false,
+		"match guard (when)":           false,
+		"at-binding (@)":               false,
 		"loop with continue":           false,
 		"tuple destructure":            false,
 		"if let Some":                  false,
@@ -604,6 +607,15 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, "loop { if (__lb") {
 			want["loop with break"] = true
+		}
+		if strings.Contains(src, "match (") && strings.Contains(src, "(__ms") {
+			want["match statement"] = true
+		}
+		if strings.Contains(src, ") when (") {
+			want["match guard (when)"] = true
+		}
+		if strings.Contains(src, " @ Some(") || strings.Contains(src, " @ Ok(") {
+			want["at-binding (@)"] = true
 		}
 		if strings.Contains(src, "continue; }") {
 			want["loop with continue"] = true
