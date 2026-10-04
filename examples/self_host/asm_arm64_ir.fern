@@ -50,8 +50,7 @@ import "./ssa_lift";
 // lowering gives a large main one slot per value and passes 8,192 of them.
 function fr_sub_imm(s: asmcore.EmitState, dst: string, base: string, imm: i32): asmcore.EmitState {
   if (imm <= 4095) {
-    s = s.write("    sub " + dst + ", " + base + ", #" + util.i32_to_string(imm) + "\n");
-    return s;
+    return ssa_addsub_imm(s, true, dst, base, imm);
   }
   s = s.write("    movz x17, #" + util.i32_to_string(imm & 65535) + "\n");
   if (imm > 65535) {
@@ -1093,37 +1092,86 @@ function ssa_save_bytes(saved: i32[]): i32 {
   return (saved.len() + 1) / 2 * 16;
 }
 
-// ssa_save_asm pushes the saved registers in pairs below the frame record;
-// ssa_epilogue_for restores them in the reverse order after cutting sp back
-// to the save area, then returns as the stack machine does.
-function ssa_save_asm(saved: i32[]): string {
-  let out: string = "";
+// ssa_save pushes the saved registers in pairs below the frame record;
+// ssa_emit_epilogue restores them in the reverse order after cutting sp back
+// to the save area, then the frame record, and returns as the stack machine
+// does.
+function ssa_save(saved: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let i: i32 = 0;
   while (i + 1 < saved.len()) {
-    out = out + "    stp " + ssa_reg(saved[i]) + ", " + ssa_reg(saved[i + 1]) + ", [sp, #-16]!\n";
+    s = ssa_pair(s, false, 3, ssa_reg(saved[i]), ssa_reg(saved[i + 1]), 0 - 16);
     i = i + 2;
   }
   if (i < saved.len()) {
-    out = out + "    str " + ssa_reg(saved[i]) + ", [sp, #-16]!\n";
+    s = ssa_ldst_wb(s, false, true, ssa_reg(saved[i]), 0 - 16);
   }
-  return out;
+  return s;
 }
 
-function ssa_epilogue_for(saved: i32[]): string {
+function ssa_emit_epilogue(saved: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .cfi_remember_state\n");
   if (saved.len() == 0) {
-    return ssa_epilogue();
+    s = ssa_mov_rr(s, "sp", "x29");
+  } else {
+    s = ssa_addsub_imm(s, true, "sp", "x29", ssa_save_bytes(saved));
+    let i: i32 = saved.len();
+    if (i % 2 == 1) {
+      i = i - 1;
+      s = ssa_ldst_wb(s, true, false, ssa_reg(saved[i]), 16);
+    }
+    while (i >= 2) {
+      i = i - 2;
+      s = ssa_pair(s, true, 1, ssa_reg(saved[i]), ssa_reg(saved[i + 1]), 16);
+    }
   }
-  let out: string = "    .cfi_remember_state\n    sub sp, x29, #" + util.i32_to_string(ssa_save_bytes(saved)) + "\n";
-  let i: i32 = saved.len();
-  if (i % 2 == 1) {
-    i = i - 1;
-    out = out + "    ldr " + ssa_reg(saved[i]) + ", [sp], #16\n";
+  s = ssa_pair(s, true, 1, "x29", "x30", 16);
+  s = s.write("    .cfi_def_cfa sp, 0\n");
+  s = ssa_ret(s);
+  return s.write("    .cfi_restore_state\n");
+}
+
+// ssa_pair writes `stp|ldp a, b, [sp, #off]!` (mode 3) or `[sp], #off`
+// (mode 1); ssa_ldst_wb the single-register `str|ldr r, [sp, #off]!` or
+// `[sp], #off`; ssa_ret `ret`.
+function ssa_pair(s: asmcore.EmitState, load: boolean, mode: i32, a: string, b: string, off: i32): asmcore.EmitState {
+  if (s.records()) {
+    let w: i64 = arm64_native.arm64_rec_pair(load, mode, a, b, "sp", off);
+    if (w >= 0) {
+      return s.word(w);
+    }
   }
-  while (i >= 2) {
-    i = i - 2;
-    out = out + "    ldp " + ssa_reg(saved[i]) + ", " + ssa_reg(saved[i + 1]) + ", [sp], #16\n";
+  let m: string = "    stp ";
+  if (load) {
+    m = "    ldp ";
   }
-  return out + "    ldp x29, x30, [sp], #16\n    .cfi_def_cfa sp, 0\n    ret\n    .cfi_restore_state\n";
+  if (mode == 3) {
+    return s.write(m + a + ", " + b + ", [sp, #" + util.i32_to_string(off) + "]!\n");
+  }
+  return s.write(m + a + ", " + b + ", [sp], #" + util.i32_to_string(off) + "\n");
+}
+
+function ssa_ldst_wb(s: asmcore.EmitState, load: boolean, pre: boolean, reg: string, off: i32): asmcore.EmitState {
+  if (s.records()) {
+    let w: i64 = arm64_native.arm64_rec_ldst_wb(load, pre, reg, "sp", off);
+    if (w >= 0) {
+      return s.word(w);
+    }
+  }
+  let m: string = "    str ";
+  if (load) {
+    m = "    ldr ";
+  }
+  if (pre) {
+    return s.write(m + reg + ", [sp, #" + util.i32_to_string(off) + "]!\n");
+  }
+  return s.write(m + reg + ", [sp], #" + util.i32_to_string(off) + "\n");
+}
+
+function ssa_ret(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.records()) {
+    return s.word(arm64_native.arm64_rec_ret());
+  }
+  return s.write("    ret\n");
 }
 
 function ssa_slot_off(v: i32): i32 {
@@ -1505,9 +1553,34 @@ function ssa_wreg(x: string): string {
 // decimal, one MOVN for a small negative one, the pool otherwise.
 function ssa_const_reg(text: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
   if (movz_text_ok(text) || movn_text_ok(text)) {
-    return s.write("    mov " + d + ", #" + text + "\n");
+    return ssa_mov_imm(s, d, text);
   }
   return s.write("    ldr " + d + ", =" + text + "\n");
+}
+
+// ssa_mov_imm writes `mov d, #text`: as one move-wide word when the decimal
+// is one movz or movn carries, as text otherwise.
+function ssa_mov_imm(s: asmcore.EmitState, d: string, text: string): asmcore.EmitState {
+  if (s.records() && (movz_text_ok(text) || movn_text_ok(text))) {
+    let w: i64 = arm64_native.arm64_rec_mov_imm(d, util.digits_to_i32(text) as i64);
+    if (w >= 0) {
+      return s.word(w);
+    }
+  }
+  return s.write("    mov " + d + ", #" + text + "\n");
+}
+
+// ssa_adrp_add writes `adrp d, label` and `add d, d, :lo12:label`, the
+// address of a label, as two named records or as text.
+function ssa_adrp_add(s: asmcore.EmitState, d: string, label: string): asmcore.EmitState {
+  if (s.records() && arm64_native.arm64_rec_label(label)) {
+    let hi: i64 = arm64_native.arm64_rec_adrp(d);
+    let lo: i64 = arm64_native.arm64_rec_add_lo12(d, d);
+    if (hi >= 0 && lo >= 0) {
+      return s.branch(hi, label).branch(lo, label);
+    }
+  }
+  return s.write("    adrp " + d + ", " + label + "\n    add " + d + ", " + d + ", :lo12:" + label + "\n");
 }
 
 // ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
@@ -2497,7 +2570,7 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
 // SsaFrame is the frame below the values: three words per frame-resident
 // string view after the values. ssa_view_off is the offset of a view's lowest
 // word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, epilogue: string, imm: ssa.Imms, lit0: i32[], lbase: i32 }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32 }
 
 // SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
 // instructions (the compare, and the `not` between it and the branch when
@@ -2625,7 +2698,7 @@ function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): a
   s = kout.state;
   let klbl: string = asmcore.const_agg_label(s, kout.idx);
   let d: string = ssa_dst(reg_of, ins.result);
-  s = s.write("    adrp " + d + ", " + klbl + "\n    add " + d + ", " + d + ", :lo12:" + klbl + "\n");
+  s = ssa_adrp_add(s, d, klbl);
   return ssa_store(reg_of, ins.result, d, s);
 }
 
@@ -2647,11 +2720,11 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
     label = asmcore.str_box_label(s, lo.idx);
   } else {
     s = s.mark_heap();
-    s = s.write("    mov x0, #" + util.i32_to_string(ins.imm) + "\n    bl __fern_arr_box\n");
+    s = ssa_bl_sym(ssa_mov_imm(s, "x0", util.i32_to_string(ins.imm)), "__fern_arr_box");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
   let d: string = ssa_dst(reg_of, ins.result);
-  s = s.write("    adrp " + d + ", " + label + "\n    add " + d + ", " + d + ", :lo12:" + label + "\n");
+  s = ssa_adrp_add(s, d, label);
   return ssa_store(reg_of, ins.result, d, s);
 }
 
@@ -2879,10 +2952,6 @@ function ssa_loc_str(loc: i32, reg: string, s: asmcore.EmitState): asmcore.EmitS
   return ssa_fr_str(s, reg, ssa_slot_off(ssa.spill_slot(loc)), 0);
 }
 
-function ssa_epilogue(): string {
-  return "    .cfi_remember_state\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    .cfi_def_cfa sp, 0\n    ret\n    .cfi_restore_state\n";
-}
-
 // ssa_jump is the branch to block `to`, or nothing when `to` is the block
 // emitted next and control falls into it.
 function ssa_jump(fr: SsaFrame, lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore.EmitState {
@@ -3028,7 +3097,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     } else {
       s = ssa_load(reg_of, t.value, "x0", s);
     }
-    return s.write(fr.epilogue);
+    return ssa_emit_epilogue(fr.saved, s);
   }
   if (t.kind_tag == 2) {
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
@@ -3044,7 +3113,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   }
   // A block the lift left unterminated is one nothing reaches; the stack
   // machine's fallback return keeps the text well formed here too.
-  return s.write("    mov x0, #0\n" + fr.epilogue);
+  return ssa_emit_epilogue(fr.saved, ssa_mov_imm(s, "x0", "0"));
 }
 
 // ssa_load_params moves each parameter from the caller's slot to its home;
@@ -3177,16 +3246,19 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irtab
   s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n    .cfi_startproc\n");
   s = s.write(ssa_entry_shim(f, asmcore.sanitize_label(label_name)));
   s = ssa_release_entry(r, lp, s);
-  s = s.write("    stp x29, x30, [sp, #-16]!\n    .cfi_def_cfa_offset 16\n    .cfi_offset x29, -16\n    .cfi_offset x30, -8\n    mov x29, sp\n    .cfi_def_cfa_register x29\n");
+  s = ssa_pair(s, false, 3, "x29", "x30", 0 - 16);
+  s = s.write("    .cfi_def_cfa_offset 16\n    .cfi_offset x29, -16\n    .cfi_offset x30, -8\n");
+  s = ssa_mov_rr(s, "x29", "sp");
+  s = s.write("    .cfi_def_cfa_register x29\n");
   let saved: i32[] = ssa_saved_regs(reg_of);
   let save: i32 = ssa_save_bytes(saved);
-  s = s.write(ssa_save_asm(saved));
+  s = ssa_save(saved, s);
   let views: i32[] = ssa_view_slots(f);
   // The blocks' labels take one id each, from lbase.
   let bp: i32[] = ssa.block_positions(f);
   let lbase: i32 = s.nlab;
   s = s.lab_take(bp.len());
-  let fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved), imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase };
+  let fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase };
   let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
   if (frame % 16 != 0) {
     frame = frame + 8;
