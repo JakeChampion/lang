@@ -255,34 +255,33 @@ function main(): i32 { let f: () => i32 = viewer(3); return f(); }
 		}
 	})
 
-	// A type that holds itself, merged past its source, has no copy and is a
-	// typed refusal by name (TestSelfHostSemIRStrict); a dyn holding a view
-	// is copied at the merge since #10909.
+	// A function value in a record, merged past its source, has no copy and is
+	// a typed refusal by name (TestSelfHostSemIRStrict).
 	t.Run("refusal_fails_the_emit", func(t *testing.T) {
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")
 		write(t, entry, `import "std/i32";
-enum L { Cons(str, L), Nil }
+struct P { a: str }
+struct Holder { f: () => i32, n: i32 }
 function mk(n: i32): string {
     let s: string = "ab";
     let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
-function two(s: string): L { return Cons(slice_unchecked(s, 0, 1), Cons(slice_unchecked(s, 1, 3), Nil)); }
-function count(l: L): i32 { match (l) { Cons(h, t) => { return h.len() + count(t); }, Nil => { return 0; } } return 0; }
 function g(n: i32): i32 {
-    let l: L = Nil;
+    let h: Holder = Holder { f: () => 0, n: 0 };
     if (n != 0) {
         let s: string = mk(n);
-        l = two(s);
+        let p: P = P { a: slice_unchecked(s, 1, 4) };
+        h = Holder { f: () => p.a.len() * 10 + (p.a[0] as i32) - 97, n: n };
     }
-    return count(l);
+    return h.f() * 10 + h.n;
 }
 function main(): i32 { return g(3) + g(0); }
 `)
 		_, se, code := drive(t, entry, nil, "-per-module-emit", "0")
-		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: g: a value merged past its source has no copy: L holds itself, so its copy would recurse") {
+		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: g: a value merged past its source has no copy: a function value (() => i32) has no shape to rebuild its environment by") {
 			t.Fatalf("emit: exit %d, want 3 naming the refusal\n%s", code, se)
 		}
 	})

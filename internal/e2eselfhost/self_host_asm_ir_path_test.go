@@ -1138,8 +1138,10 @@ function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); m
 function main(): i32 { let m: Map[string, i32] = map_new(4); m = m.insert("a", 1); m = m.insert("bb", 2); return m.get_or("bb", 0) + m.len(); }`, 4},
 		{"map-insert-overwrite", `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(7, 40); m = m.insert(7, 42); return m.get_or(7, 0) + m.len(); }`, 43},
+		// The chain starts from a bound map: a bare map_new(8) at its head binds
+		// no columns, and the inserts on it are E038 (#10214).
 		{"map-insert-chained", `import "core/map";
-function main(): i32 { let m: Map[string, i32] = map_new(8).insert("x", 5).insert("y", 7); return m.get_or("y", 0) + m.len(); }`, 9},
+function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("x", 5).insert("y", 7); return m.get_or("y", 0) + m.len(); }`, 9},
 		{"map-insert-keyword-literal", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("b", 0) + m.len(); }`, 4},
 		{"map-insert-has", `import "core/map";
