@@ -28,7 +28,7 @@ var fcRefRe = regexp.MustCompile(`\.?Lfc_([A-Za-z0-9_]+)`)
 func TestTranscendentalLabelsResolve(t *testing.T) {
 	for _, darwin := range []bool{false, true} {
 		asm := compile(t, transcendentalProgram, Options{Darwin: darwin})
-		known := map[string]bool{"tab": true, "2opi_bits": true}
+		known := map[string]bool{"tab": true, "2opi_bits": true, "logtab": true}
 		for _, c := range fdlibm.Coeffs {
 			known[c.Name] = true
 		}
@@ -46,6 +46,9 @@ func TestTranscendentalLabelsResolve(t *testing.T) {
 		// A pattern that matched nothing would pass vacuously.
 		if !strings.Contains(asm, "Lfc_tab:") {
 			t.Errorf("darwin=%v: no coefficient table emitted for a program that calls all five helpers", darwin)
+		}
+		if !strings.Contains(asm, "Lfc_logtab:") {
+			t.Errorf("darwin=%v: no log table emitted for a program that calls log", darwin)
 		}
 	}
 }

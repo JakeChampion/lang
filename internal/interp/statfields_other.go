@@ -9,7 +9,7 @@ import "os"
 // `os.FileMode`, so the type bits and permission bits are rebuilt from it
 // and everything else stays zero — the same "not reported reads zero"
 // contract the WASI backends carry.
-func statFields(info os.FileInfo) rawStat {
+func statFields(info os.FileInfo, _ statOrigin) rawStat {
 	return rawStat{mode: posixModeBits(info.Mode())}
 }
 

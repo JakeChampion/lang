@@ -23,9 +23,8 @@ import (
 // internal/codegen package from non-test code; each of them goes with the
 // backends. The list shrinks as they are deleted and never grows.
 var codegenImporters = map[string]bool{
-	"cmd/fern":            true,
-	"cmd/dump_arm64":      true,
-	"internal/e2eharness": true,
+	"cmd/fern":       true,
+	"cmd/dump_arm64": true,
 }
 
 const codegenImportPrefix = `github.com/jakechampion/lang/internal/codegen`

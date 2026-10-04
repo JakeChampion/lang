@@ -12,6 +12,7 @@
 package wasmbin
 
 import (
+	"encoding/binary"
 	"math"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -10621,172 +10622,280 @@ func putLocalsGroups(buf []byte, groups ...localGroup) []byte {
 	return buf
 }
 
-// buildLogF64Body — (f64) → f64, fdlibm __ieee754_log. x = 2^k * m with m in
-// [sqrt2/2, sqrt2). R(z) is two independent chains in w = z^2 so they evaluate
-// in parallel rather than as one 7-deep Horner.
-//
-// Locals: f64 m=1 f=2 s=3 z=4 w=5 t1=6 t2=7 hfsq=8 kf=9, then i64 k=10 bits=11
-// kadj=12.
+// buildLogF64Body — (f64) → f64, the table-driven log internal/fdlibm/logtab.go
+// documents. The coefficients are immediates; the rows are the data segment
+// at logTabBase (logTabSegment), addressed by row*24.
 func buildLogF64Body(_ map[string]uint32) []byte {
 	const (
-		lx   = 0
-		m    = 1
-		f    = 2
-		s    = 3
-		z    = 4
-		w    = 5
-		t1   = 6
-		t2   = 7
-		hfsq = 8
-		kf   = 9
-		k    = 10
-		bits = 11
-		kadj = 12
+		lx                                        = 0
+		r, kd, w, hi, lo, r2, r3, p, rhi, rlo, hh = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
+		ix, tmp, iz                               = 12, 13, 14
+		addr                                      = 15
 	)
 	var body []byte
-	body = inst.InstLocalGet(body, lx)
-	body = inst.InstLocalGet(body, lx)
-	body = numeric.InstF64Ne(body)
-	body = instGuardReturn(body, func(b []byte) []byte { return inst.InstLocalGet(b, lx) })
-	// x < 0 → NaN; x == 0 → -Inf; x == +Inf → +Inf.
-	body = inst.InstLocalGet(body, lx)
-	body = inst.InstF64Const(body, math.Float64bits(0.0))
-	body = numeric.InstF64Lt(body)
-	body = instGuardReturn(body, func(b []byte) []byte {
-		b = inst.InstI64Const(b, int64(uint64(0x7FF8000000000000)))
-		return convert.InstF64ReinterpretI64(b)
-	})
-	body = inst.InstLocalGet(body, lx)
-	body = inst.InstF64Const(body, math.Float64bits(0.0))
-	body = numeric.InstF64Eq(body)
-	body = instGuardReturn(body, func(b []byte) []byte { return instF64Inf(b, true) })
-	body = inst.InstLocalGet(body, lx)
-	body = instF64Inf(body, false)
-	body = numeric.InstF64Eq(body)
-	body = instGuardReturn(body, func(b []byte) []byte { return inst.InstLocalGet(b, lx) })
-	// A subnormal stores exponent 0 — its magnitude is in the mantissa's
-	// leading zeros — so the field below reports the smallest normal
-	// exponent for every one of them. Scale into the normal range and take
-	// the 54 back off k.
-	body = inst.InstLocalGet(body, lx)
-	body = inst.InstF64Const(body, math.Float64bits(fdlibm.MinNorm))
-	body = numeric.InstF64Lt(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLocalGet(body, lx)
-	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Two54))
-	body = numeric.InstF64Mul(body)
-	body = inst.InstLocalSet(body, lx)
-	body = inst.InstI64Const(body, 54)
-	body = inst.InstLocalSet(body, kadj)
-	body = inst.InstEnd(body)
-	// bits = reinterpret(x); k = ((bits >> 52) & 0x7FF) - 1023 - kadj
-	body = inst.InstLocalGet(body, lx)
+	get := func(l uint32) { body = inst.InstLocalGet(body, l) }
+	set := func(l uint32) { body = inst.InstLocalSet(body, l) }
+	f64c := func(v float64) { body = inst.InstF64Const(body, math.Float64bits(v)) }
+	i64c := func(v uint64) { body = inst.InstI64Const(body, int64(v)) }
+	add := func() { body = numeric.InstF64Add(body) }
+	sub := func() { body = numeric.InstF64Sub(body) }
+	mul := func() { body = numeric.InstF64Mul(body) }
+	row := func(j int) {
+		get(addr)
+		body = memory.InstF64Load(body, 3, uint32(logTabBase+8*j))
+	}
+	// (A + r*B) + r2*C, the shape every polynomial step here takes.
+	step := func(a, b, c float64) {
+		f64c(a)
+		get(r)
+		f64c(b)
+		mul()
+		add()
+		get(r2)
+		f64c(c)
+		mul()
+		add()
+	}
+	get(lx)
 	body = convert.InstI64ReinterpretF64(body)
-	body = inst.InstLocalSet(body, bits)
-	body = inst.InstLocalGet(body, bits)
-	body = inst.InstI64Const(body, 52)
+	set(ix)
+
+	// Near 1: log1p(r) for r = x - 1, which is exact there.
+	get(ix)
+	i64c(fdlibm.LogNear1Lo)
+	body = numeric.InstI64Sub(body)
+	i64c(fdlibm.LogNear1Hi - fdlibm.LogNear1Lo)
+	body = numeric.InstI64LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		b := fdlibm.LogNear1Poly
+		get(lx)
+		f64c(1)
+		sub()
+		set(r)
+		get(r)
+		get(r)
+		mul()
+		set(r2)
+		get(r)
+		get(r2)
+		mul()
+		set(r3)
+		step(b[6], b[7], b[8])
+		get(r3)
+		f64c(b[9])
+		mul()
+		add()
+		set(p)
+		for _, a := range []int{3, 0} {
+			step(b[a], b[a+1], b[a+2])
+			get(r3)
+			get(p)
+			mul()
+			add()
+			set(p)
+		}
+		// rhi keeps r's top 26 bits, so rhi*rhi is exact.
+		get(r)
+		f64c(0x1p27)
+		mul()
+		set(w)
+		get(r)
+		get(w)
+		add()
+		get(w)
+		sub()
+		set(rhi)
+		get(r)
+		get(rhi)
+		sub()
+		set(rlo)
+		get(rhi)
+		get(rhi)
+		mul()
+		f64c(0.5)
+		mul()
+		set(hh)
+		get(r)
+		get(hh)
+		sub()
+		set(hi)
+		get(r)
+		get(hi)
+		sub()
+		get(hh)
+		sub()
+		get(rlo)
+		f64c(0.5)
+		mul()
+		get(rhi)
+		get(r)
+		add()
+		mul()
+		sub()
+		set(lo)
+		// (r3*p + lo) + hi
+		get(r3)
+		get(p)
+		mul()
+		get(lo)
+		add()
+		get(hi)
+		add()
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	// Zero, subnormal, negative, Inf and NaN all have top-1 >= 0x7fe, with
+	// top the sign and exponent.
+	get(ix)
+	i64c(52)
 	body = numeric.InstI64ShrU(body)
-	body = inst.InstI64Const(body, 2047)
-	body = numeric.InstI64And(body)
-	body = inst.InstI64Const(body, 1023)
+	i64c(1)
 	body = numeric.InstI64Sub(body)
-	body = inst.InstLocalGet(body, kadj)
+	i64c(0x7fe)
+	body = numeric.InstI64GeU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		get(ix)
+		i64c(1)
+		body = numeric.InstI64Shl(body)
+		body = numeric.InstI64Eqz(body)
+		body = instGuardReturn(body, func(b []byte) []byte { return instF64Inf(b, true) })
+		get(lx)
+		get(lx)
+		body = numeric.InstF64Ne(body)
+		body = instGuardReturn(body, func(b []byte) []byte { return inst.InstLocalGet(b, lx) })
+		get(ix)
+		i64c(0)
+		body = numeric.InstI64LtS(body)
+		body = instGuardReturn(body, func(b []byte) []byte {
+			b = inst.InstI64Const(b, int64(uint64(0x7FF8000000000000)))
+			return convert.InstF64ReinterpretI64(b)
+		})
+		get(ix)
+		i64c(0x7ff0000000000000)
+		body = numeric.InstI64Eq(body)
+		body = instGuardReturn(body, func(b []byte) []byte { return inst.InstLocalGet(b, lx) })
+		// Subnormal: scale into the normal range, then take the 52 back off
+		// the exponent field so the reduction's k comes out right.
+		get(lx)
+		f64c(0x1p52)
+		mul()
+		body = convert.InstI64ReinterpretF64(body)
+		i64c(52 << 52)
+		body = numeric.InstI64Sub(body)
+		set(ix)
+	}
+	body = inst.InstEnd(body)
+
+	get(ix)
+	i64c(fdlibm.LogOff)
 	body = numeric.InstI64Sub(body)
-	body = inst.InstLocalSet(body, k)
-	// m = reinterpret((bits & mantissa) | exponent-of-1)
-	body = inst.InstLocalGet(body, bits)
-	body = inst.InstI64Const(body, 4503599627370495)
+	set(tmp)
+	get(tmp)
+	i64c(52 - fdlibm.LogTableBits)
+	body = numeric.InstI64ShrU(body)
+	i64c(1<<fdlibm.LogTableBits - 1)
 	body = numeric.InstI64And(body)
-	body = inst.InstI64Const(body, 4607182418800017408)
+	body = convert.InstI32WrapI64(body)
+	body = inst.InstI32Const(body, int32(fdlibm.LogRowSize))
+	body = numeric.InstI32Mul(body)
+	set(addr)
+	get(tmp)
+	i64c(52)
+	body = numeric.InstI64ShrS(body)
+	body = convert.InstF64ConvertI64S(body)
+	set(kd)
+	get(ix)
+	get(tmp)
+	i64c(0xfff0000000000000)
+	body = numeric.InstI64And(body)
+	body = numeric.InstI64Sub(body)
+	set(iz)
+	// r = (z - c) * invc, c the midpoint of z's subinterval.
+	get(iz)
+	body = convert.InstF64ReinterpretI64(body)
+	get(iz)
+	i64c(^uint64(1<<(52-fdlibm.LogTableBits) - 1))
+	body = numeric.InstI64And(body)
+	i64c(1 << (51 - fdlibm.LogTableBits))
 	body = numeric.InstI64Or(body)
 	body = convert.InstF64ReinterpretI64(body)
-	body = inst.InstLocalSet(body, m)
-	// if m >= sqrt2 { m *= 0.5; k += 1 }
-	body = inst.InstLocalGet(body, m)
-	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Sqrt2))
-	body = numeric.InstF64Ge(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLocalGet(body, m)
-	body = inst.InstF64Const(body, math.Float64bits(0.5))
-	body = numeric.InstF64Mul(body)
-	body = inst.InstLocalSet(body, m)
-	body = inst.InstLocalGet(body, k)
-	body = inst.InstI64Const(body, 1)
-	body = numeric.InstI64Add(body)
-	body = inst.InstLocalSet(body, k)
-	body = inst.InstEnd(body)
-	// f = m-1; s = f/(2+f); z = s*s; w = z*z
-	body = inst.InstLocalGet(body, m)
-	body = inst.InstF64Const(body, math.Float64bits(1.0))
-	body = numeric.InstF64Sub(body)
-	body = inst.InstLocalSet(body, f)
-	body = inst.InstLocalGet(body, f)
-	body = inst.InstF64Const(body, math.Float64bits(2.0))
-	body = inst.InstLocalGet(body, f)
-	body = numeric.InstF64Add(body)
-	body = numeric.InstF64Div(body)
-	body = inst.InstLocalSet(body, s)
-	body = inst.InstLocalGet(body, s)
-	body = inst.InstLocalGet(body, s)
-	body = numeric.InstF64Mul(body)
-	body = inst.InstLocalSet(body, z)
-	body = inst.InstLocalGet(body, z)
-	body = inst.InstLocalGet(body, z)
-	body = numeric.InstF64Mul(body)
-	body = inst.InstLocalSet(body, w)
-	// t1 = ((Lg6*w + Lg4)*w + Lg2)*w
-	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Lg6))
-	body = inst.InstLocalSet(body, t1)
-	body = instPolyStep(body, t1, w, fdlibm.Lg4)
-	body = instPolyStep(body, t1, w, fdlibm.Lg2)
-	body = inst.InstLocalGet(body, t1)
-	body = inst.InstLocalGet(body, w)
-	body = numeric.InstF64Mul(body)
-	body = inst.InstLocalSet(body, t1)
-	// t2 = (((Lg7*w + Lg5)*w + Lg3)*w + Lg1)*z
-	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Lg7))
-	body = inst.InstLocalSet(body, t2)
-	body = instPolyStep(body, t2, w, fdlibm.Lg5)
-	body = instPolyStep(body, t2, w, fdlibm.Lg3)
-	body = instPolyStep(body, t2, w, fdlibm.Lg1)
-	body = inst.InstLocalGet(body, t2)
-	body = inst.InstLocalGet(body, z)
-	body = numeric.InstF64Mul(body)
-	body = inst.InstLocalSet(body, t2)
-	body = inst.InstLocalGet(body, t1)
-	body = inst.InstLocalGet(body, t2)
-	body = numeric.InstF64Add(body)
-	body = inst.InstLocalSet(body, t1)
-	// hfsq = 0.5*f*f ; kf = (f64)k
-	body = inst.InstF64Const(body, math.Float64bits(0.5))
-	body = inst.InstLocalGet(body, f)
-	body = inst.InstLocalGet(body, f)
-	body = numeric.InstF64Mul(body)
-	body = numeric.InstF64Mul(body)
-	body = inst.InstLocalSet(body, hfsq)
-	body = inst.InstLocalGet(body, k)
-	body = convert.InstF64ConvertI64S(body)
-	body = inst.InstLocalSet(body, kf)
-	// kf*ln2hi - ((hfsq - (s*(hfsq+t1) + kf*ln2lo)) - f)
-	body = inst.InstLocalGet(body, kf)
-	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Ln2Hi))
-	body = numeric.InstF64Mul(body)
-	body = inst.InstLocalGet(body, hfsq)
-	body = inst.InstLocalGet(body, s)
-	body = inst.InstLocalGet(body, hfsq)
-	body = inst.InstLocalGet(body, t1)
-	body = numeric.InstF64Add(body)
-	body = numeric.InstF64Mul(body)
-	body = inst.InstLocalGet(body, kf)
-	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Ln2Lo))
-	body = numeric.InstF64Mul(body)
-	body = numeric.InstF64Add(body)
-	body = numeric.InstF64Sub(body)
-	body = inst.InstLocalGet(body, f)
-	body = numeric.InstF64Sub(body)
-	body = numeric.InstF64Sub(body)
+	sub()
+	row(0)
+	mul()
+	set(r)
+	get(kd)
+	f64c(fdlibm.Ln2Hi)
+	mul()
+	row(1)
+	add()
+	set(w)
+	get(w)
+	get(r)
+	add()
+	set(hi)
+	get(w)
+	get(hi)
+	sub()
+	get(r)
+	add()
+	get(kd)
+	f64c(fdlibm.Ln2Lo)
+	mul()
+	row(2)
+	add()
+	add()
+	set(lo)
+	get(r)
+	get(r)
+	mul()
+	set(r2)
+	a := fdlibm.LogPoly
+	f64c(a[0])
+	get(r)
+	f64c(a[1])
+	mul()
+	add()
+	get(r2)
+	f64c(a[2])
+	get(r)
+	f64c(a[3])
+	mul()
+	add()
+	mul()
+	add()
+	set(p)
+	// ((lo - r2*0.5) + (r*r2)*p) + hi
+	get(lo)
+	get(r2)
+	f64c(0.5)
+	mul()
+	sub()
+	get(r)
+	get(r2)
+	mul()
+	get(p)
+	mul()
+	add()
+	get(hi)
+	add()
 	return inst.PutFunctionBody(nil, putLocalsGroups(nil,
-		localGroup{9, encode.ValtypeF64}, localGroup{3, encode.ValtypeI64}), body)
+		localGroup{11, encode.ValtypeF64}, localGroup{3, encode.ValtypeI64},
+		localGroup{1, encode.ValtypeI32}), body)
+}
+
+// logTabSegment renders fdlibm.LogTable's rows as the LE bytes of the data
+// segment at logTabBase.
+func logTabSegment() []byte {
+	out := make([]byte, 0, logTabBytes)
+	for _, row := range fdlibm.LogTable {
+		for _, v := range row {
+			out = binary.LittleEndian.AppendUint64(out, math.Float64bits(v))
+		}
+	}
+	return out
 }
 
 // twoOverPiSegment renders the table as the LE bytes its data segment at

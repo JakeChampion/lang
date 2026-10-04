@@ -196,6 +196,18 @@ pub function ip_box2_addr(): i32 {
   return ip_box_addr() + 16;
 }
 
+// log_tab_addr is internal/fdlibm.LogTable's rows, which $__fern_log_f64
+// indexes; the data segment that fills them is emitted beside it. Reserved
+// whether or not the module uses log, so no address below depends on it.
+pub function log_tab_addr(): i32 {
+  return (ip_box2_addr() + 16 + 7) / 8 * 8;
+}
+
+// log_tab_bytes is that table's length: 128 rows of three f64s.
+pub function log_tab_bytes(): i32 {
+  return 128 * 3 * 8;
+}
+
 // str_region_base is where a unit's string-literal region starts: the low
 // scratch sits below it, rounded up to 8 so the i64 slots in that scratch stay
 // aligned. Named rather than inlined because const_str emits offsets RELATIVE
@@ -203,7 +215,7 @@ pub function ip_box2_addr(): i32 {
 // every slot added below moves it, which every literal offset and both
 // derived bases (fl_base / heap_base) follow automatically.
 pub function str_region_base(): i32 {
-  return (ip_box2_addr() + 16 + 7) / 8 * 8;
+  return log_tab_addr() + log_tab_bytes();
 }
 
 // fn_table_base is where a unit's funcref-table region starts. The elem
@@ -7464,14 +7476,16 @@ pub function build_io_error_func(slot: i32, sv: string[]): string {
 }
 
 // ---- moved verbatim from wasm.fern (#3457 slice 4 untangle) ----
-// The f64 transcendental WAT helpers: fdlibm's kernels, IR-path-only (emitted
-// only by emit_ir_module_units) and self-contained (pure WAT, no
-// imports/heap/AST).
+// The f64 transcendental WAT helpers: fdlibm's kernels, log's table-driven one
+// aside, IR-path-only (emitted only by emit_ir_module_units) and
+// self-contained (pure WAT, no imports/AST; log reads its rows from the data
+// segment at log_tab_addr()).
 //
 // The self-host cannot import Go, so the coefficients below are literals
 // rather than a shared table. internal/fdlibm's selfhost_parity_test
-// pins every one of them, and the 2/pi limbs in trig_limbs_func, to the table
-// the native backends emit — edit one side alone and that test fails.
+// pins every one of them, the 2/pi limbs in trig_limbs_func, and log's
+// generated data, to the tables the native backends emit — edit one side
+// alone and that test fails.
 //
 // wasm needs no rounding-mode note: f64.nearest is ties-to-EVEN, which is
 // exactly what arm64's `frintn` and x86's `roundsd …, 0` do, so all three
@@ -7514,44 +7528,217 @@ pub function exp_func(): string {
   return o;
 }
 
-// log_func emits $__fern_log_f64(x) -> ln x. x = 2^k*m with m normalised to
-// [sqrt2/2, sqrt2); f = m-1; s = f/(2+f). R is two INDEPENDENT chains in
-// w = z^2, so they evaluate in parallel rather than as one 7-deep Horner.
+// log_func emits $__fern_log_f64(x) -> ln x, the table-driven kernel
+// internal/fdlibm/logtab.go documents, operation for operation. The
+// coefficients are f64.const immediates; the rows are the data segment at
+// log_tab_addr(), addressed by row*24.
 pub function log_func(): string {
+  let c: string[] = log_coeffs();
+  let tab: i32 = log_tab_addr();
   let o: string = "";
   o = o + "  (func $__fern_log_f64 (param $x f64) (result f64)\n";
-  o = o + "    (local $k i64) (local $bits i64) (local $kadj i64) (local $m f64) (local $f f64) (local $s f64) (local $z f64) (local $w f64) (local $t1 f64) (local $t2 f64) (local $hfsq f64) (local $kf f64)\n";
-  o = o + "    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))\n";
-  o = o + "    (if (f64.lt (local.get $x) (f64.const 0.0)) (then (return (f64.reinterpret_i64 (i64.const 9221120237041090560)))))\n";
-  o = o + "    (if (f64.eq (local.get $x) (f64.const 0.0)) (then (return (f64.reinterpret_i64 (i64.const -4503599627370496)))))\n";
-  o = o + "    (if (f64.eq (local.get $x) (f64.reinterpret_i64 (i64.const 9218868437227405312))) (then (return (local.get $x))))\n";
-  // Subnormal prescale: a subnormal stores exponent 0 — its magnitude is in
-  // the mantissa's leading zeros — so scale into the normal range and take
-  // the 54 back off k.
-  o = o + "    (if (f64.lt (local.get $x) (f64.const 2.2250738585072014e-308)) (then (local.set $x (f64.mul (local.get $x) (f64.const 1.80143985094819840000e+16))) (local.set $kadj (i64.const 54))))\n";
-  o = o + "    (local.set $bits (i64.reinterpret_f64 (local.get $x)))\n";
-  o = o + "    (local.set $k (i64.sub (i64.sub (i64.and (i64.shr_u (local.get $bits) (i64.const 52)) (i64.const 2047)) (i64.const 1023)) (local.get $kadj)))\n";
-  o = o + "    (local.set $m (f64.reinterpret_i64 (i64.or (i64.and (local.get $bits) (i64.const 4503599627370495)) (i64.const 4607182418800017408))))\n";
-  o = o + "    (if (f64.ge (local.get $m) (f64.const 1.4142135623730951)) (then (local.set $m (f64.mul (local.get $m) (f64.const 0.5))) (local.set $k (i64.add (local.get $k) (i64.const 1)))))\n";
-  o = o + "    (local.set $f (f64.sub (local.get $m) (f64.const 1.0)))\n";
-  o = o + "    (local.set $s (f64.div (local.get $f) (f64.add (f64.const 2.0) (local.get $f))))\n";
-  o = o + "    (local.set $z (f64.mul (local.get $s) (local.get $s)))\n";
-  o = o + "    (local.set $w (f64.mul (local.get $z) (local.get $z)))\n";
-  o = o + "    (local.set $t1 (f64.const 0.1531383769920937332))\n";
-  o = o + "    (local.set $t1 (f64.add (f64.mul (local.get $t1) (local.get $w)) (f64.const 0.2222219843214978396)))\n";
-  o = o + "    (local.set $t1 (f64.add (f64.mul (local.get $t1) (local.get $w)) (f64.const 0.3999999999940941908)))\n";
-  o = o + "    (local.set $t1 (f64.mul (local.get $t1) (local.get $w)))\n";
-  o = o + "    (local.set $t2 (f64.const 0.1479819860511658591))\n";
-  o = o + "    (local.set $t2 (f64.add (f64.mul (local.get $t2) (local.get $w)) (f64.const 0.1818357216161805012)))\n";
-  o = o + "    (local.set $t2 (f64.add (f64.mul (local.get $t2) (local.get $w)) (f64.const 0.2857142874366239149)))\n";
-  o = o + "    (local.set $t2 (f64.add (f64.mul (local.get $t2) (local.get $w)) (f64.const 0.6666666666666735130)))\n";
-  o = o + "    (local.set $t2 (f64.mul (local.get $t2) (local.get $z)))\n";
-  o = o + "    (local.set $t1 (f64.add (local.get $t1) (local.get $t2)))\n";
-  o = o + "    (local.set $hfsq (f64.mul (f64.const 0.5) (f64.mul (local.get $f) (local.get $f))))\n";
-  o = o + "    (local.set $kf (f64.convert_i64_s (local.get $k)))\n";
-  o = o + "    (f64.sub (f64.mul (local.get $kf) (f64.const 0.693147180369123816490)) (f64.sub (f64.sub (local.get $hfsq) (f64.add (f64.mul (local.get $s) (f64.add (local.get $hfsq) (local.get $t1))) (f64.mul (local.get $kf) (f64.const 1.90821492927058770002e-10)))) (local.get $f))))\n";
+  o = o + "    (local $ix i64) (local $tmp i64) (local $iz i64) (local $addr i32) (local $r f64) (local $kd f64) (local $w f64) (local $hi f64) (local $lo f64) (local $r2 f64) (local $r3 f64) (local $p f64) (local $rhi f64) (local $rlo f64) (local $h f64)\n";
+  o = o + "    (local.set $ix (i64.reinterpret_f64 (local.get $x)))\n";
+  // Near 1: log1p(r) for r = x - 1, which is exact there.
+  o = o + "    (if (i64.lt_u (i64.sub (local.get $ix) (i64.const 4606619468846596096)) (i64.const 854320534781952)) (then\n";
+  o = o + "      (local.set $r (f64.sub (local.get $x) (f64.const 1.0)))\n";
+  o = o + "      (local.set $r2 (f64.mul (local.get $r) (local.get $r)))\n";
+  o = o + "      (local.set $r3 (f64.mul (local.get $r) (local.get $r2)))\n";
+  o = o + "      (local.set $p (f64.add (f64.add (f64.add (f64.const " + c[10] + ") (f64.mul (local.get $r) (f64.const " + c[11] + "))) (f64.mul (local.get $r2) (f64.const " + c[12] + "))) (f64.mul (local.get $r3) (f64.const " + c[13] + "))))\n";
+  o = o + "      (local.set $p (f64.add (f64.add (f64.add (f64.const " + c[7] + ") (f64.mul (local.get $r) (f64.const " + c[8] + "))) (f64.mul (local.get $r2) (f64.const " + c[9] + "))) (f64.mul (local.get $r3) (local.get $p))))\n";
+  o = o + "      (local.set $p (f64.add (f64.add (f64.add (f64.const " + c[4] + ") (f64.mul (local.get $r) (f64.const " + c[5] + "))) (f64.mul (local.get $r2) (f64.const " + c[6] + "))) (f64.mul (local.get $r3) (local.get $p))))\n";
+  // rhi keeps r's top 26 bits, so rhi*rhi is exact.
+  o = o + "      (local.set $w (f64.mul (local.get $r) (f64.const 134217728.0)))\n";
+  o = o + "      (local.set $rhi (f64.sub (f64.add (local.get $r) (local.get $w)) (local.get $w)))\n";
+  o = o + "      (local.set $rlo (f64.sub (local.get $r) (local.get $rhi)))\n";
+  o = o + "      (local.set $h (f64.mul (f64.mul (local.get $rhi) (local.get $rhi)) (f64.const 0.5)))\n";
+  o = o + "      (local.set $hi (f64.sub (local.get $r) (local.get $h)))\n";
+  o = o + "      (local.set $lo (f64.sub (f64.sub (f64.sub (local.get $r) (local.get $hi)) (local.get $h)) (f64.mul (f64.mul (local.get $rlo) (f64.const 0.5)) (f64.add (local.get $rhi) (local.get $r)))))\n";
+  o = o + "      (return (f64.add (f64.add (f64.mul (local.get $r3) (local.get $p)) (local.get $lo)) (local.get $hi)))))\n";
+  // Zero, subnormal, negative, Inf and NaN all have top-1 >= 0x7fe, with top
+  // the sign and exponent. A subnormal is scaled into the normal range and
+  // the 52 taken back off its exponent field, so the reduction's k comes out
+  // right.
+  o = o + "    (if (i64.ge_u (i64.sub (i64.shr_u (local.get $ix) (i64.const 52)) (i64.const 1)) (i64.const 2046)) (then\n";
+  o = o + "      (if (i64.eqz (i64.shl (local.get $ix) (i64.const 1))) (then (return (f64.reinterpret_i64 (i64.const -4503599627370496)))))\n";
+  o = o + "      (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))\n";
+  o = o + "      (if (i64.lt_s (local.get $ix) (i64.const 0)) (then (return (f64.reinterpret_i64 (i64.const 9221120237041090560)))))\n";
+  o = o + "      (if (i64.eq (local.get $ix) (i64.const 9218868437227405312)) (then (return (local.get $x))))\n";
+  o = o + "      (local.set $ix (i64.sub (i64.reinterpret_f64 (f64.mul (local.get $x) (f64.const 4503599627370496.0))) (i64.const 234187180623265792)))))\n";
+  o = o + "    (local.set $tmp (i64.sub (local.get $ix) (i64.const 4604367669032910848)))\n";
+  o = o + "    (local.set $addr (i32.mul (i32.wrap_i64 (i64.and (i64.shr_u (local.get $tmp) (i64.const 45)) (i64.const 127))) (i32.const 24)))\n";
+  o = o + "    (local.set $kd (f64.convert_i64_s (i64.shr_s (local.get $tmp) (i64.const 52))))\n";
+  o = o + "    (local.set $iz (i64.sub (local.get $ix) (i64.shl (i64.shr_s (local.get $tmp) (i64.const 52)) (i64.const 52))))\n";
+  // r = (z - c) * invc, c the midpoint of z's subinterval.
+  o = o + "    (local.set $r (f64.mul (f64.sub (f64.reinterpret_i64 (local.get $iz)) (f64.reinterpret_i64 (i64.shl (i64.or (i64.shr_u (local.get $iz) (i64.const 44)) (i64.const 1)) (i64.const 44)))) (f64.load offset=" + util.i32_to_string(tab) + " (local.get $addr))))\n";
+  o = o + "    (local.set $w (f64.add (f64.mul (local.get $kd) (f64.const 0.693147180369123816490)) (f64.load offset=" + util.i32_to_string(tab + 8) + " (local.get $addr))))\n";
+  o = o + "    (local.set $hi (f64.add (local.get $w) (local.get $r)))\n";
+  o = o + "    (local.set $lo (f64.add (f64.add (f64.sub (local.get $w) (local.get $hi)) (local.get $r)) (f64.add (f64.mul (local.get $kd) (f64.const 1.90821492927058770002e-10)) (f64.load offset=" + util.i32_to_string(tab + 16) + " (local.get $addr)))))\n";
+  o = o + "    (local.set $r2 (f64.mul (local.get $r) (local.get $r)))\n";
+  o = o + "    (local.set $p (f64.add (f64.add (f64.const " + c[0] + ") (f64.mul (local.get $r) (f64.const " + c[1] + "))) (f64.mul (local.get $r2) (f64.add (f64.const " + c[2] + ") (f64.mul (local.get $r) (f64.const " + c[3] + "))))))\n";
+  o = o + "    (f64.add (f64.add (f64.sub (local.get $lo) (f64.mul (local.get $r2) (f64.const 0.5))) (f64.mul (f64.mul (local.get $r) (local.get $r2)) (local.get $p))) (local.get $hi)))\n";
   return o;
 }
+
+// >>> generated by tools/gen_log_table.py — do not edit by hand
+// log_coeffs are fdlibm.LogPoly then fdlibm.LogNear1Poly, as f64.const spells them.
+pub function log_coeffs(): string[] {
+  let cs: string[] = [
+    "0.3333333333164825",
+    "-0.24999999997762484",
+    "0.20000321945931823",
+    "-0.16667003716456866",
+    "0.3333333333333352",
+    "-0.24999999999998365",
+    "0.19999999999321497",
+    "-0.1666666667002245",
+    "0.14285715076213892",
+    "-0.12499997818236687",
+    "0.11110712055095802",
+    "-0.10000496442458157",
+    "0.09181996510658455",
+    "-0.08327617265899454",
+  ];
+  return cs;
+}
+
+// log_tab_data is fdlibm.LogTable's rows, little-endian, as the WAT payload
+// of the data segment at log_tab_addr().
+pub function log_tab_data(): string {
+  let rows: string[] = [
+    "\\8d\\fe\\41\\c5\\f0\\34\\f7\\3f\\00\\68\\b4\\7d\\7f\\cc\\d7\\bf\\48\\86\\fb\\8f\\f7\\6c\\20\\bd",
+    "\\09\\7c\\9c\\6d\\78\\13\\f7\\3f\\00\\70\\94\\cb\\ee\\6f\\d7\\bf\\57\\2c\\85\\c9\\b9\\4b\\17\\bd",
+    "\\17\\60\\f2\\16\\60\\f2\\f6\\3f\\00\\a0\\46\\3a\\e3\\13\\d7\\bf\\72\\94\\7e\\61\\b2\\b9\\17\\bd",
+    "\\61\\c8\\81\\26\\a6\\d1\\f6\\3f\\00\\a0\\ff\\4c\\5b\\b8\\d6\\bf\\03\\25\\37\\0d\\75\\e6\\2f\\bd",
+    "\\3d\\1a\\a3\\0a\\49\\b1\\f6\\3f\\00\\e0\\4c\\8d\\55\\5d\\d6\\bf\\c0\\bd\\c5\\2d\\fd\\44\\c5\\bc",
+    "\\c0\\d0\\88\\3a\\47\\91\\f6\\3f\\00\\90\\f0\\8a\\d0\\02\\d6\\bf\\65\\3f\\df\\76\\91\\be\\1e\\bd",
+    "\\1a\\67\\01\\36\\9f\\71\\f6\\3f\\00\\e0\\be\\db\\ca\\a8\\d5\\bf\\f8\\ec\\f7\\0a\\9b\\c7\\f7\\3c",
+    "\\a3\\4a\\3b\\85\\4f\\52\\f6\\3f\\00\\e0\\7b\\1b\\43\\4f\\d5\\bf\\52\\09\\91\\c0\\54\\89\\1a\\bd",
+    "\\de\\c0\\8a\\b8\\56\\33\\f6\\3f\\00\\98\\ba\\eb\\37\\f6\\d4\\bf\\6e\\a3\\6d\\67\\9a\\53\\cf\\bc",
+    "\\94\\ae\\31\\68\\b3\\14\\f6\\3f\\00\\c8\\bc\\f3\\a7\\9d\\d4\\bf\\cd\\68\\a1\\64\\99\\09\\2f\\3d",
+    "\\fc\\2d\\29\\34\\64\\f6\\f5\\3f\\00\\a0\\53\\e0\\91\\45\\d4\\bf\\88\\3d\\92\\92\\58\\e9\\06\\3d",
+    "\\a5\\e2\\ec\\c3\\67\\d8\\f5\\3f\\00\\68\\c1\\63\\f4\\ed\\d3\\bf\\21\\78\\1a\\d0\\7a\\30\\ef\\bc",
+    "\\91\\fa\\47\\c6\\bc\\ba\\f5\\3f\\00\\c0\\9b\\35\\ce\\96\\d3\\bf\\3d\\66\\63\\56\\9c\\83\\05\\3d",
+    "\\aa\\cc\\23\\f1\\61\\9d\\f5\\3f\\00\\c8\\ae\\12\\1e\\40\\d3\\bf\\c6\\ad\\23\\55\\19\\07\\2d\\bd",
+    "\\60\\05\\58\\01\\56\\80\\f5\\3f\\00\\20\\e1\\bc\\e2\\e9\\d2\\bf\\c2\\1d\\8d\\12\\0c\\30\\24\\bd",
+    "\\e2\\52\\7c\\ba\\97\\63\\f5\\3f\\00\\68\\18\\fb\\1a\\94\\d2\\bf\\eb\\3a\\9e\\91\\7a\\de\\2b\\bd",
+    "\\fe\\82\\bb\\e6\\25\\47\\f5\\3f\\00\\b8\\1e\\99\\c5\\3e\\d2\\bf\\bc\\35\\ba\\6e\\37\\48\\22\\bd",
+    "\\4b\\05\\a8\\56\\ff\\2a\\f5\\3f\\00\\98\\88\\67\\e1\\e9\\d1\\bf\\88\\26\\dd\\b0\\44\\45\\1f\\bd",
+    "\\c5\\c4\\11\\e1\\22\\0f\\f5\\3f\\00\\c0\\9b\\3b\\6d\\95\\d1\\bf\\14\\aa\\d1\\3a\\f7\\d2\\27\\bd",
+    "\\9b\\4c\\dd\\62\\8f\\f3\\f4\\3f\\00\\78\\36\\ef\\67\\41\\d1\\bf\\ac\\50\\25\\db\\87\\3f\\ff\\3c",
+    "\\4c\\2c\\dc\\be\\43\\d8\\f4\\3f\\00\\80\\b7\\60\\d0\\ed\\d0\\bf\\f5\\35\\84\\2d\\b5\\19\\00\\bd",
+    "\\e1\\8f\\a6\\dd\\3e\\bd\\f4\\3f\\00\\c8\\e6\\72\\a5\\9a\\d0\\bf\\f6\\f2\\32\\7a\\78\\bd\\12\\3d",
+    "\\4a\\01\\76\\ad\\7f\\a2\\f4\\3f\\00\\80\\de\\0c\\e6\\47\\d0\\bf\\3c\\7f\\39\\0d\\f1\\bd\\2d\\bd",
+    "\\80\\48\\01\\22\\05\\88\\f4\\3f\\00\\00\\ea\\33\\22\\eb\\cf\\bf\\8b\\93\\00\\de\\18\\34\\2f\\bd",
+    "\\66\\60\\59\\34\\ce\\6d\\f4\\3f\\00\\f0\\4d\\13\\4b\\47\\cf\\bf\\89\\12\\82\\38\\d8\\46\\11\\bd",
+    "\\ca\\76\\c7\\e2\\d9\\53\\f4\\3f\\00\\b0\\04\\9f\\44\\a4\\ce\\bf\\94\\ab\\19\\39\\d3\\2d\\24\\3d",
+    "\\4d\\ee\\ab\\30\\27\\3a\\f4\\3f\\00\\60\\23\\c6\\0c\\02\\ce\\bf\\24\\14\\b9\\ad\\00\\2b\\25\\3d",
+    "\\51\\59\\5e\\26\\b5\\20\\f4\\3f\\00\\30\\90\\7f\\a1\\60\\cd\\bf\\8e\\e5\\7b\\20\\3f\\52\\24\\bd",
+    "\\66\\65\\0e\\d1\\82\\07\\f4\\3f\\00\\40\\db\\c9\\00\\c0\\cc\\bf\\f9\\af\\57\\5d\\58\\6d\\1d\\3d",
+    "\\07\\af\\a5\\42\\8f\\ee\\f3\\3f\\00\\00\\18\\ab\\28\\20\\cc\\bf\\c6\\7a\\5c\\e5\\0e\\2e\\29\\3d",
+    "\\c6\\75\\aa\\91\\d9\\d5\\f3\\3f\\00\\20\\b8\\30\\17\\81\\cb\\bf\\68\\d7\\9c\\3b\\68\\90\\1e\\bd",
+    "\\55\\29\\23\\d9\\60\\bd\\f3\\3f\\00\\30\\67\\6f\\ca\\e2\\ca\\bf\\5f\\15\\56\\a3\\54\\ae\\20\\3d",
+    "\\22\\c8\\7a\\38\\24\\a5\\f3\\3f\\00\\b0\\e6\\82\\40\\45\\ca\\bf\\1e\\1d\\c1\\6f\\10\\eb\\23\\3d",
+    "\\8e\\08\\66\\d3\\22\\8d\\f3\\3f\\00\\b0\\eb\\8d\\77\\a8\\c9\\bf\\e0\\78\\02\\82\\0b\\1e\\27\\3d",
+    "\\ee\\45\\c9\\d1\\5b\\75\\f3\\3f\\00\\c0\\fc\\b9\\6d\\0c\\c9\\bf\\ca\\d7\\18\\77\\f5\\35\\19\\3d",
+    "\\f8\\2a\\9f\\5f\\ce\\5d\\f3\\3f\\00\\f0\\50\\37\\21\\71\\c8\\bf\\16\\a1\\0c\\7a\\29\\ae\\29\\3d",
+    "\\46\\13\\e0\\ac\\79\\46\\f3\\3f\\00\\60\\af\\3c\\90\\d6\\c7\\bf\\d7\\01\\c3\\17\\6b\\c0\\24\\3d",
+    "\\fa\\1d\\6a\\ed\\5c\\2f\\f3\\3f\\00\\d0\\4f\\07\\b9\\3c\\c7\\bf\\cc\\d2\\ff\\97\\b7\\ca\\04\\bd",
+    "\\b6\\eb\\e9\\58\\77\\18\\f3\\3f\\00\\d0\\bb\\da\\99\\a3\\c6\\bf\\67\\a9\\57\\66\\2c\\1b\\1c\\bd",
+    "\\60\\02\\c4\\2a\\c8\\01\\f3\\3f\\00\\90\\b0\\00\\31\\0b\\c6\\bf\\d8\\0f\\ee\\6c\\52\\d7\\21\\bd",
+    "\\4b\\d1\\fe\\a1\\4e\\eb\\f2\\3f\\00\\90\\01\\c9\\7c\\73\\c5\\bf\\28\\e0\\1d\\65\\61\\15\\19\\3d",
+    "\\a0\\50\\2d\\01\\0a\\d5\\f2\\3f\\00\\c0\\7b\\89\\7b\\dc\\c4\\bf\\0f\\ff\\e1\\0a\\b6\\79\\0c\\bd",
+    "\\11\\37\\5a\\8e\\f9\\be\\f2\\3f\\00\\b0\\c9\\9d\\2b\\46\\c4\\bf\\7a\\3e\\b9\\63\\9d\\de\\1e\\bd",
+    "\\05\\c1\\f3\\92\\1c\\a9\\f2\\3f\\00\\f0\\57\\67\\8b\\b0\\c3\\bf\\15\\7c\\b3\\35\\5c\\48\\15\\bd",
+    "\\a5\\04\\b8\\5b\\72\\93\\f2\\3f\\00\\50\\3a\\4d\\99\\1b\\c3\\bf\\06\\fe\\5e\\8b\\23\\ce\\ee\\3c",
+    "\\4d\\ce\\a1\\38\\fa\\7d\\f2\\3f\\00\\b0\\11\\bc\\53\\87\\c2\\bf\\33\\fa\\d9\\94\\63\\6d\\21\\3d",
+    "\\27\\01\\d6\\7c\\b3\\68\\f2\\3f\\00\\60\\f2\\25\\b9\\f3\\c1\\bf\\33\\36\\08\\9b\\4e\\f7\\15\\3d",
+    "\\b2\\77\\91\\7e\\9d\\53\\f2\\3f\\00\\20\\4b\\02\\c8\\60\\c1\\bf\\3d\\9e\\00\\a9\\d2\\c2\\2e\\bd",
+    "\\5b\\60\\17\\97\\b7\\3e\\f2\\3f\\00\\c0\\cc\\cd\\7e\\ce\\c0\\bf\\47\\54\\ff\\ab\\2d\\65\\14\\bd",
+    "\\2a\\12\\a0\\22\\01\\2a\\f2\\3f\\00\\f0\\51\\0a\\dc\\3c\\c0\\bf\\90\\0e\\58\\3a\\8c\\95\\1f\\3d",
+    "\\e6\\55\\48\\80\\79\\15\\f2\\3f\\00\\00\\90\\7d\\bc\\57\\bf\\bf\\4e\\b0\\a8\\9e\\6c\\6a\\17\\bd",
+    "\\12\\20\\01\\12\\20\\01\\f2\\3f\\00\\40\\30\\ee\\07\\37\\be\\bf\\bd\\6a\\76\\e6\\84\\f6\\20\\bd",
+    "\\4c\\b8\\7f\\3c\\f4\\ec\\f1\\3f\\00\\a0\\21\\88\\97\\17\\bd\\bf\\25\\82\\20\\94\\98\\37\\29\\3d",
+    "\\bd\\4a\\2e\\67\\f5\\d8\\f1\\3f\\00\\c0\\9f\\76\\68\\f9\\bb\\bf\\83\\42\\82\\8d\\8c\\21\\24\\bd",
+    "\\59\\e0\\1c\\fc\\22\\c5\\f1\\3f\\00\\e0\\5a\\ee\\77\\dc\\ba\\bf\\f7\\cd\\79\\ec\\9b\\18\\25\\bd",
+    "\\e3\\ba\\f2\\67\\7c\\b1\\f1\\3f\\00\\20\\4d\\2d\\c3\\c0\\b9\\bf\\61\\e6\\f1\\85\\fd\\20\\15\\bd",
+    "\\9e\\11\\e0\\19\\01\\9e\\f1\\3f\\00\\e0\\91\\7a\\47\\a6\\b8\\bf\\05\\49\\21\\83\\fa\\b9\\0e\\3d",
+    "\\db\\2b\\90\\83\\b0\\8a\\f1\\3f\\00\\80\\3d\\26\\02\\8d\\b7\\bf\\b7\\9f\\b6\\94\\57\\9b\\06\\bd",
+    "\\84\\d6\\1b\\19\\8a\\77\\f1\\3f\\00\\60\\36\\89\\f0\\74\\b6\\bf\\f9\\33\\8b\\cd\\9a\\19\\16\\3d",
+    "\\01\\32\\fc\\50\\8d\\64\\f1\\3f\\00\\00\\0e\\05\\10\\5e\\b5\\bf\\2e\\c7\\53\\0c\\74\\1d\\0c\\bd",
+    "\\c9\\d5\\fd\\a3\\b9\\51\\f1\\3f\\00\\e0\\db\\03\\5e\\48\\b4\\bf\\44\\52\\65\\cb\\45\\ae\\d4\\3c",
+    "\\24\\47\\34\\8d\\0e\\3f\\f1\\3f\\00\\40\\18\\f8\\d7\\33\\b3\\bf\\48\\88\\1b\\a8\\b6\\92\\e6\\3c",
+    "\\ac\\c0\\ed\\89\\8b\\2c\\f1\\3f\\00\\60\\78\\5c\\7b\\20\\b2\\bf\\82\\70\\de\\07\\e6\\c4\\26\\3d",
+    "\\26\\48\\a7\\19\\30\\1a\\f1\\3f\\00\\e0\\ca\\b3\\45\\0e\\b1\\bf\\37\\97\\6b\\af\\2d\\61\\20\\bd",
+    "\\80\\10\\01\\be\\fb\\07\\f1\\3f\\00\\80\\ab\\11\\69\\fa\\af\\bf\\8f\\1a\\38\\98\\8c\\00\\23\\bd",
+    "\\a2\\25\\b3\\fa\\ed\\f5\\f0\\3f\\00\\00\\68\\dc\\8a\\da\\ad\\bf\\2f\\e4\\d9\\64\\ac\\b1\\21\\3d",
+    "\\11\\60\\82\\55\\06\\e4\\f0\\3f\\00\\00\\69\\fc\\eb\\bc\\ab\\bf\\2a\\7c\\31\\8c\\86\\bf\\17\\3d",
+    "\\3a\\9e\\35\\56\\44\\d2\\f0\\3f\\00\\c0\\73\\b5\\87\\a1\\a9\\bf\\e5\\4d\\76\\62\\a3\\7b\\2e\\bd",
+    "\\71\\41\\8b\\86\\a7\\c0\\f0\\3f\\00\\80\\35\\5a\\59\\88\\a7\\bf\\4c\\3a\\3b\\08\\0d\\8b\\10\\3d",
+    "\\b5\\ec\\2e\\72\\2f\\af\\f0\\3f\\00\\c0\\03\\4c\\5c\\71\\a5\\bf\\60\\27\\ee\\80\\c8\\dd\\1d\\bd",
+    "\\60\\83\\af\\a6\\db\\9d\\f0\\3f\\00\\40\\a1\\fa\\8b\\5c\\a3\\bf\\2b\\53\\18\\84\\0a\\2a\\1f\\3d",
+    "\\e2\\65\\75\\b3\\ab\\8c\\f0\\3f\\00\\40\\00\\e4\\e3\\49\\a1\\bf\\06\\2e\\7d\\cb\\ea\\8c\\2a\\bd",
+    "\\e2\\ea\\b8\\29\\9f\\7b\\f0\\3f\\00\\00\\14\\28\\bf\\72\\9e\\bf\\47\\4d\\77\\49\\51\\d7\\28\\3d",
+    "\\fb\\12\\79\\9c\\b5\\6a\\f0\\3f\\00\\00\\c6\\48\\f5\\55\\9a\\bf\\c9\\03\\2d\\9f\\70\\e0\\2d\\3d",
+    "\\86\\75\\72\\a0\\ee\\59\\f0\\3f\\00\\00\\69\\78\\61\\3d\\96\\bf\\42\\65\\59\\89\\f3\\ab\\07\\bd",
+    "\\c5\\64\\16\\cc\\49\\49\\f0\\3f\\00\\00\\ea\\1f\\fb\\28\\92\\bf\\fe\\91\\49\\28\\e3\\13\\27\\bd",
+    "\\fc\\47\\82\\b7\\c6\\38\\f0\\3f\\00\\00\\c7\\84\\73\\31\\8c\\bf\\05\\8c\\20\\06\\98\\c1\\27\\bd",
+    "\\e9\\29\\77\\fc\\64\\28\\f0\\3f\\00\\00\\68\\f9\\29\\19\\84\\bf\\68\\13\\d0\\55\\c7\\77\\19\\bd",
+    "\\37\\7a\\51\\36\\24\\18\\f0\\3f\\00\\00\\58\\14\\12\\12\\78\\bf\\27\\3f\\97\\82\\03\\d5\\1a\\bd",
+    "\\80\\00\\01\\02\\04\\08\\f0\\3f\\00\\00\\d4\\55\\01\\04\\60\\bf\\ef\\1e\\67\\70\\de\\89\\28\\bd",
+    "\\20\\e0\\1f\\e0\\1f\\e0\\ef\\3f\\00\\00\\b0\\a2\\0a\\f0\\6f\\3f\\6a\\b5\\86\\a0\\04\\bc\\20\\3d",
+    "\\12\\fa\\01\\aa\\1c\\a1\\ef\\3f\\00\\00\\81\\5f\\47\\dc\\87\\3f\\b1\\e0\\25\\4a\\ba\\ed\\f4\\3c",
+    "\\b5\\db\\a0\\ac\\10\\63\\ef\\3f\\00\\80\\46\\43\\a4\\ce\\93\\3f\\ea\\b7\\52\\9a\\77\\ba\\22\\3d",
+    "\\b5\\0a\\23\\44\\f6\\25\\ef\\3f\\00\\80\\af\\27\\c0\\9f\\9b\\3f\\59\\b7\\65\\d4\\fb\\97\\11\\3d",
+    "\\02\\8e\\45\\f8\\c7\\e9\\ee\\3f\\00\\c0\\23\\89\\d9\\b0\\a1\\3f\\8a\\ec\\2e\\ca\\c2\\7f\\29\\3d",
+    "\\eb\\01\\ba\\7a\\80\\ae\\ee\\3f\\00\\00\\c9\\af\\5b\\8a\\a5\\3f\\39\\ad\\70\\95\\73\\2b\\2b\\bd",
+    "\\e4\\50\\97\\a5\\1a\\74\\ee\\3f\\00\\00\\c9\\0e\\83\\5c\\a9\\3f\\b8\\fe\\c5\\97\\82\\14\\2c\\bd",
+    "\\73\\1a\\dc\\79\\91\\3a\\ee\\3f\\00\\00\\db\\8a\\6b\\27\\ad\\3f\\b0\\64\\8a\\c7\\23\\a4\\16\\3d",
+    "\\1e\\e0\\01\\1e\\e0\\01\\ee\\3f\\00\\e0\\98\\35\\98\\75\\b0\\3f\\e2\\99\\29\\6d\\c0\\c4\\11\\3d",
+    "\\ca\\1d\\a0\\dc\\01\\ca\\ed\\3f\\00\\20\\0a\\2f\\f6\\53\\b2\\3f\\fe\\b1\\2c\\09\\0e\\d2\\27\\bd",
+    "\\8a\\7f\\1e\\23\\f2\\92\\ed\\3f\\00\\40\\a6\\be\\dc\\2e\\b4\\3f\\cd\\9a\\7c\\ea\\ee\\c0\\1b\\3d",
+    "\\b2\\72\\75\\80\\ac\\5c\\ed\\3f\\00\\60\\37\\a9\\58\\06\\b6\\3f\\11\\76\\2c\\42\\9c\\78\\2e\\bd",
+    "\\1a\\5b\\fc\\a3\\2c\\27\\ed\\3f\\00\\20\\7b\\6d\\76\\da\\b7\\3f\\ca\\6e\\fe\\76\\f7\\66\\2a\\bd",
+    "\\c6\\bf\\44\\5c\\6e\\f2\\ec\\3f\\00\\40\\20\\46\\42\\ab\\b9\\3f\\61\\70\\78\\26\\48\\a6\\28\\bd",
+    "\\e7\\cb\\01\\96\\6d\\be\\ec\\3f\\00\\e0\\b0\\2b\\c8\\78\\bb\\3f\\32\\f0\\8c\\87\\10\\42\\2b\\3d",
+    "\\42\\8a\\fb\\5a\\26\\8b\\ec\\3f\\00\\c0\\6c\\d6\\13\\43\\bd\\3f\\13\\57\\13\\79\\43\\45\\29\\bd",
+    "\\86\\49\\0d\\d1\\94\\58\\ec\\3f\\00\\60\\11\\c0\\30\\0a\\bf\\3f\\77\\8b\\4b\\e6\\0b\\33\\05\\3d",
+    "\\1c\\a0\\2e\\39\\b5\\26\\ec\\3f\\00\\60\\ca\\12\\15\\67\\c0\\3f\\3d\\0a\\dc\\9c\\57\\47\\2a\\bd",
+    "\\8b\\8d\\86\\ee\\83\\f5\\eb\\3f\\00\\40\\67\\84\\85\\47\\c1\\3f\\50\\c7\\27\\10\\45\\63\\15\\3d",
+    "\\7b\\3e\\88\\65\\fd\\c4\\eb\\3f\\00\\60\\0a\\19\\6f\\26\\c2\\3f\\f6\\e7\\40\\b8\\0a\\d2\\24\\bd",
+    "\\23\\ff\\18\\2b\\1e\\95\\eb\\3f\\00\\80\\e4\\18\\d7\\03\\c3\\3f\\05\\cb\\3e\\ce\\b5\\80\\d6\\bc",
+    "\\05\\ee\\be\\e3\\e2\\65\\eb\\3f\\00\\c0\\ec\\b0\\c2\\df\\c3\\3f\\3f\\c1\\b8\\62\\2a\\a7\\28\\3d",
+    "\\ce\\06\\d8\\4a\\48\\37\\eb\\3f\\00\\50\\9a\\f3\\36\\ba\\c4\\3f\\36\\cc\\1b\\98\\68\\95\\27\\3d",
+    "\\a4\\22\\d9\\31\\4b\\09\\eb\\3f\\00\\20\\98\\d9\\38\\93\\c5\\3f\\4a\\5d\\55\\b7\\68\\ba\\f0\\3c",
+    "\\5e\\90\\94\\7f\\e8\\db\\ea\\3f\\00\\b0\\72\\42\\cd\\6a\\c6\\3f\\eb\\e1\\e4\\00\\09\\79\\15\\bd",
+    "\\fd\\eb\\87\\2f\\1d\\af\\ea\\3f\\00\\30\\40\\f5\\f8\\40\\c7\\3f\\be\\ea\\fc\\cd\\26\\93\\2e\\3d",
+    "\\59\\e1\\30\\51\\e6\\82\\ea\\3f\\00\\50\\43\\a1\\c0\\15\\c8\\3f\\30\\c6\\bf\\0d\\5a\\ab\\2f\\3d",
+    "\\4a\\8a\\68\\07\\41\\57\\ea\\3f\\00\\70\\88\\de\\28\\e9\\c8\\3f\\ad\\34\\0a\\3b\\ad\\fa\\15\\bd",
+    "\\a0\\1c\\c5\\87\\2a\\2c\\ea\\3f\\00\\00\\7e\\2e\\36\\bb\\c9\\3f\\fc\\0f\\ce\\a1\\a8\\f2\\21\\bd",
+    "\\1a\\a0\\01\\1a\\a0\\01\\ea\\3f\\00\\30\\88\\fc\\ec\\8b\\ca\\3f\\0e\\63\\e4\\0d\\a3\\e7\\fc\\bc",
+    "\\2d\\68\\6b\\17\\9f\\d7\\e9\\3f\\00\\b0\\8f\\9e\\51\\5b\\cb\\3f\\9e\\c1\\fd\\27\\ba\\91\\26\\3d",
+    "\\da\\10\\55\\ea\\24\\ae\\e9\\3f\\00\\20\\8c\\55\\68\\29\\cc\\3f\\40\\8a\\e3\\de\\73\\fd\\2c\\bd",
+    "\\ff\\c0\\8e\\0d\\2f\\85\\e9\\3f\\00\\c0\\09\\4e\\35\\f6\\cc\\3f\\5b\\d5\\07\\9a\\23\\71\\27\\3d",
+    "\\ae\\77\\e3\\0b\\bb\\5c\\e9\\3f\\00\\f0\\ab\\a0\\bc\\c1\\cd\\3f\\e9\\cc\\5c\\67\\f9\\14\\1c\\bd",
+    "\\e6\\2c\\9b\\7f\\c6\\34\\e9\\3f\\00\\60\\aa\\52\\02\\8c\\ce\\3f\\ff\\e6\\e8\\80\\5b\\80\\26\\bd",
+    "\\d5\\90\\01\\12\\4f\\0d\\e9\\3f\\00\\80\\4b\\56\\0a\\55\\cf\\3f\\fe\\02\\92\\a0\\e3\\23\\23\\bd",
+    "\\3f\\37\\f1\\7a\\52\\e6\\e8\\3f\\00\\50\\ad\\45\\6c\\0e\\d0\\3f\\03\\12\\e0\\52\\8d\\c6\\dc\\3c",
+    "\\3a\\ff\\62\\80\\ce\\bf\\e8\\3f\\00\\58\\cd\\5f\\b8\\71\\d0\\3f\\be\\97\\7f\\70\\d1\\d1\\10\\3d",
+    "\\9c\\89\\01\\f6\\c0\\99\\e8\\3f\\00\\b8\\9a\\57\\6b\\d4\\d0\\3f\\d1\\f0\\f8\\4d\\f0\\9b\\06\\bd",
+    "\\b9\\92\\c0\\bc\\27\\74\\e8\\3f\\00\\a8\\93\\02\\87\\36\\d1\\3f\\e9\\76\\4c\\31\\db\\0b\\06\\3d",
+    "\\14\\06\\78\\c2\\00\\4f\\e8\\3f\\00\\20\\d4\\2d\\0d\\98\\d1\\3f\\9a\\1c\\36\\7a\\3a\\7b\\2b\\3d",
+    "\\a0\\a4\\82\\01\\4a\\2a\\e8\\3f\\00\\a0\\48\\9e\\ff\\f8\\d1\\3f\\77\\be\\0c\\04\\6c\\94\\27\\3d",
+    "\\06\\18\\60\\80\\01\\06\\e8\\3f\\00\\78\\df\\10\\60\\59\\d2\\3f\\76\\70\\c5\\76\\0f\\61\\1c\\bd",
+    "\\1d\\4f\\5a\\51\\25\\e2\\e7\\3f\\00\\a0\\b8\\3a\\30\\b9\\d2\\3f\\a5\\b0\\bf\\d6\\12\\db\\26\\bd",
+    "\\7c\\01\\2e\\92\\b3\\be\\e7\\3f\\00\\40\\54\\c9\\71\\18\\d3\\3f\\d9\\cf\\ce\\94\\ab\\4f\\18\\3d",
+    "\\8b\\39\\b6\\6b\\aa\\9b\\e7\\3f\\00\\d8\\bf\\62\\26\\77\\d3\\3f\\d0\\fd\\c4\\3a\\95\\bc\\f6\\3c",
+    "\\0d\\c6\\9a\\11\\08\\79\\e7\\3f\\00\\f8\\c1\\a5\\4f\\d5\\d3\\3f\\e5\\50\\e3\\32\\19\\0f\\0e\\bd",
+    "\\6d\\75\\01\\c2\\ca\\56\\e7\\3f\\00\\e8\\04\\2a\\ef\\32\\d4\\3f\\dc\\94\\3a\\3a\\9b\\b5\\d3\\3c",
+  ];
+  return util.str_join_chunks(rows);
+}
+
+// <<< generated
 
 // pow_func emits $__fern_pow_f64(x, y). The integer-exponent fast path is not
 // an optimisation: exp(y*ln x) CANNOT return exactly 9 for pow(3,2), because a
@@ -7969,8 +8156,9 @@ pub function lstat_func(): string {
 //   uid      48   gid     56   dev     64   rdev     72   ino     80
 //   blksize  88   blocks  96   atime  104   atime_nsec 112
 //   mtime  120   mtime_nsec 128   ctime 136   ctime_nsec 144
+//   btime  152   btime_nsec 160
 function filestat_bytes(): i32 {
-  return 152;
+  return 168;
 }
 
 // filestat_copy_u64 stores one u64 straight out of the preview1 record.
@@ -8239,8 +8427,8 @@ function filestat_project_wat(): string {
   o = o + filestat_split_ns(104, 40);  // atime / atime_nsec
   o = o + filestat_split_ns(120, 48);  // mtime / mtime_nsec
   o = o + filestat_split_ns(136, 56);  // ctime / ctime_nsec
-  // Preview 1 reports no mode, owner, device node or block accounting at
-  // all, so those slots read zero — the contract the checker's `stat`
+  // Preview 1 reports no mode, owner, device node, block accounting or birth
+  // time at all, so those slots read zero — the contract the checker's `stat`
   // documentation states. A zero mode (an S_IFMT of 0, which no real file
   // has) is how a caller tells "not reported" from a restrictive one.
   o = o + filestat_zero(32);  // mode
@@ -8249,6 +8437,8 @@ function filestat_project_wat(): string {
   o = o + filestat_zero(72);  // rdev
   o = o + filestat_zero(88);  // blksize
   o = o + filestat_zero(96);  // blocks
+  o = o + filestat_zero(152);  // btime
+  o = o + filestat_zero(160);  // btime_nsec
   o = o + "    (call $__fern_raw_free (local.get $buf) (i32.const 64))\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
@@ -11973,8 +12163,13 @@ pub function udivrem_helpers(t: string, suffix: string): string {
 // census (#5362; the x86/arm64 self-host precedent). Counts at the
 // allocator's rounded-8 block size on both sides — $__fern_alloc's rounded
 // request and the bsz slot a free site reads are the same number for the
-// same block — so an alloc and its eventual free cancel exactly.
+// same block — so an alloc and its eventual free cancel exactly. FERN_SANITIZE
+// folds it in, as on the register backends: the census is the sanitizer's
+// leak detector, and its verdict line rides on the report.
 function leak_check_on(): boolean {
+  if (asmcore.sanitize_on()) {
+    return true;
+  }
   match (env("FERN_LEAKCHECK")) {
     Some(_) => {
       return true;
@@ -12023,17 +12218,54 @@ function lc_bump_free(nexpr: string): string {
   return o;
 }
 
+// lc_label: the stores that put a fixed label at `$b` as little-endian
+// packed words (a full word, then a half, then a byte), and the
+// $__fern_lc_wr call that writes it. Every label byte is ASCII, so no word
+// crosses the sign bit.
+function lc_label(text: string): string {
+  let o: string = "";
+  let i: i32 = 0;
+  while (i < text.len()) {
+    let left: i32 = text.len() - i;
+    let width: i32 = 1;
+    if (left >= 4) {
+      width = 4;
+    } else if (left >= 2) {
+      width = 2;
+    }
+    let word: i32 = 0;
+    let k: i32 = width - 1;
+    while (k >= 0) {
+      word = word * 256 + text[i + k] as i32;
+      k = k - 1;
+    }
+    let op: string = "i32.store8";
+    if (width == 4) {
+      op = "i32.store";
+    } else if (width == 2) {
+      op = "i32.store16";
+    }
+    let at: string = "(local.get $b)";
+    if (i > 0) {
+      at = "(i32.add (local.get $b) (i32.const " + util.i32_to_string(i) + "))";
+    }
+    o = o + "    (" + op + " " + at + " (i32.const " + util.i32_to_string(word) + "))\n";
+    i = i + width;
+  }
+  return o + "    (call $__fern_lc_wr (local.get $b) (i32.const " + util.i32_to_string(text.len()) + "))\n";
+}
+
 // lc_report_and_exit_wrapper: `$__fern_lc_report` — the census summary on
-// stderr, one `leakcheck: allocs=<N> frees=<M> live_bytes=<K>` line — plus
-// the `$proc_exit` wrapper that reports before exiting, so BOTH exit paths
-// (the exit() op and $_start) report through the one flag-gated definition;
+// stderr, one `leakcheck: allocs=<N> frees=<M> live_bytes=<K>` line, and
+// under FERN_SANITIZE the leak verdict after it — plus the `$proc_exit`
+// wrapper that reports before exiting, so BOTH exit paths (the exit() op
+// and $_start) report through the one flag-gated definition;
 // preview1_imports renames the raw import to $__fern_proc_exit_raw under the
 // same flag. Mode 0 only: the component modes have no preview1 proc_exit and
-// their $fd_write shims cannot be assumed. The line is built in a buffer
-// taken from the bump heap AT REPORT TIME (the process is exiting, and this
-// avoids touching the computed data-pool layout); labels are packed-word
-// stores; digits are written backwards by $__fern_lc_wrnum. fd_write's iovec scratch
-// at 0/4 is free at exit.
+// their $fd_write shims cannot be assumed. The line is built in fixed
+// scratch below the data pool (the process is exiting); labels are packed-word
+// stores (lc_label); digits are written backwards by $__fern_lc_wrnum.
+// fd_write's iovec scratch at 0/4 is free at exit.
 pub function lc_report_and_exit_wrapper(): string {
   if (!leak_check_on()) {
     return "";
@@ -12064,32 +12296,32 @@ pub function lc_report_and_exit_wrapper(): string {
   o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
   o = o + "      (i32.store8 (local.get $i) (i32.const 45))))\n";
   o = o + "    (call $__fern_lc_wr (local.get $i) (i32.sub (i32.add (local.get $buf) (i32.const 24)) (local.get $i))))\n";
-  // The report. Label bytes are little-endian packed constants for
-  // "leakcheck: allocs=", " frees=", " live_bytes=", and the newline.
+  // The report.
   o = o + "  (func $__fern_lc_report\n";
   o = o + "    (local $b i32)\n";
   // Fixed scratch at 8..40 — clear of the fd_write iovec at 0..8, and free
   // to clobber at exit. NOT $__fern_alloc: a heap-free program has none.
   o = o + "    (local.set $b (i32.const 8))\n";
-  o = o + "    (i32.store (local.get $b) (i32.const 1801545068))\n";
-  o = o + "    (i32.store (i32.add (local.get $b) (i32.const 4)) (i32.const 1667590243))\n";
-  o = o + "    (i32.store (i32.add (local.get $b) (i32.const 8)) (i32.const 1629502059))\n";
-  o = o + "    (i32.store (i32.add (local.get $b) (i32.const 12)) (i32.const 1668246636))\n";
-  o = o + "    (i32.store16 (i32.add (local.get $b) (i32.const 16)) (i32.const 15731))\n";
-  o = o + "    (call $__fern_lc_wr (local.get $b) (i32.const 18))\n";
+  o = o + lc_label("leakcheck: allocs=");
   o = o + "    (call $__fern_lc_wrnum (global.get $__fern_lc_alloc_count) (local.get $b))\n";
-  o = o + "    (i32.store (local.get $b) (i32.const 1701996064))\n";
-  o = o + "    (i32.store16 (i32.add (local.get $b) (i32.const 4)) (i32.const 29541))\n";
-  o = o + "    (i32.store8 (i32.add (local.get $b) (i32.const 6)) (i32.const 61))\n";
-  o = o + "    (call $__fern_lc_wr (local.get $b) (i32.const 7))\n";
+  o = o + lc_label(" frees=");
   o = o + "    (call $__fern_lc_wrnum (global.get $__fern_lc_free_count) (local.get $b))\n";
-  o = o + "    (i32.store (local.get $b) (i32.const 1986620448))\n";
-  o = o + "    (i32.store (i32.add (local.get $b) (i32.const 4)) (i32.const 2036490085))\n";
-  o = o + "    (i32.store (i32.add (local.get $b) (i32.const 8)) (i32.const 1030972788))\n";
-  o = o + "    (call $__fern_lc_wr (local.get $b) (i32.const 12))\n";
+  o = o + lc_label(" live_bytes=");
   o = o + "    (call $__fern_lc_wrnum (i64.sub (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)) (local.get $b))\n";
-  o = o + "    (i32.store8 (local.get $b) (i32.const 10))\n";
-  o = o + "    (call $__fern_lc_wr (local.get $b) (i32.const 1)))\n";
+  o = o + lc_label("\n");
+  if (asmcore.sanitize_on()) {
+    // The sanitizer's leak verdict, the text the register backends print.
+    // Only a POSITIVE balance is a leak: zero is clean, and a negative one
+    // is an over-free, a different finding named at the offending dec.
+    o = o + "    (if (i64.gt_s (i64.sub (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)) (i64.const 0)) (then\n";
+    o = o + lc_label("fern-sanitizer: leak ");
+    o = o + "    (call $__fern_lc_wrnum (i64.sub (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)) (local.get $b))\n";
+    o = o + lc_label(" bytes in ");
+    o = o + "    (call $__fern_lc_wrnum (i64.sub (global.get $__fern_lc_alloc_count) (global.get $__fern_lc_free_count)) (local.get $b))\n";
+    o = o + lc_label(" blocks\n");
+    o = o + "    ))\n";
+  }
+  o = o + "  )\n";
   // The reporting $proc_exit.
   o = o + "  (func $proc_exit (param $c i32)\n";
   o = o + "    (call $__fern_lc_report)\n";
@@ -13543,6 +13775,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
       + le32_escape(sv[di].len()) + wat_escape(sv[di]) + "\")\n");
     di = di + 1;
   }
+  if (need(needs, "flog") || need(needs, "fpow")) {
+    parts = parts.append("  (data (i32.const " + util.i32_to_string(log_tab_addr()) + ") \"" + log_tab_data() + "\")\n");
+  }
   // Static aggregate constants (#6149), the region above the string literals.
   // $__cagg_base<ns> is the sibling of $__str_base<ns>: one base per unit at
   // that unit's first block, with the unit's code emitting relative offsets.
@@ -14247,8 +14482,14 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // `main` is exported beside `_start` so a host can read its result
     // directly (`wasmtime run --invoke main`): proc_exit refuses a status
     // outside [0..126), so through `_start` alone a result of 126 or more
-    // is unreadable.
-    parts = parts.append("  (export \"main\" (func $main))\n");
+    // is unreadable. That call never reaches $proc_exit, so under the census
+    // the export reports on its way out.
+    if (leak_check_on()) {
+      parts = parts.append("  (func $__fern_main_reporting (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (local.get $r))\n");
+      parts = parts.append("  (export \"main\" (func $__fern_main_reporting))\n");
+    } else {
+      parts = parts.append("  (export \"main\" (func $main))\n");
+    }
     parts = parts.append("  (export \"_start\" (func $_start)))\n");
     return util.str_join_chunks(parts);
   }
