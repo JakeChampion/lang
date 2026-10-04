@@ -27995,6 +27995,12 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   for te in p.type_errs {
     top_stmts = top_stmts.append(te);
   }
+  match (unclosed_brace(toks)) {
+    Some(ub) => {
+      top_stmts = top_stmts.append(ub);
+    },
+    None => {}
+  }
   let parsed: Module = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [] };
   if (!verbatim) {
     let inferred: string[] = unannotated_const_names(funcs);
@@ -28008,6 +28014,54 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     settled = resolve_dyn_traits(rename_type_vars_module(settled));
   }
   return (settled, traits, impl_decls, flines, inline_hints);
+}
+
+// unclosed_brace is a `decl:` sentinel at the end of the input when the input
+// ends inside a `{`, naming the innermost one left open — native's P001
+// `expected "}"`. Every block parser closes a block whose `}` it cannot find
+// without complaint, so the token stream is the one place a missing `}` is
+// visible whichever construct it belongs to (#11315). A stream that stops at
+// a lex error never reached the end, and the lex error is its diagnostic.
+function unclosed_brace(toks: lexer.Token[]): Option[ast.Stmt] {
+  if (toks.len() == 0) {
+    return None;
+  }
+  let end_line: i32 = 0;
+  let end_col: i32 = 0;
+  if let lexer.TokEof(e) = toks[toks.len() - 1] {
+    end_line = e.line;
+    end_col = e.col;
+  } else {
+    return None;
+  }
+  let open_lines: i32[] = [];
+  let open_cols: i32[] = [];
+  let depth: i32 = 0;
+  for t in toks {
+    if let lexer.TokPunct(x) = t {
+      if (x.text == "{") {
+        open_lines = push_at(open_lines, depth, x.line);
+        open_cols = push_at(open_cols, depth, x.col);
+        depth = depth + 1;
+      } else if (x.text == "}" && depth > 0) {
+        depth = depth - 1;
+      }
+    }
+  }
+  if (depth == 0) {
+    return None;
+  }
+  let at: string = util.i32_to_string(open_lines[depth - 1]) + ":" + util.i32_to_string(open_cols[depth - 1]);
+  return Some(s_unknown_at("decl:expected \"}\" before the end of the input, to close the \"{\" at " + at, end_line, end_col));
+}
+
+// push_at writes v at index i of a stack whose live part is xs[0..i], growing
+// it when i is past the end.
+function push_at(xs: i32[], i: i32, v: i32): i32[] {
+  if (i < xs.len()) {
+    return xs.with(i, v);
+  }
+  return xs.append(v);
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:

@@ -93,30 +93,6 @@ This is exactly how the [test runner](../../tutorial/testing/) types its
 assertions — `assert_eq[T: cmp.Eq + cmp.Display]` accepts any comparable,
 printable value.
 
-<<<<<<< HEAD
-### A generic function as a value
-
-A generic function can be passed or stored where a function type is
-expected, and takes its type arguments from that type:
-
-```fern
-import "core/cmp";
-
-function show[T: cmp.Display](v: T): string { return v.to_string(); }
-function apply(f: (i32) => string, v: i32): string { return f(v); }
-
-function main(): i32 {
-    print(apply(show, 42));                 // 42: `show` at T = i32
-    let g: (string) => string = show;       // `show` at T = string
-    print(g("pear"));
-    return 0;
-}
-```
-
-Each use is its own instance, as a call would be. The expected type has to
-determine every type parameter: `let f = show;` has none and is refused
-(E040), as is a type that leaves a bound unmet (E021).
-
 ### A trait as a parameter type
 
 A parameter whose type is a trait is shorthand for a type parameter bounded
@@ -147,6 +123,29 @@ of a trait is not it, and a trait's methods are not generic, so inside an
 in a return type, a field or a `let`, write
 [`dyn Trait`](#runtime-dispatch--dyn-trait) for a value of any implementing
 type, or a type parameter.
+
+### A generic function as a value
+
+A generic function can be passed or stored where a function type is
+expected, and takes its type arguments from that type:
+
+```fern
+import "core/cmp";
+
+function show[T: cmp.Display](v: T): string { return v.to_string(); }
+function apply(f: (i32) => string, v: i32): string { return f(v); }
+
+function main(): i32 {
+    print(apply(show, 42));                 // 42: `show` at T = i32
+    let g: (string) => string = show;       // `show` at T = string
+    print(g("pear"));
+    return 0;
+}
+```
+
+Each use is its own instance, as a call would be. The expected type has to
+determine every type parameter: `let f = show;` has none and is refused
+(E040), as is a type that leaves a bound unmet (E021).
 
 ## The `core/cmp` foundation
 

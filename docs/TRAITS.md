@@ -362,6 +362,18 @@ is the existing monomorphise-then-recheck loop, plus a first-pass rule
 that says "a method call on a trait-bound type param type-checks against
 the trait and is left for the recheck."
 
+A parameter typed by a trait (`f(d: Driver)`) is shorthand for a bounded type
+parameter, desugared before type checking into `f[T_d: Driver](d: T_d)`: one
+fresh parameter per such parameter, named after it, bounded by the trait as
+written. Native does it in the checker (`desugarTraitParams`), before receiver
+type variables are bound; the self-host does a module's own traits in
+`parse_module_flagged` and an import's (`alias.Trait`) in `flatten.bundle`, both
+through `parser.desugar_trait_params`. The parameter's type has to be the trait
+itself, with its type arguments when it has them (`s: Sink[i32]`); an array of a
+trait is not it. A trait's methods are not generic, so an impl's method keeps a
+trait-typed parameter as written. Anywhere else a trait is still no type (E064,
+with a hint naming `dyn`), since `dyn Trait` is the dynamic form (#9855).
+
 A generic function named as a VALUE (`apply(show, 42)`, `let g: (string) =>
 string = show`, a field, a return) is instantiated from the function type the
 value is wanted at: each parameter and the result of the generic signature
@@ -375,18 +387,6 @@ the monomorphiser re-derives the instance from the destination spelling
 (`mono_fn_value`), the parameter's for a call argument
 (`call_param_spellings`), promoting an erased generic so named to a cloned one
 (`promote_value_named`).
-
-A parameter typed by a trait (`f(d: Driver)`) is shorthand for a bounded type
-parameter, desugared before type checking into `f[T_d: Driver](d: T_d)`: one
-fresh parameter per such parameter, named after it, bounded by the trait as
-written. Native does it in the checker (`desugarTraitParams`), before receiver
-type variables are bound; the self-host does a module's own traits in
-`parse_module_flagged` and an import's (`alias.Trait`) in `flatten.bundle`, both
-through `parser.desugar_trait_params`. The parameter's type has to be the trait
-itself, with its type arguments when it has them (`s: Sink[i32]`); an array of a
-trait is not it. A trait's methods are not generic, so an impl's method keeps a
-trait-typed parameter as written. Anywhere else a trait is still no type (E064,
-with a hint naming `dyn`), since `dyn Trait` is the dynamic form (#9855).
 
 ## 4a. Bound-driven inference (#2691)
 
