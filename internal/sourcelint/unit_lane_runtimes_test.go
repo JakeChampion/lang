@@ -135,14 +135,14 @@ func TestCoreutilsLaneRequestsWasmtime(t *testing.T) {
 // made against. A parity case asks a GNU binary what the answer is, so without
 // the built 9.12 oracle a lane either fails wholesale against the image's 9.4
 // or — worse — reports version differences as Fern's bugs. The build is one
-// composite action, used by the coreutils lane and by the self-host lane,
+// composite action, used by the coreutils lane and by the self-host shards,
 // whose byte tests compare the self-host's utilities with GNU's too.
 func TestCoreutilsLaneHasTheGNUOracle(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "actions", "gnu-coreutils", "action.yml"))
 	if err != nil {
 		t.Fatalf("read the gnu-coreutils action: %v", err)
 	}
-	for _, want := range []string{"GNU_COREUTILS_VERSION", "FERN_GNU_COREUTILS", "gnu-coreutils-full-"} {
+	for _, want := range []string{"FERN_GNU_COREUTILS", "gnu-coreutils-full-"} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("the gnu-coreutils action no longer mentions %s; the comparisons would be made against "+
 				"whatever coreutils the runner image ships (9.4) rather than the pinned oracle", want)

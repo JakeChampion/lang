@@ -485,11 +485,6 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
-      # The tests that compare a utility with GNU's (the tabs and head/tail
-      # byte tests) need the corpus's pinned release, not the image's 9.4.
-      - uses: ./.github/actions/gnu-coreutils
-        with:
-          host: ${{ matrix.host }}
       # The aarch64 shards are the Linux ARM64 jobs that build the stock
       # drivers natively, so the first of them saves that arch's cache.
       - uses: ./.github/actions/selfhost-driver-cache
@@ -501,6 +496,11 @@ jobs:
       - uses: ./.github/actions/build-e2e-binaries
         with:
           e2e: "true"
+      # TestSelfHostTabsBytes holds expand and unexpand to the GNU release the
+      # coreutils corpus is pinned to; the image's own is older and differs.
+      - uses: ./.github/actions/gnu-coreutils
+        with:
+          host: ${{ matrix.host }}
       - name: run self-host shard ${{ matrix.shard }}/${{ matrix.nshard }} (prebuilt binaries, two workers)
         id: run
         env:

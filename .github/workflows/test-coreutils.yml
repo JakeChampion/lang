@@ -51,6 +51,7 @@ jobs:
     name: test-coreutils-${{ matrix.host }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
     env:
+      GNU_COREUTILS_VERSION: "9.12"
       NSHARD: "4"
     steps:
       - uses: actions/checkout@v7
@@ -69,12 +70,71 @@ jobs:
         with:
           build-cache-key: ${{ steps.day.outputs.stamp }}
           wasmtime: true
-      # The pinned GNU coreutils oracle, built or restored, with
-      # FERN_GNU_COREUTILS pointing at it; the action says why the image's
-      # own will not do.
+      # The WHOLE GNU coreutils catalogue, built, because the runner image's
+      # own is not the version the corpus is held to: ubuntu-24.04 ships 9.4
+      # and docs/COREUTILS.md pins the oracle to 9.12. Installing only the
+      # handful of binaries the image lacks leaves every other utility
+      # answering from /usr/bin, which costs about two thousand cases across
+      # sixty utilities, each reporting a version difference as Fern's bug.
+      #
+      # It also supplies what Debian and Ubuntu leave out: `uptime` and
+      # `kill` (Debian's come from procps), `chroot` (installed to /usr/sbin,
+      # which gnuCandidates() does not search) and `arch`.
       - uses: ./.github/actions/gnu-coreutils
         with:
           host: ${{ matrix.host }}
+          version: ${{ env.GNU_COREUTILS_VERSION }}
+      # A SKIP IS A MISSING DEPENDENCY, NOT A PASS. Without this a cache that
+      # restored an empty or half-written directory would leave a corpus with
+      # no reference, and the failure would name the utility rather than this
+      # step -- the same missing oracle reported as a hundred unrelated bugs.
+      #
+      # The list is DERIVED from coreutils/*.fern rather than written out: a
+      # utility added to the tree is one this check must cover, and an
+      # enumerated list is a list that goes stale silently.
+      #
+      # `chcon` and `runcon` are the two exceptions and come from /usr/bin.
+      # They need SELinux, the build above configures --without-selinux, and
+      # from 9.9 configure omits both rather than building gnulib stubs, so
+      # the tree holds neither. Ubuntu's are real ones against the same
+      # library the corpus compared them with before this step widened.
+      - name: Assert the oracle is GNU coreutils, and point the corpus at it
+        run: |
+          set -euo pipefail
+          bindir="$HOME/gnu-coreutils/bin"
+          missing=""
+          checked=0
+          for f in coreutils/*.fern; do
+            util="$(basename "$f" .fern)"
+            dir="$bindir"
+            case "$util" in chcon|runcon) dir=/usr/bin ;; esac
+            probe="$dir/$util"
+            # test(1) answers no --version: POSIX reserves every argument for
+            # the expression, so only `[` -- built from the same source, one
+            # name over -- can vouch for it.
+            if [ "$util" = "test" ]; then probe="$dir/["; fi
+            if [ ! -x "$probe" ]; then
+              missing="$missing $util"
+              continue
+            fi
+            # `dd` is the one utility whose version line omits the word GNU:
+            # it says `dd (coreutils) 9.12`. Both spellings are the package's.
+            # Read into a variable rather than piping into grep: `head -1`
+            # closes the pipe on a program that has more to write, and under
+            # `set -o pipefail` that SIGPIPE is the pipeline's status, so a
+            # present oracle would report as a missing one.
+            line="$("$probe" --version 2>/dev/null | head -1 || true)"
+            case "$line" in
+              *"(GNU coreutils)"* | *"(coreutils)"*) checked=$((checked + 1)) ;;
+              *) missing="$missing $util" ;;
+            esac
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::no GNU coreutils oracle for:$missing"
+            exit 1
+          fi
+          echo "$checked utilities have a GNU oracle"
+          "$bindir/yes" --version | head -1
       # TWO INVOCATIONS, and the reason is `go test -run` itself: it splits
       # its pattern on `/` and applies each part to one nesting level, so
       # `^(TestCatParity|TestSelfHostCoreutilsParity/cat)$` is not a valid
