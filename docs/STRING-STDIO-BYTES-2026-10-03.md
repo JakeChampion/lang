@@ -22,15 +22,15 @@ and Unicode across buffer boundaries. Sizes cover the append threshold and
 4096-, 8192- and 65536-byte boundaries. Four repeated large Unicode writes
 also retain the input string while crossing buffered and direct-write paths.
 
-The validated source includes main `f4de66fd5`. The full Linux unit suite,
+The validated source includes main `0c445a1ac`. The full Linux unit suite,
 all lint gates, Stdio target groups, and GNU/primary consumer comparisons
 pass, including the df operand-device correction. Darwin Go and source-built
-primary tests pass in 9.641 and 38.385 seconds. The reproduced compiler
-passes all 366 native Darwin/core-WASM corpus runs in 3.053 seconds, with
+primary tests pass in 9.971 and 38.773 seconds. The reproduced compiler
+passes all 366 native Darwin/core-WASM corpus runs in 3.017 seconds, with
 balanced allocations and zero live bytes.
 
-Bootstrap stages two and three are identical at 12,979,233 bytes, SHA-256
-`457b5c8d64197757ddd908b69e4d2ebdab65404b64e2146cf4ab262693383034`.
+All three bootstrap stages are identical at 12,995,857 bytes, SHA-256
+`27c93618d8c0b4d9eb15a8e3eef3664c4a0e70da18eded1dd842260754649359`.
 Main's Go SSA retirement and compiler/checker size baselines are retained;
 all three affected driver checks pass the unchanged 5% gate. The benchmark
 sections below identify their own compiler and source revisions.
