@@ -20,9 +20,7 @@ func TestPollScratchReclaimed(t *testing.T) {
 			} else {
 				qemu = arm64QemuOrEmpty(t)
 			}
-			for _, backend := range []string{"flat", "ssa"} {
-				t.Run(backend, func(t *testing.T) { checkPollScratch(t, target, qemu, backend) })
-			}
+			checkPollScratch(t, target, qemu)
 		})
 	}
 }
@@ -31,12 +29,12 @@ func TestArm64DarwinNativePollScratch(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires the Apple Silicon execution lane")
 	}
-	checkPollScratch(t, "arm64-darwin", "", "flat")
+	checkPollScratch(t, "arm64-darwin", "")
 }
 
 // The poll helpers must reclaim their temporary kernel buffers on every
 // return path, including empty/negative sets and failed registrations (#9853).
-func checkPollScratch(t *testing.T, target, qemu, backend string) {
+func checkPollScratch(t *testing.T, target, qemu string) {
 	t.Helper()
 	fern := buildFernCLI(t)
 	for _, tc := range []struct {
@@ -82,7 +80,7 @@ function main(): i32 {
 				t.Fatal(err)
 			}
 			bin := filepath.Join(dir, "probe")
-			compile := exec.Command(fern, "-target", target, "-backend", backend, "-o", bin, path)
+			compile := exec.Command(fern, "-target", target, "-o", bin, path)
 			compile.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 			if out, err := compile.CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)

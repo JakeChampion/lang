@@ -17,7 +17,6 @@
 package e2e
 
 import (
-	"os"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -123,26 +122,6 @@ func TestArm64SignalSendDelivers(t *testing.T) {
 	out, code := compileAndRunArm64(t, signalSendDeliverySource)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see signalSendDeliverySource)\n%s", code, out)
-	}
-}
-
-func TestArm64SSASignalSend(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	bin := compileArm64SSA(t, fern, signalSendSource, os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, t.TempDir(), os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see signalSendSource)\n%s", code, stderr)
-	}
-}
-
-func TestArm64SSASignalSendDelivers(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	bin := compileArm64SSA(t, fern, signalSendDeliverySource, os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, t.TempDir(), os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see signalSendDeliverySource)\n%s", code, stderr)
 	}
 }
 

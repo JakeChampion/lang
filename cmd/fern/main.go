@@ -74,10 +74,8 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	arm64ssa "github.com/jakechampion/lang/internal/codegen/arm64ssa"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	x86_64codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/codegen/x86_64ssa"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/embed"
@@ -95,7 +93,6 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/printer"
-	"github.com/jakechampion/lang/internal/ssa"
 	"github.com/jakechampion/lang/internal/symname"
 	"github.com/jakechampion/lang/internal/treeshake"
 	"github.com/jakechampion/lang/internal/tty"
@@ -644,7 +641,6 @@ func main() {
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
 	backend := flag.String("backend", "", backendFlagUsage)
-	flag.Lookup("backend").Usage += " `typed-ssa` is the experimental typed pre-RC ownership pipeline for arm64-linux only: immutable array/tuple values, projections, direct calls, local replacement, branches and loops with i32 induction; unsupported constructs are errors. See docs/TYPED-OWNERSHIP-IR-MIGRATION.md."
 	emit := flag.String("emit", "", "output form for the selected -target, instead of its default. `core-module` emits a raw wasm core module (runnable via `wasmtime run --invoke <fn>`) instead of composing a component; `command-module` emits a WASI preview-1 COMMAND module — the same core bytes plus a `_start` that runs main and exits with its value, which is what a preview-1 host (`wasmtime run`, or a browser shim like web/wasi-shim.js) runs directly. Both are the wasm targets only. Replaces the old `-target wasm-bin` spelling: an output format is a property of the artifact, not of the machine it runs on, so it does not belong in the target name.")
 	componentWrap := flag.Bool("component-wrap", false, "with -emit core-module: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
 	componentWrapCli := flag.Bool("component-wrap-cli", false, "like -component-wrap but emits the wasi:cli/run@0.2.0 export shape so the produced component runs under plain `wasmtime run prog.wasm` (no --invoke). main()'s return value lowers to result<_, _>: 0 = ok, non-zero = err. void main is supported (auto-wrapped to return 0). Same WASI coverage as -component-wrap.")
@@ -688,7 +684,7 @@ func main() {
 	lcov := flag.Bool("lcov", false, "with -cover-report, write an lcov tracefile (SF/DA/LF/LH records) instead of the human summary, for the coverage viewers that already read that format.")
 	backtrace := flag.Bool("backtrace", ast.BacktraceEnabled, "emit the frame-pointer backtrace a fatal abort (bounds / arena / sanitizer) prints under its cause line, on the native x86-64 and arm64 backends. `-backtrace=false` drops the walk, the hex printer, and the \"backtrace:\" string from the binary — the size-critical opt-out; the cause line and every exit code (134 / 125 / 124) are unchanged. Same as FERN_BACKTRACE=0, which this flag defaults to.")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: fern [-target <isa>-<environment>] [-backend ssa] [-emit core-module] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.fern [-- ARGS...]\n       (targets: arm64-linux, arm64-darwin, arm64-android, x86-64-linux, wasm32-wasi, wasm32-wasi-http; `fern -targets` for all)")
+		fmt.Fprintln(os.Stderr, "usage: fern [-target <isa>-<environment>] [-emit core-module] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.fern [-- ARGS...]\n       (targets: arm64-linux, arm64-darwin, arm64-android, x86-64-linux, wasm32-wasi, wasm32-wasi-http; `fern -targets` for all)")
 		fmt.Fprintln(os.Stderr, "       fern -fmt [-w | -d | -o OUT] FILE...")
 		fmt.Fprintln(os.Stderr, "       fern -check FILE.fern | fern -check -      (type-check only; stdin form)")
 		fmt.Fprintln(os.Stderr, "       fern -repl")
@@ -716,17 +712,11 @@ func main() {
 		// Say what this build actually carries rather than accepting the
 		// flag and going quiet — silence reads as "sanitizer ran, program
 		// is clean", which is the one wrong conclusion this mode must
-		// never support. `-backend ssa` replaces the emitter on every
-		// target it covers and none of those is instrumented, so it drops
-		// to the no-checks case whatever the target says.
+		// never support.
 		note, covered := sanitizerCoverage[*target]
-		what := "-target " + *target
-		if *backend == "ssa" {
-			what += " -backend ssa"
-		}
 		switch {
-		case *backend == "ssa" || !covered:
-			fmt.Fprintf(os.Stderr, "fern: warning: -sanitize has no effect on %s (the detectors are native x86-64 and arm64, the leak census also wasm); this build carries no checks\n", what)
+		case !covered:
+			fmt.Fprintf(os.Stderr, "fern: warning: -sanitize has no effect on -target %s (the detectors are native x86-64 and arm64, the leak census also wasm); this build carries no checks\n", *target)
 		case note != "":
 			fmt.Fprintf(os.Stderr, "fern: warning: -sanitize on -target %s carries %s\n", *target, note)
 		}
@@ -1410,60 +1400,16 @@ func runCheck(srcPath, target string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-// resolveBackend picks the emitter this build uses.
-//
-// Every target defaults to the stack-machine emitter. The SSA backend is
-// available by name on arm64-linux and x86-64-linux, and is smaller — the
-// self-host driver is 13.4% smaller on arm64 — but it is not any target's
-// default, for a reason that is about memory rather than code size.
-//
-// The arm64 SSA default (#9511) was reverted over string retention, and part
-// of that has now been root-caused and fixed: arm64ssa allocated a string at
-// len+9 and freed it at len+8, so at lengths where the two round to different
-// 16-byte classes the block was pushed onto a class nothing requested, the
-// freelist stopped recycling, and the heap grew without bound. strBlockBytes
-// is the single number both ends use now (#9558), and x86_64ssa carried the
-// same disagreement the other way round — six producers at len+9 against a
-// free at len+8 — fixed the same way (#9568).
-//
-// It was never the single-word string ABI, which was the first reading:
-// x86-64 runs that same ABI, since ast.TwoWordOverride is set only by
-// internal/codegen/arm64, and its default emitter is clean on the same
-// programs.
-//
-// What remains is NOT the same bug. coreutils/uniq.fern still holds 369 KB at
-// exit against the stack machine's 368 bytes, with its freelist recycling
-// normally — one large read buffer that arm64ssa never frees. So the default
-// stays with the stack machine until that is closed and the retention is
-// re-measured. internal/e2e/arm64_default_string_reclaim_test.go holds the
-// default to its bar.
-
-// backendFlagUsage is `fern -h`'s description of -backend. It says what the
-// SSA backend costs as well as what it saves, because the saving is the part
-// a caller can see from the outside and the cost is not.
-const backendFlagUsage = "code-generation backend for the selected -target. Every target defaults to the stack-machine emitter, named `flat` for a caller who wants it selected rather than inherited. `ssa` names the SSA-direct backend, available for -target arm64-linux and -target x86-64-linux: it allocates registers instead of walking a stack machine and so emits less code. It is not the default because emitting less code turned out not to mean running less of it, and on the benchmark corpus the two measures disagree often enough that neither carries the decision alone (#9640). The string retention that reverted an earlier flip was the census miscounting rather than the program holding anything (#9542, #9558), and is fixed. It also does not serve --run, -cc, -export, -shared, -g, -cover or -sanitize. Coverage is a subset of the language, though both ISAs now build every one of the 105 `coreutils` programs, and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter."
+// resolveBackend picks the emitter this build uses: the stack-machine
+// emitter, which every target has, named `flat` for a caller who wants it
+// selected rather than inherited.
+const backendFlagUsage = "code-generation backend for the selected -target. This compiler has one, the stack-machine emitter, named `flat` for a caller who wants it selected rather than inherited; `fern-selfhost -backend ssa` is the self-host compiler's register-allocating emitter and is not reachable from here. The target keeps its descriptor either way, so capability enforcement (E066) applies regardless."
 
 func resolveBackend(backend string) string {
 	if backend != "" {
 		return backend
 	}
 	return "flat"
-}
-
-// ssaUnservedFlag reports the flag a -backend ssa build cannot serve, so the
-// build stops instead of quietly producing something other than what was
-// asked for. Each entry is a feature the default emitter has and this one does
-// not yet: they are gaps to close, not decisions.
-func ssaUnservedFlag(backend string, shared bool) error {
-	switch {
-	case shared:
-		return fmt.Errorf("-backend %s: -shared has no shared-object output on this backend — it would link an ordinary executable; build without -backend %s, or drop -shared", backend, backend)
-	case emitDebugSyms:
-		return fmt.Errorf("-backend %s: -g has no line table on this backend — it emits .debug_info without .debug_line, so a debugger cannot map an address to a source line; build without -backend %s, or drop -g", backend, backend)
-	case ast.CoverEnabled:
-		return fmt.Errorf("-backend %s: -cover has no instrumentation on this backend — only the default emitters for x86-64-linux and arm64-linux instrument; build without -backend %s, or drop -cover", backend, backend)
-	}
-	return nil
 }
 
 func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProviders []string, shared bool, export string, optimize bool, progArgs []string) (int, error) {
@@ -1529,27 +1475,9 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// falling through to the default emitter — which would produce a
 	// working binary that is not the one asked for.
 	switch backend {
-	case "":
-	case "typed-ssa":
-		if target != "arm64-linux" {
-			return 1, fmt.Errorf("-backend typed-ssa is not available for -target %s (available for: arm64-linux)", target)
-		}
-		if runIt || shared || export != "" || cc != "" || componentWrap || componentWrapCli || asyncExport || len(asyncProviders) != 0 {
-			return 1, fmt.Errorf("-backend typed-ssa currently supports assembly output or -o executable only; run, shared/export, external linker and component options are unsupported")
-		}
-		if ast.CoverEnabled || ast.SanitizeEnabled {
-			return 1, fmt.Errorf("-backend typed-ssa does not implement coverage or sanitizer instrumentation")
-		}
-	case "ssa":
-		if target != "arm64-linux" && target != "x86-64-linux" {
-			return 1, fmt.Errorf("-backend ssa is not available for -target %s (available for: arm64-linux, x86-64-linux)", target)
-		}
-	case "flat":
-		// The stack-machine emitter every target has had all along. The
-		// dispatches below are all `ssa` or `typed-ssa`, so naming it selects
-		// it by falling past them.
+	case "", "flat":
 	default:
-		return 1, fmt.Errorf("unknown -backend %q (want ssa, flat or typed-ssa, or omit it for the target's default emitter)", backend)
+		return 1, fmt.Errorf("unknown -backend %q (want flat, or omit it; the self-host compiler's -backend ssa is fern-selfhost's)", backend)
 	}
 
 	switch emit {
@@ -1570,91 +1498,6 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 
 	if d := platforms.ForTarget(target); d != nil && d.NoBackend {
 		return 1, fmt.Errorf("-target %s: no backend emits for this target yet — `fern -check -target %s` type-checks against its capability set, but there is nothing to compile to (#6506)", target, target)
-	}
-
-	// The SSA backends link their own output and return before the flag
-	// handling further down, so a flag served only down there does not reach
-	// them. Saying so is the whole of this check: -shared used to produce an
-	// ordinary executable rather than a shared object, -g DWARF with no
-	// .debug_line, and -cover reached the lowering's own refusal, whose
-	// remedy names the targets that instrument and so read as "build for the
-	// target you already built for".
-	if backend == "ssa" || backend == "typed-ssa" {
-		if err := ssaUnservedFlag(backend, shared); err != nil {
-			return 1, err
-		}
-	}
-
-	// The emitter for this build: what the caller named on -backend, or the
-	// stack-machine emitter otherwise. Everything below dispatches on the
-	// resolved name, never on the flag.
-	backend = resolveBackend(backend)
-
-	if (backend == "ssa" || backend == "typed-ssa") && target == "arm64-linux" {
-		// Experimental SSA-direct arm64 backend (internal/codegen/arm64ssa)
-		// — lowers via parse → check → ir.LowerWith → ssa.LiftFromIR →
-		// ssa.Optimize → arm64ssa.EmitAsmModule, then links the same in-process
-		// W^X static ELF as -target arm64-linux (linkNative). It uses SSA register
-		// allocation instead of the stack-machine emitter, so the emitted .text
-		// is markedly smaller. Coverage is a subset of the language (the integer
-		// core, control flow, calls, memory, strings, arrays, and the RC runtime);
-		// an unsupported op surfaces as a clean error rather than a miscompile —
-		// this is the path the binary-size epic widens until the self-host
-		// compiler itself can be built through it.
-		build := buildArm64SSA
-		if backend == "typed-ssa" {
-			build = buildTypedArm64SSA
-		}
-		asm, err := build(prog, info)
-		if err != nil {
-			return 1, fmt.Errorf("arm64/%s: %v", backend, err)
-		}
-		// No -o writes the assembly to stdout, as the default emitter does:
-		// -o names the output BINARY, and the text is what this emitter has
-		// before it links. Without this the only way to read what the SSA
-		// backend generated was to disassemble the linked ELF — which carries
-		// neither sections nor symbols, so a reader could not even find a
-		// function in it.
-		if outPath == "" {
-			if _, werr := os.Stdout.WriteString(asm); werr != nil {
-				return 1, werr
-			}
-			return 0, nil
-		}
-		if err := linkNative(asm, outPath, "", "", nil); err != nil {
-			return 1, fmt.Errorf("arm64/ssa link: %v", err)
-		}
-		return 0, nil
-	}
-
-	if backend == "ssa" && target == "x86-64-linux" {
-		// Experimental SSA-direct x86-64 backend (internal/codegen/x86_64ssa) —
-		// the same pipeline as the arm64 block above (parse → check →
-		// ir.LowerWith → ssa.LiftFromIR → ssa.Optimize → EmitAsmModule), linked
-		// by the same in-process ELF writer the default x86-64 target uses.
-		//
-		// This is phase 2 of #4112 becoming reachable. The emitter and its
-		// module-level assembler have existed and been tested for a while;
-		// nothing selected them, so docs/SSA-CUTOVER-PLAN.md's readiness table
-		// lists x86-64 as "unreachable from the CLI" and calls a module
-		// assembler the blocker. The assembler was already there — see that
-		// doc's corrected note.
-		asm, err := buildX86SSA(prog, info)
-		if err != nil {
-			return 1, fmt.Errorf("x86-64/ssa: %v", err)
-		}
-		// No -o writes the assembly to stdout, as the arm64 SSA path and the
-		// default emitter both do: -o names the output BINARY.
-		if outPath == "" {
-			if _, werr := os.Stdout.WriteString(asm); werr != nil {
-				return 1, werr
-			}
-			return 0, nil
-		}
-		if err := linkNativeX86(asm, outPath, "", "", nil); err != nil {
-			return 1, fmt.Errorf("x86-64/ssa link: %v", err)
-		}
-		return 0, nil
 	}
 
 	if emit == "command-module" {
@@ -2146,161 +1989,6 @@ func execDirect(binPath string, progArgs []string) (int, error) {
 // linkDarwin writes asm to a temp .s file and invokes clang with
 // the aarch64-apple-darwin triple + lld's Mach-O backend to
 // produce a native arm64 macOS binary at outPath. Works on both
-// buildArm64SSA lowers a whole program through the SSA-direct arm64 pipeline —
-// ir.LowerWith (ptr width 8) → ssa.LiftFromIR + ssa.Optimize per function →
-// arm64ssa.EmitAsmModule — and returns the AArch64 assembly text (a complete
-// `_start` + all functions + referenced runtime helpers), ready for linkNative.
-// It lifts every function so cross-function
-// calls and recursion work. Returns an error when the program has no `main`, the
-// lift fails, or emit rejects the SSA (a coverage gap) — never a miscompile.
-// Ptr width is fixed at 8 (arm64). numAlloc is 12, the largest register file the
-// renderer's x0..x15 mapping supports (12 allocatable + 4 scratch = 16).
-func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
-	// DynSupported enables `dyn Trait` lowering (OpConstVtable / OpBoxDyn /
-	// OpCallDyn + the per-(trait,concrete) vtables). DynRcSupported is
-	// deliberately NOT passed: this path does not yet reclaim `dyn` values
-	// (no `__drop_dyn_*` helper), so the box leaks — matching the arm64 native
-	// `dyn` slice. See docs/DYN-TRAITS.md §4.2.2 / §4.4.
-	irProg, err := ir.LowerWith(prog, info, 8, ir.DynSupported())
-	if err != nil {
-		return "", fmt.Errorf("ir.LowerWith: %v", err)
-	}
-	// The whole battery the flat backends run before their emitters (TCO,
-	// Inline around Defunctionalise + ElideClosurePair +
-	// InlineZeroCaptureClosures, then the per-function tail), so the lift sees
-	// the same program they do. Native closure pair: 16 bytes, env_ptr at +8.
-	ir.OptimizeProgram(irProg, 8)
-	// Dead-function elimination: lift only the functions reachable from `main`
-	// (transitively, via direct/closure calls). Without this the whole of every
-	// imported stdlib module is lifted, so an `abs`-only program would drag in
-	// `cos` and bail on the still-unported __cos_f64 helper. A missing live
-	// function can only ever surface as a clean "undefined label" link error,
-	// never a miscompile. `nil` (no entry point) means keep everything.
-	// A `dyn Trait` vtable's method implementations (`__method_<C>_<m>`) are
-	// reached ONLY through the vtable's function-pointer slots — an indirect
-	// dispatch the reachability walk can't follow — so root them explicitly or
-	// dead-function elimination culls them and OpConstVtable's `.rodata` cell
-	// references a missing symbol (docs/DYN-TRAITS.md §4.2.2; mirrors the wasm
-	// backend's `dynImplMethods` roots). The trailing drop slot isn't emitted
-	// on this path (no `dyn` RC), so its Drop fn needs no rooting.
-	var dynRoots []string
-	for _, vt := range irProg.Vtables {
-		for _, m := range vt.Methods {
-			dynRoots = append(dynRoots, m.Func)
-		}
-	}
-	// ir.CodegenAliases so a Map call site keeps its stdlib `_impl` alive: the
-	// IR emits `map_new` and only the emitter knows that resolves to
-	// `map_new_impl`, so passing nil here culled every Map impl as unreachable
-	// and the link failed on a dangling label (#6609). Must stay in step with
-	// the alias the emitter applies — same map, both ends.
-	shapes := ir.NewCallShapes(irProg)
-	live := ir.LiveFunctionsWithAliases(irProg, ir.CodegenAliases, dynRoots...)
-	if live != nil {
-		kept := irProg.Funcs[:0]
-		for _, fn := range irProg.Funcs {
-			if live[fn.Name] {
-				kept = append(kept, fn)
-			}
-		}
-		irProg.Funcs = kept
-	}
-	// The IR gate the flat backends run on the program they hand their
-	// emitter (#8798). Without it FERN_IR_VERIFY=1 covers only the emitters it
-	// was written for, and says nothing while it does.
-	if err := ir.VerifyOrRefuse(irProg); err != nil {
-		return "", err
-	}
-	funcs := map[string]*ssa.Func{}
-	for _, fn := range irProg.Funcs {
-		f, err := ssa.LiftFromIRWith(fn, shapes)
-		if err != nil {
-			return "", fmt.Errorf("ssa.LiftFromIR %s: %v", fn.Name, err)
-		}
-		ssa.Optimize(f)
-		// Verify AFTER Optimize, not before. This backend promises that an
-		// unsupported construct ERRORS rather than miscompiles, and without
-		// any Verify call on a build path that promise did not hold: invalid
-		// SSA passed through regalloc and emit and yielded a binary that
-		// SIGSEGVs.
-		//
-		// After-Optimize only, because the lifter deliberately leaves blocks
-		// unreachable — endBlockScope / endLoopScope say so explicitly, for
-		// PruneUnreachable to drop — and Verify's use-before-def rule needs a
-		// def in an ancestor block, which nothing in an unreachable block has.
-		// Checking before Optimize would therefore reject programs the lifter
-		// considers well-formed, and it buys no detection: an invalid lift
-		// survives the passes, which is how it reached emit in the first
-		// place.
-		if err := ssa.Verify(f); err != nil {
-			return "", fmt.Errorf("ssa.Verify %s: %v", fn.Name, err)
-		}
-		funcs[fn.Name] = f
-	}
-	if _, ok := funcs["main"]; !ok {
-		return "", fmt.Errorf("no `main` function in program")
-	}
-	return arm64ssa.EmitAsmModule(funcs, "main", arm64ssa.DefaultNumAlloc, nil, irProg.Vtables...)
-}
-
-// buildX86SSA is buildArm64SSA's twin for x86-64: the same lift → optimise →
-// verify loop, emitted through x86_64ssa.EmitAsmModule.
-//
-// It differs in one deliberate way. `ir.DynSupported()` is NOT passed, because
-// x86_64ssa.EmitAsmModule takes no vtable declarations and so writes no vtable
-// `.rodata` — the ops are implemented in emit.go, but the tables they read are
-// not emitted, and a `dyn` program would link against a missing symbol rather
-// than fail cleanly. Lowering without the option makes `dyn` a clean refusal at
-// the IR stage instead, which is the promise this backend makes. Passing the
-// vtables through is the next slice, not a line to add here.
-func buildX86SSA(prog *ast.Program, info *checker.Info) (string, error) {
-	irProg, err := ir.LowerWith(prog, info, 8)
-	if err != nil {
-		return "", fmt.Errorf("ir.LowerWith: %v", err)
-	}
-	// The whole battery, as the arm64 twin and the flat backends run it.
-	ir.OptimizeProgram(irProg, 8)
-	// Dead-function elimination, for the reason the arm64 twin documents: lift
-	// only what `main` reaches, or every imported stdlib module is lifted and a
-	// still-unported helper bails a program that never calls it. CodegenAliases
-	// keeps a Map call site's `_impl` alive — the IR emits `map_new` and only
-	// the emitter knows that resolves to `map_new_impl`.
-	shapes := ir.NewCallShapes(irProg)
-	live := ir.LiveFunctionsWithAliases(irProg, ir.CodegenAliases)
-	if live != nil {
-		kept := irProg.Funcs[:0]
-		for _, fn := range irProg.Funcs {
-			if live[fn.Name] {
-				kept = append(kept, fn)
-			}
-		}
-		irProg.Funcs = kept
-	}
-	// The IR gate, as the arm64 twin and the flat backends run it (#8798).
-	if err := ir.VerifyOrRefuse(irProg); err != nil {
-		return "", err
-	}
-	funcs := map[string]*ssa.Func{}
-	for _, fn := range irProg.Funcs {
-		f, err := ssa.LiftFromIRWith(fn, shapes)
-		if err != nil {
-			return "", fmt.Errorf("ssa.LiftFromIR %s: %v", fn.Name, err)
-		}
-		ssa.Optimize(f)
-		// After Optimize, never before — the lifter leaves blocks unreachable
-		// for PruneUnreachable to drop, and Verify's use-before-def rule would
-		// reject them. The arm64 twin carries the full reasoning.
-		if err := ssa.Verify(f); err != nil {
-			return "", fmt.Errorf("ssa.Verify %s: %v", fn.Name, err)
-		}
-		funcs[fn.Name] = f
-	}
-	if _, ok := funcs["main"]; !ok {
-		return "", fmt.Errorf("no `main` function in program")
-	}
-	return x86_64ssa.EmitAsmModule(funcs, "main", x86_64ssa.DefaultNumAlloc, nil)
-}
-
 // Linux dev hosts (cross-compiling) and Macs natively as long
 // as clang + lld are installed. The output is a full Mach-O
 // executable that runs on Apple Silicon Macs without further

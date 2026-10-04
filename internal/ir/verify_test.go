@@ -191,11 +191,12 @@ func TestVerifyAllowsBuiltinsAndRuntimeHelpers(t *testing.T) {
 	}
 }
 
-// internal/ssa reads a call's result width off the callee's ssa.Func, and a
-// backend-provided callee has none — an unclassified result then defaults to
-// the narrow i32 mask, which sign-extends a heap pointer from 32 bits and
-// destroys an f64 bit pattern. Nothing downstream can notice, so the demand
-// for a stamp is made here, over the IR the compiler really produced.
+// A register-allocating backend reads a call's result width off the callee's
+// body, and a backend-provided callee has none — an unclassified result then
+// defaults to the narrow i32 mask, which sign-extends a heap pointer from 32
+// bits and destroys an f64 bit pattern. The classification is kept total for
+// such a backend (ir.ResNarrow), so the demand for a stamp is made here, over
+// the IR the compiler really produced.
 //
 // This replaces a completeness test that only asked whether a NAME appeared in
 // a hand-written table; a name nobody had added — the `_ptr` and `_str`
