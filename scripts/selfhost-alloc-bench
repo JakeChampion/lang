@@ -80,8 +80,8 @@ chmod +x "$work/fern-selfhost-lc"
 # module it reached — which would read as a large improvement. The status is the
 # only thing separating the two, so the run is not allowed to fail.
 set +e
-"$work/fern-selfhost-lc" -target "$TARGET" -emit asm "$PWD/$SUBJECT" \
-  "$PWD/internal/stdlib" -o "$work/out.s" > /dev/null 2> "$work/lc"
+"$work/fern-selfhost-lc" -target "$TARGET" -emit asm -o "$work/out.s" "$PWD/$SUBJECT" \
+  "$PWD/internal/stdlib" > /dev/null 2> "$work/lc"
 status=$?
 set -e
 if [ "$status" -ne 0 ]; then
@@ -124,8 +124,8 @@ if [ "${FERN_ALLOC_PEAK_RSS:-1}" != "0" ]; then
     ./bin/fern -target "$TARGET" -o "$work/fern-selfhost" examples/self_host/fern.fern
     chmod +x "$work/fern-selfhost"
     bash -c 'echo $$ > "$1/cgroup.procs"; shift; exec "$@"' _ "$cg" \
-      "$work/fern-selfhost" -target "$TARGET" -emit asm "$PWD/$SUBJECT" \
-      "$PWD/internal/stdlib" -o /dev/null > /dev/null 2>&1 || true
+      "$work/fern-selfhost" -target "$TARGET" -emit asm -o /dev/null "$PWD/$SUBJECT" \
+      "$PWD/internal/stdlib" > /dev/null 2>&1 || true
     for f in memory.peak memory.max_usage_in_bytes; do
       if [ -f "$cg/$f" ]; then peak="$(cat "$cg/$f" 2>/dev/null || true)"; break; fi
     done
