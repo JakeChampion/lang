@@ -794,7 +794,7 @@ fip function put_head(own out: u8[], status: i32, src: u8[], rid_at: i32, rid_le
   out = out.with(at + 1, lf());
   at = at + 2;
   if (rid_len > 0) {
-    out = put_str(out, at, "x-request-id: ");
+    out = put_str(out, at, "X-Request-Id: ");
     at = at + 14;
     out = put_bytes(out, at, src, rid_at, rid_len);
     at = at + rid_len;

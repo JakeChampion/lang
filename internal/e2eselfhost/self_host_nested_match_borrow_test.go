@@ -217,7 +217,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 300,
+			wantFrees: 200,
 		},
 		{
 			// Aliased AFTER the block — the drop point is the last top-level
@@ -288,7 +288,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 300,
+			wantFrees: 200,
 		},
 		{
 			// The arm BINDING escapes to an outer local.

@@ -23,7 +23,7 @@ func TestWasmReactorTimerBlock(t *testing.T) {
     if (r != 0) { return 1; }
     return 42;
 }`
-	if got := runWasmNative(t, src); got != 42 {
+	if got := runWasmResult(t, src); got != 42 {
 		t.Errorf("wasm reactor timer: got %d, want 42", got)
 	}
 }
@@ -41,7 +41,7 @@ func TestWasmReactorTimerWithStdout(t *testing.T) {
     return 0;
 }`
 	// runWasmCapturingStdout trims the trailing newline + result line.
-	if got := stripMainResult(runNativeStdout(t, src)); got != "tick" {
+	if got := stripMainResult(runResultStdout(t, src)); got != "tick" {
 		t.Errorf("wasm reactor timer + stdout: got %q, want %q", got, "tick")
 	}
 }
@@ -60,7 +60,7 @@ func TestWasmReactorPollFirstReady(t *testing.T) {
     let ps: i32[] = [a, b];
     return wasm_poll(ps);
 }`
-	if got := runWasmNative(t, idx1); got != 1 {
+	if got := runWasmResult(t, idx1); got != 1 {
 		t.Errorf("wasm_poll first-ready (short at idx 1): got %d, want 1", got)
 	}
 	// Short timer at index 0 → poll returns 0.
@@ -70,7 +70,7 @@ func TestWasmReactorPollFirstReady(t *testing.T) {
     let ps: i32[] = [a, b];
     return wasm_poll(ps);
 }`
-	if got := runWasmNative(t, idx0); got != 0 {
+	if got := runWasmResult(t, idx0); got != 0 {
 		t.Errorf("wasm_poll first-ready (short at idx 0): got %d, want 0", got)
 	}
 }
@@ -86,7 +86,7 @@ func TestWasmReactorTimerBlockDrop(t *testing.T) {
     wasm_pollable_drop(p);
     return 42;
 }`
-	if got := runWasmNative(t, src); got != 42 {
+	if got := runWasmResult(t, src); got != 42 {
 		t.Errorf("wasm timer block drop: got %d, want 42", got)
 	}
 }

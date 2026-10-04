@@ -826,7 +826,7 @@ fbip function emit_head(own app: App, status: i32, src: u8[], rid_at: i32, rid_l
   app = emit(app, at + 1, lf());
   at = at + 2;
   if (rid_len > 0) {
-    app = emit_str(app, at, "x-request-id: ");
+    app = emit_str(app, at, "X-Request-Id: ");
     at = at + 14;
     app = emit_bytes(app, at, src, rid_at, rid_len);
     at = at + rid_len;

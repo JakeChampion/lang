@@ -22,11 +22,7 @@ import (
 	"time"
 
 	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
-	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/e2eharness"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	conv "github.com/jakechampion/lang/internal/wasm/convert"
@@ -161,58 +157,37 @@ func buildCLIComponent(t *testing.T, src string) string {
 	return comp
 }
 
-// buildNativeComponent builds src into a wasi:cli/run component with the
-// native wasm backend. The async programs use it: their poll host has no
-// import in the self-host's wasm component, so they stay native until the wasm
-// async decision on #4451.
-func buildNativeComponent(t *testing.T, src string, opts wasmbin.BuildOptions) string {
+// buildResultComponent is buildCLIComponent for a program whose answer is
+// main's result: main is renamed and called by one that prints the result
+// on the last line, where parseMainResult reads it and stripMainResult
+// takes it off.
+func buildResultComponent(t *testing.T, src string) string {
 	t.Helper()
-	skipIfPreview2Missing(t)
-	if opts.PrintMainResult {
-		src = withResultPrinter(src)
+	const entry = "function main(): i32 {"
+	if !strings.Contains(src, entry) {
+		t.Fatalf("no %q to wrap in:\n%s", entry, src)
 	}
-	srcPath := filepath.Join(t.TempDir(), "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	bin, err := wasmbin.BuildWithOptions(prog, info, opts)
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
-	return finishComponentFromCoreBytes(t, bin)
+	wrapped := "import \"std/i32\";\n" + strings.Replace(src, entry, "function result_main(): i32 {", 1) +
+		"\nfunction main(): i32 {\n    print(result_main().to_string());\n    return 0;\n}\n"
+	return buildCLIComponent(t, wrapped)
 }
 
-// nativeMainResult builds a component whose stdout ends with main's result.
-var nativeMainResult = wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, PrintMainResult: true}
-
-// runNativeStdout runs src through buildNativeComponent and returns its stdout.
-func runNativeStdout(t *testing.T, src string) string {
+// runResultStdout runs src through buildResultComponent and returns its stdout.
+func runResultStdout(t *testing.T, src string) string {
 	t.Helper()
-	s, e, ec := runComponent(t, buildNativeComponent(t, src, nativeMainResult), runOpts{})
+	s, e, ec := runComponent(t, buildResultComponent(t, src), runOpts{})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, s, e)
 	}
 	return s
 }
 
-// runWasmNative is runWasm through the native backend.
-func runWasmNative(t *testing.T, src string) int {
+// runWasmResult is main's result, run as a wasi:cli/run component: the form
+// a program that imports preview-2 interfaces (sockets, clocks, pollables)
+// takes, where runWasm's core module and --invoke cannot.
+func runWasmResult(t *testing.T, src string) int {
 	t.Helper()
-	return parseMainResult(t, runNativeStdout(t, src))
+	return parseMainResult(t, runResultStdout(t, src))
 }
 
 // isCoreModule reports whether the wasm binary at path is a core module
@@ -230,27 +205,6 @@ func isCoreModule(t *testing.T, path string) bool {
 		t.Fatalf("read wasm header of %s: %v", path, err)
 	}
 	return bytes.Equal(head, []byte{0, 'a', 's', 'm', 1, 0, 0, 0})
-}
-
-// finishComponentFromCoreBytes composes the wasmbin-produced core
-// module into a wasi:cli/run component natively, the same path the fern
-// CLI takes (component.ClassifyCore → component.Compose) — no
-// wasm-tools, no preview-1 adapter. The core must have been built with
-// Preview2WASI + SynthCliRun so it exports `_lang_run` and imports the
-// preview-2 WASI shapes the classifier recognises.
-func finishComponentFromCoreBytes(t *testing.T, core []byte) string {
-	t.Helper()
-	req, unsupported := component.ClassifyCore(core)
-	if len(unsupported) > 0 {
-		t.Fatalf("core module has imports the composer can't place: %v", unsupported)
-	}
-	comp := component.Compose(core, req, "_lang_run")
-	dir := t.TempDir()
-	componentPath := filepath.Join(dir, "prog.component.wasm")
-	if err := os.WriteFile(componentPath, comp, 0o644); err != nil {
-		t.Fatalf("write component: %v", err)
-	}
-	return componentPath
 }
 
 // runComponent runs the component under wasmtime, returning the
