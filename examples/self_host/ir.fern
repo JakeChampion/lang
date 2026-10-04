@@ -2655,7 +2655,9 @@ pub function op_struct_make(type_name: string, nfields: i32, decl_index: i32): O
 // operand stack: the values are stored in `str` as
 // `<type_name>|<v0>,<v1>,…` (i32-width field values in decl order, the same
 // pipe-then-comma packing the reuse-site registries use), and `i32_imm` is the
-// field count so a reader that only needs the arity never parses.
+// field count so a reader that only needs the arity never parses. A field
+// holding another static box is that box's own packing in braces,
+// `{<type_name>|…}` (const_struct_ref), and the backends write its address.
 //
 // The static box carries a NEGATIVE rc word, which every rc entry point already
 // reads as the immortal sentinel and skips — `__fern_rc_inc` / `__fern_arr_dec`
@@ -2691,8 +2693,13 @@ pub function const_struct_values(packed: string): string[] {
   }
   i = i + 1;
   let start: i32 = i;
+  let depth: i32 = 0;
   while (i < packed.len()) {
-    if (packed[i] == b',') {
+    if (packed[i] == b'{') {
+      depth = depth + 1;
+    } else if (packed[i] == b'}') {
+      depth = depth - 1;
+    } else if (packed[i] == b',' && depth == 0) {
       out = out.append(slice_unchecked(packed, start, i) + "");
       start = i + 1;
     }
@@ -2702,6 +2709,15 @@ pub function const_struct_values(packed: string): string[] {
     out = out.append(slice_unchecked(packed, start, packed.len()) + "");
   }
   return out;
+}
+
+// The packing of the static box a field word refers to, or "" for a scalar
+// word.
+pub function const_struct_ref(word: string): string {
+  if (word.len() < 2 || word[0] != b'{' || word[word.len() - 1] != b'}') {
+    return "";
+  }
+  return slice_unchecked(word, 1, word.len() - 1) + "";
 }
 
 // op_const_closure is const_struct's function-value case: a CAPTURE-FREE
