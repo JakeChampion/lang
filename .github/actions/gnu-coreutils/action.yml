@@ -1,0 +1,56 @@
+name: GNU coreutils oracle
+description: >
+  The pinned GNU coreutils the corpus compares against (docs/COREUTILS.md),
+  built from source and cached per host, with FERN_GNU_COREUTILS pointing at
+  it. The runner image ships an older coreutils whose output differs, so a
+  test that reads its reference from PATH alone is checked against the wrong
+  version.
+
+  `make` in full rather than named targets: a named target skips the gnulib
+  header generation the build depends on and dies on a missing stdckdint.h.
+  FORCE_UNSAFE_CONFIGURE because configure refuses to run as a user it
+  thinks might be root. `arch`, `kill` and `uptime` are named because
+  coreutils does not install them by default and Debian's copies of the
+  last two come from procps.
+inputs:
+  host:
+    description: The runner's architecture, x86_64 or aarch64, which keys the cache.
+    required: true
+  version:
+    description: The GNU coreutils release to build.
+    required: false
+    default: "9.12"
+runs:
+  using: composite
+  steps:
+    - name: Cache the GNU coreutils oracle
+      id: gnu-oracles
+      uses: actions/cache@v6
+      with:
+        path: ~/gnu-coreutils
+        key: gnu-coreutils-full-${{ inputs.version }}-${{ inputs.host }}
+    - name: Build the GNU coreutils oracle
+      if: steps.gnu-oracles.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        VER: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        work="$(mktemp -d)"
+        cd "$work"
+        curl -fsSLO "https://ftp.gnu.org/gnu/coreutils/coreutils-$VER.tar.xz"
+        tar xf "coreutils-$VER.tar.xz"
+        cd "coreutils-$VER"
+        FORCE_UNSAFE_CONFIGURE=1 ./configure --quiet --disable-nls --without-selinux \
+          --enable-install-program=arch,kill,uptime
+        make -j"$(nproc)"
+        make install prefix="$HOME/gnu-coreutils"
+        rm -rf "$HOME/gnu-coreutils/share" "$HOME/gnu-coreutils/libexec"
+        cd /
+        rm -rf "$work"
+    # The built tree FIRST. /usr/bin is appended, not prepended: the harness
+    # takes the first directory that holds the utility, so the image's older
+    # copy ahead of this one would shadow the whole catalogue.
+    - name: Point FERN_GNU_COREUTILS at the oracle
+      shell: bash
+      run: echo "FERN_GNU_COREUTILS=$HOME/gnu-coreutils/bin:/usr/bin" >> "$GITHUB_ENV"
