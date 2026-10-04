@@ -1117,6 +1117,15 @@ serializer.
   body either way. `http_serialize_response_head(resp, keep_alive, framing)`
   is the head alone, the framing line (`Content-Length` or
   `Transfer-Encoding`) the caller's.
+- **A chunked body as it arrives:** `chunk_decoder(limits)` is a
+  `ChunkDecoder` at the start of a chunked body; `(d).feed(bytes)` answers
+  `ChunkData(next, data)` — the data decoded from this feed, a chunk's
+  passed on as it arrives, and the decoder to feed next — `ChunkEnd(data,
+  trailers, rest)` once the body is complete, `rest` the bytes past it, or
+  `ChunkRefused(status)`. Its rules are the parser's (the framing budget,
+  the body cap, the extensions, the trailer section), so a body fed in any
+  pieces answers what the parser answers for the whole; the serve loop's
+  streamed request bodies read through it.
 - **Request body:** `HttpRequest.body` is a `Stream` over the bytes as
   they came, or over a source that pulls them as the handler reads
   (`std/stream`); `(req).body_string(): Result[string, BodyError]` is the
