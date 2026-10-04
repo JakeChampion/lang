@@ -13,7 +13,7 @@ Read "Where this stands (2026-09-15)" below FIRST. It corrects two things in
 the 2026-09-02 section above: that section says tripwires 1–3 are unfired (one
 has), and it quotes the benchmark geomean as evidence against the backend when
 the ratio runs the other way — 0.92x means SSA is ~8% FASTER on average.
-#8822, which that section cites for tripwire 1, closed on 2026-10-03: as the
+#8822, which that section cites for tripwire 1, is closed by #11321: as the
 self-host compiler builds it, `sort` is at or ahead of GNU
 (`docs/COREUTILS.md`).
 
