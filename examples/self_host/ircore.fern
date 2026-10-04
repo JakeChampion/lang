@@ -93,6 +93,14 @@ function is_array_type(t: string): boolean {
   return slice_unchecked(t, n - 2, n) == "[]";
 }
 
+// is_task_runtime_fn reports whether a call_direct callee is one of the task
+// primitives' runtime functions (asmcore.rt_src_task, wasm_ir's stubs): Fern
+// bodies emitted under __fn_ and called with the user ABI, which is why they
+// are not is_fern_helper's stack-arg helpers.
+pub function is_task_runtime_fn(name: string): boolean {
+  return util.str_has_prefix(name, "__fern_task_");
+}
+
 // is_fern_helper reports whether a call_direct callee is one of the IR
 // runtime helpers the backends actually provide (emit_ir_runtime and its arm64
 // / wasm counterparts). They use the stack-arg ABI and symbols — see
@@ -767,7 +775,7 @@ pub function all_runtime_need_roots(): string[] {
     "signal_mask", "signal_disposition",
     "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "putchar", "random_bytes", "random_i32", "read_file",
     "read_file_bytes",
-    "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp",
+    "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp", "task",
     "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
     "str_read_line", "str_repeat", "str_replace",
     "optarrarr_free", "str_split", "str_trim", "strarrarr_free", "strbuf", "buf",
@@ -780,10 +788,11 @@ pub function all_runtime_need_roots(): string[] {
     // Filesystem + process:
     "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
     "write_file_bytes", "write_file_bytes_u8",
+    "getxattr_bytes_u8", "lgetxattr_bytes_u8", "setxattr_bytes_u8", "lsetxattr_bytes_u8",
     "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
-    "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr",
+    "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "lgetxattr", "lgetxattr_bytes", "setxattr", "setxattr_bytes", "lsetxattr", "lsetxattr_bytes",
     "chmod", "chmod_at", "set_file_times", "truncate", "mknod", "chown_at",
-    "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_dup_onto",
+    "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "fd_dup_onto",
     "termios_get", "termios_set",
     "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "reader_splice", "fd_flags",
     "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8",
@@ -1001,7 +1010,7 @@ pub function gate(mod: parser.Module, sub: Sub): Lowered {
     while (j < r.ops.len()) {
       let o: ir.Op = r.ops[j];
       if (o.kind_tag == 149) {  // call_direct
-        if (!is_fern_helper(o.str) && !is_c_call(o.str) && !irtables.sig_reg_has_exact(freg, o.str)) {
+        if (!is_fern_helper(o.str) && !is_c_call(o.str) && !is_task_runtime_fn(o.str) && !irtables.sig_reg_has_exact(freg, o.str)) {
           if (strict_ir_on()) {
             strict_ir_refuse(mod.funcs[i].name + " (call to unknown symbol " + o.str + ")");
           }
@@ -1235,7 +1244,7 @@ pub function unit_cache_key(parts: flatten.PerModule[], u: Units, k: UnitKeys, i
   // operations. Old native slice bodies create immortal descriptors; they
   // must not be reused with callers that depend on counted view descriptors.
   // Literal alignment also changes the relative offsets in cached wasm units.
-  return key + "|ir" + lowered_digest(u.caches[idx]) + ":" + k.view + "|runtime=counted-string-views-1,wasm-string-align4-1,tagged-byte-views-1,writer-byte-views-1,byte-consumer-ops-373-1";
+  return key + "|ir" + lowered_digest(u.caches[idx]) + ":" + k.view + "|runtime=counted-string-views-1,wasm-string-align4-1,tagged-byte-views-1,writer-byte-views-1,byte-consumer-ops-379-3,xattr-bytes-377-1";
 }
 
 // struct_table_text spells every struct decl in table order, with each part

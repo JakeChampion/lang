@@ -728,6 +728,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc_rc1")
 					needs.add("__build_io_error")
 					needs.add("__fern_writer_truncate")
+				case "__fern_fd_drop_cache":
+					// (r, offset, len) → i32 — DONTNEED advice on
+					// the handle; Option[IoError].
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__build_io_error")
+					needs.add("__fern_fd_drop_cache")
 				case "__fern_writer_close":
 					// Same shape as reader_close — Writer struct
 					// has identical { fd: i32 } layout.
@@ -1403,6 +1410,7 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_fd_stat":                 {"__wasi_errno_of_code"},
 	"__fern_fd_fsync":                {"__wasi_errno_of_code"},
 	"__fern_fd_fdatasync":            {"__wasi_errno_of_code"},
+	"__fern_fd_drop_cache":           {"__wasi_errno_of_code"},
 	"__fern_fd_syncfs":               {"__wasi_errno_of_code"},
 	"__fern_fd_dup_onto":             {"__wasi_errno_of_code"},
 	"__fern_handle_window_size":      {"__wasi_errno_of_code"},
@@ -1471,6 +1479,7 @@ var helperResultBoxCallers = []string{
 	"__fern_reader_flags", "__fern_writer_flags",
 	"__fern_writer_truncate",
 	"__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs",
+	"__fern_fd_drop_cache",
 	"__fern_fd_dup_onto",
 	"__fern_handle_window_size", "__fern_handle_set_window_size",
 	"__fern_handle_termios_get", "__fern_handle_termios_set",
@@ -3436,6 +3445,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildIsattyBody,
+	},
+	"__fern_fd_drop_cache": {
+		// (r, offset: i64, len: i64) → i32 — heap-form Option[IoError]:
+		// DONTNEED advice on the handle's fd. See wasi_drop_cache.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI64},
+		results: []byte{encode.ValtypeI32},
+		body:    buildFdDropCacheBodyP1,
 	},
 	"__fern_writer_truncate": {
 		// (w, length: i64) → i32 — heap-form Option[IoError]:

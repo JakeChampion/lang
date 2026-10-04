@@ -1457,6 +1457,94 @@ function byte_array_value(bytes: u8[]): Value {
   return v_arr_of(out, "u8");
 }
 
+function call_xattr(name: string, args: Value[]): Value {
+  let reading: boolean = name == "getxattr" || name == "lgetxattr" || name == "getxattr_bytes" || name == "lgetxattr_bytes";
+  let count: i32 = 3;
+  if (reading) {
+    count = 2;
+  }
+  if (args.len() != count) {
+    return v_err(name + ": wrong argument count");
+  }
+  if (!is_string_arg(args[0]) || !is_string_arg(args[1])) {
+    return v_err(name + ": expected path and attribute name strings");
+  }
+  let path: string = vstr_of(args[0]);
+  let attr: string = vstr_of(args[1]);
+  let follow: boolean = name[0] != 108 as u8;
+  if (reading) {
+    if (name == "getxattr_bytes" || name == "lgetxattr_bytes") {
+      let result: Result[u8[], IoError] = Err(Unsupported);
+      if (follow) {
+        result = getxattr_bytes(path, attr);
+      } else {
+        result = lgetxattr_bytes(path, attr);
+      }
+      match (result) {
+        Ok(bytes) => {
+          return v_variant("Ok", [byte_array_value(bytes)]);
+        },
+        Err(e) => {
+          return v_variant("Err", [io_error_value(e)]);
+        }
+      }
+    }
+    let result: Result[string, IoError] = Err(Unsupported);
+    if (follow) {
+      result = getxattr(path, attr);
+    } else {
+      result = lgetxattr(path, attr);
+    }
+    match (result) {
+      Ok(text) => {
+        return v_variant("Ok", [v_string(text)]);
+      },
+      Err(e) => {
+        return v_variant("Err", [io_error_value(e)]);
+      }
+    }
+  }
+  let result: Result[void, IoError] = Err(Unsupported);
+  if (name == "setxattr_bytes" || name == "lsetxattr_bytes") {
+    if let VArr(a) = args[2] {
+      let bytes: u8[] = __alloc_u8(a.elements.len());
+      let i: i32 = 0;
+      while (i < a.elements.len()) {
+        if (!is_i32_arg(a.elements[i])) {
+          return v_err(name + ": expected byte array");
+        }
+        bytes = bytes.with(i, vint_bits(a.elements[i]) as u8);
+        i = i + 1;
+      }
+      if (follow) {
+        result = setxattr_bytes(path, attr, bytes);
+      } else {
+        result = lsetxattr_bytes(path, attr, bytes);
+      }
+    } else {
+      return v_err(name + ": expected byte array");
+    }
+  } else {
+    if (!is_string_arg(args[2])) {
+      return v_err(name + ": expected string value");
+    }
+    let text: string = vstr_of(args[2]);
+    if (follow) {
+      result = setxattr(path, attr, text);
+    } else {
+      result = lsetxattr(path, attr, text);
+    }
+  }
+  match (result) {
+    Ok(_) => {
+      return v_variant("Ok", [v_tuple([])]);
+    },
+    Err(e) => {
+      return v_variant("Err", [io_error_value(e)]);
+    }
+  }
+}
+
 function option_io_error_value(error: Option[IoError]): Value {
   match (error) {
     Some(e) => {
@@ -4505,6 +4593,10 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
       return v_int(__ctz64(bits));
     }
     return v_int(__popcount64(bits));
+  }
+  if (name == "getxattr" || name == "lgetxattr" || name == "setxattr" || name == "lsetxattr"
+    || name == "getxattr_bytes" || name == "lgetxattr_bytes" || name == "setxattr_bytes" || name == "lsetxattr_bytes") {
+    return call_xattr(name, args);
   }
   if (name == "__count_byte_bytes") {
     return call_count_byte_bytes(args);

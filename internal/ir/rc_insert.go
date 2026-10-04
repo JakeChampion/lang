@@ -4278,19 +4278,6 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 			Op{Kind: OpEq},
 			Op{Kind: OpIf, I32: BlockTypeVoid})
 		for k, ld := range vd.loads {
-			// A CLOSURE payload is a DOCUMENTED SAFE LEAK. A matched arm's
-			// binding takes the reference out of the box, so deep-releasing one here frees an env the binding is still
-			// calling through. `async.Future[T]`'s
-			// `Pending(i32, (i32) => Future[T])` is exactly that: the
-			// combinators match a Pending, call its `resume`, and build the
-			// next Future from the result (SIGSEGV on both natives, wasm
-			// out-of-bounds trap — the whole SimProperty corpus). The box
-			// itself is still freed by __fern_box_free below; the pair and
-			// its env leak, which is what they did before container-held
-			// closures were released at all (#6443).
-			if _, isFn := ld.typ.(*ast.FuncType); isFn {
-				continue
-			}
 			ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
 			if ld.off != 0 {
 				ops = append(ops, Op{Kind: OpConstI32, I32: ld.off}, Op{Kind: OpAdd})

@@ -709,6 +709,8 @@ func New() *Interp {
 	i.Builtins["__method_Writer_fsync"] = &Builtin{Fn: builtinFsync}
 	i.Builtins["__method_Reader_fdatasync"] = &Builtin{Fn: builtinFdatasync}
 	i.Builtins["__method_Writer_fdatasync"] = &Builtin{Fn: builtinFdatasync}
+	i.Builtins["__method_Reader_drop_cache"] = &Builtin{Fn: builtinDropCache}
+	i.Builtins["__method_Writer_drop_cache"] = &Builtin{Fn: builtinDropCache}
 	i.Builtins["__method_Reader_syncfs"] = &Builtin{Fn: builtinSyncfs}
 	i.Builtins["__method_Writer_syncfs"] = &Builtin{Fn: builtinSyncfs}
 	i.Builtins["__method_Writer_truncate"] = &Builtin{Fn: builtinWriterTruncate}
@@ -1477,6 +1479,20 @@ func New() *Interp {
 	// not observe reclamation, exactly as with __heap_bump_bytes.
 	i.Builtins["__heap_mark"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	i.Builtins["__heap_release_to"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	// The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4) in the
+	// blocking fallback: no task is ever current, so std/async's suspend
+	// polls and task_start runs its entry to completion. A park is reached
+	// only with a current task, so it reports the no-task answer.
+	i.Builtins["__task_new"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(1), nil }}
+	i.Builtins["__task_free"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_cur"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	i.Builtins["__task_enter"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_leave"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	i.Builtins["__task_park"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
+	i.Builtins["__task_wait"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return newArray(0), nil }}
+	i.Builtins["__task_timeout"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
+	i.Builtins["__task_set_ready"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_set_cancelled"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
 	i.Builtins["f32_bits"] = &Builtin{Fn: builtinF32Bits}
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}
 	i.Builtins["f64_bits"] = &Builtin{Fn: builtinF64Bits}
@@ -1563,6 +1579,10 @@ func New() *Interp {
 	i.Builtins["lgetxattr"] = &Builtin{Fn: builtinLgetxattr}
 	i.Builtins["setxattr"] = &Builtin{Fn: builtinSetxattr}
 	i.Builtins["lsetxattr"] = &Builtin{Fn: builtinLsetxattr}
+	i.Builtins["getxattr_bytes"] = &Builtin{Fn: builtinGetxattrBytes}
+	i.Builtins["lgetxattr_bytes"] = &Builtin{Fn: builtinLgetxattrBytes}
+	i.Builtins["setxattr_bytes"] = &Builtin{Fn: builtinSetxattrBytes}
+	i.Builtins["lsetxattr_bytes"] = &Builtin{Fn: builtinLsetxattrBytes}
 	i.Builtins["umask"] = &Builtin{Fn: builtinUmask}
 	i.Builtins["priority"] = &Builtin{Fn: builtinPriority}
 	i.Builtins["set_priority"] = &Builtin{Fn: builtinSetPriority}
@@ -3712,6 +3732,38 @@ func builtinSyncfs(i *Interp, args []Value) (Value, error) {
 	return syncMethod(i, "syncfs", args, hostSyncfs)
 }
 
+// errNoFadvise is a host's answer to a drop_cache it has no call for, on
+// a descriptor that could otherwise take one.
+var errNoFadvise = errors.New("no fadvise on this host")
+
+// builtinDropCache answers `r.drop_cache(offset, len)` /
+// `w.drop_cache(offset, len)`: posix_fadvise(2) with POSIX_FADV_DONTNEED
+// over that range of the handle's file, len 0 meaning to the end. A host
+// with no fadvise answers Unsupported.
+func builtinDropCache(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("drop_cache: expected 3 args")
+	}
+	off, ok1 := args[1].(Number)
+	n, ok2 := args[2].(Number)
+	if !ok1 || !ok2 {
+		return nil, fmt.Errorf("drop_cache: offset and length must be numbers")
+	}
+	unsupported := false
+	v, err := syncMethod(i, "drop_cache", args[:1], func(fd int) error {
+		e := hostDropCache(fd, int64(off), int64(n))
+		if errors.Is(e, errNoFadvise) {
+			unsupported = true
+			return nil
+		}
+		return e
+	})
+	if unsupported {
+		return optionSome(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+	}
+	return v, err
+}
+
 // builtinSync answers `sync()`: sync(2), scheduling write-back of every
 // dirty buffer on the machine. It returns nothing because the call
 // cannot fail on either host this runs on.
@@ -4379,14 +4431,22 @@ func builtinReadLink(_ *Interp, args []Value) (Value, error) {
 // builtinGetxattr reads an extended attribute's value, following a final
 // symlink; builtinLgetxattr asks about the link itself.
 func builtinGetxattr(_ *Interp, args []Value) (Value, error) {
-	return xattrResult("getxattr", args, true)
+	return xattrResult("getxattr", args, true, false)
 }
 
 func builtinLgetxattr(_ *Interp, args []Value) (Value, error) {
-	return xattrResult("lgetxattr", args, false)
+	return xattrResult("lgetxattr", args, false, false)
 }
 
-func xattrResult(name string, args []Value, follow bool) (Value, error) {
+func builtinGetxattrBytes(_ *Interp, args []Value) (Value, error) {
+	return xattrResult("getxattr_bytes", args, true, true)
+}
+
+func builtinLgetxattrBytes(_ *Interp, args []Value) (Value, error) {
+	return xattrResult("lgetxattr_bytes", args, false, true)
+}
+
+func xattrResult(name string, args []Value, follow, raw bool) (Value, error) {
 	p, err := pathArgs(name, args, 2)
 	if err != nil {
 		return nil, err
@@ -4394,6 +4454,17 @@ func xattrResult(name string, args []Value, follow bool) (Value, error) {
 	v, err := getxattrBytes(p[0], p[1], follow)
 	if err != nil {
 		return resultErr(classifyIoError(p[0], err)), nil
+	}
+	if raw {
+		out := newArray(len(v))
+		for i, b := range v {
+			out.E[i] = Number(b)
+		}
+		return resultOk(out), nil
+	}
+	if !utf8.Valid(v) {
+		return resultErr(&Enum{EnumName: "IoError", VariantName: "InvalidUtf8", Index: 3,
+			Payloads: []Value{String(p[0])}}), nil
 	}
 	return resultOk(String(v)), nil
 }
@@ -4414,6 +4485,33 @@ func setxattrResult(name string, args []Value, follow bool) (Value, error) {
 		return nil, err
 	}
 	return ioResult(p[0], setxattrBytes(p[0], p[1], []byte(p[2]), follow)), nil
+}
+
+func builtinSetxattrBytes(_ *Interp, args []Value) (Value, error) {
+	return setxattrBytesResult("setxattr_bytes", args, true)
+}
+
+func builtinLsetxattrBytes(_ *Interp, args []Value) (Value, error) {
+	return setxattrBytesResult("lsetxattr_bytes", args, false)
+}
+
+func setxattrBytesResult(name string, args []Value, follow bool) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("%s: expected 3 args, got %d", name, len(args))
+	}
+	p, err := pathArgs(name, args[:2], 2)
+	if err != nil {
+		return nil, err
+	}
+	content, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected byte array, got %T", name, args[2])
+	}
+	data := make([]byte, len(content.E))
+	for n, value := range content.E {
+		data[n] = byte(value.(Number))
+	}
+	return ioResult(p[0], setxattrBytes(p[0], p[1], data, follow)), nil
 }
 
 // builtinRename moves a directory entry. Nothing is copied and an
@@ -5522,11 +5620,65 @@ func (i *Interp) stdOut(fd int64) io.Writer {
 // builtin exists here only so modules that reference `poll` (std/reactor, and the
 // future real-fd `std/task` reactor) stay compilable + runnable under -interp;
 // real readiness lives on the native backends.
-func builtinPoll(_ *Interp, args []Value) (Value, error) {
+// builtinPoll is `poll(fds, timeout_ms)` over the descriptors behind the
+// handles: a set made for the call, each handle watched for readability,
+// one wait, and the set closed. The index of the first ready handle; -1 at
+// the timeout, for an empty set, for a set holding no handle, and on a
+// host without a reactor floor. A negative token is skipped, as poll(2)
+// skips a negative descriptor.
+func builtinPoll(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("poll: expected 2 args, got %d", len(args))
 	}
-	return Number(-1), nil
+	fds, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("poll: expected array arg 0, got %T", args[0])
+	}
+	timeout, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("poll: expected number arg 1, got %T", args[1])
+	}
+	set, err := reactorCreate()
+	if err != nil {
+		return Number(-1), nil
+	}
+	defer syscall.Close(set)
+	r := &reactor{fd: set, handles: map[int]int64{}}
+	index := map[int]int{}
+	for k, v := range fds.E {
+		handle, ok := v.(Number)
+		if !ok || handle < 0 {
+			continue
+		}
+		raw, ok := i.rawFd(int64(handle))
+		if !ok {
+			continue
+		}
+		if _, seen := index[raw]; seen {
+			continue
+		}
+		if err := r.watch(raw, 1); err != nil {
+			continue
+		}
+		index[raw] = k
+	}
+	if len(index) == 0 {
+		if timeout > 0 {
+			time.Sleep(time.Duration(timeout) * time.Millisecond)
+		}
+		return Number(-1), nil
+	}
+	got, err := r.wait(len(index), int(timeout))
+	if err != nil {
+		return Number(-1), nil
+	}
+	hit := -1
+	for _, e := range got {
+		if k, ok := index[e.raw]; ok && (hit < 0 || k < hit) {
+			hit = k
+		}
+	}
+	return Number(hit), nil
 }
 
 // builtinIsatty answers `isatty(fd)` against the real fd the

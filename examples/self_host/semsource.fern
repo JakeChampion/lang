@@ -7018,6 +7018,7 @@ function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type,
     out = out.append(ssasem.Contract { name: o + ".fsync", params: [h], modes: [v], result: io_error });
     out = out.append(ssasem.Contract { name: o + ".fdatasync", params: [h], modes: [v], result: io_error });
     out = out.append(ssasem.Contract { name: o + ".syncfs", params: [h], modes: [v], result: io_error });
+    out = out.append(ssasem.Contract { name: o + ".drop_cache", params: [h, t_i64(), t_i64()], modes: [v, v, v], result: io_error });
     out = out.append(ssasem.Contract { name: o + ".isatty", params: [h], modes: [v], result: t_bool() });
     out = out.append(ssasem.Contract { name: o + ".dup_onto", params: [h, t_i32()], modes: [v, v], result: io_error });
     i = i + 1;
@@ -7154,9 +7155,13 @@ function fs_op_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contr
     ssasem.Contract { name: "rename", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "rename_noreplace", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "getxattr", params: [t_string(), t_string()], modes: [b, b], result: t_io_result(t_string()) },
+    ssasem.Contract { name: "getxattr_bytes", params: [t_string(), t_string()], modes: [b, b], result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
     ssasem.Contract { name: "lgetxattr", params: [t_string(), t_string()], modes: [b, b], result: t_io_result(t_string()) },
+    ssasem.Contract { name: "lgetxattr_bytes", params: [t_string(), t_string()], modes: [b, b], result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
     ssasem.Contract { name: "setxattr", params: [t_string(), t_string(), t_string()], modes: [b, b, b], result: done },
+    ssasem.Contract { name: "setxattr_bytes", params: [t_string(), t_string(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [b, b, b], result: done },
     ssasem.Contract { name: "lsetxattr", params: [t_string(), t_string(), t_string()], modes: [b, b, b], result: done },
+    ssasem.Contract { name: "lsetxattr_bytes", params: [t_string(), t_string(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [b, b, b], result: done },
     ssasem.Contract { name: "rename_exchange", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "create_link", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "create_symlink", params: [t_string(), t_string()], modes: [b, b], result: done },
@@ -7398,6 +7403,8 @@ function bit_count_contracts(): ssasem.Contract[] {
 // it and drops it.
 function memory_contracts(): ssasem.Contract[] {
   let v: i32 = ssaunits.value_mode();
+  let b: i32 = ssaunits.borrow_mode();
+  let fds: typeinfo.Type = typeinfo.TypeArray { elem: t_i32(), view: false };
   let out: ssasem.Contract[] = [
     ssasem.Contract { name: "__alloc", params: [t_i32()], modes: [v], result: t_usize() },
     ssasem.Contract { name: "__alloc_u8", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
@@ -7407,6 +7414,16 @@ function memory_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__heap_alloc_count", params: [], modes: [], result: t_i64() },
     ssasem.Contract { name: "__heap_mark", params: [], modes: [], result: t_i64() },
     ssasem.Contract { name: "__heap_release_to", params: [t_i64()], modes: [v], result: t_void() },
+    ssasem.Contract { name: "__task_new", params: [], modes: [], result: t_i32() },
+    ssasem.Contract { name: "__task_free", params: [t_i32()], modes: [v], result: t_void() },
+    ssasem.Contract { name: "__task_cur", params: [], modes: [], result: t_i32() },
+    ssasem.Contract { name: "__task_enter", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
+    ssasem.Contract { name: "__task_leave", params: [], modes: [], result: t_i32() },
+    ssasem.Contract { name: "__task_park", params: [fds, t_i32()], modes: [b, v], result: t_i32() },
+    ssasem.Contract { name: "__task_wait", params: [t_i32()], modes: [v], result: fds },
+    ssasem.Contract { name: "__task_timeout", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "__task_set_ready", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
+    ssasem.Contract { name: "__task_set_cancelled", params: [t_i32()], modes: [v], result: t_void() },
     ssasem.Contract { name: "__memcpy", params: [t_usize(), t_usize(), t_i32()], modes: [v, v, v], result: t_void() },
     ssasem.Contract { name: "__memset", params: [t_usize(), t_i32(), t_i32()], modes: [v, v, v], result: t_void() },
   ];

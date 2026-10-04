@@ -13,14 +13,13 @@ The last eligible entry wins in that fallback. The correction follows that
 selection, using the pseudo-filesystem classification from GNU 9.12's
 [pinned gnulib](https://github.com/coreutils/gnulib/blob/106e9b2384d08a1696fcbd40cbab52237943f208/lib/mountlist.c#L174).
 
-The existing GNU `TestDf` corpus passes with the correction, including all
-149 previous failures. On integration with `a69b8ca2f`, the focused corpus
-passes in 1.296 seconds, the extended df checks in 0.877 seconds, and the
-primary compiler's df parity checks in 11.903 seconds. Full Linux unit tests
-and every lint gate pass. The earlier prepared correction also passed the
-broader Stdio-consumer corpus; Stdio itself remains a separate change.
+The existing GNU `TestDf` corpus and the primary compiler's df comparisons
+pass on the integration with main `f4de66fd5`, including all 149 cases that
+failed on the original parent. They run within the Stdio consumer groups;
+the full Linux unit suite and every lint gate also pass on this source.
 
-The same reproduced compiler builds both versions, with SHA-256
+The focused size comparison uses the original parent and its operand-selection
+correction, compiled with the same reproduced compiler, SHA-256
 `a518ac78b011ab3eb8ae4ddc1f66a04d04269d74cac00333956743a74b229595`.
 The libraries are identical; only df's operand selection changes.
 ARM64 Linux files grow
@@ -31,9 +30,3 @@ and fallback account for the new functionality; no size baseline changes.
 Darwin compilation is only a size check: this utility reads Linux mount
 tables, and the broader Darwin GNU corpus still fails on the unchanged
 parent as well as this candidate. It is not a Darwin parity claim.
-
-The df GNU corpus and primary/native comparisons pass again when integrated
-with Writer's `99abe4870` repair and the prepared Stdio byte buffer. These
-run within the full Stdio-consumer groups, which pass in 5.736 and 20.965
-seconds respectively. The earlier size measurements above still refer to
-their stated compiler and base; they are not new integrated size results.

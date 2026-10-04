@@ -1068,29 +1068,10 @@ function now_ms(): i64 {
   return monotonic_ns() / 1000000i64;
 }
 
-// Whether `fd` is readable within `wait_ms`: `first_readable` for one
-// socket, as the TCP reads use it.
+// Whether `fd` is readable within `wait_ms`, the wait one a task parks on.
 function readable_within(fd: i32, wait_ms: i32): boolean {
-  let ms: i32 = wait_ms;
-  if (ms < 1) {
-    ms = 1;
-  }
-  let ns_per_ms: i64 = 1000000i64;
-  let start: i64 = monotonic_ns();
-  let tok: i32 = tcp_pollable(fd);
-  let timer: i32 = wasm_timer_pollable(ms as i64 * ns_per_ms);
-  let pollset: i32[] = [tok, timer];
-  let ready: i32 = poll(pollset, ms);
-  let dtimer: i32 = wasm_pollable_drop(timer);
-  let dtok: i32 = wasm_pollable_drop(tok);
-  if (ready == 0) {
-    return true;
-  }
-  if (ready == 1) {
-    return false;
-  }
-  let waited: i64 = monotonic_ns() - start;
-  return waited * 2i64 < ms as i64 * ns_per_ms;
+  let set: i32[] = [fd, 1];
+  return async.wait_any(set, wait_ms) == 0;
 }
 
 function local_for(ns: net.SocketAddr): net.SocketAddr {
@@ -1233,24 +1214,18 @@ function pending_slots(slots: Slot[]): i32[] {
 
 // The replies to the waiting slots' queries before `deadline`, datagrams
 // that are not one ignored; a slot still waiting at the deadline keeps
-// `NoReply`. The sockets are polled as one set, so the replies are taken
-// in whichever order the server sends them; where the host has no poll
-// (the interpreter) the sockets are made non-blocking and tried in turn
-// instead, a millisecond's pause between rounds.
+// `NoReply`. The sockets are waited on as one set, so the replies are
+// taken in whichever order the server sends them.
 function await_udp_replies(slots: Slot[], deadline: i64): Slot[] {
   let out: Slot[] = slots;
   let pending: i32[] = pending_slots(out);
   let left: i32 = (deadline - now_ms()) as i32;
   while (pending.len() > 0 && left > 0) {
     let ready: i32 = first_readable(out, pending, left);
-    if (ready == 0 - 1) {
+    if (ready < 0) {
       return out;
     }
-    if (ready == 0 - 2) {
-      out = sweep_replies(out, pending);
-    } else {
-      out = taken(out, pending[ready]);
-    }
+    out = taken(out, pending[ready]);
     pending = pending_slots(out);
     left = (deadline - now_ms()) as i32;
   }
@@ -1278,24 +1253,6 @@ function taken(slots: Slot[], k: i32): Slot[] {
   return slots;
 }
 
-// One round over the pending slots without a poll: each socket is made
-// non-blocking and tried, a round that found nothing pausing a
-// millisecond so the wait does not spin.
-function sweep_replies(slots: Slot[], pending: i32[]): Slot[] {
-  let out: Slot[] = slots;
-  let i: i32 = 0;
-  while (i < pending.len()) {
-    let k: i32 = pending[i];
-    let nb: Result[void, net.NetError] = net.set_nonblocking(out[k].sock, true);
-    out = taken(out, k);
-    i = i + 1;
-  }
-  if (pending_slots(out).len() == pending.len()) {
-    sleep_ms(1i64);
-  }
-  return out;
-}
-
 // The socket closed, and -1 for the slot that held it.
 function closed_slot(sock: i32): i32 {
   let closed: Result[void, net.NetError] = net.close(sock);
@@ -1303,44 +1260,16 @@ function closed_slot(sock: i32): i32 {
 }
 
 // Which of the pending slots is readable within `wait_ms`, as an index
-// into `pending`; -1 at the deadline, -2 where the host has no poll: the
-// poll shape std/tcp's recv-with-deadline uses. A native poll(2) honours
-// the timeout and answers the first readable socket; wasm ignores its
-// argument and the timer pollable fires at the deadline; the
-// interpreter's poll is a stub that answers -1 at once, which is told
-// from a native timeout by the time that passed.
+// into `pending`; -1 at the deadline. The wait is one a task parks on.
 function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
-  let ms: i32 = wait_ms;
-  if (ms < 1) {
-    ms = 1;
-  }
-  let ns_per_ms: i64 = 1000000i64;
-  let start: i64 = monotonic_ns();
-  let pollset: i32[] = [];
+  let set: i32[] = [];
   let i: i32 = 0;
   while (i < pending.len()) {
-    pollset = pollset.append(tcp_pollable(slots[pending[i]].sock));
+    set = set.append(slots[pending[i]].sock);
+    set = set.append(1);
     i = i + 1;
   }
-  let timer: i32 = wasm_timer_pollable(ms as i64 * ns_per_ms);
-  pollset = pollset.append(timer);
-  let ready: i32 = poll(pollset, ms);
-  i = 0;
-  while (i < pollset.len()) {
-    let dropped: i32 = wasm_pollable_drop(pollset[i]);
-    i = i + 1;
-  }
-  if (ready >= 0 && ready < pending.len()) {
-    return ready;
-  }
-  if (ready == pending.len()) {
-    return 0 - 1;
-  }
-  let waited: i64 = monotonic_ns() - start;
-  if (waited * 2i64 >= ms as i64 * ns_per_ms) {
-    return 0 - 1;
-  }
-  return 0 - 2;
+  return async.wait_any(set, wait_ms);
 }
 
 // One datagram off `sock`: the reply to `q` when it is one, `None` when
@@ -2226,7 +2155,7 @@ pub function interleave_families(addrs: net.IpAddr[]): net.IpAddr[] {
   return out;
 }
 
-// One connect under way: its socket, watched for writability, which is
+// One connect under way: its socket, waited on for writability, which is
 // how a connect reports that it ended.
 struct Attempt { sock: i32 }
 
@@ -2236,24 +2165,23 @@ struct Attempt { sock: i32 }
 // with none connected, the last failure when every address failed,
 // `HostUnreachable` for no addresses.
 pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Result[i32, net.NetError] {
-  let drv: async.RealDriver = async.real_driver();
   let deadline: i64 = now_ms() + opts.timeout_ms as i64;
   let race: Race = Race { open: [], next: 0, due: now_ms(), last: HostUnreachable };
   while (true) {
     let now: i64 = now_ms();
     if (now >= deadline) {
-      close_attempts(drv, race.open);
+      close_attempts(race.open);
       return Err(TimedOut);
     }
     if (race.next < addrs.len() && (race.open.len() == 0 || now >= race.due)) {
-      race = started(drv, race, net.socket_addr(addrs[race.next], port), opts);
+      race = started(race, net.socket_addr(addrs[race.next], port), opts);
       continue;
     }
     if (race.open.len() == 0) {
       return Err(race.last);
     }
-    let woke: i32[] = drv.wait(race.open.len(), wait_window(race, addrs.len(), now, deadline));
-    match (settled(drv, race)) {
+    let woke: i32 = async.wait_any(writable(race.open), wait_window(race, addrs.len(), now, deadline));
+    match (settled(race)) {
       Ok(sock) => {
         let blocking: Result[void, net.NetError] = net.set_nonblocking(sock, false);
         return Ok(sock);
@@ -2284,15 +2212,26 @@ function wait_window(race: Race, n: i32, now: i64, deadline: i64): i32 {
 // when it may start, and the last failure.
 struct Race { open: Attempt[], next: i32, due: i64, last: net.NetError }
 
-// The next address's attempt started: watched when it is under way, the
+// The open attempts as a wait set: each socket for writability.
+function writable(attempts: Attempt[]): i32[] {
+  let set: i32[] = [];
+  let i: i32 = 0;
+  while (i < attempts.len()) {
+    set = set.append(attempts[i].sock);
+    set = set.append(2);
+    i = i + 1;
+  }
+  return set;
+}
+
+// The next address's attempt started: open when it is under way, the
 // turn handed on at once when it failed to start. Where the host
 // connects before answering (the interpreter), the attempt is already
 // settled and the next wait finds it so.
-function started(drv: async.RealDriver, race: Race, addr: net.SocketAddr, opts: DialOptions): Race {
+function started(race: Race, addr: net.SocketAddr, opts: DialOptions): Race {
   let next: i32 = race.next + 1;
   match (net.connect_start(addr)) {
     Ok(sock) => {
-      let watched: i32 = drv.watch(sock, 2);
       return Race { open: race.open.append(Attempt { sock: sock }), next: next, due: now_ms() + opts.fallback_ms as i64, last: race.last };
     },
     Err(e) => {
@@ -2305,7 +2244,7 @@ function started(drv: async.RealDriver, race: Race, addr: net.SocketAddr, opts: 
 // Every open attempt asked how its connect ended: the first that
 // connected is the winner, the others closed; one that failed is closed
 // and its turn handed on at once; the rest stay open.
-function settled(drv: async.RealDriver, race: Race): Result[i32, Race] {
+function settled(race: Race): Result[i32, Race] {
   let keep: Attempt[] = [];
   let out: Race = race;
   let i: i32 = 0;
@@ -2313,16 +2252,15 @@ function settled(drv: async.RealDriver, race: Race): Result[i32, Race] {
     let a: Attempt = race.open[i];
     match (net.connect_result(a.sock)) {
       Ok(_) => {
-        let unwatched: i32 = drv.unwatch(a.sock);
-        close_attempts(drv, keep);
-        close_attempts(drv, after(race.open, i));
+        close_attempts(keep);
+        close_attempts(after(race.open, i));
         return Ok(a.sock);
       },
       Err(e) => {
         if (e.eq(net.InProgress)) {
           keep = keep.append(a);
         } else {
-          close_attempts(drv, [a]);
+          close_attempts([a]);
           out = Race { ...out, due: now_ms(), last: e };
         }
       }
@@ -2343,10 +2281,9 @@ function after(attempts: Attempt[], i: i32): Attempt[] {
   return out;
 }
 
-function close_attempts(drv: async.RealDriver, attempts: Attempt[]): void {
+function close_attempts(attempts: Attempt[]): void {
   let i: i32 = 0;
   while (i < attempts.len()) {
-    let unwatched: i32 = drv.unwatch(attempts[i].sock);
     let closed: Result[void, net.NetError] = net.close(attempts[i].sock);
     i = i + 1;
   }

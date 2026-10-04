@@ -383,6 +383,9 @@ var linuxOnlySysno = map[string]int{
 	// __fern_fd_syncfs branches inline on Darwin rather than reaching
 	// this row.
 	"syncfs": 267,
+	// fadvise64: XNU has no fadvise, so __fern_fd_drop_cache answers
+	// Unsupported on Darwin rather than reaching this row.
+	"fadvise64": 223,
 	// getcwd: current XNU has no __getcwd trap — there is no SYS___getcwd
 	// in the macOS SDK's syscall.h and slot 326, where older XNU carried
 	// it, is empty. This row used to claim Darwin 296, which is
@@ -680,7 +683,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesCreateDir || g.usesChdir || g.usesChroot || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
 		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
-		g.usesGetxattr || g.usesLgetxattr || g.usesSetxattr || g.usesLsetxattr ||
+		g.usesGetxattr || g.usesGetxattrBytes || g.usesLgetxattr || g.usesLgetxattrBytes || g.usesSetxattr || g.usesSetxattrBytes || g.usesLsetxattr || g.usesLsetxattrBytes ||
 		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
 		g.usesAlloc = true
@@ -714,7 +717,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
 		g.usesRemoveDirAll ||
 		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
-		g.usesGetxattr || g.usesLgetxattr || g.usesSetxattr || g.usesLsetxattr ||
+		g.usesGetxattr || g.usesGetxattrBytes || g.usesLgetxattr || g.usesLgetxattrBytes || g.usesSetxattr || g.usesSetxattrBytes || g.usesLsetxattr || g.usesLsetxattrBytes ||
 		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt || g.usesReaderWriter {
 		g.usesFree = true
@@ -1120,14 +1123,26 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesGetxattr {
 		g.emitGetxattrRuntime("__fern_getxattr", "gxat", "getxattr", false)
 	}
+	if g.usesGetxattrBytes {
+		g.emitGetxattrRuntime("__fern_getxattr_bytes", "gxatb", "getxattr", false)
+	}
 	if g.usesLgetxattr {
 		g.emitGetxattrRuntime("__fern_lgetxattr", "lgxa", "lgetxattr", true)
+	}
+	if g.usesLgetxattrBytes {
+		g.emitGetxattrRuntime("__fern_lgetxattr_bytes", "lgxab", "lgetxattr", true)
 	}
 	if g.usesSetxattr {
 		g.emitSetxattrRuntime("__fern_setxattr", "sxat", "setxattr", false)
 	}
+	if g.usesSetxattrBytes {
+		g.emitSetxattrRuntime("__fern_setxattr_bytes", "sxatb", "setxattr", false)
+	}
 	if g.usesLsetxattr {
 		g.emitSetxattrRuntime("__fern_lsetxattr", "lsxa", "lsetxattr", true)
+	}
+	if g.usesLsetxattrBytes {
+		g.emitSetxattrRuntime("__fern_lsetxattr_bytes", "lsxab", "lsetxattr", true)
 	}
 	if g.usesRenameExchange {
 		g.emitRenameFlagsRuntime("__fern_rename_exchange", "rnex", false)
@@ -1176,6 +1191,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesFdSyncfs {
 		g.emitFdCallRuntime("__fern_fd_syncfs", "sfs", "syncfs", nil)
+	}
+	if g.usesFdDropCache {
+		// fadvise64(fd, offset, len, DONTNEED): the offset and length
+		// arrive in x1 and x2, where the call wants them.
+		g.emitFdCallRuntime("__fern_fd_drop_cache", "fdc", "fadvise64", func() {
+			g.emit("mov x3, #4") // POSIX_FADV_DONTNEED
+		})
 	}
 	if g.usesFdDupOnto {
 		// dup3(own_fd, fd, 0). The destination is sign-extended rather
@@ -12576,19 +12598,38 @@ func (g *generator) emitGetxattrRuntime(name, tag, sysname string, nofollow bool
 	g.emitFreeNulTermPath2W("x21", "x20")
 	g.emitFreeNulTermPath2W("x23", "x26")
 	g.emit("tbnz x22, #63, .L%s_err", tag)
+	if !strings.HasSuffix(name, "_bytes") {
+		g.emit("mov x0, x24")
+		g.emit("mov x1, x22")
+		g.emit("bl %s", AsmFnName("__fern_utf8_valid"))
+		g.emit("cbnz w0, .L%s_valid", tag)
+		g.emit("mov x22, #%d", -g.eilseq())
+		g.emit("b .L%s_err", tag)
+		g.label(fmt.Sprintf(".L%s_valid", tag))
+	}
 	g.emit("mov x0, x22")
-	g.emit("bl __fern_alloc_rc1")
+	if strings.HasSuffix(name, "_bytes") {
+		g.emit("bl __alloc_u8")
+	} else {
+		g.emit("bl __fern_alloc_rc1")
+	}
 	g.emit("mov x21, x0") // data ptr
 	g.emit("mov x1, x24")
 	g.emit("mov x2, x22")
 	g.emit("bl __fern_memcpy")
 	g.emitFreeScratch2W("x24", xattrSizeMax)
 	// Result.Ok(string): 24-byte box — {tag@0, pad@4, data@8, len@16}.
-	g.emit("mov x0, #24")
+	if strings.HasSuffix(name, "_bytes") {
+		g.emit("mov x0, #16")
+	} else {
+		g.emit("mov x0, #24")
+	}
 	g.emit("bl __fern_alloc_rc1")
-	g.emit("str wzr, [x0]")      // tag = 0 (Ok)
-	g.emit("str x21, [x0, #8]")  // payload data
-	g.emit("str x22, [x0, #16]") // payload len
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str x21, [x0, #8]") // payload data
+	if !strings.HasSuffix(name, "_bytes") {
+		g.emit("str x22, [x0, #16]") // text payload len
+	}
 	g.emit("b .L%s_return", tag)
 
 	g.label(fmt.Sprintf(".L%s_err", tag))
@@ -12644,8 +12685,12 @@ func (g *generator) emitSetxattrRuntime(name, tag, sysname string, nofollow bool
 	g.emitStrDataPtr2W("x23", "x25", "x26", 80)
 	g.emitNulTermPath2W("x23", "x23", "x26")
 	// The value is read in place; an inline one is spilled to the scratch.
-	g.emitStrDataPtr2W("x24", "x24", "x22", 80)
-	g.emitStrLen2W("w3", "x22")
+	if strings.HasSuffix(name, "_bytes") {
+		g.emit("ldur w3, [x24, #-4]")
+	} else {
+		g.emitStrDataPtr2W("x24", "x24", "x22", 80)
+		g.emitStrLen2W("w3", "x22")
+	}
 	g.emit("mov x0, x21")
 	g.emit("mov x1, x23")
 	g.emit("mov x2, x24")
@@ -15653,19 +15698,21 @@ func (g *generator) emitReaderWriterRuntime() {
 
 // emitFdCallRuntime emits one of the helpers that make a single
 // syscall on a handle's descriptor —
-// `__fern_fd_fsync` / `__fern_fd_fdatasync` / `__fern_fd_syncfs` and
-// `__fern_fd_dup_onto` — taking a Reader / Writer handle pointer and
-// answering `Option[IoError]`. They differ only in which syscall the fd
-// goes to and in whether anything beyond it needs setting up, which is
-// what `prep` emits, so one body serves all four, shaped like
-// `__fern_close_fd_box`.
+// `__fern_fd_fsync` / `__fern_fd_fdatasync` / `__fern_fd_syncfs`,
+// `__fern_fd_drop_cache` and `__fern_fd_dup_onto` — taking a Reader /
+// Writer handle pointer and answering `Option[IoError]`. They differ only
+// in which syscall the fd goes to and in whether anything beyond it needs
+// setting up, which is what `prep` emits, so one body serves all five,
+// shaped like `__fern_close_fd_box`.
 //
-// `syncfs` on Darwin is the exception: XNU has no per-filesystem flush,
-// so the fd is checked with fcntl(F_GETFD) — which answers EBADF for a
-// descriptor that is not open, and needs no stat buffer — and the flush
-// is then the whole-machine sync(2). That covers the filesystem the
+// Darwin has two exceptions. XNU has no per-filesystem flush, so for
+// `syncfs` the fd is checked with fcntl(F_GETFD) — which answers EBADF
+// for a descriptor that is not open, and needs no stat buffer — and the
+// flush is then the whole-machine sync(2). That covers the filesystem the
 // descriptor lives on, so the guarantee the caller asked for holds; it
-// simply flushes more than was asked.
+// simply flushes more than was asked. XNU has no fadvise either, and
+// F_NOCACHE is a different request, so `fadvise64` answers Unsupported once
+// lseek has shown the descriptor is seekable (a pipe is ESPIPE, as on Linux).
 func (g *generator) emitFdCallRuntime(sym, lp, call string, prep func()) {
 	g.line("")
 	g.line(".global " + sym)
@@ -15678,7 +15725,20 @@ func (g *generator) emitFdCallRuntime(sym, lp, call string, prep func()) {
 		prep()
 	}
 	g.emit("ldr w0, [x0]") // fd, at offset 0 of the handle
-	if call == "syncfs" && g.darwin {
+	if call == "fadvise64" && g.darwin {
+		// The fd is sought first, so a pipe answers ESPIPE as Linux's
+		// fadvise does.
+		g.emit("mov x1, #0")
+		g.emit("mov x2, #1") // SEEK_CUR
+		g.syscall("lseek")
+		g.emit("tbnz x0, #63, .%s_err", lp)
+		g.emit("mov x0, #8")
+		g.emit("bl __fern_alloc_box")
+		g.emit("mov w1, #5") // IoError::Unsupported
+		g.emit("str w1, [x0]")
+		g.emit("mov x19, x0")
+		g.emit("b .%s_some", lp)
+	} else if call == "syncfs" && g.darwin {
 		g.emit("mov x1, #1") // F_GETFD
 		g.emit("mov x2, #0")
 		g.syscall("fcntl")
@@ -15702,6 +15762,7 @@ func (g *generator) emitFdCallRuntime(sym, lp, call string, prep func()) {
 	}
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0")
+	g.label("." + lp + "_some")
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]") // Some
@@ -16579,6 +16640,7 @@ type generator struct {
 	usesFdSync         bool
 	usesFdDatasync     bool
 	usesFdSyncfs       bool
+	usesFdDropCache    bool
 	usesFdDupOnto      bool
 	usesSync           bool
 	usesAccess         bool
@@ -16626,11 +16688,15 @@ type generator struct {
 	// renameat2 (Darwin: renameatx_np) with a no-replace or exchange flag.
 	usesRenameNoreplace bool
 	// getxattr / lgetxattr over a path and an attribute name.
-	usesGetxattr  bool
-	usesLgetxattr bool
+	usesGetxattr       bool
+	usesGetxattrBytes  bool
+	usesLgetxattr      bool
+	usesLgetxattrBytes bool
 	// setxattr / lsetxattr over a path, an attribute name and a value.
 	usesSetxattr       bool
+	usesSetxattrBytes  bool
 	usesLsetxattr      bool
+	usesLsetxattrBytes bool
 	usesRenameExchange bool
 	// fchmodat / fchmodat2 over a path, a mode and a follow flag.
 	usesChmodAt bool
@@ -17624,7 +17690,7 @@ func (g *generator) prescanOps(ops []ir.Op) {
 			g.usesSleepMs = true
 		case "sleep_ns":
 			g.usesSleepNs = true
-		case "read_file":
+		case "read_file", "getxattr", "lgetxattr":
 			g.needFern("__fern_utf8_valid")
 		}
 	}
@@ -21369,6 +21435,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesFdSyncfs = true
 			g.usesAlloc = true
 			g.usesIoError = true
+		case "__method_Reader_drop_cache", "__method_Writer_drop_cache":
+			target = "__fern_fd_drop_cache"
+			g.usesFdDropCache = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "__method_Reader_dup_onto", "__method_Writer_dup_onto":
 			target = "__fern_fd_dup_onto"
 			g.usesFdDupOnto = true
@@ -21618,15 +21689,31 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "getxattr":
 			target = "__fern_getxattr"
 			g.usesGetxattr = true
+		case "getxattr_bytes":
+			target = "__fern_getxattr_bytes"
+			g.usesGetxattrBytes = true
+			g.usesAllocU8 = true
+			g.usesArrDec = true
 		case "lgetxattr":
 			target = "__fern_lgetxattr"
 			g.usesLgetxattr = true
+		case "lgetxattr_bytes":
+			target = "__fern_lgetxattr_bytes"
+			g.usesLgetxattrBytes = true
+			g.usesAllocU8 = true
+			g.usesArrDec = true
 		case "setxattr":
 			target = "__fern_setxattr"
 			g.usesSetxattr = true
+		case "setxattr_bytes":
+			target = "__fern_setxattr_bytes"
+			g.usesSetxattrBytes = true
 		case "lsetxattr":
 			target = "__fern_lsetxattr"
 			g.usesLsetxattr = true
+		case "lsetxattr_bytes":
+			target = "__fern_lsetxattr_bytes"
+			g.usesLsetxattrBytes = true
 		case "rename_exchange":
 			target = "__fern_rename_exchange"
 			g.usesRenameExchange = true

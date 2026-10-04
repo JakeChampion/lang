@@ -1548,10 +1548,11 @@ points that run a handler under it.
 - `Config { backlog, reuse_port, recv_deadline, min_data_rate,
   data_rate_grace, response_min_data_rate, response_data_rate_grace,
   keep_alive_idle, keep_alive_requests, max_connections,
-  max_connections_per_ip, workers, shutdown_grace, readiness_path,
-  drain_deadline, limits, stop_with_parent }` (`config()` is 128, one listener per
-  port, the 10 s deadline, 240 bytes per second after 5 s for a request
-  body and the same for a response, 130 s, 1000, 1024 and 100): the
+  max_connections_per_ip, max_in_flight, workers, shutdown_grace,
+  readiness_path, drain_deadline, limits, stop_with_parent }` (`config()` is
+  128, one listener per port, the 10 s deadline, 240 bytes per second after
+  5 s for a request body and the same for a response, 130 s, 1000, 1024, 100
+  and 1024): the
   accept queue
   depth, port sharing between listeners (`SO_REUSEPORT`, ignored on
   wasm; under `supervise` each worker then binds a
@@ -1576,6 +1577,10 @@ points that run a handler under it.
   behaves as 1; at the cap the
   listener is not read, so further connections wait in its accept queue,
   `backlog` deep, the kernel refusing past it, until one closes), how
+  many handlers the loop keeps parked on their waits at once
+  (`max_in_flight`: a handler whose `plat.http` waits on its upstream parks
+  and the loop serves other connections meanwhile; at the cap the listener
+  is not read until one finishes), how
   many of them one client may hold (`max_connections_per_ip`, counted by
   the peer's address key, `net.peer_key`, and by each worker's loop
   alone: a connection past it is closed as it is accepted, without a
@@ -2002,6 +2007,19 @@ old `concurrent { … }` / `await` keyword surface.
   reparented to init (a subreaper other than init, Linux, hides that),
   -ENOTSUP on wasm; the sim's parent never exits.
   `std/serve`'s serve loops run on it.
+- `Task[T]`, `task_new(entry)`, `task_start(t)`, `task_resume(t, woke)`,
+  `task_cancel(t)`, `task_free(t)`, `TaskStatus[T]` (`Done(T)`,
+  `Suspended(Wait)`, `Cancelled`), `Wait` (`set`, `timeout_ms`) and
+  `wait_any(set, timeout_ms)` — a call chain that parks on a set of (fd,
+  interest) pairs under a bound and runs on when its scheduler resumes it
+  with the index of the ready pair, -1 at the timeout (`docs/ASYNC.md` §8,
+  `docs/NET-P3-SUSPENSION-PLAN.md`). `wait_any` blocks when no task is
+  current, which is how std/tcp's recv-with-deadline and std/dns's connect
+  and exchange waits work in a plain program; under a scheduler the
+  self-host compiler lowers every function that reaches it to a resumable
+  form, and the native compiler keeps the blocking fallback, where
+  `task_start` runs its entry to completion. `cancelled()` is what a
+  cancelled task's waits answer from then on.
 
 ### `std/platform`
 

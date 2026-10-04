@@ -635,6 +635,39 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 0 && name == "__heap_alloc_count") {
     return t_i64();
   }
+  // The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4): a record per
+  // task, the current task, the park that unwinds it and the words the
+  // scheduler reads back.
+  if (argc == 0 && name == "__task_new") {
+    return t_i32();
+  }
+  if (argc == 1 && name == "__task_free") {
+    return t_void();
+  }
+  if (argc == 0 && name == "__task_cur") {
+    return t_i32();
+  }
+  if (argc == 2 && name == "__task_enter") {
+    return t_void();
+  }
+  if (argc == 0 && name == "__task_leave") {
+    return t_i32();
+  }
+  if (argc == 2 && name == "__task_park") {
+    return t_i32();
+  }
+  if (argc == 1 && name == "__task_wait") {
+    return t_array(t_i32());
+  }
+  if (argc == 1 && name == "__task_timeout") {
+    return t_i32();
+  }
+  if (argc == 2 && name == "__task_set_ready") {
+    return t_void();
+  }
+  if (argc == 1 && name == "__task_set_cancelled") {
+    return t_void();
+  }
   if (argc == 0 && name == "__heap_mark") {
     return t_i64();
   }
@@ -827,6 +860,36 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   if (name == "__heap_alloc_count") {
     return ([], true);
   }
+  if (name == "__task_new") {
+    return ([], true);
+  }
+  if (name == "__task_free") {
+    return ([t_i32()], true);
+  }
+  if (name == "__task_cur") {
+    return ([], true);
+  }
+  if (name == "__task_enter") {
+    return ([t_i32(), t_i32()], true);
+  }
+  if (name == "__task_leave") {
+    return ([], true);
+  }
+  if (name == "__task_park") {
+    return ([t_array(t_i32()), t_i32()], true);
+  }
+  if (name == "__task_wait") {
+    return ([t_i32()], true);
+  }
+  if (name == "__task_timeout") {
+    return ([t_i32()], true);
+  }
+  if (name == "__task_set_ready") {
+    return ([t_i32(), t_i32()], true);
+  }
+  if (name == "__task_set_cancelled") {
+    return ([t_i32()], true);
+  }
   if (name == "__heap_mark") {
     return ([], true);
   }
@@ -973,6 +1036,7 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__raw_environ", params: [], result: p },
     RawFloorSig { name: "__raw_splice_pipe", params: [], result: p },
     RawFloorSig { name: "__raw_cover", params: [], result: p },
+    RawFloorSig { name: "__raw_task_state", params: [], result: p },
     RawFloorSig { name: "__raw_call1", params: [p, p], result: n },
     RawFloorSig { name: "__raw_call2", params: [p, p, p], result: n },
     RawFloorSig { name: "__fern_str_eq", params: [p, p], result: t_bool() },
@@ -4461,6 +4525,7 @@ function builtin_sigs(): string[] {
     "__method_Reader_close(Reader): Option[IoError]",
     "__method_Reader_dup_onto(Reader, i32): Option[IoError]",
     "__method_Reader_fdatasync(Reader): Option[IoError]",
+    "__method_Reader_drop_cache(Reader, i64, i64): Option[IoError]",
     "__method_Reader_flags(Reader): Result[i64, IoError]",
     "__method_Reader_fsync(Reader): Option[IoError]",
     "__method_Reader_isatty(Reader): boolean",
@@ -4480,6 +4545,7 @@ function builtin_sigs(): string[] {
     "__method_Writer_close(Writer): Option[IoError]",
     "__method_Writer_dup_onto(Writer, i32): Option[IoError]",
     "__method_Writer_fdatasync(Writer): Option[IoError]",
+    "__method_Writer_drop_cache(Writer, i64, i64): Option[IoError]",
     "__method_Writer_flags(Writer): Result[i64, IoError]",
     "__method_Writer_fsync(Writer): Option[IoError]",
     "__method_Writer_isatty(Writer): boolean",
@@ -4522,9 +4588,13 @@ function builtin_sigs(): string[] {
     "create_symlink(string, string): Result[void, IoError]",
     "rename_noreplace(string, string): Result[void, IoError]",
     "getxattr(string, string): Result[string, IoError]",
+    "getxattr_bytes(string, string): Result[u8[], IoError]",
     "lgetxattr(string, string): Result[string, IoError]",
+    "lgetxattr_bytes(string, string): Result[u8[], IoError]",
     "setxattr(string, string, string): Result[void, IoError]",
+    "setxattr_bytes(string, string, u8[]): Result[void, IoError]",
     "lsetxattr(string, string, string): Result[void, IoError]",
+    "lsetxattr_bytes(string, string, u8[]): Result[void, IoError]",
     "rename_exchange(string, string): Result[void, IoError]",
     "env(string): Option[string]",
     "config_get(string): Option[string]",
@@ -11265,6 +11335,38 @@ function payloadless_binder_diags(pv: ast.PatVariant, structs: StructSig[], unio
   return out;
 }
 
+// generic_binder_diags is payloadless_binder_diags for a slot whose declared
+// type is one of its enum's type variables (`Some(T)`): which enum the slot
+// holds is known only from the scrutinee's instantiation, so the rule runs
+// where the arm is typed. A slot declared at a concrete enum is
+// payloadless_binder_diags' and is skipped here.
+function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  let ss: StructSig = find_variant_sig(s.structs.structs, pv.type_name);
+  let slot: i32 = 0;
+  while (slot < pv.extra_bindings.len() + 1) {
+    let nm: string = pv.binding;
+    if (slot > 0) {
+      nm = pv.extra_bindings[slot - 1];
+    }
+    if let typeinfo.TypeUnion(u) = variant_pattern_payload_type(s, pv.type_name, whole, slot) {
+      let declared: string = "";
+      if (ss.name.len() > 0) {
+        declared = payload_slot_type_name(ss, slot);
+      }
+      let owner: string = union_of_variant(nm, s.unions);
+      if (owner.len() == 0) {
+        owner = mx_builtin_enum_of(nm);
+      }
+      if (nm.len() > 0 && nm != "_" && declared != u.name && owner == u.name && variant_payload_count(nm, s.structs.structs) < 0) {
+        out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + u.name + ", but a bare name in a payload slot is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
+      }
+    }
+    slot = slot + 1;
+  }
+  return out;
+}
+
 // match_stmt_own_lambdas checks the match statements inside any lambda sitting
 // in `st`'s own expressions. match_diags walks STATEMENTS and never entered an
 // expression, so a `match` written inside a lambda body escaped E015 / E026 /
@@ -14887,6 +14989,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
               }
               if (!foreign) {
                 armScope = bind_variant_payloads(armScope, cur, apv, check_expr(m.scrutinee, cur));
+                out = util.append_diags(out, generic_binder_diags(apv, cur, mst, elem.line, elem.col));
               }
             },
             _ => {}
@@ -15682,6 +15785,7 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
 // list entry for entry.
 function registered_intrinsics(): string[] {
   return [
+    "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_wait",
     "__abs_f64", "__alloc", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
@@ -17856,7 +17960,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 // from native's table and fails when the two drift.
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
-    "__alloc_u8", "args", "buf_take", "buf_take_bytes", "cell_new", "environ", "getcwd", "getgroups",
+    "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "random_bytes", "read_line", "set_priority",
     "setgid", "setuid",
     "signal_send", "set_process_group", "set_window_size",

@@ -368,9 +368,13 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "rename_noreplace", capability: "fsrename" },
     Gate { builtin: "rename_exchange", capability: "fsrename" },
     Gate { builtin: "getxattr", capability: "xattr" },
+    Gate { builtin: "getxattr_bytes", capability: "xattr" },
     Gate { builtin: "lgetxattr", capability: "xattr" },
+    Gate { builtin: "lgetxattr_bytes", capability: "xattr" },
     Gate { builtin: "setxattr", capability: "xattr" },
+    Gate { builtin: "setxattr_bytes", capability: "xattr" },
     Gate { builtin: "lsetxattr", capability: "xattr" },
+    Gate { builtin: "lsetxattr_bytes", capability: "xattr" },
     // How large the terminal on the other end of a descriptor is. A
     // target with no terminal cannot answer: 0x0 is not "there is no
     // terminal" but "the terminal is empty", and a caller laying out

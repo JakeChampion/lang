@@ -20,7 +20,8 @@ large failed write.
 
 ## Validation
 
-The integrated source includes main `f4de66fd5`. Full Linux units and all
+The integrated source includes main `9c8eb0032` and the prepared byte-Xattr
+dependency `3153a7a13`. Full Linux units and all
 lint gates pass. GNU parity, raw-input fixtures, comparator fixtures and
 primary tests pass on Linux x86-64/ARM64, Darwin ARM64 and WASM as supported.
 Shared consumers cover Stat, LS, Dir, Vdir, Printf, Seq, Numfmt and Od.
@@ -29,9 +30,13 @@ numeric/version/random modes, keys, merging, checking and diagnostics.
 Native and core-WASM runs under the reproduced compiler have balanced
 allocation censuses. Comparator execution also passes in its interpreter.
 
-All three Darwin bootstrap stages are identical at 13,029,377 bytes, SHA-256
-`046ae956a04fd1246653f97fbf575b9d3e27742fb70458f2270ec3dba9b69add`.
-The actual compiler-output corpus passes in 6.303 seconds.
+Both bootstraps use the published `stage0-20261004-ef49ae0` pin. All three
+Linux ARM64 stages are identical at 12,989,312 bytes, SHA-256
+`09de2c7a89319732f2224fe40d481ee07e525df55e1bfd025aad474e83dcf556`.
+All three Darwin stages are identical at 13,195,057 bytes, SHA-256
+`6d9f79e41f0e89d1ca226fac7d0134631882cbe64c665bd59feddd279a9f7413`.
+The actual compiler-output corpus passes in 7.106 seconds. Registry,
+admission, Xattr, byte-scan and task-scheduler integration checks also pass.
 
 ## Measurements
 
@@ -53,16 +58,18 @@ Median elapsed time for 65,536 records:
 
 | Mode | Before | After | GNU 9.12 | uutils 0.12 |
 | --- | ---: | ---: | ---: | ---: |
-| Raw | 6.812 ms | 7.009 ms | 13.821 ms | 6.725 ms |
-| Numeric | 8.344 ms | 8.498 ms | 24.116 ms | 12.615 ms |
-| General numeric | 654.660 ms | 660.137 ms | 43.714 ms | 14.591 ms |
-| Version | 117.904 ms | 97.746 ms | 74.416 ms | 22.582 ms |
-| Check | 2.643 ms | 2.543 ms | 4.774 ms | 4.127 ms |
-| Merge | 4.137 ms | 4.217 ms | 6.986 ms | 4.722 ms |
-| Random | 1091.531 ms | 1087.494 ms | 170.857 ms | Different ordering |
+| Raw | 6.548 ms | 6.598 ms | 13.542 ms | 6.354 ms |
+| Numeric | 7.901 ms | 7.981 ms | 23.176 ms | 11.982 ms |
+| General numeric | 657.753 ms | 670.866 ms | 43.906 ms | 14.625 ms |
+| Version | 120.836 ms | 97.950 ms | 74.433 ms | 23.136 ms |
+| Check | 2.864 ms | 2.769 ms | 4.936 ms | 4.398 ms |
+| Merge | 4.842 ms | 4.639 ms | 9.769 ms | 5.264 ms |
+| Random | 1113.396 ms | 1111.689 ms | 174.292 ms | Different ordering |
 
-Version-sort ranges are disjoint: 116.599-120.268 ms before and
-96.486-102.950 ms after. Every other before/after timing range overlaps.
+Version-sort ranges are disjoint: 118.707-123.126 ms before and
+97.030-100.890 ms after. Every other before/after timing range overlaps.
+Merge timings were noisy across all implementations: 4.157-17.665 ms before
+and 4.175-29.782 ms after, so they establish no speed improvement.
 General numeric and random sorting remain substantially slower than GNU;
 this migration does not resolve that existing performance gap. uutils
 matches every measured result except random ordering, which is recorded as

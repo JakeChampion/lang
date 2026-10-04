@@ -252,6 +252,10 @@ const (
 	sysFdatasync = 75
 	sysSync      = 162
 	sysSyncfs    = 306
+	// fadvise64(2), behind the handle `drop_cache` method, with
+	// POSIX_FADV_DONTNEED as its advice.
+	sysFadvise64      = 221
+	posixFadvDontneed = 4
 	// dup3(2), behind the handle `dup_onto` method. Linux/arm64 has no
 	// dup2 at all, so dup3 is the form both Linux architectures carry.
 	sysDup3 = 292
@@ -706,7 +710,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
 		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
 		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
-		g.usesGetxattr || g.usesLgetxattr || g.usesSetxattr || g.usesLsetxattr ||
+		g.usesGetxattr || g.usesGetxattrBytes || g.usesLgetxattr || g.usesLgetxattrBytes || g.usesSetxattr || g.usesSetxattrBytes || g.usesLsetxattr || g.usesLsetxattrBytes ||
 		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
 		g.usesFree = true
@@ -1116,14 +1120,26 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesGetxattr {
 		g.emitGetxattrRuntime("__fern_getxattr", "gxat", sysGetxattr)
 	}
+	if g.usesGetxattrBytes {
+		g.emitGetxattrRuntime("__fern_getxattr_bytes", "gxatb", sysGetxattr)
+	}
 	if g.usesLgetxattr {
 		g.emitGetxattrRuntime("__fern_lgetxattr", "lgxa", sysLgetxattr)
+	}
+	if g.usesLgetxattrBytes {
+		g.emitGetxattrRuntime("__fern_lgetxattr_bytes", "lgxab", sysLgetxattr)
 	}
 	if g.usesSetxattr {
 		g.emitSetxattrRuntime("__fern_setxattr", "sxat", sysSetxattr)
 	}
+	if g.usesSetxattrBytes {
+		g.emitSetxattrRuntime("__fern_setxattr_bytes", "sxatb", sysSetxattr)
+	}
 	if g.usesLsetxattr {
 		g.emitSetxattrRuntime("__fern_lsetxattr", "lsxa", sysLsetxattr)
+	}
+	if g.usesLsetxattrBytes {
+		g.emitSetxattrRuntime("__fern_lsetxattr_bytes", "lsxab", sysLsetxattr)
 	}
 	if g.usesRenameExchange {
 		g.emitRenameFlagsRuntime("__fern_rename_exchange", "rnex", renameExchange)
@@ -1172,6 +1188,13 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesFdSyncfs {
 		g.emitFdCallRuntime("__fern_fd_syncfs", "sfs", sysSyncfs, nil)
+	}
+	if g.usesFdDropCache {
+		// fadvise64(fd, offset, len, DONTNEED): the offset and length
+		// arrive in rsi and rdx, where the call wants them.
+		g.emitFdCallRuntime("__fern_fd_drop_cache", "fdc", sysFadvise64, func() {
+			g.emit(fmt.Sprintf("mov r10d, %d", posixFadvDontneed))
+		})
 	}
 	if g.usesFdDupOnto {
 		// dup3(own_fd, fd, 0). The destination is sign-extended rather
@@ -1796,6 +1819,7 @@ type generator struct {
 	usesWriterTruncate bool
 	usesFdSync         bool
 	usesFdDatasync     bool
+	usesFdDropCache    bool
 	usesFdSyncfs       bool
 	usesFdDupOnto      bool
 	usesSync           bool
@@ -1848,11 +1872,15 @@ type generator struct {
 	usesRenameNoreplace bool
 	usesRenameExchange  bool
 	// getxattr / lgetxattr over a path and an attribute name.
-	usesGetxattr  bool
-	usesLgetxattr bool
+	usesGetxattr       bool
+	usesGetxattrBytes  bool
+	usesLgetxattr      bool
+	usesLgetxattrBytes bool
 	// setxattr / lsetxattr over a path, an attribute name and a value.
-	usesSetxattr  bool
-	usesLsetxattr bool
+	usesSetxattr       bool
+	usesSetxattrBytes  bool
+	usesLsetxattr      bool
+	usesLsetxattrBytes bool
 	// fchmodat / fchmodat2 over a path, a mode and a follow flag.
 	usesChmodAt bool
 	// truncate(2) over a path and a length.
@@ -2432,6 +2460,10 @@ func (g *generator) recordUse(target string) {
 		g.usesFdSyncfs = true
 		g.usesAlloc = true
 		g.usesIoError = true
+	case "__method_Reader_drop_cache", "__method_Writer_drop_cache":
+		g.usesFdDropCache = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "__method_Reader_dup_onto", "__method_Writer_dup_onto":
 		g.usesFdDupOnto = true
 		g.usesAlloc = true
@@ -2557,21 +2589,45 @@ func (g *generator) recordUse(target string) {
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "getxattr":
+		g.needFern("__fern_utf8_valid")
 		g.usesGetxattr = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
+	case "getxattr_bytes":
+		g.usesGetxattrBytes = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesIoError = true
+		g.usesAllocU8 = true
+		g.usesArrDec = true
 	case "lgetxattr":
+		g.needFern("__fern_utf8_valid")
 		g.usesLgetxattr = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
+	case "lgetxattr_bytes":
+		g.usesLgetxattrBytes = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesIoError = true
+		g.usesAllocU8 = true
+		g.usesArrDec = true
 	case "setxattr":
 		g.usesSetxattr = true
 		g.usesAlloc = true
 		g.usesIoError = true
+	case "setxattr_bytes":
+		g.usesSetxattrBytes = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "lsetxattr":
 		g.usesLsetxattr = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "lsetxattr_bytes":
+		g.usesLsetxattrBytes = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "rename_exchange":
@@ -4316,12 +4372,20 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_rename_noreplace"
 		case "getxattr":
 			target = "__fern_getxattr"
+		case "getxattr_bytes":
+			target = "__fern_getxattr_bytes"
 		case "lgetxattr":
 			target = "__fern_lgetxattr"
+		case "lgetxattr_bytes":
+			target = "__fern_lgetxattr_bytes"
 		case "setxattr":
 			target = "__fern_setxattr"
+		case "setxattr_bytes":
+			target = "__fern_setxattr_bytes"
 		case "lsetxattr":
 			target = "__fern_lsetxattr"
+		case "lsetxattr_bytes":
+			target = "__fern_lsetxattr_bytes"
 		case "rename_exchange":
 			target = "__fern_rename_exchange"
 		case "chmod":
@@ -4388,6 +4452,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_fd_fdatasync"
 		case "__method_Reader_syncfs", "__method_Writer_syncfs":
 			target = "__fern_fd_syncfs"
+		case "__method_Reader_drop_cache", "__method_Writer_drop_cache":
+			target = "__fern_fd_drop_cache"
 		case "__method_Reader_dup_onto", "__method_Writer_dup_onto":
 			target = "__fern_fd_dup_onto"
 		case "sync":
@@ -17825,12 +17891,28 @@ func (g *generator) emitGetxattrRuntime(name, tag string, sysno int) {
 	g.emit("call __fern_free")
 	g.emit("test r15, r15")
 	g.emit("js .L" + tag + "_err")
+	if !strings.HasSuffix(name, "_bytes") {
+		g.emit("mov rdi, [rbp - 88]")
+		g.emit("mov rsi, r15")
+		g.emit("call " + AsmFnName("__fern_utf8_valid"))
+		g.emit("test eax, eax")
+		g.emit("jnz .L" + tag + "_valid")
+		g.emit("mov r15, -84") // synthetic EILSEQ
+		g.emit("jmp .L" + tag + "_err")
+		g.label(".L" + tag + "_valid")
+	}
 	// L2 rc-header layout: payload = N data bytes + 1 NUL.
-	g.emit("lea edi, [r15 + 1]")
-	g.emit("call __fern_alloc_rc1")
-	g.emit("mov rdi, rax")
-	g.emitStrLenStore("r15d", "rdi")
-	g.emit("mov byte ptr [rdi + r15], 0")
+	if strings.HasSuffix(name, "_bytes") {
+		g.emit("mov rdi, r15")
+		g.emit("call __alloc_u8")
+		g.emit("mov rdi, rax")
+	} else {
+		g.emit("lea edi, [r15 + 1]")
+		g.emit("call __fern_alloc_rc1")
+		g.emit("mov rdi, rax")
+		g.emitStrLenStore("r15d", "rdi")
+		g.emit("mov byte ptr [rdi + r15], 0")
+	}
 	g.emit("mov rsi, [rbp - 88]")
 	g.emit("mov rdx, r15")
 	g.emit("call __fern_memcpy") // rax = dst
@@ -17905,8 +17987,13 @@ func (g *generator) emitSetxattrRuntime(name, tag string, sysno int) {
 	g.emitPathzCopy("r14", "[rbp - 64]", "[rbp - 48]", tag+"2")
 	g.emit("mov [rbp - 80], r13")
 	g.emit("mov rdi, [rbp - 88]")
-	g.emitStrLen("r13d", "rdi")
-	g.emitStrDataPtr("r12", "rdi", "[rbp - 48]")
+	if strings.HasSuffix(name, "_bytes") {
+		g.emit("mov r13d, dword ptr [rdi - 4]")
+		g.emit("mov r12, rdi")
+	} else {
+		g.emitStrLen("r13d", "rdi")
+		g.emitStrDataPtr("r12", "rdi", "[rbp - 48]")
+	}
 	g.emit("mov rdi, rbx")
 	g.emit("mov rsi, r14")
 	g.emit("mov rdx, r12")
@@ -18867,7 +18954,7 @@ func (g *generator) emitFdStatRuntime() {
 // emitFdCallRuntime emits a helper that makes ONE syscall on a
 // Reader / Writer handle's descriptor and answers `Option[IoError]` —
 // the three write-back calls (`__fern_fd_fsync` / `__fern_fd_fdatasync`
-// / `__fern_fd_syncfs`) and `__fern_fd_dup_onto`. They differ only in
+// / `__fern_fd_syncfs`), `__fern_fd_drop_cache` and `__fern_fd_dup_onto`. They differ only in
 // the syscall number and in whether anything beyond the descriptor
 // needs setting up, which is what `prep` emits.
 //

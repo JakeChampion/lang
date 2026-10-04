@@ -229,10 +229,14 @@ var gatedBuiltins = map[string]string{
 	// An entry's extended attributes. Neither WASI preview has them, and
 	// an empty answer would claim an attribute is absent from a
 	// filesystem nobody asked.
-	"getxattr":  "xattr",
-	"lgetxattr": "xattr",
-	"setxattr":  "xattr",
-	"lsetxattr": "xattr",
+	"getxattr":        "xattr",
+	"getxattr_bytes":  "xattr",
+	"lgetxattr":       "xattr",
+	"lgetxattr_bytes": "xattr",
+	"setxattr":        "xattr",
+	"setxattr_bytes":  "xattr",
+	"lsetxattr":       "xattr",
+	"lsetxattr_bytes": "xattr",
 	// Who OWNS an entry. A host can have files, directories and
 	// permission bits and still have no users to attach them to, which
 	// is what both WASI previews are: preview 1's `filestat` has no uid

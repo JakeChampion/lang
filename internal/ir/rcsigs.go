@@ -358,12 +358,16 @@ var rcInertBuiltins = map[string]bool{
 	// (path, name) → Result[string]: two borrowed strings in, a fresh
 	// value out. Native-only — E066 refuses both on the wasm worlds
 	// (`xattr`).
-	"getxattr":  true,
-	"lgetxattr": true,
+	"getxattr":        true,
+	"getxattr_bytes":  true,
+	"lgetxattr":       true,
+	"lgetxattr_bytes": true,
 	// (path, name, value) → Result[void]: three borrowed strings in,
 	// nothing retained.
-	"setxattr":  true,
-	"lsetxattr": true,
+	"setxattr":        true,
+	"setxattr_bytes":  true,
+	"lsetxattr":       true,
+	"lsetxattr_bytes": true,
 	// (pid, sig) → Result. Two scalars in and nothing retained.
 	// Native-only — E066 refuses it on both wasm worlds, which have no
 	// process table to name a target in — so it is classified here under
@@ -564,6 +568,7 @@ var rcInert = map[string]bool{
 	"__fern_reader_splice": true,
 	"__fern_reader_flags":  true, "__fern_writer_flags": true,
 	"__fern_fd_fsync": true, "__fern_fd_fdatasync": true, "__fern_fd_syncfs": true,
+	"__fern_fd_drop_cache":          true,
 	"__fern_fd_dup_onto":            true,
 	"__fern_handle_window_size":     true,
 	"__fern_handle_set_window_size": true,

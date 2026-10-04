@@ -364,14 +364,9 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 // lspCases are programs both front ends judge alike, placed through every
 // shape the wire conversion has: no diagnostic, one, several, a line with
 // non-ASCII before the position (2- and 4-byte UTF-8: one and two UTF-16
-// units), CRLF line endings, a parse marker, a positionless refusal, and
-// imports from a sibling and from the stdlib.
-//
-// Two shapes are left out because native is the one that is wrong: a
-// top-level const, which fern-lsp reports as undefined at every use because
-// it skips `-check`'s const fold, and a cross-module visibility error, which
-// it publishes at 0:0 (#11314). TestSelfHostLSPPublishesCheckFindingsX86_64
-// covers both on the self-host side.
+// units), CRLF line endings, a parse marker, a positionless refusal, a
+// top-level const, imports from a sibling and from the stdlib, and a
+// sibling's private function.
 var lspCases = []struct {
 	name  string
 	files map[string]string // main.fern is the document opened
@@ -395,6 +390,11 @@ var lspCases = []struct {
 		"lib.fern":  "pub function shown(): i32 { return 2; }\n",
 	}},
 	{"stdlib-import", map[string]string{"main.fern": "import \"std/string\";\nfunction main(): i32 {\n  let s: string = \"abc\";\n  return s.len() + w;\n}\n"}},
+	{"const", map[string]string{"main.fern": "const LIMIT: i32 = 10;\nfunction main(): i32 {\n  return LIMIT + y;\n}\n"}},
+	{"private-in-sibling", map[string]string{
+		"main.fern": "import \"./lib\";\nfunction main(): i32 {\n  return lib.hidden();\n}\n",
+		"lib.fern":  "function hidden(): i32 { return 1; }\n",
+	}},
 }
 
 // TestSelfHostLSPDiagnosticsMatchFernLSPX86_64 is the differential the issue
@@ -598,8 +598,8 @@ func utf16Column(lines []string, ln, col int) int {
 // definition: what it publishes for a document is what `-check` reports for
 // that file — every finding in the document, at its position, with its code,
 // severity and message — and nothing else. It runs over every rejection case
-// in the conformance corpus, where `-check` has the most to say, plus the
-// shapes lspCases leaves out because native gets them wrong.
+// in the conformance corpus, where `-check` has the most to say, plus a few
+// shapes the corpus does not have.
 //
 // This is what makes the server's diagnostics the self-host checker's, so the
 // checker differentials gate them too. Where those report a gap, the server

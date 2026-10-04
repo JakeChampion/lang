@@ -8,13 +8,12 @@ import (
 	"testing"
 )
 
-// The `poll(fds, timeout_ms)` builtin is real on the native backends (poll(2) /
-// ppoll(2)) and on wasm (forwards to wasi:io/poll.poll over the tokens as
-// pollable handles — docs/ASYNC-FUTURE-UNIFICATION.md). On interp it stays a
-// `-1` ("no fd ready") stub (no real fds). This pins that interp `poll([], 0)`
-// returns -1, and a poll-using program still compiles on wasm (now pulling the
-// io/poll composition rather than the old stub).
-func TestPollStubInterpWasm(t *testing.T) {
+// The `poll(fds, timeout_ms)` builtin is poll(2) / ppoll(2) on the native
+// backends, wasi:io/poll.poll over the tokens as pollable handles on wasm
+// (docs/ASYNC-FUTURE-UNIFICATION.md), and a set over the handles' descriptors
+// on the interpreter. This pins that interp `poll([], 0)` answers -1 for the
+// empty set, and that a poll-using program compiles on wasm.
+func TestPollEmptySetInterpWasm(t *testing.T) {
 	bin := buildFernCLI(t)
 	const src = `function main(): i32 {
     let fds: i32[] = [];

@@ -1993,6 +1993,26 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
 		Result: ast.VoidType{},
 	}
+	// The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4): a record per
+	// task, the current task, the park that unwinds it, and the words its
+	// scheduler reads back. std/async's Task API is written over them. Only
+	// the self-host compiler suspends; here they take the blocking fallback,
+	// so no task is ever current and a park is never reached.
+	i32T := ast.NumberType{}
+	for name, sig := range map[string]*ast.FuncType{
+		"__task_new":           {Params: []ast.Type{}, Result: i32T},
+		"__task_free":          {Params: []ast.Type{i32T}, Result: ast.VoidType{}},
+		"__task_cur":           {Params: []ast.Type{}, Result: i32T},
+		"__task_enter":         {Params: []ast.Type{i32T, i32T}, Result: ast.VoidType{}},
+		"__task_leave":         {Params: []ast.Type{}, Result: i32T},
+		"__task_park":          {Params: []ast.Type{ast.ArrayType{Elem: i32T}, i32T}, Result: i32T},
+		"__task_wait":          {Params: []ast.Type{i32T}, Result: ast.ArrayType{Elem: i32T}},
+		"__task_timeout":       {Params: []ast.Type{i32T}, Result: i32T},
+		"__task_set_ready":     {Params: []ast.Type{i32T, i32T}, Result: ast.VoidType{}},
+		"__task_set_cancelled": {Params: []ast.Type{i32T}, Result: ast.VoidType{}},
+	} {
+		c.info.FuncSigs[name] = sig
+	}
 	// f32_bits(x: f32): i32 — reinterprets a 32-bit float as its
 	// IEEE-754 bit pattern. f32_from_bits is the inverse. The pair
 	// is needed by float formatting routines (extracting sign /
@@ -3256,8 +3276,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	}
 	// getxattr(path, name): Result[string, IoError] — the value of the
 	// extended attribute `name` on `path`, `getxattr(2)`. The value is
-	// the attribute's bytes verbatim: an SELinux context keeps the NUL
-	// the kernel stores after it. An absent attribute is ENODATA
+	// UTF-8 validated, including NUL: an SELinux context keeps the NUL
+	// the kernel stores after it. Invalid text is InvalidUtf8(path).
+	// An absent attribute is ENODATA
 	// (Darwin's ENOATTR), a filesystem without attributes EOPNOTSUPP,
 	// and the Err carries which. lgetxattr is the same question about
 	// a final symlink itself, the way `lstat` is. Native only: neither
@@ -3289,6 +3310,24 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
 				ast.VoidType{},
 				ast.EnumType{Name: "IoError"},
+			}},
+		}
+	}
+	// Raw siblings preserve arbitrary attribute bytes. The setters borrow
+	// their byte arrays, and the getters return an independently owned array.
+	for _, name := range []string{"getxattr_bytes", "lgetxattr_bytes"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+				ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.EnumType{Name: "IoError"},
+			}},
+		}
+	}
+	for _, name := range []string{"setxattr_bytes", "lsetxattr_bytes"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.StringType{}, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+				ast.VoidType{}, ast.EnumType{Name: "IoError"},
 			}},
 		}
 	}
@@ -4091,6 +4130,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// rather than a mount — so it answers `Err(Unsupported)` there.
 	registerStructMethod("Reader", "syncfs", nil, optionIoErr)
 	registerStructMethod("Writer", "syncfs", nil, optionIoErr)
+	// drop_cache(offset, len) asks the kernel to drop the cached pages of
+	// that range of the handle's file: posix_fadvise(2) with
+	// POSIX_FADV_DONTNEED, len 0 meaning to the end. XNU has no fadvise, so
+	// arm64-darwin answers `Err(Unsupported)`; WASI's fd_advise /
+	// descriptor.advise carry the same advice and answer what the host does.
+	dropCacheArgs := []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}}
+	registerStructMethod("Reader", "drop_cache", dropCacheArgs, optionIoErr)
+	registerStructMethod("Writer", "drop_cache", dropCacheArgs, optionIoErr)
 	// sync(): void — `sync(2)`, which schedules write-back of every
 	// dirty buffer on the machine. It returns nothing and cannot fail
 	// on either Linux or Darwin, so there is no Result to unwrap.

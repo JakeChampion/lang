@@ -291,7 +291,52 @@ a text-typed response would be a `string` that is not well-formed UTF-8
 
 ---
 
-## 8. How it works (one paragraph)
+## 8. Tasks: parking a call chain (self-host compiler)
+
+`async.wait_any(set, timeout_ms)` waits for any of the (fd, interest) pairs
+in `set` (1 readable, 2 writable), bounded by `timeout_ms` (-1 for none),
+and answers the index of the pair that became ready or -1 at the timeout.
+With no task current it blocks: one `poll` for a read-only set, a reactor
+made for the call otherwise. Under a scheduler it *parks*: the self-host
+compiler lowers every function that reaches the park to a resumable form, so
+the whole call chain above the wait saves its locals and returns to the
+scheduler, and runs on from the wait when the scheduler resumes it. Nothing
+is written at the call site: a function that calls `wait_any`, or calls one
+that does, is lowered that way by reachability (`examples/self_host/suspend.fern`).
+The fetch client's waits are such calls: `tcp.tcp_recv_deadline`, the DNS
+exchange's receive waits and `dns.connect_race`'s connect wait all go
+through `wait_any`, so a `fetch.send` inside a task parks at each of them.
+
+```fern
+let t: async.Task[i32] = async.task_new(() => handler());
+let st: async.TaskStatus[i32] = async.task_start(t);
+match (st) {
+    Done(v) => { … },
+    Suspended(w) => {
+        // w.set and w.timeout_ms are what the task waits for; here the
+        // scheduler waits on them itself.
+        let woke: i32 = async.wait_any(w.set, w.timeout_ms);
+        st = async.task_resume(t, woke);
+    },
+    Cancelled => { … }
+}
+async.task_free(t);
+```
+
+`task_resume(t, woke)` makes the parked `wait_any` answer `woke`;
+`task_cancel(t)` runs the task on with every wait answering
+`async.cancelled()` and never parking again, which is how a disconnected
+client's handler winds down through its own control flow (`defer`s
+included). The native compiler keeps the blocking fallback: no task is ever
+current, so `task_start` runs its entry to completion and both paths behave
+as a plain program does. `docs/NET-P3-SUSPENSION-PLAN.md` is the design and
+what remains (the wasm runtime bodies, cancellation through the
+combinators, the sim's task driver). `std/serve`'s stateless loop is the
+scheduler for handlers: a handler that parks becomes a flight the loop
+watches on its reactor, and the loop serves other connections until the
+flight runs on and answers.
+
+## 9. How it works (one paragraph)
 
 A `Future[T]` is either a ready value or an fd plus a continuation. The
 combinators gather the pending futures' fds, block once in the universal `poll`

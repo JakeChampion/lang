@@ -1,11 +1,11 @@
 # Networking P3 — inferred suspension (plan)
 
-> Status: **plan, 2026-10-04.** Phase P3 of #9851, tracked in #9857. The
-> decision it implements is #9856 (B): functions that reach a platform wait
-> are lowered to resumable state machines at the IR level, the surface stays
-> colorless, the worker's reactor drives them. This document says what that
-> costs, where each piece lives, and in what order it lands. Nothing in it is
-> built yet.
+> Status: **in progress, 2026-10-04.** Phase P3 of #9851, tracked in #9857.
+> The decision it implements is #9856 (B): functions that reach a platform
+> wait are lowered to resumable state machines at the IR level, the surface
+> stays colorless, the worker's reactor drives them. This document says what
+> that costs, where each piece lives, and in what order it lands. §4 marks
+> the slices that have landed.
 
 ## 1. What P3 has to deliver
 
@@ -80,18 +80,22 @@ computation until a readiness token fires*. So the design has one primitive,
 __suspend(token: i32): i32     // returns the readiness word, or the cancel mark
 ```
 
-and the suspendable set is exactly the functions that reach `__suspend`
-transitively in the monomorphised call graph. `effects.Build` already computes
-that graph; the classifier is a reachability query on it with `__suspend` as
-the only source. `handle[P: platform.Platform]` instantiated at `Host` or
+and the suspendable set is exactly the functions that reach it transitively
+in the monomorphised call graph. As built, the primitive is
+`__task_park(set, timeout_ms)`, reached only through
+`async.wait_any(set, timeout_ms)`, which blocks on the set instead when no
+task is current; the classifier (`suspend.classify`) is a
+reachability query over the lowered rows with the park as its one source, the
+same closure `semlower.pure_rows` takes for purity. `handle[P: platform.Platform]` instantiated at `Host` or
 `SimPlatform` is in the set; at `MockPlatform` it is not, because the mock
 answers from a table. The serve loop is not in the set: it calls `reactor_wait`
 directly and never `__suspend`.
 
-Only the stdlib calls `__suspend`, in one place: the wait helper the fetch
-client already funnels its connect, DNS, send and receive waits through. A
-handler that calls `plat.http` suspends without a word of syntax, which is the
-colorless property #9856 keeps.
+Only the stdlib calls `__suspend`, in one place: `async.wait_any`, which
+the fetch client's connect, DNS and receive waits go through
+(`tcp.tcp_recv_deadline`, `dns.first_readable` and `dns.readable_within`,
+`dns.connect_race`). A handler that calls `plat.http` suspends without a
+word of syntax, which is the colorless property #9856 keeps.
 
 ### 3.2 Outside a scheduler the primitive blocks, so nothing else changes
 
@@ -148,19 +152,24 @@ slice 2 before anything depends on them.
 ### 3.4 Tasks, the scheduler in `std/serve`, and cancellation
 
 `async.Task` is the unit a scheduler drives: the save area, the mode word,
-the token it waits on, and the entry closure. Its API is three functions:
+the wait it parked on (the (fd, interest) pairs and the bound `wait_any`
+was given), and the entry closure. Its API is three functions:
 
 - `task_start(entry) → Status` runs the entry until it returns or suspends.
 - `task_resume(t) → Status` rewinds and runs to the next suspend or return.
-- `task_cancel(t) → Status` rewinds in *cancel* mode: `__suspend` returns the
-  cancel mark, the lowering treats it as an uncatchable early return at that
-  call, so the frame runs its `defer`s and its ordinary exit path (which is
-  where its `OpRcDec`s are), and each caller does the same up to the entry.
+- `task_cancel(t) → Status` rewinds with the task marked cancelled: the
+  park answers `async.cancelled()` and every later wait answers it at once
+  without parking, so the frame cannot wait again; it winds down through its
+  own control flow (a `plat.http` that returns `Err(Cancelled)`, the handler
+  returning), which runs its `defer`s and its ordinary exit path, where its
+  `OpRcDec`s are, and each caller does the same up to the entry.
 
-`Status` is `Done(result)`, `Suspended(token)` or `Cancelled`. Because cancel
-is a rewind that takes every normal exit path, cancellation needs no separate
-drop routine per suspend point, and the Perceus accounting of a cancelled
-task is the same accounting as a returned one. A task is never discarded
+`Status` is `Done(result)`, `Suspended(token)` or `Cancelled`. Because a
+cancelled task leaves through its normal exit paths, cancellation needs no
+separate drop routine per suspend point, and the Perceus accounting of a
+cancelled task is the same accounting as a returned one. What #9856 called
+"resumed once, uncatchable" holds in the form that matters: the task cannot
+block again, and nothing it does can make the scheduler wait on it. A task is never discarded
 without that rewind: `Task`'s drop runs `task_cancel` if the task is still
 suspended, which is what reclaims a `race` loser once slice 6 makes the
 combinators suspend.
@@ -173,10 +182,11 @@ context the way the refcount question in `BARE-METAL-PLAN.md` is.
 The serve loop becomes a scheduler:
 
 - `handler(req, plat)` becomes `task_start`. `Done` responds as today.
-  `Suspended(token)` records the task against the connection, watches the
-  token's fd on the worker's reactor, and goes back to `drv.wait`. A
-  readiness event on a handler-owned fd resumes that task; `Done` responds;
-  `Suspended` re-arms.
+  `Suspended(wait)` records the task against the connection, watches each
+  pair of `wait.set` on the worker's reactor with its interest, keeps
+  `wait.timeout_ms` as the task's deadline, and goes back to `drv.wait`. A
+  readiness event on a handler-owned fd resumes that task with the pair's
+  index, the deadline with -1; `Done` responds; `Suspended` re-arms.
 - `max_in_flight` bounds the suspended tasks per worker; at the cap the loop
   stops reading further requests (the same backpressure shape as
   `max_connections` unwatching the listener). Requests on one connection stay
@@ -184,8 +194,9 @@ The serve loop becomes a scheduler:
 - A client disconnect on a connection whose task is suspended cancels the
   task before the connection is closed. The timer path for `with_deadline`
   inside a handler is a timer token like any other.
-- `Host.http` watches its sockets on `Host.reactor`, the field that has been
-  waiting for this, and suspends on them.
+- `Host.http` needs nothing of its own: the fetch client's waits are
+  `wait_any` calls, and the scheduler watches what the park hands back.
+  `Host.reactor` stays the loop's handle for what the worker itself watches.
 
 ### 3.5 The two source rules
 
@@ -262,28 +273,55 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    measured against it. It lands asserting the stall P1 documented (the
    hello waits out the upstream), so the suite is green, and slice 5 flips
    the assertion to the answer arriving inside the wait.
-2. **The primitive and the transform, self-host.** `__suspend`, `Task` and
-   the three task builtins; the reachability classifier over
-   `effects.Build`; the unwind/rewind pass on `ir.fern`. Gate: a program
-   where a function three calls deep suspends twice inside a loop and a
-   branch, driven by a hand-written scheduler in the test, on x86-64, arm64
-   and wasm through the self-host CLI; the same program under no scheduler
-   returns the same value through the blocking fallback. Code size and
-   instruction count of the transformed functions recorded in the PR.
-3. **Native and interp fallback.** The four builtins classified in
-   `internal/platforms`, `internal/caps` and both self-host mirrors; blocking
-   lowering on native, interp and wasmbin; the differential rows.
-4. **The client suspends.** `fetch.Sockets` carries the reactor it registers
-   its sockets on, handed `Host.reactor` by `Host.http`, and the fetch wait
-   helper calls `__suspend`; DNS, connect, send and receive waits go through
-   it. Gates: `TestFetchClient`
-   and its twin unchanged in output; the self-host serve twin shows one
-   handler's `plat.http` wait overlapping another connection's request.
-5. **The serve loop drives tasks.** In-flight table, fd-to-task map,
-   `max_in_flight`, disconnect cancels, per-connection serialisation. The
-   slice-1 conformance case flips to pass. The two-fetch handler at 4,096
-   connections joins `net-nightly` with p99 against hyper, and bump bytes
-   per suspended handler join the held-connection heap gate.
+2. **The primitive and the transform, self-host. Landed for the native
+   targets.** The nine `__task_*` primitives (`internal/stdlib/std/async.fern`
+   writes `Task`, `task_start` / `task_resume` / `task_cancel` and `suspend`
+   over them), the runtime in `asmcore.rt_src_task` over a `.bss` state block,
+   the classifier and the unwind/rewind pass in
+   `examples/self_host/suspend.fern`, run from `ssarc.lower` before the
+   peepholes on the rows `semlower` marks. Gate: `TestSelfHostTaskScheduler`
+   (a function three calls deep parks twice inside a loop and a branch, driven
+   by hand, x86-64 and arm64) and `TestTaskSchedulerFallback` (the Go
+   compiler's blocking fallback). The Go compiler, the interp and wasm carry
+   the primitives in the blocking fallback, so every stdlib module compiles
+   everywhere; the wasm runtime bodies that let a wasm task park are the next
+   slice's, and the classifier's indirect-call rule has no closure body
+   reaching a park yet to exercise it.
+3. **Native and interp fallback.** Done with slice 2 for the primitives; the
+   differential rows follow with the first stdlib caller of `suspend`.
+4. **The client suspends. Landed.** `async.wait_any(set, timeout_ms)` is
+   the wait the park carries, (fd, interest) pairs under a bound, which the
+   scheduler reads back as `Suspended(Wait)`. `tcp.tcp_recv_deadline`, the
+   DNS exchange's receive waits and `dns.connect_race`'s connect wait go
+   through it, so a `fetch.send` inside a task parks at each; `tcp_send`
+   stays a blocking write. The interpreter's `poll` became a set over its
+   handles rather than a stub, and the elapsed-time heuristics that told
+   the stub from a timeout went with it. Gates: `TestFetchClient` and its
+   twin unchanged in output; `TestSelfHostFetchTask` runs a fetch inside a
+   hand-driven task and fetches again while it is parked;
+   `TestFetchTaskFallback` is the Go compiler's blocking twin. The serve
+   twin that shows one handler's wait overlapping another connection's
+   request is slice 5's, with the scheduler.
+5. **The serve loop drives tasks. Landed for the stateless loop.** Each
+   request's handler runs as a task; one that parks becomes a flight (its
+   task, its connection, the pairs it waits on watched on the worker's
+   reactor, its bound as a due time, and what its response needs), and the
+   loop goes back to its wait. A readiness event on a flight's descriptor
+   resumes it with the pair's index, its due time with -1; `Done` answers
+   on the connection outside any burst and leaves a framed request behind
+   it as backlog, `Suspended` re-arms, `Cancelled` closes. A connection
+   with a flight takes no further request until it answers (pipelined
+   requests stay in order), reads what the peer sends meanwhile, remembers
+   the end of its stream, and a hang-up on it cancels the flight.
+   `Config.max_in_flight` (1024) gates the listener as `max_connections`
+   does, and a stopping loop cancels every flight as it ends. The
+   slice-1 conformance case flipped to pass (`TestSelfHostServeHandlersOverlap`).
+   The stateful loop (`run_with`) still runs its handler to completion:
+   its state threads through the handler chain, so a parked handler would
+   hold it from every other request. Still open from this slice: the
+   two-fetch handler at 4,096 connections in `net-nightly` with p99 against
+   hyper, and bump bytes per suspended handler in the held-connection heap
+   gate.
 6. **Cancellation semantics.** Cancel-mode rewind runs `defer`s; `Task`'s
    drop cancels; `gather_on`, `race_on` and `with_deadline_on` suspend on
    their token set under a scheduler instead of polling, and a `race` loser

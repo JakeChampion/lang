@@ -10090,9 +10090,9 @@ pub function builtin_function_names(): string[] {
     // the rename the kernel conditions: refuse an existing destination, or swap
     "rename_noreplace", "rename_exchange",
     // an entry's extended attribute, following a final symlink or not
-    "getxattr", "lgetxattr",
+    "getxattr", "getxattr_bytes", "lgetxattr", "lgetxattr_bytes",
     // create or replace one
-    "setxattr", "lsetxattr",
+    "setxattr", "setxattr_bytes", "lsetxattr", "lsetxattr_bytes",
     // the metadata writes on an entry that already exists: its permission
     // bits (with and without following a final symlink) and its two
     // timestamps

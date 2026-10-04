@@ -2389,9 +2389,9 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "stat", "lstat", "statfs", "access", "read_file",
     "read_file_bytes", "read_file_bytes_u8", "remove_file", "create_dir_all", "create_dir",
-    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr", "chmod", "chmod_at",
+    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
-    "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
+    "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority",
@@ -2408,11 +2408,11 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "str_read_line", "strbuf", "buf", "reader",
     "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
     "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
-    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr", "chmod", "chmod_at",
+    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs",
-    "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "subprocess",
+    "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "subprocess",
     "signal_send", "set_process_group", "set_priority",
   ]);
 }
@@ -5815,7 +5815,7 @@ function emit_mismatch_x86(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let lb: string = mlo.name;
   s = mlo.state;
   s = s.write("    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rax\n");
-  if (o.kind_tag == 366) {
+  if (o.kind_tag == 378) {
     s = s.write("    movq (%rax), %r9\n    addq $8, %rax\n");
     s = s.write("    movq (%rdx), %r10\n    addq $8, %rdx\n");
   } else {
@@ -5833,7 +5833,7 @@ function emit_mismatch_x86(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(lb + "_na:\n    cmpq %r10, %r8\n    jle " + lb + "_nb\n    movq %r10, %r8\n");
   s = s.write(lb + "_nb:\n    cmpq $0, %r8\n    jge " + lb + "_nok\n    xorq %r8, %r8\n");
   s = s.write(lb + "_nok:\n");
-  if (o.kind_tag == 366 && !ir.is_packed(o)) {
+  if (o.kind_tag == 378 && !ir.is_packed(o)) {
     s = s.write("    leaq (%rax,%rsi,8), %rsi\n    leaq (%rdx,%rcx,8), %rcx\n    xorq %rdx, %rdx\n");
     s = s.write(lb + "_slots:\n    cmpq %r8, %rdx\n    jge " + lb + "_slots_done\n");
     s = s.write("    movzbq (%rsi,%rdx,8), %rax\n    movzbq (%rcx,%rdx,8), %rdi\n    cmpq %rdi, %rax\n    jne " + lb + "_slots_done\n");
@@ -6323,7 +6323,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(b_done + ":\n    movzwq %cx, %rcx\n    pushq %rcx\n");
     return s;
   }
-  if (o.kind_tag == 327 || o.kind_tag == 367) {  // count_runs / count_runs_bytes
+  if (o.kind_tag == 327 || o.kind_tag == 379) {  // count_runs / count_runs_bytes
     // operand stack [box, inside, set] (set on top) -> how many runs of
     // set members begin in the string. The set's length is at (set) and
     // its byte i in the 8-byte slot 8 + i*8; a byte past that length is
@@ -6338,7 +6338,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_done: string = clo3.name;
     s = clo3.state;
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-    if (o.kind_tag == 367) {
+    if (o.kind_tag == 379) {
       s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
     } else {
       s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
@@ -6347,7 +6347,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    xorq %r11, %r11\n    xorq %rcx, %rcx\n    movq (%rdx), %rsi\n");
     s = s.write(c_loop + ":\n");
     s = s.write("    cmpq %r8, %rcx\n    jge " + c_done + "\n");
-    if (o.kind_tag == 367 && !ir.is_packed(o)) {
+    if (o.kind_tag == 379 && !ir.is_packed(o)) {
       s = s.write("    movzbq (%rax,%rcx,8), %r10\n");
     } else {
       s = s.write("    movzbq (%rax,%rcx), %r10\n");
@@ -6485,7 +6485,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(a_done + ":\n    pushq %rdx\n");
     return s;
   }
-  if (o.kind_tag == 245 || o.kind_tag == 366) {  // mismatch / mismatch_bytes
+  if (o.kind_tag == 245 || o.kind_tag == 378) {  // mismatch / mismatch_bytes
     return emit_mismatch_x86(o, s);
   }
   if (o.kind_tag == 104) {  // str_bytes
@@ -6697,23 +6697,31 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
   return ssa_mov_rr(s, reg, home);
 }
 
-// ssa_label and ssa_branch write a label definition and a jump, conditional
-// jump or call to one. Both take a name the emitter composed itself, from
-// its label prefix or through sanitize_label, with nothing in it the text
-// path reads as more than a name; as records they skip that path's memo
-// lookup and comment and label scans, and are assembled as it would have.
-function ssa_label(s: asmcore.EmitState, name: string): asmcore.EmitState {
+// ssa_branch jumps to one of the emitter's own labels: by id when records
+// are on (asmcore.Lab), by name in the text.
+function ssa_branch(s: asmcore.EmitState, mnem: string, l: asmcore.Lab): asmcore.EmitState {
   if (s.records()) {
-    return s.mark("\x02", name);
+    let kind: i32 = x86_native.x86_rec_jump_kind(mnem);
+    if (kind >= 0) {
+      return s.lab_ref(kind as i64, l);
+    }
   }
-  return s.write(name + ":\n");
+  return s.write("    " + mnem + " " + l.name + "\n");
 }
 
-function ssa_branch(s: asmcore.EmitState, mnem: string, name: string): asmcore.EmitState {
+// ssa_call_sym calls a function symbol, which keeps its name: the record
+// line skips the text path's memo lookup and comment and label scans.
+function ssa_call_sym(s: asmcore.EmitState, name: string): asmcore.EmitState {
   if (s.records()) {
-    return s.mark("\x03", mnem + " " + name);
+    return s.mark("\x03", "call " + name);
   }
-  return s.write("    " + mnem + " " + name + "\n");
+  return s.write("    call " + name + "\n");
+}
+
+// ssa_blab is block `id`'s label: its id from the function's base, its name
+// from the prefix.
+function ssa_blab(fr: SsaFrame, lp: string, id: i32): asmcore.Lab {
+  return asmcore.Lab { id: fr.lbase + id, name: lp + util.i32_to_string(id) };
 }
 
 // The instruction helpers below hand the assembler the encoded bytes when it
@@ -7549,10 +7557,13 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   s = helper_call_needs(ins.str, s);
   s = ssa_read(reg_of, ins.args[0], "%r11", s);
   let p: string = ssa_src(reg_of, ins.args[0], "%r11");
-  let done: string = lp + "rcinc" + util.i32_to_string(ins.result);
+  let dname: string = lp + "rcinc" + util.i32_to_string(ins.result);
   if (ins.str == "__fern_rc_is_unique") {
-    done = lp + "rcuniq" + util.i32_to_string(ins.result);
+    dname = lp + "rcuniq" + util.i32_to_string(ins.result);
   }
+  let dn: asmcore.LabNew = asmcore.lab_new(s, dname);
+  s = dn.state;
+  let done: asmcore.Lab = dn.lab;
   let rc: string = "-8(" + p + ")";
   let rb: string = p;
   if (ins.imm != 4) {
@@ -7564,21 +7575,23 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.write("    xorl %ecx, %ecx\n");
     s = ssa_rc_guard(s, p, done, ins.imm != 4);
     s = s.write(ssa_rc_is_one(rc, s.rc_free_debug));
-    s = s.write("    jne " + done + "\n");
-    s = s.write("    movl $1, %ecx\n" + done + ":\n");
+    s = ssa_branch(s, "jne", done);
+    s = s.write("    movl $1, %ecx\n");
+    s = s.lab_def(done);
     s = s.write("    movq %rcx, " + d + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
   s = ssa_rc_guard(s, p, done, ins.imm != 4);
   if (s.rc_free_debug) {
     s = s.write("    movl " + rc + ", %ecx\n" + san_poison_check("%ecx"));
-    s = s.write("    testl %ecx, %ecx\n    js " + done + "\n");
+    s = s.write("    testl %ecx, %ecx\n");
+    s = ssa_branch(s, "js", done);
     s = s.write("    addl $1, %ecx\n    movl %ecx, " + rc + "\n");
   } else {
     s = ssa_branch(ssa_alu_im(s, 7, 32, 0, rb, 0 - 8), "js", done);
     s = ssa_alu_im(s, 0, 32, 1, rb, 0 - 8);
   }
-  s = ssa_label(s, done);
+  s = s.lab_def(done);
   // rc_inc hands the pointer back; a result with no home stores nothing.
   return ssa_store(reg_of, ins.result, p, s);
 }
@@ -7586,7 +7599,7 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 // ssa_rc_guard jumps to `done` for a pointer with no count to touch: an inline
 // string's tag bit, or below the heap floor (every null). `strip` clears the
 // view bit into %rdx, the base the count is read through.
-function ssa_rc_guard(s: asmcore.EmitState, p: string, done: string, strip: boolean): asmcore.EmitState {
+function ssa_rc_guard(s: asmcore.EmitState, p: string, done: asmcore.Lab, strip: boolean): asmcore.EmitState {
   s = ssa_branch(ssa_test_bit(s, 1, p), "jnz", done);
   s = ssa_branch(ssa_cmp_floor(s, p), "jb", done);
   if (strip) {
@@ -7608,7 +7621,7 @@ function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
     ha = ha + 1;
   }
   s = ssa_parallel_moves(hsrc, hdst, s);
-  s = ssa_branch(s, "call", ircore.ir_helper_symbol(ins.str) + ".r");
+  s = ssa_call_sym(s, ircore.ir_helper_symbol(ins.str) + ".r");
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
@@ -7623,9 +7636,13 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
   s = ssa_read(reg_of, ins.args[0], "%r11", s);
   let p: string = ssa_src(reg_of, ins.args[0], "%r11");
   let id: string = util.i32_to_string(ins.result);
-  let dec: string = lp + "rcdecd" + id;
-  let kept: string = lp + "rcdeck" + id;
-  let done: string = lp + "rcdece" + id;
+  let dn: asmcore.LabNew = asmcore.lab_new(s, lp + "rcdecd" + id);
+  let kn: asmcore.LabNew = asmcore.lab_new(dn.state, lp + "rcdeck" + id);
+  let en: asmcore.LabNew = asmcore.lab_new(kn.state, lp + "rcdece" + id);
+  s = en.state;
+  let dec: asmcore.Lab = dn.lab;
+  let kept: asmcore.Lab = kn.lab;
+  let done: asmcore.Lab = en.lab;
   if (ins.str == "__fern_str_free") {
     s = ssa_branch(ssa_test_bit(s, 1, p), "jnz", kept);
   }
@@ -7633,10 +7650,10 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
   s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, 0 - 8), "jg", dec);
   s = ssa_branch(ssa_alu_im(s, 7, 32, 0, p, 0 - 8), "js", kept);
   s = ssa_helper_call(ins, reg_of, s);
-  s = ssa_label(ssa_branch(s, "jmp", done), dec);
-  s = ssa_label(ssa_alu_im(s, 5, 32, 1, p, 0 - 8), kept);
+  s = ssa_branch(s, "jmp", done).lab_def(dec);
+  s = ssa_alu_im(s, 5, 32, 1, p, 0 - 8).lab_def(kept);
   s = ssa_store(reg_of, ins.result, p, s);
-  return ssa_label(s, done);
+  return s.lab_def(done);
 }
 
 // ssa_call emits one call as the stack machine leaves it: the arguments pushed
@@ -7662,6 +7679,8 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     s = helper_call_needs(ins.str, s);
   } else if (ircore.is_c_call(ins.str)) {
     s = s.need("ccall:" + ins.str);
+  } else if (ircore.is_task_runtime_fn(ins.str)) {
+    s = s.need("task");
   }
   let i: i32 = 0;
   while (i < argc) {
@@ -7673,9 +7692,9 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     i = i + 1;
   }
   if (helper) {
-    s = ssa_branch(s, "call", ircore.ir_helper_symbol(ins.str));
+    s = ssa_call_sym(s, ircore.ir_helper_symbol(ins.str));
   } else {
-    s = ssa_branch(s, "call", "__fn_" + asmcore.sanitize_label(ins.str));
+    s = ssa_call_sym(s, "__fn_" + asmcore.sanitize_label(ins.str));
   }
   if (argc > 0) {
     s = s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n");
@@ -7696,7 +7715,7 @@ function ssa_reg_call_emit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState):
     a = a + 1;
   }
   s = ssa_parallel_moves(srcs, dsts, s);
-  return ssa_branch(s, "call", "__fn_" + asmcore.sanitize_label(ins.str) + ".r");
+  return ssa_call_sym(s, "__fn_" + asmcore.sanitize_label(ins.str) + ".r");
 }
 
 // Shared and static releases finish before allocating a frame. Keeping the
@@ -8284,6 +8303,9 @@ function sym_addr_need(sym: string): string {
   if (sym == "__fern_cov_counters") {
     return "raw_cover";
   }
+  if (sym == "__fern_task_state") {
+    return "task";
+  }
   return "";
 }
 
@@ -8479,7 +8501,7 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
 // SsaFrame is the frame below the values: three words per frame-resident
 // string view after the values. ssa_view_off is the offset of a view's lowest
 // word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, epilogue: string, imm: ssa.Imms, lit0: i32[] }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, epilogue: string, imm: ssa.Imms, lit0: i32[], lbase: i32 }
 
 // SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
 // instructions (the compare, and the `not` between it and the branch when
@@ -8865,11 +8887,11 @@ function ssa_epilogue(): string {
 
 // ssa_jump is the branch to block `to`, or nothing when `to` is the block
 // emitted next and control falls into it.
-function ssa_jump(lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_jump(fr: SsaFrame, lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore.EmitState {
   if (to == next) {
     return s;
   }
-  return ssa_branch(s, "jmp", lp + util.i32_to_string(to));
+  return ssa_branch(s, "jmp", ssa_blab(fr, lp, to));
 }
 
 // ssa_brif branches on a value, or on the flags a fused compare left (fu.n
@@ -8890,17 +8912,19 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   let tr: string = ssa_src(reg_of, tv, "%r11");
   if (t.t == t.f) {
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
-    return ssa_jump(lp, t.t, next, s);
+    return ssa_jump(fr, lp, t.t, next, s);
   }
-  let fl: string = lp + util.i32_to_string(t.f);
+  let fl: asmcore.Lab = ssa_blab(fr, lp, t.f);
   let stub: boolean = ssa_has_phis(f, fr, t.f);
   if (stub) {
-    fl = lp + "e" + util.i32_to_string(blk.id) + "_" + util.i32_to_string(t.f);
+    let sn: asmcore.LabNew = asmcore.lab_new(s, lp + "e" + util.i32_to_string(blk.id) + "_" + util.i32_to_string(t.f));
+    s = sn.state;
+    fl = sn.lab;
   }
   // When the false target is the next block and neither edge carries phi
   // moves, branch on the condition itself and fall through.
   if (!stub && t.f == next && !ssa_has_phis(f, fr, t.t)) {
-    let tl: string = lp + util.i32_to_string(t.t);
+    let tl: asmcore.Lab = ssa_blab(fr, lp, t.t);
     if (fu.n > 0 && fu.tag == 0) {
       return ssa_branch(ssa_test_rr(s, tr, tr), "jz", tl);
     }
@@ -8918,13 +8942,13 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   }
   s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
   if (stub) {
-    s = ssa_branch(s, "jmp", lp + util.i32_to_string(t.t));
+    s = ssa_branch(s, "jmp", ssa_blab(fr, lp, t.t));
     s = ssa_x0_forget(s);
-    s = ssa_label(s, fl);
+    s = s.lab_def(fl);
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.f, s);
-    return ssa_jump(lp, t.f, next, s);
+    return ssa_jump(fr, lp, t.f, next, s);
   }
-  return ssa_jump(lp, t.t, next, s);
+  return ssa_jump(fr, lp, t.t, next, s);
 }
 
 // ssa_fused_test sets the flags a block's fused compare leaves for its branch
@@ -8963,15 +8987,17 @@ function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string,
   s = helper_call_needs("__fern_rc_is_unique", s);
   s = ssa_read(reg_of, v, "%r11", s);
   let p: string = ssa_src(reg_of, v, "%r11");
-  s = ssa_branch(ssa_test_bit(s, 1, p), "jnz", join);
-  s = ssa_branch(ssa_cmp_floor(s, p), "jb", join);
+  let jn: asmcore.LabNew = asmcore.lab_new(s, join);
+  s = jn.state;
+  s = ssa_branch(ssa_test_bit(s, 1, p), "jnz", jn.lab);
+  s = ssa_branch(ssa_cmp_floor(s, p), "jb", jn.lab);
   let rc: string = "-8(" + p + ")";
   if (!aligned) {
     s = s.write("    movq " + p + ", %rdx\n    andq $-3, %rdx\n");
     rc = "-8(%rdx)";
   }
-  s = s.write(ssa_rc_is_one(rc, s.rc_free_debug) + join + ":\n");
-  return s;
+  s = s.write(ssa_rc_is_one(rc, s.rc_free_debug));
+  return s.lab_def(jn.lab);
 }
 
 // ssa_rc_is_one compares the count at `rc` with one, through %edx when the
@@ -9029,7 +9055,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
       let hfu: SsaFuse = ssa_fuse(fr, h);
       return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, ssa_join(lp, blk.id), s));
     }
-    return ssa_jump(lp, t.target, next, s);
+    return ssa_jump(fr, lp, t.target, next, s);
   }
   if (t.kind_tag == 3) {
     return ssa_brif(f, fr, blk, reg_of, lp, next, fu, s);
@@ -9181,7 +9207,11 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
   if (leaf) {
     epilogue = ssa_epilogue_mark();
   }
-  let fr: SsaFrame = SsaFrame { nspill: nspill, views: views, blk_pos: ssa.block_positions(f), uses: ssa.use_counts(f), nsave: save, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f) };
+  // The blocks' labels take one id each, from lbase.
+  let bp: i32[] = ssa.block_positions(f);
+  let lbase: i32 = s.nlab;
+  s = s.lab_take(bp.len());
+  let fr: SsaFrame = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase };
   let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
   // %rsp is 16-byte aligned at a call when the pushes and the frame together
   // are a multiple of 16.
@@ -9206,7 +9236,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
       next = f.blocks[bi + 1].id;
     }
     s = ssa_x0_forget(s);
-    s = ssa_label(s, lp + util.i32_to_string(blk.id));
+    s = s.lab_def(ssa_blab(fr, lp, blk.id));
     let fu: SsaFuse = ssa_fuse(fr, blk);
     let ii: i32 = 0;
     while (ii < blk.insts.len() - fu.n) {
@@ -9864,16 +9894,22 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_rename\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("rename");
-  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 362 || o.kind_tag == 363) {  // rename_noreplace, rename_exchange, getxattr, lgetxattr
+  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 362 || o.kind_tag == 363 || o.kind_tag == 374 || o.kind_tag == 375) {  // rename_noreplace, rename_exchange, getxattr, lgetxattr
     let op: string = ir.kind_name(o.kind_tag);
+    if (o.kind_tag >= 374 && ir.is_packed(o)) {
+      op = op + "_u8";
+    }
     s = s.write("    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_" + op + "\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need(op);
-  } else if (o.kind_tag == 364 || o.kind_tag == 365) {  // setxattr, lsetxattr
+  } else if (o.kind_tag == 364 || o.kind_tag == 365 || o.kind_tag == 376 || o.kind_tag == 377) {  // setxattr, lsetxattr
     // [pathbox, namebox, valuebox] with the value on top; re-pushed reversed
     // so param[0] (path) is lowest.
     let op: string = ir.kind_name(o.kind_tag);
+    if (o.kind_tag >= 374 && ir.is_packed(o)) {
+      op = op + "_u8";
+    }
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_" + op + "\n    addq $24, %rsp\n    pushq %rax\n");
     s = s.need("heap");
@@ -9965,6 +10001,14 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("fd_syncfs");
+  } else if (o.kind_tag == 366) {  // fd_drop_cache
+    // [fd, offset, len] with len on top; re-pushed reversed so param[0]
+    // (fd) is lowest.
+    s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
+    s = s.write("    call __fn___fern_fd_drop_cache\n    addq $24, %rsp\n    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need("reader");
+    s = s.need("fd_drop_cache");
   } else if (o.kind_tag == 298) {  // sync
     // No operands. sync(2) cannot fail, but its return is pushed for
     // the statement-position drop, as sleep_ns's is.
@@ -12168,6 +12212,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("raw_cover")) {
     s = s.write("    .section .bss\n    .align 8\n__fern_cov_counters: .quad 0\n    .text\n");
   }
+  if (s.has_need("task")) {
+    s = s.write("    .section .bss\n    .align 8\n__fern_task_state: .quad 0, 0, 0, 0\n    .text\n");
+  }
   // The stdout/stderr leaves (#2649) — plain write(2) calls, allocation-free, so
   // they sit with the clocks rather than in the heap runtime: a program that only
   // prints must still link.
@@ -12241,8 +12288,11 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("access")) {
       fs_src = fs_src + " " + asmcore.rt_src_access("x86_64");
     }
+    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr")) {
+      fs_src = fs_src + " " + asmcore.rt_src_utf8_valid();
+    }
     if (s.has_need("read_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_utf8_valid() + " " + asmcore.rt_src_read_file("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_read_file("x86_64");
     }
     if (s.has_need("read_file_bytes")) {
       fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86_64", false);
@@ -12285,6 +12335,30 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("rename")) {
       fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64");
+    }
+    if (s.has_need("getxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", true, false);
+    }
+    if (s.has_need("getxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", true, true);
+    }
+    if (s.has_need("lgetxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", false, false);
+    }
+    if (s.has_need("lgetxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", false, true);
+    }
+    if (s.has_need("setxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", true, false);
+    }
+    if (s.has_need("setxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", true, true);
+    }
+    if (s.has_need("lsetxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", false, false);
+    }
+    if (s.has_need("lsetxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", false, true);
     }
     if (s.has_need("getxattr")) {
       fs_src = fs_src + " " + asmcore.rt_src_getxattr("x86_64", true);
@@ -12592,6 +12666,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("reactor_wait")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_wait("x86_64"), s);
+  }
+  if (s.has_need("task")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_task("x86_64"), s);
   }
   if (s.has_need("tcp_recv_into")) {
     s = s.write("    .text\n");

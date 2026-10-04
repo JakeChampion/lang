@@ -161,6 +161,9 @@ pub struct EmitState {
   // (`word`, `branch`, `bytes`), 0 when the text is the output: each record
   // leaves a marker line in the text, which the assembler replaces with it.
   recs: usize,
+  // The next id lab_new / lab_take hands out: a label an emitter defines and
+  // branches to travels as its id when records are on, by name in the text.
+  nlab: i32,
   // The typed lowering of a runtime helper's source: one body per function it
   // defines, then the drop helpers those bodies carry. The CLI supplies it
   // (semlower.runtime_bodies); a backend never links that pipeline itself.
@@ -330,6 +333,7 @@ pub function new_state(): EmitState {
     reg_entries: irtables.sig_reg_of([]),
     leaves: [],
     capture: 0 as usize,
+    nlab: 0,
     recs: 0 as usize,
     rt_lower: no_rt_lower,
     named: [],
@@ -1188,6 +1192,9 @@ function sysno_x86_64(name: string): string {
   if (name == "fdatasync") {
     return "75";
   }
+  if (name == "fadvise64") {
+    return "221";
+  }
   if (name == "sync") {
     return "162";
   }
@@ -1681,6 +1688,9 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "fdatasync") {
     return "83";
+  }
+  if (name == "fadvise64") {
+    return "223";
   }
   if (name == "sync") {
     return "81";
@@ -3284,6 +3294,40 @@ function kqueue_wait_src(t: string): string {
     + "let buf_own: string = __raw_string(buf, cap * 32 + 16); return n;";
 }
 
+// rt_src_task backs the task primitives (docs/NET-P3-SUSPENSION-PLAN.md
+// §3.4). The state block __fern_task_state holds the current task's id, the
+// record table and its capacity; a record is twelve words: mode (0 running,
+// 1 unwinding, 2 rewinding), the timeout a parked task gave, the readiness
+// word its scheduler set, the cancelled flag, the save area's pointer, length
+// and capacity in words, the free flag a released id leaves for reuse, and
+// the wait set's pointer, length and capacity in words.
+// park is the one primitive the suspension pass's classifier starts from: a
+// running task parks by flipping to unwinding; a rewinding one lands here
+// again and answers the readiness word, or the cancel mark once cancelled.
+// Records and save areas are never returned to the heap; a freed id is reused.
+pub function rt_src_task(t: string): string {
+  return "function __fern_task_tab(): usize { let st: usize = __raw_task_state(); let tab: usize = __raw_load_ptr(st, 1); if (tab == 0 as usize) { tab = __raw_alloc(512); let i: i32 = 0; while (i < 64) { __raw_store_ptr(tab, i, 0 as usize); i = i + 1; } __raw_store_ptr(st, 1, tab); __raw_store_ptr(st, 2, 64 as usize); } return tab; }"
+    + " function __fern_task_rec(id: i32): usize { let tab: usize = __fern_task_tab(); return __raw_load_ptr(tab, id); }"
+    + " function __fern_task_blank(): usize { let rec: usize = __raw_alloc(96); let w: i32 = 0; while (w < 12) { __raw_store_ptr(rec, w, 0 as usize); w = w + 1; } return rec; }"
+    + " function __fern_task_new(): i32 { let st: usize = __raw_task_state(); let tab: usize = __fern_task_tab(); let cap: i32 = __raw_load_ptr(st, 2) as i32; let id: i32 = 1; while (id < cap) { let rec: usize = __raw_load_ptr(tab, id); if (rec == 0 as usize) { __raw_store_ptr(tab, id, __fern_task_blank()); return id; } if (__raw_load_ptr(rec, 7) != 0 as usize) { __raw_store_ptr(rec, 7, 0 as usize); __raw_store_ptr(rec, 0, 0 as usize); __raw_store_ptr(rec, 1, 0 as usize); __raw_store_ptr(rec, 2, 0 as usize); __raw_store_ptr(rec, 3, 0 as usize); __raw_store_ptr(rec, 5, 0 as usize); __raw_store_ptr(rec, 9, 0 as usize); return id; } id = id + 1; } let ntab: usize = __raw_alloc(cap * 16); let j: i32 = 0; while (j < cap * 2) { let v: usize = 0 as usize; if (j < cap) { v = __raw_load_ptr(tab, j); } __raw_store_ptr(ntab, j, v); j = j + 1; } __raw_store_ptr(st, 1, ntab); __raw_store_ptr(st, 2, (cap * 2) as usize); __raw_store_ptr(ntab, cap, __fern_task_blank()); return cap; }"
+    + " function __fern_task_free(id: i32): i32 { let rec: usize = __fern_task_rec(id); if (rec != 0 as usize) { __raw_store_ptr(rec, 7, 1 as usize); } return 0; }"
+    + " function __fern_task_cur(): i32 { let st: usize = __raw_task_state(); return __raw_load_ptr(st, 0) as i32; }"
+    + " function __fern_task_enter(id: i32, mode: i32): i32 { let st: usize = __raw_task_state(); __raw_store_ptr(st, 0, id as usize); let rec: usize = __fern_task_rec(id); __raw_store_ptr(rec, 0, mode as usize); return 0; }"
+    + " function __fern_task_leave(): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; __raw_store_ptr(st, 0, 0 as usize); if (id == 0) { return 0; } let rec: usize = __fern_task_rec(id); return __raw_load_ptr(rec, 0) as i32; }"
+    + " function __fern_task_mode(): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0; } let rec: usize = __fern_task_rec(id); return __raw_load_ptr(rec, 0) as i32; }"
+    + " function __fern_task_park(set: i32[], timeout_ms: i32): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0 - 1; } let rec: usize = __fern_task_rec(id); let mode: i32 = __raw_load_ptr(rec, 0) as i32; if (mode == 2) { __raw_store_ptr(rec, 0, 0 as usize); if (__raw_load_ptr(rec, 3) != 0 as usize) { return 0 - 2; } return __raw_load_ptr(rec, 2) as i32; } if (__raw_load_ptr(rec, 3) != 0 as usize) { return 0 - 2; } __raw_store_ptr(rec, 0, 1 as usize); __raw_store_ptr(rec, 1, timeout_ms as usize); let n: i32 = set.len(); let buf: usize = __raw_load_ptr(rec, 8); if (n > (__raw_load_ptr(rec, 10) as i32)) { buf = __raw_alloc(n * 8); __raw_store_ptr(rec, 8, buf); __raw_store_ptr(rec, 10, n as usize); } let i: i32 = 0; while (i < n) { __raw_store_ptr(buf, i, set[i] as usize); i = i + 1; } __raw_store_ptr(rec, 9, n as usize); return 0; }"
+    + " function __fern_task_wait(id: i32): i32[] { let rec: usize = __fern_task_rec(id); let n: i32 = __raw_load_ptr(rec, 9) as i32; let buf: usize = __raw_load_ptr(rec, 8); let out: i32[] = []; let i: i32 = 0; while (i < n) { out = out.append(__raw_load_ptr(buf, i) as i32); i = i + 1; } return out; }"
+    + " function __fern_task_timeout(id: i32): i32 { let rec: usize = __fern_task_rec(id); return __raw_load_ptr(rec, 1) as i32; }"
+    + " function __fern_task_set_ready(id: i32, w: i32): i32 { let rec: usize = __fern_task_rec(id); __raw_store_ptr(rec, 2, w as usize); return 0; }"
+    + " function __fern_task_set_cancelled(id: i32): i32 { let rec: usize = __fern_task_rec(id); __raw_store_ptr(rec, 3, 1 as usize); return 0; }"
+    + " function __fern_task_push_w(x: usize): i32 { let st: usize = __raw_task_state(); let rec: usize = __fern_task_rec(__raw_load_ptr(st, 0) as i32); let len: i32 = __raw_load_ptr(rec, 5) as i32; let cap: i32 = __raw_load_ptr(rec, 6) as i32; let buf: usize = __raw_load_ptr(rec, 4); if (len >= cap) { let ncap: i32 = 64; if (cap > 0) { ncap = cap * 2; } let nbuf: usize = __raw_alloc(ncap * 8); let i: i32 = 0; while (i < len) { __raw_store_ptr(nbuf, i, __raw_load_ptr(buf, i)); i = i + 1; } buf = nbuf; __raw_store_ptr(rec, 4, buf); __raw_store_ptr(rec, 6, ncap as usize); } __raw_store_ptr(buf, len, x); __raw_store_ptr(rec, 5, (len + 1) as usize); return 0; }"
+    + " function __fern_task_pop_w(): usize { let st: usize = __raw_task_state(); let rec: usize = __fern_task_rec(__raw_load_ptr(st, 0) as i32); let len: i32 = (__raw_load_ptr(rec, 5) as i32) - 1; __raw_store_ptr(rec, 5, len as usize); let buf: usize = __raw_load_ptr(rec, 4); return __raw_load_ptr(buf, len); }"
+    + " function __fern_task_push_i64(x: i64): i32 { return __fern_task_push_w(x as usize); }"
+    + " function __fern_task_pop_i64(): i64 { return __fern_task_pop_w() as i64; }"
+    + " function __fern_task_push_f64(x: f64): i32 { return __fern_task_push_w(f64_bits(x) as usize); }"
+    + " function __fern_task_pop_f64(): f64 { return f64_from_bits(__fern_task_pop_w() as i64); }";
+}
+
 pub function rt_src_reactor_wait(t: string): string {
   let wait: string = epoll_wait_src(t);
   if (t == "arm64-darwin") {
@@ -3874,12 +3918,31 @@ pub function rt_src_read_link(t: string): string {
 // getxattr(2) takes a position and an options word as well, and XATTR_NOFOLLOW
 // (1) is its lgetxattr; a Darwin value past the buffer is ERANGE.
 pub function rt_src_getxattr(t: string, follow: boolean): string {
+  return rt_src_xattr_value(t, follow, false, false);
+}
+
+pub function rt_src_getxattr_bytes(t: string, follow: boolean, packed: boolean): string {
+  return rt_src_xattr_value(t, follow, true, packed);
+}
+
+function rt_src_xattr_value(t: string, follow: boolean, raw: boolean, packed: boolean): string {
   let fname: string = "__fern_getxattr";
   let call: string = "lgetxattr";
   if (follow) {
     call = "getxattr";
   } else {
     fname = "__fern_lgetxattr";
+  }
+  let result_type: string = "string";
+  let finish: string = "if (__fern_utf8_valid(buf, n) == 0) { return Err(InvalidUtf8(__fern_path_copy(pathz_own, plen))); } return Ok(__fern_path_copy(buf_own, n));";
+  if (raw) {
+    fname = fname + "_bytes" + packed_suffix(packed);
+    result_type = "i32[]";
+    let spread: string = "let b: usize = __raw_arr_box(n); let k: i32 = 0; while (k < n) { __raw_store_ptr(b, k + 1, __raw_load8(buf, k) as usize); k = k + 1; }";
+    if (packed) {
+      spread = packed_box("b", "n") + " __memcpy(__raw_addr(b, 8), buf, n);";
+    }
+    finish = spread + " return Ok(__raw_array(b));";
   }
   let args: string = "pathz as i64, namez as i64, buf as i64, 65536";
   let sys: string = "__syscall4(" + sysno(t, call) + ", " + args + ")";
@@ -3890,7 +3953,7 @@ pub function rt_src_getxattr(t: string, follow: boolean): string {
     }
     sys = "__syscall6(" + sysno(t, call) + ", " + args + ", 0, " + options + ")";
   }
-  return "function " + fname + "(path: string, name: string): Result[string, IoError] { let nlen: i32 = name.len(); let namez: usize = __raw_alloc(nlen + 1); let j: i32 = 0; while (j < nlen) { __raw_store8(namez, j, name[j] as i32); j = j + 1; } __raw_store8(namez, nlen, 0); let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let buf: usize = __raw_alloc(65536); let n: i32 = " + sys + " as i32; let namez_own: string = __raw_string(namez, nlen + 1); let pathz_own: string = __raw_string(pathz, plen + 1); let buf_own: string = __raw_string(buf, 65536); if (n < 0) { return Err(__fern_io_error(0 - n, __fern_path_copy(pathz_own, plen))); } return Ok(__fern_path_copy(buf_own, n)); }";
+  return "function " + fname + "(path: string, name: string): Result[" + result_type + ", IoError] { let nlen: i32 = name.len(); let namez: usize = __raw_alloc(nlen + 1); let j: i32 = 0; while (j < nlen) { __raw_store8(namez, j, name[j] as i32); j = j + 1; } __raw_store8(namez, nlen, 0); let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let buf: usize = __raw_alloc(65536); let n: i32 = " + sys + " as i32; let namez_own: string = __raw_string(namez, nlen + 1); let pathz_own: string = __raw_string(pathz, plen + 1); let buf_own: string = __raw_string(buf, 65536); if (n < 0) { return Err(__fern_io_error(0 - n, __fern_path_copy(pathz_own, plen))); } " + finish + " }";
 }
 
 // rt_src_setxattr backs `setxattr(path, name, value)` and `lsetxattr(path,
@@ -3899,12 +3962,32 @@ pub function rt_src_getxattr(t: string, follow: boolean): string {
 // Darwin's setxattr(2) takes getxattr's position and options words, and
 // XATTR_NOFOLLOW (1) is its lsetxattr.
 pub function rt_src_setxattr(t: string, follow: boolean): string {
+  return rt_src_xattr_write(t, follow, false, false);
+}
+
+pub function rt_src_setxattr_bytes(t: string, follow: boolean, packed: boolean): string {
+  return rt_src_xattr_write(t, follow, true, packed);
+}
+
+function rt_src_xattr_write(t: string, follow: boolean, raw: boolean, packed: boolean): string {
   let fname: string = "__fern_setxattr";
   let call: string = "lsetxattr";
   if (follow) {
     call = "setxattr";
   } else {
     fname = "__fern_lsetxattr";
+  }
+  let value_type: string = "string";
+  let prep: string = "let vp: usize = __raw_alloc(vlen + 1); let k: i32 = 0; while (k < vlen) { __raw_store8(vp, k, value[k] as i32); k = k + 1; } ";
+  let owner: string = "let vp_own: string = __raw_string(vp, vlen + 1); ";
+  if (raw) {
+    fname = fname + "_bytes" + packed_suffix(packed);
+    value_type = "i32[]";
+    owner = "";
+    prep = "let vp: usize = __raw_addr(__raw_arr_ptr(value), 8); ";
+    if (!packed) {
+      prep = "let raw: usize = __raw_arr_box(vlen / 8 + 1); let scratch: i32[] = __raw_array(raw); let vp: usize = __raw_addr(__raw_arr_ptr(scratch), 8); let k: i32 = 0; while (k < vlen) { __raw_store8(vp, k, value[k]); k = k + 1; } ";
+    }
   }
   let args: string = "pathz as i64, namez as i64, vp as i64, vlen as i64";
   let sys: string = "__syscall5(" + sysno(t, call) + ", " + args + ", 0)";
@@ -3915,7 +3998,7 @@ pub function rt_src_setxattr(t: string, follow: boolean): string {
     }
     sys = "__syscall6(" + sysno(t, call) + ", " + args + ", 0, " + options + ")";
   }
-  return "function " + fname + "(path: string, name: string, value: string): Result[void, IoError] { let vlen: i32 = value.len(); let vp: usize = __raw_alloc(vlen + 1); let k: i32 = 0; while (k < vlen) { __raw_store8(vp, k, value[k] as i32); k = k + 1; } let nlen: i32 = name.len(); let namez: usize = __raw_alloc(nlen + 1); let j: i32 = 0; while (j < nlen) { __raw_store8(namez, j, name[j] as i32); j = j + 1; } __raw_store8(namez, nlen, 0); let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = " + sys + " as i32; let vp_own: string = __raw_string(vp, vlen + 1); let namez_own: string = __raw_string(namez, nlen + 1); let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
+  return "function " + fname + "(path: string, name: string, value: " + value_type + "): Result[void, IoError] { let vlen: i32 = value.len(); " + prep + "let nlen: i32 = name.len(); let namez: usize = __raw_alloc(nlen + 1); let j: i32 = 0; while (j < nlen) { __raw_store8(namez, j, name[j] as i32); j = j + 1; } __raw_store8(namez, nlen, 0); let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = " + sys + " as i32; " + owner + "let namez_own: string = __raw_string(namez, nlen + 1); let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
 }
 
 // rt_src_chmod backs `chmod(path, mode)` (#9059, syscall-leaf) →
@@ -4485,6 +4568,19 @@ pub function rt_src_fd_syncfs(t: string): string {
   return "function __fern_fd_syncfs(fd: i32): Option[IoError] { let rc: i32 = __syscall3(" + sysno(t, "syncfs") + ", fd as i64, 0, 0) as i32; if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
 }
 
+// rt_src_fd_drop_cache backs `r.drop_cache(offset, len)` /
+// `w.drop_cache(offset, len)` -> Option[IoError]: fadvise64(2) with
+// POSIX_FADV_DONTNEED (4) over that range. XNU has no fadvise, and
+// F_NOCACHE is a different request, so Darwin answers Unsupported once lseek
+// has shown the descriptor is seekable (a pipe is ESPIPE, as on Linux).
+pub function rt_src_fd_drop_cache(t: string): string {
+  let head: string = "function __fern_fd_drop_cache(fd: i32, off: i64, n: i64): Option[IoError] { ";
+  if (t == "arm64-darwin") {
+    return head + "let at: i64 = __syscall3(" + sysno(t, "lseek") + ", fd as i64, 0, 1); if (at < (0 as i64)) { return Some(__fern_io_error(((0 as i64) - at) as i32, \"\")); } return Some(Unsupported); }";
+  }
+  return head + "let rc: i32 = __syscall5(" + sysno(t, "fadvise64") + ", fd as i64, off, n, 4, 0) as i32; if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
+}
+
 // rt_src_fd_dup_onto backs `r.dup_onto(fd)` / `w.dup_onto(fd)` ->
 // Option[IoError]: dup3(2) of the handle's descriptor onto `newfd`, so the
 // handle is reachable as that number too and whatever it named is closed.
@@ -4505,9 +4601,10 @@ pub function rt_src_sync(t: string): string {
   return "function __fern_sync(): i32 { return __syscall3(" + sysno(t, "sync") + ", 0, 0, 0) as i32; }";
 }
 
-// rt_src_sync_family gathers whichever of the four write-back helpers the
-// module actually reached. Both native backends select them identically, so
-// the four `has_need` tests live here once rather than in each emitter.
+// rt_src_sync_family gathers whichever of the write-back helpers, and
+// drop_cache beside them, the module actually reached. Both native backends
+// select them identically, so the `has_need` tests live here once rather than
+// in each emitter.
 pub function rt_src_sync_family(s: EmitState, t: string): string {
   let out: string = "";
   if (s.has_need("fd_fsync")) {
@@ -4518,6 +4615,9 @@ pub function rt_src_sync_family(s: EmitState, t: string): string {
   }
   if (s.has_need("fd_syncfs")) {
     out = out + " " + rt_src_fd_syncfs(t);
+  }
+  if (s.has_need("fd_drop_cache")) {
+    out = out + " " + rt_src_fd_drop_cache(t);
   }
   if (s.has_need("sync")) {
     out = out + " " + rt_src_sync(t);
@@ -7440,10 +7540,13 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "read_link") {
     return ty_result(ty_string());
   }
+  if (id.name == "getxattr_bytes" || id.name == "lgetxattr_bytes") {
+    return ty_result(ty_array_i32());
+  }
   if (id.name == "getxattr" || id.name == "lgetxattr") {
     return ty_result(ty_string());
   }
-  if (id.name == "setxattr" || id.name == "lsetxattr") {
+  if (id.name == "setxattr" || id.name == "lsetxattr" || id.name == "setxattr_bytes" || id.name == "lsetxattr_bytes") {
     return ty_option(ty_unknown());
   }
   // window_size(fd) -> Result[WinSize, IoError]. "unknown" for the same
@@ -7993,6 +8096,41 @@ pub function fresh_label(s: EmitState): LabelOut {
   return LabelOut { state: ns, name: name };
 }
 
+// Lab is a label an emitter defines and branches to: its id for the records
+// and its name for the text. The name is built in both modes, so a branch
+// the records cannot take still has its text.
+pub struct Lab { id: i32, name: string }
+
+pub struct LabNew { state: EmitState, lab: Lab }
+
+// lab_new mints the label `name` with the next id.
+pub function lab_new(s: EmitState, name: string): LabNew {
+  return LabNew { state: EmitState { ...s, nlab: s.nlab + 1 }, lab: Lab { id: s.nlab, name: name } };
+}
+
+// lab_take allocates the next n ids, the first of them `nlab` before the call.
+pub function (s: EmitState) lab_take(n: i32): EmitState {
+  return EmitState { ...s, nlab: s.nlab + n };
+}
+
+// lab_def defines `l` here: as the \x04 record carrying its id when records
+// are on, otherwise as the text `name:`.
+pub function (s: EmitState) lab_def(l: Lab): EmitState {
+  if (s.records()) {
+    buf_push_u64(s.recs, l.id as u64);
+    return s.mark("\x04", "");
+  }
+  return s.write(l.name + ":\n");
+}
+
+// lab_ref hands over a branch to `l` as the \x05 record: the target's id in
+// the high 32 bits and `payload` (the instruction word on arm64, the jump
+// kind on x86) in the low 32. The caller writes the text when records are off.
+pub function (s: EmitState) lab_ref(payload: i64, l: Lab): EmitState {
+  buf_push_u64(s.recs, (l.id as i64 << 32 | payload & 4294967295i64) as u64);
+  return s.mark("\x05", "");
+}
+
 pub function count_locals(body: ast.Stmt[]): i32 {
   let n: i32 = 0;
   let i: i32 = 0;
@@ -8249,8 +8387,9 @@ pub function runtime_need_deps(name: string): string[] {
     || name == "str_case" || name == "str_repeat"
     || name == "str_replace"
     || name == "arrarr_free" || name == "strarrarr_free" || name == "optarrarr_free"
-    || name == "poll") {
-    // poll's __fern_poll allocates the transient pollfd[] via __fern_alloc.
+    || name == "poll" || name == "task") {
+    // poll's __fern_poll allocates the transient pollfd[] via __fern_alloc;
+    // the task runtime its records, table and save areas.
     return heap;
   }
   if (name == "str_trim") {
@@ -10243,7 +10382,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_create_dir", "__fn___fern_remove_dir",
     "__fn___fern_create_link", "__fn___fern_create_symlink",
     "__fn___fern_rename", "__fn___fern_rename_noreplace", "__fn___fern_rename_exchange",
-    "__fn___fern_read_link", "__fn___fern_getxattr", "__fn___fern_lgetxattr", "__fn___fern_setxattr", "__fn___fern_lsetxattr", "__fn___fern_umask",
+    "__fn___fern_read_link", "__fn___fern_getxattr", "__fn___fern_getxattr_bytes", "__fn___fern_getxattr_bytes_u8", "__fn___fern_lgetxattr", "__fn___fern_lgetxattr_bytes", "__fn___fern_lgetxattr_bytes_u8", "__fn___fern_setxattr", "__fn___fern_setxattr_bytes", "__fn___fern_setxattr_bytes_u8", "__fn___fern_lsetxattr", "__fn___fern_lsetxattr_bytes", "__fn___fern_lsetxattr_bytes_u8", "__fn___fern_umask",
     "__fn___fern_chmod", "__fn___fern_chmod_at", "__fn___fern_set_file_times", "__fn___fern_truncate",
     "__fn___fern_mknod", "__fn___fern_chown_at",
     "__fn___fern_window_size",
