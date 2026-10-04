@@ -473,6 +473,15 @@ function provided_checks(): i32 {
   if (pv_count([ir.op_call_direct("__fern_arr_str_join", 2)], none) != 0) {
     return 75;
   }
+  // These calls are inserted by suspension lowering, without declarations
+  // in the user's module. The runtime supplies their bodies.
+  let task_ops: ir.Op[] = [ir.op_call_direct("__fern_task_new", 0), ir.op_call_direct("__fern_task_free", 1), ir.op_call_direct("__fern_task_cur", 0), ir.op_call_direct("__fern_task_enter", 2), ir.op_call_direct("__fern_task_leave", 0), ir.op_call_direct("__fern_task_park", 2), ir.op_call_direct("__fern_task_wait", 1), ir.op_call_direct("__fern_task_timeout", 1), ir.op_call_direct("__fern_task_set_ready", 2), ir.op_call_direct("__fern_task_set_cancelled", 1), ir.op_call_direct("__fern_task_mode", 0), ir.op_call_direct("__fern_task_push_w", 1), ir.op_call_direct("__fern_task_pop_w", 0), ir.op_call_direct("__fern_task_push_i64", 1), ir.op_call_direct("__fern_task_pop_i64", 0), ir.op_call_direct("__fern_task_push_f64", 1), ir.op_call_direct("__fern_task_pop_f64", 0)];
+  if (pv_count(task_ops, none) != 0) {
+    return 109;
+  }
+  if (pv_count([ir.op_call_direct("__fern_task_push_f32", 1), ir.op_call_direct("__fern_task_pop_w_typo", 0)], none) != 2) {
+    return 110;
+  }
   // The per-type helpers resolve by prefix — their suffix is a type name the
   // program supplies, so no inventory could carry them.
   if (pv_count([ir.op_call_direct("__struct_drop_Holder", 1)], none) != 0) {

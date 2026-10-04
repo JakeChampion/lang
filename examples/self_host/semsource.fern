@@ -4548,16 +4548,22 @@ function arm_variant_name(a: ast.MatchArm, owner: string): string {
   return "";
 }
 
-// A match is TOTAL when its arms are unguarded variant patterns naming
-// distinct variants of the scrutinee's union, as many as the union declares.
-// Nothing can then reach the fall-through, so the last arm needs no test.
+// A match is TOTAL when its unguarded arms are variant patterns naming
+// distinct variants of the scrutinee's union, as many as the union declares,
+// and its last arm is one of them. A guarded arm decides nothing about
+// coverage: its false edge reaches the arms after it, and an unguarded arm
+// for the same variant catches what the guard let through. Nothing can then
+// reach the fall-through, so the last arm needs no test.
 function total_match(s: State, m: ast.StmtMatch, whole: typeinfo.Type, layout: i32): boolean {
   let declared: string[] = variant_names(s, whole, layout);
-  if (declared.len() == 0 || m.arms.len() != declared.len()) {
+  if (declared.len() == 0 || m.arms.len() == 0 || m.arms[m.arms.len() - 1].has_guard) {
     return false;
   }
   let named: string[] = [];
   for a in m.arms {
+    if (a.has_guard) {
+      continue;
+    }
     let name: string = arm_variant_name(a, union_name(whole));
     if (util.index_of_str(declared, name) < 0) {
       return false;
@@ -4567,7 +4573,7 @@ function total_match(s: State, m: ast.StmtMatch, whole: typeinfo.Type, layout: i
     }
     named = named.append(name);
   }
-  return true;
+  return named.len() == declared.len();
 }
 
 // Arms are tested in order; each test's false edge enters the next test.
