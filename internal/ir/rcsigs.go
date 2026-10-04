@@ -504,8 +504,7 @@ var rcInert = map[string]bool{
 
 	"__alloc": true, "__alloc_u8": true, "__fern_string_bytes_copy": true, "__arr_idx": true,
 	"__arr_idx_1": true, "__arr_idx_1_nc": true, "__arr_idx_8": true,
-	"__arr_idx_8_nc": true, "__arr_idx_nc": true, "__build_io_error": true,
-	"__bytes_to_lang_string": true, "__fern_abs_f64": true,
+	"__arr_idx_8_nc": true, "__arr_idx_nc": true, "__build_io_error": true, "__fern_abs_f64": true,
 	"__fern_alloc": true, "__fern_alloc_box": true, "__fern_alloc_rc1": true,
 	// The builder's growth step (#8773). Its arguments are a handle and a
 	// byte count, and the buffer it replaces belongs to the builder rather

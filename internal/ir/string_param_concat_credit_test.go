@@ -61,19 +61,19 @@ func TestStringParamComparedIsCounted(t *testing.T) {
 	}
 }
 
-// The direction whose failure mode is a use-after-free: one concat
-// occurrence does not make a retaining one safe, because everyOccurrenceSafe
-// is all-or-nothing.
-func TestStringParamConcatAlongsideBareReturnStaysUncredited(t *testing.T) {
-	src := `function keep(p: string): string {
-    if (p.len() > 3) { return p + "!"; }
-    return p;
+// One concat occurrence does not make an uncredited one safe, because
+// everyOccurrenceSafe is all-or-nothing.
+func TestStringParamConcatAlongsideLocalBindingStaysUncredited(t *testing.T) {
+	src := `function keep(p: string): i32 {
+    if (p.len() > 3) { return (p + "!").len(); }
+    let s: string = p;
+    return s.len();
 }
 function main(): i32 { return 0; }`
 	got := paramCountedFor(t, src, "keep")
 	if len(got) == 1 && got[0] {
-		t.Errorf("paramCountedRetain[keep] = %v, but one return hands `p` out bare — "+
-			"crediting it lets the caller free a buffer the result points at", got)
+		t.Errorf("paramCountedRetain[keep] = %v, but `let s = p` is an occurrence this "+
+			"summary does not credit, and one credited concat must not outvote it", got)
 	}
 }
 

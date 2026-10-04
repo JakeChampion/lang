@@ -2320,9 +2320,9 @@ pub function op_strbuf_take(): Op {
 // The capacity-carrying string builder (#8773) — the same accumulator without
 // the singleton. A handle is the ADDRESS of a 32-byte control block (data ptr,
 // len, cap, reserve), so any number of builders are live at once and they nest.
-// The buffer is allocated as a heap string already is, which is what makes
-// `buf_take` zero-copy: it stamps the length and hands the same pointer back as
-// a string, leaving the builder empty but still ready at its reserve. `buf_new`
+// `buf_take` copies valid UTF-8 text, replacing malformed maximal subparts,
+// and leaves the builder empty with its capacity retained. Raw extraction
+// uses `buf_take_bytes` and preserves every byte. `buf_new`
 // pops a capacity and pushes a handle; `buf_push` / `buf_push_range` /
 // `buf_push_byte` / `buf_push_u64` / `buf_free` are statement ops (pushing a dummy so a
 // statement-level drop balances); `buf_len` and `buf_take` are value ops. All
@@ -8270,7 +8270,7 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 76 || tag == 77 || tag == 87 || tag == 92 || tag == 93 || tag == 94 || tag == 95 || tag == 302 || tag == 303) {
     return true;
   }
-  if (tag == 5 || tag == 98 || tag == 102 || tag == 103 || tag == 368) {
+  if (tag == 5 || tag == 98 || tag == 102 || tag == 103 || tag == 380) {
     return true;
   }
   // Composite boxes. struct_copy (198) allocates the fresh box a functional

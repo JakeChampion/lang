@@ -3242,6 +3242,15 @@ func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 	free := idxs["__free"]
 
 	var body []byte
+	// Reject a negative request before allocating or touching the stream.
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, errnoInval)
+	body = inst.InstLocalSet(body, 8)
+	body = emitHandleResultErr(body, buildIoErr, alloc, 8, 7, 6)
+	body = inst.InstEnd(body)
 
 	// scratch (12 bytes: iov + nread retptr)
 	body = inst.InstI32Const(body, 12)
@@ -3304,6 +3313,21 @@ func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 		body = numeric.InstI32Add(body)
 		return inst.InstCall(body, free)
 	}
+
+	// Validate only successful reads; a failed syscall must not inspect
+	// uninitialized bytes. Invalid UTF-8 shares the owned error cleanup.
+	body = inst.InstLocalGet(body, 8)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, idxs["__fern_utf8_valid"])
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, errnoIlseq)
+	body = inst.InstLocalSet(body, 8)
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
 
 	// A non-zero errno: free the buffer nobody owns and return Err(e).
 	// A read carries no path, so the errno is classified against an
@@ -3433,6 +3457,14 @@ func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	}
 
 	var body []byte
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, errnoInval)
+	body = inst.InstLocalSet(body, 8)
+	body = emitHandleResultErr(body, idxs["__build_io_error"], alloc, 8, 9, 6)
+	body = inst.InstEnd(body)
 	body = emitClosedErrP2(body, idxs, 0, 8, 9, 6)
 	// retbuf = alloc(12).
 	body = inst.InstI32Const(body, 12)
@@ -3489,6 +3521,20 @@ func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalSet(body, 4)
 	body = freeRetbuf(body)
 	body = emitReaderAdvanceP2(body, 0, 5)
+	// The read is consumed even when invalid. Refuse before making an owned
+	// text copy, and release the host's canonical-ABI list on rejection.
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, idxs["__fern_utf8_valid"])
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, free)
+	body = inst.InstI32Const(body, errnoIlseq)
+	body = inst.InstLocalSet(body, 8)
+	body = emitHandleResultErr(body, idxs["__build_io_error"], alloc, 8, 9, 6)
+	body = inst.InstEnd(body)
 	// data = alloc_rc1(chunk_len); memory.copy(data, chunk_ptr, chunk_len);
 	// __free(chunk_ptr, chunk_len) — cabi_realloc bumped exactly that.
 	body = inst.InstLocalGet(body, 5)

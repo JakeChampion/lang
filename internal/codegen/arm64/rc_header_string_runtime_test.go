@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// helperBody returns the slice of `asm` from the `.global <sym>` line up to
+// helperBody returns the slice of `asm` from the symbol's label up to
 // that symbol's `.size <sym>` directive — i.e. exactly one runtime helper's
 // body. Empty if the symbol isn't emitted.
 func helperBody(asm, sym string) string {
-	start := strings.Index(asm, ".global "+sym+"\n")
+	start := strings.Index(asm, "\n"+sym+":\n")
 	if start < 0 {
 		return ""
 	}
@@ -45,7 +45,7 @@ func TestTwoWordStringRuntimesUseRcHeaderedAlloc(t *testing.T) {
 }`
 	asm := compile(t, src, Options{})
 
-	for _, sym := range []string{"string_from_bytes_unchecked", "__fern_env", "__fern_read_line"} {
+	for _, sym := range []string{"string_from_bytes_unchecked", "__fern_env", "__fern_read_line_fd"} {
 		body := helperBody(asm, sym)
 		if body == "" {
 			t.Fatalf("%s runtime was not emitted; cannot verify its allocation path", sym)

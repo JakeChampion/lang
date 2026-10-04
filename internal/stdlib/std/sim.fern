@@ -723,31 +723,28 @@ function __net_stall(): async.Future[string] {
   return Pending(-1, resume);
 }
 
-// __net_drain_stall(at_ms, chunks, i, k, acc) — the partial-mode read:
+// __net_drain_stall(at_ms, i, k) - the partial-mode read:
 // deliver chunks `i..k` at their scheduled times, then suspend forever
 // instead of resolving.
-function __net_drain_stall(at_ms: i32[], chunks: string[], i: i32, k: i32, acc: string): async.Future[string] {
+function __net_drain_stall(at_ms: i32[], i: i32, k: i32): async.Future[string] {
   if (i >= k) {
     return __net_stall();
   }
   function resume(woken: i32): async.Future[string] {
-    return __net_drain_stall(at_ms, chunks, i + 1, k, acc + chunks[i]);
+    return __net_drain_stall(at_ms, i + 1, k);
   }
   return Pending(at_ms[i], resume);
 }
 
-// __net_drain(at_ms, chunks, i, acc) — one step of the scripted read, the
-// sim twin of fetch's __fetch_drain: a Pending ready at chunk i's scheduled
-// time whose resume appends the chunk and either resolves (last chunk) or
-// re-suspends for the next. `acc` carries the body read so far across
-// re-suspends.
-function __net_drain(at_ms: i32[], chunks: string[], i: i32, acc: string): async.Future[string] {
+// Retain the complete valid body while scheduling each physical chunk.
+// A chunk can split a scalar, so it must never become a partial string.
+// Only the last resumption publishes the body; earlier ones just advance.
+function __net_drain(at_ms: i32[], body: string, i: i32): async.Future[string] {
   function resume(woken: i32): async.Future[string] {
-    let got: string = acc + chunks[i];
-    if (i + 1 >= chunks.len()) {
-      return Ready(got);
+    if (i + 1 >= at_ms.len()) {
+      return Ready(body);
     }
-    return __net_drain(at_ms, chunks, i + 1, got);
+    return __net_drain(at_ms, body, i + 1);
   }
   return Pending(at_ms[i], resume);
 }
@@ -778,7 +775,7 @@ pub function (n: Net) fetch_future(host_be: i32, port: i32, path: string): async
   if (mode == 2) {
     return __net_stall();
   }
-  let chunks: string[] = [];
+  let chunks: i32 = 0;
   let pos: i32 = 0;
   let k: i32 = 0;
   while (k < e.chunk_lens.len() && pos < e.body.len()) {
@@ -787,18 +784,18 @@ pub function (n: Net) fetch_future(host_be: i32, port: i32, path: string): async
       take = e.body.len() - pos;
     }
     if (take > 0) {
-      chunks = chunks.append(slice_unchecked(e.body, pos, pos + take) + "");
+      chunks = chunks + 1;
       pos = pos + take;
     }
     k = k + 1;
   }
-  if (pos < e.body.len() || chunks.len() == 0) {
-    chunks = chunks.append(slice_unchecked(e.body, pos, e.body.len()) + "");
+  if (pos < e.body.len() || chunks == 0) {
+    chunks = chunks + 1;
   }
   let now: i64 = n.drv.now_ns();
   let at_ms: i32[] = [];
   let c: i32 = 0;
-  while (c < chunks.len()) {
+  while (c < chunks) {
     at_ms = at_ms.append(((now + e.first_ns + c as i64 * e.chunk_ns) / 1000000) as i32);
     c = c + 1;
   }
@@ -807,10 +804,10 @@ pub function (n: Net) fetch_future(host_be: i32, port: i32, path: string): async
     if (keep < 0) {
       keep = 0;
     }
-    if (keep > chunks.len()) {
-      keep = chunks.len();
+    if (keep > chunks) {
+      keep = chunks;
     }
-    return __net_drain_stall(at_ms, chunks, 0, keep, "");
+    return __net_drain_stall(at_ms, 0, keep);
   }
-  return __net_drain(at_ms, chunks, 0, "");
+  return __net_drain(at_ms, e.body, 0);
 }

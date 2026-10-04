@@ -3585,7 +3585,7 @@ pub function rt_src_putchar(t: string): string {
 // EOF answers the .rodata empty literal rather than allocating a zero-length
 // block for it.
 pub function rt_src_reader_read_chunk(t: string): string {
-  return "function __fern_reader_read_chunk(fd: i32, n: i32): Result[string, IoError] { let p: usize = __raw_alloc(n); let r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (r == n) { return Ok(__raw_string(p, n)); } if (r <= 0) { let short: string = __raw_string(p, n); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } return Ok(\"\"); } let q: usize = __raw_alloc(r); __memcpy(q, p, r); let full: string = __raw_string(p, n); return Ok(__raw_string(q, r)); }";
+  return "function __fern_reader_read_chunk(fd: i32, n: i32): Result[string, IoError] { if (n < 0) { return Err(__fern_io_error(22, \"\")); } let p: usize = __raw_alloc(n); let r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (r > 0 && __fern_utf8_valid(p, r) == 0) { let invalid: string = __raw_string(p, n); return Err(InvalidUtf8(\"\")); } if (r == n) { return Ok(__raw_string(p, n)); } if (r <= 0) { let short: string = __raw_string(p, n); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } return Ok(\"\"); } let q: usize = __raw_alloc(r); __memcpy(q, p, r); let full: string = __raw_string(p, n); return Ok(__raw_string(q, r)); }";
 }
 
 // Scratch is owned as an array throughout, including the error path. Full
@@ -3630,17 +3630,12 @@ pub function rt_src_reader_close(t: string): string {
 // this call will not return, and it leaves the rest of the stream in the OS for
 // the next call or a child process. `__raw_addr` supplies the moving destination.
 //
-// The 256-byte cap is observable — a longer line comes back truncated, with the
-// remainder left on the stream — so it is preserved exactly.
-//
-// `full` owns the whole 256-byte block once the line is copied out of it, and
-// the frame's reclaim gives it back, so the line handed to the caller is an
-// exact-size copy (#8402). Boxing the block
-// at the line length instead left 256 - len bytes stranded below the freelist
-// class the block landed in, and the EOF path returned None with the block simply
-// lost.
+// Grow the scratch block when full: an internal capacity must not split a line
+// or a UTF-8 scalar. Each replaced block is owned at its allocated capacity so
+// reclaim returns it to the correct size class. The result owns an exact-size
+// copy, including on a short read, and EOF releases the unused scratch block.
 pub function rt_src_read_line(t: string): string {
-  return "function __fern_read_line(fd: i32): Option[string] { let buf: usize = __raw_alloc(256); let len: i32 = 0; let go: i32 = 1; while (go == 1) { if (len >= 256) { go = 0; } else { let r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, __raw_addr(buf, len) as i64, 1) as i32; if (r < 1) { go = 0; } else { let c: i32 = __raw_load8(buf, len); len = len + 1; if (c == 10) { go = 0; } } } } if (len == 0) { let empty: string = __raw_string(buf, 256); return None; } let q: usize = __raw_alloc(len); __memcpy(q, buf, len); let full: string = __raw_string(buf, 256); return Some(__raw_string(q, len)); }";
+  return "function __fern_read_line(fd: i32): Option[string] { let cap: i32 = 256; let buf: usize = __raw_alloc(cap); let len: i32 = 0; let go: i32 = 1; while (go == 1) { if (len == cap) { let grown: usize = __raw_alloc(cap * 2); __memcpy(grown, buf, len); let old: string = __raw_string(buf, cap); buf = grown; cap = cap * 2; } let r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, __raw_addr(buf, len) as i64, 1) as i32; if (r < 1) { go = 0; } else { let c: i32 = __raw_load8(buf, len); len = len + 1; if (c == 10) { go = 0; } } } if (len == 0) { let empty: string = __raw_string(buf, cap); return None; } let q: usize = __raw_alloc(len); __memcpy(q, buf, len); let full: string = __raw_string(buf, cap); return Some(__raw_string(q, len)); }";
 }
 
 // The strerror table (#8265): glibc's text per errno and the errno's number on
@@ -3777,6 +3772,92 @@ pub function rt_src_io_error(t: string): string {
     i = i + 1;
   }
   return src + " " + strerror_unknown_src(t) + " }";
+}
+
+// Text extraction copies into exact-size storage and keeps the builder's
+// capacity. Invalid input uses one replacement per maximal subpart. Size
+// overflow takes the existing raw-allocation trap instead of wrapping.
+pub function rt_src_buf_text(): string {
+  return "function __fern_buf_text_part(data: usize, pos: i32, n: i32): i32 {\n"
+    + "  let lead: i32 = __raw_load8(data, pos);\n"
+    + "  if (lead < 128) { return 1; }\n"
+    + "  let width: i32 = 0;\n"
+    + "  if (lead >= 194 && lead <= 223) { width = 2; }\n"
+    + "  else if (lead >= 224 && lead <= 239) { width = 3; }\n"
+    + "  else if (lead >= 240 && lead <= 244) { width = 4; }\n"
+    + "  let used: i32 = 1;\n"
+    + "  while (used < width && used < n - pos) {\n"
+    + "    let next: i32 = __raw_load8(data, pos + used);\n"
+    + "    if (next < 128 || next > 191) { break; }\n"
+    + "    if (used == 1 && (lead == 224 && next < 160 || lead == 237 && next > 159 || lead == 240 && next < 144 || lead == 244 && next > 143)) { break; }\n"
+    + "    used = used + 1;\n"
+    + "  }\n"
+    + "  if (used == width) { return used; }\n"
+    + "  return 0 - used;\n"
+    + "}\n"
+    + "function __fern_buf_take_text(h: usize): string {\n"
+    + "  let wide: i64 = __load_i64(__raw_addr(h, 8));\n"
+    + "  if (wide < 0 as i64 || wide > 2147483647 as i64) {\n"
+    + "    let failed: usize = __raw_alloc(0 - 1);\n"
+    + "    return __raw_string(failed, 0);\n"
+    + "  }\n"
+    + "  let n: i32 = wide as i32;\n"
+    + "  if (n == 0) { return \"\"; }\n"
+    + "  let data: usize = __raw_load_ptr(h, 0);\n"
+    + "  let total: i64 = wide;\n"
+    + "  let i: i32 = 0;\n"
+    + "  let changed: boolean = false;\n"
+    + "  let mask: u64 = 9259542123273814144 as u64;\n"
+    + "  while (i < n) {\n"
+    + "    if (n - i >= 8) {\n"
+    + "      if ((__load_i64(__raw_addr(data, i)) as u64 & mask) == 0 as u64) {\n"
+    + "        i = i + 8;\n"
+    + "        continue;\n"
+    + "      }\n"
+    + "    }\n"
+    + "    let part: i32 = __fern_buf_text_part(data, i, n);\n"
+    + "    if (part < 0) {\n"
+    + "      total = total + (3 + part) as i64;\n"
+    + "      changed = true;\n"
+    + "      i = i - part;\n"
+    + "    } else { i = i + part; }\n"
+    + "  }\n"
+    + "  if (total > 2147483647 as i64) {\n"
+    + "    let failed: usize = __raw_alloc(0 - 1);\n"
+    + "    return __raw_string(failed, 0);\n"
+    + "  }\n"
+    + "  let length: i32 = total as i32;\n"
+    + "  let out: usize = __raw_alloc(length);\n"
+    + "  if (!changed) {\n"
+    + "    __memcpy(out, data, n);\n"
+    + "  } else {\n"
+    + "    i = 0;\n"
+    + "    let start: i32 = 0;\n"
+    + "    let written: i32 = 0;\n"
+    + "    while (i < n) {\n"
+    + "      if (n - i >= 8) {\n"
+    + "        if ((__load_i64(__raw_addr(data, i)) as u64 & mask) == 0 as u64) {\n"
+    + "          i = i + 8;\n"
+    + "          continue;\n"
+    + "        }\n"
+    + "      }\n"
+    + "      let part: i32 = __fern_buf_text_part(data, i, n);\n"
+    + "      if (part < 0) {\n"
+    + "        __memcpy(__raw_addr(out, written), __raw_addr(data, start), i - start);\n"
+    + "        written = written + (i - start);\n"
+    + "        __raw_store8(out, written, 239);\n"
+    + "        __raw_store8(out, written + 1, 191);\n"
+    + "        __raw_store8(out, written + 2, 189);\n"
+    + "        written = written + 3;\n"
+    + "        i = i - part;\n"
+    + "        start = i;\n"
+    + "      } else { i = i + part; }\n"
+    + "    }\n"
+    + "    __memcpy(__raw_addr(out, written), __raw_addr(data, start), n - start);\n"
+    + "  }\n"
+    + "  __store_i64(__raw_addr(h, 8), 0 as i64);\n"
+    + "  return __raw_string(out, length);\n"
+    + "}\n";
 }
 
 // rt_src_utf8_valid is read_file's strict D9 well-formedness scan (#5714),
@@ -8473,6 +8554,10 @@ pub function (s: EmitState) need(name: string): EmitState {
 // (End goal: when the runtime moves into Fern — issue #2649 — this table and
 // close_needs disappear, replaced by the real call graph + the deadcode pass.)
 pub function runtime_need_deps(name: string): string[] {
+  if (name == "buf_text") {
+    let deps: string[] = ["buf"];
+    return deps;
+  }
   // Heap-only deps: the helper's body `call __fern_alloc`s (directly or via
   // __fern_arr_box / a result-box alloc), so marking it pulls in "heap".
   // Note strbuf: the strbuf bundle is emitted as a unit gated on the single

@@ -211,7 +211,7 @@ Wrapper pipeline (see `emitHttpHandlerWrapper`):
 1. `incoming-request.method()` — variant lowered through a
    `br_table` over the discriminant; static interned strings for
    the canonical 9 verbs, materialise the `other(s)` payload via
-   `__bytes_to_lang_string`.
+   `__fern_str_copy`.
 2. `incoming-request.path-with-query()` — `option<string>`; on
    `None` use the empty string.
 3. `incoming-request.consume()` → `incoming-body.stream()` →

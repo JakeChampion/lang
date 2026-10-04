@@ -45,6 +45,13 @@ fip function step(own s: State, t: i32): State {
 }
 
 function main(): i32 {
+	// The observable is not stuck at zero: a fresh box moves it. This runs
+	// first because a dead State later on would donate its box to the probe.
+	let before: i64 = __heap_alloc_count();
+	let fresh: State = State { count: 1, total: 1 as i64, tag: 1 };
+	if (fresh.count != 1) { return 94; }
+	if (__heap_alloc_count() - before <= (0 as i64)) { return 95; }
+
 	let s: State = State { count: 0, total: 0 as i64, tag: 0 };
 	let at: i64 = __heap_alloc_count();
 	let i: i32 = 0;
@@ -58,11 +65,6 @@ function main(): i32 {
 	if (s.total != (20000 as i64)) { return 92; }
 	if (s.tag != 9999) { return 93; }
 
-	// The observable is not stuck at zero: a fresh box moves it.
-	let before: i64 = __heap_alloc_count();
-	let fresh: State = State { count: 1, total: 1 as i64, tag: 1 };
-	if (fresh.count != 1) { return 94; }
-	if (__heap_alloc_count() - before <= (0 as i64)) { return 95; }
 	return 42;
 }
 `

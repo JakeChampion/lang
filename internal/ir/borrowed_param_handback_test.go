@@ -7,24 +7,21 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
-// `paramCountedRetain` feeds two consumers that ask DIFFERENT questions, and
-// conflating them cost the caller its release.
+// A bare `return p` of a borrowed string parameter hands the caller a count of
+// its own: `function handout(a: string): string { return a; }` lowers to
+// `local.load; rc.inc; return`, and nothing can cancel that inc, since
+// move-on-return needs an owned rc LOCAL and a parameter is never one. Both
+// retain summaries credit it:
 //
-//   - countedArgTemp asks whether the caller may dec a fresh TEMP
-//     immediately after the call. A bare `return p` is refused there, and
-//     deliberately: every hazard the refusal tests name is that path's
-//     ("crediting it double-frees the caller's temp").
-//   - computeFreeEligible's string-argument taint asks the weaker question —
-//     may the caller's own LOCAL keep its scope-exit release? That needs
-//     only "the callee retains no UNCOUNTED alias", which a bare `return p`
-//     satisfies: `function handout(a: string): string { return a; }` lowers
-//     to `local.load; rc.inc; return`, and nothing can cancel that inc,
-//     since move-on-return needs an owned rc LOCAL and a parameter is never
-//     one.
+//   - computeFreeEligible's string-argument taint (paramNoUncountedAlias) asks
+//     whether the caller's own LOCAL may keep its scope-exit release (#9246);
+//   - countedArgTemp (paramCountedRetain) asks whether the caller may dec a
+//     fresh TEMP right after the call. Refusing it stranded every temp passed
+//     through a pass-through helper (#11479).
 //
-// So there are two summaries. This pins both verdicts on the same function,
-// which is what keeps them from collapsing back into one (#9246).
-func TestBareReturnSplitsTheTwoRetainSummaries(t *testing.T) {
+// This is where the two summaries agree; frame_bound_string_alias_test.go pins
+// the arm where they disagree.
+func TestBareReturnIsCountedInBothRetainSummaries(t *testing.T) {
 	src := `function ident(s: string): string {
     if (s.len() == 0) { return s + "x"; }
     return s;
@@ -38,13 +35,13 @@ function main(): i32 { return ident("ab").len(); }`
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	strict := inferParamCountedRetain(prog, info, nil)["ident"]
-	weak := inferParamNoUncountedAlias(prog, info, nil)["ident"]
+	strict := inferParamCountedRetain(prog, info)["ident"]
+	weak := inferParamNoUncountedAlias(prog, info)["ident"]
 	if len(strict) != 1 || len(weak) != 1 {
 		t.Fatalf("summaries are %v / %v, want one flag each", strict, weak)
 	}
-	if strict[0] {
-		t.Error("paramCountedRetain credits the bare return — the arg-temp reclaim's refusals are pinned on it staying strict")
+	if !strict[0] {
+		t.Error("paramCountedRetain refuses the bare return — the callee takes the return-transfer inc, so the caller may release a fresh temp it passed")
 	}
 	if !weak[0] {
 		t.Error("paramNoUncountedAlias refuses the bare return — the callee takes the return-transfer inc, so the caller's local may still be released")

@@ -47,6 +47,8 @@ import "std/dns";
 import "std/tcp";
 import "std/i64";
 import "core/int";
+import "std/hex";
+import "std/utf8";
 
 // `Answer` — one scripted response: `bytes` on the wire, the first of
 // them `first_ms` after the request was written, then `chunk` bytes at a
@@ -110,12 +112,17 @@ pub function (a: Answer) held(): Answer {
 // `a.kept()` — `a` on a persistent connection: its `Connection: close`
 // dropped and the connection left open for the next request.
 pub function (a: Answer) kept(): Answer {
-  let text: string = string_from_bytes_unchecked(a.bytes);
-  let at: i32 = text.index_of(CLOSING);
-  if (at < 0) {
+  let at: i32 = __find_bytes(a.bytes, CLOSING.as_bytes());
+  let end: i32 = __find_bytes(a.bytes, "\r\n\r\n".as_bytes());
+  if (at < 0 || end < 0 || at + CLOSING.len() != end + 4) {
     return a.held();
   }
-  let bytes: u8[] = (slice_unchecked(text, 0, at) + "\r\n\r\n" + slice_unchecked(text, at + CLOSING.len(), text.len())).bytes();
+  let h: usize = buf_new(a.bytes.len() - CLOSING.len() + 4);
+  buf_push_bytes_range(h, a.bytes, 0, at);
+  buf_push(h, "\r\n\r\n");
+  buf_push_bytes_range(h, a.bytes, at + CLOSING.len(), a.bytes.len());
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
   return Answer { ...a, bytes: bytes, close: false };
 }
 
@@ -188,14 +195,15 @@ pub function (n: Net) sent_count(): i32 {
   return __sent_all(n).len();
 }
 
-// `n.sent(i)` — the `i`-th request the client wrote, as written: request
-// line, fields and body.
-pub function (n: Net) sent(i: i32): string {
+// `n.sent(i)` - the bytes of the i-th write, including any binary body.
+// Text callers validate explicitly with utf8.from_bytes.
+pub function (n: Net) sent(i: i32): u8[] {
   let all: string[] = __sent_all(n);
   if (i < 0 || i >= all.len()) {
-    return "";
+    let none: u8[] = [];
+    return none;
   }
-  return all[i];
+  return hex.hex_decode(all[i]);
 }
 
 impl fetch.Transport for Net {
@@ -251,17 +259,19 @@ impl fetch.Transport for Net {
     return Ok(id);
   }
   function write(self: Net, conn: i32, bytes: u8[]): i32 {
-    let data: string = string_from_bytes_unchecked(bytes);
     let row: string[] = __conn(self, conn);
     if (row.len() == 0 || row[7] != "1") {
       return 0 - 9;
     }
-    self.sent.set(self.sent.get() + int.int_to_string(data.len()) + ":" + data);
+    // Cell admits strings but not arrays. Encode the shared journal as
+    // ASCII instead of keeping arbitrary request bytes in a string.
+    let encoded: string = hex.hex_encode(bytes);
+    self.sent.set(self.sent.get() + int.int_to_string(encoded.len()) + ":" + encoded);
     if (__busy(self, row)) {
-      return data.len();
+      return bytes.len();
     }
     let port: i32 = __field(row, 2);
-    let target: string = __target(data);
+    let target: string = __target(bytes);
     let route: i32 = 0 - 2;
     let answer: i32 = 0;
     let i: i32 = 0;
@@ -279,7 +289,7 @@ impl fetch.Transport for Net {
       first_ms = __answer(self, route, answer).first_ms;
     }
     __set_conn(self, conn, __row(conn, row[1], port, route, answer, 0, self.drv.clock_ns.get() + first_ms * 1000000, 1));
-    return data.len();
+    return bytes.len();
   }
   function read(self: Net, conn: i32, max: i32, wait_ms: i64): tcp.Recv {
     let row: string[] = __conn(self, conn);
@@ -404,15 +414,55 @@ function __elapsed(n: Net, to_ns: i64): tcp.Recv {
   return tcp.Elapsed;
 }
 
-// `__target(data)` — the request target of the request line `data` starts
+// Search the fixed ASCII delimiters without interpreting payload as text.
+function __find_bytes(data: [u8], needle: [u8]): i32 {
+  let at: i32 = 0;
+  while (at <= data.len() - needle.len()) {
+    let j: i32 = 0;
+    while (j < needle.len() && data[at + j] == needle[j]) {
+      j = j + 1;
+    }
+    if (j == needle.len()) {
+      return at;
+    }
+    at = at + 1;
+  }
+  return 0 - 1;
+}
+
+// `__target(data)` - the request target of the request line `data` starts
 // with.
-function __target(data: string): string {
-  let line: string = data.split("\r\n")[0];
-  let parts: string[] = line.split(" ");
-  if (parts.len() < 2) {
+function __target(data: u8[]): string {
+  let end: i32 = __find_bytes(data, "\r\n".as_bytes());
+  if (end < 0) {
+    end = data.len();
+  }
+  let start: i32 = 0;
+  while (start < end && data[start] != 32 as u8) {
+    start = start + 1;
+  }
+  if (start == end) {
     return "";
   }
-  return parts[1];
+  start = start + 1;
+  let stop: i32 = start;
+  while (stop < end && data[stop] != 32 as u8) {
+    stop = stop + 1;
+  }
+  let bytes: u8[] = __alloc_u8(stop - start);
+  let i: i32 = 0;
+  while (start + i < stop) {
+    bytes = bytes.with(i, data[start + i]);
+    i = i + 1;
+  }
+  match (utf8.from_bytes(bytes)) {
+    Some(target) => {
+      return target;
+    },
+    None => {
+      return "";
+    }
+  }
 }
 
 // `__took(n, route)` — the count of requests `route` had taken before this
@@ -529,8 +579,8 @@ function __field64(row: string[], i: i32): i64 {
   return v;
 }
 
-// `__sent_all(n)` — every request written, in order. The log holds each
-// as its length, `:`, and its bytes.
+// Every write encoded as ASCII hex. The journal frames the encoded text
+// with its length and ':', so empty writes remain distinct entries.
 function __sent_all(n: Net): string[] {
   let log: string = n.sent.get();
   let bs: u8[] = log.bytes();

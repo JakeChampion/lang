@@ -5,6 +5,7 @@ import "std/fetch";
 import "std/time";
 import "std/http";
 import "std/hash";
+import "std/utf8";
 
 // examples/tests/sim_fetch_test.fern — std/fetch's client over the
 // scripted network in std/sim_fetch. Every behaviour of the dialled route
@@ -17,6 +18,19 @@ import "std/hash";
 const ORIGIN: string = "93.184.216.34";
 
 const MS: i64 = 1000000;
+
+// These fixtures send textual requests. Keep their assertions explicit
+// about the conversion from the transport's captured bytes.
+function __sent_text(n: sim_fetch.Net, i: i32): string {
+  match (utf8.from_bytes(n.sent(i))) {
+    Some(text) => {
+      return text;
+    },
+    None => {
+      return "<not utf-8>";
+    }
+  }
+}
 
 // A forward proxy on a private address, which only the deployment chose.
 const PROXY: string = "10.0.0.9";
@@ -81,7 +95,7 @@ function test_answer_at_its_time(): test.TestOutcome {
   if (n.open() != 0) {
     return test.fail("the connection was left open");
   }
-  let sent: string = n.sent(0);
+  let sent: string = __sent_text(n, 0);
   if (!sent.starts_with("GET / HTTP/1.1\r\n") || sent.index_of("Host: example.test\r\n") < 0) {
     return test.fail("request: " + sent);
   }
@@ -218,8 +232,8 @@ function test_redirect_followed(): test.TestOutcome {
   if (__body(got) != "at b") {
     return test.fail(__body(got));
   }
-  if (!n.sent(1).starts_with("GET /b ")) {
-    return test.fail("second request: " + n.sent(1));
+  if (!__sent_text(n, 1).starts_with("GET /b ")) {
+    return test.fail("second request: " + __sent_text(n, 1));
   }
   return test.assert_eq(n.connects(), 2);
 }
@@ -234,13 +248,13 @@ function test_cross_origin_drops_credentials(): test.TestOutcome {
   if (__body(got) != "there") {
     return test.fail(__body(got));
   }
-  if (n.sent(0).index_of("authorization: Bearer t") < 0) {
+  if (__sent_text(n, 0).index_of("authorization: Bearer t") < 0) {
     return test.fail("first request lost its credentials");
   }
-  if (n.sent(1).index_of("authorization") >= 0) {
-    return test.fail("credentials crossed origins: " + n.sent(1));
+  if (__sent_text(n, 1).index_of("authorization") >= 0) {
+    return test.fail("credentials crossed origins: " + __sent_text(n, 1));
   }
-  return test.assert_contains(n.sent(1), "x-trace: kept");
+  return test.assert_contains(__sent_text(n, 1), "x-trace: kept");
 }
 
 // More redirects than the request allows is an error, after the allowed
@@ -330,7 +344,7 @@ function test_gzip_decoded(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [__gzip_answer(__gzip_stored("unzipped text"))]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
-  if (n.sent(0).index_of("accept-encoding: gzip") < 0) {
+  if (__sent_text(n, 0).index_of("accept-encoding: gzip") < 0) {
     return test.fail("the client did not ask for gzip");
   }
   return test.assert_eq(__body(got), "unzipped text");
@@ -544,7 +558,7 @@ function test_proxied(): test.TestOutcome {
   if (__body(got) != "via proxy") {
     return test.fail(__message(got));
   }
-  let sent: string = n.sent(0);
+  let sent: string = __sent_text(n, 0);
   if (!sent.starts_with("GET http://example.test/ HTTP/1.1\r\nHost: example.test\r\n")) {
     return test.fail("request: " + sent);
   }
@@ -573,7 +587,7 @@ function test_caller_proxy_credentials(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "via proxy")]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_header("Proxy-Authorization", "Basic b3du"), __via_proxy(false, "", false));
-  let sent: string = n.sent(0);
+  let sent: string = __sent_text(n, 0);
   if (__body(got) != "via proxy" || sent.index_of("Basic b3du\r\n") < 0 || sent.index_of("dTo=") >= 0) {
     return test.fail("request: " + sent);
   }
@@ -643,8 +657,104 @@ function test_proxy_connection_kept(): test.TestOutcome {
   return test.assert_eq(n.connects(), 1);
 }
 
+function __all_bytes(): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < 256) {
+    out = out.append(i as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function test_binary_sent_snapshot(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "posted")]);
+  let body: u8[] = __all_bytes();
+  let got = fetch.send_on(n, fetch.request("POST", "http://example.test/").with_bytes(body), __open());
+  if (__body(got) != "posted" || n.sent_count() != 1) {
+    return test.fail("binary request failed");
+  }
+  let held: u8[] = n.sent(0);
+  if (held.len() < body.len()) {
+    return test.fail("request body missing");
+  }
+  let i: i32 = 0;
+  while (i < body.len()) {
+    if (held[held.len() - body.len() + i] != body[i]) {
+      return test.fail("request body changed");
+    }
+    i = i + 1;
+  }
+  match (utf8.from_bytes(held)) {
+    Some(_) => {
+      return test.fail("fixture must contain binary bytes");
+    },
+    None => {}
+  }
+  let changed: u8[] = held.with(0, 0 as u8);
+  let second = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(second) != "posted" || n.sent_count() != 2 || !held.equal(n.sent(0)) || changed[0] != 0 || held[0] != 80 as u8) {
+    return test.fail("captured snapshot changed");
+  }
+  if (n.sent(0 - 1).len() != 0 || n.sent(2).len() != 0) {
+    return test.fail("out-of-range capture");
+  }
+  return test.pass();
+}
+
+function test_kept_binary_answer(): test.TestOutcome {
+  let body: u8[] = __all_bytes().concat("\r\nConnection: close\r\n\r\n".bytes());
+  let head: string = "HTTP/1.1 200 OK\r\nContent-Length: " + body.len().to_string();
+  let a: sim_fetch.Answer = sim_fetch.raw_bytes((head + "\r\nConnection: close\r\n\r\n").bytes().concat(body)).kept();
+  if (a.close || !a.bytes.equal((head + "\r\n\r\n").bytes().concat(body))) {
+    return test.fail("kept changed binary body");
+  }
+  let already_kept: u8[] = (head + "\r\n\r\n").bytes().concat(body);
+  let b: sim_fetch.Answer = sim_fetch.raw_bytes(already_kept).kept();
+  if (b.close || !b.bytes.equal(already_kept)) {
+    return test.fail("kept mistook body bytes for a header");
+  }
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [a]);
+  let Ok(resp) = fetch.send_on(n, fetch.get("http://example.test/"), __open()) else {
+    return test.fail("binary response failed");
+  };
+  if (!resp.body_bytes().equal(body)) {
+    return test.fail("response bytes changed");
+  }
+  return test.pass();
+}
+
+function test_raw_write_journal(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "*", [sim_fetch.reply(200, "ok")]);
+  let Ok(found) = n.lookup("example.test", false) else {
+    return test.fail("lookup");
+  };
+  let Ok(conn) = n.connect(found.dial, 80, 100) else {
+    return test.fail("connect");
+  };
+  let none: u8[] = [];
+  let invalid: u8[] = "GET /".bytes().concat([255 as u8]).concat(" HTTP/1.1\r\n\r\n".bytes());
+  if (n.write(conn, none) != 0 || n.write(conn, invalid) != invalid.len()) {
+    return test.fail("write result");
+  }
+  if (n.sent_count() != 2 || n.sent(0).len() != 0 || !n.sent(1).equal(invalid)) {
+    return test.fail("journal lost a write");
+  }
+  if (!utf8.is_valid_utf8(n.sent.get())) {
+    return test.fail("journal is not ASCII text");
+  }
+  n.close(conn);
+  return test.pass();
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/sim_fetch");
+  r = r.it("captures binary writes as owned bytes", test_binary_sent_snapshot);
+  r = r.it("keeps binary response bodies unchanged", test_kept_binary_answer);
+  r = r.it("journals empty and invalid-target writes", test_raw_write_journal);
   r = r.it("answers at its virtual time and closes", test_answer_at_its_time);
   r = r.it("reads a body that arrives a byte at a time", test_chunked_arrival);
   r = r.it("times out connecting at the connect bound", test_connect_timeout);

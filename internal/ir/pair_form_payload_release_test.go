@@ -136,9 +136,9 @@ function main(): i32 {
 // for safety but far from necessary, and the shape it refused is the ordinary
 // one — read a value out of a match, keep it — so a fresh payload was
 // abandoned per match, which is the serve loop's per-request recv buffer and the
-// unbounded growth behind it. The escapes that are genuinely unowned (a
-// return, a re-wrap into a constructor, a callee that hands the argument back)
-// are still refused, by the three tests around this one.
+// unbounded growth behind it. The escapes that are genuinely unowned (a re-wrap
+// into a constructor, a callee that hands the argument back) are still refused,
+// by the tests around this one.
 //
 // This test reads the op stream, so it cannot see whether the counts actually
 // balance: internal/e2e's TestEscapingMatchPayloadIsReclaimed runs this shape
@@ -162,20 +162,37 @@ function main(): i32 {
 	}
 }
 
-// A `return` of the binding is the escape that stays refused, and it is what
-// makes the whitelist in bindingUsesExcused worth having: the name appears in
-// a position the walk does not recognise — one that takes no count of its own
-// — so the release is declined.
-func TestPairFormPayloadKeptWhenBindingReturned(t *testing.T) {
+// `return a` takes the Return lowering's transfer retain, so the caller holds
+// a count of its own and the arm still owes the one the callee handed over.
+// Declining that release leaked one payload per match (#11479). On the
+// single-word string ABI Option[string] is pair-form too, which is where the
+// leak surfaced. internal/e2e's TestReturnedPairFormMatchPayloadIsReleased
+// runs both shapes under the leak census.
+func TestPairFormPayloadReleasedWhenBindingReturned(t *testing.T) {
 	ip := lowerForTest(t, pairPayloadSrc+`
 function keepit(n: i32): i32[] {
     match (mk(n)) { Some(a) => { return a; }, None => { return [0]; }, }
 }
 
-function main(): i32 { return keepit(7)[0]; }
+function find(values: string[], name: string): Option[string] {
+    if (values[0] == name) { return Some(values[1]); }
+    return None;
+}
+
+function lookup(values: string[]): string {
+    match (find(values, "x-echo")) { Some(v) => { return v; }, None => { return "none"; }, }
+}
+
+function main(): i32 { return keepit(7)[0] + lookup(["x-echo", "y"]).len(); }
 `)
-	if releasesAfterMatch(funcByName(ip, "keepit"), "__fern_arr_dec") {
-		t.Error("keepit: the arm returns the payload, but the arm releases it first — the caller gets freed memory")
+	if !ip.PairForm["mk"] || !ip.PairForm["find"] {
+		t.Fatal("mk / find are not pair-form; this test no longer covers the pair-form path")
+	}
+	if !releasesBoundPayload(funcByName(ip, "keepit"), "__fern_arr_dec") {
+		t.Error("keepit: `return a` retains the payload, so the arm must release the count the callee handed over")
+	}
+	if !releasesAfterMatch(funcByName(ip, "lookup"), "__fern_str_dec") {
+		t.Error("lookup: `return v` retains the string payload, so the arm must release the count the callee handed over")
 	}
 }
 

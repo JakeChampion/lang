@@ -6976,6 +6976,32 @@ function main(): i32 {
 	// An instance of a lifted generic lambda that returns a call to another
 	// lifted lambda reads that callee's result under its own binding, not as
 	// the template's `T`.
+	// A lambda in a generic body that captures a value of the type variable,
+	// called in place and returned, each at a 32-bit, a 64-bit and a heap
+	// binding of T.
+	{name: "a-generic-lambda-capturing-a-type-variable", atLeast: 8, want: "31|", src: `
+pub function direct[T](seed: T): T {
+    let g: (i32) => T = (k: i32): T => seed;
+    return g(1);
+}
+
+pub function returned[T](seed: T): (i32) => T {
+    return (k: i32): T => seed;
+}
+
+function bit(ok: boolean, b: i32): i32 {
+    if (ok) {
+        return b;
+    }
+    return 0;
+}
+
+function main(): i32 {
+    let big: i64 = 5000000000;
+    let r = bit(direct(7) == 7, 1) + bit(direct(big) == big, 2) + bit(direct("ab" + "c").len() == 3, 4);
+    return r + bit(returned(big)(1) == big, 8) + bit(returned("d" + "ef")(2).len() == 3, 16);
+}
+`},
 	{name: "a-lambda-inside-a-lifted-generic-lambda", atLeast: 9, want: "14|", src: `
 pub function make[T](seed: T): T {
     function outer(base: T): (T) => T {

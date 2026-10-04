@@ -129,7 +129,6 @@ var rcResultOwned = map[string]bool{
 	"__str_slice":              true,
 	"__fern_str_copy":          true,
 	"__fern_string_from_bytes": true,
-	"__bytes_to_lang_string":   true,
 	// CONSUMES its receiver and hands back one owned string, in place
 	// when unique and freshly concatenated otherwise. Either path
 	// leaves the caller holding exactly one unit.

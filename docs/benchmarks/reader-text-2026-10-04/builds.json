@@ -1,0 +1,56 @@
+{
+  "compilers": {
+    "before": "e0fe1c2bed31f5b23306bf6deabbae695b37551fe19ae292041107a9d56f7b0a",
+    "after": "def1f92dfb208628935491e401aab6848f588136c5cea61d313fc4f79307475a"
+  },
+  "builds": {
+    "ascii64-before": {
+      "bytes": 69888,
+      "sha256": "d15653cae346ae8dfc3660af7d396cb8e59427d9efa1c526dd52855dffadce91"
+    },
+    "ascii64-before-census": {
+      "bytes": 70144,
+      "sha256": "c65a22fd06f6e6d69610d14221931d69cabaa68ea60158d7e68c73df78e27b53"
+    },
+    "ascii64-after": {
+      "bytes": 69888,
+      "sha256": "3e837a514c492ca7f4812ac63f85c01bba0a9b6b9b832f7b080292831944645a"
+    },
+    "ascii64-after-census": {
+      "bytes": 70144,
+      "sha256": "90ef85234803ae59cfd42e4899e8992fa4bd9680211c8f36752df373eac7b041"
+    },
+    "ascii4096-before": {
+      "bytes": 69888,
+      "sha256": "220ca73519232594f03e44359276988b5c00bddf2d12ba57ae5d5babe755c6a9"
+    },
+    "ascii4096-before-census": {
+      "bytes": 70144,
+      "sha256": "c6fce6ab07f8fb9e99324ec7a74bc14b95ebcefd9bedcdee24a70e6e6caa9206"
+    },
+    "ascii4096-after": {
+      "bytes": 69888,
+      "sha256": "07d5fa93f6e1356a5a6cd5dd8a3a2a22264992f25d4fcc6fc8788a911c70f81d"
+    },
+    "ascii4096-after-census": {
+      "bytes": 70144,
+      "sha256": "b550c4a72c6e11459d55936b5b9263f5e406efe4bde94cb0269fdddb1953c268"
+    },
+    "unicode4095-before": {
+      "bytes": 69888,
+      "sha256": "ea53871dce78102f957eb43e8d4dc8f835b3d7ee3b804e7a3f3e55e0f51b0ebb"
+    },
+    "unicode4095-before-census": {
+      "bytes": 70144,
+      "sha256": "9d1a526dbae5737a02fd58fda79ff23afe84c5b77d52428ad95a6c7b055d3e54"
+    },
+    "unicode4095-after": {
+      "bytes": 69888,
+      "sha256": "e1447930ab17cbdef5af737ac6bfbf4c44542d0654cad54540764853ab9cedbb"
+    },
+    "unicode4095-after-census": {
+      "bytes": 70144,
+      "sha256": "23a664dd19a2c7ae2e45a61c1df446e3c2bdc17b68b8a03c34d6bb5afc5c3159"
+    }
+  }
+}

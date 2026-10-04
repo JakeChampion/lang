@@ -31,7 +31,7 @@ func paramCountedFor(t *testing.T, src, fn string) []bool {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	return inferParamCountedRetain(prog, info, nil)[fn]
+	return inferParamCountedRetain(prog, info)[fn]
 }
 
 func TestStringParamByteReadIsCounted(t *testing.T) {
@@ -70,10 +70,11 @@ func TestStringParamThatIsRetainedStaysUncredited(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"returned bare", `function keep(p: string): string { return p; }`},
-		// "stored in an array and returned" moved OUT of this list: the
-		// push store is a counted occurrence since the #7914 element
-		// credit (TestStringParamPushedElementIsCounted).
+		// "stored in an array and returned" and "returned bare" moved OUT of
+		// this list: the push store is a counted occurrence since the #7914
+		// element credit (TestStringParamPushedElementIsCounted), and a bare
+		// return takes the return-transfer inc
+		// (TestBareReturnIsCountedInBothRetainSummaries).
 		{"bound to a local", `function keep(p: string): i32 {
             let s: string = p;
             return s.len();

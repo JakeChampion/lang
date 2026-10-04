@@ -22,6 +22,7 @@ import "./lexer";
 import "./parser";
 import "./util";
 import "./astwalk";
+import "std/utf8";
 
 // =================== VALUES ====================
 
@@ -1422,7 +1423,7 @@ function reader_method(rs: VStruct, name: string, args: Value[]): Value {
     if (args.len() != 0) {
       return v_err("Reader.read_line takes no arguments");
     }
-    return option_string_value(r.read_line());
+    return option_string_value(read_line_from_host());
   }
   if (args.len() != 1 || !is_i32_arg(args[0])) {
     return v_err("Reader." + name + " takes one integer argument");
@@ -1437,9 +1438,19 @@ function reader_method(rs: VStruct, name: string, args: Value[]): Value {
       }
     }
   }
-  match (r.read_chunk(vint_bits(args[0]))) {
+  // Define the current text boundary even when stage0 built this interpreter
+  // with its older, unchecked read_chunk runtime. The raw API also owns the
+  // negative-size and I/O-error contract.
+  match (r.read_chunk_bytes(vint_bits(args[0]))) {
     Ok(chunk) => {
-      return v_variant("Ok", [v_string(chunk)]);
+      match (utf8.from_bytes(chunk)) {
+        Some(text) => {
+          return v_variant("Ok", [v_string(text)]);
+        },
+        None => {
+          return v_variant("Err", [io_error_value(InvalidUtf8(""))]);
+        }
+      }
     },
     Err(e) => {
       return v_variant("Err", [io_error_value(e)]);
@@ -1455,6 +1466,38 @@ function byte_array_value(bytes: u8[]): Value {
     i = i + 1;
   }
   return v_arr_of(out, "u8");
+}
+
+// Stage0 can still have a bounded text read_line. Read raw bytes here so the
+// installed stage1 interpreter also returns a complete line without consuming
+// any byte after its newline. Keep the D10 OS-text assumption at publication.
+function read_line_from_host(): Option[string] {
+  let r: Reader = stdin();
+  let h: usize = buf_new(256);
+  let done: boolean = false;
+  while (!done) {
+    match (r.read_chunk_bytes(1)) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          done = true;
+        } else {
+          buf_push_byte(h, chunk[0] as i32);
+          if (chunk[0] == 10 as u8) {
+            done = true;
+          }
+        }
+      },
+      Err(_) => {
+        done = true;
+      }
+    }
+  }
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  if (bytes.len() == 0) {
+    return None;
+  }
+  return Some(string_from_bytes_unchecked(bytes));
 }
 
 function call_xattr(name: string, args: Value[]): Value {
@@ -4360,7 +4403,9 @@ function call_buf_read(name: string, h: usize, args: Value[]): Value {
     return v_int(buf_len(h));
   }
   if (name == "buf_take") {
-    return v_string(buf_take(h));
+    // The stage0 that builds this interpreter may still expose raw buf_take.
+    // Publish text through the current decoder after draining the byte API.
+    return v_string(utf8.from_bytes_lossy(buf_take_bytes(h)));
   }
   if (name == "buf_take_bytes") {
     return call_buf_take_bytes(h);
@@ -5026,7 +5071,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     if (args.len() != 0) {
       return v_err("read_line takes no arguments");
     }
-    return option_string_value(read_line());
+    return option_string_value(read_line_from_host());
   }
   if (name == "cell_new") {
     if (args.len() != 1) {
