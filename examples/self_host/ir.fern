@@ -345,6 +345,13 @@ pub function op_arr_get_nc(width: i32): Op {
   return Op { decl: 0 - 1, kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
+// An `arr_set` whose index the lowering has already checked against an array
+// of the same length: i32_imm == 1, as on op_arr_get_nc, and the register
+// backends skip the compare and trap. wasm keeps its check.
+pub function in_bounds(op: Op): Op {
+  return Op { ...op, i32_imm: 1 };
+}
+
 pub function op_arr_set(width: i32): Op {
   return Op { decl: 0 - 1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
@@ -8189,7 +8196,7 @@ pub function call_needs_heap(name: string): boolean {
     return true;
   }
   if (name == "__fern_arr_inc_elems" || name == "__fern_arr_own_elems" || name == "__fern_str_own"
-    || name == "__fern_str_grow") {
+    || name == "__fern_str_grow" || name == "__fern_str_grow_range") {
     return true;
   }
   if (name == "__fern_rc_underflow_count" || name == "__fern_rc_underflow_get") {

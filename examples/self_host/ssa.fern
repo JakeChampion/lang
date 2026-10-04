@@ -310,7 +310,7 @@ function semantic_kind_name(id: i32): string {
     "map_keys", "map_values", "map_delete", "map_cleared", "zero", "str_bytes",
     "arr_join", "arr_slice", "map_iter", "mapiter_has_next",
     "mapiter_key", "mapiter_value", "mapiter_advance", "dyn_up", "dyn_box",
-    "dyn_is", "dyn_as", "hole_at", "hole_fill", "array_lend", "str_byte_view",
+    "dyn_is", "dyn_as", "hole_at", "hole_fill", "array_lend", "str_byte_view", "append_range",
   ];
   let at: i32 = 0 - id - 1;
   if (at < 0 || at >= names.len()) {

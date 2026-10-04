@@ -1508,7 +1508,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
 function mangle_trait_reqs(reqs: parser.TraitReq[], ctx: RewriteCtx): parser.TraitReq[] {
   let out: parser.TraitReq[] = [];
   for r in reqs {
-    out = out.append(parser.TraitReq { ...r, req_sigs: mangle_sigs(r.req_sigs, ctx), assoc_sigs: mangle_sigs(r.assoc_sigs, ctx) });
+    out = out.append(parser.TraitReq { ...r, req_sigs: mangle_sigs(r.req_sigs, ctx), assoc_sigs: mangle_sigs(r.assoc_sigs, ctx), default_sigs: mangle_sigs(r.default_sigs, ctx) });
   }
   return out;
 }
@@ -2087,6 +2087,7 @@ pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: str
     trait_reqs: trait_reqs,
     trait_decls: trait_decls,
     inferred_consts: inferred,
+    todo_sites: e.todo_sites,
   };
   return parser.resolve_dyn_traits(parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred))));
 }

@@ -37,10 +37,40 @@ func x86NativeRunner(t *testing.T) []string {
 func compileAndRunX86Native(t *testing.T, src string) (stdout string, exitCode int) {
 	t.Helper()
 	runner := x86NativeRunner(t)
+	asm := compileToX86Asm(t, src)
+	text, rodata, err := nativex86.AssembleProgram(asm, nativeelf.TextVAddr)
+	if err != nil {
+		t.Fatalf("NATIVE-ASM-FAIL: %v\n--- asm ---\n%s", err, asm)
+	}
+	binPath := filepath.Join(t.TempDir(), "prog")
+	if err := os.WriteFile(binPath, nativeelf.StaticExecutableDataX86(text, rodata), 0o755); err != nil {
+		t.Fatalf("write native bin: %v", err)
+	}
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(binPath)
+	} else {
+		cmd = exec.Command(runner[0], binPath)
+	}
+	out, _ := cmd.CombinedOutput()
+	return string(out), cmd.ProcessState.ExitCode()
+}
+
+// compileToX86Asm compiles src to x86-64 assembly with the Go x86-64 code
+// generator.
+func compileToX86Asm(t *testing.T, src string) string {
+	return compileToX86AsmExports(t, src, nil)
+}
+
+// compileToX86AsmExports is compileToX86Asm with extra tree-shake roots
+// (Options.Exports) so functions the program never calls itself survive —
+// e.g. a `-shared` .so export.
+func compileToX86AsmExports(t *testing.T, src string, exports []string) string {
+	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
+		t.Fatal(err)
 	}
 	prog, _, err := modload.Load(srcPath)
 	if err != nil {
@@ -56,26 +86,11 @@ func compileAndRunX86Native(t *testing.T, src string) (stdout string, exitCode i
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
-	asm, err := x86codegen.Emit(prog, info)
+	asm, err := x86codegen.EmitWithOptions(prog, info, x86codegen.Options{Exports: exports})
 	if err != nil {
 		t.Fatalf("x86_64 emit: %v", err)
 	}
-	text, rodata, err := nativex86.AssembleProgram(asm, nativeelf.TextVAddr)
-	if err != nil {
-		t.Fatalf("NATIVE-ASM-FAIL: %v\n--- asm ---\n%s", err, asm)
-	}
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(binPath, nativeelf.StaticExecutableDataX86(text, rodata), 0o755); err != nil {
-		t.Fatalf("write native bin: %v", err)
-	}
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(binPath)
-	} else {
-		cmd = exec.Command(runner[0], binPath)
-	}
-	out, _ := cmd.CombinedOutput()
-	return string(out), cmd.ProcessState.ExitCode()
+	return asm
 }
 
 // First x86-64 native milestone: main()'s return value reaches the

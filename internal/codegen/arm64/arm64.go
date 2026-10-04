@@ -1374,7 +1374,7 @@ func (g *generator) emitDataSections() {
 			// rejects (#5055 — the `__map_*_keyed` fn-value adapters
 			// from the core/map collapse were the first const_func
 			// cells a darwin map program emitted, turning every
-			// TestArm64DarwinBuilds/map_* case into a link failure).
+			// darwin map program into a link failure).
 			g.line(`.section __DATA,__const`)
 		} else {
 			g.line(`.section .rodata`)

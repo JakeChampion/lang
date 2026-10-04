@@ -331,19 +331,6 @@ type Reloc struct {
 	Addend uint64
 }
 
-// AssembleProgramPIE is AssembleProgram for a static position-independent
-// executable (elf.StaticPieExecutableX86): the W^X layout laid out from a
-// load base of 0, returning the R_X86_64_RELATIVE relocations for the
-// `.quad <symbol>` slots. rip-relative code is base-independent and needs
-// no relocation. Pass elf.SegmentAddrsPIEX86.
-func AssembleProgramPIE(src string, addrs SegmentAddrs) (text, rodata []byte, relocs []Reloc, err error) {
-	a, textVAddr, dataVAddr, err := resolve(src, addrs)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	return a.BytesProgramPIE(textVAddr, dataVAddr)
-}
-
 // AssembleProgramWXSyms is AssembleProgramWX that also returns every .text
 // label resolved to its absolute virtual address (textVAddr + offset) — the
 // function-symbol table the ELF writer emits into .symtab under `-g`, so a

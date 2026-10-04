@@ -460,6 +460,7 @@ func runDoctestCase(srcPath, src string, tc literate.Doctest) error {
 		return fmtErr(err)
 	}
 	ip := interp.New()
+	ip.SetDynCoercions(info.DynCoercions)
 	for _, ed := range prog.Enums {
 		ip.RegisterEnum(ed)
 	}
@@ -1196,6 +1197,7 @@ func runInterp(srcPath string, argv []string) (int, error) {
 	}
 
 	ip := interp.New()
+	ip.SetDynCoercions(info.DynCoercions)
 	// argv[0] is conventionally the program path so `args()`
 	// matches the C / Go shape. Subsequent entries are the
 	// user's own arguments, written after FILE on the fern
