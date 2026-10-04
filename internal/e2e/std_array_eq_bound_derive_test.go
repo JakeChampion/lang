@@ -151,7 +151,7 @@ func TestStdArrayEqBoundDeriveElement(t *testing.T) {
 				}
 			})
 			t.Run("x86-64 native", func(t *testing.T) {
-				if _, got := compileAndRunX86Native(t, src); got != 42 {
+				if _, got := compileAndRunX86_64(t, src); got != 42 {
 					t.Errorf("x86-64 native: got exit %d, want 42", got)
 				}
 			})
@@ -197,7 +197,7 @@ func TestStdSetEqBoundDeriveElement(t *testing.T) {
 		}
 	})
 	t.Run("x86-64 native", func(t *testing.T) {
-		if _, got := compileAndRunX86Native(t, setDeriveEqProg); got != 42 {
+		if _, got := compileAndRunX86_64(t, setDeriveEqProg); got != 42 {
 			t.Errorf("x86-64 native: got exit %d, want 42", got)
 		}
 	})

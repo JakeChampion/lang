@@ -45,7 +45,7 @@ func simPlatformSource(t *testing.T) string {
 }
 
 func TestSimPlatformNativeX86_64(t *testing.T) {
-	out, code := compileAndRunX86Native(t, simPlatformSource(t))
+	out, code := compileAndRunX86_64(t, simPlatformSource(t))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\n%s", code, out)
 	}

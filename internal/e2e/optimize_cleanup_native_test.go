@@ -1,36 +1,13 @@
 // #4377 slice 1b: OptimizeCleanup (copyprop + constprop + Fold + strength)
-// now runs on the native x86-64 / arm64 backends, not just wasm. The Fold
-// emitter crash that used to block it is fixed (the array-index zero-extend),
-// and the fixpoint's old up-to-8× whole-program convergence snapshot is gone
-// (each sub-pass reports a changed bool), so it no longer inflates self-host
-// build time.
-//
-// These pin the observable effect on native: constant expressions fold to a
-// single immediate (the intermediate arithmetic vanishes), and results stay
-// correct. The Fold-miscompile canary is TestSelfHostTupleElemTag
-// (internal/e2eselfhost), which now passes with the pass enabled.
+// runs on every backend. These shapes pin that its results stay correct on the
+// native targets; the folding itself is pinned on the self-host's emitted text
+// by TestSelfHostConstExprFoldShape (internal/e2eselfhost), and the
+// Fold-miscompile canary is TestSelfHostTupleElemTag.
 package e2e
 
 import (
-	"strings"
 	"testing"
 )
-
-// TestX86_64OptimizeCleanupFolds pins that a pure-constant expression is
-// folded at the IR level — the emitted main body carries the folded immediate
-// and NOT the intermediate `imul`/`add` that computed it.
-func TestX86_64OptimizeCleanupFolds(t *testing.T) {
-	// 2 + 3 * 4 == 14, computable entirely at compile time.
-	src := `function main(): i32 { let x: i32 = 2 + 3 * 4; return x; }`
-	asm := mainBody(compileToX86Asm(t, src))
-	if strings.Contains(asm, "imul") {
-		t.Errorf("constant expr 2 + 3*4 was not folded — `imul` survives in main:\n%s", asm)
-	}
-	// The folded constant 14 must appear as a materialised immediate.
-	if !strings.Contains(asm, "14") {
-		t.Errorf("folded constant 14 missing from emitted main:\n%s", asm)
-	}
-}
 
 var optimizeCleanupCases = []struct {
 	name     string
@@ -61,7 +38,7 @@ var optimizeCleanupCases = []struct {
 func TestX86_64OptimizeCleanupCorrect(t *testing.T) {
 	for _, tc := range optimizeCleanupCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, code := compileAndRunX86Native(t, tc.src); code != tc.expected {
+			if _, code := compileAndRunX86_64(t, tc.src); code != tc.expected {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.expected)
 			}
 		})

@@ -267,14 +267,6 @@ func StaticExecutableData(text, data []byte) []byte {
 	return staticExecutableData(text, data, emAArch64)
 }
 
-// StaticExecutableDataX86 is the x86-64 counterpart of
-// StaticExecutableData: identical single-segment layout, only the ELF
-// e_machine field differs (EM_X86_64). The x86-64 native assembler lays
-// .text at TextVAddr and .rodata immediately after, same as arm64.
-func StaticExecutableDataX86(text, data []byte) []byte {
-	return staticExecutableData(text, data, emX86_64)
-}
-
 func staticExecutableData(text, data []byte, machine uint16) []byte {
 	body := padTo8(append([]byte(nil), text...))
 	body = append(body, data...)

@@ -81,7 +81,7 @@ func TestReturnWithWritesInPlace(t *testing.T) {
 		}
 	}
 	t.Run("x86-64", func(t *testing.T) {
-		out, code := compileAndRunX86Native(t, returnWithInPlaceSrc)
+		out, code := compileAndRunX86_64(t, returnWithInPlaceSrc)
 		check(t, code, out)
 	})
 	t.Run("arm64", func(t *testing.T) {
