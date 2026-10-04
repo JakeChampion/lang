@@ -74,8 +74,8 @@ func TestSelfHostUniqLongOptionWithSameFieldCountStructs(t *testing.T) {
 		t.Fatalf("native compile of the patched uniq: %v\n%s", err, out)
 	}
 	ours := filepath.Join(work, "uniq-selfhost")
-	argv := crossArgv(selfHostCompiler(t), "-target", fernTarget(t), uniqSrc,
-		filepath.Join(root, "internal", "stdlib"), "-o", ours)
+	argv := crossArgv(selfHostCompiler(t), "-target", fernTarget(t), "-o", ours, uniqSrc,
+		filepath.Join(root, "internal", "stdlib"))
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
