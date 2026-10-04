@@ -14,8 +14,8 @@
 //
 // The recorded calls live in a `Cell[string]`, so a mock handed to a handler
 // and the test's own copy of it share one log: the mock is a value, its log
-// is not. A cell's element must be a scalar or a string (E057), so the log
-// is one string, an entry per line, and `calls()` parses it back into
+// is not. Cells admit scalars, strings and owned byte arrays (E057).
+// This text log stores one entry per line; `calls()` parses it back into
 // `MockCall` values.
 //
 // What a mocked capability RETURNS is what the test canned for it, or a

@@ -27,8 +27,8 @@ import "std/time";
 // Sim — the simulation driver: virtual clock (ns, starts at 0) +
 // explicit PRNG state, and the reactor leg: the descriptors watched with
 // their interest bits, and the readiness a test scripts for them with
-// `ready_at`. A cell holds a scalar or a string, so both tables are
-// strings of `;`-ended rows: `fd:interest` and `fd:at_ms:bits`, a
+// `ready_at`. Both shared tables use Cell[string] with `;`-ended rows:
+// `fd:interest` and `fd:at_ms:bits`, a
 // readiness time in milliseconds like a sim token. Construct with
 // `sim.new(seed)`.
 pub struct Sim { clock_ns: Cell[i64], rng: Cell[i64], watched: Cell[string], readiness: Cell[string] }

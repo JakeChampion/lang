@@ -291,7 +291,7 @@ func opStackEffect(op Op, sigs map[string]funcSig, ss int) (pops int, pushes int
 		return 2 * ss, 1, true
 	case OpStrLen:
 		return ss, 1, true
-	case OpEnumSentinel:
+	case OpEnumSentinel, OpConstArray:
 		return 0, 1, true
 	case OpMatchTag:
 		return 1, 1, true

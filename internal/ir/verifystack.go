@@ -444,7 +444,7 @@ func verifyStack(f *Func, known map[string]*Func, externs map[string]*ExternFunc
 func (s *stackChecker) step(i int, op Op) {
 	switch op.Kind {
 	// Constants.
-	case OpConstI32, OpConstI64, OpConstFunc, OpConstVtable, OpEnumSentinel:
+	case OpConstI32, OpConstI64, OpConstFunc, OpConstVtable, OpEnumSentinel, OpConstArray:
 		s.push(kInt)
 	case OpConstF32, OpConstF64:
 		s.push(kFloat)

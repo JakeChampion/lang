@@ -953,11 +953,10 @@ func builtinStructDecls() []*ast.StructDecl {
 		// mutable-state primitive for the immutable-data world
 		// (docs/CELL-TYPE-PLAN.md). `T` is restricted to cycle-free
 		// types (E057) so a cell can never reconstruct a reference
-		// cycle — v1 is scalars only (string and the rest wait on the
-		// owning-slot RC integration). The field is an opaque scalar
-		// slot; cell_new / get / set are IR-lowered to a one-element
-		// heap box (alloc + load/store at offset 0) so Perceus RCs the
-		// box itself with no per-slot RC.
+		// cycle. Scalars, strings and owned byte arrays are supported.
+		// The field is opaque; cell_new / get / set lower to a
+		// one-element heap box with type-aware retain and release for
+		// counted elements.
 		{
 			Name:       "Cell",
 			TypeParams: []string{"T"},
@@ -8711,8 +8710,8 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			// over a reference type could reconstruct a reference cycle,
 			// which is exactly what the immutable-data model forbids so
 			// Perceus RC needs no cycle collector (docs/CELL-TYPE-PLAN.md
-			// §1-2). v1 allows scalars only; string and richer cycle-free
-			// types wait on the owning-slot RC integration.
+			// §1-2). Scalars, strings and owned byte arrays have the
+			// required owning-slot RC support; other types remain unsupported.
 			if t.Name == "Cell" && len(args) == 1 && !isCellElemType(args[0]) {
 				// Anchor at the annotation's use site. Cell's decl is
 				// synthesized (sd.P is 0:0, which diag.Format renders
@@ -12203,7 +12202,8 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 // cell -> closure -> env -> cell.
 //
 // That cell is the only mutable heap slot in the language — fields are E048,
-// elements are E056, `Cell[T]` is scalar-or-string by E057 — so refusing the
+// elements are E056, and E057 limits Cell elements to scalars, strings and
+// owned byte arrays. Refusing the
 // stores through it that can reach a function value is what carries the
 // collector-free reference-counting invariant.
 //

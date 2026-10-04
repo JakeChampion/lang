@@ -1,0 +1,18 @@
+{
+  "system": "Darwin 24.6.0 arm64",
+  "cpu": "Apple M3 Pro",
+  "memory_bytes": 38654705664,
+  "logical_cpus": 12,
+  "before_source": "bcae0ce84c2861631e8e025da51436afb8f2fb48",
+  "after_source": "0b10e24e2b744bf53f24e05ffafe31e89f2b70e2",
+  "compilers": {
+    "before": {
+      "bytes": 13212609,
+      "sha256": "2d2eac75bef28a9ac40f692a03b26e9274ea55a69f77aed26ed1046ddbbcfa4f"
+    },
+    "after": {
+      "bytes": 13245633,
+      "sha256": "4f4afadfdf472003daf842055deeda893538a0d5f1819393230252e8b343b4c7"
+    }
+  }
+}
