@@ -234,10 +234,12 @@ func checkSelfHostHttpHandlerServes(t *testing.T, entry func(port int) string) {
 }
 
 // TestSelfHostHttpHandlerServesArm64 is the same server built for arm64 Linux
-// by the self-host's own assembler and ELF writer, run under qemu. Every
-// request runs its handler as a task, whose state block the arm64 assembler
-// once reserved a quarter of, crashing the server on its first request
-// (#11377).
+// the way `fern -target arm64-linux -o` builds it, through the self-host's own
+// assembler and ELF writer, and run under qemu-aarch64 off arm64 hosts. Every
+// request runs its handler as a task, whose .bss state block that assembler
+// once sized short, putting the heap allocator's globals on top of it: the
+// server bound its port, then faulted on the first request (#11377). Linking
+// the emitted text with GNU as instead never runs that assembler.
 func TestSelfHostHttpHandlerServesArm64(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)

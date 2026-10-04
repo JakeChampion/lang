@@ -392,16 +392,18 @@ function main(): i32 {
     // for stays ignorable.
     let ok: X86Asm = x86_gas_assemble("    .globl m\n    .type m,@function\n    .size m,4\n    .weak w\n");
     if (ok.unknown.len() != 0) { return 34; }
-    // A data directive reserves or lays down EVERY value it lists. The task
-    // runtime's four-value .quad state block got one .bss slot, and the next
-    // .bss symbol landed on its other three words (#11377).
-    let bl: X86Asm = x86_gas_assemble("    .section .bss\nfirst: .quad 0, 0, 0, 0\nsecond: .quad 0\nthird: .long 0, 0, 0\nfourth: .byte 0, 0\nend: .skip 1\n");
-    if (bl.bss_size != 55 || bl.rodata.len() != 0 || bl.unknown.len() != 0) { return 104; }
-    let b2: i32 = x86_label_idx(bl, "second");
-    let b4: i32 = x86_label_idx(bl, "fourth");
-    let b5: i32 = x86_label_idx(bl, "end");
-    if (b2 < 0 || bl.lab_secs[b2] != 2 || bl.lab_offs[b2] != 32) { return 105; }
-    if (b4 < 0 || bl.lab_offs[b4] != 52 || b5 < 0 || bl.lab_offs[b5] != 54) { return 106; }
+    // A data directive reserves or lays down EVERY value it lists, whatever
+    // its width and section. TestSelfHostX86BssValueList pins a .bss .quad
+    // list (#11377); in .bss the other widths wrote their bytes into the
+    // data image instead of reserving, and in data a .quad list laid down
+    // only its first value.
+    let bl: X86Asm = x86_gas_assemble("    .section .bss\nls: .long 0, 0, 0\nbs: .byte 0, 0\nds: .double 0, 0\nend: .skip 1\n");
+    if (bl.bss_size != 31 || bl.rodata.len() != 0 || bl.unknown.len() != 0) { return 104; }
+    let b2: i32 = x86_label_idx(bl, "bs");
+    let b3: i32 = x86_label_idx(bl, "ds");
+    let b4: i32 = x86_label_idx(bl, "end");
+    if (b2 < 0 || bl.lab_secs[b2] != 2 || bl.lab_offs[b2] != 12) { return 105; }
+    if (b3 < 0 || bl.lab_offs[b3] != 14 || b4 < 0 || bl.lab_offs[b4] != 30) { return 106; }
     let dl: X86Asm = x86_gas_assemble("    .section .rodata\nqs: .quad 1, -2\nls: .long 3, 4\nnext: .quad 5\n");
     if (dl.rodata.len() != 32 || dl.rodata[0] != 1 || dl.rodata[8] != 254 || dl.rodata[15] != 255) { return 107; }
     let dn: i32 = x86_label_idx(dl, "next");
@@ -667,3 +669,22 @@ function main(): i32 {
     return 0;
 }
 `
+
+// A `.bss` `.quad` with a value list reserves one zero-init slot per value,
+// so the symbols after it keep their own words (#11377); the arm64 twin is
+// TestSelfHostArm64BssValueList.
+const x86BssValueListMain = `
+function main(): i32 {
+    let a: X86Asm = x86_gas_assemble(".bss\nfour: .quad 0, 0, 0, 0\nnext: .quad 0\nlast: .skip 1\n");
+    if (a.bss_size != 41) { return 1; }
+    let n: i32 = x86_label_idx(a, "next");
+    if (n < 0 || a.lab_secs[n] != 2 || a.lab_offs[n] != 32) { return 2; }
+    let l: i32 = x86_label_idx(a, "last");
+    if (l < 0 || a.lab_secs[l] != 2 || a.lab_offs[l] != 40) { return 3; }
+    return 0;
+}
+`
+
+func TestSelfHostX86BssValueList(t *testing.T) {
+	runX86GasWasmSelfTest(t, "x86_bss_value_list", x86BssValueListMain)
+}

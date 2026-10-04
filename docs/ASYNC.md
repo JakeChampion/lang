@@ -329,12 +329,36 @@ async.task_free(t);
 client's handler winds down through its own control flow (`defer`s
 included). The native compiler keeps the blocking fallback: no task is ever
 current, so `task_start` runs its entry to completion and both paths behave
-as a plain program does. `docs/NET-P3-SUSPENSION-PLAN.md` is the design and
-what remains (the wasm runtime bodies, cancellation through the
-combinators, the sim's task driver). `std/serve`'s stateless loop is the
-scheduler for handlers: a handler that parks becomes a flight the loop
-watches on its reactor, and the loop serves other connections until the
-flight runs on and answers.
+as a plain program does. `std/serve`'s stateless loop is the scheduler for
+handlers: a handler that parks becomes a flight the loop watches on its
+reactor, and the loop serves other connections until the flight runs on
+and answers.
+
+Inside a task, fan out with the task combinators. Each runs its entries as
+tasks of the calling task and parks on the union of their waits, so a
+handler that fetches from two upstreams parks once for both:
+
+```fern
+let both: (() => fetch.FetchResult)[] = [() => plat.http(a), () => plat.http(b)];
+let rs: fetch.FetchResult[] = async.gather_tasks(both, fallback);
+let (won, first) = async.race_tasks(both, fallback);
+let timed: Option[fetch.FetchResult][] = async.with_deadline_tasks(time.duration_millis(200), both);
+```
+
+`gather_tasks(entries, on_incomplete)` answers every result in order;
+`race_tasks(entries, none_val)` answers `(index, value)` of the first to
+finish and cancels the rest; `with_deadline_tasks(deadline, entries)`
+answers `Some(value)` for each that finished in time and `None` for each
+cancelled at the deadline. A cancelled child is not abandoned: `task_cancel`
+runs it on with its waits answering `cancelled()`, so it leaves through its
+own exit paths and its `defer`s run, and a task that is itself cancelled
+cancels its children the same way. The `Future` combinators (`gather`,
+`race`, `with_deadline`, §3) park too when called inside a task, since the
+driver's wait is a `wait_any`. With no task current a combinator's own wait
+blocks; under the blocking fallback each entry runs to its end inside
+`task_start`, in order, so the first entry wins every race.
+`docs/NET-P3-SUSPENSION-PLAN.md` is the design and what remains (the wasm
+runtime bodies, the sim's task driver, the two source rules).
 
 ## 9. How it works (one paragraph)
 
@@ -348,13 +372,15 @@ that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
 
 ## Current limitations
 
-- `Pending` futures resolve on **native** (fd-backed, via poll(2)/ppoll(2)) and
-  on **wasm** (pollable-backed, via wasi:io/poll — `poll` forwards to it). The
-  wait token is portable: `fetch_future` uses `tcp_pollable(c)`, which is the raw
-  fd on native and a real wasi:io/poll pollable handle on wasm. So a real
-  overlapping `gather([fetch_future, …])` works on **both native and wasm**. On
-  **interp** the `poll` stub means `Pending` never completes (the portable
-  `Ready`-future path works everywhere).
+- `Pending` futures resolve on **native** (fd-backed, via poll(2)/ppoll(2)),
+  on **wasm** (pollable-backed, via wasi:io/poll — `poll` forwards to it) and
+  on the **interpreter** (a reactor over the handles). The wait token is
+  portable: `fetch_future` uses `tcp_pollable(c)`, which is the raw fd on
+  native and a real wasi:io/poll pollable handle on wasm, so an overlapping
+  `gather([fetch_future, …])` works everywhere.
+- A task parks only in self-host-compiled code (§8). Under the Go compiler
+  the task combinators run their entries one after another, and a wasm task
+  never parks yet: the wasm task runtime bodies are open.
 - `with_deadline` enforces its deadline on **both** native and wasm: native via
   `poll(2)`'s timeout arg; wasm by appending a real timer pollable
   (`monotonic-clock` `subscribe-duration`) to the poll set each round, so the

@@ -2,17 +2,16 @@ package e2eselfhost
 
 import "testing"
 
-// A data directive reserves or lays down EVERY value it lists. The task
-// runtime's `__fern_task_state: .quad 0, 0, 0, 0` got one .bss slot, so
-// __fern_heap_ptr and the arena base landed on its other three words and
-// every self-host-built arm64 server crashed on its first request (#11377).
+// A data directive reserves or lays down EVERY value it lists, whatever its
+// width and section. TestSelfHostArm64BssValueList pins .bss `.quad`,
+// `.word` and `.4byte` lists (#11377); this pins the other widths in .bss,
+// where `.long` and `.double` reserved nothing, and value lists in data,
+// where only the first value was laid down.
 const arm64DataListsProgram = `
 function main(): i32 {
-    let bss = arm64_gas_program(".bss\nfirst: .quad 0, 0, 0, 0\nsecond: .quad 0\nthird: .4byte 0, 0, 0\nfourth: .word 0, 0\nfifth: .long 0, 0\nsixth: .byte 0, 0, 0\nend: .skip 1\n");
-    if (bss.unknown.len() != 0 || bss.data.len() != 0 || bss.bss_size != 72) { return 1; }
-    if (arm64_gas_bss_off(bss, "second") != 32 || arm64_gas_bss_off(bss, "third") != 40) { return 2; }
-    if (arm64_gas_bss_off(bss, "fourth") != 52 || arm64_gas_bss_off(bss, "fifth") != 60) { return 3; }
-    if (arm64_gas_bss_off(bss, "sixth") != 68 || arm64_gas_bss_off(bss, "end") != 71) { return 4; }
+    let bss = arm64_gas_program(".bss\nls: .long 0, 0, 0\nds: .double 0, 0\nbs: .byte 0, 0\nend: .skip 1\n");
+    if (bss.unknown.len() != 0 || bss.data.len() != 0 || bss.bss_size != 31) { return 1; }
+    if (arm64_gas_bss_off(bss, "ds") != 12 || arm64_gas_bss_off(bss, "bs") != 28 || arm64_gas_bss_off(bss, "end") != 30) { return 2; }
     let data = arm64_gas_program(".data\nqs: .quad 1, -2\nws: .4byte 3, 4\nw1: .word 5\nls: .long 6, 7\nnext: .byte 9\n");
     if (data.unknown.len() != 0 || arm64_gas_dlabel_off(data, "next") != 36) { return 5; }
     if (data.data[0] != 1 || data.data[8] != 254 || data.data[15] != 255) { return 6; }

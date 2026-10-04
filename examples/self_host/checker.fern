@@ -12472,46 +12472,64 @@ function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, see
   return assoc_miss();
 }
 
-// trait_method_req finds method `field` among trait `tr`'s requirements, or a
-// supertrait's, as trait_assoc_req does for an associated function.
-function trait_method_req(reqs: parser.TraitReq[], tr: string, field: string, seen: string[]): AssocHit {
-  let idx: i32 = trait_req_idx(tr, reqs);
-  if (idx < 0) {
-    return assoc_miss();
-  }
-  let req: parser.TraitReq = reqs[idx];
-  if (util.has_str(seen, req.trait_name)) {
-    return assoc_miss();
-  }
-  let path: string[] = seen.append(req.trait_name);
-  for rs in req.req_sigs {
-    if (rs.name == field) {
-      return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name };
+// dyn_method is the method `name` that a trait a `dyn` names declares,
+// abstract or defaulted. Only the named traits count, not their supertraits:
+// native's vtable has a slot per method of each trait in the set and none for
+// an inherited one, so `dyn Derived` cannot call Base's method unless it says
+// `dyn Derived + Base`.
+function dyn_method(traits: string, name: string, s: Scope): Option[parser.FuncDecl] {
+  for tr in parser.dyn_trait_set("dyn " + traits) {
+    let idx: i32 = trait_req_idx(util.base_type_name(tr), s.trait_reqs);
+    if (idx >= 0) {
+      for m in s.trait_reqs[idx].req_sigs {
+        if (m.name == name) {
+          return Some(m);
+        }
+      }
+      for m in s.trait_reqs[idx].default_sigs {
+        if (m.name == name) {
+          return Some(m);
+        }
+      }
     }
   }
-  for supertrait in req.supertraits {
-    let sh: AssocHit = trait_method_req(reqs, supertrait, field, path);
-    if (sh.found) {
-      return sh;
-    }
-  }
-  return assoc_miss();
+  return None;
 }
 
 // dyn_method_type is the result of calling `name` on a `dyn` value: the
-// return type one of its traits declares for it. A result spelling Self has
-// no one type behind a dyn, so it stays unknown.
+// return type its trait declares for it. A result spelling Self has no one
+// type behind a dyn, so it stays unknown.
 function dyn_method_type(traits: string, name: string, s: Scope): typeinfo.Type {
-  for tr in parser.dyn_trait_set("dyn " + traits) {
-    let h: AssocHit = trait_method_req(s.trait_reqs, util.base_type_name(tr), name, []);
-    if (h.found) {
-      if (h.ret.len() == 0 || parser.subst_self(h.ret, "__dyn") != h.ret) {
+  match (dyn_method(traits, name, s)) {
+    Some(m) => {
+      if (m.ret_type.len() == 0 || parser.subst_self(m.ret_type, "__dyn") != m.ret_type) {
         return t_unknown("dyn method result spells Self");
       }
-      return s.resolve_type(h.ret);
-    }
+      return s.resolve_type(m.ret_type);
+    },
+    None => {}
   }
-  return t_unknown("undefined method `" + name + "` on `dyn " + traits + "`");
+  return t_unknown("no method `" + name + "` on `dyn " + traits + "`");
+}
+
+// dyn_call_diags is a method call on a `dyn` value: E021 for a method none of
+// its traits declares, E004 for the wrong number of arguments. An associated
+// function has no receiver to dispatch on; its own E021 is reported elsewhere.
+function dyn_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, traits: string, s: Scope): util.Diag[] {
+  match (dyn_method(traits, mfa.field, s)) {
+    Some(m) => {
+      if (m.params.len() == 0 || m.params[0].name != "self") {
+        return [];
+      }
+      let want: i32 = m.params.len() - 1;
+      if (c.args.len() != want) {
+        return [dg_at("E004", "method \"" + mfa.field + "\" expects " + util.i32_to_string(want) + " argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col)];
+      }
+      return [];
+    },
+    None => {}
+  }
+  return [dg_at("E021", "no method \"" + mfa.field + "\" on `dyn " + traits + "`", mfa.line, mfa.col)];
 }
 
 // tp_assoc_req resolves `T.field(…)` against type parameter `T`'s declared
@@ -13429,6 +13447,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             // Map as a struct of that name, so that is what its message says.
             out = out.append(dg_at("E043", s.unknown_method_message("Map", mfa.field, "Map", recv), mfa.line, mfa.col));
           }
+        },
+        typeinfo.TypeDyn(d) => {
+          out = util.append_diags(out, dyn_call_diags(c, mfa, d.traits, s));
         },
         typeinfo.TypeStruct(sn) => {
           // Cell[T]'s two methods are builtins, so they are in neither the
@@ -24009,7 +24030,7 @@ function annotate_module_in(mod: parser.Module, mt: ModuleTables, focus: Focus):
   if (focus.top) {
     ntop = annotate_block(rmod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs));
   }
-  return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls, inferred_consts: rmod.inferred_consts };
+  return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls, inferred_consts: rmod.inferred_consts, todo_sites: rmod.todo_sites };
 }
 
 function unchecked_capture(e: ast.Expr, own found: boolean): boolean {

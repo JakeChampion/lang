@@ -7429,23 +7429,11 @@ function x86_gas_data_width(line: string): i32 {
 
 // x86_gas_values is a data directive's comma-separated operands, trimmed.
 function x86_gas_values(line: string): string[] {
-  let out: string[] = [];
   let start: i32 = 0;
   while (start < line.len() && line[start] != b' ' && line[start] != b'\t') {
     start = start + 1;
   }
-  let i: i32 = start;
-  while (i <= line.len()) {
-    if (i == line.len() || line[i] == b',') {
-      let tok: string = x86_gas_trim(slice_unchecked(line, start, i));
-      if (tok.len() > 0) {
-        out = out.append(tok);
-      }
-      start = i + 1;
-    }
-    i = i + 1;
-  }
-  return out;
+  return x86_gas_split_ops(x86_gas_trim(slice_unchecked(line, start, line.len())));
 }
 
 // x86_gas_assemble_pass_prepared assembles one relaxation round from the

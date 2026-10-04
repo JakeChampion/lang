@@ -1,0 +1,33 @@
+import "std/i32";
+
+// A literal of a generic struct whose field holds a closure, written
+// straight as the argument of `append` and `with`: the clone it needs is
+// keyed from the array's element, since a closure-typed field value has no
+// spelling to infer it from.
+struct Box[T] { f: () => T, n: i32 }
+
+function start[T](entries: (() => T)[]): Box[T][] {
+  let out: Box[T][] = [];
+  let i: i32 = 0;
+  while (i < entries.len()) {
+    let e: () => T = entries[i];
+    out = out.append(Box { f: e, n: i });
+    i = i + 1;
+  }
+  let last: () => T = entries[entries.len() - 1];
+  return out.with(0, Box { f: last, n: 9 });
+}
+
+function run[T](entries: (() => T)[]): T {
+  let bs: Box[T][] = start(entries);
+  let b: Box[T] = bs[0];
+  let f: () => T = b.f;
+  print(b.n.to_string());
+  return f();
+}
+
+function main(): i32 {
+  let es: (() => i32)[] = [() => 41, () => 2];
+  print(run(es).to_string());
+  return 0;
+}

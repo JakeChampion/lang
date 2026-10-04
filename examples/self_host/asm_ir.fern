@@ -3699,6 +3699,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
+  // __fern_getpwuid_name(uid) -> 0: Linux keeps every account in the files
+  // the caller reads (#9815).
+  if (s.has_need("pwname")) {
+    s = s.write("__fn___fern_getpwuid_name:\n");
+    s = s.write("    xorl %eax, %eax\n");
+    s = s.write("    ret\n");
+  }
   // __fern_str_grow(a@16(%rsp), b@8(%rsp)) -> 1 once b is appended to a in
   // place, else 0 with nothing written. In place needs a FUSED box at rc 1,
   // whose block __fern_str_free will return to the class it came from: the
@@ -3707,16 +3714,35 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // the growth as a free of the old size and an alloc of the new, so its
   // lines still pair by size; the leak census sees one block that grew, as
   // native's does: its live bytes move and its counts do not.
-  // __fern_getpwuid_name(uid) -> 0: Linux keeps every account in the files
-  // the caller reads (#9815).
-  if (s.has_need("pwname")) {
-    s = s.write("__fn___fern_getpwuid_name:\n");
-    s = s.write("    xorl %eax, %eax\n");
-    s = s.write("    ret\n");
-  }
+  // __fern_str_grow_range(a@32, s@24, lo@16, hi@8) appends s's bytes
+  // [lo, hi) the same way, and answers 0 for a range outside s so the
+  // caller's slice raises the bounds abort. Both entries hand the body the
+  // source bytes in %rdx and their count in %rsi.
   if (s.has_need("str_grow")) {
     s = s.write("__fn___fern_str_grow:\n");
     s = s.write("    movq 16(%rsp), %r8\n");  // a
+    s = s.write("    movq 8(%rsp), %rdx\n");  // b
+    s = s.write("    movq 8(%rdx), %rsi\n");  // lb
+    s = s.write("    movq (%rdx), %rdx\n");  // b's data
+    s = s.write("    jmp .Lsg_body\n");
+    s = s.write("__fn___fern_str_grow_range:\n");
+    s = s.write("    movq 32(%rsp), %r8\n");  // a
+    s = s.write("    movslq 16(%rsp), %rax\n");  // lo
+    s = s.write("    movslq 8(%rsp), %rsi\n");  // hi
+    s = s.write("    movq 24(%rsp), %rdx\n");  // s
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    js .Lsg_out\n");
+    s = s.write("    cmpq 8(%rdx), %rsi\n");
+    s = s.write("    jg .Lsg_out\n");
+    s = s.write("    subq %rax, %rsi\n");  // lb
+    s = s.write("    js .Lsg_out\n");
+    s = s.write("    movq (%rdx), %rdx\n");
+    s = s.write("    addq %rax, %rdx\n");  // s's data + lo
+    s = s.write("    jmp .Lsg_body\n");
+    s = s.write(".Lsg_out:\n");
+    s = s.write("    xorl %eax, %eax\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lsg_body:\n");
     s = s.write("    xorl %eax, %eax\n");
     s = s.write("    testb $1, %r8b\n");
     s = s.write("    jnz .Lsg_ret\n");
@@ -3728,8 +3754,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jne .Lsg_ret\n");
     s = s.write("    cmpl $" + util.i32_to_string(fused_marker()) + ", -4(%r8)\n");
     s = s.write("    jne .Lsg_ret\n");
-    s = s.write("    movq 8(%rsp), %rdx\n");  // b
-    s = s.write("    movq 8(%rdx), %rsi\n");  // lb
     s = s.write("    movq 8(%r8), %rcx\n");  // la
     s = s.write("    leaq (%rcx,%rsi), %rdi\n");  // grown length
     s = s.write("    cmpq $0x7fffffff, %rdi\n");
@@ -3779,7 +3803,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq (%r8), %rdi\n");
     s = s.write("    addq %rcx, %rdi\n");  // dst = data + la
     s = s.write("    movq %rsi, %rcx\n");
-    s = s.write("    movq (%rdx), %rsi\n");  // src = b's data
+    s = s.write("    movq %rdx, %rsi\n");  // src
     s = s.write("    rep movsb\n");
     s = s.write("    movl $1, %eax\n");
     s = s.write(".Lsg_ret:\n");
@@ -7704,7 +7728,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   let c: string = ssa_src(reg_of, ins.args[2], "%rdx");
   s = ssa_load(reg_of, ins.args[2], c, s);
   s = s.need("heap");
-  s = s.write("    cmpq (" + a + "), " + b + "\n    jae __fern_oob_abort\n");
+  if (ins.imm != 1) {
+    s = s.write("    cmpq (" + a + "), " + b + "\n    jae __fern_oob_abort\n");
+  }
   if (ins.str == "u8") {
     return s.write("    movb " + ssa_r8(c) + ", 8(" + a + "," + b + ")\n");
   }
@@ -10457,7 +10483,7 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_str_own") {
     s = s.need("str_own");
   }
-  if (name == "__fern_str_grow") {
+  if (name == "__fern_str_grow" || name == "__fern_str_grow_range") {
     s = s.need("str_grow");
   }
   if (name == "__fern_getpwuid_name") {

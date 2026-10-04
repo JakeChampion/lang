@@ -402,6 +402,13 @@ pub function str_byte_view(): i32 {
   return 0 - 51;
 }
 
+// `acc + slice_unchecked(s, lo, hi)`: a string append whose right operand is a
+// range of `s`, so its bytes can go into the left operand's block without the
+// window being built first. Operands: acc, s, lo, hi.
+pub function append_range(): i32 {
+  return 0 - 52;
+}
+
 pub function is_hole_op(kind: i32): boolean {
   return kind == hole_at() || kind == hole_fill();
 }
@@ -1606,6 +1613,21 @@ function slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return "";
 }
 
+// A range append takes a counted string on the left and answers one, as `+`
+// does; the range is read from either text type.
+function append_range_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+  if (ins.args.len() != 4) {
+    return "append range arity";
+  }
+  if (!is_string(result) || !is_string(f.values[ins.args[0]]) || !is_text(f.values[ins.args[1]])) {
+    return "append range string type";
+  }
+  if (!is_i32(f.values[ins.args[2]]) || !is_i32(f.values[ins.args[3]])) {
+    return "append range bound type";
+  }
+  return "";
+}
+
 // A window has a view type with the source's element type. Physical lowering
 // currently copies its storage; that does not erase its semantic view type.
 function arr_slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -1655,7 +1677,7 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 // bytes, and the cell and map vocabularies.
 function is_builtin_op(kind: i32): boolean {
   return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
-    || kind == str_bytes() || kind == str_byte_view() || kind == arr_slice() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind)
+    || kind == append_range() || kind == str_bytes() || kind == str_byte_view() || kind == arr_slice() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind)
     || is_map_iter_op(kind);
 }
 
@@ -1718,6 +1740,9 @@ function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   }
   if (ins.kind_tag == slice()) {
     return slice_error(ins, f, result);
+  }
+  if (ins.kind_tag == append_range()) {
+    return append_range_error(ins, f, result);
   }
   if (ins.kind_tag == arr_slice()) {
     return arr_slice_error(ins, f, result);

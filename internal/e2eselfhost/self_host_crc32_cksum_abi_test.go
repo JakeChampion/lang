@@ -1,14 +1,10 @@
-package e2e
+package e2eselfhost
 
 import (
+	"os"
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // AAPCS64 makes x19..x28 the callee's to preserve and reserves x18 as the
@@ -19,31 +15,21 @@ import (
 //
 // The differential corpus cannot see this. Its call sites are straight-line
 // expressions with nothing live across the call, so a kernel that destroyed
-// x19/x20 passed all 487 cases on every leg and still miscompiled. The
-// contract is what needs asserting, not a program that happens to expose it.
+// x19/x20 passes every case and still miscompiles. The contract is what needs
+// asserting, not a program that happens to expose it.
 //
 // Scoped to __fern_crc32_cksum because that is the kernel this guards; the
 // helpers that legitimately use the callee-saved range (strcat and friends)
 // save and restore them around their own bodies.
-func TestArm64Crc32CksumKeepsCalleeSavedRegisters(t *testing.T) {
-	const src = `function main(): i32 { return __crc32_cksum(0, "abcdefghijklmnopqrstuvwxyz0123456789"); }`
-	prog, _, err := modload.LoadSource(src)
+func TestSelfHostArm64Crc32CksumKeepsCalleeSavedRegisters(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := writeTempFern(t, t.TempDir(), "crc32",
+		`function main(): i32 { return __crc32_cksum(0, "abcdefghijklmnopqrstuvwxyz0123456789"); }`)
+	asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux"))
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatal(err)
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{})
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-
-	body := kernelBody(t, asm, "__fern_crc32_cksum")
+	body := kernelBody(t, string(asm), "__fern_crc32_cksum")
 	// x18 and x19..x28, in both the x and w spellings, as whole tokens so
 	// that x1 / x2 and the .Lcrc32_bit labels do not match.
 	bad := regexp.MustCompile(`\b[xw](1[89]|2[0-8])\b`)
