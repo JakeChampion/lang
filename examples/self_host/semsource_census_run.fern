@@ -40,6 +40,7 @@ import "./lift";
 import "./semsource";
 import "./ssaunits";
 import "./ssarc";
+import "./suspend";
 
 struct Hist { keys: string[], counts: i32[] }
 
@@ -108,7 +109,7 @@ function stage_of(p: semsource.Produced, tab: irtables.StructTab): Stage {
     return Stage { planned: false, lowered: false, plan_why: plan.why, rc_why: "" };
   }
   let no_names: string[] = [];
-  let lr: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, tab, ssaunits.no_grows(), util.name_index(no_names), ssaunits.no_view());
+  let lr: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, tab, ssaunits.no_grows(), util.name_index(no_names), ssaunits.no_view(), suspend.none());
   if (!lr.ok) {
     return Stage { planned: true, lowered: false, plan_why: "", rc_why: lr.why };
   }

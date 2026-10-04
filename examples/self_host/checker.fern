@@ -635,6 +635,39 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 0 && name == "__heap_alloc_count") {
     return t_i64();
   }
+  // The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4): a record per
+  // task, the current task, the park that unwinds it and the words the
+  // scheduler reads back.
+  if (argc == 0 && name == "__task_new") {
+    return t_i32();
+  }
+  if (argc == 1 && name == "__task_free") {
+    return t_void();
+  }
+  if (argc == 0 && name == "__task_cur") {
+    return t_i32();
+  }
+  if (argc == 2 && name == "__task_enter") {
+    return t_void();
+  }
+  if (argc == 0 && name == "__task_leave") {
+    return t_i32();
+  }
+  if (argc == 2 && name == "__task_park") {
+    return t_i32();
+  }
+  if (argc == 1 && name == "__task_wait") {
+    return t_array(t_i32());
+  }
+  if (argc == 1 && name == "__task_timeout") {
+    return t_i32();
+  }
+  if (argc == 2 && name == "__task_set_ready") {
+    return t_void();
+  }
+  if (argc == 1 && name == "__task_set_cancelled") {
+    return t_void();
+  }
   if (argc == 0 && name == "__heap_mark") {
     return t_i64();
   }
@@ -821,6 +854,36 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   if (name == "__heap_alloc_count") {
     return ([], true);
   }
+  if (name == "__task_new") {
+    return ([], true);
+  }
+  if (name == "__task_free") {
+    return ([t_i32()], true);
+  }
+  if (name == "__task_cur") {
+    return ([], true);
+  }
+  if (name == "__task_enter") {
+    return ([t_i32(), t_i32()], true);
+  }
+  if (name == "__task_leave") {
+    return ([], true);
+  }
+  if (name == "__task_park") {
+    return ([t_array(t_i32()), t_i32()], true);
+  }
+  if (name == "__task_wait") {
+    return ([t_i32()], true);
+  }
+  if (name == "__task_timeout") {
+    return ([t_i32()], true);
+  }
+  if (name == "__task_set_ready") {
+    return ([t_i32(), t_i32()], true);
+  }
+  if (name == "__task_set_cancelled") {
+    return ([t_i32()], true);
+  }
   if (name == "__heap_mark") {
     return ([], true);
   }
@@ -952,6 +1015,7 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__raw_environ", params: [], result: p },
     RawFloorSig { name: "__raw_splice_pipe", params: [], result: p },
     RawFloorSig { name: "__raw_cover", params: [], result: p },
+    RawFloorSig { name: "__raw_task_state", params: [], result: p },
     RawFloorSig { name: "__raw_call1", params: [p, p], result: n },
     RawFloorSig { name: "__raw_call2", params: [p, p, p], result: n },
     RawFloorSig { name: "__fern_str_eq", params: [p, p], result: t_bool() },
@@ -15693,6 +15757,7 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
 // list entry for entry.
 function registered_intrinsics(): string[] {
   return [
+    "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_wait",
     "__abs_f64", "__alloc", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
@@ -17867,7 +17932,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 // from native's table and fails when the two drift.
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
-    "__alloc_u8", "args", "buf_take", "buf_take_bytes", "cell_new", "environ", "getcwd", "getgroups",
+    "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "random_bytes", "read_line", "set_priority",
     "setgid", "setuid",
     "signal_send", "set_process_group", "set_window_size",

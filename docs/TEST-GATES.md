@@ -230,12 +230,30 @@ in asmcore is `TestSelfHostRawOwnerAfterLastRead`'s, below);
 `TestSelfHostSupervisedServeReusePortWorkers` serves
 through two workers binding their own `SO_REUSEPORT` listeners and prove
 a replacement worker binds anew after a trap.
-`TestSelfHostServeBlockingHandlerStallsWorker` is the blocking-handler
-conformance case of #9851 §5: a one-worker server whose handler waits on
-`plat.http` to an upstream answering after 100 ms, and a hello on a second
-connection measured against it. It pins what P1 documented, the hello
-waiting out the upstream, and #9857 flips it to the hello arriving inside
-the wait.
+`TestSelfHostServeHandlersOverlap` is the blocking-handler conformance case
+of #9851 §5 as #9857 flipped it: a one-worker server whose handler waits on
+`plat.http` to an upstream answering after 100 ms parks that handler, so a
+hello on a second connection is answered inside the upstream's delay, two
+such handlers on two connections finish inside one delay, two requests
+pipelined on one connection are answered in order, and a client that goes
+away mid-wait leaves the worker serving before and after its upstream
+answers. The Go compiler keeps the blocking fallback, so only the self-host
+build is held to it.
+`TestSelfHostTaskScheduler` is the suspension pass's gate
+(`docs/NET-P3-SUSPENSION-PLAN.md` §4, slice 2): `e2eharness.TaskSchedulerProgram`
+parks a task twice, three calls deep, inside a loop and a branch, with a
+string held across both parks, drives it by hand through `task_resume`, and
+then runs the same functions with no task; the self-host's x86-64 and arm64
+output must show both parks and the readiness word reaching every frame.
+`TestTaskSchedulerFallback` runs the same program through the Go compiler,
+which keeps the blocking fallback: no park, the plain figure both times.
+`TestSelfHostFetchTask` is slice 4's gate: `e2eharness.FetchTaskProgram`
+runs a `fetch.send` to the harness upstream's 100 ms `/slow` target inside a
+task, fetches `/plain` from the program's own loop while the task is parked,
+and waits on the task's wait set itself; the self-host's x86-64 and arm64
+output must show the task parked and the plain fetch answered first.
+`TestFetchTaskFallback` is the same program through the Go compiler: no
+park, the plain fetch never runs.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestSelfHostServeConfig` serves through

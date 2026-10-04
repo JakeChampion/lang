@@ -15782,6 +15782,28 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4) in the
+	// blocking fallback: this compiler never suspends, so no task is ever
+	// current and each answers as the interp does. The arguments are
+	// evaluated for their effects and dropped; a void primitive pushes
+	// nothing, as a void runtime helper would.
+	if v, isTask := taskPrimitiveFallback[id.Name]; isTask {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpDrop})
+			}
+			if taskPrimitiveArray[id.Name] {
+				return b.expr(&ast.ArrayLit{P: n.P, ElemType: ast.NumberType{Width: 32, Signed: true}})
+			}
+			if !taskPrimitiveVoid[id.Name] {
+				b.emit(Op{Kind: OpConstI32, I32: v})
+			}
+			return nil
+		}
+	}
 	if id.Name == "__heap_release_to" && len(n.Args) == 1 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			if err := b.expr(n.Args[0]); err != nil {

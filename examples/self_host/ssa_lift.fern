@@ -441,7 +441,7 @@ function prod_mem_kind(k: string): boolean {
 function prod_host_kind(k: string): boolean {
   let host: string[] = [
     "syscall3", "syscall4", "syscall5", "syscall6", "exit", "raw_string", "strbuf_reset", "strbuf_append",
-    "raw_scratch", "raw_environ", "raw_splice_pipe", "raw_cover", "raw_addr", "monotonic_ns", "now_unix_ms",
+    "raw_scratch", "raw_environ", "raw_splice_pipe", "raw_cover", "raw_task_state", "raw_addr", "monotonic_ns", "now_unix_ms",
     "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
     "map_new", "strbuf_take", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count",
   ];
@@ -529,6 +529,9 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   }
   if (k == "raw_cover") {
     return lift_pop_push(lv, 0, 58, 0, "__fern_cov_counters");
+  }
+  if (k == "raw_task_state") {
+    return lift_pop_push(lv, 0, 58, 0, "__fern_task_state");
   }
   if (k == "raw_addr") {
     return lift_pop_push(lv, 2, 9, 64, "add");

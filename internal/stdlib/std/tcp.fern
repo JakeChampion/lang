@@ -5,6 +5,7 @@
 // `import "std/tcp";` (docs/PRELUDE-TO-MODULES.md, Phase 5).
 
 import "std/time";
+import "std/async";
 
 // tcp_recv_deadline(fd, max, deadline) — recv up to `max` bytes,
 // waiting at most `deadline` for the socket to become readable.
@@ -12,43 +13,15 @@ import "std/time";
 // read completed in time, `None` when the deadline passed first. This is
 // the recv-with-deadline primitive std/fetch's deadline variants are
 // built on. Socket bytes are arbitrary, so they
-// stay `u8[]` rather than `string` (D9, docs/STRINGS-SOTA.md).
-//
-// Portability: the wait is the same poll shape `async.with_deadline`
-// uses — native poll(2) honors the millisecond timeout directly (the
-// appended timer token is -1, ignored); wasm `poll` ignores its timeout
-// argument, so a real timer pollable in the set fires at the deadline.
-// On interp, `poll` is a stub that returns -1 IMMEDIATELY, which is
-// distinguished from a native timeout (which only reports -1 after
-// waiting the window out) by elapsed time: an instant -1 means
-// readiness is unavailable here, and the call degrades to a plain
-// blocking recv — preserving interp behavior at the cost of the
-// deadline.
+// stay `u8[]` rather than `string` (D9, docs/STRINGS-SOTA.md). The wait
+// is `async.wait_any`, so under a scheduler the caller's task parks.
 pub function tcp_recv_deadline(fd: i32, max: i32, deadline: Duration): Option[u8[]] {
   let wait_ms: i32 = deadline.as_millis() as i32;
   if (wait_ms < 1) {
     wait_ms = 1;
   }
-  let ns_per_ms: i64 = 1000000;
-  let start_ns: i64 = monotonic_ns();
-  let tok: i32 = tcp_pollable(fd);
-  let timer: i32 = wasm_timer_pollable(wait_ms as i64 * ns_per_ms);
-  let pollset: i32[] = [tok, timer];
-  let ready: i32 = poll(pollset, wait_ms);
-  let dtimer: i32 = wasm_pollable_drop(timer);
-  let dtok: i32 = wasm_pollable_drop(tok);
-  if (ready == 0) {
-    return Some(tcp_recv(fd, max));
-  }
-  if (ready == 1) {
-    // The timer pollable fired first (wasm) — deadline.
-    return None;
-  }
-  // ready < 0: a native poll(2) only reports this after the wait
-  // elapsed (timeout); an instant -1 is the interp stub (or EINTR /
-  // a poll error), where blocking recv preserves the old behavior.
-  let waited_ns: i64 = monotonic_ns() - start_ns;
-  if (waited_ns * 2i64 >= wait_ms as i64 * ns_per_ms) {
+  let set: i32[] = [fd, 1];
+  if (async.wait_any(set, wait_ms) != 0) {
     return None;
   }
   return Some(tcp_recv(fd, max));
