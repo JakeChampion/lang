@@ -61,4 +61,5 @@ and retired instruction counts reproduce the values in the
 [performance attribution](STRING-BUILDER-PERF-2026-10-04.md).
 Linux and Darwin bootstrap fixed points, reproduced native checks and native
 benchmarks are recorded in the [boundary report](STRING-VALIDITY-BOUNDARIES-2026-10-04.md).
-The final main integration and publication gates remain open for #5714.
+The implementation landed through PR #11520. Issue #5714 tracks the final
+integration and closure record.

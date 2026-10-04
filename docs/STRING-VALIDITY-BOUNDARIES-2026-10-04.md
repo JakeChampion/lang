@@ -134,4 +134,5 @@ The CI-configured GNU 9.12 build reproduces the same failures. Both test
 functions are already listed in the repository's Darwin ratchet; its list
 and tolerances are unchanged. These are existing platform divergences, not
 new failures from this change. This record does not claim full macOS GNU
-parity. Completion of #5714 still requires the final integration gates.
+parity. Issue #5714 tracks the final integration and closure record; the
+measurements above retain their stated source revisions.

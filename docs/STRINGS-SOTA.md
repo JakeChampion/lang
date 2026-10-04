@@ -8,11 +8,13 @@ alongside (byte views, scalar/char, paths, symbols, builders).
 
 ## Migration audit, October 2026
 
-Epic #5626 is closed, but prerequisite #5714 remains open and its acceptance
-work is incomplete. D9 requires every observable
-`string` to be well-formed UTF-8, subject to the D10 OS-input contract below.
-The producer migrations are implemented; final integrated validation and
-publication remain outstanding.
+The producer migrations for #5714 landed through PR #11520, completing
+the implementation of epic #5626. D9 requires every observable `string` to
+be well-formed UTF-8, subject to the D10 OS-input contract below. The
+[boundary report](STRING-VALIDITY-BOUNDARIES-2026-10-04.md) records target
+coverage, bootstrap fixed points, native measurements and existing Darwin
+parity exceptions. Issue #5714 tracks the final integration and closure
+record; a closed epic alone is not validation evidence.
 
 | Producer | Bytes from | What it does with ill-formed bytes |
 |---|---|---|
@@ -833,7 +835,7 @@ generic and imported declarations. See [the diagnostic report](STRING-VIEW-DIAGN
 The runtime, consumer and diagnostic changes were validated and merged in
 PR #11459.
 
-### D9 - Guarantee UTF-8 validity on `string`. **IN PROGRESS** (#5634, #5714)
+### D9 - Guarantee UTF-8 validity on `string`. **IMPLEMENTED** (#5634, #5714)
 
 The §2.8 invariant. `string` means *well-formed UTF-8*; arbitrary bytes
 live in `u8[]`/`[u8]` (which D8 makes ergonomic).
@@ -1470,7 +1472,7 @@ Tracked as epic #5626; issue numbers below.
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
 | 6 | **D8** (#5632) - `[u8]` string view - **IMPLEMENTED** | - | Allocation-free primary runtime, consumer checks and typed frontend escape diagnostics validated and merged. |
 | 7 | **D6** (#5633) — grapheme segmentation — **DONE**; word segmentation followed under #5552 | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `str[]` views (was `string[]` until #5695 was fixed). Word_Break coalesces to 1085 ranges, ~13 KB; a program that does not segment words is byte-identical to one built before it existed. |
-| 8 | **D9** (#5634, #5714): the UTF-8 validity invariant, **IN PROGRESS** | 6 | Producer migrations are implemented, including builder/Reader boundaries, PEG captures and private HTTP buffers. Final integrated validation and publication remain outstanding; see the audit at the top. |
+| 8 | **D9** (#5634, #5714): the UTF-8 validity invariant, **IMPLEMENTED** | 6 | Producer migrations landed, including builder/Reader boundaries, PEG captures and private HTTP buffers. The audit and linked reports record contracts and validation evidence. |
 | 9 | **D10** (#5635) — document the path assumption — **DONE** | — | Doc-only. Stated in `std/path`, `std/io`, and `read_dir`'s builtin signature. |
 
 #5552 as filed maps onto slices 1, 4, 5, 6, 7. Its step 1 (document the
