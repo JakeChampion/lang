@@ -18,6 +18,9 @@ import (
 //   - countedArgTemp (paramCountedRetain) asks whether the caller may dec a
 //     fresh TEMP right after the call. Refusing it stranded every temp passed
 //     through a pass-through helper (#11479).
+//
+// This is where the two summaries agree; frame_bound_string_alias_test.go pins
+// the arm where they disagree.
 func TestBareReturnIsCountedInBothRetainSummaries(t *testing.T) {
 	src := `function ident(s: string): string {
     if (s.len() == 0) { return s + "x"; }
