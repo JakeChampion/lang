@@ -68,6 +68,16 @@ function main(): i32 {
     rec_vs_text("x86_mov_rsp_base", x86_native.x86_rec_mov_rm(64, true, 0, 4, 0), "movq (%rsp), %rax");
     rec_vs_text("x86_mov_r13_base", x86_native.x86_rec_mov_rm(64, true, 0, 13, 0), "movq (%r13), %rax");
     rec_vs_text("x86_alu_rsp", x86_native.x86_rec_alu_ir(0, 64, 8, 4), "addq $8, %rsp");
+    // x86: consecutive records are one run, laid down as their text would be,
+    // and a label id between two records closes one run and starts another.
+    let run: usize = buf_new(64);
+    for x in words_of(x86_native.x86_rec_push_r(12)) { buf_push_byte(run, x as i32); }
+    for x in words_of(x86_native.x86_rec_mov_rr(64, 5, 4)) { buf_push_byte(run, x as i32); }
+    buf_push_u64(run, 3 as u64);
+    for x in words_of(x86_native.x86_rec_pop_r(12)) { buf_push_byte(run, x as i32); }
+    let rr = x86_native.x86_gas_assemble_words(".text\n\x01\n\x01\n\x04\n\x01\n", buf_take_bytes(run));
+    let rt = x86_native.x86_gas_assemble_words(".text\n    pushq %r12\n    movq %rsp, %rbp\nl:\n    popq %r12\n", buf_take_bytes(buf_new(1)));
+    print("x86_run " + util.i32_to_string(first_diff(rr.code, rt.code)) + " " + util.i32_to_string(rr.unknown.len() + rt.unknown.len()) + " " + util.i32_to_string(rr.code.len()));
     // x86: jmp (kind 16) to label id 7 with no definition, then with one.
     let bad = x86_native.x86_gas_assemble_words(".text\n\x05\n", pack(7, 16));
     print("x86_undefined_unknown " + util.i32_to_string(bad.unknown.len()));
@@ -156,6 +166,7 @@ func TestSelfHostRecordRefusals(t *testing.T) {
 		"\nx86_mov_rsp_base -1 0\n",
 		"\nx86_mov_r13_base -1 0\n",
 		"\nx86_alu_rsp -1 0\n",
+		"\nx86_run -1 0 7\n", // 41 54, 48 89 e5, 41 5c
 		"\nx86_undefined_unknown 1\n",
 		"\n  branch to a label id nothing defines\n",
 		"\nx86_defined_unknown 0\n",
