@@ -196,12 +196,15 @@ func TestSelfHostOptStructBorrowChainHazardsX86_64(t *testing.T) {
 	}{
 		{
 			// The INTERMEDIATE struct extracted whole — a borrow only while it is
-			// read through, and this reads it out.
+			// read through, and this reads it out. `held` starts from an array
+			// passed through `id`, which hides the constant from the static-box plan, so it
+			// is a heap box rather than a static one.
 			name: "intermediate_struct_extracted",
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
+function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
-    let held: Inner = Inner { ys: [0] };
+    let held: Inner = Inner { ys: id([0]) };
     let acc: i32 = 0;
     let o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1] }, n: i });
     match (o) { Some(p) => { held = p.inner; acc = p.n; }, None => {} }

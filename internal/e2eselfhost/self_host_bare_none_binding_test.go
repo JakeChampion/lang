@@ -5,7 +5,8 @@ import "testing"
 // `let o = None;` names no payload, so the typed lowering settles the binding
 // at a void payload, as it does a bare None payload (#10697). That Option is
 // only ever None, so it reads as the None of any Option a destination names:
-// a matched local, an argument, an annotated binding and a return.
+// a matched local, an argument, an annotated binding and a return. Every one
+// of them is the static None block, so the program allocates nothing (#11510).
 const bareNoneBindingSrc = `function arg(p: Option[i64]): i32 { match (p) { Some(_) => { return 100; }, None => { return 1; } } }
 function ret(): Option[string] { let o = None; return o; }
 function round(i: i32): i32 {

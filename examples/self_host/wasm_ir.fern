@@ -680,9 +680,7 @@ pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
     let i: i32 = 0;
     while (i < r.ops.len()) {
       if (r.ops[i].kind_tag == 218) {  // const_struct
-        if (util.index_of_str(vals, r.ops[i].str) < 0) {
-          vals = vals.append(r.ops[i].str);
-        }
+        vals = intern_const_agg(vals, r.ops[i].str);
       }
       // alloc_u8's zero-length answer, the empty byte array.
       if (r.ops[i].kind_tag == 77 && util.index_of_str(vals, empty_bytes_const()) < 0) {
@@ -693,6 +691,20 @@ pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
     fi = fi + 1;
   }
   return vals;
+}
+
+// A constant and every static box its fields hold, each once.
+function intern_const_agg(vals: string[], packed: string): string[] {
+  if (util.index_of_str(vals, packed) >= 0) {
+    return vals;
+  }
+  for v in ir.const_struct_values(packed) {
+    let inner: string = ir.const_struct_ref(v);
+    if (inner.len() > 0) {
+      vals = intern_const_agg(vals, inner);
+    }
+  }
+  return vals.append(packed);
 }
 
 // const_agg_block_bytes is one constant's whole block: the 8-byte rc+bsz header
@@ -4019,7 +4031,7 @@ function proxy_exit_shim(): string {
   return "  (func $proc_exit (param $c i32)\n    (unreachable))\n";
 }
 
-pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean): string {
+pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean, lc: boolean): string {
   let o: string = "  (global $__stdout_handle (mut i32) (i32.const -1))\n";
   if (stderr) {
     o = o + "  (global $__stderr_handle (mut i32) (i32.const -1))\n";
@@ -4061,7 +4073,7 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
   if (need(needs, "exit") && proxy) {
     o = o + proxy_exit_shim();
   } else if (need(needs, "exit")) {
-    o = o + "  (func $proc_exit (param $c i32)\n";
+    o = o + "  (func $proc_exit (param $c i32)\n" + lc_exit_report(lc);
     o = o + "    (call $exit (i32.ne (local.get $c) (i32.const 0)))\n";
     o = o + "    (unreachable))\n";
   }
@@ -12698,21 +12710,46 @@ function lc_label(text: string): string {
 // wrapper that reports before exiting, so BOTH exit paths (the exit() op
 // and $_start) report through the one flag-gated definition;
 // preview1_imports renames the raw import to $__fern_proc_exit_raw under the
-// same flag. Mode 0 only: the component modes have no preview1 proc_exit and
-// their $fd_write shims cannot be assumed. The line is built in fixed
-// scratch below the data pool (the process is exiting); labels are packed-word
-// stores (lc_label); digits are written backwards by $__fern_lc_wrnum.
-// fd_write's iovec scratch at 0/4 is free at exit.
+// same flag. Mode 0's; a component reports from its run entry and its exit
+// shim instead. The line is built in fixed scratch below the data pool (the
+// process is exiting); labels are packed-word stores (lc_label); digits are
+// written backwards by $__fern_lc_wrnum.
 pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean): string {
   if (!lc) {
     return "";
   }
+  return lc_report_funcs(sanitize) + "  (func $proc_exit (param $c i32)\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
+}
+
+// lc_exit_report is the census report a component's exit shim makes before
+// wasi:cli/exit, when the census is on.
+function lc_exit_report(lc: boolean): string {
+  if (!lc) {
+    return "";
+  }
+  return "    (call $__fern_lc_report)\n";
+}
+
+// component_run_entry is `$_lang_run`: main's result mapped to the 0 = ok /
+// 1 = err the canon lift expects, reporting the census on the way out when
+// `report` is set.
+function component_run_entry(report: boolean, sanitize: boolean): string {
+  if (!report) {
+    return "  (func $_lang_run (result i32) (i32.eqz (i32.eqz (call $main))))\n";
+  }
+  return lc_report_funcs(sanitize) + "  (func $_lang_run (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
+}
+
+// lc_report_funcs is `$__fern_lc_report` and the two writers it calls, for
+// either framing: mode 0 reports from its $proc_exit, a component from its
+// run entry and its exit shim.
+function lc_report_funcs(sanitize: boolean): string {
   let o: string = "";
   // $__fern_lc_wr(p, len): one fd_write(2) of [p, p+len).
   o = o + "  (func $__fern_lc_wr (param $p i32) (param $len i32)\n";
   o = o + "    (i32.store (i32.const 0) (local.get $p))\n";
   o = o + "    (i32.store (i32.const 4) (local.get $len))\n";
-  o = o + "    (drop (call $fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8))))\n";
+  o = o + "    (drop (call $fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 16))))\n";
   // $__fern_lc_wrnum(n, buf): signed decimal, digits backwards from buf+24.
   o = o + "  (func $__fern_lc_wrnum (param $n i64) (param $buf i32)\n";
   o = o + "    (local $i i32) (local $neg i32)\n";
@@ -12735,34 +12772,37 @@ pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean): string 
   o = o + "    (call $__fern_lc_wr (local.get $i) (i32.sub (i32.add (local.get $buf) (i32.const 24)) (local.get $i))))\n";
   // The report.
   o = o + "  (func $__fern_lc_report\n";
-  o = o + "    (local $b i32)\n";
-  // Fixed scratch at 8..40 — clear of the fd_write iovec at 0..8, and free
-  // to clobber at exit. NOT $__fern_alloc: a heap-free program has none.
-  o = o + "    (local.set $b (i32.const 8))\n";
+  o = o + "    (local $b i32) (local $na i64) (local $nf i64) (local $live i64)\n";
+  // The counts are read before anything is written: a component's $fd_write
+  // shim allocates, and would count its own writes into the line.
+  o = o + "    (local.set $na (global.get $__fern_lc_alloc_count))\n";
+  o = o + "    (local.set $nf (global.get $__fern_lc_free_count))\n";
+  o = o + "    (local.set $live (i64.sub (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)))\n";
+  // Fixed scratch at 40..72, the sleep block dead by now: clear of the
+  // fd_write iovec at 0..8 and the written-count slot at 16, which the
+  // component shim zeroes before it writes. NOT $__fern_alloc: a heap-free
+  // program has none.
+  o = o + "    (local.set $b (i32.const 40))\n";
   o = o + lc_label("leakcheck: allocs=");
-  o = o + "    (call $__fern_lc_wrnum (global.get $__fern_lc_alloc_count) (local.get $b))\n";
+  o = o + "    (call $__fern_lc_wrnum (local.get $na) (local.get $b))\n";
   o = o + lc_label(" frees=");
-  o = o + "    (call $__fern_lc_wrnum (global.get $__fern_lc_free_count) (local.get $b))\n";
+  o = o + "    (call $__fern_lc_wrnum (local.get $nf) (local.get $b))\n";
   o = o + lc_label(" live_bytes=");
-  o = o + "    (call $__fern_lc_wrnum (i64.sub (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)) (local.get $b))\n";
+  o = o + "    (call $__fern_lc_wrnum (local.get $live) (local.get $b))\n";
   o = o + lc_label("\n");
   if (sanitize) {
     // The sanitizer's leak verdict, the text the register backends print.
     // Only a POSITIVE balance is a leak: zero is clean, and a negative one
     // is an over-free, a different finding named at the offending dec.
-    o = o + "    (if (i64.gt_s (i64.sub (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)) (i64.const 0)) (then\n";
+    o = o + "    (if (i64.gt_s (local.get $live) (i64.const 0)) (then\n";
     o = o + lc_label("fern-sanitizer: leak ");
-    o = o + "    (call $__fern_lc_wrnum (i64.sub (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)) (local.get $b))\n";
+    o = o + "    (call $__fern_lc_wrnum (local.get $live) (local.get $b))\n";
     o = o + lc_label(" bytes in ");
-    o = o + "    (call $__fern_lc_wrnum (i64.sub (global.get $__fern_lc_alloc_count) (global.get $__fern_lc_free_count)) (local.get $b))\n";
+    o = o + "    (call $__fern_lc_wrnum (i64.sub (local.get $na) (local.get $nf)) (local.get $b))\n";
     o = o + lc_label(" blocks\n");
     o = o + "    ))\n";
   }
   o = o + "  )\n";
-  // The reporting $proc_exit.
-  o = o + "  (func $proc_exit (param $c i32)\n";
-  o = o + "    (call $__fern_lc_report)\n";
-  o = o + "    (call $__fern_proc_exit_raw (local.get $c)))\n";
   return o;
 }
 
@@ -13634,7 +13674,7 @@ function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab,
       body = body + le32_escape(struct_type_id(structs, ir.const_struct_type(cv[i]))) + le32_escape(0);
       let vi: i32 = 0;
       while (vi < vals.len()) {
-        let w: i32 = util.lit_to_i32(vals[vi]);
+        let w: i32 = const_agg_field(sv, cv, vals[vi]);
         body = body + le32_escape(w);
         if (w < 0) {
           body = body + le32_escape(0 - 1);
@@ -13648,6 +13688,16 @@ function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab,
     i = i + 1;
   }
   return util.str_join_chunks(parts);
+}
+
+// A record field's word: its literal, or the address of the static box it
+// holds.
+function const_agg_field(sv: string[], cv: string[], word: string): i32 {
+  let inner: string = ir.const_struct_ref(word);
+  if (inner.len() > 0) {
+    return const_agg_offset(sv, cv, util.index_of_str(cv, inner)) + 8;
+  }
+  return util.lit_to_i32(word);
 }
 
 // arr_push_i64_helper emits $__fern_arr_push_i64 standalone for the IR path
@@ -14125,15 +14175,16 @@ pub function heap_base_for_units(units: WasmUnit[]): i32 {
 // rather than a second emitter (wasm.fern's AST component path is a full
 // parallel copy; this is not).
 pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: string[], fn_sigs: string[], rc_bodies: string, mode: i32, sw: asmcore.Switches): string {
-  let lc: boolean = sw.sanitize || asmcore.leak_check_on();
+  let lc: boolean = census_on(sw);
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   let parts: string[] = [];
   parts = parts.append("(module\n");
   if (mode == 0) {
     parts = parts.append(preview1_imports(needs, lc));
   }
+  let stderr: boolean = component_uses_stderr(mod, needs) || lc;
   if (mode == 2) {
-    parts = parts.append(component_io_imports(needs, component_uses_stderr(mod, needs), module_is_proxy(mod)));
+    parts = parts.append(component_io_imports(needs, stderr, module_is_proxy(mod)));
     parts = parts.append(preview2_wasi_imports(needs, true));
   }
   // WIT `@import` externs. Emitted for EVERY mode: an extern is a declaration
@@ -14239,7 +14290,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // every $fd_write / $proc_exit call site the IR emits links unchanged.
   // Placed after the heap runtime they call into (as the AST path does).
   if (mode == 2) {
-    parts = parts.append(component_io_shims(needs, component_uses_stderr(mod, needs), module_is_proxy(mod)));
+    parts = parts.append(component_io_shims(needs, stderr, module_is_proxy(mod), lc));
   } else if (mode == 1 && module_is_proxy(mod) && need(needs, "exit")) {
     parts = parts.append(proxy_exit_shim());
   }
@@ -14943,10 +14994,11 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     return util.str_join_chunks(parts);
   }
   // Component run entry: export main, and _lang_run = (main() == 0) mapped to
-  // the 0 = ok / 1 = err result the canon lift expects.
+  // the 0 = ok / 1 = err result the canon lift expects. Under the census the
+  // entry reports on its way out, as mode 0's exported main does.
   parts = parts.append("  (export \"main\" (func $main))\n");
   parts = parts.append(xps);
-  parts = parts.append("  (func $_lang_run (result i32) (i32.eqz (i32.eqz (call $main))))\n");
+  parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize));
   parts = parts.append("  (export \"_lang_run\" (func $_lang_run)))\n");
   return util.str_join_chunks(parts);
 }
@@ -18374,7 +18426,15 @@ function called_names(mod: parser.Module): Map[string, boolean] {
 // the component framings distinguish.
 struct HostNeeds { io: boolean, rd: boolean, wr: boolean, env: boolean, args: boolean, rnd: boolean, clkw: boolean, clkm: boolean, ep: boolean, ex: boolean, net: boolean, fs: boolean, wait: boolean }
 
-function host_needs(mod: parser.Module): HostNeeds {
+// census_on reports a build whose leak census is on: FERN_LEAKCHECK, or the
+// sanitizer, which implies it (asmcore.with_switches).
+pub function census_on(sw: asmcore.Switches): boolean {
+  return sw.sanitize || asmcore.leak_check_on();
+}
+
+// `census` is a build with the leak census or the sanitizer on, whose report
+// goes to stderr whatever the program calls.
+function host_needs(mod: parser.Module, census: boolean): HostNeeds {
   let calls: Map[string, boolean] = called_names(mod);
   // Building a Map imports get-random-u64 with no explicit random call in the
   // program: core/map draws its per-process string-hash seed from the same
@@ -18390,7 +18450,7 @@ function host_needs(mod: parser.Module): HostNeeds {
     rnd: calls.has("random_bytes") || calls.has("random_i32") || calls.has("__map_hash_seed"),
     clkw: calls.has("now_unix_ms") || calls.has("now_ns"),
     clkm: calls.has("monotonic_ns"),
-    ep: calls.has("eprint") || calls.has("stderr"),
+    ep: calls.has("eprint") || calls.has("stderr") || census,
     ex: calls.has("exit"),
     net: calls_any(calls, socket_builtins()),
     fs: calls_any(calls, fs_builtins()),
@@ -18442,13 +18502,13 @@ function wait_builtins(): string[] {
 // component_needs_host reports whether a program reaches its WASI host at
 // all: false is the no-I/O component core, whose only imports are the
 // program's own externs.
-pub function component_needs_host(mod: parser.Module): boolean {
-  let n: HostNeeds = host_needs(mod);
+pub function component_needs_host(mod: parser.Module, sw: asmcore.Switches): boolean {
+  let n: HostNeeds = host_needs(mod, census_on(sw));
   return n.io || n.rd || n.wr || n.env || n.args || n.rnd || n.clkw || n.clkm || n.ep || n.ex || n.net || n.fs || n.wait;
 }
 
-pub function component_shape(mod: parser.Module): i32 {
-  let n: HostNeeds = host_needs(mod);
+pub function component_shape(mod: parser.Module, sw: asmcore.Switches): i32 {
+  let n: HostNeeds = host_needs(mod, census_on(sw));
   let io: boolean = n.io;
   let rd: boolean = n.rd;
   let wr: boolean = n.wr;

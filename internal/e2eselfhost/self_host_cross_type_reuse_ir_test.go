@@ -14,8 +14,8 @@ import (
 // fresh alloc). The self-host x86 struct box is allocated with `call
 // __fern_arr_box`, one per live construction.
 // `* k` (k == 1, so every value is unchanged) keeps these literals off the
-// STATIC-CONSTANT path (#6149): an all-scalar-literal aggregate is placed in
-// data, which allocates nothing and makes the reuse it would have fed moot —
+// STATIC-CONSTANT path (#6149): an aggregate of constants is placed in data,
+// which allocates nothing and makes the reuse it would have fed moot —
 // correct, and strictly better, but it would leave this test measuring zero
 // against zero. A donor that genuinely allocates is what the reuse contract
 // below is about. (The constant/reuse interaction itself is pinned by
@@ -26,10 +26,11 @@ const crossTypeReuseLiveDonor = `struct Point { x: i32, y: i32 } struct Pair { a
 // Array-field cross-type pair: a dead Holder{id,items} reused for Bag{tag,data}
 // (identical [i32, i32[]] layout). The array literals are static constants, so
 // only the struct boxes reach __fern_arr_box: one when the dead donor's box is
-// reused, two when the donor is read after the recipient. The delta proves the
-// array-field cross-type reuse lowers in place.
-const crossTypeReuseArrDeadDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { let h = Holder { id: 1, items: [1, 2] }; let s = h.id + h.items[0]; let b = Bag { tag: s, data: [3, 4] }; return b.tag + b.data[0]; }`
-const crossTypeReuseArrLiveDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { let h = Holder { id: 1, items: [1, 2] }; let b = Bag { tag: 5, data: [3, 4] }; return b.tag + b.data[0] + h.id + h.items[1]; }`
+// reused, two when the donor is read after the recipient. `* k` keeps each
+// struct off the static path as above. The delta proves the array-field
+// cross-type reuse lowers in place.
+const crossTypeReuseArrDeadDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { let k = 1; let h = Holder { id: 1 * k, items: [1, 2] }; let s = h.id + h.items[0]; let b = Bag { tag: s, data: [3, 4] }; return b.tag + b.data[0]; }`
+const crossTypeReuseArrLiveDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { let k = 1; let h = Holder { id: 1 * k, items: [1, 2] }; let b = Bag { tag: 5 * k, data: [3, 4] }; return b.tag + b.data[0] + h.id + h.items[1]; }`
 
 // crossTypeReuseIRCases exercise cross-TYPE FBIP reuse (structs_reuse_compatible):
 // a dead struct donor whose box is reused in place by a LATER construction of a

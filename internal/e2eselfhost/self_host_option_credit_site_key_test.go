@@ -83,9 +83,12 @@ function main(): i32 {
 			want: 61, allocs: 152, frees: 152,
 		},
 		{
-			// The same shape on an Option of a struct.
+			// The same shape on an Option of a struct. `b`'s array goes
+			// through `id`, which hides the constant from the static-box plan, so its P is a
+			// heap box rather than a static one.
 			name: "optstruct_collide",
 			src: `struct P { xs: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 function round(b: Option[P], i: i32): i32 {
     let t: i32 = 0;
     if (i % 2 == 0) { let o: Option[P] = Some(P { xs: [i, i + 1] }); match (o) { Some(p) => { t = t + p.xs.len(); }, None => {} } }
@@ -94,7 +97,7 @@ function round(b: Option[P], i: i32): i32 {
 }
 
 function main(): i32 {
-    let b: Option[P] = Some(P { xs: [7, 8] });
+    let b: Option[P] = Some(P { xs: id([7, 8]) });
     let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + round(b, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -106,6 +109,7 @@ function main(): i32 {
 			// Its pairwise control.
 			name: "optstruct_renamed",
 			src: `struct P { xs: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 function round(b: Option[P], i: i32): i32 {
     let t: i32 = 0;
     if (i % 2 == 0) { let o: Option[P] = Some(P { xs: [i, i + 1] }); match (o) { Some(p) => { t = t + p.xs.len(); }, None => {} } }
@@ -114,7 +118,7 @@ function round(b: Option[P], i: i32): i32 {
 }
 
 function main(): i32 {
-    let b: Option[P] = Some(P { xs: [7, 8] });
+    let b: Option[P] = Some(P { xs: id([7, 8]) });
     let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + round(b, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }

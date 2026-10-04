@@ -159,13 +159,16 @@ function round(i: i32): i32 {
 			// underflow guard are both blind to a use-after-READ — #7505 was
 			// exactly that, and passed them plus FERN_SANITIZE=1. Native returns
 			// 9. The arrays after the match are constant and not heap-allocated
-			// on the typed lowering.
+			// on the typed lowering. The payload reaches its variant through
+			// `id`, which hides the constant from the static-box plan, so the
+			// variant is still allocated.
 			//
 			// The modulus is 97 because the wasm leg reads the value through the
 			// exit code and WASI rejects a status outside [0, 126).
 			name: "payload_read_back_after_churn",
 			src: `enum E { A(i32[]), B }
-function mkv(): E { return E.A([7, 8]); }
+function id(xs: i32[]): i32[] { return xs; }
+function mkv(): E { return E.A(id([7, 8])); }
 function round(i: i32): i32 {
     let v: E = mkv();
     let a: i32 = 0;

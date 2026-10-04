@@ -114,13 +114,16 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// underflow guard cannot see a use-after-READ; the value can. Native
 			// returns 53; so do all three backends here. The arrays after the
 			// match are constant and not heap-allocated on the typed lowering.
+			// The payload reaches its variant through `id`, which hides the constant from the static-box plan,
+			// so the variant is still allocated.
 			//
 			// The modulus is 97 rather than something larger because WASI rejects
 			// an exit status outside [0, 126) and the wasm leg reads the value
 			// through the exit code.
 			name: "payload_read_back_after_churn",
 			src: `enum E { A(i32[]), B }
-function mkv(): E { return E.A([7, 8]); }
+function id(xs: i32[]): i32[] { return xs; }
+function mkv(): E { return E.A(id([7, 8])); }
 function round(i: i32): i32 {
     let v: E = mkv();
     let keep: i32[] = [0];

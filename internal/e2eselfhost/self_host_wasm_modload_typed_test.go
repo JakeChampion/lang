@@ -302,4 +302,35 @@ function main(): i32 { return g(3) + g(0); }
 			t.Fatalf("linked recursive module: %v, want exit 3", err)
 		}
 	})
+
+	// A function value in a record, merged past its source, has no copy and is
+	// a typed refusal by name (TestSelfHostSemIRStrict).
+	t.Run("refusal_fails_the_emit", func(t *testing.T) {
+		proj := t.TempDir()
+		entry := filepath.Join(proj, "main.fern")
+		write(t, entry, `import "std/i32";
+struct P { a: str }
+struct Holder { f: () => i32, n: i32 }
+function mk(n: i32): string {
+    let s: string = "ab";
+    let i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function g(n: i32): i32 {
+    let h: Holder = Holder { f: () => 0, n: 0 };
+    if (n != 0) {
+        let s: string = mk(n);
+        let p: P = P { a: slice_unchecked(s, 1, 4) };
+        h = Holder { f: () => p.a.len() * 10 + (p.a[0] as i32) - 97, n: n };
+    }
+    return h.f() * 10 + h.n;
+}
+function main(): i32 { return g(3) + g(0); }
+`)
+		_, se, code := drive(t, entry, nil, "-per-module-emit", "0")
+		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: g: a value merged past its source has no copy: a function value (() => i32) has no shape to rebuild its environment by") {
+			t.Fatalf("emit: exit %d, want 3 naming the refusal\n%s", code, se)
+		}
+	})
 }

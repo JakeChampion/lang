@@ -88,6 +88,9 @@ var dynTraitIRCases = []struct {
 	// MISS: a `dyn Shape` holding a Rect, `s as? Circle` → None → 0.
 	{name: "downcast-miss",
 		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Circle) { Some(c) => { return c.r; }, None => { return 0; } } } function main(): i32 { let r: Rect = Rect { w: 2, h: 5 }; return dc(r); }`, expected: 0, static: true},
+	// Runtime payloads also exercise the heap-backed downcast.
+	{name: "downcast-miss-dynamic",
+		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Circle) { Some(c) => { return c.r; }, None => { return 0; } } } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let r: Rect = Rect { w: n(2), h: 5 }; return dc(r); }`, expected: 0},
 	// The OTHER target on the same value: a `dyn Shape` Rect, `s as? Rect` → Some;
 	// w*h = 2*5 = 10.
 	{name: "downcast-hit-rect",
@@ -122,6 +125,9 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 	// MISS: a `dyn Show + Weigh` holding a Brick, `d as? Apple` → None → 0.
 	{name: "downcast-multi-miss",
 		src: `trait Show { function show(self: Self): i32; } trait Weigh { function weight(self: Self): i32; } struct Apple { g: i32 } struct Brick { kg: i32 } impl Show for Apple { function show(self: Self): i32 { return self.g; } } impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } } impl Show for Brick { function show(self: Self): i32 { return self.kg; } } impl Weigh for Brick { function weight(self: Self): i32 { return self.kg; } } function dc(d: dyn Show + Weigh): i32 { match (d as? Apple) { Some(a) => { return a.g; }, None => { return 99; } } } function main(): i32 { let x: Brick = Brick { kg: 3 }; return dc(x); }`, expected: 99, static: true},
+	// Runtime payloads also exercise the heap-backed downcast.
+	{name: "downcast-multi-miss-dynamic",
+		src: `trait Show { function show(self: Self): i32; } trait Weigh { function weight(self: Self): i32; } struct Apple { g: i32 } struct Brick { kg: i32 } impl Show for Apple { function show(self: Self): i32 { return self.g; } } impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } } impl Show for Brick { function show(self: Self): i32 { return self.kg; } } impl Weigh for Brick { function weight(self: Self): i32 { return self.kg; } } function dc(d: dyn Show + Weigh): i32 { match (d as? Apple) { Some(a) => { return a.g; }, None => { return 99; } } } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let x: Brick = Brick { kg: n(3) }; return dc(x); }`, expected: 99},
 
 	// --- STRING-returning `dyn Trait` methods, chained (#5142). The dispatch
 	// returns the string in the result register; a string method chained

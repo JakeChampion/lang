@@ -191,10 +191,13 @@ In this order, one PR each. Compiler slices are self-host first. A Go-compiler
 twin is a needless-allocation bugfix under `docs/NATIVE-FREEZE.md`, referenced
 on #4451, as slice 2 was.
 
-1. **An empty array literal is a constant.** The self-host's static-box plan
-   treats `[]` as constant, so a record whose fields are all constants,
-   `HeaderMap { names: [], values: [] }` among them, is one static box.
-   Removes the 2 `header_map_new()` boxes. Parse 40 to 38.
+1. **A record field may hold a static box.** `[]` was already a static box,
+   but the self-host's static-box plan admitted only scalar fields, so
+   `HeaderMap { names: [], values: [] }` was built per call. A field now
+   holds another static box's address, so every `header_map_new()` is one
+   static box. Done, after slice 2: parse 37 to 35. The trailers' map and
+   the default map are static, and the parse's own map starts from the
+   static box, which its first append copies.
 2. **`h = h.append(…)` reuses `h`'s box.** At every call in the parse the
    caller's `h` dies at the call, and the Go compiler already writes the
    spread `HeaderMap { ...h, … }` into it; the self-host took a fresh box.
