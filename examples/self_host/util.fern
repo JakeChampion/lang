@@ -1030,6 +1030,21 @@ pub function rc_underflow_guard(who: string, code: i32): i32 {
   return RC_UNDERFLOW_EXIT;
 }
 
+// verify_on reports whether the compile path re-checks what its own passes
+// produced: FERN_IR_VERIFY=1, which also prints the IR gate's coverage line,
+// or FERN_IR_VERIFY=quiet. The re-checks catch compiler bugs, not errors in
+// the program, so a plain compile skips them; the test suites set quiet.
+pub function verify_on(): boolean {
+  match (env("FERN_IR_VERIFY")) {
+    Some(v) => {
+      return v == "1" || v == "quiet";
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
 // arr_push_cliff_report prints the process-wide rc==1 append-cliff count to
 // stderr when FERN_CLIFF_REPORT is set, and passes `code` through unchanged.
 //

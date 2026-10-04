@@ -2927,9 +2927,12 @@ function types_error(f: ssasem.Func, view: ssaunits.SchemaView): string {
 }
 
 function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, view: ssaunits.SchemaView): string {
-  let why: string = ssaunits.verify_planned(f, modes, p);
-  if (why != "") {
-    return why;
+  let why: string = "";
+  if (util.verify_on()) {
+    why = ssaunits.verify_planned(f, modes, p);
+    if (why != "") {
+      return why;
+    }
   }
   why = types_error(f, view);
   if (why != "") {

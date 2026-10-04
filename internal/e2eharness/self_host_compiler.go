@@ -164,7 +164,7 @@ func EmitAsmWithSelfHost(t testing.TB, compiler, target, src string) string {
 	asmPath := filepath.Join(t.TempDir(), "out.s")
 	err := withBuildMemory(DriverBuildWeightMB(filepath.Base(src)), func() error {
 		cmd := exec.Command(compiler, "-target", target, "-emit", "asm", "-o", asmPath, src, stdlib)
-		cmd.Env = ChildEnv()
+		cmd.Env = SelfHostChildEnv()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("%s -target %s -emit asm %s: %v\n%s", filepath.Base(compiler), target, filepath.Base(src), err, out)
 		}
@@ -321,7 +321,7 @@ func CompileSelfHostFile(t testing.TB, target, entry string, env []string) strin
 		args = append(args, "-emit", "core-module")
 	}
 	cmd := exec.Command(SelfHostCLI(t), append(args, "-o", out, entry, SelfHostStdlibRoot(t))...)
-	cmd.Env = ChildEnv(env...)
+	cmd.Env = SelfHostChildEnv(env...)
 	if msg, err := cmd.CombinedOutput(); err != nil {
 		src, _ := os.ReadFile(entry)
 		t.Fatalf("SELFHOST-COMPILE-FAIL -target %s: %v\n%s\nsrc:\n%s", target, err, msg, src)

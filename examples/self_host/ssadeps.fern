@@ -2,6 +2,7 @@
 // feeding them to ssalive. This proves neither reference counts nor uniqueness.
 import "./ssa";
 import "./ssalive";
+import "./util";
 
 function flags(n: i32, bit: boolean): boolean[] {
   let out: boolean[] = [];
@@ -256,11 +257,28 @@ function use_error(value: i32, block: i32, pos: i32, f: ssa.SFunc, dependencies:
 // before receiving any live sets. Exact semantic types and counted-unit
 // verification remain separate obligations of that planner's typed input.
 pub function analyze(f: ssa.SFunc, dependencies: i32[][]): ssalive.Flow {
-  let why: string = verify(f, dependencies);
+  let why: string = limits_error(f);
+  if (why == "" && util.verify_on()) {
+    why = verify(f, dependencies);
+  }
   if (why != "") {
     return ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [], none: [] };
   }
   return ssalive.compute_checked(f, dependencies);
+}
+
+// limits_error refuses a graph too large for the dominator and live matrices.
+// Unlike verify, which re-checks what the lift built, it holds for every
+// compile.
+pub function limits_error(f: ssa.SFunc): string {
+  let n: i32 = f.blocks.len();
+  if (n > 0 && n > 2147483647 / n) {
+    return "dominator matrix overflow";
+  }
+  if (f.nvals > 0 && n > 2147483647 / f.nvals) {
+    return "live matrix overflow";
+  }
+  return "";
 }
 
 // Dependencies contain their full transitive closure and are keyed by values,
