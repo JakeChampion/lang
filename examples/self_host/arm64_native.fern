@@ -10404,6 +10404,16 @@ function arm64_gas_sym_addr(p: Arm64GasProg, aw: Arm64Asm, name: string, text_va
   return Arm64SymAddr { found: false, addr: 0 };
 }
 
+// arm64_symbol_addr is the address `name` loads at once the program is
+// linked at `text_vaddr` / `data_vaddr`, -1 for a name with no place.
+pub function arm64_symbol_addr(p: Arm64GasProg, name: string, text_vaddr: i64, data_vaddr: i64): i64 {
+  let res: Arm64SymAddr = arm64_gas_sym_addr(p, p.asm, name, text_vaddr, data_vaddr, p.data.len());
+  if (!res.found) {
+    return 0 - 1 as i64;
+  }
+  return res.addr;
+}
+
 // arm64_gas_rebase_offs returns the offsets, within the data blob, of every
 // 8-byte slot arm64_gas_link filled with an ABSOLUTE address (`.quad <symbol>`
 // — today only a static aggregate constant's shape pointer, #6149). A Mach-O

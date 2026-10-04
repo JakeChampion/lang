@@ -3696,7 +3696,9 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irtab
   let save: i32 = ssa_save_bytes(saved);
   s = ssa_save(saved, s);
   let fn_label: string = "__fn_" + asmcore.sanitize_label(label_name);
-  let dbg: asmcore.DbgVars = asmcore.dbg_vars(fn_label, alloc, r, formed.repl, seen_vals, seen_slots, ssa_dbg_locs(reg_of, save, seen_vals.len() > 0), ssa.position_count(f));
+  let dbg_out: asmcore.DbgOut = asmcore.dbg_shaped_vars(s, fn_label, alloc, r, formed.repl, seen_vals, seen_slots, ssa_dbg_locs(reg_of, save, seen_vals.len() > 0), ssa.position_count(f));
+  s = dbg_out.state;
+  let dbg: asmcore.DbgVars = dbg_out.dbg;
   let views: i32[] = ssa_view_slots(f);
   // The blocks' labels take one id each, from lbase.
   let bp: i32[] = ssa.block_positions(f);

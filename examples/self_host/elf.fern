@@ -1068,7 +1068,8 @@ function elf_debug_abbrev(lines: boolean, vars: boolean): i32[] {
 }
 
 // dw_type_abbrevs are the composite type DIEs: 7 a pointer, 8 a struct with
-// member children, 9 a member at its byte offset.
+// member children, 9 a member at its byte offset, 10 an enum with enumerator
+// children, 11 an enumerator and its value.
 function dw_type_abbrevs(b: i32[]): i32[] {
   b = dw_uleb(dw_uleb(b, 7), 15).append(0);
   b = dw_attr(dw_attr(b, 11, 11), 73, 19);  // DW_AT_byte_size data1, DW_AT_type ref4
@@ -1078,14 +1079,22 @@ function dw_type_abbrevs(b: i32[]): i32[] {
   b = dw_attr(b, 0, 0);
   b = dw_uleb(dw_uleb(b, 9), 13).append(0);
   b = dw_attr(dw_attr(dw_attr(b, 3, 8), 73, 19), 56, 15);  // DW_AT_data_member_location udata
+  b = dw_attr(b, 0, 0);
+  b = dw_uleb(dw_uleb(b, 10), 4).append(1);
+  b = dw_attr(dw_attr(b, 3, 8), 11, 11);  // an enumeration_type: name, byte_size data1
+  b = dw_attr(b, 0, 0);
+  b = dw_uleb(dw_uleb(b, 11), 40).append(0);
+  b = dw_attr(dw_attr(b, 3, 8), 28, 13);  // an enumerator: name, DW_AT_const_value sdata
   return dw_attr(b, 0, 0);
 }
 
 // DwTypes is the type DIEs the variables need, parsed from their spellings
 // (ssarc's dbg_type): a scalar's base type, `*Name` a pointer to the struct
-// `Name`, and that struct with its members. `keys` names each definition
-// (`Name` for the struct, `*Name` for the pointer); `kinds` is 0 base, 1
-// pointer, 2 struct; a member belongs to the definition `m_owner` names.
+// `Name` with its members, `%Name` a pointer to the enum `Name` with its
+// enumerators. `keys` names each definition (`Name` for the struct or enum,
+// `*Name` or `%Name` for the pointer); `kinds` is 0 base, 1 pointer, 2
+// struct, 3 enum; a member or enumerator belongs to the definition `m_owner`
+// names, an enumerator's value held in `m_offs`.
 struct DwTypes { keys: string[], kinds: i32[], sizes: i32[], m_owner: i32[], m_names: string[], m_types: string[], m_offs: i32[] }
 
 // DwParsed is a parse's result: the table, the key of the type read, and the
@@ -1106,7 +1115,7 @@ function dw_types_add(t: DwTypes, key: string, kind: i32, size: i32): DwTypes {
 // dw_token is s from i up to the first of the description's separators.
 function dw_token(s: string, i: i32): string {
   let j: i32 = i;
-  while (j < s.len() && s[j] != b'@' && s[j] != b'{' && s[j] != b'}' && s[j] != b',' && s[j] != b':') {
+  while (j < s.len() && s[j] != b'@' && s[j] != b'{' && s[j] != b'}' && s[j] != b',' && s[j] != b':' && s[j] != b'=') {
     j = j + 1;
   }
   return slice_unchecked(s, i, j) + "";
@@ -1114,6 +1123,9 @@ function dw_token(s: string, i: i32): string {
 
 // dw_type_parse reads the type spelled at s[i].
 function dw_type_parse(t: DwTypes, s: string, i: i32): DwParsed {
+  if (s[i] == b'%') {
+    return dw_enum_parse(t, s, i);
+  }
   if (s[i] != b'*') {
     let name: string = dw_token(s, i);
     let bt: i32[] = dw_base_type(name);
@@ -1128,6 +1140,27 @@ function dw_type_parse(t: DwTypes, s: string, i: i32): DwParsed {
     return DwParsed { ...p, key: "*" + name };
   }
   return DwParsed { t: t, key: "*" + name, next: at };
+}
+
+// dw_enum_parse reads `%Name{Variant=value,...}`, an enum and the pointer
+// to it, the enumerators recorded the first time the enum is described.
+function dw_enum_parse(t: DwTypes, s: string, i: i32): DwParsed {
+  let name: string = dw_token(s, i + 1);
+  t = dw_types_add(dw_types_add(t, "%" + name, 1, 8), name, 3, 8);
+  let first: boolean = !dw_has_members(t, util_index_of(t.keys, name));
+  let at: i32 = i + 2 + name.len();
+  while (at < s.len() && s[at] != b'}') {
+    let variant: string = dw_token(s, at);
+    let value: string = dw_token(s, at + variant.len() + 1);
+    if (first) {
+      t = DwTypes { ...t, m_owner: t.m_owner.append(util_index_of(t.keys, name)), m_names: t.m_names.append(variant), m_types: t.m_types.append(""), m_offs: t.m_offs.append(dw_atoi(value)) };
+    }
+    at = at + variant.len() + 1 + value.len();
+    if (at < s.len() && s[at] == b',') {
+      at = at + 1;
+    }
+  }
+  return DwParsed { t: t, key: "%" + name, next: at + 1 };
 }
 
 // dw_members_parse reads `field:type:offset,...}` for the struct `owner`,
@@ -1180,6 +1213,9 @@ function dw_type_emit(e: DwEmit, t: DwTypes, k: i32): DwEmit {
   if (t.kinds[k] == 1) {
     return dw_type_ref(DwEmit { ...e, die: dw_uleb(e.die, 7).append(8) }, slice_unchecked(key, 1, key.len()) + "");
   }
+  if (t.kinds[k] == 3) {
+    return dw_enum_emit(e, t, k);
+  }
   e = DwEmit { ...e, die: dw_uleb(elf_str_bytes(dw_uleb(e.die, 8), key), t.sizes[k]) };
   let m: i32 = 0;
   while (m < t.m_owner.len()) {
@@ -1190,6 +1226,18 @@ function dw_type_emit(e: DwEmit, t: DwTypes, k: i32): DwEmit {
     m = m + 1;
   }
   return DwEmit { ...e, die: dw_uleb(e.die, 0) };
+}
+
+function dw_enum_emit(e: DwEmit, t: DwTypes, k: i32): DwEmit {
+  let die: i32[] = elf_str_bytes(dw_uleb(e.die, 10), t.keys[k]).append(t.sizes[k]);
+  let m: i32 = 0;
+  while (m < t.m_owner.len()) {
+    if (t.m_owner[m] == k) {
+      die = dw_sleb(elf_str_bytes(dw_uleb(die, 11), t.m_names[m]), t.m_offs[m]);
+    }
+    m = m + 1;
+  }
+  return DwEmit { ...e, die: dw_uleb(die, 0) };
 }
 
 // dw_type_ref writes a DW_AT_type to be pointed at the definition `key`.

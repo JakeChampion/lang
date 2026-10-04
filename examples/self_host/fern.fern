@@ -362,7 +362,7 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
     cu_name, getcwd(),
     pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
     arm64_native.arm64_debug_frame(p, elf.elf_text_vaddr_wx() as i64),
-    arm64_var_ranges(pa2),
+    arm64_var_ranges(p, tv, dv),
   );
   return string_from_bytes_unchecked(util.to_u8(wide));
 }
@@ -459,7 +459,7 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
     cu_name, getcwd(),
     a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
     x86_native.x86_debug_frame(a, elf.elf_text_vaddr_x86() as i64),
-    x86_var_ranges(a),
+    x86_var_ranges(a, elf.elf_text_vaddr_x86()),
   );
   return string_from_bytes_unchecked(util.to_u8(wide));
 }
@@ -755,29 +755,84 @@ function le64_at(b: i32[], off: i32): i64 {
 
 // x86_var_ranges / arm64_var_ranges are the emitters' `-g` variable rows
 // (asmcore.DbgVars) with each range's labels resolved to .text offsets, the
-// form elf_append_debug writes .debug_loc from. A range whose labels did not
-// both land, or that is empty, is dropped.
-function x86_var_ranges(a: x86_native.X86Asm): elf.VarRanges {
+// form elf_append_debug writes .debug_loc from, and each enum type's variant
+// shapes resolved to the addresses they load at. A range whose labels did
+// not both land, that is empty, or whose enum shapes have no address, is
+// dropped.
+function x86_var_ranges(a: x86_native.X86Asm, tv: i32): elf.VarRanges {
   let out: elf.VarRanges = elf.no_var_ranges();
   for row in a.dvars {
     let f: string[] = row.split("|");
-    out = var_range(out, f, x86_native.x86_label_off(a, f[4]), x86_native.x86_label_off(a, f[5]));
+    let addrs: i64[] = [];
+    for l in shape_labels(f[2]) {
+      addrs = addrs.append(x86_native.x86_symbol_addr(a, l, tv) as i64);
+    }
+    out = var_range(out, f.with(2, with_shape_addrs(f[2], addrs)), x86_native.x86_label_off(a, f[4]), x86_native.x86_label_off(a, f[5]));
   }
   return out;
 }
 
-function arm64_var_ranges(a: arm64_native.Arm64Asm): elf.VarRanges {
+function arm64_var_ranges(p: arm64_native.Arm64GasProg, tv: i64, dv: i64): elf.VarRanges {
   let out: elf.VarRanges = elf.no_var_ranges();
-  for row in a.dvars {
+  for row in p.asm.dvars {
     let f: string[] = row.split("|");
-    out = var_range(out, f, arm64_native.arm64_asm_label_off(a, f[4]), arm64_native.arm64_asm_label_off(a, f[5]));
+    let addrs: i64[] = [];
+    for l in shape_labels(f[2]) {
+      addrs = addrs.append(arm64_native.arm64_symbol_addr(p, l, tv, dv));
+    }
+    out = var_range(out, f.with(2, with_shape_addrs(f[2], addrs)), arm64_native.arm64_asm_label_off(p.asm, f[4]), arm64_native.arm64_asm_label_off(p.asm, f[5]));
+  }
+  return out;
+}
+
+// shape_labels is the labels an enum description names its variants'
+// shapes by, `=label` up to the next `,` or `}`.
+function shape_labels(t: string): string[] {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < t.len()) {
+    if (t[i] == b'=') {
+      let j: i32 = i + 1;
+      while (j < t.len() && t[j] != b',' && t[j] != b'}') {
+        j = j + 1;
+      }
+      out = out.append(slice_unchecked(t, i + 1, j) + "");
+      i = j;
+    } else {
+      i = i + 1;
+    }
+  }
+  return out;
+}
+
+// with_shape_addrs is the description with each shape label replaced by the
+// address it loads at, in order; "" when one has none.
+function with_shape_addrs(t: string, addrs: i64[]): string {
+  let out: string = "";
+  let k: i32 = 0;
+  let i: i32 = 0;
+  while (i < t.len()) {
+    if (t[i] != b'=') {
+      out = out + slice_unchecked(t, i, i + 1);
+      i = i + 1;
+      continue;
+    }
+    if (addrs[k] < 0 as i64) {
+      return "";
+    }
+    out = out + "=" + util.i64_to_string(addrs[k]);
+    k = k + 1;
+    i = i + 1;
+    while (i < t.len() && t[i] != b',' && t[i] != b'}') {
+      i = i + 1;
+    }
   }
   return out;
 }
 
 // var_range appends one row `fn|name|type|param|from|to|loc` over [lo, hi).
 function var_range(r: elf.VarRanges, f: string[], lo: i32, hi: i32): elf.VarRanges {
-  if (lo < 0 || hi <= lo) {
+  if (lo < 0 || hi <= lo || f[2] == "") {
     return r;
   }
   return elf.VarRanges {

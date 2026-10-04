@@ -1972,6 +1972,17 @@ pub function x86_data_base(a: X86Asm, text_len: i32): i32 {
   return x86_align8(end);
 }
 
+// x86_symbol_addr is the address `name` loads at in an image whose .text
+// starts at `text_vaddr`, -1 for a name with no place.
+pub function x86_symbol_addr(a: X86Asm, name: string, text_vaddr: i32): i32 {
+  let padded_text: i32 = x86_data_base(a, a.text.len());
+  let off: i32 = x86_final_off(a, name, padded_text, padded_text + a.rodata.len());
+  if (off < 0) {
+    return 0 - 1;
+  }
+  return text_vaddr + off;
+}
+
 // x86_resolve_data patches the absolute `.quad <label>` relocations, which
 // x86_resolve cannot: a rel32 branch needs only body offsets, an absolute
 // pointer needs the virtual address the image loads at. Call after
