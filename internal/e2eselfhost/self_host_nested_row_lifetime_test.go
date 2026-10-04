@@ -92,7 +92,7 @@ func TestSelfHostArm64DarwinNestedRowLifetime(t *testing.T) {
 				t.Fatal(err)
 			}
 			bin := filepath.Join(t.TempDir(), "row")
-			cmd := exec.Command(cli, "-target", "arm64-darwin", src, "-o", bin)
+			cmd := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src)
 			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)
