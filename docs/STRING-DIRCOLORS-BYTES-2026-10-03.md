@@ -63,13 +63,20 @@ native/core-WASM corpus in 1.149 seconds, with balanced allocations. Its
 matcher runs free all 4,805 native and 4,736 core-WASM allocations, and the
 interpreter passes the same fixture.
 
+The October 4 integration of publication `74c69bdf8` passes the Linux target
+tests, GNU comparisons, full unit suite and all lint gates. Darwin Go targets
+pass in 11.143 seconds, GNU dircolors/ls/dir/vdir in 13.092 seconds, and
+source-built primary dircolors/matcher tests in 37.798 seconds. The reproduced
+compiler passes all 96 native/core-WASM artifact runs in 1.370 seconds with
+balanced allocations. Its stages two and three match at 13,010,545 bytes.
+
 ## Measurements
 
 Both versions use the reproduced primary compiler with SHA-256
-`571e6324d7055bdb7782ec768a8543b7715140a669a054498db01db3d3e2b450`
-and matching standard library. The before dircolors source is from `26b82ea7c`.
-Both versions use the same current GNU Stdio and filename-matcher libraries,
-so this comparison measures the consumer conversion, not those dependencies.
+`48efd5540bac3b85b564beb4b49e0c0d3b2b6aea510c1652c0328258909f66fe`
+and matching standard library. The before dircolors source and complete
+coreutils library directory come from `74c69bdf8`; the after version uses
+this branch. This measures the consumer and shared-matcher changes together.
 Task-owned heavy jobs were idle; the desktop was not isolated.
 
 The benchmark reads a file and emits Bourne-shell output. A 131072-byte pilot
@@ -82,22 +89,22 @@ two warmups and seven alternating samples writing to `/dev/null`.
 
 | Workload | Before median | After median | Before allocations | After allocations |
 | --- | ---: | ---: | ---: | ---: |
-| Small ASCII entries | 61.027 ms | 53.121 ms | 2,516,990 | 839,207 |
-| Small raw extensions | 51.018 ms | 49.450 ms | 1,048,983 | 344 |
-| Long value | 21.421 ms | 21.729 ms | 791 | 474 |
-| TERM pattern per entry | 67.091 ms | 67.605 ms | 2,649,440 | 1,324,862 |
+| Small ASCII entries | 59.523 ms | 53.923 ms | 2,516,990 | 839,207 |
+| Small raw extensions | 48.608 ms | 46.800 ms | 1,048,983 | 344 |
+| Long value | 20.441 ms | 20.719 ms | 791 | 474 |
+| TERM pattern per entry | 65.360 ms | 64.167 ms | 3,532,450 | 1,324,862 |
 
-Only small-ASCII timing ranges are disjoint: 60.278-62.272 ms before and
-52.308-54.920 ms after. Other ranges overlap; their medians do not establish
-a speedup. The new implementation balances allocations and frees in every
+All before/after timing ranges overlap; these samples do not establish a
+speedup. The new implementation balances allocations and frees in every
 workload. The old implementation leaks one large output body in each full
 run: respectively 7,549,744, 9,437,184, 8,323,584 and 2,207,528 live bytes.
 Those baseline failures are recorded, not treated as balanced results.
 
-Both native files occupy 183,841 bytes. Code grows from 120,472 to 121,272
-bytes, unwind data from 12,100 to 12,332 bytes, and data stays at 20,552
-bytes. The added raw parsing, diagnostic and mixed-input matching paths
-account for the change. No binary-size baseline changes.
+Both native files occupy 183,873 bytes. Code shrinks from 121,912 to 121,464
+bytes, unwind data grows from 11,788 to 12,356 bytes, and data stays at 20,808
+bytes. The combined parser and specialized matcher replace the old text
+paths; their net code/unwind increase is 120 bytes. No binary-size baseline
+changes.
 
 ## GNU and uutils comparison
 
@@ -109,22 +116,23 @@ in rotating implementation order. Peak RSS is measured in a separate run.
 
 | Workload | Fern median | GNU median | uutils median |
 | --- | ---: | ---: | ---: |
-| Small ASCII entries | 53.039 ms | 109.776 ms | 215.481 ms |
-| Small raw extensions | 48.535 ms | 114.267 ms | Incorrect output |
-| Long value | 21.087 ms | 29.452 ms | 18.519 ms |
-| TERM pattern per entry | 65.854 ms | 112.207 ms | 331.737 ms |
+| Small ASCII entries | 52.322 ms | 108.544 ms | 214.626 ms |
+| Small raw extensions | 47.716 ms | 109.969 ms | Incorrect output |
+| Long value | 20.691 ms | 29.048 ms | 18.259 ms |
+| TERM pattern per entry | 64.403 ms | 109.483 ms | 325.119 ms |
 
-Timing ranges are disjoint for every valid comparison in this table.
-Fern beats GNU on these four workloads; uutils beats Fern on long values.
+Fern's timing ranges are below GNU's for ASCII entries, raw extensions and
+long values; the TERM ranges overlap. Uutils is faster than Fern on long
+values and slower on ASCII entries and TERM, with disjoint ranges.
 For raw extensions, uutils exits successfully but emits 31 bytes rather
 than the expected 9,437,215, so it is excluded from that timing comparison.
 
 | Workload | Fern peak RSS | GNU peak RSS | uutils peak RSS |
 | --- | ---: | ---: | ---: |
-| Small ASCII entries | 49,266,688 B | 34,521,088 B | 9,633,792 B |
-| Small raw extensions | 55,869,440 B | 57,868,288 B | Excluded |
-| Long value | 34,717,696 B | 33,931,264 B | 10,780,672 B |
-| TERM pattern per entry | 35,471,360 B | 8,503,296 B | 4,276,224 B |
+| Small ASCII entries | 49,266,688 B | 35,766,272 B | 9,502,720 B |
+| Small raw extensions | 55,902,208 B | 53,608,448 B | Excluded |
+| Long value | 34,717,696 B | 33,980,416 B | 10,829,824 B |
+| TERM pattern per entry | 35,504,128 B | 15,958,016 B | 4,554,752 B |
 
 Fern retains the whole input and output while parsing. Its lower runtime
 on most measured cases does not imply lower peak memory use.

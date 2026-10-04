@@ -1630,7 +1630,7 @@ pub struct StructSig { name: string, field_names: string[], field_types: typeinf
 // is implicit at the call site (`obj.name(a, b)`) so it's
 // stored separately from param_types. Plain functions live
 // in the FuncSig table; the two tables don't overlap.
-pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[] }
+pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_bounds: string[] }
 
 // UnionSig: nominal handle for a declared type alias —
 // `pub type Shape = Circle | Square`. Variants are captured
@@ -2980,7 +2980,7 @@ function (s: Scope) array_recv_method(field: string, view: boolean): MethodSig {
     i = s.methods.next[i];
   }
   let empty_pt: typeinfo.Type[] = [];
-  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "", param_type_names: [], all_type_params: [] };
+  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_bounds: [] };
 }
 
 // has_array_method reports whether an auto-discovered std/array method
@@ -3456,7 +3456,7 @@ function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
     i = s.methods.next[i];
   }
   let empty_pt: typeinfo.Type[] = [];
-  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "", param_type_names: [], all_type_params: [] };
+  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_bounds: [] };
 }
 
 // has_method answers lookup_method's question without building the sentinel
@@ -4487,6 +4487,10 @@ function builtin_sigs(): string[] {
     "create_link(string, string): Result[void, IoError]",
     "create_symlink(string, string): Result[void, IoError]",
     "rename_noreplace(string, string): Result[void, IoError]",
+    "getxattr(string, string): Result[string, IoError]",
+    "lgetxattr(string, string): Result[string, IoError]",
+    "setxattr(string, string, string): Result[void, IoError]",
+    "lsetxattr(string, string, string): Result[void, IoError]",
     "rename_exchange(string, string): Result[void, IoError]",
     "env(string): Option[string]",
     "config_get(string): Option[string]",
@@ -5365,8 +5369,28 @@ function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name
   let ret: parser.TypeRef = parser.parse_type_ref(sig.ret_type_name);
   for tp in sig.all_type_params {
     let (named, all_empty) = empty_array_positions(sig.param_type_names, c.args, tp);
-    if (util.index_of_str(bn, tp) < 0 && !type_ref_names_any(ret, [tp]) && !bound_names_tp(sig, tp) && all_empty) {
+    if (util.index_of_str(bn, tp) < 0 && !type_ref_names_any(ret, [tp]) && !bound_names_tp(sig.type_bounds, tp) && all_empty) {
       out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + name + " — supply it explicitly at the call site (e.g. " + name + "[i32](...)) or annotate the binding", c.line, c.col));
+    }
+  }
+  return out;
+}
+
+// uninferred_method_diags is uninferred_call_diags for a receiver method,
+// labelled `recv`.`method` as native labels it. The receiver binds exactly the
+// variables its declared type names, so a concrete receiver (`u8[]`, `[u8]`,
+// `string`) binds none of the method's own (#10991).
+function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (c.type_args.len() > 0 || msig.name.len() == 0 || c.args.len() != msig.param_type_names.len()) {
+    return out;
+  }
+  let rref: parser.TypeRef = parser.parse_type_ref(msig.receiver_type);
+  let ret: parser.TypeRef = parser.parse_type_ref(msig.ret_type_name);
+  for tp in msig.all_type_params {
+    let (named, all_empty) = empty_array_positions(msig.param_type_names, c.args, tp);
+    if (!type_ref_names_any(rref, [tp]) && !type_ref_names_any(ret, [tp]) && !bound_names_tp(msig.type_bounds, tp) && all_empty) {
+      out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + recv + "." + method + " — supply it explicitly at the call site (e.g. ." + method + "[i32](...)) or annotate the binding", c.line, c.col));
     }
   }
   return out;
@@ -5407,10 +5431,10 @@ function binds_nothing(e: ast.Expr): boolean {
   return false;
 }
 
-// bound_names_tp: a bound on one of `sig`'s type parameters spells `tp`, so
-// bound_bindings may be what binds it.
-function bound_names_tp(sig: FuncSig, tp: string): boolean {
-  for b in sig.type_bounds {
+// bound_names_tp: one of `bounds` spells `tp`, so bound_bindings may be what
+// binds it.
+function bound_names_tp(bounds: string[], tp: string): boolean {
+  for b in bounds {
     for entry in parser.split_plus_bounds(b) {
       if (type_ref_names_any(parser.parse_type_ref(entry), [tp])) {
         return true;
@@ -7348,7 +7372,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], tn: TypeNames): MethodSig
         pts = pts.append(param_decl_type(param, fd.type_params, tn));
         ptn = ptn.append(param.type_name);
       }
-      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, tn), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params });
+      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, tn), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params, type_bounds: fd.bound_traits });
     }
   }
   return out;
@@ -13102,11 +13126,16 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col));
           }
+          out = util.append_diags(out, uninferred_method_diags(c, int_label(it), mfa.field, s.lookup_method(mfa.field, int_label(it))));
         },
         typeinfo.TypeFloat(f) => {
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(dg_at("E043", s.unknown_method_advice(float_label(f), mfa.field, recv), mfa.line, mfa.col));
           }
+          out = util.append_diags(out, uninferred_method_diags(c, float_label(f), mfa.field, s.lookup_method(mfa.field, float_label(f))));
+        },
+        typeinfo.TypeBool(_) => {
+          out = util.append_diags(out, uninferred_method_diags(c, "boolean", mfa.field, s.lookup_method(mfa.field, "boolean")));
         },
         typeinfo.TypeString(_) => {
           // E043: a string carries exactly two builtin methods
@@ -13129,6 +13158,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if ((mfa.field == "len" || mfa.field == "as_bytes") && c.args.len() != 0 && s.lookup_method(mfa.field, "string").name.len() == 0) {
             out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects 0 argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
           }
+          out = util.append_diags(out, uninferred_method_diags(c, "string", mfa.field, s.lookup_method(mfa.field, "string")));
         },
         typeinfo.TypeArray(ar) => {
           // E038: a built-in array method whose argument must
@@ -13171,6 +13201,11 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col));
           }
+          let arr_label: string = "Array";
+          if (ar.view) {
+            arr_label = "slice";
+          }
+          out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, s.array_recv_method(mfa.field, ar.view)));
           // E004 (array builtin arity): the three unconditional array
           // builtins take a fixed number of arguments — `len()` none,
           // `append(x)` one, `with(i, v)` two — so an over- or
@@ -13255,6 +13290,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                   mi = mi + 1;
                 }
                 out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, sn.args, s));
+                out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig));
               }
             } else {
               // A call `obj.m(...)` on a known struct with no
@@ -13302,6 +13338,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           let umsig: MethodSig = s.lookup_method(mfa.field, un.name);
           if (umsig.name.len() > 0 && c.args.len() == umsig.param_types.len()) {
             out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, un.args, s));
+            out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig));
           }
         },
         _ => {
@@ -24327,8 +24364,10 @@ function pretype_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
     },
     ast.StmtMatch(m) => {
       let narms: ast.MatchArm[] = [];
-      for arm in m.arms {
-        let asc: Scope = annotate_arm_scope(arm, s, check_expr(m.scrutinee, s));
+      let whole: typeinfo.Type = check_expr(m.scrutinee, s);
+      for arm0 in m.arms {
+        let arm: ast.MatchArm = ast.MatchArm { ...arm0, pattern: rescope_pattern(arm0.pattern, whole, s) };
+        let asc: Scope = annotate_arm_scope(arm, s, whole);
         let g: ast.Expr = arm.guard;
         if (arm.has_guard) {
           g = pretype_expr(arm.guard, asc);
@@ -24378,6 +24417,140 @@ function pretype_at(x: ast.Expr, own acc: boolean): boolean {
     }
   }
   return false;
+}
+
+// Pattern variants are named by the scrutinee (#10922). The module bundler
+// resolves a bare variant name lexically, so with std/net loaded an arm's
+// `Other` names `net__Other` even when the match is on an IoError. Wherever a
+// bare name is spelled by more than one variant, pretype_stmt renames an arm
+// to the member of the scrutinee's enum that spells it, which is what native
+// resolves the pattern against.
+
+// colliding_variant_names lists each bare variant name that two variants of
+// the module's enums, or of the built-in ones, spell.
+function colliding_variant_names(mod: parser.Module): string[] {
+  let full: string[] = [];
+  for ed in mod.enums {
+    for vn in ed.variant_names {
+      full = full.append(vn);
+    }
+  }
+  for sd in parser.inject_builtin_enums([]) {
+    if (sd.enum_owner.len() > 0) {
+      full = full.append(sd.name);
+    }
+  }
+  let seen: string[] = [];
+  let seen_full: string[] = [];
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < full.len()) {
+    let b: string = variant_bare_name(full[i]);
+    let at: i32 = util.index_of_str(seen, b);
+    if (at < 0) {
+      seen = seen.append(b);
+      seen_full = seen_full.append(full[i]);
+    } else if (seen_full[at] != full[i] && !util.has_str(out, b)) {
+      out = out.append(b);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// variant_bare_name is a variant's name without its module prefix.
+function variant_bare_name(name: string): string {
+  let i: i32 = name.len() - 2;
+  while (i > 0) {
+    if (name[i] == b'_' && name[i + 1] == b'_') {
+      return slice_unchecked(name, i + 2, name.len()) + "";
+    }
+    i = i - 1;
+  }
+  return name;
+}
+
+// rescope_pattern renames an unqualified variant pattern to the member of the
+// scrutinee's enum that spells the same bare name, when it names another
+// enum's variant.
+function rescope_pattern(p: ast.Pattern, whole: typeinfo.Type, s: Scope): ast.Pattern {
+  if let ast.PatVariant(pv) = p {
+    if (variant_pattern_qualified(pv.type_name)) {
+      return p;
+    }
+    if let typeinfo.TypeUnion(u) = whole {
+      let members: string[] = enum_members(s, u.name, pv.type_name);
+      if (util.has_str(members, pv.type_name)) {
+        return p;
+      }
+      let bare: string = variant_bare_name(pv.type_name);
+      for v in members {
+        if (variant_bare_name(v) == bare) {
+          return ast.PatVariant { ...pv, type_name: v };
+        }
+      }
+    }
+  }
+  return p;
+}
+
+// enum_members is the variant names of enum `name`: its union signature's, or
+// for a built-in enum outside the table (IoError, JsonValue, Body) the
+// injected variant declarations it owns. The built-ins are read only for a
+// module-prefixed `variant`, the one spelling that can name another enum's.
+function enum_members(s: Scope, name: string, variant: string): string[] {
+  let us: UnionSig = s.lookup_union(name);
+  if (us.name.len() > 0) {
+    return us.variants;
+  }
+  let out: string[] = [];
+  if (variant_bare_name(variant).len() == variant.len()) {
+    return out;
+  }
+  for sd in parser.inject_builtin_enums([]) {
+    if (sd.enum_owner == name) {
+      out = out.append(sd.name);
+    }
+  }
+  return out;
+}
+
+struct RescopeScan { coll: string[], found: boolean }
+
+function rescope_at_stmt(st: ast.Stmt, own a: RescopeScan): RescopeScan {
+  if (a.found) {
+    return a;
+  }
+  if let ast.StmtMatch(m) = st {
+    for arm in m.arms {
+      if let ast.PatVariant(pv) = arm.pattern {
+        if (util.has_str(a.coll, variant_bare_name(pv.type_name))) {
+          return RescopeScan { ...a, found: true };
+        }
+      }
+    }
+  }
+  return a;
+}
+
+function rescope_at_expr(e: ast.Expr, own a: RescopeScan): RescopeScan {
+  return a;
+}
+
+// needs_pretype_or_rescope is needs_pretype, or a match arm whose variant name
+// is in `coll`.
+function needs_pretype_or_rescope(stmts: ast.Stmt[], coll: string[]): boolean {
+  if (needs_pretype(stmts)) {
+    return true;
+  }
+  if (coll.len() == 0) {
+    return false;
+  }
+  let a: RescopeScan = RescopeScan { coll: coll, found: false };
+  for stmt in stmts {
+    a = astwalk.fold_stmt_nodes(stmt, a, rescope_at_stmt, rescope_at_expr, astwalk.descend_all);
+  }
+  return a.found;
 }
 
 // needs_pretype reports whether a body holds anything pretype_module rewrites.
@@ -24506,11 +24679,12 @@ function use_typed(c: ast.ExprCall, s: Scope): ast.ExprCall {
 // slot spells. Runs ahead of the checker's own diagnostics and of lowering, so
 // both see one declaration.
 pub function pretype_module(mod: parser.Module): parser.Module {
-  if (needs_pretype(mod.top_stmts)) {
+  let coll: string[] = colliding_variant_names(mod);
+  if (needs_pretype_or_rescope(mod.top_stmts, coll)) {
     return pretype_module_in(mod, build_module_tables(mod));
   }
   for fd in mod.funcs {
-    if (needs_pretype(fd.body)) {
+    if (needs_pretype_or_rescope(fd.body, coll)) {
       return pretype_module_in(mod, build_module_tables(mod));
     }
   }
@@ -24519,11 +24693,12 @@ pub function pretype_module(mod: parser.Module): parser.Module {
 
 function pretype_module_in(mod: parser.Module, mt: ModuleTables): parser.Module {
   // Keep untouched functions and avoid rebuilding bodies with nothing to retype.
-  let top_hit: boolean = needs_pretype(mod.top_stmts);
+  let coll: string[] = colliding_variant_names(mod);
+  let top_hit: boolean = needs_pretype_or_rescope(mod.top_stmts, coll);
   let hits: boolean[] = [];
   let any: boolean = top_hit;
   for fn in mod.funcs {
-    let hit: boolean = needs_pretype(fn.body);
+    let hit: boolean = needs_pretype_or_rescope(fn.body, coll);
     hits = hits.append(hit);
     if (hit) {
       any = true;

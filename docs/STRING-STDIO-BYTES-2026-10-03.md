@@ -46,12 +46,21 @@ Darwin and core WASM with balanced allocation counts in 3.263 seconds.
 The 208 primary compiler and standard-library source files match that
 compiler's reproduced source tree exactly.
 
+The latest integration includes upstream head `38f4a269d`. Linux Go and
+primary fixture groups pass in 6.456 and 41.445 seconds, GNU consumers in
+5.674 seconds and primary/native comparisons in 21.612 seconds. The full
+unit suite and every lint gate pass. All 5,946 Go/Fern files match the frozen
+snapshot. Darwin Go and primary tests pass in 7.961 and 36.571 seconds.
+The fresh compiler passes all 179 cases on Darwin and core WASM with balanced
+allocation counts in 2.931 seconds. Its bootstrap takes 35, 27 and 15 seconds;
+stages two and three are identical at 12,878,049 bytes.
+
 ## Controlled measurements
 
 Both versions use the reproduced primary compiler with SHA-256
-`571e6324d7055bdb7782ec768a8543b7715140a669a054498db01db3d3e2b450`
+`3f4f3a40bf167dee51cbdc2d90e396cb3999a3bd34ccc741d479d42904d9682a`
 and its matching standard library. The before module is `coreutils/lib/gnu.fern`
-at `26b82ea7c`; the after module is this byte-buffer implementation. No other
+at `38f4a269d`; the after module is this byte-buffer implementation. No other
 source differs. Task-owned heavy jobs were idle; the desktop was not isolated.
 
 The program creates one Stdio, repeatedly writes the same string, then closes
@@ -64,22 +73,26 @@ uses two warmups and seven samples in alternating order.
 
 | Piece | Before median | After median | Before allocations | After allocations |
 | --- | ---: | ---: | ---: | ---: |
-| 7 ASCII bytes | 38.501 ms | 26.638 ms | 1,469,763 | 11,588 |
-| 7 Unicode bytes | 38.119 ms | 26.677 ms | 1,469,763 | 11,588 |
-| 4096 ASCII bytes | 3.158 ms | 3.448 ms | 7,205 | 6,180 |
-| 65536 ASCII bytes | 2.687 ms | 3.014 ms | 1,059 | 1,183 |
+| 7 ASCII bytes | 38.722 ms | 26.656 ms | 1,469,763 | 11,588 |
+| 7 Unicode bytes | 37.599 ms | 26.366 ms | 1,469,763 | 11,588 |
+| 4096 ASCII bytes | 2.907 ms | 3.203 ms | 7,205 | 6,180 |
+| 65536 ASCII bytes | 2.565 ms | 2.948 ms | 1,059 | 1,183 |
 
-The small-write ranges are disjoint: ASCII takes 37.863-39.767 ms before and
-25.935-27.409 ms after; Unicode takes 37.461-39.071 and 26.039-28.272 ms.
-The 4096-byte case is slower with disjoint ranges, 3.038-3.217 versus
-3.373-3.542 ms. The 65536-byte ranges overlap. This is not a general speedup:
-large writes still pay for partial-range copies, byte-buffer construction
-and Writer view dispatch. The small-write allocation reduction is exact.
+The small-write ranges are disjoint: ASCII takes 37.861-39.526 ms before and
+26.300-29.661 ms after; Unicode takes 37.407-39.752 and 26.218-27.819 ms.
+Both larger cases are slower with disjoint ranges: 4096-byte writes take
+2.864-2.975 ms before and 3.130-3.285 ms after; 65536-byte writes take
+2.523-2.612 and 2.853-3.078 ms. Large writes still pay for partial-range
+copies, byte-buffer construction and Writer view dispatch. The small-write
+allocation reduction is exact; the timing result applies to those workloads.
 
-Both native benchmark files occupy 83,073 bytes. Code grows from 41,488 to
-42,272 bytes and unwind data from 7,276 to 7,492 bytes; data grows from 4,144
+Both native benchmark files occupy 83,073 bytes. Code grows from 41,680 to
+42,464 bytes and unwind data from 7,300 to 7,516 bytes; data grows from 4,144
 to 4,168 bytes. The extra paths support raw input, range handling and byte buffering.
-No size baseline changes are needed.
+Stdio itself needs no size baseline change. A later main integration crossed
+the compiler path-probe gate. Its separate [size investigation](SELFHOST-PATH-PROBE-SIZE-2026-10-04.md)
+attributes the accumulated compiler growth and removes unused verdict report
+construction before updating that driver's measured baseline.
 
 This enables byte-oriented consumers such as dircolors. It does not complete
 their conversion or the remaining producer audit for #5714.

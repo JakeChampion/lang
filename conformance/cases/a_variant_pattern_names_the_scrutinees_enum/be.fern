@@ -1,0 +1,5 @@
+pub enum Be { X(string), Zb }
+
+pub function mk_b(): Be {
+  return X("hello");
+}

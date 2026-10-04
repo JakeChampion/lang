@@ -1451,6 +1451,10 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"create_link":                      emitCreateLinkHelper,
 	"create_symlink":                   emitCreateSymlinkHelper,
 	"read_link":                        emitReadLinkHelper,
+	"getxattr":                         emitGetxattrHelper("getxattr", "gxat", 8),
+	"lgetxattr":                        emitGetxattrHelper("lgetxattr", "lgxa", 9),
+	"setxattr":                         emitSetxattrHelper("setxattr", "sxat", 5),
+	"lsetxattr":                        emitSetxattrHelper("lsetxattr", "lsxa", 6),
 	"umask":                            emitUmaskHelper,
 	"priority":                         emitPriorityHelper,
 	"set_priority":                     emitSetPriorityHelper,
@@ -4326,6 +4330,10 @@ var runtimeHelperDeps = map[string][]string{
 	"create_link":                      {"__fern_io_error", "__fern_rc_inc"},
 	"create_symlink":                   {"__fern_io_error", "__fern_rc_inc"},
 	"read_link":                        {"__fern_io_error", "__fern_rc_inc"},
+	"getxattr":                         {"__fern_io_error", "__fern_rc_inc"},
+	"lgetxattr":                        {"__fern_io_error", "__fern_rc_inc"},
+	"setxattr":                         {"__fern_io_error", "__fern_rc_inc"},
+	"lsetxattr":                        {"__fern_io_error", "__fern_rc_inc"},
 	"rename":                           {"__fern_io_error", "__fern_rc_inc"},
 	"rename_noreplace":                 {"__fern_io_error", "__fern_rc_inc"},
 	"rename_exchange":                  {"__fern_io_error", "__fern_rc_inc"},
@@ -4443,6 +4451,10 @@ var heapUsingHelpers = map[string]bool{
 	"create_link":                      true,
 	"create_symlink":                   true,
 	"read_link":                        true,
+	"getxattr":                         true,
+	"lgetxattr":                        true,
+	"setxattr":                         true,
+	"lsetxattr":                        true,
 	"rename":                           true,
 	"rename_noreplace":                 true,
 	"rename_exchange":                  true,
@@ -7314,6 +7326,126 @@ func emitReadLinkHelper(w func(string, ...any)) {
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #64")
 	w("\tret")
+}
+
+// emitGetxattrHelper returns the emitter for name(path, attr) ->
+// Result[string, IoError]: getxattr(2) (8) or lgetxattr(2) (9) into a stack
+// buffer of XATTR_SIZE_MAX, the largest value Linux stores, and the value
+// copied out into a fresh string. The IoError names the path.
+//
+// x19 = path, x20 = pathz, x21 = attr then the value length, x22 = attrz
+// then the value's data.
+func emitGetxattrHelper(name, tag string, sysno int) func(func(string, ...any)) {
+	const xattrSizeMax = 65536
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tstp x29, x30, [sp, #-64]!")
+		w("\tmov x29, sp")
+		w("\tstp x19, x20, [sp, #16]")
+		w("\tstp x21, x22, [sp, #32]")
+		w("\tsub sp, sp, #%d", xattrSizeMax)
+		w("\tmov x19, x0") // path
+		w("\tmov x21, x1") // attr
+		emitSsaPathz(w, "x20", "x19", tag+"p")
+		emitSsaPathz(w, "x22", "x21", tag+"n")
+		w("\tmov x0, x20")
+		w("\tmov x1, x22")
+		w("\tmov x2, sp")
+		w("\tmov x3, #%d", xattrSizeMax)
+		w("\tmov x8, #%d", sysno)
+		w("\tsvc #0")
+		// Rewinding the first copy releases the second, made after it.
+		emitSsaPathzRewind(w, "x20")
+		w("\ttbnz x0, #63, .Lssa_%s_err", tag)
+		w("\tmov x21, x0") // value length
+		// The value in its own rc block: {rc@0, len@4, data@8},
+		// NUL-terminated so a C consumer can read it back.
+		emitAllocBlock(w, "x4", "x21", strBlockBytes)
+		w("\tmov w6, #1")
+		w("\tstr w6, [x4]")      // rc = 1
+		w("\tstr w21, [x4, #4]") // len
+		w("\tadd x22, x4, #8")   // data
+		w("\tmov w7, #0")
+		w(".Lssa_%s_cp:", tag)
+		w("\tcmp w7, w21")
+		w("\tb.hs .Lssa_%s_cpd", tag)
+		w("\tldrb w8, [sp, x7]")
+		w("\tstrb w8, [x22, x7]")
+		w("\tadd w7, w7, #1")
+		w("\tb .Lssa_%s_cp", tag)
+		w(".Lssa_%s_cpd:", tag)
+		w("\tstrb wzr, [x22, x21]")
+		emitSsaResultBox(w)
+		w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+		w("\tstr x22, [x0, #8]") // the value
+		w("\tb .Lssa_%s_ret", tag)
+		w(".Lssa_%s_err:", tag)
+		w("\tneg x0, x0")
+		emitIoErrorOwningPath(w, "x19")
+		w("\tmov x19, x0")
+		emitSsaResultBox(w)
+		w("\tmov w6, #1")
+		w("\tstr w6, [x0]") // tag = 1 (Err)
+		w("\tstr x19, [x0, #8]")
+		w(".Lssa_%s_ret:", tag)
+		w("\tadd sp, sp, #%d", xattrSizeMax)
+		w("\tldp x21, x22, [sp, #32]")
+		w("\tldp x19, x20, [sp, #16]")
+		w("\tldp x29, x30, [sp], #64")
+		w("\tret")
+	}
+}
+
+// emitSetxattrHelper returns the emitter for name(path, attr, value) ->
+// Result[void, IoError]: setxattr(2) (5) or lsetxattr(2) (6) with no flags, so
+// the attribute is created or replaced. The value is read in place. The
+// IoError names the path.
+//
+// x19 = path, x20 = pathz, x21 = attr, x22 = attrz, x23 = value.
+func emitSetxattrHelper(name, tag string, sysno int) func(func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tstp x29, x30, [sp, #-64]!")
+		w("\tmov x29, sp")
+		w("\tstp x19, x20, [sp, #16]")
+		w("\tstp x21, x22, [sp, #32]")
+		w("\tstp x23, x24, [sp, #48]")
+		w("\tmov x19, x0") // path
+		w("\tmov x21, x1") // attr
+		w("\tmov x23, x2") // value
+		emitSsaPathz(w, "x20", "x19", tag+"p")
+		emitSsaPathz(w, "x22", "x21", tag+"n")
+		w("\tmov x0, x20")
+		w("\tmov x1, x22")
+		w("\tmov x2, x23")
+		w("\tldur w3, [x23, #-4]") // value length
+		w("\tmov x4, #0")          // flags: create or replace
+		w("\tmov x8, #%d", sysno)
+		w("\tsvc #0")
+		// Rewinding the first copy releases the second, made after it.
+		emitSsaPathzRewind(w, "x20")
+		w("\ttbnz x0, #63, .Lssa_%s_err", tag)
+		emitSsaResultBox(w)
+		w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+		w("\tstr xzr, [x0, #8]") // unit payload
+		w("\tb .Lssa_%s_ret", tag)
+		w(".Lssa_%s_err:", tag)
+		w("\tneg x0, x0")
+		emitIoErrorOwningPath(w, "x19")
+		w("\tmov x19, x0")
+		emitSsaResultBox(w)
+		w("\tmov w6, #1")
+		w("\tstr w6, [x0]") // tag = 1 (Err)
+		w("\tstr x19, [x0, #8]")
+		w(".Lssa_%s_ret:", tag)
+		w("\tldp x23, x24, [sp, #48]")
+		w("\tldp x21, x22, [sp, #32]")
+		w("\tldp x19, x20, [sp, #16]")
+		w("\tldp x29, x30, [sp], #64")
+		w("\tret")
+	}
 }
 
 // emitRenameHelper writes rename(from, to) -> Result[void, IoError]:
