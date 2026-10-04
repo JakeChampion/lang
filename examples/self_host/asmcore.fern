@@ -296,9 +296,9 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
           name = util.base_type_name(mod.funcs[fi].receiver_type) + "." + name;
         }
       }
-      let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(kt, name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops);
+      let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(kt, name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops, false);
       if (lifted.ok) {
-        let f: ssa.SFunc = ssa.register_form(lifted.func);
+        let f: ssa.SFunc = ssa.register_form(lifted.func).f;
         for leaf in ssa.leaf_of(name, f) {
           out = out.append(leaf);
         }
@@ -10952,4 +10952,141 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
     k = k + 1;
   }
   return ops;
+}
+
+// DbgVars is one function's `-g` record of where its source variables live
+// (#11410): `at` marks the SSA positions that bound a variable's range, which
+// the emitter labels (dbg_label), and each row reads
+// `fn|name|type|param|from|to|loc`: a variable, its type's spelling, 1 for a
+// parameter, the labels its value's home holds it between, and that home as
+// DWARF location bytes in hex. The assembler records the rows (`.fern_var`)
+// and the ELF writer turns them into DIEs and .debug_loc lists.
+pub struct DbgVars { at: boolean[], rows: string[] }
+
+// dbg_vars builds the record from the allocation `a` of a function whose
+// lowering `r` named its variables' slots, `seen_vals`/`seen_slots` pairing
+// each lifted value with the slot it was stored to or read from, `repl` the
+// value register_form replaced each by (ssa.Formed), and `locs[v]` the
+// location of value v's home ("" when it has none). `npos` is the function's
+// last position, past its last terminator.
+pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.LowerResult, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
+  if (seen_vals.len() == 0) {
+    return DbgVars { at: [], rows: [] };
+  }
+  let d: DbgVars = DbgVars { at: util.bools(npos + 1, false), rows: [] };
+  let i: i32 = 0;
+  while (i < r.dbg_slots.len()) {
+    if (dbg_scalar(r.dbg_types[i])) {
+      d = dbg_var(d, fn_label, a, r, i, repl, seen_vals, seen_slots, locs, npos);
+    }
+    i = i + 1;
+  }
+  return d;
+}
+
+// dbg_var adds the rows of variable `i`: one per distinct value its slot held
+// that has a home and a live range inside the function.
+function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.LowerResult, i: i32, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
+  let param: string = "0";
+  if (r.dbg_slots[i] < r.n_params) {
+    param = "1";
+  }
+  let done: i32[] = [];
+  let j: i32 = 0;
+  while (j < seen_slots.len()) {
+    let v: i32 = dbg_home(a, repl, locs, npos, seen_vals[j]);
+    if (seen_slots[j] == r.dbg_slots[i] && v >= 0 && util.index_of_i32(done, v) < 0) {
+      done = done.append(v);
+      let lo: i32 = a.def_pos[v] + 1;
+      let hi: i32 = a.hi[v] + 1;
+      d = DbgVars {
+        at: d.at.with(lo, true).with(hi, true),
+        rows: d.rows.append(fn_label + "|" + r.dbg_names[i] + "|" + r.dbg_types[i] + "|" + param + "|" + dbg_label_name(fn_label, lo) + "|" + dbg_label_name(fn_label, hi) + "|" + locs[v]),
+      };
+    }
+    j = j + 1;
+  }
+  return d;
+}
+
+// dbg_home is lifted value `v` after register_form's replacement, or -1 when
+// it has no home or no range strictly inside the function.
+function dbg_home(a: ssa.Alloc, repl: i32[], locs: string[], npos: i32, v: i32): i32 {
+  if (v >= 0 && v < repl.len()) {
+    v = repl[v];
+  }
+  if (v < 0 || v >= a.def_pos.len() || v >= locs.len() || locs[v] == "") {
+    return 0 - 1;
+  }
+  if (a.def_pos[v] < 0 || a.hi[v] <= a.def_pos[v] || a.hi[v] >= npos) {
+    return 0 - 1;
+  }
+  return v;
+}
+
+// dbg_scalar reports a type the first slice of variable DIEs describes: the
+// scalars a single register or slot holds.
+function dbg_scalar(t: string): boolean {
+  for s in ["i32", "i64", "u8", "u32", "u64", "usize", "isize", "f64", "f32", "boolean"] {
+    if (t == s) {
+      return true;
+    }
+  }
+  return false;
+}
+
+pub function dbg_label_name(fn_label: string, pos: i32): string {
+  return ".Ldbg_" + sanitize_label(fn_label) + "_" + util.i32_to_string(pos);
+}
+
+// dbg_label writes the label for position `pos` when a range needs it.
+pub function dbg_label(s: EmitState, d: DbgVars, fn_label: string, pos: i32): EmitState {
+  if (pos < d.at.len() && d.at[pos]) {
+    return s.write(dbg_label_name(fn_label, pos) + ":\n");
+  }
+  return s;
+}
+
+// dbg_labels writes the labels for positions `lo` up to `hi`.
+pub function dbg_labels(s: EmitState, d: DbgVars, fn_label: string, lo: i32, hi: i32): EmitState {
+  let pos: i32 = lo;
+  while (pos < hi) {
+    s = dbg_label(s, d, fn_label, pos);
+    pos = pos + 1;
+  }
+  return s;
+}
+
+// dbg_rows writes the record's rows for the assembler to keep.
+pub function dbg_rows(s: EmitState, d: DbgVars): EmitState {
+  for row in d.rows {
+    s = s.write("    .fern_var " + row + "\n");
+  }
+  return s;
+}
+
+// dbg_hex spells DWARF location bytes as the hex a row carries.
+pub function dbg_hex(bytes: i32[]): string {
+  let digits: string = "0123456789abcdef";
+  let out: string = "";
+  for b in bytes {
+    out = out + slice_unchecked(digits, b >> 4 & 15, (b >> 4 & 15) + 1) + slice_unchecked(digits, b & 15, (b & 15) + 1);
+  }
+  return out;
+}
+
+// dbg_sleb is a DWARF signed LEB128.
+pub function dbg_sleb(b: i32[], v: i32): i32[] {
+  let more: boolean = true;
+  while (more) {
+    let byte: i32 = v & 127;
+    v = v >> 7;
+    if (v == 0 && (byte & 64) == 0 || v == 0 - 1 && (byte & 64) != 0) {
+      more = false;
+    } else {
+      byte = byte | 128;
+    }
+    b = b.append(byte);
+  }
+  return b;
 }

@@ -1043,6 +1043,9 @@ pub struct Arm64Asm {
   loc_lines: i32[],
   loc_cols: i32[],
   loc_flags: i32[],
+  // The `.fern_var` rows (asmcore.DbgVars), kept verbatim for the ELF
+  // writer's variable DIEs (#11410).
+  dvars: string[],
   // Label lookup by name hashes into arm64_label_buckets() chains:
   // lab_head[b] is the first label in bucket b, lab_next[i] the label after
   // i in its chain, lab_tail[b] the chain's last so a new label joins it
@@ -1144,7 +1147,7 @@ function arm64_asm_new(): Arm64Asm {
 // struct the live one was moved out of.
 function arm64_asm_vacant(): Arm64Asm {
   return Arm64Asm {
-    code: 0 as usize, text: [], patq: 0 as usize, lab_names: [], lab_offs: [], files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [],
+    code: 0 as usize, text: [], patq: 0 as usize, lab_names: [], lab_offs: [], files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [],
     lab_head: arm64_empty_buckets(), lab_next: [], lab_tail: arm64_empty_buckets(),
     fixq: 0 as usize, fix_names: [], lid_offs: [], unres: [], oor: [],
   };
@@ -10056,6 +10059,8 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
     if (line[0] == b'.') {
       if (arm64_str_starts_with(line, ".loc ")) {
         a = arm64_loc_row(a, line);
+      } else if (arm64_str_starts_with(line, ".fern_var ")) {
+        a = Arm64Asm { ...a, dvars: a.dvars.append(slice_unchecked(line, 10, line.len()) + "") };
       } else if (arm64_str_starts_with(line, ".file ")) {
         a = arm64_file_entry(a, line);
       } else if (arm64_str_starts_with(line, ".cfi_")) {
@@ -11627,9 +11632,9 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
 // renderer's, and through it to gas.
 //
 // Offsets are recorded as .text byte offsets at the point the directive is
-// seen. Neither self-host assembler moves code after parsing — the x86 one
-// re-emits to a fixpoint rather than remapping, the arm64 one flushes its
-// literal pool inline — so no remap step exists here.
+// seen. The recorder never moves them: the x86 assembler's branch relaxation
+// remaps them itself (x86_relax_apply), and the arm64 one flushes its literal
+// pool inline, so its code never moves.
 
 // DWARF call-frame opcodes. Only the ones this module emits.
 function cfi_op_nop(): i32 {

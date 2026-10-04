@@ -9667,17 +9667,21 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // the parameters loaded from the caller's slots into their homes, and each
 // block behind its label. prune_dead first takes out the zeros the lift gives
 // every declared local and the loop phis nothing reads.
-function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtables.LowerResult, seen_vals: i32[], seen_slots: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = asmcore.EmitState { ...s, dw_first: true };
-  let f: ssa.SFunc = ssa.register_form(lifted);
+  let formed: ssa.Formed = ssa.register_form(lifted);
+  let f: ssa.SFunc = formed.f;
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
-  let reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));
+  let alloc: ssa.Alloc = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));
+  let reg_of: i32[] = alloc.reg_of;
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
   s = ssa_entry_shim(f, asmcore.sanitize_label(label_name), s);
   s = ssa_release_entry(r, lp, s);
   let saved: i32[] = ssa_saved_regs(reg_of);
   let save: i32 = 8 * saved.len();
+  let fn_label: string = "__fn_" + asmcore.sanitize_label(label_name);
+  let dbg: asmcore.DbgVars = asmcore.dbg_vars(fn_label, alloc, r, formed.repl, seen_vals, seen_slots, ssa_dbg_locs(reg_of, save, seen_vals.len() > 0), ssa.position_count(f));
   let views: i32[] = ssa_view_slots(f);
   let nspill: i32 = ssa.spill_count(reg_of);
   // A function with no frame slots that might make no call is emitted into a
@@ -9709,6 +9713,9 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
   }
   s = asmcore.EmitState { ...s, ssa_save: save };
   s = ssa_load_params(f, reg_of, s);
+  // `pos` numbers the instructions and terminators as the allocator does, so
+  // a `-g` variable range's labels land where its home takes and drops it.
+  let pos: i32 = 0;
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     let blk: ssa.SBlock = f.blocks[bi];
@@ -9721,16 +9728,21 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
     let fu: SsaFuse = ssa_fuse(fr, blk);
     let ii: i32 = 0;
     while (ii < blk.insts.len() - fu.n) {
+      s = asmcore.dbg_label(s, dbg, fn_label, pos + ii);
       let ins: ssa.SInst = blk.insts[ii];
       if (ins.kind_tag != 6 && ins.kind_tag != 8) {
         s = ssa_inst(ins, reg_of, lp, fr, r, s);
       }
       ii = ii + 1;
     }
+    s = asmcore.dbg_labels(s, dbg, fn_label, pos + ii, pos + blk.insts.len());
     s = ssa_fused_test(fr, reg_of, fu, ssa_join(lp, blk.id), s);
+    s = asmcore.dbg_label(s, dbg, fn_label, pos + blk.insts.len());
     s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
+    pos = pos + blk.insts.len() + 1;
     bi = bi + 1;
   }
+  s = asmcore.dbg_label(s, dbg, fn_label, pos);
   if (leaf) {
     let text: string = buf_take(body);
     s = asmcore.EmitState { ...s, capture: outer };
@@ -9744,7 +9756,27 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
     }
   }
   s = asmcore.EmitState { ...s, ssa_save: 0 };
-  return ssa_cfi(s, 2, "", 0);
+  return asmcore.dbg_rows(ssa_cfi(s, 2, "", 0), dbg);
+}
+
+// ssa_dbg_locs is each value's home as DWARF location bytes: DW_OP_reg<n> for
+// a register, DW_OP_breg6 (%rbp) at its offset for a spill slot, "" for no
+// home. A function with spills always has the %rbp frame.
+function ssa_dbg_locs(reg_of: i32[], save: i32, want: boolean): string[] {
+  let out: string[] = [];
+  if (!want) {
+    return out;
+  }
+  for h in reg_of {
+    if (h >= 0) {
+      out = out.append(asmcore.dbg_hex([80 + ssa_dwarf(ssa_reg(h))]));
+    } else if (h < 0 - 1) {
+      out = out.append(asmcore.dbg_hex(asmcore.dbg_sleb([118], ssa_slot_disp(ssa.spill_slot(h), save))));
+    } else {
+      out = out.append("");
+    }
+  }
+  return out;
 }
 
 // ssa_frame writes the %rbp frame: the saved registers pushed under it and
@@ -9868,7 +9900,7 @@ function ssa_replace_all(text: string, mark: string, with: string): string {
 // the backend does not cover.
 function emit_ssa_function(r: irtables.LowerResult, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
   let t_lift: i64 = monotonic_ns();
-  let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops);
+  let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.dbg_slots.len() > 0 && s.records());
   let why: string = lifted.bail;
   if (lifted.ok) {
     let collision: i32 = ssa.repeated_block_id(lifted.func);
@@ -9882,7 +9914,7 @@ function emit_ssa_function(r: irtables.LowerResult, label_name: string, s: asmco
   }
   let lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
   let t_emit: i64 = monotonic_ns();
-  s = emit_ssa_function_x86(ssa.inline_leaves(lifted.func, s.leaves), label_name, r, s);
+  s = emit_ssa_function_x86(ssa.inline_leaves(lifted.func, s.leaves), label_name, r, lifted.seen_vals, lifted.seen_slots, s);
   // Under the report, a function whose lift or emit took over 200 ms is
   // named with both times: the whole-compiler build is where a phase's
   // cost shows, and this is how a slow one is found.

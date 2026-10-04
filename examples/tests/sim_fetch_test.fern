@@ -510,7 +510,7 @@ function test_trailing_bytes_not_kept(): test.TestOutcome {
 function test_pool_cap(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let other: string = "93.184.216.35";
-  let n: sim_fetch.Net = __net(d).host("other.test", [other]).listen(other, 80, 5).pooling(fetch.idle_limited(1, 90000)).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "a").kept()]).route(other, 80, "/", [sim_fetch.reply(200, "b").kept()]);
+  let n: sim_fetch.Net = __net(d).host("other.test", [other]).listen(other, 80, 5).pooling(fetch.idle_limited(1, time.duration_seconds(90 as i64))).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "a").kept()]).route(other, 80, "/", [sim_fetch.reply(200, "b").kept()]);
   let a: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
   let b: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://other.test/"), __open());
   if (n.open() != 1) {

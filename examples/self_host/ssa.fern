@@ -973,6 +973,13 @@ function drop_active_at(a: i32[], k: i32): i32[] {
   return out;
 }
 
+// Alloc is regalloc_linear's assignment, `reg_of`, with the interval each home
+// holds its value over: from the end of position def_pos[v] to the end of
+// hi[v], numbered over the instructions and then the terminator of each block
+// in layout order, -1 for a value with no interval. A `-g` build describes a
+// variable's location from it (#11410).
+pub struct Alloc { reg_of: i32[], def_pos: i32[], hi: i32[] }
+
 // regalloc_linear assigns each value a register index or a spill slot. The
 // indices below `nregs` are the caller-saved registers, the `nsaved` above
 // them the callee-saved ones: a value live across a call takes one of the
@@ -985,7 +992,7 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 // is taken when free and v does not live across a call; an empty `pref` asks
 // for nothing. A value a block returns that names no register asks for
 // `abi_reg`, where the return reads it (`return_prefs`).
-pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[]): i32[] {
+pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[]): Alloc {
   let wish: i32[] = return_prefs(f, pref, abi_reg);
   let big: i32 = 2000000000;
   let lo: i32[] = [];
@@ -1359,7 +1366,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   if (sites.start.len() == 0 && spilled_mates(reg_of, def_pos, mates.hint)) {
     sites = read_sites(f, at, blk_start);
   }
-  return assign_spill_slots(f, shape, lo, hi, reg_of, slot_hints(f, sites, def_blk, def_pos, reg_of, mates), sites);
+  return Alloc { reg_of: assign_spill_slots(f, shape, lo, hi, reg_of, slot_hints(f, sites, def_blk, def_pos, reg_of, mates), sites), def_pos: def_pos, hi: hi };
 }
 
 // A spilled value keeps its phi mate's hint for a slot, a loop-carried one
@@ -1622,6 +1629,16 @@ function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mat
     pos = pos + 1;
   }
   return Mates { hint: hint, carried: carried };
+}
+
+// position_count is the number of positions regalloc_linear numbers: one per
+// instruction and one per block's terminator.
+pub function position_count(f: SFunc): i32 {
+  let n: i32 = 0;
+  for blk in f.blocks {
+    n = n + blk.insts.len() + 1;
+  }
+  return n;
 }
 
 // block_positions maps each non-negative block id to the position of the
@@ -2361,7 +2378,7 @@ function leaf_index(leaves: Leaf[], name: string, argc: i32): i32 {
 }
 
 // prune_trivial_phis drops the folded phis and rewrites every reader.
-pub function prune_trivial_phis(f: SFunc): SFunc {
+pub function prune_trivial_phis(f: SFunc): Formed {
   let repl: i32[] = trivial_phi_repl(f);
   let any: boolean = false;
   let i: i32 = 0;
@@ -2372,7 +2389,7 @@ pub function prune_trivial_phis(f: SFunc): SFunc {
     i = i + 1;
   }
   if (!any) {
-    return f;
+    return Formed { f: f, repl: [] };
   }
   let flat: i32[] = [];
   i = 0;
@@ -2391,7 +2408,7 @@ pub function prune_trivial_phis(f: SFunc): SFunc {
     }
     nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, flat), preds: blk.preds });
   }
-  return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
+  return Formed { f: SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env }, repl: flat };
 }
 
 // repeated_block_id names the first block id that appears twice in `f.blocks`,
@@ -2791,16 +2808,52 @@ function arm_term(v: i32, konst: i32[], jn: BoolJoin): STerm {
   return t_brif(v, jn.t, jn.f);
 }
 
+// Formed is a function with `repl`, the value each of the input's values was
+// replaced by (resolved, so one lookup is enough); empty when none was. A `-g`
+// build follows a variable's value through it (#11410).
+pub struct Formed { f: SFunc, repl: i32[] }
+
+function formed_by(f: SFunc, repl: i32[]): Formed {
+  let flat: i32[] = [];
+  let i: i32 = 0;
+  while (i < repl.len()) {
+    flat = flat.append(resolve_repl(repl, i));
+    i = i + 1;
+  }
+  return Formed { f: f, repl: flat };
+}
+
+// compose_repl is the replacement `b` makes after `a`.
+function compose_repl(a: i32[], b: i32[]): i32[] {
+  if (a.len() == 0) {
+    return b;
+  }
+  if (b.len() == 0) {
+    return a;
+  }
+  let out: i32[] = [];
+  for v in a {
+    if (v >= 0 && v < b.len()) {
+      out = out.append(b[v]);
+    } else {
+      out = out.append(v);
+    }
+  }
+  return out;
+}
+
 // register_form is a lifted function as the register backends allocate it:
 // trivial phis folded, rotates fused, wraps nothing reads dropped, dead values
 // pruned, branches on boolean joins threaded and forwarding blocks threaded.
-pub function register_form(f: SFunc): SFunc {
-  let g: SFunc = prune_dead(drop_low_wraps(fuse_rotates(prune_trivial_phis(f))));
+pub function register_form(f: SFunc): Formed {
+  let folded: Formed = prune_trivial_phis(f);
+  let unwrapped: Formed = drop_low_wraps(fuse_rotates(folded.f));
+  let g: SFunc = prune_dead(unwrapped.f);
   let t: Threading = thread_bool_joins(g);
   if (t.changed) {
     g = prune_dead(t.f);
   }
-  return thread_forwarding(g);
+  return Formed { f: thread_forwarding(g), repl: compose_repl(folded.repl, unwrapped.repl) };
 }
 
 // drop_low_wraps replaces a signed 32-bit wrap, extend or cast by its operand where
@@ -2812,9 +2865,9 @@ pub function register_form(f: SFunc): SFunc {
 // branch or a return. A loop counter's step goes too, read or not: `v + 1`
 // for a v that is below a 32-bit value cannot overflow (counter_step). The
 // register backends only: on wasm the wrap changes the value's type.
-pub function drop_low_wraps(f: SFunc): SFunc {
+pub function drop_low_wraps(f: SFunc): Formed {
   if (!has_signed_wrap(f)) {
-    return f;
+    return Formed { f: f, repl: [] };
   }
   // prop[v] is how many leading operands of v's definition have their high
   // half read once v's is (high_operands); def_b / def_k locate v's
@@ -2909,7 +2962,7 @@ pub function drop_low_wraps(f: SFunc): SFunc {
     wj = wj + 1;
   }
   if (!dropped) {
-    return f;
+    return Formed { f: f, repl: [] };
   }
   let nblocks: SBlock[] = [];
   for blk in f.blocks {
@@ -2936,7 +2989,7 @@ pub function drop_low_wraps(f: SFunc): SFunc {
     }
     nblocks = nblocks.append(SBlock { ...blk, insts: ninsts, term: t });
   }
-  return SFunc { ...f, blocks: nblocks };
+  return formed_by(SFunc { ...f, blocks: nblocks }, repl);
 }
 
 function has_signed_wrap(f: SFunc): boolean {

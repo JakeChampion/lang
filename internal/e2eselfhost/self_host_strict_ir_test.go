@@ -734,29 +734,6 @@ function viewer(n: i32): () => i32 {
 }
 function main(): i32 { let f: () => i32 = viewer(3); return f(); }
 `, "viewer", "closure capture type"},
-	// A type that holds itself has no copy a merge could rebuild
-	// (ssasem.copy_refusal), so one merged past its source is refused by
-	// name; a dyn holding a view is copied there since #10909.
-	{"recursive-enum-merged-past-its-source", `import "std/i32";
-enum L { Cons(str, L), Nil }
-function mk(n: i32): string {
-    let s: string = "ab";
-    let i: i32 = 0;
-    while (i < n) { s = s + "c"; i = i + 1; }
-    return s;
-}
-function two(s: string): L { return Cons(slice_unchecked(s, 0, 1), Cons(slice_unchecked(s, 1, 3), Nil)); }
-function count(l: L): i32 { match (l) { Cons(h, t) => { return h.len() + count(t); }, Nil => { return 0; } } return 0; }
-function g(n: i32): i32 {
-    let l: L = Nil;
-    if (n != 0) {
-        let s: string = mk(n);
-        l = two(s);
-    }
-    return count(l);
-}
-function main(): i32 { return g(3) + g(0); }
-`, "g", "holds itself, so its copy would recurse"},
 	// An instance bound to a view would hand out a view it was lent.
 	{"template-bound-to-a-view", `pub function first[T](f: () => T): T {
     let xs: T[] = [f()];

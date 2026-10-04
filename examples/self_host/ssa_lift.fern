@@ -36,8 +36,11 @@ import "./util";
 
 // `bail` names the IR op kind that forced ok=false (or "unbalanced-scope"),
 // "" when the lift succeeded — a diagnostic for the coverage scan; the
-// production drivers read only .func / .ok.
-pub struct LResult { func: ssa.SFunc, ok: boolean, bail: string }
+// production drivers read only .func / .ok. With slot tracking, `seen_vals`
+// and `seen_slots` pair each value stored to or read from a local slot with
+// that slot, which is how a `-g` build finds the values a source variable
+// holds (#11410).
+pub struct LResult { func: ssa.SFunc, ok: boolean, bail: string, seen_vals: i32[], seen_slots: i32[] }
 
 // ---- small array helpers (value-semantics, no slice syntax) -------------
 
@@ -290,8 +293,8 @@ pub function kind_table(): KindTable {
   return KindTable { names: names, classes: classes, argc: argc, host: host, pops: ir.pops_by_kind() };
 }
 
-pub function lift_from_ir_prod(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResult {
-  return lift_impl(kt, name, nparams, nslots, ops);
+pub function lift_from_ir_prod(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): LResult {
+  return lift_impl(kt, name, nparams, nslots, ops, track_slots);
 }
 
 // prod_kind is the op vocabulary lift_from_ir_prod admits.
@@ -1067,8 +1070,18 @@ function lift_const_text_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cu
   return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
 }
 
-function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResult {
+// tracked is `xs` with `x` appended when tracking is on.
+function tracked(xs: i32[], on: boolean, x: i32): i32[] {
+  if (!on) {
+    return xs;
+  }
+  return xs.append(x);
+}
+
+function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): LResult {
   let nvals: i32 = 0;
+  let seen_vals: i32[] = [];
+  let seen_slots: i32[] = [];
   let next_blk: i32 = 0;
   let bail: string = "";  // the op kind that forced a fall-back (scan diagnostic)
 
@@ -1258,6 +1271,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         ok = false;
       } else {
         stack = stack.append(slots[op.i32_imm]);
+        seen_vals = tracked(seen_vals, track_slots, slots[op.i32_imm]);
+        seen_slots = tracked(seen_slots, track_slots, op.i32_imm);
       }
     } else if (tag == t_store_local || tag == t_tee_local) {
       if (stack.len() < 1) {
@@ -1276,6 +1291,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           slot_mark = slot_mark.with(ss, sc_n - 1);
         }
         slots = slots.with(ss, sv);
+        seen_vals = tracked(seen_vals, track_slots, sv);
+        seen_slots = tracked(seen_slots, track_slots, ss);
       }
     } else if ((cls & 8) != 0) {
       if (stack.len() < 2) {
@@ -2065,7 +2082,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   }
 
   let f: ssa.SFunc = ssa.SFunc { name: name, nparams: nparams, nvals: nvals, blocks: blocks, entry: 0, takes_env: false };
-  return LResult { func: f, ok: ok, bail: bail };
+  return LResult { func: f, ok: ok, bail: bail, seen_vals: seen_vals, seen_slots: seen_slots };
 }
 
 // filled is n copies of v.

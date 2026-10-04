@@ -118,6 +118,11 @@ struct State {
   // Emit a source-position marker ahead of each statement (line_mark), the
   // `-g` build's line table.
   debug_lines: boolean,
+  // Under debug_lines, every value a source variable is bound to, in binding
+  // order, and that variable's name: the record a debugger's view of a local
+  // is built from (#11410).
+  dbg_vals: i32[],
+  dbg_names: string[],
 }
 
 struct Value { s: State, id: i32 }
@@ -279,18 +284,32 @@ function lookup(s: State, name: string): i32 {
 }
 
 function bind(s: State, name: string, value: i32): State {
-  return State { ...s, names: s.names.append(name), vals: s.vals.append(value) };
+  return note_binding(State { ...s, names: s.names.append(name), vals: s.vals.append(value) }, name, value);
 }
 
 function replace(s: State, name: string, value: i32): State {
   let i: i32 = s.names.len() - 1;
   while (i >= 0) {
     if (s.names[i] == name) {
-      return State { ...s, vals: s.vals.with(i, value) };
+      return note_binding(State { ...s, vals: s.vals.with(i, value) }, name, value);
     }
     i = i - 1;
   }
   return fail(s, "replacement of an unbound name");
+}
+
+// note_binding records, under debug_lines, that `name` now holds `value`. A
+// binding the compiler introduced (`for index`) has no source spelling and is
+// not recorded.
+function note_binding(s: State, name: string, value: i32): State {
+  if (!s.debug_lines) {
+    return s;
+  }
+  let src: string = lexical.source_name(name);
+  if (!util.is_ident(src)) {
+    return s;
+  }
+  return State { ...s, dbg_vals: s.dbg_vals.append(value), dbg_names: s.dbg_names.append(src) };
 }
 
 function leave(s: State, count: i32, scope: checker.Scope): State {
@@ -321,6 +340,9 @@ function merge_env(s: State, envs: i32[][], count: i32): State {
   while (at < count) {
     let merged: Value = merge_binding(s, envs, at);
     s = merged.s;
+    if (merged.id != envs[0][at]) {
+      s = note_binding(s, s.names[at], merged.id);
+    }
     vals = vals.append(merged.id);
     at = at + 1;
   }
@@ -4737,7 +4759,7 @@ function header_phis(s: State, count: i32): State {
   while (at < count) {
     let entry: i32 = s.vals[at];
     let phi: Value = define(s, 8, [entry], 0, "", s.values[entry]);
-    s = State { ...phi.s, vals: phi.s.vals.with(at, phi.id) };
+    s = note_binding(State { ...phi.s, vals: phi.s.vals.with(at, phi.id) }, s.names[at], phi.id);
     at = at + 1;
   }
   return s;
@@ -5223,7 +5245,7 @@ function reachable(blocks: ssa.SBlock[]): ssa.SBlock[] {
 
 // Removed phis leave no gaps: surviving definitions are renumbered densely
 // in block order, keeping parameters at their declared positions.
-function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ssasem.Func {
+function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[], dbg_vals: i32[], dbg_names: string[]): ssasem.Func {
   let ids: i32[] = [];
   let kept: typeinfo.Type[] = [];
   let i: i32 = 0;
@@ -5263,7 +5285,22 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
     out = out.append(ssa.SBlock { ...b, insts: insts, term: term });
   }
   let graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-  return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false };
+  let f: ssasem.Func = ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [] };
+  return renumber_bindings(f, map, ids, dbg_vals, dbg_names);
+}
+
+// A recorded binding follows its value through the collapsed phis, and is
+// dropped with an unreachable one.
+function renumber_bindings(f: ssasem.Func, map: i32[], ids: i32[], dbg_vals: i32[], dbg_names: string[]): ssasem.Func {
+  let d: i32 = 0;
+  while (d < dbg_vals.len()) {
+    let id: i32 = ids[resolve(map, dbg_vals[d])];
+    if (id >= 0) {
+      f = ssasem.Func { ...f, dbg_vals: f.dbg_vals.append(id), dbg_names: f.dbg_names.append(dbg_names[d]) };
+    }
+    d = d + 1;
+  }
+  return f;
 }
 
 // ---- functions --------------------------------------------------------------
@@ -5608,7 +5645,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
   let graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-  return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0 };
+  return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [] }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0 };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], debug_lines: boolean): State {
@@ -5618,7 +5655,7 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
     names: [], vals: [], scope: scope, result: result_type(fd, scope, binding, contracts.list), loops: [], contracts: contracts, calls: [],
     template: generic_decl(fd), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows, views: views,
     name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: try_cleanup(fd.body), replaying: false, escaping: escaping_bindings(fd.body), learned: [], learned_types: [],
-    debug_lines: debug_lines,
+    debug_lines: debug_lines, dbg_vals: [], dbg_names: [],
   };
 }
 
@@ -6660,7 +6697,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo)
   s = terminate(s, t_ret(0 - 1));
   let blocks: ssa.SBlock[] = reachable(s.blocks);
   let map: i32[] = trivial_phis(blocks, s.values.len());
-  let f: ssasem.Func = renumber(blocks, map, s.values);
+  let f: ssasem.Func = renumber(blocks, map, s.values, s.dbg_vals, s.dbg_names);
   let params: typeinfo.Type[] = [];
   let modes: i32[] = s.modes;
   let at: i32 = 0;
@@ -7740,7 +7777,11 @@ function close_module(all: Produced[], names: util.NameIndex): Produced[] {
 // Every body then carries the whole table, which is what anchors a call's
 // result in the caller's graph, and is verified only then: unanchored, a call
 // result is its own root, which a loop phi it flows back into cannot depend on.
-function anchor_module(all: Produced[], names: string[], verify: boolean): Produced[] {
+// The copy helpers the merge copies call (ssasem.copy_helper_func) follow the
+// rows, each named in `names`.
+struct Anchored { all: Produced[], names: string[] }
+
+function anchor_module(all: Produced[], names: string[], verify: boolean): Anchored {
   let anchors: ssasem.Anchor[] = [];
   let copied: boolean = true;
   while (copied) {
@@ -7776,6 +7817,7 @@ function anchor_module(all: Produced[], names: string[], verify: boolean): Produ
     }
   }
   let out: Produced[] = [];
+  let helpers: CopyHelpers = CopyHelpers { types: [], from: [] };
   let i: i32 = 0;
   while (i < all.len()) {
     let p: Produced = all[i];
@@ -7791,6 +7833,9 @@ function anchor_module(all: Produced[], names: string[], verify: boolean): Produ
       } else {
         if (plan.copies.len() > 0) {
           p = Produced { ...p, func: ssasem.with_merge_copies(p.func, plan.copies) };
+          helpers = with_copy_helpers(helpers, p.func);
+          anchors = helper_anchors(anchors, helpers);
+          p = Produced { ...p, func: ssasem.Func { ...p.func, anchors: anchors } };
         }
         let analysis: ssasem.Analysis = ssasem.analyze(p.func);
         if (!analysis.ok) {
@@ -7803,7 +7848,59 @@ function anchor_module(all: Produced[], names: string[], verify: boolean): Produ
     out = out.append(p);
     i = i + 1;
   }
-  return close_module(out, util.name_index(names));
+  return helper_rows(out, names, helpers, anchors);
+}
+
+// The rows of the copy helpers, after the module's own. A helper's body can
+// call another helper, so the list grows as it is read.
+function helper_rows(out: Produced[], names: string[], helpers: CopyHelpers, anchors: ssasem.Anchor[]): Anchored {
+  let h: i32 = 0;
+  while (h < helpers.types.len()) {
+    let f: ssasem.Func = ssasem.copy_helper_func(helpers.from[h], helpers.types[h]);
+    helpers = with_copy_helpers(helpers, f);
+    anchors = helper_anchors(anchors, helpers);
+    f = ssasem.Func { ...f, anchors: anchors };
+    let p: Produced = Produced { ...refuse(""), ok: true, func: f, modes: [ssaunits.borrow_mode()] };
+    let analysis: ssasem.Analysis = ssasem.analyze(f);
+    if (!analysis.ok) {
+      p = refuse("copy helper fails semantic verification: " + analysis.why);
+    } else {
+      p = Produced { ...p, analysis: Some(analysis) };
+    }
+    out = out.append(p);
+    names = names.append(ssasem.copy_helper(helpers.types[h]));
+    h = h + 1;
+  }
+  return Anchored { all: close_module(out, util.name_index(names)), names: names };
+}
+
+// The copy helpers a module's merge copies call, each with the body whose
+// schemas it is built over.
+struct CopyHelpers { types: typeinfo.Type[], from: ssasem.Func[] }
+
+function with_copy_helpers(h: CopyHelpers, f: ssasem.Func): CopyHelpers {
+  for t in ssasem.copy_helpers_called(f) {
+    let known: boolean = false;
+    for x in h.types {
+      if (semtypes.equal(x, t)) {
+        known = true;
+      }
+    }
+    if (!known) {
+      h = CopyHelpers { types: h.types.append(t), from: h.from.append(f) };
+    }
+  }
+  return h;
+}
+
+// A helper's result is a fresh copy: it anchors nothing.
+function helper_anchors(anchors: ssasem.Anchor[], h: CopyHelpers): ssasem.Anchor[] {
+  for t in h.types {
+    if (!ssasem.anchored(anchors, ssasem.copy_helper(t))) {
+      anchors = anchors.append(ssasem.Anchor { name: ssasem.copy_helper(t), params: [] });
+    }
+  }
+  return anchors;
 }
 
 // Each `return v` of a view becomes `return (v + "") as str`.
@@ -8220,7 +8317,9 @@ function produce_module(mod: parser.Module, verify: boolean, debug_lines: boolea
     names = names.append(r.name);
     at = at + 1;
   }
-  let all: Produced[] = anchor_module(close_module(util.append_all(decls, instances), util.name_index(names)), names, verify);
+  let anchored: Anchored = anchor_module(close_module(util.append_all(decls, instances), util.name_index(names)), names, verify);
+  let all: Produced[] = anchored.all;
+  names = anchored.names;
   if (verify) {
     all = fuse_pipelines(inline_leaves(all, names, mod.funcs), names);
   }
