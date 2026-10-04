@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -40,6 +41,21 @@ func TestSelfHostArm64DarwinReactorSignal(t *testing.T) {
 		t.Skip("requires native Apple Silicon")
 	}
 	checkSelfHostReactorSignal(t, []string{"arm64-darwin"})
+}
+
+// Every host compiles the Darwin reactor, so a Linux-only syscall reached
+// while building its runtime bodies fails here, not first on the macOS runner.
+func TestSelfHostArm64DarwinReactorCompiles(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for name, src := range map[string]string{"floor": e2eharness.ReactorProbe(), "signal": e2eharness.ReactorSignalProbe("native")} {
+		path := filepath.Join(t.TempDir(), "main.fern")
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(cli.emit(t, path, "arm64-darwin")); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
 }
 
 func checkSelfHostReactorSignal(t *testing.T, targets []string) {

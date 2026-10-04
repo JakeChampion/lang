@@ -19,14 +19,13 @@
 //     `internal/strerror`'s row for row, so a number cannot drift.
 //
 // The socket controls (`listen_with`, `listen_at`, the options,
-// `shutdown`), the datagram sockets (`udp_socket`, `send_to`, `recv_from`,
-// …), the connects and the Unix-domain sockets are typed faces over the
-// descriptor builtins, further down; every primitive that takes an address
-// takes either family as its bytes, so an IPv6 `SocketAddr` goes through
-// unchanged. The stream verbs on a TCP connection arrive with the owned
-// buffers of #9853; until then `std/tcp` and `std/fetch` are the TCP
-// surface and `packed_v4()` bridges an `IpAddr` to the packed IPv4
-// argument `tcp_connect` and `fetch.ipv4` take.
+// `shutdown`), the stream verbs on a connection (`read` into the caller's
+// buffer, `write`), the datagram sockets (`udp_socket`, `send_to`,
+// `recv_from`, …), the connects and the Unix-domain sockets are typed
+// faces over the descriptor builtins, further down; every primitive that
+// takes an address takes either family as its bytes, so an IPv6
+// `SocketAddr` goes through unchanged. `packed_v4()` bridges an `IpAddr`
+// to the packed IPv4 argument `tcp_connect` and `fetch.ipv4` take.
 //
 // The predicates (`is_loopback`, `is_private`, `is_link_local`,
 // `is_multicast`, `is_unspecified`) and `to_canonical()` are the vocabulary
@@ -1179,6 +1178,29 @@ pub function listen_with(port: i32, opts: ListenOptions): Result[i32, NetError] 
 // `peer_addr`.
 pub function listen_at(addr: SocketAddr, opts: ListenOptions): Result[i32, NetError] {
   return __socket_count(tcp_listen_with(addr.ip.bytes(), addr.port, opts.backlog, opts.reuse_port));
+}
+
+// ---------------------------------------------------------------------------
+// Streams
+//
+// Typed faces over `tcp_recv_into` and `tcp_send_bytes`.
+
+// `read(sock, buf)` — one read from a connected stream socket into `buf`,
+// up to its length: the byte count, `Ok(0)` at the end of the stream, or
+// the error the read reported. A non-blocking socket with nothing to read
+// answers `WouldBlock`, and so does every socket on wasi:sockets, whose
+// reads never block: wait for readability first there.
+pub function read(sock: i32, buf: u8[]): Result[i32, NetError] {
+  return __socket_count(tcp_recv_into(sock, buf));
+}
+
+// `write(sock, data)` — `data` written to a connected stream socket: the
+// bytes the socket accepted, which on a non-blocking socket may be fewer
+// than `data` holds, or the error the write reported. A peer that has
+// gone answers `ConnectionReset` or the broken pipe's `Other`; the write
+// never raises SIGPIPE.
+pub function write(sock: i32, data: u8[]): Result[i32, NetError] {
+  return __socket_count(tcp_send_bytes(sock, data));
 }
 
 // Shutdown — the half of a connection `shutdown` closes: `Read` stops

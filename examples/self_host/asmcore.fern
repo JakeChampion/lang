@@ -3297,9 +3297,11 @@ function parent_watch_src(t: string): string {
 }
 
 pub function rt_src_reactor_ctl(t: string): string {
-  let watch: string = epoll_watch_src(t);
+  let watch: string = "";
   if (t == "arm64-darwin") {
     watch = kqueue_watch_src(t);
+  } else {
+    watch = epoll_watch_src(t);
   }
   return "function __fern_reactor_ctl(r_fd: i32, op: i32, fd: i32, arg: i32): i32 { "
     + "if (op == 3) { return __syscall3(" + sysno(t, "close") + ", r_fd as i64, 0, 0) as i32; } "
@@ -3377,9 +3379,11 @@ pub function rt_src_task(t: string): string {
 }
 
 pub function rt_src_reactor_wait(t: string): string {
-  let wait: string = epoll_wait_src(t);
+  let wait: string = "";
   if (t == "arm64-darwin") {
     wait = kqueue_wait_src(t);
+  } else {
+    wait = epoll_wait_src(t);
   }
   return "function __fern_reactor_wait(r_fd: i32, events: i32[], timeout_ms: i32): i32 { let cap: i32 = events.len() / 2; if (cap <= 0) { return 0 - 22; } " + wait + " }";
 }
