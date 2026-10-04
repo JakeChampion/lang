@@ -37,7 +37,7 @@ function main(): i32 {
     }
   }
   let a: x86_native.X86Asm = x86_native.x86_gas_assemble(src);
-  print("text=" + a.code.len().to_string() + " rodata=" + a.rodata.len().to_string()
+  print("text=" + a.text.len().to_string() + " rodata=" + a.rodata.len().to_string()
     + " bump=" + __heap_bump_bytes().to_string() + "\n");
   if (a.unknown.len() > 0) {
     let u: i32 = 0;
@@ -48,8 +48,8 @@ function main(): i32 {
   }
   if (dump) {
     let b: i32 = 0;
-    while (b < a.code.len()) {
-      print("byte " + b.to_string() + " " + a.code[b].to_string());
+    while (b < a.text.len()) {
+      print("byte " + b.to_string() + " " + (a.text[b] as i32).to_string());
       b = b + 1;
     }
   }

@@ -200,11 +200,11 @@ function main(): i32 {
             let entry: i32 = x86_label_off(a, "_start");
             let tv: i64 = elf_text_vaddr_x86() as i64;
             let hdr_len: i32 = x86_eh_frame_hdr_len(a);
-            let hv: i64 = elf_eh_hdr_vaddr_x86(a.code.len()) as i64;
-            let ev: i64 = elf_eh_frame_vaddr_x86(a.code.len(), hdr_len) as i64;
+            let hv: i64 = elf_eh_hdr_vaddr_x86(a.text.len()) as i64;
+            let ev: i64 = elf_eh_frame_vaddr_x86(a.text.len(), hdr_len) as i64;
             let eh: i32[] = x86_eh_frame(a, tv, ev);
             let hdr: i32[] = x86_eh_frame_hdr(a, tv, ev, hv);
-            write(string_from_bytes_unchecked(to_u8(elf_program_x86(a.code, hdr, eh, a.rodata, a.bss_size, entry))));
+            write(string_from_bytes_unchecked(to_u8(elf_program_x86(a.text, hdr, eh, a.rodata, a.bss_size, entry))));
             return 0;
         }
     }

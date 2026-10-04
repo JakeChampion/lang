@@ -86,8 +86,8 @@ func TestSelfHostX86CallRuns(t *testing.T) {
 }
 
 // TestSelfHostX86Labels byte-checks the named-label assembler (slice 2d):
-// forward branch (patched by x86_resolve), backward branch (patched
-// immediately), forward call, and label lookup. Same wasm self-test shape
+// forward branch, backward branch and forward call (each patched by
+// x86_resolve), and label lookup. Same wasm self-test shape
 // as TestSelfHostX86Encode.
 func TestSelfHostX86Labels(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -485,10 +485,10 @@ function x86enc_selftest_10(): i32 {
     let tk: i32[] = x86_sse_any_rr([], 102, 87, 0, 1); // xorpd %xmm1,%xmm0 -> 66 0F 57 C1
     if (tk.len() != 4 || tk[0] != 102 || tk[1] != 15 || tk[2] != 87 || tk[3] != 193) { return 92; }
     // rep stosb / cld now route through the string / fixed tables.
-    let tl: X86Asm = x86_gas_emit(x86_asm_new(), "rep", "stosb"); // F3 AA
-    if (tl.code.len() != 2 || tl.code[0] != 243 || tl.code[1] != 170) { return 93; }
-    let tm: X86Asm = x86_gas_emit(x86_asm_new(), "cld", ""); // FC
-    if (tm.code.len() != 1 || tm.code[0] != 252) { return 94; }
+    let tl: X86Asm = x86_resolve(x86_gas_emit(x86_asm_new(), "rep", "stosb")); // F3 AA
+    if (tl.text.len() != 2 || tl.text[0] as i32 != 243 || tl.text[1] as i32 != 170) { return 93; }
+    let tm: X86Asm = x86_resolve(x86_gas_emit(x86_asm_new(), "cld", "")); // FC
+    if (tm.text.len() != 1 || tm.text[0] as i32 != 252) { return 94; }
     // movsd reg-reg: movsd %xmm0,%xmm3 -> F2 0F 10 D8
     let tn: i32[] = x86_sse_any_rr([], 242, 16, 3, 0);
     if (tn.len() != 4 || tn[0] != 242 || tn[1] != 15 || tn[2] != 16 || tn[3] != 216) { return 95; }
@@ -517,17 +517,17 @@ function x86enc_selftest_11(): i32 {
     // correct at the call site.
     // movdqu (%rax,%rdx), %xmm0 -> F3 0F 6F 04 10 (through the GAS layer:
     // the load direction of the movdq family)
-    let va: X86Asm = x86_gas_emit(x86_asm_new(), "movdqu", "(%rax,%rdx), %xmm0");
-    if (va.code.len() != 5 || va.code[0] != 243 || va.code[1] != 15 || va.code[2] != 111 || va.code[3] != 4 || va.code[4] != 16) { return 111; }
+    let va: X86Asm = x86_resolve(x86_gas_emit(x86_asm_new(), "movdqu", "(%rax,%rdx), %xmm0"));
+    if (va.text.len() != 5 || va.text[0] as i32 != 243 || va.text[1] as i32 != 15 || va.text[2] as i32 != 111 || va.text[3] as i32 != 4 || va.text[4] as i32 != 16) { return 111; }
     // movdqu (%rax), %xmm0 -> F3 0F 6F 00
-    let vb: X86Asm = x86_gas_emit(x86_asm_new(), "movdqu", "(%rax), %xmm0");
-    if (vb.code.len() != 4 || vb.code[0] != 243 || vb.code[1] != 15 || vb.code[2] != 111 || vb.code[3] != 0) { return 112; }
+    let vb: X86Asm = x86_resolve(x86_gas_emit(x86_asm_new(), "movdqu", "(%rax), %xmm0"));
+    if (vb.text.len() != 4 || vb.text[0] as i32 != 243 || vb.text[1] as i32 != 15 || vb.text[2] as i32 != 111 || vb.text[3] as i32 != 0) { return 112; }
     // movdqu (%r8,%r9), %xmm3 -> F3 43 0F 6F 1C 08 (REX.X and REX.B both set)
-    let vc: X86Asm = x86_gas_emit(x86_asm_new(), "movdqu", "(%r8,%r9), %xmm3");
-    if (vc.code.len() != 6 || vc.code[0] != 243 || vc.code[1] != 67 || vc.code[2] != 15 || vc.code[3] != 111 || vc.code[4] != 28 || vc.code[5] != 8) { return 113; }
+    let vc: X86Asm = x86_resolve(x86_gas_emit(x86_asm_new(), "movdqu", "(%r8,%r9), %xmm3"));
+    if (vc.text.len() != 6 || vc.text[0] as i32 != 243 || vc.text[1] as i32 != 67 || vc.text[2] as i32 != 15 || vc.text[3] as i32 != 111 || vc.text[4] as i32 != 28 || vc.text[5] as i32 != 8) { return 113; }
     // movdqu (%rax,%rdx), %xmm9 -> F3 44 0F 6F 0C 10 (REX.R for the xmm)
-    let vd: X86Asm = x86_gas_emit(x86_asm_new(), "movdqu", "(%rax,%rdx), %xmm9");
-    if (vd.code.len() != 6 || vd.code[0] != 243 || vd.code[1] != 68 || vd.code[2] != 15 || vd.code[3] != 111 || vd.code[4] != 12 || vd.code[5] != 16) { return 114; }
+    let vd: X86Asm = x86_resolve(x86_gas_emit(x86_asm_new(), "movdqu", "(%rax,%rdx), %xmm9"));
+    if (vd.text.len() != 6 || vd.text[0] as i32 != 243 || vd.text[1] as i32 != 68 || vd.text[2] as i32 != 15 || vd.text[3] as i32 != 111 || vd.text[4] as i32 != 12 || vd.text[5] as i32 != 16) { return 114; }
     // pcmpeqb %xmm1, %xmm0 -> 66 0F 74 C1 ; %xmm9,%xmm10 -> 66 45 0F 74 D1
     let ve: i32[] = x86_sse_any_rr([], 102, 116, 0, 1);
     if (ve.len() != 4 || ve[0] != 102 || ve[1] != 15 || ve[2] != 116 || ve[3] != 193) { return 115; }
@@ -770,48 +770,48 @@ const x86LabelsSelfTestMain = `
 function main(): i32 {
     // forward conditional: cmp then jge done (placeholder, resolved later).
     let a: X86Asm = x86_asm_new();
-    a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_rax(), 42) };
-    a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_rcx(), 17) };
-    a = X86Asm { ...a, code: x86_cmp_r64_r64(a.code, x86_rax(), x86_rcx()) };
+    x86_push_arr(a.code, x86_mov_r32_imm32([], x86_rax(), 42));
+    x86_push_arr(a.code, x86_mov_r32_imm32([], x86_rcx(), 17));
+    x86_push_arr(a.code, x86_cmp_r64_r64([], x86_rax(), x86_rcx()));
     a = x86_jcc_label(a, x86_cc_ge(), "done");
-    a = X86Asm { ...a, code: x86_mov_r64_r64(a.code, x86_rax(), x86_rcx()) };
+    x86_push_arr(a.code, x86_mov_r64_r64([], x86_rax(), x86_rcx()));
     a = x86_label(a, "done");
     a = x86_resolve(a);
-    if (a.code.len() != 22 || a.code[13] != 15 || a.code[14] != 141) { return 1; }
-    if (a.code[15] != 3 || a.code[16] != 0 || a.code[17] != 0 || a.code[18] != 0) { return 2; }
+    if (a.text.len() != 22 || a.text[13] as i32 != 15 || a.text[14] as i32 != 141) { return 1; }
+    if (a.text[15] as i32 != 3 || a.text[16] as i32 != 0 || a.text[17] as i32 != 0 || a.text[18] as i32 != 0) { return 2; }
 
-    // backward conditional: label loop, body, jne loop (patched immediately).
+    // backward conditional: label loop, body, jne loop, resolve.
     let b: X86Asm = x86_asm_new();
     b = x86_label(b, "loop");
-    b = X86Asm { ...b, code: x86_add_r64_imm32(b.code, x86_rax(), 6) };
+    x86_push_arr(b.code, x86_add_r64_imm32([], x86_rax(), 6));
     b = x86_jcc_label(b, x86_cc_ne(), "loop");
-    if (b.code.len() != 13 || b.code[7] != 15 || b.code[8] != 133) { return 3; }
-    if (b.code[9] != 243 || b.code[10] != 255 || b.code[11] != 255 || b.code[12] != 255) { return 4; }
+    b = x86_resolve(b);
+    if (b.text.len() != 13 || b.text[7] as i32 != 15 || b.text[8] as i32 != 133) { return 3; }
+    if (b.text[9] as i32 != 243 || b.text[10] as i32 != 255 || b.text[11] as i32 != 255 || b.text[12] as i32 != 255) { return 4; }
 
     // forward call: call sub, ret, label sub, resolve.
     let c: X86Asm = x86_asm_new();
     c = x86_call_label(c, "sub");
-    c = X86Asm { ...c, code: x86_ret(c.code) };
+    x86_push_arr(c.code, x86_ret([]));
     c = x86_label(c, "sub");
     c = x86_resolve(c);
-    if (c.code.len() != 6 || c.code[0] != 232 || c.code[1] != 1 || c.code[2] != 0) { return 5; }
+    if (c.text.len() != 6 || c.text[0] as i32 != 232 || c.text[1] as i32 != 1 || c.text[2] as i32 != 0) { return 5; }
 
     // label lookup: defined vs missing.
     if (x86_label_off(c, "sub") != 6) { return 6; }
     if (x86_label_off(c, "nope") != (0 - 1)) { return 7; }
 
-    // rip-relative lea placeholder: lea rax, [rip+0] -> 48 8D 05 00*4.
+    // rip-relative lea: lea rax, [rip+d] -> 48 8D 05 <d>, resolved against
+    // a .rodata quad: lea(7)+mov(3)=10 text, padded 16, S0 at 16;
+    // disp32 = 16 - (3+4) = 9.
     let d: X86Asm = x86_asm_new();
     d = x86_lea_rip_label(d, x86_rax(), "S0");
-    if (d.code.len() != 7 || d.code[0] != 72 || d.code[1] != 141 || d.code[2] != 5) { return 8; }
-    if (d.code[3] != 0 || d.code[4] != 0 || d.code[5] != 0 || d.code[6] != 0) { return 9; }
-    // resolve a rip ref to a .rodata quad: lea(7)+mov(3)=10 text, padded 16,
-    // S0 at 16; disp32 = 16 - (3+4) = 9.
-    d = X86Asm { ...d, code: x86_mov_load_r64(d.code, x86_rax(), x86_rax(), 0) };
+    x86_push_arr(d.code, x86_mov_load_r64([], x86_rax(), x86_rax(), 0));
     d = x86_rodata_label(d, "S0");
     d = x86_rodata_quad(d, 42i64);
     d = x86_resolve(d);
-    if (d.code.len() != 10 || d.code[3] != 9 || d.code[4] != 0 || d.code[5] != 0 || d.code[6] != 0) { return 10; }
+    if (d.text[0] as i32 != 72 || d.text[1] as i32 != 141 || d.text[2] as i32 != 5) { return 8; }
+    if (d.text.len() != 10 || d.text[3] as i32 != 9 || d.text[4] as i32 != 0 || d.text[5] as i32 != 0 || d.text[6] as i32 != 0) { return 10; }
     if (d.rodata.len() != 8 || d.rodata[0] != 42 || d.rodata[1] != 0 || d.rodata[7] != 0) { return 11; }
     // x86_align8 rounds up to the .text/.rodata boundary.
     if (x86_align8(10) != 16 || x86_align8(16) != 16 || x86_align8(0) != 0) { return 12; }
@@ -819,18 +819,19 @@ function main(): i32 {
     // movq %rcx,G(%rip) -> 48 89 0D <d>.
     let e2: X86Asm = x86_asm_new();
     e2 = x86_mov_load_rip_label(e2, x86_rax(), "G");
-    if (e2.code.len() != 7 || e2.code[0] != 72 || e2.code[1] != 139 || e2.code[2] != 5) { return 13; }
     e2 = x86_mov_store_rip_label(e2, x86_rcx(), "G");
-    if (e2.code[7] != 72 || e2.code[8] != 137 || e2.code[9] != 13) { return 14; }
+    e2 = x86_resolve(e2);
+    if (e2.text.len() != 14 || e2.text[0] as i32 != 72 || e2.text[1] as i32 != 139 || e2.text[2] as i32 != 5) { return 13; }
+    if (e2.text[7] as i32 != 72 || e2.text[8] as i32 != 137 || e2.text[9] as i32 != 13) { return 14; }
 
     // A repeated label name resolves to its FIRST definition. The label table
     // is bucket-indexed, and a bucket that chained newest-first would answer
     // with the second one — so this pins the insertion-order walk, not a
     // property of the input.
     let f: X86Asm = x86_asm_new();
-    f = X86Asm { ...f, code: x86_ret(f.code) };
+    x86_push_arr(f.code, x86_ret([]));
     f = x86_label(f, "dup");
-    f = X86Asm { ...f, code: x86_ret(f.code) };
+    x86_push_arr(f.code, x86_ret([]));
     f = x86_label(f, "dup");
     if (x86_label_off(f, "dup") != 1) { return 15; }
 
@@ -843,7 +844,7 @@ function main(): i32 {
     while (i < 26) {
         let j: i32 = 0;
         while (j < 26) {
-            g = X86Asm { ...g, code: g.code.append(0) };
+            buf_push_byte(g.code, 0);
             g = x86_label(g, slice_unchecked(alpha, i, i + 1) + slice_unchecked(alpha, j, j + 1));
             j = j + 1;
         }
@@ -866,20 +867,20 @@ const x86ElfLabelDriverMain = `
 function main(): i32 {
     let a: X86Asm = x86_asm_new();
     a = x86_call_label(a, "compute");              // forward call
-    a = X86Asm { ...a, code: x86_mov_r64_r64(a.code, x86_rdi(), x86_rax()) }; // exit code = result
-    a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_rax(), 60) };
-    a = X86Asm { ...a, code: x86_syscall(a.code) };
+    x86_push_arr(a.code, x86_mov_r64_r64([], x86_rdi(), x86_rax())); // exit code = result
+    x86_push_arr(a.code, x86_mov_r32_imm32([], x86_rax(), 60));
+    x86_push_arr(a.code, x86_syscall([]));
     a = x86_label(a, "compute");
-    a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_rax(), 0) }; // acc = 0
-    a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_rcx(), 7) }; // counter = 7
+    x86_push_arr(a.code, x86_mov_r32_imm32([], x86_rax(), 0)); // acc = 0
+    x86_push_arr(a.code, x86_mov_r32_imm32([], x86_rcx(), 7)); // counter = 7
     a = x86_label(a, "loop");
-    a = X86Asm { ...a, code: x86_add_r64_imm32(a.code, x86_rax(), 6) }; // acc += 6
-    a = X86Asm { ...a, code: x86_sub_r64_imm32(a.code, x86_rcx(), 1) }; // counter -= 1
-    a = X86Asm { ...a, code: x86_cmp_r64_imm32(a.code, x86_rcx(), 0) };
+    x86_push_arr(a.code, x86_add_r64_imm32([], x86_rax(), 6)); // acc += 6
+    x86_push_arr(a.code, x86_sub_r64_imm32([], x86_rcx(), 1)); // counter -= 1
+    x86_push_arr(a.code, x86_cmp_r64_imm32([], x86_rcx(), 0));
     a = x86_jcc_label(a, x86_cc_ne(), "loop");     // backward branch
-    a = X86Asm { ...a, code: x86_ret(a.code) };
+    x86_push_arr(a.code, x86_ret([]));
     a = x86_resolve(a);
-    let bin: i32[] = elf_static_executable_x86(a.code);
+    let bin: i32[] = elf_static_executable_x86(elf_cat_u8([], a.text));
     write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
@@ -925,14 +926,14 @@ const x86ElfRodataDriverMain = `
 function main(): i32 {
     let a: X86Asm = x86_asm_new();
     a = x86_lea_rip_label(a, x86_rax(), "answer");          // rax = &answer
-    a = X86Asm { ...a, code: x86_mov_load_r64(a.code, x86_rax(), x86_rax(), 0) }; // rax = *answer
-    a = X86Asm { ...a, code: x86_mov_r64_r64(a.code, x86_rdi(), x86_rax()) };  // exit code = answer
-    a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_rax(), 60) };
-    a = X86Asm { ...a, code: x86_syscall(a.code) };
+    x86_push_arr(a.code, x86_mov_load_r64([], x86_rax(), x86_rax(), 0)); // rax = *answer
+    x86_push_arr(a.code, x86_mov_r64_r64([], x86_rdi(), x86_rax()));  // exit code = answer
+    x86_push_arr(a.code, x86_mov_r32_imm32([], x86_rax(), 60));
+    x86_push_arr(a.code, x86_syscall([]));
     a = x86_rodata_label(a, "answer");
     a = x86_rodata_quad(a, 42i64);                          // .quad 42
     a = x86_resolve(a);
-    let bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
+    let bin: i32[] = elf_static_executable_data_x86(a.text, a.rodata);
     write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
