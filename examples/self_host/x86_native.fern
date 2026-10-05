@@ -1677,6 +1677,7 @@ function x86_queue_fixup_at(own a: X86Asm, at: i32, width: i32, name: string, id
   return a;
 }
 
+// x86_br_count is how many branches the round has queued.
 function x86_br_count(a: X86Asm): i32 {
   if (a.brq != 0 as usize) {
     return buf_len(a.brq) / 8;
