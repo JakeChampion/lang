@@ -5820,6 +5820,14 @@ function function_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   for operand in ins.args {
     r = emit(r, ir.op_load_local(operand));
   }
+  // A locally constructed closure already names its exact body. Keep the
+  // same borrowed environment and arguments, but omit the slot lookup and
+  // indirect dispatch. In particular, fused array callbacks retain this
+  // identity after their source combinator calls have been removed.
+  let callee: ssa.SInst = definition(f, ins.args[0]);
+  if (callee.result == ins.args[0] && callee.kind_tag == ssasem.closure_new()) {
+    return emit(r, ir.op_call_direct(callee.str, ins.args.len()));
+  }
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_arr_get(32));
