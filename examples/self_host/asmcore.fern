@@ -7162,6 +7162,7 @@ function builtin_i32_names(): string[] {
     // word: the op allocates it, so the value pushed is a data
     // pointer with an rc header behind it, like any array literal's.
     "__scale_f64",
+    "__outer_mul_f64",
     // __crc32_cksum(crc, s): the incoming CRC-32 with s's bytes
     // folded in — poly 0x04C11DB7, MSB first, unreflected, no
     // final complement (#9128). i32 like its five siblings, and
@@ -8355,7 +8356,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
     });
   }
   let entry: parser.FuncDecl = parser.FuncDecl {
-    no_inline: false,
+    stdlib: "", no_inline: false,
     name: "main", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [],
     params: [], ret_type: "i32", body: body, line: 0, col: 0,
     import_iface: "", import_wit: "", all_type_params: [],

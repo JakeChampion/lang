@@ -3930,14 +3930,18 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
   let i: i32 = 0;
   while (i < funcs.len()) {
     let fd: parser.FuncDecl = funcs[i];
-    let rt_match: boolean = fd.receiver_type == recv_type;
+    // Generic struct arguments are erased from VStruct's nominal name.
+    // Method registration uses that same base identity. Keep the full module
+    // prefix so unrelated structs with the same short name cannot match.
+    let receiver_base: string = util.base_type_name(fd.receiver_type);
+    let rt_match: boolean = receiver_base == recv_type;
     if (!rt_match && byte_recv && fd.receiver_type == "u8") {
       rt_match = true;
     }
     // Union-receiver methods: a method declared on a union
     // (`function (sh: Shape) area()`) matches when recv's
     // struct type_name is in the union's variant list.
-    if (!rt_match && is_variant_of_alias_interp(recv_type, fd.receiver_type, aliases)) {
+    if (!rt_match && is_variant_of_alias_interp(recv_type, receiver_base, aliases)) {
       rt_match = true;
     }
     // Array-receiver methods, all of std/array: every array value answers
@@ -4134,6 +4138,63 @@ function call_crc32_cksum_array(args: Value[]): Value {
     return v_int(crc);
   }
   return v_err("__crc32_cksum_array: second arg must be an array");
+}
+
+function call_scale_f64(args: Value[]): Value {
+  if (args.len() != 2) {
+    return v_err("__scale_f64: expected 2 args (xs, k)");
+  }
+  if let VArr(xa) = args[0] {
+    if let VFloat(kf) = args[1] {
+      let sout: Value[] = [];
+      let sidx: i32 = 0;
+      while (sidx < xa.elements.len()) {
+        if let VFloat(ef) = xa.elements[sidx] {
+          sout = sout.append(v_float(ef.v * kf.v));
+        } else {
+          return v_err("__scale_f64: elements must be f64");
+        }
+        sidx = sidx + 1;
+      }
+      return v_arr_of(sout, "f64");
+    }
+    return v_err("__scale_f64: k must be an f64");
+  }
+  return v_err("__scale_f64: first arg must be an array");
+}
+
+function outer_mul_values(a: Value[], b: Value[]): Value {
+  if (b.len() > 0 && a.len() > 2147483647 / b.len()) {
+    exit(134);
+    return v_err("__outer_mul_f64: result length overflow");
+  }
+  let out: Value[] = [];
+  for left in a {
+    if let VFloat(x) = left {
+      for right in b {
+        if let VFloat(y) = right {
+          out = out.append(v_float(x.v * y.v));
+        } else {
+          return v_err("__outer_mul_f64: elements must be f64");
+        }
+      }
+    } else {
+      return v_err("__outer_mul_f64: elements must be f64");
+    }
+  }
+  return v_arr_of(out, "f64");
+}
+
+function call_outer_mul_f64(args: Value[]): Value {
+  if (args.len() != 2) {
+    return v_err("__outer_mul_f64: expected 2 args");
+  }
+  if let VArr(a) = args[0] {
+    if let VArr(b) = args[1] {
+      return outer_mul_values(a.elements, b.elements);
+    }
+  }
+  return v_err("__outer_mul_f64: inputs must be arrays");
 }
 
 function call_byte_reduction(name: string, args: Value[]): Value {
@@ -4793,6 +4854,9 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   if (name == "__mismatch_bytes") {
     return call_mismatch_bytes(args);
   }
+  if (name == "__outer_mul_f64") {
+    return call_outer_mul_f64(args);
+  }
   // `__memchr(s, byte, from)` / `__ascii_run(s, from)` — the two scan
   // kernels the compiled backends vectorise, and the byte-search floor
   // under std/string's find family. `from` clamps (negative behaves as 0)
@@ -4812,26 +4876,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   // array: the oracle for the eighth kernel and the first over an array.
   // Each product is one IEEE multiply, so a vector body owes these bits.
   if (name == "__scale_f64") {
-    if (args.len() != 2) {
-      return v_err("__scale_f64: expected 2 args (xs, k)");
-    }
-    if let VArr(xa) = args[0] {
-      if let VFloat(kf) = args[1] {
-        let sout: Value[] = [];
-        let sidx: i32 = 0;
-        while (sidx < xa.elements.len()) {
-          if let VFloat(ef) = xa.elements[sidx] {
-            sout = sout.append(v_float(ef.v * kf.v));
-          } else {
-            return v_err("__scale_f64: elements must be f64");
-          }
-          sidx = sidx + 1;
-        }
-        return v_arr_of(sout, "f64");
-      }
-      return v_err("__scale_f64: k must be an f64");
-    }
-    return v_err("__scale_f64: first arg must be an array");
+    return call_scale_f64(args);
   }
   // `__scan_set(s, from, set)` — the byte-set scan: the first byte at or
   // after `from` whose entry in `set` is nonzero, or len(s). `from` clamps

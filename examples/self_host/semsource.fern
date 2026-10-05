@@ -7625,6 +7625,7 @@ function byte_scan_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__sum_bytes", params: [t_string()], modes: [lent], result: t_i32() },
     // The one over an ARRAY: the f64[] is lent and a fresh f64[] comes back.
     ssasem.Contract { name: "__scale_f64", params: [typeinfo.TypeArray { elem: t_f64(), view: false }, t_f64()], modes: [lent, value], result: typeinfo.TypeArray { elem: t_f64(), view: false } },
+    ssasem.Contract { name: "__outer_mul_f64", params: [typeinfo.TypeArray { elem: t_f64(), view: false }, typeinfo.TypeArray { elem: t_f64(), view: false }], modes: [lent, lent], result: typeinfo.TypeArray { elem: t_f64(), view: false } },
     ssasem.Contract { name: "__crc32_cksum", params: [t_i32(), t_string()], modes: [value, lent], result: t_i32() },
     ssasem.Contract { name: "__crc32_cksum_array", params: [t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [value, lent], result: t_i32() },
     ssasem.Contract { name: "__ascii_run", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
@@ -8490,10 +8491,18 @@ function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
   return result;
 }
 
+function ndarray_kernels_needed(names: string[], enabled: boolean, products: boolean, report: boolean): boolean {
+  if (!enabled && !products && !report) {
+    return false;
+  }
+  return semndarray.has_kernel(names) || report && semndarray.any_operation(names);
+}
+
 function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module): Produced[] {
   let report: boolean = semarrayreport.enabled();
-  let enabled: boolean = scale_kernel_on();
-  if (!enabled && !report || !util.has_str(names, "__smm_ndarray__NdArray_map__f64__f64") && !(report && semndarray.any_operation(names))) {
+  let enabled: boolean = kernel_switch_on("FERN_NO_SCALE_KERNEL");
+  let products: boolean = kernel_switch_on("FERN_NO_PRODUCT_KERNEL");
+  if (!ndarray_kernels_needed(names, enabled, products, report)) {
     return all;
   }
   let funcs: ssasem.Func[] = [];
@@ -8503,7 +8512,7 @@ function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module
     usable = usable.append(p.ok && !p.template && !p.bodyless);
   }
   let open: boolean[] = ndarray_open(all, names, mod, funcs);
-  let out: semndarray.Scaled = semndarray.scale_maps(funcs, names, usable, open, enabled, report);
+  let out: semndarray.Scaled = semndarray.scale_maps(funcs, names, usable, open, ndarray_stdlib_names(all, names, mod), enabled, products, report);
   if (report) {
     eprint(semarrayreport.render_kind("ndarray kernels", semarrayreport.kernel_reasons(), out.sites));
   }
@@ -8520,8 +8529,31 @@ function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module
   return result;
 }
 
-function scale_kernel_on(): boolean {
-  match (env("FERN_NO_SCALE_KERNEL")) {
+// The declaration origin survives bundling and monomorphization. A basename
+// or a user-written mangled name cannot establish the stdlib's contract.
+function ndarray_stdlib_names(all: Produced[], names: string[], mod: parser.Module): string[] {
+  let keys: string[] = [];
+  for fd in mod.funcs {
+    keys = keys.append(parser.decl_key(fd));
+  }
+  let index: util.NameIndex = util.name_index(keys);
+  let trusted: string[] = [];
+  let i: i32 = 0;
+  while (i < all.len()) {
+    let di: i32 = i;
+    if (i >= mod.funcs.len()) {
+      di = index.find(all[i].key);
+    }
+    if (di >= 0 && di < mod.funcs.len() && mod.funcs[di].stdlib == "std/ndarray") {
+      trusted = trusted.append(names[i]);
+    }
+    i = i + 1;
+  }
+  return trusted;
+}
+
+function kernel_switch_on(name: string): boolean {
+  match (env(name)) {
     Some(v) => {
       return v != "1";
     },

@@ -245,7 +245,9 @@ var rcBuiltinSigs = map[string]RcSig{
 //     release invalidates memory wholesale, which is a different axis
 //     and not one any caller of this table is asking about.
 var rcInertBuiltins = map[string]bool{
-	"__c_call0": true, "__c_call0_f32": true, "__c_call0_f64": true,
+	// The packed product borrows both inputs and writes a fresh result.
+	"__outer_mul_f64": true,
+	"__c_call0":       true, "__c_call0_f32": true, "__c_call0_f64": true,
 	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true,
 	"__c_call2": true, "__c_call2_f32": true, "__c_call2_f64": true,
 	"__c_call3": true, "__c_call3_f32": true, "__c_call3_f64": true,

@@ -156,8 +156,16 @@ pub function kernel_unsupported_element_type(): i32 {
   return 11;
 }
 
+pub function kernel_outer_mul_kernel(): i32 {
+  return 12;
+}
+
+pub function kernel_element_not_binary_multiply(): i32 {
+  return 13;
+}
+
 // Stable ordinals are shared by the decision and its diagnostic. A successful
-// rewrite is 0; every other entry is a refusal, never a prediction of a rewrite.
+// rewrite has its own tag; refusals never predict a rewrite.
 pub function reasons(): string[] {
   return ["fused", "no-producer", "intermediate-shared", "control-flow-boundary", "effect-boundary", "element-fn-unresolved", "element-fn-effectful", "non-scalar", "result-escapes", "no-reduction-sink", "operator-outside-algebra", "disabled"];
 }
@@ -171,7 +179,7 @@ pub function storage_reasons(): string[] {
 }
 
 pub function kernel_reasons(): string[] {
-  return ["scale-kernel", "disabled", "layout-unknown", "layout-strided", "layout-row-major", "element-fn-unresolved", "element-fn-captures", "element-not-literal-scale", "constructor-unavailable", "builtin-shadowed", "unsupported-operation", "unsupported-element-type"];
+  return ["scale-kernel", "disabled", "layout-unknown", "layout-strided", "layout-row-major", "element-fn-unresolved", "element-fn-captures", "element-not-literal-scale", "constructor-unavailable", "builtin-shadowed", "unsupported-operation", "unsupported-element-type", "outer-mul-kernel", "element-not-binary-multiply"];
 }
 
 pub function scale_storage_guarded_reuse(): i32 {

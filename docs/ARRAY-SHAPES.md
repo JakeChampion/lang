@@ -145,10 +145,12 @@ IR, not a stdlib struct the compiler cannot see" is met the way
 `ARRAY-ALGEBRA.md` §6 met it for `map`: **recognition is by resolved
 stdlib identity**, not by a builtin type. `std/array`'s `map` is ordinary
 Fern that the fusion and in-place passes recognize by the callee it lowers
-to; `std/ndarray`'s operations are ordinary Fern that phase 4's kernels
-will recognize the same way, keyed on the `ndarray__` prefix modload
-reserves, with a user's own `NdArray` no more the algebra's than a user's
-own `map` is (#9840 made that rule explicit). The struct's layout is
+to; `std/ndarray`'s operations are ordinary Fern whose declaration origin
+the primary compiler tracks from loading through generic instantiation.
+The `ndarray__` prefix identifies candidates, but only verified stdlib
+declarations supply layout guarantees and kernel contracts. A user module
+named `ndarray.fern` retains its own behavior, even when its types and method
+signatures match the stdlib. The struct's layout is
 therefore the representation: four fields the IR reads as any struct's,
 which is what lets a kernel take `data`, `shape`, `strides` and `offset`
 without a second description of them.
@@ -160,25 +162,28 @@ site includes its receiver layout, the second operand's layout for binary
 operations, resolved element-function names, and a literal axis or rank where
 available. A computed axis is `?`, never guessed.
 
-The current kernel is packed `f64` map with a capture-free literal scale.
+The current kernels are packed `f64` map with a capture-free literal scale
+and packed `f64` outer product with a capture-free binary multiply.
 `scale-kernel` is recorded by the rewrite itself with
 `storage=deferred-to-ownership`. The final `scale storage` report states whether
-the kernel uses a fresh buffer or guarded reuse. Other operations remain ordinary scalar
-combinators. Their closed refusal tags are:
+the scale kernel uses a fresh buffer or guarded reuse. `outer-mul-kernel`
+always reports `storage=fresh-kernel-buffer`. Other operations remain ordinary
+scalar combinators. Their closed refusal tags are:
 
 | Tag | Planner gate |
 | --- | --- |
-| `disabled` | `FERN_NO_SCALE_KERNEL=1` disabled kernel rewriting. |
+| `disabled` | An otherwise eligible site was disabled by `FERN_NO_SCALE_KERNEL=1` (map) or `FERN_NO_PRODUCT_KERNEL=1` (outer). |
 | `layout-unknown` | Packed layout was not proved. |
 | `layout-strided` | A metadata transform prevents a packed proof. |
 | `layout-row-major` | Row-major order is known, but packed storage is not. |
 | `element-fn-unresolved` | The function is not a locally resolved closure body. |
 | `element-fn-captures` | The closure carries captures. |
 | `element-not-literal-scale` | The body is not exactly element times an `f64` literal. |
-| `constructor-unavailable` | The matching `from_flat` instance is unavailable. |
-| `builtin-shadowed` | A user declaration shadows the scale builtin. |
+| `element-not-binary-multiply` | The body is not exactly the left element times the right element, in that order. |
+| `constructor-unavailable` | A required `from_flat`, shape-join or shape-check helper is unavailable. |
+| `builtin-shadowed` | A user declaration shadows the selected kernel builtin. |
 | `unsupported-operation` | No kernel currently replaces this algebra operation. |
-| `unsupported-element-type` | This is not the supported `f64` map instance. |
+| `unsupported-element-type` | This is not a supported `f64` map or outer instance. |
 
 The histogram includes zero counts. Reporting on and off must emit identical
 code; tests compare assembly and verify kernel instructions at reported sites.
@@ -197,11 +202,13 @@ Buffer reuse does not promise that the whole operation allocates nothing.
 `receiver-borrowed`, `receiver-still-live`, `receiver-supplied`,
 `borrow-linked-result`, `builtin-shadowed`, and `shape-unsupported`.
 `FERN_SELFHOST_NO_REUSE=1` disables donation while retaining the fresh-buffer
-SIMD kernel; `FERN_NO_SCALE_KERNEL=1` disables the ndarray kernel rewrite.
+SIMD kernel; `FERN_NO_SCALE_KERNEL=1` disables the ndarray scale rewrite.
+`FERN_NO_PRODUCT_KERNEL=1` disables the outer rewrite. Intrinsic refusal
+reasons survive both switches; only otherwise eligible sites report `disabled`.
 
 Layout facts come from the same interprocedural analysis that gates rewrites.
-The report does not call an `inner` or `outer` site a kernel merely because
-its element functions look arithmetic.
+The report does not call an `inner` site a kernel. An `outer` site must pass
+both packed-layout proofs and the exact element-body proof below.
 
 **Retained Go analysis.** The older `-array-report` interface described below
 is labelled as Go analysis and does not describe primary compiler output.
@@ -446,6 +453,14 @@ declarations public, so `is_pub` does not describe external entry points.
 Hand-written record literals, fields, cells and unresolved calls also claim
 nothing. No nominal type alone proves storage layout.
 
+The loader supplies stdlib provenance separately from function names. The
+planner checks it for the operation, constructor and metadata helpers, and
+the layout analysis checks it before applying a stdlib return guarantee.
+Relative user imports and flat-name or manifest fallbacks do not gain that
+provenance from their spelling. Execution regressions cover a custom module
+whose `map` and `outer` reverse the left input, both import orders alongside
+the real stdlib, and a missing stdlib that resolves through a local fallback.
+
 Captured factors and unresolved element functions still use scalar maps.
 These are coverage limits, not claims that those cases cannot be optimized.
 `FERN_NO_SCALE_KERNEL=1` disables this rewrite. The primary gate
@@ -549,9 +564,66 @@ Three rules follow:
   broadcast (§8) is a derived shape that is wrong (`ARRAY-ALGEBRA.md`
   §4), and takes the same status an out-of-range index does (§5).
 
-`map` and `zip_with` allocate their result even when the receiver is
-consumed and unique. §1's licence for the in-place form is stated and
-unimplemented; taking it is the kernel work, not this list's.
+`outer` also walks data directly when both operands are packed. Its nested
+loop visits every right-hand element for each left-hand element and retains
+the callback, including captures and effects. It checks the joined shape for
+overflow before either path. Strided inputs retain the broadcast-view walk.
+Both paths produce canonical result strides, including when an input has a
+noncanonical stride on an extent-one axis.
+
+On arm64-darwin on 2026-10-05, `examples/array_pipeline/ndarray_outer.fern`
+with two 32-element vectors and 200 rounds, nine alternating processes per
+build, measured median times of 10,036 ns before and 2,465 ns after this
+packed scalar path. The ranges were 9,682-10,666 ns and 2,360-2,548 ns.
+Allocator calls fell from 6,200 to 3,600 and fresh bytes from 20,248 to
+20,016. Every result and both inputs were checked outside the timer.
+This is the scalar baseline for subsequent product kernels.
+
+The primary compiler also provides `std/array.outer_mul_f64(a, b)`, backed
+by `__outer_mul_f64`. It borrows two flat `f64[]` inputs and allocates a fresh
+array in left-index-first order: element `i * b.len() + j` is `a[i] * b[j]`.
+Empty inputs produce an empty array. A length product above signed i32
+aborts before allocation (status 134 on native targets, a bounds trap on
+WebAssembly). SSE2, NEON and WebAssembly SIMD each multiply two right-hand
+elements per iteration, with an ordered scalar tail. Operand order is
+preserved; no vector value survives a call. Non-NaN results must match the
+scalar reference bit-for-bit. Arithmetic NaN payloads follow FS-04 and may
+differ between backends; both inputs must retain their exact bits.
+
+An explicit-kernel probe in the same benchmark, on Apple M3 Pro,
+arm64-darwin, 2026-10-05, compared 32-by-32 results over 200 rounds in nine
+alternating processes. The packed scalar stdlib path measured a median
+2,540 ns per outer product (range 2,493-3,064); the kernel probe measured
+297 ns (284-323). Allocator calls were 3,600 versus 2,000, and fresh bytes
+20,016 versus 10,472. Both modes checked all results and both source arrays
+outside the timer. Only the round count changed from the two-round pilot.
+This measures explicit kernel use on those inputs.
+
+The primary compiler also selects that kernel for `a.outer(b, (x: f64,
+y: f64): f64 => x * y)` when both layouts are proved packed. Its typed
+element-body proof requires a resolved, capture-free closure that returns
+exactly one multiply of its left and right element parameters, in that
+order. Calls, branches, conversions, extra arithmetic and reversed operands
+keep the scalar path. A shadowed builtin also prevents the rewrite.
+Joined-shape validation runs before the kernel allocation: prefix overflow
+still fails even if a later extent is zero. `from_flat` builds canonical
+result metadata, including rank-zero and empty products. The kernel borrows
+both inputs, so aliased operands remain unchanged. The differential checks
+non-NaN result bits, NaN classification and exact input bits. It and the
+ownership census run with the rewrite enabled and disabled on x86-64, arm64
+and WebAssembly.
+
+For the final ndarray rewrite, the same machine, inputs and nine alternating
+processes measured 279 ns per outer product (259-295) with rewriting enabled
+versus 2,554 ns (2,489-2,715) with `FERN_NO_PRODUCT_KERNEL=1`. Both builds ran
+the ordinary stdlib-call mode, with every output and both inputs checked
+outside the timer. Over 200 rounds, allocator calls were 1,600 versus 3,600
+and fresh bytes 10,472 versus 20,016. The two-round pilot changed only its
+round count for this measurement.
+
+General `map` and `zip_with` allocate their result even when the receiver is
+consumed and unique. The primary compiler can donate the packed literal-scale
+map's data buffer under the ownership and uniqueness conditions in §6.
 
 ## 8. Broadcasting
 
@@ -604,18 +676,19 @@ Four consequences:
   sized-array primitive was needed. It was chosen over the dot product
   because a reduction may not reassociate (`ARRAY-ALGEBRA.md` §3) while a
   multiply has nothing to reassociate. The same kernel now reaches the
-  ndarray `map` of that shape over a packed receiver (§6). `inner` and
-  `outer` are recognized (§6) and still lowered as the scalar loop; which
-  of THEIR sites a kernel replaces, and how a site's element functions are
-  proved to be the arithmetic the kernel implements, is not decided here.
+  ndarray `map` of that shape over a packed receiver (§6). The primary
+  compiler also selects binary-multiply `outer` sites with two packed
+  operands, using the exact body proof above. `inner` retains its scalar
+  reduction order; a kernel for it remains separate work.
   The primary compiler's literal-scale kernel can donate its buffer through
   the ownership plan and runtime guard described in §6.
 - **Other in-place operations through a handle.** Donation currently covers
   the packed literal-scale kernel. General `map` and `zip_with` still allocate
   their result buffers. Layout analysis proves packed order; the ownership
   plan and runtime guard establish the right to modify storage.
-- **Other layout rewrites.** The primary compiler selects the packed scale
-  kernel. Eliminating metadata operations' runtime branches is separate work.
+- **Other layout rewrites.** The primary compiler selects packed scale and
+  outer-multiply kernels. Eliminating metadata operations' runtime branches
+  is separate work.
 - **Static shapes.** §4.
 - **The self-host.** The primary compiler's ndarray kernel, storage and
   algebra tests cover x86-64, ARM64 and WASM, including `f64` closures.

@@ -55,8 +55,8 @@ function seed(types: typeinfo.Type[], open: boolean): i32[] {
 }
 
 // A generic struct method is a folded free generic, or a receiver-qualified
-// method. Both keep std/ndarray's reserved module prefix. Match the delimiter
-// as well as the verb, so names such as map_rank cannot be mistaken for map.
+// method. These names are candidates, not proof of stdlib identity. Match
+// the delimiter too, so names such as map_rank cannot be mistaken for map.
 pub function operation(name: string): string {
   let prefix: string = "__smm_ndarray__NdArray_";
   if (util.str_has_prefix(name, prefix)) {
@@ -78,7 +78,7 @@ pub function operation(name: string): string {
   return "";
 }
 
-function called_layout(ins: ssa.SInst, values: i32[], returns: i32[], index: util.NameIndex): i32 {
+function library_layout(ins: ssa.SInst, values: i32[]): i32 {
   if (util.str_has_prefix(ins.str, "ndarray__from_flat__") || util.str_has_prefix(ins.str, "ndarray__from_flat$")) {
     return packed();
   }
@@ -96,6 +96,16 @@ function called_layout(ins: ssa.SInst, values: i32[], returns: i32[], index: uti
     }
     return row_major();
   }
+  return 0 - 1;
+}
+
+function called_layout(ins: ssa.SInst, values: i32[], returns: i32[], index: util.NameIndex, trusted: util.NameIndex): i32 {
+  if (trusted.has(ins.str)) {
+    let fact: i32 = library_layout(ins, values);
+    if (fact >= 0) {
+      return fact;
+    }
+  }
   let at: i32 = index.find(ins.str);
   if (at >= 0) {
     return returns[at];
@@ -111,7 +121,7 @@ function strided_result(v: string): boolean {
   return v == "transpose" || v == "permute" || v == "reverse" || v == "slice" || v == "select" || v == "broadcast_to";
 }
 
-function transfer(ins: ssa.SInst, values: i32[], params: i32[], returns: i32[], index: util.NameIndex): i32 {
+function transfer(ins: ssa.SInst, values: i32[], params: i32[], returns: i32[], index: util.NameIndex, trusted: util.NameIndex): i32 {
   if (ins.kind_tag == ssasem.param()) {
     return params[ins.imm];
   }
@@ -123,7 +133,7 @@ function transfer(ins: ssa.SInst, values: i32[], params: i32[], returns: i32[], 
     return result;
   }
   if (ins.kind_tag == ssasem.call()) {
-    return called_layout(ins, values, returns, index);
+    return called_layout(ins, values, returns, index, trusted);
   }
   // Fields, mutable cells, opaque calls and hand-written record literals
   // cannot inherit a layout merely from their result's nominal type.
@@ -135,7 +145,7 @@ function transfer(ins: ssa.SInst, values: i32[], params: i32[], returns: i32[], 
 // Every other parameter is the meet of ALL direct callers, independent of
 // their order in the module. Recursive edges participate in the same fixed
 // point, so a cycle neither forces unknown nor supplies a packed assumption.
-pub function analyze(funcs: ssasem.Func[], names: string[], usable: boolean[], open: boolean[]): Facts {
+pub function analyze(funcs: ssasem.Func[], names: string[], usable: boolean[], open: boolean[], trusted: util.NameIndex): Facts {
   let index: util.NameIndex = util.name_index(names);
   let values: i32[][] = [];
   let params: i32[][] = [];
@@ -151,7 +161,7 @@ pub function analyze(funcs: ssasem.Func[], names: string[], usable: boolean[], o
     returns = returns.append(result);
     i = i + 1;
   }
-  let facts: Facts = settle(funcs, usable, index, Facts { values: values, params: params, returns: returns });
+  let facts: Facts = settle(funcs, usable, index, trusted, Facts { values: values, params: params, returns: returns });
   // A closed cycle with no incoming value has learned nothing. Turn every
   // remaining bottom into unknown, then propagate that through consumers.
   values = [];
@@ -163,7 +173,7 @@ pub function analyze(funcs: ssasem.Func[], names: string[], usable: boolean[], o
   for row in facts.params {
     params = params.append(finish(row));
   }
-  return settle(funcs, usable, index, Facts { values: values, params: params, returns: returns });
+  return settle(funcs, usable, index, trusted, Facts { values: values, params: params, returns: returns });
 }
 
 function finish(row: i32[]): i32[] {
@@ -201,7 +211,7 @@ function feed_call(ins: ssa.SInst, values: i32[], usable: boolean[], index: util
   return Step { facts: Facts { ...facts, params: facts.params.with(at, row) }, changed: changed };
 }
 
-function step(f: ssasem.Func, i: i32, usable: boolean[], index: util.NameIndex, initial: Facts): Step {
+function step(f: ssasem.Func, i: i32, usable: boolean[], index: util.NameIndex, trusted: util.NameIndex, initial: Facts): Step {
   let facts: Facts = initial;
   let values: i32[] = facts.values[i];
   let result: i32 = facts.returns[i];
@@ -209,7 +219,7 @@ function step(f: ssasem.Func, i: i32, usable: boolean[], index: util.NameIndex, 
   for b in f.graph.blocks {
     for ins in b.insts {
       if (handle(f.values[ins.result])) {
-        let next: i32 = meet(values[ins.result], transfer(ins, values, facts.params[i], facts.returns, index));
+        let next: i32 = meet(values[ins.result], transfer(ins, values, facts.params[i], facts.returns, index, trusted));
         if (next != values[ins.result]) {
           values = values.with(ins.result, next);
           changed = true;
@@ -228,7 +238,7 @@ function step(f: ssasem.Func, i: i32, usable: boolean[], index: util.NameIndex, 
   return Step { facts: Facts { ...facts, values: facts.values.with(i, values), returns: facts.returns.with(i, result) }, changed: changed || result != facts.returns[i] };
 }
 
-function settle(funcs: ssasem.Func[], usable: boolean[], index: util.NameIndex, initial: Facts): Facts {
+function settle(funcs: ssasem.Func[], usable: boolean[], index: util.NameIndex, trusted: util.NameIndex, initial: Facts): Facts {
   let facts: Facts = initial;
   let changed: boolean = true;
   while (changed) {
@@ -239,7 +249,7 @@ function settle(funcs: ssasem.Func[], usable: boolean[], index: util.NameIndex, 
         i = i + 1;
         continue;
       }
-      let next: Step = step(funcs[i], i, usable, index, facts);
+      let next: Step = step(funcs[i], i, usable, index, trusted, facts);
       changed = changed || next.changed;
       facts = next.facts;
       i = i + 1;

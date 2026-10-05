@@ -29,6 +29,7 @@ func TestSelfHostArrayReportReasonTags(t *testing.T) {
 			"scale-kernel", "disabled", "layout-unknown", "layout-strided", "layout-row-major",
 			"element-fn-unresolved", "element-fn-captures", "element-not-literal-scale",
 			"constructor-unavailable", "builtin-shadowed", "unsupported-operation", "unsupported-element-type",
+			"outer-mul-kernel", "element-not-binary-multiply",
 		}},
 		{"scale_storage", "scale_storage_reasons", []string{
 			"guarded-reuse", "reuse-disabled", "receiver-borrowed", "receiver-still-live",

@@ -742,7 +742,7 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__sum_bytes") {
     return t_i32();
   }
-  if (argc == 2 && name == "__scale_f64") {
+  if (argc == 2 && (name == "__scale_f64" || name == "__outer_mul_f64")) {
     return t_array(t_float());
   }
   if (argc == 2 && name == "__ascii_run") {
@@ -946,6 +946,9 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   }
   if (name == "__scale_f64") {
     return ([t_array(t_float()), t_float()], true);
+  }
+  if (name == "__outer_mul_f64") {
+    return ([t_array(t_float()), t_array(t_float())], true);
   }
   if (name == "__ascii_run") {
     return ([t_string(), t_i32()], true);
@@ -15943,7 +15946,7 @@ function registered_intrinsics(): string[] {
     "__getpwuid_name", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8", "__log_f64",
     "__map_hash_seed", "__memchr", "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__pow_f64", "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
-    "__round_f64", "__scale_f64", "__scan_set", "__scan_set_bytes", "__sin_f64", "__sqrt_f64", "__store_i32", "__store_i64",
+    "__round_f64", "__scale_f64", "__outer_mul_f64", "__scan_set", "__scan_set_bytes", "__sin_f64", "__sqrt_f64", "__store_i32", "__store_i64",
     "__store_ptr", "__store_u8", "__str_bytes", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
   ];
 }

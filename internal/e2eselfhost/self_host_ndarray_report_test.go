@@ -115,7 +115,6 @@ func TestSelfHostNdarrayReportMatchesEmission(t *testing.T) {
 	}
 	for _, plan := range []string{
 		"algebra: zip_with; layout=packed; rhs-layout=packed;",
-		"algebra: outer; layout=packed; rhs-layout=strided;",
 		"algebra: inner; layout=packed; rhs-layout=strided; multiply=",
 		"algebra: fold_all; layout=packed;",
 		"algebra: reduce_axis; layout=packed; axis=1;",
@@ -127,6 +126,10 @@ func TestSelfHostNdarrayReportMatchesEmission(t *testing.T) {
 		if start < 0 || !strings.Contains(strings.SplitN(report[start:], "\n", 3)[1], "reason=unsupported-operation ") {
 			t.Fatalf("missing scalar decision for %s:\n%s", plan, report)
 		}
+	}
+	outerStart := strings.Index(report, "algebra: outer; layout=packed; rhs-layout=strided;")
+	if outerStart < 0 || !strings.Contains(strings.SplitN(report[outerStart:], "\n", 3)[1], "reason=layout-strided ") {
+		t.Fatalf("missing strided outer refusal:\n%s", report)
 	}
 	bin := buildBin(t, gcc, dir, "ndarray-report", asm)
 	if out, err := runX86_64Bin(runner, bin).CombinedOutput(); err != nil {

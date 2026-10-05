@@ -1405,6 +1405,7 @@ func New() *Interp {
 		}
 		return out, nil
 	}}
+	i.Builtins["__outer_mul_f64"] = &Builtin{Fn: builtinOuterMulF64}
 	// __crc32_cksum(crc, s): `s` folded into the running CRC-32 cksum(1)
 	// prints. The oracle for the seventh fused kernel
 	// (docs/ATLAS-PLATFORM-PLAN.md §3.3), and the first CARRIED one — the
@@ -5556,6 +5557,35 @@ func builtinStderr(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("stderr: expected 0 args, got %d", len(args))
 	}
 	return &Struct{TypeName: "Writer", Fields: map[string]Value{"fd": Number(2)}}, nil
+}
+
+func builtinOuterMulF64(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("__outer_mul_f64: expected 2 args, got %d", len(args))
+	}
+	a, aok := args[0].(Array)
+	b, bok := args[1].(Array)
+	if !aok || !bok {
+		return nil, fmt.Errorf("__outer_mul_f64: inputs must be arrays")
+	}
+	if len(b.E) > 0 && len(a.E) > 2147483647/len(b.E) {
+		return builtinExit(i, []Value{Number(134)})
+	}
+	out := newArray(len(a.E) * len(b.E))
+	for ai, left := range a.E {
+		x, ok := left.(Float)
+		if !ok {
+			return nil, fmt.Errorf("__outer_mul_f64: elements must be f64")
+		}
+		for bi, right := range b.E {
+			y, ok := right.(Float)
+			if !ok {
+				return nil, fmt.Errorf("__outer_mul_f64: elements must be f64")
+			}
+			out.E[ai*len(b.E)+bi] = Float{V: x.V * y.V, Width: 64}
+		}
+	}
+	return out, nil
 }
 
 func builtinExit(i *Interp, args []Value) (Value, error) {
