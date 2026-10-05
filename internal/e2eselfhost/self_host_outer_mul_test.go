@@ -175,26 +175,31 @@ func TestSelfHostOuterMulBenchmark(t *testing.T) {
 	src := filepath.Join(repoRootFromTest(t), "examples", "array_pipeline", "ndarray_outer.fern")
 	for _, target := range selfHostFusionTargets {
 		t.Run(target, func(t *testing.T) {
-			bin := e2eharness.CompileSelfHostFile(t, target, src, nil)
 			type counters struct {
 				Calls int64 `json:"alloc_calls"`
 				Bytes int64 `json:"fresh_bytes"`
 			}
 			results := map[string]counters{}
-			for _, mode := range []string{"0", "1", "2"} {
-				out, err := runScaleTarget(t, target, bin, "32", "32", "2", mode).CombinedOutput()
-				if err != nil {
-					t.Fatalf("outer benchmark mode=%s: %v\n%s", mode, err, out)
+			for _, disabled := range []string{"0", "1"} {
+				bin := e2eharness.CompileSelfHostFile(t, target, src, []string{"FERN_NO_PRODUCT_KERNEL=" + disabled})
+				for _, mode := range []string{"0", "1", "2"} {
+					out, err := runScaleTarget(t, target, bin, "32", "32", "2", mode).CombinedOutput()
+					if err != nil {
+						t.Fatalf("outer benchmark mode=%s: %v\n%s", mode, err, out)
+					}
+					var got counters
+					if err := json.Unmarshal(out, &got); err != nil {
+						t.Fatalf("benchmark report: %v\n%s", err, out)
+					}
+					results[disabled+mode] = got
 				}
-				var got counters
-				if err := json.Unmarshal(out, &got); err != nil {
-					t.Fatalf("benchmark report: %v\n%s", err, out)
-				}
-				results[mode] = got
 			}
-			kernel, ordinary := results["2"], results["0"]
-			if kernel.Calls <= 0 || kernel.Bytes <= 0 || kernel.Calls >= ordinary.Calls || kernel.Bytes >= ordinary.Bytes {
-				t.Fatalf("kernel must reduce both counters: kernel=%+v ordinary=%+v", kernel, ordinary)
+			ordinary := results["10"]
+			for _, mode := range []string{"00", "12"} {
+				kernel := results[mode]
+				if kernel.Calls <= 0 || kernel.Bytes <= 0 || kernel.Calls >= ordinary.Calls || kernel.Bytes >= ordinary.Bytes {
+					t.Fatalf("kernel %s must reduce both counters: kernel=%+v ordinary=%+v", mode, kernel, ordinary)
+				}
 			}
 		})
 	}

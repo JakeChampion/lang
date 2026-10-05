@@ -8471,10 +8471,18 @@ function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
   return result;
 }
 
+function ndarray_kernels_needed(names: string[], enabled: boolean, products: boolean, report: boolean): boolean {
+  if (!enabled && !products && !report) {
+    return false;
+  }
+  return semndarray.has_kernel(names) || report && semndarray.any_operation(names);
+}
+
 function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module): Produced[] {
   let report: boolean = semarrayreport.enabled();
-  let enabled: boolean = scale_kernel_on();
-  if (!enabled && !report || !util.has_str(names, "__smm_ndarray__NdArray_map__f64__f64") && !(report && semndarray.any_operation(names))) {
+  let enabled: boolean = kernel_switch_on("FERN_NO_SCALE_KERNEL");
+  let products: boolean = kernel_switch_on("FERN_NO_PRODUCT_KERNEL");
+  if (!ndarray_kernels_needed(names, enabled, products, report)) {
     return all;
   }
   let funcs: ssasem.Func[] = [];
@@ -8484,7 +8492,7 @@ function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module
     usable = usable.append(p.ok && !p.template && !p.bodyless);
   }
   let open: boolean[] = ndarray_open(all, names, mod, funcs);
-  let out: semndarray.Scaled = semndarray.scale_maps(funcs, names, usable, open, enabled, report);
+  let out: semndarray.Scaled = semndarray.scale_maps(funcs, names, usable, open, enabled, products, report);
   if (report) {
     eprint(semarrayreport.render_kind("ndarray kernels", semarrayreport.kernel_reasons(), out.sites));
   }
@@ -8501,8 +8509,8 @@ function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module
   return result;
 }
 
-function scale_kernel_on(): boolean {
-  match (env("FERN_NO_SCALE_KERNEL")) {
+function kernel_switch_on(name: string): boolean {
+  match (env(name)) {
     Some(v) => {
       return v != "1";
     },
