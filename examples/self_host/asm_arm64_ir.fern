@@ -6807,10 +6807,9 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
 // emit_rt_arena_and_alloc emits the arena and the allocator: the lazily-mmap'd 16 GiB region,
 // __fern_alloc and its freelist, the array / string box constructors, and the
 // strbuf accumulator.
-// emit_lc_report emits __fern_lc_report() — the census summary, cribbed from
-// the NATIVE arm64 emitter's body (internal/codegen/arm64 emitLcReportRuntime)
-// with its syscall abstraction replaced by the self-host mov x8 / svc form
-// that darwinize already reskins for Mach-O. One stderr line:
+// emit_lc_report emits __fern_lc_report() — the census summary, in the
+// mov x8 / svc syscall form that darwinize reskins for Mach-O. One stderr
+// line:
 //
 //     leakcheck: allocs=<N> frees=<M> live_bytes=<K>
 //
@@ -8051,8 +8050,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // Linux's 0x20), so 0x4022 asked for a FILE mapping with fd = -1: mmap
   // failed, `b.mi` took .Lalloc_oom, and every arm64-darwin binary died
   // "heap arena exhausted" (exit 137) on its first allocation — a lie about
-  // the cause, since the arena was never mapped at all (#6042). Mirrors the
-  // native backend's split at internal/codegen/arm64/arm64.go.
+  // the cause, since the arena was never mapped at all (#6042).
   if (darwin) {
     // MAP_ANON (0x1000) | MAP_PRIVATE (0x2). No NORESERVE: macOS does not
     // strictly account anonymous private reservations.
@@ -8721,8 +8719,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("__fn___ptr_width:\n");
   s = s.write("    mov x0, #8\n");
   s = s.write("    ret\n");
-  // RC intrinsics — Phase 0c real bodies (ported from the native
-  // arm64 backend, internal/codegen/arm64/arm64.go). The rc word
+  // RC intrinsics. The rc word
   // is a 32-bit count at [data-8]; data is the value pointer
   // callers hold. Guard chain: SSO inline-tag (low bit) -> low-address
   // (< 0x10000, null included) -> static sentinel (rc high bit). Static /
@@ -11809,10 +11806,9 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
 // polynomials whose own comment here claimed "<1e-5 against libm" while
 // measuring 3.2e10 ulp for sin, 4.5e7 for exp and 9844 for log.
 //
-// Same reduction and same `frintn` as internal/codegen/arm64's
-// emitFloatTranscendentalsRuntime (ties-to-EVEN, matching x86's
-// `roundsd …, 0`; the more familiar `frinta` rounds ties away and would
-// disagree). The self-host cannot import Go, so the .Lfc_* table below is a
+// Same reduction as asm_ir.fern's x86-64 kernels, rounding with `frintn`
+// (ties-to-EVEN, matching x86's `roundsd …, 0`; the more familiar `frinta`
+// rounds ties away and would disagree). The self-host cannot import Go, so the .Lfc_* table below is a
 // literal copy of internal/fdlibm's — whose selfhost_parity_test pins
 // it entry for entry. internal/e2e/f64_ulp_test.go is the gate for the native
 // pair.

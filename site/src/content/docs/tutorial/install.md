@@ -88,7 +88,6 @@ These are only built from a source checkout (`go build ./cmd/...`):
 | `fern`       | `go build ./cmd/fern`                  | The main compiler + runner.      |
 | `fern-lsp`   | `go build ./cmd/fern-lsp`              | Language server for editors.     |
 | `ferndoc`    | `go build ./cmd/ferndoc`               | Generate the stdlib reference.   |
-| `dump_arm64` | `go build ./cmd/dump_arm64`            | Disassemble an emitted .s file.  |
 
 ## Run hello, world
 

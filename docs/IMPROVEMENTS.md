@@ -159,7 +159,6 @@ without code-gen tooling. Lower ceiling, lower floor.
 
 `go test ./...` output lists these packages with no tests:
 `internal/closureconv`, `internal/shadowrename`, `internal/treeshake`,
-`internal/codegen/arm64`, `internal/codegen/x86_64`,
 `internal/monomorph` (the last one now has tests since PR #614).
 
 Each is a real pass with real behaviour. End-to-end tests in

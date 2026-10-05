@@ -187,8 +187,8 @@ position" overstated it.
 The representation is **not** already shipped everywhere. The SSO two-word ABI
 carries a string as `(data, len)` unboxed on **wasm32 and arm64**; x86-64 is
 still single-word LSB-tagged and never sets `ast.TwoWordOverride`
-(`SSO-NATIVE-FLIP-STATUS.md`, whose title says so, and
-`internal/codegen/x86_64/x86_64.go:2168`). x86-64 is the backend the leak
+(`SSO-NATIVE-FLIP-STATUS.md`, whose title says so, and the Go x86-64 emitter
+this was read from, since deleted in #11557). x86-64 is the backend the leak
 measurement above ran on, so there the two-word shape is precisely the un-done
 flip, not a baseline a slice can inherit: plan that half as new ABI work.
 
@@ -197,8 +197,7 @@ Two things follow that this section originally missed. A two-word string's
 is that shape" holds for heap-form strings and needs an answer for inline ones.
 And `as_bytes()` on an inline-packed string today "first copies the bytes into
 a bare `__fern_alloc` block the header points at; that copy has no owner"
-(`internal/ir/rcresults.go:145`, the backends' helpers at e.g.
-`internal/codegen/x86_64/x86_64.go:11134`) — an ownerless copy whose only
+(`internal/ir/rcresults.go:145`, and the deleted Go backends' helpers) — an ownerless copy whose only
 holder is the header that is being retired. **Open:** does the two-word slice
 forbid the inline-materialising path, forcing a heap-form promotion inside the
 string, or carry an inline tag of its own? The decision does not turn on the

@@ -1486,9 +1486,8 @@ function sysno_arm64_darwin(name: string): string {
   // No syncfs row: XNU has no per-filesystem flush, and rt_src_fd_syncfs
   // branches on the target rather than issuing a number that is not one.
   // XNU has no mknodat — this is mknod(2), which takes no directory
-  // descriptor. The row keeps the Linux spelling so the two tables
-  // pair up (selfhost_sysno_parity_test); rt_src_mknod branches on
-  // the target for the argument shape.
+  // descriptor. The row keeps the Linux spelling so the tables pair up;
+  // rt_src_mknod branches on the target for the argument shape.
   if (name == "mknodat") {
     return "14";
   }

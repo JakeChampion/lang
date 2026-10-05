@@ -466,9 +466,6 @@ The backend runtime helpers — `__fern_alloc`, `__fern_str_eq`,
 | self-host x86-64 | `asm_ir.fern` `emit_ir_runtime` | `need`/`has_need` + `runtime_need_deps`/`close_needs`, shared via `asmcore.fern` |
 | self-host arm64 | `asm_arm64_ir.fern` | same |
 | self-host wasm | `wasm_ir.fern` helper bundles | `module_uses_*` + ad-hoc `if` coupling |
-| native (Go) x86-64 | `internal/codegen/x86_64/x86_64.go` | `recordUse` use-flags; Fern helpers via `internal/fernrt` |
-| native (Go) arm64 | `internal/codegen/arm64/arm64.go` | `recordUse` use-flags; Fern helpers via `internal/fernrt` |
-| native (Go) wasm | `internal/codegen/wasmbin/runtime.go` | use-flags; Fern helpers via `internal/fernrt` |
 
 Their inter-helper dependencies are tracked **out of band**: a helper body
 that `call`s another helper is a link-time edge nothing in the compiler
