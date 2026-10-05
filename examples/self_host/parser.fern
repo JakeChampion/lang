@@ -569,10 +569,6 @@ function e_array_at(elements: ast.Expr[], line: i32, col: i32): ast.Expr {
   return ast.ExprArray { elements: elements, elem_ty: "", line: line, col: col };
 }
 
-function e_tuple(elements: ast.Expr[]): ast.Expr {
-  return ast.ExprTuple { elements: elements, line: 0, col: 0 };
-}
-
 function e_tuple_at(elements: ast.Expr[], line: i32, col: i32): ast.Expr {
   return ast.ExprTuple { elements: elements, line: line, col: col };
 }
@@ -960,18 +956,6 @@ function with_loop_label(st: ast.Stmt, label: string): ast.Stmt {
 
 function s_break(): ast.Stmt {
   return ast.StmtBreak { tag: 0, line: 0, col: 0, label: "" };
-}
-
-function s_break_at(line: i32, col: i32): ast.Stmt {
-  return ast.StmtBreak { tag: 0, line: line, col: col, label: "" };
-}
-
-function s_continue(): ast.Stmt {
-  return ast.StmtContinue { tag: 0, line: 0, col: 0, label: "" };
-}
-
-function s_continue_at(line: i32, col: i32): ast.Stmt {
-  return ast.StmtContinue { tag: 0, line: line, col: col, label: "" };
 }
 
 function s_assign(target: string, value: ast.Expr): ast.Stmt {
@@ -9828,7 +9812,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
       // A multi-payload variant `V(A, B, …)` keeps every payload as a field
       // `__ev`, `__ev1`, `__ev2`, … (the first stays `__ev` so the existing
       // "is this a payloaded variant?" checks that look for `__ev` still
-      // fire). Codegen indexes them by position (struct_field_off).
+      // fire). Codegen indexes them by position.
       fields = fields.append(tr);
       let pnum: i32 = 1;
       while (p.peek_punct() == ",") {
@@ -10640,24 +10624,6 @@ function bg_find(fns: MFns, name: string): i32 {
       return fns.gat[e];
     }
     e = fns.gnext[e];
-  }
-  return 0 - 1;
-}
-
-// tparam_arg_index returns the index of the first parameter whose
-// declared type is the (first) type variable — the argument whose
-// concrete type fixes the instantiation. -1 if none.
-function tparam_arg_index(fd: FuncDecl): i32 {
-  if (fd.type_params.len() == 0) {
-    return 0 - 1;
-  }
-  let tp: string = fd.type_params[0];
-  let i: i32 = 0;
-  while (i < fd.params.len()) {
-    if (fd.params[i].type_name == tp) {
-      return i;
-    }
-    i = i + 1;
   }
   return 0 - 1;
 }
@@ -19493,11 +19459,6 @@ function hl_cycle_captures(sibs: NestedFn[], cycle: string[], enclosing: string[
   return caps;
 }
 
-// rw_call_expr appends `caps` (as ident arguments) to every call of
-// `fname` in an expression, recursing through the whole tree. Used by the
-// lambda-lift to thread a lifted function's captured variables through its
-// call sites. ExprCall is the only node it changes; the rest are rebuilt
-// verbatim around their rewritten children.
 // rw_call_of is the capture-threading rewrite's ONLY changed node: a direct
 // call of the lifted function gains that function's captures as trailing ident
 // arguments. Every other node is rebuilt verbatim around its rewritten
@@ -19537,13 +19498,9 @@ function rw_call_of(x: ast.Expr, fname: string, caps: string[]): ast.Expr {
   return x;
 }
 
-function rw_call_expr(e: ast.Expr, fname: string, caps: string[]): ast.Expr {
-  function rw(x: ast.Expr): ast.Expr {
-    return rw_call_of(x, fname, caps);
-  }
-  return astwalk.map_expr(e, rw);
-}
-
+// rw_call_stmts appends `caps` (as ident arguments) to every call of `fname`
+// in a statement list. Used by the lambda-lift to thread a lifted function's
+// captured variables through its call sites.
 function rw_call_stmts(stmts: ast.Stmt[], fname: string, caps: string[]): ast.Stmt[] {
   function rw(x: ast.Expr): ast.Expr {
     return rw_call_of(x, fname, caps);
@@ -19812,10 +19769,6 @@ struct DeferHoist { stmts: ast.Stmt[], decls: ast.Stmt[] }
 // same way — every backend inlines one into the enclosing function, so its
 // declarations belong to that function's scope.
 struct DeferHoistExpr { expr: ast.Expr, decls: ast.Stmt[] }
-
-function dl_is_array_type(t: string): boolean {
-  return t.len() > 2 && slice_unchecked(t, t.len() - 2, t.len()) == "[]";
-}
 
 // Every annotation can be lifted: ExprZero names the type and reaches each
 // engine as the constant zero of it, so a struct, an enum, a tuple and a cell
@@ -21467,7 +21420,7 @@ pub function desugar_prepass_module(raw: Module): Module {
 // backend, and the interpreter all see a full argument list and need no
 // knowledge of defaults. Mirrors the native compiler's internal/defaultargs.
 //
-// The rewriter follows rw_call_expr / rw_call_stmts exactly — only the
+// The rewriter follows rw_call_stmts exactly — only the
 // ExprCall arm differs: instead of appending captured names, it appends the
 // callee's declared defaults for the omitted trailing parameters. A module
 // with no defaulted parameter is returned verbatim (the precheck), so
@@ -21565,25 +21518,6 @@ function fda_args_have_named(args: ast.Expr[]): boolean {
     i = i + 1;
   }
   return false;
-}
-
-// fda_strip_named unwraps any named markers to their bare value, dropping
-// the name. The fallback when a named argument lands on a callee we can't
-// resolve (a method or an unknown function — an error in the native
-// compiler); unwrapping keeps a well-formed positional call so nothing
-// downstream trips over the marker.
-function fda_strip_named(args: ast.Expr[]): ast.Expr[] {
-  let out: ast.Expr[] = [];
-  let i: i32 = 0;
-  while (i < args.len()) {
-    if (fda_is_named_marker(args[i])) {
-      out = out.append(fda_marker_value(args[i]));
-    } else {
-      out = out.append(args[i]);
-    }
-    i = i + 1;
-  }
-  return out;
 }
 
 function fda_named_lookup(names: string[], vals: ast.Expr[], want: string): i32 {
@@ -21734,13 +21668,6 @@ function fda_call_of(x: ast.Expr, funcs: FuncDecl[]): ast.Expr {
     }
   }
   return x;
-}
-
-function fda_expr(e: ast.Expr, funcs: FuncDecl[]): ast.Expr {
-  function rw(x: ast.Expr): ast.Expr {
-    return fda_call_of(x, funcs);
-  }
-  return astwalk.map_expr(e, rw);
 }
 
 function fda_stmts(stmts: ast.Stmt[], funcs: FuncDecl[]): ast.Stmt[] {
@@ -26678,7 +26605,7 @@ pub function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: stri
     }
     i = i + 1;
   }
-  return FuncDecl { ...m, receiver_name: rname, receiver_type: impl_type, type_params: mtps, bound_traits: mtbs, params: newparams, ret_type: rt };
+  return FuncDecl { ...m, receiver_name: rname, receiver_type: impl_type, receiver_own: m.params[0].own, type_params: mtps, bound_traits: mtbs, params: newparams, ret_type: rt };
 }
 
 // parse_trait_decl consumes a `trait Name { <method>; … }` block. The

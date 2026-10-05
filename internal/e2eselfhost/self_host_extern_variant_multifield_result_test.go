@@ -17,7 +17,7 @@ import (
 // enum `Ev { Click(i32, i32), Key(i32), Close }`. The canonical join is SlotCount=2
 // i32 slots, returned indirectly (disc:u8 @0, slot0 @4, slot1 @8). The return area
 // is sized for the widest arm, so the result wrapper blind-copies all SlotCount
-// slots into the box fields (struct_field_off(j)); a match on a shorter arm reads
+// slots into the box fields; a match on a shorter arm reads
 // only its own fields (the rest stay unread) — no per-arm result branch needed.
 //
 // `classify: func(n: s32) -> ev`: n<10 -> close, n<100 -> key(n), else ->

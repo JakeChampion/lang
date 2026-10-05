@@ -70,10 +70,6 @@ pub struct FipClaim {
   allowance: i32,
 }
 
-pub function claim_none(name: string): FipClaim {
-  return FipClaim { fn_name: name, is_fip: false, is_fbip: false, allowance: 0 };
-}
-
 // ---- the result --------------------------------------------------------
 
 // FipResult carries the verdict plus the two counts behind it. The counts are

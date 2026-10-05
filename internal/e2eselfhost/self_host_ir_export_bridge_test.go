@@ -17,12 +17,9 @@ import (
 //     emitted a core whose only exports were `memory` and `_start` — the binding
 //     SILENTLY DROPPED. Measured on the pre-fix tree: 11,108 bytes, no `iota`.
 //
-// The bridge lives in wasm_ir with the heap-box geometry parameterised by which
-// consumer will read the boxes it fills (wasm_ir.xbox_field_off — the IR path
-// slots 8, the legacy AST emitter 4). Moving it WITHOUT that parameter is what
-// #5974 tried: the functions are pure, but purity is not layout-independence, and
-// every record / variant / tuple extern then read its leaves from the wrong
-// offsets. TestSelfHostWasmExternBridgeIRLayout pins the offsets per shape.
+// The bridge lives in wasm_ir and lays its heap boxes out with 8-byte slots
+// (wasm_ir.xbox_field_off). TestSelfHostWasmExternBridgeIRLayout pins the
+// offsets per shape.
 //
 // This test covers the mode-0 half, which is the half that was silently wrong and
 // is reachable from a stdin driver. The component half is covered by the

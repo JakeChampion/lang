@@ -27,8 +27,9 @@ type NamedOp struct {
 type NamedFamily struct {
 	Name string
 	Doc  string
-	// FernFn is the generated Fern lookup, "" for a family that needs only
-	// the predicate. Pack says what it returns.
+	// FernFn is the generated Fern lookup, which a caller tests for >= 0 to
+	// ask whether a mnemonic is in the family. A family without one generates
+	// the predicate PredicateName instead. Pack says what the lookup returns.
 	FernFn string
 	Pack   func(NamedOp) int
 	Ops    []NamedOp
