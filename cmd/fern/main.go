@@ -54,7 +54,7 @@
 // rather than handed to the program as data: `fern prog.fern -o out` is a
 // misplaced driver flag far more often than it is an argument named `-o`.
 //
-// The -cc and -qemu flags override the linker and emulator.
+// -qemu names the emulator --run uses for a foreign ISA.
 // The formatter preserves `//` line comments (leading, trailing, and
 // standalone) and an author's blank-line grouping between statements.
 package main
@@ -542,7 +542,7 @@ func writeGeneratedFile(path, content string) error {
 }
 
 // repeatedString collects a flag that may be passed multiple times (e.g.
-// `-async-provider a=x.wasm -async-provider b=y.wasm`).
+// `-lint-set a=warn -lint-set b=deny`).
 type repeatedString []string
 
 func (r *repeatedString) String() string { return strings.Join(*r, ",") }
