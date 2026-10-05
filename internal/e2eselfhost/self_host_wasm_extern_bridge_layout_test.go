@@ -11,19 +11,15 @@ import (
 // The WIT extern/export bridge on the IR path (#3457, follows #5974).
 //
 // The bridge lifts record / variant / tuple leaves into Fern-side heap boxes,
-// and the two wasm emitters read those boxes at DIFFERENT slot widths — the IR
-// consumer at 8 + i*8, the legacy AST emitter at 4 + i*4. Emitting one layout
-// for both is a silent wrong-answer bug that has landed twice (#5795, #5974), so
-// the geometry is parameterised by consumer (wasm_ir.xbox_field_off) and these
+// which the consumer reads at 8 + i*8 (wasm_ir.xbox_field_off). A wrong layout
+// is a silent wrong-answer bug that has landed twice (#5795, #5974), so these
 // tests pin the parts the end-to-end component tests cannot see on their own:
 //
-//   - that an extern/export module ROUTES the IR path at all (a regression to
-//     the AST emitter would keep the component tests green while quietly
-//     reinstating the layout that is about to be deleted);
+//   - that an extern/export module's core carries the IR framing;
 //   - the emitted wrapper's box offsets, so a mismatch is a readable diff rather
 //     than a `mr-bad` from wasmtime;
-//   - the two calling-convention shims the IR path needs and the AST path does
-//     not: a void extern and a void export.
+//   - the two calling-convention shims every Fern-callable's i32 result needs:
+//     a void extern and a void export.
 //
 // TestSelfHostWasmVariantF32ArmMatchIR covers the lowering fix the bridge
 // surfaced, on a program with no WIT in it at all.

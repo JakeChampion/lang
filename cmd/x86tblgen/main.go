@@ -68,9 +68,9 @@ func lookup(b *strings.Builder, fn, param string, rows []string) {
 	b.WriteString("        _ => { return 0 - 1; }\n    }\n}\n")
 }
 
-// genNamedTables renders the by-name vocabulary: a predicate per family
-// over the AT&T spellings the self-host dispatches on, and for the families
-// whose encoder reads per-spelling data, the lookup that returns it.
+// genNamedTables renders the by-name vocabulary over the AT&T spellings the
+// self-host dispatches on: for a family whose encoder reads per-spelling data,
+// the lookup that returns it, and for the rest a predicate.
 //
 // A family marked Suffixed is matched on the suffix-stripped base, so its
 // predicate and lookup take that base. A row with no AT&T spelling (the
@@ -88,9 +88,8 @@ func genNamedTables() string {
 		if len(spellings) == 0 {
 			continue
 		}
-		fmt.Fprintf(&b, "// %s: %s.\n", f.PredicateName(), f.Doc)
 		if f.FernFn != "" {
-			fmt.Fprintf(&b, "function %s(mnem: string): boolean { return %s(mnem) >= 0; }\n", f.PredicateName(), f.FernFn)
+			fmt.Fprintf(&b, "// %s: %s.\n", f.FernFn, f.Doc)
 			var rows []string
 			for _, o := range f.Ops {
 				if o.ATT == "" {
@@ -101,6 +100,7 @@ func genNamedTables() string {
 			lookup(&b, f.FernFn, "mnem", rows)
 			continue
 		}
+		fmt.Fprintf(&b, "// %s: %s.\n", f.PredicateName(), f.Doc)
 		fmt.Fprintf(&b, "function %s(mnem: string): boolean {\n    return ", f.PredicateName())
 		for i, t := range spellings {
 			if i > 0 {

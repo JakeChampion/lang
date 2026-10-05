@@ -18,6 +18,7 @@ import "./util";
 import "./seminline";
 import "./semfuse";
 import "./semndarray";
+import "./semarrayreport";
 
 // One body's production. A TEMPLATE declaration — one spelling type variables
 // — has no body of its own: it is produced once per instantiation its callers
@@ -4717,10 +4718,6 @@ function current_loop(s: State): Loop {
   return s.loops[s.loops.len() - 1];
 }
 
-function with_loop(s: State, l: Loop): State {
-  return State { ...s, loops: s.loops.with(s.loops.len() - 1, l) };
-}
-
 // A labelled exit leaves the loop the label names and every loop inside it:
 // the edge records the environment at that loop's entry, so the bindings the
 // inner loops made die on it.
@@ -8521,7 +8518,9 @@ function inline_on(): boolean {
 // std/array combinator chains fused into one loop (semfuse).
 // `FERN_NO_ARRAY_FUSION=1` turns the pass off, as it does native's.
 function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
-  if (!fusion_on()) {
+  let enabled: boolean = fusion_on();
+  let report: boolean = semarrayreport.enabled();
+  if (!enabled && !report) {
     return all;
   }
   let funcs: ssasem.Func[] = [];
@@ -8530,7 +8529,10 @@ function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
     funcs = funcs.append(p.func);
     usable = usable.append(p.ok && !p.template && !p.bodyless);
   }
-  let out: semfuse.Fused = semfuse.fuse_pipelines(funcs, names, usable);
+  let out: semfuse.Fused = semfuse.fuse_pipelines(funcs, names, usable, enabled, report);
+  if (report) {
+    eprint(semarrayreport.render(out.sites));
+  }
   let result: Produced[] = [];
   let i: i32 = 0;
   while (i < all.len()) {
@@ -8545,16 +8547,10 @@ function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
 }
 
 function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module): Produced[] {
-  if (!util.has_str(names, "__smm_ndarray__NdArray_map__f64__f64")) {
+  let report: boolean = semarrayreport.enabled();
+  let enabled: boolean = scale_kernel_on();
+  if (!enabled && !report || !util.has_str(names, "__smm_ndarray__NdArray_map__f64__f64") && !(report && semndarray.any_operation(names))) {
     return all;
-  }
-  match (env("FERN_NO_SCALE_KERNEL")) {
-    Some(v) => {
-      if (v == "1") {
-        return all;
-      }
-    },
-    None => {}
   }
   let funcs: ssasem.Func[] = [];
   let usable: boolean[] = [];
@@ -8563,7 +8559,10 @@ function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module
     usable = usable.append(p.ok && !p.template && !p.bodyless);
   }
   let open: boolean[] = ndarray_open(all, names, mod, funcs);
-  let out: semndarray.Scaled = semndarray.scale_maps(funcs, names, usable, open);
+  let out: semndarray.Scaled = semndarray.scale_maps(funcs, names, usable, open, enabled, report);
+  if (report) {
+    eprint(semarrayreport.render_kind("ndarray kernels", semarrayreport.kernel_reasons(), out.sites));
+  }
   let result: Produced[] = [];
   let i: i32 = 0;
   while (i < all.len()) {
@@ -8575,6 +8574,17 @@ function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module
     i = i + 1;
   }
   return result;
+}
+
+function scale_kernel_on(): boolean {
+  match (env("FERN_NO_SCALE_KERNEL")) {
+    Some(v) => {
+      return v != "1";
+    },
+    None => {
+      return true;
+    }
+  }
 }
 
 function ndarray_open(all: Produced[], names: string[], mod: parser.Module, funcs: ssasem.Func[]): boolean[] {

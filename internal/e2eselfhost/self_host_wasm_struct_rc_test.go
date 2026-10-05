@@ -13,7 +13,7 @@ import (
 // $__fern_str_box (8-byte rc+bsz header, returns base+8), so it carries
 // an rc word at [s-8] while every s-relative access is unchanged — the
 // type id stays at slot 0 (so `match` reads the right tag) and each field
-// stays at struct_field_off. Field values + array/string members survive,
+// stays at its offset. Field values + array/string members survive,
 // and counting and recursive field release keep the over-release detector
 // clean.
 //

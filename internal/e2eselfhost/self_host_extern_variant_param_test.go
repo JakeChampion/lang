@@ -17,8 +17,8 @@ import (
 // (disc, payload). A self-host payloaded variant value is a `[struct_id@0]
 // [payload@4]` box and a payloadless one is `[struct_id@0]`; struct_id is a
 // global id, so the wrapper maps it to the variant index via the
-// extern_plain_enum_disc select-chain (the disc) and reads the payload at
-// struct_field_off(0). For a payloadless-case value the payload read is ignored
+// extern_plain_enum_disc select-chain (the disc) and reads the payload from
+// the box's first field. For a payloadless-case value the payload read is ignored
 // garbage (the host drops it for that disc).
 //
 // The provider exports `describe: func(s: shape) -> s32` over

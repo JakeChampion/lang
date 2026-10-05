@@ -219,6 +219,13 @@ turns the shape off. Each taint is a row of `fern -array-report`'s
 buffer verdicts (`receiver-not-own-param`, `element-fn-captures`,
 …), read from the same planner that performs the rewrite.
 
+The primary Fern compiler selects R7 in `ssarc.fern` from typed ownership
+plans. Its switch is `FERN_SELFHOST_NO_REUSE=1`.
+`FERN_ARRAY_REPORT=1` prints the final plan's map storage verdicts, including
+`guarded-reuse`: unique input is reused and shared input is copied. The
+`-array-report` interface above describes the retained Go analysis. Both
+interfaces and their reason tags are documented in `ARRAY-ALGEBRA.md`.
+
 **Visibility.** `fip` / `fbip` reach the shape: E053 admits
 `xs.map(f)` on an `own` receiver the way it admits constructors
 (the checker cannot tell which `map` R7 writes through its

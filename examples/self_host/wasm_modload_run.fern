@@ -139,9 +139,6 @@ function unit_obj(ns: string, unit: parser.Module, cache: irtables.LowerResult[]
     fns: wasm_ir.fn_value_table(cache),
     needs: wasm_ir.needs_of(cache),
     fn_sigs: wasm_ir.indirect_fn_sigs(cache),
-    frt: wasm_ir.field_reclaim_types(cache),
-    sdt: wasm_ir.struct_drop_types(cache, all_stab),
-    aet: wasm_ir.struct_arr_elems_drop_types(cache, all_stab),
     text: wasm_ir.emit_functions_view(ns, unit, cache, all_funcs, all_stab),
   };
 }
@@ -204,10 +201,10 @@ function read_plan(plan_file: string, nmods: i32): ShardRef[] {
 
 // Linked is a link's units in plan order, the union of what their objects
 // need, and the units the cache did not have.
-struct Linked { units: wasm_ir.WasmUnit[], needs: string[], fn_sigs: string[], frt: string[], sdt: string[], aet: string[], missing: string }
+struct Linked { units: wasm_ir.WasmUnit[], needs: string[], fn_sigs: string[], missing: string }
 
 function no_units(): Linked {
-  return Linked { units: [], needs: [], fn_sigs: [], frt: [], sdt: [], aet: [], missing: "" };
+  return Linked { units: [], needs: [], fn_sigs: [], missing: "" };
 }
 
 function add_found(l: Linked, parts: flatten.PerModule[], u: ShardRef, lk: wasm_objfile.MaybeUnit): Linked {
@@ -220,9 +217,6 @@ function add_found(l: Linked, parts: flatten.PerModule[], u: ShardRef, lk: wasm_
     units: l.units.append(wasm_ir.WasmUnit { ns: ns, text: obj.text, strs: obj.strs, caggs: obj.caggs, fns: obj.fns }),
     needs: wasm_ir.union_strs(l.needs, obj.needs),
     fn_sigs: wasm_ir.union_strs(l.fn_sigs, obj.fn_sigs),
-    frt: wasm_ir.union_strs(l.frt, obj.frt),
-    sdt: wasm_ir.union_strs(l.sdt, obj.sdt),
-    aet: wasm_ir.union_strs(l.aet, obj.aet),
     missing: l.missing,
   };
 }
@@ -236,12 +230,9 @@ function link_missing(l: Linked): boolean {
   return true;
 }
 
-// link_text is the linked module. The RC helper bodies are emitted once, since
-// every unit shares the struct world, and heap_base is a whole-LINK quantity:
-// it sits past every unit's literals.
+// link_text is the linked module.
 function link_text(l: Linked, merged: parser.Module): string {
-  let rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, l.frt, l.sdt, l.aet, wasm_ir.heap_base_for_units(l.units));
-  return wasm_ir.emit_ir_module_units(l.units, merged, l.needs, l.fn_sigs, rc, 0, asmcore.env_switches());
+  return wasm_ir.emit_ir_module_units(l.units, merged, l.needs, l.fn_sigs, 0, asmcore.env_switches());
 }
 
 // Typed is the program the typed lowering built, whole, cut into units by

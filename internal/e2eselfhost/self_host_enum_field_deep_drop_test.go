@@ -9,26 +9,16 @@ import (
 )
 
 // #8567: a DIRECT enum field with an rc payload was released box-only, stranding
-// the live variant's payloads. `fr_enum` in field_reclaim_field_ops fell through
-// its arm chain to the shallow `arr_dec`, with no walk to reach for:
-// `__enum_arr_elems_drop_<E>` is a variant walk and all three backends emit it,
-// but it takes a BUFFER and loops. What was missing was the single-box step.
+// the live variant's payloads.
 //
-// So the per-element body inside that loop is its own helper,
-// `__enum_drop_<E>(box)`, on all three backends, and the array walk delegates to
-// it — a direct enum field and an enum-array element release through the same
-// code rather than through two that can drift.
-//
-// `__struct_drop_`'s `k_enum` arm takes it too (deep_enum_drop), as the ONE
-// releaser of a direct enum field's payload (#8692). A second one — an inline
-// sweep at a struct local's scope exit — used to coexist with it, and since both
-// were rc==1-gated they both fired in a scope-exit context and the second dec
+// A direct enum field's payload has one releaser on every drop path (#8692): a
+// second one at a struct local's scope exit once fired after the first and
 // landed past a live claim (exit 99 on TestSelfHostEnumFieldShare and
-// TestSelfHostStructEnumFieldPayloadDrop). That sweep is gone.
+// TestSelfHostStructEnumFieldPayloadDrop).
 //
 // THE EXIT CODE DOES NOT MOVE on the leak: the leakcheck leg against native is
-// the gate. The register and wasm legs are the miscompile guard on a new helper
-// three backends emit, and where an over-release would land as exit 99.
+// the gate. The register and wasm legs are where an over-release would land as
+// exit 99.
 var selfHostEnumFieldDeepDropCases = []struct {
 	name string
 	src  string

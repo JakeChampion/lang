@@ -1,0 +1,194 @@
+// Primary compiler array decisions. The rewriting passes supply the sites;
+// this module only formats them and counts their closed reason tags.
+import "./util";
+
+pub struct Site { owner: string, stage: string, plan: string, reason: i32, storage: string }
+
+pub function enabled(): boolean {
+  match (env("FERN_ARRAY_REPORT")) {
+    Some(v) => {
+      return v == "1";
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// Named ordinals keep planner decisions tied to the closed diagnostic tags.
+pub function fusion_fused(): i32 {
+  return 0;
+}
+
+pub function fusion_no_producer(): i32 {
+  return 1;
+}
+
+pub function fusion_intermediate_shared(): i32 {
+  return 2;
+}
+
+pub function fusion_control_flow_boundary(): i32 {
+  return 3;
+}
+
+pub function fusion_effect_boundary(): i32 {
+  return 4;
+}
+
+pub function fusion_element_fn_unresolved(): i32 {
+  return 5;
+}
+
+pub function fusion_element_fn_effectful(): i32 {
+  return 6;
+}
+
+pub function fusion_non_scalar(): i32 {
+  return 7;
+}
+
+pub function fusion_result_escapes(): i32 {
+  return 8;
+}
+
+pub function fusion_no_reduction_sink(): i32 {
+  return 9;
+}
+
+pub function fusion_operator_outside_algebra(): i32 {
+  return 10;
+}
+
+pub function fusion_disabled(): i32 {
+  return 11;
+}
+
+pub function storage_guarded_reuse(): i32 {
+  return 0;
+}
+
+pub function storage_reuse_disabled(): i32 {
+  return 1;
+}
+
+pub function storage_shape_unsupported(): i32 {
+  return 2;
+}
+
+pub function storage_borrow_linked_result(): i32 {
+  return 3;
+}
+
+pub function storage_receiver_not_consumed_param(): i32 {
+  return 4;
+}
+
+pub function storage_receiver_still_live(): i32 {
+  return 5;
+}
+
+pub function storage_receiver_supplied(): i32 {
+  return 6;
+}
+
+pub function storage_element_fn_unresolved(): i32 {
+  return 7;
+}
+
+pub function storage_element_fn_captures(): i32 {
+  return 8;
+}
+
+pub function storage_element_fn_effectful(): i32 {
+  return 9;
+}
+
+pub function storage_aliased_arguments(): i32 {
+  return 10;
+}
+
+pub function kernel_scale_kernel(): i32 {
+  return 0;
+}
+
+pub function kernel_disabled(): i32 {
+  return 1;
+}
+
+pub function kernel_layout_unknown(): i32 {
+  return 2;
+}
+
+pub function kernel_layout_strided(): i32 {
+  return 3;
+}
+
+pub function kernel_layout_row_major(): i32 {
+  return 4;
+}
+
+pub function kernel_element_fn_unresolved(): i32 {
+  return 5;
+}
+
+pub function kernel_element_fn_captures(): i32 {
+  return 6;
+}
+
+pub function kernel_element_not_literal_scale(): i32 {
+  return 7;
+}
+
+pub function kernel_constructor_unavailable(): i32 {
+  return 8;
+}
+
+pub function kernel_builtin_shadowed(): i32 {
+  return 9;
+}
+
+pub function kernel_unsupported_operation(): i32 {
+  return 10;
+}
+
+pub function kernel_unsupported_element_type(): i32 {
+  return 11;
+}
+
+// Stable ordinals are shared by the decision and its diagnostic. A successful
+// rewrite is 0; every other entry is a refusal, never a prediction of a rewrite.
+pub function reasons(): string[] {
+  return ["fused", "no-producer", "intermediate-shared", "control-flow-boundary", "effect-boundary", "element-fn-unresolved", "element-fn-effectful", "non-scalar", "result-escapes", "no-reduction-sink", "operator-outside-algebra", "disabled"];
+}
+
+pub function render(sites: Site[]): string {
+  return render_kind("typed semantic fusion", reasons(), sites);
+}
+
+pub function storage_reasons(): string[] {
+  return ["guarded-reuse", "reuse-disabled", "shape-unsupported", "borrow-linked-result", "receiver-not-consumed-param", "receiver-still-live", "receiver-supplied", "element-fn-unresolved", "element-fn-captures", "element-fn-effectful", "aliased-arguments"];
+}
+
+pub function kernel_reasons(): string[] {
+  return ["scale-kernel", "disabled", "layout-unknown", "layout-strided", "layout-row-major", "element-fn-unresolved", "element-fn-captures", "element-not-literal-scale", "constructor-unavailable", "builtin-shadowed", "unsupported-operation", "unsupported-element-type"];
+}
+
+pub function render_kind(kind: string, tags: string[], sites: Site[]): string {
+  let counts: i32[] = [];
+  for tag in tags {
+    counts = counts.append(0);
+  }
+  let out: string = "array report: primary Fern compiler, " + kind + "\n";
+  for site in sites {
+    out = out + site.owner + ": " + site.plan + "\n  stage=" + site.stage + " reason=" + tags[site.reason] + " storage=" + site.storage + "\n";
+    counts = counts.with(site.reason, counts[site.reason] + 1);
+  }
+  out = out + kind + " decisions: " + util.i32_to_string(sites.len()) + "\n";
+  let i: i32 = 0;
+  while (i < tags.len()) {
+    out = out + "  " + tags[i] + " " + util.i32_to_string(counts[i]) + "\n";
+    i = i + 1;
+  }
+  return out;
+}

@@ -3755,17 +3755,6 @@ function print_import(im: parser.Import): string {
   return "import " + quote_string(im.path) + ";\n";
 }
 
-// decl_sep is the separator before a top-level declaration: native's formatter
-// blank-separates every one of them unconditionally, and emits nothing before
-// the first (#6762). Imports are the exception — they cluster with no blank
-// between them — so they do not go through this.
-function decl_sep(out: string): string {
-  if (out.len() == 0) {
-    return "";
-  }
-  return "\n";
-}
-
 // print_module prints a compile-path parse, so its type variables go back to
 // the names they were written as; `-fmt`'s verbatim parse never respells them.
 pub function print_module(mod: parser.Module): string {
