@@ -628,7 +628,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 322) {  // scale_f64
     // Flag1 is the physical planner's sole-owned-buffer form. It skips
     // allocation and uses the same pointer for reads and writes.
-    // operand stack [xs, k bits] -> the data pointer of a fresh f64
+    // operand stack [xs, k bits] -> the data pointer of an f64
     // array of xs's length whose element i is xs[i] * k.
     //
     // NEON (§3.4 step 3): fmul over a .2d pair, with the scalar loop as
@@ -649,7 +649,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // adding to it: d1 IS v1's low half, so one instruction serves the
     // vector body and the tail both.
     //
-    // __fern_arr_box(n) writes the rc header and len = n and clobbers
+    // Flag0 allocates with __fern_arr_box(n), which writes the rc header
+    // and len = n and clobbers
     // only x0-x2; this backend's arrays keep len at [arr] and element i
     // at [arr + (i+1)*8], which is why the cursor is biased by one before
     // it is scaled. Base-register FP accesses only: the address is formed
