@@ -112,7 +112,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read lib3: %v", err)
 	}
-	keep := "pub function m3_keep(xs: i32[]): i32 { return xs.len(); }\n"
+	keep := "@noinline pub function m3_keep(xs: i32[]): i32 { return xs.len(); }\n"
 	if err := os.WriteFile(filepath.Join(proj, "lib3.fern"), append(b3, keep...), 0o644); err != nil {
 		t.Fatalf("write lib3: %v", err)
 	}
