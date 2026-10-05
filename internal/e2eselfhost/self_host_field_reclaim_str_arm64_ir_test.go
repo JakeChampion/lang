@@ -6,10 +6,8 @@ import (
 
 // TestSelfHostFieldReclaimStrIRArm64 is the arm64 port of the #4355
 // replaced-STRING-field reclaim (x86 sibling:
-// TestSelfHostFieldReclaimStrIRX86_64): the widened
-// emit_arm64_field_reclaim_one body frees a replaced string field via the
-// rc-aware __fern_str_free under the same cow + snap guards. Lighter churn
-// under qemu.
+// TestSelfHostFieldReclaimStrIRX86_64): a replaced string field is freed
+// exactly once. Lighter churn under qemu.
 func TestSelfHostFieldReclaimStrIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

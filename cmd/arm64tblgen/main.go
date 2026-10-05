@@ -4,8 +4,7 @@
 // Two kinds of block are rewritten in place in
 // examples/self_host/arm64_native.fern: one per Advanced SIMD class, and the
 // scalar vocabulary — the family lookup and the index constants the
-// dispatch compares it against, a predicate per family, the base-word
-// lookups the encoders read, and arm64_gas_known, the allow-list the
+// dispatch compares it against, the base-word lookups the encoders read, and arm64_gas_known, the allow-list the
 // program loop consults. The staleness test fails if the committed output
 // stops matching the table.
 //
@@ -64,9 +63,6 @@ const (
 	scalarEnd   = "// END GENERATED ARM64 SCALAR VOCABULARY"
 )
 
-// predicateName is the Fern predicate a family generates.
-func predicateName(f arm64tbl.Family) string { return "arm64_gas_is_" + f.Name }
-
 // familyID is the Fern constant naming a family's index in the table.
 func familyID(f arm64tbl.Family) string { return "arm64_fam_" + f.Name }
 
@@ -97,7 +93,7 @@ func genFamily(b *strings.Builder) {
 	sort.Ints(lens)
 	b.WriteString("// arm64_gas_family is the index in the table of the family a mnemonic\n")
 	b.WriteString("// belongs to, or -1: length first, then the leading bytes, then the\n")
-	b.WriteString("// spellings left. The predicates below and arm64_gas_known read it.\n")
+	b.WriteString("// spellings left. The dispatch and arm64_gas_known read it.\n")
 	b.WriteString("function arm64_gas_family(mnem: string): i32 {\n    let n: i32 = mnem.len();\n")
 	for _, n := range lens {
 		fmt.Fprintf(b, "    if (n == %d) { return arm64_gas_family_len%d(mnem); }\n", n, n)
@@ -159,8 +155,8 @@ func genFamilyGroup(b *strings.Builder, name string, depth int, group []spelling
 	}
 }
 
-// genScalar renders the by-name vocabulary: an index constant and a
-// predicate per family, the family lookup they read, the base-word lookup
+// genScalar renders the by-name vocabulary: an index constant per family,
+// the family lookup the dispatch compares them against, the base-word lookup
 // for the families whose encoders read one, and arm64_gas_known over all
 // of them plus the pattern-matched and table-dispatched rest.
 func genScalar() string {
@@ -170,8 +166,6 @@ func genScalar() string {
 	}
 	genFamily(&b)
 	for _, f := range arm64tbl.Scalar {
-		fmt.Fprintf(&b, "// %s: %s.\n", predicateName(f), f.Doc)
-		fmt.Fprintf(&b, "function %s(mnem: string): boolean { return arm64_gas_family(mnem) == %s(); }\n", predicateName(f), familyID(f))
 		if f.Base == "" {
 			continue
 		}

@@ -11,10 +11,10 @@ import (
 
 // closureCallsClosureIRCases exercise a local closure whose body CALLS another
 // local, capture-free closure (`let add = fn(a){…}; let twice = fn(a){
-// add(add(a)) }`). `subst_fcall_expr` has to rewrite the hoisted `add`'s call
+// add(add(a)) }`). `subst_fcall_stmts` has to rewrite the hoisted `add`'s call
 // sites that sit INSIDE `twice`'s body; otherwise `add` stays referenced, its
 // lift declines, and the whole module bails to the
-// AST emitter. Now `subst_fcall_expr` recurses into nested lambda bodies (for a
+// AST emitter. Now `subst_fcall_stmts` recurses into nested lambda bodies (for a
 // capture-free hoist, no capture args to inject), and each lift round extends
 // the global-fn set with the names hoisted so far — so a sibling lambda calling
 // an already-hoisted `__lam_N` sees it as a global, not a capture it can't type.

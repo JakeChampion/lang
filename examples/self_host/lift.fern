@@ -919,7 +919,7 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
   if (util.index_of_str(assigns, fname) >= 0) {
     return ClosureLift { body: body, acc: acc, changed: false };
   }
-  // The name must denote ONE binding in this body (#7253). subst_fcall_expr
+  // The name must denote ONE binding in this body (#7253). subst_fcall_stmts
   // rewrites every `fname(…)` callee it walks past, and it recurses into
   // nested if / while / for / match bodies with no notion of scope — so a
   // nested `let fname = <another lambda>` has its OWN calls rewritten to THIS
@@ -2108,9 +2108,7 @@ function fd_bound_names(fd: parser.FuncDecl): string[] {
 }
 
 // lift_callee_param_is_fn reports whether free function / method `callee`'s
-// param `idx` is fn-typed (coarse type_name "fn"). The lift-pass mirror of
-// asmcore.callee_param_is_fn, reading the module
-// funcs directly.
+// param `idx` is fn-typed (coarse type_name "fn"), reading the module funcs.
 // lift_binding_param_is_fn is lift_callee_param_is_fn for a callee that is a
 // BINDING of this function rather than a module function: a nested local
 // function (`let helper = <lambda>`, #6341), a fn-typed parameter, a local

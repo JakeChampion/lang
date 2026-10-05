@@ -540,14 +540,13 @@ pub function emit_shape_lits_from(s: EmitState, from: i32): EmitState {
 // `.weak` DEFINITIONS from a concatenated unit stream, keeping the first of
 // each.
 //
-// A per-module unit emits four kinds of symbol that are one-per-PROGRAM but that
+// A per-module unit emits two kinds of symbol that are one-per-PROGRAM but that
 // any unit needing them emits for itself, each marked `.weak` so the linker
 // merges the copies:
 //
-//   __fern_shp_<T>                     interned struct/enum shape (asmcore.shape_sym)
-//   __fn___struct_drop_<T>             per-type deep struct drop (asm_ir.fern)
-//   __fn___struct_arr_elems_drop_<T>   its element-walking sibling
-//   __fn___field_reclaim_<T>
+//   __fern_shp_<T>      interned struct/enum shape (asmcore.shape_sym)
+//   __fn_<name>         a body the typed lowering generated, such as
+//                       __sem_drop_<T> (asm_ir.emit_named_bodies)
 //
 // The weak merge only happens when each unit is its own object file — the
 // batched per-module build. Concatenating units into a single assembly stream
@@ -557,17 +556,9 @@ pub function emit_shape_lits_from(s: EmitState, from: i32): EmitState {
 // REFERENCES one definition to bind to, which is exactly the address the weak
 // merge would have produced.
 //
-// This used to special-case `__fern_shp_` alone and drop exactly ONE following
-// line, because a shape definition is the two-line pair `.weak SYM` / `SYM:
-// .ascii …`. The three drop/reclaim helpers are multi-line function BODIES, so
-// they collided anyway: that is one of the two things behind the per-module
-// rescue's `nfuncs < 1500` cap below — a program whose modules share struct
-// types (three `ast__` types across the stage-2 compiler's units) hit
-// `symbol __fn___struct_drop_ast__ParamDecl is already defined`, which reads
-// like a memory limit and is not one. (The cap's OTHER reason IS memory, but for
-// a different program: see the bound's own comment.)
-//
-// So skip the whole definition, whatever its length. After a duplicate
+// A shape definition is the two-line pair `.weak SYM` / `SYM: .ascii …`, but a
+// generated body is a multi-line function, so skip the whole definition,
+// whatever its length. After a duplicate
 // `.weak SYM` comes the `SYM:` line, then the body: INSTRUCTIONS (indented, and
 // never starting with `.`) and `.L…:` local labels. Anything else ends the skip.
 //
@@ -3918,35 +3909,10 @@ pub function rt_src_create_dir_all(t: string): string {
   return "function __fern_create_dir_all(path: string): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = 0; let j: i32 = 1; while (j < plen) { if (path[j] == 47) { if (path[j - 1] != 47) { __raw_store8(pathz, j, 0); rc = " + mk + "; __raw_store8(pathz, j, 47); } } j = j + 1; } rc = " + mk + "; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { if (rc != 0 - 17) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } } return Ok(()); }";
 }
 
-// rt_src_create_dir backs `create_dir(path, mode)` (#8883, syscall-leaf) →
-// Result[void, IoError]. NUL-terminate the path, mkdirat(AT_FDCWD, path, mode)
-// and report the errno as it came: EEXIST is an error here, not the silent
-// success create_dir_all folds it into, because `mkdir(1)` is entirely about
-// that distinction. The kernel masks `mode` with the process umask exactly as
-// POSIX says; a caller that wants the mode verbatim clears the umask around
-// the call. Same body on every native target; only the mkdirat number and
-// AT_FDCWD come from `t`.
 // rt_src_chdir backs `chdir(path)` (#9090, syscall-leaf) → Result[void,
 // IoError]. chdir(2) — the move `getcwd` only ever reported. ENOENT, ENOTDIR
 // and EACCES all reach the caller rather than being folded away; `env -C` has
 // to name which one it was.
-// needs_any reports whether `s` carries ANY of `names` as a need.
-//
-// The runtime-bundle gates each ask that of two to four dozen names. Spelled
-// as one `||` chain per gate every name is a branch of its own, which is most
-// of what those functions score on the complexity ratchet; asked of a list it
-// is one loop.
-pub function needs_any(s: EmitState, names: string[]): boolean {
-  let i: i32 = 0;
-  while (i < names.len()) {
-    if (s.has_need(names[i])) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
 pub function rt_src_chdir(t: string): string {
   return "function __fern_chdir(path: string): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = __syscall3(" + sysno(t, "chdir") + ", pathz as i64, 0, 0) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
 }
@@ -4032,6 +3998,14 @@ pub function rt_src_signal_disposition_read(t: string): string {
   return "function __fern_signal_disposition(sig: i32): i32 { let act: usize = __raw_scratch(32); __store_i64(act, 0 as i64); __store_i64(__raw_addr(act, 8), 0 as i64); __store_i64(__raw_addr(act, 16), 0 as i64); __store_i64(__raw_addr(act, 24), 0 as i64); let rc: i32 = __syscall4(" + sysno(t, "sigaction") + ", sig as i64, 0, act as i64, 8) as i32; if (rc < 0) { return rc; } let h: i64 = __load_i64(act); if (h == (0 as i64)) { return 0; } if (h == (1 as i64)) { return 1; } return 2; }";
 }
 
+// rt_src_create_dir backs `create_dir(path, mode)` (#8883, syscall-leaf) →
+// Result[void, IoError]. NUL-terminate the path, mkdirat(AT_FDCWD, path, mode)
+// and report the errno as it came: EEXIST is an error here, not the silent
+// success create_dir_all folds it into, because `mkdir(1)` is entirely about
+// that distinction. The kernel masks `mode` with the process umask exactly as
+// POSIX says; a caller that wants the mode verbatim clears the umask around
+// the call. Same body on every native target; only the mkdirat number and
+// AT_FDCWD come from `t`.
 pub function rt_src_create_dir(t: string): string {
   return "function __fern_create_dir(path: string, mode: i32): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = __syscall3(" + sysno(t, "mkdirat") + ", " + at_fdcwd(t) + ", pathz as i64, mode as i64) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
 }
@@ -5665,36 +5639,6 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
   return ty_unknown();
 }
 
-pub function is_enum_variant(name: string, s: EmitState): boolean {
-  let di: i32 = 0;
-  while (di < s.struct_decls.decls.len()) {
-    if (s.struct_decls.decls[di].name == name) {
-      let sd: parser.StructDecl = s.struct_decls.decls[di];
-      let fi: i32 = 0;
-      while (fi < sd.fields.len()) {
-        if (sd.fields[fi].name == "__ev") {
-          return true;
-        }
-        fi = fi + 1;
-      }
-      return false;
-    }
-    di = di + 1;
-  }
-  return false;
-}
-
-pub function is_unit_variant(name: string, s: EmitState): boolean {
-  let di: i32 = 0;
-  while (di < s.struct_decls.decls.len()) {
-    if (s.struct_decls.decls[di].name == name) {
-      return s.struct_decls.decls[di].fields.len() == 0;
-    }
-    di = di + 1;
-  }
-  return false;
-}
-
 pub function is_struct_decl_name(name: string, s: EmitState): boolean {
   let di: i32 = 0;
   while (di < s.struct_decls.decls.len()) {
@@ -5712,7 +5656,7 @@ pub function is_struct_decl_name(name: string, s: EmitState): boolean {
 // boxes (docs/DYN-TRAITS.md §4.2.3). A primitive has no runtime shape pointer,
 // so a `dyn` over it is heap-boxed at coercion; the dispatch chain matches the
 // box's offset-0 shape (the interned primitive type name) and unboxes. Distinct
-// from is_struct_decl_name (structs) and is_enum_recv (enums); an array
+// from is_struct_decl_name (structs); an array
 // receiver (recv_is_array) is excluded.
 pub function is_prim_recv_name(name: string, s: EmitState): boolean {
   if (recv_is_array(name)) {
@@ -5733,29 +5677,13 @@ pub function is_prim_recv_name(name: string, s: EmitState): boolean {
   return false;
 }
 
-pub function is_enum_recv(name: string, s: EmitState): boolean {
-  if (is_struct_decl_name(name, s)) {
-    return false;
-  }
-  if (is_int_tag(ty_from_name(name))) {
-    return false;
-  }
-  if (name == "string" || name == "bool" || name == "boolean") {
-    return false;
-  }
-  if (name == "f64" || name == "f32" || name == "float") {
-    return false;
-  }
-  return true;
-}
-
 // recv_is_array reports whether a method receiver type spelling is an ARRAY
 // (`T[]`, `i32[]`, …). Such a method (e.g. std/json's element-poly
 // `(xs: T[]) to_json[T: Json]()`) is NOT a concrete struct/enum dispatch
 // candidate — a value's runtime shape pointer never names an array method —
 // so the runtime shape-dispatch in the AST backends had to skip it. Without this
 // the array `to_json`, whose base receiver name `T` (a type parameter) passes
-// is_enum_recv's permissive default, would be picked as the enum fallback for
+// a permissive enum-receiver test, would be picked as the enum fallback for
 // EVERY `.to_json()` call and corrupt non-array receivers (#2766). Distinct
 // from a generic struct receiver like `Box[T]`, which ends in `]` but not `[]`.
 pub function recv_is_array(rt: string): boolean {
@@ -5764,33 +5692,6 @@ pub function recv_is_array(rt: string): boolean {
     return false;
   }
   return slice_unchecked(rt, n - 2, n) == "[]";
-}
-
-// find_array_method_func returns the exact in-scope name of the std/array
-// auto-discovered helper backing `a.<field>()` — `__method_Array_<field>` when
-// the program imports std/array as a single file, or the `<mod>__`-mangled name
-// the bundler produced (which ends in the bare convention name) — or "" when no
-// such function is in scope (then `a.<field>()` is a genuine unknown method).
-// Only free functions (no receiver) qualify; the `__method_Array_` suffix is
-// specific enough that no other decl collides. Shared by both asm backends so
-// the array-method-syntax dispatch can't drift between them.
-pub function find_array_method_func(field: string, s: EmitState): string {
-  let target: string = "__method_Array_" + field;
-  let tn: i32 = target.len();
-  let i: i32 = 0;
-  while (i < s.funcs.len()) {
-    let nm: string = s.funcs[i].name;
-    if (s.funcs[i].receiver_type.len() == 0) {
-      if (nm == target) {
-        return nm;
-      }
-      if (nm.len() > tn && slice_unchecked(nm, nm.len() - tn, nm.len()) == target) {
-        return nm;
-      }
-    }
-    i = i + 1;
-  }
-  return "";
 }
 
 // field_type_tag_in is the type of `field` of the declared struct
@@ -5985,10 +5886,6 @@ pub function ty_array_i64(): Ty {
 
 pub function ty_array_string(): Ty {
   return TyArrayString { tag: 0 };
-}
-
-pub function ty_fn_any(): Ty {
-  return TyFnAny { tag: 0 };
 }
 
 pub function ty_map_any(): Ty {
@@ -6192,42 +6089,6 @@ pub function is_int_array_tag(t: Ty): boolean {
   return false;
 }
 
-pub function is_unsigned_tag(t: Ty): boolean {
-  match (t) {
-    TyU32(_) => {
-      return true;
-    },
-    TyU64(_) => {
-      return true;
-    },
-    TyUsize(_) => {
-      return true;
-    },
-    TyU8(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-pub function is_unsigned_int_array_tag(t: Ty): boolean {
-  match (t) {
-    TyArrayU32(_) => {
-      return true;
-    },
-    TyArrayU64(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
 // ty_is_array_like reports whether t is any array type. All arrays now
 // carry the Perceus rc header at [data-8] (see __fern_arr_box in the
 // backends), so an alias of one is a reference-creation site that must
@@ -6251,37 +6112,6 @@ pub function ty_is_array_like(t: Ty): boolean {
     },
     TyArrayString(_) => {
       return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-// needs_rc_inc_on_alias reports whether binding/passing `e` creates a
-// new reference to an rc-tracked heap value that must be retained
-// (the Perceus inc site). Ported from the native compiler's
-// needsRcIncOnAlias (internal/ir/ir.go), scoped to arrays for Phase 1d
-// — strings / structs / enums / closures / tuples join in Phase 1e.
-// Fires for a READ of an array-typed value that already has an owner:
-//   - an Ident (let y = x),
-//   - a struct field (let y = h.items),
-//   - an index load (let y = m[i], m an array of arrays).
-// A fresh array literal or a call result is already uniquely owned at
-// rc=1 and is NOT re-incremented. A spurious inc on a mis-inferred
-// non-array is harmless — the rc-inc helper's null / low-address /
-// sentinel guards short-circuit — so this is robust to inference gaps.
-pub function needs_rc_inc_on_alias(e: ast.Expr, s: EmitState): boolean {
-  match (e) {
-    ast.ExprIdent(id) => {
-      return ty_is_array_like(s.local_type_of(id.name));
-    },
-    ast.ExprFieldAccess(_) => {
-      return ty_is_array_like(infer_expr_type(e, s));
-    },
-    ast.ExprIndex(_) => {
-      return ty_is_array_like(infer_expr_type(e, s));
     },
     _ => {
       return false;
@@ -6428,54 +6258,6 @@ pub function ty_is_u8(t: Ty): boolean {
   return false;
 }
 
-pub function ty_is_u32(t: Ty): boolean {
-  match (t) {
-    TyU32(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-pub function ty_is_u64(t: Ty): boolean {
-  match (t) {
-    TyU64(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-pub function ty_is_i64(t: Ty): boolean {
-  match (t) {
-    TyI64(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-pub function ty_is_usize(t: Ty): boolean {
-  match (t) {
-    TyUsize(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
 pub function ty_is_bool(t: Ty): boolean {
   match (t) {
     TyBool(_) => {
@@ -6503,30 +6285,6 @@ pub function ty_is_string(t: Ty): boolean {
 pub function ty_is_f64(t: Ty): boolean {
   match (t) {
     TyF64(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-pub function ty_is_struct(t: Ty): boolean {
-  match (t) {
-    TyStruct(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-pub function ty_is_tuple(t: Ty): boolean {
-  match (t) {
-    TyTuple(_) => {
       return true;
     },
     _ => {
@@ -6862,36 +6620,6 @@ pub function ty_eq(a: Ty, b: Ty): boolean {
   return false;
 }
 
-pub function generic_value_ty(name: string, start: i32): Ty {
-  if (name.len() <= start + 1) {
-    return ty_unknown();
-  }
-  let inner: str = slice_unchecked(name, start, name.len() - 1);
-  let i: i32 = 0;
-  while (i + 1 < inner.len()) {
-    if (inner[i] == b',' && inner[i + 1] == b' ') {
-      return ty_from_name(slice_unchecked(inner, i + 2, inner.len()));
-    }
-    i = i + 1;
-  }
-  return ty_unknown();
-}
-
-pub function generic_key_is_i32(name: string, start: i32): boolean {
-  if (name.len() <= start + 1) {
-    return false;
-  }
-  let inner: str = slice_unchecked(name, start, name.len() - 1);
-  let i: i32 = 0;
-  while (i + 1 < inner.len()) {
-    if (inner[i] == b',' && inner[i + 1] == b' ') {
-      return ty_is_i32(ty_from_name(slice_unchecked(inner, 0, i)));
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
 // ty_from_ref maps a structured TypeRef (parser.parse_type_ref) to the coarse
 // asmcore Ty, replacing ty_from_name's hand-rolled byte scan (SH-021 slice 2 —
 // docs/SELF-HOST-AUDIT.md T2). It is byte-identical to the former scan across the
@@ -6938,7 +6666,7 @@ pub function ty_from_ref(t: parser.TypeRef): Ty {
   if (t.args.len() > 0) {
     // Generic. Recognised constructors carry their key/value/inner type;
     // MapIter[V] / Map[V] / Result[T] with only ONE arg (no comma in the
-    // old scan) degrade exactly as generic_value_ty / split_tuple_ret did.
+    // old scan) degrade.
     if (t.base == "MapIter") {
       if (t.args.len() >= 2) {
         return ty_mapiter(ty_from_ref(t.args[1]));
@@ -7062,58 +6790,6 @@ pub function tuple_ret_tag_at(tt: string, idx: i32): Ty {
   }
   if (idx < t.args.len()) {
     return ty_from_ref(t.args[idx]);
-  }
-  return ty_i32();
-}
-
-// The tag to bind for the idx-th name of a `let (a, b, …) = init`
-// destructure, for any arity. A tuple literal reads element idx
-// directly; a tuple-returning free function / method splits its
-// declared return type at idx.
-pub function tuple_destructure_tag_at(init: ast.Expr, idx: i32, s: EmitState): Ty {
-  match (init) {
-    ast.ExprTuple(t) => {
-      if (idx < t.elements.len()) {
-        return infer_expr_type(t.elements[idx], s);
-      }
-    },
-    ast.ExprCall(c) => {
-      match (c.callee) {
-        ast.ExprIdent(id) => {
-          let fi: i32 = 0;
-          while (fi < s.funcs.len()) {
-            if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
-              return tuple_ret_tag_at(s.funcs[fi].ret_type, idx);
-            }
-            fi = fi + 1;
-          }
-        },
-        ast.ExprFieldAccess(fa) => {
-          // The builtin map `without` returns `(Map, bool)`: bind
-          // element 0 to the receiver's own map tag so the resulting
-          // map dispatches its methods correctly (rather than
-          // mis-mangling as `__fn_i32__<method>`); the bool is i32.
-          let rcv: Ty = infer_expr_type(fa.obj, s);
-          if (fa.field == "without" && is_map(rcv)) {
-            if (idx == 0) {
-              return rcv;
-            }
-            return ty_i32();
-          }
-          if (!ty_is_unknown(rcv)) {
-            let mfi: i32 = 0;
-            while (mfi < s.funcs.len()) {
-              if (s.funcs[mfi].name == fa.field && ty_eq(struct_local_tag(s.funcs[mfi].receiver_type, s), rcv)) {
-                return tuple_ret_tag_at(s.funcs[mfi].ret_type, idx);
-              }
-              mfi = mfi + 1;
-            }
-          }
-        },
-        _ => {}
-      }
-    },
-    _ => {}
   }
   return ty_i32();
 }
@@ -8851,49 +8527,6 @@ pub function escape_for_ascii(s: string): string {
     i = i + 1;
   }
   return string_from_bytes_unchecked(out);
-}
-
-pub function is_value_fn_name(s: EmitState, name: string): boolean {
-  let fi: i32 = 0;
-  while (fi < s.funcs.len()) {
-    if (s.funcs[fi].name == name && s.funcs[fi].receiver_type.len() == 0) {
-      return true;
-    }
-    fi = fi + 1;
-  }
-  return false;
-}
-
-pub function callee_param_is_fn(s: EmitState, name: string, idx: i32): boolean {
-  // Match receiver methods as well as free functions so
-  // `f.bench("…", n, my_workload)` boxes `my_workload` the same way
-  // a free-fn call does. See asm.fern.
-  let fi: i32 = 0;
-  while (fi < s.funcs.len()) {
-    if (s.funcs[fi].name == name) {
-      if (idx < s.funcs[fi].params.len()
-        && s.funcs[fi].params[idx].type_name == "fn") {
-        return true;
-      }
-    }
-    fi = fi + 1;
-  }
-  return false;
-}
-
-pub function arg_fn_value_name(arg: ast.Expr, callee: string, idx: i32, s: EmitState): string {
-  match (arg) {
-    ast.ExprIdent(id) => {
-      if (callee_param_is_fn(s, callee, idx) && is_value_fn_name(s, id.name)) {
-        return id.name;
-      }
-      return "";
-    },
-    _ => {
-      return "";
-    }
-  }
-  return "";
 }
 
 pub function has_main(mod: parser.Module): boolean {
@@ -10751,9 +10384,6 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_str_arr_free",
     // arr-of-arr reclaim (#4355 slice 9): the exit sweep of a module with a
     // fresh arr-of-arr local references these; the entry owns the bodies.
-    // __fern_arrarr_free is reached from a second direction too — every
-    // __struct_drop_/__field_reclaim_ release of a struct/enum-array field
-    // calls it, and those bodies are emitted per-unit.
     "__fn___fern_arrarr_free", "__fn___fern_strarrarr_free", "__fn___fern_optarrarr_free",
     // compact base copy (#4650): a LIBRARY module doing `T { ...base, f: v }`
     // on a struct_copy_eligible T emits `call __fn___fern_struct_copy`; the
@@ -10832,213 +10462,6 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
 // locals + re-passed — the RC-miscount blocker fixed in step 1). The bundle is a
 // SINGLE param rather than 23 individual params so flat's arm64 stack frame stays
 // within `stur`'s ±256 offset range (23 params overflowed it).
-
-// ---- RC emission directives (#7736) -----------------------------------------
-//
-// The three IR backends each hand-wrote the field walk inside
-// `__struct_drop_<T>`: which arm a field takes, in what priority, and which
-// helper releases it. That decision is backend-INDEPENDENT — it reads only the
-// struct decls, the shared `irtables` predicates and the whole-program need set
-// — while only the instruction selection differs. Writing it three times is
-// what made every RC slice a three-way port and every divergence silent, which
-// is the drift `RC-PERCEUS-SELF-HOST-PORT.md` §1b names as the lever.
-//
-// So the decision moves here and the backends keep only the selection: each
-// walks `struct_drop_field_ops` and emits its own instructions per directive.
-//
-// A field yields one or two directives, in emission order:
-//
-//   elems_drop_struct <E>  pre-walk a struct-array field's elements' OWN rc
-//                          fields, before the boxes below are freed
-//   elems_drop_enum   <E>  the enum-array sibling
-//   box_walk_dec           unique-gate the buffer, dec each element box, dec
-//                          the buffer
-//   deep_struct_drop  <T>  unique-gate the inner box and release ITS rc fields
-//   str_free               rc-aware string-box release
-//   str_arr_free           deep string[] release (elements + buffer at rc==1)
-//   arr_dec                shallow rc-guarded box/buffer dec
-//
-// `idx` is the field index; a backend derives its own slot offset from it,
-// since the register backends and wasm lay a box out differently.
-//
-// All three backends walk this list. The `string[]` admissions are required
-// on wasm too: a functional-update base copy hands the new box every array
-// field pointer with no retain, so an ungated dec there frees a buffer the base
-// still owns (#8119, the compiler's own FnSigs).
-// `cow` and `uniq` say what a field whose OLD and NEW values are the same
-// pointer means. `cow` (a plain carried copy) skips the release: the base copy
-// took no count for it. `uniq` (a nested struct / enum field, #6605) releases
-// it — the base copy DID take an `__fern_rc_inc`, paid to the new box's future
-// drop, so the old box's own claim dies here — UNLESS the field is uniquely
-// owned, which means no such inc was taken and this is the only reference
-// (#8198: a callee reused the field's box in place and returned it, so old and
-// new coincide without a second claim; releasing there frees a box the new
-// binding names).
-pub struct RcOp { kind: string, idx: i32, ty: string, cow: boolean, uniq: boolean }
-
-// struct_drop_field_ops returns the ordered field-release directives for
-// `__struct_drop_<sty>`. Read-only in `s`: it consults the need set for the
-// admission gates, and leaves issuing the corresponding `need()` to the caller
-// that emits the directive.
-pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
-  let ops: RcOp[] = [];
-  let n: i32 = irtables.decl_field_count(s.struct_decls, sty);
-  let k: i32 = 0;
-  while (k < n) {
-    let fdt: string = irtables.decl_field_type_at(s.struct_decls, sty, k);
-    let k_scalar: boolean = irtables.is_leaksafe_array_field(fdt);
-    let k_box: boolean = !k_scalar && (irtables.is_struct_array_field_type(s.struct_decls, fdt) || irtables.is_enum_array_field_type(s.struct_decls, fdt)
-      || irtables.is_row_array_field_type(s.struct_decls, fdt));
-    let k_struct: boolean = !k_scalar && !k_box && irtables.decl_is_struct(s.struct_decls, fdt);
-    // The string / string[] / closure arms are gated on the whole-program
-    // read scan: the construction-side retain only fires for admitted
-    // types, so a non-admitted type's fields are uncounted aliases this
-    // release would dangle. A non-admitted type keeps the sound leak.
-    let k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string" && s.has_need("strfldok:" + sty);
-    let k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str && irtables.decl_is_enum(s.struct_decls, fdt);
-    let k_str_arr: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
-    let k_clo: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && fdt == "fn" && s.has_need("strfldok:clo:" + sty);
-    // The buffer half of a string[] the element scan refused: a read hazard
-    // costs the element walk, not the buffer this box still owes back.
-    let k_str_arr_shallow: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && !k_clo && fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty);
-    if (k_box) {
-      if (irtables.is_struct_array_field_type(s.struct_decls, fdt)) {
-        let elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-        if (irtables.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
-          ops = ops.append(RcOp { kind: "elems_drop_struct", idx: k, ty: elem_ty + "", cow: false, uniq: false });
-        }
-      } else if (irtables.is_enum_array_field_type(s.struct_decls, fdt)) {
-        let eaty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-        if (irtables.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
-          ops = ops.append(RcOp { kind: "elems_drop_enum", idx: k, ty: eaty + "", cow: false, uniq: false });
-        }
-      }
-      ops = ops.append(RcOp { kind: "box_walk_dec", idx: k, ty: "", cow: false, uniq: false });
-    } else if (k_struct && irtables.nested_field_deep_drop_ok(s.struct_decls, fdt)) {
-      ops = ops.append(RcOp { kind: "deep_struct_drop", idx: k, ty: fdt, cow: false, uniq: false });
-      ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
-    } else if (k_str) {
-      ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "", cow: false, uniq: false });
-    } else if (k_str_arr) {
-      ops = ops.append(RcOp { kind: "str_arr_free", idx: k, ty: "", cow: false, uniq: false });
-      // A DIRECT enum field: its live variant's rc payloads (__enum_drop_,
-      // rc==1-gated on the enum box), then the box. This helper is the one
-      // releaser of that payload on every drop path (#8692), as
-      // __field_reclaim_'s deep_enum_dec is on the rebind path.
-    } else if (k_enum && irtables.enum_arr_elems_walk_ok(s.struct_decls, fdt)) {
-      ops = ops.append(RcOp { kind: "deep_enum_drop", idx: k, ty: fdt, cow: false, uniq: false });
-      ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
-    } else if (k_scalar || k_struct || k_enum || k_clo || k_str_arr_shallow) {
-      ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
-    }
-    k = k + 1;
-  }
-  return ops;
-}
-
-// field_reclaim_field_ops returns the ordered per-field release directives for
-// `__field_reclaim_<sty>`, the rebind-side counterpart of struct_drop_field_ops.
-// One directive per PARTICIPATING field: `kind` is the terminal release and says
-// which pre-walk precedes it (`arrarr_free` walks struct elements,
-// `arrarr_free_enum` enum ones), `ty` is that pre-walk's element type (empty
-// when there is none), and `cow` says whether the new-vs-old compare guards the
-// release.
-//
-// `cow` is false exactly for a carried nested struct / enum field. Those release
-// without the compare, so a field the callee reused in place would otherwise dec
-// the only reference to a nested box — which is why the caller emits the
-// same-box check before this list is walked at all.
-//
-// Read-only in `s`, like its sibling: the admission gates are consulted here and
-// the matching need() stays with the backend that emits the directive.
-pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
-  let ops: RcOp[] = [];
-  let n: i32 = irtables.decl_field_count(s.struct_decls, sty);
-  let k: i32 = 0;
-  while (k < n) {
-    let fdt: string = irtables.decl_field_type_at(s.struct_decls, sty, k);
-    let fr_str: boolean = fdt == "string" && s.has_need("strfldok:" + sty);
-    let fr_str_arr: boolean = fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
-    let fr_clo: boolean = fdt == "fn" && s.has_need("strfldok:clo:" + sty);
-    let fr_struct: boolean = irtables.decl_is_struct(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
-    let fr_enum: boolean = irtables.decl_is_enum(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
-    let fr_box_arr: boolean = !fr_str && !fr_str_arr && !fr_clo && !fr_struct && !fr_enum
-      && !irtables.is_leaksafe_array_field(fdt)
-      && (irtables.is_struct_array_field_type(s.struct_decls, fdt) || irtables.is_enum_array_field_type(s.struct_decls, fdt))
-      && s.has_need("strfldok:sarr:" + sty);
-    let fr_rows: boolean = irtables.is_row_array_field_type(s.struct_decls, fdt);
-    let participates: boolean = fr_str || fr_str_arr || fr_clo || fr_struct || fr_enum || fr_rows
-      || fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty)
-      || irtables.is_leaksafe_array_field(fdt)
-      || irtables.is_struct_array_field_type(s.struct_decls, fdt)
-      || irtables.is_enum_array_field_type(s.struct_decls, fdt);
-    if (participates) {
-      // The carries the base copy RETAINS take the uniq arm: a nested struct
-      // or enum, and every array kind. Pointer-equal in old and new then means
-      // two counted holders unless the field is unique, in which case no inc
-      // was taken (an in-place move, or #6653's suppressed retain) and the
-      // pointers coincide for that reason. A string or closure field is
-      // carried uncounted unless routed, so it keeps the cow compare.
-      let uniq: boolean = fr_struct || fr_enum || fr_str_arr || fr_box_arr || fr_rows
-        || irtables.is_leaksafe_array_field(fdt)
-        || fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty)
-        || irtables.is_struct_array_field_type(s.struct_decls, fdt)
-        || irtables.is_enum_array_field_type(s.struct_decls, fdt);
-      let cow: boolean = !uniq;
-      // A nested STRUCT field owns rc children of its own, and the box dec
-      // below frees only the box — so the children were stranded (#8538).
-      // `__struct_drop_<inner>` releases them, under the same rc==1 gate
-      // struct_drop_field_ops' deep_struct_drop arm uses: a SHARED inner
-      // keeps its fields for the other owner. Empty when the inner reaches
-      // nothing reclaimable, or when its graph has a cycle
-      // (nested_field_deep_drop_ok), leaving today's box-only release.
-      let deep: string = "";
-      if (fr_struct && irtables.nested_field_deep_drop_ok(s.struct_decls, fdt)) {
-        deep = fdt;
-      }
-      // The enum sibling (#8567): a direct enum field's live variant owns rc
-      // payloads the box dec alone strands, under the gate struct_drop_field_ops
-      // uses for the same field.
-      let deep_enum: string = "";
-      if (fr_enum && irtables.enum_arr_elems_walk_ok(s.struct_decls, fdt)) {
-        deep_enum = fdt;
-      }
-      if (fr_rows) {
-        ops = ops.append(RcOp { kind: "arrarr_free", idx: k, ty: "", cow: cow, uniq: uniq });
-      } else if (fr_box_arr) {
-        let pre: string = "";
-        let pre_kind: string = "arrarr_free";
-        if (irtables.is_struct_array_field_type(s.struct_decls, fdt)) {
-          let elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-          if (irtables.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
-            pre = elem_ty + "";
-          }
-        } else if (irtables.is_enum_array_field_type(s.struct_decls, fdt)) {
-          // The enum-array sibling, under the gate struct_drop_field_ops'
-          // elems_drop_enum arm uses so the two helpers agree (#8604).
-          let eaty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-          if (irtables.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
-            pre = eaty + "";
-            pre_kind = "arrarr_free_enum";
-          }
-        }
-        ops = ops.append(RcOp { kind: pre_kind, idx: k, ty: pre, cow: cow, uniq: uniq });
-      } else if (fr_str) {
-        ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "", cow: cow, uniq: uniq });
-      } else if (fr_str_arr) {
-        ops = ops.append(RcOp { kind: "str_arr_free", idx: k, ty: "", cow: cow, uniq: uniq });
-      } else if (deep.len() > 0) {
-        ops = ops.append(RcOp { kind: "deep_struct_dec", idx: k, ty: deep, cow: cow, uniq: uniq });
-      } else if (deep_enum.len() > 0) {
-        ops = ops.append(RcOp { kind: "deep_enum_dec", idx: k, ty: deep_enum, cow: cow, uniq: uniq });
-      } else {
-        ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: cow, uniq: uniq });
-      }
-    }
-    k = k + 1;
-  }
-  return ops;
-}
 
 // DbgVars is one function's `-g` record of where its source variables live
 // (#11410): `at` marks the SSA positions that bound a variable's range, which

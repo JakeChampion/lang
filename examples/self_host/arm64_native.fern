@@ -56,10 +56,6 @@ function arm64_lr(): i32 {  // x30, the link register
   return 30;
 }
 
-function arm64_xzr(): i32 {
-  return 31;
-}
-
 // ---- byte emitter ----
 
 // arm64_le32 appends a 32-bit instruction word (held in an i64),
@@ -832,14 +828,6 @@ function arm64_ge(): i32 {  // >= (signed)
 
 function arm64_lt(): i32 {  // <  (signed)
   return 11;
-}
-
-function arm64_gt(): i32 {  // >  (signed)
-  return 12;
-}
-
-function arm64_le(): i32 {  // <= (signed)
-  return 13;
 }
 
 // ---- branches ----
@@ -1784,11 +1772,6 @@ function arm64_br(buf: i32[], rn: i32): i32[] {
   return arm64_le32(buf, arm64_br_word(rn));
 }
 
-// arm64_neg emits `neg Xd, Xm` — the `sub Xd, XZR, Xm` alias.
-function arm64_neg(buf: i32[], rd: i32, rm: i32): i32[] {
-  return arm64_le32(buf, arm64_subreg_word(rd, 31, rm));
-}
-
 // arm64_tbz_word / arm64_tbnz_word encode `tbz/tbnz Xt, #bit, <rel>` —
 // test bit `bit` and branch if zero / nonzero. rel is a PC-relative byte
 // delta (÷4 -> signed imm14 at bits 18:5). The tested bit splits into b5
@@ -1966,26 +1949,6 @@ function arm64_barrier(buf: i32[], is_dsb: boolean, opt: i32): i32[] {
   return arm64_le32(buf, base | (opt & 15) as i64 << 8);
 }
 
-// arm64_cset encodes `cset Xd/Wd, <cond>` — `csinc Xd, XZR, XZR, invert(cond)`.
-// The destination width lives in the sf bit, like every other ALU form: 0x9a..
-// for X, 0x1a.. for W. It was hardcoded to the X form, so `cset w0, mi`
-// assembled as `cset x0, mi` — 73 times in one fixture, found by the
-// whole-program alignment #6062 asked for. Behaviourally invisible (cset writes
-// 0 or 1, so the top half is zero either way), which is why nothing caught it,
-// but it is the wrong instruction and the #6054 width class exactly.
-// Verified vs GNU as: cset w0,mi = 0x1a9f57e0, cset x0,ge = 0x9a9fb7e0,
-// cset w3,eq = 0x1a9f17e3.
-// (set Xd to 1 if cond holds, else 0). The condition is inverted (cond^1).
-//   0x9A800400 | (31<<16) | invcond<<12 | (31<<5) | Rd
-function arm64_cset(buf: i32[], rd: i32, cond: i32, w32: boolean): i32[] {
-  let base: i64 = 0x9a800400;
-  if (w32) {
-    base = 0x1a800400;
-  }
-  let w: i64 = base | 31 << 16 | ((cond ^ 1) & 15) as i64 << 12 | 31 << 5 | (rd & 31) as i64;
-  return arm64_le32(buf, w);
-}
-
 // ---- shifts (immediate), cmn, csel, and ----
 
 // arm64_lsl_imm / arm64_lsr_imm encode `lsl/lsr Rd, Rn, #sh` — the UBFM
@@ -2070,16 +2033,6 @@ function arm64_lsrv(buf: i32[], rd: i32, rn: i32, rm: i32, w: boolean): i32[] {
 
 function arm64_asrv(buf: i32[], rd: i32, rn: i32, rm: i32, w: boolean): i32[] {
   return arm64_rrr(buf, 0x9ac02800, rd, rn, rm, w);
-}
-
-// arm64_cmn_imm encodes `cmn Xn, #imm12` — `adds XZR, Xn, #imm12`; the
-// register form goes through arm64_rrr with base 0xab000000.
-function arm64_cmn_imm(buf: i32[], rn: i32, imm12: i32, w: boolean): i32[] {
-  let word: i64 = 0xb1000000 | (imm12 & 0xfff) as i64 << 10 | (rn & 31) as i64 << 5 | 31;
-  if (w) {
-    word = word & 0x7fffffff;
-  }
-  return arm64_le32(buf, word);
 }
 
 // arm64_condsel encodes the conditional-select family `<op> Rd, Rn, Rm,
@@ -2302,8 +2255,7 @@ function arm64_and_imm_ok(imm: i32): boolean {
 }
 
 // arm64_and_imm encodes `and Xd, Xn, #imm` / `and Wd, Wn, #imm` (logical
-// immediate). Callers must check arm64_and_imm_ok(imm) — and, for the 32-bit
-// form, arm64_logical_imm_w_ok(imm) — first.
+// immediate). Callers must check arm64_and_imm_ok(imm) first.
 //
 // The 32-bit form is base 0x12000000 with **N = 0**: a 32-bit logical immediate
 // has no 64-bit element size to select, so the N bit is not merely the sf bit
@@ -2369,76 +2321,15 @@ function arm64_logical_imm_word(base: i64, w: boolean, rd: i32, rn: i32, imm: i6
 // arm64_ands_imm encodes the flag-setting `ands Rd, Rn, #imm` (tst is the
 // Rd=XZR alias): base 0xF2000000, or 0x72000000 with N dropped for the
 // 32-bit form — the same N rule as arm64_and_imm. Callers must check
-// arm64_and_imm_ok / arm64_logical_imm_w_ok first.
+// arm64_and_imm_ok first.
 function arm64_ands_imm(buf: i32[], rd: i32, rn: i32, imm: i64, w: boolean): i32[] {
   return arm64_le32(buf, arm64_logical_imm_word(0xf2000000, w, rd, rn, imm));
-}
-
-// arm64_logical_imm_w_ok reports whether `imm` can be re-encoded as a 32-bit
-// logical immediate by dropping the N bit — i.e. it fits in 32 bits and the
-// 64-bit encoding is the single-run (N=1) shape whose immr/imms transfer
-// unchanged. immr transfers only when it is 0 (a run starting at bit 0 —
-// masks like 1, 31, 127, 255): a rotated run re-derives immr against the
-// 32-bit element size (and w4, w4, #16 is immr 28 where the 64-bit form
-// carries 60), so those are REFUSED — along with masks needing a 64-bit
-// element size or wider than 32 bits — rather than encoded on a guess:
-// silently emitting the wrong mask is the #6047 / #6054 failure mode.
-function arm64_logical_imm_w_ok(imm: i32): boolean {
-  if (imm < 0) {
-    return false;
-  }
-  return arm64_logical_imm_ok(imm as i64, true);
-}
-
-// orr's immediate form `orr Xd, Xn, #imm`: base 0xb2000000 (0x32000000 with
-// N dropped for the 32-bit form — the same N and immr-carry-over rules as
-// arm64_and_imm), same encoder + validity check as `and #imm`. Verified vs
-// GNU as: orr x4, x4, #16 = 0xb27c0084, orr w4, w4, #1 = 0x32000084.
-function arm64_orr_imm_ok(imm: i32): boolean {
-  return arm64_encode_bitmask(imm as i64).ok;
-}
-
-function arm64_orr_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[] {
-  return arm64_le32(buf, arm64_logical_imm_word(0xb2000000, w, rd, rn, imm as i64));
-}
-
-// eor's immediate form `eor Xd, Xn, #imm` (the boolean-not idiom `x ^ 1`):
-// 0xd2000000 + the logical-bitmask (N,immr,imms), same encoder + validity
-// check as `and #imm`. The register forms of and/orr/eor go through
-// arm64_logical_shift. (Verified vs llvm-mc: eor x0,x1,#1 = 0xd2400020.)
-function arm64_eor_imm_ok(imm: i32): boolean {
-  return arm64_encode_bitmask(imm as i64).ok;
-}
-
-// 32-bit form: base 0x52000000, N=0 — same rule as arm64_and_imm above.
-// Verified vs clang: eor w9,w9,#1 = 0x52000129.
-function arm64_eor_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[] {
-  return arm64_le32(buf, arm64_logical_imm_word(0xd2000000, w, rd, rn, imm as i64));
 }
 
 // ---- subs / divide / rev16 ----
 //
 // The integer-runtime ops the self-host asm_arm64 emitter uses beyond the
 // arithmetic above (verified vs llvm-mc).
-
-// subs Xd, Xn, Xm (flag-setting subtract) -> 0xEB000000.
-function arm64_subsreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
-  return arm64_le32(buf, arm64_addsub_reg_word(true, true, false, rd, rn, rm, 0, 0));
-}
-
-// subs Xd, Xn, #imm12 -> 0xF1000000 (cmp is the Rd=31 special case).
-function arm64_subsimm(buf: i32[], rd: i32, rn: i32, imm12: i32): i32[] {
-  return arm64_le32(buf, arm64_addsub_imm_word(true, true, false, rd, rn, imm12));
-}
-
-// udiv / sdiv Xd, Xn, Xm -> 0x9AC00800 / 0x9AC00C00.
-function arm64_udiv(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
-  return arm64_le32(buf, 0x9ac00800 | (rm & 31) as i64 << 16 | (rn & 31) as i64 << 5 | (rd & 31) as i64);
-}
-
-function arm64_sdiv(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
-  return arm64_le32(buf, 0x9ac00c00 | (rm & 31) as i64 << 16 | (rn & 31) as i64 << 5 | (rd & 31) as i64);
-}
 
 // The `w` forms of the divides: sf clears, as everywhere else.
 function arm64_div_w(buf: i32[], signed: boolean, rd: i32, rn: i32, rm: i32, w: boolean): i32[] {
@@ -3319,7 +3210,8 @@ function arm64_gas_vecgen_handles(mnem: string): boolean {
     || arm64_vfpcmpzero_entry(mnem) >= 0 || arm64_vshift_entry(mnem) >= 0
     || arm64_vpermute_opc(mnem) >= 0 || arm64_vpolylong_entry(mnem) >= 0
     || arm64_pairlong_entry(mnem) >= 0
-    || arm64_gas_is_shll(mnem) || arm64_gas_is_narrow(mnem) || arm64_gas_is_vecext(mnem);
+    || arm64_gas_family(mnem) == arm64_fam_shll() || arm64_gas_family(mnem) == arm64_fam_narrow()
+    || arm64_gas_family(mnem) == arm64_fam_vecext();
 }
 
 // arm64_gas_emit_narrowwide encodes the narrowing and widening shifts. Their
@@ -5521,7 +5413,7 @@ function arm64_fam_shll(): i32 {
 
 // arm64_gas_family is the index in the table of the family a mnemonic
 // belongs to, or -1: length first, then the leading bytes, then the
-// spellings left. The predicates below and arm64_gas_known read it.
+// spellings left. The dispatch and arm64_gas_known read it.
 function arm64_gas_family(mnem: string): i32 {
   let n: i32 = mnem.len();
   if (n == 1) {
@@ -6684,66 +6576,6 @@ function arm64_gas_family_len6_u(mnem: string): i32 {
   return 0 - 1;
 }
 
-// arm64_gas_is_fixed: no operands.
-function arm64_gas_is_fixed(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_fixed();
-}
-
-// arm64_gas_is_sys: an imm16 exception class.
-function arm64_gas_is_sys(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_sys();
-}
-
-// arm64_gas_is_indirect: branch to a register.
-function arm64_gas_is_indirect(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_indirect();
-}
-
-// arm64_gas_is_branch: a label.
-function arm64_gas_is_branch(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_branch();
-}
-
-// arm64_gas_is_cbranch: compare a register against zero and branch.
-function arm64_gas_is_cbranch(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_cbranch();
-}
-
-// arm64_gas_is_tbranch: test a bit and branch.
-function arm64_gas_is_tbranch(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_tbranch();
-}
-
-// arm64_gas_is_movwide: mov and the move-wide trio.
-function arm64_gas_is_movwide(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_movwide();
-}
-
-// arm64_gas_is_symaddr: PC-relative address of a symbol.
-function arm64_gas_is_symaddr(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_symaddr();
-}
-
-// arm64_gas_is_addsub: add/sub in every operand class, and the cmp/cmn aliases.
-function arm64_gas_is_addsub(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_addsub();
-}
-
-// arm64_gas_is_neg: sub from the zero register.
-function arm64_gas_is_neg(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_neg();
-}
-
-// arm64_gas_is_logical3: the logical ops with an immediate form.
-function arm64_gas_is_logical3(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_logical3();
-}
-
-// arm64_gas_is_logical2: flag-setting and negated logicals, with the tst/mvn aliases.
-function arm64_gas_is_logical2(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_logical2();
-}
-
 // arm64_logical2_base maps a mnemonic to its base word (every register field zero); -1 = not one.
 function arm64_logical2_base(mnem: string): i64 {
   match (mnem) {
@@ -6774,11 +6606,6 @@ function arm64_logical2_base(mnem: string): i64 {
   }
 }
 
-// arm64_gas_is_carry: add/sub with carry; ngc/ngcs are the Rn=XZR aliases.
-function arm64_gas_is_carry(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_carry();
-}
-
 // arm64_carry_base maps a mnemonic to its base word (every register field zero); -1 = not one.
 function arm64_carry_base(mnem: string): i64 {
   match (mnem) {
@@ -6804,11 +6631,6 @@ function arm64_carry_base(mnem: string): i64 {
       return 0 - 1;
     }
   }
-}
-
-// arm64_gas_is_mulwide: the high-half and widening multiplies, and madd.
-function arm64_gas_is_mulwide(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_mulwide();
 }
 
 // arm64_mulwide_base maps a mnemonic to its base word (every register field zero); -1 = not one.
@@ -6845,31 +6667,6 @@ function arm64_mulwide_base(mnem: string): i64 {
       return 0 - 1;
     }
   }
-}
-
-// arm64_gas_is_muldiv: mul, the divides, and msub.
-function arm64_gas_is_muldiv(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_muldiv();
-}
-
-// arm64_gas_is_bitfield: the BFM-family insert aliases.
-function arm64_gas_is_bitfield(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_bitfield();
-}
-
-// arm64_gas_is_bfx: the BFM-family extract aliases.
-function arm64_gas_is_bfx(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_bfx();
-}
-
-// arm64_gas_is_extr_ror: extract, and ror as its Rn=Rm alias or as RORV.
-function arm64_gas_is_extr_ror(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_extr_ror();
-}
-
-// arm64_gas_is_condsel: conditional select and compare, with the inverting aliases.
-function arm64_gas_is_condsel(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_condsel();
 }
 
 // arm64_condsel_base maps a mnemonic to its base word (every register field zero); -1 = not one.
@@ -6914,76 +6711,6 @@ function arm64_condsel_base(mnem: string): i64 {
   }
 }
 
-// arm64_gas_is_bitops: the one-source data-processing ops.
-function arm64_gas_is_bitops(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_bitops();
-}
-
-// arm64_gas_is_shift: shifts by immediate (BFM aliases) or by register.
-function arm64_gas_is_shift(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_shift();
-}
-
-// arm64_gas_is_extend: the sign/zero extends (BFM aliases).
-function arm64_gas_is_extend(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_extend();
-}
-
-// arm64_gas_is_ldst: the 32/64-bit and SIMD&FP single-register loads and stores.
-function arm64_gas_is_ldst(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_ldst();
-}
-
-// arm64_gas_is_ldst_narrow: the byte and halfword accesses, and the sign-extending loads.
-function arm64_gas_is_ldst_narrow(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_ldst_narrow();
-}
-
-// arm64_gas_is_unscaled: the explicit unscaled-offset 32/64-bit and SIMD&FP forms.
-function arm64_gas_is_unscaled(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_unscaled();
-}
-
-// arm64_gas_is_unscaled2: unscaled byte/halfword accesses and sign-extending loads.
-function arm64_gas_is_unscaled2(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_unscaled2();
-}
-
-// arm64_gas_is_pair: register pairs in the three addressing modes.
-function arm64_gas_is_pair(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_pair();
-}
-
-// arm64_gas_is_excl_ld: load-exclusive, plain and acquire.
-function arm64_gas_is_excl_ld(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_excl_ld();
-}
-
-// arm64_gas_is_excl_st: store-exclusive, plain and release.
-function arm64_gas_is_excl_st(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_excl_st();
-}
-
-// arm64_gas_is_acqrel: load-acquire and store-release.
-function arm64_gas_is_acqrel(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_acqrel();
-}
-
-// arm64_gas_is_barrier: the memory and instruction barriers.
-function arm64_gas_is_barrier(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_barrier();
-}
-
-// arm64_gas_is_sysreg: system-register reads and writes.
-function arm64_gas_is_sysreg(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_sysreg();
-}
-
-// arm64_gas_is_fp3: three-register scalar FP; the word is the double-precision form, single clears bit 22.
-function arm64_gas_is_fp3(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_fp3();
-}
-
 // arm64_fp3_base maps a mnemonic to its base word (every register field zero); -1 = not one.
 function arm64_fp3_base(mnem: string): i64 {
   match (mnem) {
@@ -7020,11 +6747,6 @@ function arm64_fp3_base(mnem: string): i64 {
   }
 }
 
-// arm64_gas_is_fp4: the fused multiply-adds.
-function arm64_gas_is_fp4(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_fp4();
-}
-
 // arm64_fp4_base maps a mnemonic to its base word (every register field zero); -1 = not one.
 function arm64_fp4_base(mnem: string): i64 {
   match (mnem) {
@@ -7044,21 +6766,6 @@ function arm64_fp4_base(mnem: string): i64 {
       return 0 - 1;
     }
   }
-}
-
-// arm64_gas_is_fpcond: conditional FP select and compare.
-function arm64_gas_is_fpcond(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_fpcond();
-}
-
-// arm64_gas_is_fcmp: FP compare, quiet and signalling.
-function arm64_gas_is_fcmp(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_fcmp();
-}
-
-// arm64_gas_is_funary: unary scalar FP; the word is the double-precision form.
-function arm64_gas_is_funary(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_funary();
 }
 
 // arm64_funary_d_base maps a mnemonic to its base word (every register field zero); -1 = not one.
@@ -7092,56 +6799,6 @@ function arm64_funary_d_base(mnem: string): i64 {
       return 0 - 1;
     }
   }
-}
-
-// arm64_gas_is_fcvt: precision conversion.
-function arm64_gas_is_fcvt(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_fcvt();
-}
-
-// arm64_gas_is_fcvtz: FP to integer, toward zero.
-function arm64_gas_is_fcvtz(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_fcvtz();
-}
-
-// arm64_gas_is_cvtf: integer to FP.
-function arm64_gas_is_cvtf(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_cvtf();
-}
-
-// arm64_gas_is_fmov: FP moves between register files and the FP immediate.
-function arm64_gas_is_fmov(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_fmov();
-}
-
-// arm64_gas_is_vecmov: lane moves between the vector and general register files.
-function arm64_gas_is_vecmov(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_vecmov();
-}
-
-// arm64_gas_is_movi: the vector modified immediate.
-function arm64_gas_is_movi(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_movi();
-}
-
-// arm64_gas_is_vecldst: single-structure vector loads and stores.
-function arm64_gas_is_vecldst(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_vecldst();
-}
-
-// arm64_gas_is_vecext: byte extract and table lookup.
-function arm64_gas_is_vecext(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_vecext();
-}
-
-// arm64_gas_is_narrow: the narrowing moves and shifts.
-function arm64_gas_is_narrow(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_narrow();
-}
-
-// arm64_gas_is_shll: the widening shifts; the word is the packed kind: bit 0 unsigned, bit 1 the `2` suffix, bit 2 an sxtl/uxtl alias.
-function arm64_gas_is_shll(mnem: string): boolean {
-  return arm64_gas_family(mnem) == arm64_fam_shll();
 }
 
 // arm64_gas_shll_kind maps a widening-shift mnemonic to its packed kind; -1 = not one.
@@ -7569,7 +7226,7 @@ function arm64_gas_bad_rev(mnem: string, ops: string[]): string {
 // writeback), a W status register, and W data for the b/h variants.
 function arm64_gas_bad_excl(mnem: string, ops: string[], lm: Arm64Mem): string {
   let want: i32 = 2;
-  if (arm64_gas_is_excl_st(mnem)) {
+  if (arm64_gas_family(mnem) == arm64_fam_excl_st()) {
     want = 3;
   }
   if (ops.len() != want) {
@@ -8001,7 +7658,7 @@ function arm64_gas_emit_bitops(own a: Arm64Asm, mnem: string, ops: string[]): Ar
 }
 
 function arm64_gas_emit_excl(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
-  if (arm64_gas_is_excl_st(mnem)) {
+  if (arm64_gas_family(mnem) == arm64_fam_excl_st()) {
     if (ops.len() < 3) {
       return a;
     }
@@ -8017,7 +7674,7 @@ function arm64_gas_emit_excl(own a: Arm64Asm, mnem: string, ops: string[], lm: A
   let size: i32 = arm64_gas_excl_size(mnem, ops[0]);
   let rt: i32 = arm64_gas_reg(ops[0]);
   let rn: i32 = arm64_gas_mem_at(ops, 1, lm).base;
-  if (arm64_gas_is_acqrel(mnem)) {
+  if (arm64_gas_family(mnem) == arm64_fam_acqrel()) {
     arm64_push_arr(a.code, arm64_acqrel([], size, arm64_str_starts_with(mnem, "ld"), rt, rn));
     return a;
   }

@@ -87,7 +87,7 @@ jobs:
           # could catch it never ran anywhere in CI.
           wasmtime: "true"
       - uses: ./.github/actions/selfhost-driver-cache
-      - name: build native test runners
+      - name: build the e2e test binary
         run: |
           go test -c -o "$RUNNER_TEMP/e2e-other.test" ./internal/e2e/
           go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
