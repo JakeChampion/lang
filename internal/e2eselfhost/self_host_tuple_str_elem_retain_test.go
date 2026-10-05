@@ -210,10 +210,8 @@ func TestSelfHostTupleStrElemRetainX86_64(t *testing.T) {
 // TestSelfHostTupleStrElemHazardsX86_64 — shapes the credit must REFUSE, plus the
 // one whose point is surviving at all.
 //
-// These assert the ANSWER and the underflow counter, not leak counts, and
-// deliberately so: a refused shape falls back to leak mode, which is the safe
-// direction and the same trade the array limb makes. A wrongly-GRANTED credit
-// here is a freed-then-read string, not a number.
+// The census must balance, but a wrongly-GRANTED credit here is a
+// freed-then-read string, which only the answer and the underflow counter show.
 //
 // The underflow check is the essential part. Without it every case below
 // passes against a compiler that over-releases: a doubly-released block goes back
@@ -275,11 +273,6 @@ function round(i: i32): i32 { let g: string = grab(i); return g.len() + i; }` + 
 			// entry zero at the sweep. __fern_str_free null-guards the element; the
 			// op_tuple_get that reaches it does not. A missing guard is a segfault,
 			// so this case is about surviving at all.
-			//
-			// It leaks 1600 bytes, and that floor is #7292's — a block-scoped fresh
-			// string local is swept by nothing, with or without a tuple in the block
-			// (the same program with the tuple deleted measures allocs=100 frees=0).
-			// Hence the answer-only assertion here.
 			name: "untaken_branch_null",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -290,12 +283,16 @@ function round(i: i32): i32 { let g: string = grab(i); return g.len() + i; }` + 
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := hevCompile(t, runner, driverBin, tc.src, nil)
+			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
 			progBin := buildBin(t, gcc, dir, "tupstrhaz_"+tc.name, asm)
-			_, exit := hevRun(t, runner, progBin)
+			stderr, exit := hevRun(t, runner, progBin)
 			if exit != tc.want {
-				t.Errorf("%s exited %d, want %d (99 = rc underflow: the element release "+
+				t.Fatalf("%s exited %d, want %d (99 = rc underflow: the element release "+
 					"claimed a reference the frame handed to another owner)", tc.name, exit, tc.want)
+			}
+			allocs, frees, live := parseLeakcheck(t, tc.name, stderr)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", tc.name, allocs, frees, live)
 			}
 		})
 	}

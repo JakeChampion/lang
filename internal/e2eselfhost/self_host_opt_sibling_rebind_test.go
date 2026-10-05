@@ -162,12 +162,8 @@ function main(): i32 {
 }`, 34)
 	})
 
-	t.Run("optstruct_single_bind_no_double_free", func(t *testing.T) {
-		// This one is NOT balanced and was not before: a single-bind
-		// Option[<struct-with-array>] leaks 4000 over 100 rounds, one block a round,
-		// a residue outside this change. What matters here is the direction — frees
-		// must not EXCEED allocs, which is what a wrongly-widened credit would do.
-		allocs, frees, _ := counts(t, "optstruct_single", `struct P { xs: i32[], n: i32 }
+	t.Run("optstruct_single_bind_unchanged", func(t *testing.T) {
+		balanced(t, "optstruct_single", `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
     let acc: i32 = 0;
     let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
@@ -180,10 +176,6 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`, 4)
-		if frees > allocs {
-			t.Errorf("allocs=%d frees=%d — more frees than allocs is a double free; a "+
-				"single-bind Option stays the consuming-match analysis's", allocs, frees)
-		}
 	})
 }
 

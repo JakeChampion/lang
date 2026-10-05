@@ -124,10 +124,9 @@ func fillSelfHostImports(t *testing.T, progDir string, files map[string]string) 
 
 // CompileSourceModload compiles `entrySrc` and its FULL transitive stdlib
 // closure (resolved by the real Go modload, exactly like selfHostBundleFor)
-// with the file-based driver: each resolved module is written as a flat
-// <base>.fern next to main.fern, and the loader's basename fallback
-// resolves their std/-qualified imports. Returns the emitted asm and the
-// program dir.
+// with the file-based driver. Stdlib modules retain their std/ or core/ path
+// so the loader can distinguish them from user files with the same basename.
+// Returns the emitted asm and the program dir.
 func CompileSourceModload(t *testing.T, runner []string, driverBin, entrySrc string, extraArgs ...string) (asm string, progDir string) {
 	t.Helper()
 	progDir = WriteSourceModloadProject(t, entrySrc)
@@ -135,7 +134,7 @@ func CompileSourceModload(t *testing.T, runner []string, driverBin, entrySrc str
 }
 
 // WriteSourceModloadProject lays out the program CompileSourceModload
-// compiles — main.fern, builtins.fern and the flat transitive stdlib closure —
+// compiles: main.fern, builtins.fern and the transitive stdlib closure,
 // in a fresh temp dir and returns it, for a caller that runs the driver itself
 // (one that expects a refusal, say). A program with no imports gets only the
 // entry and builtins.
@@ -163,8 +162,16 @@ func WriteSourceModloadProject(t *testing.T, entrySrc string) (progDir string) {
 			t.Fatalf("module-name collision: %q and %q both map to %q", prev, p, b)
 		}
 		seen[b] = p
-		if err := os.WriteFile(filepath.Join(progDir, b+".fern"), []byte(src), 0o644); err != nil {
-			t.Fatalf("write %s.fern: %v", b, err)
+		name := b + ".fern"
+		if strings.HasPrefix(p, "stdlib://") {
+			name = strings.TrimPrefix(p, "stdlib://")
+		}
+		path := filepath.Join(progDir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(progDir, "main.fern"), []byte(entrySrc), 0o644); err != nil {

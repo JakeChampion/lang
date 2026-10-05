@@ -145,10 +145,12 @@ IR, not a stdlib struct the compiler cannot see" is met the way
 `ARRAY-ALGEBRA.md` §6 met it for `map`: **recognition is by resolved
 stdlib identity**, not by a builtin type. `std/array`'s `map` is ordinary
 Fern that the fusion and in-place passes recognize by the callee it lowers
-to; `std/ndarray`'s operations are ordinary Fern that phase 4's kernels
-will recognize the same way, keyed on the `ndarray__` prefix modload
-reserves, with a user's own `NdArray` no more the algebra's than a user's
-own `map` is (#9840 made that rule explicit). The struct's layout is
+to; `std/ndarray`'s operations are ordinary Fern whose declaration origin
+the primary compiler tracks from loading through generic instantiation.
+The `ndarray__` prefix identifies candidates, but only verified stdlib
+declarations supply layout guarantees and kernel contracts. A user module
+named `ndarray.fern` retains its own behavior, even when its types and method
+signatures match the stdlib. The struct's layout is
 therefore the representation: four fields the IR reads as any struct's,
 which is what lets a kernel take `data`, `shape`, `strides` and `offset`
 without a second description of them.
@@ -453,6 +455,14 @@ visibility is different: flattening has merged the modules and marked their
 declarations public, so `is_pub` does not describe external entry points.
 Hand-written record literals, fields, cells and unresolved calls also claim
 nothing. No nominal type alone proves storage layout.
+
+The loader supplies stdlib provenance separately from function names. The
+planner checks it for the operation, constructor and metadata helpers, and
+the layout analysis checks it before applying a stdlib return guarantee.
+Relative user imports and flat-name or manifest fallbacks do not gain that
+provenance from their spelling. Execution regressions cover a custom module
+whose `map` and `outer` reverse the left input, both import orders alongside
+the real stdlib, and a missing stdlib that resolves through a local fallback.
 
 Captured factors and unresolved element functions still use scalar maps.
 These are coverage limits, not claims that those cases cannot be optimized.

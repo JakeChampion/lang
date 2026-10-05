@@ -39,8 +39,7 @@ var nestedTupleElemReclaimCases = []struct {
 	want int
 }{
 	// Defect 1 alone: the nested element is never read, so no read gate is in
-	// play. The array sibling is reclaimable on its own and still leaked,
-	// because the all-scalar nested tuple refused the whole tuple.
+	// play.
 	{"nested-scalar-tuple-elem-unread", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -152,8 +151,11 @@ function main(): i32 {
 
 const nestedTupleElemFailFmt = "%s = %d, want %d (a small non-zero is the leaked bytes per round; 99 = over-release; 97 = value corrupted)"
 
+// TestSelfHostNestedTupleElemReclaimIRX86_64 also requires a balanced census on
+// every case, the negatives included.
 func TestSelfHostNestedTupleElemReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
+	t.Setenv("FERN_LEAKCHECK", "1")
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
@@ -165,15 +167,13 @@ func TestSelfHostNestedTupleElemReclaimIRX86_64(t *testing.T) {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			stderr, code := hevRun(t, runner, bin)
+			if code != tc.want {
 				t.Errorf(nestedTupleElemFailFmt, tc.name, code, tc.want)
+			}
+			allocs, frees, live := parseLeakcheck(t, tc.name, stderr)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", tc.name, allocs, frees, live)
 			}
 		})
 	}

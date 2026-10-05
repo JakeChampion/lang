@@ -8518,6 +8518,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   let h: usize = buf_new(256);
   s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, asmcore.EmitState { ...s, capture: h });
   let arm: string = buf_take(h);
+  buf_free(h);
   s = asmcore.EmitState { ...s, capture: outer };
   let pops: string[] = ssa_leading_pops(arm, ins.args.len());
   let moves: SsaArgMoves = ssa_arg_moves(ins, reg_of, pops, s);
@@ -9793,6 +9794,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
   s = asmcore.dbg_label(s, dbg, fn_label, pos);
   if (leaf) {
     let text: string = buf_take(body);
+    buf_free(body);
     s = asmcore.EmitState { ...s, capture: outer };
     if (ssa_needs_frame(text)) {
       s = ssa_frame(s, saved, frame);
@@ -11887,6 +11889,7 @@ function emit_entry_runtime_settled(s0: asmcore.EmitState): asmcore.EmitState {
     let h: usize = buf_new(65536);
     let t: asmcore.EmitState = emit_entry_runtime(asmcore.EmitState { ...s, capture: h });
     let text: string = buf_take(h);
+    buf_free(h);
     if (t.needed.len() == s.needed.len()) {
       settled = true;
       let back: asmcore.EmitState = asmcore.EmitState { ...t, capture: s0.capture };

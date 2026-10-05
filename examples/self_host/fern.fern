@@ -304,6 +304,13 @@ function word_buf(emit_text: boolean): usize {
   return buf_new(1048576);
 }
 
+// words_of hands a word_buf's bytes to the image writer and frees the builder.
+function words_of(recs: usize): u8[] {
+  let words: u8[] = buf_take_bytes(recs);
+  buf_free(recs);
+  return words;
+}
+
 // arm64_elf_binary assembles arm64 Linux GAS text (from either the SSA or AST
 // emitter) into a runnable static ELF entirely in-process via arm64_native +
 // elf.fern — no `.s` + external gcc/ld. Returns the binary bytes packed into a
@@ -1942,7 +1949,11 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
         return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, err: "fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err) };
       }
       let mdir: string = rm.dir;
-      let m: parser.Module = parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1));
+      let origin: string = "";
+      if (root.len() > 0 && rm.shown == mpath) {
+        origin = ipath;
+      }
+      let m: parser.Module = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1)), origin);
       let shown: string = display_path(rm.shown, root);
       files = files.append(shown);
       // Identity is the FILE, not its basename: two modules can share a
@@ -3529,12 +3540,12 @@ function run(): i32 {
       out_asm = export_entries(merged, shared_roots, true) + out_asm;
     }
     if (!emit_text && shared) {
-      out_asm = arm64_elf_shared(out_asm, buf_take_bytes(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
       if (out_asm.len() == 0) {
         return 2;
       }
     } else if (!emit_text) {
-      out_asm = arm64_elf_binary(out_asm, buf_take_bytes(recs), emit_syms, entry_path);
+      out_asm = arm64_elf_binary(out_asm, words_of(recs), emit_syms, entry_path);
       util.arr_push_cliff_report("arm64:image", 0);
       if (out_asm.len() == 0) {
         return 2;
@@ -3556,12 +3567,12 @@ function run(): i32 {
       out_asm = export_entries(merged, shared_roots, true) + out_asm;
     }
     if (!emit_text && shared) {
-      out_asm = arm64_elf_shared(out_asm, buf_take_bytes(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
       if (out_asm.len() == 0) {
         return 2;
       }
     } else if (!emit_text) {
-      out_asm = arm64_elf_binary_pie(out_asm, buf_take_bytes(recs));
+      out_asm = arm64_elf_binary_pie(out_asm, words_of(recs));
       if (out_asm.len() == 0) {
         return 2;
       }
@@ -3690,12 +3701,12 @@ function run(): i32 {
       out_asm = export_entries(merged, shared_roots, false) + out_asm;
     }
     if (!emit_text && shared) {
-      out_asm = x86_elf_shared(out_asm, buf_take_bytes(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "");
+      out_asm = x86_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "");
       if (out_asm.len() == 0) {
         return 2;
       }
     } else if (!emit_text) {
-      out_asm = x86_elf_binary(out_asm, buf_take_bytes(recs), emit_syms, entry_path);
+      out_asm = x86_elf_binary(out_asm, words_of(recs), emit_syms, entry_path);
       if (out_asm.len() == 0) {
         return 2;
       }
