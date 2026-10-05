@@ -267,7 +267,7 @@ kernels, and a checklist of free text cannot be tallied.
 | `element-fn-captures` | a lambda closed over something, and a kernel has nowhere to put it |
 | `element-fn-calls` | the body calls something, and a call is an op boundary |
 | `element-fn-not-one-op` | the body is more than one operation, or applies none |
-| `element-fn-not-arithmetic` | the body's one operation is not arithmetic a kernel emits inline. Two absences are deliberate: INTEGER division and remainder, because both trap on a zero divisor and a kernel that hoisted one would move the trap (float division stays, which does not trap); and conversions, because they change the element type, which makes the stage a different shape rather than a kernel over this one |
+| `element-fn-not-arithmetic` | The body's one operation is outside the retained classifier's supported arithmetic set. Integer division and remainder are excluded, although Fern defines them as total even for zero divisors (`ARRAY-ALGEBRA.md` §2). Conversions are excluded because they change the element type. |
 
 Each line then carries the SITE's verdict, which is the question a
 planner actually asks: every element function primitive is necessary and

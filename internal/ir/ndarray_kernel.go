@@ -95,7 +95,7 @@ func (r NdarrayElementRefusal) String() string {
 	case NdarrayElementNotOneOp:
 		return "the body is more than one operation, so inlining it is not what a kernel does"
 	case NdarrayElementNotArithmetic:
-		return "the body's one operation is not arithmetic a kernel emits inline — integer division and remainder trap, and a conversion changes the element type"
+		return "the body's one operation is outside the supported arithmetic set; integer division and remainder are not supported, and a conversion changes the element type"
 	}
 	return "no reason recorded"
 }
@@ -120,12 +120,11 @@ func (v NdarrayKernelVerdict) String() string {
 // a kernel emits `fneg` the way it emits `fmul`, and the bit-count trio is
 // already an Atlas intrinsic on both baselines.
 //
-// INTEGER division and remainder are the deliberate absences, for the reason
-// rotate.go's purity list leaves them out: both trap on a zero divisor, so a
-// kernel that hoisted one would move a trap. Float division stays, which does
-// not trap. Conversions are absent for a different reason — they change the
-// element type, and a stage that changes it is a different shape rather than
-// a kernel over this one.
+// Integer division and remainder are outside this classifier's supported set.
+// Fern defines both as total, including zero divisors (ARRAY-ALGEBRA.md section
+// 2); their exclusion does not imply a language-level arithmetic trap.
+// Conversions are absent because they change the element type, making the
+// stage a different shape rather than a kernel over this one.
 var ndarrayPrimitiveOps = map[OpKind]string{
 	OpAdd: "add", OpSub: "sub", OpMul: "mul",
 	OpAnd: "and", OpOr: "or", OpXor: "xor",
