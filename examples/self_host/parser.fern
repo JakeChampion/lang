@@ -1580,10 +1580,37 @@ pub function resolve_labels_module(mod: Module): Module {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     let fd: FuncDecl = mod.funcs[i];
-    funcs = funcs.append(FuncDecl { ...fd, body: resolve_labels_block(fd.body, none) });
+    if (has_labeled_jump(fd.body)) {
+      fd = FuncDecl { ...fd, body: resolve_labels_block(fd.body, none) };
+    }
+    funcs = funcs.append(fd);
     i = i + 1;
   }
   return Module { ...mod, funcs: funcs, top_stmts: resolve_labels_block(mod.top_stmts, none) };
+}
+
+// has_labeled_jump: some `break`/`continue` in `stmts` names a label, the only
+// statements resolve_labels_block changes.
+function has_labeled_jump(stmts: ast.Stmt[]): boolean {
+  let found: boolean = false;
+  for st in stmts {
+    found = astwalk.fold_stmt_nodes(st, found, labeled_jump_at, keep_flag, astwalk.descend_all);
+  }
+  return found;
+}
+
+function labeled_jump_at(st: ast.Stmt, own acc: boolean): boolean {
+  if let ast.StmtBreak(b) = st {
+    return acc || b.label.len() > 0;
+  }
+  if let ast.StmtContinue(c) = st {
+    return acc || c.label.len() > 0;
+  }
+  return acc;
+}
+
+function keep_flag(e: ast.Expr, own acc: boolean): boolean {
+  return acc;
 }
 
 // Parser state. `toks` is the lexer's output; `pos` is the
@@ -21402,7 +21429,10 @@ pub function desugar_prepass_module(raw: Module): Module {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     let fd: FuncDecl = mod.funcs[i];
-    let body: ast.Stmt[] = resolve_labels_block(fd.body, none);
+    let body: ast.Stmt[] = fd.body;
+    if (has_labeled_jump(body)) {
+      body = resolve_labels_block(body, none);
+    }
     if (need_fda) {
       body = fda_stmts(body, mod.funcs);
     }
