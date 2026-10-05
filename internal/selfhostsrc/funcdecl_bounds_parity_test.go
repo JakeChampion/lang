@@ -49,7 +49,6 @@ import (
 var selfHostSources = []string{
 	"../../examples/self_host/parser.fern",
 	"../../examples/self_host/irtables.fern",
-	"../../examples/self_host/fnsigs.fern",
 	"../../examples/self_host/lift.fern",
 	"../../examples/self_host/constfold.fern",
 }

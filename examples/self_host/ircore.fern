@@ -4,7 +4,7 @@
 // files; what lives here decides WHETHER a module lowers and WHAT the shared
 // names are, never what instruction comes out.
 //
-// Seven groups:
+// Six groups:
 //
 //   * the gate — gate / gate_program, which every `*_or_error` entry runs before it
 //     emits;
@@ -17,8 +17,6 @@
 //     classifiers the register path's compare-and-branch fusion reads;
 //   * the AST pre-passes each backend runs before it emits — lift_lambdas and
 //     script_normalized;
-//   * wp_fn_sigs, the whole-program lowering side-tables every emit path
-//     derives once over all_funcs before it enters its per-function loop;
 //   * all_runtime_need_roots, the closed root set the per-module driver feeds
 //     the entry unit.
 //
@@ -32,7 +30,6 @@ import "./asmcore";
 import "./util";
 import "./ir";
 import "./irtables";
-import "./fnsigs";
 import "./lift";
 import "./irfipverify";
 import "./irverify";
@@ -840,12 +837,6 @@ pub function lower_failed_refuse(name: string, r: irtables.LowerResult): i32 {
   return 0;
 }
 
-// wp_fn_sigs derives the whole-program FnSigs base once (the expensive
-// O(all_funcs) part).
-pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: irtables.StructTab): fnsigs.FnSigs {
-  return fnsigs.fn_sigs_for_borrow(funcs, structs, fnsigs.borrowable_params_interproc(funcs, structs));
-}
-
 // Sub is a whole-module semantic lowering the CALLER produced, threaded into
 // the emit as a value. The pipeline behind it (semsource -> ssaunits -> ssarc,
 // `semlower`) is a large import closure, so passing the RESULT rather than
@@ -857,9 +848,9 @@ pub struct Sub {
   // The bodies with no declaration of their own: the generic instances and
   // the per-type drop helpers, deduped onto the cache tail by symbol.
   extra: irtables.LowerResult[],
-  // The registries `ssarc.caller_sigs` rewrote from the produced callees'
-  // verified contracts, which the emit reads.
-  sigs: fnsigs.FnSigs,
+  // One row per produced function, its key and parameter modes: what a
+  // caller's lowering reads of its callees beyond their signatures.
+  contracts: string[],
   // The runtime helpers' lowering, handed to the emit's state.
   rt_lower: (string) => irtables.LowerResult[],
   // The typed module the producer lambda-lifted, which a register backend's
@@ -879,7 +870,7 @@ pub struct Sub {
 
 pub function no_sub(): Sub {
   let none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [] };
-  return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, switches: asmcore.env_switches() };
+  return Sub { bodies: [], extra: [], contracts: [], rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, switches: asmcore.env_switches() };
 }
 
 // The register emit's lambda-lifted module: the producer's, erased, when it
@@ -968,13 +959,12 @@ pub function gate(mod: parser.Module, sub: Sub): Lowered {
 }
 
 // Gated is the whole program a register backend emits: the module it gates,
-// the emit cache (the substitution's bodies, its extra bodies on the tail) and
-// the registry base. `ok` is gate's verdict.
+// and the emit cache (the substitution's bodies, its extra bodies on the tail).
+// `ok` is gate's verdict.
 pub struct Gated {
   ok: boolean,
   im: parser.Module,
   stab: irtables.StructTab,
-  base: fnsigs.FnSigs,
   cache: irtables.LowerResult[],
 }
 
@@ -985,7 +975,7 @@ pub function gate_program(lifted: parser.Module, sub: Sub): Gated {
   let im: parser.Module = with_records(parser.infer_ret_types_module(script_normalized(lifted)), sub);
   let stab: irtables.StructTab = irtables.struct_tab(im.structs);
   let g: Lowered = gate(im, sub);
-  return Gated { ok: g.ok, im: im, stab: stab, base: sub.sigs, cache: g.cache };
+  return Gated { ok: g.ok, im: im, stab: stab, cache: g.cache };
 }
 
 // Units is a gated program cut into one unit per module of a per-module build:
@@ -1087,7 +1077,7 @@ function unit_owners(g: Gated, declared: i32[], entry: i32): i32[] {
     if (owner[i] >= 0) {
       queue = queue.append(i);
     } else {
-      unowned = unowned.insert(fnsigs.grow_fn_key(g.im.funcs[i]), i + 1);
+      unowned = unowned.insert(parser.decl_key(g.im.funcs[i]), i + 1);
     }
     i = i + 1;
   }
@@ -1127,8 +1117,7 @@ function unit_owners(g: Gated, declared: i32[], entry: i32): i32[] {
 }
 
 // UnitKeys is what keys the units of one split beyond each unit's own source:
-// every unit's signature hash, the whole-program facts when the target's emit
-// reads them, and `view`, a hash of what any unit's emit can read beyond its
+// every unit's signature hash, the contract hashes, and `view`, a hash of what any unit's emit can read beyond its
 // dependencies' signatures (the loose functions' signatures and the whole
 // struct table, whose enum owners and type parameters the emit reads).
 pub struct UnitKeys { sighashes: string[], facts: modloader.FactHashes, view: string }
@@ -1138,20 +1127,16 @@ pub function no_unit_keys(): UnitKeys {
   return UnitKeys { sighashes: [], facts: modloader.FactHashes { per_mod: [], global: "" }, view: "" };
 }
 
-// unit_keys derives the keys of `u` once for every unit of it. `facts` folds in
-// the verdicts fnsigs.wp_fact_rows derives from `base`, for a target whose emit
-// reads that registry (the register backends' does; wasm's does not).
-pub function unit_keys(u: Units, funcs: parser.FuncDecl[], stab: irtables.StructTab, base: fnsigs.FnSigs, facts: boolean): UnitKeys {
+// unit_keys derives the keys of `u` once for every unit of it. A caller's
+// lowering reads its callees' parameter modes, which a body change can move
+// without touching a signature, so each unit is keyed on the `contracts` rows
+// of the modules it depends on as well.
+pub function unit_keys(u: Units, stab: irtables.StructTab, contracts: string[]): UnitKeys {
   let sigmods: parser.Module[] = [];
-  let none: string[] = [];
   for m in u.mods {
     sigmods = sigmods.append(parser.Module { ...m, structs: [] });
-    none = none.append("");
   }
-  let fh: modloader.FactHashes = modloader.FactHashes { per_mod: none, global: "" };
-  if (facts) {
-    fh = modloader.module_fact_hashes(sigmods, fnsigs.wp_fact_rows(base, funcs, stab));
-  }
+  let fh: modloader.FactHashes = modloader.module_fact_hashes(sigmods, contracts);
   let loose: string = modloader.module_sig_string(parser.Module { ...sigmods[0], funcs: u.loose });
   return UnitKeys { sighashes: modloader.fact_sig_hashes(sigmods, fh), facts: fh, view: util.hash_key(loose + struct_table_text(stab.decls)) };
 }

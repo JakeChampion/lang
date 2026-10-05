@@ -29,7 +29,6 @@ import "./parser";
 import "./util";
 import "./ir";
 import "./irtables";
-import "./fnsigs";
 import "./lift";
 import "./irverifygate";
 import "./asmcore";

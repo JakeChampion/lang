@@ -21,7 +21,6 @@ import "./checker";
 import "./constfold";
 import "./lexer";
 import "./irtables";
-import "./fnsigs";
 import "./lift";
 import "./parser";
 import "./platforms";
@@ -408,9 +407,6 @@ function unmarked(keys: string[], marks: boolean[]): string[] {
 // result back as a value for the emit path to thread in (ircore.Sub). The
 // caller normalises the module exactly as the emit path does, so the bodies
 // line up with `mod.funcs` position for position.
-//
-// `base` is the pre-`append_dyn` registry set the emitters read; the rows
-// caller_sigs rewrites are returned in the Sub, and the emit reads them.
 struct Inference { built: semsource.Built, rows: Rows, records: parser.StructDecl[] }
 
 // Whether the typed pipeline lowers EVERY body of this module, given whether
@@ -527,20 +523,17 @@ function field_spelling(t: typeinfo.Type): string {
   return typeinfo.spelling(t);
 }
 
-pub function substitution(mod: parser.Module, structs: irtables.StructTab, base: fnsigs.FnSigs, debug_lines: boolean): ircore.Sub {
+pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug_lines: boolean): ircore.Sub {
   let inf: Inference = produced_rows(mod, structs, debug_lines);
   let built: semsource.Built = inf.built;
   let r: Rows = inf.rows;
   report_rows(r, "");
-  let sigs: fnsigs.FnSigs = base;
   let helpers: ssarc.Helpers = ssarc.no_helpers();
   let bodies: irtables.LowerResult[] = [];
-  let callees: ssarc.Callee[] = [];
   let n: i32 = 0;
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (r.keep[i]) {
-      callees = callees.append(ssarc.Callee { name: parser.decl_key(mod.funcs[i]), f: built.decls[i].func, modes: built.decls[i].modes, plan: r.plans[i], receiver: semsource.has_receiver(mod.funcs[i]) });
       helpers = ssarc.with_drop_helpers(helpers, built.decls[i].func);
       bodies = bodies.append(r.body[i]);
       n = n + 1;
@@ -569,7 +562,6 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, base:
     }
     at = at + 1;
   }
-  sigs = ssarc.caller_sigs(sigs, callees);
   util.arr_push_cliff_report("sem:substituted", 0);
   // A refused declaration or instance fails the compile.
   let refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len();
@@ -604,7 +596,49 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, base:
   // The declaration-less bodies are merged by symbol here, where the rule
   // lives, so the emit path's tail is a plain append.
   let extra: irtables.LowerResult[] = ssarc.merge_helpers(instances, helpers.rows);
-  return ircore.Sub { ...ircore.no_sub(), bodies: bodies, extra: extra, sigs: sigs, records: inf.records };
+  return ircore.Sub { ...ircore.no_sub(), bodies: bodies, extra: extra, contracts: contract_rows(built.contracts, r), records: inf.records };
+}
+
+// contract_rows spells what a caller's lowering reads of the functions it
+// calls — each contract whole (its parameter types and modes and its result
+// type, which inference can move without the declaration changing), the grow
+// rows, the pure rows and the suspension classes — one row per fact, for
+// ircore.unit_keys to fold into a per-module cache key.
+// TestSelfHostContractRowsFoldEveryCalleeFact keeps it complete.
+function contract_rows(cs: ssasem.Contracts, r: Rows): string[] {
+  let out: string[] = [];
+  for c in cs.list {
+    let row: string = "C:" + c.name + "(";
+    let j: i32 = 0;
+    while (j < c.params.len() || j < c.modes.len()) {
+      if (j > 0) {
+        row = row + ",";
+      }
+      if (j < c.params.len()) {
+        row = row + typeinfo.spelling(c.params[j]);
+      }
+      if (j < c.modes.len()) {
+        row = row + " " + util.i32_to_string(c.modes[j]);
+      }
+      j = j + 1;
+    }
+    out = out.append(row + ")" + typeinfo.spelling(c.result));
+  }
+  for g in r.grows.rows {
+    out = out.append("G:" + g.callee + "|" + util.i32_to_string(g.param) + "|" + util.i32_to_string(g.field));
+  }
+  for name in r.pure.names {
+    out = out.append("P:" + name);
+  }
+  let k: i32 = 0;
+  while (k < r.susp.rows.names.len()) {
+    out = out.append("S:" + r.susp.rows.names[k] + "|" + r.susp.classes[k]);
+    k = k + 1;
+  }
+  if (r.susp.indirect) {
+    out = out.append("S:indirect");
+  }
+  return out;
 }
 
 function array_storage_report(mod: parser.Module, built: semsource.Built, r: Rows): i32 {
@@ -831,7 +865,7 @@ function substitution_of(im: parser.Module, debug_lines: boolean): ircore.Sub {
   let lowered: parser.Module = parser.erase_view_module(im);
   let stab: irtables.StructTab = irtables.struct_tab(lowered.structs);
   util.arr_push_cliff_report("sem:gated", 0);
-  let sub: ircore.Sub = substitution(im, stab, ircore.wp_fn_sigs(lowered.funcs, stab), debug_lines);
+  let sub: ircore.Sub = substitution(im, stab, debug_lines);
   return ircore.Sub { ...sub, rt_lower: runtime_bodies };
 }
 

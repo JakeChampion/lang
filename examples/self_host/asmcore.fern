@@ -76,7 +76,6 @@ pub struct EmitState {
   // kinds: the lift's op-kind table, built once with the state.
   kinds: ssa_lift.KindTable,
   local_names: string[],
-  in_function: boolean,
   string_lits: string[],
   // slit_head / slit_next: a chained index over string_lits by content, so
   // add_string_lit's dedupe is a bucket walk rather than a scan of every
@@ -88,24 +87,14 @@ pub struct EmitState {
   // requests, by name. Populated via need() / the mark_*
   // wrappers; emit_module consults has_need() to decide which
   // helper bodies to append. Replaces ~26 parallel needs_*
-  // booleans — see asm.fern for the rationale.
+  // booleans.
   needed: string[],
   struct_decls: irtables.StructTab,
-  // loop_exit_labels / loop_cont_labels: see asm.fern for
-  // semantics. break / continue use the top of each stack.
-  loop_exit_labels: string[],
-  loop_cont_labels: string[],
   // funcs: the whole program's FuncDecls, in a per-module unit too — used by
   // method and `dyn` dispatch.
   funcs: parser.FuncDecl[],
-  // local_types: parallel to local_names. See asm.fern.
+  // local_types: parallel to local_names.
   local_types: Ty[],
-  // n_params: count of leading local_names slots that are the
-  // function's receiver + parameters (bound first by emit_function).
-  // The Perceus function-exit dec sweep skips these — parameters are
-  // BORROWED (the caller still owns them), so the callee must not
-  // release them. Set per function after the params are bound.
-  n_params: i32,
   // use_ir: the parallel-path migration's IR opt-in
   // (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3), left on. Nothing routes
   // around it any more — the AST emitters are gone and every backend is
@@ -312,8 +301,6 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
 pub function new_state(): EmitState {
   let ns: string[] = [];
   let sl: string[] = [];
-  let lex: string[] = [];
-  let lcn: string[] = [];
   let fns: parser.FuncDecl[] = [];
   let lts: Ty[] = [];
   let nd: string[] = [];
@@ -325,17 +312,13 @@ pub function new_state(): EmitState {
     funcs_ix: util.name_index(ns),
     kinds: ssa_lift.kind_table(),
     local_names: ns,
-    in_function: false,
     string_lits: sl,
     slit_head: slit_empty_buckets(),
     slit_next: [],
     needed: nd,
     struct_decls: irtables.struct_tab_empty(),
-    loop_exit_labels: lex,
-    loop_cont_labels: lcn,
     funcs: fns,
     local_types: lts,
-    n_params: 0,
     use_ir: true,
     // Whole-program default: no namespace, so string labels stay `.S<idx>`
     // (byte-identical to the pre-per-module emitter). Per-module unit emit
@@ -810,10 +793,6 @@ pub function (s: EmitState) branch(w: i64, label: string): EmitState {
   return s.mark("\x02", label);
 }
 
-pub function (s: EmitState) bind_local(name: string): EmitState {
-  return s.bind_local_typed(name, ty_unknown());
-}
-
 pub function (s: EmitState) bind_local_typed(name: string, ty: Ty): EmitState {
   let ln: string[] = s.local_names.append(name);
   let lts: Ty[] = s.local_types.append(ty);
@@ -920,16 +899,8 @@ pub function (s: EmitState) mark_str_eq(): EmitState {
   return s.need("str_eq");
 }
 
-pub function (s: EmitState) mark_str_print(): EmitState {
-  return s.need("str_print");
-}
-
 pub function (s: EmitState) mark_str_cmp(): EmitState {
   return s.need("str_cmp");
-}
-
-pub function (s: EmitState) mark_str_read_line(): EmitState {
-  return s.need("heap").need("str_read_line");
 }
 
 pub function (s: EmitState) mark_i32_to_string(): EmitState {
@@ -5213,14 +5184,6 @@ pub function rt_src_environ(): string {
   return "function __fern_environ(): string[] { let out: string[] = []; let envp: usize = __raw_environ(); let idx: i32 = 0; let done: i32 = 0; while (done == 0) { let entry: usize = __raw_load_ptr(envp, idx); if (entry == 0) { done = 1; } else { let n: i32 = 0; while (__raw_load8(entry, n) != 0) { n = n + 1; } let e: string = \"\"; if (n > 0) { let b: usize = __raw_alloc(n); __memcpy(b, entry, n); e = __raw_string(b, n); } out = out.append(e); idx = idx + 1; } } return out; }";
 }
 
-pub function (s: EmitState) mark_eprint(): EmitState {
-  return s.need("eprint");
-}
-
-pub function (s: EmitState) mark_args(): EmitState {
-  return s.need("heap").need("args");
-}
-
 pub function (s: EmitState) mark_arr_push(): EmitState {
   return s.need("heap").need("arr_push");
 }
@@ -5344,7 +5307,7 @@ pub function rt_src_str_replace(): string {
 // in Fern: a shallow 8-byte SLOT copy over the __raw_arr_box + __raw_array
 // pair, which is why one `i32[]`-typed body serves every element type — a
 // string / struct element is a pointer in the same slot and the body never
-// inspects it. The parameter is read-only, so borrowable_params_interproc
+// inspects it. The parameter is read-only, so the ownership inference
 // marks it borrowed and the caller's array survives; the fresh box comes back
 // at rc=1 from __fern_arr_box.
 //
@@ -6087,70 +6050,6 @@ pub function is_int_array_tag(t: Ty): boolean {
     }
   }
   return false;
-}
-
-// ty_is_array_like reports whether t is any array type. All arrays now
-// carry the Perceus rc header at [data-8] (see __fern_arr_box in the
-// backends), so an alias of one is a reference-creation site that must
-// retain (inc) the buffer.
-pub function ty_is_array_like(t: Ty): boolean {
-  match (t) {
-    TyArray(_) => {
-      return true;
-    },
-    TyArrayI32(_) => {
-      return true;
-    },
-    TyArrayU32(_) => {
-      return true;
-    },
-    TyArrayU64(_) => {
-      return true;
-    },
-    TyArrayI64(_) => {
-      return true;
-    },
-    TyArrayString(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-// move_on_return_idx implements Perceus move-on-return for owned array
-// locals. When `return e` returns `e` that is a bare ExprIdent naming an
-// array-typed LOCAL whose slot index is >= n_params (i.e. NOT a borrowed
-// parameter), the buffer can be MOVED to the caller: the return-retain
-// inc and the exit sweep's dec of that one slot are a balanced pair on
-// the same value, so eliding BOTH hands the array to the caller at its
-// current rc with identical net effect. Returns that local's index for
-// the caller to (a) skip the return inc and (b) exclude from the sweep;
-// returns -1 when no move applies (non-ident, non-array, or a borrowed
-// param). Eliding an inc/dec pair on one slot is net-zero regardless of
-// any aliasing of the same buffer through other slots, so this is safe.
-pub function (s: EmitState) move_on_return_idx(e: ast.Expr): i32 {
-  match (e) {
-    ast.ExprIdent(id) => {
-      if (!s.has_local(id.name)) {
-        return 0 - 1;
-      }
-      if (!ty_is_array_like(s.local_type_of(id.name))) {
-        return 0 - 1;
-      }
-      let idx: i32 = (0 - s.lookup_local(id.name)) / 8 - 1;
-      if (idx < s.n_params) {
-        return 0 - 1;
-      }
-      return idx;
-    },
-    _ => {
-      return 0 - 1;
-    }
-  }
-  return 0 - 1;
 }
 
 pub function is_map(t: Ty): boolean {
@@ -7888,64 +7787,6 @@ pub function (s: EmitState) reset_locals(): EmitState {
   return EmitState { ...s, local_names: ln, local_types: lts };
 }
 
-pub function (s: EmitState) enter_function(): EmitState {
-  return EmitState { ...s, in_function: true };
-}
-
-// set_n_params records the receiver+parameter slot count so the
-// Perceus function-exit dec sweep can skip borrowed params. Called by
-// emit_function once the params are bound.
-pub function (s: EmitState) set_n_params(n: i32): EmitState {
-  return EmitState { ...s, n_params: n };
-}
-
-pub function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): EmitState {
-  let nex: string[] = s.loop_exit_labels.append(exit_lbl);
-  let ncn: string[] = s.loop_cont_labels.append(cont_lbl);
-  return EmitState { ...s, loop_exit_labels: nex, loop_cont_labels: ncn };
-}
-
-pub function (s: EmitState) pop_loop_labels(): EmitState {
-  let nex: string[] = [];
-  let ncn: string[] = [];
-  let i: i32 = 0;
-  while (i < s.loop_exit_labels.len() - 1) {
-    nex = nex.append(s.loop_exit_labels[i]);
-    ncn = ncn.append(s.loop_cont_labels[i]);
-    i = i + 1;
-  }
-  return EmitState { ...s, loop_exit_labels: nex, loop_cont_labels: ncn };
-}
-
-pub function (s: EmitState) top_loop_exit(): string {
-  if (s.loop_exit_labels.len() == 0) {
-    return "";
-  }
-  return s.loop_exit_labels[s.loop_exit_labels.len() - 1];
-}
-
-pub function (s: EmitState) top_loop_cont(): string {
-  if (s.loop_cont_labels.len() == 0) {
-    return "";
-  }
-  return s.loop_cont_labels[s.loop_cont_labels.len() - 1];
-}
-
-pub function (s: EmitState) leave_function(): EmitState {
-  return EmitState { ...s, in_function: false };
-}
-
-pub function (s: EmitState) lookup_local(name: string): i32 {
-  let i: i32 = s.local_names.len() - 1;
-  while (i >= 0) {
-    if (s.local_names[i] == name) {
-      return 0 - 8 * (i + 1);
-    }
-    i = i - 1;
-  }
-  return 0;
-}
-
 pub function (s: EmitState) has_local(name: string): boolean {
   let i: i32 = 0;
   while (i < s.local_names.len()) {
@@ -8021,16 +7862,6 @@ pub function (s: EmitState) cfi(kind: i32, reg: i32, off: i32): EmitState {
   return s.mark("\x06", "");
 }
 
-pub function count_locals(body: ast.Stmt[]): i32 {
-  let n: i32 = 0;
-  let i: i32 = 0;
-  while (i < body.len()) {
-    n = n + count_locals_in_stmt(body[i]);
-    i = i + 1;
-  }
-  return n;
-}
-
 pub function name_has_comma(name: string): boolean {
   let i: i32 = 0;
   while (i < name.len()) {
@@ -8040,66 +7871,6 @@ pub function name_has_comma(name: string): boolean {
     i = i + 1;
   }
   return false;
-}
-
-pub function count_locals_in_stmt(stmt: ast.Stmt): i32 {
-  match (stmt) {
-    ast.StmtVar(v) => {
-      // `let (a, b, …) = E` destructure binds one frame slot per name;
-      // count the comma-joined names (commas + 1) so the prologue
-      // reserves enough — undercounting writes a binding below %rsp.
-      if (name_has_comma(v.name)) {
-        let cnt: i32 = 1;
-        let ci: i32 = 0;
-        while (ci < v.name.len()) {
-          if (v.name[ci] == b',') {
-            cnt = cnt + 1;
-          }
-          ci = ci + 1;
-        }
-        return cnt;
-      }
-      return 1;
-    },
-    ast.StmtIf(ifs) => {
-      return count_locals(ifs.then_body) + count_locals(ifs.else_body);
-    },
-    ast.StmtWhile(w) => {
-      return count_locals(w.body);
-    },
-    ast.StmtMatch(m) => {
-      // +1 for the synthetic scrutinee local + one per
-      // non-empty PatVariant binding + the recursive body
-      // counts. Wildcard arms add no binding.
-      let n: i32 = 1;
-      let i: i32 = 0;
-      while (i < m.arms.len()) {
-        match (m.arms[i].pattern) {
-          ast.PatVariant(pv) => {
-            if (pv.binding.len() > 0 && pv.binding != "_") {
-              n = n + 1;
-            }
-          },
-          ast.PatWildcard(_) => {}
-        }
-        n = n + count_locals(m.arms[i].body);
-        i = i + 1;
-      }
-      return n;
-    },
-    ast.StmtFor(f) => {
-      // `for (k,v) in m` binds 4 locals (map ptr, index, k, v);
-      // plain `for x in arr` binds 3.
-      if (name_has_comma(f.var_name)) {
-        return 4 + count_locals(f.body);
-      }
-      return 3 + count_locals(f.body);
-    },
-    _ => {
-      return 0;
-    }
-  }
-  return 0;
 }
 
 pub struct ConstAggOut { state: EmitState, idx: i32 }

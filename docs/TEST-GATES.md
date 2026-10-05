@@ -845,7 +845,7 @@ rather than the IR path.
 
 **Reach for `scripts/selfhost-emit-hashes` on any mechanical refactor of the
 self-host compiler.** It is the gate that fits the failure mode: whole families
-of values there share one type — the `FnSigs` registries are all `string[]`,
+of values there share one type — the per-module cache key rows are all `string[]`,
 the IR ops all `ir.Op` — so a crossed wire or a dropped argument type-checks
 cleanly and surfaces only as a miscompile. The fixpoint will not catch it
 (self-referential, see above) and the type checker cannot. Comparing emitted

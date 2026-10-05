@@ -25,7 +25,6 @@ import "./checker";
 import "./util";
 import "./ir";
 import "./irtables";
-import "./fnsigs";
 import "./irverifygate";
 import "./ircore";
 import "./ssa";
@@ -4706,8 +4705,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // tempting to push %r12 onto the freelist when its rc==1, but that DOUBLE-
     // FREEs: today's lowering deliberately depends on __fern_arr_push never
     // freeing, because borrow-form appends can hand it an ALIASED (rc>1) buffer
-    // the struct/owner still references (see fnsigs.fern's note on arr_push's
-    // un-share of a shared receiver). Adding the free turns the OOM
+    // the struct/owner still references. Adding the free turns the OOM
     // into a SIGSEGV. Reclaim-on-grow is sound only AFTER the lowering routes
     // every non-consume append through the clone form (lower_arr_append_value),
     // leaving op_arr_push for true consumes, and drops the self-consume
@@ -11539,7 +11537,7 @@ function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.
 // (e.g. str_concat) would reference an undefined symbol at link. It runs the
 // unit's emit over `cache` (its lowered bodies, ircore.split_units) so the
 // need-set is exact, but discards the asm (strbuf_reset) and reads `needed`.
-pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, cache: irtables.LowerResult[], base: fnsigs.FnSigs): string[] {
+pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, cache: irtables.LowerResult[]): string[] {
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs }, all_funcs);
@@ -11602,11 +11600,11 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub, recs:
     return "";
   }
   // Every function eligible — emit from the cache (no second lowering).
-  return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower, recs, sub.switches);
+  return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), sub.rt_lower, recs, sub.switches);
 }
 
 // `rt` lowers the runtime helpers this unit appends (asmcore.EmitState.rt_lower).
-pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], b: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[], recs: usize, sw: asmcore.Switches): string {
+pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], rt: (string) => irtables.LowerResult[], recs: usize, sw: asmcore.Switches): string {
   // Infer return types for unannotated functions so the IR path's
   // ret-type-keyed call tagging matches what module_with_builtins supplies.
   // (#4394 lever 3: `cache`, when non-empty, is the caller's pre-lowered

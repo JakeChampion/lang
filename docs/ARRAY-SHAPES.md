@@ -576,7 +576,9 @@ Empty inputs produce an empty array. A length product above signed i32
 aborts before allocation (status 134 on native targets, a bounds trap on
 WebAssembly). SSE2, NEON and WebAssembly SIMD each multiply two right-hand
 elements per iteration, with an ordered scalar tail. Operand order is
-preserved, including NaN payload selection; no vector value survives a call.
+preserved; no vector value survives a call. Non-NaN results must match the
+scalar reference bit-for-bit. Arithmetic NaN payloads follow FS-04 and may
+differ between backends; both inputs must retain their exact bits.
 
 An explicit-kernel probe in the same benchmark, on Apple M3 Pro,
 arm64-darwin, 2026-10-05, compared 32-by-32 results over 200 rounds in nine
@@ -596,9 +598,10 @@ keep the scalar path. A shadowed builtin also prevents the rewrite.
 Joined-shape validation runs before the kernel allocation: prefix overflow
 still fails even if a later extent is zero. `from_flat` builds canonical
 result metadata, including rank-zero and empty products. The kernel borrows
-both inputs, so aliased operands remain unchanged. The exact-bit differential
-and ownership census run with the rewrite enabled and disabled on x86-64,
-arm64 and WebAssembly.
+both inputs, so aliased operands remain unchanged. The differential checks
+non-NaN result bits, NaN classification and exact input bits. It and the
+ownership census run with the rewrite enabled and disabled on x86-64, arm64
+and WebAssembly.
 
 For the final ndarray rewrite, the same machine, inputs and nine alternating
 processes measured 279 ns per outer product (259-295) with rewriting enabled
