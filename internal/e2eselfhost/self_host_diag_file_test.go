@@ -97,6 +97,23 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 			},
 		},
 		{
+			// A range desugars to core/iter's iter.range, so without the
+			// import E001 names `iter`, at the `..` the program wrote.
+			name: "range_without_iter",
+			files: map[string]string{
+				"main.fern": "function main(): i32 {\n    let n: i32 = 3;\n    let r = 0..n;\n    return 0;\n}\n",
+			},
+		},
+		{
+			// E034 on a value that is not an array names the `[`, and on a
+			// literal index the literal: a `true` carries its column too.
+			name: "index_positions",
+			files: map[string]string{
+				"main.fern": "function f(): i32 {\n    let x: i32 = 5; return x[0];\n}\n" +
+					"function main(): i32 {\n    let a: i32[] = [1]; return a[true];\n}\n",
+			},
+		},
+		{
 			// E050 quotes the line of the move. In a sibling module that line
 			// is decoded like the position is.
 			name:  "sibling_moved_at",
