@@ -56,9 +56,9 @@ x86_64/call_overhead.ir	8550862
 x86_64/closure_call.text	814
 x86_64/closure_call.ir	103908097
 x86_64/enum_match.text	950
-x86_64/enum_match.ir	107100094
+x86_64/enum_match.ir	89775094
 x86_64/http_hello.text	21832
-x86_64/http_hello.ir	47508273
+x86_64/http_hello.ir	44892266
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
 x86_64/map_int.text	6564
