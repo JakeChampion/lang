@@ -856,6 +856,13 @@ pub const ORIGIN_MAP_COMP: string = "map_comp";
 // and only one the lift declines is inlined.
 pub const ORIGIN_IIFE_SCOPED: string = "iife_scoped";
 
+// DFA_TRYALL and DFA_TRYERR are the always-false flags the defer lowering
+// declares in every scope it lowers, guarding the cleanup a `?` exit owes:
+// plain defers behind the first, errdefers behind the second.
+pub const DFA_TRYALL: string = "__dfa_tryall";
+
+pub const DFA_TRYERR: string = "__dfa_tryerr";
+
 // ORIGIN_USE marks the callback lambda a `use NAME[: TYPE] <- CALL;` desugars
 // to, appended as CALL's last argument. The printer reads it back to reprint
 // the `use`; nothing else treats the lambda differently from a written one,
@@ -1573,10 +1580,37 @@ pub function resolve_labels_module(mod: Module): Module {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     let fd: FuncDecl = mod.funcs[i];
-    funcs = funcs.append(FuncDecl { ...fd, body: resolve_labels_block(fd.body, none) });
+    if (has_labeled_jump(fd.body)) {
+      fd = FuncDecl { ...fd, body: resolve_labels_block(fd.body, none) };
+    }
+    funcs = funcs.append(fd);
     i = i + 1;
   }
   return Module { ...mod, funcs: funcs, top_stmts: resolve_labels_block(mod.top_stmts, none) };
+}
+
+// has_labeled_jump: some `break`/`continue` in `stmts` names a label, the only
+// statements resolve_labels_block changes.
+function has_labeled_jump(stmts: ast.Stmt[]): boolean {
+  let found: boolean = false;
+  for st in stmts {
+    found = astwalk.fold_stmt_nodes(st, found, labeled_jump_at, keep_flag, astwalk.descend_all);
+  }
+  return found;
+}
+
+function labeled_jump_at(st: ast.Stmt, own acc: boolean): boolean {
+  if let ast.StmtBreak(b) = st {
+    return acc || b.label.len() > 0;
+  }
+  if let ast.StmtContinue(c) = st {
+    return acc || c.label.len() > 0;
+  }
+  return acc;
+}
+
+function keep_flag(e: ast.Expr, own acc: boolean): boolean {
+  return acc;
 }
 
 // Parser state. `toks` is the lexer's output; `pos` is the
@@ -20090,8 +20124,8 @@ function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string, fn_
   // are ordinary always-false flags, so on any consumer that does NOT know
   // the markers these blocks are dead code and the lowering is behaviourally
   // unchanged.
-  body = body.append(s_var("__dfa_tryall", "boolean", e_bool(false)));
-  body = body.append(s_var("__dfa_tryerr", "boolean", e_bool(false)));
+  body = body.append(s_var(DFA_TRYALL, "boolean", e_bool(false)));
+  body = body.append(s_var(DFA_TRYERR, "boolean", e_bool(false)));
   let k: i32 = 0;
   while (k < expanded.len()) {
     body = body.append(expanded[k]);
@@ -20105,8 +20139,8 @@ function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string, fn_
     c = c + 1;
   }
   let noelse: ast.Stmt[] = [];
-  body = body.append(s_if(e_ident("__dfa_tryall"), cleanup, noelse));
-  body = body.append(s_if(e_ident("__dfa_tryerr"), cleanup_err, noelse));
+  body = body.append(s_if(e_ident(DFA_TRYALL), cleanup, noelse));
+  body = body.append(s_if(e_ident(DFA_TRYERR), cleanup_err, noelse));
   return body;
 }
 
@@ -21395,7 +21429,10 @@ pub function desugar_prepass_module(raw: Module): Module {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     let fd: FuncDecl = mod.funcs[i];
-    let body: ast.Stmt[] = resolve_labels_block(fd.body, none);
+    let body: ast.Stmt[] = fd.body;
+    if (has_labeled_jump(body)) {
+      body = resolve_labels_block(body, none);
+    }
     if (need_fda) {
       body = fda_stmts(body, mod.funcs);
     }

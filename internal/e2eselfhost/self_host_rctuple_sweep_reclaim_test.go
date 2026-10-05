@@ -148,9 +148,9 @@ function main(): i32 {
 // Sweeping that by type frees `xs` underneath its owner. tuple_arg_payload_fresh
 // is what excludes it, the same gate OPTTUP already applies to the same helper.
 //
-// These assert BEHAVIOUR, not leak counts: a wrongly-granted credit produces a
-// wrong answer or a crash. Each `want` came from the interpreter and the native
-// backend agreeing.
+// A wrongly-granted credit produces a wrong answer or a crash, so the exit code
+// comes first; the census must balance as well. Each `want` came from the
+// interpreter and the native backend agreeing.
 func TestSelfHostRcTupleSweepHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -229,11 +229,8 @@ function main(): i32 {
 			want: 44,
 		},
 		{
-			// REASSIGNED, so refused: the assign path emits no release for this class,
-			// and the final value's shape cannot be judged from the declaration alone.
-			// Still leaking by design — pinned so that widening the assign path has to
-			// come with a deliberate change here.
-			name: "reassigned_refused",
+			// REASSIGNED: every superseded value and the final one must be released.
+			name: "reassigned",
 			src: `function round(i: i32): i32 {
     let t: (i32, string) = (i, "abc");
     let k: i32 = 0;
@@ -250,13 +247,17 @@ function main(): i32 {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := hevCompile(t, runner, driverBin, tc.src, nil)
+			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
 			progBin := buildBin(t, gcc, dir, "rctupsweep_hazard_"+tc.name, asm)
-			_, exit := hevRun(t, runner, progBin)
+			stderr, exit := hevRun(t, runner, progBin)
 			if exit != tc.want {
-				t.Errorf("exited %d, want %d — a wrong answer or a crash here means the "+
+				t.Fatalf("exited %d, want %d — a wrong answer or a crash here means the "+
 					"sweep freed memory something else still owns (use-after-free), not "+
 					"merely that the shape leaked", exit, tc.want)
+			}
+			allocs, frees, live := parseLeakcheck(t, tc.name, stderr)
+			if live != 0 || allocs != frees {
+				t.Errorf("allocs=%d frees=%d live_bytes=%d, want a balanced census", allocs, frees, live)
 			}
 		})
 	}

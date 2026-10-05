@@ -108,7 +108,7 @@ struct State {
   // from (`dyn_concretes`).
   impls: parser.ImplInfo[],
   // What a `?` failure edge runs before it returns: the defer desugar's
-  // cleanup behind `__dfa_tryall` and `__dfa_tryerr` (parser.lower_defers_body).
+  // cleanup behind parser.DFA_TRYALL and parser.DFA_TRYERR (parser.lower_defers_body).
   try_cleanup: ast.Stmt[],
   // Whether that cleanup is being lowered. A `?` inside a defer action
   // (E079) would replay it again without end.
@@ -5841,7 +5841,7 @@ function escaping_bindings(body: ast.Stmt[]): string[] {
 }
 
 // defer_lowered: the defer desugar gave some scope of the body, the function's
-// or a lambda's, its `__dfa_tryall` flag (parser.lower_defers_body).
+// or a lambda's, its parser.DFA_TRYALL flag (parser.lower_defers_body).
 function defer_lowered(body: ast.Stmt[]): boolean {
   let found: boolean = false;
   for st in body {
@@ -5852,7 +5852,7 @@ function defer_lowered(body: ast.Stmt[]): boolean {
 
 function tryall_decl(st: ast.Stmt, own acc: boolean): boolean {
   if let ast.StmtVar(v) = st {
-    return acc || v.name == "__dfa_tryall";
+    return acc || v.name == parser.DFA_TRYALL;
   }
   return acc;
 }
@@ -5878,7 +5878,7 @@ function try_cleanup(body: ast.Stmt[]): ast.Stmt[] {
   for st in body {
     if let ast.StmtIf(f) = st {
       if let ast.ExprIdent(id) = f.cond {
-        if (id.name == "__dfa_tryall" || id.name == "__dfa_tryerr") {
+        if (id.name == parser.DFA_TRYALL || id.name == parser.DFA_TRYERR) {
           for c in f.then_body {
             out = out.append(c);
           }

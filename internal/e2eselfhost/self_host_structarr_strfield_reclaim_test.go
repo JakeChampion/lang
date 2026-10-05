@@ -94,13 +94,11 @@ func TestSelfHostStructArrStrFieldReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructArrStrFieldHazardsX86_64 — the shapes the deep element walk
-// must still REFUSE. A wrongly-granted drop frees a string something else still
-// reads, so the failure is a wrong answer or a crash, not a leak. Every `want` was
-// confirmed against both the interpreter and the native x86-64 backend.
-//
-// All of these currently measure as still leaking, i.e. genuinely refused rather
-// than incidentally passing — checked, not assumed.
+// TestSelfHostStructArrStrFieldHazardsX86_64 — shapes whose element strings are
+// still referenced elsewhere when the array dies. A wrongly-granted drop frees a
+// string something else still reads, so the first failure is a wrong answer or a
+// crash; the census must balance as well. Every `want` was confirmed against both
+// the interpreter and the native x86-64 backend.
 func TestSelfHostStructArrStrFieldHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -189,13 +187,17 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := hevCompile(t, runner, driverBin, tc.src, nil)
+			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
 			progBin := buildBin(t, gcc, dir, "structarr_strfield_hazard_"+tc.name, asm)
-			_, exit := hevRun(t, runner, progBin)
+			stderr, exit := hevRun(t, runner, progBin)
 			if exit != tc.want {
-				t.Errorf("exited %d, want %d — a wrong answer or a crash means the element "+
+				t.Fatalf("exited %d, want %d — a wrong answer or a crash means the element "+
 					"walk's string drop was granted to a shape whose string is still read "+
 					"elsewhere (use-after-free), not merely that it leaked", exit, tc.want)
+			}
+			allocs, frees, live := parseLeakcheck(t, tc.name, stderr)
+			if live != 0 || allocs != frees {
+				t.Errorf("allocs=%d frees=%d live_bytes=%d, want a balanced census", allocs, frees, live)
 			}
 		})
 	}

@@ -10,49 +10,27 @@ import (
 
 // --- A nested array from a producer that returns a LOCAL (#7335) -------------
 //
-// `collect_fresh_arrarr_names` admits `let g: T[][] = mk(..)` off the "AAC:"
-// registry, and `opt_fresh_ret_fns_of` builds that registry by proving every
-// return of the callee is a fresh arr-of-arr LITERAL — syntactically. One extra
-// statement inside the callee disqualified it:
+// `let g: T[][] = mk(..)` must reclaim the whole structure — the outer buffer
+// and both inner arrays — whether mk returns the literal directly or a local
+// bound from it:
 //
-//	function mk(): i32[][] { return [[1,2],[3,4]]; }                       clean
-//	function mk(): i32[][] { let a: i32[][] = [[1,2],[3,4]]; return a; }   leaks
+//	function mk(): i32[][] { return [[1,2],[3,4]]; }
+//	function mk(): i32[][] { let a: i32[][] = [[1,2],[3,4]]; return a; }
 //
-// Same caller either way. The refused form leaked BOTH inner arrays every round
-// — allocs matched native exactly and frees were exactly one third of them, the
-// outer buffer reclaimed and the two inners stranded:
+// Returning a local is the form real code has: anything that builds rows
+// before handing them back cannot use the literal form.
 //
-//	200 rounds   allocs=600  frees=200   live_bytes=16000
-//	400 rounds   allocs=1200 frees=400   live_bytes=32000
-//	800 rounds   allocs=2400 frees=800   live_bytes=64000
-//
-// 80 B/round, unbounded, against 0 on native and interp. Returning a local is
-// the form real code has — anything that builds rows before handing them back
-// cannot use the literal form — so the refused case was the common one.
-//
-// The return predicates now resolve `return <ident>` through arrarr_row_effective,
-// which already carried the consumption proof one level down for ROWS: declared
-// earlier in this statement list from an array literal, mentioned nowhere between
-// that declaration and the use, and this is its last use. Those together say the
-// returned value solely owns the structure, which is the invariant the literal
-// form gets for free.
-//
-// THE ORDER MATTERS, and this is the case that shows it. Widening the registry
-// ALONE takes sibling_alias and sibling_alias_strings from 34 to 99 (rc
-// underflow): "ARRARR:" resolved through reclaim_slot_name, so the credit the
-// widening newly grants the fresh binding was inherited by a same-named aliasing
-// sibling, which then freed a buffer the caller still owned. The byte counts
-// stayed clean while it double-freed. A name-keyed credit cannot be widened
-// safely — the site-keying (#7253) is a prerequisite, not a parallel cleanup.
+// The sibling_alias cases guard the other direction: a same-named `v` bound to
+// a borrowed parameter must not inherit the producer binding's release. A
+// double free there moves no byte count, so the exit code carries it.
 //
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the native
 // x86-64 backend agreed on each — never read off the self-host run under test.
 
 type arrarrProdCase struct {
-	name    string
-	src     string
-	want    int
-	balance bool // assert allocs == frees at live_bytes 0
+	name string
+	src  string
+	want int
 }
 
 // `id` hides a row from the static-box plan, so the outer array is a heap box.
@@ -69,7 +47,7 @@ func arrarrProdCases() []arrarrProdCase {
 			name: "producer_returns_local",
 			src: `function mk(): i32[][] { let a: i32[][] = [id([1,2]),[3,4]]; return a; }
 function round(i: i32): i32 { let v: i32[][] = mk(); return v.len(); }` + arrarrProdMain,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
 			// The same producer returning the literal directly — admitted before
@@ -77,14 +55,14 @@ function round(i: i32): i32 { let v: i32[][] = mk(); return v.len(); }` + arrarr
 			name: "producer_returns_literal",
 			src: `function mk(): i32[][] { return [id([1,2]),[3,4]]; }
 function round(i: i32): i32 { let v: i32[][] = mk(); return v.len(); }` + arrarrProdMain,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
 			// No producer at all: the literal bound straight into the local. This
 			// path was always credited and must stay so.
 			name: "literal_init",
 			src:  `function round(i: i32): i32 { let v: i32[][] = [id([1,2]),[3,4]]; return v.len(); }` + arrarrProdMain,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
 			// THE OVER-RELEASE GUARD. Two same-named `v`, one from the producer and
@@ -118,13 +96,8 @@ function main(): i32 { let b: string[][] = [[w("a")],[w("b")]]; let t: i32 = 0; 
 			want: 34,
 		},
 		{
-			// STILL OPEN, deliberately: the literal and the alias in ONE body. The
-			// literal is credited to `a`, and reading it into `v` disqualifies it, so
-			// this leaks 16000 exactly as before. That is an escape-gate question,
-			// not a registry one. Asserted on the exit code only — the point here is
-			// that the shape must not start OVER-releasing while it waits for its own
-			// fix, which is the direction a careless widening would take it.
-			name: "local_alias_still_leaks",
+			// The literal and an alias of it in ONE body.
+			name: "local_alias",
 			src:  `function round(i: i32): i32 { let a: i32[][] = [id([1,2]),[3,4]]; let v: i32[][] = a; return v.len(); }` + arrarrProdMain,
 			want: 68,
 		},
@@ -160,7 +133,7 @@ func TestSelfHostArrArrProducerX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance && (live != 0 || allocs != frees) {
+			if live != 0 || allocs != frees {
 				t.Errorf("%s: %s — must balance at live_bytes 0. The inner arrays are two "+
 					"thirds of the allocations here, so a withheld deep walk shows up as "+
 					"frees at one third of allocs", tc.name, summary)

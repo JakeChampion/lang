@@ -7,24 +7,7 @@ import (
 
 // --- Rebound rc-tuple reclaim (#6127 tuple_churn, rc half) -------------------
 //
-// #6251 gave a fresh rc-tuple local a scope-exit sweep ("TUPRCS:") and left the
-// REBOUND form deliberately unfixed, pinned as still leaking 32000, because the
-// assign path emitted no release for the class and so the final value's shape
-// could not be judged from the declaration alone. A rebound rc-tuple therefore
-// freed NOTHING: allocs=1000 frees=0 live_bytes=32000 over 100 rounds on
-// `(i32, string)`, against 0 on native.
-//
-// Two halves, and #6232 is the worked example of why both are needed — with only
-// the assign-site release the LAST chain still leaks, and with only the credit
-// every superseded one does:
-//
-//   - lower_stmt_assign now routes a reclaimable rc-tuple slot through the
-//     existing emit_tuple_deep_reinit_store, the same release the StmtVar
-//     re-declaration path has always used;
-//   - the "TUPRCS:" sweep credit admits a reassigned name when every assignment
-//     rebuilds a fresh rc-tuple of the SAME annotated type
-//     (all_assigns_fresh_rc_tuple), which is what makes the declaration's type a
-//     sound description of the final value the sweep frees by.
+// A rebound rc-tuple must release every chain it supersedes and its final value.
 //
 // This is a DEEP drop — the rc children as well as the box — so a wrongly-granted
 // release frees a payload something else still reads, not merely a box.
@@ -89,12 +72,11 @@ func TestSelfHostRcTupleRebindReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRcTupleRebindHazardsX86_64 — the shapes the deep drop must still
-// REFUSE. Because this releases the rc CHILD as well as the box, a wrongly-granted
-// credit frees a payload something else still points at, so the failure is a wrong
-// answer or a crash rather than a leak. Every `want` came from the interpreter and
-// native x86-64 agreeing; all five are currently refused, verified by checking each
-// still leaks rather than assuming a passing exit means the gate fired.
+// TestSelfHostRcTupleRebindHazardsX86_64 — shapes where the old chain is still
+// referenced at the rebind. Because the deep drop releases the rc CHILD as well as
+// the box, dropping there frees a payload something else still points at, so the
+// first failure is a wrong answer or a crash; the census must balance as well.
+// Every `want` came from the interpreter and native x86-64 agreeing.
 func TestSelfHostRcTupleRebindHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -183,13 +165,17 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := hevCompile(t, runner, driverBin, tc.src, nil)
+			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
 			progBin := buildBin(t, gcc, dir, "rctuple_rebind_hazard_"+tc.name, asm)
-			_, exit := hevRun(t, runner, progBin)
+			stderr, exit := hevRun(t, runner, progBin)
 			if exit != tc.want {
-				t.Errorf("exited %d, want %d — a wrong answer or a crash means the DEEP drop "+
+				t.Fatalf("exited %d, want %d — a wrong answer or a crash means the DEEP drop "+
 					"was granted to a shape that still holds a live reference to the payload "+
 					"(use-after-free), not merely that it leaked", exit, tc.want)
+			}
+			allocs, frees, live := parseLeakcheck(t, tc.name, stderr)
+			if live != 0 || allocs != frees {
+				t.Errorf("allocs=%d frees=%d live_bytes=%d, want a balanced census", allocs, frees, live)
 			}
 		})
 	}

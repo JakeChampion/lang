@@ -275,13 +275,15 @@ func TestSelfHostStructProducerLocalX86_64(t *testing.T) {
 			if frees != tc.frees {
 				t.Errorf("%s: %s — want frees=%d", tc.name, summary, tc.frees)
 			}
+			if live != 0 {
+				t.Errorf("%s: %s — want live_bytes=0", tc.name, summary)
+			}
 		})
 	}
 }
 
-// TestSelfHostStructProducerLocalWasmIR — the wasm sibling. Exit codes only: the
-// leak rows do not move one, so what this leg catches is a release that frees a
-// LIVE box on wasm.
+// TestSelfHostStructProducerLocalWasmIR — the wasm sibling. Exit codes only, so
+// what this leg catches is a release that frees a LIVE box on wasm.
 func TestSelfHostStructProducerLocalWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping struct producer-local wasm IR e2e")

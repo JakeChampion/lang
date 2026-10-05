@@ -7,32 +7,12 @@ import (
 
 // --- Rebound rc-payload enum reclaim (#6127) --------------------------------
 //
-// An rc-payload enum local (`Text(string)`) already reclaimed correctly when it
-// was RE-DECLARED each iteration (`while { let e = Text(…); match (e) … }`) —
-// the StmtVar lowering routes such a slot through emit_enum_deep_reinit_store,
-// which deep-drops the prior chain (payload + box) before the store. A REBOUND
-// local (`let e = Nothing; while { e = Text(…) }`) reached none of that: both
-// collect_fresh_rcenum_names and consumed_rcpayload_enum_frees excluded any
-// reassigned name outright, and the assignment path fell through to
-// emit_arr_store's SHALLOW box dec, which for an rc-payload enum would have
-// leaked the payload anyway.
+// A REBOUND rc-payload enum local (`let e = Nothing; while { e = Text(…) }`)
+// must release every chain it orphans and its final value, exactly as the
+// re-declared form (`while { let e = Text(…); match (e) … }`) does.
 //
-// Nothing was freed at all — measured allocs=900 frees=0 live_bytes=28800 over
-// 100 rounds, scaling linearly, against 0 on native, while the byte-identical
-// re-declared shape is flat at 0.
-//
-// The two collectors now admit a rebound name when EVERY assignment to it
-// constructs a fresh chain of the SAME enum (all_assigns_fresh_rcenum, checked
-// recursively — the interesting rebinds sit inside a loop). The rebinds release
-// the orphaned chains through the existing emit_enum_deep_reinit_store, and the
-// consuming-match free releases the last one; both halves are needed, since with
-// only the first the final value's box + payload still leaked 2 blocks a round.
-//
-// This is a DEEP drop, so the hazard set below matters more than it did for the
-// scalar-box sibling: granting the credit to a shape that still holds a live
-// reference frees the payload too. The escape gate is unchanged and is what
-// excludes them — walk_stmt_escapes reads an assignment's RHS, so a value
-// aliased out before being overwritten disqualifies the name.
+// This is a DEEP drop, so the hazard set below matters: releasing a chain that
+// something else still references frees the payload too.
 
 // `ids` hides the literal payload from the static-box plan, so each Text is a
 // heap box.
@@ -106,10 +86,10 @@ func TestSelfHostRcEnumRebindReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRcEnumRebindHazardsX86_64 — the rebind shapes the deep drop must
-// still REFUSE. Each asserts BEHAVIOUR: a wrongly-granted credit releases a
-// payload something else still reads, so the failure mode is a wrong answer or a
-// crash, not a leak. Every `want` was confirmed against both the interpreter and
+// TestSelfHostRcEnumRebindHazardsX86_64 — rebind shapes whose old chain is still
+// referenced. A wrongly-granted drop releases a payload something else still
+// reads, so the first failure is a wrong answer or a crash; the census must
+// balance as well. Every `want` was confirmed against both the interpreter and
 // the native x86-64 backend. `ids` keeps each Text a heap box.
 func TestSelfHostRcEnumRebindHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -240,14 +220,18 @@ function main(): i32 {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := hevCompile(t, runner, driverBin, tc.src, nil)
+			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
 			progBin := buildBin(t, gcc, dir, "rcenum_rebind_hazard_"+tc.name, asm)
-			_, exit := hevRun(t, runner, progBin)
+			stderr, exit := hevRun(t, runner, progBin)
 			if exit != tc.want {
-				t.Errorf("exited %d, want %d — a wrong answer or a crash here means the "+
+				t.Fatalf("exited %d, want %d — a wrong answer or a crash here means the "+
 					"rebind's DEEP drop was granted to a shape that still holds a live "+
 					"reference to the payload (use-after-free), not merely that it leaked",
 					exit, tc.want)
+			}
+			allocs, frees, live := parseLeakcheck(t, tc.name, stderr)
+			if live != 0 || allocs != frees {
+				t.Errorf("allocs=%d frees=%d live_bytes=%d, want a balanced census", allocs, frees, live)
 			}
 		})
 	}
