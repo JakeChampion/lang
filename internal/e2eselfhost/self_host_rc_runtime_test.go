@@ -324,8 +324,9 @@ func TestSelfHostRcArm64(t *testing.T) {
 		{"array-of-arrays", "function main(): i32 { let a: i32[] = [1, 2]; let b: i32[] = [3, 4]; let both: i32[][] = [a, b]; return both[0][1] + both[1][0] + __rc_underflow_count(); }", 5},
 		{"struct-update-copy", "struct H { items: i32[], n: i32 } function main(): i32 { let xs: i32[] = [1, 2]; let h: H = H { items: xs, n: 0 }; let h2: H = H { ...h, n: 5 }; return h2.items[1] + h2.n + __rc_underflow_count(); }", 7},
 		// Phase 3 (arm64 free): reclamation churn (alloc >> heap completes) + enum payload retain.
+		// xs goes through id so the payload is built on the heap rather than placed as a constant.
 		{"reclaim-churn", "function work(n: i32): i32 { let xs: i32[] = []; let i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs[n - 1]; } function main(): i32 { let k = 0; let s = 0; while (k < 200000) { s = work(200); k = k + 1; } return (s % 7) + __rc_underflow_count(); }", 3},
-		{"enum-holds-array", "enum Box { Arr(i32[]), Empty } function mk(): Box { let xs: i32[] = [3, 4, 5]; return Arr(xs); } function main(): i32 { let b = mk(); match (b) { Arr(a) => { return a[1] + a[2] + __rc_underflow_count(); }, Empty => { return 0; } } }", 9},
+		{"enum-holds-array", "enum Box { Arr(i32[]), Empty } function id(xs: i32[]): i32[] { return xs; } function mk(): Box { let xs: i32[] = id([3, 4, 5]); return Arr(xs); } function main(): i32 { let b = mk(); match (b) { Arr(a) => { return a[1] + a[2] + __rc_underflow_count(); }, Empty => { return 0; } } }", 9},
 		// Phase 4 (move-on-return): bare owned local moved to caller; sibling
 		// local still swept; borrowed-param return is not a move.
 		{"move-bare-local", "function make(): i32[] { let xs: i32[] = [10, 20, 30]; return xs; } function main(): i32 { let ys = make(); return ys[0] + ys[2] + __rc_underflow_count(); }", 40},
@@ -501,8 +502,9 @@ func TestSelfHostRcFreeReclaimX86_64(t *testing.T) {
 		{"borrowed-param-builder", "function add(toks: i32[], t: i32): i32[] { return toks.append(t); } function main(): i32 { let ts: i32[] = []; let i = 0; while (i < 200) { ts = add(ts, i); i = i + 1; } return ts[199] + __rc_underflow_count(); }", 199},
 		// Enum payload holding an array: the variant retains it, so the
 		// source local going out of scope does not free it (would UAF
-		// once free is on -- the JSON nested-structure gap).
-		{"enum-holds-array", "enum Box { Arr(i32[]), Empty } function mk(): Box { let xs: i32[] = [3, 4, 5]; return Arr(xs); } function main(): i32 { let b = mk(); match (b) { Arr(a) => { return a[1] + a[2] + __rc_underflow_count(); }, Empty => { return 0; } } }", 9},
+		// once free is on -- the JSON nested-structure gap). xs goes through id
+		// so the payload is built on the heap rather than placed as a constant.
+		{"enum-holds-array", "enum Box { Arr(i32[]), Empty } function id(xs: i32[]): i32[] { return xs; } function mk(): Box { let xs: i32[] = id([3, 4, 5]); return Arr(xs); } function main(): i32 { let b = mk(); match (b) { Arr(a) => { return a[1] + a[2] + __rc_underflow_count(); }, Empty => { return 0; } } }", 9},
 		// Loop-local array rebind: `let r = build(n)` re-bound each iteration
 		// is released per-iteration (StmtVar cow-guarded dec-on-overwrite),
 		// not leaked until function exit. 100k rebinds stay value-correct and

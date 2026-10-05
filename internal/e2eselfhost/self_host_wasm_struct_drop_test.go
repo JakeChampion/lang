@@ -18,7 +18,8 @@ import (
 // boxes) are reclaimed onto the freelist and reused, so memory stays bounded and
 // the program completes (exit 0); a leak goes past the cap and traps. The WAT
 // assertions pin the typed lowering's drop helper and the release it makes, so
-// the cap is not passed vacuously.
+// the cap is not passed vacuously. Each constant field value goes through id so
+// the struct is built on the heap rather than placed as a constant.
 func TestSelfHostStructDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm struct-drop e2e")
@@ -48,7 +49,8 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 		{
 			"scalar-array-field-reclaim",
 			"struct Bag { items: i32[] } " +
-				"function mk(): i32 { let b: Bag = Bag { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }; return b.items[0] + b.items[15]; } " +
+				"function id(xs: i32[]): i32[] { return xs; } " +
+				"function mk(): i32 { let b: Bag = Bag { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }; return b.items[0] + b.items[15]; } " +
 				"function main(): i32 { let s: i32 = 0; let k: i32 = 0; while (k < 500000) { s = mk(); k = k + 1; } return s - 17; }",
 			"$__sem_drop_Bag",
 			"call $__fern_arr_dec",
@@ -69,7 +71,8 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 		{
 			"nested-struct-field-reclaim",
 			"struct Inner { v: i32, w: i32 } struct Outer { inner: Inner, tag: i32 } " +
-				"function mk(): i32 { let o: Outer = Outer { inner: Inner { v: 5, w: 6 }, tag: 3 }; return o.inner.v + o.inner.w + o.tag; } " +
+				"function id(xs: i32[]): i32[] { return xs; } " +
+				"function mk(): i32 { let o: Outer = Outer { inner: Inner { v: id([5])[0], w: 6 }, tag: 3 }; return o.inner.v + o.inner.w + o.tag; } " +
 				"function main(): i32 { let s: i32 = 0; let k: i32 = 0; while (k < 500000) { s = mk(); k = k + 1; } return s - 14; }",
 			"$__sem_drop_Outer",
 			"call $__fern_arr_dec",
@@ -81,7 +84,8 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 		{
 			"nested-struct-field-deep-drop",
 			"struct Inner { items: i32[] } struct Outer { inner: Inner, tag: i32 } " +
-				"function mk(): i32 { let o: Outer = Outer { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, tag: 7 }; return o.inner.items[0] + o.inner.items[15] + o.tag; } " +
+				"function id(xs: i32[]): i32[] { return xs; } " +
+				"function mk(): i32 { let o: Outer = Outer { inner: Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }, tag: 7 }; return o.inner.items[0] + o.inner.items[15] + o.tag; } " +
 				"function main(): i32 { let s: i32 = 0; let k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 24; }",
 			"$__sem_drop_Outer",
 			"call $__sem_release_Inner",
@@ -93,7 +97,8 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 		{
 			"nested-struct-field-deep-drop-depth2",
 			"struct Inner { items: i32[] } struct Mid { inner: Inner, m: i32 } struct Outer { mid: Mid, tag: i32 } " +
-				"function mk(): i32 { let o: Outer = Outer { mid: Mid { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, m: 2 }, tag: 7 }; return o.mid.inner.items[0] + o.mid.inner.items[15] + o.mid.m + o.tag; } " +
+				"function id(xs: i32[]): i32[] { return xs; } " +
+				"function mk(): i32 { let o: Outer = Outer { mid: Mid { inner: Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }, m: 2 }, tag: 7 }; return o.mid.inner.items[0] + o.mid.inner.items[15] + o.mid.m + o.tag; } " +
 				"function main(): i32 { let s: i32 = 0; let k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 26; }",
 			"$__sem_drop_Mid",
 			"call $__sem_release_Inner",
