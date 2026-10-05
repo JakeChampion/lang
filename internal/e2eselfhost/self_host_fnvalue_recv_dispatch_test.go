@@ -126,7 +126,7 @@ var fnValueRecvDispatchCases = []struct {
 // route "ir" (a refusal is a regression too — the point is that the call
 // dispatches, correctly), then the linked binary's exit code must equal both
 // the interpreter oracle and the hand-computed expectation.
-func runFnValueRecvDispatch(t *testing.T, dir, driver, root string, target []string, link func(t *testing.T, name, asm string) string, run func(bin string) *exec.Cmd) {
+func runFnValueRecvDispatch(t *testing.T, dir, driver, root string, runner, target []string, link func(t *testing.T, name, asm string) string, run func(bin string) *exec.Cmd) {
 	t.Helper()
 	for _, tc := range fnValueRecvDispatchCases {
 		tc := tc
@@ -140,11 +140,14 @@ func runFnValueRecvDispatch(t *testing.T, dir, driver, root string, target []str
 				t.Fatalf("oracle = %d, want %d (the case stopped exercising what it describes)", want, tc.want)
 			}
 			args := append([]string{entry, root}, target...)
-			out, _ := exec.Command(driver, append(args, "-decide")...).Output()
+			out, err := runX86_64Bin(runner, driver, append(args, "-decide")...).CombinedOutput()
+			if err != nil {
+				t.Fatalf("self-host decide failed: %v\n%s", err, out)
+			}
 			if got := strings.TrimSpace(string(out)); got != "ir" {
 				t.Fatalf("decide = %q, want \"ir\"", got)
 			}
-			asm, err := exec.Command(driver, args...).Output()
+			asm, err := runX86_64Bin(runner, driver, args...).Output()
 			if err != nil {
 				t.Fatalf("self-host compile failed: %v", err)
 			}
@@ -168,7 +171,7 @@ func TestSelfHostFnValueRecvDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
-	runFnValueRecvDispatch(t, dir, driver, root, nil,
+	runFnValueRecvDispatch(t, dir, driver, root, runner, nil,
 		func(t *testing.T, name, asm string) string { return buildBin(t, gcc, dir, name, asm) },
 		func(bin string) *exec.Cmd { return runX86_64Bin(runner, bin) })
 }
@@ -181,16 +184,13 @@ func TestSelfHostFnValueRecvDispatch(t *testing.T) {
 func TestSelfHostFnValueRecvDispatchArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
-	if len(x86runner) != 0 {
-		t.Skip("arm64 fn-value dispatch gate needs a native x86 host to run the driver")
-	}
 	dir := copySelfHostTree(t)
 	driver := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "fvrd_arm64")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
-	runFnValueRecvDispatch(t, dir, driver, root, []string{"-target", "arm64-linux"},
+	runFnValueRecvDispatch(t, dir, driver, root, x86runner, []string{"-target", "arm64-linux"},
 		func(t *testing.T, name, asm string) string { return buildBinArm64(t, arm64gcc, dir, name, asm) },
 		func(bin string) *exec.Cmd { return runArm64Bin(qemu, bin) })
 }

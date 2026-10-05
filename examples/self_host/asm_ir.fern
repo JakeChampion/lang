@@ -5942,6 +5942,14 @@ function emit_inner_mul_add_f64(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  if (o.kind_tag == 383) {
+    s = s.write("    popq %rdi\n    testl %edi, %edi\n    js __fern_oob_abort\n    movl %edi, %edi\n");
+    if (o.width == 8) {
+      s = s.write("    addq $7, %rdi\n    shrq $3, %rdi\n");
+    }
+    s = s.write("    call __fern_arr_box\n    movq $0, (%rax)\n    pushq %rax\n");
+    return s.need("heap");
+  }
   if (o.kind_tag == 382) {
     return emit_inner_mul_add_f64(s);
   }

@@ -298,7 +298,7 @@ function need_open_file(needs: string[]): boolean {
 // it is recorded like the rest for both to see.
 pub function need_ops(): string[] {
   return [
-    "args", "arr_push", "arr_push_f64", "arr_push_i64", "arr_push_owned", "arr_push_owned_i64",
+    "args", "arr_reserve", "arr_push", "arr_push_f64", "arr_push_i64", "arr_push_owned", "arr_push_owned_i64",
     "arr_push_owned_f64", "env", "environ", "eprint_str", "exit", "fcos", "fexp", "flog",
     "fpow", "fsin", "monotonic_ns", "now_ns", "now_unix_ms", "poll", "print_str", "putchar",
     "random_bytes", "read_chunk", "read_chunk_bytes", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache",
@@ -2332,7 +2332,7 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
       i = i + 1;
       continue;
     }
-    if (n == "arr_push" || n == "arr_push_owned" || n == "arr_push_i64"
+    if (n == "arr_reserve" || n == "arr_push" || n == "arr_push_owned" || n == "arr_push_i64"
       || n == "arr_push_f64" || n == "arr_push_owned_i64" || n == "arr_push_owned_f64"
       || n == "arr_push_u8" || n == "arr_push_owned_u8"
       || n == "map_iter" || n == "str_split"
@@ -6918,6 +6918,15 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
 // arm emits -- wrong code that looks plausible. asm_ir carries the same guard
 // for the same reason.
 function emit_str_op_wat(o: ir.Op): string {
+  if (o.kind_tag == 383) {
+    let stride: i32 = 4;
+    if (o.width == 8) {
+      stride = 1;
+    } else if (o.width == 64) {
+      stride = 8;
+    }
+    return "    i32.const " + util.i32_to_string(stride) + "\n    call $__fern_arr_reserve\n";
+  }
   if (o.kind_tag == 381) {
     return "    call $__fern_outer_mul_f64\n";
   }
@@ -9648,8 +9657,18 @@ pub function scale_f64_helper(): string {
   return o;
 }
 
-// Each row splats its left operand and visits the right input in order.
-// No reduction or operand exchange is permitted, including in the odd tail.
+// Reserve private capacity while keeping the observable initialized length zero.
+pub function array_reserve_helper(): string {
+  return "  (func $__fern_arr_reserve (param $n i32) (param $stride i32) (result i32)\n"
+    + "    (local $out i32)\n"
+    + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (unreachable)))\n"
+    + "    (local.set $out (call $__fern_arr_elems (local.get $n) (local.get $stride)))\n"
+    + "    (i32.store (local.get $out) (i32.const 0))\n"
+    + "    (i32.store offset=4 (local.get $out) (local.get $n))\n"
+    + "    (local.get $out))\n";
+}
+
+// Each output accumulates in K order without contraction or reassociation.
 pub function inner_mul_add_f64_helper(): string {
   let o: string = "  (func $__fern_inner_mul_add_f64 (param $a i32) (param $b i32) (param $rows i32) (param $extent i32) (param $columns i32) (param $init f64) (result i32)\n";
   o = o + "    (local $size i64) (local $out i32) (local $p i32) (local $left i32) (local $right i32) (local $row i32) (local $col i32) (local $k i32) (local $acc v128) (local $sacc f64)\n";
@@ -14595,6 +14614,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@uses_inner_mul_add_f64")) {
     parts = parts.append(inner_mul_add_f64_helper());
+  }
+  if (need(needs, "arr_reserve")) {
+    parts = parts.append(array_reserve_helper());
   }
   if (need(needs, "@uses_crc32_cksum")) {
     parts = parts.append(crc32_cksum_helper());

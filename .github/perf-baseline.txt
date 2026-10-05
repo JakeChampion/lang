@@ -80,7 +80,7 @@ x86_64/sort_inplace.ir	44638114
 x86_64/sort_ints.text	4047
 x86_64/sort_ints.ir	35771082
 x86_64/sort_strings.text	4866
-x86_64/sort_strings.ir	133610715
+x86_64/sort_strings.ir	131233536
 x86_64/string_build.text	3432
 x86_64/string_build.ir	102210113
 x86_64/string_count_byte.text	3029
@@ -183,7 +183,7 @@ aarch64/sort_inplace.ir	54286058
 aarch64/sort_ints.text	4659
 aarch64/sort_ints.ir	37318031
 aarch64/sort_strings.text	5584
-aarch64/sort_strings.ir	144692942
+aarch64/sort_strings.ir	141543740
 aarch64/string_build.text	4033
 aarch64/string_build.ir	99475440
 aarch64/string_count_byte.text	3517

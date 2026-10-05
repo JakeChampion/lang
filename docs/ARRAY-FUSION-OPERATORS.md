@@ -2,8 +2,8 @@
 
 Status: `internal/ir/array_fusion.go` (#9731) and the primary compiler's
 `examples/self_host/semfuse.fern` (#11072) implement the `map`/`filter` stages
-and `fold`/`reduce` sinks below. The scan section describes an unimplemented
-extension. This document states what each array operator contributes to a
+and `fold`/`reduce` sinks below. The primary compiler also implements `scan`
+as a materializing sink. This document states what each operator contributes to a
 fused loop, and why composing those contributions gives the guarantee
 `docs/ITERATOR-FUSION-CONTRACT.md` clause 1 asks for.
 
@@ -141,37 +141,97 @@ The seeded flag is what `reduce` has instead of `z`, and it costs one
 `i1` in the loop rather than an allocation. The `Option` is built in
 `finish`, once — O(1), not per element.
 
+When no stage can skip an element, both compilers instead test for an empty
+input, run the map fragments on element zero to seed the accumulator, and
+start the loop at element one. That removes the arrival flag from the loop.
+Empty input still returns `None`, and a singleton never calls the combining
+function. A chain containing a filter retains the flag because its first
+arriving element is not known in advance.
+
 `reduce` is where `docs/ARRAY-ALGEBRA.md` §3 binds: `h` is applied in
 index order and the fragments above do not license any other order. A
 tree reduction is a different `step`/`finish` pair and needs the
 explicit opt-in that document requires.
 
-### `scan(z, h)`: proposed prefix sink
+### `scan(z, h)`: prefix sink
 
-Neither compiler currently fuses scan. The primary report names such a site
-`operator-outside-algebra`. The following fragments describe the proposed
-extension, not the code emitted today.
+The primary compiler fuses map/filter chains into scan. The Go bootstrap
+compiler retains its eager scan implementation.
 
 ```
-init:    acc = z; out = <buffer of length n>
-step:    acc = h(acc, x); out[i] = acc
+init:    acc = z; out = <empty buffer with capacity n>
+step:    acc = h(acc, x); out.append(acc)
 finish:  result is out
 ```
 
-**`scan` is a sink that materializes, and saying so is the point.** Its
-output has the same length as its input, so it cannot be fused away —
-but it can still be fused *into*: the buffer is sized once in `init`
-from a length already known, so the pipeline pays one allocation instead
-of the O(log n) geometric regrows the eager combinator pays today.
+Scan materializes one prefix value per arriving element, excluding the initial
+seed. The original input length is an upper bound after any number of filters,
+so one reservation suffices even when the output length is unknown. Filtered
+elements carry both the accumulator and output unchanged to the next iteration.
+Append updates the actual length only after initializing the next element.
 
-The original minimum viable design includes scan to demonstrate that a
-materializing operator composes with the same fragment interface. That part
-remains unimplemented. The shipped first slice uses reduction sinks; scan
-still needs loop generation, cardinality handling after filters, allocation
-and semantic tests, and measurement.
+The typed `array_reserve` operation requires an owned scalar array and an i32
+capacity. Physical lowering keeps the layout in each backend: packed bytes or
+word slots on native targets, and the appropriate element stride on Wasm.
+Negative capacities and Wasm byte-size overflow abort before allocation.
+Ownership planning accounts for the output array through its loop phi.
 
-In that design, a `scan` in the middle of a chain would end one fused loop
-and begin another.
+A scan in the middle of a chain ends one fused loop and can feed another.
+Its observable prefix array remains materialized. Effectful callbacks, shared
+intermediates and non-scalar accumulators retain the existing refusal rules.
+`FERN_ARRAY_REPORT=1` identifies fused scans with
+`storage=no-intermediate-arrays/one-output-buffer`.
+
+`TestSelfHostArrayFusionScan*` checks values, callback effects, scalar widths,
+floating order and RC balance on all three primary targets. Allocation tests
+require exactly one output allocation, including empty and all-filtered scans,
+with input construction and verification excluded from the count. The repeatable
+native benchmark is `examples/array_pipeline/map_scan.fern`; build it with
+fusion enabled and disabled and run `2000 200 0` or `2000 200 1` for filtered
+input. It verifies every prefix outside the timed region.
+
+On Apple M3 Pro arm64-darwin, 2026-10-05, nine alternating processes per
+build used 2,000 input elements. A two-round pilot preceded 200 rounds with
+only that argument changed. Every prefix and both builds' checksums agreed.
+
+| Pipeline | Fusion disabled, ns/scan | Fusion enabled, ns/scan | Allocator calls, disabled/enabled | Fresh bytes, disabled/enabled |
+| --- | ---: | ---: | ---: | ---: |
+| map.scan | 8,318 (8,133-8,578) | 2,120 (2,000-2,241) | 4,000 / 200 | 40,960 / 16,384 |
+| filter.map.scan | 6,761 (6,445-7,778) | 1,612 (1,503-1,866) | 5,400 / 200 | 10,240 / 16,384 |
+
+Times are medians with observed ranges; allocation counters cover all 200
+calls. Reserving the input-length bound trades spare capacity for avoiding
+growth. The filtered case keeps one element in three and used more fresh
+bytes with fusion, as the table shows. The enabled benchmark's native text
+section was 22,024 bytes, versus 22,312 with fusion disabled.
+The compiler's native text grew by 7,136 bytes for the scan graph construction,
+typed reservation checks, ownership integration and three backend emitters.
+No size baseline was changed.
+
+The benchmark also accepts `loop` as its fourth argument, selecting a
+handwritten while/append implementation with the same prefix semantics.
+For example, `2000 20000 1 loop` runs the filtered control. The language has
+no public scalar-array capacity reservation, so this control grows its output
+through ordinary append; the fused loop reserves its input-length bound once.
+
+With the final ready-successor layout described below, a two-round pilot and
+200-round run preceded 20,000 rounds, changing only the round count. Nine
+alternating processes per variant on the same Apple M3 Pro gave:
+
+| Pipeline | Fusion disabled, ns/scan | Fusion enabled, ns/scan | Handwritten loop, ns/scan |
+| --- | ---: | ---: | ---: |
+| map.scan | 8,936 (8,645-9,212) | 2,301 (2,184-5,039) | 2,609 (2,563-3,465) |
+| filter.map.scan | 7,069 (6,751-7,530) | 2,016 (1,970-2,850) | 2,487 (2,364-2,826) |
+
+All prefixes and checksums agreed. Across 20,000 scans, the fused variants
+made 20,000 allocator calls each. The handwritten loops made 200,000 and
+180,000 calls, respectively, versus 400,000 and 540,000 with fusion disabled.
+Fused fresh bytes were 16,384 in both cases. The handwritten loops used
+20,480 and zero fresh bytes, while the eager variants used 40,960 and 10,240.
+Zero fresh bytes in the filtered control reflects freelist reuse, not zero
+allocations. The fused output's larger reserved capacity remains a cost even
+though it avoids growth calls. Empty, singleton, short and 257-element inputs
+also pass the benchmark's prefix checks with both variants and fusion settings.
 
 ## Deliberately not in the first slice
 
@@ -246,12 +306,192 @@ labelled Go analysis. See `ARRAY-ALGEBRA.md` for the closed refusal tags.
 The primary fusion report recognizes `map`, `filter`, `fold`, `reduce`,
 `scan`, `zip`, `take`, `take_while`, `drop`, `drop_while`, `flat_map`,
 `flatten`, `chunks`, `chunks_exact`, `windows`, `partition`, `enumerate`
-and `reverse`. Only the first four belong to the implemented fusion algebra;
+and `reverse`. Only the first five belong to the primary fusion algebra;
 the others report `operator-outside-algebra`. This report does not inventory
 every std/array helper. Calls outside this recognized set produce no site
 line, so silence is not evidence that such a call fused or avoided allocation.
 `TestSelfHostArrayFusion*` and `TestSelfHostArrayReport*` in
 `internal/e2eselfhost` gate the primary path on x86-64, arm64 and wasm32-wasi.
+
+The primary compiler now preserves a locally constructed closure's target
+through physical lowering. Captured callbacks still receive their environment;
+unknown function values retain indirect dispatch. After fusion, `seminline`
+also splices small capture-free callback bodies into the changed callers.
+It prepares callback helpers with the ordinary inliner in a scratch graph,
+then requires each resulting callback to satisfy the small scalar-leaf limit.
+Only fused callers receive these callback bodies. Fusion precedes general
+single-use inlining, which would otherwise absorb the combinator calls.
+The callback proof requires an unread environment parameter, respects
+`@noinline`, `fip` and `fbip`, and retains the leaf, caller and splice limits.
+`FERN_SEM_INLINE=` disables this additional inlining. Unread capture-free
+closure constants are then removed before ownership and register planning.
+`TestSelfHostClosureInlineAdmission` checks these proof boundaries and verifies
+the resulting typed graphs. `TestSelfHostArrayFusionUsesKnownCallbackBodies`
+checks emitted dispatch and executes the value fixture.
+It also requires a single bound test in each emitted map-only reduction loop.
+`TestSelfHostArrayFusionSeededReductionBits` checks empty and singleton inputs,
+captured map callbacks and index-order floating arithmetic on all three targets.
+Arithmetic NaNs follow FS-04; other result bits remain exact.
+
+After fusion, `semoption.fern` splits private `Option[scalar]` values into a
+boolean tag and a scalar payload before ownership planning. The proof covers
+the complete component connected by copies and phis, including loop phis.
+Every origin must be a local constructor, and every use must be a tag test,
+payload read, copy or phi. A return, call, container store, closure capture or
+external origin keeps the whole component boxed. Counted payloads, finalizers
+and source debug bindings also retain their existing representation.
+
+Some supplies its payload directly; None supplies an unobservable typed zero.
+Tag and payload phis follow the original predecessor order. Repeated reads
+remain reads, and escaping Options keep their public ABI. The scalar-option
+tests require zero allocations for local reductions and the expected box for
+escaping results on all three targets. They cover empty and rejected inputs,
+integer and floating widths, booleans, branch/loop joins and RC balance.
+Floating payload copies retain exact bits, including NaNs. The direct semantic
+admission fixture verifies both graphs and checks refusal boundaries.
+
+The measurements below track the primary compiler's path to the handwritten
+controls. On Apple M3 Pro arm64-darwin, 2026-10-05,
+nine alternating runs of the existing 2,000-element benchmarks gave these
+medians and observed ranges, in ns per round. A two-round pilot preceded the
+200-round measurements; checksums agreed throughout.
+
+| Primary compiler variant | map.map.reduce | filter.map.reduce |
+| --- | ---: | ---: |
+| Before direct closure lowering | 10,505 (10,310-11,240) | 4,957 (4,766-5,168) |
+| Direct closure lowering | 8,321 (8,078-8,709) | 2,723 (2,627-2,840) |
+| Same-run handwritten control | 7,295 (7,138-7,614) | 2,392 (2,346-2,609) |
+| Inlining and dead closure removal, later run | 8,779 (8,397-10,110) | 2,886 (2,739-2,929) |
+| Later-run handwritten control | 7,618 (7,303-7,831) | 2,592 (2,446-2,688) |
+| Prepared helper callbacks, final run | 7,844 (7,743-8,273) | 2,690 (2,640-2,941) |
+| Final-run handwritten control | 7,584 (7,364-9,080) | 2,491 (2,478-3,370) |
+
+The initial closure pass missed benchmark callbacks whose helpers had just
+become scalar leaves. Physical inlining removed those calls after ownership
+planning, leaving unused closure bookkeeping. Preparing the helper calls before
+the closure proof removes that bookkeeping too. In the final paired run, the
+version immediately before that preparation measured 8,468 ns (8,167-8,792)
+and 2,953 ns (2,804-7,547), respectively. The improvement still does not
+establish parity. Pipelines make one allocator call per round for `Some`;
+controls make none. Both have zero steady fresh bytes. The dispatch explanation
+and September timing results below describe the Go compiler and do not
+establish primary parity.
+
+Peeling the first mapped element removes the per-iteration arrival test in
+the primary compiler too. A subsequent run with the same pilot and measurement
+protocol measured map.map.reduce at 7,316 ns (7,047-11,208), versus 7,782 ns
+(7,386-7,901) before peeling and 7,173 ns (6,997-8,520) for the handwritten
+control. The unchanged filtered pipeline measured 2,558 ns (2,508-2,806),
+with a 2,421 ns (2,350-2,642) control. Allocation counts and checksums were
+unchanged. These overlapping ranges do not establish runtime parity.
+
+Splitting private scalar Options removes that remaining allocation. A two-round
+pilot and 200-round run passed before scaling only the round count to 20,000,
+with nine alternating processes per variant and the same 2,000-element inputs.
+The longer run separates the filtered pipeline's remaining runtime gap from
+the short-run variation:
+
+| Pipeline | Before Option splitting, ns/round | After splitting, ns/round | Same-build handwritten control, ns/round |
+| --- | ---: | ---: | ---: |
+| map.map.reduce | 7,634 (7,603-7,714) | 7,584 (7,549-7,649) | 7,598 (7,556-8,327) |
+| filter.map.reduce | 2,724 (2,709-2,747) | 2,722 (2,703-2,736) | 2,540 (2,524-2,604) |
+
+Both optimized pipelines and their controls make zero allocator calls and use
+zero steady fresh bytes; the prior pipelines make 20,000 calls. Checksums agree.
+The mapped reduction reaches the control's measured timing range, but the
+filtered reduction remains slower. Removing the box alone does not close that
+gap. The native compiler text grew by 11,616 bytes for the component analysis
+and typed scalar rewrite. No size baseline was increased.
+
+The final layout pass follows a ready successor before falling back to block
+storage order. It still requires every forward predecessor to be ready and
+keeps natural-loop regions contiguous. This lets accepted filter work fall
+through instead of jumping across a rejection block. Direct layout tests cover
+reversed storage order, a join with a pending predecessor, nested loops with
+breaks and back edges, and refusal of irreducible graphs.
+
+After a two-round pilot, the same nine-process alternating protocol ran at
+200, 20,000 and 200,000 rounds, changing only that argument. At 20,000 rounds,
+the filtered pipeline measured 2,417 ns (2,405-2,552), versus 2,550 ns
+(2,514-2,776) before the layout change and 2,397 ns (2,354-2,472) for its
+same-build control. The longest run retained more timing variation:
+
+| Pipeline | Previous layout, ns/round | Ready-successor layout, ns/round | Same-build handwritten control, ns/round |
+| --- | ---: | ---: | ---: |
+| map.map.reduce | 7,253 (6,680-10,993) | 7,269 (6,809-8,268) | 7,206 (6,800-8,682) |
+| filter.map.reduce | 2,625 (2,546-2,936) | 2,570 (2,437-3,335) | 2,475 (2,371-2,613) |
+
+Both pipelines now fall within the observed control timing ranges. A separate
+native ARM64 Linux Callgrind 3.19.0 run checks instruction cost without relying
+on those timing ranges. A two-round pilot preceded 200 rounds of the same
+2,000-element programs. Counts cover each complete benchmark process:
+
+| Pipeline | Previous layout, instructions | Ready-successor layout, instructions | Same-build handwritten control, instructions |
+| --- | ---: | ---: | ---: |
+| map.map.reduce | 12,693,586 | 12,691,851 | 13,096,956 |
+| filter.map.reduce | 9,106,961 | 9,246,669 | 9,642,513 |
+
+Every variant agreed on checksums and reported zero steady allocator calls and
+fresh bytes. The new filtered layout executes more instructions than
+the old layout, but both pipelines remain below their handwritten controls.
+The native timing and instruction results meet the measured control comparison
+on these hosts; they do not establish a speedup on every machine or target.
+
+The compiler reproduces itself byte-for-byte from stage 3 to stage 4. Its
+native text shrank from 11,340,716 to 11,330,152 bytes. Nine alternating
+checker-driver assembly compilations measured medians of 2.428 seconds before
+and 2.374 seconds after, with overlapping ranges of 2.038-2.968 and
+2.034-3.801 seconds. That does not establish a compiler speedup. No size or
+performance baseline was raised.
+
+### Integration with single-use inlining
+
+The integration exposed a callback whose shared helper became a leaf only
+after the first scratch inlining pass. Revisiting eligible callbacks with the
+updated leaf table removes the remaining closure bookkeeping. The second
+pass retains the ordinary budgets and annotation guards, and the final
+capture-free scalar admission still applies. A dispatch regression calls the
+helper independently to keep the single-use inliner from hiding this case.
+
+With this fix and main through `66d7deb95`, the compiler reaches a
+byte-identical stage-3/stage-4 fixed point. Native text is 10,382,448 bytes,
+versus 10,374,416 before the fix and latest parser/Wasm integration, and
+10,749,040 before the general-inliner integration. These comparisons include
+main's changes and do not attribute the size differences to fusion alone.
+
+Fresh Apple M3 Pro measurements used a two-round pilot followed by nine
+alternating 20,000-round runs, changing only the round count. All outputs
+agreed. The subsequent parser/Wasm integration left all eight benchmark
+programs' assembly identical on both ARM64 targets.
+
+| Pipeline | Current pipeline, ns/round | Same-build handwritten control, ns/round | Eager scan, ns/round |
+| --- | ---: | ---: | ---: |
+| map.map.reduce | 6,918 (6,485-7,407) | 7,125 (7,035-8,076) | n/a |
+| filter.map.reduce | 2,560 (2,462-2,607) | 2,565 (2,492-2,591) | n/a |
+| map.scan | 2,211 (2,195-2,261) | 2,590 (2,550-4,386) | 8,762 (8,649-9,034) |
+| filter.map.scan | 2,044 (2,003-2,104) | 2,419 (2,372-2,776) | 7,068 (6,802-7,649) |
+
+Both reductions and their controls still make zero steady allocator calls and
+use zero steady fresh bytes. Both scans make exactly 20,000 allocator calls,
+one per result. Their eager forms make 400,000 and 540,000 calls; handwritten
+forms make 200,000 and 180,000. Fresh-byte counts remain 16,384 for either
+fused scan, 40,960/10,240 for eager scans and 20,480/0 for handwritten scans.
+The zero reflects allocator reuse, not an absence of allocations.
+
+Both reduction timing ranges overlap their controls. Native ARM64 Linux
+Callgrind, with a two-round pilot followed by 200 rounds of 2,000 elements,
+also confirms that the fix removes the instruction excess. Complete-process
+counts are shown below; these are instruction counts, not elapsed timings.
+
+| Reduction | Before fix | Fixed pipeline | Fixed handwritten control |
+| --- | ---: | ---: | ---: |
+| map.map.reduce | 14,308,973 | 12,692,466 | 13,087,952 |
+| filter.map.reduce | 9,648,203 | 9,242,724 | 9,376,471 |
+
+Every profiled variant produces the same checksum with zero steady allocator
+calls and fresh bytes. Together with the scan results, these measurements
+establish parity for the documented workload and controls. They do not claim
+identical speed for all inputs or machines.
 
 Clause 1's second half — "no unspecialised calls per element" — holds, and it
 is not something this pass does by itself. Fusion runs FIRST in

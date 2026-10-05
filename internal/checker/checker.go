@@ -1797,8 +1797,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// __scan_set(s, from, set) → i32: the index of the first byte at or after
 	// `from` whose entry in `set`, a u8[] indexed by byte value, is nonzero,
 	// or len(s). A byte past the end of `set` is not in it. The byte-set scan
-	// behind cat -A's spelling. Native runtime surface, carried by the
-	// self-host emitters too (#4451).
+	// behind cat -A's spelling.
 	c.info.FuncSigs["__scan_set"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.StringType{},
@@ -1818,8 +1817,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	}
 	// __bsd_sum(s, sum) → i32: the BSD checksum `sum -r` keeps, carried in
 	// `sum` and continued over s: per byte, rotate the 16 bits right by one
-	// and add the byte, modulo 2^16. Native runtime surface, carried by the
-	// self-host emitters too (#4451).
+	// and add the byte, modulo 2^16.
 	c.info.FuncSigs["__bsd_sum"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.StringType{},
@@ -1830,8 +1828,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// __count_runs(s, inside, set) → i32: how many runs of bytes whose entry
 	// in `set` is nonzero begin in s. `inside` nonzero says the byte before s
 	// was a member, so a run open at s[0] is not counted. A byte past the end
-	// of `set` is not a member. wc's word count, one call per read. Native
-	// runtime surface, carried by the self-host emitters too (#4451).
+	// of `set` is not a member. wc's word count, one call per read.
 	c.info.FuncSigs["__count_runs"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.StringType{},
@@ -2418,11 +2415,6 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// from a program that ran and returned 1 — that cost one
 	// investigation a completely fabricated reproduction before
 	// anyone thought to check the mode (#6133).
-	//
-	// New native-only runtime surface, so it is a debt entry against
-	// the convergence freeze (#4451) until the self-host emitters
-	// carry it too — which this change does, because fern.fern calls
-	// it and the self-host compiler compiles fern.fern.
 	c.info.FuncSigs["write_file_exec"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{

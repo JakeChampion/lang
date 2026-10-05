@@ -90,7 +90,7 @@ func TestNdarrayElementRefusals(t *testing.T) {
 		{5, "ident, which applies nothing", ir.NdarrayElementNotOneOp, ""},
 		{6, "neg, a unary a kernel emits as readily as a multiply", ir.NdarrayElementPrimitive, "f64 neg"},
 		{7, "a lambda over a captured factor", ir.NdarrayElementCaptures, ""},
-		{8, "third, an integer divide, which traps on zero", ir.NdarrayElementNotArithmetic, ""},
+		{8, "third, an integer divide outside the supported set", ir.NdarrayElementNotArithmetic, ""},
 		{9, "ult, an unsigned compare", ir.NdarrayElementPrimitive, "u64 lt"},
 	} {
 		if tc.at >= len(got) {

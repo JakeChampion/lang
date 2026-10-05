@@ -3008,7 +3008,7 @@ function value_op(k: i32): boolean {
 function container_op(k: i32): boolean {
   return kind_in(
     [
-      ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(), ssasem.dyn_box(),
+      ssasem.array_new(), ssasem.array_reserve(), ssasem.tuple_new(), ssasem.record_new(), ssasem.dyn_box(),
       ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
       ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index(),
       ssasem.str_bytes(), ssasem.str_byte_view(), ssasem.arr_join(), ssasem.arr_slice(),
@@ -3709,6 +3709,9 @@ function own_copied(own r: irtables.LowerResult, elem: typeinfo.Type, copy: i32,
 // backends store every field as 8 bytes, and every read takes its offset from
 // the field index alone.
 function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): irtables.LowerResult {
+  if (ins.kind_tag == ssasem.array_reserve()) {
+    return emit(r, ir.op_arr_reserve(elem_width(elem_type(f.values[ins.result]))));
+  }
   if (variant_op(ins.kind_tag)) {
     return variant(r, f, ins, structs);
   }
@@ -5834,6 +5837,14 @@ function function_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   }
   for operand in ins.args {
     r = emit(r, ir.op_load_local(operand));
+  }
+  // A locally constructed closure already names its exact body. Keep the
+  // same borrowed environment and arguments, but omit the slot lookup and
+  // indirect dispatch. In particular, fused array callbacks retain this
+  // identity after their source combinator calls have been removed.
+  let callee: ssa.SInst = definition(f, ins.args[0]);
+  if (callee.result == ins.args[0] && callee.kind_tag == ssasem.closure_new()) {
+    return emit(r, ir.op_call_direct(callee.str, ins.args.len()));
   }
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_const_i32(0));

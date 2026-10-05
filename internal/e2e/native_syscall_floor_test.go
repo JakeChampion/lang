@@ -11,11 +11,10 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// The native runtime's raw floor — `__syscall3` … `__syscall6`, `__store_u8`
-// — on every native backend of the Go compiler (#9853, #4451): the same
-// names and shapes the self-host's asmcore helpers are written on, so a
-// socket primitive can be one Fern body per compiler rather than assembly
-// per backend. The probe maps a file at a nonzero offset through
+// The runtime's raw floor — `__syscall3` … `__syscall6`, `__store_u8` —
+// through the `fern` CLI on each Linux target (#9853), the names and shapes
+// the asmcore helpers are written on, so a socket primitive is one Fern body
+// rather than assembly per backend. The probe maps a file at a nonzero offset through
 // `__syscall6`, reads it back through `__load_u8`, unmaps and closes through
 // `__syscall3`, pins the signed -errno of a bad descriptor, and round-trips
 // bytes through `__store_u8`. A leg whose ISA this host cannot run is
@@ -25,12 +24,12 @@ func TestNativeSyscallFloor(t *testing.T) {
 	x86, x86ok := x86Runner()
 	arm, armok := arm64Runner()
 	for _, c := range []struct {
-		name, target, backend string
-		runnable              bool
-		run                   func(bin string) *exec.Cmd
+		name, target string
+		runnable     bool
+		run          func(bin string) *exec.Cmd
 	}{
-		{"x86-64", "x86-64-linux", "", x86ok, func(bin string) *exec.Cmd { return runX86Bin(x86, bin) }},
-		{"arm64", "arm64-linux", "", armok, func(bin string) *exec.Cmd { return runArm64Bin(arm, bin) }},
+		{"x86-64", "x86-64-linux", x86ok, func(bin string) *exec.Cmd { return runX86Bin(x86, bin) }},
+		{"arm64", "arm64-linux", armok, func(bin string) *exec.Cmd { return runArm64Bin(arm, bin) }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if !c.runnable {
@@ -42,12 +41,7 @@ func TestNativeSyscallFloor(t *testing.T) {
 				t.Fatal(err)
 			}
 			bin := filepath.Join(dir, "probe")
-			args := []string{"-target", c.target}
-			if c.backend != "" {
-				args = append(args, "-backend", c.backend)
-			}
-			args = append(args, "-o", bin, src)
-			if out, err := exec.Command(fern, args...).CombinedOutput(); err != nil {
+			if out, err := exec.Command(fern, "-target", c.target, "-o", bin, src).CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)
 			}
 			if out, err := c.run(bin).CombinedOutput(); err != nil {
