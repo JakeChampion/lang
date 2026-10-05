@@ -1147,7 +1147,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   let sole: i32[] = sole_readers(f);
 
   // Built the first time an interference question is asked.
-  let sites: ReadSites = ReadSites { start: [], blk: [], pos: [], succ: [], phi_end: [] };
+  let sites: ReadSites = ReadSites { start: [], blk: [], pos: [], succ: [], phi_end: [], unseen: [] };
   let reg_of: i32[] = [];
   let shared_with: i32[] = [];
   i = 0;
@@ -1219,6 +1219,19 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         continue;
       }
     }
+    // A phi whose outliving operand is spilled and dead where the phi is
+    // defined stays spilled too, to share that slot (path_slot) rather than
+    // load it into a register on every edge.
+    let ma: i32 = mates.alt[v];
+    if (ma >= 0 && reg_of[ma] == 0 - 1 && lo[ma] <= lo[v] && hi[ma] >= 0) {
+      if (sites.start.len() == 0) {
+        sites = read_sites(f, at, blk_start);
+      }
+      if (!live_at_def(sites, ma, v, def_blk, def_pos)) {
+        oi = oi + 1;
+        continue;
+      }
+    }
     let abi_ok: boolean = !spans_call(cum_abi, lo[v], hi[v]);
     // A value takes the register of its phi mate, or of an operand of
     // its definition, when it can: the register is free, or its holder
@@ -1227,7 +1240,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     // the two never live at once. First fit wins; the phi mate first.
     let placed: boolean = false;
     // -2 stands for `wish[v]`, which names a register rather than a value.
-    let cands: i32[] = [mates.hint[v], 0 - 2, def_a[v], def_b[v]];
+    let cands: i32[] = [mates.alt[v], mates.hint[v], 0 - 2, def_a[v], def_b[v]];
     let ci: i32 = 0;
     while (ci < cands.len() && !placed) {
       let h: i32 = cands[ci];
@@ -1281,11 +1294,11 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         continue;
       }
       let share: boolean = act_hi[ha] == lo[v] && reads_mate[v];
-      if (!share && h == mates.hint[v] && mates.carried[v] && act_val[ha] == h) {
+      if (!share && (h == mates.hint[v] && mates.carried[v] || h == mates.alt[v])) {
         if (sites.start.len() == 0) {
           sites = read_sites(f, at, blk_start);
         }
-        share = !live_at_def(sites, h, v, def_blk, def_pos);
+        share = chain_dead_at_def(sites, act_val[ha], v, shared_with, lo, hi, def_blk, def_pos);
       }
       if (!share) {
         continue;
@@ -1585,9 +1598,11 @@ function shares_operand_home(op: string): boolean {
 // second kind, whose interference with the phi is a question of paths rather
 // than positions. An operand with no home pairs with nothing. When the first
 // operand from before the phi outlives it, as the loop header's phi does at
-// every merge of an else-if chain inside the loop, no home can be shared with
-// it, and the hint is the first operand that dies by the phi instead.
-struct Mates { hint: i32[], carried: boolean[] }
+// every merge of an else-if chain inside the loop, the hint is the first
+// operand that dies by the phi instead, and `alt[r]` is the outliving one. The
+// two overlap by position only, so the phi shares alt's home when no path has
+// both live at once (chain_dead_at_def).
+struct Mates { hint: i32[], carried: boolean[], alt: i32[] }
 
 function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mates {
   let hint: i32[] = [];
@@ -1598,11 +1613,13 @@ function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mat
     carried = carried.append(false);
     i = i + 1;
   }
+  let alt: i32[] = hint;
   let pos: i32 = 0;
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < hint.len()) {
         let dying: i32 = 0 - 1;
+        let outliving: i32 = 0 - 1;
         for a in ins.args {
           if (a < 0 || a >= hint.len() || a < no_home.len() && no_home[a]) {
             continue;
@@ -1614,6 +1631,9 @@ function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mat
             if (dying < 0 && hi[a] < pos) {
               dying = a;
             }
+            if (outliving < 0 && hi[a] >= pos) {
+              outliving = a;
+            }
           } else if (hint[a] < 0) {
             hint = hint.with(a, ins.result);
             carried = carried.with(a, true);
@@ -1623,12 +1643,15 @@ function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mat
         if (dying >= 0 && !carried[ins.result] && h >= 0 && hi[h] >= pos) {
           hint = hint.with(ins.result, dying);
         }
+        if (!carried[ins.result]) {
+          alt = alt.with(ins.result, outliving);
+        }
       }
       pos = pos + 1;
     }
     pos = pos + 1;
   }
-  return Mates { hint: hint, carried: carried };
+  return Mates { hint: hint, carried: carried, alt: alt };
 }
 
 // position_count is the number of positions regalloc_linear numbers: one per
@@ -1836,16 +1859,19 @@ function still_in(occ: i32[], hi: i32[], from: i32): i32[] {
 // its block's last instruction, and a phi reads its operand there in the
 // predecessor it arrives from. Value v's reads are entries start[v] up to
 // start[v + 1]. `succ` lists each block's successor positions.
-// phi_end is, per block, the position just past its last phi.
-struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ: i32[][], phi_end: i32[] }
+// phi_end is, per block, the position just past its last phi. `unseen` is a
+// false per block, live_at_def's visited set before its first write.
+struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ: i32[][], phi_end: i32[], unseen: boolean[] }
 
 function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
   let count: i32[] = zeros(f.nvals + 1);
   let succ: i32[][] = [];
   let phi_end: i32[] = [];
+  let unseen: boolean[] = [];
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     succ = succ.append(successor_positions(f, at, bi));
+    unseen = unseen.append(false);
     let end: i32 = 0;
     let k: i32 = 0;
     while (k < f.blocks[bi].insts.len()) {
@@ -1926,7 +1952,21 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
     }
     pass = pass + 1;
   }
-  return ReadSites { start: start, blk: blk, pos: pos, succ: succ, phi_end: phi_end };
+  return ReadSites { start: start, blk: blk, pos: pos, succ: succ, phi_end: phi_end, unseen: unseen };
+}
+
+// chain_dead_at_def says no value sharing `holder`'s register, the holder and
+// those it shares with, is live where `a` is defined. One whose interval ends
+// before a's begins is not.
+function chain_dead_at_def(sites: ReadSites, holder: i32, a: i32, shared_with: i32[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): boolean {
+  let m: i32 = holder;
+  while (m >= 0) {
+    if (hi[m] >= lo[a] && live_at_def(sites, m, a, def_blk, def_pos)) {
+      return false;
+    }
+    m = shared_with[m];
+  }
+  return true;
 }
 
 // live_at_def says r is live where a is defined: some read of r is reachable
@@ -1958,12 +1998,7 @@ function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: 
   if (!far) {
     return false;
   }
-  let seen: boolean[] = [];
-  i = 0;
-  while (i < sites.succ.len()) {
-    seen = seen.append(false);
-    i = i + 1;
-  }
+  let seen: boolean[] = sites.unseen;
   let work: i32[] = sites.succ[ab];
   let next: i32 = 0;
   while (next < work.len()) {
