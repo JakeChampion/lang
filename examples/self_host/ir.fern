@@ -917,6 +917,12 @@ pub function op_inner_mul_add_f64(): Op {
   return op0(382);
 }
 
+// [capacity] -> fresh empty scalar array. Each backend reserves enough bytes
+// for width-bit elements, keeping length zero until an append initializes one.
+pub function op_arr_reserve(width: i32): Op {
+  return Op { ...op0(383), width: width };
+}
+
 // Physical ownership lowering has already established unique storage and
 // transfers its unit to the result. This form allocates nothing itself.
 pub function op_scale_f64_in_place(): Op {
@@ -4126,6 +4132,9 @@ function kind_id_len10_t(name: string): i32 {
 }
 
 function kind_id_len11(name: string): i32 {
+  if (name == "arr_reserve") {
+    return 383;
+  }
   if (name == "write_bytes") {
     return 349;
   }
@@ -5629,6 +5638,9 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 383) {
+    return "arr_reserve";
+  }
   if (id == 381) {
     return "outer_mul_f64";
   }
@@ -5802,7 +5814,7 @@ function pops1_mem(t: i32): boolean {
   // Single-address reads and the allocation primitives.
   return t == 69 || t == 70 || t == 71  // load_i32, load_i64, load_ptr
     || t == 76 || t == 77  // alloc, alloc_u8
-    || t == 81 || t == 205 || t == 224  // raw_alloc, raw_scratch, raw_arr_box
+    || t == 81 || t == 205 || t == 224 || t == 383  // raw_alloc, raw_scratch, raw_arr_box, arr_reserve
     || t == 90 || t == 91  // arr_len, arr_rc
     || t == 97 || t == 103 || t == 104 || t == 345  // str_len, str_from_bytes, str_bytes, str_data
     || t == 253 || t == 368  // sum_bytes / sum_bytes_array
@@ -8304,7 +8316,7 @@ pub function op_needs_heap(o: Op): boolean {
 }
 
 pub function op_allocates(tag: i32): boolean {
-  if (tag == 381 || tag == 382) {
+  if (tag == 381 || tag == 382 || tag == 383) {
     return true;
   }
   if (tag == 348 || tag == 349 || tag == 350 || tag == 352) {  // byte array plus Result wrapper
@@ -8512,7 +8524,7 @@ pub function op_allocates(tag: i32): boolean {
 // than logic: every `||` is one row of a table, there is no path through it to
 // get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 382 || tag == 381 || tag == 380 || tag == 373 || tag == 368 || tag == 369 || tag == 361 || tag == 379 || tag == 378 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
+  return tag == 383 || tag == 382 || tag == 381 || tag == 380 || tag == 373 || tag == 368 || tag == 369 || tag == 361 || tag == 379 || tag == 378 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
     || tag == 104 || tag == 105 || tag == 106
     || tag == 107 || tag == 108 || tag == 109
     || tag == 111 || tag == 113 || tag == 98

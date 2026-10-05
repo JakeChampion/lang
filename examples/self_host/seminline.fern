@@ -130,7 +130,7 @@ function splice_round(prev: Inlined, rewrite: boolean[], ix: util.NameIndex, rea
   let i: i32 = 0;
   while (i < funcs.len()) {
     if (rewrite[i] && count_insts(funcs[i].graph) <= max_caller_insts()) {
-      let spliced: Rewrite = splice_calls(funcs[i], funcs, ix, ready);
+      let spliced: Rewrite = splice_calls(funcs[i], funcs, ix, ready, false);
       if (spliced.changed) {
         funcs = funcs.with(i, spliced.f);
         rewritten = rewritten.with(i, true);
@@ -223,6 +223,92 @@ function spliceable(f: ssasem.Func, limit: i32): boolean {
   return count_insts(f.graph) <= limit;
 }
 
+// Fusion creates calls through closures whose exact bodies are already known.
+// Splice tiny capture-free bodies only into callers that fusion changed. The
+// unused environment remains an argument of the original typed call; splice
+// maps it like every other parameter, and no copied instruction reads it.
+pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[]): ssasem.Func[] {
+  let any: boolean = false;
+  for changed in rewrite {
+    any = any || changed;
+  }
+  if (!any) {
+    return funcs;
+  }
+  // Prepare callback helpers with the ordinary inliner, then require each
+  // resulting callback to satisfy the small scalar-leaf limit. This scratch
+  // view does not replace non-fused callers or remove any function body.
+  let ix: util.NameIndex = util.name_index(names);
+  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable).funcs;
+  // A shared helper cannot take the single-use path. The first pass can
+  // expose its leaf body, so rebuild the leaf table before preparing its
+  // callback callers. Only callback bodies change in this second scratch pass.
+  let callbacks: boolean[] = [];
+  let ci: i32 = 0;
+  while (ci < candidates.len()) {
+    callbacks = callbacks.append(inlinable[ci] && unused_environment(candidates[ci]) >= 0);
+    ci = ci + 1;
+  }
+  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable).funcs;
+  let leaves: boolean[] = [];
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    let env: i32 = unused_environment(candidates[i]);
+    leaves = leaves.append(inlinable[i] && env >= 0 && leaf_body(candidates[i], env));
+    i = i + 1;
+  }
+  let out: ssasem.Func[] = [];
+  i = 0;
+  while (i < funcs.len()) {
+    let f: ssasem.Func = funcs[i];
+    if (rewrite[i] && count_insts(f.graph) <= max_caller_insts()) {
+      f = drop_unread(splice_calls(f, candidates, ix, leaves, true).f);
+    }
+    out = out.append(f);
+    i = i + 1;
+  }
+  return out;
+}
+
+function parameter_value(f: ssasem.Func, index: i32): i32 {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.param() && ins.imm == index) {
+        return ins.result;
+      }
+    }
+  }
+  return 0 - 1;
+}
+
+function reads(g: ssa.SFunc, value: i32): boolean {
+  for b in g.blocks {
+    for ins in b.insts {
+      for arg in ins.args {
+        if (arg == value) {
+          return true;
+        }
+      }
+    }
+    if (b.term.kind_tag == 1 && b.term.value == value || b.term.kind_tag == 3 && b.term.cond == value) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function unused_environment(f: ssasem.Func): i32 {
+  let contract: ssasem.Contract = ssasem.Contract { name: f.graph.name, params: f.params, modes: [], result: f.result };
+  if (!ssasem.closure_env(contract) || ssasem.closure_captures(contract).len() != 0) {
+    return 0 - 1;
+  }
+  let env: i32 = parameter_value(f, 0);
+  if (env < 0 || reads(f.graph, env)) {
+    return 0 - 1;
+  }
+  return env;
+}
+
 function scalar(t: typeinfo.Type): boolean {
   return ssasem.is_integer(t) || ssasem.is_float(t) || ssasem.is_bool(t) || ssasem.is_char(t);
 }
@@ -252,7 +338,28 @@ function record(t: typeinfo.Type): boolean {
 }
 
 function leaf(f: ssasem.Func): boolean {
-  if (f.graph.takes_env || f.graph.blocks.len() > max_leaf_blocks()) {
+  return leaf_body(f, 0 - 1);
+}
+
+function leaf_value_records(f: ssasem.Func, ignored: i32): i32 {
+  let records: i32 = 0;
+  let i: i32 = 0;
+  while (i < f.values.len()) {
+    if (i != ignored) {
+      let t: typeinfo.Type = f.values[i];
+      if (record(t)) {
+        records = records + 1;
+      } else if (!scalar(t) && !scalar_tuple(t)) {
+        return 0 - 1;
+      }
+    }
+    i = i + 1;
+  }
+  return records;
+}
+
+function leaf_body(f: ssasem.Func, ignored: i32): boolean {
+  if (f.graph.takes_env && ignored < 0 || f.graph.blocks.len() > max_leaf_blocks()) {
     return false;
   }
   // The splice gives the entry one predecessor, the caller's block.
@@ -262,13 +369,9 @@ function leaf(f: ssasem.Func): boolean {
   if (!scalar(f.result) && !scalar_tuple(f.result)) {
     return false;
   }
-  let records: i32 = 0;
-  for t in f.values {
-    if (record(t)) {
-      records = records + 1;
-    } else if (!scalar(t) && !scalar_tuple(t)) {
-      return false;
-    }
+  let records: i32 = leaf_value_records(f, ignored);
+  if (records < 0) {
+    return false;
   }
   // Each param defines its own value, so equal counts mean every record is a param.
   let record_params: i32 = 0;
@@ -285,7 +388,7 @@ function leaf(f: ssasem.Func): boolean {
         return false;
       }
       if (ins.kind_tag == ssasem.param()) {
-        if (record(f.values[ins.result])) {
+        if (ins.result != ignored && record(f.values[ins.result])) {
           record_params = record_params + 1;
         }
       } else {
@@ -297,15 +400,32 @@ function leaf(f: ssasem.Func): boolean {
 }
 
 // The ready function a call instruction names, as an index into `funcs`, or -1.
-function ready_callee(ins: ssa.SInst, ix: util.NameIndex, ready: boolean[]): i32 {
+function ready_callee(f: ssasem.Func, ins: ssa.SInst, ix: util.NameIndex, ready: boolean[], closures: boolean): i32 {
   let j: i32 = called(ins, ix);
+  if (closures) {
+    j = closure_callee(f, ins, ix);
+  }
   if (j < 0 || !ready[j]) {
     return 0 - 1;
   }
   return j;
 }
 
-function splice_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, ready: boolean[]): Rewrite {
+function closure_callee(f: ssasem.Func, ins: ssa.SInst, ix: util.NameIndex): i32 {
+  if (ins.kind_tag != ssasem.call_value() || ins.args.len() == 0) {
+    return 0 - 1;
+  }
+  for b in f.graph.blocks {
+    for d in b.insts {
+      if (d.result == ins.args[0] && d.kind_tag == ssasem.closure_new() && d.args.len() == 0) {
+        return ix.find(d.str);
+      }
+    }
+  }
+  return 0 - 1;
+}
+
+function splice_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, ready: boolean[], closures: boolean): Rewrite {
   let f: ssasem.Func = f0;
   let done: i32 = 0;
   let bi: i32 = 0;
@@ -313,7 +433,7 @@ function splice_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex,
     let k: i32 = 0;
     let spliced: boolean = false;
     while (k < f.graph.blocks[bi].insts.len() && !spliced) {
-      let at: i32 = ready_callee(f.graph.blocks[bi].insts[k], ix, ready);
+      let at: i32 = ready_callee(f, f.graph.blocks[bi].insts[k], ix, ready, closures);
       if (at >= 0 && funcs[at].graph.name != f.graph.name
         && count_insts(f.graph) + count_insts(funcs[at].graph) <= max_caller_insts()) {
         f = splice(f, bi, k, funcs[at]);
@@ -1089,7 +1209,7 @@ function count_insts(g: ssa.SFunc): i32 {
 function drop_unread(f: ssasem.Func): ssasem.Func {
   let g: ssa.SFunc = f.graph;
   let built: typeinfo.Type[] = built_types(g, f);
-  if (built.len() == 0) {
+  if (built.len() == 0 && !has_static_closure(g)) {
     return f;
   }
   let reads: i32[] = read_counts(f);
@@ -1107,6 +1227,17 @@ function drop_unread(f: ssasem.Func): ssasem.Func {
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
   }
   return ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } };
+}
+
+function has_static_closure(g: ssa.SFunc): boolean {
+  for b in g.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.closure_new() && ins.args.len() == 0) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function any_unread(f: ssasem.Func, built: typeinfo.Type[], reads: i32[]): boolean {
@@ -1171,6 +1302,11 @@ function counted(own reads: i32[], v: i32): i32[] {
 function unread_build(f: ssasem.Func, built: typeinfo.Type[], reads: i32[], ins: ssa.SInst): boolean {
   if (ins.result < 0 || ins.result >= reads.len() || reads[ins.result] != 0) {
     return false;
+  }
+  // Capture-free closure constants have no capture lifetime to preserve.
+  // read_counts includes debug bindings, so those remain visible under -g.
+  if (ins.kind_tag == ssasem.closure_new() && ins.args.len() == 0) {
+    return true;
   }
   if (!builds(ins.kind_tag) && ins.kind_tag != 7 && ins.kind_tag != 8) {
     return false;

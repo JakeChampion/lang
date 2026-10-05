@@ -521,25 +521,29 @@ pub function flip_int_cmp_kind(id: i32): i32 {
 // answers a different type than it takes, so `__arrm_map__f64` alone does not
 // say the result is f64. The lambda's own signature is what settles that.
 pub function scale_f64_maps_module(mod: parser.Module): parser.Module {
-  if (!has_array_map(mod.funcs)) {
+  let names: string[] = stdlib_array_maps(mod.funcs);
+  if (names.len() == 0) {
     return mod;
   }
+  let trusted: util.NameIndex = util.name_index(names);
+  let rewrite = (e: ast.Expr): ast.Expr => scale_map_call(e, trusted);
   let out: parser.FuncDecl[] = [];
   for fd in mod.funcs {
-    out = out.append(parser.FuncDecl { ...fd, body: astwalk.map_stmts(fd.body, scale_map_call) });
+    out = out.append(parser.FuncDecl { ...fd, body: astwalk.map_stmts(fd.body, rewrite) });
   }
   return parser.Module { ...mod, funcs: out };
 }
 
-// has_array_map: the worklist cloned some `__arrm_map__<elem>`, without which
-// no call can name one.
-function has_array_map(funcs: parser.FuncDecl[]): boolean {
+// Only loader-verified stdlib declarations establish the map contract. User
+// functions can have the same mangled-looking name and different behavior.
+function stdlib_array_maps(funcs: parser.FuncDecl[]): string[] {
+  let names: string[] = [];
   for fd in funcs {
-    if (util.str_has_prefix(fd.name, "__arrm_map__")) {
-      return true;
+    if (fd.stdlib == "std/array" && util.str_has_prefix(fd.name, "__arrm_map__")) {
+      names = names.append(fd.name);
     }
   }
-  return false;
+  return names;
 }
 
 // Every shape test below is spelled `if let` rather than `match`, and that is
@@ -557,13 +561,13 @@ struct ScaleFactor { ok: boolean, k: ast.Expr }
 // scale_map_call rewrites one recognized map call, or returns it untouched.
 // astwalk.map_expr has already rewritten the children, so a chained
 // `xs.map(f).map(g)` has its inner call rewritten when the outer one is seen.
-function scale_map_call(e: ast.Expr): ast.Expr {
+function scale_map_call(e: ast.Expr, trusted: util.NameIndex): ast.Expr {
   if let ast.ExprCall(c) = e {
     if (c.args.len() != 2) {
       return e;
     }
     if let ast.ExprIdent(id) = c.callee {
-      if (!util.str_has_prefix(id.name, "__arrm_map__")) {
+      if (!trusted.has(id.name)) {
         return e;
       }
       if let ast.ExprLambda(lm) = c.args[1] {

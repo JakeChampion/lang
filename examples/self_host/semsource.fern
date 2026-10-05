@@ -17,6 +17,7 @@ import "./ownership";
 import "./util";
 import "./seminline";
 import "./semfuse";
+import "./semoption";
 import "./semndarray";
 import "./semarrayreport";
 
@@ -8350,7 +8351,7 @@ function produce_module(mod: parser.Module, verify: boolean, debug_lines: boolea
   if (verify) {
     // Fusion first: it recognises a pipeline by its calls to std/array's
     // combinators, which a function called once would otherwise absorb.
-    let inlined: Spliced = inline_leaves(fuse_pipelines(all, names), names, mod);
+    let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs), names, mod);
     all = scale_ndarray_maps(without_unnamed(inlined.all, names, inlined.spliced, mod), names, mod);
   }
   decls = [];
@@ -8543,7 +8544,7 @@ function inline_on(): boolean {
 
 // std/array combinator chains fused into one loop (semfuse).
 // `FERN_NO_ARRAY_FUSION=1` turns the pass off, as it does native's.
-function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
+function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl[]): Produced[] {
   let enabled: boolean = fusion_on();
   let report: boolean = semarrayreport.enabled();
   if (!enabled && !report) {
@@ -8555,7 +8556,18 @@ function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
     funcs = funcs.append(p.func);
     usable = usable.append(p.ok && !p.template && !p.bodyless);
   }
-  let out: semfuse.Fused = semfuse.fuse_pipelines(funcs, names, usable, enabled, report);
+  let out: semfuse.Fused = semfuse.fuse_pipelines(funcs, names, usable, stdlib_names(all, names, decls, "std/array"), enabled, report);
+  if (inline_on()) {
+    let inlinable: boolean[] = [];
+    let modes: i32[][] = [];
+    let at: i32 = 0;
+    while (at < all.len()) {
+      inlinable = inlinable.append(usable[at] && at < decls.len() && !decls[at].no_inline && !decls[at].fip && !decls[at].fbip);
+      modes = modes.append(all[at].modes);
+      at = at + 1;
+    }
+    out = semfuse.Fused { ...out, funcs: seminline.inline_closures(out.funcs, names, modes, inlinable, out.rewritten) };
+  }
   if (report) {
     eprint(semarrayreport.render(out.sites));
   }
@@ -8564,7 +8576,7 @@ function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
   while (i < all.len()) {
     let p: Produced = all[i];
     if (out.rewritten[i]) {
-      p = Produced { ...p, func: out.funcs[i], analysis: None };
+      p = Produced { ...p, func: semoption.split(out.funcs[i]), analysis: None };
     }
     result = result.append(p);
     i = i + 1;
@@ -8593,7 +8605,7 @@ function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module
     usable = usable.append(p.ok && !p.template && !p.bodyless);
   }
   let open: boolean[] = ndarray_open(all, names, mod, funcs);
-  let out: semndarray.Scaled = semndarray.scale_maps(funcs, names, usable, open, ndarray_stdlib_names(all, names, mod), enabled, products, report);
+  let out: semndarray.Scaled = semndarray.scale_maps(funcs, names, usable, open, stdlib_names(all, names, mod.funcs, "std/ndarray"), enabled, products, report);
   if (report) {
     eprint(semarrayreport.render_kind("ndarray kernels", semarrayreport.kernel_reasons(), out.sites));
   }
@@ -8612,9 +8624,9 @@ function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module
 
 // The declaration origin survives bundling and monomorphization. A basename
 // or a user-written mangled name cannot establish the stdlib's contract.
-function ndarray_stdlib_names(all: Produced[], names: string[], mod: parser.Module): string[] {
+function stdlib_names(all: Produced[], names: string[], decls: parser.FuncDecl[], library: string): string[] {
   let keys: string[] = [];
-  for fd in mod.funcs {
+  for fd in decls {
     keys = keys.append(parser.decl_key(fd));
   }
   let index: util.NameIndex = util.name_index(keys);
@@ -8622,10 +8634,10 @@ function ndarray_stdlib_names(all: Produced[], names: string[], mod: parser.Modu
   let i: i32 = 0;
   while (i < all.len()) {
     let di: i32 = i;
-    if (i >= mod.funcs.len()) {
+    if (i >= decls.len()) {
       di = index.find(all[i].key);
     }
-    if (di >= 0 && di < mod.funcs.len() && mod.funcs[di].stdlib == "std/ndarray") {
+    if (di >= 0 && di < decls.len() && decls[di].stdlib == library) {
       trusted = trusted.append(names[i]);
     }
     i = i + 1;

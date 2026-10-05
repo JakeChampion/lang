@@ -1441,6 +1441,26 @@ function tok_spelling(t: lexer.Token): string {
   return "";
 }
 
+// defer_action is `st`, parsed at `p` after `defer`, when it is a block, an
+// expression or an assignment, and a P001 at its first token otherwise.
+function defer_action(st: ast.Stmt, p: Par): ast.Stmt {
+  if let ast.StmtExpr(_) = st {
+    return st;
+  }
+  if let ast.StmtAssign(_) = st {
+    return st;
+  }
+  if let ast.StmtUnknown(_) = st {
+    return st;
+  }
+  if let ast.StmtIf(f) = st {
+    if (f.origin == "block") {
+      return st;
+    }
+  }
+  return decl_sentinel(p, "unexpected token \"" + tok_spelling(p.peek()) + "\"");
+}
+
 function s_defer(action: ast.Stmt): ast.Stmt {
   return ast.StmtDefer { action: action, on_error: 0, line: 0 };
 }
@@ -7083,19 +7103,18 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
   }
   let kw: string = p.peek_keyword();
   if (kw == "defer") {
-    // `defer ACTION;` — the deferred action is an ordinary statement
-    // (assignment, call, …). Parse it (which consumes the trailing
-    // `;`) and wrap it; lower_defers schedules it at function exit.
+    // `defer ACTION;` — the deferred action is a block, an expression or an
+    // assignment; lower_defers schedules it at function exit.
     p = p.advance();  // consume `defer`
     let (da_stmt, da_p) = parse_stmt(p);
-    return (s_defer(da_stmt), da_p);
+    return (s_defer(defer_action(da_stmt, p)), da_p);
   }
   if (kw == "errdefer") {
     // `errdefer ACTION;` — like `defer`, but lower_defers schedules it
     // only on an error exit (a `return` of a None/Err value).
     p = p.advance();  // consume `errdefer`
     let (ea_stmt, ea_p) = parse_stmt(p);
-    return (s_errdefer(ea_stmt), ea_p);
+    return (s_errdefer(defer_action(ea_stmt, p)), ea_p);
   }
   if (kw == "function") {
     // Local (nested) function declaration: desugar to a closure-valued
@@ -21085,14 +21104,9 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
       return [ast.StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms }];
     },
     ast.StmtDefer(d) => {
-      // A range `for` desugars to several statements, which a block keeps as
-      // the one action.
-      let r: ast.Stmt[] = desugar_ranges_one(d.action);
-      let action: ast.Stmt = s_block(r);
-      if (r.len() == 1) {
-        action = r[0];
-      }
-      return [ast.StmtDefer { action: action, on_error: d.on_error, line: d.line }];
+      // The action is a block, an expression or an assignment
+      // (defer_action), each of which desugars to one statement.
+      return [ast.StmtDefer { action: desugar_ranges_one(d.action)[0], on_error: d.on_error, line: d.line }];
     },
     ast.StmtVar(v) => {
       // The statement forms whose EXPRESSIONS can hold a lambda. Without these

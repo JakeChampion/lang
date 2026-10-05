@@ -189,15 +189,14 @@ var interpProgs = []struct {
 	{"range-in-lambda-match-arm", "enum E { A(i32) }\n" +
 		"function run(f: () => i32): i32 { return f(); }\n" +
 		"function main(): i32 { let e: E = E.A(1); match (e) { E.A(v) => { return run((): i32 => { let s = 0; for i in 0..4 { s = s + i; } return s; }); }, _ => { return 0; } } return 0; }", 6},
-	// A range-for in either branch of an `if`, in a match arm, and as a `defer`
-	// action, bare or in a block. A bare `defer for` desugars to several
-	// statements, which the defer has to keep as one action.
+	// A range-for in either branch of an `if`, in a match arm, and in a `defer`
+	// block.
 	{"range-in-if-branches", "function f(take: boolean): i32 { let s = 0; if (take) { for i in 0..4 { s = s + i; } } else { for j in 1..=3 { s = s + j; } } return s; }\n" +
 		"function main(): i32 { return f(true) + f(false); }", 12},
 	{"range-in-match-arm", "enum Shape { Run(i32), Pair }\n" +
 		"function f(sh: Shape): i32 { let s = 0; match (sh) { Shape.Run(n) => { for i in 0..n { s = s + i; } }, Shape.Pair => { for k in 1..=2 { s = s + 1; } } } return s; }\n" +
 		"function main(): i32 { return f(Shape.Run(4)) + f(Shape.Pair); }", 8},
-	{"range-in-defer", "function main(): i32 { let s = 0; let t = 0; loop { defer for i in 0..4 { s = s + i; } defer { for k in 0..3 { t = t + 1; } } break; } return s + t; }", 9},
+	{"range-in-defer", "function main(): i32 { let t = 0; loop { defer { for k in 0..3 { t = t + 1; } } break; } return t; }", 3},
 	// Generic trait declaration header `trait Name[T]` with a default
 	// method (#4340): parse_trait_decl walked name -> `:` supertraits ->
 	// `{` and never consumed the `[T]` type-param list, so `[T] { … }`

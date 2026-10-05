@@ -28,17 +28,17 @@ a borrowed array, each later one writes in place.
 ## Measured
 
 `checker.fern` built for x86-64-linux by the stage-2 compiler under
-callgrind, main at de419851 against this branch. The two compilers build
+callgrind, main at fac64a9a against this branch. The two compilers build
 `checker.fern` for x86-64, arm64 and wasm, and `fern.fern`, to byte-identical
 binaries. `scripts/selfhost-emit-hashes` matches on every row:
 
 | | main | rewritten in place |
 |---|--:|--:|
-| stage 2, x86-64 target, total Ir | 21.892 G | 20.846 G (−4.78%) |
-| `seminline.inline_leaves`, inclusive | 1,484 M | 439 M |
-| `seminline.split_all`, inclusive | 1,176 M | 166 M |
-| `seminline.drop_unread`, inclusive | 576 M | 20 M |
-| `__fern_arr_slice`, inclusive | 1,336 M | 427 M |
+| stage 2, x86-64 target, total Ir | 21.947 G | 20.881 G (−4.86%) |
+| `seminline.inline_leaves`, inclusive | 1,518 M | 452 M |
+| `seminline.split_all`, inclusive | 1,197 M | 167 M |
+| `seminline.drop_unread`, inclusive | 597 M | 21 M |
+| `__fern_arr_slice`, inclusive | 1,356 M | 428 M |
 
 Most of what is left in `inline_leaves` is `splice` itself, 190 M over 738
 splices.

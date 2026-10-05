@@ -674,7 +674,7 @@ function contract_error(f: ssasem.Func, modes: i32[], view: SchemaView): string 
 // released when the box is. So is a cell, over its one element; a read of a
 // cell hands out a unit of the element rather than borrowing the slot.
 function construction(kind: i32): boolean {
-  return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new() || kind == ssasem.dyn_box()
+  return kind == ssasem.array_new() || kind == ssasem.array_reserve() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new() || kind == ssasem.dyn_box()
     || kind == ssasem.closure_new() || kind == ssasem.cell_new() || kind == ssasem.map_new()
     || kind == ssasem.map_cleared();
 }
