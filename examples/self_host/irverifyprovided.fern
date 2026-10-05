@@ -139,16 +139,10 @@ pub function provided_names(): string[] {
 // body per instantiated type for. They cannot be listed: the suffix is a type
 // name the program supplies, so the rule is a prefix and not an inventory.
 pub function is_generated_helper(name: string): boolean {
-  if (name.len() > 14 && slice_unchecked(name, 0, 14) == "__struct_drop_") {
-    return true;
-  }
   if (name.len() > 11 && slice_unchecked(name, 0, 11) == "__sem_drop_") {
     return true;
   }
-  if (name.len() > 14 && slice_unchecked(name, 0, 14) == "__sem_release_") {
-    return true;
-  }
-  return name.len() > 16 && slice_unchecked(name, 0, 16) == "__field_reclaim_";
+  return name.len() > 14 && slice_unchecked(name, 0, 14) == "__sem_release_";
 }
 
 // is_c_call_shim reports the `__c_call<n>` FFI family — `__c_call0`..`_4` with

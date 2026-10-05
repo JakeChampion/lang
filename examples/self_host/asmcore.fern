@@ -540,14 +540,13 @@ pub function emit_shape_lits_from(s: EmitState, from: i32): EmitState {
 // `.weak` DEFINITIONS from a concatenated unit stream, keeping the first of
 // each.
 //
-// A per-module unit emits four kinds of symbol that are one-per-PROGRAM but that
+// A per-module unit emits two kinds of symbol that are one-per-PROGRAM but that
 // any unit needing them emits for itself, each marked `.weak` so the linker
 // merges the copies:
 //
-//   __fern_shp_<T>                     interned struct/enum shape (asmcore.shape_sym)
-//   __fn___struct_drop_<T>             per-type deep struct drop (asm_ir.fern)
-//   __fn___struct_arr_elems_drop_<T>   its element-walking sibling
-//   __fn___field_reclaim_<T>
+//   __fern_shp_<T>      interned struct/enum shape (asmcore.shape_sym)
+//   __fn_<name>         a body the typed lowering generated, such as
+//                       __sem_drop_<T> (asm_ir.emit_named_bodies)
 //
 // The weak merge only happens when each unit is its own object file — the
 // batched per-module build. Concatenating units into a single assembly stream
@@ -557,17 +556,9 @@ pub function emit_shape_lits_from(s: EmitState, from: i32): EmitState {
 // REFERENCES one definition to bind to, which is exactly the address the weak
 // merge would have produced.
 //
-// This used to special-case `__fern_shp_` alone and drop exactly ONE following
-// line, because a shape definition is the two-line pair `.weak SYM` / `SYM:
-// .ascii …`. The three drop/reclaim helpers are multi-line function BODIES, so
-// they collided anyway: that is one of the two things behind the per-module
-// rescue's `nfuncs < 1500` cap below — a program whose modules share struct
-// types (three `ast__` types across the stage-2 compiler's units) hit
-// `symbol __fn___struct_drop_ast__ParamDecl is already defined`, which reads
-// like a memory limit and is not one. (The cap's OTHER reason IS memory, but for
-// a different program: see the bound's own comment.)
-//
-// So skip the whole definition, whatever its length. After a duplicate
+// A shape definition is the two-line pair `.weak SYM` / `SYM: .ascii …`, but a
+// generated body is a multi-line function, so skip the whole definition,
+// whatever its length. After a duplicate
 // `.weak SYM` comes the `SYM:` line, then the body: INSTRUCTIONS (indented, and
 // never starting with `.`) and `.L…:` local labels. Anything else ends the skip.
 //
@@ -10751,9 +10742,6 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_str_arr_free",
     // arr-of-arr reclaim (#4355 slice 9): the exit sweep of a module with a
     // fresh arr-of-arr local references these; the entry owns the bodies.
-    // __fern_arrarr_free is reached from a second direction too — every
-    // __struct_drop_/__field_reclaim_ release of a struct/enum-array field
-    // calls it, and those bodies are emitted per-unit.
     "__fn___fern_arrarr_free", "__fn___fern_strarrarr_free", "__fn___fern_optarrarr_free",
     // compact base copy (#4650): a LIBRARY module doing `T { ...base, f: v }`
     // on a struct_copy_eligible T emits `call __fn___fern_struct_copy`; the
@@ -10832,213 +10820,6 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
 // locals + re-passed — the RC-miscount blocker fixed in step 1). The bundle is a
 // SINGLE param rather than 23 individual params so flat's arm64 stack frame stays
 // within `stur`'s ±256 offset range (23 params overflowed it).
-
-// ---- RC emission directives (#7736) -----------------------------------------
-//
-// The three IR backends each hand-wrote the field walk inside
-// `__struct_drop_<T>`: which arm a field takes, in what priority, and which
-// helper releases it. That decision is backend-INDEPENDENT — it reads only the
-// struct decls, the shared `irtables` predicates and the whole-program need set
-// — while only the instruction selection differs. Writing it three times is
-// what made every RC slice a three-way port and every divergence silent, which
-// is the drift `RC-PERCEUS-SELF-HOST-PORT.md` §1b names as the lever.
-//
-// So the decision moves here and the backends keep only the selection: each
-// walks `struct_drop_field_ops` and emits its own instructions per directive.
-//
-// A field yields one or two directives, in emission order:
-//
-//   elems_drop_struct <E>  pre-walk a struct-array field's elements' OWN rc
-//                          fields, before the boxes below are freed
-//   elems_drop_enum   <E>  the enum-array sibling
-//   box_walk_dec           unique-gate the buffer, dec each element box, dec
-//                          the buffer
-//   deep_struct_drop  <T>  unique-gate the inner box and release ITS rc fields
-//   str_free               rc-aware string-box release
-//   str_arr_free           deep string[] release (elements + buffer at rc==1)
-//   arr_dec                shallow rc-guarded box/buffer dec
-//
-// `idx` is the field index; a backend derives its own slot offset from it,
-// since the register backends and wasm lay a box out differently.
-//
-// All three backends walk this list. The `string[]` admissions are required
-// on wasm too: a functional-update base copy hands the new box every array
-// field pointer with no retain, so an ungated dec there frees a buffer the base
-// still owns (#8119, the compiler's own FnSigs).
-// `cow` and `uniq` say what a field whose OLD and NEW values are the same
-// pointer means. `cow` (a plain carried copy) skips the release: the base copy
-// took no count for it. `uniq` (a nested struct / enum field, #6605) releases
-// it — the base copy DID take an `__fern_rc_inc`, paid to the new box's future
-// drop, so the old box's own claim dies here — UNLESS the field is uniquely
-// owned, which means no such inc was taken and this is the only reference
-// (#8198: a callee reused the field's box in place and returned it, so old and
-// new coincide without a second claim; releasing there frees a box the new
-// binding names).
-pub struct RcOp { kind: string, idx: i32, ty: string, cow: boolean, uniq: boolean }
-
-// struct_drop_field_ops returns the ordered field-release directives for
-// `__struct_drop_<sty>`. Read-only in `s`: it consults the need set for the
-// admission gates, and leaves issuing the corresponding `need()` to the caller
-// that emits the directive.
-pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
-  let ops: RcOp[] = [];
-  let n: i32 = irtables.decl_field_count(s.struct_decls, sty);
-  let k: i32 = 0;
-  while (k < n) {
-    let fdt: string = irtables.decl_field_type_at(s.struct_decls, sty, k);
-    let k_scalar: boolean = irtables.is_leaksafe_array_field(fdt);
-    let k_box: boolean = !k_scalar && (irtables.is_struct_array_field_type(s.struct_decls, fdt) || irtables.is_enum_array_field_type(s.struct_decls, fdt)
-      || irtables.is_row_array_field_type(s.struct_decls, fdt));
-    let k_struct: boolean = !k_scalar && !k_box && irtables.decl_is_struct(s.struct_decls, fdt);
-    // The string / string[] / closure arms are gated on the whole-program
-    // read scan: the construction-side retain only fires for admitted
-    // types, so a non-admitted type's fields are uncounted aliases this
-    // release would dangle. A non-admitted type keeps the sound leak.
-    let k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string" && s.has_need("strfldok:" + sty);
-    let k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str && irtables.decl_is_enum(s.struct_decls, fdt);
-    let k_str_arr: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
-    let k_clo: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && fdt == "fn" && s.has_need("strfldok:clo:" + sty);
-    // The buffer half of a string[] the element scan refused: a read hazard
-    // costs the element walk, not the buffer this box still owes back.
-    let k_str_arr_shallow: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && !k_clo && fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty);
-    if (k_box) {
-      if (irtables.is_struct_array_field_type(s.struct_decls, fdt)) {
-        let elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-        if (irtables.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
-          ops = ops.append(RcOp { kind: "elems_drop_struct", idx: k, ty: elem_ty + "", cow: false, uniq: false });
-        }
-      } else if (irtables.is_enum_array_field_type(s.struct_decls, fdt)) {
-        let eaty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-        if (irtables.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
-          ops = ops.append(RcOp { kind: "elems_drop_enum", idx: k, ty: eaty + "", cow: false, uniq: false });
-        }
-      }
-      ops = ops.append(RcOp { kind: "box_walk_dec", idx: k, ty: "", cow: false, uniq: false });
-    } else if (k_struct && irtables.nested_field_deep_drop_ok(s.struct_decls, fdt)) {
-      ops = ops.append(RcOp { kind: "deep_struct_drop", idx: k, ty: fdt, cow: false, uniq: false });
-      ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
-    } else if (k_str) {
-      ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "", cow: false, uniq: false });
-    } else if (k_str_arr) {
-      ops = ops.append(RcOp { kind: "str_arr_free", idx: k, ty: "", cow: false, uniq: false });
-      // A DIRECT enum field: its live variant's rc payloads (__enum_drop_,
-      // rc==1-gated on the enum box), then the box. This helper is the one
-      // releaser of that payload on every drop path (#8692), as
-      // __field_reclaim_'s deep_enum_dec is on the rebind path.
-    } else if (k_enum && irtables.enum_arr_elems_walk_ok(s.struct_decls, fdt)) {
-      ops = ops.append(RcOp { kind: "deep_enum_drop", idx: k, ty: fdt, cow: false, uniq: false });
-      ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
-    } else if (k_scalar || k_struct || k_enum || k_clo || k_str_arr_shallow) {
-      ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
-    }
-    k = k + 1;
-  }
-  return ops;
-}
-
-// field_reclaim_field_ops returns the ordered per-field release directives for
-// `__field_reclaim_<sty>`, the rebind-side counterpart of struct_drop_field_ops.
-// One directive per PARTICIPATING field: `kind` is the terminal release and says
-// which pre-walk precedes it (`arrarr_free` walks struct elements,
-// `arrarr_free_enum` enum ones), `ty` is that pre-walk's element type (empty
-// when there is none), and `cow` says whether the new-vs-old compare guards the
-// release.
-//
-// `cow` is false exactly for a carried nested struct / enum field. Those release
-// without the compare, so a field the callee reused in place would otherwise dec
-// the only reference to a nested box — which is why the caller emits the
-// same-box check before this list is walked at all.
-//
-// Read-only in `s`, like its sibling: the admission gates are consulted here and
-// the matching need() stays with the backend that emits the directive.
-pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
-  let ops: RcOp[] = [];
-  let n: i32 = irtables.decl_field_count(s.struct_decls, sty);
-  let k: i32 = 0;
-  while (k < n) {
-    let fdt: string = irtables.decl_field_type_at(s.struct_decls, sty, k);
-    let fr_str: boolean = fdt == "string" && s.has_need("strfldok:" + sty);
-    let fr_str_arr: boolean = fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
-    let fr_clo: boolean = fdt == "fn" && s.has_need("strfldok:clo:" + sty);
-    let fr_struct: boolean = irtables.decl_is_struct(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
-    let fr_enum: boolean = irtables.decl_is_enum(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
-    let fr_box_arr: boolean = !fr_str && !fr_str_arr && !fr_clo && !fr_struct && !fr_enum
-      && !irtables.is_leaksafe_array_field(fdt)
-      && (irtables.is_struct_array_field_type(s.struct_decls, fdt) || irtables.is_enum_array_field_type(s.struct_decls, fdt))
-      && s.has_need("strfldok:sarr:" + sty);
-    let fr_rows: boolean = irtables.is_row_array_field_type(s.struct_decls, fdt);
-    let participates: boolean = fr_str || fr_str_arr || fr_clo || fr_struct || fr_enum || fr_rows
-      || fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty)
-      || irtables.is_leaksafe_array_field(fdt)
-      || irtables.is_struct_array_field_type(s.struct_decls, fdt)
-      || irtables.is_enum_array_field_type(s.struct_decls, fdt);
-    if (participates) {
-      // The carries the base copy RETAINS take the uniq arm: a nested struct
-      // or enum, and every array kind. Pointer-equal in old and new then means
-      // two counted holders unless the field is unique, in which case no inc
-      // was taken (an in-place move, or #6653's suppressed retain) and the
-      // pointers coincide for that reason. A string or closure field is
-      // carried uncounted unless routed, so it keeps the cow compare.
-      let uniq: boolean = fr_struct || fr_enum || fr_str_arr || fr_box_arr || fr_rows
-        || irtables.is_leaksafe_array_field(fdt)
-        || fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty)
-        || irtables.is_struct_array_field_type(s.struct_decls, fdt)
-        || irtables.is_enum_array_field_type(s.struct_decls, fdt);
-      let cow: boolean = !uniq;
-      // A nested STRUCT field owns rc children of its own, and the box dec
-      // below frees only the box — so the children were stranded (#8538).
-      // `__struct_drop_<inner>` releases them, under the same rc==1 gate
-      // struct_drop_field_ops' deep_struct_drop arm uses: a SHARED inner
-      // keeps its fields for the other owner. Empty when the inner reaches
-      // nothing reclaimable, or when its graph has a cycle
-      // (nested_field_deep_drop_ok), leaving today's box-only release.
-      let deep: string = "";
-      if (fr_struct && irtables.nested_field_deep_drop_ok(s.struct_decls, fdt)) {
-        deep = fdt;
-      }
-      // The enum sibling (#8567): a direct enum field's live variant owns rc
-      // payloads the box dec alone strands, under the gate struct_drop_field_ops
-      // uses for the same field.
-      let deep_enum: string = "";
-      if (fr_enum && irtables.enum_arr_elems_walk_ok(s.struct_decls, fdt)) {
-        deep_enum = fdt;
-      }
-      if (fr_rows) {
-        ops = ops.append(RcOp { kind: "arrarr_free", idx: k, ty: "", cow: cow, uniq: uniq });
-      } else if (fr_box_arr) {
-        let pre: string = "";
-        let pre_kind: string = "arrarr_free";
-        if (irtables.is_struct_array_field_type(s.struct_decls, fdt)) {
-          let elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-          if (irtables.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
-            pre = elem_ty + "";
-          }
-        } else if (irtables.is_enum_array_field_type(s.struct_decls, fdt)) {
-          // The enum-array sibling, under the gate struct_drop_field_ops'
-          // elems_drop_enum arm uses so the two helpers agree (#8604).
-          let eaty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-          if (irtables.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
-            pre = eaty + "";
-            pre_kind = "arrarr_free_enum";
-          }
-        }
-        ops = ops.append(RcOp { kind: pre_kind, idx: k, ty: pre, cow: cow, uniq: uniq });
-      } else if (fr_str) {
-        ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "", cow: cow, uniq: uniq });
-      } else if (fr_str_arr) {
-        ops = ops.append(RcOp { kind: "str_arr_free", idx: k, ty: "", cow: cow, uniq: uniq });
-      } else if (deep.len() > 0) {
-        ops = ops.append(RcOp { kind: "deep_struct_dec", idx: k, ty: deep, cow: cow, uniq: uniq });
-      } else if (deep_enum.len() > 0) {
-        ops = ops.append(RcOp { kind: "deep_enum_dec", idx: k, ty: deep_enum, cow: cow, uniq: uniq });
-      } else {
-        ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: cow, uniq: uniq });
-      }
-    }
-    k = k + 1;
-  }
-  return ops;
-}
 
 // DbgVars is one function's `-g` record of where its source variables live
 // (#11410): `at` marks the SSA positions that bound a variable's range, which

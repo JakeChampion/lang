@@ -11,8 +11,7 @@
 //   * the refusals all three share — strict_ir_refuse, eprint_ir_ineligible and
 //     unsupported_op_refuse, each an eprint-then-exit(3) whose only per-backend
 //     part is the name it prints;
-//   * the helper-name map — is_fern_helper / ir_helper_symbol and the
-//     `__struct_drop_<T>` / `__field_reclaim_<T>` name<->type pair, plus the
+//   * the helper-name map — is_fern_helper / ir_helper_symbol, plus the
 //     C-call classifier;
 //   * label naming — str_lit_label, str_box_label — and the comparison
 //     classifiers the register path's compare-and-branch fusion reads;
@@ -112,26 +111,7 @@ pub function is_fern_helper(name: string): boolean {
     || is_release_helper(name)
     || is_map_release_helper(name)
     || is_boxed_key_map_release_helper(name)
-    || is_text_helper(name)
-    // per-type field-level move tracking (#3457): __field_reclaim_<T> frees
-    // the REPLACED array-field buffers of the superseded old box (cow + snap
-    // guarded) before freeing the box. All three backends emit a real per-type
-    // body (x86 emit_ir_field_reclaims, arm64 emit_arm64_field_reclaim_one, wasm
-    // emit_wasm_field_reclaim_body).
-    || is_field_reclaim_name(name)
-    // per-type deep struct-drop (#3457): __struct_drop_<T> deep-drops the
-    // rc-array FIELDS of a reclaimable struct box at scope exit (a scalar
-    // field's buffer; a struct/enum-array field's elements + buffer; an acyclic
-    // nested-struct field, recursively). All three backends emit a real per-type
-    // body (x86 emit_ir_struct_drops, arm64 emit_arm64_struct_drop_one, wasm
-    // emit_wasm_struct_drop_body). The per-type helper replaces the former inline
-    // field-drop so the broad struct reclaim fits #3452.
-    || is_struct_drop_name(name)
-    // per-type struct-VALUE column walk of a reclaimable map:
-    // __map_vals_struct_drop_<T> releases each value box's own rc fields
-    // (through the backend's element walk over __struct_drop_<T>) before the
-    // map's one-dec column free takes the boxes.
-    || is_map_vals_struct_drop_name(name);
+    || is_text_helper(name);
 }
 
 // The count primitives and the element retain and reuse built on them.
@@ -301,39 +281,6 @@ function is_text_helper(name: string): boolean {
     || name == "__fern_arr_str_join";
 }
 
-// is_struct_drop_name reports whether a call_direct callee is a per-type
-// __struct_drop_<T> helper (the suffix is the struct type name).
-pub function is_struct_drop_name(name: string): boolean {
-  return name.len() > 14 && slice_unchecked(name, 0, 14) == "__struct_drop_";
-}
-
-// struct_drop_type returns the struct type T from a "__struct_drop_<T>" name.
-pub function struct_drop_type(name: string): string {
-  return slice_unchecked(name, 14, name.len()) + "";
-}
-
-// is_map_vals_struct_drop_name reports whether a call_direct callee is a
-// per-type __map_vals_struct_drop_<T> helper (the suffix is the value struct).
-pub function is_map_vals_struct_drop_name(name: string): boolean {
-  return name.len() > 23 && slice_unchecked(name, 0, 23) == "__map_vals_struct_drop_";
-}
-
-// map_vals_struct_drop_type returns T from a "__map_vals_struct_drop_<T>" name.
-pub function map_vals_struct_drop_type(name: string): string {
-  return slice_unchecked(name, 23, name.len()) + "";
-}
-
-// is_field_reclaim_name reports whether a call_direct callee is a per-type
-// __field_reclaim_<T> helper (the suffix is the struct type name).
-pub function is_field_reclaim_name(name: string): boolean {
-  return name.len() > 16 && slice_unchecked(name, 0, 16) == "__field_reclaim_";
-}
-
-// field_reclaim_type returns the struct type T from a "__field_reclaim_<T>" name.
-pub function field_reclaim_type(name: string): string {
-  return slice_unchecked(name, 16, name.len()) + "";
-}
-
 // is_c_call reports whether a call_direct callee is an FFI shim of the
 // `__c_call<n>` family — `__c_call0`..`__c_call4` with an optional `_f32` /
 // `_f64` return-type suffix (#4375). The family calls a C-ABI (System V /
@@ -392,17 +339,6 @@ pub function ir_helper_symbol(name: string): string {
   }
   if (name == "__fern_rc_underflow_get") {
     return "__fn___fern_rc_underflow_count";
-  }
-  // __field_reclaim_<T> -> __fn___field_reclaim_<sanitized T> (#3457). Sanitised
-  // so a monomorphised / bracketed type name yields a valid asm label, matching
-  // the body label emit_ir_field_reclaims writes.
-  if (is_field_reclaim_name(name)) {
-    return "__fn___field_reclaim_" + asmcore.sanitize_label(field_reclaim_type(name));
-  }
-  // __struct_drop_<T> -> __fn___struct_drop_<sanitized T> (#3457), matching the
-  // body label emit_ir_struct_drops writes.
-  if (is_struct_drop_name(name)) {
-    return "__fn___struct_drop_" + asmcore.sanitize_label(struct_drop_type(name));
   }
   return "__fn_" + name;
 }
@@ -995,9 +931,8 @@ pub struct Lowered {
 // gate is the eligibility verdict every whole-program emit path asks of the
 // typed lowering `sub` for `mod`: each declaration's produced body, then a
 // call_direct / const_func scan whose only rejections are USER function names
-// nothing defines (RC-inserted __struct_drop_ / __field_reclaim_ / __fern_*
-// helper calls all pass is_fern_helper). The cache it returns is the one the
-// emit reads.
+// nothing defines (RC-inserted __fern_* helper calls all pass is_fern_helper).
+// The cache it returns is the one the emit reads.
 pub function gate(mod: parser.Module, sub: Sub): Lowered {
   let cache: irtables.LowerResult[] = [];
   let freg: irtables.SigReg = defined_reg(mod, sub.extra);
