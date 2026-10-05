@@ -250,7 +250,7 @@ function typed_units(parts: flatten.PerModule[], d: semlower.Driven, cache_dir: 
     ircore.eprint_ir_ineligible();
     exit(1);
   }
-  let g: ircore.Gated = ircore.Gated { ok: true, im: im, stab: stab, base: d.sub.sigs, cache: l.cache };
+  let g: ircore.Gated = ircore.Gated { ok: true, im: im, stab: stab, cache: l.cache };
   let raw: parser.Module[] = [];
   let entry_at: i32 = 0;
   let k: i32 = 0;
@@ -264,8 +264,8 @@ function typed_units(parts: flatten.PerModule[], d: semlower.Driven, cache_dir: 
   let u: ircore.Units = ircore.split_units(g, raw, entry_at);
   let keys: ircore.UnitKeys = ircore.no_unit_keys();
   if (cache_dir.len() > 0) {
-    // The wasm emit reads no whole-program registry, so no facts.
-    keys = ircore.unit_keys(u, im.funcs, stab, d.sub.sigs, false);
+    // A unit's lowering reads its callees' contracts, so their rows key it.
+    keys = ircore.unit_keys(u, stab, d.sub.contracts);
   }
   return Typed { g: g, u: u, keys: keys };
 }

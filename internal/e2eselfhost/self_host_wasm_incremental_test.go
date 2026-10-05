@@ -55,7 +55,7 @@ func TestSelfHostWasmIncrementalCache(t *testing.T) {
 		}
 	}
 	entry := `import "./leaf";
-function main(): i32 { return leaf.value() + leaf.small() + 1; }`
+function main(): i32 { return leaf.value() + leaf.small() + leaf.take([1, 2, 3]) + 1; }`
 	if err := os.WriteFile(filepath.Join(proj, "entry.fern"), []byte(entry), 0o644); err != nil {
 		t.Fatalf("write entry.fern: %v", err)
 	}
@@ -63,7 +63,12 @@ function main(): i32 { return leaf.value() + leaf.small() + 1; }`
 	// small is inlined into entry. holder is a struct no function uses.
 	const holder = "pub struct Holder { f: (i32) => i32 }"
 	const holderI64 = "pub struct Holder { f: (i32) => i64 }"
-	writeLeaf(t, "@noinline pub function value(): i32 { return 10; }\npub function small(): i32 { return 1; }\n"+holder)
+	// take only reads its argument, so the typed lowering infers a borrowed
+	// parameter; takeOwn consumes it, which moves that mode and nothing in the
+	// signature.
+	const take = "@noinline pub function take(xs: i32[]): i32 { return xs.len(); }\n"
+	const takeOwn = "@noinline pub function take(xs: i32[]): i32 { let ys: i32[] = xs.append(4); return ys.len(); }\n"
+	writeLeaf(t, take+"@noinline pub function value(): i32 { return 10; }\npub function small(): i32 { return 1; }\n"+holder)
 
 	entryPath := filepath.Join(proj, "entry.fern")
 
@@ -148,7 +153,7 @@ function main(): i32 { return leaf.value() + leaf.small() + 1; }`
 	// THE CLAIM. leaf's body changes; its signature does not. leaf must be
 	// re-emitted and entry must NOT be.
 	t.Run("body_only_edit_reemits_only_that_module", func(t *testing.T) {
-		writeLeaf(t, "@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 1; }\n"+holder)
+		writeLeaf(t, take+"@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 1; }\n"+holder)
 		got := emitBoth(t)
 		if got["leaf"] != "cache-miss" {
 			t.Errorf("leaf reported %s after its body changed, want cache-miss", got["leaf"])
@@ -161,7 +166,7 @@ function main(): i32 { return leaf.value() + leaf.small() + 1; }`
 	// A body edit to a callee entry INLINED: entry's own code changed, so
 	// reusing its unit would ship the old body.
 	t.Run("inlined_body_edit_also_invalidates_the_importer", func(t *testing.T) {
-		writeLeaf(t, "@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 2; }\n"+holder)
+		writeLeaf(t, take+"@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 2; }\n"+holder)
 		got := emitBoth(t)
 		if got["leaf"] != "cache-miss" {
 			t.Errorf("leaf reported %s after its body changed, want cache-miss", got["leaf"])
@@ -176,13 +181,28 @@ function main(): i32 { return leaf.value() + leaf.small() + 1; }`
 	// table whole, so every unit's key covers all of it, and re-emitting every
 	// unit on a struct edit is deliberate.
 	t.Run("struct_only_edit_also_invalidates_the_importer", func(t *testing.T) {
-		writeLeaf(t, "@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 2; }\n"+holderI64)
+		writeLeaf(t, take+"@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 2; }\n"+holderI64)
 		got := emitBoth(t)
 		if got["leaf"] != "cache-miss" {
 			t.Errorf("leaf reported %s after its struct changed, want cache-miss", got["leaf"])
 		}
 		if v := entryVerdict(t, got); v != "cache-miss" {
 			t.Errorf("entry reported %s after a struct decl changed, want cache-miss (full map: %v)", v, got)
+		}
+	})
+
+	// A callee body edit that moves the ownership the typed lowering infers for
+	// its parameter, with the signature unchanged. entry's lowering of the call
+	// reads that mode, so reusing entry's unit would release the argument the
+	// old way.
+	t.Run("ownership_edit_also_invalidates_the_importer", func(t *testing.T) {
+		writeLeaf(t, takeOwn+"@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 2; }\n"+holderI64)
+		got := emitBoth(t)
+		if got["leaf"] != "cache-miss" {
+			t.Errorf("leaf reported %s after take's body changed, want cache-miss", got["leaf"])
+		}
+		if v := entryVerdict(t, got); v != "cache-miss" {
+			t.Errorf("entry reported %s after take's inferred parameter mode changed, want cache-miss (full map: %v)", v, got)
 		}
 	})
 
@@ -195,7 +215,7 @@ function main(): i32 { return leaf.value() + leaf.small() + 1; }`
 	// leaves the importer unable to lower is refused at emit, and the verdicts
 	// this asserts are never reached.
 	t.Run("signature_edit_also_invalidates_the_importer", func(t *testing.T) {
-		writeLeaf(t, "@noinline pub function value(bump: i32 = 5): i32 { return 20 + bump; }\npub function small(): i32 { return 2; }\n"+holderI64)
+		writeLeaf(t, take+"@noinline pub function value(bump: i32 = 5): i32 { return 20 + bump; }\npub function small(): i32 { return 2; }\n"+holderI64)
 		got := emitBoth(t)
 		if got["leaf"] != "cache-miss" {
 			t.Errorf("leaf reported %s after its signature changed, want cache-miss", got["leaf"])

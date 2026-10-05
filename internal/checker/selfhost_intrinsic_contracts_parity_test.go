@@ -159,13 +159,13 @@ func withLowering(names []string, lowerable map[string]bool) []string {
 }
 
 // selfHostLoweredIntrinsics is every intrinsic name the self-hosted lowering
-// mentions — semsource and ssarc, the typed lowering, irtables, fnsigs and lift for the op
+// mentions — semsource and ssarc, the typed lowering, irtables and lift for the op
 // builders it calls, ir.fern for the op table. A name in none has no IR
 // behind it on this compiler at all.
 func selfHostLoweredIntrinsics(t *testing.T) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
-	for _, f := range []string{"semsource.fern", "ssarc.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "ir.fern"} {
+	for _, f := range []string{"semsource.fern", "ssarc.fern", "irtables.fern", "lift.fern", "ir.fern"} {
 		b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", f))
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)

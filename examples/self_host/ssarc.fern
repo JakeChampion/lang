@@ -2,7 +2,6 @@
 // facts or alternate backend ABI enter this boundary.
 import "./ir";
 import "./irtables";
-import "./fnsigs";
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
@@ -860,8 +859,7 @@ function scratch_base(f: ssasem.Func): i32 {
 function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
   // A handle has no box, so there is nothing under it to walk — and
   // no schema either, which is what the record arm below would go looking
-  // for. `caller_sigs` asks this of every parameter type, so a handle
-  // reaches here on any program that opens one.
+  // for.
   if (semtypes.is_handle(t)) {
     return false;
   }
@@ -7236,175 +7234,6 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
     e = pop(e);
   }
   return e;
-}
-
-// A produced function whose borrowability rows caller_sigs rewrites. `name` is
-// the key an AST caller looks it up by, `<Base>.<name>` for a method.
-// `receiver` says parameter 0 is a receiver, which has no position in the AST's
-// per-parameter rows; an associated function has none.
-pub struct Callee { name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, receiver: boolean }
-
-// caller_sigs replaces every callee's borrowability rows with the ones its
-// verified contract gives, in callee order.
-pub function caller_sigs(sg: fnsigs.FnSigs, callees: Callee[]): fnsigs.FnSigs {
-  let borrows: string[] = sg.borrowable_params;
-  for c in callees {
-    let first: i32 = 0;
-    if (c.receiver) {
-      first = 1;
-    }
-    borrows = borrow_rows(borrows, c.name, counted_tiers(c.f, c.modes, first), bare_flags(c.f, c.modes, c.plan, first));
-  }
-  return fnsigs.FnSigs { ...sg, borrowable_params: borrows };
-}
-
-// The AST caller's release of an argument it built follows the callee's
-// parameter rows, which its readers took from the callee's SYNTAX: a borrowed
-// parameter handed on to a counted one reads as consumed there, and an
-// argument the rows call neither borrowed nor counted is taken to be the
-// callee's, so the caller never releases it. The contract decides here: a
-// borrowed reference parameter is only ever read or retained, which is the
-// counted-tier row — every reference the callee keeps was retained, so
-// exactly one release stays with the caller — and never the bare row, which
-// promises the callee keeps no reference at all. A counted parameter takes
-// the one count the caller hands over, which is the row-less reading already.
-// The tier is the parameter's type, as the AST readers key it; the result
-// needs no test, since a returned parameter is a retained one here.
-function counted_tier(t: typeinfo.Type): string {
-  if let typeinfo.TypeArray(a) = t {
-    if (!ssasem.reference(a.elem) || ssasem.is_string(a.elem)) {
-      return "ACNT:";
-    }
-    if (named(a.elem) != "") {
-      return "DCNT:";
-    }
-    return "";
-  }
-  if (ssasem.is_string(t)) {
-    return "SCNT:";
-  }
-  if let typeinfo.TypeStruct(_) = t {
-    return "PCNT:";
-  }
-  if let typeinfo.TypeUnion(_) = t {
-    return "ECNT:";
-  }
-  if let typeinfo.TypeTuple(_) = t {
-    return "TCNT:";
-  }
-  return "";
-}
-
-function counted_tiers(f: ssasem.Func, modes: i32[], first: i32): string[] {
-  let out: string[] = [];
-  let i: i32 = first;
-  while (i < modes.len()) {
-    if (modes[i] == ssaunits.borrow_mode()) {
-      out = out.append(counted_tier(f.params[i]));
-    } else {
-      out = out.append("");
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
-function tier_flags(tiers: string[], prefix: string): string {
-  let flags: string = "";
-  let any: boolean = false;
-  for tier in tiers {
-    if (tier == prefix || prefix == "CNT:" && tier != "") {
-      flags = flags + "1";
-      any = true;
-    } else {
-      flags = flags + "0";
-    }
-  }
-  if (!any) {
-    return "";
-  }
-  return flags;
-}
-
-function borrow_rows(own reg: string[], name: string, tiers: string[], bare_row: string): string[] {
-  reg = fnsigs.borrow_reg_set(reg, name, bare_row);
-  return fnsigs.borrow_reg_set(reg, "CNT:" + name, tier_flags(tiers, "CNT:"));
-}
-
-// The bare row promises the callee keeps no reference to the argument once
-// it returns, which an AST caller's element sweep relies on to free what the
-// argument holds. A borrowed parameter keeps nothing when no unit of it, or of
-// anything projected from it, is retained, and nothing projected from it is
-// handed to a call other than a dyn dispatch, which lends its operands.
-function bare_flags(f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, first: i32): string {
-  if (!plan.ok) {
-    return "";
-  }
-  let borrows: boolean = false;
-  for m in modes {
-    if (m == ssaunits.borrow_mode()) {
-      borrows = true;
-    }
-  }
-  if (!borrows) {
-    return "";
-  }
-  let a: ssasem.Analysis = plan.analysis;
-  if (!a.ok) {
-    return "";
-  }
-  let flags: string = "";
-  let any: boolean = false;
-  let i: i32 = first;
-  while (i < modes.len()) {
-    let v: i32 = param_value(f, i);
-    if (v >= 0 && modes[i] == ssaunits.borrow_mode() && keeps_nothing(f, plan, a, v)) {
-      flags = flags + "1";
-      any = true;
-    } else {
-      flags = flags + "0";
-    }
-    i = i + 1;
-  }
-  if (!any) {
-    return "";
-  }
-  return flags;
-}
-
-function param_value(f: ssasem.Func, index: i32): i32 {
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (ins.kind_tag == 6 && ins.imm == index) {
-        return ins.result;
-      }
-    }
-  }
-  return 0 - 1;
-}
-
-function keeps_nothing(f: ssasem.Func, plan: ssaunits.Plan, a: ssasem.Analysis, param: i32): boolean {
-  for step in plan.steps {
-    for item in step.supplies {
-      if (item.mode == ssaunits.retain_unit() && derives(a, item.value, param)) {
-        return false;
-      }
-    }
-  }
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      let handed: boolean = ins.kind_tag == ssasem.call_value() || ins.kind_tag == ssasem.call() && !ssasem.is_dyn_call(ins.str);
-      if (!handed) {
-        continue;
-      }
-      for arg in ins.args {
-        if (derives(a, arg, param)) {
-          return false;
-        }
-      }
-    }
-  }
-  return true;
 }
 
 function derives(a: ssasem.Analysis, v: i32, root: i32): boolean {

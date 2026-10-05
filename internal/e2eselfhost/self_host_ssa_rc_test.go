@@ -113,11 +113,11 @@ function main(): i32 {
     // The rest of the program is the typed lowering's, as the emit entries
     // gate it; produce's body is the fixture's.
     let d = semlower.driven(mod, av[1]);
-    let g: ircore.Gated = ircore.Gated { ok: false, im: d.full, stab: irtables.struct_tab_empty(), base: d.sub.sigs, cache: [] };
+    let g: ircore.Gated = ircore.Gated { ok: false, im: d.full, stab: irtables.struct_tab_empty(), cache: [] };
     if (av[1] == "wasm32-wasi") {
         let wm = ircore.with_records(wasm_ir.route_normalized(d.full), d.sub);
         let l = ircore.gate(wm, d.sub);
-        g = ircore.Gated { ok: l.ok, im: wm, stab: irtables.struct_tab(wm.structs), base: d.sub.sigs, cache: l.cache };
+        g = ircore.Gated { ok: l.ok, im: wm, stab: irtables.struct_tab(wm.structs), cache: l.cache };
     } else { g = semlower.program(d); }
     if (!g.ok) { return 3; }
     let cache: irtables.LowerResult[] = [];
@@ -131,7 +131,7 @@ function main(): i32 {
         at = at + 1;
     }
     if (av[1] == "x86-64-linux") {
-        print(asm_ir.emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, cache, g.base, d.sub.rt_lower, 0 as usize, asmcore.env_switches()));
+        print(asm_ir.emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, cache, d.sub.rt_lower, 0 as usize, asmcore.env_switches()));
     } else if (av[1] == "arm64-linux") {
         strbuf_reset();
         let state = asmcore.new_state();
@@ -171,7 +171,7 @@ func physicalRCSource(setup, modes string) string {
 	source = strings.Replace(source, `let src: string = "function produce`, `let src: string = "@noinline function produce`, 1)
 	return `import "./ssarc"; import "./suspend"; import "./ssasem"; import "./ssaunits"; import "./ssa";
 import "./typeinfo"; import "./semrecords"; import "./parser"; import "./lexer"; import "./irtables";
-import "./fnsigs"; import "./ir"; import "./util";
+import "./ir"; import "./util";
 import "./ircore"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./irverifyrc";
 import "./semlower";
 ` + source
@@ -402,30 +402,6 @@ function main(): i32 {
     let i32ty: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
     let boxOnly: typeinfo.Type = typeinfo.TypeStruct { name: "BoxOnly", args: [] };
     let boxOnlySchema = semrecords.Record { views: false, ty: boxOnly, fields: [semrecords.Field { name: "n", ty: i32ty }] };
-    let withKids: typeinfo.Type = typeinfo.TypeStruct { name: "WithKids", args: [] };
-    let withKidsSchema = semrecords.Record { views: false, ty: withKids, fields: [semrecords.Field { name: "xs", ty: f.result }] };
-    let withKidsFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: selfGraph, values: [withKids], params: [withKids], result: withKids, records: semrecords.records_of([withKidsSchema]), enums: [], calls: [] };
-    // The parameter rows come from the contract, not the syntax: a borrowed
-    // reference parameter is the retained-keep row, and without a plan to show
-    // it keeps nothing never the bare one; a counted or scalar parameter has
-    // neither.
-    let rowSigs = ssarc.caller_sigs(fnsigs.fn_sigs_empty(), [ssarc.Callee { name: "mk", f: ssasem.Func { ...withKidsFunc, params: [withKids, i32ty, withKids] }, modes: [2, 1, 3], plan: ssaunits.refused("no plan"), receiver: false }]);
-    let rowAll: string = "";
-    for bucket in rowSigs.borrowable_params { rowAll = rowAll + bucket; }
-    if (!has_sub(rowAll, "CNT:mk|100\n") || has_sub("\n" + rowAll, "\nmk|")) { return 130; }
-    let rowReg: string[] = rowSigs.borrowable_params;
-    rowReg = fnsigs.borrow_reg_set(rowReg, "mk", "1");
-    let rowNone = ssarc.caller_sigs(fnsigs.FnSigs { ...rowSigs, borrowable_params: rowReg }, [ssarc.Callee { name: "mk", f: withKidsFunc, modes: [3], plan: ssaunits.refused("no plan"), receiver: false }]);
-    rowAll = "";
-    for bucket in rowNone.borrowable_params { rowAll = rowAll + bucket; }
-    if (has_sub("\n" + rowAll, "\nmk|")) { return 131; }
-    // A method's receiver is parameter 0 of the Func but has no position in
-    // the AST's per-parameter rows, which start at the first declared
-    // parameter (#10515). The rows its syntax gave are replaced.
-    let methodRows = ssarc.caller_sigs(fnsigs.FnSigs { ...fnsigs.fn_sigs_empty(), borrowable_params: fnsigs.borrow_reg_set([], "W.mk", "11") }, [ssarc.Callee { name: "W.mk", f: ssasem.Func { ...withKidsFunc, params: [withKids, i32ty, withKids] }, modes: [2, 1, 2], plan: ssaunits.refused("no plan"), receiver: true }]);
-    rowAll = "";
-    for bucket in methodRows.borrowable_params { rowAll = rowAll + bucket; }
-    if (!has_sub(rowAll, "CNT:W.mk|01\n") || has_sub("\n" + rowAll, "\nW.mk|")) { eprint(rowAll); return 204; }
     // A length reads its receiver and hands back an i32 that owns nothing: an
     // array selects arr_len, a string str_len, and a receiver that is neither
     // is not a counted container this can read at all.
@@ -434,18 +410,6 @@ function main(): i32 {
     let arrLen = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: lenGraph, values: [f.result, i32ty], params: [f.result], result: i32ty, records: semrecords.no_records(), enums: [], calls: [] };
     let arrLenPlan = ssaunits.plan(arrLen, [2], ssaunits.no_view());
     if (!arrLenPlan.ok) { eprint(arrLenPlan.why); return 32; }
-    // A borrowed parameter the plan shows the callee keeps nothing of (no
-    // retain, nothing handed on) earns the bare row as well as the counted one.
-    let lenRows: string = "";
-    let lenSigs = ssarc.caller_sigs(fnsigs.fn_sigs_empty(), [ssarc.Callee { name: "len", f: arrLen, modes: [2], plan: arrLenPlan, receiver: false }]);
-    for bucket in lenSigs.borrowable_params { lenRows = lenRows + bucket; }
-    if (!has_sub("\n" + lenRows, "\nlen|1\n")) { eprint(lenRows); return 194; }
-    // The same body as a method keeps nothing of its receiver, which the AST
-    // rows have no position for, so it writes no parameter row at all.
-    lenRows = "";
-    lenSigs = ssarc.caller_sigs(fnsigs.fn_sigs_empty(), [ssarc.Callee { name: "Arr.len", f: arrLen, modes: [2], plan: arrLenPlan, receiver: true }]);
-    for bucket in lenSigs.borrowable_params { lenRows = lenRows + bucket; }
-    if (has_sub(lenRows, "len|")) { eprint(lenRows); return 206; }
     let arrLenLowered = ssarc.lower(arrLen, [2], arrLenPlan, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none());
     if (!arrLenLowered.ok) { eprint(arrLenLowered.why); return 33; }
     let sawArrLen: boolean = false;
