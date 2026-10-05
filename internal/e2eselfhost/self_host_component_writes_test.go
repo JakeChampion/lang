@@ -76,7 +76,7 @@ func TestSelfHostArm64DarwinComponentWrites(t *testing.T) {
 	// failures that a successful wasmtime stdout cannot exercise.
 	src := filepath.Join(dir, "shim.fern")
 	if err := os.WriteFile(src, []byte(`import "./wasm_ir";
-function main(): i32 { write(wasm_ir.component_io_shims([], true, false)); return 0; }
+function main(): i32 { write(wasm_ir.component_io_shims([], true, false, false)); return 0; }
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
