@@ -65,17 +65,29 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   while (i < funcs0.len()) {
     let is_leaf: boolean = inlinable[i] && leaf(funcs0[i]);
     leaves = leaves.append(is_leaf);
-    once = once.append(!is_leaf && inlinable[i] && unnamed[i] && calls[i] == 1 && spliceable(funcs0[i], max_once_insts()));
+    once = once.append(!is_leaf && inlinable[i] && unnamed[i] && once_spliceable(funcs0[i], calls[i]));
     i = i + 1;
   }
-  let out: Inlined = split_all(splice_rounds(funcs0, rewrite, Spliceable { ix: ix, leaves: leaves, once: once }), rewrite, modes);
-  let spliced: boolean[] = [];
-  i = 0;
-  while (i < funcs0.len()) {
-    spliced = spliced.append(leaves[i] || once[i]);
+  let sp: Spliceable = Spliceable { ix: ix, leaves: leaves, once: once };
+  let out: Inlined = split_all(splice_rounds(funcs0, rewrite, sp), rewrite, modes);
+  return Inlined { ...out, spliced: spliced_away(sp, calls, call_counts(out.funcs, ix)) };
+}
+
+// Whether `f`, called `calls` times and no leaf, is spliced into its caller.
+function once_spliceable(f: ssasem.Func, calls: i32): boolean {
+  return calls == 1 && !lends_view(f) && spliceable(f, max_once_insts());
+}
+
+// The functions spliced into every one of their callers: called before the
+// pass, `calls`, and no longer after it, `left`.
+function spliced_away(sp: Spliceable, calls: i32[], left: i32[]): boolean[] {
+  let out: boolean[] = [];
+  let i: i32 = 0;
+  while (i < calls.len()) {
+    out = out.append((sp.leaves[i] || sp.once[i]) && calls[i] > 0 && left[i] == 0);
     i = i + 1;
   }
-  return Inlined { ...out, spliced: spliced };
+  return out;
 }
 
 // The functions spliced wherever they are called, by index into the
@@ -135,6 +147,17 @@ function split_all(prev: Inlined, rewrite: boolean[], modes: i32[][]): Inlined {
     i = i + 1;
   }
   return out;
+}
+
+// Whether a parameter or the result of `f` holds a view, which only the frame
+// that lends it may keep.
+function lends_view(f: ssasem.Func): boolean {
+  for p in f.params {
+    if (ssasem.holds_view(f, p)) {
+      return true;
+    }
+  }
+  return ssasem.holds_view(f, f.result);
 }
 
 // How many direct calls name each function, over every body.
@@ -817,7 +840,7 @@ function part_of(f: ssasem.Func, w: Walk, read: ssa.SInst, v: i32, depth: i32): 
     return fail;
   }
   let d: ssa.SInst = def_inst(w.e.defs, x);
-  if (marked(w.e.chained, x)) {
+  if (marked(w.e.chained, x) || index_of(f.dbg_vals, v) >= 0 || index_of(f.dbg_vals, x) >= 0) {
     return fail;
   }
   if (builds(d.kind_tag) || d.kind_tag == ssasem.zero()) {
@@ -1067,27 +1090,21 @@ function drop_unread(f: ssasem.Func): ssasem.Func {
   if (built.len() == 0) {
     return f;
   }
-  let reads: i32[] = read_counts(g);
+  let reads: i32[] = read_counts(f);
   if (!any_unread(f, built, reads)) {
     return f;
   }
   let blocks: ssa.SBlock[] = [];
-  let gone: boolean[] = [];
-  while (gone.len() < g.nvals) {
-    gone = gone.append(false);
-  }
   for b in g.blocks {
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
-      if (unread_build(f, built, reads, ins)) {
-        gone = gone.with(ins.result, true);
-      } else {
+      if (!unread_build(f, built, reads, ins)) {
         insts = insts.append(ins);
       }
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
   }
-  return without_bindings(ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } }, gone);
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } };
 }
 
 function any_unread(f: ssasem.Func, built: typeinfo.Type[], reads: i32[]): boolean {
@@ -1099,21 +1116,6 @@ function any_unread(f: ssasem.Func, built: typeinfo.Type[], reads: i32[]): boole
     }
   }
   return false;
-}
-
-// `f` without the `-g` bindings of the values in `gone`, which nothing defines.
-function without_bindings(f: ssasem.Func, gone: boolean[]): ssasem.Func {
-  let vals: i32[] = [];
-  let names: string[] = [];
-  let i: i32 = 0;
-  while (i < f.dbg_vals.len()) {
-    if (!marked(gone, f.dbg_vals[i])) {
-      vals = vals.append(f.dbg_vals[i]);
-      names = names.append(f.dbg_names[i]);
-    }
-    i = i + 1;
-  }
-  return ssasem.Func { ...f, dbg_vals: vals, dbg_names: names };
 }
 
 function built_types(g: ssa.SFunc, f: ssasem.Func): typeinfo.Type[] {
@@ -1128,8 +1130,10 @@ function built_types(g: ssa.SFunc, f: ssasem.Func): typeinfo.Type[] {
   return built;
 }
 
-// How many operands and terminators name each value.
-function read_counts(g: ssa.SFunc): i32[] {
+// How often each value is read: as an operand, by a terminator, or as a
+// source variable under `-g`, which a debugger reads.
+function read_counts(f: ssasem.Func): i32[] {
+  let g: ssa.SFunc = f.graph;
   let reads: i32[] = [];
   let v: i32 = 0;
   while (v < g.nvals) {
@@ -1148,6 +1152,9 @@ function read_counts(g: ssa.SFunc): i32[] {
     if (b.term.kind_tag == 3) {
       reads = counted(reads, b.term.cond);
     }
+  }
+  for v in f.dbg_vals {
+    reads = counted(reads, v);
   }
   return reads;
 }
