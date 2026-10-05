@@ -17,7 +17,8 @@ import (
 // with trap-on-grow-failure (the whole chain's boxes + the items buffer recycle onto
 // the freelist); a regression to the leaf-only drop leaks B.c + C.items past the cap
 // and traps. The WAT assertion pins that the non-leaf inner's $__sem_drop_B is
-// emitted.
+// emitted. items goes through id so the chain is built on the heap rather than
+// placed as a constant.
 func TestSelfHostStructMultiLevelDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm multi-level deep-drop e2e")
@@ -29,10 +30,11 @@ func TestSelfHostStructMultiLevelDropWasm(t *testing.T) {
 
 	const cap = "16777216" // 16 MiB
 	prog := `struct C { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
 function mk(): i32 {
-    let a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
+    let a: A = A { b: B { c: C { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }, bt: 2 }, at: 7 };
     return a.b.c.items[0] + a.b.c.items[15] + a.b.bt + a.at;
 }
 function main(): i32 {
