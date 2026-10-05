@@ -174,6 +174,10 @@ pub function kernel_reasons(): string[] {
   return ["scale-kernel", "disabled", "layout-unknown", "layout-strided", "layout-row-major", "element-fn-unresolved", "element-fn-captures", "element-not-literal-scale", "constructor-unavailable", "builtin-shadowed", "unsupported-operation", "unsupported-element-type"];
 }
 
+pub function scale_storage_reasons(): string[] {
+  return ["guarded-reuse", "reuse-disabled", "receiver-borrowed", "receiver-still-live", "receiver-supplied", "borrow-linked-result", "builtin-shadowed", "shape-unsupported"];
+}
+
 pub function render_kind(kind: string, tags: string[], sites: Site[]): string {
   let counts: i32[] = [];
   for tag in tags {

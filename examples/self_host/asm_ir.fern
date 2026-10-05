@@ -6180,6 +6180,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     return s;
   }
   if (o.kind_tag == 322) {  // scale_f64
+    // Flag1 is the physical planner's sole-owned-buffer form. It skips
+    // allocation and uses the same pointer for reads and writes.
     // operand stack [xs, k bits] -> the data pointer of a fresh f64
     // array of xs's length whose element i is xs[i] * k.
     //
@@ -6218,9 +6220,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let sf_vec: string = flo3.name;
     s = flo3.state;
     s = s.write("    popq %rcx\n    popq %rax\n");
-    s = s.write("    pushq %rax\n    pushq %rcx\n");
-    s = s.write("    movq (%rax), %rdi\n    call __fern_arr_box\n");
-    s = s.write("    popq %rcx\n    popq %rsi\n");
+    if (o.i32_imm == 1) {
+      s = s.write("    movq %rax, %rsi\n");
+    } else {
+      s = s.write("    pushq %rax\n    pushq %rcx\n");
+      s = s.write("    movq (%rax), %rdi\n    call __fern_arr_box\n");
+      s = s.write("    popq %rcx\n    popq %rsi\n");
+    }
     s = s.write("    movq %rcx, %xmm1\n    unpcklpd %xmm1, %xmm1\n    xorq %rdx, %rdx\n");
     // Whole pairs only, so the vector body cannot run past the last
     // element; the tail picks up the odd one.

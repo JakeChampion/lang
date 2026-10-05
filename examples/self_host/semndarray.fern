@@ -335,7 +335,7 @@ function operation_text(f: ssasem.Func, ins: ssa.SInst, layouts: i32[]): string 
 function kernel_site(f: ssasem.Func, ins: ssa.SInst, layouts: i32[], plan: Plan): semarrayreport.Site {
   let storage: string = "scalar-combinator";
   if (plan.reason == semarrayreport.kernel_scale_kernel()) {
-    storage = "fresh-kernel-buffer";
+    storage = "deferred-to-ownership";
   }
   return semarrayreport.Site { owner: f.graph.name, stage: ins.str + "@v" + util.i32_to_string(ins.result), plan: operation_text(f, ins, layouts), reason: plan.reason, storage: storage };
 }

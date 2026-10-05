@@ -612,15 +612,18 @@ function array_storage_report(mod: parser.Module, built: semsource.Built, r: Row
     return 0;
   }
   let sites: semarrayreport.Site[] = [];
+  let scales: semarrayreport.Site[] = [];
   let i: i32 = 0;
   while (i < r.plans.len()) {
     if (r.keep[i]) {
       let p: semsource.Produced = produced_at(built, mod, i);
       sites = util.append_all(sites, ssarc.map_report(p.func, p.modes, r.plans[i], r.pure));
+      scales = util.append_all(scales, ssarc.scale_report(p.func, r.plans[i]));
     }
     i = i + 1;
   }
   eprint(semarrayreport.render_kind("map storage", semarrayreport.storage_reasons(), sites));
+  eprint(semarrayreport.render_kind("scale storage", semarrayreport.scale_storage_reasons(), scales));
   return 0;
 }
 

@@ -1,0 +1,90 @@
+// Run n rounds shared, with shared either 0 (unique) or 1 (a live alias).
+// Measure only the scale call. Verify every result and live alias outside
+// that timer. Both allocation counters include the handle's metadata.
+import "std/ndarray";
+import "std/string";
+
+@noinline
+function scale(own a: ndarray.NdArray[f64]): ndarray.NdArray[f64] {
+  return a.map((x: f64): f64 => x * 2.0);
+}
+
+function build(n: i32): ndarray.NdArray[f64] {
+  let xs: f64[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    xs = xs.append((i % 127 + 1) as f64);
+    i = i + 1;
+  }
+  return ndarray.from_flat(xs, [n]);
+}
+
+function correct(a: ndarray.NdArray[f64], n: i32, factor: f64): boolean {
+  if (a.len() != n || a.shape()[0] != n || !a.is_packed()) {
+    return false;
+  }
+  let xs: f64[] = a.to_flat();
+  let i: i32 = 0;
+  while (i < n) {
+    let expected: f64 = (i % 127 + 1) as f64 * factor;
+    if (xs[i] != expected) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  let n: i32 = 1000;
+  let rounds: i32 = 2;
+  let shared: boolean = false;
+  if (argv.len() > 1) {
+    n = argv[1].parse_int_or(n);
+  }
+  if (argv.len() > 2) {
+    rounds = argv[2].parse_int_or(rounds);
+  }
+  if (argv.len() > 3) {
+    shared = argv[3] == "1";
+  }
+  // Power-of-two scaling is exact and remains finite throughout this range.
+  if (n < 1 || rounds < 1 || rounds > 1000) {
+    return 1;
+  }
+  let current: ndarray.NdArray[f64] = build(n);
+  let mark_calls: i64 = __heap_alloc_count();
+  let mark_bytes: i64 = __heap_bump_bytes();
+  let elapsed: i64 = 0 as i64;
+  let factor: f64 = 1.0;
+  let r: i32 = 0;
+  while (r < rounds) {
+    if (shared) {
+      let alias: ndarray.NdArray[f64] = current;
+      let start: i64 = monotonic_ns();
+      current = scale(current);
+      elapsed = elapsed + monotonic_ns() - start;
+      if (!correct(alias, n, factor)) {
+        return 2;
+      }
+    } else {
+      let start: i64 = monotonic_ns();
+      current = scale(current);
+      elapsed = elapsed + monotonic_ns() - start;
+    }
+    factor = factor * 2.0;
+    if (!correct(current, n, factor)) {
+      return 3;
+    }
+    r = r + 1;
+  }
+  let calls: i64 = __heap_alloc_count() - mark_calls;
+  let bytes: i64 = __heap_bump_bytes() - mark_bytes;
+  let mode: string = "unique";
+  if (shared) {
+    mode = "shared";
+  }
+  print("{\"n\":" + n.to_string() + ",\"rounds\":" + rounds.to_string() + ",\"mode\":\"" + mode + "\",\"alloc_calls\":" + calls.to_string() + ",\"fresh_bytes\":" + bytes.to_string() + ",\"ns_per_map\":" + (elapsed / (rounds as i64)).to_string() + "}");
+  return 0;
+}
