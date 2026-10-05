@@ -70,15 +70,14 @@ built recompiling itself, and that compiler doing it once more — adds **209 s 
 137 s at 5.7 GB peak** and reaches a byte-identical stage3. `docs/BOOTSTRAP.md`
 has the table. Do not run it alongside anything else heavy on a 16 GB box.
 
-## Fastest self-host loop: `make selfhost-cli`
+## Build a local compiler: `make selfhost-cli`
 
-Builds the self-host compiler to a native binary for this host — **~31 s warm /
-~52 s from a cold Go build cache** on a 4-core x86-64 container (measured
-2026-09-01; the ~2 minutes this said before is not what the target costs, and
-erring high discourages using the fastest loop there is), **~13 s warm / ~40 s
-cold on arm64-darwin** (measured 2026-08-06 on an M-series Mac). Then ~1.3 s per
-program, versus minutes per program interpreted and 90+ minutes for an
-unsharded `internal/e2eselfhost`:
+Builds the self-host compiler to a native binary for this host. Historical
+pre-retirement timings were **~31 s warm / ~52 s from a cold Go build cache**
+on a 4-core x86-64 container (measured 2026-09-01), **~13 s warm / ~40 s
+cold on arm64-darwin** (measured 2026-08-06 on an M-series Mac). The resulting
+compiler then took ~1.3 s per program. Re-measure this target on current source;
+those measurements used the retired Go compilation pipeline.
 
 ```
 make selfhost-cli
@@ -86,17 +85,20 @@ bin/fern-selfhost -target wasm32-wasi -emit asm -o p.wat /ABS/prog.fern $PWD/int
 wasmtime run p.wat; echo $?     # oracle: ./bin/fern -interp /ABS/prog.fern
 ```
 
-**`bin/fern-selfhost` from `make selfhost-cli` is NATIVE-built, so A/B-ing it
-cannot see a lowering change.** (`make bootstrap` installs the pin's output at
-the same path, a self-built compiler; `scripts/perf-bench-selfhost` and
-`scripts/coreutils-bench` rebuild only when the binary is older than the
-sources, so say which producer a measurement used.) The binary that target
-produces was compiled by `bin/fern`, which
-applies native's own lowering — so a self-host lowering improvement is absent
-from the code being timed, and the only difference an A/B measures is the cost
-of the new analysis. #8224's field-append change read as +0.2% Ir that way while
-being -17.6% where it lands. To measure a self-host lowering change, build
-STAGE 2 — the same source compiled once by each compiler — and time those:
+**Record which compiler produced the binary being measured.** `make selfhost-cli`
+calls `bin/fern -target`, which now delegates to the Fern-written compiler.
+The launcher selects `FERN_SELFHOST`, an installed sibling `fern-selfhost`, or
+a compiler built from its embedded sources by stage0, in that order. The target
+does not use Go lowering. `make bootstrap` also installs at `bin/fern-selfhost`;
+the benchmark scripts may reuse that binary based on source timestamps, so its
+path alone does not identify its producer or generation.
+
+To measure the effect of a lowering change on the compiler's own generated code,
+compile the same source with the base and changed compilers, then time those
+stage-2 outputs. Timing only the first-generation compilers can measure the new
+analysis without measuring the code it improves. The historical #8224 result
+(+0.2% Ir in the Go-built compiler versus -17.6% in its own output) illustrates
+why the producer matters, rather than describing today's build path:
 
 ```
 ./bin/fern-selfhost -g -target x86-64-linux -o /tmp/s2-new  examples/self_host/fern.fern $PWD/internal/stdlib
@@ -109,27 +111,28 @@ binary rather than reading `???:0x…` rows — and `nm` the binary you PROFILED
 Two builds do not share a layout, so resolving one run's addresses against the
 other's symbol table silently names the wrong functions.
 
-**Emitted-code SIZE is a compile-time cost here, which it is not for native.**
-The self-host assembles its own output in-process, so every line the codegen
-writes is a line the assembler then parses. Measured 2026-09-06 on a stage-2
-compile of `checker.fern` **to x86-64**: `-emit asm` 15.86 G Ir, `-o` 21.82 G,
+**Emitted-code size contributes to compile time.** The compiler assembles and
+links its output in-process. Generated instructions now largely travel as
+structured records; retained text still needs parsing. The following historical
+measurement predates that handoff and is not a current per-instruction cost.
+Measured 2026-09-06 on a stage-2 compile of `checker.fern` **to x86-64**:
+`-emit asm` 15.86 G Ir, `-o` 21.82 G,
 so assemble + link is **5.96 G — 27.3% of a full compile — over 278,058 emitted
 lines, or ~21,425 Ir per line.**
 
-The per-line figure is per TARGET, and only x86-64's is measured: arm64 and wasm
+That historical per-line figure is target-specific: arm64 and wasm
 have their own assemblers (`arm64_native.fern`, `watbin.fern`) and their own emit
 sizes, so re-measure before pricing a change against one of them. The shape of
 the argument carries — all three assemble in-process — but the number does not.
 
-That number is the bar any size-increasing optimisation has to clear, and it is
-high enough to flip the sign on changes native adopts freely. Native's inline rc
-fast path (#4402 opt 2b) is the worked example: porting it to the self-host
-would save ~87 M Ir (21.7 M dynamic `__fern_rc_inc` / `__fern_rc_is_unique`
-calls at ~4 instructions of call overhead each) and cost ~325 M in the assembler
-(+9 lines at each of 1,688 sites) — **a net loss of ~1.1%**. Native measures the
-compiled program's speed and hands its text to a separate assembler; the
-self-host's headline metric includes assembling the text. Price a port against
-this figure before building it.
+The earlier advice against porting inline RC, based on an estimated 1.1% net
+loss using that per-line figure, is withdrawn. The register emitters already
+inline `__fern_rc_inc` and `__fern_rc_is_unique` through `ssa.rc_inlined` and
+their `ssa_rc_prim` helpers; see the
+[register-path retirement record](ssa-log/2026-09-22-the-stack-machines-function-driver-is-gone.md#what-the-drivers-tests-were-really-pinning).
+Measure both generated-program performance and compiler assembly/link work on
+the current implementation before changing that policy. The old estimate is
+not evidence against an implementation that has already shipped.
 
 This is what made it practical to run all 335 fixtures through the self-host
 compiler:
@@ -143,11 +146,10 @@ One leg per target, each with its own
 `internal/e2e/testdata/selfhost-<target>-known-divergences.txt`. It found twelve
 divergences on fixtures green for months, and sixteen more on x86-64.
 
-The **arm64 leg** is the highest-value of the three: `-target arm64-linux` is the only
-path where the self-host compiler produces the finished binary ITSELF (emit +
-assemble + link in-process, no gcc, no wasmtime), so it is the only gate on
-`arm64_native.fern`. Its first valid run measured 302/317 passing with 15 listed
-rows, 12 of which are the x86-64 leg's own rows at the same measured values —
+The **arm64 leg** exercises `arm64_native.fern` through emit, assembly and
+linking. The x86-64 compiler also assembles and links in-process. The arm64 leg's first
+valid run measured 302/317 passing with 15 listed rows, 12 of which were the
+x86-64 leg's own rows at the same measured values —
 shared frontend bugs, not arm64 ones.
 
 Two constraints on that leg:
@@ -335,13 +337,13 @@ under a 16 GB host:
   sized to GNU as's measured peak (`gccBigLinkWeightMB`: ~6 MB per MB of asm
   plus 500 MB; 392 MB measured on the x86-64 compiler listing, 590 MB on the
   arm64 one). Small program links take no reservation.
-- The asm benches' in-process Go emit of `fern.fern` runs under a refcounted
-  soft heap cap (`withEmitMemLimit`, `FERN_EMIT_MEMLIMIT_MB`, default 3600;
-  `<= 0` disables), so the Go runtime keeps its heap near the live set instead
-  of letting it double between collections.
+
+The old in-process Go emit used `FERN_EMIT_MEMLIMIT_MB` to cap the Go heap.
+That helper remains covered by its own tests, but target compilation no longer
+calls it; it does not limit a Fern compiler subprocess.
 
 If a build is still OOM-killed, lower `FERN_BUILD_MEM_BUDGET_MB` (fewer builds
-overlap) or `FERN_EMIT_MEMLIMIT_MB`, or re-create the ephemeral
+overlap), or re-create the ephemeral
 swap file (a container restart wipes it):
 
 ```
@@ -442,10 +444,10 @@ treating genuine compiler regressions as infra.
   a link. Retry with a smaller budget per the knobs above. This is *total-RAM* pressure, not a
   cgroup cap (`memory.limit_in_bytes` is effectively unlimited).
 
-**The arena is 16 GiB** (0x400000000) on every emitter — native x86-64 + arm64
-(`heapBytes`) and self-host `asm_ir.fern` / `asm_arm64_ir.fern` (`heap_size`),
-kept in lockstep. The mmap is `MAP_NORESERVE`, so the reservation costs nothing
-until touched; only the exit-125 ceiling moves. The stage-2 self-compile
+**The native arena is 16 GiB** (0x400000000) in the current x86-64 and ARM64
+emitters, `asm_ir.fern` and `asm_arm64_ir.fern`. The former Go `heapBytes`
+implementations are retired. The Linux mmap uses `MAP_NORESERVE`, so the
+reservation costs nothing until touched; only the exit-125 ceiling moves. The stage-2 self-compile
 (gen1/mmc2 in the fixpoint tests) is the usual victim: the self-host-built
 compiler's live set grows with every compiler-source addition, and when it hits
 the arena wall the test "OOMs" on CI with no kernel OOM anywhere. Measure with
@@ -651,8 +653,8 @@ The heap's address regime is not what breaks the darwin stage 3. XNU ignores
 the arena's mmap hint and maps it above the 4 GiB `__PAGEZERO`, so on darwin
 every heap pointer has a non-zero high half from the first allocation, where
 Linux honours the 256 MiB hint. `FERN_HIGH_HEAP=1` makes the self-host arm64
-emitter raise the hint to 8 GiB (`asm_arm64_ir.fern`, the twin of the native
-`arm64codegen.Options.HighHeapProbe`), and qemu-aarch64 honours it. Measured
+emitter raise the hint to 8 GiB (`asm_arm64_ir.fern`), and qemu-aarch64 honours
+it. The former Go `arm64codegen.Options.HighHeapProbe` is retired. Measured
 2026-09-29 on the 4-core x86-64 container: an aarch64 self-host compiler
 emitted with that hint compiles `fern.fern` for `arm64-linux` under qemu in
 537 s at 5.4 GB peak RSS, exit 0, and its output is byte-identical to the
