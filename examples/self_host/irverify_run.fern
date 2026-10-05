@@ -484,10 +484,10 @@ function provided_checks(): i32 {
   }
   // The per-type helpers resolve by prefix — their suffix is a type name the
   // program supplies, so no inventory could carry them.
-  if (pv_count([ir.op_call_direct("__struct_drop_Holder", 1)], none) != 0) {
+  if (pv_count([ir.op_call_direct("__sem_drop_Holder", 1)], none) != 0) {
     return 76;
   }
-  if (pv_count([ir.op_call_direct("__field_reclaim_Box", 1)], none) != 0) {
+  if (pv_count([ir.op_call_direct("__sem_release_Box", 1)], none) != 0) {
     return 77;
   }
   // The FFI shim family, across the arity and return-suffix axes.
@@ -504,7 +504,7 @@ function provided_checks(): i32 {
   if (pv_count([ir.op_call_direct("__c_call0_f16", 1)], none) != 1) {
     return 81;
   }
-  if (pv_count([ir.op_call_direct("__struct_drop_", 1)], none) != 1) {
+  if (pv_count([ir.op_call_direct("__sem_drop_", 1)], none) != 1) {
     return 82;
   }
   if (pv_count([ir.op_call_direct("__fern_rc_de", 1)], none) != 1) {

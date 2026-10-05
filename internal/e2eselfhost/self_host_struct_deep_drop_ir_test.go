@@ -15,11 +15,9 @@ import (
 // (slices 3a/b/c).
 //
 // DEPTH: `nested_field_deep_drop_ok` / `nddo_reach` admits ARBITRARY acyclic depth,
-// so `__struct_drop_<Inner>` may itself recurse into Inner's own deep-drop-ok
-// nested-struct fields (the depth-2+ cases below): the emitted call graph is a DAG
-// bounded by the struct-type count, and the per-type bodies are emitted for the
-// whole transitive closure (asm_ir's index-driven `struct_drop:` need loop / wasm's
-// `struct_drop_types` transitive walk / arm64 mirror).
+// so Inner's drop may itself recurse into Inner's own deep-drop-ok nested-struct
+// fields (the depth-2+ cases below): the call graph is a DAG bounded by the
+// struct-type count.
 //
 // CYCLE SAFETY: a back-edge on the nested-struct closure (a self-referential / tree
 // struct — `Node { kids: Node[] }`) poisons the whole chain, so `nddo_reach` returns

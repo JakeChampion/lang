@@ -137,10 +137,9 @@ function main(): i32 {
         let state = asmcore.new_state();
         state = asmcore.EmitState { ...state, struct_decls: g.stab, funcs: g.im.funcs, rt_lower: d.sub.rt_lower };
         state = asm_arm64_ir.emit_body(g.im, state, false, cache);
-        state = asm_arm64_ir.emit_arm64_reclaim_drop_bodies(state);
         state = asm_arm64_ir.emit_ir_runtime(state, false);
         print(strbuf_take());
-    } else { print(wasm_ir.emit_ir_module_mode(g.im, cache, 0, g.base, asmcore.env_switches())); }
+    } else { print(wasm_ir.emit_ir_module_mode(g.im, cache, 0, asmcore.env_switches())); }
     return 0;
 }
 `
