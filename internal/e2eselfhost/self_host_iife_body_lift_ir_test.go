@@ -78,10 +78,10 @@ function main(): i32 {
     return fs[0](40i32) & 63i32;
 }`, 41},
 	// A lambda passed as a call argument inside a value-position match's GUARD.
-	// An enum-payload pattern keeps its guard as a guard (a literal pattern
-	// folds it into an if condition), and the IIFE body walk skipped guards, so
-	// the lifted `__lam_N` reached the lowering unboxed. Reduced from nightly
-	// differential seed 82671.
+	// A match on an enum keeps its guards as guards (a literal scrutinee's
+	// if-chain makes each one an if condition), and the IIFE body walk skipped
+	// guards, so the lifted `__lam_N` reached the lowering unboxed. Reduced from
+	// nightly differential seed 82671.
 	{"lambda-in-enum-match-guard", `function f(g: (i32) => i32): i32 { return g(1i32); }
 function main(): i32 {
     let v: Result[i32, i32] = Ok(819i32);
@@ -94,6 +94,19 @@ function main(): i32 {
     let o: Option[i32] = Some(3i32);
     return (match (o) { Some(n) when (f(((x: i32) => x + k + n)) == 44i32) => n + 20i32, Some(m) => 1i32, None => 2i32 });
 }`, 23},
+	// The guard is FALSE, so the answer depends on the rewritten guard running.
+	{"false-lambda-guard-falls-through", `function f(g: (i32) => i32): i32 { return g(1i32); }
+function main(): i32 {
+    let k: i32 = 40i32;
+    let o: Option[i32] = Some(3i32);
+    return (match (o) { Some(n) when (f(((x: i32) => x + k + n)) > 1000i32) => 42i32, Some(m) => m + 4i32, None => 2i32 });
+}`, 7},
+	// A literal payload folds into the guard beside the written one.
+	{"lambda-guard-on-literal-payload", `function f(g: (i32) => i32): i32 { return g(1i32); }
+function main(): i32 {
+    let v: Result[i32, i32] = Ok(0i32);
+    return (match (v) { Ok(0i32) when (f(((x: i32) => 274i32)) > 3i32) => 42i32, Ok(a) => 7i32, Err(e) => 9i32 });
+}`, 42},
 	// A value-position `if` of lambdas handed through a generic passthrough to
 	// a fn-typed parameter. The passthrough boxing took only a bare lambda or
 	// fn name, so the arms stayed raw. Reduced from nightly seed 78232.

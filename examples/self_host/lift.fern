@@ -1850,7 +1850,7 @@ function ilc_keep_expr(x: ast.Expr, a: InlineCloAcc): (ast.Expr, InlineCloAcc, b
 //
 // Returns only, and the caller gates it on the fn-value paths not having claimed
 // the arms — running two of these over one node would box a value twice. The
-// condition is lift_iife_body's.
+// condition and the arm guards are lift_iife_body's, which runs first.
 function lift_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDecls, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: irtables.StructTab): (ast.Stmt[], InlineCloAcc) {
   function vs(s: ast.Stmt, a: InlineCloAcc): (ast.Stmt, InlineCloAcc, boolean) {
     match (s) {
