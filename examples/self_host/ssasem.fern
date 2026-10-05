@@ -155,6 +155,12 @@ pub function array_new(): i32 {
   return 0 - 1;
 }
 
+// Fresh empty scalar array with capacity for the i32 operand's element count.
+// Capacity is private storage; only append can expose initialized elements.
+pub function array_reserve(): i32 {
+  return 0 - 53;
+}
+
 pub function tuple_new(): i32 {
   return 0 - 2;
 }
@@ -1105,6 +1111,18 @@ function array_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type
     return "";
   }
   return "array construction type";
+}
+
+function array_reserve_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+  if (ins.args.len() != 1 || !is_i32(f.values[ins.args[0]])) {
+    return "array reserve capacity type";
+  }
+  if let typeinfo.TypeArray(a) = result {
+    if (!a.view && (is_integer(a.elem) || is_float(a.elem) || is_bool(a.elem) || is_char(a.elem))) {
+      return "";
+    }
+  }
+  return "array reserve requires owned scalar elements";
 }
 
 function tuple_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -2816,12 +2834,15 @@ function scalar_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 // An array, a tuple and a record: the containers whose contract is a shape
 // spelled out beside the value rather than in a declaration table.
 function is_aggregate_op(kind: i32): boolean {
-  return kind == array_new() || kind == tuple_new() || kind == array_get()
+  return kind == array_new() || kind == array_reserve() || kind == tuple_new() || kind == array_get()
     || kind == tuple_get() || kind == record_new() || kind == record_get();
 }
 
 function aggregate_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   let kind: i32 = ins.kind_tag;
+  if (kind == array_reserve()) {
+    return array_reserve_error(ins, f, result);
+  }
   if (kind == array_new()) {
     return array_construction_error(ins, f, result);
   }

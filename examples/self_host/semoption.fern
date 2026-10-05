@@ -1,0 +1,198 @@
+// Local Option[scalar] values can carry a tag and payload without a box.
+// Prove a complete copy/phi component private before changing any value's
+// representation. This runs before ownership planning; escaped boxes retain
+// their ordinary ABI and lifetime. None's zero payload is never observable.
+import "./ssa";
+import "./ssasem";
+import "./semrecords";
+import "./typeinfo";
+
+function scalar(t: typeinfo.Type): boolean {
+  return ssasem.is_integer(t) || ssasem.is_float(t) || ssasem.is_bool(t) || ssasem.is_char(t);
+}
+
+// The resolved builtin schema, including its scalar payload, is the proof.
+function option_schema(f: ssasem.Func, t: typeinfo.Type): i32 {
+  let at: i32 = semrecords.find_enum(f.enums, t);
+  if (at < 0 || ssasem.finalizer_of(f, t) != "") {
+    return 0 - 1;
+  }
+  let e: semrecords.Enum = f.enums[at];
+  if (e.layout != semrecords.layout_option() || e.variants.len() != 2) {
+    return 0 - 1;
+  }
+  let some: semrecords.Variant = e.variants[0];
+  let none: semrecords.Variant = e.variants[1];
+  if (some.name != "Some" || none.name != "None" || some.fields.len() != 1 || none.fields.len() != 0) {
+    return 0 - 1;
+  }
+  if (!scalar(some.fields[0].ty)) {
+    return 0 - 1;
+  }
+  return at;
+}
+
+function member(active: boolean[], v: i32): boolean {
+  return v >= 0 && v < active.len() && active[v];
+}
+
+function local_origin(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.variant_new() || ins.kind_tag == 7 || ins.kind_tag == 8;
+}
+
+function local_read(ins: ssa.SInst, active: boolean[]): boolean {
+  if (ins.kind_tag == 7 || ins.kind_tag == 8) {
+    return member(active, ins.result);
+  }
+  if (ins.args.len() != 1) {
+    return false;
+  }
+  if (ins.kind_tag == ssasem.variant_is()) {
+    return ins.str == "Some" || ins.str == "None";
+  }
+  return ins.kind_tag == ssasem.variant_get() && ins.str == "Some" && ins.imm == 0;
+}
+
+// Rejection flows both ways through copy/phi edges: an escape on one alias
+// preserves every joined constructor, and an external input preserves every
+// downstream alias. A worklist visits each rejected value once, including
+// cyclic phis, rather than recursively chasing incoming definitions.
+function candidates(f: ssasem.Func): boolean[] {
+  let active: boolean[] = [];
+  let peers: i32[][] = [];
+  let bad: boolean[] = [];
+  for t in f.values {
+    active = active.append(option_schema(f, t) >= 0);
+    peers = peers.append([]);
+    bad = bad.append(false);
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      let r: i32 = ins.result;
+      if (member(active, r) && !local_origin(ins)) {
+        bad = bad.with(r, true);
+      }
+      for a in ins.args {
+        if (member(active, a)) {
+          if (!local_read(ins, active)) {
+            bad = bad.with(a, true);
+          }
+          if ((ins.kind_tag == 7 || ins.kind_tag == 8) && member(active, r)) {
+            peers = peers.with(a, peers[a].append(r));
+            peers = peers.with(r, peers[r].append(a));
+          }
+        } else if (member(active, r) && (ins.kind_tag == 7 || ins.kind_tag == 8)) {
+          bad = bad.with(r, true);
+        }
+      }
+    }
+    if (b.term.kind_tag == 1 && member(active, b.term.value)) {
+      bad = bad.with(b.term.value, true);
+    }
+    if (b.term.kind_tag == 3 && member(active, b.term.cond)) {
+      bad = bad.with(b.term.cond, true);
+    }
+  }
+  // Keep source-level debug bindings truthful until debug locations can
+  // describe a split aggregate. Unbound temporaries remain eligible.
+  for v in f.dbg_vals {
+    if (member(active, v)) {
+      bad = bad.with(v, true);
+    }
+  }
+  let queue: i32[] = [];
+  let v: i32 = 0;
+  while (v < active.len()) {
+    if (active[v] && bad[v]) {
+      queue = queue.append(v);
+      active = active.with(v, false);
+    }
+    v = v + 1;
+  }
+  let i: i32 = 0;
+  while (i < queue.len()) {
+    for p in peers[queue[i]] {
+      if (active[p]) {
+        active = active.with(p, false);
+        queue = queue.append(p);
+      }
+    }
+    i = i + 1;
+  }
+  return active;
+}
+
+function pair(ins: ssa.SInst, payloads: i32[]): ssa.SInst[] {
+  let tag: ssa.SInst = ins;
+  let payload: ssa.SInst = ssa.SInst { ...ins, result: payloads[ins.result] };
+  if (ins.kind_tag == ssasem.variant_new()) {
+    let present: i32 = 0;
+    if (ins.str == "Some") {
+      present = 1;
+    }
+    tag = ssa.SInst { ...tag, kind_tag: 2, args: [], imm: present, str: "" };
+    let kind: i32 = ssasem.zero();
+    if (present == 1) {
+      kind = 7;
+    }
+    payload = ssa.SInst { ...payload, kind_tag: kind, imm: 0, str: "" };
+  } else {
+    let args: i32[] = [];
+    for a in ins.args {
+      args = args.append(payloads[a]);
+    }
+    payload = ssa.SInst { ...payload, args: args };
+  }
+  return [tag, payload];
+}
+
+function projection(ins: ssa.SInst, payloads: i32[]): ssa.SInst {
+  let kind: i32 = 7;
+  let name: string = "";
+  let arg: i32 = ins.args[0];
+  if (ins.kind_tag == ssasem.variant_get()) {
+    arg = payloads[arg];
+  } else if (ins.str == "None") {
+    kind = 10;
+    name = "!";
+  }
+  return ssa.SInst { ...ins, kind_tag: kind, args: [arg], imm: 0, str: name };
+}
+
+pub function split(f: ssasem.Func): ssasem.Func {
+  let active: boolean[] = candidates(f);
+  let values: typeinfo.Type[] = f.values;
+  let payloads: i32[] = [];
+  let v: i32 = 0;
+  while (v < f.values.len()) {
+    let p: i32 = 0 - 1;
+    if (active[v]) {
+      p = values.len();
+      let at: i32 = option_schema(f, f.values[v]);
+      values = values.append(f.enums[at].variants[0].fields[0].ty);
+      values = values.with(v, typeinfo.TypeBool { tag: 0 });
+    }
+    payloads = payloads.append(p);
+    v = v + 1;
+  }
+  if (values.len() == f.values.len()) {
+    return f;
+  }
+  let blocks: ssa.SBlock[] = [];
+  for b in f.graph.blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      if (member(active, ins.result)) {
+        for part in pair(ins, payloads) {
+          insts = insts.append(part);
+        }
+      } else if (ins.args.len() == 1 && member(active, ins.args[0])) {
+        insts = insts.append(projection(ins, payloads));
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  }
+  return ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } };
+}

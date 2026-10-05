@@ -269,7 +269,7 @@ kernels, and a checklist of free text cannot be tallied.
 | `element-fn-captures` | a lambda closed over something, and a kernel has nowhere to put it |
 | `element-fn-calls` | the body calls something, and a call is an op boundary |
 | `element-fn-not-one-op` | the body is more than one operation, or applies none |
-| `element-fn-not-arithmetic` | the body's one operation is not arithmetic a kernel emits inline. Two absences are deliberate: INTEGER division and remainder, because both trap on a zero divisor and a kernel that hoisted one would move the trap (float division stays, which does not trap); and conversions, because they change the element type, which makes the stage a different shape rather than a kernel over this one |
+| `element-fn-not-arithmetic` | The body's one operation is outside the retained classifier's supported arithmetic set. Integer division and remainder are excluded, although Fern defines them as total even for zero divisors (`ARRAY-ALGEBRA.md` §2). Conversions are excluded because they change the element type. |
 
 Each line then carries the SITE's verdict, which is the question a
 planner actually asks: every element function primitive is necessary and
@@ -688,6 +688,23 @@ element outside timing. Allocator calls were 2,000 versus 4,000; fresh bytes
 were 10,472 in both builds. The enabled executable used 1,112 more text bytes
 for the checked adapter and kernel, with unchanged data size.
 
+After integrating the later fusion passes, ready-successor block layout and
+typed-contract retirement, a fresh compiler repeated both ordinary-call
+benchmarks on the same Apple M3 Pro. A two-round pilot preceded 200 rounds,
+with nine alternating processes and only `FERN_NO_PRODUCT_KERNEL` changed
+between builds. The outer inputs were 32-by-32 and the inner geometry was
+32-by-32-by-32, with the same 0.25 initial accumulator:
+
+| Operation | Kernel enabled, ns/operation | Kernel disabled, ns/operation | Allocator calls, enabled/disabled |
+| --- | ---: | ---: | ---: |
+| outer | 238 (228-246) | 2,241 (2,195-2,386) | 1,600 / 3,600 |
+| inner | 5,982 (5,717-6,350) | 128,045 (125,963-136,920) | 2,000 / 4,000 |
+
+Times are medians with observed ranges; counts cover all 200 operations.
+Every output and both inputs were verified outside timing. Fresh bytes stayed
+at 10,472/20,016 for outer and 10,472/10,472 for inner, enabled/disabled.
+Both kernels retain their measured advantage with the combined compiler.
+
 Source tree shaking retains the adapter until typed selection. When no site
 uses it, final lowering removes the adapter and its otherwise unused ordinary
 ndarray callees while preserving exports, shared callees and function-address
@@ -734,6 +751,24 @@ Four consequences:
   dropped a write through a stretched axis would land `n` times on one
   element. A kernel that writes takes a packed handle, so the licence
   reads: consumed, unique, and `is_packed()`.
+
+### Product measurements after compiler integration
+
+After main's single-use inliner, construction splitting, SSA join homes and
+closure-lifting changes were integrated through `6c7dd98fa`, the native
+compiler reproduced itself byte-for-byte. Product benchmark assembly changed,
+so both ordinary-call kernels were remeasured on Apple M3 Pro arm64-darwin.
+A two-round pilot preceded nine alternating 200-round processes at 32 by 32
+for outer and 32 by 32 by 32 for inner, changing only the round argument.
+Each executable verifies its result against the scalar reference.
+
+| Operation | Kernel, ns/call | Scalar path, ns/call | Allocator calls, kernel/scalar | Fresh bytes, kernel/scalar |
+| --- | ---: | ---: | ---: | ---: |
+| outer | 258 (243-274) | 2,439 (2,362-2,527) | 1,600 / 3,600 | 10,472 / 20,016 |
+| inner | 6,210 (6,046-6,873) | 140,977 (140,407-146,292) | 2,000 / 4,000 | 10,472 / 10,472 |
+
+Times are medians and observed ranges. Counters cover all 200 calls. Both
+kernels remain faster than their scalar paths; no baseline was increased.
 
 ## 9. What this does not decide
 

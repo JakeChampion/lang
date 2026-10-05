@@ -358,3 +358,4 @@ count_runs_bytes=379
 str_from_bytes_range=380
 outer_mul_f64=381
 inner_mul_add_f64=382
+arr_reserve=383
