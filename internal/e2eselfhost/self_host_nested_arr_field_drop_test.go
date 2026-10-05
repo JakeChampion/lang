@@ -12,9 +12,10 @@ import (
 // the AST lowering: __struct_drop_<T> had no arm for the field, and a tuple
 // position holding it took a shallow buffer dec (#10397). Each row is checked
 // on every lowering, and the reads that follow a rebind run after fresh
-// allocations, so a row released early shows as a wrong answer. Constant rows
-// and strings go through id or ids so they are built on the heap rather than
-// placed as constants.
+// allocations, so a row released early shows as a wrong answer. A box whose
+// release a row tests goes through id or ids, so it is built on the heap rather
+// than placed as a constant; a rebind target the test only reads past can stay
+// a constant.
 var nestedArrFieldDropCases = []struct {
 	name string
 	src  string

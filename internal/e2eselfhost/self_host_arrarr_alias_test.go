@@ -11,9 +11,10 @@ import (
 // a fresh unaliased local did, and an alias left every slot on the shallow
 // buffer dec, which freed the outer buffer and stranded the rows. Reads that
 // follow the first release run after fresh allocations, so a row freed early
-// shows as a wrong answer as well as under the sanitizer. Constant rows and
-// strings go through id or ids so they are built on the heap rather than placed
-// as constants.
+// shows as a wrong answer as well as under the sanitizer. A box whose release a
+// row tests goes through id or ids, so it is built on the heap rather than
+// placed as a constant; a rebind target the test only reads past can stay a
+// constant.
 var arrArrAliasCases = []struct {
 	name string
 	src  string
