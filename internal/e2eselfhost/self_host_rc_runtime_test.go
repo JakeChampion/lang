@@ -321,7 +321,9 @@ func TestSelfHostRcArm64(t *testing.T) {
 		{"self-append-values", "function main(): i32 { let xs: i32[] = []; let i = 0; while (i < 20) { xs = xs.append(i * 2); i = i + 1; } return xs[19]; }", 38},
 		// Construction store: struct field + array-of-arrays capture.
 		{"struct-holds-array", "struct H { items: i32[] } function mk(): H { let xs: i32[] = [7, 8]; return H { items: xs }; } function main(): i32 { let h = mk(); return h.items[0] + h.items[1] + __rc_underflow_count(); }", 15},
-		{"array-of-arrays", "function main(): i32 { let a: i32[] = [1, 2]; let b: i32[] = [3, 4]; let both: i32[][] = [a, b]; return both[0][1] + both[1][0] + __rc_underflow_count(); }", 5},
+		// The inner arrays go through id so they are built on the heap rather than
+		// placed as constants.
+		{"array-of-arrays", "function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let a: i32[] = id([1, 2]); let b: i32[] = id([3, 4]); let both: i32[][] = [a, b]; return both[0][1] + both[1][0] + __rc_underflow_count(); }", 5},
 		{"struct-update-copy", "struct H { items: i32[], n: i32 } function main(): i32 { let xs: i32[] = [1, 2]; let h: H = H { items: xs, n: 0 }; let h2: H = H { ...h, n: 5 }; return h2.items[1] + h2.n + __rc_underflow_count(); }", 7},
 		// Phase 3 (arm64 free): reclamation churn (alloc >> heap completes) + enum payload retain.
 		// xs goes through id so the payload is built on the heap rather than placed as a constant.
@@ -441,13 +443,15 @@ func TestSelfHostRcConstructContainersX86_64(t *testing.T) {
 		src  string
 		exit int
 	}{
-		// Array of arrays: the inner array aliases are retained.
-		{"array-of-arrays", "function main(): i32 { let a: i32[] = [1, 2]; let b: i32[] = [3, 4]; let both: i32[][] = [a, b]; return both[0][1] + both[1][0] + __rc_underflow_count(); }", 5},
+		// Array of arrays: the inner array aliases are retained. The inner arrays go
+		// through id so they are built on the heap rather than placed as constants.
+		{"array-of-arrays", "function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let a: i32[] = id([1, 2]); let b: i32[] = id([3, 4]); let both: i32[][] = [a, b]; return both[0][1] + both[1][0] + __rc_underflow_count(); }", 5},
 		// Tuple holding an array: the array element is retained.
 		{"tuple-of-array", "function main(): i32 { let xs: i32[] = [7, 8]; let t = (xs, 9); return t.0[1] + t.1 + __rc_underflow_count(); }", 17},
 		// Returning a container that captured a local array (would UAF
-		// once free is on without the construction inc) stays correct.
-		{"return-arr-of-arrs", "function mk(): i32[][] { let a: i32[] = [5, 6]; return [a, a]; } function main(): i32 { let both = mk(); return both[0][0] + both[1][1] + __rc_underflow_count(); }", 11},
+		// once free is on without the construction inc) stays correct. a goes
+		// through id so it is built on the heap rather than placed as a constant.
+		{"return-arr-of-arrs", "function id(xs: i32[]): i32[] { return xs; } function mk(): i32[][] { let a: i32[] = id([5, 6]); return [a, a]; } function main(): i32 { let both = mk(); return both[0][0] + both[1][1] + __rc_underflow_count(); }", 11},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -549,16 +553,19 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 		// case landed, and the self-host parser then silently miscompiled the
 		// program into an infinite loop (the `i = i + 1` increment lowered to
 		// StmtUnknown), hanging the CI shard at the 18m go-test timeout. The
-		// silent-miscompile-on-parse-error bug is tracked in #4471.
-		{"struct-arr-field-alias-no-underflow", "struct E { v: i32 } struct H { es: E[] } function wrapH(src: E[]): i32 { let h = H { es: src }; return h.es[0].v; } function main(): i32 { let shared: E[] = [E { v: 3 }, E { v: 4 }]; let s = 0; let i = 0; while (i < 2000) { s = s + wrapH(shared); i = i + 1; } return s - s + __rc_underflow_count(); }", 0},
+		// silent-miscompile-on-parse-error bug is tracked in #4471. The first
+		// element reads v off the heap so shared is built on the heap rather than
+		// placed as a constant.
+		{"struct-arr-field-alias-no-underflow", "struct E { v: i32 } struct H { es: E[] } function id(xs: i32[]): i32[] { return xs; } function wrapH(src: E[]): i32 { let h = H { es: src }; return h.es[0].v; } function main(): i32 { let shared: E[] = [E { v: id([3])[0] }, E { v: 4 }]; let s = 0; let i = 0; while (i < 2000) { s = s + wrapH(shared); i = i + 1; } return s - s + __rc_underflow_count(); }", 0},
 		// Struct-array field from a fresh CALL value (sole owner, no inc): the
 		// field-drop frees it; a non-fresh callee would over-free here.
 		{"struct-arr-field-callvalue-no-underflow", "struct E { v: i32 } struct H { es: E[] } function mk(n: i32): E[] { return [E { v: n }, E { v: n * 2 }]; } function step(n: i32): i32 { let h = H { es: mk(n) }; return h.es[1].v; } function main(): i32 { let s = 0; let i = 0; while (i < 2000) { s = s + step(i); i = i + 1; } return s - s + __rc_underflow_count(); }", 0},
 		// Array-of-ENUM field: the buffer is reclaimed the same shallow way.
 		{"enum-arr-field-no-underflow", "enum K { A(i32), B } struct G { ks: K[] } function step(n: i32): i32 { let g = G { ks: [A(n), B] }; return match (g.ks[0]) { A(x) => x, B => 0 }; } function main(): i32 { let s = 0; let i = 0; while (i < 2000) { s = s + step(i); i = i + 1; } return s - s + __rc_underflow_count(); }", 0},
 		// Value-correctness: the reclamation does not disturb the field reads
-		// before the drop.
-		{"struct-arr-field-value", "struct E { v: i32 } struct H { es: E[] } function main(): i32 { let h = H { es: [E { v: 5 }, E { v: 9 }] }; return h.es[0].v * 10 + h.es[1].v; }", 59},
+		// before the drop. The first element reads v off the heap so h is built on
+		// the heap rather than placed as a constant.
+		{"struct-arr-field-value", "struct E { v: i32 } struct H { es: E[] } function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let h = H { es: [E { v: id([5])[0] }, E { v: 9 }] }; return h.es[0].v * 10 + h.es[1].v; }", 59},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -580,10 +587,11 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 	// `is_unique(null)` is 0 on every path, so ir.fern's prune_zero_slot_guards
 	// resolves the gate to a constant and the fold deletes the arm it gated,
 	// correctly. A second assignment gives the reclaim a slot with a real
-	// previous value, which is the case the gate exists for.
+	// previous value, which is the case the gate exists for. Each v is read off
+	// the heap so h is built on the heap rather than placed as a constant.
 	t.Run("emits-struct-array-field-drop", func(t *testing.T) {
 		asm := cli.emit(t, "x86-64-linux",
-			"struct E { v: i32 } struct H { es: E[] } function main(): i32 { let h = H { es: [E { v: 1 }] }; h = H { es: [E { v: 2 }] }; return h.es[0].v; }")
+			"struct E { v: i32 } struct H { es: E[] } function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let h = H { es: [E { v: id([1])[0] }] }; h = H { es: [E { v: id([2])[0] }] }; return h.es[0].v; }")
 		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
 			t.Errorf("expected a struct-array field buffer drop (__fern_arr_dec) at struct reclamation; not found")
 		}

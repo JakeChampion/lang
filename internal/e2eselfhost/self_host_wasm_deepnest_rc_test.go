@@ -16,8 +16,9 @@ import (
 // generated fn rc==1-gates internally, so a shared child at rc>1 just
 // decrements (no over-release). (Arrays-of-structs deep-release + enum variant
 // payload dispatch are later stages; here struct-array fields still free one
-// level and enum boxes free flat.) Where a case's arrays are constants they go
-// through id so the tree is built on the heap rather than placed as a constant.
+// level and enum boxes free flat.) Where a case's arrays or strings are constants
+// they go through id or ids so the tree is built on the heap rather than placed as
+// a constant.
 func TestSelfHostRcDeepNestWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm deep-nest e2e")
@@ -39,7 +40,7 @@ func TestSelfHostRcDeepNestWasm(t *testing.T) {
 		// 3-level transitive: C -> B -> A -> A.v array.
 		{"deep-nested-3", "struct A { v: i32[] } struct B { a: A, x: i32 } struct C { b: B, y: i32 } function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let a = A { v: id([7, 8]) }; let b = B { a: a, x: 1 }; let c = C { b: b, y: 2 }; return c.b.a.v[1] + c.b.x + c.y + __rc_underflow_count(); }", 11},
 		// A nested STRING field deep in the tree is released too.
-		{"deep-nested-string", "struct In { s: string } struct Out { in: In, n: i32 } function main(): i32 { let i = In { s: \"ab\" + \"cd\" }; let o = Out { in: i, n: 38 }; return o.in.s.len() + o.n + __rc_underflow_count(); }", 42},
+		{"deep-nested-string", "struct In { s: string } struct Out { in: In, n: i32 } function ids(s: string): string { return s; } function main(): i32 { let i = In { s: ids(\"ab\") + \"cd\" }; let o = Out { in: i, n: 38 }; return o.in.s.len() + o.n + __rc_underflow_count(); }", 42},
 		// A deep-nested-struct churn: built + freed 50k times. The inner arrays
 		// reclaim transitively each cycle (no OOM), detector clean — proves real
 		// transitive free (50k leaked inner arrays would exhaust memory).
@@ -51,11 +52,11 @@ func TestSelfHostRcDeepNestWasm(t *testing.T) {
 		// Stage B: an array-of-structs LOCAL deep-releases each element's fields
 		// (here each Inner's xs array) via $__fern_arr_release_<Inner>, not just
 		// the element boxes — value-correct + detector clean.
-		{"arr-of-struct-released", "struct Inner { xs: i32[], n: i32 } function main(): i32 { let ps: Inner[] = [Inner { xs: [1, 2], n: 3 }, Inner { xs: [4, 5], n: 6 }]; return ps[0].xs[1] + ps[1].xs[0] + ps[1].n + __rc_underflow_count(); }", 12},
+		{"arr-of-struct-released", "struct Inner { xs: i32[], n: i32 } function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let ps: Inner[] = [Inner { xs: id([1, 2]), n: 3 }, Inner { xs: id([4, 5]), n: 6 }]; return ps[0].xs[1] + ps[1].xs[0] + ps[1].n + __rc_underflow_count(); }", 12},
 		// Stage B churn: 50k arrays-of-structs-holding-arrays built + freed. The
 		// inner arrays reclaim transitively each cycle (no OOM) — proves the
 		// deep array-element free, not a flat one-level dec.
-		{"arr-of-struct-churn", "struct Inner { xs: i32[], n: i32 } function mk(): i32 { let ps: Inner[] = [Inner { xs: [1, 2, 3, 4], n: 5 }, Inner { xs: [6, 7, 8, 9], n: 1 }]; return ps[0].xs[3] + ps[1].n; } function main(): i32 { let k = 0; let s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __rc_underflow_count(); }", 5},
+		{"arr-of-struct-churn", "struct Inner { xs: i32[], n: i32 } function id(xs: i32[]): i32[] { return xs; } function mk(): i32 { let ps: Inner[] = [Inner { xs: id([1, 2, 3, 4]), n: 5 }, Inner { xs: id([6, 7, 8, 9]), n: 1 }]; return ps[0].xs[3] + ps[1].n; } function main(): i32 { let k = 0; let s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __rc_underflow_count(); }", 5},
 		// The recursive Node tree (a Node[] field, deep): $__fern_release_Node ↔
 		// $__fern_arr_release_Node mutual recursion reclaims the WHOLE tree to
 		// arbitrary depth (the watbin-parser shape). Value-correct + detector 0.
@@ -64,24 +65,24 @@ func TestSelfHostRcDeepNestWasm(t *testing.T) {
 		// generated $__fern_release_<Enum> struct_id dispatch to the matching
 		// variant struct's release fn (native genEnumDrops). Here Circle's heap
 		// string payload is freed.
-		{"enum-string-payload-released", "enum Shape { Circle(string), Square(i32) } function main(): i32 { let s: Shape = Circle(\"ab\" + \"cd\"); match (s) { Circle(name) => { return name.len() + 38 + __rc_underflow_count(); }, Square(w) => { return w; } } }", 42},
+		{"enum-string-payload-released", "enum Shape { Circle(string), Square(i32) } function ids(s: string): string { return s; } function main(): i32 { let s: Shape = Circle(ids(\"ab\") + \"cd\"); match (s) { Circle(name) => { return name.len() + 38 + __rc_underflow_count(); }, Square(w) => { return w; } } }", 42},
 		// An enum array-payload variant releases its array.
 		{"enum-array-payload-released", "enum Box { Has(i32[]), Empty } function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let b: Box = Has(id([10, 20, 30])); match (b) { Has(xs) => { return xs[1] + 22 + __rc_underflow_count(); }, Empty => { return 0; } } }", 42},
 		// Churn: 50k enum-with-string-payload built + freed; the payload reclaims
 		// each cycle (no OOM), detector clean — proves the variant-dispatch free.
-		{"enum-payload-churn", "enum Shape { Circle(string), Square(i32) } function mk(): i32 { let s: Shape = Circle(\"x\" + \"y\"); match (s) { Circle(name) => { return name.len(); }, Square(w) => { return w; } } } function main(): i32 { let k = 0; let n = 0; while (k < 50000) { n = mk(); k = k + 1; } return (n % 7) + __rc_underflow_count(); }", 2},
+		{"enum-payload-churn", "enum Shape { Circle(string), Square(i32) } function ids(s: string): string { return s; } function mk(): i32 { let s: Shape = Circle(ids(\"x\") + \"y\"); match (s) { Circle(name) => { return name.len(); }, Square(w) => { return w; } } } function main(): i32 { let k = 0; let n = 0; while (k < 50000) { n = mk(); k = k + 1; } return (n % 7) + __rc_underflow_count(); }", 2},
 		// Stage D: an array-of-enum deep-releases each element's variant payload
 		// (via the generated $__fern_arr_release_<Enum>, which calls the
 		// dispatching $__fern_release_<Enum> per element). Drives the AST's
 		// Stmt[] / Expr[]. Here each Circle's string payload is freed.
-		{"arr-of-enum-released", "enum Shape { Circle(string), Square(i32) } function main(): i32 { let shapes: Shape[] = [Circle(\"ab\" + \"cd\"), Square(7)]; match (shapes[0]) { Circle(name) => { return name.len() + 38 + __rc_underflow_count(); }, Square(w) => { return w; } } }", 42},
+		{"arr-of-enum-released", "enum Shape { Circle(string), Square(i32) } function ids(s: string): string { return s; } function main(): i32 { let shapes: Shape[] = [Circle(ids(\"ab\") + \"cd\"), Square(7)]; match (shapes[0]) { Circle(name) => { return name.len() + 38 + __rc_underflow_count(); }, Square(w) => { return w; } } }", 42},
 		// Churn: 50k arrays-of-enums-with-string-payloads built + freed; every
 		// element payload reclaims each cycle (no OOM), detector clean.
-		{"arr-of-enum-churn", "enum Shape { Circle(string), Square(i32) } function mk(): i32 { let shapes: Shape[] = [Circle(\"x\" + \"y\"), Circle(\"z\" + \"w\"), Square(3)]; match (shapes[1]) { Circle(name) => { return name.len(); }, Square(w) => { return w; } } } function main(): i32 { let k = 0; let n = 0; while (k < 50000) { n = mk(); k = k + 1; } return (n % 7) + __rc_underflow_count(); }", 2},
+		{"arr-of-enum-churn", "enum Shape { Circle(string), Square(i32) } function ids(s: string): string { return s; } function mk(): i32 { let shapes: Shape[] = [Circle(ids(\"x\") + \"y\"), Circle(ids(\"z\") + \"w\"), Square(3)]; match (shapes[1]) { Circle(name) => { return name.len(); }, Square(w) => { return w; } } } function main(): i32 { let k = 0; let n = 0; while (k < 50000) { n = mk(); k = k + 1; } return (n % 7) + __rc_underflow_count(); }", 2},
 		// Stage E: an ENUM tuple element (kind 'i' but carrying an svtype)
 		// deep-releases its variant payload through $__fern_release_<Enum>. Here
 		// the Circle string payload held in the tuple is freed; value via match.
-		{"tuple-enum-payload-released", "enum Shape { Circle(string), Square(i32) } function main(): i32 { let s: Shape = Circle(\"ab\" + \"cd\"); let t = (s, 38); match (t.0) { Circle(name) => { return name.len() + t.1 + __rc_underflow_count(); }, Square(w) => { return w; } } }", 42},
+		{"tuple-enum-payload-released", "enum Shape { Circle(string), Square(i32) } function ids(s: string): string { return s; } function main(): i32 { let s: Shape = Circle(ids(\"ab\") + \"cd\"); let t = (s, 38); match (t.0) { Circle(name) => { return name.len() + t.1 + __rc_underflow_count(); }, Square(w) => { return w; } } }", 42},
 		// Stage E soundness: 50k struct-in-tuple churn (the tuple deep-releases
 		// the Inner struct + its array via $__fern_release_Inner). The array
 		// reclaims each cycle (no OOM), detector clean. (Value uses t.1 only —

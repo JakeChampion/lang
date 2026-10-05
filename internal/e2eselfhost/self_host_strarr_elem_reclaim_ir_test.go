@@ -161,13 +161,16 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 	// actually fail. `build` returns the Box, so the retain is still live when
 	// `xs` sweeps: the walk runs, finds rc 2, and decs without touching an
 	// element. 500 rounds each read every element back AFTER 20 churn frames
-	// have recycled the freelist; a wrong walk returns 100, a double free 99.
+	// have recycled the freelist; a wrong walk returns 100, a double free 99. One
+	// junk element goes through ids so the churn's array is built on the heap
+	// rather than placed as a constant.
 	run(t, `struct Box { rows: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function keep(xs: string[]): Box { return Box { rows: xs }; }
 function build(pre: string): Box { let xs: string[] = mk(pre); let b: Box = keep(xs); return b; }
-function churnjunk(i: i32): i32 { let a: string[] = ["zzzz", "yyyy", "xxxx"]; return a[0].len() + a[2].len(); }
+function ids(s: string): string { return s; }
+function churnjunk(i: i32): i32 { let a: string[] = ["zzzz", "yyyy", ids("xxxx")]; return a[0].len() + a[2].len(); }
 function round(i: i32): i32 {
     let pre: string = "ab";
     let b: Box = build(pre);
