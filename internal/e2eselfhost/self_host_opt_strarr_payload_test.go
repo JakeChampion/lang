@@ -27,6 +27,7 @@ import (
 // literal or a fresh producer, which is why the aliased rows below stay refused.
 
 func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

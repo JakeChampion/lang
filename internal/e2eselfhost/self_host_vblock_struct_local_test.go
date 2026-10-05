@@ -46,13 +46,16 @@ function round(n: i32): i32 {
 }
 
 func TestSelfHostVblockStructLocalX86_64(t *testing.T) {
+	boxedProbes(t)
 	runLeakRowsX86_64(t, vblockStructLocalRows)
 }
 
 func TestSelfHostVblockStructLocalArm64(t *testing.T) {
+	boxedProbes(t)
 	runLeakRowsArm64(t, vblockStructLocalRows)
 }
 
 func TestSelfHostVblockStructLocalWasm(t *testing.T) {
+	boxedProbes(t)
 	runLeakRowsWasm(t, vblockStructLocalRows)
 }

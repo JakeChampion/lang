@@ -58,7 +58,7 @@ var strConcatTempIRCases = []struct {
 	// property of the class rather than of an escape scan, so it cannot drift back.
 	// ("ab"+"cde").len() + 2 + 3 = 10.
 	{"ident-operands-result-only",
-		`function f(a: string, b: string): i32 { return (a + b).len() + a.len() + b.len(); } function main(): i32 { return f("ab", "cde"); }`,
+		`@noinline function f(a: string, b: string): i32 { return (a + b).len() + a.len() + b.len(); } function main(): i32 { return f("ab", "cde"); }`,
 		10, 1, "f"},
 	// A scalar `.to_string()` operand (`"n" + w.to_string()`) is the builtin
 	// fresh producer — freed after the concat (#4353 concat-temp finding: it
@@ -177,7 +177,7 @@ func TestSelfHostStrConcatTempIRX86_64(t *testing.T) {
 			}
 			reclaims := countUserStrFreeReclaims(asm)
 			if tc.scope != "" {
-				reclaims = countCallsInFn(asm, tc.scope, "__fn___fern_str_free")
+				reclaims = countCallsInFn(t, asm, tc.scope, "__fn___fern_str_free")
 			}
 			if tc.wantReclaims < 0 && reclaims == 0 {
 				t.Errorf("%s: expected a fresh-operand reclaim (call __fn___fern_str_free), found none — the temp leaks", tc.name)

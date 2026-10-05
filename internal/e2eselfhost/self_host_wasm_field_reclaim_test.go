@@ -18,6 +18,7 @@ import (
 // that the rebinding function releases the superseded struct
 // ($__sem_release_Acc), so the cap is not passed vacuously.
 func TestSelfHostFieldReclaimWasm(t *testing.T) {
+	boxedProbes(t)
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm field-reclaim e2e")
 	}

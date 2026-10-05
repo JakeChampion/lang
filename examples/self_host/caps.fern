@@ -191,6 +191,7 @@ pub function builtin_caps(): BuiltinCap[] {
 pub function ungated(): string[] {
   return [
     "__outer_mul_f64",
+    "__inner_mul_add_f64",
     "putchar", "print", "write", "eprint", "read_line",
     "stdin", "stdout", "stderr", "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "target_os", "target_arch", "args", "exit",
     "signal_ignore", "signal_default",

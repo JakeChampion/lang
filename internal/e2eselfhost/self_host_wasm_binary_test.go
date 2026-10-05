@@ -127,6 +127,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// uleb boundary (f64x2.mul is 242), and the one reaching v128.store.
 		// Five elements, so the vector body runs twice and the tail once.
 		{"scale-f64-v128", "function main(): i32 { let xs: f64[] = [1.0, 2.0, 3.0, 4.0, 5.0]; let ys: f64[] = __scale_f64(xs, 2.0); return (ys[0] + ys[4]) as i32 + 30; }", 42},
+		{"inner-f64-v128", "function main(): i32 { let ys = __inner_mul_add_f64([2.0, 3.0], [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 1, 2, 3, 1.0); return (ys[0] + ys[2]) as i32 + 2; }", 42},
 		// random_i32(): a single i32 of randomness. Used in self-cancelling
 		// arithmetic so the result is deterministic (42) while still
 		// exercising the builtin's call + helper emission end-to-end.
@@ -250,6 +251,7 @@ var wantSIMDMnemonics = map[string][]string{
 	// first byte, so the disassembly is what proves the width is right — the
 	// module validating does not.
 	"scale-f64-v128": {"f64x2.splat", "v128.load", "f64x2.mul", "v128.store"},
+	"inner-f64-v128": {"f64x2.splat", "v128.load", "f64x2.mul", "f64x2.add", "v128.store"},
 }
 
 // asmReadFileDriver is the assembler's entry point: read the target WAT

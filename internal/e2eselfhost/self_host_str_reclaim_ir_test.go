@@ -73,7 +73,7 @@ function main(): i32 { let base: string = "abc"; let sum: i32 = 0; let i: i32 = 
 	// aliased-RESULT contract stays isolated. Value stays correct: 3 + 3 = 6, and
 	// an over-release would show as a wrong exit rather than this count.
 	{"aliased-reclaimed-once",
-		`function mk(a: string, b: string): i32 { let s: string = a + b; let t: string = s; return s.len() + t.len(); } function main(): i32 { return mk("ab", "c"); }`,
+		`@noinline function mk(a: string, b: string): i32 { let s: string = a + b; let t: string = s; return s.len() + t.len(); } function main(): i32 { return mk("ab", "c"); }`,
 		6, true, "mk"},
 	// NEGATIVE: a RETURNED fresh string escapes its producer → h must not free it.
 	// The box is handed to the caller, and freeing it in h would leave main reading
@@ -83,7 +83,7 @@ function main(): i32 { let base: string = "abc"; let sum: i32 = 0; let i: i32 = 
 	// caller-side reclaim is the point of the registry, not a violation of this
 	// case.
 	{"returned-not-reclaimed",
-		`function h(x: string, y: string): string { let s: string = x + y; return s; } function main(): i32 { return h("xy", "z").len(); }`,
+		`@noinline function h(x: string, y: string): string { let s: string = x + y; return s; } function main(): i32 { return h("xy", "z").len(); }`,
 		3, false, "h"},
 	// ANNOTATED i32 `.to_string()` in a loop: reclaimed each iter. On the self-host the
 	// helper boxes at an allocation boundary (unlike native's mid-buffer emitter),
@@ -150,7 +150,7 @@ func TestSelfHostStrReclaimIRX86_64(t *testing.T) {
 			// emitted) is not a call, so counting the call form isolates the reclaim.
 			reclaims := countUserStrFreeReclaims(asm)
 			if tc.scope != "" {
-				reclaims = countCallsInFn(asm, tc.scope, "__fn___fern_str_free")
+				reclaims = countCallsInFn(t, asm, tc.scope, "__fn___fern_str_free")
 			}
 			if tc.mustReclaim && reclaims == 0 {
 				t.Errorf("%s: expected a fresh-string reclaim (call __fn___fern_str_free), found none — the string leaks", tc.name)

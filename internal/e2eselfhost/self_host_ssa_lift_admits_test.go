@@ -27,10 +27,11 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// (#11510): a payloadless Option is op_const_option's static block.
 	// outer_mul_f64 adds one admitted array operation with two inputs and
 	// one result; it adds no unmodelled stack effect.
+	// inner_mul_add_f64 adds another, with six inputs and one result.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=359 declined=3\n"
+		"registered=360 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()

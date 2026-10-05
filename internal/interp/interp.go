@@ -1406,6 +1406,7 @@ func New() *Interp {
 		return out, nil
 	}}
 	i.Builtins["__outer_mul_f64"] = &Builtin{Fn: builtinOuterMulF64}
+	i.Builtins["__inner_mul_add_f64"] = &Builtin{Fn: builtinInnerMulAddF64}
 	// __crc32_cksum(crc, s): `s` folded into the running CRC-32 cksum(1)
 	// prints. The oracle for the seventh fused kernel
 	// (docs/ATLAS-PLATFORM-PLAN.md §3.3), and the first CARRIED one — the
@@ -5557,6 +5558,47 @@ func builtinStderr(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("stderr: expected 0 args, got %d", len(args))
 	}
 	return &Struct{TypeName: "Writer", Fields: map[string]Value{"fd": Number(2)}}, nil
+}
+
+func builtinInnerMulAddF64(i *Interp, args []Value) (Value, error) {
+	if len(args) != 6 {
+		return nil, fmt.Errorf("__inner_mul_add_f64: expected 6 args")
+	}
+	a, aok := args[0].(Array)
+	b, bok := args[1].(Array)
+	rows, rok := args[2].(Number)
+	extent, eok := args[3].(Number)
+	columns, cok := args[4].(Number)
+	init, iok := args[5].(Float)
+	if !aok || !bok || !rok || !eok || !cok || !iok {
+		return nil, fmt.Errorf("__inner_mul_add_f64: invalid argument types")
+	}
+	m, k, n := int64(rows), int64(extent), int64(columns)
+	if m < 0 || k < 0 || n < 0 || m > 2147483647 || k > 2147483647 || n > 2147483647 || m*k != int64(len(a.E)) || k*n != int64(len(b.E)) || m*n > 2147483647 {
+		return builtinExit(i, []Value{Number(134)})
+	}
+	out := newArray(int(m * n))
+	if len(out.E) == 0 {
+		return out, nil
+	}
+	for row := int64(0); row < m; row++ {
+		for col := int64(0); col < n; col++ {
+			acc := init.V
+			for at := int64(0); at < k; at++ {
+				x, okx := a.E[row*k+at].(Float)
+				y, oky := b.E[at*n+col].(Float)
+				if !okx || !oky {
+					return nil, fmt.Errorf("__inner_mul_add_f64: elements must be f64")
+				}
+				// Explicit conversion rounds the product before addition, so
+				// the Go oracle cannot contract this expression into an FMA.
+				product := float64(x.V * y.V)
+				acc = acc + product
+			}
+			out.E[row*n+col] = Float{V: acc, Width: 64}
+		}
+	}
+	return out, nil
 }
 
 func builtinOuterMulF64(i *Interp, args []Value) (Value, error) {

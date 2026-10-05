@@ -80,6 +80,7 @@ function main(): i32 {
 }`
 
 func TestSelfHostRcFieldLoopLocalReclaimIRX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))

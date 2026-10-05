@@ -1,10 +1,11 @@
 # The per-operator fusion proof
 
-Status: the contract `internal/ir/array_fusion.go` (#9731) and the self-host's
-`examples/self_host/semfuse.fern` (#11072) implement. What
-each array operator contributes to a fused loop, and why composing those
-contributions gives the guarantee `docs/ITERATOR-FUSION-CONTRACT.md` clause
-1 asks for.
+Status: `internal/ir/array_fusion.go` (#9731) and the primary compiler's
+`examples/self_host/semfuse.fern` (#11072) implement the `map`/`filter` stages
+and `fold`/`reduce` sinks below. The scan section describes an unimplemented
+extension. This document states what each array operator contributes to a
+fused loop, and why composing those contributions gives the guarantee
+`docs/ITERATOR-FUSION-CONTRACT.md` clause 1 asks for.
 
 Written before the pass, because clause 1 is a claim a benchmark cannot
 establish:
@@ -145,7 +146,11 @@ index order and the fragments above do not license any other order. A
 tree reduction is a different `step`/`finish` pair and needs the
 explicit opt-in that document requires.
 
-### `scan(z, h)` — prefix
+### `scan(z, h)`: proposed prefix sink
+
+Neither compiler currently fuses scan. The primary report names such a site
+`operator-outside-algebra`. The following fragments describe the proposed
+extension, not the code emitted today.
 
 ```
 init:    acc = z; out = <buffer of length n>
@@ -159,14 +164,14 @@ but it can still be fused *into*: the buffer is sized once in `init`
 from a length already known, so the pipeline pays one allocation instead
 of the O(log n) geometric regrows the eager combinator pays today.
 
-That is a real win of a different kind from the others, and it is the
-reason `scan` is in the minimum viable set rather than deferred: it
-demonstrates that a materializing operator composes with the same
-fragment interface, which is what stops the interface being quietly
-specialised to the allocation-free cases.
+The original minimum viable design includes scan to demonstrate that a
+materializing operator composes with the same fragment interface. That part
+remains unimplemented. The shipped first slice uses reduction sinks; scan
+still needs loop generation, cardinality handling after filters, allocation
+and semantic tests, and measurement.
 
-A `scan` in the middle of a chain ends the fused loop and begins a new
-one. Nothing about that is special-cased — a sink is a sink.
+In that design, a `scan` in the middle of a chain would end one fused loop
+and begin another.
 
 ## Deliberately not in the first slice
 

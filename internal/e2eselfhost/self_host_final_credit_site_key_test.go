@@ -371,6 +371,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 // TestSelfHostFinalCreditSiteKeyX86_64 — each binding resolves the credit it
 // earned itself, across the last name-keyed families.
 func TestSelfHostFinalCreditSiteKeyX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

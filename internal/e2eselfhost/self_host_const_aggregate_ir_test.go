@@ -105,6 +105,7 @@ var constAggCases = []struct {
 // x86-64 driver, asserting the exit code, the emitted static-constant sites, and
 // the runtime allocation count.
 func TestSelfHostConstAggregateIRX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")

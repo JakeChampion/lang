@@ -481,6 +481,7 @@ pub function gated_builtins(): Gate[] {
 pub function core_builtins(): string[] {
   return [
     "__outer_mul_f64",
+    "__inner_mul_add_f64",
     "exit", "isatty", "target_os", "target_arch",
     // Darwin asks libSystem's getpwuid(3); the rest answer 0, meaning use
     // the files, which is the truth there (#9815).

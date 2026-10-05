@@ -194,6 +194,17 @@ func TestSeccompDoesNotBreakWorkingPrograms(t *testing.T) {
 		src  string
 	}{
 		{"arithmetic only", `function main(): i32 { let a: i32 = 6; return a * 7 - 42; }`},
+		// No heap and nothing emitted after the constant data, so the
+		// install stub follows a .data section.
+		{"constant data, no heap", `enum Light { On, Off, Dim(i32) }
+function level(l: Light): i32 {
+    match (l) {
+        On => { return 100; },
+        Off => { return 0; },
+        Dim(n) => { return n; }
+    }
+}
+function main(): i32 { return level(Dim(42)) - 42; }`},
 		{"heap + strings", `function main(): i32 {
     let xs: i32[] = [1, 2, 3, 4];
     let s: string = "a" + "b";

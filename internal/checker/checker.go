@@ -1927,6 +1927,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.ArrayType{Elem: ast.FloatType{Width: 64}}, ast.ArrayType{Elem: ast.FloatType{Width: 64}}},
 		Result: ast.ArrayType{Elem: ast.FloatType{Width: 64}},
 	}
+	c.info.FuncSigs["__inner_mul_add_f64"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.FloatType{Width: 64}}, ast.ArrayType{Elem: ast.FloatType{Width: 64}}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.FloatType{Width: 64}},
+		Result: ast.ArrayType{Elem: ast.FloatType{Width: 64}},
+	}
 	// __crc32_cksum(crc, s) → i32: `s` folded into the running CRC-32 that
 	// cksum(1) prints — polynomial 0x04C11DB7, MSB first, no reflection, and
 	// no final complement (std/hash's Cksum does the length fold and the

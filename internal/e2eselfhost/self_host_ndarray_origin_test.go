@@ -38,6 +38,18 @@ pub function (a: NdArray[T]) outer[T, U, V](b: NdArray[U], f: (T, U) => V): NdAr
   }
   return from_flat(out, join(a.shape, b.shape));
 }
+pub function (a: NdArray[T]) inner[T, U](b: NdArray[T], init: U, mul: (T, T) => U, add: (U, U) => U): NdArray[U] {
+  let out = init;
+  let i: i32 = 0;
+  while (i < a.data.len()) {
+    out = add(out, mul(a.data[a.data.len() - 1 - i], b.data[i]));
+    i = i + 1;
+  }
+  return from_flat([out], []);
+}
+pub function inner_kernel(a: NdArray[f64], b: NdArray[f64], init: f64): NdArray[f64] {
+  return from_flat([init + 123.0], []);
+}
 `
 
 const customNdarrayChecks = `
@@ -46,6 +58,9 @@ const customNdarrayChecks = `
   if (b.data[0] != 6.0 || b.data[1] != 4.0) { return 7; }
   let c = a.outer(a, (x: f64, y: f64): f64 => x * y);
   if (c.data.len() != 4 || c.data[0] != 6.0 || c.data[1] != 9.0 || c.data[2] != 4.0 || c.data[3] != 6.0) { return 8; }
+  let d = a.inner(a, 0.25, (x: f64, y: f64): f64 => x * y, (acc: f64, x: f64): f64 => acc + x);
+  if (d.data[0] != 12.25) { return 11; }
+  if (custom.inner_kernel(a, a, 0.25).data[0] != 123.25) { return 12; }
 `
 
 const standardNdarrayChecks = `
@@ -54,6 +69,8 @@ const standardNdarrayChecks = `
   if (m[0] != 4.0 || m[1] != 6.0) { return 9; }
   let o = s.outer(s, (x: f64, y: f64): f64 => x * y).to_flat();
   if (o[0] != 4.0 || o[1] != 6.0 || o[2] != 6.0 || o[3] != 9.0) { return 10; }
+  let sd = s.inner(s, 0.25, (x: f64, y: f64): f64 => x * y, (acc: f64, x: f64): f64 => acc + x).to_flat();
+  if (sd[0] != 13.25) { return 13; }
 `
 
 func TestSelfHostNdarrayModuleOrigin(t *testing.T) {
@@ -90,7 +107,7 @@ func TestSelfHostNdarrayModuleOrigin(t *testing.T) {
 				if err != nil {
 					t.Fatalf("primary compiler report: %v\n%s", err, out)
 				}
-				for _, reason := range []string{"scale-kernel", "outer-mul-kernel"} {
+				for _, reason := range []string{"scale-kernel", "outer-mul-kernel", "inner-mul-add-kernel"} {
 					if !strings.Contains(string(out), "reason="+reason+" ") {
 						t.Fatalf("stdlib %s must remain selected beside a custom module:\n%s", reason, out)
 					}

@@ -5921,7 +5921,30 @@ function emit_outer_mul_f64(s: asmcore.EmitState): asmcore.EmitState {
   return s.need("heap");
 }
 
+function emit_inner_mul_add_f64(s: asmcore.EmitState): asmcore.EmitState {
+  let label: asmcore.LabelOut = asmcore.fresh_label(s);
+  s = label.state;
+  let lb: string = label.name;
+  s = s.write("    popq %r9\n    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %r10\n");
+  s = s.write("    testl %edx, %edx\n    js __fern_oob_abort\n    testl %ecx, %ecx\n    js __fern_oob_abort\n    testl %r8d, %r8d\n    js __fern_oob_abort\n    movl %edx, %edx\n    movl %ecx, %ecx\n    movl %r8d, %r8d\n");
+  s = s.write("    movq %rdx, %rdi\n    imulq %rcx, %rdi\n    cmpq (%r10), %rdi\n    jne __fern_oob_abort\n    movq %rcx, %rdi\n    imulq %r8, %rdi\n    cmpq (%rsi), %rdi\n    jne __fern_oob_abort\n    movq %rdx, %rdi\n    imulq %r8, %rdi\n    cmpq $2147483647, %rdi\n    ja __fern_oob_abort\n");
+  // No vector is live over allocation. Save only the six scalar inputs.
+  s = s.write("    pushq %r10\n    pushq %rsi\n    pushq %rdx\n    pushq %rcx\n    pushq %r8\n    pushq %r9\n    call __fern_arr_box\n    popq %r9\n    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %r10\n    pushq %rax\n");
+  s = s.write("    testq %rdx, %rdx\n    jz " + lb + "_done\n    testq %r8, %r8\n    jz " + lb + "_done\n    leaq 8(%rax), %r11\n    leaq 8(%r10), %rdi\n    addq $8, %rsi\n    movq %r9, %xmm3\n    unpcklpd %xmm3, %xmm3\n");
+  s = s.write(lb + "_row:\n    xorq %r10, %r10\n" + lb + "_pair:\n    leaq 1(%r10), %rax\n    cmpq %r8, %rax\n    jge " + lb + "_tail\n    leaq (%rsi,%r10,8), %rax\n    movapd %xmm3, %xmm2\n    xorq %r9, %r9\n");
+  s = s.write(lb + "_k:\n    cmpq %rcx, %r9\n    jge " + lb + "_store\n    movsd (%rdi,%r9,8), %xmm1\n    unpcklpd %xmm1, %xmm1\n    movupd (%rax), %xmm0\n    mulpd %xmm0, %xmm1\n    addpd %xmm1, %xmm2\n    leaq (%rax,%r8,8), %rax\n    addq $1, %r9\n    jmp " + lb + "_k\n");
+  s = s.write(lb + "_store:\n    movupd %xmm2, (%r11)\n    addq $16, %r11\n    addq $2, %r10\n    jmp " + lb + "_pair\n");
+  s = s.write(lb + "_tail:\n    cmpq %r8, %r10\n    jge " + lb + "_next\n    leaq (%rsi,%r10,8), %rax\n    movapd %xmm3, %xmm2\n    xorq %r9, %r9\n");
+  s = s.write(lb + "_scalar:\n    cmpq %rcx, %r9\n    jge " + lb + "_scalar_store\n    movsd (%rdi,%r9,8), %xmm1\n    mulsd (%rax), %xmm1\n    addsd %xmm1, %xmm2\n    leaq (%rax,%r8,8), %rax\n    addq $1, %r9\n    jmp " + lb + "_scalar\n");
+  s = s.write(lb + "_scalar_store:\n    movsd %xmm2, (%r11)\n    addq $8, %r11\n" + lb + "_next:\n    leaq (%rdi,%rcx,8), %rdi\n    subq $1, %rdx\n    jnz " + lb + "_row\n" + lb + "_done:\n");
+  // The saved result is already the single operand-stack output.
+  return s.need("heap");
+}
+
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  if (o.kind_tag == 382) {
+    return emit_inner_mul_add_f64(s);
+  }
   if (o.kind_tag == 381) {
     return emit_outer_mul_f64(s);
   }
@@ -11822,7 +11845,8 @@ function emit_seccomp_install(s: asmcore.EmitState): asmcore.EmitState {
     exit(3);
     return s;
   }
-  s = s.write("__fern_seccomp_install:\n");
+  // The runtime may have left the stream in a data section.
+  s = s.write("    .section .text\n__fern_seccomp_install:\n");
   // prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0): what lets an unprivileged
   // process install a filter.
   s = s.write("    movq $38, %rdi\n    movq $1, %rsi\n    movq $0, %rdx\n    movq $0, %r10\n    movq $0, %r8\n    movq $157, %rax\n").syscall(157);

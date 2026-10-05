@@ -34,6 +34,7 @@ import (
 // this closes; frees ABOVE allocs would mean the sweep and the rebind path both
 // claimed a box, which is a double free rather than a leak.
 func TestSelfHostRcTupleSweepReclaimX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

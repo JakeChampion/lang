@@ -208,16 +208,17 @@ var BuiltinCaps = map[string]string{
 // overrides. A builtin absent from both this set and BuiltinCaps
 // fails the inventory-completeness tests.
 var Ungated = map[string]bool{
-	"__outer_mul_f64": true,
-	"putchar":         true,
-	"print":           true,
-	"write":           true,
-	"eprint":          true,
-	"read_line":       true,
-	"stdin":           true,
-	"stdout":          true,
-	"stderr":          true,
-	"isatty":          true,
+	"__outer_mul_f64":     true,
+	"__inner_mul_add_f64": true,
+	"putchar":             true,
+	"print":               true,
+	"write":               true,
+	"eprint":              true,
+	"read_line":           true,
+	"stdin":               true,
+	"stdout":              true,
+	"stderr":              true,
+	"isatty":              true,
 	// How large the terminal on the other end of a descriptor is. The
 	// descriptor was handed to the process by whoever started it and
 	// its geometry is one more fact about it, so a dependency that asks
