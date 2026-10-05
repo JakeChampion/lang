@@ -112,7 +112,7 @@ function verb_of(name: string): string {
     return "";
   }
   let v: string = slice_unchecked(name, 7, suffix_at(name, 7)) + "";
-  if (util.has_str(["map", "filter", "fold", "reduce", "scan", "zip", "take", "take_while", "drop", "drop_while", "flat_map", "flatten", "chunks", "chunks_exact", "windows", "partition", "enumerate", "reverse", "sorted", "sorted_by"], v)) {
+  if (util.has_str(["map", "filter", "fold", "reduce", "scan", "zip", "take", "take_while", "drop", "drop_while", "flat_map", "flatten", "chunks", "chunks_exact", "windows", "partition", "enumerate", "reverse"], v)) {
     return v;
   }
   return "";
@@ -291,7 +291,7 @@ function sink_verb(ins: ssa.SInst, cx: Context): string {
 }
 
 function admissible(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): boolean {
-  return decision(f, cx, defs, c).reason == 0;
+  return decision(f, cx, defs, c).reason == semarrayreport.fusion_fused();
 }
 
 function decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision {
@@ -300,17 +300,17 @@ function decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision 
   }
   let between: i32 = effect_between(f.graph.blocks[c.block], c);
   if (between >= 0) {
-    return Decision { reason: 4, stage: between };
+    return Decision { reason: semarrayreport.fusion_effect_boundary(), stage: between };
   }
   let purity: Decision = purity_decision(f, cx, defs, c);
-  if (purity.reason != 0) {
+  if (purity.reason != semarrayreport.fusion_fused()) {
     return purity;
   }
   let non_scalar: i32 = non_scalar_stage(f, c);
   if (non_scalar >= 0) {
-    return Decision { reason: 7, stage: non_scalar };
+    return Decision { reason: semarrayreport.fusion_non_scalar(), stage: non_scalar };
   }
-  return Decision { reason: 0, stage: c.sink };
+  return Decision { reason: semarrayreport.fusion_fused(), stage: c.sink };
 }
 
 function absent_producer(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision {
@@ -319,15 +319,15 @@ function absent_producer(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): De
     let ins: ssa.SInst = f.graph.blocks[d.block].insts[d.pos];
     if (stage_verb(ins, cx) != "") {
       if (d.block != c.block) {
-        return Decision { reason: 3, stage: c.sink };
+        return Decision { reason: semarrayreport.fusion_control_flow_boundary(), stage: c.sink };
       }
-      return Decision { reason: 2, stage: d.pos };
+      return Decision { reason: semarrayreport.fusion_intermediate_shared(), stage: d.pos };
     }
     if (d.block == c.block && ins.kind_tag == ssasem.call() && report_verb(cx, ins.str) != "") {
-      return Decision { reason: 10, stage: d.pos };
+      return Decision { reason: semarrayreport.fusion_operator_outside_algebra(), stage: d.pos };
     }
   }
-  return Decision { reason: 1, stage: c.sink };
+  return Decision { reason: semarrayreport.fusion_no_producer(), stage: c.sink };
 }
 
 function stage_verb(ins: ssa.SInst, cx: Context): string {
@@ -368,19 +368,19 @@ function purity_decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): De
     }
     let d: Def = defs[v];
     if (d.block < 0) {
-      return Decision { reason: 5, stage: stage };
+      return Decision { reason: semarrayreport.fusion_element_fn_unresolved(), stage: stage };
     }
     let ins: ssa.SInst = f.graph.blocks[d.block].insts[d.pos];
     let at: i32 = cx.index.find(ins.str);
     if (ins.kind_tag != ssasem.closure_new() || at < 0) {
-      return Decision { reason: 5, stage: stage };
+      return Decision { reason: semarrayreport.fusion_element_fn_unresolved(), stage: stage };
     }
     if (cx.bad[at]) {
-      return Decision { reason: 6, stage: stage };
+      return Decision { reason: semarrayreport.fusion_element_fn_effectful(), stage: stage };
     }
     j = j + 1;
   }
-  return Decision { reason: 0, stage: c.sink };
+  return Decision { reason: semarrayreport.fusion_fused(), stage: c.sink };
 }
 
 // Successful entries are captured immediately before their actual rewrite.
@@ -403,7 +403,7 @@ function chain_text(c: Chain): string {
 }
 
 function fused_site(f: ssasem.Func, c: Chain, name: string): semarrayreport.Site {
-  return semarrayreport.Site { owner: name, stage: stage_name(f.graph.blocks[c.block].insts[c.sink]), plan: chain_text(c) + "; one traversal", reason: 0, storage: "no-intermediate-arrays" };
+  return semarrayreport.Site { owner: name, stage: stage_name(f.graph.blocks[c.block].insts[c.sink]), plan: chain_text(c) + "; one traversal", reason: semarrayreport.fusion_fused(), storage: "no-intermediate-arrays" };
 }
 
 function escapes(f: ssasem.Func, value: i32): boolean {
@@ -417,12 +417,12 @@ function escapes(f: ssasem.Func, value: i32): boolean {
 
 function standalone_reason(f: ssasem.Func, ins: ssa.SInst, uses: i32[]): i32 {
   if (uses[ins.result] > 1) {
-    return 2;
+    return semarrayreport.fusion_intermediate_shared();
   }
   if (escapes(f, ins.result)) {
-    return 8;
+    return semarrayreport.fusion_result_escapes();
   }
-  return 9;
+  return semarrayreport.fusion_no_reduction_sink();
 }
 
 function remaining_site(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], bi: i32, k: i32, name: string, enabled: boolean): semarrayreport.Site {
@@ -431,14 +431,14 @@ function remaining_site(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], b
   let why: Decision = Decision { reason: standalone_reason(f, ins, uses), stage: k };
   let plan: string = report_verb(cx, ins.str);
   if (stage_verb(ins, cx) == "" && sink_verb(ins, cx) == "") {
-    why = Decision { reason: 10, stage: k };
+    why = Decision { reason: semarrayreport.fusion_operator_outside_algebra(), stage: k };
   }
   if (c.verb != "") {
     why = decision(f, cx, defs, c);
     plan = chain_text(c);
   }
   if (!enabled) {
-    why = Decision { reason: 11, stage: k };
+    why = Decision { reason: semarrayreport.fusion_disabled(), stage: k };
   }
   return semarrayreport.Site { owner: name, stage: stage_name(f.graph.blocks[bi].insts[why.stage]), plan: plan + "; not fused", reason: why.reason, storage: "deferred-to-ownership" };
 }

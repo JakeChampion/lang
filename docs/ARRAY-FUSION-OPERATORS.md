@@ -238,6 +238,13 @@ calls anything. `FERN_NO_ARRAY_FUSION=1` turns it off too.
 `FERN_ARRAY_REPORT=1` on a compile prints this pass's actual fusion decisions
 and the final R7 map storage decisions; `-array-report` remains the separately
 labelled Go analysis. See `ARRAY-ALGEBRA.md` for the closed refusal tags.
+The primary fusion report recognizes `map`, `filter`, `fold`, `reduce`,
+`scan`, `zip`, `take`, `take_while`, `drop`, `drop_while`, `flat_map`,
+`flatten`, `chunks`, `chunks_exact`, `windows`, `partition`, `enumerate`
+and `reverse`. Only the first four belong to the implemented fusion algebra;
+the others report `operator-outside-algebra`. This report does not inventory
+every std/array helper. Calls outside this recognized set produce no site
+line, so silence is not evidence that such a call fused or avoided allocation.
 `TestSelfHostArrayFusion*` and `TestSelfHostArrayReport*` in
 `internal/e2eselfhost` gate the primary path on x86-64, arm64 and wasm32-wasi.
 
