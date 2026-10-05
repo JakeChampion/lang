@@ -2550,7 +2550,7 @@ function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (!semtypes.equal(c.result, result)) {
     return "call result type";
   }
-  if (ins.imm != 0) {
+  if (ins.imm != 0 && (ins.imm > f.values.len() || !is_usize(f.values[ins.imm - 1]))) {
     return "call immediate";
   }
   return "";

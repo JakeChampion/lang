@@ -58,7 +58,7 @@ x86_64/closure_call.ir	103908097
 x86_64/enum_match.text	999
 x86_64/enum_match.ir	53775055
 x86_64/http_hello.text	20830
-x86_64/http_hello.ir	31548767
+x86_64/http_hello.ir	31204779
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
 x86_64/map_int.text	6564
@@ -161,7 +161,7 @@ aarch64/closure_call.ir	139968083
 aarch64/enum_match.text	1137
 aarch64/enum_match.ir	41400056
 aarch64/http_hello.text	22071
-aarch64/http_hello.ir	34148939
+aarch64/http_hello.ir	33776600
 aarch64/int_loop.text	101
 aarch64/int_loop.ir	18000025
 aarch64/map_int.text	7119

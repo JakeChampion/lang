@@ -355,6 +355,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_emits_op_cached(cache, "heap_alloc_count")) {
     out = out.append("@heap_alloc_count");
   }
+  if (module_emits_op_cached(cache, "ret_word") || module_emits_op_cached(cache, "call_word")) {
+    out = out.append("@ret_word");
+  }
   if (module_allocates(cache)) {
     out = out.append("@allocates");
   }
@@ -6956,6 +6959,12 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
 // arm emits -- wrong code that looks plausible. asm_ir carries the same guard
 // for the same reason.
 function emit_str_op_wat(o: ir.Op): string {
+  if (o.kind_tag == 384) {
+    return "    global.set $__fern_ret_word\n    i32.const 0\n";
+  }
+  if (o.kind_tag == 385) {
+    return "    global.get $__fern_ret_word\n";
+  }
   if (o.kind_tag == 383) {
     let stride: i32 = 4;
     if (o.width == 8) {
@@ -14138,6 +14147,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // any mode's bump sites reference them, and a heap-free mode-0 program
   // still reports zeros. Empty when FERN_LEAKCHECK is off.
   parts = parts.append(lc_globals(lc));
+  if (need(needs, "@ret_word")) {
+    parts = parts.append("  (global $__fern_ret_word (mut i32) (i32.const 0))\n");
+  }
   // mode 2 folds into the heap gate: the $__fern_fd_write shim allocates its
   // canonical-ABI return area through $__fern_alloc, so a component-io core
   // needs the heap even when the program itself never allocates.

@@ -359,3 +359,5 @@ str_from_bytes_range=380
 outer_mul_f64=381
 inner_mul_add_f64=382
 arr_reserve=383
+ret_word=384
+call_word=385

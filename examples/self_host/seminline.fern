@@ -15,6 +15,7 @@ import "./ssasem";
 import "./typeinfo";
 import "./semtypes";
 import "./semrecords";
+import "./sempair";
 
 // Past these a leaf is not tiny, and splicing it grows its callers more than
 // the call it removes costs.
@@ -69,7 +70,7 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
     i = i + 1;
   }
   let sp: Spliceable = Spliceable { ix: ix, leaves: leaves, once: once };
-  let out: Inlined = split_all(splice_rounds(funcs0, rewrite, sp), rewrite, modes);
+  let out: Inlined = split_all(paired_all(splice_rounds(funcs0, rewrite, sp), names, rewrite, unnamed), rewrite, modes);
   return Inlined { ...out, spliced: spliced_away(sp, calls, call_counts(out.funcs, ix)) };
 }
 
@@ -140,6 +141,24 @@ function splice_round(prev: Inlined, rewrite: boolean[], ix: util.NameIndex, rea
     i = i + 1;
   }
   return Round { out: Inlined { ...prev, funcs: funcs, rewritten: rewritten }, changed: changed };
+}
+
+// Variant returns paired (sempair) once nothing more is spliced, so split
+// reads the rebuilt variants apart; a construction a return no longer reads
+// goes with it.
+function paired_all(prev: Inlined, names: string[], rewrite: boolean[], unnamed: boolean[]): Inlined {
+  let p: sempair.Paired = sempair.pair_returns(prev.funcs, names, rewrite, unnamed);
+  let funcs: ssasem.Func[] = p.funcs;
+  let rewritten: boolean[] = prev.rewritten;
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    if (p.changed[i]) {
+      funcs = funcs.with(i, drop_unread(funcs[i]));
+      rewritten = rewritten.with(i, true);
+    }
+    i = i + 1;
+  }
+  return Inlined { ...prev, funcs: funcs, rewritten: rewritten };
 }
 
 function split_all(prev: Inlined, rewrite: boolean[], modes: i32[][]): Inlined {

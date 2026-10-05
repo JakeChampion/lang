@@ -162,6 +162,31 @@ bytes (-3.9%). The rest of the track, in order:
    first six and pushes the rest where the stack ABI puts them.
 4. Once nothing refers to a stack entry, the shims go.
 
+## A variant returned in two words
+
+A function whose result is an enum, an Option or a Result with at most one
+payload per variant, where the payload fits a word (a pointer, or an integer
+no wider than one), returns the variant's position as its result and the
+payload beside it: in `%rdx` on x86-64, x1 on arm64 and the global
+`$__fern_ret_word` on wasm (`ir.op_ret_word`, `ir.op_call_word`). Neither
+register is in either pool, and neither an epilogue nor a call's result store
+touches it, so the callee sets the word as the last thing before it returns
+and the caller reads it as the first thing after it stores the call's result.
+
+`sempair`, which `seminline` runs once nothing more is spliced, chooses the
+functions: nothing outside the bodies names one, every body that names it
+calls it directly, and it never suspends, so every call to it is rewritten
+with it. A caller rebuilds the variant as a branch on the position joining
+one construction per variant, and split reads a match on the call off those
+constructions, so the variant is never built. A function is paired only when
+every caller takes the variant apart, by matching on it or by returning it
+from a function that is paired too. One caller keeping the variant whole would
+have to build the box the callee no longer builds, and where the callee built
+it in the box of a node it was consuming, as `std/pvec`'s path rebuild does,
+that box was free. Pairing `__pv_with_in` regardless took `pvec_with` from
+995 allocations to 1.1 million, every write copying the arrays on its path,
+and five times the instructions.
+
 ## What the lift admits, and what declines
 
 Everything the compiler uses. Measured on the compiler compiling itself

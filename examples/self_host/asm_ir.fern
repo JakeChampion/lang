@@ -5942,6 +5942,12 @@ function emit_inner_mul_add_f64(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  if (o.kind_tag == 384) {
+    return s.write("    popq %rdx\n    pushq %rdx\n");
+  }
+  if (o.kind_tag == 385) {
+    return s.write("    pushq %rdx\n");
+  }
   if (o.kind_tag == 383) {
     s = s.write("    popq %rdi\n    testl %edi, %edi\n    js __fern_oob_abort\n    movl %edi, %edi\n");
     if (o.width == 8) {
