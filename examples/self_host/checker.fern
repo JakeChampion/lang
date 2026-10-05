@@ -18285,14 +18285,13 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
 // guard). No-op when the module declares no `own` parameter anywhere, so
 // ordinary programs are untouched. The result-borrow fixpoint always spans the
 // module; only the bodies `focus` admits (in_focus) are walked.
-pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
+pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: string[]): util.Diag[] {
   let ofuncs: OwnFuncs = collect_own_funcs(mod);
   let builtins: util.NameIndex = util.name_index(ow_fresh_builtins());
   let borrows: util.NameIndex = ow_result_borrows(mod, ofuncs, builtins);
   let fresh: string[] = ow_fresh_owners(mod, ofuncs, builtins, borrows);
   let fresh_methods: string[] = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   let fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins);
-  let env: ModuleEnv = module_env(mod);
   let out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
@@ -18615,8 +18614,7 @@ function e049_find(stmts: ast.Stmt[], enclosing: NameTy[]): util.Diag[] {
   return out;
 }
 
-pub function e049_diags(mod: parser.Module, focus: string[]): util.Diag[] {
-  let env: ModuleEnv = module_env(mod);
+pub function e049_diags(mod: parser.Module, env: ModuleEnv, focus: string[]): util.Diag[] {
   let out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
@@ -21807,11 +21805,12 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // because a call that did not resolve was left as written.
   let (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
   let mod: parser.Module = prepared_module(filled);
-  let mt: ModuleTypes = check_module_pass(mod, fda_diags, []);
+  let env: ModuleEnv = module_env(mod);
+  let mt: ModuleTypes = check_module_pass(mod, env, fda_diags, []);
   if (mt.diags.len() > 0) {
     return mt;
   }
-  let clones: parser.FuncDecl[] = instantiated_clones(mod, module_env(mod));
+  let clones: parser.FuncDecl[] = instantiated_clones(mod, env);
   if (clones.len() == 0) {
     return mt;
   }
@@ -21821,7 +21820,8 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     funcs = funcs.append(cl);
     names = names.append(cl.name);
   }
-  let rt: ModuleTypes = check_module_pass(parser.Module { ...mod, funcs: funcs }, [], names);
+  let cmod: parser.Module = parser.Module { ...mod, funcs: funcs };
+  let rt: ModuleTypes = check_module_pass(cmod, module_env(cmod), [], names);
   if (rt.diags.len() == 0) {
     return mt;
   }
@@ -21854,43 +21854,24 @@ function prepared_module(filled: parser.Module): parser.Module {
   return parser.Module { ...revalued, structs: parser.inject_builtin_enums(revalued.structs) };
 }
 
-// check_module_pass types a prepared module; `fda_diags` are the default
-// filling's diagnostics, reported first.
-function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: string[]): ModuleTypes {
-  // Collect struct decls first; func sigs + union aliases
-  // both use them to resolve names. Union aliases come next
-  // so func sigs can reference union-typed params / returns.
-  // Union NAMES are needed before the struct sigs so a struct field
-  // typed as a union (or union array) resolves rather than going
-  // unknown. The full UnionSig table (with variants) still comes after.
-  let import_paths: string[] = import_paths_of(mod);
+// check_module_pass types a prepared module against its tables, `env`, which
+// module_env built from it; `fda_diags` are the default filling's diagnostics,
+// reported first.
+function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.Diag[], focus: string[]): ModuleTypes {
+  let import_paths: string[] = env.imports;
   let rnames: string[] = resource_names(mod);
-  let structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), rnames);
-  let struct_names: string[] = [];
-  for sd in structs {
-    struct_names = struct_names.append(sd.name);
-  }
-  let unions: UnionSig[] = collect_union_sigs(mod);
-  // Register enum decls as union sigs (variants = variant names) so an
-  // enum-typed scrutinee types to TypeUnion and the E030 exhaustiveness
-  // check (plus union-variant assignability) covers enums the same way
-  // it covers `type X = A | B` aliases. The self-host's own source uses
-  // no enum decls, so this is inert on the bundle; it enables
-  // exhaustiveness for user / corpus enum matches.
-  for ed in mod.enums {
-    unions = unions.append(enum_union_sig(ed));
-  }
+  let st: SigTable = env.sigs;
+  let stt: StructTable = env.structs;
+  let ut: UnionTable = env.unions;
+  let methods: MethodTable = env.methods;
+  let sigs: FuncSig[] = st.sigs;
+  let structs: StructSig[] = stt.structs;
+  let unions: UnionSig[] = ut.unions;
+  let union_names: string[] = ut.index.names;
   let well_typed: boolean = true;
-  if (!validate_union_sigs(unions, struct_names)) {
+  if (!validate_union_sigs(unions, stt.index.names)) {
     well_typed = false;
   }
-  let union_names: string[] = union_sig_names(unions);
-  let tn: TypeNames = with_spellings(type_names(struct_names, union_names, rnames), mod);
-  let sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
-  let st: SigTable = sig_table(sigs);
-  let stt: StructTable = struct_table(structs, rnames, tn.spellings);
-  let ut: UnionTable = union_table(unions);
-  let methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
   let body_diags: util.Diag[] = [];
   let ambig: string[] = ambiguous_variants(mod.enums);
   // E067 runs only when the module declares a @must_consume type — the
@@ -21907,7 +21888,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   // first. Every function is summarised rather than only the ones whose
   // declared return spelling looks like a slice: an inferred-return body
   // can hand one back too, which is why the walk below runs unfiltered.
-  let call_impls: parser.ImplInfo[] = assoc_func_impls(mod.impls, mod.funcs);
+  let call_impls: parser.ImplInfo[] = env.impls;
   let slc_fns: parser.FuncDecl[] = [];
   let slc_scopes: Scope[] = [];
   let slc_sums: ViewSum[] = [];
@@ -22341,7 +22322,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   if (focus.len() == 0) {
     decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), e021_diags(mod)), derive_diags);
   }
-  let dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, decl_diags), body_diags), own_diags(mod, focus)), e049_diags(mod, focus)), e021_object_safety_diags(mod, focus)), e060_e062_diags(mod, focus)));
+  let dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, decl_diags), body_diags), own_diags(mod, env, focus)), e049_diags(mod, env, focus)), e021_object_safety_diags(mod, focus)), e060_e062_diags(mod, focus)));
   if (dd.len() > 0) {
     well_typed = false;
   }
@@ -22351,12 +22332,13 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
 // ModuleEnv is the module-level name environment: the four indexed tables a
 // Scope carries plus the module's own import paths — everything
 // build_func_scope and new_scope_full need to place a statement in the scope
-// check_module would check it in. Kept in sync with check_module's head, which
-// builds the same tables alongside the intermediate arrays its own diagnostic
-// passes go on to read.
+// check_module would check it in. check_module builds it once per pass and
+// every walk of that pass reads it.
 struct ModuleEnv { sigs: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[] }
 
 function module_env(mod: parser.Module): ModuleEnv {
+  // Union NAMES come before the struct sigs, so a struct field typed as a
+  // union resolves rather than going unknown; func sigs read both.
   let rnames: string[] = resource_names(mod);
   let structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), rnames);
   let struct_names: string[] = [];
@@ -22364,6 +22346,8 @@ function module_env(mod: parser.Module): ModuleEnv {
     struct_names = struct_names.append(sd.name);
   }
   let unions: UnionSig[] = collect_union_sigs(mod);
+  // An enum registers as a union sig, so an enum-typed scrutinee types to
+  // TypeUnion and E030 exhaustiveness covers it as it covers an alias.
   for ed in mod.enums {
     unions = unions.append(enum_union_sig(ed));
   }
