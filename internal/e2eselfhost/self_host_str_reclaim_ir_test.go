@@ -50,8 +50,10 @@ function main(): i32 { let base: string = "abc"; let sum: i32 = 0; let i: i32 = 
 		`function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let s: string = chr(65 + (i % 3)) + "x"; sum = sum + s.len(); i = i + 1; } return sum; }`,
 		8, true, ""},
 	// Non-loop fresh string local, freed at scope exit. s = "hi" + "!" (len 3).
+	// "hi" goes through ids so the concat is built on the heap rather than folded
+	// to a constant.
 	{"scope-exit-concat",
-		`function main(): i32 { let s: string = "hi" + "!"; return s.len(); }`,
+		`function ids(s: string): string { return s; } function main(): i32 { let s: string = ids("hi") + "!"; return s.len(); }`,
 		3, true, ""},
 	// Memory-safety at scale: 5,000,000 iterations of a fresh-concat loop. A leaked
 	// box + buffer per iteration would exhaust the heap; a double-free would corrupt

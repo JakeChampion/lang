@@ -23,7 +23,8 @@ import (
 //
 // Reclaim is shown by heap exhaustion: a long consume-by-match churn that leaks the
 // payload buffer each iteration is SIGKILLed (137); with the reclaim it stays
-// bounded (0).
+// bounded (0). Each payload array goes through id so it is built on the heap rather
+// than placed as a constant.
 func TestSelfHostEnumQualifiedCtorReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -59,8 +60,9 @@ func TestSelfHostEnumQualifiedCtorReclaimIRX86_64(t *testing.T) {
 	// (exit 0). Pre-fix the qualified callee wasn't recognised, so the box + buffer
 	// leaked every iteration → heap exhausted → SIGKILL.
 	run(t, `enum Bag { Items(i32[]), None }
+function id(xs: i32[]): i32[] { return xs; }
 function mk(): i32 {
-    let b: Bag = Bag.Items([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]);
+    let b: Bag = Bag.Items(id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]));
     match (b) { Items(_) => {}, None => {}, }
     return 5;
 }
@@ -75,8 +77,9 @@ function main(): i32 {
 	// bounded AND the read-back is intact. xs[0]+xs[15] = 1 + 16 = 17. A missing inc
 	// would double-free → freelist corruption / crash; a wrong free → wrong value.
 	run(t, `enum Bag { Items(i32[]), None }
+function id(xs: i32[]): i32[] { return xs; }
 function mk(): i32 {
-    let xs: i32[] = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16];
+    let xs: i32[] = id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]);
     let b: Bag = Bag.Items(xs);
     let r: i32 = xs[0] + xs[15];
     match (b) { Items(_) => {}, None => {}, }

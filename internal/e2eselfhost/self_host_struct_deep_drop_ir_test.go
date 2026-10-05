@@ -28,7 +28,9 @@ import (
 // The leak/reclaim signal is heap exhaustion: a long churn that leaks the inner's
 // array buffer each iteration exhausts the bump heap and is SIGKILLed (exit 137);
 // with the deep-drop reclaiming it the freed blocks recycle and the churn stays
-// bounded (exit 0) — the same differential the field-reclaim IR test uses.
+// bounded (exit 0) — the same differential the field-reclaim IR test uses. Each
+// items array goes through id so the chain is built on the heap rather than placed
+// as a constant.
 func TestSelfHostStructDeepDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -66,9 +68,10 @@ func TestSelfHostStructDeepDropIRX86_64(t *testing.T) {
 	// that 150M alloc→drop cycles stay bounded (exit 0); under the slice-3 shallow
 	// drop `inner.items` leaked every call → heap exhausted → SIGKILL (137).
 	run(t, `struct Inner { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 struct Outer { inner: Inner, tag: i32 }
 function mk(): i32 {
-    let o: Outer = Outer { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, tag: 7 };
+    let o: Outer = Outer { inner: Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }, tag: 7 };
     return o.inner.items[0] + o.inner.items[15] + o.tag;
 }
 function main(): i32 {
@@ -80,9 +83,10 @@ function main(): i32 {
 	// VALUE-CORRECTNESS: the inner is read back before the drop; a wrong free of a
 	// live buffer would corrupt it. o.inner.items[0..15] sum to 136, + tag 7 = 143.
 	run(t, `struct Inner { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 struct Outer { inner: Inner, tag: i32 }
 function main(): i32 {
-    let o: Outer = Outer { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, tag: 7 };
+    let o: Outer = Outer { inner: Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }, tag: 7 };
     let sum: i32 = 0; let j: i32 = 0;
     while (j < 16) { sum = sum + o.inner.items[j]; j = j + 1; }
     return sum + o.tag;
@@ -112,10 +116,11 @@ function main(): i32 {
 	// leaks `inner.items` every call → heap exhausted → SIGKILL (137). items[0]+
 	// items[15]=17, +mid.m 2 +tag 7 = 26, so s-26==0.
 	run(t, `struct Inner { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 struct Mid { inner: Inner, m: i32 }
 struct Outer { mid: Mid, tag: i32 }
 function mk(): i32 {
-    let o: Outer = Outer { mid: Mid { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, m: 2 }, tag: 7 };
+    let o: Outer = Outer { mid: Mid { inner: Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }, m: 2 }, tag: 7 };
     return o.mid.inner.items[0] + o.mid.inner.items[15] + o.mid.m + o.tag;
 }
 function main(): i32 {
@@ -146,10 +151,11 @@ function main(): i32 {
 	// wrong free of a live buffer would corrupt the sum. items[0..15] sum 136 + mid.m
 	// 2 + tag 7 = 145.
 	run(t, `struct Inner { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 struct Mid { inner: Inner, m: i32 }
 struct Outer { mid: Mid, tag: i32 }
 function main(): i32 {
-    let o: Outer = Outer { mid: Mid { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, m: 2 }, tag: 7 };
+    let o: Outer = Outer { mid: Mid { inner: Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }, m: 2 }, tag: 7 };
     let sum: i32 = 0; let j: i32 = 0;
     while (j < 16) { sum = sum + o.mid.inner.items[j]; j = j + 1; }
     return sum + o.mid.m + o.tag;

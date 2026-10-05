@@ -27,7 +27,8 @@ import (
 // buffer per iteration exhausts the bump heap and is SIGKILLed (exit 137); with
 // the local reclaimed each iteration the freed blocks recycle through the
 // size-class freelist and the churn stays bounded (exit 0). This is the same
-// heap-exhaustion differential the field-reclaim IR test uses.
+// heap-exhaustion differential the field-reclaim IR test uses. items goes through
+// id so the Node is built on the heap rather than placed as a constant.
 func TestSelfHostBorrowInferInterprocX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -45,6 +46,7 @@ func TestSelfHostBorrowInferInterprocX86_64(t *testing.T) {
 	// greatest-fixpoint both params are borrowable; under the old least-fixpoint
 	// neither was (the cycle couldn't bootstrap).
 	const cycle = `struct Node { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 function walk_a(n: Node, d: i32): i32 { if (d <= 0) { return n.items[0]; } return walk_b(n, d - 1); }
 function walk_b(n: Node, d: i32): i32 { if (d <= 0) { return n.items[0]; } return walk_a(n, d - 1); }
 `
@@ -75,7 +77,7 @@ function walk_b(n: Node, d: i32): i32 { if (d <= 0) { return n.items[0]; } retur
 	// Across 200M iterations the reclaimed buffers recycle → bounded → exit 0; under
 	// the least-fixpoint `nd` leaked every call → heap exhausted → SIGKILL (137).
 	run(t, cycle+`function once(): i32 {
-    let nd: Node = Node { items: [5, 6, 7] };
+    let nd: Node = Node { items: id([5, 6, 7]) };
     return walk_a(nd, 4);
 }
 function main(): i32 {
@@ -91,7 +93,7 @@ function main(): i32 {
 	// over-release detector must stay 0. A wrong free of a live buffer would corrupt
 	// the value or tick the detector.
 	run(t, cycle+`function once(): i32 {
-    let nd: Node = Node { items: [5, 6, 7] };
+    let nd: Node = Node { items: id([5, 6, 7]) };
     return walk_a(nd, 4);
 }
 function main(): i32 {
