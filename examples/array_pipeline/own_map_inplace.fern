@@ -76,9 +76,7 @@ fip function via_with_own(own xs: i64[], n: i32): i64[] {
 
 // The same loop with nothing owned. The receiver is live in the caller, so
 // `.with` takes the copy-on-write path on the first write and the function
-// pays for a whole fresh buffer. It stays a call: spliced into `apply`, which
-// owns `xs`, it would take the buffer over too.
-@noinline
+// pays for a whole fresh buffer.
 function via_with_borrowed(xs: i64[], n: i32): i64[] {
   let out: i64[] = xs;
   let i: i32 = 0;

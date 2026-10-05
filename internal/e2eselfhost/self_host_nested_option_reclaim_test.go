@@ -248,7 +248,6 @@ var nestedOptHazardCases = []struct {
 // Non-vacuity: all three cases fail this against the parent commit, at
 // frees=0 / live_bytes=16000 per 200 rounds.
 func TestSelfHostNestedOptionReclaimX86_64(t *testing.T) {
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

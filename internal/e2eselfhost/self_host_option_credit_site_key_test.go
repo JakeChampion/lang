@@ -351,7 +351,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 // TestSelfHostOptionCreditSiteKeyX86_64 — each Option binding resolves the
 // credit it earned itself, and no same-named sibling inherits one.
 func TestSelfHostOptionCreditSiteKeyX86_64(t *testing.T) {
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

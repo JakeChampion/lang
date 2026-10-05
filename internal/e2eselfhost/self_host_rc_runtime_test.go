@@ -65,7 +65,6 @@ const (
 // right result, the over-release detector stays 0, and the retain is emitted
 // where the alias really is a second owner and elided where it is a move.
 func TestSelfHostRcAliasIncX86_64(t *testing.T) {
-	boxedProbes(t)
 	cli := newStrictCLI(t)
 
 	cases := []struct {

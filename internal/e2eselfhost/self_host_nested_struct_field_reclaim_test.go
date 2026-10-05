@@ -53,7 +53,6 @@ function main(): i32 {
 // essential: frees short of allocs is the leak this closes; frees ABOVE
 // allocs is #6148's use-after-free reappearing as a double free.
 func TestSelfHostNestedStructFieldReclaimX86_64(t *testing.T) {
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

@@ -11,7 +11,6 @@ import "testing"
 // payload reaches its variant through `id`, which hides the constant from the static-box plan, so the
 // variant is allocated rather than placed as a static box.
 func TestSelfHostCrossBlockReuse(t *testing.T) {
-	boxedProbes(t)
 	cli := buildSelfHostCLI(t)
 	cases := []struct {
 		name   string

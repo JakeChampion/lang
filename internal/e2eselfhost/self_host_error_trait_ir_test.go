@@ -62,7 +62,6 @@ var errorTraitIRCases = []struct {
 // TestSelfHostErrorTraitIR compiles each case with the self-host CLI for
 // x86-64 and wasm and checks the exit code and the leak census.
 func TestSelfHostErrorTraitIR(t *testing.T) {
-	boxedProbes(t)
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
 		for _, tc := range errorTraitIRCases {
