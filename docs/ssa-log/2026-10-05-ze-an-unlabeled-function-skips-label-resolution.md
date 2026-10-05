@@ -27,5 +27,6 @@ ten conformance cases with a labeled jump:
 
 | | main | labels only where named |
 |---|--:|--:|
-| stage 2, x86-64 target, total Ir | 18.087 G | 18.001 G (−0.48%) |
+| stage 2, x86-64 target, total Ir | 18.087 G | 17.937 G (−0.83%) |
 | `resolve_labels_module`, inclusive | 105 M | 17 M |
+| `desugar_prepass_module`, inclusive | 136 M | 76 M |

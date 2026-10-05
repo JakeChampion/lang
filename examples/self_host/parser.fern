@@ -21429,7 +21429,10 @@ pub function desugar_prepass_module(raw: Module): Module {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     let fd: FuncDecl = mod.funcs[i];
-    let body: ast.Stmt[] = resolve_labels_block(fd.body, none);
+    let body: ast.Stmt[] = fd.body;
+    if (has_labeled_jump(body)) {
+      body = resolve_labels_block(body, none);
+    }
     if (need_fda) {
       body = fda_stmts(body, mod.funcs);
     }
