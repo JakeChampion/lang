@@ -13,7 +13,7 @@ import "testing"
 // `append(name.to_lower())` is this shape once `to_lower` returns an
 // already-lowercase input as is.
 func TestPassThroughParamLeavesTheCallersTempReclaimable(t *testing.T) {
-	checkGoCompilerCensusOnEveryTarget(t, []struct{ name, src string }{
+	checkCensusOnEveryTarget(t, []struct{ name, src string }{
 		{"forwarded_through_a_pass_through", `
 function same(s: string): string {
   return s;
