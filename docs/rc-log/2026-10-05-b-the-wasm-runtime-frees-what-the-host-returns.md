@@ -77,9 +77,11 @@ three cases fail on main.
   so every read ended as a failure: `TestSelfHostWasiHttpOutgoing` failed on
   the first version of this change.
 
-- A component calling only `environ()` failed to instantiate. The host's
-  environment interface was imported only for `env` and `config_get`, and the
-  core did not export `cabi_realloc` for it. Both gates now include `environ`.
+- A component calling only `environ()` could not run. `host_needs`' `env`,
+  which picks the component's framing from the parse tree, counted `env` and
+  `config_get` but not `environ`, and the `cabi_realloc` export was gated on
+  `env` and `args` alone. Both now include `environ`; the environment import
+  itself already did.
 - `std/async`'s `race` never closes a loser's socket: the 16-byte tcp record
   on wasm, a descriptor on native. A future has no cancellation hook to hand
   it; #11599.

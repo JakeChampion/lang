@@ -70,7 +70,8 @@ function main(): i32 {
 //   - `outer` nests a record { f32, u8 } ahead of an s64;
 //   - `one` and `onef`, a lone u64 and a lone f32, come back by value as an
 //     i64 and an f32;
-//   - `wide` and `outer` go back as parameters, flattened to their leaves.
+//   - `wide` and `outer` go back as parameters, flattened to their leaves;
+//   - a list<u64> comes back and goes out again, eight bytes an element.
 func TestSelfHostExternRecordWideFieldsCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -105,6 +106,8 @@ func TestSelfHostExternRecordWideFieldsCustomProvider(t *testing.T) {
   make-onef: func() -> onef;
   sum-wide: func(w: wide) -> f64;
   sum-outer: func(o: outer) -> f64;
+  sum-u64: func(data: list<u64>) -> u64;
+  iota-u64: func(n: u32) -> list<u64>;
 }`
 	if err := os.WriteFile(filepath.Join(provWit, "src.wit"),
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
@@ -142,7 +145,28 @@ func TestSelfHostExternRecordWideFieldsCustomProvider(t *testing.T) {
     (f64.add (f64.add (f64.add (f64.add (f64.convert_i32_u (local.get $a)) (f64.convert_i64_u (local.get $b)))
       (f64.promote_f32 (local.get $c))) (local.get $d)) (f64.convert_i32_s (local.get $e))))
   (func (export "local:test/src@0.1.0#sum-outer") (param $x f32) (param $y i32) (param $n i64) (result f64)
-    (f64.add (f64.add (f64.promote_f32 (local.get $x)) (f64.convert_i32_u (local.get $y))) (f64.convert_i64_s (local.get $n)))))`), 0o644); err != nil {
+    (f64.add (f64.add (f64.promote_f32 (local.get $x)) (f64.convert_i32_u (local.get $y))) (f64.convert_i64_s (local.get $n))))
+  (func (export "local:test/src@0.1.0#sum-u64") (param $p i32) (param $n i32) (result i64)
+    (local $i i32) (local $s i64)
+    (block $done (loop $next
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $s (i64.add (local.get $s) (i64.load (i32.add (local.get $p) (i32.shl (local.get $i) (i32.const 3))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $next)))
+    (local.get $s))
+  (func (export "local:test/src@0.1.0#iota-u64") (param $n i32) (result i32)
+    (local $r i32) (local $d i32) (local $i i32)
+    (local.set $r (call 0 (i32.const 0) (i32.const 0) (i32.const 4) (i32.const 8)))
+    (local.set $d (call 0 (i32.const 0) (i32.const 0) (i32.const 8) (i32.shl (local.get $n) (i32.const 3))))
+    (block $done (loop $next
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (i64.store (i32.add (local.get $d) (i32.shl (local.get $i) (i32.const 3)))
+        (i64.add (i64.shl (i64.extend_i32_u (local.get $i)) (i64.const 32)) (i64.const 1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $next)))
+    (i32.store (local.get $r) (local.get $d))
+    (i32.store offset=4 (local.get $r) (local.get $n))
+    (local.get $r)))`), 0o644); err != nil {
 		t.Fatalf("write provider core: %v", err)
 	}
 	provider := filepath.Join(dir, "provider.wasm")
@@ -197,6 +221,10 @@ function make_onef(): OneF;
 function sum_wide(w: Wide): f64;
 @import("local:test/src@0.1.0", "sum-outer")
 function sum_outer(o: Outer): f64;
+@import("local:test/src@0.1.0", "sum-u64")
+function sum_u64(data: u64[]): u64;
+@import("local:test/src@0.1.0", "iota-u64")
+function iota_u64(n: u32): u64[];
 function main(): i32 {
     let w: Wide = make_wide();
     if (w.a != 7 as u8) { write("bad a\n"); }
@@ -212,6 +240,9 @@ function main(): i32 {
     if ((make_onef().v as f64) != 1.5) { write("bad onef\n"); }
     if (sum_wide(w) != 1099511627778.25) { write("bad sum-wide\n"); }
     if (sum_outer(o) != 0.0 - 4294967095.25) { write("bad sum-outer\n"); }
+    let xs: u64[] = iota_u64(3 as u32);
+    if (xs.len() != 3 || xs[0] != 1 as u64 || xs[2] != 8589934593 as u64) { write("bad iota-u64\n"); }
+    if (sum_u64(xs) != 12884901891 as u64) { write("bad sum-u64\n"); }
     write("wide-done\n");
     return 0;
 }`

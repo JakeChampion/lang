@@ -8785,13 +8785,14 @@ pub function create_dir_all_func(): string {
 // path_open(preopen fd 3, FD_READDIR right) the directory, then loop fd_readdir
 // over the WASI dirent stream (dirent header is 24 bytes: d_next u64 @0, d_ino
 // u64 @8, d_namlen u32 @16, d_type u8 @20; the name's d_namlen bytes follow),
-// skipping "." / "..", building a string[] via $__fern_arr_push (each entry a
-// fresh [len][bytes] block). The cookie loop pages through large directories and
+// skipping "." / "..", building a string[] via $__fern_arr_push_owned (each
+// entry a fresh [len][bytes] block whose one reference moves into the array, so
+// a failed page releases them all by dropping the array). The cookie loop pages through large directories and
 // resumes from the last COMPLETE entry when fd_readdir truncates the trailing
 // name (bufused == buflen). On path_open failure push Result.Err [tag1, errno];
 // otherwise Result.Ok [tag0, arrayptr]. The readdir buffer is alloc'd once before
 // the loop, so the name/array allocations that follow it never overlap the bytes
-// a later fd_readdir page overwrites. Needs the heap runtime + $__fern_arr_push.
+// a later fd_readdir page overwrites. Needs the heap runtime + $__fern_arr_push_owned.
 pub function read_dir_func(): string {
   return read_dir_func_like("__fern_read_dir", true);
 }
@@ -18111,14 +18112,14 @@ function extern_elem_from_canon(kind: string, dst: string, src: string): string 
 }
 
 pub function elem_slot_size(kind: string): i32 {
-  if (kind == "i64" || irtables.elem_ty_is_f64slot(kind)) {
+  if (elem_is_i64slot(kind) || irtables.elem_ty_is_f64slot(kind)) {
     return 8;
   }
   return 4;
 }
 
 pub function elem_store_op(kind: string): string {
-  if (kind == "i64") {
+  if (elem_is_i64slot(kind)) {
     return "i64.store";
   }
   if (irtables.elem_ty_is_f64slot(kind)) {
@@ -18127,8 +18128,13 @@ pub function elem_store_op(kind: string): string {
   return "i32.store";
 }
 
+// elem_is_i64slot is true for an element kind held in an i64 slot.
+function elem_is_i64slot(kind: string): boolean {
+  return kind == "i64" || kind == "u64";
+}
+
 pub function elem_load_op(kind: string): string {
-  if (kind == "i64") {
+  if (elem_is_i64slot(kind)) {
     return "i64.load";
   }
   if (irtables.elem_ty_is_f64slot(kind)) {

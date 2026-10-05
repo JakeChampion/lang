@@ -208,6 +208,8 @@ function async_sig(f: parser.FuncDecl, role: string, mem: boolean): AsyncSig {
   let rt: i32[] = [];
   if (wasm_ir.returns_value(f.ret_type)) {
     rt = async_type(f.ret_type, mem);
+    // async_lower_wrapper lifts and frees a memory result as a (ptr, len)
+    // list or string; a tuple or any other shape must stop here.
     if (rt.len() == 0 || rt[0] == 111) {
       return sig_refused("the result type " + f.ret_type + " is one an " + role + " cannot take yet");
     }
