@@ -14,7 +14,7 @@
 > lives in `core/map` + the IR's runtime-tag scheme, not
 > `internal/prelude/prelude.fern`. The wide-scalar-K/V correctness gap that
 > partly motivated this was fixed separately via runtime kind tags (see
-> `BACKEND-PARITY.md` and `ROADMAP-AND-SELF-HOSTING.md` item 3); what
+> `ROADMAP-AND-SELF-HOSTING.md` item 3); what
 > remains here is the perf/code-size monomorphisation lever.
 
 Captures the proposed migration from the current **runtime-tag

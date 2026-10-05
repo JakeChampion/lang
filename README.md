@@ -189,8 +189,7 @@ in place for a fresh one of the same shape.
 cmd/fern/             CLI driver           cmd/fern-lsp/       language server
 cmd/ferndoc/          stdlib doc generator cmd/fern-wasm/      playground bundle
 internal/lexer,parser,checker,monomorph,closureconv,ir   front end and IR
-internal/codegen/     arm64/, x86_64/, wasmbin/ emitters
-internal/native/      pure-Go assemblers, ELF and Mach-O linkers, code signing
+internal/x86tbl,arm64tbl/  the self-host assemblers' vocabulary tables
 internal/stdlib/std/  the standard library, written in Fern
 internal/interp/      tree-walking interpreter and REPL
 internal/e2e*/        end-to-end suites for every backend and the self-host

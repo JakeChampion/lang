@@ -2,8 +2,7 @@
 // executable writer for the self-hosted *native* backend. This is the
 // container half of the native-binary path that aims to remove the
 // external `gcc` / `ld` link step the self-host currently shells out to
-// for x86-64 / arm64 Linux (mirroring the Go reference
-// internal/native/elf/elf.go).
+// for x86-64 / arm64 Linux.
 //
 // Because a Fern program links to one self-contained blob
 // (`-static -nostdlib`: no archives, no shared objects, no relocations
@@ -24,7 +23,7 @@
 //     values we emit are all small (addresses < 2^31, sizes), but the
 //     full 8 bytes are always laid down per the ELF-64 layout.
 
-// ---- fixed layout constants (see internal/native/elf/elf.go) ----
+// ---- fixed layout constants ----
 
 // elf_eh_size is the ELF-64 header size (e_ehsize).
 function elf_eh_size(): i32 {
@@ -408,7 +407,7 @@ function elf_push_zeros(b: usize, n: i32): void {
 // R+W from the first page past it, which Android requires. Then PT_DYNAMIC,
 // PT_GNU_EH_FRAME (PT_NULL without unwind data) and PT_GNU_STACK, without
 // which a loader gives the process an executable stack or refuses the
-// library. Native's writer is internal/native/elf's sharedLib.
+// library.
 
 // elf_so_phnum is the shared object's program header count.
 function elf_so_phnum(wx: boolean): i32 {

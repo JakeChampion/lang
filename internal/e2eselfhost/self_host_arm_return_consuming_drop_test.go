@@ -198,7 +198,6 @@ function round(i: i32): i32 {
 // with no rc underflow, which is the pair of facts a shallow return-path release
 // (leak) and a doubled one (over-release) each break in one direction only.
 func TestSelfHostArmReturnConsumingDropX86_64(t *testing.T) {
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

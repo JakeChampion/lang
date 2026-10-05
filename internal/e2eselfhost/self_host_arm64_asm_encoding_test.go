@@ -2,19 +2,14 @@ package e2eselfhost
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
-
-	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
-	nativeelf "github.com/jakechampion/lang/internal/native/elf"
 )
 
-// TestSelfHostArm64AsmEncodingMatchesNative pins the SELF-HOST in-process arm64
-// assembler's instruction encodings to the NATIVE Go assembler's, on identical
-// GAS text.
+// TestSelfHostArm64AsmEncodingMatchesGas pins the SELF-HOST in-process arm64
+// assembler's instruction encodings to GNU as's, on identical GAS text.
 //
 // # Why an encoding test, when execution tests exist
 //
@@ -35,35 +30,14 @@ import (
 // which is the layer the bug was in, and it fails on any divergence rather than
 // only on the ones that happen to change an exit code.
 //
-// # Why the native assembler is a valid oracle
-//
-// internal/native/arm64 is what `bin/fern -target arm64-linux` uses in production, and
-// its own tests (TestFuzzEncodingsAgainstGNUAs, TestSymbolAddressingMatchesGNUAs
-// and the rest of the *MatchesGNUAs family) pin its encodings to GNU as's on
-// the same text. So "self-host agrees with native" transitively means
-// "self-host agrees with gcc", without needing a cross-toolchain on this host.
-//
 // # Why the snippet avoids labels, adrp and literal pools
 //
-// The two assemblers lay out images differently (different entry stub, different
-// rodata handling), so any address-bearing instruction legitimately differs —
-// comparing those would produce noise, not findings. The snippet below is
+// The self-host lays out a whole image and GNU as an unlinked object, so any
+// address-bearing instruction legitimately differs. The snippet below is
 // deliberately position-independent: registers and immediates only. Add a row
-// whenever the emitter learns a new instruction form; both assemblers then have
-// to agree about it.
-//
-// The oracle used to lag the assembler it checks, which forced movn and the
-// negative-FP-offset forms out of this snippet -- leaving the self-host's most
-// recently added encoders as precisely the code with no differential coverage.
-// #6075 closed that: movn, FP stur/ldur and numeric local labels all assemble
-// in internal/native/arm64 now, each pinned against GNU as in
-// internal/native/arm64/gas_localsyms_test.go, and the rows are restored below.
-//
-// One of the three gaps #6075 listed turned out not to exist: dot-prefixed
-// local labels (.Ldone:) always worked, because splitLabel peels labels before
-// the '.'-prefix directive check. The claim was in the issue and in this
-// comment; TestAssembleDotLocalLabel now guards the behaviour.
-func TestSelfHostArm64AsmEncodingMatchesNative(t *testing.T) {
+// whenever the emitter learns a new instruction form.
+func TestSelfHostArm64AsmEncodingMatchesGas(t *testing.T) {
+	gas := gnuArm64Oracle(t)
 	gcc, runner := x86_64Tooling(t)
 
 	// Every form here is one the arm64 emitter actually produces. The
@@ -511,14 +485,7 @@ Lend:
 
 	got := assembleSelfHost(t, buildAsmBenchDriver(t, gcc), runner, snippet)
 
-	text, _, err := nativearm64.AssembleProgram(snippet, nativeelf.TextVAddr)
-	if err != nil {
-		t.Fatalf("native assembler rejected the snippet (the oracle must accept it): %v", err)
-	}
-	var want []uint32
-	for i := 0; i+4 <= len(text); i += 4 {
-		want = append(want, binary.LittleEndian.Uint32(text[i:]))
-	}
+	want := arm64Words(gas.text(t, snippet))
 
 	lines := snippetInsns(snippet)
 	if len(got) != len(want) {
@@ -530,11 +497,11 @@ Lend:
 				if i < len(lines) {
 					src = lines[i]
 				}
-				t.Fatalf("word count differs: self-host %d, native %d (snippet has %d instructions); first divergence at word %d (%s)",
+				t.Fatalf("word count differs: self-host %d, GNU as %d (snippet has %d instructions); first divergence at word %d (%s)",
 					len(got), len(want), len(lines), i, src)
 			}
 		}
-		t.Fatalf("word count differs: self-host %d, native %d (snippet has %d instructions)", len(got), len(want), len(lines))
+		t.Fatalf("word count differs: self-host %d, GNU as %d (snippet has %d instructions)", len(got), len(want), len(lines))
 	}
 	for i := range want {
 		if got[i] != want[i] {
@@ -542,7 +509,7 @@ Lend:
 			if i < len(lines) {
 				src = lines[i]
 			}
-			t.Errorf("word %d (%s): self-host %08x, native %08x", i, src, got[i], want[i])
+			t.Errorf("word %d (%s): self-host %08x, GNU as %08x", i, src, got[i], want[i])
 		}
 	}
 }
@@ -661,13 +628,11 @@ func TestSelfHostArm64AsmUnresolvedBranchRefused(t *testing.T) {
 // a word inside the ELF header, which is zero, which is UDF #0. 129 of 317
 // corpus fixtures died on SIGILL before printing a byte (#6045).
 //
-// This compared two SPELLINGS of the same control flow — numeric against named
-// — until #6075, because the oracle could not assemble numeric locals at all.
-// It can now, so the comparison is direct: the numeric spelling is checked
-// against internal/native/arm64 like every other form, and the workaround is
-// gone. Address-bearing instructions are safe to compare here, unlike in the
-// snippet above, because every branch target is inside the same fragment.
+// The numeric spelling is checked against GNU as. Address-bearing
+// instructions are safe to compare here, unlike in the snippet above, because
+// every branch target is inside the same fragment.
 func TestSelfHostArm64AsmNumericLocalLabels(t *testing.T) {
+	gas := gnuArm64Oracle(t)
 	gcc, runner := x86_64Tooling(t)
 
 	// Two definitions of `1` and one of `2`, exercising: a forward reference
@@ -698,17 +663,10 @@ Labort:
 
 	got := assembleSelfHost(t, buildAsmBenchDriver(t, gcc), runner, numeric)
 
-	text, _, err := nativearm64.AssembleProgram(numeric, nativeelf.TextVAddr)
-	if err != nil {
-		t.Fatalf("native assembler rejected the numeric-local snippet (the oracle must accept it since #6075): %v", err)
-	}
-	var want []uint32
-	for i := 0; i+4 <= len(text); i += 4 {
-		want = append(want, binary.LittleEndian.Uint32(text[i:]))
-	}
+	want := arm64Words(gas.text(t, numeric))
 	lines := snippetInsns(numeric)
 	if len(got) != len(want) {
-		t.Fatalf("word count differs: self-host %d, native %d", len(got), len(want))
+		t.Fatalf("word count differs: self-host %d, GNU as %d", len(got), len(want))
 	}
 	for i := range want {
 		if got[i] != want[i] {
@@ -716,7 +674,7 @@ Labort:
 			if i < len(lines) {
 				src = lines[i]
 			}
-			t.Errorf("word %d (%s): self-host %08x, native %08x", i, src, got[i], want[i])
+			t.Errorf("word %d (%s): self-host %08x, GNU as %08x", i, src, got[i], want[i])
 		}
 	}
 }

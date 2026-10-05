@@ -11,8 +11,7 @@ import (
 
 // arm64ImageSpan is the AArch64 b/bl reach in bytes: a signed 26-bit
 // instruction offset, ±2^25 instructions = ±128 MB. A .text bigger than
-// this needs the native assembler's branch veneers
-// (internal/native/arm64/veneer.go) to link at all.
+// this needs branch veneers to link at all.
 const arm64ImageSpan = 1 << 27
 
 // TestSelfHostArm64ModloadNativeBuild builds the per-module orchestrator

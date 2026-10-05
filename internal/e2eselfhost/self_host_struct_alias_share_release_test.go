@@ -198,7 +198,6 @@ function main(): i32 {
 }
 
 func TestSelfHostStructAliasShareReleaseX86_64(t *testing.T) {
-	boxedProbes(t)
 	cli := buildSelfHostCLI(t)
 	for _, tc := range structAliasShareCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -224,7 +223,6 @@ func TestSelfHostStructAliasShareReleaseX86_64(t *testing.T) {
 }
 
 func TestSelfHostStructAliasShareReleaseWasm(t *testing.T) {
-	boxedProbes(t)
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}

@@ -168,7 +168,6 @@ func tupStrElemCases() []tupStrElemCase {
 // keeps it alive (frees short by the same amount); with a release but no credit
 // the arithmetic balances on the tuple and strands the local.
 func TestSelfHostTupleStrElemRetainX86_64(t *testing.T) {
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

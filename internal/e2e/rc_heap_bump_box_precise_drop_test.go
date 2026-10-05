@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"github.com/jakechampion/lang/internal/e2eharness"
 	"strings"
 	"testing"
 )
@@ -90,7 +89,6 @@ function main(): i32 {
 }
 
 func TestWASMBoxPreciseDrop(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	if dead, live := runWasm(t, boxDead4Src()), runWasm(t, boxLive4Src()); dead >= live {
 		t.Errorf("precise drops should reclaim sequentially-dead struct boxes: dead4 %d should be < live4 %d", dead, live)
 	}

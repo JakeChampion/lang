@@ -5,8 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/native/arm64"
-	"github.com/jakechampion/lang/internal/native/arm64tbl"
+	"github.com/jakechampion/lang/internal/arm64tbl"
 )
 
 const arm64NativeFern = "../../examples/self_host/arm64_native.fern"
@@ -48,12 +47,12 @@ func TestMarkersArePresent(t *testing.T) {
 	}
 }
 
-// TestGoAssemblerAcceptsEveryScalarRow is the same loop for the by-name
-// vocabulary: every row's probe assembles through the Go assembler, so a
-// family added to the table without a dispatch arm, or a probe that names
-// a shape the encoder refuses, fails here. The self-host side of the same
-// probes is internal/e2eselfhost's TestSelfHostArm64TableRowsMatchNative.
-func TestGoAssemblerAcceptsEveryScalarRow(t *testing.T) {
+// TestScalarRowsAreWellFormed guards the by-name vocabulary's own shape: a
+// mnemonic listed twice would dispatch to one of its two rows, and a probe
+// that does not start with its mnemonic probes some other row. The self-host
+// side of the same probes is internal/e2eselfhost's
+// TestSelfHostArm64TableRowsMatchGas.
+func TestScalarRowsAreWellFormed(t *testing.T) {
 	seen := map[string]bool{}
 	for _, fam := range arm64tbl.Scalar {
 		if len(fam.Ops) == 0 {
@@ -68,53 +67,21 @@ func TestGoAssemblerAcceptsEveryScalarRow(t *testing.T) {
 			if !strings.HasPrefix(probe, o.Mnemonic+" ") && probe != o.Mnemonic {
 				t.Errorf("%s: probe %q does not start with the mnemonic", o.Mnemonic, probe)
 			}
-			if _, _, err := arm64.AssembleProgram(".text\n"+probe+"\n", 0x400000); err != nil {
-				t.Errorf("%s (%s): %v", o.Mnemonic, fam.Name, err)
-			}
 		}
 	}
 }
 
-// TestGoAssemblerAcceptsEveryRow closes the loop on the other side: every
-// mnemonic in every class assembles through the Go assembler in that class's
-// operand shape, so a row in the table is a row both assemblers reach.
-func TestGoAssemblerAcceptsEveryRow(t *testing.T) {
-	// One probe per class, at an arrangement every row of it accepts.
-	forms := map[string]string{
-		"arm64_v3int_entry":      "%s v0.16b, v1.16b, v2.16b",
-		"arm64_vlogical_entry":   "%s v0.16b, v1.16b, v2.16b",
-		"arm64_vcmpzero_entry":   "%s v0.16b, v1.16b, #0",
-		"arm64_v2misc_entry":     "%s v0.16b, v1.16b",
-		"arm64_vfp3_entry":       "%s v0.4s, v1.4s, v2.4s",
-		"arm64_vfp2_entry":       "%s v0.4s, v1.4s",
-		"arm64_vfpcmpzero_entry": "%s v0.4s, v1.4s, #0.0",
-		"arm64_vshift_entry":     "%s v0.4s, v1.4s, #3",
-		"arm64_vpermute_opc":     "%s v0.16b, v1.16b, v2.16b",
-		"arm64_across_entry":     "%s b0, v1.16b",
-		"arm64_pairlong_entry":   "%s v0.8h, v1.16b",
-		"arm64_vpolylong_entry":  "%s v0.8h, v1.8b, v2.8b",
-	}
+// TestVecRowsAreDistinct: a mnemonic listed twice in a class would dispatch
+// to one of its two rows. The self-host side of the same rows is
+// internal/e2eselfhost's TestSelfHostArm64VecTableRowsMatchGas.
+func TestVecRowsAreDistinct(t *testing.T) {
 	for _, tbl := range arm64tbl.VecTables {
-		form, ok := forms[tbl.FernFn]
-		if !ok {
-			t.Fatalf("no probe form for %s", tbl.FernFn)
-		}
 		seen := map[string]bool{}
 		for _, o := range tbl.Ops {
 			if seen[o.Mnemonic] {
 				t.Errorf("%s lists %q twice", tbl.FernFn, o.Mnemonic)
 			}
 			seen[o.Mnemonic] = true
-			probe := strings.Replace(form, "%s", o.Mnemonic, 1)
-			if tbl.FernFn == "arm64_across_entry" && o.Bool() {
-				probe = o.Mnemonic + " h0, v1.16b" // widening: one class up
-			}
-			if tbl.FernFn == "arm64_vpolylong_entry" && o.Bool() {
-				probe = o.Mnemonic + " v0.8h, v1.16b, v2.16b" // the `2` is the Q bit
-			}
-			if _, _, err := arm64.AssembleProgram(".text\n"+probe+"\n", 0x400000); err != nil {
-				t.Errorf("%q: %v", probe, err)
-			}
 		}
 	}
 }

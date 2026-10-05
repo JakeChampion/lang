@@ -4551,8 +4551,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{usizeT, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
-	// `__load_u8(addr)` — one byte, zero-extended. The byte-scanning
-	// runtime helpers in internal/fernrt are written on it.
+	// `__load_u8(addr)` — one byte, zero-extended.
 	c.info.FuncSigs["__load_u8"] = &ast.FuncType{
 		Params: []ast.Type{usizeT},
 		Result: ast.NumberType{},

@@ -14,7 +14,6 @@
 package e2e
 
 import (
-	"github.com/jakechampion/lang/internal/e2eharness"
 	"testing"
 )
 
@@ -54,7 +53,6 @@ function main(): i32 {
 // (otherwise the per-iteration String buffer alone would grow the
 // high-water unboundedly).
 func TestWASMDynTraitHeapBumpBounded(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	small := runWasm(t, dynTraitBumpGrowthSrc("50"))
 	large := runWasm(t, dynTraitBumpGrowthSrc("5000"))
 	if small != large {
@@ -98,7 +96,6 @@ function main(): i32 {
 // 3 here: a1, b1, b2). The loop must stay bump-bounded, proving the drop
 // slot is read at the right merged offset.
 func TestWASMDynTraitMultiTraitDrop(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	src := func(n string) string {
 		return `import "std/i32";
 trait A { function a1(self: Self): i32; }

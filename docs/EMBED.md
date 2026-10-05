@@ -115,7 +115,8 @@ The measurement says 4x is reachable only by data that is overwhelmingly
 low bytes, which is also data that compresses to nearly nothing. **That
 slice is therefore not built.** If a future asset bundle does make the asm
 text hurt, the linker-splice path remains available precisely because Fern
-owns its assembler and linker (`internal/native`).
+owns its assembler and linker (`x86_native.fern`, `arm64_native.fern`,
+`elf.fern`, `macho.fern` in `examples/self_host`).
 
 ## Compression
 
