@@ -38,9 +38,11 @@ import "std/time";
 //                          chains by returning another `Pending`.
 //
 // A combinator that abandons a pending future (a `race` loser, a
-// `with_deadline` straggler) drops its token and then calls
-// `resume(cancelled())` once: a continuation handed `cancelled()` releases
-// what it holds, a socket above all, and returns `Ready`.
+// `with_deadline` straggler, what `gather` holds when its wait fails) drops
+// its token and then calls `resume(cancelled())` once: a continuation handed
+// `cancelled()` releases what it holds, a socket above all, and returns
+// `Ready` without waiting. A wait there could rewind a task into the
+// cancellation and run its release twice, and a close is not idempotent.
 pub enum Future[T] {
   Ready(T),
   Pending(i32, (i32) => Future[T]),
@@ -260,7 +262,7 @@ function __all_ready[T](fs: Future[T][]): boolean {
 // values in input order. The canonical edge fan-out: issue N outbound
 // fetches, take every result (cache + primary). All pending futures'
 // fds are in flight simultaneously, so their I/O overlaps on one
-// thread. A future that never resolves (a poll error) lands
+// thread. A future that never resolves (a poll error) is cancelled and lands
 // `on_incomplete` in its slot — generic `T` has no default,
 // so the caller supplies the fallback (matching the realities of a
 // blocking poll, which otherwise always makes progress).
@@ -291,6 +293,7 @@ pub function gather_on[D: Driver, T](drv: D, fs_in: Future[T][], on_incomplete: 
     }
     let ready: i32 = drv.poll_ready(fds, -1);
     if (ready < 0) {
+      let dl: i32 = __drop_losers(drv, fs, -1);
       break;
     }
     let ti: i32 = idxs[ready];
@@ -425,7 +428,7 @@ pub function race_on[D: Driver, T](drv: D, fs_in: Future[T][], none_val: T): (i3
 // because a timed-out slot must be distinguishable from a real result
 // that happens to equal the sentinel, e.g. an empty body.) This is
 // happy-eyeballs with an SLA: fan out to
-// N upstreams, take whatever answers in time, drop the rest.
+// N upstreams, take whatever answers in time, cancel the rest.
 pub function with_deadline[T](deadline: Duration, fs_in: Future[T][]): Option[T][] {
   return with_deadline_on(real_driver(), deadline, fs_in);
 }
@@ -489,8 +492,7 @@ pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: F
       }
     }
   }
-  // Drop the pollables of any future that timed out (still Pending) so wasm
-  // doesn't trap with "resource has children" — no-op on native/interp.
+  // Cancel every future that timed out (still Pending).
   let dd: i32 = __drop_losers(drv, fs, -1);
   // Some(v) for a future that resolved in time; None for one that timed out
   // (no sentinel ambiguity — an empty/zero result is distinct from absent).

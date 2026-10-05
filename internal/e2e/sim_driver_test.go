@@ -118,3 +118,51 @@ func TestWASMSimDriver(t *testing.T) {
 		t.Errorf("wasm std/sim exit = %d, want 42 (failing check index)", code)
 	}
 }
+
+// gatherAbandonProgram stops a gather whose wait fails: the second future's
+// token is negative, so the sim driver has nothing to wait on and answers -1.
+// gather fills that slot with on_incomplete and must cancel the future it
+// abandons, resuming it with cancelled(). Exit 0 iff it did.
+const gatherAbandonProgram = `import "std/async";
+import "std/sim";
+
+function main(): i32 {
+    let d: sim.Sim = sim.new(1);
+    let woke: Cell[i32] = cell_new(0);
+    let done: async.Future[i32] = Ready(7);
+    let lost: async.Future[i32] = Pending(0 - 1, (w: i32) => {
+        woke.set(w);
+        let r: async.Future[i32] = Ready(0);
+        return r;
+    });
+    let got: i32[] = async.gather_on(d, [done, lost], 0 - 9);
+    if (got[0] != 7 || got[1] != 0 - 9) { return 1; }
+    if (woke.get() != async.cancelled()) { return 2; }
+    return 0;
+}
+`
+
+func TestSimGatherCancelsWhatItAbandonsX86_64(t *testing.T) {
+	bin := buildFernCLI(t)
+	qemu := x86QemuOrEmpty(t)
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "gather.fern")
+	if err := os.WriteFile(srcPath, []byte(gatherAbandonProgram), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	out := filepath.Join(dir, "gather.bin")
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, srcPath).CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, o)
+	}
+	cmd := runX86Bin(qemu, out)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("exit = %d, want 0 (2 = the abandoned future was not cancelled)", code)
+	}
+}
+
+func TestWASMSimGatherCancelsWhatItAbandons(t *testing.T) {
+	if code := runWasmResult(t, gatherAbandonProgram); code != 0 {
+		t.Errorf("exit = %d, want 0 (2 = the abandoned future was not cancelled)", code)
+	}
+}
