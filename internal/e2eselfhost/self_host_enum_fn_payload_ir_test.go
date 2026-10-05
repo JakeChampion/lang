@@ -8,6 +8,8 @@ import (
 // a generic-style recursive enum whose Pending variant carries a FUNCTION-typed
 // payload. main constructs Pending(41, step), matches it, and INDIRECT-calls the
 // bound continuation k(41) -> step(41) -> Ready(42), so it exits 42.
+// `pending` is `@noinline` so main cannot see that k is step and call it
+// directly.
 //
 // Before slice 5, the user-enum match path recovered the payload type but had no
 // path to mark a function-typed field a closure local, so lower_func bailed and
@@ -18,8 +20,11 @@ const futureEnumProgram = `enum Future { Ready(i32), Pending(i32, (i32) => Futur
 
 function step(x: i32): Future { return Ready(x + 1); }
 
+@noinline
+function pending(): Future { return Pending(41, step); }
+
 function main(): i32 {
-    let f: Future = Pending(41, step);
+    let f: Future = pending();
     match (f) {
         Ready(v) => { return v; },
         Pending(tag, k) => {
