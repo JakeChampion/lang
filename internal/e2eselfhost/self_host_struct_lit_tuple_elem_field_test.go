@@ -85,6 +85,7 @@ func tupleElemFieldSrc(run string, rounds int) string {
 var tupleElemFieldRounds = [2]int{200, 2000}
 
 func TestSelfHostStructLitTupleElemFieldX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -120,6 +121,7 @@ func TestSelfHostStructLitTupleElemFieldX86_64(t *testing.T) {
 }
 
 func TestSelfHostStructLitTupleElemFieldSanitizeX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
