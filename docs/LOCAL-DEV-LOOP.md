@@ -167,28 +167,33 @@ every function value resolved into .data and `blr`'d into it (23 SEGVs); and the
 (`ldr x0, =1234567890123` loaded 1912767691). All three now REFUSE rather than
 emit garbage when they cannot resolve something.
 
-## Where a whole native build spends its time
+## Historical Go-compiler build profile (2026-09-02)
+
+This profile describes the retired Go compilation pipeline. `bin/fern -target`
+now invokes the self-host compiler, so neither these shares nor the Go worker
+and GC tuning below describe a current target build. Profile the self-host
+compiler with the tools below, and use `scripts/perf-history` for the tracked
+trend. Reproducing this Go profile requires the historical compiler source.
 
 Profile of `bin/fern -target x86-64-linux` on `examples/self_host/fern.fern`
 (4-core container, 2026-09-02, 34.9 s wall): codegen 72% — `ir.LowerWith`
 32%, `ir.OptimizeCleanup` 22%, rendering the asm text 10% — the in-process
 assembler 18.5% (of which parsing that text back is 14.5% and layout 3.8%),
 front end 8%, and GC 28% of CPU across all of it. The codegen-to-assembler
-text round trip is the largest inefficiency in the pipeline (#7993); the IR
-passes are the largest cost. To re-measure, wrap `run()` in
+text round trip was the largest inefficiency in that pipeline (#7993); the IR
+passes were the largest cost. The profiling recipe then wrapped `run()` in
 `pprof.StartCPUProfile` from a throwaway `cmd/fern` test and read
-`go tool pprof -top -cum`.
+`go tool pprof -top -cum`; it does not profile today's target compiler.
 
-Two stages of that pipeline run on every core (#8176): `ir.LowerWith`'s
-per-function body lowering (`FERN_LOWER_JOBS=N` sets the worker count, `1` is
-sequential) and the x86-64 assembler's line parse, which reads the text in
-chunks ahead of the in-order encode. Both are GC-bound rather than core-bound:
+Two stages of that pipeline ran on every core (#8176): `ir.LowerWith`'s
+per-function body lowering (`FERN_LOWER_JOBS=N` set the worker count, `1` was
+sequential) and the x86-64 assembler's line parse, which read the text in
+chunks ahead of the in-order encode. Both were GC-bound rather than core-bound:
 on the same container the lowering loop went 3.4 s to 2.3 s at four workers
-and 3.0 s to 1.3 s with `GOGC=400`, so the allocation rate, not the worker
-count, is what to attack next. `ir.OptimizeCleanup` was tried on the same
-pool and gained nothing measurable at the default GOGC (its passes copy each
-op list per round, so it is allocation all the way down); it stays sequential
-until that copying goes.
+and 3.0 s to 1.3 s with `GOGC=400`, which made allocation rate the next target.
+`ir.OptimizeCleanup` was tried on the same
+pool and gained nothing measurable at the default GOGC (its passes copied each
+op list per round); it remained sequential.
 
 ## Historical self-host emit profile (2026-10-02)
 
@@ -201,9 +206,11 @@ where stage0's releases), 57 s wall on the 4-core container under other load
 the same compiler: the input tree moves the count by under 0.02%, the
 building compiler by 3%. These measurements predate the removal of the FnSigs
 analysis in `40231668cf` and have not been re-measured on current main. The
-retained inclusive shares below describe that 2026-10-02 pass, one pass each;
-the deleted analysis rows are omitted. Re-measure before using these shares to
-prioritize current compiler work.
+retained inclusive shares below describe selected costs from that 2026-10-02
+pass. The bullets omit the deleted analysis rows and are not a complete
+breakdown of the totals; the optimization history afterward retains names as
+measured then. Re-measure before using these shares to prioritize current
+compiler work.
 
 - The semantic lowering (`semlower.target_substitution`) was 60%: producing
   the rows 40% (`ssarc.lower` of 13.5k bodies 17%, `semsource.build_module`

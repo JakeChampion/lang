@@ -9,8 +9,8 @@ compiler with 0 differing on both bases.
 
 ## What the profile named
 
-The whole-compiler emit (`docs/LOCAL-DEV-LOOP.md`, "Where a whole self-host
-emit spends its time") after the two scan removals of #10993 still had three
+The whole-compiler emit ([Historical self-host emit profile (2026-10-02)](../LOCAL-DEV-LOOP.md#historical-self-host-emit-profile-2026-10-02))
+after the two scan removals of #10993 still had three
 scans in its inclusive top rows:
 
 - `asmcore.check_undefined_calls` 8.12 G of 227.37 G: `callgate_expr` looked
