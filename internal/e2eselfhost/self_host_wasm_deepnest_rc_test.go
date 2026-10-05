@@ -16,7 +16,8 @@ import (
 // generated fn rc==1-gates internally, so a shared child at rc>1 just
 // decrements (no over-release). (Arrays-of-structs deep-release + enum variant
 // payload dispatch are later stages; here struct-array fields still free one
-// level and enum boxes free flat.)
+// level and enum boxes free flat.) Where a case's arrays are constants they go
+// through id so the tree is built on the heap rather than placed as a constant.
 func TestSelfHostRcDeepNestWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm deep-nest e2e")
@@ -34,19 +35,19 @@ func TestSelfHostRcDeepNestWasm(t *testing.T) {
 	}{
 		// 2-level: releasing Outer transitively frees Inner's array (the inner
 		// box was already freed one-level before; now its array is too).
-		{"deep-nested-2", "struct Inner { xs: i32[], n: i32 } struct Outer { inner: Inner, m: i32 } function main(): i32 { let i = Inner { xs: [1, 2, 3], n: 5 }; let o = Outer { inner: i, m: 9 }; return o.inner.xs[2] + o.inner.n + o.m + __rc_underflow_count(); }", 17},
+		{"deep-nested-2", "struct Inner { xs: i32[], n: i32 } struct Outer { inner: Inner, m: i32 } function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let i = Inner { xs: id([1, 2, 3]), n: 5 }; let o = Outer { inner: i, m: 9 }; return o.inner.xs[2] + o.inner.n + o.m + __rc_underflow_count(); }", 17},
 		// 3-level transitive: C -> B -> A -> A.v array.
-		{"deep-nested-3", "struct A { v: i32[] } struct B { a: A, x: i32 } struct C { b: B, y: i32 } function main(): i32 { let a = A { v: [7, 8] }; let b = B { a: a, x: 1 }; let c = C { b: b, y: 2 }; return c.b.a.v[1] + c.b.x + c.y + __rc_underflow_count(); }", 11},
+		{"deep-nested-3", "struct A { v: i32[] } struct B { a: A, x: i32 } struct C { b: B, y: i32 } function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let a = A { v: id([7, 8]) }; let b = B { a: a, x: 1 }; let c = C { b: b, y: 2 }; return c.b.a.v[1] + c.b.x + c.y + __rc_underflow_count(); }", 11},
 		// A nested STRING field deep in the tree is released too.
 		{"deep-nested-string", "struct In { s: string } struct Out { in: In, n: i32 } function main(): i32 { let i = In { s: \"ab\" + \"cd\" }; let o = Out { in: i, n: 38 }; return o.in.s.len() + o.n + __rc_underflow_count(); }", 42},
 		// A deep-nested-struct churn: built + freed 50k times. The inner arrays
 		// reclaim transitively each cycle (no OOM), detector clean — proves real
 		// transitive free (50k leaked inner arrays would exhaust memory).
-		{"deep-nested-churn", "struct Inner { xs: i32[], n: i32 } struct Outer { inner: Inner, m: i32 } function mk(): i32 { let i = Inner { xs: [1, 2, 3, 4, 5, 6, 7, 8], n: 5 }; let o = Outer { inner: i, m: 9 }; return o.inner.xs[7] + o.m; } function main(): i32 { let k = 0; let s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __rc_underflow_count(); }", 3},
+		{"deep-nested-churn", "struct Inner { xs: i32[], n: i32 } struct Outer { inner: Inner, m: i32 } function id(xs: i32[]): i32[] { return xs; } function mk(): i32 { let i = Inner { xs: id([1, 2, 3, 4, 5, 6, 7, 8]), n: 5 }; let o = Outer { inner: i, m: 9 }; return o.inner.xs[7] + o.m; } function main(): i32 { let k = 0; let s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __rc_underflow_count(); }", 3},
 		// Builder-escape across the deep tree: mk builds the nested value and
 		// returns the outer (move); the caller's transitive release frees the
 		// whole tree exactly once.
-		{"deep-builder-escape", "struct Inner { xs: i32[], n: i32 } struct Outer { inner: Inner, m: i32 } function mk(): Outer { let i = Inner { xs: [3, 4, 5], n: 6 }; return Outer { inner: i, m: 7 }; } function main(): i32 { let o = mk(); let p = mk(); return o.inner.xs[1] + o.inner.n + o.m + __rc_underflow_count(); }", 17},
+		{"deep-builder-escape", "struct Inner { xs: i32[], n: i32 } struct Outer { inner: Inner, m: i32 } function id(xs: i32[]): i32[] { return xs; } function mk(): Outer { let i = Inner { xs: id([3, 4, 5]), n: 6 }; return Outer { inner: i, m: 7 }; } function main(): i32 { let o = mk(); let p = mk(); return o.inner.xs[1] + o.inner.n + o.m + __rc_underflow_count(); }", 17},
 		// Stage B: an array-of-structs LOCAL deep-releases each element's fields
 		// (here each Inner's xs array) via $__fern_arr_release_<Inner>, not just
 		// the element boxes — value-correct + detector clean.
@@ -65,7 +66,7 @@ func TestSelfHostRcDeepNestWasm(t *testing.T) {
 		// string payload is freed.
 		{"enum-string-payload-released", "enum Shape { Circle(string), Square(i32) } function main(): i32 { let s: Shape = Circle(\"ab\" + \"cd\"); match (s) { Circle(name) => { return name.len() + 38 + __rc_underflow_count(); }, Square(w) => { return w; } } }", 42},
 		// An enum array-payload variant releases its array.
-		{"enum-array-payload-released", "enum Box { Has(i32[]), Empty } function main(): i32 { let b: Box = Has([10, 20, 30]); match (b) { Has(xs) => { return xs[1] + 22 + __rc_underflow_count(); }, Empty => { return 0; } } }", 42},
+		{"enum-array-payload-released", "enum Box { Has(i32[]), Empty } function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let b: Box = Has(id([10, 20, 30])); match (b) { Has(xs) => { return xs[1] + 22 + __rc_underflow_count(); }, Empty => { return 0; } } }", 42},
 		// Churn: 50k enum-with-string-payload built + freed; the payload reclaims
 		// each cycle (no OOM), detector clean — proves the variant-dispatch free.
 		{"enum-payload-churn", "enum Shape { Circle(string), Square(i32) } function mk(): i32 { let s: Shape = Circle(\"x\" + \"y\"); match (s) { Circle(name) => { return name.len(); }, Square(w) => { return w; } } } function main(): i32 { let k = 0; let n = 0; while (k < 50000) { n = mk(); k = k + 1; } return (n % 7) + __rc_underflow_count(); }", 2},
