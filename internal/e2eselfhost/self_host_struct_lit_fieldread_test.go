@@ -157,7 +157,6 @@ struct P { f: string, n: i32 }` +
 // TestSelfHostStructLitFieldReadX86_64 — a scalar field read off a struct
 // literal releases the temporary box, and an rc-field read keeps refusing.
 func TestSelfHostStructLitFieldReadX86_64(t *testing.T) {
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

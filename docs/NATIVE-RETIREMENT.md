@@ -195,7 +195,10 @@ group is one PR, after the re-point.
      are generated from moved to `internal/x86tbl` and `internal/arm64tbl`,
      without their Intel spellings and probes.
 
-   Still to go: `docs/BACKEND-PARITY.md` loses its per-backend comparisons.
+   - `internal/fernrt`, the Go compiler's Fern-written runtime helpers, had
+     no importer once the emitters went, and went with the IR options only
+     it passed. `docs/BACKEND-PARITY.md` lost its per-backend comparisons
+     and describes the self-host's targets only.
 6. **DONE: `cmd/fern` is the launcher** (#4451). Go keeps the parser, checker
    and interpreter, which the oracle needs, and the report, package and
    literate modes. Every `-target` compile execs the self-host compiler

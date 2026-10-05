@@ -966,21 +966,8 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 // TestSelfHostContainerAliasBindX86_64 — a plain alias of an rc container shares
 // its credit, and every row frees what it allocates.
 func TestSelfHostContainerAliasBindX86_64(t *testing.T) {
-	boxedProbes(t)
-	runContainerAliasCases(t, true)
-}
-
-// The rows that allocate nothing are scalar tuples, which the inliner splits.
-func TestSelfHostContainerAliasScalarX86_64(t *testing.T) {
-	runContainerAliasCases(t, false)
-}
-
-func runContainerAliasCases(t *testing.T, boxes bool) {
 	cli := newStrictCLI(t)
 	for _, tc := range containerAliasCases() {
-		if (tc.allocs > 0) != boxes {
-			continue
-		}
 		t.Run(tc.name, func(t *testing.T) {
 			asm := cli.emit(t, "x86-64-linux", tc.src, "FERN_LEAKCHECK=1")
 			stderr, exit := hevRun(t, cli.runner, buildBin(t, cli.gcc, t.TempDir(), "alias", asm))

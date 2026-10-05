@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"github.com/jakechampion/lang/internal/e2eharness"
 	"strconv"
 	"strings"
 	"testing"
@@ -140,7 +139,6 @@ func leakCounts(t *testing.T, name, src string, wantExit int) (int64, int64, int
 }
 
 func TestX86_64MatchCallScrutineeReclaim(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	for _, tc := range []struct {
 		name string
 		src  string

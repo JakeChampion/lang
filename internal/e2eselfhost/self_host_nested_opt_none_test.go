@@ -151,7 +151,6 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 // TestSelfHostNestedOptNoneX86_64 — a `Some(None)` payload keeps the binding's
 // declared Option type, so the nested `match` lowers, and every row balances.
 func TestSelfHostNestedOptNoneX86_64(t *testing.T) {
-	boxedProbes(t)
 	cli := newStrictCLI(t)
 	for _, tc := range nestedOptNoneCases() {
 		t.Run(tc.name, func(t *testing.T) {

@@ -213,7 +213,6 @@ function round(i: i32): i32 {
 // row under FERN_SANITIZE=1: an identity guard that frees a box another holder
 // still reads is an over-release into a freelist, which the census cannot see.
 func TestSelfHostMapAliasGroupX86_64(t *testing.T) {
-	boxedProbes(t)
 	cli := newStrictCLI(t)
 	for _, tc := range mapAliasGroupCases() {
 		t.Run(tc.name, func(t *testing.T) {

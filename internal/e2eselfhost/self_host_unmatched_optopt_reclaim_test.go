@@ -261,7 +261,6 @@ function round(i: i32): i32 {
 // TestSelfHostUnmatchedOptoptX86_64 — an unmatched nested-Option local reclaims
 // both boxes, and an aliased rc inner payload is never freed under its alias.
 func TestSelfHostUnmatchedOptoptX86_64(t *testing.T) {
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

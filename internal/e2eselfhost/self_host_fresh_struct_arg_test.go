@@ -95,7 +95,6 @@ func freshStructArgCases() []freshStructArgCase {
 // carries the over-release one, since a doubly-released block returns to the
 // freelist and moves neither count.
 func TestSelfHostFreshStructArgX86_64(t *testing.T) {
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

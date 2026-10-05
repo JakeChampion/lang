@@ -3,7 +3,6 @@ package e2eharness
 import (
 	"os"
 	"strings"
-	"testing"
 )
 
 // ChildEnv builds the environment for a compiler or driver child process:
@@ -41,34 +40,7 @@ func ChildEnv(extra ...string) []string {
 		}
 		env = append(env, kv)
 	}
-	return append(env, ProbeEnv(extra...)...)
-}
-
-// BoxedProbe compiles with the semantic inliner off, for a probe that pins the
-// rc plan for a tuple, record or variant box the inliner would split into its
-// parts, leaving nothing on the heap to count.
-const BoxedProbe = "FERN_SEM_INLINE="
-
-// boxed is set for the length of a BoxedProbes test.
-var boxed bool
-
-// BoxedProbes compiles the rest of the test's programs as BoxedProbe does,
-// through ChildEnv and through children that inherit the test's environment.
-// The setting is the test's own, so a FERN_SEM_INLINE in the developer's
-// shell still reaches no ChildEnv child.
-func BoxedProbes(t testing.TB) {
-	t.Helper()
-	t.Setenv("FERN_SEM_INLINE", "")
-	boxed = true
-	t.Cleanup(func() { boxed = false })
-}
-
-// ProbeEnv is env with BoxedProbe added while a BoxedProbes test runs.
-func ProbeEnv(env ...string) []string {
-	if boxed {
-		return append(env, BoxedProbe)
-	}
-	return env
+	return append(env, extra...)
 }
 
 // SelfHostVerify turns on the self-host compiler's re-checks of its own

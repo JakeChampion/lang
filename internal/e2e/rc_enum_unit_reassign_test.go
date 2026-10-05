@@ -1,10 +1,6 @@
 package e2e
 
-import (
-	"testing"
-
-	"github.com/jakechampion/lang/internal/e2eharness"
-)
+import "testing"
 
 // A local initialised from a qualified unit variant (`Pick.First`) owns
 // the static sentinel, so a payload box assigned over it later is released
@@ -12,7 +8,6 @@ import (
 // payload goes through ids so it is built on the heap rather than placed as
 // a constant.
 func TestEnumLocalReassignedFromAUnitVariant(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	const loop = `
 function ids(s: string): string { return s; }
 function main(): i32 {

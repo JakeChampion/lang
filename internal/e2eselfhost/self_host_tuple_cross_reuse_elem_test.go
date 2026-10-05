@@ -242,7 +242,6 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 // frees ABOVE allocs a double free. The exact alloc count catches the reuse
 // silently ceasing to pair these shapes, which would make the rest vacuous.
 func TestSelfHostTupleCrossReuseElemX86_64(t *testing.T) {
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

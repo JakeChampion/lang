@@ -47,9 +47,9 @@ var CodegenAliases = map[string]string{
 	"__method_MapIter_key":      "__mapiter_key_impl",
 	"__method_MapIter_value":    "__mapiter_value_impl",
 	"__method_MapIter_advance":  "__mapiter_advance_impl",
-	// The socket builtins whose runtime helper is written in Fern
-	// (internal/fernrt): the helper is named by its runtime symbol, and a
-	// backend that calls helpers by the builtin's name reaches it here.
+	// The socket builtins whose runtime helper is written in Fern: the
+	// helper is named by its runtime symbol, and a backend that calls
+	// helpers by the builtin's name reaches it here.
 	"tcp_listen":       "__fern_tcp_listen",
 	"tcp_recv":         "__fern_tcp_recv",
 	"tcp_send":         "__fern_tcp_send",
