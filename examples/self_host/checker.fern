@@ -22451,8 +22451,9 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
 pub struct ModuleEnv { sigs: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[] }
 
 function module_env(mod: parser.Module): ModuleEnv {
-  // Union NAMES come before the struct sigs, so a struct field typed as a
-  // union resolves rather than going unknown; func sigs read both.
+  // The struct sigs resolve against the union NAMES, so a struct field typed
+  // as a union resolves rather than going unknown; the full union sigs, with
+  // their variants, come after, and func sigs read both.
   let rnames: string[] = resource_names(mod);
   let structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), rnames);
   let struct_names: string[] = [];
@@ -24245,8 +24246,8 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
   return st;
 }
 
-function annotate_func(fd: parser.FuncDecl, mt: ModuleEnv): parser.FuncDecl {
-  let s: Scope = build_func_scope(fd, mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs);
+function annotate_func(fd: parser.FuncDecl, env: ModuleEnv): parser.FuncDecl {
+  let s: Scope = build_func_scope(fd, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
   return parser.FuncDecl { ...fd, body: annotate_block(fd.body, s) };
 }
 
@@ -24276,13 +24277,13 @@ function whole_focus(mod: parser.Module): Focus {
   return Focus { funcs: funcs, top: true };
 }
 
-function annotate_module_in(mod: parser.Module, mt: ModuleEnv, focus: Focus): parser.Module {
-  let rmod: parser.Module = pretype_module_in(settle_literal_locals_in(mod, mt, focus), mt, focus);
+function annotate_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
+  let rmod: parser.Module = pretype_module_in(settle_literal_locals_in(mod, env, focus), env, focus);
   let nfuncs: parser.FuncDecl[] = [];
   let i: i32 = 0;
   while (i < rmod.funcs.len()) {
     if (focus.funcs[i]) {
-      nfuncs = nfuncs.append(annotate_func(rmod.funcs[i], mt));
+      nfuncs = nfuncs.append(annotate_func(rmod.funcs[i], env));
     } else {
       nfuncs = nfuncs.append(rmod.funcs[i]);
     }
@@ -24290,7 +24291,7 @@ function annotate_module_in(mod: parser.Module, mt: ModuleEnv, focus: Focus): pa
   }
   let ntop: ast.Stmt[] = rmod.top_stmts;
   if (focus.top) {
-    ntop = annotate_block(rmod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs));
+    ntop = annotate_block(rmod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
   }
   return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls, inferred_consts: rmod.inferred_consts, todo_sites: rmod.todo_sites };
 }
@@ -24415,12 +24416,12 @@ pub function ensure_annotated_parts(mods: parser.Module[]): parser.Module[] {
     }
   }
   let view = parser.Module { ...mods[0], funcs: funcs, structs: structs, aliases: aliases, enums: enums };
-  let mt = module_env(view);
+  let env = module_env(view);
   let out: parser.Module[] = [];
   let k: i32 = 0;
   while (k < mods.len()) {
     if (any_focus(focus[k])) {
-      out = out.append(annotate_module_in(mods[k], ModuleEnv { ...mt, imports: import_paths_of(mods[k]) }, focus[k]));
+      out = out.append(annotate_module_in(mods[k], ModuleEnv { ...env, imports: import_paths_of(mods[k]) }, focus[k]));
     } else {
       out = out.append(mods[k]);
     }
@@ -25323,7 +25324,7 @@ pub function pretype_module(mod: parser.Module): parser.Module {
   return mod;
 }
 
-function pretype_module_in(mod: parser.Module, mt: ModuleEnv, focus: Focus): parser.Module {
+function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
   // Keep untouched functions and avoid rebuilding bodies with nothing to retype.
   let coll: string[] = colliding_variant_names(mod);
   let top_hit: boolean = focus.top && needs_pretype_or_rescope(mod.top_stmts, coll);
@@ -25346,7 +25347,7 @@ function pretype_module_in(mod: parser.Module, mt: ModuleEnv, focus: Focus): par
   while (i < mod.funcs.len()) {
     let func: parser.FuncDecl = mod.funcs[i];
     if (hits[i]) {
-      let fs: Scope = build_func_scope(func, mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs);
+      let fs: Scope = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
       nfuncs = nfuncs.append(parser.FuncDecl { ...func, body: pretype_stmts(func.body, fs) });
     } else {
       nfuncs = nfuncs.append(func);
@@ -25355,7 +25356,7 @@ function pretype_module_in(mod: parser.Module, mt: ModuleEnv, focus: Focus): par
   }
   let ntop: ast.Stmt[] = mod.top_stmts;
   if (top_hit) {
-    ntop = pretype_stmts(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs));
+    ntop = pretype_stmts(mod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
 }
@@ -26848,7 +26849,7 @@ pub function settle_literal_locals(mod: parser.Module): parser.Module {
   return settle_literal_locals_in(mod, module_env(mod), whole_focus(mod));
 }
 
-function settle_literal_locals_in(mod: parser.Module, mt: ModuleEnv, focus: Focus): parser.Module {
+function settle_literal_locals_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
   let generics: string[] = generic_fn_names(mod.funcs);
   let nfuncs: parser.FuncDecl[] = [];
   let k: i32 = 0;
@@ -26856,7 +26857,7 @@ function settle_literal_locals_in(mod: parser.Module, mt: ModuleEnv, focus: Focu
     let hit: boolean = focus.funcs[k] && needs_lit_settle(func.body, generics);
     k = k + 1;
     if (hit) {
-      let fs: Scope = build_func_scope(func, mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs);
+      let fs: Scope = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
       nfuncs = nfuncs.append(parser.FuncDecl { ...func, body: settle_lit_body(func.body, fs) });
     } else {
       nfuncs = nfuncs.append(func);
@@ -26864,7 +26865,7 @@ function settle_literal_locals_in(mod: parser.Module, mt: ModuleEnv, focus: Focu
   }
   let ntop: ast.Stmt[] = mod.top_stmts;
   if (focus.top && needs_lit_settle(mod.top_stmts, generics)) {
-    ntop = settle_lit_body(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs));
+    ntop = settle_lit_body(mod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
 }
