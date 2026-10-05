@@ -549,9 +549,24 @@ Three rules follow:
   broadcast (§8) is a derived shape that is wrong (`ARRAY-ALGEBRA.md`
   §4), and takes the same status an out-of-range index does (§5).
 
-`map` and `zip_with` allocate their result even when the receiver is
-consumed and unique. §1's licence for the in-place form is stated and
-unimplemented; taking it is the kernel work, not this list's.
+`outer` also walks data directly when both operands are packed. Its nested
+loop visits every right-hand element for each left-hand element and retains
+the callback, including captures and effects. It checks the joined shape for
+overflow before either path. Strided inputs retain the broadcast-view walk.
+Both paths produce canonical result strides, including when an input has a
+noncanonical stride on an extent-one axis.
+
+On arm64-darwin on 2026-10-05, `examples/array_pipeline/ndarray_outer.fern`
+with two 32-element vectors and 200 rounds, nine alternating processes per
+build, measured median times of 10,036 ns before and 2,465 ns after this
+packed scalar path. The ranges were 9,682-10,666 ns and 2,360-2,548 ns.
+Allocator calls fell from 6,200 to 3,600 and fresh bytes from 20,248 to
+20,016. Every result and both inputs were checked outside the timer.
+This is the scalar baseline for subsequent product kernels.
+
+General `map` and `zip_with` allocate their result even when the receiver is
+consumed and unique. The primary compiler can donate the packed literal-scale
+map's data buffer under the ownership and uniqueness conditions in §6.
 
 ## 8. Broadcasting
 

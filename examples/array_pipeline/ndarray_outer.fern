@@ -1,0 +1,117 @@
+// Native probe: left length, right length, rounds, packed scalar probe (0/1).
+// Check every result and both inputs outside the timed region. The packed
+// probe retains the ordinary element-function call and append semantics.
+import "std/ndarray";
+import "std/string";
+
+function input(n: i32, bias: i32): ndarray.NdArray[f64] {
+  let data: f64[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    data = data.append((i % 127 + bias) as f64 * 0.125);
+    i = i + 1;
+  }
+  return ndarray.from_flat(data, [n]);
+}
+
+@noinline
+function packed_outer(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64], f: (f64, f64) => f64): ndarray.NdArray[f64] {
+  let xs: f64[] = a.to_flat();
+  let ys: f64[] = b.to_flat();
+  let out: f64[] = [];
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    let j: i32 = 0;
+    while (j < ys.len()) {
+      out = out.append(f(xs[i], ys[j]));
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return ndarray.from_flat(out, [xs.len(), ys.len()]);
+}
+
+@noinline
+function ordinary_outer(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64]): ndarray.NdArray[f64] {
+  return a.outer(b, (x: f64, y: f64): f64 => x * y);
+}
+
+@noinline
+function run_outer(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64], packed: boolean): ndarray.NdArray[f64] {
+  if (packed) {
+    return packed_outer(a, b, (x: f64, y: f64): f64 => x * y);
+  }
+  return ordinary_outer(a, b);
+}
+
+function correct(out: ndarray.NdArray[f64], a: ndarray.NdArray[f64], b: ndarray.NdArray[f64], n: i32, m: i32): boolean {
+  if (out.shape().len() != 2 || out.shape()[0] != n || out.shape()[1] != m || !out.is_packed()) {
+    return false;
+  }
+  let values: f64[] = out.to_flat();
+  let xs: f64[] = a.to_flat();
+  let ys: f64[] = b.to_flat();
+  let i: i32 = 0;
+  while (i < n) {
+    let x: f64 = (i % 127 + 1) as f64 * 0.125;
+    if (xs[i] != x) {
+      return false;
+    }
+    let j: i32 = 0;
+    while (j < m) {
+      let y: f64 = (j % 127 + 3) as f64 * 0.125;
+      if (ys[j] != y || values[i * m + j] != x * y) {
+        return false;
+      }
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  let n: i32 = 32;
+  let m: i32 = 32;
+  let rounds: i32 = 2;
+  let packed: boolean = false;
+  if (argv.len() > 1) {
+    n = argv[1].parse_int_or(n);
+  }
+  if (argv.len() > 2) {
+    m = argv[2].parse_int_or(m);
+  }
+  if (argv.len() > 3) {
+    rounds = argv[3].parse_int_or(rounds);
+  }
+  if (argv.len() > 4) {
+    packed = argv[4] == "1";
+  }
+  if (n < 1 || m < 1 || rounds < 1 || n > 2147483647 / m) {
+    return 1;
+  }
+  let a: ndarray.NdArray[f64] = input(n, 1);
+  let b: ndarray.NdArray[f64] = input(m, 3);
+  let mark_calls: i64 = __heap_alloc_count();
+  let mark_bytes: i64 = __heap_bump_bytes();
+  let elapsed: i64 = 0i64;
+  let r: i32 = 0;
+  while (r < rounds) {
+    let start: i64 = monotonic_ns();
+    let out: ndarray.NdArray[f64] = run_outer(a, b, packed);
+    elapsed = elapsed + monotonic_ns() - start;
+    if (!correct(out, a, b, n, m)) {
+      return 2;
+    }
+    r = r + 1;
+  }
+  let calls: i64 = __heap_alloc_count() - mark_calls;
+  let bytes: i64 = __heap_bump_bytes() - mark_bytes;
+  let mode: string = "ordinary";
+  if (packed) {
+    mode = "packed";
+  }
+  print("{\"n\":" + n.to_string() + ",\"m\":" + m.to_string() + ",\"rounds\":" + rounds.to_string() + ",\"mode\":\"" + mode + "\",\"alloc_calls\":" + calls.to_string() + ",\"fresh_bytes\":" + bytes.to_string() + ",\"ns_per_outer\":" + (elapsed / (rounds as i64)).to_string() + "}");
+  return 0;
+}

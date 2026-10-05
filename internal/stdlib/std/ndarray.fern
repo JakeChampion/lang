@@ -511,16 +511,38 @@ function packed_zip[T, U, V](x: T[], y: U[], f: (T, U) => V): V[] {
 
 // `outer(b, f)` — `f` over every pair of elements, as a packed handle of
 // shape `a.shape() ++ b.shape()`: element `[i.., j..]` is
-// `f(a.get(i..), b.get(j..))`. Each operand is read through a broadcast
-// view, so one buffer is allocated.
+// `f(a.get(i..), b.get(j..))`. Packed operands use a direct walk; others
+// are read through broadcast views. Both paths build one result buffer.
 pub function (a: NdArray[T]) outer[T, U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
-  let ra: i32 = a.shape.len();
-  let rb: i32 = b.shape.len();
   let shape: i32[] = join(a.shape, b.shape);
   check_shape(shape);
+  if (a.is_packed() && b.is_packed()) {
+    return packed_outer(a.data, b.data, shape, f);
+  }
+  let ra: i32 = a.shape.len();
+  let rb: i32 = b.shape.len();
   let x: NdArray[T] = NdArray { data: a.data, shape: join(a.shape, ones(rb)), strides: join(a.strides, zeros(rb)), offset: a.offset };
   let y: NdArray[U] = NdArray { data: b.data, shape: join(ones(ra), b.shape), strides: join(zeros(ra), b.strides), offset: b.offset };
   return x.zip_with(y, f);
+}
+
+// Packed storage already follows reading order. Retain the element function
+// and its call order, with one append walk and no broadcast-view odometers.
+function packed_outer[T, U, V](a: T[], b: U[], shape: i32[], f: (T, U) => V): NdArray[V] {
+  let out: V[] = [];
+  if (b.len() == 0) {
+    return from_flat(out, shape);
+  }
+  let i: i32 = 0;
+  while (i < a.len()) {
+    let j: i32 = 0;
+    while (j < b.len()) {
+      out = out.append(f(a[i], b[j]));
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return from_flat(out, shape);
 }
 
 // `x` followed by `y`.
