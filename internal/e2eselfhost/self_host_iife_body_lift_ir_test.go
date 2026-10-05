@@ -77,6 +77,23 @@ function main(): i32 {
     });
     return fs[0](40i32) & 63i32;
 }`, 41},
+	// A lambda passed as a call argument inside a value-position match's GUARD.
+	// An enum-payload pattern keeps its guard as a guard (a literal pattern
+	// folds it into an if condition), and the IIFE body walk skipped guards, so
+	// the lifted `__lam_N` reached the lowering unboxed. Reduced from nightly
+	// differential seed 82671.
+	{"lambda-in-enum-match-guard", `function f(g: (i32) => i32): i32 { return g(1i32); }
+function main(): i32 {
+    let v: Result[i32, i32] = Ok(819i32);
+    return (match (v) { Ok(a) when (f(((x: i32) => 274i32)) > 3i32) => 42i32, Ok(b) => 7i32, Err(e) => 9i32 });
+}`, 42},
+	// The same, with a lambda capturing a local and the arm's payload binding.
+	{"capturing-lambda-in-enum-match-guard", `function f(g: (i32) => i32): i32 { return g(1i32); }
+function main(): i32 {
+    let k: i32 = 40i32;
+    let o: Option[i32] = Some(3i32);
+    return (match (o) { Some(n) when (f(((x: i32) => x + k + n)) == 44i32) => n + 20i32, Some(m) => 1i32, None => 2i32 });
+}`, 23},
 }
 
 // TestSelfHostIifeBodyLiftIRX86_64 drives the production x86-64 IR path and

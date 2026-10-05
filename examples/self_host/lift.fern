@@ -1731,8 +1731,8 @@ function iife_arms_all_marked(stmts: ast.Stmt[], mfuncs: MFuncs): boolean {
 //
 // On the spine: a statement that declines hands its expressions to the full
 // lift visitor and recurses its bodies through this one. StmtMatch is claimed
-// and rebuilt by hand, because declining it would put the arm GUARDS through
-// the lift too, which this walk has never done.
+// and rebuilt by hand so its arm bodies recurse through this walk; its
+// scrutinee and guards go through the full lift like any other condition.
 function lift_iife_body(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDecls, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: irtables.StructTab): (ast.Stmt[], InlineCloAcc) {
   function ve(x: ast.Expr, a: InlineCloAcc): (ast.Expr, InlineCloAcc, boolean) {
     return ilc_expr_at(x, a, fd, vars, gfns, structs, mfuncs);
@@ -1748,10 +1748,17 @@ function lift_iife_body(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDecls, 
         let ct: i32 = sr.counter;
         let narms: ast.MatchArm[] = [];
         for arm in mm.arms {
+          let ng: ast.Expr = arm.guard;
+          if (arm.has_guard) {
+            let gr: InlineCloRes = lift_inline_closures_expr(arm.guard, fd, vars, fs, ct, gfns, structs, mfuncs);
+            ng = gr.expr;
+            fs = gr.funcs;
+            ct = gr.counter;
+          }
           let (abs, aba) = lift_iife_body(arm.body, fd, vars, fs, ct, gfns, mfuncs, structs);
           fs = aba.funcs;
           ct = aba.counter;
-          narms = narms.append(ast.MatchArm { ...arm, body: abs });
+          narms = narms.append(ast.MatchArm { ...arm, guard: ng, body: abs });
         }
         return (ast.StmtMatch { ...mm, scrutinee: sr.expr, arms: narms }, InlineCloAcc { funcs: fs, counter: ct }, true);
       },
