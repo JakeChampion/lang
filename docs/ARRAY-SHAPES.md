@@ -368,6 +368,37 @@ the same ones faster, which is why the gate is the proof and not the
 verb. Everything else still runs the scalar loop, and nothing fuses or
 donates on this side.
 
+The primary Fern compiler reaches the same kernel through
+`examples/self_host/semndarray.fern`, on typed semantic values before ownership
+planning. Its initial proof accepts a local `from_flat` result, a preceding
+ndarray `map` result, and copies or joins whose every input is proven packed.
+The element function must be a capture-free closure whose body is exactly
+the element multiplied by an `f64` literal. It constructs the result through
+`from_flat`, which preserves the shape and produces canonical row-major
+strides. Ownership planning retains the shared shape and releases temporary
+storage through its ordinary rules.
+
+Parameters, helper returns, cycles, strided transforms, captured factors and
+unresolved element functions remain scalar in this initial primary-compiler
+slice. These are coverage limits, not claims that those cases cannot be
+optimized. `FERN_NO_SCALE_KERNEL=1` disables this rewrite. The primary gate
+checks emitted instructions as well as values: a packed map emits the SIMD
+scale, while a transposed receiver and an unknown parameter retain their map
+calls. The primary compiler's broader layout and reporting parity remains
+part of #9727.
+
+Measured on arm64-darwin on 2026-10-05 with
+`examples/array_pipeline/ndarray_scale.fern`: the same candidate compiler,
+kernel enabled versus `FERN_NO_SCALE_KERNEL=1`, 1,000 elements, 200 rounds
+per process, nine alternating runs of each build. Median time per map was
+253 ns enabled and 2,235 ns disabled (8.83x). Every checksum agreed. Cold
+allocator calls fell from 15 to 6 and fresh bytes from 10,392 to 8,288.
+Steady counters over 200 rounds were 3,200 versus 1,400 allocator calls and
+10,392 versus 8,344 fresh bytes. Counters include metadata and result checks;
+timing covers only the map. The first result stays live across the run, and
+every later result is checked after its timer. This is a native measurement
+for this input size, not a claim about other targets or shapes.
+
 ## 7. Elementwise, and along an axis
 
 **Normative.** The first slices of #9735: the operations that read every
