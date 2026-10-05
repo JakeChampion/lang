@@ -22,7 +22,9 @@ import (
 // millions of iterations exhaust the heap (SIGKILL 137); WITH it the heap stays
 // flat. A spurious double-free (mis-balanced construction inc) would instead tick
 // __rc_underflow_count() -> exit 99. Exit 0 proves the enum field is reclaimed
-// AND balanced (no over-release) over millions of build/drop cycles.
+// AND balanced (no over-release) over millions of build/drop cycles. Where the
+// shared enum's payload is a constant it is read from id([..]) so the enum is built
+// on the heap rather than placed as a constant.
 func TestSelfHostStructEnumFieldReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -76,7 +78,8 @@ function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() !
 	// while s is live). Exit 0; a mis-balanced inc/dec would tick underflow → 99.
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
-function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let s: Shape = Rect(7); let t: Tagged = Tagged { e: s, n: 1 }; match (t.e) { Rect(v) => { if (v != 7) { bad = 1; } }, _ => { bad = 1; } } match (s) { Rect(w) => { if (w != 7) { bad = 1; } }, _ => { bad = 1; } } i = i + 1; } return bad; }
+function id(xs: i32[]): i32[] { return xs; }
+function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let s: Shape = Rect(id([7])[0]); let t: Tagged = Tagged { e: s, n: 1 }; match (t.e) { Rect(v) => { if (v != 7) { bad = 1; } }, _ => { bad = 1; } } match (s) { Rect(w) => { if (w != 7) { bad = 1; } }, _ => { bad = 1; } } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"struct-enum-field-aliased-balanced", 0)
 
@@ -88,7 +91,8 @@ function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() !
 	// t1.e still valid → exit 0; the pre-fix double-free would tick underflow → 99.
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
-function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let s: Shape = Rect(9); let t1: Tagged = Tagged { e: s, n: 1 }; let t2: Tagged = Tagged { ...t1, n: 2 }; match (t2.e) { Rect(v) => { if (v != 9) { bad = 1; } }, _ => { bad = 1; } } match (t1.e) { Rect(w) => { if (w != 9) { bad = 1; } }, _ => { bad = 1; } } i = i + 1; } return bad; }
+function id(xs: i32[]): i32[] { return xs; }
+function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let s: Shape = Rect(id([9])[0]); let t1: Tagged = Tagged { e: s, n: 1 }; let t2: Tagged = Tagged { ...t1, n: 2 }; match (t2.e) { Rect(v) => { if (v != 9) { bad = 1; } }, _ => { bad = 1; } } match (t1.e) { Rect(w) => { if (w != 9) { bad = 1; } }, _ => { bad = 1; } } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"struct-enum-field-base-copy-balanced", 0)
 

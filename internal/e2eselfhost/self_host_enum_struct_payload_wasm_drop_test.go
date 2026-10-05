@@ -15,7 +15,8 @@ import (
 // consume-by-match churn over a fresh `Full(Inner{items:[..]})` stays bounded under a
 // tight max-memory-size cap with trap-on-grow-failure (the payload buffer + boxes are
 // reclaimed onto the freelist and reused); a regression to the leak exceeds the cap
-// and traps. The WAT assertion pins that $__sem_drop_Inner is emitted.
+// and traps. The WAT assertion pins that $__sem_drop_Inner is emitted. items goes
+// through id so the payload is built on the heap rather than placed as a constant.
 func TestSelfHostEnumStructPayloadDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm enum-struct-payload e2e")
@@ -27,9 +28,10 @@ func TestSelfHostEnumStructPayloadDropWasm(t *testing.T) {
 
 	const cap = "16777216" // 16 MiB
 	prog := `struct Inner { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 enum Box { Full(Inner), Empty }
 function mk(): i32 {
-    let b: Box = Full(Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] });
+    let b: Box = Full(Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) });
     match (b) {
         Full(_) => {},
         Empty => {},

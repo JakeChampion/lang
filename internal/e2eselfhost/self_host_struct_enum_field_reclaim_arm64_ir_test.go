@@ -11,7 +11,9 @@ import (
 // (one level — the variant payload leaks; churn keeps payloads scalar so the box
 // free balances). Under qemu the reclaim is proven by CORRECTNESS (a wrong free of
 // a live enum box corrupts the read-back match) plus a balanced arm64 census.
-// Heavy heap-exhaustion churn is left to the x86 path (too slow under qemu).
+// Heavy heap-exhaustion churn is left to the x86 path (too slow under qemu). Each
+// Rect payload is read from id([..]) so the enum is built on the heap rather than
+// placed as a constant.
 func TestSelfHostStructEnumFieldReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -32,8 +34,9 @@ func TestSelfHostStructEnumFieldReclaimIRArm64(t *testing.T) {
 	// Value: match on Rect(7) → 7 + n(5) = 12.
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
+function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
-    let t: Tagged = Tagged { e: Rect(7), n: 5 };
+    let t: Tagged = Tagged { e: Rect(id([7])[0]), n: 5 };
     let r: i32 = 0;
     match (t.e) { Rect(v) => { r = v; }, _ => { r = 0; } }
     return r + t.n;
@@ -45,10 +48,11 @@ function main(): i32 {
 	// build/drop cycles staying correct (value 0) proves balance on the arm64 arm.
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
+function id(xs: i32[]): i32[] { return xs; }
 function churn(n: i32): i32 {
     let bad: i32 = 0; let i: i32 = 0;
     while (i < n) {
-        let s: Shape = Rect(9);
+        let s: Shape = Rect(id([9])[0]);
         let t: Tagged = Tagged { e: s, n: 1 };
         match (t.e) { Rect(v) => { if (v != 9) { bad = 1; } }, _ => { bad = 1; } }
         i = i + 1;

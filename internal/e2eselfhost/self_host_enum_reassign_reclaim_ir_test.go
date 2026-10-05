@@ -35,14 +35,16 @@ function main(): i32 { return churn(%d); }
 
 // A 4000-byte payload (1000 i32) per reassign: on the register backends, if the
 // superseded array leaks, ~600k iterations exhaust the 2.5 GiB heap and the program
-// traps (exit 137). With the deep-drop it stays flat and completes.
+// traps (exit 137). With the deep-drop it stays flat and completes. The payloads go
+// through id so they are built on the heap rather than placed as constants.
 const enumReassignFlatHeap = `enum Big { A(i32[]), B(i32[]) }
+function id(xs: i32[]): i32[] { return xs; }
 function churn(n: i32): i32 {
     let b: Big = A([0]);
     let i: i32 = 0;
     while (i < n) {
-        b = A([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        b = B([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        b = A(id([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        b = B(id([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
         i = i + 1;
     }
     match (b) { A(_) => { return 1; }, B(_) => { return 7; }, }
@@ -53,16 +55,18 @@ function main(): i32 { return churn(3000000); }
 
 // Corruption probe (x86): a fresh array allocated in the same scope as the reassigns
 // must read back correctly (a mis-freed superseded payload would poison the recycled
-// buffer). acc = 10 * (7+8) = 150.
+// buffer). acc = 10 * (7+8) = 150. The arrays go through id so they are built on
+// the heap rather than placed as constants.
 const enumReassignCorruptionProbe = `enum Bag { Keep(i32[]), Swap(i32[]) }
+function id(xs: i32[]): i32[] { return xs; }
 function churn(n: i32): i32 {
     let b: Bag = Keep([9, 9]);
     let i: i32 = 0;
     let acc: i32 = 0;
     while (i < n) {
-        b = Keep([1, 2]);
-        b = Swap([3, 4]);
-        let fresh: i32[] = [7, 8];
+        b = Keep(id([1, 2]));
+        b = Swap(id([3, 4]));
+        let fresh: i32[] = id([7, 8]);
         acc = acc + fresh[0] + fresh[1];
         i = i + 1;
     }

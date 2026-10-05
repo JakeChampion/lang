@@ -25,7 +25,8 @@ import (
 // struct-dropped B. Its presence proves A recursed into a non-leaf inner. Runtime
 // signal is heap exhaustion: a long churn that leaks C.items each iteration exhausts
 // the bump heap and is SIGKILLed (137); with the multi-level reclaim it stays
-// bounded (exit 0).
+// bounded (exit 0). Each items array goes through id so the chain is built on the
+// heap rather than placed as a constant.
 func TestSelfHostStructMultiLevelDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -64,10 +65,11 @@ func TestSelfHostStructMultiLevelDropIRX86_64(t *testing.T) {
 	// gate) is emitted, and that 150M alloc->drop cycles stay bounded (exit 0); a
 	// regression to the leaf-only drop leaks B.c + C.items every call -> SIGKILL (137).
 	run(t, `struct C { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
 function mk(): i32 {
-    let a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
+    let a: A = A { b: B { c: C { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }, bt: 2 }, at: 7 };
     return a.b.c.items[0] + a.b.c.items[15] + a.b.bt + a.at;
 }
 function main(): i32 {
@@ -80,10 +82,11 @@ function main(): i32 {
 	// of a live buffer down the chain would corrupt the read. a.b.c.items[0..15] sum to
 	// 136, + b.bt 2 + a.at 7 = 145.
 	run(t, `struct C { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
 function main(): i32 {
-    let a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
+    let a: A = A { b: B { c: C { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }, bt: 2 }, at: 7 };
     let sum: i32 = 0; let j: i32 = 0;
     while (j < 16) { sum = sum + a.b.c.items[j]; j = j + 1; }
     return sum + a.b.bt + a.at;
@@ -93,11 +96,12 @@ function main(): i32 {
 	// transitive body-emission closure (need() re-checks) chains beyond depth-2 and the
 	// runtime recursion still terminates. items sum 136 + z/y/x/w tags = 136+1+2+3+4=146.
 	run(t, `struct Z { items: i32[], zt: i32 }
+function id(xs: i32[]): i32[] { return xs; }
 struct Y { z: Z, yt: i32 }
 struct X { y: Y, xt: i32 }
 struct W { x: X, wt: i32 }
 function mk(): i32 {
-    let w: W = W { x: X { y: Y { z: Z { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16], zt: 1 }, yt: 2 }, xt: 3 }, wt: 4 };
+    let w: W = W { x: X { y: Y { z: Z { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]), zt: 1 }, yt: 2 }, xt: 3 }, wt: 4 };
     return w.x.y.z.items[0] + w.x.y.z.items[15] + w.x.y.z.zt + w.x.y.yt + w.x.xt + w.wt;
 }
 function main(): i32 {
