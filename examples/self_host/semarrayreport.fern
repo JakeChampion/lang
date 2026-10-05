@@ -29,6 +29,10 @@ pub function storage_reasons(): string[] {
   return ["guarded-reuse", "reuse-disabled", "shape-unsupported", "borrow-linked-result", "receiver-not-consumed-param", "receiver-still-live", "receiver-supplied", "element-fn-unresolved", "element-fn-captures", "element-fn-effectful", "aliased-arguments"];
 }
 
+pub function kernel_reasons(): string[] {
+  return ["scale-kernel", "disabled", "layout-unknown", "layout-strided", "layout-row-major", "element-fn-unresolved", "element-fn-captures", "element-not-literal-scale", "constructor-unavailable", "builtin-shadowed", "unsupported-operation", "unsupported-element-type"];
+}
+
 pub function render_kind(kind: string, tags: string[], sites: Site[]): string {
   let counts: i32[] = [];
   for tag in tags {

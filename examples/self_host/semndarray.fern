@@ -7,12 +7,17 @@ import "./semtypes";
 import "./typeinfo";
 import "./util";
 import "./semndlayout";
+import "./semarrayreport";
 
-pub struct Scaled { funcs: ssasem.Func[], rewritten: boolean[] }
+pub struct Scaled { funcs: ssasem.Func[], rewritten: boolean[], sites: semarrayreport.Site[] }
 
 struct Def { found: boolean, ins: ssa.SInst }
 
-struct Factor { ok: boolean, literal: string }
+struct Factor { ok: boolean, literal: string, reason: i32 }
+
+function no_factor(reason: i32): Factor {
+  return Factor { ok: false, literal: "", reason: reason };
+}
 
 function definition(f: ssasem.Func, v: i32): Def {
   for b in f.graph.blocks {
@@ -55,7 +60,7 @@ function uncopy(f: ssasem.Func, v: i32, seen: i32[]): i32 {
 // One multiply of the element and a literal. No calls, captures, branches,
 // conversions or additional arithmetic can be discarded by this proof.
 function factor(f: ssasem.Func): Factor {
-  let no: Factor = Factor { ok: false, literal: "" };
+  let no: Factor = no_factor(7);
   // A closure wrapper has its environment first and its element second.
   // The caller has proved that the closure captures nothing, and below no
   // instruction is allowed to read fields out of that environment.
@@ -93,14 +98,14 @@ function factor_body(b: ssa.SBlock, result: i32): boolean {
 }
 
 function literal_factor(f: ssasem.Func, mul: ssa.SInst): Factor {
-  let no: Factor = Factor { ok: false, literal: "" };
+  let no: Factor = no_factor(7);
   let left: Def = definition(f, uncopy(f, mul.args[0], []));
   let right: Def = definition(f, uncopy(f, mul.args[1], []));
   if (!left.found || !right.found) {
     return no;
   }
   if (left.ins.kind_tag == 6 && left.ins.imm == f.params.len() - 1 && right.ins.kind_tag == 1 && f64_type(f.values[right.ins.result])) {
-    return Factor { ok: true, literal: right.ins.str };
+    return Factor { ok: true, literal: right.ins.str, reason: 0 };
   }
   // Preserve the source's operand order, including NaN payload selection.
   return no;
@@ -108,13 +113,16 @@ function literal_factor(f: ssasem.Func, mul: ssa.SInst): Factor {
 
 function closure_factor(f: ssasem.Func, v: i32, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[]): Factor {
   let d: Def = definition(f, uncopy(f, v, []));
-  if (d.found && d.ins.kind_tag == ssasem.closure_new() && d.ins.args.len() == 0) {
+  if (d.found && d.ins.kind_tag == ssasem.closure_new()) {
+    if (d.ins.args.len() != 0) {
+      return no_factor(6);
+    }
     let at: i32 = index.find(d.ins.str);
     if (at >= 0 && usable[at]) {
       return factor(funcs[at]);
     }
   }
-  return Factor { ok: false, literal: "" };
+  return no_factor(5);
 }
 
 function kernel_contract(): ssasem.Contract {
@@ -131,59 +139,103 @@ function from_flat_contract(funcs: ssasem.Func[], index: util.NameIndex, usable:
   return at;
 }
 
-pub function scale_maps(funcs: ssasem.Func[], names: string[], usable: boolean[], open: boolean[]): Scaled {
+pub function scale_maps(funcs: ssasem.Func[], names: string[], usable: boolean[], open: boolean[], enabled: boolean, report: boolean): Scaled {
   let index: util.NameIndex = util.name_index(names);
   let rewritten: boolean[] = [];
   for f in funcs {
     rewritten = rewritten.append(false);
   }
-  if (index.find("__smm_ndarray__NdArray_map__f64__f64") < 0) {
-    return Scaled { funcs: funcs, rewritten: rewritten };
+  if (!report && index.find("__smm_ndarray__NdArray_map__f64__f64") < 0) {
+    return Scaled { funcs: funcs, rewritten: rewritten, sites: [] };
   }
   let layouts: semndlayout.Facts = semndlayout.analyze(funcs, names, usable, open);
   let out: ssasem.Func[] = [];
+  let sites: semarrayreport.Site[] = [];
   rewritten = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
     let f: ssasem.Func = funcs[i];
-    if (!usable[i] || !has_map(f) || util.has_str(f.shadows, "__scale_f64")) {
+    if (!usable[i] || !has_operation(f, report)) {
       out = out.append(f);
       rewritten = rewritten.append(false);
       i = i + 1;
       continue;
     }
-    let result: Rewritten = scale_function(f, funcs, names, index, usable, layouts.values[i]);
+    let result: Rewritten = scale_function(f, funcs, names, index, usable, layouts.values[i], enabled, report);
     out = out.append(result.func);
     rewritten = rewritten.append(result.changed);
+    sites = util.append_all(sites, result.sites);
     i = i + 1;
   }
-  return Scaled { funcs: out, rewritten: rewritten };
+  return Scaled { funcs: out, rewritten: rewritten, sites: sites };
 }
 
-struct Rewritten { func: ssasem.Func, changed: boolean }
+struct Rewritten { func: ssasem.Func, changed: boolean, sites: semarrayreport.Site[] }
 
-struct Plan { factor: Factor, ctor: i32 }
+struct Plan { factor: Factor, ctor: i32, reason: i32 }
 
-function scale_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], layouts: i32[]): Plan {
-  if (ins.kind_tag == ssasem.call() && ins.args.len() == 2
-    && ins.str == "__smm_ndarray__NdArray_map__f64__f64" && layouts[ins.args[0]] == semndlayout.packed()) {
-    return Plan { factor: closure_factor(f, ins.args[1], funcs, index, usable), ctor: from_flat_contract(funcs, index, usable, f.values[ins.result]) };
+function no_plan(reason: i32): Plan {
+  return Plan { factor: no_factor(reason), ctor: 0 - 1, reason: reason };
+}
+
+function site_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[], enabled: boolean): i32 {
+  if (!enabled) {
+    return 1;
   }
-  return Plan { factor: Factor { ok: false, literal: "" }, ctor: 0 - 1 };
+  if (ins.kind_tag != ssasem.call() || semndlayout.operation(ins.str) != "map") {
+    return 10;
+  }
+  if (ins.args.len() != 2 || ins.str != "__smm_ndarray__NdArray_map__f64__f64") {
+    return 11;
+  }
+  if (util.has_str(f.shadows, "__scale_f64")) {
+    return 9;
+  }
+  let layout: i32 = layouts[ins.args[0]];
+  if (layout == semndlayout.unknown()) {
+    return 2;
+  }
+  if (layout == semndlayout.strided()) {
+    return 3;
+  }
+  if (layout != semndlayout.packed()) {
+    return 4;
+  }
+  return 0;
 }
 
-function scale_function(f: ssasem.Func, funcs: ssasem.Func[], names: string[], index: util.NameIndex, usable: boolean[], layouts: i32[]): Rewritten {
+function scale_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean): Plan {
+  let why: i32 = site_refusal(f, ins, layouts, enabled);
+  if (why != 0) {
+    return no_plan(why);
+  }
+  let k: Factor = closure_factor(f, ins.args[1], funcs, index, usable);
+  if (!k.ok) {
+    return no_plan(k.reason);
+  }
+  let ctor: i32 = from_flat_contract(funcs, index, usable, f.values[ins.result]);
+  if (ctor < 0) {
+    return no_plan(8);
+  }
+  return Plan { factor: k, ctor: ctor, reason: 0 };
+}
+
+function scale_function(f: ssasem.Func, funcs: ssasem.Func[], names: string[], index: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean, report: boolean): Rewritten {
   let values: typeinfo.Type[] = f.values;
   let blocks: ssa.SBlock[] = [];
   let changed: boolean = false;
   let calls: ssasem.Contract[] = f.calls;
+  let sites: semarrayreport.Site[] = [];
   for b in f.graph.blocks {
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
-      let plan: Plan = scale_plan(f, ins, funcs, index, usable, layouts);
+      let plan: Plan = scale_plan(f, ins, funcs, index, usable, layouts, enabled);
+      if (report && ins.kind_tag == ssasem.call() && algebra(ins.str)) {
+        sites = sites.append(kernel_site(f, ins, layouts, plan));
+      }
       let k: Factor = plan.factor;
       let ctor: i32 = plan.ctor;
-      if (k.ok && ctor >= 0) {
+      if (plan.reason == 0) {
         let contract: ssasem.Contract = kernel_contract();
         let n: i32 = values.len();
         let dims: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false }, view: false };
@@ -206,16 +258,84 @@ function scale_function(f: ssasem.Func, funcs: ssasem.Func[], names: string[], i
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
   }
-  return Rewritten { func: ssasem.Func { ...f, values: values, calls: calls, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } }, changed: changed };
+  return Rewritten { func: ssasem.Func { ...f, values: values, calls: calls, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } }, changed: changed, sites: sites };
 }
 
-function has_map(f: ssasem.Func): boolean {
+function has_operation(f: ssasem.Func, report: boolean): boolean {
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.kind_tag == ssasem.call() && ins.str == "__smm_ndarray__NdArray_map__f64__f64") {
+      if (ins.kind_tag == ssasem.call() && (ins.str == "__smm_ndarray__NdArray_map__f64__f64" || report && algebra(ins.str))) {
         return true;
       }
     }
   }
   return false;
+}
+
+function algebra(name: string): boolean {
+  return util.has_str(["map", "zip_with", "outer", "inner", "fold_all", "reduce_axis", "scan_axis", "map_rank"], semndlayout.operation(name));
+}
+
+pub function any_operation(names: string[]): boolean {
+  for name in names {
+    if (algebra(name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function layout_name(layout: i32): string {
+  if (layout == semndlayout.packed()) {
+    return "packed";
+  }
+  if (layout == semndlayout.row_major()) {
+    return "row-major";
+  }
+  if (layout == semndlayout.strided()) {
+    return "strided";
+  }
+  return "unknown";
+}
+
+function element_name(f: ssasem.Func, value: i32): string {
+  let d: Def = definition(f, uncopy(f, value, []));
+  if (d.found && d.ins.kind_tag == ssasem.closure_new()) {
+    return d.ins.str;
+  }
+  return "unresolved@v" + util.i32_to_string(value);
+}
+
+function axis_text(f: ssasem.Func, value: i32): string {
+  let d: Def = definition(f, uncopy(f, value, []));
+  if (d.found && d.ins.kind_tag == 1) {
+    return util.i32_to_string(d.ins.imm);
+  }
+  return "?";
+}
+
+function operation_text(f: ssasem.Func, ins: ssa.SInst, layouts: i32[]): string {
+  let op: string = semndlayout.operation(ins.str);
+  let out: string = op + "; layout=" + layout_name(layouts[ins.args[0]]);
+  if (op == "zip_with" || op == "outer" || op == "inner") {
+    out = out + "; rhs-layout=" + layout_name(layouts[ins.args[1]]);
+  }
+  if (op == "reduce_axis" || op == "scan_axis") {
+    out = out + "; axis=" + axis_text(f, ins.args[1]);
+  }
+  if (op == "map_rank") {
+    out = out + "; rank=" + axis_text(f, ins.args[1]);
+  }
+  if (op == "inner") {
+    out = out + "; multiply=" + element_name(f, ins.args[ins.args.len() - 2]);
+  }
+  return out + "; element=" + element_name(f, ins.args[ins.args.len() - 1]);
+}
+
+function kernel_site(f: ssasem.Func, ins: ssa.SInst, layouts: i32[], plan: Plan): semarrayreport.Site {
+  let storage: string = "scalar-combinator";
+  if (plan.reason == 0) {
+    storage = "fresh-kernel-buffer";
+  }
+  return semarrayreport.Site { owner: f.graph.name, stage: ins.str + "@v" + util.i32_to_string(ins.result), plan: operation_text(f, ins, layouts), reason: plan.reason, storage: storage };
 }

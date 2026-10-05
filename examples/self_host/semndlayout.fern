@@ -57,7 +57,7 @@ function seed(types: typeinfo.Type[], open: boolean): i32[] {
 // A generic struct method is a folded free generic, or a receiver-qualified
 // method. Both keep std/ndarray's reserved module prefix. Match the delimiter
 // as well as the verb, so names such as map_rank cannot be mistaken for map.
-function verb(name: string): string {
+pub function operation(name: string): string {
   let prefix: string = "__smm_ndarray__NdArray_";
   if (util.str_has_prefix(name, prefix)) {
     let end: i32 = prefix.len();
@@ -82,7 +82,7 @@ function called_layout(ins: ssa.SInst, values: i32[], returns: i32[], index: uti
   if (util.str_has_prefix(ins.str, "ndarray__from_flat__") || util.str_has_prefix(ins.str, "ndarray__from_flat$")) {
     return packed();
   }
-  let v: string = verb(ins.str);
+  let v: string = operation(ins.str);
   if (packed_result(v)) {
     return packed();
   }

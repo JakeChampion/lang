@@ -356,9 +356,14 @@ Refusals use the closed tags `reuse-disabled`, `shape-unsupported`,
 `element-fn-effectful` and `aliased-arguments`. Each names the map's semantic
 value. `combinator-buffer` means R7 kept the ordinary combinator.
 
+The `ndarray kernels` section records kernel rewrites and refusals from the
+actual planner, with receiver layouts, element functions and axis/rank
+arguments. Its closed tags and scope are in `ARRAY-SHAPES.md` §6. A recognized
+algebra operation does not imply a kernel was selected.
+
 This report covers the map/filter/fold/reduce fusion planner, recognized
-unsupported combinators and R7 map storage. Primary ndarray kernel diagnostics
-remain separate work; this is not an all-allocation report.
+unsupported combinators, R7 map storage and ndarray kernels. It is not an
+all-allocation report.
 
 **Retained Go analysis.** `fern -array-report FILE.fern` prints the older Go
 IR analysis and labels it explicitly. It does not describe code emitted by
