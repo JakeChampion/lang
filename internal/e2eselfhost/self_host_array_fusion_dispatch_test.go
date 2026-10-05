@@ -22,6 +22,11 @@ func TestSelfHostArrayFusionUsesKnownCallbackBodies(t *testing.T) {
 			if name != "via_capture" && strings.Contains(body, "call __fn_"+name+"$wrap") {
 				t.Fatalf("tiny capture-free callback still calls its wrapper:\n%s", body)
 			}
+			// This fixture's callbacks use i64. The only i32 arithmetic is
+			// the fused cursor, whose increment is dominated by i < len.
+			if name == "via_map_fold" && strings.Contains(body, "movslq ") {
+				t.Fatalf("bounded fused cursor still sign-extends each increment:\n%s", body)
+			}
 		})
 	}
 	bin := buildBin(t, gcc, dir, "fusion-dispatch", asm)

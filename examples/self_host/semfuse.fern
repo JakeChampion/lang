@@ -737,14 +737,15 @@ function header(s: Build, l: Loop, entry: i32, start: i32, init: i32, unseen: i3
 struct Opened { s: Build, l: Loop, init: i32, unseen: i32, yes: i32, start: i32 }
 
 // What runs once before the loop: the length, read once since the array is a
-// value nothing in the loop can replace, the cursor one before the first
-// element, and the accumulator's seed. Then the header: advance, and test
-// against the length.
+// value nothing in the loop can replace, the cursor at zero, and the seed.
+// Test the cursor before advancing it in the body. The dominating bound also
+// proves the increment cannot overflow, which the physical SSA pass uses to
+// remove the redundant signed32 wrap without changing integer semantics.
 function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type): Opened {
   let i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
   let bool_t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
   let n: Emitted = emit(s, ssasem.length(), i32t, [c.base], 0, "");
-  let start: Emitted = emit(n.s, 1, i32t, [], 0 - 1, "");
+  let start: Emitted = emit(n.s, 1, i32t, [], 0, "");
   s = start.s;
   let sink: ssa.SInst = f.graph.blocks[c.block].insts[c.sink];
   let o: Opened = Opened { s: s, l: Loop { head: 0, i: 0, acc: 0, seen: 0 - 1, next_i: 0, backs: [], accs: [], seens: [] }, init: 0, unseen: 0 - 1, yes: 0 - 1, start: start.v };
@@ -765,11 +766,11 @@ function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type): Opened
     s = Build { ...s, values: s.values.append(bool_t) };
   }
   s = open(close(s, br(head)), head, []);
-  let one: Emitted = emit(s, 1, i32t, [], 1, "");
-  let step: Emitted = emit(one.s, 9, i32t, [l.i, one.v], 0, "+");
-  let more: Emitted = emit(step.s, 9, bool_t, [step.v, n.v], 0, "<");
+  let more: Emitted = emit(s, 9, bool_t, [l.i, n.v], 0, "<");
   s = close(more.s, brif(more.v, head + 1, head + 2));
-  return Opened { ...o, s: open(s, head + 1, [head]), l: Loop { ...l, next_i: step.v } };
+  let one: Emitted = emit(open(s, head + 1, [head]), 1, i32t, [], 1, "");
+  let step: Emitted = emit(one.s, 9, i32t, [l.i, one.v], 0, "+");
+  return Opened { ...o, s: step.s, l: Loop { ...l, next_i: step.v } };
 }
 
 // Replaces the chain with one loop. The block holding it is split: what came
@@ -786,7 +787,7 @@ function fuse(f: ssasem.Func, c: Chain): ssasem.Func {
   }
   let s: Build = Build { values: f.values, blocks: [], id: b.id, preds: b.preds, insts: kept_before(b, c), next: next_block_id(g) };
   let o: Opened = enter(f, c, s, acc_t);
-  let fetched: Emitted = emit(o.s, ssasem.array_get(), element(f.values[c.base]), [c.base, o.l.next_i], 1, "");
+  let fetched: Emitted = emit(o.s, ssasem.array_get(), element(f.values[c.base]), [c.base, o.l.i], 1, "");
   let st: Stepped = steps(f, c, fetched.s, o.l, fetched.v);
   st = sink_step(c, sink.args[sink.args.len() - 1], acc_t, st, o.yes);
   s = finish(f, c, open(st.s, o.l.head + 2, [o.l.head]), st.l, sink.result);
