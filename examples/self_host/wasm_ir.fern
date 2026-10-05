@@ -3450,8 +3450,7 @@ pub function truncate_func_p2(): string {
 // err_payload_p2 is the Err/Some payload expression the preview2 fs helpers
 // store: a real IoError variant box, built by translating the error-code
 // discriminant (a single BYTE at ra+4 — native reads it with load8_u for the
-// same reason) through $__fern_build_io_error_p2. Both emitters get one, each
-// against its own box layout — see build_io_error_func's `slot` (#5795).
+// same reason) through $__fern_build_io_error_p2.
 function err_payload_p2(): string {
   return "(call $__fern_build_io_error_p2 (i32.load8_u (i32.add (local.get $ra) (i32.const 4))) (call $__fern_rc_inc (local.get $np)))";
 }
@@ -5425,7 +5424,7 @@ pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
 // fn_value_table collects the module's address-taken functions (the targets of
 // const_func ops) in first-seen, deduped order. The position of a name here is
 // its funcref-table slot index — both the const_func `i32.const <idx>` and the
-// elem segment in fn_support_section index into this list, so they agree.
+// elem segment in fn_support_section_units index into this list, so they agree.
 // pipe_before / pipe_after split op_map_new's packed struct "hash|eq" fns.
 pub function pipe_before(s: string): string {
   let i: i32 = 0;
@@ -5527,7 +5526,7 @@ pub function fn_sig_key(argc: i32): string {
 }
 
 // indirect_fn_sigs collects the distinct SIGNATURES used by call_indirect ops
-// across the module (deduped), so fn_support_section declares one signature type
+// across the module (deduped), so fn_support_section_units declares one signature type
 // per shape actually dispatched. An untagged op contributes its all-i32 arity
 // signature under its `$fn<argc>` name; a tagged one contributes its own.
 // Entries are "<name>|<sig>" so the emitter has both without re-deriving either.
@@ -5605,21 +5604,17 @@ function fn_type_decl(entry: string): string {
   return out + " (result " + wasm_type_of_char(slice_unchecked(sig, us + 1, sig.len())) + ")))\n";
 }
 
-// fn_support_section emits the WAT module items that back plain function values:
+// fn_support_section_units emits the WAT module items that back plain function values:
 // one `(type …)` per dispatched SIGNATURE — `$fn<N>` all-i32 for the arity-keyed
 // fallback, `$fn<tag>` for a signature carrying a 64-bit type — a
 // `(table <M> funcref)` sized to the address-taken set, and an `(elem (i32.const
 // 0) $f0 $f1 …)` filling it in fn_value_table order. Empty string when the
 // module has no function values, so non-closure modules are byte-unchanged.
-// fn_support_section_units is the multi-unit form (#5331 step 4b): one table and
-// one elem segment covering every unit's address-taken functions, plus one
+// One table and one elem segment cover every unit's address-taken functions, plus one
 // $__fn_base<ns> global per unit holding that unit's start index. `all_fns` is
 // the flat concatenation of the per-unit tables and `counts` their lengths, so
 // unit i occupies [sum(counts[0..i]), +counts[i]) — exactly the relative indices
 // its bodies were emitted against.
-//
-// The single-unit call below passes nss = [""] and the whole table, which
-// reproduces the historical output byte for byte.
 pub function fn_support_section_units(nss: string[], all_fns: string[], counts: i32[], fn_sigs: string[]): string {
   if (all_fns.len() == 0 && fn_sigs.len() == 0) {
     return "";
@@ -5652,15 +5647,6 @@ pub function fn_support_section_units(nss: string[], all_fns: string[], counts: 
     parts = parts.append(")\n");
   }
   return util.str_join_chunks(parts);
-}
-
-// fn_support_section is whole-program emit: a single unit, so the table needs
-// exactly one base at 0. The table must exist for any call_indirect to validate
-// — including the map's struct-key hk/keq, which is emitted (but dead) even when
-// no function VALUE is taken — so the units form sizes an empty set to 1 slot.
-pub function fn_support_section(cache: irtables.LowerResult[]): string {
-  let ft: string[] = fn_value_table(cache);
-  return fn_support_section_units([""], ft, [ft.len()], indirect_fn_sigs(cache));
 }
 
 // wasm_arr_bounds_check emits the array index bounds check shared by arr_get /
@@ -6876,7 +6862,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // A function VALUE is its slot index in the module's funcref table
     // (fn_table). The table is built over the address-taken functions in
     // first-seen order (fn_value_table), so the index here matches the
-    // elem segment fn_support_section emits.
+    // elem segment fn_support_section_units emits.
     parts = parts.append("    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, o.str) - fn_table_base()) + "\n    i32.add\n");
   } else if (o.kind_tag == 150) {  // call_indirect
     parts = emit_wasm_call_indirect(o, parts);
@@ -7209,16 +7195,6 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
   return util.str_join_chunks(parts);
 }
 
-// emit_functions renders the user functions of an all-eligible module as WAT
-// (func ...) blocks — and ONLY the functions. The module wrapper (imports +
-// memory), the heap/RC runtime (heap_alloc_helpers + rc_runtime_helpers, which
-// live in wasm.fern), and the `_start` + exports are emitted by the CALLER
-// (wasm.emit_module, or the differential driver). Keeping the runtime on the
-// caller side lets wasm.fern import this module for the use_ir dispatch without
-// a cycle: wasm_ir never imports wasm. Caller must ensure wasm_eligible(mod).
-
-// emit_functions emits a unit's function bodies. `ns` namespaces the base
-// globals the bodies reference (see str_base_global); "" is whole-program emit.
 // emit_functions_view emits ONE unit's function bodies against a WHOLE-PROGRAM
 // view of the program's functions and structs (#5331 step 4b).
 //
@@ -7289,11 +7265,6 @@ pub function emit_functions_ns(ns: string, mod: parser.Module, cache: irtables.L
   return emit_functions_view(ns, im, cache, im.funcs, irtables.struct_tab(im.structs));
 }
 
-// emit_functions is whole-program emit: one unit, so the bases are unnamespaced.
-pub function emit_functions(mod: parser.Module, cache: irtables.LowerResult[]): string {
-  return emit_functions_ns("", mod, cache);
-}
-
 // struct_type_id returns a struct's runtime type id = its index in the module's
 // struct table. (For scalar-field structs with static field access it is never
 // read, but it occupies the 8-byte header slot so fields land at 8 + i*8.)
@@ -7342,14 +7313,14 @@ pub function errno_p2_func(): string {
 }
 
 // io_err_box_bytes is the size of an n-field IoError variant box, and
-// io_err_field_off the byte offset of its field i, for a consumer whose boxes
-// are `slot` bytes per slot. See build_io_error_func for the layout.
-function io_err_box_bytes(nfields: i32, slot: i32): string {
-  return util.i32_to_string(slot * (1 + nfields));
+// io_err_field_off the byte offset of its field i. See build_io_error_func for
+// the layout.
+function io_err_box_bytes(nfields: i32): string {
+  return util.i32_to_string(xbox_bytes(nfields));
 }
 
-function io_err_field_off(i: i32, slot: i32): string {
-  return util.i32_to_string(slot * (1 + i));
+function io_err_field_off(i: i32): string {
+  return util.i32_to_string(xbox_field_off(i));
 }
 
 // needs_fd_sync reports whether the module reached any of the per-handle
@@ -7393,19 +7364,11 @@ pub function with_strerror_texts(sv: string[]): string[] {
 // Unsupported, EILSEQ(25) → InvalidUtf8(path) (synthetic — no wasi call
 // returns it; only read_file's D9 gate passes 25).
 //
-// `slot` is the CONSUMER's variant-box slot width. Both consumers lay a box out
-// the same way — the variant id in slot 0, field i in slot 1+i, so field i sits
-// at slot*(1+i) and an n-field box is slot*(1+n) bytes — but at different
-// widths: the IR consumer (op_enum_new / the IR match dispatch) slots 8, while
-// the legacy AST emitter slots 4 (wasm.struct_field_off(i) = 4 + i*4, boxed as
-// 4 + nfields*4). Emitting the IR layout for both is what made an AST-path
-// `NotFound(p)` read its path out of the upper half of the id slot, and the
-// two-field default arm `Other(path, msg)` — where every unmapped errno lands —
-// wrong in both fields (#5795). Boxes via $__fern_str_box, the same rc-headered
-// allocation both emitters build variants with. A string field is a single
+// The box is laid out as xbox_field_off describes, and allocated via
+// $__fern_str_box, as op_enum_new builds variants. A string field is a single
 // [len][bytes] block pointer, and the builder consumes the path it is given: a
 // caller passing a borrowed path retains it first.
-pub function build_io_error_func(slot: i32, sv: string[]): string {
+pub function build_io_error_func(sv: string[]): string {
   // Consumes one path owner. Payload variants keep it; payloadless
   // variants release it. Borrowed callers retain before this call.
   let o: string = "";
@@ -7413,39 +7376,39 @@ pub function build_io_error_func(slot: i32, sv: string[]): string {
   o = o + "    (local $r i32) (local $e i32) (local $n i32) (local $t i32)\n";
   // ENOENT(44) -> NotFound(path)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 44)) (then\n";
-  o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1, slot) + ")))\n";
+  o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1) + ")))\n";
   o = o + "      (i32.store (local.get $r) (global.get " + tid_global("NotFound") + "))\n";
-  o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0, slot) + ")) (local.get $path))\n";
+  o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0) + ")) (local.get $path))\n";
   o = o + "      (return (local.get $r))))\n";
   // EACCES(2) -> PermissionDenied(path)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 2)) (then\n";
-  o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1, slot) + ")))\n";
+  o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1) + ")))\n";
   o = o + "      (i32.store (local.get $r) (global.get " + tid_global("PermissionDenied") + "))\n";
-  o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0, slot) + ")) (local.get $path))\n";
+  o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0) + ")) (local.get $path))\n";
   o = o + "      (return (local.get $r))))\n";
   // EEXIST(20) -> AlreadyExists(path)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 20)) (then\n";
-  o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1, slot) + ")))\n";
+  o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1) + ")))\n";
   o = o + "      (i32.store (local.get $r) (global.get " + tid_global("AlreadyExists") + "))\n";
-  o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0, slot) + ")) (local.get $path))\n";
+  o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0) + ")) (local.get $path))\n";
   o = o + "      (return (local.get $r))))\n";
   // EINTR(27) -> Interrupted (payloadless)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 27)) (then\n";
   o = o + "      (drop (call $__fern_arr_dec (local.get $path)))\n";
-  o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(0, slot) + ")))\n";
+  o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(0) + ")))\n";
   o = o + "      (i32.store (local.get $r) (global.get " + tid_global("Interrupted") + "))\n";
   o = o + "      (return (local.get $r))))\n";
   // ENOTSUP(58) -> Unsupported (payloadless)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 58)) (then\n";
   o = o + "      (drop (call $__fern_arr_dec (local.get $path)))\n";
-  o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(0, slot) + ")))\n";
+  o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(0) + ")))\n";
   o = o + "      (i32.store (local.get $r) (global.get " + tid_global("Unsupported") + "))\n";
   o = o + "      (return (local.get $r))))\n";
   // EILSEQ(25) -> InvalidUtf8(path)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 25)) (then\n";
-  o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1, slot) + ")))\n";
+  o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1) + ")))\n";
   o = o + "      (i32.store (local.get $r) (global.get " + tid_global("InvalidUtf8") + "))\n";
-  o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0, slot) + ")) (local.get $path))\n";
+  o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0) + ")) (local.get $path))\n";
   o = o + "      (return (local.get $r))))\n";
   // default -> Other(path, strerror(errno)) (#8265): $e is the pooled
   // literal for the errno (with_strerror_texts put every text in sv), or a
@@ -7479,10 +7442,10 @@ pub function build_io_error_func(slot: i32, sv: string[]): string {
   o = o + "      (local.set $n (local.get $errno))\n";
   o = o + "      (block $wd (loop $wl (local.set $t (i32.sub (local.get $t) (i32.const 1))) (i32.store8 (local.get $t) (i32.add (i32.const 48) (i32.rem_u (local.get $n) (i32.const 10)))) (local.set $n (i32.div_u (local.get $n) (i32.const 10))) (br_if $wd (i32.eqz (local.get $n))) (br $wl)))\n";
   o = o + "    ))\n";
-  o = o + "    (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(2, slot) + ")))\n";
+  o = o + "    (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(2) + ")))\n";
   o = o + "    (i32.store (local.get $r) (global.get " + tid_global("Other") + "))\n";
-  o = o + "    (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0, slot) + ")) (local.get $path))\n";
-  o = o + "    (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(1, slot) + ")) (local.get $e))\n";
+  o = o + "    (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0) + ")) (local.get $path))\n";
+  o = o + "    (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(1) + ")) (local.get $e))\n";
   o = o + "    (local.get $r))\n";
   return o;
 }
@@ -10806,18 +10769,6 @@ pub function divrem_helpers(): string {
   return util.str_join_chunks(parts);
 }
 
-// The integer→string runtime backing `(n).to_string()` (and so an f-string
-// interpolant, which desugars to it): format an i32 / i64 / u64 into a fresh
-// `[len][bytes]` heap block, rc-headered by $__fern_str_box.
-//
-// to_string_helpers is the AST emitter's bundle (i32 + i64, emitted together on
-// one `.to_string()` gate); the IR path emits each body on its own need
-// (@uses_i32_to_string / @uses_i64_to_string / @uses_u64_to_string), so an
-// i64-only module carries no dead i32 formatter.
-pub function to_string_helpers(): string {
-  return i32_to_string_helper() + i64_to_string_helper();
-}
-
 pub function i32_to_string_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_i32_to_str (param $n i32) (result i32)\n";
@@ -14020,7 +13971,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // in the source, not a property of the framing, and a module that calls one
   // without importing it fails at load with `unknown func`. This is half of
   // what the AST emitter did and the IR path did not.
-  parts = parts.append(extern_imports(mod, xslot_ir()));
+  parts = parts.append(extern_imports(mod));
   parts = parts.append(async_lower_imports(mod));
   if (lifts_async(mod, mode)) {
     parts = parts.append(async_lift_imports(mod));
@@ -14170,8 +14121,8 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // The canonical-ABI wrappers a string/list-returning `@import` resolves to
   // (return-area alloc, raw import call, lift). Gated the same way the AST
   // emitter gates them, so a module with no such extern is unchanged.
-  if (module_needs_extern_wrappers(mod, xslot_ir())) {
-    parts = parts.append(extern_wrappers(mod, xslot_ir()));
+  if (module_needs_extern_wrappers(mod)) {
+    parts = parts.append(extern_wrappers(mod));
   }
   parts = parts.append(async_lower_wrappers(mod));
   if (need(needs, "@uses_divrem")) {
@@ -14266,7 +14217,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // sibling of asm_ir's __fern_io_error). Emit it once whenever any fs op is present so the
   // helpers' Err/Some payloads carry a matchable variant, not a raw errno.
   if (needs_io_error(needs)) {
-    parts = parts.append(build_io_error_func(8, sv));
+    parts = parts.append(build_io_error_func(sv));
   }
   // $__fern_stat(path, fstype): path_filestat_get -> FileStat struct +
   // Result box. Heap-backed (allocates the buffer + boxes), so folded into
@@ -14781,7 +14732,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // WIT `@export` bindings. Without these the IR path emitted a core whose only
   // exports were `memory` and `_start`, silently DROPPING every `@export` — the
   // mode-0 half of the same gap (component mode refused such modules outright).
-  let xps: string = extern_exports(mod, xslot_ir());
+  let xps: string = extern_exports(mod);
   // A REACTOR module — no `main` and no top-level statements, its entry being
   // its `@export` bindings — still needs a `$main` for the framing's run entry
   // (`_start` in mode 0, `_lang_run` in component mode). The AST emitter
@@ -15198,7 +15149,7 @@ pub function extern_plain_enum_param(mod: parser.Module, t: string): boolean {
 // struct whose field is i32/u32, all single-payloads uniform (the self-host slot
 // is i32 anyway), with at least one payloaded variant (else it's a plain enum).
 // The wrapper maps struct_id → variant index (extern_plain_enum_disc) for the
-// disc and reads the payload at struct_field_off(0); for a payloadless-case
+// disc and reads the payload from the box's first field; for a payloadless-case
 // value the payload read yields ignored garbage (the host drops it).
 pub function extern_variant_param_supported(mod: parser.Module, t: string): boolean {
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
@@ -15418,18 +15369,18 @@ function extern_flat_coerce(v: string, from: string, to: string): string {
 // loads its field j coerced to the slot's join type, else the join's zero
 // (padding a shorter arm). Lazy (not select): a shorter arm's box has no slot j,
 // so the non-matched branches must not read it.
-pub function extern_variant_multifield_slot(mod: parser.Module, t: string, j: i32, boxloc: string, slot: i32): string {
+pub function extern_variant_multifield_slot(mod: parser.Module, t: string, j: i32, boxloc: string): string {
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   let join: string = extern_variant_slot_join(mod, t, j);
   let ei: i32 = 0;
   while (ei < mod.enums.len()) {
     if (mod.enums[ei].name == t) {
       let n: i32 = mod.enums[ei].variant_names.len();
-      let acc: string = extern_variant_arm_slot(mod, mod.enums[ei].variant_names[n - 1], j, join, boxloc, slot);
+      let acc: string = extern_variant_arm_slot(mod, mod.enums[ei].variant_names[n - 1], j, join, boxloc);
       let k: i32 = n - 2;
       while (k >= 0) {
         let sid: i32 = struct_id(stab, mod.enums[ei].variant_names[k]);
-        acc = "(if (result " + join + ") (i32.eq (i32.load (local.get " + boxloc + ")) (i32.const " + util.i32_to_string(sid) + ")) (then " + extern_variant_arm_slot(mod, mod.enums[ei].variant_names[k], j, join, boxloc, slot) + ") (else " + acc + "))";
+        acc = "(if (result " + join + ") (i32.eq (i32.load (local.get " + boxloc + ")) (i32.const " + util.i32_to_string(sid) + ")) (then " + extern_variant_arm_slot(mod, mod.enums[ei].variant_names[k], j, join, boxloc) + ") (else " + acc + "))";
         k = k - 1;
       }
       return acc;
@@ -15441,11 +15392,11 @@ pub function extern_variant_multifield_slot(mod: parser.Module, t: string, j: i3
 
 // extern_variant_arm_slot emits one arm's slot-j value: its field j coerced to
 // the slot type `join`, or that type's zero (padding).
-pub function extern_variant_arm_slot(mod: parser.Module, vn: string, j: i32, join: string, boxloc: string, slot: i32): string {
+pub function extern_variant_arm_slot(mod: parser.Module, vn: string, j: i32, join: string, boxloc: string): string {
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   if (j < struct_field_count(stab, vn)) {
     let ft: string = struct_field_type_at(stab, vn, j);
-    let addr: string = "(i32.add (local.get " + boxloc + ") (i32.const " + util.i32_to_string(xbox_field_off(slot, j)) + "))";
+    let addr: string = "(i32.add (local.get " + boxloc + ") (i32.const " + util.i32_to_string(xbox_field_off(j)) + "))";
     return extern_flat_coerce(extern_box_field_load(ft, addr), extern_flat_scalar(ft), join);
   }
   return "(" + join + ".const 0)";
@@ -15506,7 +15457,7 @@ function extern_arm_canon_offs(mod: parser.Module, vn: string): i32[] {
 // canonical return area $rb (payload at `poff`, each field at its natural
 // offset) into the box $s, branched on the discriminant $d. The box holds an
 // f32 as an f64.
-function extern_variant_multifield_lift(mod: parser.Module, t: string, poff: i32, slot: i32): string {
+function extern_variant_multifield_lift(mod: parser.Module, t: string, poff: i32): string {
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   let o: string = "";
   let ei: i32 = 0;
@@ -15523,7 +15474,7 @@ function extern_variant_multifield_lift(mod: parser.Module, t: string, poff: i32
           while (fj < fc) {
             let flat: string = extern_flat_scalar(struct_field_type_at(stab, vn, fj));
             let src: string = "(" + flat + ".load offset=" + util.i32_to_string(poff + offs[fj]) + " (local.get $rb))";
-            let dst: string = util.i32_to_string(xbox_field_off(slot, fj));
+            let dst: string = util.i32_to_string(xbox_field_off(fj));
             if (flat == "f32") {
               o = o + "      (f64.store offset=" + dst + " (local.get $s) (f64.promote_f32 " + src + "))\n";
             } else {
@@ -15656,17 +15607,17 @@ pub function extern_variant_has_f32_arm(mod: parser.Module, t: string): boolean 
 // zero-extends; a payloadless arm contributes 0 (the host drops it). The chain
 // MUST be if/else (not select): the arms read the box at different widths, and
 // only the matched arm's box is wide enough, so non-taken branches must not run.
-pub function extern_variant_payload_join_i64(mod: parser.Module, t: string, boxloc: string, slot: i32): string {
+pub function extern_variant_payload_join_i64(mod: parser.Module, t: string, boxloc: string): string {
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   let ei: i32 = 0;
   while (ei < mod.enums.len()) {
     if (mod.enums[ei].name == t) {
       let n: i32 = mod.enums[ei].variant_names.len();
-      let acc: string = extern_variant_arm_join_i64(mod, mod.enums[ei].variant_names[n - 1], boxloc, slot);
+      let acc: string = extern_variant_arm_join_i64(mod, mod.enums[ei].variant_names[n - 1], boxloc);
       let k: i32 = n - 2;
       while (k >= 0) {
         let sid: i32 = struct_id(stab, mod.enums[ei].variant_names[k]);
-        acc = "(if (result i64) (i32.eq (i32.load (local.get " + boxloc + ")) (i32.const " + util.i32_to_string(sid) + ")) (then " + extern_variant_arm_join_i64(mod, mod.enums[ei].variant_names[k], boxloc, slot) + ") (else " + acc + "))";
+        acc = "(if (result i64) (i32.eq (i32.load (local.get " + boxloc + ")) (i32.const " + util.i32_to_string(sid) + ")) (then " + extern_variant_arm_join_i64(mod, mod.enums[ei].variant_names[k], boxloc) + ") (else " + acc + "))";
         k = k - 1;
       }
       return acc;
@@ -15678,12 +15629,12 @@ pub function extern_variant_payload_join_i64(mod: parser.Module, t: string, boxl
 
 // extern_variant_arm_join_i64 emits one arm's payload coerced to the i64 join:
 // i64.load for a 64-bit field, i64.extend_i32_u(i32.load) for a 32-bit field,
-// i64.const 0 for a payloadless arm. Payload sits at xbox_field_off(slot, 0).
-pub function extern_variant_arm_join_i64(mod: parser.Module, vn: string, boxloc: string, slot: i32): string {
+// i64.const 0 for a payloadless arm. Payload sits at xbox_field_off(0).
+pub function extern_variant_arm_join_i64(mod: parser.Module, vn: string, boxloc: string): string {
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   if (struct_field_count(stab, vn) == 1) {
     let ft: string = struct_field_type_at(stab, vn, 0);
-    let poff: string = util.i32_to_string(xbox_field_off(slot, 0));
+    let poff: string = util.i32_to_string(xbox_field_off(0));
     // A 64-bit arm (i64/u64, or an f64 read as its raw bits) loads i64
     // directly; a 32-bit arm zero-extends. The box holds an f64 payload's
     // bits, so i64.load is the value-preserving reinterpret the canonical
@@ -15708,17 +15659,17 @@ pub function extern_variant_arm_join_i64(mod: parser.Module, vn: string, boxloc:
 // wide enough, so non-taken branches must not run. Used only when
 // extern_variant_has_f32_arm — an f32-free variant keeps the single
 // unconditional i32.load (byte-identical output).
-pub function extern_variant_payload_join_i32_f32(mod: parser.Module, t: string, boxloc: string, slot: i32): string {
+pub function extern_variant_payload_join_i32_f32(mod: parser.Module, t: string, boxloc: string): string {
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   let ei: i32 = 0;
   while (ei < mod.enums.len()) {
     if (mod.enums[ei].name == t) {
       let n: i32 = mod.enums[ei].variant_names.len();
-      let acc: string = extern_variant_arm_join_i32_f32(mod, mod.enums[ei].variant_names[n - 1], boxloc, slot);
+      let acc: string = extern_variant_arm_join_i32_f32(mod, mod.enums[ei].variant_names[n - 1], boxloc);
       let k: i32 = n - 2;
       while (k >= 0) {
         let sid: i32 = struct_id(stab, mod.enums[ei].variant_names[k]);
-        acc = "(if (result i32) (i32.eq (i32.load (local.get " + boxloc + ")) (i32.const " + util.i32_to_string(sid) + ")) (then " + extern_variant_arm_join_i32_f32(mod, mod.enums[ei].variant_names[k], boxloc, slot) + ") (else " + acc + "))";
+        acc = "(if (result i32) (i32.eq (i32.load (local.get " + boxloc + ")) (i32.const " + util.i32_to_string(sid) + ")) (then " + extern_variant_arm_join_i32_f32(mod, mod.enums[ei].variant_names[k], boxloc) + ") (else " + acc + "))";
         k = k - 1;
       }
       return acc;
@@ -15730,12 +15681,12 @@ pub function extern_variant_payload_join_i32_f32(mod: parser.Module, t: string, 
 
 // extern_variant_arm_join_i32_f32 emits one arm's payload coerced to the i32
 // join: the demote+reinterpret bridge for an f32 field (the box holds it as an
-// 8-byte f64 at xbox_field_off(slot, 0)), a plain i32.load for a 32-bit field,
+// 8-byte f64 at xbox_field_off(0)), a plain i32.load for a 32-bit field,
 // i32.const 0 for a payloadless arm.
-pub function extern_variant_arm_join_i32_f32(mod: parser.Module, vn: string, boxloc: string, slot: i32): string {
+pub function extern_variant_arm_join_i32_f32(mod: parser.Module, vn: string, boxloc: string): string {
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   if (struct_field_count(stab, vn) == 1) {
-    let poff: string = util.i32_to_string(xbox_field_off(slot, 0));
+    let poff: string = util.i32_to_string(xbox_field_off(0));
     if (struct_field_type_at(stab, vn, 0) == "f32") {
       return "(i32.reinterpret_f32 (f32.demote_f64 (f64.load offset=" + poff + " (local.get " + boxloc + "))))";
     }
@@ -15752,30 +15703,30 @@ pub function extern_variant_arm_join_i32_f32(mod: parser.Module, vn: string, box
 // every other arm it copies the i32 payload (unread garbage for a payloadless
 // arm, exactly as on the f32-free i32-join path). Reads the host payload at
 // offset 4 of $rb (the i32-join return area — canonical, so consumer-independent)
-// and stores it at the box's payload slot, xbox_field_off(slot, 0), in $s.
-pub function extern_variant_result_store_f32(mod: parser.Module, t: string, slot: i32): string {
+// and stores it at the box's payload slot, xbox_field_off(0), in $s.
+pub function extern_variant_result_store_f32(mod: parser.Module, t: string): string {
   let ei: i32 = 0;
   while (ei < mod.enums.len()) {
     if (mod.enums[ei].name == t) {
       let n: i32 = mod.enums[ei].variant_names.len();
-      let acc: string = extern_variant_result_store_f32_arm(mod, mod.enums[ei].variant_names[n - 1], slot);
+      let acc: string = extern_variant_result_store_f32_arm(mod, mod.enums[ei].variant_names[n - 1]);
       let k: i32 = n - 2;
       while (k >= 0) {
-        acc = "(if (i32.eq (local.get $d) (i32.const " + util.i32_to_string(k) + ")) (then " + extern_variant_result_store_f32_arm(mod, mod.enums[ei].variant_names[k], slot) + ") (else " + acc + "))";
+        acc = "(if (i32.eq (local.get $d) (i32.const " + util.i32_to_string(k) + ")) (then " + extern_variant_result_store_f32_arm(mod, mod.enums[ei].variant_names[k]) + ") (else " + acc + "))";
         k = k - 1;
       }
       return acc;
     }
     ei = ei + 1;
   }
-  return "(i32.store offset=" + util.i32_to_string(xbox_field_off(slot, 0)) + " (local.get $s) (i32.load offset=4 (local.get $rb)))";
+  return "(i32.store offset=" + util.i32_to_string(xbox_field_off(0)) + " (local.get $s) (i32.load offset=4 (local.get $rb)))";
 }
 
 // extern_variant_result_store_f32_arm emits one arm's result payload store:
 // the promote bridge for an f32 field, the plain i32 copy otherwise.
-pub function extern_variant_result_store_f32_arm(mod: parser.Module, vn: string, slot: i32): string {
+pub function extern_variant_result_store_f32_arm(mod: parser.Module, vn: string): string {
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
-  let poff: string = util.i32_to_string(xbox_field_off(slot, 0));
+  let poff: string = util.i32_to_string(xbox_field_off(0));
   if (struct_field_count(stab, vn) == 1 && struct_field_type_at(stab, vn, 0) == "f32") {
     return "(f64.store offset=" + poff + " (local.get $s) (f64.promote_f32 (f32.reinterpret_i32 (i32.load offset=4 (local.get $rb)))))";
   }
@@ -16011,7 +15962,7 @@ pub function extern_canon_record_size_nested(mod: parser.Module, tn: string): i3
 // Recurses to arbitrary depth — the wrapper reserves one $inner local per level.
 // The single local per depth is safe across siblings: a child's pointer is stored
 // into its parent before the next sibling at that depth overwrites the local.
-pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string, canon_base: i32, depth: i32, slot: i32): string {
+pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string, canon_base: i32, depth: i32): string {
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   let parts: string[] = [];
   let nf: i32 = struct_field_count(stab, tn);
@@ -16019,15 +15970,15 @@ pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string
   while (rc < nf) {
     let rcft: string = struct_field_type_at(stab, tn, rc);
     let coff: i32 = canon_base + extern_canon_top_off(mod, tn, rc);
-    let foff: string = util.i32_to_string(xbox_field_off(slot, rc));
+    let foff: string = util.i32_to_string(xbox_field_off(rc));
     if (extern_field_is_scalar(rcft)) {
       parts = parts.append("    (i32.store (i32.add (local.get " + dst + ") (i32.const " + foff + ")) (" + extern_field_load_op(rcft) + " (i32.add (local.get $rb) (i32.const " + util.i32_to_string(coff) + "))))\n");
     } else {
       let inner_local: string = "$inner" + util.i32_to_string(depth);
       let inf: i32 = struct_field_count(stab, rcft);
-      parts = parts.append("    (local.set " + inner_local + " (call $__fern_str_box (i32.const " + util.i32_to_string(xbox_bytes(slot, inf, false)) + ")))\n");
+      parts = parts.append("    (local.set " + inner_local + " (call $__fern_str_box (i32.const " + util.i32_to_string(xbox_bytes(inf)) + ")))\n");
       parts = parts.append("    (i32.store (local.get " + inner_local + ") (i32.const " + util.i32_to_string(struct_id(stab, rcft)) + "))\n");
-      parts = parts.append(extern_emit_record_fill(mod, inner_local, rcft, coff, depth + 1, slot));
+      parts = parts.append(extern_emit_record_fill(mod, inner_local, rcft, coff, depth + 1));
       parts = parts.append("    (i32.store (i32.add (local.get " + dst + ") (i32.const " + foff + ")) (local.get " + inner_local + "))\n");
     }
     rc = rc + 1;
@@ -16043,18 +15994,18 @@ pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string
 // pointer at base+off and recurses with that as the new base — to arbitrary
 // depth. (The base sub-expression is re-evaluated per leaf, matching the one-level
 // shape this generalizes; the redundant inner-pointer loads are cheap.)
-pub function extern_emit_record_param_leaves(mod: parser.Module, base_expr: string, tn: string, slot: i32): string {
+pub function extern_emit_record_param_leaves(mod: parser.Module, base_expr: string, tn: string): string {
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   let parts: string[] = [];
   let n: i32 = struct_field_count(stab, tn);
   let fi: i32 = 0;
   while (fi < n) {
     let ft: string = struct_field_type_at(stab, tn, fi);
-    let field_expr: string = "(i32.add " + base_expr + " (i32.const " + util.i32_to_string(xbox_field_off(slot, fi)) + "))";
+    let field_expr: string = "(i32.add " + base_expr + " (i32.const " + util.i32_to_string(xbox_field_off(fi)) + "))";
     if (extern_param_field_scalar(ft)) {
       parts = parts.append(" " + extern_param_field_load(ft, field_expr));
     } else {
-      parts = parts.append(extern_emit_record_param_leaves(mod, "(i32.load " + field_expr + ")", ft, slot));
+      parts = parts.append(extern_emit_record_param_leaves(mod, "(i32.load " + field_expr + ")", ft));
     }
     fi = fi + 1;
   }
@@ -16226,9 +16177,8 @@ pub function tuple_type_elem_count(t: string): i32 {
 // extern_tuple_param_supported is true for an `@import` tuple parameter the
 // wrapper can flatten to its elements, and for a tuple result the wrapper can
 // read back from a return area. A self-host tuple is a heap block of N
-// consecutive slots with no id word — element i @ i*slot, where slot is the
-// consumer's width (4 under xslot_ast, 8 under xslot_ir) — every element is
-// i32-class, and the canonical tuple flattens to one i32 per element, in
+// consecutive 8-byte slots with no id word — element i @ i*8 — every element
+// is i32-class, and the canonical tuple flattens to one i32 per element, in
 // order (i*4 in a return area). Scoped to 2..16 i32/u32 elements (a 1-element
 // parenthesised type isn't a tuple in Fern; the canonical wider/byte elements
 // wouldn't fit a 4-byte slot). No alignment wall: like records, it flattens
@@ -16278,18 +16228,16 @@ function extern_marshals(mod: parser.Module, f: parser.FuncDecl): boolean {
 // generated wrapper rather than straight to the import: a composite result
 // (return-area lift) or a memory/record parameter.
 //
-// A VOID extern needs one too, but only for the IR consumer, whose calling
-// convention differs: the IR path gives every Fern-callable an i32 result (a
+// A VOID extern needs one too, since every Fern-callable has an i32 result (a
 // `function f(x: i32) { }` emits `(func $f (param i32) (result i32)` returning
 // 0), so a discarded call is lowered as call-then-DROP. Dropping the result of a
 // void import leaves nothing on the stack and the module fails to validate
 // ("expected a type but nothing on stack" — how the WIT resource-handle externs
 // `[method]pollable.block` surfaced this). The shim calls the import and pushes
-// the 0 the convention promises. The AST emitter makes no such promise, so its
-// gate is unchanged.
-pub function extern_needs_wrapper(mod: parser.Module, f: parser.FuncDecl, slot: i32): boolean {
+// the 0 the convention promises.
+pub function extern_needs_wrapper(mod: parser.Module, f: parser.FuncDecl): boolean {
   return is_extern_composite_ret(mod, f.ret_type) || has_extern_mem_param(mod, f) || extern_plain_enum_param(mod, f.ret_type)
-    || has_extern_f32(f) || slot >= 8 && !returns_value(f.ret_type);
+    || has_extern_f32(f) || !returns_value(f.ret_type);
 }
 
 // extern_core_params is an `@import`'s raw core params, each Fern param
@@ -16354,13 +16302,13 @@ function extern_core_param(mod: parser.Module, t: string): string {
   return util.str_join_chunks(parts);
 }
 
-pub function extern_imports(mod: parser.Module, slot: i32): string {
+pub function extern_imports(mod: parser.Module): string {
   let parts: string[] = [];
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     let f: parser.FuncDecl = mod.funcs[i];
     if (is_sync_extern(f)) {
-      if (extern_needs_wrapper(mod, f, slot)) {
+      if (extern_needs_wrapper(mod, f)) {
         // The raw import is named $name__import; the Fern $name resolves
         // to the wrapper (see extern_wrappers). Each string param
         // lowers to (ptr, len) = 2 i32s.
@@ -16474,7 +16422,7 @@ pub function module_has_array_param_export(mod: parser.Module): boolean {
 // the wrapper repacks into the canonical `[ptr,len]` return area. Scalars pass
 // through. Local indices: wrapper params 0..W-1, then one block local per
 // string param, then a loop counter, then (string result) $s + $ra.
-pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: string, slot: i32): string {
+pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: string): string {
   // Each string OR numeric-array param takes two canonical wrapper slots
   // (ptr,len) and gets one scratch "block" local (the [len][bytes] string block
   // / the rebuilt Fern array); scalars take one slot, no local.
@@ -16569,7 +16517,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
       let lenS: string = util.i32_to_string(lenI);
       let ptrS: string = util.i32_to_string(wp);
       let jS: string = util.i32_to_string(j);
-      body = body + "    (local.set " + blkS + " " + xstr_new(slot, "(local.get " + lenS + ")") + ")\n";
+      body = body + "    (local.set " + blkS + " " + xstr_new("(local.get " + lenS + ")") + ")\n";
       body = body + "    (i32.store (local.get " + blkS + ") (local.get " + lenS + "))\n";
       body = body + "    (local.set " + iS + " (i32.const 0))\n";
       body = body + "    (block $d" + jS + " (loop $c" + jS + "\n";
@@ -16668,10 +16616,9 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
     body = body + "    (i32.store offset=4 (local.get " + srbS + ") (i32.load offset=4 (local.get " + svS + ")))\n";
     body = body + "    (local.get " + srbS + "))\n";
   } else if (tup_result) {
-    // Tuple result. The Fern func returns a tuple pointer (element i @ i*slot,
+    // Tuple result. The Fern func returns a tuple pointer (element i @ i*8,
     // no header — see the tuple param push in extern_wrappers); the canonical
-    // tuple returns indirectly with element i at i*4 (all i32). The two strides
-    // are only equal for the 4-slot consumer, so read and write separately.
+    // tuple returns indirectly with element i at i*4 (all i32).
     // Copy each element into the 8-aligned return area.
     let tvS: string = util.i32_to_string(tup_v);
     let trbS: string = util.i32_to_string(tup_rb);
@@ -16681,12 +16628,12 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
     let ti: i32 = 0;
     while (ti < tn) {
       let canon_off: string = util.i32_to_string(ti * 4);
-      let fern_off: string = util.i32_to_string(ti * slot);
+      let fern_off: string = util.i32_to_string(ti * 8);
       body = body + "    (i32.store (i32.add (local.get " + trbS + ") (i32.const " + canon_off + ")) (i32.load (i32.add (local.get " + tvS + ") (i32.const " + fern_off + "))))\n";
       ti = ti + 1;
     }
     body = body + "    (local.get " + trbS + "))\n";
-  } else if (slot >= 8 && !returns_value(ret)) {
+  } else if (!returns_value(ret)) {
     // Void export on the IR consumer: discard the i32 its convention returns.
     body = body + "    (drop (call $" + fname + callargs + ")))\n";
   } else {
@@ -16726,27 +16673,26 @@ pub function export_needs_realloc(mod: parser.Module): boolean {
   return false;
 }
 
-pub function extern_exports(mod: parser.Module, slot: i32): string {
+pub function extern_exports(mod: parser.Module): string {
   let parts: string[] = [];
   let i: i32 = 0;
   while (i < mod.exports.len()) {
     let x: parser.ExportBinding = mod.exports[i];
     let ret: string = export_func_ret(mod, x.func_name);
     let params: ast.ParamDecl[] = export_func_params(mod, x.func_name);
-    // A VOID export needs a wrapper on the IR consumer for the mirror of the
-    // reason a void EXTERN does (see extern_needs_wrapper): the IR path emits
-    // every Fern function with `(result i32)`, so exporting one directly
+    // A VOID export needs a wrapper for the mirror of the reason a void
+    // EXTERN does (see extern_needs_wrapper): every Fern function is emitted
+    // with `(result i32)`, so exporting one directly
     // offers the canonical ABI an i32 where the WIT signature has no result
     // ("lowered result types [] do not match result types [I32]"). The
-    // wrapper drops it. The AST emitter emits a void function as void, so its
-    // exports are unchanged.
-    if (ret == "string" || export_has_string_param(params) || extern_array_param_supported(ret) || export_has_numeric_array_param(params) || extern_sum_param_supported(ret) || extern_tuple_param_supported(ret) || slot >= 8 && !returns_value(ret)) {
+    // wrapper drops it.
+    if (ret == "string" || export_has_string_param(params) || extern_array_param_supported(ret) || export_has_numeric_array_param(params) || extern_sum_param_supported(ret) || extern_tuple_param_supported(ret) || !returns_value(ret)) {
       // Composite signature: surface a wrapper that bridges the canonical
       // ABI (string params materialised as [len][bytes] blocks, a string
       // result repacked into the [ptr,len] return area, a numeric-array
       // `list<T>` result copied into an aligned (ptr,len) return area) to
       // the Fern func.
-      parts = parts.append(build_export_wrapper(x.func_name, params, ret, slot));
+      parts = parts.append(build_export_wrapper(x.func_name, params, ret));
       parts = parts.append("  (export \"" + x.iface + "#" + x.wit + "\" (func $__xwrap_" + x.func_name + "))\n");
     } else {
       parts = parts.append("  (export \"" + x.iface + "#" + x.wit + "\" (func $" + x.func_name + "))\n");
@@ -16942,7 +16888,7 @@ function async_lower_wrapper(mod: parser.Module, f: parser.FuncDecl): string {
     o = o + stream_result_collect(f) + "    (local.set $r (local.get $s))\n";
   } else if (composite) {
     o = o + "    (local.set $dp (i32.load (local.get $rb)))\n    (local.set $ln (i32.load offset=4 (local.get $rb)))\n";
-    o = o + extern_composite_lift(f.ret_type, xslot_ir()) + "    (local.set $r (local.get $s))\n";
+    o = o + extern_composite_lift(f.ret_type) + "    (local.set $r (local.get $s))\n";
   } else if (returns_value(f.ret_type)) {
     o = o + "    (local.set $r " + async_result_load(f.ret_type) + ")\n";
   }
@@ -16959,7 +16905,7 @@ function async_lower_args(mod: parser.Module, f: parser.FuncDecl): string {
     if (is_stream_slot(f, i)) {
       args = args + " (local.get $sr" + util.i32_to_string(i) + ")";
     } else {
-      args = args + extern_marshal_arg(mod, f.params[i].type_name, i, xslot_ir());
+      args = args + extern_marshal_arg(mod, f.params[i].type_name, i);
     }
     i = i + 1;
   }
@@ -17080,7 +17026,7 @@ function stream_result_collect(f: parser.FuncDecl): string {
   o = o + "    (call $__fern_stream_drop_readable_" + e + " (local.get $sd))\n";
   o = o + "    (call $__fern_ws_drop (local.get $sw))\n";
   o = o + "    (local.set $dp (local.get $sb))\n    (local.set $ln (local.get $sn))\n";
-  o = o + extern_composite_lift(f.ret_type, xslot_ir());
+  o = o + extern_composite_lift(f.ret_type);
   return o + "    (call $__fern_raw_free (local.get $sb) (i32.mul (local.get $sc) (i32.const " + sz + ")))\n";
 }
 
@@ -17196,17 +17142,17 @@ pub function module_has_extern_composite_result(mod: parser.Module): boolean {
 // heap gate is otherwise driven by the lowered ops, so a program that allocates
 // only inside a wrapper would emit calls into an absent runtime.
 pub function module_extern_needs_heap(mod: parser.Module): boolean {
-  return module_needs_extern_wrappers(mod, xslot_ir()) || module_has_extern_composite_result(mod)
+  return module_needs_extern_wrappers(mod) || module_has_extern_composite_result(mod)
     || export_needs_heap(mod) || export_needs_realloc(mod) || module_has_array_param_export(mod)
     || async_imports(mod).len() > 0;
 }
 
 // module_needs_extern_wrappers is true when any `@import` extern needs a
 // generated wrapper (composite result or string parameter).
-pub function module_needs_extern_wrappers(mod: parser.Module, slot: i32): boolean {
+pub function module_needs_extern_wrappers(mod: parser.Module): boolean {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
-    if (is_sync_extern(mod.funcs[i]) && extern_needs_wrapper(mod, mod.funcs[i], slot)) {
+    if (is_sync_extern(mod.funcs[i]) && extern_needs_wrapper(mod, mod.funcs[i])) {
       return true;
     }
     i = i + 1;
@@ -17223,9 +17169,9 @@ pub function module_needs_extern_wrappers(mod: parser.Module, slot: i32): boolea
 // extern_copy_string emits the WAT that builds a Fern string block in the local
 // `dst` from the host bytes at (local `ptr`, local `len`), with `ctr` as the
 // loop counter and `lbl` naming the block / loop labels.
-pub function extern_copy_string(slot: i32, dst: string, ptr: string, len: string, ctr: string, lbl: string): string {
+pub function extern_copy_string(dst: string, ptr: string, len: string, ctr: string, lbl: string): string {
   let o: string = "";
-  o = o + "    (local.set " + dst + " " + xstr_new(slot, "(local.get " + len + ")") + ")\n";
+  o = o + "    (local.set " + dst + " " + xstr_new("(local.get " + len + ")") + ")\n";
   o = o + "    (i32.store (local.get " + dst + ") (local.get " + len + "))\n";
   o = o + "    (local.set " + ctr + " (i32.const 0))\n";
   o = o + "    (block $d" + lbl + " (loop $c" + lbl + "\n";
@@ -17276,7 +17222,7 @@ function extern_sum_result_locals(): string {
 // A 64-bit payload (extern_sum_wide_payload) is the i64 at +8, in a 16-byte box.
 // The area is floored at 64 bytes: the Fern type reads a host error variant
 // by its discriminant, but the host writes the whole variant.
-function extern_sum_result_tail(fname: string, ret: string, slot: i32, callargs: string): string {
+function extern_sum_result_tail(fname: string, ret: string, callargs: string): string {
   let heap: string = extern_sum_heap_payload(ret);
   let opt: boolean = extern_sum_param_is_option(ret);
   let wide: boolean = extern_sum_wide_payload(ret);
@@ -17284,9 +17230,9 @@ function extern_sum_result_tail(fname: string, ret: string, slot: i32, callargs:
   o = o + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 71)) (i32.const 7)) (i32.const -8)))\n";
   o = o + "    (call $" + fname + "__import" + callargs + " (local.get $rb))\n";
   if (wide) {
-    o = o + "    (local.set $s " + xbox_new(slot, 16) + ")\n";
+    o = o + "    (local.set $s " + xbox_new(16) + ")\n";
   } else {
-    o = o + "    (local.set $s " + xbox_new(slot, 8) + ")\n";
+    o = o + "    (local.set $s " + xbox_new(8) + ")\n";
   }
   if (opt) {
     o = o + "    (i32.store (local.get $s) (i32.sub (i32.const 1) (i32.load8_u (local.get $rb))))\n";
@@ -17306,7 +17252,7 @@ function extern_sum_result_tail(fname: string, ret: string, slot: i32, callargs:
     o = o + "      (local.set $dp (i32.load offset=4 (local.get $rb)))\n";
     o = o + "      (local.set $ln (i32.load offset=8 (local.get $rb)))\n";
     if (heap == "string") {
-      o = o + extern_copy_string(slot, "$hp", "$dp", "$ln", "$i", "h");
+      o = o + extern_copy_string("$hp", "$dp", "$ln", "$i", "h");
     } else {
       o = o + extern_copy_bytes(heap, "$hp", "$dp", "$ln", "$i", "h");
     }
@@ -17325,9 +17271,9 @@ function extern_sum_result_tail(fname: string, ret: string, slot: i32, callargs:
 // a tuple: the canonical tuple returns indirectly, element i at i*4 in the
 // return area (all i32 — extern_tuple_param_supported admits i32/u32 elements
 // only). The wrapper allocates the area, calls the raw import with it, and
-// materializes the self-host tuple box the caller expects (element i @ i*slot,
+// materializes the self-host tuple box the caller expects (element i @ i*8,
 // no header, rc-boxed like tuple_make's).
-function extern_tuple_result_wrapper(f: parser.FuncDecl, slot: i32): string {
+function extern_tuple_result_wrapper(f: parser.FuncDecl): string {
   let n: i32 = tuple_type_elem_count(f.ret_type);
   let parts: string[] = [];
   parts = parts.append("  (func $" + f.name);
@@ -17342,10 +17288,10 @@ function extern_tuple_result_wrapper(f: parser.FuncDecl, slot: i32): string {
   parts = parts.append("    (local $rb i32) (local $s i32)\n");
   parts = parts.append("    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const " + util.i32_to_string(n * 4 + 7) + ")) (i32.const 7)) (i32.const -8)))\n");
   parts = parts.append("    (call $" + f.name + "__import" + args + " (local.get $rb))\n");
-  parts = parts.append("    (local.set $s (call $__fern_str_box (i32.const " + util.i32_to_string(n * slot) + ")))\n");
+  parts = parts.append("    (local.set $s (call $__fern_str_box (i32.const " + util.i32_to_string(n * 8) + ")))\n");
   let e: i32 = 0;
   while (e < n) {
-    parts = parts.append("    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(e * slot) + ")) (i32.load (i32.add (local.get $rb) (i32.const " + util.i32_to_string(e * 4) + "))))\n");
+    parts = parts.append("    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(e * 8) + ")) (i32.load (i32.add (local.get $rb) (i32.const " + util.i32_to_string(e * 4) + "))))\n");
     e = e + 1;
   }
   parts = parts.append("    (local.get $s))\n");
@@ -17436,11 +17382,11 @@ function extern_param_prologue(f: parser.FuncDecl): string {
 
 // extern_marshal_args is each of a wrapper's params forwarded in its canonical
 // shape, as the import call's args.
-function extern_marshal_args(mod: parser.Module, f: parser.FuncDecl, slot: i32): string {
+function extern_marshal_args(mod: parser.Module, f: parser.FuncDecl): string {
   let margs: string = "";
   let fi: i32 = 0;
   while (fi < f.params.len()) {
-    margs = margs + extern_marshal_arg(mod, f.params[fi].type_name, fi, slot);
+    margs = margs + extern_marshal_arg(mod, f.params[fi].type_name, fi);
     fi = fi + 1;
   }
   return margs;
@@ -17448,7 +17394,7 @@ function extern_marshal_args(mod: parser.Module, f: parser.FuncDecl, slot: i32):
 
 // extern_marshal_arg is param `fi` ($epN), of Fern type `t`, forwarded in its
 // canonical shape.
-function extern_marshal_arg(mod: parser.Module, t: string, fi: i32, slot: i32): string {
+function extern_marshal_arg(mod: parser.Module, t: string, fi: i32): string {
   let fppn: string = "$ep" + util.i32_to_string(fi);
   let margs: string = "";
   if (t == "string") {
@@ -17462,7 +17408,7 @@ function extern_marshal_arg(mod: parser.Module, t: string, fi: i32, slot: i32): 
     // width+sign-aware load for sub-word fields), recursing into
     // nested record fields to arbitrary depth (deref the inner
     // value pointer, then its leaves).
-    margs = margs + extern_emit_record_param_leaves(mod, "(local.get " + fppn + ")", t, slot);
+    margs = margs + extern_emit_record_param_leaves(mod, "(local.get " + fppn + ")", t);
   } else if (extern_sum_param_supported(t)) {
     // option/result: push the discriminant (tag@0, remapped
     // 1-tag for option) then the payload (@4).
@@ -17485,7 +17431,7 @@ function extern_marshal_arg(mod: parser.Module, t: string, fi: i32, slot: i32): 
     // width without the +1 a struct/variant box carries).
     let tfi: i32 = 0;
     while (tfi < tuple_type_elem_count(t)) {
-      margs = margs + (" (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(tfi * slot) + ")))");
+      margs = margs + (" (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(tfi * 8) + ")))");
       tfi = tfi + 1;
     }
   } else if (extern_plain_enum_param(mod, t)) {
@@ -17497,27 +17443,27 @@ function extern_marshal_arg(mod: parser.Module, t: string, fi: i32, slot: i32): 
     // payload-join. A multi-field variant pushes SlotCount i32 slots
     // (each disc-branched — the arm's field j or 0 padding); an i64
     // join (mixed-width) coerces each arm to i64 via a disc-branch;
-    // else the single i32 payload at xbox_field_off(slot, 0). For a
+    // else the single i32 payload at xbox_field_off(0). For a
     // payloadless-case value the payload read is ignored garbage.
     margs = margs + (" " + extern_plain_enum_disc(mod, t, fppn));
     if (extern_variant_is_multifield(mod, t)) {
       let msc: i32 = extern_variant_max_fields(mod, t);
       let msi: i32 = 0;
       while (msi < msc) {
-        margs = margs + (" " + extern_variant_multifield_slot(mod, t, msi, fppn, slot));
+        margs = margs + (" " + extern_variant_multifield_slot(mod, t, msi, fppn));
         msi = msi + 1;
       }
     } else if (extern_variant_is_uniform_f64(mod, t)) {
       // uniform f64: push the box's f64 payload directly.
-      margs = margs + (" (f64.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(xbox_field_off(slot, 0)) + ")))");
+      margs = margs + (" (f64.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(xbox_field_off(0)) + ")))");
     } else if (extern_variant_join_is64(mod, t)) {
-      margs = margs + (" " + extern_variant_payload_join_i64(mod, t, fppn, slot));
+      margs = margs + (" " + extern_variant_payload_join_i64(mod, t, fppn));
     } else if (extern_variant_has_f32_arm(mod, t)) {
       // i32 join with an f32 arm (S2, #5327): per-arm bridge —
       // the f32 arm's payload sits in the box as an f64.
-      margs = margs + (" " + extern_variant_payload_join_i32_f32(mod, t, fppn, slot));
+      margs = margs + (" " + extern_variant_payload_join_i32_f32(mod, t, fppn));
     } else {
-      margs = margs + (" (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(xbox_field_off(slot, 0)) + ")))");
+      margs = margs + (" (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(xbox_field_off(0)) + ")))");
     }
   } else {
     margs = margs + (" " + extern_core_arg(t, fppn));
@@ -17528,7 +17474,7 @@ function extern_marshal_arg(mod: parser.Module, t: string, fi: i32, slot: i32): 
 // extern_composite_lift builds $s, the Fern value of a list/string result the
 // host wrote at ($dp, $ln): a byte array, a numeric array widened into its
 // slots, or a `[len][bytes]` string. Scratch: $i.
-function extern_composite_lift(ret: string, slot: i32): string {
+function extern_composite_lift(ret: string): string {
   let parts: string[] = [];
   if (ret == "u8[]" || ret == "boolean[]") {
     parts = parts.append(extern_copy_bytes(ret, "$s", "$dp", "$ln", "$i", ""));
@@ -17549,7 +17495,7 @@ function extern_composite_lift(ret: string, slot: i32): string {
     parts = parts.append("      (br $c)))\n");
   } else {
     // string: `[len][bytes]` block.
-    parts = parts.append("    (local.set $s " + xstr_new(slot, "(local.get $ln)") + ")\n");
+    parts = parts.append("    (local.set $s " + xstr_new("(local.get $ln)") + ")\n");
     parts = parts.append("    (i32.store (local.get $s) (local.get $ln))\n");
     parts = parts.append("    (local.set $i (i32.const 0))\n");
     parts = parts.append("    (block $d (loop $c\n");
@@ -17561,7 +17507,7 @@ function extern_composite_lift(ret: string, slot: i32): string {
   return util.str_join_chunks(parts);
 }
 
-pub function extern_wrappers(mod: parser.Module, slot: i32): string {
+pub function extern_wrappers(mod: parser.Module): string {
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   let parts: string[] = [];
   let i: i32 = 0;
@@ -17581,7 +17527,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append(extern_param_decls(mod, f));
       // A void extern still results i32 for the IR consumer — see
       // extern_needs_wrapper for why the convention demands it.
-      let void_shim: boolean = slot >= 8 && !returns_value(f.ret_type);
+      let void_shim: boolean = !returns_value(f.ret_type);
       if (sum_ret) {
         parts = parts.append(" (result i32)");
       } else if (returns_value(f.ret_type)) {
@@ -17595,9 +17541,9 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
         parts = parts.append(extern_sum_result_locals());
       }
       parts = parts.append(extern_param_prologue(f));
-      let margs: string = extern_marshal_args(mod, f, slot);
+      let margs: string = extern_marshal_args(mod, f);
       if (sum_ret) {
-        parts = parts.append(extern_sum_result_tail(f.name, f.ret_type, slot, margs));
+        parts = parts.append(extern_sum_result_tail(f.name, f.ret_type, margs));
       } else {
         if (f.ret_type == "f32") {
           parts = parts.append("    (f64.promote_f32 (call $" + f.name + "__import" + margs + "))");
@@ -17621,10 +17567,10 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       }
       parts = parts.append(" (result i32)\n");
       parts = parts.append("    (local $s i32)\n");
-      parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, false)) + ")\n");
+      parts = parts.append("    (local.set $s " + xbox_new(xbox_bytes(1)) + ")\n");
       parts = parts.append("    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(stab, f.ret_type)) + "))\n");
-      // field @ xbox_field_off(slot, 0) = the import's by-value i32 result.
-      parts = parts.append("    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(xbox_field_off(slot, 0)) + ")) (call $" + f.name + "__import");
+      // field @ xbox_field_off(0) = the import's by-value i32 result.
+      parts = parts.append("    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(xbox_field_off(0)) + ")) (call $" + f.name + "__import");
       let da: i32 = 0;
       while (da < f.params.len()) {
         parts = parts.append(" " + extern_core_arg(f.params[da].type_name, "$ep" + util.i32_to_string(da)));
@@ -17673,12 +17619,12 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append(" (local.get $rb))\n");
       // Materialize the struct: type id at slot 0, then fill each field
       // (scalar or nested) recursively from the inlined canonical area.
-      parts = parts.append("    (local.set $s (call $__fern_str_box (i32.const " + util.i32_to_string(xbox_bytes(slot, nf, false)) + ")))\n");
+      parts = parts.append("    (local.set $s (call $__fern_str_box (i32.const " + util.i32_to_string(xbox_bytes(nf)) + ")))\n");
       parts = parts.append("    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(stab, f.ret_type)) + "))\n");
-      parts = parts.append(extern_emit_record_fill(mod, "$s", f.ret_type, 0, 0, slot));
+      parts = parts.append(extern_emit_record_fill(mod, "$s", f.ret_type, 0, 0));
       parts = parts.append("    (local.get $s))\n");
     } else if (is_sync_extern(f) && extern_tuple_param_supported(f.ret_type)) {
-      parts = parts.append(extern_tuple_result_wrapper(f, slot));
+      parts = parts.append(extern_tuple_result_wrapper(f));
     } else if (is_sync_extern(f) && extern_sum_result_supported(f.ret_type)) {
       // option/result result (P4c): flattens to (disc, payload), returned
       // indirectly; the wrapper materializes the self-host enum box — see
@@ -17693,7 +17639,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       }
       parts = parts.append(" (result i32)\n");
       parts = parts.append(extern_sum_result_locals());
-      parts = parts.append(extern_sum_result_tail(f.name, f.ret_type, slot, sargs));
+      parts = parts.append(extern_sum_result_tail(f.name, f.ret_type, sargs));
     } else if (is_sync_extern(f) && extern_plain_enum_param(mod, f.ret_type)) {
       // WIT enum result: the import returns a single i32 discriminant; the
       // wrapper materializes the Fern payloadless enum value by mapping the
@@ -17714,7 +17660,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
         ena = ena + 1;
       }
       parts = parts.append("))\n");
-      parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 0, false)) + ")\n");
+      parts = parts.append("    (local.set $s " + xbox_new(xbox_bytes(0)) + ")\n");
       parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
       parts = parts.append("    (local.get $s))\n");
     } else if (is_sync_extern(f) && extern_variant_string_arms(mod, f.ret_type).len() > 0) {
@@ -17736,13 +17682,13 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append("    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 71)) (i32.const 7)) (i32.const -8)))\n");
       parts = parts.append("    (call $" + f.name + "__import" + svargs + " (local.get $rb))\n");
       parts = parts.append("    (local.set $d (i32.load8_u (local.get $rb)))\n");
-      parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, false)) + ")\n");
+      parts = parts.append("    (local.set $s " + xbox_new(xbox_bytes(1)) + ")\n");
       parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
-      let spoff: string = util.i32_to_string(xbox_field_off(slot, 0));
+      let spoff: string = util.i32_to_string(xbox_field_off(0));
       parts = parts.append("    (if " + extern_variant_string_arm_test(sarms) + " (then\n");
       parts = parts.append("      (local.set $dp (i32.load offset=4 (local.get $rb)))\n");
       parts = parts.append("      (local.set $ln (i32.load offset=8 (local.get $rb)))\n");
-      parts = parts.append(extern_copy_string(slot, "$hp", "$dp", "$ln", "$i", "h"));
+      parts = parts.append(extern_copy_string("$hp", "$dp", "$ln", "$i", "h"));
       parts = parts.append("      (i32.store offset=" + spoff + " (local.get $s) (local.get $hp)))\n");
       parts = parts.append("    (else (i32.store offset=" + spoff + " (local.get $s) (i32.const 0))))\n");
       parts = parts.append("    (local.get $s))\n");
@@ -17785,24 +17731,24 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append(" (local.get $rb))\n");
       parts = parts.append("    (local.set $d (i32.load8_u (local.get $rb)))\n");
       // Materialize [struct_id@0][payload in slot 1] (struct_id mapped from
-      // disc); box sized for the join by xbox_bytes — `wide` for an 8-byte
-      // payload, SlotCount slots for a multi-field one.
-      let poff: string = util.i32_to_string(xbox_field_off(slot, 0));
+      // disc); box sized for the join by xbox_bytes — SlotCount fields for a
+      // multi-field one.
+      let poff: string = util.i32_to_string(xbox_field_off(0));
       if (vmf) {
         // Multi-field: the matched arm's fields, each at its natural offset
         // after the payload alignment, into the box's field j.
-        parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, vsc, true)) + ")\n");
+        parts = parts.append("    (local.set $s " + xbox_new(xbox_bytes(vsc)) + ")\n");
         parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
-        parts = parts.append(extern_variant_multifield_lift(mod, f.ret_type, extern_variant_payload_align(mod, f.ret_type), slot));
+        parts = parts.append(extern_variant_multifield_lift(mod, f.ret_type, extern_variant_payload_align(mod, f.ret_type)));
       } else if (extern_variant_is_uniform_f64(mod, f.ret_type)) {
         // uniform f64: the return area packs the f64 payload @8 (8-aligned);
         // store it into the box's payload slot as an f64. Checked before
         // vj64 (which also fires for an f64 arm).
-        parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, true)) + ")\n");
+        parts = parts.append("    (local.set $s " + xbox_new(xbox_bytes(1)) + ")\n");
         parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
         parts = parts.append("    (f64.store offset=" + poff + " (local.get $s) (f64.load offset=8 (local.get $rb)))\n");
       } else if (vj64) {
-        parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, true)) + ")\n");
+        parts = parts.append("    (local.set $s " + xbox_new(xbox_bytes(1)) + ")\n");
         parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
         parts = parts.append("    (i64.store offset=" + poff + " (local.get $s) (i64.load offset=8 (local.get $rb)))\n");
       } else if (extern_variant_has_f32_arm(mod, f.ret_type)) {
@@ -17811,11 +17757,11 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
         // widened to f64 (S1), so the store is branched per-arm on the
         // disc: the f32 arm bridges bits → f32 → f64 into a wide-payload
         // box; every other arm keeps the plain i32 copy.
-        parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, true)) + ")\n");
+        parts = parts.append("    (local.set $s " + xbox_new(xbox_bytes(1)) + ")\n");
         parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
-        parts = parts.append("    " + extern_variant_result_store_f32(mod, f.ret_type, slot) + "\n");
+        parts = parts.append("    " + extern_variant_result_store_f32(mod, f.ret_type) + "\n");
       } else {
-        parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, false)) + ")\n");
+        parts = parts.append("    (local.set $s " + xbox_new(xbox_bytes(1)) + ")\n");
         parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
         parts = parts.append("    (i32.store offset=" + poff + " (local.get $s) (i32.load offset=4 (local.get $rb)))\n");
       }
@@ -17855,7 +17801,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
         let tloff: string = util.i32_to_string(tj * 8 + 4);
         parts = parts.append("      (local.set $sp (i32.load offset=" + toff + " (i32.add (local.get $dp) (i32.mul (local.get $i) (i32.const " + tstride + ")))))\n");
         parts = parts.append("      (local.set $sl (i32.load offset=" + tloff + " (i32.add (local.get $dp) (i32.mul (local.get $i) (i32.const " + tstride + ")))))\n");
-        parts = parts.append(extern_copy_string(slot, "$hp", "$sp", "$sl", "$q", "e" + util.i32_to_string(tj)));
+        parts = parts.append(extern_copy_string("$hp", "$sp", "$sl", "$q", "e" + util.i32_to_string(tj)));
         parts = parts.append("      (i32.store offset=" + toff + " (local.get $t) (local.get $hp))\n");
         tj = tj + 1;
       }
@@ -17882,9 +17828,9 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append("    (call $" + f.name + "__import" + args + " (local.get $rb))\n");
       parts = parts.append("    (local.set $dp (i32.load (local.get $rb)))\n");
       parts = parts.append("    (local.set $ln (i32.load offset=4 (local.get $rb)))\n");
-      parts = parts.append(extern_composite_lift(f.ret_type, slot));
+      parts = parts.append(extern_composite_lift(f.ret_type));
       parts = parts.append("    (local.get $s))\n");
-    } else if (is_sync_extern(f) && slot >= 8 && !returns_value(f.ret_type)) {
+    } else if (is_sync_extern(f) && !returns_value(f.ret_type)) {
       // Void extern, scalar params: nothing to marshal, so the wrapper
       // exists only to satisfy the IR consumer's "every Fern-callable
       // results i32" convention (see extern_needs_wrapper). Forward the
@@ -17936,76 +17882,29 @@ pub function struct_id(structs: irtables.StructTab, name: string): i32 {
   return 0 - 1;
 }
 
-// struct_field_off is the byte offset of field index `idx` in a struct value
-// laid out for the LEGACY AST emitter: the type id occupies slot 0, and its
-// slots are 4 wide. Retires with wasm.fern — every remaining caller is in it.
-// Anything shared with the IR consumer must go through xbox_field_off instead,
-// which takes the consumer's slot width; see it for why.
-pub function struct_field_off(idx: i32): i32 {
-  return xbox_field_off(4, idx);
-}
-
 // xbox_field_off / xbox_bytes / xbox_new: the geometry of a struct / variant /
-// tuple heap box, parameterised by the CONSUMER that will read it.
-//
-// Both wasm consumers lay a box out the same way — the type id or variant
-// discriminant in slot 0, field i in slot 1+i — but at different slot WIDTHS:
-// the IR consumer (op_struct_new / op_enum_new and the IR match dispatch) slots
-// 8, while the legacy AST emitter slots 4. Emitting one layout for both is a
-// silent wrong-answer bug, twice landed: #5795 had an AST-path `NotFound(p)`
-// read its path out of the upper half of the id slot, and #5974 had every
-// record / variant / tuple extern read its leaves from the wrong offsets. So
-// code shared by the two emitters takes `slot` and derives its offsets here
-// rather than baking either width.
-pub function xbox_field_off(slot: i32, idx: i32): i32 {
-  return slot * (1 + idx);
+// tuple heap box — the type id or variant discriminant in an 8-byte slot 0,
+// field i in slot 1+i (op_struct_new / op_enum_new and the match dispatch).
+pub function xbox_field_off(idx: i32): i32 {
+  return 8 * (1 + idx);
 }
 
-// xslot_ir / xslot_ast name the two consumers' slot widths, so a call site says
-// WHICH consumer it emits for instead of a bare 8 or 4. xslot_ast retires with
-// wasm.fern, and with it every `slot == 4` arm below.
-pub function xslot_ir(): i32 {
-  return 8;
+// xbox_bytes is the raw block size of an `nf`-field box.
+pub function xbox_bytes(nf: i32): i32 {
+  return 8 * (1 + nf);
 }
 
-pub function xslot_ast(): i32 {
-  return 4;
+// xbox_new emits the allocation for a box of `bytes` raw bytes. Every box goes
+// through $__fern_str_box, so it carries the rc header $__fern_arr_dec reads at
+// [p-8].
+pub function xbox_new(bytes: i32): string {
+  return "(call $__fern_str_box (i32.const " + util.i32_to_string(bytes) + "))";
 }
 
-// xbox_bytes is the raw block size of an `nf`-slot box for a `slot`-wide
-// consumer. `wide` says the payload needs 8 bytes (an i64/u64/f64 variant arm):
-// the slot-4 consumer's slots are too narrow to hold one, so it sizes such a box
-// slot + 8*nf instead of slot*(1+nf) — the AST emitter's historical 12-byte
-// i64-payload variant box. At slot 8 the slot already holds 8, so both agree.
-pub function xbox_bytes(slot: i32, nf: i32, wide: boolean): i32 {
-  if (slot >= 8 || !wide) {
-    return slot * (1 + nf);
-  }
-  return slot + 8 * nf;
-}
-
-// xbox_new emits the allocation for a box of `bytes` raw bytes, in the form the
-// consumer's own constructors use. The IR consumer allocates every box through
-// $__fern_str_box, so its boxes carry the rc header $__fern_arr_dec reads at
-// [p-8] — handing IR-emitted code a bump-allocated box would have it decrement a
-// header that is really the previous block's data. The legacy AST emitter bump-
-// allocates the small ones; that arm goes with wasm.fern.
-pub function xbox_new(slot: i32, bytes: i32): string {
-  if (slot >= 8) {
-    return "(call $__fern_str_box (i32.const " + util.i32_to_string(bytes) + "))";
-  }
-  return "(call $__fern_alloc (i32.const " + util.i32_to_string(bytes) + "))";
-}
-
-// xstr_new emits the allocation for a `[len][bytes]` string block of `len_expr`
-// bytes of text, again in the consumer's own form: rc-headered via
-// $__fern_str_box for the IR consumer (whose strings are rc-managed), a raw bump
-// for the legacy AST emitter.
-pub function xstr_new(slot: i32, len_expr: string): string {
-  if (slot >= 8) {
-    return "(call $__fern_str_box (i32.add (i32.const 4) " + len_expr + "))";
-  }
-  return "(call $__fern_alloc (i32.add (i32.const 4) " + len_expr + "))";
+// xstr_new emits the allocation for an rc-managed `[len][bytes]` string block of
+// `len_expr` bytes of text.
+pub function xstr_new(len_expr: string): string {
+  return "(call $__fern_str_box (i32.add (i32.const 4) " + len_expr + "))";
 }
 
 // nth_tuple_type_elem parses a tuple-type spelling "(A, B, …)" and returns the
