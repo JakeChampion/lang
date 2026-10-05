@@ -74,9 +74,10 @@ function count(f: ssasem.Func, kind: i32): i32 {
 }
 function main(): i32 {
   // Positive, policy/noinline mask, unchanged caller, captured environment,
-  // environment read, alias, leaf budget, caller budget and splice budget.
+  // environment read, alias, leaf budget, caller budget, splice budget,
+  // helper exposed by the earlier ordinary pass, and a noinline helper.
   let row: i32 = 0;
-  while (row < 9) {
+  while (row < 11) {
     let leaf_size: i32 = 1;
     if (row == 6) { leaf_size = 41; }
     let caller_size: i32 = 0;
@@ -84,13 +85,20 @@ function main(): i32 {
     let calls: i32 = 1;
     if (row == 8) { calls = 65; }
     let cb = callback(row == 3, row == 4, leaf_size);
+    let helper = body("helper", [word()], [word()], [inst(ssasem.param(), 0, [], 0, "")], 0);
+    helper = ssasem.Func { ...helper, graph: ssa.SFunc { ...helper.graph, takes_env: false } };
+    if (row >= 9) {
+      let ops = [inst(ssasem.param(), 0, [], 0, ""), inst(ssasem.param(), 1, [], 1, ""), inst(ssasem.call(), 2, [1], 0, "helper")];
+      cb = body("cb", cb.params, [cb.params[0], word(), word()], ops, 2);
+      cb = ssasem.Func { ...cb, calls: [ssasem.Contract { name: "helper", params: [word()], modes: [ssasem.value_mode()], result: word() }] };
+    }
     let f = caller(cb, row == 3, row == 5, caller_size, calls);
-    let out = seminline.inline_closures([cb, f], ["cb", "caller"], [row != 1, false], [false, row != 2])[1];
+    let out = seminline.inline_closures([cb, f, helper], ["cb", "caller", "helper"], [row != 1, false, row != 10], [false, row != 2, false])[1];
     let want: i32 = 1;
-    if (row == 0) { want = 0; }
+    if (row == 0 || row == 9) { want = 0; }
     if (count(out, ssasem.call_value()) != want) { return 10 + row; }
-    if (row == 0 && count(out, ssasem.closure_new()) != 0) { return 30; }
-    if (row != 0 && count(out, ssasem.closure_new()) != 1) { return 31 + row; }
+    if (want == 0 && count(out, ssasem.closure_new()) != 0) { return 30; }
+    if (want != 0 && count(out, ssasem.closure_new()) != 1) { return 31 + row; }
     let checked = ssasem.analyze(out);
     if (!checked.ok) { print(checked.why); return 50 + row; }
     row = row + 1;

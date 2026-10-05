@@ -257,8 +257,10 @@ The primary compiler now preserves a locally constructed closure's target
 through physical lowering. Captured callbacks still receive their environment;
 unknown function values retain indirect dispatch. After fusion, `seminline`
 also splices small capture-free callback bodies into the changed callers.
-It requires an unread environment parameter, respects declaration eligibility
-and `@noinline`, and retains the existing leaf, caller and splice limits.
+It first prepares eligible callback bodies using helpers exposed by the earlier
+ordinary inlining pass. It requires an unread environment parameter, respects
+declaration eligibility and `@noinline`, and retains the existing leaf, caller
+and splice limits.
 `FERN_SEM_INLINE=` disables this additional inlining. Unread capture-free
 closure constants are then removed before ownership and register planning.
 `TestSelfHostClosureInlineAdmission` checks these proof boundaries and verifies
@@ -277,12 +279,19 @@ medians and observed ranges, in ns per round. A two-round pilot preceded the
 | Same-run handwritten control | 7,295 (7,138-7,614) | 2,392 (2,346-2,609) |
 | Inlining and dead closure removal, later run | 8,779 (8,397-10,110) | 2,886 (2,739-2,929) |
 | Later-run handwritten control | 7,618 (7,303-7,831) | 2,592 (2,446-2,688) |
+| Prepared helper callbacks, final run | 7,844 (7,743-8,273) | 2,690 (2,640-2,941) |
+| Final-run handwritten control | 7,584 (7,364-9,080) | 2,491 (2,478-3,370) |
 
-Inlining removed the small callback calls from the emitted loops, but these
-measurements do not establish a further runtime gain or parity. The pipelines
-still make one allocator call per round for `Some`; controls make none. Both
-have zero steady fresh bytes. The dispatch explanation and September timing
-results below describe the Go compiler and do not establish primary parity.
+The initial closure pass missed benchmark callbacks whose helpers had just
+become scalar leaves. Physical inlining removed those calls after ownership
+planning, leaving unused closure bookkeeping. Preparing the helper calls before
+the closure proof removes that bookkeeping too. In the final paired run, the
+version immediately before that preparation measured 8,468 ns (8,167-8,792)
+and 2,953 ns (2,804-7,547), respectively. The improvement still does not
+establish parity. Pipelines make one allocator call per round for `Some`;
+controls make none. Both have zero steady fresh bytes. The dispatch explanation
+and September timing results below describe the Go compiler and do not
+establish primary parity.
 
 Clause 1's second half — "no unspecialised calls per element" — holds, and it
 is not something this pass does by itself. Fusion runs FIRST in

@@ -89,12 +89,23 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], inlinable: b
   if (!any) {
     return funcs;
   }
+  // The first ordinary pass may have made a callback's helper a leaf after
+  // building its candidate table. Prepare only eligible closure bodies from
+  // those current helpers before proving the closure bodies themselves tiny.
+  // Keep this scratch view local: only fused callers are returned rewritten.
+  let callbacks: boolean[] = [];
+  let ci: i32 = 0;
+  while (ci < funcs.len()) {
+    callbacks = callbacks.append(inlinable[ci] && unused_environment(funcs[ci]) >= 0);
+    ci = ci + 1;
+  }
+  let candidates: ssasem.Func[] = inline_leaves(funcs, names, inlinable, callbacks).funcs;
   let leaves: Map[string, i32] = map_new(64);
   let i: i32 = 0;
   while (i < funcs.len()) {
     if (inlinable[i]) {
-      let env: i32 = unused_environment(funcs[i]);
-      if (env >= 0 && leaf_body(funcs[i], env)) {
+      let env: i32 = unused_environment(candidates[i]);
+      if (env >= 0 && leaf_body(candidates[i], env)) {
         leaves = leaves.insert(names[i], i);
       }
     }
@@ -105,7 +116,7 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], inlinable: b
   while (i < funcs.len()) {
     let f: ssasem.Func = funcs[i];
     if (rewrite[i] && count_insts(f.graph) <= max_caller_insts()) {
-      f = drop_unread(splice_calls(f, funcs, leaves, true).f);
+      f = drop_unread(splice_calls(f, candidates, leaves, true).f);
     }
     out = out.append(f);
     i = i + 1;
