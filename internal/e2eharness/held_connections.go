@@ -59,9 +59,9 @@ function main(): i32 {
 // the second batch of held connections may cost, per connection, when
 // each connection's handler is parked on its upstream: the connection's
 // own cost plus the flight, the task's record and save area, and the
-// fetch client's request, pooled connection and parked frames. The
-// self-host's loop costs about 12 KiB.
-const HeldSuspendedBytesPerHandler = 16384
+// fetch client's request, pooled connection and parked frames, which
+// save only their live locals. The self-host's loop costs about 4.7 KiB.
+const HeldSuspendedBytesPerHandler = 8192
 
 // HeldSuspendedServerSource is HeldConnectionsServerSource with a handler
 // that waits on `plat.http` to the fetch upstream's /hold target (through

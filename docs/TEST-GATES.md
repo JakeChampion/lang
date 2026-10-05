@@ -249,7 +249,7 @@ a request whose handler is parked on the fetch upstream's `/hold` target
 (P3's suspended handler, `docs/NET-P3-SUSPENSION-PLAN.md` §4 slice 5),
 released at the end so every parked handler is seen to answer. The
 self-host's loop costs about 560 and 590 bytes per connection for the
-first two, and about 12 KiB per suspended handler, under a 16 KiB bound:
+first two, and about 4.7 KiB per suspended handler, under an 8 KiB bound:
 the connection's own cost plus the flight, the task's record and save
 area, and the fetch client's request, pooled connection and parked frames.
 The test compiles with the production driver:

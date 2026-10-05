@@ -211,10 +211,11 @@ capturing a mutable local by reference live across one, since a rewound
 frame's locals would be restored copies and the shared cell would split.
 Neither hazard exists in the lowering slice 2 landed, so neither rule does:
 
-- An unwinding frame saves its locals as the words they are and returns
-  without running its exit-path releases, so every reference the frame
-  holds keeps its count in the save area, and the owner a view borrows from
-  survives the park with it. A view whose owner is not a local of some
+- An unwinding frame saves the locals the rest of its body reads, as the
+  words they are, and returns without running its exit-path releases. A
+  reference the frame still holds is one of them, since its release reads
+  it, so it keeps its count in the save area, and the owner a view borrows
+  from survives the park with it. A view whose owner is not a local of some
   frame on the chain is the general dangling-view hazard the view contract
   already covers, park or no park.
 - A scalar a closure captures and either side assigns is a heap cell both
@@ -469,10 +470,10 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    The stateful loop (`run_with`) still runs its handler to completion:
    its state threads through the handler chain, so a parked handler would
    hold it from every other request. A connection with its handler parked
-   on an upstream costs the heap about 12 KiB, the connection's own ~0.6
+   on an upstream costs the heap about 4.7 KiB, the connection's own ~0.6
    KiB included (`TestSelfHostHeldConnectionsHeapBoundX86_64`'s third
    shape: 64 then 64 more connections, each with a handler parked on the
-   fetch upstream, under a 16 KiB bound). The two-fetch handler at 4,096
+   fetch upstream, under an 8 KiB bound). The two-fetch handler at 4,096
    connections is `net-nightly`'s: `scripts/net-bench` loads
    `scripts/net-bench.d/twofetch.fern`, one loop built by the self-host
    compiler fetching the Go hello twice per request, beside hyper's
