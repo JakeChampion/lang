@@ -6,12 +6,9 @@ import "std/string";
 @noinline
 function pipeline(xs: i64[], filtered: boolean): i64[] {
   if (filtered) {
-    return xs.filter((x: i64): boolean => x % 3i64 == 0i64)
-      .map((x: i64): i64 => x * 5i64 + 7i64)
-      .scan(0i64, (a: i64, x: i64): i64 => a + x);
+    return xs.filter((x: i64): boolean => x % 3i64 == 0i64).map((x: i64): i64 => x * 5i64 + 7i64).scan(0i64, (a: i64, x: i64): i64 => a + x);
   }
-  return xs.map((x: i64): i64 => x * 5i64 + 7i64)
-    .scan(0i64, (a: i64, x: i64): i64 => a + x);
+  return xs.map((x: i64): i64 => x * 5i64 + 7i64).scan(0i64, (a: i64, x: i64): i64 => a + x);
 }
 
 function correct(xs: i64[], out: i64[], filtered: boolean): boolean {
