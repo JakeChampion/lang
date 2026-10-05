@@ -9,7 +9,9 @@ import "testing"
 // plus the heap allocations the rounds made. origin, the TInt and TVoid
 // members, the Shade payload, named's string field and names' string elements
 // allocate nothing; fresh holds a parameter and rebuild's first record a loop
-// counter, so each still allocates once a round. rebuild's second record is constant, so the first one's box is
+// counter, so each still allocates once a round; rebuild hands that record to
+// px, since one only read would never be built. rebuild's second record is
+// constant, so the first one's box is
 // released where it dies rather than held for a construction that no longer
 // takes it. An empty array literal is one static box too: leaf's record
 // allocates and its args do not, and later's push onto those args makes the
@@ -44,9 +46,10 @@ struct U { x: u32 }
         Shade.Mixed(n, b) => { if (b) { return n * 10; } return n; }
     }
 }
+@noinline function px(p: P): i32 { return p.x; }
 @noinline function rebuild(i: i32): i32 {
     let a: P = P { x: i, y: i, on: true };
-    let n: i32 = a.x;
+    let n: i32 = px(a);
     let b: P = P { x: 4, y: 5, on: false };
     return n + b.y;
 }

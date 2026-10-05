@@ -127,6 +127,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 // inline concat does, and an alias-returning callee is never released under its
 // caller.
 func TestSelfHostRcEnumStrCallPayloadX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // Allocation ASYMPTOTICS are ungated. `TestSelfHostAllocDifferentialX86_64`
@@ -83,6 +85,10 @@ type allocScaleCase struct {
 	// out of the corpus, and the gate would lose its own calibration — these
 	// entries are what prove the bound still separates the two classes.
 	wantQuadratic bool
+
+	// boxed compiles under e2eharness.BoxedProbes: the shape's boxes are ones
+	// the semantic inliner would split away, leaving nothing to measure.
+	boxed bool
 }
 
 var allocScaleCases = []allocScaleCase{
@@ -315,7 +321,8 @@ function churn(n: i32): i32 {
 		// local-base spelling of the same thing was flat.
 		//
 		// Constant in n: each round builds and discards one record.
-		name: "struct-update-fresh-base",
+		name:  "struct-update-fresh-base",
+		boxed: true,
 		decls: `struct R { tag: string, note: string, n: i32 }
 function mk(): R { return R { tag: "base", note: "", n: 0 }; }
 function churn(n: i32): i32 {
@@ -587,7 +594,8 @@ function churn(n: i32): i32 {
 		// there was no leak-free spelling.
 		//
 		// Constant in n: one tuple and one element per round.
-		name: "tuple-struct-element-binding",
+		name:  "tuple-struct-element-binding",
+		boxed: true,
 		decls: `struct P { a: i32, b: i32, c: i32 }
 function pull(s: P): (i32, P) { return (s.a, P { a: s.a + 1, b: s.b, c: s.c }); }
 function churn(n: i32): i32 {
@@ -869,7 +877,8 @@ function churn(n: i32): i32 {
 		// flat (#6417). The map-get sibling below reaches the same join.
 		//
 		// Constant in n: one box per round, all of it reclaimed.
-		name: "match-returning-arms-boxed-result",
+		name:  "match-returning-arms-boxed-result",
+		boxed: true,
 		decls: `function make(i: i64): Result[i64, i64] {
     if (i % 2i64 == 0i64) { return Ok(i); }
     return Err(i);
@@ -1020,6 +1029,9 @@ func parseVolume(t *testing.T, label, out string, exit int) int64 {
 func TestX86_64AllocScaling(t *testing.T) {
 	for _, tc := range allocScaleCases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.boxed {
+				e2eharness.BoxedProbes(t)
+			}
 			out1, exit1 := compileAndRunX86_64(t, tc.volumeSrc(tc.n))
 			v1 := parseVolume(t, tc.name+"@n", out1, exit1)
 			out2, exit2 := compileAndRunX86_64(t, tc.volumeSrc(2*tc.n))
