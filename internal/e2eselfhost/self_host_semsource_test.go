@@ -937,6 +937,7 @@ function main(): i32 {
 `
 
 func TestSelfHostSemanticInferredCycle(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
 	if err := os.WriteFile(filepath.Join(dir, "semsource_infer.fern"), []byte(semsourceInferDriver), 0o644); err != nil {
@@ -958,6 +959,7 @@ func TestSelfHostSemanticInferredCycle(t *testing.T) {
 }
 
 func TestSelfHostSemanticSourcePrint(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
 	if err := os.WriteFile(filepath.Join(dir, "semsource_print.fern"), []byte(semsourcePrintDriver), 0o644); err != nil {
