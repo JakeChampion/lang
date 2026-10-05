@@ -37,8 +37,9 @@ func TestSelfHostLambdaReachesIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
-	// A no-capture lambda passed as a callback — the uniform env-box shape.
-	src := `function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x + 1; }, 41); }`
+	// Keep the callback consumer opaque to exercise the uniform env-box shape.
+	src := `@noinline
+function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x + 1; }, 41); }`
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
 		cmd = exec.Command(driverBin, "-ir")
