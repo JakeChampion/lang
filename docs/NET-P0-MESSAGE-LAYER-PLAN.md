@@ -220,8 +220,7 @@ on #4451, as slice 2 was.
    line hands `__target_path` its range of the buffer, and a path that needs
    work is decoded and has its dot segments removed in one byte array, with
    UTF-8 checked only when an escape decoded past ASCII. Parse 35 to 28 on
-   the self-host; the Go compiler goes 43 to 38 on x86-64, 53 to 46 on arm64
-   and 49 to 42 on wasm.
+   the self-host.
 5. **The head parse returns by writing, not by boxing.** The helpers that
    return a tuple, `Option` or `Result` once per request are the 14 rows
    above. Which fix applies is decided by the first measurement of this
@@ -231,6 +230,17 @@ on #4451, as slice 2 was.
    `docs/FIP-PACKET-PROTOCOL.md` shape of the parse writing its findings
    into the state it threads. The compiler fix is preferred where it
    covers the case, since every caller gains. Removes 14. Parse 29 to 15.
+   Done, by neither of the two return conventions. The measurement put
+   the 14 in helpers each called from one place, whose box the caller
+   takes apart at once, so the semantic inliner (`seminline`) now splices
+   a function called from one place whatever it computes, emits no body
+   for it once nothing else names it, and reads a tuple, record or variant
+   built and only read off its construction, through the phis that join
+   its returns, instead of allocating it. That is a fix every program
+   gets on every target, wasm included, with no change to how a call
+   returns. Parse 28 to 15 on the self-host. The
+   gate's probe hands the request to a function that is not spliced, as a
+   server hands it to its handler, so it counts what a server keeps.
 6. **The donor boundary.** What is left is the kept and wrapper rows and the
    serialize's builder and copy. The connection record owns a request
    record and a write buffer. The parse fills the request in place, the

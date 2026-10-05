@@ -16,6 +16,7 @@ import (
 // double free, frees < allocs an unclaimed box, and they mean different bugs.
 
 func TestSelfHostBlockScopedReclaimX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

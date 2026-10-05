@@ -65,6 +65,7 @@ function main(): i32 {
 // emitted after the match statement, which a returning arm never reaches (#6219),
 // so returning arms here would measure that separate gap instead of this one.
 func TestSelfHostRcEnumRebindReclaimX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

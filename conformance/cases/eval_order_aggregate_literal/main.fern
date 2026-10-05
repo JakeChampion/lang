@@ -20,7 +20,9 @@
 // passing for a reason the case is not about. That is why only the struct and
 // the array appear: a small tuple or single-payload variant is returned in
 // registers in some contexts and has no box to time. Those two are pinned on
-// the op stream instead, by internal/ir/aggregate_eval_order_test.go.
+// the op stream instead, by internal/ir/aggregate_eval_order_test.go. The
+// struct is read through a call, since one only ever read field by field is
+// taken apart rather than boxed.
 import "std/i64";
 import "std/string";
 
@@ -32,11 +34,13 @@ function order_of(cost: i64, read_at: i64): string {
     return "box-first";
 }
 
+@noinline function a_of(m: M): i64 { return m.a; }
+
 function main(): i32 {
     let b0: i64 = __heap_alloc_count();
     let m: M = M { a: __heap_alloc_count(), b: 0 as i64 };
     let a0: i64 = __heap_alloc_count();
-    print("struct: " + order_of(a0 - b0, m.a - b0));
+    print("struct: " + order_of(a0 - b0, a_of(m) - b0));
 
     let b1: i64 = __heap_alloc_count();
     let v: i64[] = [__heap_alloc_count(), 0 as i64];

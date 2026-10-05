@@ -13,6 +13,7 @@ import (
 // a live enum box corrupts the read-back match) plus a balanced arm64 census.
 // Heavy heap-exhaustion churn is left to the x86 path (too slow under qemu).
 func TestSelfHostStructEnumFieldReclaimIRArm64(t *testing.T) {
+	boxedProbes(t)
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
