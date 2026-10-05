@@ -1352,73 +1352,144 @@ function cell_value(v: Value): Value {
       return VCell { ...c, kind: "string" };
     },
     VArr(a) => {
-      let encoded: Value = cell_bytes_text(a);
+      let encoded: Value = cell_array_text(a);
       if let VString(s) = encoded {
         c.cs.set(s.v);
-        return VCell { ...c, kind: "u8[]" };
+        return VCell { ...c, kind: "array" };
       }
       return encoded;
     },
     _ => {
-      return v_err("cell_new: a cell holds a scalar, string or u8[]");
+      return v_err("cell_new: a cell holds a scalar, string or owned scalar array");
     }
   }
 }
 
 // cell_method answers `c.get()` and `c.set(v)` on a program's cell.
 // Keep the interpreter itself buildable by the old scalar/string-cell pin.
-// Its byte-cell storage is ASCII hex; application native/WASM cells retain
-// the owned array directly. No arbitrary byte is ever stored in a string.
-function cell_bytes_text(a: VArr): Value {
-  let h: usize = buf_new(a.elements.len() * 2);
+// Array slots store their element name followed by tagged scalar bit patterns
+// in ASCII hex. This retains unsigned/float identity without lossy text numeric
+// conversion. Compiled application cells hold the owned array directly.
+function cell_bits_text(h: usize, tag: i32, bits: i64): void {
   let digits: string = "0123456789abcdef";
+  buf_push_byte(h, tag);
+  let shift: i32 = 60;
+  while (shift >= 0) {
+    let nibble: i32 = (bits >> shift as i64 & 15i64) as i32;
+    buf_push_byte(h, digits[nibble] as i32);
+    shift = shift - 4;
+  }
+}
+
+function cell_scalar_text(h: usize, v: Value): boolean {
+  match (v) {
+    VInt(n) => {
+      cell_bits_text(h, 105, n.v as i64);
+    },
+    VUint(n) => {
+      cell_bits_text(h, 110, uint_zext(n.v));
+    },
+    VInt64(n) => {
+      let tag: i32 = 108;
+      if (n.unsigned) {
+        tag = 117;
+      }
+      cell_bits_text(h, tag, vint_as_i64(v));
+    },
+    VBool(b) => {
+      let bits: i64 = 0i64;
+      if (b.v) {
+        bits = 1i64;
+      }
+      cell_bits_text(h, 98, bits);
+    },
+    VFloat(f) => {
+      cell_bits_text(h, 100, f64_bits(f.v));
+    },
+    VFloat32(f) => {
+      cell_bits_text(h, 102, f32_bits(f.v as f32) as i64);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return true;
+}
+
+function cell_array_text(a: VArr): Value {
+  let elem: string = a.elem;
+  if (elem != "" && elem != "u8" && elem != "i32" && elem != "u32" && elem != "i64" && elem != "u64" && elem != "usize" && elem != "f32" && elem != "f64" && elem != "boolean") {
+    return v_err("Cell array: expected scalar elements");
+  }
+  let h: usize = buf_new(a.elements.len() * 17 + elem.len() + 1);
+  buf_push(h, elem);
+  buf_push_byte(h, 58);
   for v in a.elements {
-    if (!is_i32_arg(v)) {
+    if (!cell_scalar_text(h, v)) {
       buf_free(h);
-      return v_err("Cell[u8[]]: expected byte elements");
+      return v_err("Cell array: expected scalar elements");
     }
-    let b: i32 = vint_bits(v);
-    if (b < 0 || b > 255) {
-      buf_free(h);
-      return v_err("Cell[u8[]]: byte out of range");
-    }
-    buf_push_byte(h, digits[b / 16] as i32);
-    buf_push_byte(h, digits[b % 16] as i32);
   }
   let encoded: string = buf_take(h);
   buf_free(h);
   return v_string(encoded);
 }
 
-function cell_bytes_value(s: string): Value {
-  let out: Value[] = [];
-  let i: i32 = 0;
-  while (i < s.len()) {
-    let hi: i32 = s[i] as i32 - 48;
-    let lo: i32 = s[i + 1] as i32 - 48;
-    if (hi > 9) {
-      hi = hi - 39;
-    }
-    if (lo > 9) {
-      lo = lo - 39;
-    }
-    out = out.append(v_int(hi * 16 + lo));
-    i = i + 2;
+function cell_scalar_value(tag: i32, bits: i64): Value {
+  if (tag == 105) {
+    return v_int(bits as i32);
   }
-  return v_arr_of(out, "u8");
+  if (tag == 110) {
+    return VUint { v: bits as i32 };
+  }
+  if (tag == 108 || tag == 117) {
+    return VInt64 { hi: (bits >> 32i64) as i32, lo: bits as i32, unsigned: tag == 117 };
+  }
+  if (tag == 98) {
+    return v_bool(bits != 0i64);
+  }
+  if (tag == 100) {
+    return v_float(f64_from_bits(bits));
+  }
+  return v_float32(f32_from_bits(bits as i32) as f64);
+}
+
+function cell_array_value(s: string): Value {
+  let sep: i32 = 0;
+  while (s[sep] != b':') {
+    sep = sep + 1;
+  }
+  let elem: string = slice_unchecked(s, 0, sep) + "";
+  let out: Value[] = [];
+  let i: i32 = sep + 1;
+  while (i < s.len()) {
+    let bits: i64 = 0i64;
+    let j: i32 = 1;
+    while (j <= 16) {
+      let digit: i32 = s[i + j] as i32 - 48;
+      if (digit > 9) {
+        digit = digit - 39;
+      }
+      bits = bits << 4i64 | digit as i64;
+      j = j + 1;
+    }
+    out = out.append(cell_scalar_value(s[i] as i32, bits));
+    i = i + 17;
+  }
+  return v_arr_of(out, elem);
 }
 
 function cell_set_value(c: VCell, v: Value): Value {
-  if (c.kind == "u8[]") {
+  if (c.kind == "array") {
     if let VArr(a) = v {
-      let encoded: Value = cell_bytes_text(a);
+      let encoded: Value = cell_array_text(a);
       if let VString(s) = encoded {
         c.cs.set(s.v);
         return v_void();
       }
       return encoded;
     }
-    return v_err("Cell.set: the value is not a u8[]");
+    return v_err("Cell.set: the value is not a scalar array");
   }
   if (c.kind == "i32" && is_i32_arg(v)) {
     c.ci.set(vint_bits(v));
@@ -1474,8 +1545,8 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     if (c.kind == "f64") {
       return VFloat { v: c.cf.get() };
     }
-    if (c.kind == "u8[]") {
-      return cell_bytes_value(c.cs.get());
+    if (c.kind == "array") {
+      return cell_array_value(c.cs.get());
     }
     return v_string(c.cs.get());
   }

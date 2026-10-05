@@ -1,18 +1,25 @@
 # Cell[T] — a sanctioned mutable cell for the immutable-data world
 
-Date: 2026-06-07 (byte-array extension drafted 2026-10-04).
+Date: 2026-06-07 (scalar-array extension 2026-10-06).
 
-The current extension admits **Cell[u8[]]** as another cycle-free element.
-Byte arrays cannot reference cells. Construction retains an aliased array;
+The current extension admits **Cell[T[]]** for scalar `T`: `u8`, `i32`, `u32`,
+`i64`, `u64`, `usize`, `f32`, `f64` and `boolean`. Scalar arrays cannot reference
+cells. Construction retains an aliased array;
 get returns an owned snapshot; set evaluates and retains its replacement
 before releasing the old array; final cell drop releases its slot and box.
 The primary compiler uses typed IR's cell and array ownership operations.
-The bootstrap interpreter encodes its private byte-cell slot as ASCII hex
-so its source remains buildable by the older pin. Compiled applications
-store byte arrays directly. This extension is not yet validated; see
-[the byte-array-cell specification](contexts/compiler/specs/byte-array-cells.md).
+The bootstrap interpreter encodes its private array-cell slot as tagged scalar
+bits in ASCII hex, preserving element types and exact floating-point values
+while remaining buildable by the older pin. Compiled applications store arrays
+directly. String arrays, nested arrays, borrowed views and arrays of composite
+or reference elements remain rejected. See
+[the scalar-array specification](contexts/compiler/specs/scalar-array-cells.md)
+for the contract and validation status. The earlier
+[byte-array slice](contexts/compiler/specs/byte-array-cells.md) also migrated
+HTTP stream buffers and simulated transport output away from unchecked strings.
 
-The original implementation history follows.
+The original scalar/string implementation history follows. Its narrower type
+table describes that implementation, before the array extensions above.
 
 Status: implemented for scalar **and `string`** element types. The Go
 reference compiler does `cell_new` / `get` / `set` + cycle-free E057 + full

@@ -7106,10 +7106,10 @@ function main(): i32 { let c: Cell[Point] = cell_new(Point { x: 1 }); return 0; 
 	if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
 		t.Errorf("Cell[Point] should be E057, got %v", err)
 	}
-	// Cell[i32[]] (array) — also a reference/composite type: rejected.
-	err = checkSource(t, `function main(): i32 { let c: Cell[i32[]] = cell_new([1, 2]); return 0; }`)
+	// Arrays of reference elements remain outside scalar-array cell support.
+	err = checkSource(t, `function main(): i32 { let c: Cell[string[]] = cell_new(["a", "b"]); return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
-		t.Errorf("Cell[i32[]] should be E057, got %v", err)
+		t.Errorf("Cell[string[]] should be E057, got %v", err)
 	}
 }
 
