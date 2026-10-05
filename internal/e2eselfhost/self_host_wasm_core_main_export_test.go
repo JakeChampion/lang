@@ -17,7 +17,7 @@ import (
 func TestSelfHostWasmCoreExportsMain(t *testing.T) {
 	cli := newStrictCLI(t)
 	wat := cli.emit(t, "wasm32-wasi", "function main(): i32 { return 200; }")
-	for _, want := range []string{`(export "main" (func $main))`, `(export "_start" (func $_start))`} {
+	for _, want := range []string{`(export "main" (func $main))`, `(export "_start" (func $__fern_start))`} {
 		if !strings.Contains(wat, want) {
 			t.Fatalf("core module lacks %s:\n%s", want, wat)
 		}

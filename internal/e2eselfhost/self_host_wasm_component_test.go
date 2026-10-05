@@ -537,7 +537,7 @@ function main(): i32 {
 
 // TestSelfHostWasmComponentStdout exercises the fully self-hosted preview2
 // stdout I/O path: source -> emit_module_run_io (a run core importing
-// wasi:cli/stdout + wasi:io/streams, with a $fd_write shim over the stream)
+// wasi:cli/stdout + wasi:io/streams, with a $__fern_fd_write shim over the stream)
 // -> emit_binary -> component_full_io -> a wasi:cli/run component that
 // prints under wasmtime. Asserts both stdout and the run() result
 // (main()==0 -> exit 0; main()!=0 -> exit 1).

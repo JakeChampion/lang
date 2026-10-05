@@ -198,7 +198,7 @@ func TestWASMSanitizeCleanRunIsSilent(t *testing.T) {
 }
 
 // The report is emitted at every exit seam but must print ONCE: the exit()
-// builtin reports through $proc_exit and never returns to the exported main,
+// builtin reports through $__fern_proc_exit and never returns to the exported main,
 // which reports on a return.
 func TestWASMLeakCheckReportsOnce(t *testing.T) {
 	src := `function main(): i32 {

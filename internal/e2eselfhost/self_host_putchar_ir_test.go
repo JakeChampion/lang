@@ -35,7 +35,7 @@ var putcharIRCases = []struct {
 const wasmPutcharSeq = "    i32.store8\n" +
 	"    i32.const 0\n    i32.const 16\n    i32.store\n" +
 	"    i32.const 4\n    i32.const 1\n    i32.store\n" +
-	"    i32.const 1\n    i32.const 0\n    i32.const 1\n    i32.const 8\n    call $fd_write\n"
+	"    i32.const 1\n    i32.const 0\n    i32.const 1\n    i32.const 8\n    call $__fern_fd_write\n"
 
 func TestSelfHostPutcharIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

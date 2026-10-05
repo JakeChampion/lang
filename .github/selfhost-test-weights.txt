@@ -1606,6 +1606,7 @@ TestSelfHostWasmUDPGuestStorage 2
 TestSelfHostWasmUDPLifecycleCensus 3
 TestSelfHostWasmUnitsN2 58
 TestSelfHostWasmUnsupportedOpRefused 2
+TestSelfHostWasmUserNamesDoNotShadowTheRuntime 35
 TestSelfHostWasmWriteFileReportsFullDevice 2
 TestSelfHostWatLex 2
 TestSelfHostWatbinFlat 2

@@ -382,9 +382,9 @@ so the failure is attributable to the allocator, with its caller chain, but
 the process dies as a trap rather than carrying a status
 (`examples/self_host/wasm_ir.fern`'s `$__fern_alloc`).
 
-Fix plan: call `$proc_exit` with 125 instead of trapping. The cost is the
+Fix plan: call `$__fern_proc_exit` with 125 instead of trapping. The cost is the
 reason it has not been done — the import-free component core (mode 1 of
-`wasm_ir.fern`'s module emitter) has no `$proc_exit`, so wiring the allocator
+`wasm_ir.fern`'s module emitter) has no `$__fern_proc_exit`, so wiring the allocator
 to it puts a WASI import into every allocating module. Scope: small in the
 emitter, wide in what it perturbs.
 
