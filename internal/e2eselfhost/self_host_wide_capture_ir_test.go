@@ -9,7 +9,8 @@ import (
 )
 
 // TestSelfHostWideCaptureIR gates closures that capture an 8-byte scalar
-// (i64 / u64 / f64) — #6046.
+// (i64 / u64 / f64) — #6046 — or an f32, which the RC layer's box store does not
+// take as an i32-shaped word either.
 //
 // The closure env box is an i32[], so cap_slot_ok takes pointer-shaped captures
 // (every heap and code address in the -no-pie -static binary is 32-bit) but not
@@ -58,6 +59,7 @@ func TestSelfHostWideCaptureIR(t *testing.T) {
 		{"escaping-i64-capture", "function make(n: i64): (i32) => i32 { return (x: i32): i32 => { return x + (n as i32); }; }\nfunction main(): i32 { let f = make(100 as i64); return f(5); }", 105},
 		{"escaping-u64-capture", "function make(n: u64): (i32) => i32 { return (x: i32): i32 => { return x + (n as i32); }; }\nfunction main(): i32 { let f = make(100 as u64); return f(5); }", 105},
 		{"escaping-f64-capture", "function make(d: f64): (i32) => i32 { return (x: i32): i32 => { return x + (d as i32); }; }\nfunction main(): i32 { let f = make(100.0); return f(5); }", 105},
+		{"escaping-f32-capture", "function make(d: f32): (i32) => i32 { return (x: i32): i32 => { return x + (d as i32); }; }\nfunction main(): i32 { let f = make(100.0f32); return f(5); }", 105},
 		{"escaping-i32-capture-control", "function make(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; }\nfunction main(): i32 { let f = make(100); return f(5); }", 105},
 
 		// The capture is a LOCAL rather than a param, so the cell decl has to be
@@ -69,6 +71,9 @@ func TestSelfHostWideCaptureIR(t *testing.T) {
 		{"callarg-i64-capture", outcome + "function check(): i32 { let b: i64 = 42 as i64; return run((): Outcome => { return Fail(b as i32); }); }\nfunction main(): i32 { return check(); }", 42},
 		{"callarg-i64-param-capture", outcome + "function check(b: i64): i32 { return run((): Outcome => { return Fail(b as i32); }); }\nfunction main(): i32 { return check(42 as i64); }", 42},
 		{"callarg-f64-capture", outcome + "function check(): i32 { let d: f64 = 10.5; return run((): Outcome => { return Fail((d * 4.0) as i32); }); }\nfunction main(): i32 { return check(); }", 42},
+		// An f32 captured by a closure stored in an array: nightly differential
+		// seed 77860 ("unsupported physical RC construction element").
+		{"array-elem-f32-capture", "function main(): i32 { let w: f32 = 6.0f32; let fs: ((i32) => i32)[] = [((x: i32) => (w as i32) + x)]; return fs[0](36); }", 42},
 		{"callarg-i32-capture-control", outcome + "function check(): i32 { let b: i32 = 42; return run((): Outcome => { return Fail(b); }); }\nfunction main(): i32 { return check(); }", 42},
 
 		// Two wide captures in one closure — the cells are distinct locals and the
