@@ -164,10 +164,11 @@ but it can still be fused *into*: the buffer is sized once in `init`
 from a length already known, so the pipeline pays one allocation instead
 of the O(log n) geometric regrows the eager combinator pays today.
 
-This would let a materializing operator compose with the same fragment
-interface. The implemented first slice uses reduction sinks; extending it
-to scan still needs loop generation, cardinality handling after filters,
-allocation and semantic tests, and measurement.
+The original minimum viable design includes scan to demonstrate that a
+materializing operator composes with the same fragment interface. That part
+remains unimplemented. The shipped first slice uses reduction sinks; scan
+still needs loop generation, cardinality handling after filters, allocation
+and semantic tests, and measurement.
 
 In that design, a `scan` in the middle of a chain would end one fused loop
 and begin another.
