@@ -230,22 +230,8 @@ function elf_static_executable_x86(text: i32[]): i32[] {
   return elf_image(text, 5, elf_em_x86_64());  // PF_R | PF_X
 }
 
-// elf_static_executable_data wraps .text + a data blob (rodata followed
-// by the zero-initialised .bss globals an assembler appends) into a
-// runnable static ELF-64 executable for arm64 Linux. Both live in a
-// single PT_LOAD, with the data placed 8-byte aligned after .text. The
-// segment is mapped R+W+X: the .bss globals must be writable and a single
-// segment keeps the loader simple.
-function elf_static_executable_data(text: i32[], data: i32[]): i32[] {
-  let body: i32[] = elf_cat([], text);
-  body = elf_pad_to_8(body);
-  body = elf_cat(body, data);
-  return elf_image(body, 7, elf_em_aarch64());  // PF_R | PF_W | PF_X
-}
-
-// elf_static_executable_data_x86 is the x86-64 counterpart of
-// elf_static_executable_data (R+W+X), identical single-segment layout,
-// only e_machine differs (EM_X86_64).
+// elf_static_executable_data_x86 is an x86-64 (EM_X86_64) single-segment
+// R+W+X image.
 function elf_static_executable_data_x86(text: u8[], data: i32[]): i32[] {
   let body: i32[] = elf_cat_u8([], text);
   body = elf_pad_to_8(body);
@@ -869,8 +855,7 @@ pub function elf_image_pie(text: u8[], data: i32[], machine: i32, entry_off: i32
   return elf_image_two_seg(text, [], [], data, machine, entry_off, bss, 0, 3, false);  // base 0, ET_DYN
 }
 
-// elf_static_executable_data_wx is the W^X counterpart of
-// elf_static_executable_data: arm64 (EM_AARCH64), entry at the first
+// elf_static_executable_data_wx is the W^X arm64 (EM_AARCH64) image: entry at the first
 // instruction, no .bss. Pair it with an assembler that page-aligns
 // .rodata (textVAddr = elf_text_vaddr_wx()).
 function elf_static_executable_data_wx(text: u8[], data: i32[]): u8[] {
@@ -1753,13 +1738,6 @@ function elf_opt_shdr(out: i32[], present: boolean, name: i32, off: i32, size: i
   }
   let zero64: i64 = 0;
   return elf_shdr(out, name, 1, zero64, zero64, off as i64, size as i64, 0, 0, align as i64, zero64);
-}
-
-// elf_text_off is where .text begins in a SINGLE-segment image: just past
-// the ELF header and its one program header. The x86-64 binary path uses
-// this layout; arm64's W^X link uses elf_wx_text_off below.
-pub function elf_text_off(): i32 {
-  return elf_eh_size() + elf_ph_size();
 }
 
 // elf_wx_text_off is where .text begins in a W^X two-segment image: just
