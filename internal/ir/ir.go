@@ -2916,10 +2916,6 @@ type lowerOpts struct {
 	// LowerWith publish the resulting table as Program.CoverSites. Off by
 	// default: an ordinary build emits no coverage op at all.
 	coverPoints bool
-	// coverExempt marks a lowering that is never instrumented, whatever
-	// ast.CoverEnabled says: the runtime helpers fernrt lowers alongside
-	// the program. Without it the -cover refusal below fires on them.
-	coverExempt bool
 	// targetOS is the environment `target_os()` answers with when a call
 	// reaches the lowering unfolded. Empty selects the pointer width's
 	// default environment (wasi for 4, linux for 8).
@@ -2962,8 +2958,6 @@ func EmitLineMarkers() LowerOption { return func(o *lowerOpts) { o.emitLineMarke
 // Program.CoverSites (#5548, `fern -cover`). Off by default.
 func CoverPoints() LowerOption { return func(o *lowerOpts) { o.coverPoints = true } }
 
-func CoverExempt() LowerOption { return func(o *lowerOpts) { o.coverExempt = true } }
-
 // targetName is the two halves of the compile target's name that source
 // can ask for: `target_os()` and `target_arch()`.
 type targetName struct{ os, arch string }
@@ -3004,12 +2998,10 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	var cover *coverTable
 	if lo.coverPoints {
 		cover = newCoverTable()
-	} else if ast.CoverEnabled && !lo.coverExempt {
-		// A backend that has not wired coverage would otherwise lower an
-		// UNinstrumented program under -cover and produce a binary that
-		// says nothing at exit — a coverage run that silently measures
-		// zero is worse than one that refuses. Only the x86-64 and arm64
-		// natives pass CoverPoints today (docs/BACKEND-PARITY.md).
+	} else if ast.CoverEnabled {
+		// A lowering without CoverPoints would produce an UNinstrumented
+		// program under -cover — a coverage run that silently measures
+		// zero is worse than one that refuses.
 		return nil, fmt.Errorf("-cover: this backend has no coverage instrumentation — build for x86-64-linux or arm64-linux, or drop -cover")
 	}
 	// `dyn Trait` (runtime trait objects) representation by target

@@ -331,129 +331,41 @@ first migrations actually took, which was simpler than first proposed. The near-
 the symbol-closure link check) has already landed (PRs #2650, #3697); this
 doc picks up where that left off.
 
-## Native: the runtime's Fern half (`internal/fernrt`, #8038)
+## The floors the native helpers are written on
 
-The native backends have the same twin problem the self-host solved above,
-one copy per backend: `internal/codegen/x86_64`, `internal/codegen/arm64`,
-`internal/codegen/arm64ssa` and `internal/codegen/wasmbin` each carried a
-hand-written `__fern_utf8_valid`. `internal/fernrt` is the native answer:
-`runtime.fern` defines a helper as an ordinary Fern function under its exact
-runtime symbol name, and a backend that needs it asks `fernrt.Func` for the
-declaration and lowered IR and emits it through the same function emitter it
-uses for user code. One source, lowered per target: `fernrt.Func` takes the
-target (`fernrt.Target`: pointer width, OS, ISA), folds `target_os()` and
-`target_arch()` before the body is checked, and `ir.Inline` then makes a
-constant-returning sibling (`__sys_socket()`, a syscall number keyed by
-target) the constant at its call sites. There is no bootstrap
-circularity on this side — Go compiles the source — so the only constraint is
-the one the self-host has: a body may reach only the provided-callee floor
-(`__load_u8`, `__load_i64`, `__load_ptr`, `__alloc`, `__store_u8`,
-`__syscall3` … `__syscall6`, …) and never an operation that lowers to a
-call of the helper it implements.
-`TestHelpersCallOnlyTheFloorOrEachOther` pins that.
+The native targets' socket, datagram and reactor helpers are Fern bodies
+generated per target by `asmcore.fern`'s `rt_src_*` functions over the
+syscall floor (`__syscall3` … `__syscall6`) and the raw-memory floor
+(#9853), as `__fern_utf8_valid` is over `__raw_load8`. An address arrives
+as a `u8[]` of four or sixteen network-order bytes, and `af_of_addr` and
+`sockaddr_of` splice the family choice and the `sockaddr_in` or
+`sockaddr_in6` construction into each body; another length is
+`-EAFNOSUPPORT` before any syscall. `udp_recvfrom` reads into a raw buffer
+and spreads the bytes into the caller's array, the way `tcp_recv` fills a
+fresh one, and writes the sender's nineteen bytes through `__raw_arr_ptr`.
+The reactor floor is `__fern_reactor_new` (epoll_create1, or kqueue on
+Darwin), `__fern_reactor_ctl` (epoll_ctl with ADD, then MOD on EEXIST, and
+DEL for no interest; on Darwin one kevent change per filter, EV_ADD with
+EV_ENABLE or EV_DELETE, ENOENT on a delete ignored) and
+`__fern_reactor_wait` (epoll_pwait into a block of events, 12 bytes each on
+x86-64, where the struct is packed, and 16 on arm64; kevent with a timespec
+on Darwin), which writes (fd, readiness) pairs into the caller's `i32[]`.
+The wasm twins are in `wasm_ir.fern`, where `__fern_ip_flat` writes the
+ip-socket-address flattening once for each bind, connect and stream, and
+the reactor keeps a guest table of pollables.
 
-How each backend reaches a helper:
+The bytes floor, `__str_bytes(s, scratch)` and `__arr_set_len(a, n)`,
+lowers onto the `str_data` op and the length slot of the string and array
+boxes. Under `FERN_SANDBOX=1` the x86-64 emitter records a raw syscall where
+it writes the `syscall`, when the frame knows the number as a constant, so
+the seccomp allowlist stays exact through these helpers; a number computed
+at run time is refused.
 
-- **x86-64 / arm64** — a hand-written body that calls one declares it with
-  `needFern` next to its other use-flags (`read_file` is the one that needs
-  `__fern_utf8_valid`), a builtin whose helper is Fern reaches it through
-  `ir.CodegenAliases` (`tcp_listen` → `__fern_tcp_listen`) in the pre-scan,
-  the pre-scan walks the helper's IR for the flags it sets, and the helper
-  is emitted through `emitFunc` at the head of the runtime chain under
-  `AsmFnName(name)` — `__fn___fern_utf8_valid` — which is the symbol the
-  hand-asm calls.
-- **wasmbin** — `injectFernHelpers` moves the helper out of the
-  `runtimeHelperSpecs` set and into `prog.Funcs`, unexported, so `emitBody`
-  lowers it and `funcIdx` resolves its name for the hand-built bodies; its
-  own needs are scanned in like a user function's. A name that has a
-  hand-built wasi body is that target's twin of a native helper written on
-  the syscall floor, and the wasi body wins.
-
-The socket helpers `__fern_tcp_listen`, `__fern_tcp_listen_with`,
-`__fern_tcp_connect`, `__fern_tcp_accept`, `__fern_tcp_local_port`,
-`__fern_tcp_close`, `__fern_tcp_pollable`, `__fern_tcp_socket_ctl`,
-`__fern_tcp_recv`, `__fern_tcp_send` and `__fern_udp_send` are Fern bodies
-over `__syscall3`, `__syscall5` and `__syscall6` (#9853): four hand-written
-copies each, x86-64, arm64, x86-64ssa and arm64ssa, are gone, and the two
-controls never had any. The datagram sockets `__fern_udp_bind`,
-`__fern_udp_connect`, `__fern_udp_sendto` and `__fern_udp_recvfrom` arrived
-as Fern bodies on both compilers and never had a hand-written copy; the
-caller's `u8[]` reaches the kernel as `buf as usize` on the Go compiler,
-while the self-host body reads into a raw buffer and spreads the bytes one
-per slot, the way its `tcp_recv` fills a fresh array, and writes the
-sender's nineteen bytes through `__raw_arr_ptr`. An address arrives as a
-`u8[]` of four or sixteen network-order bytes: on the Go compiler
-`__socket_for` opens the socket for the family the length names and
-`__sockaddr_of` builds the `sockaddr_in` or `sockaddr_in6` in one 32-byte
-block with its length at 28; the self-host splices `af_of_addr` and
-`sockaddr_of` into each body, reading the bytes one per slot. Another
-length is `-EAFNOSUPPORT` before any syscall. The wasm twins are in
-`wasi_udp.go` and `wasm_ir.fern`, where `__fern_ip_flat` writes the
-ip-socket-address flattening once and each bind, connect and stream
-pushes its twelve words from there; `udp_send` is the three of them in a
-row.
-
-The **reactor floor** (#9853) is three more bodies on both compilers:
-`__fern_reactor_new` (epoll_create1, or kqueue on Darwin),
-`__fern_reactor_ctl` (epoll_ctl with ADD then MOD on EEXIST and DEL for no
-interest; on Darwin one kevent change per filter, EV_ADD with EV_ENABLE or
-EV_DELETE, ENOENT on a delete ignored) and `__fern_reactor_wait`
-(epoll_pwait into a block of events, 12 bytes each on x86-64 where the
-struct is packed and 16 on arm64; kevent with a timespec on Darwin, the
-wait writing (fd, readiness) pairs into the caller's `i32[]` through its
-data pointer on the Go compiler and `__raw_arr_ptr` on the self-host).
-`__fern_tcp_recv_into` is one read into the caller's `u8[]`, the way
-`udp_recvfrom` fills its buffer. The wasm twins keep a guest table of
-pollables (`wasi_reactor.go`, `wasm_ir.fern`).
-
-The last three needed the **bytes floor**: `__str_bytes(s, scratch)` is
-the address of a string's bytes for the length `s.len()` reports, and
-`__arr_set_len(a, n)` shortens a fresh `u8[]` from `__alloc_u8` to the
-bytes a read filled. A string a backend carries inline in its word (x86-64
-and arm64's stack backends, and wasm) has no address until it is spilled,
-so the caller passes sixteen bytes of scratch it keeps alive while it reads
-through the answer, or 0 to be told the string is inline (the answer is
-then 0); a heap string, which is every string on the SSA backends, is
-answered from where it is. The stack backends emit both as inline arms on
-their SSO seams (`emitStrBytes`, and the two-word `emitStrBytes2W` on
-arm64), the SSA backends as leaf helpers, wasm as bodies over its
-`(data, len)` pair, and the self-host lowers them onto the `str_data` op and
-the length slot of its box. `tcp_send` sends a heap string from where it is;
-only an inline one borrows sixteen bytes for the call.
-The x86-64 stack backend records a raw syscall whose number is a literal
-(`literalSyscallNumbers`, off the IR's operand-stack model), and the self-host
-records it where it writes the `syscall`, when the SSA frame knows the number
-as a constant, so the seccomp allowlist stays exact through them; a number
-computed at run time is refused under `FERN_SANDBOX=1`.
-
-A Fern helper is a function, not a provided callee: it has no row in
-`verifyprovided.go`, `rcsigs.go` or `rcresults.go`, and
-`TestRcSigsCoverEveryRuntimeHelper` fails if one is left behind. The floor
-primitive it needed, `__load_u8`, IS a provided callee and has all four
-lowerings plus the checker signature.
-
-The gate is `internal/e2e/read_file_utf8_differential_test.go`: every 1- and
-2-byte sequence, the 3-/4-byte boundaries and an eight-byte ASCII word skip
-at every offset, `read_file`'s verdict against `std/utf8.is_valid_utf8`, run
-on x86-64, arm64 and wasm. Its first wasm run found that every preview-2 file
-body leaked the descriptor it opened — fixed alongside, pinned by
-`TestWASMFileBuiltinsReleaseDescriptors`.
-
-What the move costs, measured on x86-64 with eight `read_file`s of a
-32 MiB file: ASCII text is at parity with the hand-written scan (the
-eight-byte word skip is the same loop), multibyte text is about 1.45× slower
-(690 ms against 478 ms) — the stack-machine codegen's price for the
-per-byte path, after the raw pokes were made inline instructions rather
-than calls. That is the same trade the self-host made for its Fern helpers
-("The hot core needs better codegen first" above); the fix is codegen, not
-a return to asm.
-
-Next candidates are the pure byte scanners that do not touch the string
-encoding (`__fern_utf8_valid` was chosen because its callers hand it raw
-bytes); anything reading a `string` value needs the backend's SSO seam
-expressed on the floor first, and the SIMD kernels (`memchr`, `count_byte`,
-`ascii_run`) stay hand-written because the instruction selection is the
-point.
+The gate on `__fern_utf8_valid` is
+`internal/e2e/read_file_utf8_differential_test.go`: every 1- and 2-byte
+sequence, the 3- and 4-byte boundaries and an eight-byte ASCII word skip at
+every offset, `read_file`'s verdict against `std/utf8.is_valid_utf8`, on
+x86-64, arm64 and wasm.
 
 ## The end goal, restated
 
