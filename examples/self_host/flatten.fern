@@ -575,7 +575,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   let serve: ast.Expr = ast.ExprCall { callee: serve_ref(qual, entry_name), args: args, line: 0, col: 0, type_args: [], ty: "" };
   body = body.append(ast.StmtReturn { value: serve, line: 0, col: 0 });
   let main: parser.FuncDecl = parser.FuncDecl {
-    no_inline: false,
+    stdlib: "", no_inline: false,
     name: "main", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [],
     params: [], ret_type: "i32", body: body, line: 0, col: 0,
     import_iface: "", import_wit: "", all_type_params: [],

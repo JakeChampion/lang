@@ -8356,7 +8356,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
     });
   }
   let entry: parser.FuncDecl = parser.FuncDecl {
-    no_inline: false,
+    stdlib: "", no_inline: false,
     name: "main", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [],
     params: [], ret_type: "i32", body: body, line: 0, col: 0,
     import_iface: "", import_wit: "", all_type_params: [],

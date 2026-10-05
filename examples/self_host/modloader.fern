@@ -556,7 +556,12 @@ pub function load_imports_with_files(ov: Overlay, entry_path: string, entry: par
     seen = seen.append(name);
     let r: Resolved = resolve_module(ov, from, path, name);
     if (r.ok) {
-      let m: parser.Module = parser.parse_module(lexer.tokenize_from(r.src, util.line_base(files.len()) + 1));
+      // The flat-name and manifest fallbacks are not the standard library.
+      let origin: string = "";
+      if (r.shown == "stdlib://" + rel_path(path) + ".fern" || r.shown == from + rel_path(path) + ".fern") {
+        origin = path;
+      }
+      let m: parser.Module = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize_from(r.src, util.line_base(files.len()) + 1)), origin);
       files = files.append(r.shown);
       loaded = loaded.append(flatten.LoadedModule { name: name, ident: "", mod: m });
       let before: i32 = queue.len();
