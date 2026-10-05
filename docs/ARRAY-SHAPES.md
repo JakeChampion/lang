@@ -752,6 +752,24 @@ Four consequences:
   element. A kernel that writes takes a packed handle, so the licence
   reads: consumed, unique, and `is_packed()`.
 
+### Product measurements after compiler integration
+
+After main's single-use inliner, construction splitting, SSA join homes and
+closure-lifting changes were integrated through `6c7dd98fa`, the native
+compiler reproduced itself byte-for-byte. Product benchmark assembly changed,
+so both ordinary-call kernels were remeasured on Apple M3 Pro arm64-darwin.
+A two-round pilot preceded nine alternating 200-round processes at 32 by 32
+for outer and 32 by 32 by 32 for inner, changing only the round argument.
+Each executable verifies its result against the scalar reference.
+
+| Operation | Kernel, ns/call | Scalar path, ns/call | Allocator calls, kernel/scalar | Fresh bytes, kernel/scalar |
+| --- | ---: | ---: | ---: | ---: |
+| outer | 258 (243-274) | 2,439 (2,362-2,527) | 1,600 / 3,600 | 10,472 / 20,016 |
+| inner | 6,210 (6,046-6,873) | 140,977 (140,407-146,292) | 2,000 / 4,000 | 10,472 / 10,472 |
+
+Times are medians and observed ranges. Counters cover all 200 calls. Both
+kernels remain faster than their scalar paths; no baseline was increased.
+
 ## 9. What this does not decide
 
 - **The kernels**: the rest of #9735. The first one exists, `__scale_f64`,

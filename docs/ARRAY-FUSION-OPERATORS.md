@@ -317,10 +317,12 @@ The primary compiler now preserves a locally constructed closure's target
 through physical lowering. Captured callbacks still receive their environment;
 unknown function values retain indirect dispatch. After fusion, `seminline`
 also splices small capture-free callback bodies into the changed callers.
-It first prepares eligible callback bodies using helpers exposed by the earlier
-ordinary inlining pass. It requires an unread environment parameter, respects
-declaration eligibility and `@noinline`, and retains the existing leaf, caller
-and splice limits.
+It prepares callback helpers with the ordinary inliner in a scratch graph,
+then requires each resulting callback to satisfy the small scalar-leaf limit.
+Only fused callers receive these callback bodies. Fusion precedes general
+single-use inlining, which would otherwise absorb the combinator calls.
+The callback proof requires an unread environment parameter, respects
+`@noinline`, `fip` and `fbip`, and retains the leaf, caller and splice limits.
 `FERN_SEM_INLINE=` disables this additional inlining. Unread capture-free
 closure constants are then removed before ownership and register planning.
 `TestSelfHostClosureInlineAdmission` checks these proof boundaries and verifies
@@ -441,6 +443,38 @@ checker-driver assembly compilations measured medians of 2.428 seconds before
 and 2.374 seconds after, with overlapping ranges of 2.038-2.968 and
 2.034-3.801 seconds. That does not establish a compiler speedup. No size or
 performance baseline was raised.
+
+### Integration with single-use inlining
+
+After integrating main through `6c7dd98fa`, the compiler again reaches a
+byte-identical stage-3/stage-4 fixed point. Its native text is 10,374,416 bytes,
+versus 10,749,040 immediately before the integration. That comparison includes
+main's general inliner, construction splitting, SSA join homes and closure
+lifting changes; it does not attribute the reduction to fusion alone.
+
+All eight benchmark programs changed assembly on both ARM64 targets, so the
+earlier timings do not establish the current build's performance. Fresh Apple
+M3 Pro measurements used the same two-round pilot followed by nine alternating
+20,000-round runs, changing only the round count. All outputs agreed.
+
+| Pipeline | Current pipeline, ns/round | Same-build handwritten control, ns/round | Eager scan, ns/round |
+| --- | ---: | ---: | ---: |
+| map.map.reduce | 7,527 (7,493-7,750) | 7,097 (7,081-7,293) | n/a |
+| filter.map.reduce | 2,675 (2,660-2,813) | 2,414 (2,407-2,477) | n/a |
+| map.scan | 2,167 (2,154-2,229) | 2,537 (2,510-4,359) | 8,600 (8,500-8,780) |
+| filter.map.scan | 2,000 (1,969-2,061) | 2,385 (2,372-2,439) | 6,878 (6,803-7,340) |
+
+Both reductions and their controls still make zero steady allocator calls and
+use zero steady fresh bytes. Both scans make exactly 20,000 allocator calls,
+one per result. Their eager forms make 400,000 and 540,000 calls; handwritten
+forms make 200,000 and 180,000. Fresh-byte counts remain 16,384 for either
+fused scan, 40,960/10,240 for eager scans and 20,480/0 for handwritten scans.
+The zero reflects allocator reuse, not an absence of allocations.
+
+The scans meet the measured control comparison. The reductions are slower
+than their controls with non-overlapping observed ranges in this run. Their
+runtime-parity acceptance remains open after integration; earlier instruction
+profiles and overlapping timings do not close this new measurement gap.
 
 Clause 1's second half — "no unspecialised calls per element" — holds, and it
 is not something this pass does by itself. Fusion runs FIRST in
