@@ -65,7 +65,10 @@ the wire buffer `own`: producing the input is the harness, not the codec,
 and a borrowed buffer would copy all 1,024 bytes on each store.
 
 Both produce the same 120,470 served, 7,530 refused, the same 12,599,962
-response bytes and one digest, 482417158. That agreement is the differential
+response bytes and one digest, 482417158, in the measurements below. Those
+runs used lowercase response header names. The current examples preserve
+the baseline handler's `X-Request-Id` spelling and compare their digests at
+runtime; changing the spelling changes the digest. That agreement is the differential
 test; a variant that framed a different answer is caught rather than
 reporting a throughput win for doing less work.
 

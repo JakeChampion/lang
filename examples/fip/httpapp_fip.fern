@@ -778,8 +778,8 @@ fip function head_len(status: i32, rid_len: i32, blen: i32): i32 {
 }
 
 // put_head writes the response head std/http would serialise: the status
-// line, the request id header when the request carried one (HeaderMap
-// folds the name to lower case), the length and `Connection: close`.
+// line, the request id header with the baseline handler's spelling,
+// the length and `Connection: close`.
 fip function put_head(own out: u8[], status: i32, src: u8[], rid_at: i32, rid_len: i32, blen: i32): u8[] {
   let at: i32 = out_base();
   out = put_str(out, at, "HTTP/1.1 ");

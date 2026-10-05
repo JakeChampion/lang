@@ -273,6 +273,11 @@ func TestSelfHostPackedBytes(t *testing.T) {
 			}
 		})
 	}
+	testPackedBytesComponent(t, selfHostBin, nil, stdlibRoot)
+}
+
+func testPackedBytesComponent(t *testing.T, compiler string, runner []string, stdlib string) {
+	t.Helper()
 	t.Run("component", func(t *testing.T) {
 		e2eharness.Wasmtime(t)
 		dir := t.TempDir()
@@ -281,7 +286,7 @@ func TestSelfHostPackedBytes(t *testing.T) {
 			t.Fatal(err)
 		}
 		out := filepath.Join(dir, "prog.wasm")
-		compile := exec.Command(selfHostBin, "-target", "wasm32-wasi", "-o", out, in, stdlibRoot)
+		compile := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", "-o", out, in, stdlib)
 		compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1")
 		if msg, err := compile.CombinedOutput(); err != nil {
 			t.Fatalf("compile: %v\n%s", err, msg)
@@ -295,6 +300,7 @@ func TestSelfHostPackedBytes(t *testing.T) {
 		if got := strings.TrimSpace(stdout.String()); got != packedBytesComponentWant {
 			t.Fatalf("stdout = %q, want %q\n%s", got, packedBytesComponentWant, stderr.String())
 		}
+		assertBalancedCensus(t, stderr.String())
 		if strings.Contains(stderr.String(), "fern-sanitizer:") {
 			t.Fatalf("heap finding:\n%s", stderr.String())
 		}
