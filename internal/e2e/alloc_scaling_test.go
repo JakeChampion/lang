@@ -86,7 +86,7 @@ type allocScaleCase struct {
 	// entries are what prove the bound still separates the two classes.
 	wantQuadratic bool
 
-	// boxed compiles with e2eharness.BoxedProbe: the shape's boxes are ones
+	// boxed compiles under e2eharness.BoxedProbes: the shape's boxes are ones
 	// the semantic inliner would split away, leaving nothing to measure.
 	boxed bool
 }
@@ -1026,23 +1026,15 @@ func parseVolume(t *testing.T, label, out string, exit int) int64 {
 	return 0
 }
 
-func (c allocScaleCase) run(t *testing.T, n int) (string, int) {
-	t.Helper()
-	if !c.boxed {
-		return compileAndRunX86_64(t, c.volumeSrc(n))
-	}
-	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetX86_64Linux, c.volumeSrc(n), []string{e2eharness.BoxedProbe})
-	cmd := runX86_64Bin(e2eharness.X86_64Runner(t), bin)
-	out, _ := cmd.CombinedOutput()
-	return string(out), cmd.ProcessState.ExitCode()
-}
-
 func TestX86_64AllocScaling(t *testing.T) {
 	for _, tc := range allocScaleCases {
 		t.Run(tc.name, func(t *testing.T) {
-			out1, exit1 := tc.run(t, tc.n)
+			if tc.boxed {
+				e2eharness.BoxedProbes(t)
+			}
+			out1, exit1 := compileAndRunX86_64(t, tc.volumeSrc(tc.n))
 			v1 := parseVolume(t, tc.name+"@n", out1, exit1)
-			out2, exit2 := tc.run(t, 2*tc.n)
+			out2, exit2 := compileAndRunX86_64(t, tc.volumeSrc(2*tc.n))
 			v2 := parseVolume(t, tc.name+"@2n", out2, exit2)
 
 			if v1 <= 0 {

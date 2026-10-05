@@ -487,6 +487,7 @@ impl Shape for i32 {
 function measure(s: dyn Shape, k: i32): i32 { return s.area() * 100 + s.scaled(k); }
 @noinline
 function bump(n: i32): i32 { return n + 1; }
+@noinline
 function arg_from_call(s: dyn Shape, n: i32): i32 { return s.scaled(bump(n)); }
 function main(): i32 {
     let a: dyn Shape = Square { side: 3 };
@@ -1259,7 +1260,7 @@ func TestSelfHostSSALoopIsFourInstructions(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "count.fern")
-	prog := `function count(n: i64): i64 {
+	prog := `@noinline function count(n: i64): i64 {
     let sum: i64 = 0i64;
     let i: i64 = 0i64;
     while (i < n) { sum = sum + i; i = i + 1i64; }
@@ -1330,13 +1331,13 @@ func TestSelfHostSSAResultTakesDyingOperandRegister(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "step.fern")
-	prog := `function step(x: i64, y: i64): i64 {
+	prog := `@noinline function step(x: i64, y: i64): i64 {
     let a: i64 = x * 3i64;
     let b: i64 = a + y;
     if (b > 100i64) { return b - 7i64; }
     return b;
 }
-function first_over(n: i64): i64 {
+@noinline function first_over(n: i64): i64 {
     let i: i64 = 0i64;
     loop { if (i * i > n) { break; } i = i + 1i64; }
     return i;
@@ -1582,7 +1583,7 @@ func TestSelfHostSSAWithChainSettlesOnce(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "with_chain.fern")
-	prog := `function hist(xs: i32[]): i32[] {
+	prog := `@noinline function hist(xs: i32[]): i32[] {
     let counts: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
     let i: i32 = 0;
     while (i < xs.len()) {
@@ -1818,7 +1819,7 @@ func TestSelfHostSSAConstantsAreImmediates(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "count.fern")
-	prog := `function count(): i64 {
+	prog := `@noinline function count(): i64 {
     let sum: i64 = 0i64;
     let i: i64 = 0i64;
     while (i < 3000i64) { sum = sum + i; i = i + 1i64; }
