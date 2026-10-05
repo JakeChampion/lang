@@ -5473,6 +5473,8 @@ function parse_range(p: Par): (ast.Expr, Par) {
   p = left_p;
   let pk: string = p.peek_punct();
   if (pk == ".." || pk == "..=") {
+    let rline: i32 = p.peek_line();
+    let rcol: i32 = p.peek_col();
     p = p.advance();
     let fn: string = "range";
     if (pk == "..=") {
@@ -5480,7 +5482,9 @@ function parse_range(p: Par): (ast.Expr, Par) {
     }
     let (right_expr, right_p) = parse_binary(p, 1);
     p = right_p;
-    let callee: ast.Expr = e_field_access(e_ident("iter"), fn);
+    // The desugared names point at the operator, so a missing core/iter is
+    // reported where the range is written.
+    let callee: ast.Expr = e_field_access_at(e_ident_at("iter", rline, rcol), fn, rline, rcol);
     let args: ast.Expr[] = [left_expr, right_expr];
     return (e_call(callee, args), p);
   }

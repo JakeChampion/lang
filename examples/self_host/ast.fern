@@ -415,7 +415,7 @@ pub function expr_col(e: Expr): i32 {
       return st.col;
     },
     ExprBool(b) => {
-      return 0;
+      return b.col;
     },
     ExprBinary(b) => {
       return b.col;

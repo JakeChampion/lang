@@ -184,6 +184,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"owned-method-on-view", "function (xs: T[]) first(): T { return xs[0]; } function main(): i32 { let a = [3]; let v: [i32] = a[:]; return v.first(); }", []string{"E043"}},
 		{"byte-view-has-no-append", "function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.append(100 as u8); return 0; }", []string{"E043"}},
 		{"array-view-has-no-with", "function main(): i32 { let a = [3]; let v: [i32] = a[:]; v.with(0, 7); return 0; }", []string{"E043"}},
+		{"map-iter-has-no-next", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let it: MapIter[string, i32] = m.iter(); while (it.has_next()) { it.next(); } return 0; }\n", []string{"E043"}},
+		{"map-iter-methods", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let it: MapIter[string, i32] = m.iter(); let n: i32 = 0; while (it.has_next()) { n = n + it.value() + it.key().len(); it.advance(); } return n; }\n", nil},
 		{"view-append-is-not-a-builtin-arity-error", "function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.append(); return 0; }", []string{"E043"}},
 		{"view-custom-append-method", "function (xs: [u8]) append(): i32 { return xs.len(); } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); return v.append(); }", nil},
 		{"view-custom-with-method", "function (xs: [u8]) with(s: string): string { return s; } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); return v.with(\"x\").len(); }", nil},
