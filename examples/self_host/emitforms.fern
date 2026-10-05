@@ -69,6 +69,10 @@ pub function wasm_http_core(full: parser.Module, sub: ircore.Sub): string {
 // emitter's own refusal, already reported; a non-empty `refused` names the
 // import the world does not declare.
 pub function wasm_http_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
+  let asyncs: parser.FuncDecl[] = wasm_ir.async_exports(full);
+  if (asyncs.len() > 0) {
+    return wit_compose.Composed { bytes: [], refused: "async function " + asyncs[0].name + " is an async export, which only -target wasm32-wasi lifts" };
+  }
   let wat: string = wasm_http_core(full, sub);
   if (wat.len() == 0) {
     return wit_compose.Composed { bytes: [], refused: "" };
@@ -92,7 +96,7 @@ function declares_extern(full: parser.Module): boolean {
 
 // wasm_component is the wasi:cli/run component for `full`. A program a fixed
 // framing takes is framed by framed_component. One declaring `@import`
-// externs, or reaching WASI no fixed framing wires (sockets, the filesystem
+// externs or an async export, or reaching WASI no fixed framing wires (sockets, the filesystem
 // past read_file / write_file, or more than two categories), composes against
 // the fern world, which wires each import its core makes. That includes a
 // core whose needs only the lowering shows — a stdio Writer's close is a
@@ -100,8 +104,12 @@ function declares_extern(full: parser.Module): boolean {
 // `refused` is the emitter's own refusal, already reported; a non-empty
 // `refused` is the message to print.
 pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
+  let al: AsyncLifts = async_lifts(full);
+  if (al.refused.len() > 0) {
+    return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: " + al.refused };
+  }
   let shape: i32 = wasm_ir.component_shape(full, sub.switches);
-  let framed: boolean = shape >= 0 && !declares_extern(full);
+  let framed: boolean = shape >= 0 && !declares_extern(full) && al.lifts.len() == 0;
   if (framed && shape == 0) {
     return wit_compose.Composed { bytes: watbin.component_full(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, false, sub))), refused: "" };
   }
@@ -113,11 +121,87 @@ pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.C
     return wit_compose.Composed { bytes: framed_component(watbin.wat_to_binary(core.wat), shape), refused: "" };
   }
   let tbody: i32[] = wit_decode.wit_section_body(watbin.blob_to_bytes(wit_fern_world.fern_world_payload()), 7);
-  let c: wit_compose.Composed = wit_compose.compose_run(tbody, watbin.wat_to_binary(core.wat));
+  let c: wit_compose.Composed = wit_compose.compose_run(tbody, watbin.wat_to_binary(core.wat), al.lifts);
   if (c.bytes.len() == 0) {
     return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: the fern world cannot take this program: " + c.refused };
   }
   return c;
+}
+
+// AsyncLifts is a module's async exports as the composer lifts them, or why
+// one cannot be.
+struct AsyncLifts { lifts: watbin.AsyncLift[], refused: string }
+
+// async_lifts maps each async export of `full` to its component signature:
+// names in kebab case, scalars by wasm_ir.async_lift_valtype.
+function async_lifts(full: parser.Module): AsyncLifts {
+  let lifts: watbin.AsyncLift[] = [];
+  for f in wasm_ir.async_exports(full) {
+    let why: string = "async function " + f.name + ": ";
+    if (f.receiver_type.len() > 0 || f.type_params.len() > 0) {
+      return AsyncLifts { lifts: [], refused: why + "an async export must be a free, non-generic function" };
+    }
+    let name: string = kebab(f.name);
+    if (name.len() == 0) {
+      return AsyncLifts { lifts: [], refused: why + "the name has no kebab-case form for the component export" };
+    }
+    let names: string[] = [];
+    let types: i32[] = [];
+    for p in f.params {
+      let vt: i32 = wasm_ir.async_lift_valtype(p.type_name);
+      let pn: string = kebab(p.name);
+      if (vt < 0) {
+        return AsyncLifts { lifts: [], refused: why + "parameter " + p.name + " has type " + p.type_name + ", which an async export cannot lift yet" };
+      }
+      if (pn.len() == 0) {
+        return AsyncLifts { lifts: [], refused: why + "parameter " + p.name + " has no kebab-case form for the component export" };
+      }
+      names = names.append(pn);
+      types = types.append(vt);
+    }
+    let rt: i32 = 0 - 1;
+    if (wasm_ir.returns_value(f.ret_type)) {
+      rt = wasm_ir.async_lift_valtype(f.ret_type);
+      if (rt < 0) {
+        return AsyncLifts { lifts: [], refused: why + "the result type " + f.ret_type + " is one an async export cannot lift yet" };
+      }
+    }
+    lifts = lifts.append(watbin.AsyncLift { name: name, core_name: f.name, param_names: names, param_types: types, result: rt });
+  }
+  return AsyncLifts { lifts: lifts, refused: "" };
+}
+
+// kebab is a Fern identifier as a component-model name: each
+// underscore-separated word must be lower case and start with a letter, and
+// the underscores become hyphens. "" when it cannot be one.
+function kebab(id: string): string {
+  let out: u8[] = [];
+  let word_start: boolean = true;
+  for c in id {
+    if (c == 95) {
+      if (word_start) {
+        return "";
+      }
+      out = out.append(45);
+      word_start = true;
+    } else {
+      if (!kebab_char(c, word_start)) {
+        return "";
+      }
+      out = out.append(c);
+      word_start = false;
+    }
+  }
+  if (word_start) {
+    return "";
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+// kebab_char is true for a lower-case letter, or a digit past a word's first
+// character.
+function kebab_char(c: u8, word_start: boolean): boolean {
+  return c >= 97 && c <= 122 || c >= 48 && c <= 57 && !word_start;
 }
 
 // framed_component is the wasi:cli/run component for the I/O core `core` in

@@ -120,42 +120,30 @@ verified in `component_test.go`):
   task done. It needs the **stackful** async feature at runtime
   (`-W component-model-async-stackful`).
 
-**Status — DONE, Fern source → runnable async export via the CLI.**
-(1) the canonical-async emitters (`PutCanonSectionLiftAsync` /
-`PutCanonTaskReturnSingle`) + bytes tests + a runnable assembly test;
-(2) the wasmbin async core-func shape (`BuildOptions.AsyncExportName`:
-the `("", "task-return")` import + a synthetic `() -> ()` core func that
-calls `main`, hands its i32 to task-return, returns void) + the composer
-assembly (`component.BuildAsyncLiftedExportComponent`); (3) the CLI
-surface — `fern -target wasm32-wasi -emit core-module -async-export` produces a component
-exporting `run: async func() -> u32`, run with
-`wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`.
-Tests: `TestWasmP3AsyncExport{Assembly,FromFern,U64FromFern,F64FromFern}`. The
-CLI flag left with step 6 of `docs/NATIVE-RETIREMENT.md`, when `fern` began
-compiling through the self-host; its preview-3 surface is #11530.
+**Status — DONE in the self-host.** On `-target wasm32-wasi`, every
+`async function` with a body is a top-level export of the `wasi:cli/run`
+component, lifted with the async option under its name in kebab case
+(`async function scale_by(x: f32, k: i32): f32` exports `scale-by: async
+func(x: f32, k: s32) -> f32`). Its parameters and result are the scalars
+`boolean`, `u8`, `i32`, `u32`, `i64`, `u64`, `f32` and `f64`, or no result.
+Anything else, an async method or generic, or a name with no kebab-case form
+is refused, as is any async export on `wasm32-wasi-http`, whose proxy world
+exports only the handler.
 
-**UPDATE — first-class `async` keyword.** `async function foo(): i32 {
-… }` (a contextual modifier, like `fip` — `async` stays usable as an
-ordinary identifier elsewhere; `pub async function` works) marks the
-function `FuncDecl.Async`. On `-target wasm32-wasi -emit core-module` the driver lifts the
-async-marked function under its own name (`foo: async func() -> u32`),
-no flag needed. The source function is pinned past both the AST
-tree-shaker and the IR-level cull (it's reachable only through the
-synthetic async wrapper). Tests: `TestParseAsyncModifier` and the
-`TestWasmP3AsyncExport*FromFern` builds.
+- **Core module** (`examples/self_host/wasm_ir.fern`, `async_lift_imports`
+  / `async_lift_wrappers`). Each export imports its task.return as
+  `("[export]$root", "[task-return]NAME")`, the names wit-bindgen uses. It
+  also exports `[async-lift]NAME`, a wrapper that calls the function, hands
+  the result to task.return and returns void.
+- **Composer** (`wit_compose.compose_run`, `watbin.component_suffix`).
+  Supplies each task.return import with a `canon task.return`. After the
+  run entry, it aliases each `[async-lift]` export, gives it an async func
+  type (0x43) and lifts it with `canon lift … async`.
+- **Tree-shaker.** Roots the function, whose only caller is the wrapper.
 
-**UPDATE — non-i32 scalar export results.** The async export now lifts
-any single scalar result, not just i32: the synthetic wrapper hands its
-value to a `task-return` import whose param valtype is width-matched to
-the source result (i32/i64/f32/f64), and the CLI derives the component
-result valtype from the source's return type (`s64`/`u64`/`f32`/`f64`).
-Tests: `TestWasmP3AsyncExportU64FromFern` (`async function big(): u64`
-returns 4294967338) and `TestWasmP3AsyncExportF64FromFern` (an `async`
-f64 function). This surfaced and fixed a
-latent wasmbin type-dedup bug: the `addType` key joined params/results
-with `'|'` (0x7c) — the f64 valtype byte — so `() -> (f64)` and `(f64) ->
-()` collided into one wrong type; the key now param-count-prefixes
-instead (`TestEmitTypeDedupF64NoSeparatorCollision`).
+A program with an async export always composes against the `fern` world, never
+a fixed framing. Tests: `TestSelfHostWasmAsyncExport{,Refusals}`
+(`internal/e2eselfhost`), with `TestParseAsyncModifier` for the keyword.
 
 ## Next epic — the async IMPORT / await side (scoped, tooling-confirmed)
 
@@ -289,9 +277,8 @@ async import.** Both halves landed together (coupled-for-correctness):
   import `big(): u64` returning 4294967338 (2^32 + 42) round-trips
   through the same `(retptr) -> i32 status` lower — the wide result lands
   in the 8-byte return area, and the wrapper reads it with `i64.load`
-  (width-selected by the result valtype). The `run` export stays i32
-  (the async *export* side is i32-only today) and returns 42 iff the
-  awaited u64 matches, so a truncated read would fail the check.
+  (width-selected by the result valtype). The `run` export returns
+  42 iff the awaited u64 matches, so a truncated read would fail the check.
 - **multiple imports** (`TestWasmP3AsyncImportMultiFromFern`): a program
   that awaits TWO async imports from distinct interfaces and sums them —
   `one()+two()` → 42. `component.BuildAsyncImportsAwaitComponent` takes a
@@ -301,13 +288,6 @@ async import.** Both halves landed together (coupled-for-correctness):
   bundled as a separate nested component. `BuildAsyncImportAwaitComponent`
   is now the N=1 wrapper (byte-identical output). The edge-handler
   fan-out-of-awaits shape composes.
-- **non-i32 scalar EXPORT results** (`TestWasmP3AsyncExportU64FromFern` /
-  `TestWasmP3AsyncExportF64FromFern`): `async function foo(): i64 / u64
-  / f32 / f64` lifts as `foo: async func() -> <that type>`; the synthetic
-  wrapper's `task-return` import is width-matched to the source result and
-  the CLI derives the component valtype (`s64`/`u64`/`f32`/`f64`). This
-  also fixed a latent wasmbin type-dedup collision (`'|'` separator ==
-  0x7c == f64 valtype byte).
 
 **Remaining — the *pending* (genuinely non-blocking) async import.**
 Everything above is the **synchronous-completion** path: the lowered
