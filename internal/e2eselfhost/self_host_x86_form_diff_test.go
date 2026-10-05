@@ -5,17 +5,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/native/x86_64"
-	"github.com/jakechampion/lang/internal/native/x86tbl"
+	"github.com/jakechampion/lang/internal/x86tbl"
 )
 
-// The operand-form differential (#8083).
+// The operand-form differential (#8083), against GNU as.
 //
-// The two x86-64 assemblers have byte-level differentials for everything that
-// lives in a TABLE — the condition families, the SSE halves, the 0F38 group.
-// The GPR families have no table on either side: Go dispatches through insn's
-// switch, the self-host through x86_gas_emit's if-chain, and until this
-// nothing compared them at all.
+// The table-driven families (the condition families, the SSE halves, the 0F38
+// group) are checked row by row from x86tbl. The GPR families have no table:
+// the self-host dispatches them through x86_gas_emit's if-chain, and this
+// matrix is what reaches every arm of it.
 //
 // The mnemonic-level coverage test does not reach this. It asks whether `lea`
 // and `movzx` are reachable, and they are; what it cannot ask is whether every
@@ -28,32 +26,23 @@ import (
 // mnemonic-shaped or single-form probe passes, and only the register source
 // exposes it.
 
-// formCase is one instruction in both dialects. The AT&T text goes to the
-// self-host assembler, the Intel text to internal/native/x86_64, and the bytes
-// must agree.
-type formCase struct{ att, intel string }
-
 // aluFormCases is every ALU mnemonic at every width in every operand form:
 // reg-reg, mem-reg, reg-mem, reg-imm, mem-imm. The mnemonic lists here and
-// below come from x86tbl, the table both assemblers dispatch from, so a
-// spelling added there is probed here without anyone remembering to.
-func aluFormCases() []formCase {
-	var out []formCase
+// below come from x86tbl, the table the self-host's dispatch is generated
+// from, so a spelling added there is probed here without anyone remembering
+// to.
+func aluFormCases() []string {
+	var out []string
 	for _, m := range x86tbl.ALU.Spellings() {
-		for _, w := range []struct{ sfx, att, intel, size string }{
-			{"b", "%dl", "dl", "byte ptr"},
-			{"w", "%dx", "dx", "word ptr"},
-			{"l", "%edx", "edx", "dword ptr"},
-			{"q", "%rdx", "rdx", "qword ptr"},
+		for _, w := range []struct{ sfx, dst, src string }{
+			{"b", "%dl", "%cl"}, {"w", "%dx", "%cx"}, {"l", "%edx", "%ecx"}, {"q", "%rdx", "%rcx"},
 		} {
-			src := map[string]string{"b": "%cl", "w": "%cx", "l": "%ecx", "q": "%rcx"}[w.sfx]
-			isrc := map[string]string{"b": "cl", "w": "cx", "l": "ecx", "q": "rcx"}[w.sfx]
 			out = append(out,
-				formCase{fmt.Sprintf("%s%s %s, %s", m, w.sfx, src, w.att), fmt.Sprintf("%s %s, %s", m, w.intel, isrc)},
-				formCase{fmt.Sprintf("%s%s (%%rbx), %s", m, w.sfx, w.att), fmt.Sprintf("%s %s, %s [rbx]", m, w.intel, w.size)},
-				formCase{fmt.Sprintf("%s%s %s, (%%rbx)", m, w.sfx, w.att), fmt.Sprintf("%s %s [rbx], %s", m, w.size, w.intel)},
-				formCase{fmt.Sprintf("%s%s $7, %s", m, w.sfx, w.att), fmt.Sprintf("%s %s, 7", m, w.intel)},
-				formCase{fmt.Sprintf("%s%s $7, (%%rbx)", m, w.sfx), fmt.Sprintf("%s %s [rbx], 7", m, w.size)},
+				fmt.Sprintf("%s%s %s, %s", m, w.sfx, w.src, w.dst),
+				fmt.Sprintf("%s%s (%%rbx), %s", m, w.sfx, w.dst),
+				fmt.Sprintf("%s%s %s, (%%rbx)", m, w.sfx, w.dst),
+				fmt.Sprintf("%s%s $7, %s", m, w.sfx, w.dst),
+				fmt.Sprintf("%s%s $7, (%%rbx)", m, w.sfx),
 			)
 		}
 	}
@@ -62,18 +51,15 @@ func aluFormCases() []formCase {
 
 // shiftFormCases covers the three count shapes each shift takes — the imm-1
 // short form, an imm8, and %cl — at every width, register and memory.
-func shiftFormCases() []formCase {
-	var out []formCase
+func shiftFormCases() []string {
+	var out []string
 	for _, m := range x86tbl.Shift.Spellings() {
-		for _, w := range []struct{ sfx, att, intel, size string }{
-			{"b", "%dl", "dl", "byte ptr"}, {"w", "%dx", "dx", "word ptr"},
-			{"l", "%edx", "edx", "dword ptr"}, {"q", "%rdx", "rdx", "qword ptr"},
-		} {
+		for _, w := range []struct{ sfx, reg string }{{"b", "%dl"}, {"w", "%dx"}, {"l", "%edx"}, {"q", "%rdx"}} {
 			out = append(out,
-				formCase{fmt.Sprintf("%s%s $1, %s", m, w.sfx, w.att), fmt.Sprintf("%s %s, 1", m, w.intel)},
-				formCase{fmt.Sprintf("%s%s $3, %s", m, w.sfx, w.att), fmt.Sprintf("%s %s, 3", m, w.intel)},
-				formCase{fmt.Sprintf("%s%s %%cl, %s", m, w.sfx, w.att), fmt.Sprintf("%s %s, cl", m, w.intel)},
-				formCase{fmt.Sprintf("%s%s $3, (%%rbx)", m, w.sfx), fmt.Sprintf("%s %s [rbx], 3", m, w.size)},
+				fmt.Sprintf("%s%s $1, %s", m, w.sfx, w.reg),
+				fmt.Sprintf("%s%s $3, %s", m, w.sfx, w.reg),
+				fmt.Sprintf("%s%s %%cl, %s", m, w.sfx, w.reg),
+				fmt.Sprintf("%s%s $3, (%%rbx)", m, w.sfx),
 			)
 		}
 	}
@@ -81,112 +67,105 @@ func shiftFormCases() []formCase {
 }
 
 // extendLeaFormCases is the family #8083 was found in: AT&T names BOTH widths
-// in the mnemonic where Intel reads them off the operands, so every spelling
-// needs its own arm, in both source forms.
-func extendLeaFormCases() []formCase {
-	return []formCase{
-		{"leaw (%rbx), %cx", "lea cx, [rbx]"},
-		{"leal (%rbx), %edx", "lea edx, [rbx]"},
-		{"leaq (%rbx), %rdx", "lea rdx, [rbx]"},
-		{"leal (%rbx,%rax,4), %edx", "lea edx, [rbx+rax*4]"},
-		{"leaq (%rbx,%rax,4), %rdx", "lea rdx, [rbx+rax*4]"},
-		{"leaq -32(%rbp), %rdi", "lea rdi, [rbp-32]"},
-		{"movzbw %cl, %dx", "movzx dx, cl"},
-		{"movzbw (%rbx), %dx", "movzx dx, byte ptr [rbx]"},
-		{"movzbl %cl, %edx", "movzx edx, cl"},
-		{"movzbl (%rbx), %edx", "movzx edx, byte ptr [rbx]"},
-		{"movzbq %cl, %rdx", "movzx rdx, cl"},
-		{"movzbq (%rbx), %rdx", "movzx rdx, byte ptr [rbx]"},
-		{"movzwl %cx, %edx", "movzx edx, cx"},
-		{"movzwl (%rbx), %edx", "movzx edx, word ptr [rbx]"},
-		{"movzwq %cx, %rdx", "movzx rdx, cx"},
-		{"movzwq (%rbx), %rdx", "movzx rdx, word ptr [rbx]"},
-		{"movsbw %cl, %dx", "movsx dx, cl"},
-		{"movsbl %cl, %edx", "movsx edx, cl"},
-		{"movsbl (%rbx), %edx", "movsx edx, byte ptr [rbx]"},
-		{"movsbq %cl, %rdx", "movsx rdx, cl"},
-		{"movswl %cx, %edx", "movsx edx, cx"},
-		{"movswl (%rbx), %edx", "movsx edx, word ptr [rbx]"},
-		{"movswq %cx, %rdx", "movsx rdx, cx"},
-		{"movslq %ecx, %rdx", "movsxd rdx, ecx"},
-		{"movslq (%rbx), %rdx", "movsxd rdx, dword ptr [rbx]"},
+// in the mnemonic, so every spelling needs its own arm, in both source forms.
+func extendLeaFormCases() []string {
+	return []string{
+		"leaw (%rbx), %cx",
+		"leal (%rbx), %edx",
+		"leaq (%rbx), %rdx",
+		"leal (%rbx,%rax,4), %edx",
+		"leaq (%rbx,%rax,4), %rdx",
+		"leaq -32(%rbp), %rdi",
+		"movzbw %cl, %dx",
+		"movzbw (%rbx), %dx",
+		"movzbl %cl, %edx",
+		"movzbl (%rbx), %edx",
+		"movzbq %cl, %rdx",
+		"movzbq (%rbx), %rdx",
+		"movzwl %cx, %edx",
+		"movzwl (%rbx), %edx",
+		"movzwq %cx, %rdx",
+		"movzwq (%rbx), %rdx",
+		"movsbw %cl, %dx",
+		"movsbl %cl, %edx",
+		"movsbl (%rbx), %edx",
+		"movsbq %cl, %rdx",
+		"movswl %cx, %edx",
+		"movswl (%rbx), %edx",
+		"movswq %cx, %rdx",
+		"movslq %ecx, %rdx",
+		"movslq (%rbx), %rdx",
 		// spl/bpl/sil/dil need a bare REX as a byte SOURCE, and the extended
 		// byte registers need one too — the widths must not lose that.
-		{"movzbl %spl, %esi", "movzx esi, spl"},
-		{"movzbq %r9b, %r10", "movzx r10, r9b"},
-		{"movsbl %sil, %edx", "movsx edx, sil"},
+		"movzbl %spl, %esi",
+		"movzbq %r9b, %r10",
+		"movsbl %sil, %edx",
 	}
 }
 
 // miscFormCases: the remaining GPR families, register and memory where both
 // exist — test, the bit-test group, the RMW atomics, bswap, imul, mov.
-func miscFormCases() []formCase {
-	var out []formCase
-	for _, w := range []struct{ sfx, a, b, ia, ib, size string }{
-		{"l", "%ecx", "%edx", "ecx", "edx", "dword ptr"},
-		{"q", "%rcx", "%rdx", "rcx", "rdx", "qword ptr"},
-	} {
+func miscFormCases() []string {
+	var out []string
+	for _, w := range []struct{ sfx, a, b string }{{"l", "%ecx", "%edx"}, {"q", "%rcx", "%rdx"}} {
 		out = append(out,
-			formCase{fmt.Sprintf("test%s %s, %s", w.sfx, w.a, w.b), fmt.Sprintf("test %s, %s", w.ib, w.ia)},
-			formCase{fmt.Sprintf("test%s $7, %s", w.sfx, w.b), fmt.Sprintf("test %s, 7", w.ib)},
-			formCase{fmt.Sprintf("bswap%s %s", w.sfx, w.a), fmt.Sprintf("bswap %s", w.ia)},
-			formCase{fmt.Sprintf("imul%s %s, %s", w.sfx, w.a, w.b), fmt.Sprintf("imul %s, %s", w.ib, w.ia)},
-			formCase{fmt.Sprintf("imul%s $9, %s, %s", w.sfx, w.a, w.b), fmt.Sprintf("imul %s, %s, 9", w.ib, w.ia)},
-			formCase{fmt.Sprintf("mov%s %s, %s", w.sfx, w.a, w.b), fmt.Sprintf("mov %s, %s", w.ib, w.ia)},
-			formCase{fmt.Sprintf("mov%s $9, %s", w.sfx, w.b), fmt.Sprintf("mov %s, 9", w.ib)},
-			formCase{fmt.Sprintf("mov%s (%%rbx), %s", w.sfx, w.b), fmt.Sprintf("mov %s, %s [rbx]", w.ib, w.size)},
-			formCase{fmt.Sprintf("mov%s %s, (%%rbx)", w.sfx, w.b), fmt.Sprintf("mov %s [rbx], %s", w.size, w.ib)},
+			fmt.Sprintf("test%s %s, %s", w.sfx, w.a, w.b),
+			fmt.Sprintf("test%s $7, %s", w.sfx, w.b),
+			fmt.Sprintf("bswap%s %s", w.sfx, w.a),
+			fmt.Sprintf("imul%s %s, %s", w.sfx, w.a, w.b),
+			fmt.Sprintf("imul%s $9, %s, %s", w.sfx, w.a, w.b),
+			fmt.Sprintf("mov%s %s, %s", w.sfx, w.a, w.b),
+			fmt.Sprintf("mov%s $9, %s", w.sfx, w.b),
+			fmt.Sprintf("mov%s (%%rbx), %s", w.sfx, w.b),
+			fmt.Sprintf("mov%s %s, (%%rbx)", w.sfx, w.b),
 		)
 		for _, m := range x86tbl.BitTest.Spellings() {
 			out = append(out,
-				formCase{fmt.Sprintf("%s%s %s, %s", m, w.sfx, w.a, w.b), fmt.Sprintf("%s %s, %s", m, w.ib, w.ia)},
-				formCase{fmt.Sprintf("%s%s $3, %s", m, w.sfx, w.b), fmt.Sprintf("%s %s, 3", m, w.ib)},
+				fmt.Sprintf("%s%s %s, %s", m, w.sfx, w.a, w.b),
+				fmt.Sprintf("%s%s $3, %s", m, w.sfx, w.b),
 			)
 		}
 		for _, m := range []string{"xchg", "xadd", "cmpxchg"} {
-			out = append(out, formCase{fmt.Sprintf("%s%s %s, %s", m, w.sfx, w.a, w.b), fmt.Sprintf("%s %s, %s", m, w.ib, w.ia)})
+			out = append(out, fmt.Sprintf("%s%s %s, %s", m, w.sfx, w.a, w.b))
 		}
 	}
 	for _, m := range append(x86tbl.Unary.Spellings(), x86tbl.IncDec.Spellings()...) {
-		for _, w := range []struct{ sfx, att, intel, size string }{
-			{"b", "%cl", "cl", "byte ptr"}, {"l", "%ecx", "ecx", "dword ptr"}, {"q", "%rcx", "rcx", "qword ptr"},
-		} {
+		for _, w := range []struct{ sfx, reg string }{{"b", "%cl"}, {"l", "%ecx"}, {"q", "%rcx"}} {
 			out = append(out,
-				formCase{fmt.Sprintf("%s%s %s", m, w.sfx, w.att), fmt.Sprintf("%s %s", m, w.intel)},
-				formCase{fmt.Sprintf("%s%s (%%rbx)", m, w.sfx), fmt.Sprintf("%s %s [rbx]", m, w.size)},
+				fmt.Sprintf("%s%s %s", m, w.sfx, w.reg),
+				fmt.Sprintf("%s%s (%%rbx)", m, w.sfx),
 			)
 		}
 	}
 	return out
 }
 
-// vexFormCases is the AVX2 vocabulary the byte kernels use: the five VEX
-// forms native's avx.go encodes and nothing else, each with a low and an
-// extended register so both halves of the prefix are checked.
-func vexFormCases() []formCase {
-	return []formCase{
-		{"vmovdqu (%rax,%rdx), %ymm0", "vmovdqu ymm0, [rax + rdx]"},
-		{"vmovdqu (%r8,%r9), %ymm3", "vmovdqu ymm3, [r8 + r9]"},
-		{"vmovdqu (%rdi), %ymm9", "vmovdqu ymm9, [rdi]"},
-		{"vmovdqu %ymm1, %ymm0", "vmovdqu ymm0, ymm1"},
-		{"vpbroadcastb %xmm1, %ymm1", "vpbroadcastb ymm1, xmm1"},
-		{"vpbroadcastb %xmm9, %ymm10", "vpbroadcastb ymm10, xmm9"},
-		{"vpcmpeqb %ymm1, %ymm0, %ymm0", "vpcmpeqb ymm0, ymm0, ymm1"},
-		{"vpcmpeqb %ymm9, %ymm10, %ymm11", "vpcmpeqb ymm11, ymm10, ymm9"},
-		{"vpcmpeqb (%rax,%rdx), %ymm1, %ymm0", "vpcmpeqb ymm0, ymm1, [rax + rdx]"},
-		{"vpmovmskb %ymm0, %eax", "vpmovmskb eax, ymm0"},
-		{"vpmovmskb %ymm0, %r9d", "vpmovmskb r9d, ymm0"},
-		{"vpmovmskb %ymm10, %r11d", "vpmovmskb r11d, ymm10"},
-		{"vzeroupper", "vzeroupper"},
+// vexFormCases is the AVX2 vocabulary the byte kernels use, each form with a
+// low and an extended register so both halves of the prefix are checked.
+func vexFormCases() []string {
+	return []string{
+		"vmovdqu (%rax,%rdx), %ymm0",
+		"vmovdqu (%r8,%r9), %ymm3",
+		"vmovdqu (%rdi), %ymm9",
+		"vmovdqu %ymm1, %ymm0",
+		"vpbroadcastb %xmm1, %ymm1",
+		"vpbroadcastb %xmm9, %ymm10",
+		"vpcmpeqb %ymm1, %ymm0, %ymm0",
+		"vpcmpeqb %ymm9, %ymm10, %ymm11",
+		"vpcmpeqb (%rax,%rdx), %ymm1, %ymm0",
+		"vpmovmskb %ymm0, %eax",
+		"vpmovmskb %ymm0, %r9d",
+		"vpmovmskb %ymm10, %r11d",
+		"vzeroupper",
 	}
 }
 
-// TestSelfHostX86FormsMatchNative is the gate. Every case is assembled by both
+// TestSelfHostX86FormsMatchGas is the gate. Every case is assembled by both
 // assemblers and byte-compared; a self-host refusal is a failure, not a skip,
 // because a refused line is an instruction that would have left the byte
 // stream.
-func TestSelfHostX86FormsMatchNative(t *testing.T) {
-	var cases []formCase
+func TestSelfHostX86FormsMatchGas(t *testing.T) {
+	var cases []string
 	cases = append(cases, aluFormCases()...)
 	cases = append(cases, shiftFormCases()...)
 	cases = append(cases, extendLeaFormCases()...)
@@ -202,23 +181,24 @@ func TestSelfHostX86FormsMatchNative(t *testing.T) {
 	compareFormCases(t, cases)
 }
 
-// compareFormCases assembles every case with both assemblers and byte-compares
-// the results. internal/native/x86_64 is the oracle, so a case it rejects is a
-// failure of the case rather than of the self-host.
-func compareFormCases(t *testing.T, cases []formCase) {
+// compareFormCases assembles every AT&T line with GNU as and with the
+// self-host assembler and byte-compares the results. A line GNU as rejects is
+// a failure of the case rather than of the self-host.
+func compareFormCases(t *testing.T, cases []string) {
 	t.Helper()
+	gas := gnuX86Oracle(t)
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
 
-	for _, c := range cases {
-		want, _, err := x86_64.AssembleProgram(c.intel+"\n", 0x400000)
-		if err != nil {
-			t.Errorf("%q: internal/native/x86_64 rejects it, so it cannot be the oracle for %q: %v", c.intel, c.att, err)
+	for i, want := range gas.assemble(t, cases) {
+		c := cases[i]
+		if want.rejected != "" {
+			t.Errorf("%q: GNU as rejects it, so it cannot be the oracle for it: %s", c, want.rejected)
 			continue
 		}
-		out := runX86BenchDriver(t, bin, runner, ".text\n_start:\n    "+c.att+"\n", "-bytes")
+		out := runX86BenchDriver(t, bin, runner, ".text\n_start:\n    "+c+"\n", "-bytes")
 		if refused := asmRefusals(out); len(refused) > 0 {
-			t.Errorf("%-32q the self-host assembler REFUSES it; native emits % x", c.att, want)
+			t.Errorf("%-34q the self-host assembler REFUSES it; GNU as emits % x", c, want.bytes)
 			continue
 		}
 		var got []byte
@@ -228,8 +208,8 @@ func compareFormCases(t *testing.T, cases []formCase) {
 				got = append(got, byte(val))
 			}
 		}
-		if string(got) != string(want) {
-			t.Errorf("%-32q self-host % x, internal/native/x86_64 % x", c.att, got, want)
+		if string(got) != string(want.bytes) {
+			t.Errorf("%-34q self-host % x, GNU as % x", c, got, want.bytes)
 		}
 	}
 }

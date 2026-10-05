@@ -107,7 +107,6 @@ function main(): i32 {
     let q: Arm64Asm = arm64_gas_assemble("eor x0, x1, #1");
     if (q.text[0] != 32 || q.text[1] != 0 || q.text[2] != 64 || q.text[3] != 210) { return 16; }
     // clz x0, x1 (freelist size-class log2, #4801) -> 0xDAC01020 -> 20 10 C0 DA
-    // (pinned against internal/native/arm64's CLZ test vectors)
     let r: Arm64Asm = arm64_gas_assemble("clz x0, x1");
     if (r.text[0] != 32 || r.text[1] != 16 || r.text[2] != 192 || r.text[3] != 218) { return 17; }
     // clz x3, x2 -> 0xDAC01043 -> 43 10 C0 DA

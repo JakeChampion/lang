@@ -1,12 +1,11 @@
-// Package arm64tbl is the single source of truth for the arm64 encoding
-// tables both assemblers need (#7903) — the arm64 twin of x86tbl.
+// Package arm64tbl is the single source of truth for the vocabulary of the
+// self-host arm64 assembler (#7903) — the arm64 twin of x86tbl.
 //
 // The Advanced SIMD classes are the tabular part of the arm64 vocabulary:
 // per mnemonic a U bit, an opcode, and one class-specific extra (the element
 // sizes the encoding has, an szHi bit, a shift direction, a widening flag).
-// internal/native/arm64 reads these directly and cmd/arm64tblgen writes the
-// self-host lookups in examples/self_host/arm64_native.fern from them, so a
-// mnemonic one side knows and the other does not cannot exist.
+// cmd/arm64tblgen writes the self-host lookups in
+// examples/self_host/arm64_native.fern from them.
 //
 // Every row is pinned against GNU as: the size sets, and every size
 // deliberately absent (mul/min/max have no .2d, the bitwise ops and cnt are
