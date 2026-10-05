@@ -33,7 +33,9 @@ binaries. `scripts/selfhost-emit-hashes` matches on all 2,001 rows:
 | `with_drop_helpers`, inclusive | 211 M | 126 M |
 | `append_helpers`, inclusive | 115 M | 5.0 M |
 
-The remaining 90 M is `schema_scan`, which scans each body's values and its
-table's field types for maps and byte views. What it finds feeds the routed
-map helpers, which depend on the body (`f.map_module`), so it is not skipped
-by the same rule.
+Of the remaining 126 M, 90 M is `schema_scan`, which scans each body's
+values and its table's field types for maps and byte views. What it finds
+feeds the routed map helpers, which depend on the body (`f.map_module`), so
+it is not skipped by the same rule. Most of the other 31 M is
+`helpers_not_in` building a type key for each of the 87,700 record and enum
+entries and looking it up in `seen`.

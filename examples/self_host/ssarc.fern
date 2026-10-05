@@ -857,6 +857,9 @@ function scratch_base(f: ssasem.Func): i32 {
 // A parent owns one unit per reference field. Shared parents release only
 // their own unit; the final parent release walks children before its box.
 // Array/tuple/struct opcodes preserve the production native/Wasm layouts.
+// The answer for a type must not depend on which body of a module asks:
+// with_drop_helpers settles each record and enum type at the first body
+// whose table holds it (Helpers.seen).
 function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
   // A handle has no box, so there is nothing under it to walk — and
   // no schema either, which is what the record arm below would go looking
@@ -2804,7 +2807,8 @@ pub function no_helpers(): Helpers {
   return Helpers { rows: [], done: util.name_index(none), seen: util.name_index(none) };
 }
 
-// with_drop_helpers adds the helpers of f whose symbols h does not carry yet.
+// with_drop_helpers adds the helpers of f whose symbols h does not carry yet,
+// skipping the record and enum types h has seen.
 pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
   let fresh: Fresh = helpers_not_in(f, h.done, h.seen);
   let out: Helpers = Helpers { ...h, seen: fresh.seen };
