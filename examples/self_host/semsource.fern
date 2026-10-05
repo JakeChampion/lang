@@ -8491,10 +8491,10 @@ function outside_unnamed(p: Produced, name: string, i: i32, mod: parser.Module):
   if (p.template || p.bodyless || !p.ok || name == "main" || util.str_has_prefix(name, "__") || util.contains(name, ".")) {
     return false;
   }
-  if (i >= mod.funcs.len()) {
-    return true;
-  }
-  let fd: parser.FuncDecl = mod.funcs[i];
+  return i >= mod.funcs.len() || decl_unnamed(mod.funcs[i], mod);
+}
+
+function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {
   for x in mod.exports {
     if (x.func_name == fd.name) {
       return false;

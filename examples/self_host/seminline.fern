@@ -388,19 +388,8 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
     copied = copied.append(ssa.SBlock { id: first + j, insts: insts, term: t, preds: preds });
     j = j + 1;
   }
-  let values: typeinfo.Type[] = f.values;
-  for t in callee.values {
-    values = values.append(t);
-  }
-  // One returned value stands for the call's result in every use, where the
-  // types agree: a copy of it would count as a second owner.
-  let swap: i32[] = [];
-  if (call.result >= 0 && ret_vals.len() == 1 && semtypes.equal(values[call.result], values[ret_vals[0]])) {
-    while (swap.len() <= call.result) {
-      swap = swap.append(0 - 1);
-    }
-    swap = swap.with(call.result, ret_vals[0]);
-  }
+  let values: typeinfo.Type[] = util.append_all(f.values, callee.values);
+  let swap: i32[] = result_swap(call, ret_vals, values);
   let head: ssa.SInst[] = [];
   let tail: ssa.SInst[] = [];
   let kind: i32 = 8;
@@ -720,12 +709,26 @@ function through_copies(defs: Defs, v: i32): i32 {
   return x;
 }
 
+// Whether `read` takes a scalar field of a tuple or record, which may be read
+// off a box that is kept anyway.
+function scalar_field(read: ssa.SInst, ty: typeinfo.Type): boolean {
+  return scalar(ty) && read.kind_tag != ssasem.variant_is() && read.kind_tag != ssasem.variant_get();
+}
+
 // The values something other than a part read needs whole: an operand of
 // any other instruction or a terminator, and what a copy or phi of one copies.
 // A box kept anyway is still built, so reading a reference part off it would
 // only add a second owner of the part, and its variant reads stay together so
 // each projection keeps the test that guards it.
 function kept_values(g: ssa.SFunc): boolean[] {
+  let spread: Spread = Spread { kept: used_whole(g), moved: true };
+  while (spread.moved) {
+    spread = copied_back(g, spread.kept);
+  }
+  return spread.kept;
+}
+
+function used_whole(g: ssa.SFunc): boolean[] {
   let kept: boolean[] = [];
   while (kept.len() < g.nvals) {
     kept = kept.append(false);
@@ -743,32 +746,36 @@ function kept_values(g: ssa.SFunc): boolean[] {
       kept = all_kept(kept, [b.term.cond]);
     }
   }
-  let moved: boolean = true;
-  while (moved) {
-    moved = false;
-    for b in g.blocks {
-      for ins in b.insts {
-        if ((ins.kind_tag == 7 || ins.kind_tag == 8) && marked(kept, ins.result) && !all_of(kept, ins.args)) {
-          kept = all_kept(kept, ins.args);
-          moved = true;
-        }
-      }
-    }
-  }
   return kept;
 }
 
-function marked(flags: boolean[], v: i32): boolean {
-  return v >= 0 && v < flags.len() && flags[v];
+struct Spread { kept: boolean[], moved: boolean }
+
+// `kept` with what each kept copy or phi copies marked too, and whether that
+// marked anything new.
+function copied_back(g: ssa.SFunc, kept: boolean[]): Spread {
+  let out: Spread = Spread { kept: kept, moved: false };
+  for b in g.blocks {
+    for ins in b.insts {
+      if ((ins.kind_tag == 7 || ins.kind_tag == 8) && marked(out.kept, ins.result) && !all_marked(out.kept, ins.args)) {
+        out = Spread { kept: all_kept(out.kept, ins.args), moved: true };
+      }
+    }
+  }
+  return out;
 }
 
-function all_of(kept: boolean[], vs: i32[]): boolean {
+function all_marked(flags: boolean[], vs: i32[]): boolean {
   for v in vs {
-    if (v >= 0 && v < kept.len() && !kept[v]) {
+    if (v >= 0 && v < flags.len() && !flags[v]) {
       return false;
     }
   }
   return true;
+}
+
+function marked(flags: boolean[], v: i32): boolean {
+  return v >= 0 && v < flags.len() && flags[v];
 }
 
 function all_kept(kept: boolean[], vs: i32[]): boolean[] {
@@ -805,7 +812,7 @@ function part_of(f: ssasem.Func, w: Walk, read: ssa.SInst, v: i32, depth: i32): 
   }
   let ty: typeinfo.Type = f.values[read.result];
   let x: i32 = through_copies(w.e.defs, v);
-  if (marked(w.e.kept, x) && (!scalar(ty) || read.kind_tag == ssasem.variant_is() || read.kind_tag == ssasem.variant_get())) {
+  if (marked(w.e.kept, x) && !scalar_field(read, ty)) {
     return fail;
   }
   let d: ssa.SInst = def_inst(w.e.defs, x);
@@ -918,6 +925,19 @@ function swapped(swap: i32[], v: i32): i32 {
     steps = steps + 1;
   }
   return x;
+}
+
+// One returned value stands for the call's result in every use, where the
+// types agree: a copy of it would count as a second owner.
+function result_swap(call: ssa.SInst, ret_vals: i32[], values: typeinfo.Type[]): i32[] {
+  let swap: i32[] = [];
+  if (call.result < 0 || ret_vals.len() != 1 || !semtypes.equal(values[call.result], values[ret_vals[0]])) {
+    return swap;
+  }
+  while (swap.len() <= call.result) {
+    swap = swap.append(0 - 1);
+  }
+  return swap.with(call.result, ret_vals[0]);
 }
 
 // `blocks` with every operand and terminator value renamed through `swap`.
