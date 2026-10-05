@@ -25,10 +25,12 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// registered and admitted alongside the rename and xattr operations, as
 	// are str_from_bytes_range and the -g line marker. opt_none is retired
 	// (#11510): a payloadless Option is op_const_option's static block.
+	// outer_mul_f64, inner_mul_add_f64 and arr_reserve each add one admitted
+	// array operation; none adds an unmodelled stack effect.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=358 declined=3\n"
+		"registered=361 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()
