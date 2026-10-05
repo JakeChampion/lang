@@ -4,8 +4,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // interpStdlibModloadCases are stdlib-importing programs run through the
@@ -21,6 +22,39 @@ var interpStdlibModloadCases = []struct {
 	name string
 	src  string
 }{
+	{"generic-record-and-union-receivers", `struct Box[T] { value: T }
+function (b: Box[T]) get(): T { return b.value; }
+function (b: Box[T]) map[U](f: (T) => U): Box[U] { return Box { value: f(b.value) }; }
+struct Foo { value: i32 }
+function (b: Box[Foo]) deep(): i32 { return b.value.value; }
+enum Opt[T] { Missing, Present(T) }
+function (o: Opt[T]) get_or(other: T): T {
+  match (o) { Present(x) => { return x; }, Missing => { return other; } }
+}
+function main(): i32 {
+  let a: Box[i32] = Box { value: 7 };
+  let b: Box[string] = Box { value: "text" };
+  if (a.get() != 7 || b.get() != "text") { return 1; }
+  if (!a.map((x: i32): boolean => x == 7).get()) { return 2; }
+  let c: Box[Foo] = Box { value: Foo { value: 9 } };
+  if (c.deep() != 9) { return 3; }
+  let some: Opt[i32] = Present(12);
+  let none: Opt[string] = Missing;
+  if (some.get_or(0) != 12 || none.get_or("empty") != "empty") { return 4; }
+  return 7;
+}`},
+	{"generic-ndarray-receiver-identity", `import "std/ndarray";
+struct NdArray[T] { value: T }
+function (a: NdArray[T]) to_flat(): T[] { return [a.value]; }
+function main(): i32 {
+  let local: NdArray[i32] = NdArray { value: 99 };
+  let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [2, 2]);
+  if (local.to_flat()[0] != 99 || a.to_flat()[3] != 4) { return 1; }
+  let t: ndarray.NdArray[i32] = a.transpose();
+  let flat: i32[] = t.to_flat();
+  if (flat[0] != 1 || flat[1] != 3 || flat[2] != 2 || flat[3] != 4) { return 2; }
+  return 7;
+}`},
 	{"char-unicode-methods", `import "std/unicode";
 import "std/string";
 struct Scalar { value: char }
@@ -194,27 +228,10 @@ function main(): i32 {
 // through parser.parse_module with no loader, so no `std/` or `core/` import
 // resolves there for any engine.
 //
-// Host modes mirror TestSelfHostArm64DarwinBuilds: on Apple Silicon the CLI is
-// built for arm64-darwin through the driver's own in-process Mach-O path; off
-// it, with the Go x86-64 backend. Either way the CLI runs on the host, since
-// it takes host filesystem paths as argv.
+// Use the current compiler built for the host, including native ARM64 Linux.
+// The interpreter reads host filesystem paths and needs no cross runner.
 func TestSelfHostInterpStdlibModload(t *testing.T) {
-	native := runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
-
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-
-	var fernBin string
-	if native {
-		fernBin = buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
-	} else {
-		gcc, runner := x86_64Tooling(t)
-		if len(runner) != 0 {
-			t.Skip("self-host CLI driver runs only natively (argv paths)")
-		}
-		fernBin = buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	}
-
+	fernBin := e2eharness.SelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {

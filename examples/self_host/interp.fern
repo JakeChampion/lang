@@ -3930,14 +3930,18 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
   let i: i32 = 0;
   while (i < funcs.len()) {
     let fd: parser.FuncDecl = funcs[i];
-    let rt_match: boolean = fd.receiver_type == recv_type;
+    // Generic struct arguments are erased from VStruct's nominal name.
+    // Method registration uses that same base identity. Keep the full module
+    // prefix so unrelated structs with the same short name cannot match.
+    let receiver_base: string = util.base_type_name(fd.receiver_type);
+    let rt_match: boolean = receiver_base == recv_type;
     if (!rt_match && byte_recv && fd.receiver_type == "u8") {
       rt_match = true;
     }
     // Union-receiver methods: a method declared on a union
     // (`function (sh: Shape) area()`) matches when recv's
     // struct type_name is in the union's variant list.
-    if (!rt_match && is_variant_of_alias_interp(recv_type, fd.receiver_type, aliases)) {
+    if (!rt_match && is_variant_of_alias_interp(recv_type, receiver_base, aliases)) {
       rt_match = true;
     }
     // Array-receiver methods, all of std/array: every array value answers
