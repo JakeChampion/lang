@@ -110,7 +110,7 @@ func handleTtyRun(t *testing.T, args ...string) {
 	}
 }
 
-func handleTtyCompile(t *testing.T, target, backend string) string {
+func handleTtyCompile(t *testing.T, target string) string {
 	t.Helper()
 	fern := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -119,19 +119,15 @@ func handleTtyCompile(t *testing.T, target, backend string) string {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "prog")
-	args := []string{"-target", target, "-o", bin, src}
-	if backend != "" {
-		args = append([]string{"-backend", backend}, args...)
-	}
-	out, err := exec.Command(fern, args...).CombinedOutput()
+	out, err := exec.Command(fern, "-target", target, "-o", bin, src).CombinedOutput()
 	if err != nil {
-		t.Fatalf("compile for %s -backend %q: %v\n%s", target, backend, err, out)
+		t.Fatalf("compile for %s: %v\n%s", target, err, out)
 	}
 	return bin
 }
 
 func TestX86_64HandleTty(t *testing.T) {
-	handleTtyRun(t, handleTtyCompile(t, "x86-64-linux", ""))
+	handleTtyRun(t, handleTtyCompile(t, "x86-64-linux"))
 }
 
 func TestArm64HandleTty(t *testing.T) {
@@ -139,7 +135,7 @@ func TestArm64HandleTty(t *testing.T) {
 	if qemu == "" {
 		t.Skip("qemu-aarch64 is not on PATH")
 	}
-	handleTtyRun(t, qemu, handleTtyCompile(t, "arm64-linux", "flat"))
+	handleTtyRun(t, qemu, handleTtyCompile(t, "arm64-linux"))
 }
 
 func TestInterpHandleTty(t *testing.T) {

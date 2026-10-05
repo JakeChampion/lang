@@ -475,24 +475,6 @@ func TestDWARFNestedStructVars(t *testing.T) {
 	}
 }
 
-// sleb128 decodes a signed LEB128 value from the front of b.
-func sleb128(b []byte) (int64, bool) {
-	var result int64
-	var shift uint
-	for i, by := range b {
-		result |= int64(by&0x7f) << shift
-		shift += 7
-		if by&0x80 == 0 {
-			if shift < 64 && by&0x40 != 0 {
-				result |= -1 << shift
-			}
-			_ = i
-			return result, true
-		}
-	}
-	return 0, false
-}
-
 // TestDWARFMultiFile is the gate #7902 names: a program spanning two source
 // files, built with -g for both native targets, whose line table names the
 // right file for every row, carries columns, marks the first row of each

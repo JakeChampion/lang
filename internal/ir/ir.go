@@ -21644,30 +21644,12 @@ func isWideScalar(t ast.Type) bool {
 	return false
 }
 
-// payloadLayout computes the per-slot byte offsets and the
-// total enum heap size for a variant whose payloads have the
-// given types. The tag occupies the first 4 bytes (offset 0);
-// payload slots follow in order. Wide (8-byte) slots —
-// including pointer-typed payloads on arm64 (ptrW=8) — are
-// aligned to a multiple of 8 from the object base, which
-// matches the natural alignment of `str x` / `i64.store`.
-// Returned offsets are addresses relative to the variant
-// pointer (i.e. payload[0] starts at offset 4 for a 4-byte
-// payload, or 8 if the first payload is wide).
 // structFieldLayout packs `fields` in declaration order, using
 // `payloadSlotSize` (which is ptrW-aware) per field. Wide
 // fields (i64 / f64 / pointer on arm64) are aligned to a
 // multiple of 8 so str x / ldr x land on aligned addresses.
 // Returned map is field-name → offset; second return is the
 // total struct size.
-// StructFieldLayout is the exported view of structFieldLayout: it returns the
-// byte offset of each field within a struct's heap field-area (excluding the
-// rc header — the user-visible data pointer already points past it) and the
-// total field-area size. Used by cmd/fern to emit DWARF struct-member DIEs.
-func StructFieldLayout(fields []ast.Param, ptrW int) (map[string]int32, int32) {
-	return structFieldLayout(fields, ptrW)
-}
-
 func structFieldLayout(fields []ast.Param, ptrW int) (map[string]int32, int32) {
 	offs := make(map[string]int32, len(fields))
 	pos := int32(0)
@@ -21699,6 +21681,16 @@ func tupleElemLayout(elems []ast.Type, ptrW int) ([]int32, int32) {
 	return offs, pos
 }
 
+// payloadLayout computes the per-slot byte offsets and the
+// total enum heap size for a variant whose payloads have the
+// given types. The tag occupies the first 4 bytes (offset 0);
+// payload slots follow in order. Wide (8-byte) slots —
+// including pointer-typed payloads on arm64 (ptrW=8) — are
+// aligned to a multiple of 8 from the object base, which
+// matches the natural alignment of `str x` / `i64.store`.
+// Returned offsets are addresses relative to the variant
+// pointer (i.e. payload[0] starts at offset 4 for a 4-byte
+// payload, or 8 if the first payload is wide).
 func payloadLayout(types []ast.Type, count int, ptrW int) ([]int32, int32) {
 	offsets := make([]int32, count)
 	pos := int32(4)

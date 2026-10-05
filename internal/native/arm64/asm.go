@@ -586,8 +586,7 @@ func (a *Assembler) TextLabelVAddrs(textVAddr uint64) map[string]uint64 {
 // but laid out relative to a load base of 0, returning the list of
 // R_AARCH64_RELATIVE relocations for the `.quad <symbol>` slots.
 // PC-relative fixups (branches, adrp/:lo12:, ldr-literals) are
-// base-independent and need no relocation. Both addresses come from
-// elf.SegmentAddrsPIE(TextLen()).
+// base-independent and need no relocation. textVAddr is elf.TextVAddrPIE.
 func (a *Assembler) BytesProgramPIE(textVAddr, rodataVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
 	if _, err := a.TextLen(); err != nil {
 		return nil, nil, nil, err

@@ -32,7 +32,7 @@ const (
 // says where .text and the data blob load. The data address cannot be known
 // any earlier — branch relaxation and the literal pool settle the size — and
 // deriving it here instead would leave the image with two authorities that
-// have to agree. Pass elf.SegmentAddrsWXArm64 or elf.SegmentAddrsPIEArm64.
+// have to agree. Pass elf.SegmentAddrsWXArm64.
 type SegmentAddrs func(textLen int) (textVAddr, dataVAddr uint64)
 
 // resolve parses src, settles the size of .text, and asks addrs where the
@@ -86,43 +86,6 @@ func AssembleProgramWX(src string, addrs SegmentAddrs) (text, rodata []byte, err
 		return nil, nil, err
 	}
 	return a.BytesProgramWX(textVAddr, dataVAddr)
-}
-
-// AssembleProgramPIE is AssembleProgram for a static position-independent
-// executable (elf.StaticPieExecutable): the W^X layout laid out from a
-// load base of 0, returning the R_AARCH64_RELATIVE relocations for the
-// `.quad <symbol>` slots. Pass elf.SegmentAddrsPIEArm64.
-func AssembleProgramPIE(src string, addrs SegmentAddrs) (text, rodata []byte, relocs []Reloc, err error) {
-	a, textVAddr, dataVAddr, err := resolve(src, addrs)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	return a.BytesProgramPIE(textVAddr, dataVAddr)
-}
-
-// AssembleProgramShared assembles for a shared object (.so): the same
-// base-0 PIE layout, also resolving each name in exportNames to its
-// load-base-relative virtual address (textVAddr + its .text offset) in
-// exportVAddr — the addresses elf.SharedLibrary records in .dynsym. Pass
-// elf.SegmentAddrsPIEArm64.
-func AssembleProgramShared(src string, addrs SegmentAddrs, exportNames []string) (text, rodata []byte, relocs []Reloc, exportVAddr map[string]uint64, err error) {
-	a, textVAddr, dataVAddr, err := resolve(src, addrs)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	text, rodata, relocs, err = a.BytesProgramPIE(textVAddr, dataVAddr)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	exportVAddr = map[string]uint64{}
-	for _, n := range exportNames {
-		v, ok := a.TextLabelVAddr(n, textVAddr)
-		if !ok {
-			return nil, nil, nil, nil, fmt.Errorf("export %q is not a defined .text symbol", n)
-		}
-		exportVAddr[n] = v
-	}
-	return text, rodata, relocs, exportVAddr, nil
 }
 
 // ParseProgram parses and encodes the program (instructions + data

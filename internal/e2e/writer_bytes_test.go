@@ -41,20 +41,20 @@ func writerBytesSource(t *testing.T) string {
 	return p
 }
 
-func compileBootstrapWriterBytes(t *testing.T, target, source string, census bool) string {
+func compileCLIWriterBytes(t *testing.T, target, source string, census bool) string {
 	t.Helper()
 	dir := t.TempDir()
 	src, bin := filepath.Join(dir, "writer.fern"), filepath.Join(dir, "writer")
 	if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(buildLangBinForInterp(t), "-target", target, "-backend", "flat", "-o", bin, src)
+	cmd := exec.Command(buildLangBinForInterp(t), "-target", target, "-o", bin, src)
 	cmd.Env = e2eharness.ChildEnv()
 	if census {
 		cmd.Env = append(cmd.Env, "FERN_LEAKCHECK=1")
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("bootstrap compile: %v\n%s", err, out)
+		t.Fatalf("compile: %v\n%s", err, out)
 	}
 	return bin
 }
@@ -64,23 +64,21 @@ func TestWriterBytesInterp(t *testing.T) {
 }
 
 func TestWriterBytesCensus(t *testing.T) {
-	// Bootstrap handles and IoError boxes are immortal. Compare a no-write
-	// control with repeated writes instead of treating those allocations as
-	// owned. Heap-form strings avoid the bootstrap's existing SSO spill leak
-	// (#8408). The primary compiler separately requires a zero-live census for
-	// the complete fixture, including short strings and closed-handle errors.
+	// Writes must retain nothing: compare a no-write control with repeated
+	// writes. TestSelfHostWriterBytes separately requires a zero-live census
+	// for the complete fixture, including short strings and closed-handle errors.
 	for _, tc := range []struct {
 		name string
 		run  func(*testing.T, string) (string, string, int)
 	}{
 		{"x86_64", func(t *testing.T, source string) (string, string, int) {
 			runner := e2eharness.X86_64Runner(t)
-			bin := compileBootstrapWriterBytes(t, "x86-64-linux", source, true)
+			bin := compileCLIWriterBytes(t, "x86-64-linux", source, true)
 			return runSplit(t, runX86_64Bin(runner, bin))
 		}},
 		{"arm64", func(t *testing.T, source string) (string, string, int) {
 			qemu := e2eharness.Arm64Runner(t)
-			bin := compileBootstrapWriterBytes(t, "arm64-linux", source, true)
+			bin := compileCLIWriterBytes(t, "arm64-linux", source, true)
 			return runSplit(t, runArm64Bin(qemu, bin))
 		}},
 		{"wasm", func(t *testing.T, source string) (string, string, int) {
@@ -151,13 +149,13 @@ func TestArm64WriterBytes(t *testing.T) {
 	// The shared fixture runners use the primary compiler. Exercise the Go
 	// CLI explicitly here; e2eselfhost owns the primary target matrix.
 	qemu := e2eharness.Arm64Runner(t)
-	bin := compileBootstrapWriterBytes(t, "arm64-linux", e2eharness.WriterBytesProgram, false)
+	bin := compileCLIWriterBytes(t, "arm64-linux", e2eharness.WriterBytesProgram, false)
 	runWriterBytesCommand(t, runArm64Bin(qemu, bin))
 }
 
 func TestX86_64WriterBytes(t *testing.T) {
 	runner := e2eharness.X86_64Runner(t)
-	bin := compileBootstrapWriterBytes(t, "x86-64-linux", e2eharness.WriterBytesProgram, false)
+	bin := compileCLIWriterBytes(t, "x86-64-linux", e2eharness.WriterBytesProgram, false)
 	runWriterBytesCommand(t, runX86_64Bin(runner, bin))
 }
 
