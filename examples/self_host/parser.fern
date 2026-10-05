@@ -21115,7 +21115,31 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
 }
 
 pub function desugar_ranges_func(fd: FuncDecl): FuncDecl {
-  return FuncDecl { ...fd, body: desugar_ranges_block(fd.body) };
+  return FuncDecl { ...fd, body: desugar_ranges_body(fd.body) };
+}
+
+// desugar_ranges_body: a function body with no range `for` keeps its
+// statements as parsed.
+function desugar_ranges_body(body: ast.Stmt[]): ast.Stmt[] {
+  if (!has_range_for(body)) {
+    return body;
+  }
+  return desugar_ranges_block(body);
+}
+
+function has_range_for(stmts: ast.Stmt[]): boolean {
+  let found: boolean = false;
+  for st in stmts {
+    found = astwalk.fold_stmt_nodes(st, found, range_for_at, keep_flag, astwalk.descend_all);
+  }
+  return found;
+}
+
+function range_for_at(st: ast.Stmt, own acc: boolean): boolean {
+  if let ast.StmtFor(fr) = st {
+    return acc || iter_range_args(fr.iter).len() == 2;
+  }
+  return acc;
 }
 
 pub function desugar_ranges_module(mod: Module): Module {
@@ -21452,7 +21476,7 @@ pub function desugar_prepass_module(raw: Module): Module {
     if (need_fda) {
       body = fda_stmts(body, mod.funcs);
     }
-    body = desugar_ranges_block(body);
+    body = desugar_ranges_body(body);
     funcs = funcs.append(FuncDecl { ...fd, body: body });
     i = i + 1;
   }
