@@ -351,8 +351,10 @@ merge main in and push. Do not stop at "pushed to the branch".
 
 - **Exit 125 is the arena; 137 is the host.** 125 (`ExitArenaExhausted`) is a
   real, reproducible failure and almost always a leak. 137 is 128+9 — the host
-  ran out of RAM; lower `FERN_BUILD_MEM_BUDGET_MB` / `FERN_EMIT_MEMLIMIT_MB`
-  and retry. Do not investigate one as the other.
+  killed the process, potentially because it ran out of RAM. Check the host's
+  OOM evidence; for overlapping harness builds, lower
+  `FERN_BUILD_MEM_BUDGET_MB` and retry. The retired Go emitter's
+  `FERN_EMIT_MEMLIMIT_MB` does not limit compiler subprocesses.
 
 - **If a test SKIPs, that is a missing dependency, not a green light.** The
   pinned wasm toolchain is wasmtime v46.0.1 + wasm-tools 1.253.0; the

@@ -841,16 +841,9 @@ pub function elf_data_vaddr_pie(text_len: i32): i32 {
 // slots). Lay .text / data out at elf_text_vaddr_pie() / elf_data_vaddr_pie()
 // so the PC-relative fixups line up.
 //
-// NOT YET WIRED to a -target. The self-host arm64 backend stores heap
-// pointers in 32 bits (the heap is sized to keep base + 3.5 GiB < 4 GiB —
-// see asm_arm64.fern's heap_size), so the image must load in the low 4 GiB.
-// A PIE is mapped at a high randomized base (on qemu AND real Android), which
-// truncates those pointers and trips the alloc trap on the first allocation.
-// Wiring this up needs the self-host backend to use 64-bit pointers (or an
-// mmap heap that maps low), the way the native arm64 backend already does;
-// until then this is a tested container only (see TestSelfHostELF). The
-// native compiler's -target arm64-android (cmd/fern) is unaffected — it uses
-// 64-bit pointers + an mmap heap and runs at any base.
+// fern.arm64_elf_binary_pie uses this for -target arm64-android. The emitter
+// uses 64-bit pointers and maps its heap separately from the image, so the
+// loader may choose a high address without truncating image or heap pointers.
 pub function elf_image_pie(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32): u8[] {
   return elf_image_two_seg(text, [], [], data, machine, entry_off, bss, 0, 3, false);  // base 0, ET_DYN
 }
