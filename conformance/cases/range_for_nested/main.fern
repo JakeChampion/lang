@@ -1,0 +1,35 @@
+// A range `for` desugars to a `while` wherever it sits: in either branch of an
+// `if`, in a `match` arm, and in a `defer` block.
+enum Shape { Run(i32), Pair }
+
+function branches(take: boolean): i32 {
+    let s: i32 = 0;
+    if (take) {
+        for i in 0..4 { s = s + i; }             // 0+1+2+3 = 6
+    } else {
+        for j in 1..=3 { s = s + j; }            // 1+2+3 = 6
+    }
+    return s;
+}
+
+function arms(sh: Shape): i32 {
+    let s: i32 = 0;
+    match (sh) {
+        Shape.Run(n) => { for i in 0..n { s = s + i; } },    // n = 4: 6
+        Shape.Pair => { for k in 1..=2 { s = s + 1; } },     // 2
+    }
+    return s;
+}
+
+function deferred(): i32 {
+    let t: i32 = 0;
+    loop {
+        defer { for k in 0..3 { t = t + 1; } }   // runs at the break: 3
+        break;
+    }
+    return t;
+}
+
+function main(): i32 {
+    return branches(true) + branches(false) + arms(Shape.Run(4)) + arms(Shape.Pair) + deferred();   // 12 + 8 + 3 = 23
+}

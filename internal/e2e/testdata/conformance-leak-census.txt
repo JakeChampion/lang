@@ -414,6 +414,7 @@ question_op                                          0
 radix_literals                                       0
 random_bytes                                         0
 range_for                                            0
+range_for_nested                                     0
 range_value                                          0
 rc_borrowed_box_field                                0
 rc_borrowed_payload_array                            0

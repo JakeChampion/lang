@@ -21085,11 +21085,14 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
       return [ast.StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms }];
     },
     ast.StmtDefer(d) => {
+      // A range `for` desugars to several statements, which a block keeps as
+      // the one action.
       let r: ast.Stmt[] = desugar_ranges_one(d.action);
+      let action: ast.Stmt = s_block(r);
       if (r.len() == 1) {
-        return [ast.StmtDefer { action: r[0], on_error: d.on_error, line: d.line }];
+        action = r[0];
       }
-      return [st];
+      return [ast.StmtDefer { action: action, on_error: d.on_error, line: d.line }];
     },
     ast.StmtVar(v) => {
       // The statement forms whose EXPRESSIONS can hold a lambda. Without these
@@ -21127,6 +21130,9 @@ function desugar_ranges_body(body: ast.Stmt[]): ast.Stmt[] {
   return desugar_ranges_block(body);
 }
 
+// has_range_for walks every statement desugar_ranges_block reaches, lambda
+// bodies included, and more: a narrower walk would leave a range loop as a
+// `__range` call.
 function has_range_for(stmts: ast.Stmt[]): boolean {
   let found: boolean = false;
   for st in stmts {
@@ -21137,7 +21143,7 @@ function has_range_for(stmts: ast.Stmt[]): boolean {
 
 function range_for_at(st: ast.Stmt, own acc: boolean): boolean {
   if let ast.StmtFor(fr) = st {
-    return acc || iter_range_args(fr.iter).len() == 2;
+    return acc || range_call_name(fr.iter) != "";
   }
   return acc;
 }

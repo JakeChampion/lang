@@ -8,6 +8,8 @@ Self-host parser, every target. Refs #8171.
 a `while`. `desugar_ranges_block` did that by rebuilding every statement of
 every function body, and descending into each lambda, to reach the range loops.
 Most functions have none, so for them it rebuilt the body to change nothing.
+The self-host compiler's own sources have none at all, so the measurement
+below is all skip path.
 
 `has_range_for` walks the body once, read-only, over astwalk's fold spine,
 which also covers lambda bodies. It asks whether any `for` iterates a range.
@@ -29,3 +31,22 @@ binaries. `scripts/selfhost-emit-hashes` matches on all 2,001 rows:
 |---|--:|--:|
 | stage 2, x86-64 target, total Ir | 17.853 G | 17.824 G (−0.16%) |
 | `desugar_prepass_module`, inclusive | 75.6 M | 54.6 M |
+
+A body that has a range loop pays for the walk as well as the rebuild.
+`conformance/cases/elementary_automaton` has five range loops, and its compile
+moves from 101.167 M to 101.171 M Ir (+0.003%), with an identical binary.
+
+## A bare `defer` of a range loop
+
+Writing the tests for each place a range loop can sit found that
+`defer for i in 0..4 { ... }` did not compile:
+"call target has no semantic contract: __range". The desugar's `defer` arm
+kept a desugared action only when it was one statement, and a range loop
+desugars to three, so it left the loop as written. The arm now wraps several
+statements in a block, the shape `defer { ... }` already had.
+
+`conformance/cases/range_for_nested` covers a range loop in each `if` branch,
+a `match` arm and a `defer` block, and the interpreter driver has the same
+shapes. The native parser takes only an expression or a block after `defer`,
+so the bare form is the self-host compiler's alone, and
+`TestSelfHostRangeForAsDeferAction` covers it.
