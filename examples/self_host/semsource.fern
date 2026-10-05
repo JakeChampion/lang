@@ -8400,7 +8400,8 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
 
 // Tiny leaves and functions called once spliced into their callers, and
 // constructions read only by their parts split into those parts (seminline).
-// A declaration marked @noinline stays a call, and so does every instance. `FERN_SEM_INLINE=`
+// A declaration marked @noinline stays a call, and so does every instance; so
+// does a `fip` or `fbip` one, whose allocation claim is checked on its body. `FERN_SEM_INLINE=`
 // (set but empty) turns the pass off, for comparing a build against itself.
 struct Spliced { all: Produced[], spliced: boolean[] }
 
@@ -8409,6 +8410,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module): Sp
     return Spliced { all: all, spliced: [] };
   }
   let funcs: ssasem.Func[] = [];
+  let modes: i32[][] = [];
   let inlinable: boolean[] = [];
   let rewrite: boolean[] = [];
   let unnamed: boolean[] = [];
@@ -8417,12 +8419,13 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module): Sp
     let p: Produced = all[i];
     let usable: boolean = p.ok && !p.template && !p.bodyless;
     funcs = funcs.append(p.func);
+    modes = modes.append(p.modes);
     rewrite = rewrite.append(usable);
-    inlinable = inlinable.append(usable && i < mod.funcs.len() && !mod.funcs[i].no_inline);
+    inlinable = inlinable.append(usable && i < mod.funcs.len() && !mod.funcs[i].no_inline && !mod.funcs[i].fip && !mod.funcs[i].fbip);
     unnamed = unnamed.append(outside_unnamed(p, names[i], i, mod));
     i = i + 1;
   }
-  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, inlinable, rewrite, unnamed);
+  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed);
   let result: Produced[] = [];
   i = 0;
   while (i < all.len()) {

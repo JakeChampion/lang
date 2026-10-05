@@ -54,8 +54,9 @@ struct Rewrite { f: ssasem.Func, changed: boolean }
 // `funcs[i]` is spliced into its callers when `inlinable[i]` and it is a leaf,
 // or called once and `unnamed[i]`: nothing outside the bodies names it, so the
 // splice leaves no second copy. `rewrite[i]` says which functions may be
-// rewritten at all. `names[i]` is the key a call to `funcs[i]` carries.
-pub function inline_leaves(funcs0: ssasem.Func[], names: string[], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[]): Inlined {
+// rewritten at all. `names[i]` is the key a call to `funcs[i]` carries, and
+// `modes[i]` its parameters' modes.
+pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[]): Inlined {
   let ix: util.NameIndex = util.name_index(names);
   let calls: i32[] = call_counts(funcs0, ix);
   let leaves: boolean[] = [];
@@ -67,7 +68,7 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], inlinable: bo
     once = once.append(!is_leaf && inlinable[i] && unnamed[i] && calls[i] == 1 && spliceable(funcs0[i], max_once_insts()));
     i = i + 1;
   }
-  let out: Inlined = split_all(splice_rounds(funcs0, rewrite, Spliceable { ix: ix, leaves: leaves, once: once }), rewrite);
+  let out: Inlined = split_all(splice_rounds(funcs0, rewrite, Spliceable { ix: ix, leaves: leaves, once: once }), rewrite, modes);
   let spliced: boolean[] = [];
   i = 0;
   while (i < funcs0.len()) {
@@ -123,12 +124,12 @@ function splice_round(prev: Inlined, rewrite: boolean[], ix: util.NameIndex, rea
   return r;
 }
 
-function split_all(prev: Inlined, rewrite: boolean[]): Inlined {
+function split_all(prev: Inlined, rewrite: boolean[], modes: i32[][]): Inlined {
   let out: Inlined = prev;
   let i: i32 = 0;
   while (i < out.funcs.len()) {
     if (rewrite[i]) {
-      let split: Rewrite = split_constructions(out.funcs[i]);
+      let split: Rewrite = split_constructions(out.funcs[i], modes[i]);
       out = Inlined { ...out, funcs: out.funcs.with(i, split.f), rewritten: out.rewritten.with(i, out.rewritten[i] || split.changed) };
     }
     i = i + 1;
@@ -624,12 +625,12 @@ function part(built: ssa.SInst, read: ssa.SInst): Part {
 // head of the block of the phi they split. `defs` and `values` grow with them.
 struct Head { block: i32, ins: ssa.SInst }
 
-struct Edits { defs: Defs, values: typeinfo.Type[], swap: i32[], entry: ssa.SInst[], heads: Head[], kept: boolean[] }
+struct Edits { defs: Defs, values: typeinfo.Type[], swap: i32[], entry: ssa.SInst[], heads: Head[], kept: boolean[], chained: boolean[] }
 
 // Every read of a known construction reads its part instead, a read of a phi
 // joining constructions reads a per-part phi, and a construction, or a phi or
 // copy of one, left unread is dropped.
-function split_constructions(f0: ssasem.Func): Rewrite {
+function split_constructions(f0: ssasem.Func, modes: i32[]): Rewrite {
   if (!reads_parts(f0.graph)) {
     return Rewrite { f: f0, changed: false };
   }
@@ -638,7 +639,7 @@ function split_constructions(f0: ssasem.Func): Rewrite {
   let changed: boolean = true;
   let rewritten: boolean = false;
   while (changed && round < 8) {
-    let split: Rewrite = split_round(f);
+    let split: Rewrite = split_round(f, modes);
     let swept: ssasem.Func = drop_unread(split.f);
     changed = split.changed || count_insts(swept.graph) != count_insts(split.f.graph);
     f = swept;
@@ -649,7 +650,7 @@ function split_constructions(f0: ssasem.Func): Rewrite {
 }
 
 // Every read that resolves, rewritten at once.
-function split_round(f: ssasem.Func): Rewrite {
+function split_round(f: ssasem.Func, modes: i32[]): Rewrite {
   let defs: Defs = defs_of(f.graph);
   let swap: i32[] = [];
   let v: i32 = 0;
@@ -657,7 +658,7 @@ function split_round(f: ssasem.Func): Rewrite {
     swap = swap.append(0 - 1);
     v = v + 1;
   }
-  let e: Edits = Edits { defs: defs, values: f.values, swap: swap, entry: [], heads: [], kept: kept_values(f.graph) };
+  let e: Edits = Edits { defs: defs, values: f.values, swap: swap, entry: [], heads: [], kept: kept_values(f.graph), chained: chained_rebuilds(f, defs, modes) };
   let any: boolean = false;
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -816,6 +817,9 @@ function part_of(f: ssasem.Func, w: Walk, read: ssa.SInst, v: i32, depth: i32): 
     return fail;
   }
   let d: ssa.SInst = def_inst(w.e.defs, x);
+  if (marked(w.e.chained, x)) {
+    return fail;
+  }
   if (builds(d.kind_tag) || d.kind_tag == ssasem.zero()) {
     let p: Part = Part { ok: true, value: 0 - 1, flag: 0, filler: read.kind_tag != ssasem.variant_is() };
     if (builds(d.kind_tag)) {
@@ -849,6 +853,65 @@ function part_of(f: ssasem.Func, w: Walk, read: ssa.SInst, v: i32, depth: i32): 
   let ins: ssa.SInst = ssa.SInst { kind_tag: 8, result: nv, args: args, imm: 0, str: "" };
   let defs: Defs = Defs { insts: cur.e.defs.insts.with(nv, ins), blocks: cur.e.defs.blocks };
   return Walk { ...cur, e: Edits { ...cur.e, defs: defs, heads: cur.e.heads.append(Head { block: pb, ins: ins }) }, value: nv };
+}
+
+// The rebuilds that are rebuilt in turn and rebuild a box the frame owns: a
+// call's result or an owned parameter. A rebuild takes over the box it rebuilds
+// where that box dies, so such a chain runs in that one box, and splitting a
+// link frees it early, leaving the next link to allocate. A borrowed box is not
+// the frame's to take over, so its first rebuild allocates either way.
+function chained_rebuilds(f: ssasem.Func, defs: Defs, modes: i32[]): boolean[] {
+  let rebuilt: boolean[] = rebuilt_values(f, defs);
+  let out: boolean[] = [];
+  while (out.len() < f.graph.nvals) {
+    out = out.append(false);
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (builds(ins.kind_tag) && marked(rebuilt, ins.result) && rebuilds_owned(f, defs, ins, modes)) {
+        out = out.with(ins.result, true);
+      }
+    }
+  }
+  return out;
+}
+
+function rebuilds_owned(f: ssasem.Func, defs: Defs, built: ssa.SInst, modes: i32[]): boolean {
+  for a in built.args {
+    let donor: i32 = rebuilt_from(f, defs, a, built.result);
+    if (donor >= 0) {
+      let param: boolean = donor < f.graph.nparams && donor < modes.len();
+      return def_inst(defs, donor).kind_tag == ssasem.call() || param && modes[donor] == ssasem.counted_mode();
+    }
+  }
+  return false;
+}
+
+// The values a construction of their own type is built from parts of.
+function rebuilt_values(f: ssasem.Func, defs: Defs): boolean[] {
+  let out: boolean[] = [];
+  while (out.len() < f.graph.nvals) {
+    out = out.append(false);
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (builds(ins.kind_tag)) {
+        for a in ins.args {
+          out = all_kept(out, [rebuilt_from(f, defs, a, ins.result)]);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// The value of `built`'s type the operand `a` is a part of, past copies, or -1.
+function rebuilt_from(f: ssasem.Func, defs: Defs, a: i32, built: i32): i32 {
+  let src: ssa.SInst = def_inst(defs, through_copies(defs, a));
+  if (!reads_part(src.kind_tag) || src.args.len() != 1 || !semtypes.equal(f.values[src.args[0]], f.values[built])) {
+    return 0 - 1;
+  }
+  return through_copies(defs, src.args[0]);
 }
 
 struct Placed { e: Edits, value: i32 }
