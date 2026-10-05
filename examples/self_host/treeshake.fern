@@ -276,6 +276,12 @@ function ts_names_stmt(st: ast.Stmt, own acc: string[]): string[] {
 
 // ts_func_names appends every name function `fd`'s body references to `acc`.
 function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
+  // The typed ndarray planner may replace inner with its checked adapter.
+  // Keep that synthetic dependency until the typed rewrite and final DCE;
+  // otherwise the planner can never find the adapter's body and contract.
+  if (fd.name == "inner" && util.base_type_name(fd.receiver_type) == "ndarray__NdArray") {
+    acc = acc.append("ndarray__inner_kernel");
+  }
   let i: i32 = 0;
   while (i < fd.body.len()) {
     acc = ts_names_stmt(fd.body[i], acc);

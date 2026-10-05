@@ -113,8 +113,14 @@ function literal_factor(f: ssasem.Func, mul: ssa.SInst): Factor {
 
 // Exactly the two element parameters, in source order. In particular, y*x
 // cannot substitute for x*y when the two operands have different NaN payloads.
-function binary_product(f: ssasem.Func): Factor {
-  let no: Factor = no_factor(semarrayreport.kernel_element_not_binary_multiply());
+function binary_element(f: ssasem.Func, add: boolean): Factor {
+  let refusal: i32 = semarrayreport.kernel_element_not_binary_multiply();
+  let op: string = "*";
+  if (add) {
+    refusal = semarrayreport.kernel_element_not_binary_add();
+    op = "+";
+  }
+  let no: Factor = no_factor(refusal);
   if (!binary_signature(f)) {
     return no;
   }
@@ -124,7 +130,7 @@ function binary_product(f: ssasem.Func): Factor {
   }
   let result: i32 = uncopy(f, b.term.value, []);
   let mul: Def = definition(f, result);
-  if (!is_multiply(mul) || !factor_body(b, result)) {
+  if (!mul.found || mul.ins.kind_tag != 9 || mul.ins.str != op || mul.ins.args.len() != 2 || !factor_body(b, result)) {
     return no;
   }
   let left: Def = definition(f, uncopy(f, mul.ins.args[0], []));
@@ -145,7 +151,7 @@ function element_param(d: Def, index: i32): boolean {
   return d.found && d.ins.kind_tag == ssasem.param() && d.ins.imm == index;
 }
 
-function closure_factor(f: ssasem.Func, v: i32, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], binary: boolean): Factor {
+function closure_factor(f: ssasem.Func, v: i32, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], binary: boolean, add: boolean): Factor {
   let d: Def = definition(f, uncopy(f, v, []));
   if (d.found && d.ins.kind_tag == ssasem.closure_new()) {
     if (d.ins.args.len() != 0) {
@@ -154,7 +160,7 @@ function closure_factor(f: ssasem.Func, v: i32, funcs: ssasem.Func[], index: uti
     let at: i32 = index.find(d.ins.str);
     if (at >= 0 && usable[at]) {
       if (binary) {
-        return binary_product(funcs[at]);
+        return binary_element(funcs[at], add);
       }
       return factor(funcs[at]);
     }
@@ -187,7 +193,8 @@ pub function has_kernel(names: string[]): boolean {
 
 function kernel_name(name: string): boolean {
   return name == "__smm_ndarray__NdArray_map__f64__f64"
-    || name == "__smm_ndarray__NdArray_outer__f64__f64__f64";
+    || name == "__smm_ndarray__NdArray_outer__f64__f64__f64"
+    || name == "__smm_ndarray__NdArray_inner__f64__f64";
 }
 
 pub function scale_maps(funcs: ssasem.Func[], names: string[], usable: boolean[], open: boolean[], enabled: boolean, products: boolean, report: boolean): Scaled {
@@ -223,10 +230,10 @@ pub function scale_maps(funcs: ssasem.Func[], names: string[], usable: boolean[]
 
 struct Rewritten { func: ssasem.Func, changed: boolean, sites: semarrayreport.Site[] }
 
-struct Plan { factor: Factor, ctor: i32, join: i32, check: i32, reason: i32 }
+struct Plan { factor: Factor, ctor: i32, join: i32, check: i32, adapter: i32, reason: i32 }
 
 function no_plan(reason: i32): Plan {
-  return Plan { factor: no_factor(reason), ctor: 0 - 1, join: 0 - 1, check: 0 - 1, reason: reason };
+  return Plan { factor: no_factor(reason), ctor: 0 - 1, join: 0 - 1, check: 0 - 1, adapter: 0 - 1, reason: reason };
 }
 
 function site_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[]): i32 {
@@ -261,7 +268,7 @@ function scale_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index:
   if (why != semarrayreport.kernel_scale_kernel()) {
     return no_plan(why);
   }
-  let k: Factor = closure_factor(f, ins.args[1], funcs, index, usable, false);
+  let k: Factor = closure_factor(f, ins.args[1], funcs, index, usable, false, false);
   if (!k.ok) {
     return no_plan(k.reason);
   }
@@ -272,7 +279,7 @@ function scale_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index:
   if (!enabled) {
     return no_plan(semarrayreport.kernel_disabled());
   }
-  return Plan { factor: k, ctor: ctor, join: 0 - 1, check: 0 - 1, reason: semarrayreport.kernel_scale_kernel() };
+  return Plan { factor: k, ctor: ctor, join: 0 - 1, check: 0 - 1, adapter: 0 - 1, reason: semarrayreport.kernel_scale_kernel() };
 }
 
 function outer_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[]): i32 {
@@ -314,7 +321,7 @@ function outer_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index:
   if (why != semarrayreport.kernel_outer_mul_kernel()) {
     return no_plan(why);
   }
-  let k: Factor = closure_factor(f, ins.args[2], funcs, index, usable, true);
+  let k: Factor = closure_factor(f, ins.args[2], funcs, index, usable, true, false);
   if (!k.ok) {
     return no_plan(k.reason);
   }
@@ -328,12 +335,51 @@ function outer_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index:
   if (!enabled) {
     return no_plan(semarrayreport.kernel_disabled());
   }
-  return Plan { factor: k, ctor: ctor, join: join, check: check, reason: semarrayreport.kernel_outer_mul_kernel() };
+  return Plan { factor: k, ctor: ctor, join: join, check: check, adapter: 0 - 1, reason: semarrayreport.kernel_outer_mul_kernel() };
+}
+
+function inner_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[]): i32 {
+  if (ins.args.len() != 5 || ins.str != "__smm_ndarray__NdArray_inner__f64__f64") {
+    return semarrayreport.kernel_unsupported_element_type();
+  }
+  if (util.has_str(f.shadows, "__inner_mul_add_f64")) {
+    return semarrayreport.kernel_builtin_shadowed();
+  }
+  for value in [ins.args[0], ins.args[1]] {
+    if (layouts[value] != semndlayout.packed()) {
+      return layout_refusal(layouts[value]);
+    }
+  }
+  return semarrayreport.kernel_inner_mul_add_kernel();
+}
+
+function inner_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean): Plan {
+  let why: i32 = inner_refusal(f, ins, layouts);
+  if (why != semarrayreport.kernel_inner_mul_add_kernel()) {
+    return no_plan(why);
+  }
+  for at in [3, 4] {
+    let k: Factor = closure_factor(f, ins.args[at], funcs, index, usable, true, at == 4);
+    if (!k.ok) {
+      return no_plan(k.reason);
+    }
+  }
+  let adapter: i32 = metadata_helper(funcs, index, usable, "ndarray__inner_kernel", [f.values[ins.args[0]], f.values[ins.args[1]], f.values[ins.args[2]]], f.values[ins.result]);
+  if (adapter < 0) {
+    return no_plan(semarrayreport.kernel_constructor_unavailable());
+  }
+  if (!enabled) {
+    return no_plan(semarrayreport.kernel_disabled());
+  }
+  return Plan { ...no_plan(semarrayreport.kernel_inner_mul_add_kernel()), adapter: adapter };
 }
 
 function site_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean, products: boolean): Plan {
   if (ins.kind_tag == ssasem.call() && semndlayout.operation(ins.str) == "outer") {
     return outer_plan(f, ins, funcs, index, usable, layouts, products);
+  }
+  if (ins.kind_tag == ssasem.call() && semndlayout.operation(ins.str) == "inner") {
+    return inner_plan(f, ins, funcs, index, usable, layouts, products);
   }
   return scale_plan(f, ins, funcs, index, usable, layouts, enabled);
 }
@@ -347,7 +393,11 @@ struct Emitted { values: typeinfo.Type[], insts: ssa.SInst[], calls: ssasem.Cont
 function helper_contract(f: ssasem.Func): ssasem.Contract {
   let modes: i32[] = [];
   for p in f.params {
-    modes = modes.append(ssasem.borrow_mode());
+    if (ssasem.reference(p)) {
+      modes = modes.append(ssasem.borrow_mode());
+    } else {
+      modes = modes.append(ssasem.value_mode());
+    }
   }
   return ssasem.Contract { name: f.graph.name, params: f.params, modes: modes, result: f.result };
 }
@@ -407,7 +457,14 @@ function scale_function(f: ssasem.Func, funcs: ssasem.Func[], names: string[], i
       if (report && ins.kind_tag == ssasem.call() && algebra(ins.str)) {
         sites = sites.append(kernel_site(f, ins, layouts, plan));
       }
-      if (plan.reason == semarrayreport.kernel_outer_mul_kernel()) {
+      if (plan.reason == semarrayreport.kernel_inner_mul_add_kernel()) {
+        let contract: ssasem.Contract = helper_contract(funcs[plan.adapter]);
+        insts = insts.append(ssa.SInst { ...ins, str: contract.name, args: [ins.args[0], ins.args[1], ins.args[2]] });
+        if (ssasem.find_contract_in(calls, contract.name) < 0) {
+          calls = calls.append(contract);
+        }
+        changed = true;
+      } else if (plan.reason == semarrayreport.kernel_outer_mul_kernel()) {
         let emitted: Emitted = outer_instructions(ins, plan, funcs, values, insts, calls);
         values = emitted.values;
         insts = emitted.insts;
@@ -503,7 +560,7 @@ function kernel_site(f: ssasem.Func, ins: ssa.SInst, layouts: i32[], plan: Plan)
   let storage: string = "scalar-combinator";
   if (plan.reason == semarrayreport.kernel_scale_kernel()) {
     storage = "deferred-to-ownership";
-  } else if (plan.reason == semarrayreport.kernel_outer_mul_kernel()) {
+  } else if (plan.reason == semarrayreport.kernel_outer_mul_kernel() || plan.reason == semarrayreport.kernel_inner_mul_add_kernel()) {
     storage = "fresh-kernel-buffer";
   }
   return semarrayreport.Site { owner: f.graph.name, stage: ins.str + "@v" + util.i32_to_string(ins.result), plan: operation_text(f, ins, layouts), reason: plan.reason, storage: storage };
