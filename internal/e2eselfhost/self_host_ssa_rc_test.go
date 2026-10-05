@@ -113,11 +113,11 @@ function main(): i32 {
     // The rest of the program is the typed lowering's, as the emit entries
     // gate it; produce's body is the fixture's.
     let d = semlower.driven(mod, av[1]);
-    let g: ircore.Gated = ircore.Gated { ok: false, im: d.full, stab: irtables.struct_tab_empty(), base: d.sub.sigs, cache: [] };
+    let g: ircore.Gated = ircore.Gated { ok: false, im: d.full, stab: irtables.struct_tab_empty(), cache: [] };
     if (av[1] == "wasm32-wasi") {
         let wm = ircore.with_records(wasm_ir.route_normalized(d.full), d.sub);
         let l = ircore.gate(wm, d.sub);
-        g = ircore.Gated { ok: l.ok, im: wm, stab: irtables.struct_tab(wm.structs), base: d.sub.sigs, cache: l.cache };
+        g = ircore.Gated { ok: l.ok, im: wm, stab: irtables.struct_tab(wm.structs), cache: l.cache };
     } else { g = semlower.program(d); }
     if (!g.ok) { return 3; }
     let cache: irtables.LowerResult[] = [];
@@ -131,7 +131,7 @@ function main(): i32 {
         at = at + 1;
     }
     if (av[1] == "x86-64-linux") {
-        print(asm_ir.emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, cache, g.base, d.sub.rt_lower, 0 as usize, asmcore.env_switches()));
+        print(asm_ir.emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, cache, d.sub.rt_lower, 0 as usize, asmcore.env_switches()));
     } else if (av[1] == "arm64-linux") {
         strbuf_reset();
         let state = asmcore.new_state();

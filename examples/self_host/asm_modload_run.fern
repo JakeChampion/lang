@@ -157,13 +157,13 @@ function provided_audit(): i32 {
 
 // View is what a per-module build emits from: one module per unit and each
 // unit's lowering, cut from the typed lowering of the whole program, which has
-// already been gated, and the whole-program function, struct and registry
-// view every unit emits against.
+// already been gated, the whole-program function and struct view every unit
+// emits against, and the borrowability rows the unit keys fold.
 struct View {
   u: ircore.Units,
   all_funcs: parser.FuncDecl[],
   stab: irtables.StructTab,
-  base: fnsigs.FnSigs,
+  sigs: fnsigs.FnSigs,
   rt: (string) => irtables.LowerResult[],
 }
 
@@ -185,7 +185,7 @@ function per_module_view(entry: parser.Module, loaded: flatten.LoadedModule[], p
     }
     k = k + 1;
   }
-  return View { u: ircore.split_units(g, raw, entry_at), all_funcs: g.im.funcs, stab: g.stab, base: g.base, rt: d.sub.rt_lower };
+  return View { u: ircore.split_units(g, raw, entry_at), all_funcs: g.im.funcs, stab: g.stab, sigs: d.sub.sigs, rt: d.sub.rt_lower };
 }
 
 // merged_program is the whole program the merged emit reads.
@@ -296,15 +296,15 @@ function view_keys(v: View, cache_dir: string): ircore.UnitKeys {
   if (cache_dir.len() == 0) {
     return ircore.no_unit_keys();
   }
-  return ircore.unit_keys(v.u, v.all_funcs, v.stab, v.base, true);
+  return ircore.unit_keys(v.u, v.stab, v.sigs, true);
 }
 
 // emit_unit emits unit `idx`'s [lo, hi) function window for `target`.
 function emit_unit(v: View, idx: i32, is_entry: boolean, ns: string, extra: string[], lo: i32, hi: i32, target: string): string {
   if (target == "arm64-linux") {
-    return asm_arm64_ir.emit_module_ir_unit_arm64_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.base, v.rt, asmcore.env_switches());
+    return asm_arm64_ir.emit_module_ir_unit_arm64_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.rt, asmcore.env_switches());
   }
-  return asm_ir.emit_module_ir_unit_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.base, v.rt, 0 as usize, asmcore.env_switches());
+  return asm_ir.emit_module_ir_unit_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.rt, 0 as usize, asmcore.env_switches());
 }
 
 // unit_cache_file returns the object path for ONE emitted unit, or "" when the
@@ -425,8 +425,8 @@ function spawn_batch(self_exe: string, entry_path: string, tmp: string, lo: i32,
 // reclaimed within a process, so emitting all ~35 whole-compiler units in one
 // accumulates past the 16 GiB bump arena and trips __fern_alloc's bounds check
 // (exit 137, which reads like an OOM-kill without being one). A child per batch
-// releases the accumulation at exit while still amortising the shared base
-// derivation (wp_fn_sigs) across its batch.
+// releases the accumulation at exit while still amortising the whole-program
+// view (per_module_view) across its batch.
 //
 // A process boundary is also the only release mechanism that TOLERATES the emit
 // path's pre-existing over-releases: __rc_underflow_count() reports ~2443 of
@@ -703,8 +703,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
   }
   if (pm_mode == "emit-all") {
     // Multi-unit-per-process whole-compiler per-module emit (#3457 slice 2).
-    // The whole-program signature registry is derived ONCE per process
-    // (wp_fn_sigs) and shared across every unit it emits — collapsing the
+    // The whole-program view is built ONCE per process (per_module_view)
+    // and shared across every unit it emits — collapsing the
     // O(units × all_funcs) re-derivation that dominated the per-process
     // serial emit (~20 s/unit even for a 3-function module). Units are the flat
     // (module × window) list, each module sharded into the SAME [lo,hi)
@@ -715,9 +715,9 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // The per-window emit's net working set (~0.4 GB) is NOT reclaimed within
     // one process, so emitting ALL 35 units in one process OOMs (~16 GB); an
     // orchestrator drives BATCHES of units, each a fresh process that releases
-    // the accumulation on exit while still sharing the base derivation across
-    // its batch. The entry gets the full runtime-need roots as its extra_needs.
-    // x86 shares the bases; -target arm64-linux uses the arm64 emitter unchanged.
+    // the accumulation on exit while still sharing the view across its batch.
+    // The entry gets the full runtime-need roots as its extra_needs.
+    // -target arm64-linux uses the arm64 emitter unchanged.
     let needs: string[] = ircore.all_runtime_need_roots();
     let units: string[] = flat_unit_list(dir, parts, infmods, func_budget);
     // Incremental object cache (#3451 step 6 / #3458). This is the mode the

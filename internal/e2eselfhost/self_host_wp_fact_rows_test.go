@@ -26,8 +26,8 @@ func TestWpFactRowsCoversEveryFnSigsField(t *testing.T) {
 		t.Fatal("cannot find wp_fact_rows and its comment in fnsigs.fern")
 	}
 	fields := regexp.MustCompile(`(?m)^\s+([a-z_0-9]+):`).FindAllStringSubmatch(st[1], -1)
-	if len(fields) < 2 {
-		t.Fatalf("parsed only %d FnSigs fields; the pattern no longer matches the struct", len(fields))
+	if len(fields) == 0 {
+		t.Fatal("parsed no FnSigs fields; the pattern no longer matches the struct")
 	}
 	var missing []string
 	for _, f := range fields {

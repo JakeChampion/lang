@@ -167,7 +167,7 @@ function main(): i32 {
 // The enum field takes the same `structfldok:` gate the nested-struct one does,
 // so the exemption admits both. Its residual needed a second fix as well: the
 // QUALIFIED variant-ctor spelling `V.A(7)` did not read as a fresh construction
-// (variant_ctor_enum_owner only knew the bare `A(7)` callee), so the field was
+// (only the bare `A(7)` callee did), so the field was
 // retained as if it aliased and the one box the whole shape allocates was never
 // freed — 400 B here, flat in k, and present on the `...o` carry too (#6681).
 // Either fix alone leaves that 400; both together reach 0.
@@ -443,7 +443,7 @@ func TestSelfHostNestedFieldAliasRebindX86_64(t *testing.T) {
 		}
 		if qualified != bare {
 			t.Errorf("`V.A(7)` leaked %d bytes against `A(7)`'s %d — the same fresh box either "+
-				"way, so variant_ctor_enum_owner must read both spellings (#6681)", qualified, bare)
+				"way, so both spellings must read as a fresh construction (#6681)", qualified, bare)
 		}
 	})
 

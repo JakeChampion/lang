@@ -6,25 +6,9 @@ import (
 )
 
 // A struct whose TUPLE field carries a RECLAIM-STRUCT element — `Holder { t:
-// (i32, P), … }` where `P` has an rc-array field. This is the shape that
-// separates the two tuple admission predicates, and nothing else covers it.
-//
-// struct_routes_field_reclaim_at consults struct_has_reclaim_array_field
-// first, whose tuple case (#7259) is TYPE-only: with no `structs` view it
-// cannot classify a struct-typed element and deliberately bails on one. The
-// struct_has_deep_tuple_field clause below it does take `structs` and admits
-// the element via struct_has_reclaim_array_field(P). Neither predicate
-// subsumes the other — theirs also admits Option/Result and f64[]/i64[]
-// elements that this one does not.
-//
-// Measured both ways, because the leak matrix has NO cell of this shape and so
-// reports nothing when the clause is removed:
-//
-//	clause live     400 allocs / 400 frees, 0 live
-//	clause removed  400 allocs / 100 frees, 12800 live
-//
-// A knockout that reads only the matrix therefore looks like dead code. This
-// test is what makes it move a number.
+// (i32, P), … }` where `P` has an rc-array field. The leak matrix has no cell
+// of this shape, so this test is what balances it: when the element is not
+// released, 400 allocations leave 300 unfreed and 12800 bytes live.
 
 func TestSelfHostTupleStructElemFieldX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -67,8 +51,7 @@ function main(): i32 {
 	}
 	if live != 0 || allocs != frees {
 		t.Errorf("%s — must balance at live_bytes 0; a struct-element tuple field "+
-			"leaks its whole chain when struct_routes_field_reclaim_at stops "+
-			"admitting it", summary)
+			"leaks its whole chain when the element is not released", summary)
 	}
 
 	sanAsm := hevCompile(t, runner, driverBin, src, []string{"FERN_SANITIZE=1"})

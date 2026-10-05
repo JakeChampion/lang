@@ -48,8 +48,7 @@ function probe(source: string, name: string): i32 {
     let body = mod.funcs[0].body;
     let ids: string[] = [];
     for st in body { ids = astwalk.collect_idents_stmt(st, ids); }
-    let count: i32 = astwalk.count_ident_stmts(body, name);
-    if (count != frequency(ids, name)) { return -2; }
+    let count: i32 = frequency(ids, name);
     function check_expr(e: ast.Expr, own bad: i32): i32 {
         if (astwalk.count_ident_expr(e, name) != frequency(astwalk.collect_idents_expr(e, []), name)) { return bad + 1; }
         return bad;

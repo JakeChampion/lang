@@ -342,113 +342,6 @@ pub function decl_is_enum(structs: StructTab, name: string): boolean {
   return stab_enum_first(structs, name) >= 0;
 }
 
-// decl_is_leaksafe reports whether every field is leak-safe in the IR path.
-// Leak-only fields need no reference counting; Reader/Writer are bare fd handles
-// and likewise carry no heap reference.
-// is_scalar_array_type reports whether `t` is a scalar-element array (i32[] /
-// boolean[]) — leak-only-safe as a struct field: indexing yields an i32, and the
-// array (a fresh literal at construction) leaks with the struct (never freed),
-// so no reference counting is needed. String / struct element arrays need
-// element tracking (their elements are heap values), so they stay deferred.
-pub function is_scalar_array_type(t: string): boolean {
-  return t == "i32[]" || t == "boolean[]";
-}
-
-pub function is_leaksafe_array_field(t: string): boolean {
-  return is_scalar_array_type(t) || is_float_array_type_name(t) || t == "i64[]" || t == "u64[]" || t == "u32[]"
-    || t == "char[]" || is_subword_array_type(t);
-}
-
-// is_float_array_type_name reports whether the declared type name `t` is a
-// FLOAT array — one whose elements use the 8-byte-stride f64 layout that
-// mark_f64arr tracks. Both `f64[]` and `f32[]` do: a scalar `f32` lowers to a
-// wasm f64, and the array-literal / Cell element paths already fold `f32` in
-// with `f64` (`celt == "f64" || celt == "f32"`). Spelling the pair once keeps
-// the declaration-driven sites from drifting apart, which is how `f32[]` came
-// to be classified as no array kind at all (#6175).
-pub function is_float_array_type_name(t: string): boolean {
-  return t == "f64[]" || t == "f32[]";
-}
-
-// is_subword_array_type reports whether `t` is a sub-32-bit integer-element
-// array (u8[]). This uses the SAME 4-byte-slot element
-// representation as i32[]: the self-host IR (like the AST emitter) stores each
-// element in a full 32-bit slot — op_arr_push / op_arr_get(32) round-trip the
-// value at 32-bit width, and the sub-word value is wrapped to its range by the
-// cast at the producing site BEFORE the push (the `b as u8` idiom), so the
-// stored slot already holds the in-range value. A read yields that same i32
-// (the consumer `data[i] as i32` is a no-op zero-extend). So as a struct field
-// it is leak-safe exactly like i32[] / u32[] — the buffer is a pointer in
-// the field slot, owned by the struct, deep-dropped on reclamation. This admits
-// byte-buffer structs (BytesWriter, Stream readers) onto the IR path.
-pub function is_subword_array_type(t: string): boolean {
-  return t == "u8[]";
-}
-
-// is_struct_array_field_type: a `X[]` where X is a leaf-safe struct (array-of-
-// struct field). Admitted to the IR path (construction + `f[i].field` read) but
-// NOT deep-dropped yet — the array and its struct elements leak with the struct (a
-// recursive-drop follow-up); aliasing it (bind / return / assign) bails, like the
-// scalar-array fields, so the leak-only IR never creates a dangling second owner.
-pub function is_struct_array_field_type(structs: StructTab, t: string): boolean {
-  let n: i32 = t.len();
-  if (n < 3) {
-    return false;
-  }
-  if (slice_unchecked(t, n - 2, n) != "[]") {
-    return false;
-  }
-  // Element leaf-safety is guaranteed by the leaksafe gate (decl_is_leaksafe_d,
-  // depth-bounded) before any struct admitting this field reaches the IR path, so
-  // this only needs to recognise the struct-array shape (no recursion → no cycle).
-  return decl_is_struct(structs, slice_unchecked(t, 0, n - 2));
-}
-
-// is_enum_array_field_type: a `C[]` where C is a (nominal) enum (array-of-enum
-// field). Like the array-of-struct field it is admitted to the IR path in leak
-// mode (the array + its enum boxes leak with the struct) and bailed in the
-// alias-creating positions (bind / return / assign), so the leak-only IR never
-// creates a dangling second owner.
-pub function is_enum_array_field_type(structs: StructTab, t: string): boolean {
-  let n: i32 = t.len();
-  if (n < 3) {
-    return false;
-  }
-  if (slice_unchecked(t, n - 2, n) != "[]") {
-    return false;
-  }
-  return is_enum_like_name(slice_unchecked(t, 0, n - 2), structs);
-}
-
-// is_nested_array_field_type: a `T[][]` whose ELEMENT `T[]` is itself an
-// admitted array field type (scalar / struct / enum element). Its elements are
-// array POINTERS, so the outer buffer uses the same 4-byte-slot layout as an
-// i32[] and needs no element-width dispatch.
-//
-// ONE level of nesting, matching decl_is_leaksafe_at_d's own admission (which
-// calls this): a `T[][][]` field keeps its whole struct off the IR path, so
-// recognising it here would classify a receiver that can never be reached.
-pub function is_nested_array_field_type(structs: StructTab, t: string): boolean {
-  let n: i32 = t.len();
-  if (n < 5) {
-    return false;
-  }
-  if (slice_unchecked(t, n - 2, n) != "[]") {
-    return false;
-  }
-  let elt: str = slice_unchecked(t, 0, n - 2);
-  return is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt)
-    || is_enum_array_field_type(structs, elt);
-}
-
-// is_row_array_field_type: a field whose elements are counted array buffers —
-// a nested array, or `string[][]`, which is_nested_array_field_type does not
-// reach. __struct_drop_<T> releases each row and then the outer buffer, under
-// the same sole-owner gate as a struct-array field's element walk.
-pub function is_row_array_field_type(structs: StructTab, t: string): boolean {
-  return t == "string[][]" || is_nested_array_field_type(structs, t);
-}
-
 // tuple_type_elem_tag parses a tuple type string "(t0, t1, …)" → element n's tag,
 // or "" if not a tuple / n is out of range. Decodes via the structured TypeRef
 // (SH-021, docs/SELF-HOST-AUDIT.md T2) instead of a hand-rolled depth-tracking
@@ -478,56 +371,6 @@ pub function tuple_type_elem_tag(t: string, n: i32): string {
     return "clo";
   }
   return rt;
-}
-
-// is_enum_like_name reports whether type name `t` denotes a (nominal) enum:
-// not a primitive, struct, array, or bracketed/tuple generic — a bare nominal
-// that isn't anything else is an enum. Used to carry an enum-typed local / param /
-// receiver's type name in local_struct_type, so `x.method()` on an enum value
-// dispatches to `<Enum>.<method>` (the enum-receiver-method path).
-//
-// It stays SYNTACTIC rather than asking decl_is_enum: at the leak-safety and
-// param/receiver gates the enum's variant decls are frequently not in the
-// `structs` handed down, so decl_is_enum answers false for a genuine enum
-// (ast.Expr, typeinfo.Type, lexer.Token) and the gate would bail every module
-// that names one. A bare type VARIABLE (`T`) still over-matches; the sites that
-// care exclude it themselves.
-pub function is_enum_like_name(t: string, structs: StructTab): boolean {
-  if (t.len() == 0) {
-    return false;
-  }
-  if (typeinfo.is_primitive_type_name(t)) {
-    return false;
-  }
-  // "clo" is the compiler's closure-BOX tag spelling (a boxed fn-valued
-  // tuple element / Option payload) — never a user enum name. Without this
-  // exclusion an Option[clo] payload's match bind was claimed by the enum
-  // branch (mark_struct_type("clo")) before the closure-local mark could
-  // fire, so `f(args)` bare-called the box pointer → SIGSEGV. ("fn" is NOT
-  // excluded: existing struct-field / enum-payload machinery relies on the
-  // coarse "fn" spelling reading as enum-like in its dispatch gates.)
-  if (t == "clo") {
-    return false;
-  }
-  if (decl_is_struct(structs, t)) {
-    return false;
-  }
-  if (is_array_type_name(t)) {
-    return false;
-  }
-  // A bracketed generic (Option[..]/Result[..]/Map[..]/Box[..]) or a tuple
-  // "(..)" is not a bare enum.
-  let ci: i32 = 0;
-  while (ci < t.len()) {
-    if (t[ci] == b'[') {
-      return false;
-    }
-    ci = ci + 1;
-  }
-  if (slice_unchecked(t, 0, 1) == "(") {
-    return false;
-  }
-  return true;
 }
 
 // decl_is_prim_recv reports whether a method-receiver type spelling names a
@@ -613,18 +456,6 @@ pub function decl_at_field_type(structs: StructTab, decl_index: i32, index: i32)
 // `struct_name`, or "".
 pub function decl_field_type_at(structs: StructTab, struct_name: string, index: i32): string {
   return decl_at_field_type(structs, decl_index_of(structs, struct_name), index);
-}
-
-// decl_at_field_count returns the field count of the decl at `decl_index`.
-pub function decl_at_field_count(structs: StructTab, decl_index: i32): i32 {
-  if (decl_index < 0 || decl_index >= structs.decls.len()) {
-    return 0;
-  }
-  return structs.decls[decl_index].fields.len();
-}
-
-pub function decl_field_count(structs: StructTab, struct_name: string): i32 {
-  return decl_at_field_count(structs, stab_struct_first(structs, struct_name));
 }
 
 // elem_ty_is_f64slot: element type `t` occupies the 8-byte float slot. f32
@@ -1283,90 +1114,6 @@ pub function f64_math_builtin_kind(name: string): string {
   return "";
 }
 
-// nested_field_deep_drop_ok reports whether a DIRECT nested-struct field of type
-// `sty` is safe to DEEP-drop — i.e. its drop site may recursively release `sty`'s
-// OWN rc fields (via __struct_drop_<sty>) before freeing the inner box, instead of
-// the shallow box-only free. True iff `sty`'s nested-struct-field closure is
-// ACYCLIC and reaches at least one rc-ARRAY field to reclaim.
-//
-// ACYCLICITY is the CYCLE-SAFETY guarantee: __struct_drop_<sty>'s emitted body
-// recurses `call __struct_drop_<fdt>` for each nested-struct field fdt admitted by
-// THIS predicate, so the emitted call graph edge sty→fdt exists iff fdt is itself
-// deep-drop-ok. If every type's nested-struct closure is acyclic, that call graph
-// is a DAG and the runtime recursion terminates (bounded by the number of distinct
-// struct types — a type cannot recur on the chain without a cycle). A back-edge
-// (sty reachable from fdt) poisons the whole ancestor chain: nddo_reach returns the
-// CYCLIC sentinel, so the field stays SHALLOW — a self-referential / mutually-
-// recursive struct (tree / linked list, admitted leak-safe by decl_is_leaksafe's
-// back-edge rule) keeps the existing one-level box-only reclaim, leak-safe.
-//
-// This generalises the former LEAF-only rule (depth-1, no nested-struct field) to
-// arbitrary acyclic depth: `A { b: B }` / `B { c: C }` / `C { xs: i32[] }` now
-// deep-drops all the way down (A's drop releases B's box AND, transitively, C's xs
-// buffer), reusing the per-level rc_is_unique guard the leaf case already applied.
-// A `string` field counts as reclaimable (#4297 A2), and so does an enum field
-// whose payloads `__struct_drop_`'s deep_enum_drop walks (enum_arr_elems_walk_ok,
-// #8692). Option / tuple inner fields are not reclaimed, so a struct reaching
-// only those returns false.
-pub function nested_field_deep_drop_ok(structs: StructTab, sty: string): boolean {
-  if (sty.len() == 0) {
-    return false;
-  }
-  let visiting: string[] = [];
-  return nddo_reach(structs, sty, visiting) == 1;
-}
-
-// nddo_reach is the cycle-detecting DFS behind nested_field_deep_drop_ok. It returns
-//   -1  a cycle is reachable from `sty` (a back-edge to a struct on the current path,
-//       or the depth backstop) — UNSAFE to deep-drop, and poisons every ancestor;
-//    1  `sty`'s closure is acyclic AND reaches a RECLAIMABLE field — an rc-ARRAY or,
-//       since #4297 A2, a `string` field (deep-drop-worthy);
-//    0  `sty`'s closure is acyclic but reaches nothing reclaimable.
-// `visiting` is the set of struct types on the current recursion path (the same
-// back-edge mechanism as decl_is_leaksafe_d). A direct rc-array / string field sets
-// the reclaimable flag; a nested-struct field recurses (its cycle poisons via -1,
-// its reclaimable content propagates up). Deep-dropping a nested string-only struct
-// is sound: the deep-drop is rc_is_unique-gated, so a SHARED nested struct skips it
-// (no over-release), and a uniquely-owned one runs its own __struct_drop whose k_str
-// arm reclaims the string exactly as at top level (the construction alias-inc
-// balances a non-fresh field; a fresh field is freed).
-function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
-  if (util.has_str(visiting, sty)) {  // back-edge → cycle → unsafe
-    return 0 - 1;
-  }
-  if (visiting.len() > 16) {  // depth backstop → treat as unsafe
-    return 0 - 1;
-  }
-  let nv: string[] = visiting.append(sty);
-  let n: i32 = decl_field_count(structs, sty);
-  let has_arr: boolean = false;
-  let fi: i32 = 0;
-  while (fi < n) {
-    let fdt: string = decl_field_type_at(structs, sty, fi);
-    if (decl_is_struct(structs, fdt)) {
-      let r: i32 = nddo_reach(structs, fdt, nv);
-      if (r < 0) {  // a cycle below poisons this struct too
-        return 0 - 1;
-      }
-      if (r == 1) {
-        has_arr = true;
-      }
-    } else if (is_leaksafe_array_field(fdt) || is_struct_array_field_type(structs, fdt) || is_enum_array_field_type(structs, fdt)
-      || is_row_array_field_type(structs, fdt)) {
-      has_arr = true;
-    } else if (fdt == "string") {
-      has_arr = true;  // #4297 A2: a string field is reclaimable (k_str drop)
-    } else if (decl_is_enum(structs, fdt) && enum_arr_elems_walk_ok(structs, fdt)) {
-      has_arr = true;  // deep_enum_drop walks its payloads
-    }
-    fi = fi + 1;
-  }
-  if (has_arr) {
-    return 1;
-  }
-  return 0;
-}
-
 // reuse_layer_disabled: the #4350 §6.5 differential switch. When the
 // FERN_SELFHOST_NO_REUSE env let is "1" in the COMPILER's environment, every
 // donor-based box-reuse pairing (self-overwrite / cross-struct / cross-tuple /
@@ -1465,16 +1212,6 @@ pub function result_f64(): i32 {
   return 3;
 }
 
-// is_array_type_name reports whether a type string denotes an array (ends
-// with "[]", e.g. "i32[]").
-pub function is_array_type_name(t: string): boolean {
-  let n: i32 = t.len();
-  if (n < 2) {
-    return false;
-  }
-  return slice_unchecked(t, n - 2, n) == "[]";
-}
-
 // is_f64_scalar_type_name reports whether a declared SCALAR type is an 8-byte
 // IEEE float — f64 or f32 (Fern represents f32 as an f64 internally: f32<->f64
 // casts are no-ops and every float op runs at double width). The two spell the
@@ -1531,51 +1268,6 @@ pub function local_decl_count(stmts: ast.Stmt[], name: string): i32 {
     i = i + 1;
   }
   return n;
-}
-
-// is_scalar_type_name reports whether `t` names a flat scalar type
-// (i32 / i64 / f64 / boolean / u32 / u64) — a value that is COPIED, not
-// rc-tracked, so a shallow box free needs no element walk and never entangles a
-// bound payload's lifetime.
-pub function is_scalar_type_name(t: string): boolean {
-  return t == "i32" || t == "i64" || t == "f64" || t == "boolean" || t == "u32" || t == "u64";
-}
-
-// enum_walk_payload_field: a payload the element walk releases with one
-// rc-guarded arr_dec — a LEAK-SAFE scalar array, or a closure's env box.
-function enum_walk_payload_field(ft: string): boolean {
-  return is_leaksafe_array_field(ft) || ft == "fn";
-}
-
-// enum_arr_elems_walk_ok: the enum-ARRAY element walk (__enum_arr_elems_drop_<E>)
-// may release payloads for enum E — every variant's payload fields are scalars
-// or enum_walk_payload_field, and some variant actually carries one. Only those
-// kinds' counting is guaranteed at construction (the variant ctor incs a
-// bare-ident array payload — the #3720 dup — and any closure that does not
-// arrive counted, and a fresh literal is owned), so the walk's rc-guarded
-// arr_dec balances either way; a string / nested-box payload can reach the box
-// uncounted and keeps the enum outside the walk.
-pub function enum_arr_elems_walk_ok(structs: StructTab, ename: string): boolean {
-  if (!decl_is_enum(structs, ename)) {
-    return false;
-  }
-  let any_walked: boolean = false;
-  for sd in structs.decls {
-    if (sd.enum_owner == ename) {
-      let n: i32 = decl_field_count(structs, sd.name);
-      let fi: i32 = 0;
-      while (fi < n) {
-        let ft: string = decl_field_type_at(structs, sd.name, fi);
-        if (enum_walk_payload_field(ft)) {
-          any_walked = true;
-        } else if (!is_scalar_type_name(ft)) {
-          return false;
-        }
-        fi = fi + 1;
-      }
-    }
-  }
-  return any_walked;
 }
 
 // erased_expr_uses_any: does `e` reference any of the (erased-param) names?

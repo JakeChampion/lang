@@ -408,9 +408,6 @@ function unmarked(keys: string[], marks: boolean[]): string[] {
 // result back as a value for the emit path to thread in (ircore.Sub). The
 // caller normalises the module exactly as the emit path does, so the bodies
 // line up with `mod.funcs` position for position.
-//
-// `base` is the pre-`append_dyn` registry set the emitters read; the rows
-// caller_sigs rewrites are returned in the Sub, and the emit reads them.
 struct Inference { built: semsource.Built, rows: Rows, records: parser.StructDecl[] }
 
 // Whether the typed pipeline lowers EVERY body of this module, given whether
@@ -527,12 +524,11 @@ function field_spelling(t: typeinfo.Type): string {
   return typeinfo.spelling(t);
 }
 
-pub function substitution(mod: parser.Module, structs: irtables.StructTab, base: fnsigs.FnSigs, debug_lines: boolean): ircore.Sub {
+pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug_lines: boolean): ircore.Sub {
   let inf: Inference = produced_rows(mod, structs, debug_lines);
   let built: semsource.Built = inf.built;
   let r: Rows = inf.rows;
   report_rows(r, "");
-  let sigs: fnsigs.FnSigs = base;
   let helpers: ssarc.Helpers = ssarc.no_helpers();
   let bodies: irtables.LowerResult[] = [];
   let callees: ssarc.Callee[] = [];
@@ -569,7 +565,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, base:
     }
     at = at + 1;
   }
-  sigs = ssarc.caller_sigs(sigs, callees);
+  let sigs: fnsigs.FnSigs = ssarc.caller_sigs(fnsigs.fn_sigs_empty(), callees);
   util.arr_push_cliff_report("sem:substituted", 0);
   // A refused declaration or instance fails the compile.
   let refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len();
@@ -824,11 +820,10 @@ function wasm_gated(typed: parser.Module): parser.Module {
 }
 
 function substitution_of(im: parser.Module, debug_lines: boolean): ircore.Sub {
-  // The typed lowering reads im; the AST lowering's tables read its erasure.
-  let lowered: parser.Module = parser.erase_view_module(im);
-  let stab: irtables.StructTab = irtables.struct_tab(lowered.structs);
+  // The typed lowering reads im; the struct table reads its erasure.
+  let stab: irtables.StructTab = irtables.struct_tab(parser.erase_view_structs(im.structs));
   util.arr_push_cliff_report("sem:gated", 0);
-  let sub: ircore.Sub = substitution(im, stab, ircore.wp_fn_sigs(lowered.funcs, stab), debug_lines);
+  let sub: ircore.Sub = substitution(im, stab, debug_lines);
   return ircore.Sub { ...sub, rt_lower: runtime_bodies };
 }
 

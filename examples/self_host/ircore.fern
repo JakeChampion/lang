@@ -17,8 +17,6 @@
 //     classifiers the register path's compare-and-branch fusion reads;
 //   * the AST pre-passes each backend runs before it emits — lift_lambdas and
 //     script_normalized;
-//   * wp_fn_sigs, the whole-program lowering side-tables every emit path
-//     derives once over all_funcs before it enters its per-function loop;
 //   * all_runtime_need_roots, the closed root set the per-module driver feeds
 //     the entry unit.
 //
@@ -840,12 +838,6 @@ pub function lower_failed_refuse(name: string, r: irtables.LowerResult): i32 {
   return 0;
 }
 
-// wp_fn_sigs derives the whole-program FnSigs base once (the expensive
-// O(all_funcs) part).
-pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: irtables.StructTab): fnsigs.FnSigs {
-  return fnsigs.fn_sigs_for_borrow(funcs, structs, fnsigs.borrowable_params_interproc(funcs, structs));
-}
-
 // Sub is a whole-module semantic lowering the CALLER produced, threaded into
 // the emit as a value. The pipeline behind it (semsource -> ssaunits -> ssarc,
 // `semlower`) is a large import closure, so passing the RESULT rather than
@@ -857,8 +849,8 @@ pub struct Sub {
   // The bodies with no declaration of their own: the generic instances and
   // the per-type drop helpers, deduped onto the cache tail by symbol.
   extra: irtables.LowerResult[],
-  // The registries `ssarc.caller_sigs` rewrote from the produced callees'
-  // verified contracts, which the emit reads.
+  // The borrowability rows `ssarc.caller_sigs` writes from the produced
+  // callees' verified contracts, which the per-module cache keys fold.
   sigs: fnsigs.FnSigs,
   // The runtime helpers' lowering, handed to the emit's state.
   rt_lower: (string) => irtables.LowerResult[],
@@ -967,14 +959,13 @@ pub function gate(mod: parser.Module, sub: Sub): Lowered {
   return Lowered { ok: true, cache: util.append_all(cache, sub.extra) };
 }
 
-// Gated is the whole program a register backend emits: the module it gates,
-// the emit cache (the substitution's bodies, its extra bodies on the tail) and
-// the registry base. `ok` is gate's verdict.
+// Gated is the whole program a register backend emits: the module it gates
+// and the emit cache (the substitution's bodies, its extra bodies on the
+// tail). `ok` is gate's verdict.
 pub struct Gated {
   ok: boolean,
   im: parser.Module,
   stab: irtables.StructTab,
-  base: fnsigs.FnSigs,
   cache: irtables.LowerResult[],
 }
 
@@ -985,7 +976,7 @@ pub function gate_program(lifted: parser.Module, sub: Sub): Gated {
   let im: parser.Module = with_records(parser.infer_ret_types_module(script_normalized(lifted)), sub);
   let stab: irtables.StructTab = irtables.struct_tab(im.structs);
   let g: Lowered = gate(im, sub);
-  return Gated { ok: g.ok, im: im, stab: stab, base: sub.sigs, cache: g.cache };
+  return Gated { ok: g.ok, im: im, stab: stab, cache: g.cache };
 }
 
 // Units is a gated program cut into one unit per module of a per-module build:
@@ -1127,8 +1118,8 @@ function unit_owners(g: Gated, declared: i32[], entry: i32): i32[] {
 }
 
 // UnitKeys is what keys the units of one split beyond each unit's own source:
-// every unit's signature hash, the whole-program facts when the target's emit
-// reads them, and `view`, a hash of what any unit's emit can read beyond its
+// every unit's signature hash, the whole-program facts when the caller asks for
+// them, and `view`, a hash of what any unit's emit can read beyond its
 // dependencies' signatures (the loose functions' signatures and the whole
 // struct table, whose enum owners and type parameters the emit reads).
 pub struct UnitKeys { sighashes: string[], facts: modloader.FactHashes, view: string }
@@ -1139,9 +1130,8 @@ pub function no_unit_keys(): UnitKeys {
 }
 
 // unit_keys derives the keys of `u` once for every unit of it. `facts` folds in
-// the verdicts fnsigs.wp_fact_rows derives from `base`, for a target whose emit
-// reads that registry (the register backends' does; wasm's does not).
-pub function unit_keys(u: Units, funcs: parser.FuncDecl[], stab: irtables.StructTab, base: fnsigs.FnSigs, facts: boolean): UnitKeys {
+// the borrowability rows of `sigs` (fnsigs.wp_fact_rows).
+pub function unit_keys(u: Units, stab: irtables.StructTab, sigs: fnsigs.FnSigs, facts: boolean): UnitKeys {
   let sigmods: parser.Module[] = [];
   let none: string[] = [];
   for m in u.mods {
@@ -1150,7 +1140,7 @@ pub function unit_keys(u: Units, funcs: parser.FuncDecl[], stab: irtables.Struct
   }
   let fh: modloader.FactHashes = modloader.FactHashes { per_mod: none, global: "" };
   if (facts) {
-    fh = modloader.module_fact_hashes(sigmods, fnsigs.wp_fact_rows(base, funcs, stab));
+    fh = modloader.module_fact_hashes(sigmods, fnsigs.wp_fact_rows(sigs));
   }
   let loose: string = modloader.module_sig_string(parser.Module { ...sigmods[0], funcs: u.loose });
   return UnitKeys { sighashes: modloader.fact_sig_hashes(sigmods, fh), facts: fh, view: util.hash_key(loose + struct_table_text(stab.decls)) };

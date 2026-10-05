@@ -785,8 +785,8 @@ pub function import_closure_ns(parts: flatten.PerModule[], infmods: parser.Modul
 }
 
 // FactHashes splits fnsigs.wp_fact_rows by module. per_mod[j] hashes every row
-// that names one of module j's functions; global hashes the rows that name none
-// (the type-level reclaim verdicts, mostly). A row naming functions of several
+// that names one of module j's functions; global hashes the rows that name
+// none. A row naming functions of several
 // modules lands in each, and a function name that also appears in an unrelated
 // row only over-attributes it, so an edit can re-emit too much but never too
 // little.
