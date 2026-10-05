@@ -12,10 +12,12 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// Compare actual bits with a scalar operation on the same target, including
-// signed zero, infinities, subnormals and distinct NaN payloads. Rebuilding
-// the reference avoids accidentally making every tested donor shared.
+// Compare non-NaN result bits with a scalar operation on the same target,
+// including signed zero, infinities and subnormals. FS-04 leaves arithmetic
+// NaN payloads unspecified: require NaN production, while unchanged inputs
+// retain their exact payloads. Rebuilding the reference keeps donors unique.
 const scaleReuseSrc = `import "std/ndarray";
+import "std/i64";
 @noinline function value(i: i32): f64 {
   let bits: i64[] = [0i64, 0i64 - 9223372036854775807i64 - 1i64,
     9218868437227405312i64, 0i64 - 4503599627370496i64,
@@ -25,6 +27,10 @@ const scaleReuseSrc = `import "std/ndarray";
   return f64_from_bits(bits[i % bits.len()]);
 }
 @noinline function scalar(x: f64, k: f64): f64 { return x * k; }
+function same_result(actual: f64, expected: f64): boolean {
+  if (expected != expected) { return actual != actual; }
+  return f64_bits(actual) == f64_bits(expected);
+}
 function build(n: i32): f64[] {
   let xs: f64[] = [];
   let i: i32 = 0;
@@ -48,7 +54,14 @@ function correct(xs: f64[], n: i32, k: f64): boolean {
   if (xs.len() != n) { return false; }
   let i: i32 = 0;
   while (i < n) {
-    if (f64_bits(xs[i]) != f64_bits(scalar(value(i), k))) { return false; }
+    let reference: f64 = scalar(value(i), k);
+    let actual: i64 = f64_bits(xs[i]);
+    let expected: i64 = f64_bits(reference);
+    if (!same_result(xs[i], reference)) {
+      eprint("scale mismatch: actual=" + actual.to_string() + " expected=" + expected.to_string()
+        + " input=" + f64_bits(value(i)).to_string() + " factor=" + f64_bits(k).to_string());
+      return false;
+    }
     i = i + 1;
   }
   return true;
@@ -63,6 +76,11 @@ function unchanged(xs: f64[], n: i32): boolean {
   return true;
 }
 function main(): i32 {
+  // The NaN freedom must not hide finite errors or lost signed zero, and a
+  // finite result must not satisfy a reference that should produce NaN.
+  if (same_result(1.0, 2.0) || same_result(value(0), value(1))
+    || same_result(value(4), 1.0) || same_result(1.0, value(4))
+    || !same_result(value(4), value(5))) { return 10; }
   let n: i32 = 0;
   while (n < 42) {
     let j: i32 = 0;
@@ -75,7 +93,7 @@ function main(): i32 {
       donor = consumed(donor, k);
       if (!correct(donor, n, k) || !unchanged(alias, n)) { return 2; }
       if (!correct(borrowed(alias, k), n, k) || !unchanged(alias, n)) { return 3; }
-      if (n > 0 && borrowed_read(alias, k) != f64_bits(scalar(value(0), k))) { return 9; }
+      if (n > 0 && !same_result(f64_from_bits(borrowed_read(alias, k)), scalar(value(0), k))) { return 9; }
       let live: (f64[], f64[]) = still_live(build(n), k);
       if (!correct(live.0, n, k) || !unchanged(live.1, n)) { return 4; }
       j = j + 1;
