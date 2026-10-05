@@ -17003,13 +17003,20 @@ function lu_try_at(x: ast.Expr, own found: boolean): boolean {
 }
 
 // lu_call collects the keys of `c`'s own-position arguments that die at it.
-// It has no types, so a method that takes its receiver `own` is known by name:
-// the receiver's key is only read where the call guard resolved that method.
-// A receiver that dies only if the receiver parameter is not an array is keyed
-// with a `~` suffix, which the guard reads for a non-array row alone.
+// It has no types, so a method with an `own` position is known by name: its
+// receiver's and arguments' keys are only read where the call guard resolved
+// that method. An argument that dies only if its parameter is not an array is
+// keyed with a `~` suffix, which the guard reads for a non-array position alone.
 function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   if let ast.ExprFieldAccess(fa) = c.callee {
-    return lu_receiver(fa, e, outer, has_outer, site, fx, acc);
+    if (!fx.ofuncs.methods.has(fa.field)) {
+      return acc;
+    }
+    acc = lu_method_arg(fa.obj, e, outer, has_outer, site, fx, acc);
+    for a in c.args {
+      acc = lu_method_arg(a, e, outer, has_outer, site, fx, acc);
+    }
+    return acc;
   }
   let cname: string = ow_ident_name(c.callee);
   if (cname.len() == 0 || util.has_str(fx.params, cname) || !ow_is_own_func(fx.ofuncs, cname)) {
@@ -17030,15 +17037,13 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
   return acc;
 }
 
-function lu_receiver(fa: ast.ExprFieldAccess, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
-  if let ast.ExprIdent(rid) = fa.obj {
-    if (fx.ofuncs.methods.has(fa.field)) {
-      if (lu_dies(fx, e, true, rid, outer, has_outer, site)) {
-        return acc.append(lu_key(rid.line, rid.col));
-      }
-      if (lu_dies(fx, e, false, rid, outer, has_outer, site)) {
-        return acc.append(lu_key(rid.line, rid.col) + "~");
-      }
+function lu_method_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
+  if let ast.ExprIdent(id) = a {
+    if (lu_dies(fx, e, true, id, outer, has_outer, site)) {
+      return acc.append(lu_key(id.line, id.col));
+    }
+    if (lu_dies(fx, e, false, id, outer, has_outer, site)) {
+      return acc.append(lu_key(id.line, id.col) + "~");
     }
   }
   return acc;
@@ -17405,19 +17410,17 @@ function ow_field_move_fields(target: string, value: ast.Expr, ctx: OwnCtx): str
 // OwnCall is a call's arguments in its callee's parameter order, a method's
 // receiver first, beside the callee's `own` flags: empty when it takes
 // nothing `own`.
-// `recv` says what args[0] is: RECV_NONE for a plain call, RECV_VALUE or
-// RECV_ARRAY for a method's receiver (an array-typed one the second), and
-// RECV_DYN for a `dyn` receiver, whose move counts but which is not guarded,
-// as native guards no `dyn` dispatch.
-struct OwnCall { args: ast.Expr[], flags: boolean[], recv: i32 }
+// `recv` says what args[0] is: RECV_NONE for a plain call, RECV_METHOD for a
+// method's receiver, with `arr` the row's array-typed positions, and RECV_DYN
+// for a `dyn` receiver: its moves count but nothing is guarded, as native
+// guards no `dyn` dispatch.
+struct OwnCall { args: ast.Expr[], flags: boolean[], arr: boolean[], recv: i32 }
 
 const RECV_NONE: i32 = 0;
 
-const RECV_VALUE: i32 = 1;
+const RECV_METHOD: i32 = 1;
 
-const RECV_ARRAY: i32 = 2;
-
-const RECV_DYN: i32 = 3;
+const RECV_DYN: i32 = 2;
 
 function ow_own_call(c: ast.ExprCall, ctx: OwnCtx): OwnCall {
   let key: string = ow_method_key(c, ctx);
@@ -17427,30 +17430,32 @@ function ow_own_call(c: ast.ExprCall, ctx: OwnCtx): OwnCall {
       for a in c.args {
         args = args.append(a);
       }
-      return OwnCall { args: args, flags: ow_func_flags(ctx.ofuncs, key), recv: ow_recv_kind(ctx.ofuncs, key) };
+      let row: i32 = ctx.ofuncs.names.find(key);
+      let arr: boolean[] = [];
+      if (row >= 0) {
+        arr = ctx.ofuncs.rows[row].arr;
+      }
+      return OwnCall { args: args, flags: ow_func_flags(ctx.ofuncs, key), arr: arr, recv: ow_recv_kind(key) };
     }
   }
-  return OwnCall { args: c.args, flags: ow_call_arg_flags(c.callee, ctx), recv: RECV_NONE };
+  return OwnCall { args: c.args, flags: ow_call_arg_flags(c.callee, ctx), arr: [], recv: RECV_NONE };
 }
 
-function ow_recv_kind(ofuncs: OwnFuncs, key: string): i32 {
+function ow_recv_kind(key: string): i32 {
   if (key.len() >= 4 && slice_unchecked(key, 0, 4) == "dyn ") {
     return RECV_DYN;
   }
-  let i: i32 = ofuncs.names.find(key);
-  if (i >= 0 && ofuncs.rows[i].arr.len() > 0 && ofuncs.rows[i].arr[0]) {
-    return RECV_ARRAY;
-  }
-  return RECV_VALUE;
+  return RECV_METHOD;
 }
 
-// ow_receiver_dies: a receiver of a non-array row that the last-use pass found
-// dead at the call under that condition (lu_receiver's `~` key).
-function ow_receiver_dies(oc: OwnCall, ctx: OwnCtx): boolean {
-  if (oc.recv != RECV_VALUE) {
+// ow_arg_dies: a method call's argument, at a position that is not
+// array-typed, that the last-use pass found dead under that condition
+// (lu_method_arg's `~` key).
+function ow_arg_dies(oc: OwnCall, i: i32, ctx: OwnCtx): boolean {
+  if (oc.recv != RECV_METHOD || i >= oc.arr.len() || oc.arr[i]) {
     return false;
   }
-  if let ast.ExprIdent(id) = oc.args[0] {
+  if let ast.ExprIdent(id) = oc.args[i] {
     return util.has_str(ctx.last_use, lu_key(id.line, id.col) + "~");
   }
   return false;
@@ -17463,7 +17468,7 @@ function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   let oc: OwnCall = ow_own_call(c, ctx);
   let i: i32 = 0;
   while (i < oc.args.len() && i < oc.flags.len()) {
-    let exempt: boolean = i == 0 && (oc.recv == RECV_DYN || ow_receiver_dies(oc, ctx));
+    let exempt: boolean = oc.recv == RECV_DYN || ow_arg_dies(oc, i, ctx);
     if (oc.flags[i] && !exempt && !ow_is_owned_expr(oc.args[i], ctx)) {
       // The argument is the anchor, as native's is; a kind that carries no
       // position of its own falls back to the call.
@@ -17977,9 +17982,7 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
       let key: string = ow_receiver_ns(func.receiver_type) + "." + func.name;
       out = out.append(OwnFunc { name: key, flags: flags, arr: arr });
       names = names.append(key);
-      if (func.receiver_own) {
-        methods = methods.append(func.name);
-      }
+      methods = methods.append(func.name);
     }
   }
   for td in mod.trait_decls {
