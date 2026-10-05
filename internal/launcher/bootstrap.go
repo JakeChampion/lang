@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jakechampion/lang/bootstrap"
 	selfhost "github.com/jakechampion/lang/examples/self_host"
@@ -176,14 +177,11 @@ func fetchStage0(dir, host string) (string, error) {
 	}
 	asset := url + "/fern-selfhost-" + host + ".gz"
 	fmt.Fprintln(os.Stderr, "fern: downloading the stage0 compiler "+asset)
-	resp, err := http.Get(asset)
+	resp, err := download(asset)
 	if err != nil {
-		return "", fmt.Errorf("download %s: %v", asset, err)
+		return "", fmt.Errorf("%v\nfern: the stage0 compiler is pinned to %s by bootstrap/stage0.lock; to compile offline, set %s to an installed fern-selfhost", err, tag, EnvCompiler)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("download %s: %s", asset, resp.Status)
-	}
 	zr, err := gzip.NewReader(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("%s is not gzip data: %v", asset, err)
@@ -210,6 +208,33 @@ func fetchStage0(dir, host string) (string, error) {
 		return "", fmt.Errorf("sha256 mismatch for %s: the lock pins %s, downloaded %s", asset, want, got)
 	}
 	return path, os.Rename(tmp, path)
+}
+
+// download GETs url with a deadline, retrying a network error or a 5xx / 429
+// answer twice; any other status is final.
+func download(url string) (*http.Response, error) {
+	client := &http.Client{Timeout: 5 * time.Minute}
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+		}
+		var resp *http.Response
+		resp, err = client.Get(url)
+		if err != nil {
+			err = fmt.Errorf("download %s: %v", url, err)
+			continue
+		}
+		if resp.StatusCode == http.StatusOK {
+			return resp, nil
+		}
+		resp.Body.Close()
+		err = fmt.Errorf("download %s: %s", url, resp.Status)
+		if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+			return nil, err
+		}
+	}
+	return nil, err
 }
 
 func fileSHA256(path string) (string, error) {

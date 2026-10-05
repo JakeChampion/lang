@@ -3192,10 +3192,6 @@ function run(): i32 {
       eprint("fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)");
       return 2;
     }
-    if (out_path.len() == 0) {
-      eprint("fern: -emit command-module writes a binary module; pass -o OUTPUT");
-      return 2;
-    }
     emit = "core-module";
   }
   if (emit.len() > 0 && emit != "asm" && emit != "core-module") {
@@ -3204,6 +3200,11 @@ function run(): i32 {
   }
   if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
     eprint("fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit");
+    return 2;
+  }
+  // A wasm component or core module is binary; stdout takes only its text.
+  if (out_path.len() == 0 && emit != "asm" && platforms.for_target(target).isa == "wasm32") {
+    eprint("fern: -target " + target + " writes a binary; pass -o OUTPUT, or -emit asm for its text");
     return 2;
   }
   if (shared) {

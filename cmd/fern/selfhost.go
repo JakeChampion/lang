@@ -22,15 +22,16 @@ type compileRequest struct {
 }
 
 // compileArgs is the self-host compiler's command line for r, writing to out.
-// Without -o the Go CLI printed the target's assembly, so a compile with no
-// output and no -emit asks for it.
+// Without -o the Go CLI printed a native target's assembly, so a native
+// compile with no output and no -emit asks for it. A wasm target's output is
+// binary, and the self-host refuses it without -o.
 func compileArgs(r compileRequest, out, stdlib string) []string {
 	args := []string{"-target", r.target}
 	if out != "" {
 		args = append(args, "-o", out)
 	}
 	emit := r.emit
-	if out == "" && emit == "" {
+	if d := platforms.ForTarget(r.target); out == "" && emit == "" && (d == nil || d.ISA != "wasm32") {
 		emit = "asm"
 	}
 	for _, f := range []struct{ name, val string }{{"-emit", emit}, {"-backend", r.backend}, {"-embed", r.embed}, {"-export", r.export}} {

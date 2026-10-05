@@ -1,6 +1,9 @@
 package launcher
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,5 +51,41 @@ func TestCompilerPrefersTheEnvironment(t *testing.T) {
 	t.Setenv(EnvCompiler, filepath.Join(t.TempDir(), "absent"))
 	if _, err := Compiler(); err == nil || !strings.Contains(err.Error(), EnvCompiler) {
 		t.Errorf("a missing %s gave %v, want an error naming it", EnvCompiler, err)
+	}
+}
+
+// TestDownloadRetriesOnlyTransientFailures: a 503 is retried and the next 200
+// is returned, while a 404 is final after one request.
+func TestDownloadRetriesOnlyTransientFailures(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		switch {
+		case r.URL.Path == "/missing":
+			w.WriteHeader(http.StatusNotFound)
+		case hits == 1:
+			w.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			io.WriteString(w, "ok")
+		}
+	}))
+	defer srv.Close()
+
+	resp, err := download(srv.URL + "/asset")
+	if err != nil {
+		t.Fatalf("after one 503: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "ok" || hits != 2 {
+		t.Errorf("body %q after %d requests, want \"ok\" after 2", body, hits)
+	}
+
+	hits = 0
+	if _, err := download(srv.URL + "/missing"); err == nil || !strings.Contains(err.Error(), "404") {
+		t.Errorf("404: err = %v, want the status", err)
+	}
+	if hits != 1 {
+		t.Errorf("404 was requested %d times, want 1", hits)
 	}
 }
