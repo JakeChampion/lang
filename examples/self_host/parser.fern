@@ -26678,7 +26678,7 @@ pub function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: stri
     }
     i = i + 1;
   }
-  return FuncDecl { ...m, receiver_name: rname, receiver_type: impl_type, type_params: mtps, bound_traits: mtbs, params: newparams, ret_type: rt };
+  return FuncDecl { ...m, receiver_name: rname, receiver_type: impl_type, receiver_own: m.params[0].own, type_params: mtps, bound_traits: mtbs, params: newparams, ret_type: rt };
 }
 
 // parse_trait_decl consumes a `trait Name { <method>; … }` block. The
