@@ -21,7 +21,7 @@ import "./util";
 // a new parser node is covered everywhere the moment it is covered here (#6993).
 //
 // `visit` reaches it as a nested named function closing over whatever context
-// the consumer needs — see collect_qualrefs_expr. An arrow lambda works too
+// the consumer needs — see collect_qualrefs_stmt. An arrow lambda works too
 // since #6996; the named form is kept because it reads better at the call site.
 pub function fold_expr[T](e: ast.Expr, own acc: T, visit: (ast.Expr, own T) => T): T {
   return fold_expr_pruned(e, acc, visit, descend_all);
@@ -1402,16 +1402,7 @@ function qualref_of(e: ast.Expr, quals: string[], acc: QualRef[]): QualRef[] {
   return acc;
 }
 
-// collect_qualrefs_expr appends every `<q>.<name>` in `e` whose qualifier `q`
-// is in `quals` (the module names in scope for the file being walked).
-pub function collect_qualrefs_expr(e: ast.Expr, quals: string[], own acc: QualRef[]): QualRef[] {
-  function visit(n: ast.Expr, own a: QualRef[]): QualRef[] {
-    return qualref_of(n, quals, a);
-  }
-  return fold_expr(e, acc, visit);
-}
-
-// collect_qualrefs_stmt is collect_qualrefs_expr's statement half.
+// collect_qualrefs_stmt collects the qualified references in a statement.
 pub function collect_qualrefs_stmt(st: ast.Stmt, quals: string[], own acc: QualRef[]): QualRef[] {
   function visit(n: ast.Expr, own a: QualRef[]): QualRef[] {
     return qualref_of(n, quals, a);

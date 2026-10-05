@@ -75,7 +75,7 @@ function main(): i32 { return apply((x: i32) => x * 2); }`},
 
 	// --- the SHADOW rows (#7253) --------------------------------------------
 	//
-	// A nested `let g = <lambda>` shadowing a top-level one. `subst_fcall_expr`
+	// A nested `let g = <lambda>` shadowing a top-level one. `subst_fcall_stmts`
 	// rewrites every `g(…)` callee it walks past to the outer lambda's hoisted
 	// `__lam_N`, and it recurses into if / while / for / match bodies with no
 	// notion of scope — so the INNER binding's own calls ran the OUTER lambda.
