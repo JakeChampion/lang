@@ -30,6 +30,10 @@ func TestSelfHostArrayReportReasonTags(t *testing.T) {
 			"element-fn-unresolved", "element-fn-captures", "element-not-literal-scale",
 			"constructor-unavailable", "builtin-shadowed", "unsupported-operation", "unsupported-element-type",
 		}},
+		{"scale_storage", "scale_storage_reasons", []string{
+			"guarded-reuse", "reuse-disabled", "receiver-borrowed", "receiver-still-live",
+			"receiver-supplied", "borrow-linked-result", "builtin-shadowed", "shape-unsupported",
+		}},
 	}
 	var src strings.Builder
 	src.WriteString("import \"./semarrayreport\";\nfunction main(): i32 {\n")

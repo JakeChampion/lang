@@ -1,6 +1,8 @@
 package e2eselfhost
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +43,14 @@ const ndarrayScaleKernelSrc = `import "std/ndarray";
   return ndarray.from_flat(xs, [xs.len()]).map((x: f64): f64 => x * 2.0);
 }
 
+@noinline function zero_scale(xs: f64[]): ndarray.NdArray[f64] {
+  return ndarray.from_flat(xs, [xs.len()]).map((x: f64): f64 => x * 0.0);
+}
+@noinline function reversed_scale(xs: f64[]): ndarray.NdArray[f64] {
+  return ndarray.from_flat(xs, [xs.len()]).map((x: f64): f64 => 2.0 * x);
+}
+@noinline function scalar_product(x: f64, y: f64): f64 { return x * y; }
+
 function main(): i32 {
   let xs: f64[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
   let a: ndarray.NdArray[f64] = packed_scale(xs);
@@ -76,6 +86,23 @@ function main(): i32 {
     }
     n = n + 1;
   }
+  let bits: i64[] = [0i64 - 9223372036854775807i64 - 1i64,
+    9218868437227405312i64, 0i64 - 4503599627370496i64,
+    9221120237041090625i64, 9221120237041090626i64, 9218868437227405313i64];
+  let special: f64[] = [];
+  for bit in bits { special = special.append(f64_from_bits(bit)); }
+  let twice = packed_dynamic(special).to_flat();
+  let zero = zero_scale(special).to_flat();
+  let reversed = reversed_scale(special).to_flat();
+  i = 0;
+  while (i < special.len()) {
+    if (f64_bits(twice[i]) != f64_bits(scalar_product(special[i], 2.0))) { return 82; }
+    if (f64_bits(zero[i]) != f64_bits(scalar_product(special[i], 0.0))) { return 83; }
+    if (f64_bits(reversed[i]) != f64_bits(scalar_product(2.0, special[i]))) { return 84; }
+    if (f64_bits(special[i]) != bits[i]) { return 85; }
+    i = i + 1;
+  }
+  if (__rc_underflow_count() != 0) { return 86; }
   return 0;
 }
 `
@@ -93,6 +120,8 @@ func TestSelfHostNdarrayScaleKernelX86_64(t *testing.T) {
 	}{
 		{"packed_scale", true},
 		{"packed_dynamic", true},
+		{"zero_scale", true},
+		{"reversed_scale", false},
 		// The noinline named function is outside this slice's literal-body
 		// proof and remains a scalar map.
 		{"named_scale", false},
@@ -106,6 +135,72 @@ func TestSelfHostNdarrayScaleKernelX86_64(t *testing.T) {
 			vector := strings.Contains(body, "unpcklpd")
 			if mapped == tc.kernel || vector != tc.kernel {
 				t.Fatalf("kernel=%t, map call=%t, vector splat=%t\n%s", tc.kernel, mapped, vector, body)
+			}
+		})
+	}
+	cmd := runX86_64Bin(runner, driver, filepath.Join(dir, "main.fern"))
+	cmd.Env = append(os.Environ(), "FERN_NO_SCALE_KERNEL=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	disabled, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("compile disabled scale kernel: %v\n%s", err, stderr.String())
+	}
+	for _, name := range []string{"packed_scale", "packed_dynamic", "zero_scale"} {
+		body := emittedBody(t, string(disabled), "__fn_"+name)
+		if !strings.Contains(body, "call __fn___smm_ndarray__NdArray_map__") || strings.Contains(body, "unpcklpd") {
+			t.Fatalf("disabled kernel still rewrote %s:\n%s", name, body)
+		}
+	}
+}
+
+func TestSelfHostNdarrayScaleKernelLeakCensus(t *testing.T) {
+	for _, target := range selfHostFusionTargets {
+		t.Run(target, func(t *testing.T) {
+			for _, disabled := range []string{"0", "1"} {
+				t.Run("disabled="+disabled, func(t *testing.T) {
+					bin := e2eharness.CompileSelfHostSource(t, target, ndarrayScaleKernelSrc,
+						[]string{"FERN_LEAKCHECK=1", "FERN_NO_SCALE_KERNEL=" + disabled})
+					out, err := runScaleTarget(t, target, bin).CombinedOutput()
+					if err != nil {
+						t.Fatalf("scale kernel census: %v\n%s", err, out)
+					}
+					line := leakSummaryLine(string(out))
+					var allocs, frees, live int64
+					if _, err := fmtSscan(line, &allocs, &frees, &live); err != nil {
+						t.Fatalf("missing census: %v\n%s", err, out)
+					}
+					if allocs == 0 || allocs != frees || live != 0 {
+						t.Fatalf("unbalanced scale ownership: %s", line)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestSelfHostNdarrayScaleKernelBenchmark(t *testing.T) {
+	src := filepath.Join(repoRootFromTest(t), "examples", "array_pipeline", "ndarray_scale.fern")
+	for _, target := range selfHostFusionTargets {
+		t.Run(target, func(t *testing.T) {
+			for _, disabled := range []string{"0", "1"} {
+				bin := e2eharness.CompileSelfHostFile(t, target, src, []string{"FERN_NO_SCALE_KERNEL=" + disabled})
+				out, err := runScaleTarget(t, target, bin, "17", "2").CombinedOutput()
+				if err != nil {
+					t.Fatalf("scale benchmark disabled=%s: %v\n%s", disabled, err, out)
+				}
+				var report struct {
+					N        int   `json:"n"`
+					Rounds   int   `json:"rounds"`
+					Checksum int64 `json:"checksum"`
+				}
+				if err := json.Unmarshal(bytes.TrimSpace(out), &report); err != nil {
+					t.Fatalf("benchmark report: %v\n%s", err, out)
+				}
+				// Each round sums 2*i for i in [0, 17).
+				if report.N != 17 || report.Rounds != 2 || report.Checksum != 544 {
+					t.Fatalf("incorrect benchmark result: %+v", report)
+				}
 			}
 		})
 	}

@@ -625,7 +625,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     return s;
   }
   if (o.kind_tag == 322) {  // scale_f64
-    // operand stack [xs, k bits] -> the data pointer of a fresh f64
+    // Flag1 is the physical planner's sole-owned-buffer form. It skips
+    // allocation and uses the same pointer for reads and writes.
+    // operand stack [xs, k bits] -> the data pointer of an f64
     // array of xs's length whose element i is xs[i] * k.
     //
     // NEON (§3.4 step 3): fmul over a .2d pair, with the scalar loop as
@@ -646,7 +648,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // adding to it: d1 IS v1's low half, so one instruction serves the
     // vector body and the tail both.
     //
-    // __fern_arr_box(n) writes the rc header and len = n and clobbers
+    // Flag0 allocates with __fern_arr_box(n), which writes the rc header
+    // and len = n and clobbers
     // only x0-x2; this backend's arrays keep len at [arr] and element i
     // at [arr + (i+1)*8], which is why the cursor is biased by one before
     // it is scaled. Base-register FP accesses only: the address is formed
@@ -659,9 +662,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let sf_vec: string = flo3.name;
     s = flo3.state;
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    stp x0, x1, [sp, #-16]!\n");
-    s = s.write("    ldr x0, [x0]\n    bl __fern_arr_box\n");
-    s = s.write("    ldp x2, x1, [sp], #16\n");
+    if (o.i32_imm == 1) {
+      s = s.write("    mov x2, x0\n");
+    } else {
+      s = s.write("    stp x0, x1, [sp, #-16]!\n");
+      s = s.write("    ldr x0, [x0]\n    bl __fern_arr_box\n");
+      s = s.write("    ldp x2, x1, [sp], #16\n");
+    }
     s = s.write("    dup v1.2d, x1\n    mov x3, #0\n    ldr x4, [x2]\n");
     // Whole pairs only, so the vector body cannot run past the last
     // element; the tail picks up the odd one.
