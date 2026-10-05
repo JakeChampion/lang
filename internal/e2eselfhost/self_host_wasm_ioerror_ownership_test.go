@@ -96,20 +96,14 @@ function main(): i32 {
 					if err := os.WriteFile(componentSrc, []byte(componentSource), 0o644); err != nil {
 						t.Fatal(err)
 					}
-					bin := filepath.Join(t.TempDir(), "main.wasm")
-					compile := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-o", bin, componentSrc, cli.stdlib)
-					compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
-					if out, err := compile.CombinedOutput(); err != nil {
-						t.Fatalf("compile component: %v\n%s", err, out)
-					}
+					bin := cli.wasmComponent(t, componentSrc, "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 					cmd := exec.Command("wasmtime", "run", "--dir=.", bin)
 					cmd.Dir = dir
 					out, err := cmd.CombinedOutput()
 					if err != nil {
 						t.Fatalf("run component: %v\n%s", err, out)
 					}
-					// Components return through wasi:cli/run and currently do
-					// not emit the core module's exit-time allocation census.
+					assertBalancedCensus(t, string(out))
 				})
 			}
 		})
