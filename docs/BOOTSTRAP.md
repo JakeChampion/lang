@@ -73,7 +73,7 @@ STAGE0=bin/fern-selfhost make distcheck` rebuilds the host's pin as its
 the pinned sha256 against a build of their own.
 
 WASM as the snapshot format (`BOOTSTRAP-RESEARCH.md §7`) is ruled out twice over
-today. Native cannot compile `fern.fern` to wasm: `write_file_exec` needs
+today. `fern.fern` cannot be compiled to wasm: `write_file_exec` needs
 `fsmode`, and E066 refuses it because the component-model filesystem has no
 permission bits (#6133) — a target property, not a gap. And compiling the
 compiler peaks at 4.0 GB of resident memory under a 16 GiB `MAP_NORESERVE`
@@ -92,33 +92,35 @@ Refresh when:
 - On a cadence, so the pin does not rot: after roughly fifty PRs touching
   `examples/self_host`, and before a tagged release.
 
-How: dispatch `.github/workflows/bootstrap.yml` with `publish` ticked, **on the
-branch that needs the refresh** — a PR whose source needs a new construct
-publishes from its own branch and pins it in the same PR. The job builds a
-candidate on each host with `make selfhost-cli`, proves it compiles the compiler
-at that commit and that the result runs (`STAGE0=candidate make bootstrap`),
-and tags an immutable `stage0-<yyyymmdd>-<sha7>` release carrying the three
-`.gz` binaries and a ready-made `stage0.lock`. Copy that lock over
-`bootstrap/stage0.lock` and commit; the `verify` job on the PR then proves the
-pin from a Go-less runner. Releases are never deleted or moved: every commit
-that ever pinned one must stay bootstrappable.
+How: dispatch `.github/workflows/bootstrap.yml` with `publish` ticked on the
+branch to pin. The job builds a candidate on each host with `make
+selfhost-cli`, proves it compiles the compiler at that commit and that the
+result runs (`STAGE0=candidate make bootstrap`), and tags an immutable
+`stage0-<yyyymmdd>-<sha7>` release carrying the three `.gz` binaries and a
+ready-made `stage0.lock`. Copy that lock over `bootstrap/stage0.lock` and
+commit; the `verify` job on the PR then proves the pin from a Go-less runner.
+Releases are never deleted or moved: every commit that ever pinned one must
+stay bootstrappable.
 
-The candidate is built by the **native** toolchain, but it is not what gets
-pinned: the publish job runs `STAGE0=candidate make distcheck` and uploads
-`build/bootstrap/stage2`, the self-built fixed point, on every host. Those
-bytes are what the current source emits for itself, so any correct compiler
-of that source reproduces them. Using the pin — `make bootstrap`, the
-`verify` lanes — needs no native binary from that refresh on. Producing the
-next pin still seeds a native-built candidate on every publish, so each pin
-has one native-built generation in its ancestry (stage2 is stage1's output,
-stage1 the candidate's). Seeding a publish from the current pin instead would
-remove that generation, at the cost of the route a refresh needs when the pin
-cannot build the source — as on 2026-09-28, when the arm64 pin's stage1 looped
-on the compiler. arm64-darwin uploaded the native-built candidate until
-2026-09-29, while its stage2 exhausted the arena compiling the compiler
-(#8479); the fixed point holds there now (stage3 in 56 s at 3.8 GB RSS,
-stage2 == stage3, `docs/LOCAL-DEV-LOOP.md`), so it pins its stage2 like the
-other two.
+`make selfhost-cli` runs `bin/fern`, the launcher, which compiles with the
+current pin: the candidate is the pin's build of the source. So a publish can
+only pin source the current pin compiles, and a new construct reaches the
+compiler's own sources in two steps: teach the compiler the construct without
+using it, publish and pin from that commit, then use it. This is the "Go 1.4
+rule" (`NATIVE-CONVERGENCE.md §1`), with the pin in the place native held.
+
+The candidate is not what gets pinned either: the publish job runs
+`STAGE0=candidate make distcheck` and uploads `build/bootstrap/stage2`, the
+self-built fixed point, on every host. Those bytes are what the current source
+emits for itself, so any correct compiler of that source reproduces them.
+
+When the pin cannot build the source at all — as on 2026-09-28, when the
+arm64 pin's stage1 looped on the compiler — the seed has to come from
+elsewhere: an earlier release (none is ever deleted) passed as `STAGE0`, or
+`bin/fern` built at a commit from before the native backends were deleted
+(2026-10-05), whose native compile needs no pin. Either may need a chain of
+intermediate commits, one publish each, to reach a source it cannot compile
+directly.
 
 ## What `make distcheck` measures
 

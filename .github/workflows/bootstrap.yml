@@ -30,22 +30,17 @@ name: Bootstrap
 #
 #   publish  workflow_dispatch with publish=true — builds a NEW stage0 for
 #            all three hosts and releases it. Each host builds a candidate
-#            with the native toolchain (`make selfhost-cli`) and proves the
+#            with the current pin (`make selfhost-cli`) and proves the
 #            candidate compiles the current compiler and that the result runs
 #            (STAGE0=candidate make bootstrap). Every host goes on to
 #            `make distcheck` and uploads STAGE2 — the self-built fixed point,
 #            whose bytes any correct compiler of this source reproduces — so
-#            the pin a refresh leaves behind is a self-built binary and
-#            `make bootstrap` never needs a native-built stage0. Producing
-#            the next pin still seeds this native candidate, so each pin has
-#            one native-built generation in it (stage2 is stage1's output,
-#            stage1 is the candidate's).
+#            the pin a refresh leaves behind is a self-built binary.
 #            The release job tags an immutable `stage0-<date>-<sha7>` release
 #            with the three gzipped binaries and a ready-to-commit
 #            stage0.lock; committing that lock is the refresh
-#            (docs/BOOTSTRAP.md). Runs on the branch you dispatch it from, so
-#            a PR whose source needs a construct the pin lacks can publish its
-#            own stage0 and pin it in the same PR.
+#            (docs/BOOTSTRAP.md). Runs on the branch you dispatch it from,
+#            and can only pin source the current pin compiles.
 #
 # The pin is a release asset rather than a file in the tree so that a refresh
 # is a one-line diff: each host's compiler is 3-4 MB compressed, three hosts
@@ -88,7 +83,7 @@ jobs:
           # 5.7 GB on a 7 GB runner: a regression in the compiler's own memory
           # shows up on this host first. Like the other two hosts, this
           # measures the chain from the PIN; only candidate-arm64 below also
-          # runs it from a freshly native-built compiler, and only on
+          # runs it from a candidate built from the current source, and only on
           # arm64-linux (docs/TEST-GATES.md, the `make bootstrap` row).
           - { runner: macos-15,         host: arm64-darwin }
     name: verify-${{ matrix.host }}
@@ -120,7 +115,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
 
-      - name: native toolchain builds the candidate (make selfhost-cli)
+      - name: the current pin builds the candidate (make selfhost-cli)
         run: |
           make selfhost-cli SELFHOST_TARGET=arm64-linux
           mkdir -p build
@@ -159,7 +154,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
 
-      - name: native toolchain builds the candidate (make selfhost-cli)
+      - name: the current pin builds the candidate (make selfhost-cli)
         run: |
           make selfhost-cli SELFHOST_TARGET=${{ matrix.host }}
           mkdir -p build
@@ -168,8 +163,7 @@ jobs:
       - name: the candidate compiles the current compiler, and that compiler works
         run: STAGE0=build/candidate make bootstrap
 
-      # Every host pins the self-built fixed point rather than the native-built
-      # candidate.
+      # Every host pins the self-built fixed point rather than the candidate.
       - name: the compiler it built reproduces itself (stage2 == stage3); stage2 becomes the pin
         run: |
           STAGE0=build/candidate make distcheck

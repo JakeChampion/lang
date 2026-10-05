@@ -42,7 +42,7 @@ ok()   { printf '  \033[32mGREEN\033[0m        %s\n' "$1"; green=$((green + 1));
 huh()  { printf '  \033[33mUNVERIFIABLE\033[0m %s\n' "$1"; unverifiable=$((unverifiable + 1)); }
 bad()  { printf '  \033[31mREGRESSED\033[0m    %s\n' "$1"; regressed=$((regressed + 1)); }
 
-echo "native-convergence freeze preconditions (docs/NATIVE-CONVERGENCE.md, tracker #4451)"
+echo "native-convergence freeze preconditions (docs/NATIVE-CONVERGENCE.md)"
 echo
 
 # --- 1. Goal 2 / Perceus parity -------------------------------------------
@@ -167,6 +167,5 @@ if [ "$regressed" -gt 0 ]; then
   exit 1
 fi
 printf '\n\n'
-echo "Update #4451 from this output rather than from memory. Precondition 1 is"
-echo "no longer a prose argument either: its criterion is \`make distcheck\`"
-echo "green, which this gate reads off the CI wiring rather than running."
+echo "Precondition 1's criterion is \`make distcheck\` green, which this gate"
+echo "reads off the CI wiring rather than running."

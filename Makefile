@@ -102,7 +102,7 @@ ci-selftest:
 	node tools/perf-gate-selftest.mjs
 
 # Report the live state of the native-convergence freeze preconditions,
-# derived from the tree rather than read off #4451. Fails only on a
+# derived from the tree. Fails only on a
 # REGRESSION (ground lost). See tools/freeze_gate.sh.
 freeze:
 	./tools/freeze_gate.sh

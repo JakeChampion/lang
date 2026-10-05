@@ -22851,9 +22851,9 @@ pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
     if (!check_func_body(func, fs)) {
       let site: UnknownSite = unknown_site(func.body, fs);
       if (site.found) {
-        return [dg_at("type", "\"" + func.name + "\": the self-host checker could not infer the type of the statement at line " + util.i32_to_string(util.pos_line(site.line)) + " (" + site.reason + "); run native `fern -check` for further diagnostics - see issue #4451", site.line, 1)];
+        return [dg_at("type", "\"" + func.name + "\": the self-host checker could not infer the type of the statement at line " + util.i32_to_string(util.pos_line(site.line)) + " (" + site.reason + "); run `fern -check`, the Go checker, for further diagnostics", site.line, 1)];
       }
-      return [dg_at("type", "\"" + func.name + "\": the self-host checker could not infer an expression's type (for example, a dyn method call or an unregistered builtin); run native `fern -check` for further diagnostics - see issue #4451", func.line, func.col)];
+      return [dg_at("type", "\"" + func.name + "\": the self-host checker could not infer an expression's type (for example, a dyn method call or an unregistered builtin); run `fern -check`, the Go checker, for further diagnostics", func.line, func.col)];
     }
   }
   let s: Scope = new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
@@ -22861,10 +22861,10 @@ pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
     let r: CheckResult = check_stmt(top_stmt, s);
     s = r.scope;
     if (is_unknown(r.ty)) {
-      return [dg_at("type", "at top level: the self-host checker could not infer an expression's type (for example, a dyn method call or an unregistered builtin); run native `fern -check` for further diagnostics - see issue #4451", 0, 0)];
+      return [dg_at("type", "at top level: the self-host checker could not infer an expression's type (for example, a dyn method call or an unregistered builtin); run `fern -check`, the Go checker, for further diagnostics", 0, 0)];
     }
   }
-  return [dg_at("type", "type checking failed but no specific diagnostic is available (self-host checker limitation, #4451)", 0, 0)];
+  return [dg_at("type", "type checking failed but no specific diagnostic is available (self-host checker limitation)", 0, 0)];
 }
 
 // =================== VALIDATION ====================
