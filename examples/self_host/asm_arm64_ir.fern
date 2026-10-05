@@ -27,7 +27,6 @@ import "./checker";
 import "./util";
 import "./ir";
 import "./irtables";
-import "./fnsigs";
 import "./irverifygate";
 import "./lexer";
 import "./ircore";
@@ -12117,10 +12116,10 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: 
   if (!g.ok) {
     return "";
   }
-  return emit_module_ir_flat(g.im, g.stab, darwin, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower, recs, sub.switches);
+  return emit_module_ir_flat(g.im, g.stab, darwin, ircore.inline_tiny_leaves(g.im, g.cache), sub.rt_lower, recs, sub.switches);
 }
 
-function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwin: boolean, cache: irtables.LowerResult[], base: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[], recs: usize, sw: asmcore.Switches): string {
+function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwin: boolean, cache: irtables.LowerResult[], rt: (string) => irtables.LowerResult[], recs: usize, sw: asmcore.Switches): string {
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.with_funcs(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: stab, rt_lower: rt, recs: recs }, sw), mod.funcs);
@@ -12144,10 +12143,8 @@ function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwi
 // layout; only mod.funcs are EMITTED. The _start is copied verbatim from
 // emit_body (the proven single-unit IR path). Caller must have established
 // asm_ir.all_eligible_*_known_view(mod) and seeded nothing (we reset here).
-// `b` is the whole-program registry base (ircore.wp_fn_sigs over all_funcs /
-// all_structs), derived once by the driver and shared by every unit it emits
-// (the arm64 twin of asm_ir.emit_module_ir_unit_flat).
-pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], b: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[], sw: asmcore.Switches): string {
+// The arm64 twin of asm_ir.emit_module_ir_unit_flat.
+pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], rt: (string) => irtables.LowerResult[], sw: asmcore.Switches): string {
   mod = parser.infer_ret_types_module(mod);
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();

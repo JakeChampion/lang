@@ -16,7 +16,7 @@
 #
 # This exists because the compiler's own type system cannot catch the mistakes
 # a mechanical refactor makes. Whole families of values here share one type —
-# the FnSigs registries are all `string[]`, the IR ops are all `ir.Op` — so a
+# the per-module cache key rows are all `string[]`, the IR ops are all `ir.Op` — so a
 # crossed wire or a dropped argument type-checks cleanly and shows up only as
 # a miscompile. And per docs/TEST-GATES.md the self-compile fixpoint is
 # SELF-REFERENTIAL: it proves the compiler reproduces itself, and is
