@@ -1280,45 +1280,77 @@ pub function no_var_ranges(): VarRanges {
 
 function dw_vars(r: VarRanges): DwVars {
   let d: DwVars = DwVars { fns: [], names: [], types: [], params: [], loc_at: [], loc: [] };
-  let first: i32[] = [];  // each variable's first range
+  // Each variable's ranges are chained in order: head[k] its first, next[i]
+  // the one after range i.
+  let nb: i32 = r.fns.len() * 2 + 1;
+  let bucket: i32[] = dw_filled(nb);
+  let chain: i32[] = [];
+  let head: i32[] = [];
+  let tail: i32[] = [];
+  let next: i32[] = dw_filled(r.fns.len());
   let i: i32 = 0;
   while (i < r.fns.len()) {
-    if (dw_var_index(d, r, i) < 0) {
-      first = first.append(i);
+    let b: i32 = dw_var_bucket(r, i, nb);
+    let k: i32 = bucket[b];
+    while (k >= 0 && !dw_same_var(d, k, r, i)) {
+      k = chain[k];
+    }
+    if (k < 0) {
+      k = d.fns.len();
       d = DwVars { ...d, fns: d.fns.append(r.fns[i]), names: d.names.append(r.names[i]), types: d.types.append(r.types[i]), params: d.params.append(r.params[i]) };
+      chain = chain.append(bucket[b]);
+      bucket = bucket.with(b, k);
+      head = head.append(i);
+      tail = tail.append(i);
+    } else {
+      next = next.with(tail[k], i);
+      tail = tail.with(k, i);
     }
     i = i + 1;
   }
+  let loc: i32[] = [];
+  let loc_at: i32[] = [];
   let k: i32 = 0;
   while (k < d.fns.len()) {
-    let loc: i32[] = d.loc;
-    let at: i32 = loc.len();
-    let j: i32 = first[k];
-    while (j < r.fns.len()) {
-      if (dw_var_index(d, r, j) == k) {
-        let expr: i32[] = dw_unhex(r.locs[j]);
-        loc = elf_le64(elf_le64(loc, r.lo[j] as i64), r.hi[j] as i64);
-        loc = elf_cat(elf_le16(loc, expr.len()), expr);
-      }
-      j = j + 1;
+    loc_at = loc_at.append(loc.len());
+    let j: i32 = head[k];
+    while (j >= 0) {
+      let expr: i32[] = dw_unhex(r.locs[j]);
+      loc = elf_le64(elf_le64(loc, r.lo[j] as i64), r.hi[j] as i64);
+      loc = elf_cat(elf_le16(loc, expr.len()), expr);
+      j = next[j];
     }
     loc = elf_le64(elf_le64(loc, 0 as i64), 0 as i64);  // end of list
-    d = DwVars { ...d, loc: loc, loc_at: d.loc_at.append(at) };
     k = k + 1;
   }
-  return d;
+  return DwVars { ...d, loc: loc, loc_at: loc_at };
 }
 
-// dw_var_index is the variable range i belongs to, -1 for one not yet seen.
-function dw_var_index(d: DwVars, r: VarRanges, i: i32): i32 {
-  let k: i32 = 0;
-  while (k < d.fns.len()) {
-    if (d.fns[k] == r.fns[i] && d.names[k] == r.names[i] && d.params[k] == r.params[i]) {
-      return k;
-    }
-    k = k + 1;
+function dw_same_var(d: DwVars, k: i32, r: VarRanges, i: i32): boolean {
+  return d.fns[k] == r.fns[i] && d.names[k] == r.names[i] && d.params[k] == r.params[i];
+}
+
+// dw_var_bucket hashes range i's function and variable name into [0, nb).
+function dw_var_bucket(r: VarRanges, i: i32, nb: i32): i32 {
+  return dw_hash(dw_hash(17, r.fns[i]), r.names[i]) % nb;
+}
+
+function dw_hash(h0: i32, s: string): i32 {
+  let h: i32 = h0;
+  let i: i32 = 0;
+  while (i < s.len()) {
+    h = (h * 31 + s[i] as i32) % 1000003;
+    i = i + 1;
   }
-  return 0 - 1;
+  return h;
+}
+
+function dw_filled(n: i32): i32[] {
+  let out: i32[] = [];
+  while (out.len() < n) {
+    out = out.append(0 - 1);
+  }
+  return out;
 }
 
 // dw_base_type is a scalar's DW_AT_byte_size and DW_AT_encoding (DW_ATE_*).
