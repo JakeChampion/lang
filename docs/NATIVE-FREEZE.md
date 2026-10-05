@@ -55,13 +55,8 @@ above is the first run of it.
   `NATIVE-CONVERGENCE.md §1`. A new language feature lands in
   `examples/self_host/` first, gated by the fixpoints and the differential
   suites; native gets it only if the self-host sources come to use it.
-- A native-only feature that still lands is an exception argued on #4451, so
-  the debt stays visible in one place, rather than the default.
 - The bootstrap pin on every host is the self-built fixed point
-  (`bootstrap.yml`'s publish job uploads `build/bootstrap/stage2`). Using it
-  needs no native binary; producing the next one still seeds a native-built
-  candidate on every publish, so each pin has one native-built generation in
-  its ancestry (`BOOTSTRAP.md`).
+  (`bootstrap.yml`'s publish job uploads `build/bootstrap/stage2`).
 
 ## What does not change
 
@@ -69,9 +64,24 @@ above is the first run of it.
   anchors on, and keeps receiving bugfixes (`NATIVE-CONVERGENCE.md §3`).
 - The differential suites keep running on every push; the freeze is a policy
   on where features land, not a relaxation of any gate.
-- The native backends are **not** deleted. Retiring them has its own
-  prerequisites (`NATIVE-CONVERGENCE.md §3a`), and the freeze is the first of
-  the two events, not the second.
+
+## After the backends went (2026-10-05)
+
+The freeze was the first of two events. The second, retiring the backends
+(`NATIVE-CONVERGENCE.md §3a`, worked in `NATIVE-RETIREMENT.md`), finished on
+2026-10-05: `internal/codegen`, `internal/native` and `internal/fernrt` are
+deleted and `cmd/fern` execs the self-host for every `-target` compile. With
+nothing native left to add surface to, the tracker that recorded native-only
+exceptions (#4451) is closed. Two things follow:
+
+- `internal/` is the Go front end, the interpreter and the tools built on
+  them. A change there is a bugfix, an oracle need, or what `-fmt`, the LSP
+  and the package tools need to read the language.
+- The "Go 1.4 rule" moved from native to the pin. A publish builds its
+  candidate by having the current pin compile the source (`make selfhost-cli`
+  goes through the launcher), so the compiler's own sources can use a
+  construct only after a pin that compiles it is published
+  (`BOOTSTRAP.md`, "Refreshing the pin").
 
 ## What still stands between the freeze and retiring the native backends
 

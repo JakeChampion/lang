@@ -64,8 +64,7 @@ func TestMapTempReceiverInterp(t *testing.T) {
 	}
 }
 
-// The native wasm build under the leak census: the leg the fix is for, since
-// native x86-64 and arm64 builds no longer run here (#4451).
+// The wasm build under the leak census: the leg the fix is for.
 func TestMapTempReceiverNativeWasmCensus(t *testing.T) {
 	_, stderr, code := runLeakCheckWasm(t, mapTempReceiverProg, false)
 	if code != 42 && code != 0 {

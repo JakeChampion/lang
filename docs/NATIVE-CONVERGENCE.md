@@ -278,16 +278,17 @@ is in force (`NATIVE-FREEZE.md`).
 - The differential suites keep running forever — they are the regression net,
   not a one-time gate.
 - `internal/interp` keeps getting bugfixes (§3).
-- The self-host compiler's *language subset that native must bootstrap* stays
-  conservative on purpose; a self-host-only feature is allowed to be
-  un-bootstrappable by native as long as it is not on the bootstrap path.
+- The compiler's own sources stay within what the current bootstrap pin
+  compiles (`BOOTSTRAP.md`, "Refreshing the pin"); since the backends went,
+  the pin holds the place in the Go 1.4 rule that native held.
 
 ## Maintenance contract now the freeze is in force
 
-- `internal/` accepts bugfixes, oracle needs, and what the self-host sources
-  require to bootstrap (§1). A new native-only feature is an exception to
-  argue for on #4451, not a free win: it widens the surface the self-host
-  must mirror. New language surface lands self-host-first.
+- `internal/` accepts bugfixes, oracle needs, and what the Go front-end tools
+  (`-fmt`, the LSP, the package tools) need to read the language. The native
+  backends are deleted (`NATIVE-RETIREMENT.md`), so there is no native-only
+  surface left to add, and the tracker that recorded such exceptions (#4451)
+  is closed. New language surface lands self-host-first.
 - Keep the three differential suites green in CI (they already run).
 - `tools/freeze_gate.sh` keeps running in CI so a precondition that regresses
   fails a PR rather than a future audit. When one does, amend its row here

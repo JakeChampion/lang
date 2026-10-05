@@ -252,14 +252,16 @@ gains on every target instead of one caller gaining on one.
 have repeatedly lagged reality — #4451 / #4363 / #4346 all described work that
 was already done. Check the code, not the issue.
 
-**Native is frozen (2026-09-28, `docs/NATIVE-FREEZE.md`)** — reference on any
-native-touching work. `docs/NATIVE-CONVERGENCE.md` is the policy: `internal/`
-accepts only bugfixes, oracle needs, and what the self-host sources require to
-bootstrap (the "Go 1.4 rule"). New language surface lands self-host-first. A
-native-only feature that still lands is an exception to argue for on #4451,
-and any issue/PR adding native-only surface (`internal/ir`, `internal/interp`)
-or touching the differential/parity suites references
-#4451, so the debt stays visible in one place.
+**There is no native compiler.** It froze on 2026-09-28 and its backends were
+deleted by 2026-10-05; the tracker that governed both (#4451) is closed. What
+Go keeps in `internal/` — the parser, checker and interpreter the oracle needs,
+plus `-fmt`, the LSP and the package and literate tools — accepts bugfixes,
+oracle needs, and what those tools need to read the language. A language
+feature lands in `examples/self_host/` first; the Go front end and interpreter
+learn it so the differentials can check it, never as a feature of their own.
+The bootstrap's "Go 1.4 rule" now binds the pin: the compiler's own sources may
+use a construct only once a published stage0 can compile it
+(`docs/BOOTSTRAP.md`).
 
 ## Engineering bar (non-negotiable)
 

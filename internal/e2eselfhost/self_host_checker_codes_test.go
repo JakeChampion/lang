@@ -3166,7 +3166,7 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// was already LOWERED by the lowering — the comment at its lowering says the
 		// point is that core/map compiles and links — but none was registered in
 		// the self-host checker's intrinsic table, so every body calling one
-		// answered the #4451 "could not infer an expression's type" bail while
+		// answered the "could not infer an expression's type" bail while
 		// the Go checker typed it fine. `map_new_impl` was the first casualty and
 		// `__map_own_str_slot` the next, which is why core/map did not type at
 		// all on the self-host and its Map stayed the linear-scan runtime.
