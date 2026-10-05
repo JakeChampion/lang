@@ -145,6 +145,28 @@ A program with an async export always composes against the `fern` world, never
 a fixed framing. Tests: `TestSelfHostWasmAsyncExport{,Refusals}`
 (`internal/e2eselfhost`), with `TestParseAsyncModifier` for the keyword.
 
+**Status — async imports of scalars, DONE in the self-host.** On
+`-target wasm32-wasi`, an `@import(iface, name) async function` of an
+interface the `fern` world does not declare makes the component import that
+interface, as an instance of async funcs typed from the Fern signatures. Each
+import is lowered with `canon lower async` over the core module's memory,
+through the composer's existing memory trampoline. The core module:
+
+- imports the lower as `(iface, "[async-lower]NAME")`, with core signature
+  `(params, retptr) -> status`;
+- imports the waitable intrinsics from `$root`
+  (`[waitable-set-new]`, `[waitable-join]`, `[waitable-set-wait]`,
+  `[subtask-drop]`, `[waitable-set-drop]`);
+- gives each import a wrapper (`wasm_ir.async_lower_wrapper`) that calls the
+  lower with a 16-byte area from the heap. When the status is not RETURNED,
+  the wrapper waits on the subtask in a waitable set of its own, then reads
+  the result and frees the area.
+
+Parameters are scalars, at most four (more would go through memory). An
+interface the world declares is refused, since the component would import it
+twice. Tests: `TestSelfHostWasmAsyncImport{,Refusals}`. The provider is linked
+with `wasm-tools compose`, and one of its functions yields, so the wait runs.
+
 ## Next epic — the async IMPORT / await side (scoped, tooling-confirmed)
 
 The export side is complete (above). The remaining P3 capability is the

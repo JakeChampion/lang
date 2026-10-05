@@ -14198,6 +14198,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // without importing it fails at load with `unknown func`. This is half of
   // what the AST emitter did and the IR path did not.
   parts = parts.append(extern_imports(mod, xslot_ir()));
+  parts = parts.append(async_lower_imports(mod));
   if (lifts_async(mod, mode)) {
     parts = parts.append(async_lift_imports(mod));
   }
@@ -14368,6 +14369,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (module_needs_extern_wrappers(mod, xslot_ir())) {
     parts = parts.append(extern_wrappers(mod, xslot_ir()));
   }
+  parts = parts.append(async_lower_wrappers(mod));
   if (need(needs, "@uses_divrem")) {
     parts = parts.append(divrem_helpers());
   }
@@ -17025,7 +17027,7 @@ pub function extern_imports(mod: parser.Module, slot: i32): string {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     let f: parser.FuncDecl = mod.funcs[i];
-    if (f.import_iface.len() > 0) {
+    if (is_sync_extern(f)) {
       if (extern_needs_wrapper(mod, f, slot)) {
         // The raw import is named $name__import; the Fern $name resolves
         // to the wrapper (see extern_wrappers). Each string param
@@ -17491,6 +17493,113 @@ pub function async_exports(mod: parser.Module): parser.FuncDecl[] {
   return out;
 }
 
+// is_sync_extern reports whether `f` is an `@import` the sync canonical ABI
+// lowers; an async one is lowered by async_lower_imports instead.
+pub function is_sync_extern(f: parser.FuncDecl): boolean {
+  return f.import_iface.len() > 0 && !f.async;
+}
+
+// async_imports is the module's `@import(...) async function`s: each is
+// lowered with the async canonical ABI, and its call waits for the result.
+pub function async_imports(mod: parser.Module): parser.FuncDecl[] {
+  let out: parser.FuncDecl[] = [];
+  for f in mod.funcs {
+    if (f.async && f.import_iface.len() > 0) {
+      out = out.append(f);
+    }
+  }
+  return out;
+}
+
+// async_lower_imports declares each async import's `canon lower async` entry,
+// `(params, retptr) -> status`, and the waitable intrinsics a call that has
+// not returned yet waits with. The names are the ones wit-bindgen uses.
+function async_lower_imports(mod: parser.Module): string {
+  let fs: parser.FuncDecl[] = async_imports(mod);
+  if (fs.len() == 0) {
+    return "";
+  }
+  let parts: string[] = [];
+  for f in fs {
+    let sig: string = "";
+    for p in f.params {
+      sig = sig + " (param " + extern_core_valtype(p.type_name) + ")";
+    }
+    if (returns_value(f.ret_type)) {
+      sig = sig + " (param i32)";
+    }
+    parts = parts.append("  (import \"" + f.import_iface + "\" \"[async-lower]" + f.import_wit + "\" (func $" + f.name + "__async" + sig + " (result i32)))\n");
+  }
+  let r: string = "  (import \"$root\" \"";
+  parts = parts.append(r + "[waitable-set-new]\" (func $__fern_ws_new (result i32)))\n");
+  parts = parts.append(r + "[waitable-join]\" (func $__fern_w_join (param i32 i32)))\n");
+  parts = parts.append(r + "[waitable-set-wait]\" (func $__fern_ws_wait (param i32 i32) (result i32)))\n");
+  parts = parts.append(r + "[subtask-drop]\" (func $__fern_subtask_drop (param i32)))\n");
+  parts = parts.append(r + "[waitable-set-drop]\" (func $__fern_ws_drop (param i32)))\n");
+  return util.str_join_chunks(parts);
+}
+
+// async_lower_wrappers emits the function each async import's Fern calls
+// resolve to. It calls the async lower with a 16-byte area: the result at +0,
+// the event a wait writes at +8. A status other than RETURNED (2) carries the
+// subtask in its upper bits, and the wrapper waits on it in a waitable set of
+// its own before reading the result.
+function async_lower_wrappers(mod: parser.Module): string {
+  let parts: string[] = [];
+  for f in async_imports(mod) {
+    parts = parts.append(async_lower_wrapper(f));
+  }
+  return util.str_join_chunks(parts);
+}
+
+function async_lower_wrapper(f: parser.FuncDecl): string {
+  let head: string = "  (func $" + f.name;
+  let args: string = "";
+  let i: i32 = 0;
+  while (i < f.params.len()) {
+    head = head + " (param " + wat_extern_valtype(f.params[i].type_name) + ")";
+    args = args + " " + extern_core_arg(f.params[i].type_name, util.i32_to_string(i));
+    i = i + 1;
+  }
+  let ret: boolean = returns_value(f.ret_type);
+  let rvt: string = "i32";
+  if (ret) {
+    rvt = wat_extern_valtype(f.ret_type);
+    args = args + " (local.get $rb)";
+  }
+  let o: string = head + " (result " + rvt + ")\n";
+  o = o + "    (local $rb i32) (local $st i32) (local $task i32) (local $ws i32) (local $r " + rvt + ")\n";
+  o = o + "    (local.set $rb (call $__fern_alloc (i32.const 16)))\n";
+  o = o + "    (local.set $st (call $" + f.name + "__async" + args + "))\n";
+  o = o + "    (if (i32.ne (i32.and (local.get $st) (i32.const 15)) (i32.const 2)) (then\n";
+  o = o + "      (local.set $task (i32.shr_u (local.get $st) (i32.const 4)))\n";
+  o = o + "      (local.set $ws (call $__fern_ws_new))\n";
+  o = o + "      (call $__fern_w_join (local.get $task) (local.get $ws))\n";
+  o = o + "      (drop (call $__fern_ws_wait (local.get $ws) (i32.add (local.get $rb) (i32.const 8))))\n";
+  o = o + "      (call $__fern_subtask_drop (local.get $task))\n";
+  o = o + "      (call $__fern_ws_drop (local.get $ws))))\n";
+  if (ret) {
+    o = o + "    (local.set $r " + async_result_load(f.ret_type) + ")\n";
+  }
+  o = o + "    (call $__fern_raw_free (local.get $rb) (i32.const 16))\n";
+  return o + "    (local.get $r))\n";
+}
+
+// async_result_load reads a scalar result of Fern type `t` from the return
+// area: a byte for a u8 or boolean, and an f32 widened to the f64 the
+// self-host holds it as.
+function async_result_load(t: string): string {
+  if (t == "u8" || t == "boolean") {
+    return "(i32.load8_u (local.get $rb))";
+  }
+  let vt: string = extern_core_valtype(t);
+  let load: string = "(" + vt + ".load (local.get $rb))";
+  if (vt == "f32") {
+    return "(f64.promote_f32 " + load + ")";
+  }
+  return load;
+}
+
 // async_lift_valtype is the component valtype byte an async export lifts a
 // Fern scalar of type `t` as, or -1 for a type it cannot lift yet.
 pub function async_lift_valtype(t: string): i32 {
@@ -17562,7 +17671,7 @@ function async_lift_wrappers(mod: parser.Module): string {
 pub function module_has_extern_composite_result(mod: parser.Module): boolean {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
-    if (mod.funcs[i].import_iface.len() > 0 && is_extern_composite_ret(mod, mod.funcs[i].ret_type)) {
+    if (is_sync_extern(mod.funcs[i]) && is_extern_composite_ret(mod, mod.funcs[i].ret_type)) {
       return true;
     }
     i = i + 1;
@@ -17578,7 +17687,8 @@ pub function module_has_extern_composite_result(mod: parser.Module): boolean {
 // only inside a wrapper would emit calls into an absent runtime.
 pub function module_extern_needs_heap(mod: parser.Module): boolean {
   return module_needs_extern_wrappers(mod, xslot_ir()) || module_has_extern_composite_result(mod)
-    || export_needs_heap(mod) || export_needs_realloc(mod) || module_has_array_param_export(mod);
+    || export_needs_heap(mod) || export_needs_realloc(mod) || module_has_array_param_export(mod)
+    || async_imports(mod).len() > 0;
 }
 
 // module_needs_extern_wrappers is true when any `@import` extern needs a
@@ -17586,7 +17696,7 @@ pub function module_extern_needs_heap(mod: parser.Module): boolean {
 pub function module_needs_extern_wrappers(mod: parser.Module, slot: i32): boolean {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
-    if (mod.funcs[i].import_iface.len() > 0 && extern_needs_wrapper(mod, mod.funcs[i], slot)) {
+    if (is_sync_extern(mod.funcs[i]) && extern_needs_wrapper(mod, mod.funcs[i], slot)) {
       return true;
     }
     i = i + 1;
@@ -17738,7 +17848,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     let f: parser.FuncDecl = mod.funcs[i];
-    if (f.import_iface.len() > 0 && extern_marshals(mod, f)) {
+    if (is_sync_extern(f) && extern_marshals(mod, f)) {
       // memory parameter (P4c): the wrapper forwards each to the canonical
       // (ptr, len). A `string` ([len][bytes]) forwards (ptr+4, load(ptr)).
       // A numeric array forwards (buf, len): the self-host array value is
@@ -17916,7 +18026,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
         }
         parts = parts.append(")\n");
       }
-    } else if (f.import_iface.len() > 0 && extern_record_ret_direct(mod, f.ret_type)) {
+    } else if (is_sync_extern(f) && extern_record_ret_direct(mod, f.ret_type)) {
       // single-field record result (P4c): returned by value (one i32),
       // no return area. The wrapper materializes the one-field self-host
       // struct (type-id@0, field@+4) from the import's i32 result.
@@ -17939,7 +18049,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       }
       parts = parts.append("))\n");
       parts = parts.append("    (local.get $s))\n");
-    } else if (f.import_iface.len() > 0 && extern_record_result_supported(mod, f.ret_type)) {
+    } else if (is_sync_extern(f) && extern_record_result_supported(mod, f.ret_type)) {
       // record result (P4c): a multi-field record returns indirectly; the
       // host writes the fields into the return area at the canonical memory
       // layout (sub-word fields pack tighter than the self-host struct's
@@ -17984,9 +18094,9 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append("    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(stab, f.ret_type)) + "))\n");
       parts = parts.append(extern_emit_record_fill(mod, "$s", f.ret_type, 0, 0, slot));
       parts = parts.append("    (local.get $s))\n");
-    } else if (f.import_iface.len() > 0 && extern_tuple_param_supported(f.ret_type)) {
+    } else if (is_sync_extern(f) && extern_tuple_param_supported(f.ret_type)) {
       parts = parts.append(extern_tuple_result_wrapper(f, slot));
-    } else if (f.import_iface.len() > 0 && extern_sum_result_supported(f.ret_type)) {
+    } else if (is_sync_extern(f) && extern_sum_result_supported(f.ret_type)) {
       // option/result result (P4c): flattens to (disc, payload), returned
       // indirectly; the wrapper materializes the self-host enum box — see
       // extern_sum_result_tail.
@@ -18001,7 +18111,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append(" (result i32)\n");
       parts = parts.append(extern_sum_result_locals());
       parts = parts.append(extern_sum_result_tail(f.name, f.ret_type, slot, sargs));
-    } else if (f.import_iface.len() > 0 && extern_plain_enum_param(mod, f.ret_type)) {
+    } else if (is_sync_extern(f) && extern_plain_enum_param(mod, f.ret_type)) {
       // WIT enum result: the import returns a single i32 discriminant; the
       // wrapper materializes the Fern payloadless enum value by mapping the
       // disc to the matching variant's struct_id and storing it in a fresh
@@ -18024,7 +18134,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 0, false)) + ")\n");
       parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
       parts = parts.append("    (local.get $s))\n");
-    } else if (f.import_iface.len() > 0 && extern_variant_string_arms(mod, f.ret_type).len() > 0) {
+    } else if (is_sync_extern(f) && extern_variant_string_arms(mod, f.ret_type).len() > 0) {
       // string-arm variant result: disc:u8 @0, and when the disc selects
       // a string arm its (ptr, len) @4/@8. The box is [struct_id@0]
       // [payload in slot 1] with the payload the copied string, or 0 for
@@ -18053,7 +18163,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append("      (i32.store offset=" + spoff + " (local.get $s) (local.get $hp)))\n");
       parts = parts.append("    (else (i32.store offset=" + spoff + " (local.get $s) (i32.const 0))))\n");
       parts = parts.append("    (local.get $s))\n");
-    } else if (f.import_iface.len() > 0 && extern_variant_result_supported(mod, f.ret_type)) {
+    } else if (is_sync_extern(f) && extern_variant_result_supported(mod, f.ret_type)) {
       // variant result: returned indirectly. The canonical variant memory
       // layout is disc:u8 @0 then the payload aligned to the join width — @4
       // for an i32 join, @8 for an i64 (mixed-width) join. The wrapper
@@ -18127,7 +18237,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
         parts = parts.append("    (i32.store offset=" + poff + " (local.get $s) (i32.load offset=4 (local.get $rb)))\n");
       }
       parts = parts.append("    (local.get $s))\n");
-    } else if (f.import_iface.len() > 0 && extern_string_tuple_array_result(f.ret_type)) {
+    } else if (is_sync_extern(f) && extern_string_tuple_array_result(f.ret_type)) {
       // list<tuple<string, …>> result: (ptr, count) at the return area,
       // each element the strings' (ptr, len) pairs, 8 bytes per string.
       // Build the array ([len@0][cap@4], 4-byte pointer slots at +8) of
@@ -18170,7 +18280,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append("      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
       parts = parts.append("      (br $ca)))\n");
       parts = parts.append("    (local.get $s))\n");
-    } else if (f.import_iface.len() > 0 && is_extern_composite_ret(mod, f.ret_type)) {
+    } else if (is_sync_extern(f) && is_extern_composite_ret(mod, f.ret_type)) {
       parts = parts.append("  (func $" + f.name);
       let args: string = "";
       let p: i32 = 0;
@@ -18220,7 +18330,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
         parts = parts.append("      (br $c)))\n");
         parts = parts.append("    (local.get $s))\n");
       }
-    } else if (f.import_iface.len() > 0 && slot >= 8 && !returns_value(f.ret_type)) {
+    } else if (is_sync_extern(f) && slot >= 8 && !returns_value(f.ret_type)) {
       // Void extern, scalar params: nothing to marshal, so the wrapper
       // exists only to satisfy the IR consumer's "every Fern-callable
       // results i32" convention (see extern_needs_wrapper). Forward the

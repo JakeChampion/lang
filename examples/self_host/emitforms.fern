@@ -7,6 +7,7 @@
 
 import "./ircore";
 import "./parser";
+import "./util";
 import "./wasm_ir";
 import "./watbin";
 import "./wit_compose";
@@ -69,9 +70,9 @@ pub function wasm_http_core(full: parser.Module, sub: ircore.Sub): string {
 // emitter's own refusal, already reported; a non-empty `refused` names the
 // import the world does not declare.
 pub function wasm_http_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
-  let asyncs: parser.FuncDecl[] = wasm_ir.async_exports(full);
+  let asyncs: parser.FuncDecl[] = util.append_all(wasm_ir.async_exports(full), wasm_ir.async_imports(full));
   if (asyncs.len() > 0) {
-    return wit_compose.Composed { bytes: [], refused: "async function " + asyncs[0].name + " is an async export, which only -target wasm32-wasi lifts" };
+    return wit_compose.Composed { bytes: [], refused: "async function " + asyncs[0].name + ": only -target wasm32-wasi lifts an async export or lowers an async import" };
   }
   let wat: string = wasm_http_core(full, sub);
   if (wat.len() == 0) {
@@ -104,12 +105,12 @@ function declares_extern(full: parser.Module): boolean {
 // `refused` is the emitter's own refusal, already reported; a non-empty
 // `refused` is the message to print.
 pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
-  let al: AsyncLifts = async_lifts(full);
-  if (al.refused.len() > 0) {
-    return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: " + al.refused };
+  let ap: AsyncPlan = async_plan(full);
+  if (ap.refused.len() > 0) {
+    return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: " + ap.refused };
   }
   let shape: i32 = wasm_ir.component_shape(full, sub.switches);
-  let framed: boolean = shape >= 0 && !declares_extern(full) && al.lifts.len() == 0;
+  let framed: boolean = shape >= 0 && !declares_extern(full) && ap.asy.lifts.len() == 0;
   if (framed && shape == 0) {
     return wit_compose.Composed { bytes: watbin.component_full(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, false, sub))), refused: "" };
   }
@@ -121,54 +122,87 @@ pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.C
     return wit_compose.Composed { bytes: framed_component(watbin.wat_to_binary(core.wat), shape), refused: "" };
   }
   let tbody: i32[] = wit_decode.wit_section_body(watbin.blob_to_bytes(wit_fern_world.fern_world_payload()), 7);
-  let c: wit_compose.Composed = wit_compose.compose_run(tbody, watbin.wat_to_binary(core.wat), al.lifts);
+  let c: wit_compose.Composed = wit_compose.compose_run(tbody, watbin.wat_to_binary(core.wat), ap.asy);
   if (c.bytes.len() == 0) {
     return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: the fern world cannot take this program: " + c.refused };
   }
   return c;
 }
 
-// AsyncLifts is a module's async exports as the composer lifts them, or why
-// one cannot be.
-struct AsyncLifts { lifts: watbin.AsyncLift[], refused: string }
+// AsyncPlan is a module's async exports and imports as the composer wires
+// them, or why one cannot be.
+struct AsyncPlan { asy: watbin.AsyncSurface, refused: string }
 
-// async_lifts maps each async export of `full` to its component signature:
-// names in kebab case, scalars by wasm_ir.async_lift_valtype.
-function async_lifts(full: parser.Module): AsyncLifts {
+// AsyncSig is an async function's component signature: parameter names and
+// valtypes, the result's (-1 for none), or why it has none.
+struct AsyncSig { names: string[], types: i32[], result: i32, refused: string }
+
+function sig_refused(why: string): AsyncSig {
+  return AsyncSig { names: [], types: [], result: 0 - 1, refused: why };
+}
+
+// async_sig maps `f`'s signature to component types: names in kebab case,
+// scalars by wasm_ir.async_lift_valtype. `role` names it in a refusal.
+function async_sig(f: parser.FuncDecl, role: string): AsyncSig {
+  if (f.receiver_type.len() > 0 || f.type_params.len() > 0) {
+    return sig_refused("an " + role + " must be a free, non-generic function");
+  }
+  let names: string[] = [];
+  let types: i32[] = [];
+  for p in f.params {
+    let vt: i32 = wasm_ir.async_lift_valtype(p.type_name);
+    if (vt < 0) {
+      return sig_refused("parameter " + p.name + " has type " + p.type_name + ", which an " + role + " cannot take yet");
+    }
+    if (kebab(p.name).len() == 0) {
+      return sig_refused("parameter " + p.name + " has no kebab-case form for the component");
+    }
+    names = names.append(kebab(p.name));
+    types = types.append(vt);
+  }
+  let rt: i32 = 0 - 1;
+  if (wasm_ir.returns_value(f.ret_type)) {
+    rt = wasm_ir.async_lift_valtype(f.ret_type);
+    if (rt < 0) {
+      return sig_refused("the result type " + f.ret_type + " is one an " + role + " cannot take yet");
+    }
+  }
+  return AsyncSig { names: names, types: types, result: rt, refused: "" };
+}
+
+// async_plan maps each async export and async import of `full` to the
+// signature the composer gives it. An async lower passes at most four flat
+// parameters in registers; more would go through memory, which it does not
+// do yet.
+function async_plan(full: parser.Module): AsyncPlan {
   let lifts: watbin.AsyncLift[] = [];
   for f in wasm_ir.async_exports(full) {
-    let why: string = "async function " + f.name + ": ";
-    if (f.receiver_type.len() > 0 || f.type_params.len() > 0) {
-      return AsyncLifts { lifts: [], refused: why + "an async export must be a free, non-generic function" };
-    }
+    let sg: AsyncSig = async_sig(f, "async export");
     let name: string = kebab(f.name);
-    if (name.len() == 0) {
-      return AsyncLifts { lifts: [], refused: why + "the name has no kebab-case form for the component export" };
+    if (sg.refused.len() == 0 && name.len() == 0) {
+      sg = sig_refused("the name has no kebab-case form for the component export");
     }
-    let names: string[] = [];
-    let types: i32[] = [];
-    for p in f.params {
-      let vt: i32 = wasm_ir.async_lift_valtype(p.type_name);
-      let pn: string = kebab(p.name);
-      if (vt < 0) {
-        return AsyncLifts { lifts: [], refused: why + "parameter " + p.name + " has type " + p.type_name + ", which an async export cannot lift yet" };
-      }
-      if (pn.len() == 0) {
-        return AsyncLifts { lifts: [], refused: why + "parameter " + p.name + " has no kebab-case form for the component export" };
-      }
-      names = names.append(pn);
-      types = types.append(vt);
+    if (sg.refused.len() > 0) {
+      return plan_refused("async function " + f.name + ": " + sg.refused);
     }
-    let rt: i32 = 0 - 1;
-    if (wasm_ir.returns_value(f.ret_type)) {
-      rt = wasm_ir.async_lift_valtype(f.ret_type);
-      if (rt < 0) {
-        return AsyncLifts { lifts: [], refused: why + "the result type " + f.ret_type + " is one an async export cannot lift yet" };
-      }
-    }
-    lifts = lifts.append(watbin.AsyncLift { name: name, core_name: f.name, param_names: names, param_types: types, result: rt });
+    lifts = lifts.append(watbin.AsyncLift { name: name, core_name: f.name, param_names: sg.names, param_types: sg.types, result: sg.result });
   }
-  return AsyncLifts { lifts: lifts, refused: "" };
+  let lowers: watbin.AsyncLower[] = [];
+  for f in wasm_ir.async_imports(full) {
+    let sg: AsyncSig = async_sig(f, "async import");
+    if (sg.refused.len() == 0 && f.params.len() > 4) {
+      sg = sig_refused("more than four parameters, which an async import cannot pass yet");
+    }
+    if (sg.refused.len() > 0) {
+      return plan_refused("async import " + f.name + ": " + sg.refused);
+    }
+    lowers = lowers.append(watbin.AsyncLower { iface: f.import_iface, name: f.import_wit, param_names: sg.names, param_types: sg.types, result: sg.result });
+  }
+  return AsyncPlan { asy: watbin.AsyncSurface { lifts: lifts, lowers: lowers }, refused: "" };
+}
+
+function plan_refused(why: string): AsyncPlan {
+  return AsyncPlan { asy: watbin.AsyncSurface { lifts: [], lowers: [] }, refused: why };
 }
 
 // kebab is a Fern identifier as a component-model name: each

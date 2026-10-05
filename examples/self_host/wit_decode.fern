@@ -1910,6 +1910,11 @@ pub function wit_classify(tbody: i32[], iface: string, fname: string): i32 {
 // wit_import_instance_index returns the instance index `iface` lands at in
 // the prefix the plan emits — the instance the suffix aliases its functions
 // from — or -1 when the world does not import it or the plan drops it.
+// wit_world_declares reports whether the world imports interface `iface`.
+pub function wit_world_declares(tbody: i32[], iface: string): boolean {
+  return wit_names_index(wit_world_decls(tbody).imp_names, iface) >= 0;
+}
+
 pub function wit_import_instance_index(tbody: i32[], plan: WitImportPlan, iface: string): i32 {
   let j: i32 = wit_names_index(wit_world_decls(tbody).imp_names, iface);
   if (j < 0) {
