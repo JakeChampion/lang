@@ -85,7 +85,11 @@ cases++;
 // A lane main skipped because the merged PR's run passed it at the same tree.
 const changes = { id: 42, name: "Validate / changes", conclusion: "success" };
 const skipped = (lane) => ({ name: `Validate / Full suite / ${lane} / x86`, conclusion: "skipped" });
-const proof = (lanes) => [{ title: "Lanes proven by the merged pull request", message: JSON.stringify({ pr: 5, run: 6, lanes }) }];
+// The title is read off ci.yml's producer, so a rename on either side fails here.
+const ciSource = fs.readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+const provenTitle = ciSource.match(/core\.notice\(JSON\.stringify\(\{ pr: proven\.pr[^\n]*\n\s*\{ title: "([^"]+)" \}/)?.[1];
+assert.ok(provenTitle, "ci.yml's changes job must annotate the lanes the merged PR proved");
+const proof = (lanes) => [{ title: provenTitle, message: JSON.stringify({ pr: 5, run: 6, lanes }) }];
 
 let calls = await run({ jobs: [changes, skipped("Test units")], issues: [issue], annotations: proof(["Test units"]) });
 assert.deepEqual(calls.map(([kind]) => kind), ["comment", "update"], "a lane the merged PR proved closes its issue");
