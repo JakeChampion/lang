@@ -17,7 +17,8 @@ import (
 // `S{ elems: [Inner{items:[..]}, ..] }` stays bounded under a tight max-memory-size cap
 // with trap-on-grow-failure (each element's items buffer + boxes recycle onto the
 // freelist); a regression to the shallow element walk leaks the items past the cap and
-// traps. The WAT assertion pins the per-element $__sem_release_Inner.
+// traps. The WAT assertion pins the per-element $__sem_release_Inner. items goes
+// through id so it is built on the heap rather than placed as a constant.
 func TestSelfHostStructArrElemDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm array-element deep-drop e2e")
@@ -29,9 +30,10 @@ func TestSelfHostStructArrElemDropWasm(t *testing.T) {
 
 	const cap = "16777216" // 16 MiB
 	prog := `struct Inner { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 struct S { elems: Inner[], tag: i32 }
 function mk(): i32 {
-    let s: S = S { elems: [Inner { items: [1,2,3,4,5,6,7,8] }, Inner { items: [9,10,11,12,13,14,15,16] }], tag: 3 };
+    let s: S = S { elems: [Inner { items: id([1,2,3,4,5,6,7,8]) }, Inner { items: id([9,10,11,12,13,14,15,16]) }], tag: 3 };
     return s.elems[0].items[0] + s.elems[1].items[7] + s.tag;
 }
 function main(): i32 {

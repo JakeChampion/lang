@@ -5459,9 +5459,8 @@ function emit_arm64_op_dyn_box(o: ir.Op, own s: asmcore.EmitState): asmcore.Emit
 // The regions are walked rather than tabulated: string boxes are a fixed 24-byte
 // stride, a record constant's block carries its own length in the `cap` word
 // the walk strides by, and a function value's block is a fixed 32 bytes. An
-// array of scalars holds no address and sits outside all three. A record field
-// holding another static box's address is the one word that is tabulated, in
-// `.Lfern_cref_begin`. Only the whole-program pool is contiguous and complete,
+// array sits outside all three. A field or element holding a static box's
+// address is the one word that is tabulated, in `.Lfern_cref_begin`. Only the whole-program pool is contiguous and complete,
 // which is the only shape `-target arm64-android` produces; a per-module unit
 // (str_ns != "") emits its pool piecewise and gets no loop.
 // reloc_wanted decides, for BOTH the relocation loop and the data it walks,

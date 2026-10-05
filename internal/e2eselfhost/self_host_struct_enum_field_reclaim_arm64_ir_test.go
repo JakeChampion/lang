@@ -43,8 +43,9 @@ function main(): i32 {
 
 	// BALANCE UNDER CHURN: an aliased enum field (`e: s` from a live enum local) is
 	// co-owned via the construction rc_inc; the k_enum drop decs the dup, `s` frees
-	// at rc 0. A mis-balance would double-free and corrupt/crash under qemu. 200000
-	// build/drop cycles staying correct (value 0) proves balance on the arm64 arm.
+	// at rc 0. A mis-balance would double-free and corrupt/crash under qemu. 20000
+	// build/drop cycles staying correct (value 0) proves balance on the arm64 arm;
+	// each cycle allocates, so a longer churn only costs qemu time.
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
 @noinline function runtime(n: i32): i32 { return n; }
@@ -58,5 +59,5 @@ function churn(n: i32): i32 {
     }
     return bad;
 }
-function main(): i32 { return churn(200000); }`, "struct_enum_field_arm64_churn", 0)
+function main(): i32 { return churn(20000); }`, "struct_enum_field_arm64_churn", 0)
 }

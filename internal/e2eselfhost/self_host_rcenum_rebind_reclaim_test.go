@@ -34,12 +34,15 @@ import (
 // excludes them — walk_stmt_escapes reads an assignment's RHS, so a value
 // aliased out before being overwritten disqualifies the name.
 
+// `ids` hides the literal payload from the static-box plan, so each Text is a
+// heap box.
 const rcenumRebindSrc = `enum T { Text(string), Nothing }
+function ids(s: string): string { return s; }
 
 function round(): i32 {
     let e: T = Nothing;
     let i: i32 = 0;
-    while (i < 4) { e = Text("hello"); i = i + 1; }
+    while (i < 4) { e = Text(ids("hello")); i = i + 1; }
     let t: i32 = 0;
     match (e) { Text(s) => { t = s.len(); }, Nothing => { t = 0; } }
     return t;
@@ -106,7 +109,7 @@ func TestSelfHostRcEnumRebindReclaimX86_64(t *testing.T) {
 // still REFUSE. Each asserts BEHAVIOUR: a wrongly-granted credit releases a
 // payload something else still reads, so the failure mode is a wrong answer or a
 // crash, not a leak. Every `want` was confirmed against both the interpreter and
-// the native x86-64 backend.
+// the native x86-64 backend. `ids` keeps each Text a heap box.
 func TestSelfHostRcEnumRebindHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -123,11 +126,12 @@ func TestSelfHostRcEnumRebindHazardsX86_64(t *testing.T) {
 			// still reachable through the array.
 			name: "escapes_to_container",
 			src: `enum T { Text(string), Nothing }
+function ids(s: string): string { return s; }
 function round(): i32 {
     let keep: T[] = [];
     let e: T = Nothing;
     let i: i32 = 0;
-    while (i < 4) { e = Text("hello"); keep = keep.append(e); i = i + 1; }
+    while (i < 4) { e = Text(ids("hello")); keep = keep.append(e); i = i + 1; }
     let t: i32 = 0;
     let k: i32 = 0;
     while (k < keep.len()) { match (keep[k]) { Text(s) => { t = t + s.len(); }, Nothing => {} } k = k + 1; }
@@ -145,12 +149,13 @@ function main(): i32 {
 			// Passed to a call before being overwritten — the callee may retain it.
 			name: "passed_to_call",
 			src: `enum T { Text(string), Nothing }
+function ids(s: string): string { return s; }
 function sink(x: T): i32 { match (x) { Text(s) => { return s.len(); }, Nothing => { return 0; } } return 0; }
 function round(): i32 {
     let e: T = Nothing;
     let t: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) { e = Text("hello"); t = t + sink(e); i = i + 1; }
+    while (i < 4) { e = Text(ids("hello")); t = t + sink(e); i = i + 1; }
     return t;
 }
 function main(): i32 {
@@ -166,10 +171,11 @@ function main(): i32 {
 			// rebind.
 			name: "aliased_to_local",
 			src: `enum T { Text(string), Nothing }
+function ids(s: string): string { return s; }
 function round(): i32 {
-    let e: T = Text("aa");
+    let e: T = Text(ids("aa"));
     let keep: T = e;
-    e = Text("bbbb");
+    e = Text(ids("bbbb"));
     let t: i32 = 0;
     match (keep) { Text(s) => { t = t + s.len(); }, Nothing => {} }
     match (e) { Text(s) => { t = t + s.len(); }, Nothing => {} }
@@ -189,11 +195,12 @@ function main(): i32 {
 			// array still points at. This is what match_arm_binds_rc_payload guards.
 			name: "arm_moves_payload_out",
 			src: `enum T { Text(string), Nothing }
+function ids(s: string): string { return s; }
 function round(): i32 {
     let out: string[] = [];
     let e: T = Nothing;
     let i: i32 = 0;
-    while (i < 3) { e = Text("hello"); match (e) { Text(s) => { out = out.append(s); }, Nothing => {} } i = i + 1; }
+    while (i < 3) { e = Text(ids("hello")); match (e) { Text(s) => { out = out.append(s); }, Nothing => {} } i = i + 1; }
     let t: i32 = 0;
     let k: i32 = 0;
     while (k < out.len()) { t = t + out[k].len(); k = k + 1; }

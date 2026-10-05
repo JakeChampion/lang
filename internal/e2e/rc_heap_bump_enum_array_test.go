@@ -25,16 +25,18 @@ import (
 // code), and returns __rc_underflow_count() — 0 iff value-correct AND no
 // payload was double-dropped. A premature free / corrupted payload shows up
 // as the 99 value-mismatch sentinel; an over-release shows up as a non-zero
-// underflow count.
+// underflow count. Each payload goes through `ids`, which hides the literal
+// from the static-box plan, so every variant and array is a heap box.
 
 func enumArrBumpSrc(n string) string {
 	return `enum Box { Val(string), Empty }
+function ids(s: string): string { return s; }
 function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;
     let acc: i32 = 0;
     while (i < ` + n + `) {
-        let xs: Box[] = [Val("hello there friend, "), Val("general kenobi!!!"), Empty];
+        let xs: Box[] = [Val(ids("hello there friend, ")), Val(ids("general kenobi!!!")), Empty];
         acc = acc + xs.len();
         i = i + 1;
     }
@@ -46,10 +48,11 @@ function main(): i32 {
 // Concrete Box[] — reads both heap-string payloads back: 20 + 17 == 37, ×200
 // == 7400.
 const enumArrCheckBox = `enum Box { Val(string), Empty }
+function ids(s: string): string { return s; }
 function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        let xs: Box[] = [Val("hello there friend, "), Val("general kenobi!!!"), Empty];
+        let xs: Box[] = [Val(ids("hello there friend, ")), Val(ids("general kenobi!!!")), Empty];
         let a: i32 = match (xs[0]) { Val(s) => s.len(), Empty => 0 };
         let b: i32 = match (xs[1]) { Val(s) => s.len(), Empty => 0 };
         acc = acc + a + b;
@@ -61,10 +64,11 @@ function main(): i32 {
 
 // Generic Option[string][] — exercises the substituted-decl registration:
 // 18 + 6 == 24, ×200 == 4800.
-const enumArrCheckOption = `function main(): i32 {
+const enumArrCheckOption = `function ids(s: string): string { return s; }
+function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        let xs: Option[string][] = [Some("hello there friend"), None, Some("kenobi")];
+        let xs: Option[string][] = [Some(ids("hello there friend")), None, Some(ids("kenobi"))];
         let a: i32 = match (xs[0]) { Some(s) => s.len(), None => 0 };
         let b: i32 = match (xs[2]) { Some(s) => s.len(), None => 0 };
         acc = acc + a + b;
@@ -77,10 +81,11 @@ const enumArrCheckOption = `function main(): i32 {
 // Nested Box[][] — exercises the recursive __drop_arr_of_ wrapper:
 // 5 + 4 + 5 == 14, ×200 == 2800.
 const enumArrCheckNested = `enum Box { Val(string), Empty }
+function ids(s: string): string { return s; }
 function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        let g: Box[][] = [[Val("alpha"), Empty], [Val("beta"), Val("gamma")]];
+        let g: Box[][] = [[Val(ids("alpha")), Empty], [Val(ids("beta")), Val(ids("gamma"))]];
         let a: i32 = match (g[0][0]) { Val(s) => s.len(), Empty => 0 };
         let b: i32 = match (g[1][0]) { Val(s) => s.len(), Empty => 0 };
         let c: i32 = match (g[1][1]) { Val(s) => s.len(), Empty => 0 };

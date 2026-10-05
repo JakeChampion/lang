@@ -294,13 +294,15 @@ function main(): i32 {
 	// An update of a unique record leaves the fields it carries over in its
 	// box: `tag` is taken from the slot it is stored back to, so it is neither
 	// nulled nor released, and only `names`, which the update replaces, is.
+	// `ids` keeps the initial record a heap box.
 	{"update-keeps-fields", `struct Acc { names: string[], tag: string, n: i32 }
+function ids(s: string): string { return s; }
 function add(own a: Acc, s: string): Acc {
     a = Acc { ...a, names: a.names.append(s), n: a.n + 1 };
     return a;
 }
 function main(): i32 {
-    let a: Acc = Acc { names: [], tag: "t", n: 0 };
+    let a: Acc = Acc { names: [], tag: ids("t"), n: 0 };
     let i: i32 = 0;
     while (i < 6) { a = add(a, "x"); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -310,14 +312,16 @@ function main(): i32 {
 	// The same update over a base another binding still holds: the donor is
 	// shared at its first kept read, so the kept fields are retained, the
 	// construction allocates, and `keep` still reads the fields it had. The
-	// second update's base is unique again and builds in place.
+	// second update's base is unique again and builds in place. `ids` keeps
+	// the initial record a heap box.
 	{"update-keeps-shared-base", `struct Acc { names: string[], tag: string, n: i32 }
+function ids(s: string): string { return s; }
 function add(own a: Acc, s: string): Acc {
     a = Acc { ...a, names: a.names.append(s), n: a.n + 1 };
     return a;
 }
 function main(): i32 {
-    let a: Acc = Acc { names: ["p"], tag: "t", n: 0 };
+    let a: Acc = Acc { names: [ids("p")], tag: "t", n: 0 };
     let keep: Acc = a;
     a = add(a, "x");
     a = add(a, "y");
@@ -328,14 +332,16 @@ function main(): i32 {
 	// A field carried over into its own slot and read again after the update:
 	// the read keeps its position (another use needs the value), and the
 	// construction still leaves the slot alone while the donor is unique.
+	// `ids` keeps the initial record a heap box.
 	{"update-keeps-field-read-later", `struct Acc { names: string[], tag: string, n: i32 }
+function ids(s: string): string { return s; }
 function add(own a: Acc, s: string): Acc {
     let t: string = a.tag;
     a = Acc { names: a.names.append(s), tag: t, n: a.n + t.len() };
     return a;
 }
 function main(): i32 {
-    let a: Acc = Acc { names: [], tag: "tag", n: 0 };
+    let a: Acc = Acc { names: [], tag: ids("tag"), n: 0 };
     let i: i32 = 0;
     while (i < 6) { a = add(a, "x"); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }

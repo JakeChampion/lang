@@ -59,11 +59,13 @@ func TestSelfHostStructArrElemDropIRX86_64(t *testing.T) {
 	// fresh sole-owned literal (rc 1) holding an `items` buffer. The per-element helper
 	// reclaims both `items` buffers each iteration. Asserts the helper call is emitted,
 	// and 50M alloc->drop cycles stay bounded (exit 0); under the shallow k_box walk each
-	// element's `items` leaked every call -> heap exhausted -> SIGKILL (137).
+	// element's `items` leaked every call -> heap exhausted -> SIGKILL (137). items goes
+	// through id so it is built on the heap rather than placed as a constant.
 	run(t, `struct Inner { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 struct S { elems: Inner[], tag: i32 }
 function mk(): i32 {
-    let s: S = S { elems: [Inner { items: [1,2,3,4,5,6,7,8] }, Inner { items: [9,10,11,12,13,14,15,16] }], tag: 3 };
+    let s: S = S { elems: [Inner { items: id([1,2,3,4,5,6,7,8]) }, Inner { items: id([9,10,11,12,13,14,15,16]) }], tag: 3 };
     return s.elems[0].items[0] + s.elems[1].items[7] + s.tag;
 }
 function main(): i32 {
@@ -74,11 +76,13 @@ function main(): i32 {
 
 	// VALUE-CORRECTNESS: every element's items are read back before the drop; a premature
 	// free of a live element buffer would corrupt the read. Two Inners: items sum
-	// (1..8)=36 and (9..16)=100, + tag 3 = 139.
+	// (1..8)=36 and (9..16)=100, + tag 3 = 139. items goes through id so it is built on
+	// the heap rather than placed as a constant.
 	run(t, `struct Inner { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 struct S { elems: Inner[], tag: i32 }
 function main(): i32 {
-    let s: S = S { elems: [Inner { items: [1,2,3,4,5,6,7,8] }, Inner { items: [9,10,11,12,13,14,15,16] }], tag: 3 };
+    let s: S = S { elems: [Inner { items: id([1,2,3,4,5,6,7,8]) }, Inner { items: id([9,10,11,12,13,14,15,16]) }], tag: 3 };
     let sum: i32 = 0; let e: i32 = 0;
     while (e < 2) {
         let j: i32 = 0;
@@ -92,11 +96,14 @@ function main(): i32 {
 	// (`Inner { mid: Mid }`, `Mid { items: i32[] }`), so the element helper calls
 	// __struct_drop_Inner which recurses into __struct_drop_Mid — array-element deep-drop
 	// composed with the acyclic multi-level gate. 40M cycles stay bounded (exit 0).
+	// items goes through id so the chain is built on the heap rather than placed as a
+	// constant.
 	run(t, `struct Mid { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 struct Inner { mid: Mid, it: i32 }
 struct S { elems: Inner[], tag: i32 }
 function mk(): i32 {
-    let s: S = S { elems: [Inner { mid: Mid { items: [1,2,3,4,5,6,7,8] }, it: 4 }], tag: 3 };
+    let s: S = S { elems: [Inner { mid: Mid { items: id([1,2,3,4,5,6,7,8]) }, it: 4 }], tag: 3 };
     return s.elems[0].mid.items[0] + s.elems[0].it + s.tag;
 }
 function main(): i32 {

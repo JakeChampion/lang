@@ -87,9 +87,10 @@ var selfAssignReuseCases = []struct {
 	// SHADOWING control: `for p in ps` rebinds the name to an ELEMENT of ps, a
 	// box the container owns. slot_of resolves to that binding, so admitting the
 	// name would fire the reuse there and write straight through ps[0] —
-	// ps[0].xs[0] must stay 7.
+	// ps[0].xs[0] must stay 7. ps[0].xs goes through id so ps is built on the heap
+	// rather than placed as a constant.
 	{"self-assign-shadowed-by-for",
-		`struct P { xs: i32[], n: i32 } function main(): i32 { let p: P = P { xs: [1], n: 0 }; let ps: P[] = [P { xs: [7, 8], n: 5 }]; for p in ps { p = P { ...p, xs: [2], n: p.n + 1 }; } return ps[0].xs[0] * 10 + ps[0].n + p.n; }`,
+		`struct P { xs: i32[], n: i32 } function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let p: P = P { xs: [1], n: 0 }; let ps: P[] = [P { xs: id([7, 8]), n: 5 }]; for p in ps { p = P { ...p, xs: [2], n: p.n + 1 }; } return ps[0].xs[0] * 10 + ps[0].n + p.n; }`,
 		75},
 	// SHADOWING: a nested `let p` of the same type is its own binding
 	// (lexical.fern). Only the top-level binding carries the donor gates, so its

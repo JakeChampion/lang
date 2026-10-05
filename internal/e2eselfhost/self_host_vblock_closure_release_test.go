@@ -96,12 +96,14 @@ const closureRebindReleaseWant = 76
 
 // A defer inside a value block names an unannotated local of that block, which
 // the desugar cannot lift, and replays at the function's exit, so the block
-// keeps the local rather than moving it out (#10496).
-const vblockDeferUnliftedSrc = `function main(): i32 {
+// keeps the local rather than moving it out (#10496). ids builds the string
+// array on the heap rather than placing it as a constant.
+const vblockDeferUnliftedSrc = `function ids(s: string): string { return s; }
+function main(): i32 {
     let r = 0;
     let c = 1;
     let d = { let q = [1, 2, 3]; if (c > 0) { defer { r = q[0] + q.len() } } q };
-    let e = { let s = ["ab", "c"]; if (c > 5) { defer { r = r + s.len() } } s };
+    let e = { let s = [ids("ab"), "c"]; if (c > 5) { defer { r = r + s.len() } } s };
     return d[0] + r * 10 + e[0].len() * 50;
 }
 `

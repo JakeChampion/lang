@@ -15,13 +15,16 @@ import (
 // free; __fern_drop_arr_ptr on native single-word x86_64), then free the
 // outer buffer. Each helper is_unique-gates internally.
 
+// `ids` hides a literal from the static-box plan, so each inner string[] is a
+// heap box.
 func arrOfStrBumpSrc(n string) string {
-	return `function main(): i32 {
+	return `function ids(s: string): string { return s; }
+function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;
     let acc: i32 = 0;
     while (i < ` + n + `) {
-        let g: string[][] = [["aa", "bb"], ["cc"]];
+        let g: string[][] = [[ids("aa"), "bb"], [ids("cc")]];
         acc = acc + g[0][1].len();
         i = i + 1;
     }
@@ -30,11 +33,12 @@ func arrOfStrBumpSrc(n string) string {
 }
 
 // Inner strings + buffers must reclaim AND not over-release.
-const arrOfStrUnderflowSrc = `function main(): i32 {
+const arrOfStrUnderflowSrc = `function ids(s: string): string { return s; }
+function main(): i32 {
     let i: i32 = 0;
     let acc: i32 = 0;
     while (i < 200) {
-        let g: string[][] = [["alpha", "beta"], ["gamma"]];
+        let g: string[][] = [[ids("alpha"), "beta"], [ids("gamma")]];
         acc = acc + g[0][0].len() + g[1][0].len();
         i = i + 1;
     }
