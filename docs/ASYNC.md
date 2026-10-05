@@ -119,8 +119,10 @@ With a blocking native `poll`, live futures always make progress.
 ## 4. `race` — first to finish wins
 
 `race` runs the futures until the **first** resolves, returns `(winnerIndex,
-value)`, and abandons the rest (happy-eyeballs / first-wins). Cancellation is
-structural: a loser is simply never resumed.
+value)`, and cancels the rest (happy-eyeballs / first-wins). A loser is
+resumed once more, with `async.cancelled()`, and releases what it holds:
+`fetch_future` closes its socket. A future of your own handles `cancelled()`
+the same way, by cleaning up and returning `Ready`.
 
 ```fern
 import "std/async";

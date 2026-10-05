@@ -36,6 +36,11 @@ import "std/time";
 //                          Future (typically a non-blocking read that
 //                          returns `Ready(...)`). Multi-step I/O
 //                          chains by returning another `Pending`.
+//
+// A combinator that abandons a pending future (a `race` loser, a
+// `with_deadline` straggler) drops its token and then calls
+// `resume(cancelled())` once: a continuation handed `cancelled()` releases
+// what it holds, a socket above all, and returns `Ready`.
 pub enum Future[T] {
   Ready(T),
   Pending(i32, (i32) => Future[T]),
@@ -312,14 +317,14 @@ pub function gather_on[D: Driver, T](drv: D, fs_in: Future[T][], on_incomplete: 
   return out;
 }
 
-// __drop_losers(fs, winner) — drop the readiness token of every still-Pending
-// future EXCEPT `winner` (whose own continuation already consumed/dropped its
-// token — fetch_future's resume drops the woken pollable before closing). On
-// wasm a Pending's token is a wasi:io/poll pollable that is a CHILD of its
-// socket resource, so an abandoned `race` loser must drop it or wasmtime traps
-// with "resource has children" at teardown. `wasm_pollable_drop` is a no-op on
-// native/interp (a pollable is just an fd there), so this is portable. Pass
-// `winner = -1` to drop every Pending token (no resumed winner).
+// __drop_losers(fs, winner) — cancel every still-Pending future EXCEPT
+// `winner` (whose own continuation already consumed its token). Its token is
+// dropped first: on wasm a Pending's token is a wasi:io/poll pollable that is
+// a CHILD of its socket, and wasmtime traps with "resource has children" at
+// teardown if the socket goes first. `wasm_pollable_drop` is a no-op on
+// native/interp. Then `resume(cancelled())` runs once, so the continuation
+// closes what it holds, and the token of a Pending it hands back is dropped
+// too. Pass `winner = -1` to cancel every Pending future.
 function __drop_losers[D: Driver, T](drv: D, fs: Future[T][], winner: i32): i32 {
   let i: i32 = 0;
   while (i < fs.len()) {
@@ -328,6 +333,12 @@ function __drop_losers[D: Driver, T](drv: D, fs: Future[T][], winner: i32): i32 
         Ready(v) => {},
         Pending(tok, c) => {
           let d: i32 = drv.drop_token(tok);
+          match (c(cancelled())) {
+            Ready(v) => {},
+            Pending(rest, rc) => {
+              let dr: i32 = drv.drop_token(rest);
+            }
+          }
         }
       }
     }
@@ -338,11 +349,10 @@ function __drop_losers[D: Driver, T](drv: D, fs: Future[T][], winner: i32): i32 
 
 // race(fs, none_val) — await the FIRST future to resolve, returning
 // `(winnerIndex, value)`. Happy-eyeballs: fan out to N upstreams, take
-// the fastest answer, abandon the rest. CANCELLATION is structural —
-// the losers are simply never driven again; their parked continuations
-// (and captured frames) are dropped and reference counting reclaims
-// them, and their readiness tokens are dropped (`__drop_losers`) so wasm
-// doesn't trap on an abandoned pollable. An already-`Ready` future wins
+// the fastest answer, abandon the rest. The losers are cancelled
+// (`__drop_losers`): each token is dropped, so wasm doesn't trap on an
+// abandoned pollable, and each continuation is resumed with `cancelled()`
+// so it closes its socket. An already-`Ready` future wins
 // immediately (lowest index). Returns `(-1, none_val)` only if no future
 // can make progress (poll error / no pending fds).
 pub function race[T](fs_in: Future[T][], none_val: T): (i32, T) {
