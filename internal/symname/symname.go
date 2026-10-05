@@ -35,13 +35,3 @@ func Fn(name string) string { return Prefix + name }
 func Source(sym string) (string, bool) {
 	return strings.CutPrefix(sym, Prefix)
 }
-
-// Fns mangles a list of Fern function names, preserving order. Export lists
-// arrive as Fern names and have to be looked up as asm symbols.
-func Fns(names []string) []string {
-	out := make([]string, len(names))
-	for i, n := range names {
-		out[i] = Fn(n)
-	}
-	return out
-}

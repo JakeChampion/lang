@@ -136,16 +136,6 @@ func SegmentAddrsWXX86(textLen int) (textVAddr, dataVAddr uint64) {
 	return segmentAddrsWX(textLen, emX86_64)
 }
 
-// SegmentAddrsPIEArm64 is the arm64 static-PIE / shared-object segment map.
-func SegmentAddrsPIEArm64(textLen int) (textVAddr, dataVAddr uint64) {
-	return segmentAddrsPIE(textLen, emAArch64)
-}
-
-// SegmentAddrsPIEX86 is the x86-64 static-PIE / shared-object segment map.
-func SegmentAddrsPIEX86(textLen int) (textVAddr, dataVAddr uint64) {
-	return segmentAddrsPIE(textLen, emX86_64)
-}
-
 // SegmentMapWXEhArm64 is the arm64 W^X address map for an image carrying
 // unwind data. hdrLen comes from the assembler's EhFrameHdrLen, which depends
 // only on the FDE count; ehLen may be any non-zero placeholder on the call
@@ -239,7 +229,7 @@ type Export struct {
 
 // TextVAddrPIE is the .text address in the static-PIE image, measured from
 // a load base of 0 (just past the ELF header + three program headers).
-// Pass it to arm64.AssembleProgramPIE as the textVAddr so every PC-relative
+// Pass it to arm64's Assembler.BytesProgramPIE as the textVAddr so every PC-relative
 // fixup is laid out base-relative.
 const TextVAddrPIE = ehSize + phNumPIE*phSize
 
@@ -467,7 +457,7 @@ func trailingTrimZeros(b []byte) int {
 // PC-relative code runs as-is. Programs whose only absolute addresses are
 // resolved at startup need a self-relocation prologue to apply .rela.dyn
 // (a later slice); reloc-free programs run unchanged. Pair with
-// arm64.AssembleProgramPIE(.., TextVAddrPIE).
+// arm64's Assembler.BytesProgramPIE(TextVAddrPIE, ..).
 func StaticPieExecutable(text, data []byte, relocs []Reloc) []byte {
 	return staticPie(text, data, relocs, emAArch64)
 }
@@ -903,12 +893,6 @@ type Debug struct {
 // .debug_frame. The loaded image is identical to the plain one.
 func StaticExecutableDataX86WXDebug(text []byte, u Unwind, data []byte, d Debug) ([]byte, error) {
 	return imageWXDebug(text, u, data, emX86_64, 0, d)
-}
-
-// StaticExecutableDataWXDebug is the arm64 counterpart of
-// StaticExecutableDataX86WXDebug.
-func StaticExecutableDataWXDebug(text []byte, u Unwind, data []byte, d Debug) ([]byte, error) {
-	return imageWXDebug(text, u, data, emAArch64, 0, d)
 }
 
 // imageWXSyms builds the W^X image (imageWX) and appends a section table with

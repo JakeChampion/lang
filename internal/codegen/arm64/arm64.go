@@ -422,7 +422,7 @@ type Options struct {
 	// R_AARCH64_RELATIVE entries in .rela.dyn (the `.quad <symbol>`
 	// function-pointer / vtable slots) before the program runs, so the
 	// binary is correct at the arbitrary base the kernel loads it at.
-	// Pair with arm64.AssembleProgramPIE + elf.StaticPieExecutable. Linux
+	// Pair with the arm64 Assembler.BytesProgramPIE + elf.StaticPieExecutable. Linux
 	// only (the Darwin path is its own non-PIE Mach-O image).
 	PIE bool
 

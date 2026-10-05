@@ -248,11 +248,7 @@ func TestInterpMknod(t *testing.T) {
 // and the call site's position.
 func TestWASMMknodRefused(t *testing.T) {
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build fern: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 	srcPath := filepath.Join(dir, "mk.fern")
 	src := `function main(): i32 {
     match (mknod("p", 4096, 0, 0)) { Ok(_) => { return 0; }, Err(_) => { return 1; } }

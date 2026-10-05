@@ -406,6 +406,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e051-result-is-the-borrowed-parameter", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction passthru(xs: i32[]): i32[] { return xs; }\nfunction main(): i32 { return keep(passthru([1, 2])); }\n", []string{"E051"}},
 		{"e051-result-borrowed-through-a-local", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction hop(xs: i32[]): i32[] {\n    let y: i32[] = xs;\n    return y;\n}\nfunction main(): i32 { return keep(hop([1, 2])); }\n", []string{"E051"}},
 		{"e051-result-borrowed-through-a-chain", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction passthru(xs: i32[]): i32[] { return xs; }\nfunction relay(ys: i32[]): i32[] { return passthru(ys); }\nfunction main(): i32 { return keep(relay([1, 2])); }\n", []string{"E051"}},
+		// A top-level const is a fresh value at every use, so it may be handed
+		// to an `own` parameter; a parameter of the same name shadows it (#11471).
+		{"own-accepts-a-const-array", "const W: i32[] = [1, 2];\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction main(): i32 { return keep(W); }\n", nil},
+		{"e051-param-shadows-a-const", "const W: i32[] = [1, 2];\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(W: i32[]): i32 { return keep(W); }\nfunction main(): i32 { return f([3]); }\n", []string{"E051"}},
 		// Call-site checks against a fn-typed PARAM (#5986's last half): the
 		// param resolves to a real TypeFunc from its sidecars, so a
 		// non-function argument draws E038 — the same code native emits —

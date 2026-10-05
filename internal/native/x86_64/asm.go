@@ -232,14 +232,6 @@ func (a *Assembler) BytesProgramWX(textVAddr, rodataVAddr uint64) (text, rodata 
 	return text, rodata, err
 }
 
-// BytesProgramPIE is the W^X layout laid out from a load base of 0, returning
-// the R_X86_64_RELATIVE relocations the `.quad <symbol>` slots need.
-// rip-relative code is base-independent and needs none. Both addresses come
-// from elf.SegmentAddrsPIEX86(TextLen()).
-func (a *Assembler) BytesProgramPIE(textVAddr, rodataVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
-	return a.layout(textVAddr, rodataVAddr, true)
-}
-
 // TextLabelVAddr returns the virtual address of a .text symbol
 // (textVAddr + its byte offset), or false when name is not a defined .text
 // label. Only meaningful after a BytesProgram* call has settled the layout,
@@ -273,7 +265,7 @@ func (a *Assembler) Files() map[int]string { return a.files }
 // says where .text and the data blob load. The data address cannot be known
 // any earlier — branch relaxation settles the size — and deriving it here
 // instead would leave the image with two authorities that have to agree.
-// Pass elf.SegmentAddrsWXX86 or elf.SegmentAddrsPIEX86.
+// Pass elf.SegmentAddrsWXX86.
 type SegmentAddrs func(textLen int) (textVAddr, dataVAddr uint64)
 
 // resolve parses src, settles the size of .text, and asks addrs where the
@@ -346,32 +338,6 @@ func AssembleProgramWXSyms(src string, addrs SegmentAddrs) (text, rodata []byte,
 		return nil, nil, nil, nil, err
 	}
 	return text, rodata, a.TextLabelVAddrs(textVAddr), a.LocRows(), nil
-}
-
-// AssembleProgramShared assembles for a shared object (.so): the same
-// base-0 PIE layout, but it also resolves each `.text` label in
-// exportNames to its load-base-relative virtual address (textVAddr +
-// offset) and returns them in exportVAddr — the addresses elf.SharedLibrary
-// records in .dynsym so a dynamic loader can resolve the exports. Pass
-// elf.SegmentAddrsPIEX86.
-func AssembleProgramShared(src string, addrs SegmentAddrs, exportNames []string) (text, rodata []byte, relocs []Reloc, exportVAddr map[string]uint64, err error) {
-	a, textVAddr, dataVAddr, err := resolve(src, addrs)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	text, rodata, relocs, err = a.BytesProgramPIE(textVAddr, dataVAddr)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	exportVAddr = map[string]uint64{}
-	for _, n := range exportNames {
-		v, ok := a.TextLabelVAddr(n, textVAddr)
-		if !ok {
-			return nil, nil, nil, nil, fmt.Errorf("export %q is not a defined .text symbol", n)
-		}
-		exportVAddr[n] = v
-	}
-	return text, rodata, relocs, exportVAddr, nil
 }
 
 // NewProgram is an empty program positioned in .text, to be built with

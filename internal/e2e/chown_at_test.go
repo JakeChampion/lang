@@ -291,11 +291,7 @@ func TestInterpChownAt(t *testing.T) {
 // name and the call site's position.
 func TestWASMChownAtRefused(t *testing.T) {
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build fern: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 	srcPath := filepath.Join(dir, "ch.fern")
 	src := `function main(): i32 {
     match (chown_at("f", 0, 0, true)) { Ok(_) => { return 0; }, Err(_) => { return 1; } }

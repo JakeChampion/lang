@@ -175,3 +175,39 @@ func TestSelfHostWasmComponentCreateDirAll(t *testing.T) {
 		t.Errorf("vendor/pkg/src is not a directory under the preopen (err = %v)", err)
 	}
 }
+
+// TestSelfHostWasmComponentDropCache runs drop_cache on a writer and a reader.
+// The fern world must declare descriptor.advise for the CLI to compose it at
+// all, which is how coreutils' dd builds for wasm32-wasi. A host may ignore the
+// advice, so what runs is the success path and the bytes left behind.
+func TestSelfHostWasmComponentDropCache(t *testing.T) {
+	requireWasmTools(t)
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	comp, printed := buildFsMutateComponent(t, cli, dir, `function main(): i32 {
+    match (open_writer("cached.txt")) {
+        Ok(w) => {
+            match (w.write("cached\n")) { None => {}, Some(_) => { return 1; } }
+            match (w.drop_cache(0i64, 0i64)) { None => {}, Some(_) => { return 1; } }
+            w.close();
+        },
+        Err(_) => { return 1; }
+    }
+    match (open_reader("cached.txt")) {
+        Ok(r) => {
+            match (r.drop_cache(2i64, 0i64)) { None => {}, Some(_) => { return 1; } }
+            match (r.read_chunk(6)) { Ok(c) => { if (c != "cached") { return 1; } }, Err(_) => { return 1; } }
+        },
+        Err(_) => { return 1; }
+    }
+    return 0;
+}`)
+	checkDeclares(t, printed, []string{"[method]descriptor.advise"}, []string{"[method]descriptor.set-size"})
+	run := t.TempDir()
+	if out, err := exec.Command("wasmtime", "run", "--dir", run, comp).CombinedOutput(); err != nil {
+		t.Errorf("drop_cache: wasmtime run: %v\n%s", err, out)
+	}
+	if got, err := os.ReadFile(filepath.Join(run, "cached.txt")); err != nil || string(got) != "cached\n" {
+		t.Errorf("cached.txt = %q (err = %v), want %q", got, err, "cached\n")
+	}
+}

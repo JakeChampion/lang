@@ -109,7 +109,7 @@ func TestSegmentMapGateSeesCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n < 12 {
+	if n < 9 {
 		t.Fatalf("the scan found only %d segment-map call sites — the pattern has gone stale, which makes TestSegmentMapMatchesAssembler vacuous", n)
 	}
 }
@@ -173,9 +173,10 @@ func TestUnwindMapUsesAreTypePinned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The elf package's own two definitions, plus one wrapper per target in
-	// the driver. Fewer means the naming moved and this scan sees nothing.
-	if uses < 4 {
+	// The elf package's own two definitions; the driver's per-target wrappers
+	// went with cmd/fern's native compile path. Fewer means the naming moved
+	// and this scan sees nothing.
+	if uses < 2 {
 		t.Fatalf("the scan found only %d uses of the unwind maps — the pattern has gone stale, which makes this test vacuous", uses)
 	}
 }

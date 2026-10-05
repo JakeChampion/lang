@@ -21,9 +21,6 @@ import (
 // the string shape leaked only there; on arm64 and wasm it is a heap box whose
 // deep drop already balanced it. Option[i32[]] is pair-form on every target,
 // so the array shape is the same bug on all three.
-//
-// Built by the Go compiler: the self-host lowers this shape on its own and
-// never leaked it.
 func TestReturnedPairFormMatchPayloadIsReleased(t *testing.T) {
 	shapes := []struct{ name, src string }{
 		{"string_payload", `
@@ -84,15 +81,15 @@ function main(): i32 {
 }`},
 	}
 
-	checkGoCompilerCensusOnEveryTarget(t, shapes,
+	checkCensusOnEveryTarget(t, shapes,
 		"the payload a returning arm hands back leaks once per match (#11479)")
 }
 
-// checkGoCompilerCensusOnEveryTarget builds each shape with the Go compiler's
-// CLI under FERN_LEAKCHECK for x86-64, arm64 and wasm, runs it, and requires a
+// checkCensusOnEveryTarget builds each shape with the fern CLI under
+// FERN_LEAKCHECK for x86-64, arm64 and wasm, runs it, and requires a
 // zero exit and a balanced census. A shape returns 99 for a non-zero
 // __rc_underflow_count() and 1 for a wrong answer.
-func checkGoCompilerCensusOnEveryTarget(t *testing.T, shapes []struct{ name, src string }, leakWhy string) {
+func checkCensusOnEveryTarget(t *testing.T, shapes []struct{ name, src string }, leakWhy string) {
 	t.Helper()
 	fern := buildFernCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {

@@ -10,9 +10,6 @@ import "testing"
 // leaked on every call, and with string elements the pushed element leaked
 // with it. The grow helper counts its result on both arms, so the binding owns
 // a reference of its own and reclaims it.
-//
-// Built by the Go compiler: the self-host lowers this shape on its own and
-// never leaked it.
 func TestAppendOnBorrowedParamIsReleased(t *testing.T) {
 	shapes := []struct{ name, src string }{
 		{"i32_elements", `
@@ -95,6 +92,6 @@ function main(): i32 {
 }`},
 	}
 
-	checkGoCompilerCensusOnEveryTarget(t, shapes,
+	checkCensusOnEveryTarget(t, shapes,
 		"the append result bound on a borrowed parameter leaks once per call (#11487)")
 }

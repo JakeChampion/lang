@@ -281,13 +281,14 @@ type environment struct {
 	entry        EntryShape
 }
 
-// Every environment lists BOTH entry shapes because every target compiles
-// both: a `handle` program gets the synthesised main (the supervised serve
-// loop on the hosted natives, which grant `proc`; the single-process loop
-// on WASI CLI, whose descriptor grants `tcp` and no processes; the
-// incoming-handler wrapper on the proxy world), and a program that writes
-// its own `main` keeps it. The lists said otherwise on all six targets --
-// one kind each, none of them the whole truth -- because nothing read the
+// A process environment lists BOTH entry shapes because it compiles both: a
+// `handle` program gets the synthesised main (the supervised serve loop on
+// the hosted natives, which grant `proc`; the single-process loop on WASI
+// CLI, whose descriptor grants `tcp` and no processes), and a program that
+// writes its own `main` keeps it. The proxy world lists `handle` alone: the
+// host only ever calls the exported handler, so a `main` there has nothing
+// to run it and the compiler refuses it. The lists were once one kind each
+// on all six targets, none of them the whole truth, because nothing read the
 // field. TestHandlerKindsMatchWhatTheCompilerAccepts is what stops it
 // drifting back: it compiles both shapes for every emitting target and
 // fails if the descriptor and the compiler disagree in either direction.
@@ -303,7 +304,7 @@ var environments = map[string]environment{
 
 	"wasi-http": {
 		profile:      "wasi-proxy",
-		handlerKinds: []string{"handle", "main"},
+		handlerKinds: []string{"handle"},
 		// The proxy world never enters the component; the host calls
 		// the exported `handle`.
 		entry: EntryExports,

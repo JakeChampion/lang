@@ -177,92 +177,52 @@ func TestWasmP3AsyncExportU64FromFern(t *testing.T) {
 	}
 }
 
-// TestCmdLangAsyncExport drives a Fern program through the actual CLI
-// (`fern -target wasm32-wasi -emit core-module -async-export`) and runs the produced
-// component's `run: async func() -> u32` export under wasmtime's async
-// features — the user-facing surface for WASI Preview-3 async exports.
-func TestCmdLangAsyncExport(t *testing.T) {
-	skipIfPreview2Missing(t)
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "aexport.fern")
-	if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 7 * 6; }\n"), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	compPath := filepath.Join(dir, "aexport.wasm")
-	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm32-wasi", "-emit", "core-module", "-async-export", "-o", compPath, srcPath)
-	cmd.Dir = projectRoot(t)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("fern -async-export failed: %v\n%s", err, out)
-	}
-	out, err := exec.Command("wasmtime", "run",
-		"-W", "component-model-async,component-model-async-stackful",
-		"--invoke", "run()", compPath).CombinedOutput()
-	if err != nil {
-		t.Fatalf("wasmtime run (async): %v\n%s", err, out)
-	}
-	if !bytes.Contains(out, []byte("42")) {
-		t.Errorf("CLI async export: got %q, want 42", bytes.TrimSpace(out))
-	}
-}
+// TestWasmP3AsyncExportF64FromFern is the f64 width of
+// TestWasmP3AsyncExportU64FromFern: `async function half(): f64` is lifted as
+// `half: async func() -> f64`, with the task-return import width-matched to
+// f64, and prints 3.5 under wasmtime's async features.
+func TestWasmP3AsyncExportF64FromFern(t *testing.T) {
+	skipIfPreview2Missing(t) // ensures wasmtime on PATH
 
-// TestCmdLangAsyncFunctionKeyword drives the `async function` keyword
-// through the CLI (no -async-export flag): the async-marked function is
-// lifted as the component's `<name>: async func() -> u32` export, run
-// under wasmtime's async features.
-func TestCmdLangAsyncFunctionKeyword(t *testing.T) {
-	skipIfPreview2Missing(t)
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "akw.fern")
-	src := "async function compute(): i32 { return 6 * 7; }\nfunction main(): i32 { return 0; }\n"
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	compPath := filepath.Join(dir, "akw.wasm")
-	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm32-wasi", "-emit", "core-module", "-o", compPath, srcPath)
-	cmd.Dir = projectRoot(t)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("fern (async function) failed: %v\n%s", err, out)
-	}
-	// The async-marked function is exported under its own name.
-	out, err := exec.Command("wasmtime", "run",
-		"-W", "component-model-async,component-model-async-stackful",
-		"--invoke", "compute()", compPath).CombinedOutput()
-	if err != nil {
-		t.Fatalf("wasmtime run (async): %v\n%s", err, out)
-	}
-	if !bytes.Contains(out, []byte("42")) {
-		t.Errorf("async function keyword: got %q, want 42", bytes.TrimSpace(out))
-	}
-}
-
-// TestCmdLangAsyncFunctionKeywordF64 drives an `async function` returning a
-// non-i32 scalar through the CLI: `async function half(): f64 { return 3.5; }`
-// is lifted as `half: async func() -> f64` (the CLI derives the component result
-// valtype from the source's return type). Running `half()` under wasmtime's
-// async features prints 3.5 — proving the async export width plumbing works end
-// to end from `fern -target wasm32-wasi -emit core-module`, not just the i32 default.
-func TestCmdLangAsyncFunctionKeywordF64(t *testing.T) {
-	skipIfPreview2Missing(t)
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "akwf.fern")
 	src := "async function half(): f64 { return 3.5; }\nfunction main(): i32 { return 0; }\n"
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
+		t.Fatal(err)
 	}
-	compPath := filepath.Join(dir, "akwf.wasm")
-	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm32-wasi", "-emit", "core-module", "-o", compPath, srcPath)
-	cmd.Dir = projectRoot(t)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("fern (async function f64) failed: %v\n%s", err, out)
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		Preview2WASI:    true,
+		AsyncExportName: "__async_run",
+		AsyncSourceFunc: "half",
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+	comp := component.BuildAsyncLiftedExportComponent(core, "__async_run", "half", component.CValtypeF64)
+
+	p := filepath.Join(dir, "fern_async_f64.wasm")
+	if err := os.WriteFile(p, comp, 0o644); err != nil {
+		t.Fatal(err)
 	}
 	out, err := exec.Command("wasmtime", "run",
 		"-W", "component-model-async,component-model-async-stackful",
-		"--invoke", "half()", compPath).CombinedOutput()
+		"--invoke", "half()", p).CombinedOutput()
 	if err != nil {
-		t.Fatalf("wasmtime run (async f64): %v\n%s", err, out)
+		t.Fatalf("wasmtime run (async f64 export): %v\n%s", err, out)
 	}
 	if !bytes.Contains(out, []byte("3.5")) {
 		t.Errorf("async f64 export: got %q, want 3.5", bytes.TrimSpace(out))

@@ -103,9 +103,10 @@ freeing dec quarantines.
 
 The arm64 family's Mach-O member is gated the same way:
 `arm64_darwin_sanitizer_test.go` (`TestArm64DarwinSanitize`, the macos lane)
-builds the same probes through the CLI's `-sanitize` and runs them natively on
-Apple Silicon, so `-target arm64-darwin` is covered by a test and not only by
-the coverage table in `cmd/fern`.
+builds the self-host's probes through the CLI's `-sanitize` and runs them
+natively on Apple Silicon. There `__rc_dec` is the freeing dec, so a stale
+`__fern_rc_inc` and a second `__rc_dec` both land on the quarantine's poison
+and report the use-after-free.
 
 `-sanitize` on a target that is not fully covered **warns and names what the
 build does carry**, so a silent run is never mistaken for a checked one. On

@@ -110,11 +110,9 @@ const sanLeakSrc = `function main(): i32 {
     return 42;
 }`
 
-// sanDoubleFreeSrc releases a buffer twice. On the self-host __rc_dec is the
-// freeing dec, so the first call reclaims the block and poisons its rc word
-// and the second touches the poison: a use-after-free report. Native's
-// __rc_dec never frees, so its leg (TestArm64DarwinSanitize) reads rc 0 and
-// reports the over-release instead (docs/SANITIZER.md).
+// sanDoubleFreeSrc releases a buffer twice. __rc_dec is the freeing dec, so
+// the first call reclaims the block and poisons its rc word and the second
+// touches the poison: a use-after-free report.
 const sanDoubleFreeSrc = `function main(): i32 {
     let a: u8[] = __alloc_u8(16);
     __rc_dec(a);
@@ -139,22 +137,10 @@ const sanQuarantineSrc = `function main(): i32 {
     return (b / 1024) as i32;
 }`
 
-// sanUseAfterFreeSrc builds a real dangling reference on native, whose
-// plain __rc_dec never frees: __fern_arr_dec on the data pointer takes the
-// rc==1 buffer to zero, poisons its rc word and frees the block, and the
-// retained raw address then reaches __fern_rc_inc, which reads the poison.
-// Native's Darwin leg (TestArm64DarwinSanitize) runs it.
-const sanUseAfterFreeSrc = `function main(): i32 {
-    let a: u8[] = __alloc_u8(16);
-    let p: usize = a as usize;
-    __fern_arr_dec(p, 1);
-    __fern_rc_inc(p);
-    return 0;
-}`
-
-// sanStaleTouchSrc is the same dangling reference on the self-host, where
-// __fern_arr_dec is core/map's no-op array release and __rc_dec is the
-// freeing dec. Perceus's own drop of `a` at scope exit is never reached.
+// sanStaleTouchSrc builds a real dangling reference: __rc_dec frees the
+// buffer and poisons its rc word, and the retained raw address then reaches
+// __fern_rc_inc, which reads the poison. Perceus's own drop of `a` at scope
+// exit is never reached.
 const sanStaleTouchSrc = `function main(): i32 {
     let a: u8[] = __alloc_u8(16);
     let p: usize = a as usize;

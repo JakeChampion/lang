@@ -183,11 +183,7 @@ func TestArm64DarwinWindowSize(t *testing.T) {
 // so with the builtin's name and the call site's position.
 func TestWASMWindowSizeRefused(t *testing.T) {
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build fern: %v\n%s", err, out)
-	}
+	bin := buildFernCLI(t)
 	srcPath := filepath.Join(dir, "w.fern")
 	src := `function main(): i32 {
     match (window_size(1)) { Ok(ws) => { return 0; }, Err(e) => { return 1; } }

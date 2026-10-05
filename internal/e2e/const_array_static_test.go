@@ -10,10 +10,8 @@ import "testing"
 // header. A constant is now one static array under the immortal rc, so a read
 // is its address, and every write path has to see it as shared: a push grows
 // into a fresh buffer, a `.with` copies, and the constant reads the same
-// afterwards.
-//
-// Built by the Go compiler: the self-host places constant literals in its
-// static constant pool and never allocated them.
+// afterwards. The scan buffer is built from a runtime value, so the census
+// has an allocation to balance.
 func TestConstArrayReadsDoNotAllocate(t *testing.T) {
 	shapes := []struct{ name, src string }{
 		{"reads", `
@@ -30,8 +28,11 @@ function pick_wide(i: i32): i32 { return WIDE[i % 4]; }
 @noinline
 function scan(buf: u8[]): i32 { return __scan_set_bytes(buf, 0, STOP); }
 
+@noinline
+function buffer(last: i32): u8[] { return [0u8, 1u8, 2u8, last as u8]; }
+
 function main(): i32 {
-  let buf: u8[] = [0u8, 1u8, 2u8, 1u8];
+  let buf: u8[] = buffer(1);
   let before: i64 = __heap_alloc_count();
   let i: i32 = 0;
   let narrow: i32 = 0;
@@ -111,6 +112,6 @@ function main(): i32 {
 }`},
 	}
 
-	checkGoCompilerCensusOnEveryTarget(t, shapes,
+	checkCensusOnEveryTarget(t, shapes,
 		"a copy made from a constant array leaks (#11471)")
 }
