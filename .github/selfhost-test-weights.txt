@@ -302,6 +302,7 @@ TestSelfHostCmpBranchFusion 2
 TestSelfHostCmpCoreIRX86_64 5
 TestSelfHostCmpHelpersIRX86_64 2
 TestSelfHostCompilePathEnforcesFipBudget 3
+TestSelfHostCompilerFreesWhatItAllocatesX86_64 40
 TestSelfHostComposeFromUserWorld 40
 TestSelfHostComposeFromWorld 23
 TestSelfHostComposeHttpFromProxyWorld 32

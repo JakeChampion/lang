@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -18,11 +17,11 @@ import (
 // runtime is needed. Admission: every element must be a fresh no-base struct
 // LITERAL ("STRUCTARR:"); a bare element bind (`let q = g[0]`) or a `for p in g`
 // whose body lets `p` escape rejects the candidate (the element pointer would
-// dangle). The elements' own rc-array / string FIELDS still leak (sound) — the
-// deep per-element __struct_drop_<T> walk is a follow-up, so these fixtures use
-// scalar-field structs.
+// dangle). These fixtures use scalar-field structs. Every run must also leave a
+// balanced census.
 func TestSelfHostStructArrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
+	t.Setenv("FERN_LEAKCHECK", "1")
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
 	if err != nil {
@@ -40,15 +39,13 @@ func TestSelfHostStructArrReclaimIRX86_64(t *testing.T) {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(bin)
-		} else {
-			cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-		}
-		_ = cmd.Run()
-		if code := cmd.ProcessState.ExitCode(); code != want {
+		stderr, code := hevRun(t, runner, bin)
+		if code != want {
 			t.Errorf("%s exited %d, want %d (98 = element boxes leaked; 99 = over-release; 88 = live value freed; 97 = value corrupted)", name, code, want)
+		}
+		allocs, frees, live := parseLeakcheck(t, name, stderr)
+		if live != 0 || allocs != frees {
+			t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", name, allocs, frees, live)
 		}
 	}
 
@@ -128,10 +125,8 @@ function main(): i32 {
     return 0;
 }`, "structarr-iter-flat", 0)
 
-	// ELEMENT-ALIAS exclusion: `let q = g[0]` binds an element struct box, so
-	// the candidate is rejected (structarr_elem_escapes) — the structure keeps
-	// its prior sound leak and q stays a valid, correctly-valued box (never
-	// freed under it).
+	// ELEMENT ALIAS: `let q = g[1]` binds an element struct box, which must stay
+	// a valid, correctly-valued box (never freed under it).
 	run(t, `struct P { x: i32, y: i32 }
 function main(): i32 {
     let bad: i32 = 0;

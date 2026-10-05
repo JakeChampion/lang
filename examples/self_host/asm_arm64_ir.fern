@@ -4545,6 +4545,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   let h: usize = buf_new(256);
   s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, asmcore.EmitState { ...s, capture: h });
   let arm: string = buf_take(h);
+  buf_free(h);
   s = asmcore.EmitState { ...s, capture: outer };
   let pops: string[] = ssa_leading_pops(arm, ins.args.len());
   if (!ssa_pops_ordered(ins, reg_of, pops)) {
@@ -12068,6 +12069,7 @@ function emit_ir_runtime_settled(s0: asmcore.EmitState, darwin: boolean): asmcor
     let h: usize = buf_new(65536);
     let t: asmcore.EmitState = emit_ir_runtime(asmcore.EmitState { ...s, capture: h }, darwin);
     let text: string = buf_take(h);
+    buf_free(h);
     if (t.needed.len() == s.needed.len()) {
       settled = true;
       let back: asmcore.EmitState = asmcore.EmitState { ...t, capture: s0.capture };

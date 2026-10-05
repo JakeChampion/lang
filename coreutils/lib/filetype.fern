@@ -113,7 +113,9 @@ pub function type_name(mode: u32, size: i64): string {
 pub function type_letter(mode: u32): string {
   let h: usize = buf_new(1);
   buf_push_byte(h, type_letter_byte(mode));
-  return buf_take(h);
+  let letter: string = buf_take(h);
+  buf_free(h);
+  return letter;
 }
 
 function type_letter_byte(mode: u32): i32 {
@@ -186,5 +188,7 @@ pub function mode_string(mode: u32): string {
   push_triple(h, mode, 6, 0x800 as u32, 115, 83);
   push_triple(h, mode, 3, 0x400 as u32, 115, 83);
   push_triple(h, mode, 0, 0x200 as u32, 116, 84);
-  return buf_take(h);
+  let text: string = buf_take(h);
+  buf_free(h);
+  return text;
 }

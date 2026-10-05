@@ -116,22 +116,6 @@ func heapFlatMain(iters string) string {
 }`
 }
 
-// balancedMain is heapFlatMain without the growth check, for the shapes the
-// admission deliberately DECLINES: an aliased or base-copied enum field is not
-// sole-owned, so it keeps today's shallow path and its payload still leaks. Their
-// contract is that declining is SAFE — the reads after the sweep still see live
-// data (90/91) and nothing was released twice (99) — not that they are flat.
-// Asserting flatness here would assert a leak that is out of scope for #6696 and
-// would make this file fail for a reason it does not own.
-func balancedMain(iters string) string {
-	return `function main(): i32 {
-    if (drive(50) != 0) { return 90; }
-    if (drive(` + iters + `) != 0) { return 91; }
-    if (__rc_underflow_count() != 0) { return 99; }
-    return 0;
-}`
-}
-
 // TestSelfHostStructEnumFieldPayloadDropIRX86_64 pins #6696: the VARIANT PAYLOAD
 // of a struct's direct enum field is released when the struct is swept.
 //
@@ -145,7 +129,7 @@ func balancedMain(iters string) string {
 // reclaim), an aliased BOX and a base-copied field (the __fern_rc_is_unique gate
 // must decline — releasing there frees a payload another owner still reads), and
 // an aliased PAYLOAD (must reclaim AND stay balanced, since a bare-ident array
-// payload gets the variant-construction alias-inc). Growth proves the reclaim;
+// payload gets the variant-construction alias-inc). All four must be flat;
 // exit 99 would catch the over-release the aliased shapes risk.
 func TestSelfHostStructEnumFieldPayloadDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -178,11 +162,11 @@ func TestSelfHostStructEnumFieldPayloadDropIRX86_64(t *testing.T) {
 		}
 	}
 
-	flat, balanced := heapFlatMain("200000"), balancedMain("200000")
+	flat := heapFlatMain("200000")
 	run(t, churnEnumFieldFresh+flat, "enum-field-fresh-payload-reclaimed")
 	run(t, churnEnumFieldAliasedPayload+flat, "enum-field-aliased-payload-balanced")
-	run(t, churnEnumFieldAliasedBox+balanced, "enum-field-aliased-box-balanced")
-	run(t, churnEnumFieldBaseCopy+balanced, "enum-field-base-copy-balanced")
+	run(t, churnEnumFieldAliasedBox+flat, "enum-field-aliased-box-balanced")
+	run(t, churnEnumFieldBaseCopy+flat, "enum-field-base-copy-balanced")
 }
 
 // TestSelfHostStructEnumFieldPayloadDropIRArm64 is the arm64 leg of #6696. The
@@ -210,11 +194,11 @@ func TestSelfHostStructEnumFieldPayloadDropIRArm64(t *testing.T) {
 		}
 	}
 
-	flat, balanced := heapFlatMain("20000"), balancedMain("20000")
+	flat := heapFlatMain("20000")
 	run(t, churnEnumFieldFresh+flat, "enum-field-fresh-payload-reclaimed")
 	run(t, churnEnumFieldAliasedPayload+flat, "enum-field-aliased-payload-balanced")
-	run(t, churnEnumFieldAliasedBox+balanced, "enum-field-aliased-box-balanced")
-	run(t, churnEnumFieldBaseCopy+balanced, "enum-field-base-copy-balanced")
+	run(t, churnEnumFieldAliasedBox+flat, "enum-field-aliased-box-balanced")
+	run(t, churnEnumFieldBaseCopy+flat, "enum-field-base-copy-balanced")
 }
 
 // TestSelfHostStructEnumFieldPayloadDropWasm is the wasm leg of #6696, and it
@@ -253,11 +237,11 @@ func TestSelfHostStructEnumFieldPayloadDropWasm(t *testing.T) {
 		}
 	}
 
-	flat, balanced := heapFlatMain("200000"), balancedMain("200000")
+	flat := heapFlatMain("200000")
 	// Without $__sem_drop_S the struct is not swept at all and the growth check
 	// proves nothing.
 	run(t, churnEnumFieldFresh+flat, "enum-field-fresh-payload-reclaimed", "$__sem_drop_S")
 	run(t, churnEnumFieldAliasedPayload+flat, "enum-field-aliased-payload-balanced", "")
-	run(t, churnEnumFieldAliasedBox+balanced, "enum-field-aliased-box-balanced", "")
-	run(t, churnEnumFieldBaseCopy+balanced, "enum-field-base-copy-balanced", "")
+	run(t, churnEnumFieldAliasedBox+flat, "enum-field-aliased-box-balanced", "")
+	run(t, churnEnumFieldBaseCopy+flat, "enum-field-base-copy-balanced", "")
 }
