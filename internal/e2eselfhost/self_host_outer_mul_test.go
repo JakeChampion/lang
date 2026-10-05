@@ -21,6 +21,11 @@ const outerMulSrc = `import "std/array";
   return f64_from_bits(bits[i % bits.len()]);
 }
 @noinline function scalar(x: f64, y: f64): f64 { return x * y; }
+// FS-04 leaves arithmetic NaN payloads unspecified; all other bits are exact.
+function same_result(actual: f64, expected: f64): boolean {
+  if (expected != expected) { return actual != actual; }
+  return f64_bits(actual) == f64_bits(expected);
+}
 function build(n: i32): f64[] {
   let xs: f64[] = [];
   let i: i32 = 0;
@@ -35,7 +40,7 @@ function check(a: f64[], b: f64[]): boolean {
   while (i < a.len()) {
     let j: i32 = 0;
     while (j < b.len()) {
-      if (f64_bits(out[i * b.len() + j]) != f64_bits(scalar(a[i], b[j]))) { return false; }
+      if (!same_result(out[i * b.len() + j], scalar(a[i], b[j]))) { return false; }
       if (f64_bits(b[j]) != f64_bits(value(j))) { return false; }
       j = j + 1;
     }
