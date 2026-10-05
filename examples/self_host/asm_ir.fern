@@ -6203,7 +6203,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 322) {  // scale_f64
     // Flag1 is the physical planner's sole-owned-buffer form. It skips
     // allocation and uses the same pointer for reads and writes.
-    // operand stack [xs, k bits] -> the data pointer of a fresh f64
+    // operand stack [xs, k bits] -> the data pointer of an f64
     // array of xs's length whose element i is xs[i] * k.
     //
     // SSE2 (§3.4 step 3): mulpd over two lanes, with the scalar loop as
@@ -6224,11 +6224,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // serves the vector body and the tail both, since the tail reads only
     // lane 0.
     //
-    // Both bodies multiply the ELEMENT by the factor, in that operand
-    // order, so the two cannot disagree about which NaN a NaN times a NaN
-    // yields.
+    // Both bodies multiply the element by the factor in that operand
+    // order. Arithmetic NaN payloads remain unspecified (FS-04).
     //
-    // The result comes from __fern_arr_box(n), which writes the rc
+    // Flag0 allocates the result with __fern_arr_box(n), which writes the rc
     // header and len = n; this backend's arrays keep len at [arr] and
     // element i at [arr + 8 + i*8]. Both operands are spilled around
     // that call, since it clobbers the caller-saved set. The float

@@ -9598,8 +9598,8 @@ pub function sum_bytes_helper(): string {
   return o;
 }
 
-// scale_f64_helper emits $__fern_scale_f64(xs, k) -> the data pointer of a
-// fresh f64 array of xs's length whose element i is xs[i] * k
+// scale_f64_helper emits $__fern_scale_f64(xs, k, reuse) -> the data pointer
+// of an f64 array of xs's length whose element i is xs[i] * k
 // (ATLAS-PLATFORM-PLAN §3.3, eighth kernel; the first over an array and the
 // first with a buffer out).
 //
@@ -9618,9 +9618,9 @@ pub function sum_bytes_helper(): string {
 // same reason: this emitter writes its own locals list, so a v128 local costs
 // one declaration.
 //
-// The result comes from $__fern_arr_box, whose block keeps len at [a],
-// cap at [a+4] and element i at [a + 8 + i*8]; both are set to n here, the
-// way $__fern_random_bytes sets them for the array it fills.
+// Without reuse, $__fern_arr_elems allocates the result. Its block keeps
+// len at [a], cap at [a+4] and element i at [a + 8 + i*8]; len and cap are
+// set to n here, the way $__fern_random_bytes sets them for its result.
 // With reuse set, ownership lowering has already made a sole-owned buffer.
 // Preserve its header and capacity, and write back into the same data.
 pub function scale_f64_helper(): string {
