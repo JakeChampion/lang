@@ -1114,22 +1114,18 @@ Worth knowing so you do not assume coverage you do not have:
   a conformance case rather than a Go test, it also survives the freeze
   this document's own framing is organised around.
 
-- **Allocation COUNT between the two compilers — gated by
-  `TestSelfHostAllocCountMatrixX86_64`** (`internal/e2eselfhost/testdata/
-  selfhost-alloc-count-matrix.txt`). The differential below measures BYTES and
-  the leak matrix measures a clean/leak verdict; neither can see one compiler
-  spending twice as many BLOCKS as the other on the same values, which is how
-  #7351 — every self-host heap string costing a box block and a data block where
-  native's cost one — survived every reclaim fix in flight. This gate compiles
-  one corpus with both compilers under `FERN_LEAKCHECK=1` and pins
-  blocks-per-round for each side. Counts, not bytes, on purpose: one block per
-  array, one per struct box, one per heap string is a property of the value
-  graph, so it survives the header and capacity changes that make a byte budget
-  rot. `TestX86_64AllocScaling` bounds a ratio INSIDE one compiler and is blind
-  to a constant factor between two; this is the other half. The pin file's only
-  disagreeing rows today are the two SSO ones — native x86-64 keeps a string of
-  7 bytes or fewer inline in the value word and the self-host has no inline form
-  — so the file reads as the volume-divergence list.
+- **Allocation COUNT — gated by `TestSelfHostAllocCountMatrixX86_64`**
+  (`internal/e2eselfhost/testdata/selfhost-alloc-count-matrix.txt`). The leak
+  matrix measures a clean/leak verdict and cannot see a program spending more
+  BLOCKS than its values need, which is how #7351 — every self-host heap string
+  costing a box block and a data block — survived every reclaim fix in flight.
+  This gate compiles one corpus under `FERN_LEAKCHECK=1` and pins blocks per
+  round, with the interpreter's exit code as the wrong-answer oracle. Counts,
+  not bytes, on purpose: one block per array, one per struct box, one per heap
+  string is a property of the value graph, so it survives the header and
+  capacity changes that make a byte budget rot. `TestX86_64AllocScaling` bounds
+  a ratio inside one compiler and is blind to a constant factor; this pins the
+  factor.
 
 - **Allocation volume — gated by `TestSelfHostAllocDifferentialX86_64`.**
   Nothing used to measure how much a compiler allocates, which is how the two
