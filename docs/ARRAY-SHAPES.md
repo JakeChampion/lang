@@ -729,8 +729,8 @@ Four consequences:
   now is: vectorised on all eight backends, and reached by
   `xs.map((x: f64): f64 => x * k)` without the wrapper being written, for a
   literal k or a captured one (`ATLAS-PLATFORM-PLAN.md` §3.4's four steps,
-  with the measurements), allocating its own result so no
-  sized-array primitive was needed, and chosen over the dot product
+  with the measurements). Its fresh-output form allocates the result, so no
+  sized-array primitive was needed. It was chosen over the dot product
   because a reduction may not reassociate (`ARRAY-ALGEBRA.md` §3) while a
   multiply has nothing to reassociate. The same kernel now reaches the
   ndarray `map` of that shape over a packed receiver (§6). The primary

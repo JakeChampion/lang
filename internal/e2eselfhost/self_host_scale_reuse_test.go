@@ -118,6 +118,7 @@ function main(): i32 {
   let literal_donor: f64[] = literal;
   literal_donor = consumed(literal_donor, 2.0);
   if (literal_donor[2] != 6.0 || literal[2] != 3.0) { return 8; }
+  if (__rc_underflow_count() != 0) { return 90; }
   return 0;
 }
 `
@@ -157,12 +158,13 @@ func TestSelfHostScaleReuseDecisions(t *testing.T) {
 			body := emittedBody(t, asm, "__fn_"+tc.name)
 			guard := strings.Contains(body, "cmpl $1, -8(")
 			copy := strings.Contains(body, "call __fn___fern_arr_slice")
-			fresh := strings.Contains(body, "call __fern_arr_box")
+			boxes := strings.Count(body, "call __fern_arr_box")
+			inPlace := strings.Contains(body, "movq %rax, %rsi\n    movq %rcx, %xmm1\n    unpcklpd")
 			if tc.reason == "guarded-reuse" {
-				if !guard || copy || !fresh || strings.Count(body, "unpcklpd") != 2 {
-					t.Fatalf("missing guarded SIMD reuse, guard=%t copy=%t fresh=%t\n%s", guard, copy, fresh, body)
+				if !guard || copy || boxes != 1 || !inPlace || strings.Count(body, "unpcklpd") != 2 {
+					t.Fatalf("missing guarded SIMD reuse, guard=%t copy=%t boxes=%d inPlace=%t\n%s", guard, copy, boxes, inPlace, body)
 				}
-			} else if !fresh {
+			} else if boxes == 0 {
 				t.Fatalf("refused site did not allocate a fresh kernel buffer:\n%s", body)
 			}
 		})
@@ -226,7 +228,7 @@ func runScaleTarget(t *testing.T, target, bin string, args ...string) *exec.Cmd 
 }
 
 func TestSelfHostScaleReuseValues(t *testing.T) {
-	for _, target := range []string{e2eharness.TargetArm64Linux, e2eharness.TargetWasm32Wasi} {
+	for _, target := range selfHostFusionTargets {
 		t.Run(target, func(t *testing.T) {
 			for _, disabled := range []string{"0", "1"} {
 				t.Run("disabled="+disabled, func(t *testing.T) {
@@ -234,9 +236,14 @@ func TestSelfHostScaleReuseValues(t *testing.T) {
 					if err := os.WriteFile(src, []byte(scaleReuseSrc), 0o644); err != nil {
 						t.Fatal(err)
 					}
-					bin := e2eharness.CompileSelfHostFile(t, target, src, []string{"FERN_SELFHOST_NO_REUSE=" + disabled})
-					if out, err := runScaleTarget(t, target, bin).CombinedOutput(); err != nil {
+					bin := e2eharness.CompileSelfHostFile(t, target, src, []string{"FERN_SELFHOST_NO_REUSE=" + disabled, "FERN_LEAKCHECK=1"})
+					out, err := runScaleTarget(t, target, bin).CombinedOutput()
+					if err != nil {
 						t.Fatalf("scale reuse: %v\n%s", err, out)
+					}
+					var allocs, frees, live int64
+					if _, err := fmtSscan(leakSummaryLine(string(out)), &allocs, &frees, &live); err != nil || allocs == 0 || allocs != frees || live != 0 {
+						t.Fatalf("scale reuse ownership: %v\n%s", err, out)
 					}
 				})
 			}
@@ -268,9 +275,14 @@ func TestSelfHostNdarrayScaleReuseAllocation(t *testing.T) {
 					t.Logf("disabled=%s shared=%s: %+v", disabled, shared, got)
 				}
 			}
-			unique, shared, fresh := results["00"], results["01"], results["10"]
-			if unique.Calls >= shared.Calls || unique.Bytes >= shared.Bytes || unique.Calls >= fresh.Calls || unique.Bytes >= fresh.Bytes {
-				t.Fatalf("reuse did not reduce both counters: unique=%+v shared=%+v disabled=%+v", unique, shared, fresh)
+			// Compare identical workloads with only the reuse switch changed.
+			// Shared mode performs an extra alias check that also allocates.
+			unique, fresh := results["00"], results["10"]
+			if unique.Calls >= fresh.Calls || unique.Bytes >= fresh.Bytes {
+				t.Fatalf("reuse did not reduce both counters: unique=%+v disabled=%+v", unique, fresh)
+			}
+			if results["01"] != results["11"] {
+				t.Fatalf("reuse changed shared-input counters: enabled=%+v disabled=%+v", results["01"], results["11"])
 			}
 		})
 	}
