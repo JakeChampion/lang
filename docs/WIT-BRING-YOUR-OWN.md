@@ -1564,12 +1564,14 @@ produces a response:
 > (`wit_proxy_world.fern`): the world-driven composer with `[resource-drop]`
 > lowerings and the incoming-handler export tail. The world bounds the
 > component's imports rather than dictating them: the prefix declares the
-> interfaces the core imports, the ones the export's types need, and what
-> those alias (`wit_decode.wit_import_plan`), so a handler that never reads
-> its configuration does not import `wasi:config/store` and serves without
+> functions the core imports and the types the export needs, each interface's
+> instance type pruned to those and the types they reach
+> (`wit_decode.wit_import_plan`), so a handler that never reads its
+> configuration does not import `wasi:config/store` and serves without
 > `-S config`, the same import surface the native path derives by classifying
-> the core. Native's `-target
-> wasm32-wasi-http` (`emitIncomingHandlerExport` / `compose_http.go` /
+> the core. A value type used from another interface that names no other type
+> (wall-clock's `datetime`) is declared inline rather than imported. Native's
+> `-target wasm32-wasi-http` (`emitIncomingHandlerExport` / `compose_http.go` /
 > `wasi_http.go`) emits the entry as wasm instructions instead;
 > `TestSelfHostWasiHttpTargetMatchesNative` holds the two to the same
 > responses, and the native wrapper goes with the native backends.
