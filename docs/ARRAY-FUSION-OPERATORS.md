@@ -446,23 +446,30 @@ performance baseline was raised.
 
 ### Integration with single-use inlining
 
-After integrating main through `6c7dd98fa`, the compiler again reaches a
-byte-identical stage-3/stage-4 fixed point. Its native text is 10,374,416 bytes,
-versus 10,749,040 immediately before the integration. That comparison includes
-main's general inliner, construction splitting, SSA join homes and closure
-lifting changes; it does not attribute the reduction to fusion alone.
+The integration exposed a callback whose shared helper became a leaf only
+after the first scratch inlining pass. Revisiting eligible callbacks with the
+updated leaf table removes the remaining closure bookkeeping. The second
+pass retains the ordinary budgets and annotation guards, and the final
+capture-free scalar admission still applies. A dispatch regression calls the
+helper independently to keep the single-use inliner from hiding this case.
 
-All eight benchmark programs changed assembly on both ARM64 targets, so the
-earlier timings do not establish the current build's performance. Fresh Apple
-M3 Pro measurements used the same two-round pilot followed by nine alternating
-20,000-round runs, changing only the round count. All outputs agreed.
+With this fix and main through `66d7deb95`, the compiler reaches a
+byte-identical stage-3/stage-4 fixed point. Native text is 10,382,448 bytes,
+versus 10,374,416 before the fix and latest parser/Wasm integration, and
+10,749,040 before the general-inliner integration. These comparisons include
+main's changes and do not attribute the size differences to fusion alone.
+
+Fresh Apple M3 Pro measurements used a two-round pilot followed by nine
+alternating 20,000-round runs, changing only the round count. All outputs
+agreed. The subsequent parser/Wasm integration left all eight benchmark
+programs' assembly identical on both ARM64 targets.
 
 | Pipeline | Current pipeline, ns/round | Same-build handwritten control, ns/round | Eager scan, ns/round |
 | --- | ---: | ---: | ---: |
-| map.map.reduce | 7,527 (7,493-7,750) | 7,097 (7,081-7,293) | n/a |
-| filter.map.reduce | 2,675 (2,660-2,813) | 2,414 (2,407-2,477) | n/a |
-| map.scan | 2,167 (2,154-2,229) | 2,537 (2,510-4,359) | 8,600 (8,500-8,780) |
-| filter.map.scan | 2,000 (1,969-2,061) | 2,385 (2,372-2,439) | 6,878 (6,803-7,340) |
+| map.map.reduce | 6,918 (6,485-7,407) | 7,125 (7,035-8,076) | n/a |
+| filter.map.reduce | 2,560 (2,462-2,607) | 2,565 (2,492-2,591) | n/a |
+| map.scan | 2,211 (2,195-2,261) | 2,590 (2,550-4,386) | 8,762 (8,649-9,034) |
+| filter.map.scan | 2,044 (2,003-2,104) | 2,419 (2,372-2,776) | 7,068 (6,802-7,649) |
 
 Both reductions and their controls still make zero steady allocator calls and
 use zero steady fresh bytes. Both scans make exactly 20,000 allocator calls,
@@ -471,10 +478,20 @@ forms make 200,000 and 180,000. Fresh-byte counts remain 16,384 for either
 fused scan, 40,960/10,240 for eager scans and 20,480/0 for handwritten scans.
 The zero reflects allocator reuse, not an absence of allocations.
 
-The scans meet the measured control comparison. The reductions are slower
-than their controls with non-overlapping observed ranges in this run. Their
-runtime-parity acceptance remains open after integration; earlier instruction
-profiles and overlapping timings do not close this new measurement gap.
+Both reduction timing ranges overlap their controls. Native ARM64 Linux
+Callgrind, with a two-round pilot followed by 200 rounds of 2,000 elements,
+also confirms that the fix removes the instruction excess. Complete-process
+counts are shown below; these are instruction counts, not elapsed timings.
+
+| Reduction | Before fix | Fixed pipeline | Fixed handwritten control |
+| --- | ---: | ---: | ---: |
+| map.map.reduce | 14,308,973 | 12,692,466 | 13,087,952 |
+| filter.map.reduce | 9,648,203 | 9,242,724 | 9,376,471 |
+
+Every profiled variant produces the same checksum with zero steady allocator
+calls and fresh bytes. Together with the scan results, these measurements
+establish parity for the documented workload and controls. They do not claim
+identical speed for all inputs or machines.
 
 Clause 1's second half — "no unspecialised calls per element" — holds, and it
 is not something this pass does by itself. Fusion runs FIRST in
