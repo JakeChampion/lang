@@ -59,15 +59,6 @@ so the census counts what the callers held; it is constant per process.
 
 A sweep of `internal/e2eselfhost` with `FERN_LEAKCHECK` forced on every x86-64
 program it builds (1,382 tests, 13,891 programs) found no leak in what the
-typed lowering emits. Every test comment that says a shape "still leaks" now
-measures 0: `self_host_arr_fresh_ret_method_test.go`,
-`self_host_borrowed_struct_param_return_test.go`,
-`self_host_block_scoped_classes_test.go`,
-`self_host_struct_enum_field_payload_drop_ir_test.go`,
-`self_host_struct_lit_fieldread_test.go`,
-`self_host_tuple_str_elem_retain_test.go`, `self_host_opt_sibling_rebind_test.go`,
-`self_host_str_bind_sfrrecv_test.go`, `self_host_consumed_append_reclaim_test.go`,
-`self_host_arrarr_producer_test.go`, `self_host_rctuple_rebind_reclaim_test.go`
-and `self_host_arrenum_reclaim_ir_test.go` among them. Those comments, and
-the assertions that step around a leak, should become `live_bytes == 0`
-assertions. The next leak lead has to come from a new shape, not from them.
+typed lowering emits. Every test comment that said a shape "still leaks"
+measured 0, so the 25 files that carried one now require a balanced census on
+every case. The next leak lead has to come from a new shape, not from them.

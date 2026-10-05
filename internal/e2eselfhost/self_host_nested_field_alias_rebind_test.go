@@ -302,14 +302,21 @@ func leakSummary(t *testing.T, gcc string, runner []string, driverBin, dir, name
 	return live, allocs, exit
 }
 
-// TestSelfHostNestedFieldAliasRebindX86_64 — the two spellings of the same
-// self-update cost the same, and the shapes the exemption must not reach still
-// answer correctly.
+// TestSelfHostNestedFieldAliasRebindX86_64 — both spellings of the same
+// self-update reclaim everything, and the shapes the exemption must not reach
+// still answer correctly. Every program here must end at live_bytes 0.
 func TestSelfHostNestedFieldAliasRebindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	flat := func(t *testing.T, name string, live int64) {
+		t.Helper()
+		if live != 0 {
+			t.Errorf("%s: live_bytes=%d, want 0", name, live)
+		}
+	}
 
 	explicitLive, _, explicitExit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_explicit", nestedFieldAliasExplicitSrc)
 	carriedLive, _, carriedExit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_carried", nestedFieldAliasCarriedSrc)
@@ -317,25 +324,12 @@ func TestSelfHostNestedFieldAliasRebindX86_64(t *testing.T) {
 	if explicitExit != 36 || carriedExit != 36 {
 		t.Fatalf("exit codes: explicit=%d carried=%d, want 36 for both", explicitExit, carriedExit)
 	}
-	if carriedLive != 0 {
-		t.Errorf("the `...base` carry leaked %d bytes — #6620 took it to an exact 0", carriedLive)
-	}
-	// The two spellings mean the same thing, so they cost the same. 800 here was
-	// #6653's unbalanced override retain (one `I` box plus its one-element `data`
-	// buffer, per call, ten calls); 10160 was the per-ITERATION credit loss #6623
-	// fixed, which this shape can regress to.
-	if explicitLive != carriedLive {
-		t.Errorf("live_bytes: explicit alias=%d against the `...base` carry's %d — the successor "+
-			"box goes into the slot `o` names either way, so the explicit spelling must reclaim "+
-			"the superseded inner box too (#6653)", explicitLive, carriedLive)
-	}
+	flat(t, "the `...base` carry", carriedLive)
+	flat(t, "the explicit `inner: o.inner` alias (#6653)", explicitLive)
 
-	// #6628. The defect is PER-ITERATION — every superseded box and the `xs`
-	// buffer it owned was stranded — so the k curve is the discriminator, not the
-	// absolute count: 1440 / 2160 / 9840 / 98160 bytes at k = 1 / 2 / 8 / 32
-	// before, one flat residual after.
+	// #6628. Every superseded box and the `xs` buffer it owned must be released,
+	// so a regression grows with k.
 	t.Run("array-field-alias-flat-in-k", func(t *testing.T) {
-		var first int64 = -1
 		for _, k := range []int{1, 2, 8, 32} {
 			name := fmt.Sprintf("nfa_arrfield_k%d", k)
 			live, _, exit := leakSummary(t, gcc, runner, driverBin, dir, name, nestedFieldAliasArrayFieldSrc(k, false))
@@ -344,66 +338,31 @@ func TestSelfHostNestedFieldAliasRebindX86_64(t *testing.T) {
 			if want := arrayFieldAliasExit(k); exit != want {
 				t.Fatalf("k=%d exited %d, want %d — a carried `ys` was released under a live reference", k, exit, want)
 			}
-			if first < 0 {
-				first = live
-				continue
-			}
-			if live != first {
-				t.Errorf("k=%d leaked %d bytes against %d at k=1 — the per-iteration strand is "+
-					"back: the local lost its __field_reclaim_S credit (#6628)", k, live, first)
-			}
+			flat(t, name, live)
 		}
 	})
 
-	// What the flat residual IS, pinned exactly so it cannot grow quietly. The
-	// override path incs the aliased `ys`, but __field_reclaim_ cow-SKIPS a field
-	// that is pointer-equal in old and new, so that inc is never balanced: one
-	// stranded `ys` buffer per call, 48 B for three i32 elements. The `...o`
-	// spelling reaches an exact 0 because its base-copy path emits no inc for an
-	// array field. Same unbalanced retain as the nested-struct row above, by a
-	// different route — #6653.
 	t.Run("array-field-alias-matches-the-carry", func(t *testing.T) {
 		explicit, _, _ := leakSummary(t, gcc, runner, driverBin, dir, "nfa_arrfield_x", nestedFieldAliasArrayFieldSrc(8, false))
 		carried, _, _ := leakSummary(t, gcc, runner, driverBin, dir, "nfa_arrfield_c", nestedFieldAliasArrayFieldSrc(8, true))
-		if carried != 0 {
-			t.Errorf("the `...o` array carry leaked %d bytes — it has always been an exact 0", carried)
-		}
-		// The residual this row used to pin at 480 was the override's retain on a
-		// field __field_reclaim_ then cow-skipped. #6653 drops that retain for a
-		// self-rebind, which is what the `...o` base-copy path had always done, so
-		// the two spellings now agree at zero.
-		if explicit != carried {
-			t.Errorf("explicit `ys: o.ys` leaked %d bytes against the `...o` carry's %d — the "+
-				"successor box goes into the slot `o` names either way, so neither spelling "+
-				"should retain the carried buffer (#6653)", explicit, carried)
-		}
+		flat(t, "the `...o` array carry", carried)
+		flat(t, "explicit `ys: o.ys` (#6653)", explicit)
 	})
 
 	// `work` returns (2 + k) + 2 + 6 here, so the exit is (10*(k+10)) & 63.
 	t.Run("struct-array-field-alias-flat-in-k", func(t *testing.T) {
-		var first int64 = -1
 		for _, k := range []int{1, 2, 8, 32} {
 			name := fmt.Sprintf("nfa_structarr_k%d", k)
 			live, _, exit := leakSummary(t, gcc, runner, driverBin, dir, name, nestedFieldAliasStructArraySrc(k))
 			if want := (10 * (k + 10)) & 63; exit != want {
 				t.Fatalf("k=%d exited %d, want %d — a carried `es` was released under a live reference", k, exit, want)
 			}
-			if first < 0 {
-				first = live
-				continue
-			}
-			if live != first {
-				t.Errorf("k=%d leaked %d bytes against %d at k=1 — an array-of-struct field takes "+
-					"the same ExprFieldAccess retain a scalar-element one does (#6628)", k, live, first)
-			}
+			flat(t, name, live)
 		}
 	})
 
-	// #6653's enum route. Flat in k AND equal to the carry — the residual both
-	// spellings shared was the qualified ctor's retain (#6681), so a k curve
-	// alone would not have seen it.
+	// #6653's enum route.
 	t.Run("enum-field-alias-matches-the-carry", func(t *testing.T) {
-		var first int64 = -1
 		for _, k := range []int{1, 2, 8, 32} {
 			name := fmt.Sprintf("nfa_enumfield_k%d", k)
 			live, _, exit := leakSummary(t, gcc, runner, driverBin, dir, name, enumFieldAliasSrc(k, false))
@@ -411,63 +370,47 @@ func TestSelfHostNestedFieldAliasRebindX86_64(t *testing.T) {
 				t.Fatalf("k=%d exited %d, want %d — the carried enum box was released under the "+
 					"`vv` borrow that reads its payload back", k, exit, want)
 			}
-			if first < 0 {
-				first = live
-			} else if live != first {
-				t.Errorf("k=%d leaked %d bytes against %d at k=1 — the rebind chain is stranding "+
-					"a box per iteration", k, live, first)
-			}
+			flat(t, name, live)
 		}
 		carried, _, _ := leakSummary(t, gcc, runner, driverBin, dir, "nfa_enumfield_c", enumFieldAliasSrc(8, true))
-		if carried != 0 {
-			t.Errorf("the `...o` enum carry leaked %d bytes — nothing in it is per-iteration and "+
-				"the one enum box it builds is fresh, so it must reach an exact 0", carried)
-		}
-		if first != carried {
-			t.Errorf("explicit `v: o.v` leaked %d bytes against the `...o` carry's %d — the enum "+
-				"field takes the same structfldok: gate the nested-struct one does (#6653)", first, carried)
-		}
+		flat(t, "the `...o` enum carry", carried)
 	})
 
-	// #6681, and the reason the row above reaches zero rather than 400: the two
-	// spellings of one fresh construction must cost the same.
+	// #6681: the two spellings of one fresh variant construction.
 	t.Run("qualified-variant-ctor-field-is-fresh", func(t *testing.T) {
 		qualified, _, qExit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_qvctor", freshVariantCtorFieldSrc(true))
 		bare, _, bExit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_bvctor", freshVariantCtorFieldSrc(false))
 		if qExit != 11 || bExit != 11 {
 			t.Fatalf("exit codes: qualified=%d bare=%d, want 11 for both", qExit, bExit)
 		}
-		if bare != 0 {
-			t.Errorf("the bare `A(7)` field leaked %d bytes — a variant ctor is sole-owned at "+
-				"rc=1 and has always been handed to the struct with no retain", bare)
-		}
-		if qualified != bare {
-			t.Errorf("`V.A(7)` leaked %d bytes against `A(7)`'s %d — the same fresh box either "+
-				"way, so variant_ctor_enum_owner must read both spellings (#6681)", qualified, bare)
-		}
+		flat(t, "the bare `A(7)` field", bare)
+		flat(t, "the qualified `V.A(7)` field", qualified)
 	})
 
 	t.Run("enum-fork-to-other-local-not-exempt", func(t *testing.T) {
-		_, _, exit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_enumfork", enumFieldAliasForkSrc)
+		live, _, exit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_enumfork", enumFieldAliasForkSrc)
 		if exit != 17 {
 			t.Errorf("exited %d, want 17 — both locals read the shared enum box afterwards, so "+
 				"only the self-rebind may be exempted", exit)
 		}
+		flat(t, "nfa_enumfork", live)
 	})
 
 	t.Run("array-fork-to-other-local-not-exempt", func(t *testing.T) {
-		_, _, exit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_arrfork", nestedFieldAliasArrayForkSrc)
+		live, _, exit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_arrfork", nestedFieldAliasArrayForkSrc)
 		if exit != 27 {
 			t.Errorf("exited %d, want 27 — both locals show the shared `ys` buffer afterwards, so "+
 				"only the self-rebind may be exempted", exit)
 		}
+		flat(t, "nfa_arrfork", live)
 	})
 
 	t.Run("fork-to-other-local-not-exempt", func(t *testing.T) {
-		_, _, exit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_fork", nestedFieldAliasForkSrc)
+		live, _, exit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_fork", nestedFieldAliasForkSrc)
 		if exit != 27 {
 			t.Errorf("exited %d, want 27 — both locals read the shared inner box afterwards, so "+
 				"only the self-rebind may be exempted from the field-move mark", exit)
 		}
+		flat(t, "nfa_fork", live)
 	})
 }

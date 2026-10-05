@@ -146,14 +146,7 @@ func TestSelfHostArrFreshRetMethodX86_64(t *testing.T) {
 // `return h.xs` hands back the receiver's own buffer, not a fresh one. Releasing
 // it at the call site would free a buffer the live `hh` still owns — the failure
 // this admission rule exists to prevent, and the direction that corrupts rather
-// than leaks.
-//
-// It asserts the ANSWER and `__rc_underflow_count()`, not leak counts, and deliberately:
-// this shape still leaks 48 bytes, which is #7259's OTHER two defects (the
-// unreleased return-transfer dup, and the struct losing its deep field-drop when
-// a function returns one of its array fields). Both are bounded per object and
-// neither is addressed here. Asserting `live_bytes == 0` would therefore pin a
-// bug rather than the refusal this case is for.
+// than leaks. The census must still balance.
 func TestSelfHostArrFreshRetMethodRefusedX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -166,12 +159,17 @@ func TestSelfHostArrFreshRetMethodRefusedX86_64(t *testing.T) {
 		"while (i < 100) { t = t + hh.get().len(); i = i + 1; } " +
 		"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
-	asm := hevCompile(t, runner, driverBin, src, nil)
+	asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
 	progBin := buildBin(t, gcc, dir, "arrfreshmeth_borrowed_field_return", asm)
-	_, exit := hevRun(t, runner, progBin)
+	stderr, exit := hevRun(t, runner, progBin)
 	if exit != 51 {
-		t.Errorf("borrowed_field_return exited %d, want 51 (99 = rc underflow: the "+
+		t.Fatalf("borrowed_field_return exited %d, want 51 (99 = rc underflow: the "+
 			"registry admitted a method that hands back its receiver's own buffer)", exit)
+	}
+	allocs, frees, live := parseLeakcheck(t, "borrowed_field_return", stderr)
+	if live != 0 || allocs != frees {
+		t.Errorf("borrowed_field_return: allocs=%d frees=%d live_bytes=%d, want a balanced census",
+			allocs, frees, live)
 	}
 }
 

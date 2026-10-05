@@ -31,12 +31,10 @@ import (
 // dec'ing that frees a buffer another owner still holds — which is what the
 // per-module emit-all fixpoint said when this arm was first written ungated.
 //
-// The probes use SSO-short elements on purpose. A non-admitted field's element
-// boxes still leak — that is the admission's job, not this one's — so wide
-// elements would dominate the buffer in the measurement. With short ones the
-// buffer is the only heap object per round, and each case returns the MEASURED
-// bytes per round as its exit code: a regression reports its own size instead
-// of a bare "not zero". x86-64 and arm64 both read 56 before the fix; wasm
+// The probes use SSO-short elements on purpose: the buffer is then the only heap
+// object per round, and each case returns the MEASURED bytes per round as its
+// exit code, so a regression reports its own size instead of a bare "not zero".
+// x86-64 and arm64 both read 56 before the fix; wasm
 // already read 0 and is here to pin that it stays there.
 var strArrFieldBufferReleaseCases = []struct {
 	name string
@@ -112,8 +110,8 @@ function main(): i32 {
 }`, 0},
 	// The shallow arm must stay SHALLOW on a non-admitted field: the elements
 	// are read through the struct and through the live local, so freeing them
-	// would corrupt both. Wide elements (they leak — sound), values exact,
-	// over-release detector at zero.
+	// would corrupt both. Wide elements, values exact, over-release detector at
+	// zero.
 	{"strarr-field-nonadmitted-elements-safe", `struct Doc { title: string, lines: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { let o: string[] = []; let i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
@@ -364,9 +362,10 @@ function main(): i32 {
 }
 
 // TestSelfHostStrArrFieldBufferReleaseIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler.
+// self-hosted x86-64 compiler, with the leak census on.
 func TestSelfHostStrArrFieldBufferReleaseIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
+	t.Setenv("FERN_LEAKCHECK", "1")
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
@@ -378,15 +377,13 @@ func TestSelfHostStrArrFieldBufferReleaseIRX86_64(t *testing.T) {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			stderr, code := hevRun(t, runner, bin)
+			if code != tc.want {
 				t.Errorf("%s = %d, want %d (a small non-zero is the leaked bytes per round; 98 = element boxes leaked; 99 = over-release; 97 = value corrupted)", tc.name, code, tc.want)
+			}
+			allocs, frees, live := parseLeakcheck(t, tc.name, stderr)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", tc.name, allocs, frees, live)
 			}
 		})
 	}

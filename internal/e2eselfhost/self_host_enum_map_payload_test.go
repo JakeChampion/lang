@@ -8,11 +8,8 @@ import (
 	"testing"
 )
 
-// One Map-typed variant payload refused the whole enum's release on the AST
-// lowering: enum_field_rc_droppable had no row for a map, so every variant's
-// payloads leaked with it, the Map variant never having been built (#9304). A
-// map payload is now admitted and released by nothing, since a map box has no
-// count to say whether the enum is its only holder.
+// An enum with a Map-typed variant releases every variant's payloads, whether
+// or not the Map variant is ever built (#9304).
 const enumMapDeclaredSrc = `import "core/map";
 enum Rec { Text(string), Pair(string, string), Obj(Map[string, string]) }
 
@@ -32,8 +29,7 @@ function main(): i32 {
 }
 `
 
-// The Map variant constructed on every third round. Its maps still leak, so
-// this row asserts the answer and that nothing is released twice.
+// The Map variant constructed on every third round.
 const enumMapBuiltSrc = `import "core/map";
 enum Rec { Text(string), Pair(string, string), Obj(Map[string, string]) }
 function once(v: string, k: i32): i32 {
@@ -77,8 +73,7 @@ function main(): i32 {
 }
 `
 
-// The typed lowering releases the built maps and the recursive payloads as
-// well; the AST lowering still strands both.
+// The built maps and the recursive payloads are released as well.
 func TestSelfHostEnumMapPayloadTypedReleaseX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, sc := range []struct {

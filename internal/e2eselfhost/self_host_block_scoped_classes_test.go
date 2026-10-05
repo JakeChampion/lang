@@ -38,12 +38,6 @@ import (
 //     are 0; at #6285 only the `.len()` probes leaked, while element-access and
 //     no-access variants were already clean. The two shapes are pinned below —
 //     nothing else keeps a fix that landed as a side effect from regressing.
-//   - The BARE-name struct credit leaks 8800 and stays leaking: switching it on
-//     SEGFAULTS the gen1 self-compile. It is the credit the compiler's own
-//     threaded builders lean on, and it feeds the deep field drop, the precise
-//     drop and the reuse-donor paths as well as the exit sweep, so the releases
-//     it turns on for block-scoped slots are not all sole-owner. That is why
-//     these go in one class at a time behind the per-module fixpoint.
 
 func TestSelfHostBlockScopedClassesX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

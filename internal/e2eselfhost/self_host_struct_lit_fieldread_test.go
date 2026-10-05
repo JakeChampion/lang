@@ -30,18 +30,9 @@ import (
 // field the release frees, so the gate is on the FIELD BEING READ: a scalar
 // result cannot alias anything, which makes the deep drop unconditionally safe.
 //
-// An rc-field read (`(A { … }).xs`) stays refused, and that refusal is
-// essential. Dropping the scalar gate puts `rc_field_read_uaf` at
-// **802 frees against 800 allocs** — more frees than allocations, a double free
-// — with the leakcheck summary itself corrupted. It also makes the plain
-// `rc_field_read` case read a clean 200/200 where the correct compiler reads
-// 200/0: the fifth slice running where a census-only comparison scores the
-// broken build higher than the correct one.
-//
-// String / enum / map / tuple / option fields keep struct_fields_reusable false,
-// so a struct carrying one still leaks whole — the safe-leak floor the
-// discarded-statement arm documents. `string_field_struct` pins that it is
-// unchanged here.
+// An rc-field read (`(A { … }).xs`) hands out the field itself, so the box's
+// release must not free it: `rc_field_read_uaf` holds that array across churn,
+// and a premature free shows as more frees than allocs.
 //
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
 // native x86-64 backend agreed on each — never read off the self-host run.
@@ -67,7 +58,7 @@ func structLitFieldReadCases() []arrenumShareCase {
 			name: "scalar_struct_field_read",
 			src: structLitFieldReadDecl +
 				structLitFieldReadMain(`t = t + (S { a: r, b: r }).a; r = r + 1;`),
-			want: 3, balance: true,
+			want: 3,
 		},
 		{
 			// A scalar read off a struct that also owns an rc-ARRAY field: the
@@ -77,20 +68,18 @@ func structLitFieldReadCases() []arrenumShareCase {
 			name: "array_field_struct_scalar_read",
 			src: structLitFieldReadDecl +
 				structLitFieldReadMain(`t = t + (A { xs: [r, r + 1], k: r }).k; r = r + 1;`),
-			want: 3, balance: true,
+			want: 3,
 		},
 		{
-			// REFUSED: the read hands out the rc field itself, which the deep
-			// drop would free. Stays the leak it was, deliberately.
+			// The read hands out the rc field itself, which the deep drop
+			// must not free.
 			name: "rc_field_read",
 			src: structLitFieldReadDecl +
 				structLitFieldReadMain(`t = t + (A { xs: [r, r + 1], k: r }).xs.len(); r = r + 1;`),
 			want: 6,
 		},
 		{
-			// REFUSED, and the case that proves the scalar gate essential:
-			// hold the handed-out array across allocation churn and read it.
-			// Without the gate this reports 802 frees for 800 allocs.
+			// Hold the handed-out array across allocation churn and read it.
 			name: "rc_field_read_uaf",
 			src: `struct A { xs: i32[], k: i32 }
 function churn(i: i32): i32 {
@@ -139,12 +128,10 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 28, balance: true,
+			want: 28,
 		},
 		{
-			// The documented safe-leak floor, pinned unchanged: a string field
-			// keeps struct_fields_reusable false, so the whole box still leaks
-			// even for a scalar read.
+			// A scalar read off a struct carrying a heap string field.
 			name: "string_field_struct",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 struct P { f: string, n: i32 }` +
@@ -154,8 +141,8 @@ struct P { f: string, n: i32 }` +
 	}
 }
 
-// TestSelfHostStructLitFieldReadX86_64 — a scalar field read off a struct
-// literal releases the temporary box, and an rc-field read keeps refusing.
+// TestSelfHostStructLitFieldReadX86_64 — a field read off a struct literal
+// releases the temporary box without freeing the value it hands out.
 func TestSelfHostStructLitFieldReadX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -182,12 +169,9 @@ func TestSelfHostStructLitFieldReadX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			// frees > allocs is a DOUBLE FREE, and is what dropping the scalar
-			// gate produces. Check it on every case, admitted or refused.
 			if frees > allocs {
 				t.Errorf("%s: %s — more frees than allocs is a double free", tc.name, summary)
-			}
-			if tc.balance && (live != 0 || allocs != frees) {
+			} else if live != 0 || allocs != frees {
 				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 		})
