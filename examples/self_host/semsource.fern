@@ -17,6 +17,7 @@ import "./ownership";
 import "./util";
 import "./seminline";
 import "./semfuse";
+import "./semndarray";
 
 // One body's production. A TEMPLATE declaration — one spelling type variables
 // — has no body of its own: it is produced once per instantiation its callers
@@ -8322,7 +8323,7 @@ function produce_module(mod: parser.Module, verify: boolean, debug_lines: boolea
   let all: Produced[] = anchored.all;
   names = anchored.names;
   if (verify) {
-    all = fuse_pipelines(inline_leaves(all, names, mod.funcs), names);
+    all = scale_ndarray_maps(fuse_pipelines(inline_leaves(all, names, mod.funcs), names), names);
   }
   decls = [];
   instances = [];
@@ -8450,6 +8451,35 @@ function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
     usable = usable.append(p.ok && !p.template && !p.bodyless);
   }
   let out: semfuse.Fused = semfuse.fuse_pipelines(funcs, names, usable);
+  let result: Produced[] = [];
+  let i: i32 = 0;
+  while (i < all.len()) {
+    let p: Produced = all[i];
+    if (out.rewritten[i]) {
+      p = Produced { ...p, func: out.funcs[i], analysis: None };
+    }
+    result = result.append(p);
+    i = i + 1;
+  }
+  return result;
+}
+
+function scale_ndarray_maps(all: Produced[], names: string[]): Produced[] {
+  match (env("FERN_NO_SCALE_KERNEL")) {
+    Some(v) => {
+      if (v == "1") {
+        return all;
+      }
+    },
+    None => {}
+  }
+  let funcs: ssasem.Func[] = [];
+  let usable: boolean[] = [];
+  for p in all {
+    funcs = funcs.append(p.func);
+    usable = usable.append(p.ok && !p.template && !p.bodyless);
+  }
+  let out: semndarray.Scaled = semndarray.scale_maps(funcs, names, usable);
   let result: Produced[] = [];
   let i: i32 = 0;
   while (i < all.len()) {
