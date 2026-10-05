@@ -122,6 +122,7 @@ function main(): i32 {
 
 function fetch_future(conn: i32): async.Future[i32] {
     function resume(woken_fd: i32): async.Future[i32] {
+        if (woken_fd == async.cancelled()) { return Ready(0); }
         let resp: u8[] = tcp_recv(woken_fd, 4096);
         if (resp.len() > 0) { return Ready(1); }
         return Ready(0);

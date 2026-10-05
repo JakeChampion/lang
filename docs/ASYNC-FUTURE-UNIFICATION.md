@@ -151,13 +151,15 @@ sequences the safe consolidation first.
      `fetch.fetch_future` through `async.gather` over real sockets,
      bodies returned in input order, overlapped, under stock wasmtime
      (`-S inherit-network`, Preview 2).
-   - **DONE — drop abandoned pollables.** `race` (and `gather` /
-     `with_deadline`) now drop every still-`Pending` future's token via
-     `__drop_losers` → `wasm_pollable_drop` (a no-op on native/interp).
-     A `race` over real wasm sockets no longer leaks the losers'
-     pollables (children of their sockets → would trap with "resource
-     has children"). Verified by
-     `internal/e2e/async_wasm_fetch_e2e_test.go ▸ TestAsyncWasmRaceFetchDropsLoser`.
+   - **DONE — cancel abandoned futures.** `race`, `with_deadline`, and
+     `gather` when its wait fails cancel every still-`Pending` future
+     through `__drop_losers`: its token goes first (`wasm_pollable_drop`,
+     a no-op on native/interp), since a pollable is a child of its socket
+     and would trap with "resource has children", and then its
+     continuation is resumed with `cancelled()` and closes its socket, on
+     native and wasm alike (#11599). Verified by
+     `internal/e2e/async_wasm_fetch_e2e_test.go ▸ TestAsyncWasmRaceFetchDropsLoser`
+     and `TestSelfHostRaceClosesTheLoser`.
    - **DONE — `with_deadline` host-timeout on wasm (incl. the composer
      fix).** `with_deadline` appends a deadline timer to the poll set
      each round: native uses `poll(2)`'s timeout arg (the appended timer
@@ -200,12 +202,6 @@ tests / docs.
 
 ## Open questions / risks
 
-- **Pollable handle lifetime.** wasi pollables are owned resources; a
-  `race` loser's pollable must be dropped (`wasm_pollable_drop`) so the
-  host stops the I/O. Native already leaves fds to process exit; wasm
-  needs explicit drop on the abandoned `Pending`. PR5b must thread drop
-  into `race`/`with_deadline`'s loser path (the native side can adopt
-  the same `tcp_close`-on-loser for symmetry).
 - **`list<pollable>` marshalling.** `poll`'s `i32[]` → `list<pollable>`
   is straightforward — `__fern_wasm_poll` already takes the `i32`
   array-data-pointer shape (reads `len` at `arr-4`) and returns the

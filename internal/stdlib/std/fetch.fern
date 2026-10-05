@@ -2028,6 +2028,11 @@ pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u
 // pays one linear pass at EOF.
 function __fetch_drain(c: i32, chunks: u8[][]): async.Future[u8[]] {
   function resume(woken: i32): async.Future[u8[]] {
+    if (woken == async.cancelled()) {
+      tcp_close(c);
+      let none: u8[] = [];
+      return Ready(none);
+    }
     let dropped: i32 = wasm_pollable_drop(woken);
     let chunk: u8[] = tcp_recv(c, 4096);
     if (chunk.len() == 0) {
