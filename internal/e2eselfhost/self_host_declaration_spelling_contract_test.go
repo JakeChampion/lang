@@ -36,7 +36,7 @@ func TestSelfHostDeclarationSpellingContracts(t *testing.T) {
 	}
 	src.WriteString("return 0;\n}\n")
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "irtables.fern", "fnsigs.fern", "lift.fern")
+	copySelfHostFiles(t, dir, "irtables.fern", "lift.fern")
 	if err := os.WriteFile(filepath.Join(dir, "declaration_contract.fern"), []byte(src.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -14,7 +14,7 @@ import (
 // The reach phase: the entry starts calling a second lib3 function. The units
 // are cut from the typed lowering of the whole program, which is not pruned to
 // what the entry reaches, so only the entry re-emits. The fact phase is a
-// body-only edit that flips a borrow verdict its caller reads.
+// body-only edit that moves a parameter mode the typed lowering infers.
 func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir, mmr := buildConcatDriver(t, gcc)
@@ -103,9 +103,9 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	pmWantSets(t, "reach", hits, misses, without("__entry"), []string{"__entry"})
 
 	// A body-only edit that moves a fact about a function. m3_keep's parameter is
-	// borrowable until its body starts storing it, and callers lower against that
-	// verdict, so lib3's facts move and every module importing lib3 re-emits the
-	// way it would for a signature change. Modules outside that closure are
+	// inferred borrowed until its body starts consuming it, and callers lower
+	// against that mode, so lib3's contract rows move and every module importing
+	// lib3 re-emits the way it would for a signature change. Modules outside that closure are
 	// served. First bring m3_keep into reach, then make the fact-only edit.
 	edit("lib3.fern", "return x + 301;", "return x + 301 + m3_keep([x]) - 1;")
 	b3, err := os.ReadFile(filepath.Join(proj, "lib3.fern"))
@@ -117,7 +117,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 		t.Fatalf("write lib3: %v", err)
 	}
 	concat("keep")
-	edit("lib3.fern", "{ return xs.len(); }", "{ let h: i32[][] = [xs]; return h[0].len(); }")
+	edit("lib3.fern", "{ return xs.len(); }", "{ let ys: i32[] = xs.append(4); return ys.len() - 1; }")
 	hits, misses = concat("fact")
 	pmWantSets(t, "fact", hits, misses, reHits, []string{"__entry", "lib3"})
 

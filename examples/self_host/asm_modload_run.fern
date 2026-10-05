@@ -31,7 +31,6 @@ import "./asm_arm64_ir";
 import "./asm_ir";
 import "./asmcore";
 import "./irtables";
-import "./fnsigs";
 import "./ir";
 import "./irverify";
 import "./irverifyprovided";
@@ -66,10 +65,10 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
   let im: parser.Module = ircore.with_records(parser.infer_ret_types_module(ircore.script_normalized(ircore.sub_lifted(d.sub, d.full))), d.sub);
   let i: i32 = 0;
   while (i < im.funcs.len()) {
-    declared = declared.append(fnsigs.grow_fn_key(im.funcs[i]));
+    declared = declared.append(parser.decl_key(im.funcs[i]));
     let r: irtables.LowerResult = ircore.produced(d.sub.bodies, i, im.funcs[i]);
     if (!r.superseded) {
-      names = names.append(fnsigs.grow_fn_key(im.funcs[i]));
+      names = names.append(parser.decl_key(im.funcs[i]));
       bodies = bodies.append(r.ops);
     }
     i = i + 1;
@@ -157,13 +156,13 @@ function provided_audit(): i32 {
 
 // View is what a per-module build emits from: one module per unit and each
 // unit's lowering, cut from the typed lowering of the whole program, which has
-// already been gated, and the whole-program function, struct and registry
-// view every unit emits against.
+// already been gated, the whole-program function and struct view every unit
+// emits against, and the typed lowering's contract rows the cache keys fold in.
 struct View {
   u: ircore.Units,
   all_funcs: parser.FuncDecl[],
   stab: irtables.StructTab,
-  base: fnsigs.FnSigs,
+  contracts: string[],
   rt: (string) => irtables.LowerResult[],
 }
 
@@ -185,7 +184,7 @@ function per_module_view(entry: parser.Module, loaded: flatten.LoadedModule[], p
     }
     k = k + 1;
   }
-  return View { u: ircore.split_units(g, raw, entry_at), all_funcs: g.im.funcs, stab: g.stab, base: g.base, rt: d.sub.rt_lower };
+  return View { u: ircore.split_units(g, raw, entry_at), all_funcs: g.im.funcs, stab: g.stab, contracts: d.sub.contracts, rt: d.sub.rt_lower };
 }
 
 // merged_program is the whole program the merged emit reads.
@@ -296,15 +295,15 @@ function view_keys(v: View, cache_dir: string): ircore.UnitKeys {
   if (cache_dir.len() == 0) {
     return ircore.no_unit_keys();
   }
-  return ircore.unit_keys(v.u, v.all_funcs, v.stab, v.base, true);
+  return ircore.unit_keys(v.u, v.stab, v.contracts);
 }
 
 // emit_unit emits unit `idx`'s [lo, hi) function window for `target`.
 function emit_unit(v: View, idx: i32, is_entry: boolean, ns: string, extra: string[], lo: i32, hi: i32, target: string): string {
   if (target == "arm64-linux") {
-    return asm_arm64_ir.emit_module_ir_unit_arm64_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.base, v.rt, asmcore.env_switches());
+    return asm_arm64_ir.emit_module_ir_unit_arm64_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.rt, asmcore.env_switches());
   }
-  return asm_ir.emit_module_ir_unit_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.base, v.rt, 0 as usize, asmcore.env_switches());
+  return asm_ir.emit_module_ir_unit_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.rt, 0 as usize, asmcore.env_switches());
 }
 
 // unit_cache_file returns the object path for ONE emitted unit, or "" when the
@@ -425,8 +424,8 @@ function spawn_batch(self_exe: string, entry_path: string, tmp: string, lo: i32,
 // reclaimed within a process, so emitting all ~35 whole-compiler units in one
 // accumulates past the 16 GiB bump arena and trips __fern_alloc's bounds check
 // (exit 137, which reads like an OOM-kill without being one). A child per batch
-// releases the accumulation at exit while still amortising the shared base
-// derivation (wp_fn_sigs) across its batch.
+// releases the accumulation at exit while still amortising the shared typed
+// lowering across its batch.
 //
 // A process boundary is also the only release mechanism that TOLERATES the emit
 // path's pre-existing over-releases: __rc_underflow_count() reports ~2443 of
@@ -703,8 +702,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
   }
   if (pm_mode == "emit-all") {
     // Multi-unit-per-process whole-compiler per-module emit (#3457 slice 2).
-    // The whole-program signature registry is derived ONCE per process
-    // (wp_fn_sigs) and shared across every unit it emits — collapsing the
+    // The whole-program typed lowering runs ONCE per process and is shared
+    // across every unit it emits — collapsing the
     // O(units × all_funcs) re-derivation that dominated the per-process
     // serial emit (~20 s/unit even for a 3-function module). Units are the flat
     // (module × window) list, each module sharded into the SAME [lo,hi)

@@ -161,8 +161,9 @@ operations, resolved element-function names, and a literal axis or rank where
 available. A computed axis is `?`, never guessed.
 
 The current kernel is packed `f64` map with a capture-free literal scale.
-`scale-kernel` is recorded by the rewrite itself and means
-`storage=fresh-kernel-buffer`. Other operations remain ordinary scalar
+`scale-kernel` is recorded by the rewrite itself with
+`storage=deferred-to-ownership`. The final `scale storage` report states whether
+the kernel uses a fresh buffer or guarded reuse. Other operations remain ordinary scalar
 combinators. Their closed refusal tags are:
 
 | Tag | Planner gate |
@@ -181,6 +182,23 @@ combinators. Their closed refusal tags are:
 
 The histogram includes zero counts. Reporting on and off must emit identical
 code; tests compare assembly and verify kernel instructions at reported sites.
+
+The final ownership plan may donate an owned data buffer whose unit dies at
+the scale call. Guarded record-field takes establish ownership for consumed
+handles; borrowed fields and still-live values cannot donate. A runtime
+uniqueness test selects reuse or a fresh result, preserving shared handles and
+separate aliases of their data. The shared arm scales directly into the new
+buffer, without first copying the input. Each arm keeps its vector lifetime
+inside the kernel.
+The output still uses `from_flat`, preserving canonical result metadata.
+Buffer reuse does not promise that the whole operation allocates nothing.
+
+`scale storage` uses these closed reasons: `guarded-reuse`, `reuse-disabled`,
+`receiver-borrowed`, `receiver-still-live`, `receiver-supplied`,
+`borrow-linked-result`, `builtin-shadowed`, and `shape-unsupported`.
+`FERN_SELFHOST_NO_REUSE=1` disables donation while retaining the fresh-buffer
+SIMD kernel; `FERN_NO_SCALE_KERNEL=1` disables the ndarray kernel rewrite.
+
 Layout facts come from the same interprocedural analysis that gates rewrites.
 The report does not call an `inner` or `outer` site a kernel merely because
 its element functions look arithmetic.
@@ -448,6 +466,24 @@ timing covers only the map. The first result stays live across the run, and
 every later result is checked after its timer. This is a native measurement
 for this input size, not a claim about other targets or shapes.
 
+The consuming-input probe is `examples/array_pipeline/ndarray_owned_scale.fern`,
+run with `1000 200 0` for unique inputs and `1000 200 1` for live aliases.
+On arm64-darwin on 2026-10-05, nine alternating processes per build and mode
+reported these counters, including metadata and checks:
+
+| Input | Before donation: calls / fresh bytes | With donation: calls / fresh bytes |
+| --- | --- | --- |
+| Unique | 1,000 / 16,440 | 800 / 56 |
+| Shared | 1,400 / 16,560 | 1,400 / 16,560 |
+
+Median times per map were 252 ns before and 235 ns after for unique input,
+240 ns before and 235 ns after for shared input. The ranges overlap, so this
+establishes an allocation reduction, not a timing improvement. Every element
+and live alias was checked outside the timer. An initial shared implementation
+copied and then scaled, regressing to 538 ns; the direct fresh-output arm
+removed that extra traversal before publication. Target tests repeat both
+counters and alias checks on x86-64, ARM64 and WASM with reuse on and off.
+
 ## 7. Elementwise, and along an axis
 
 **Normative.** The first slices of #9735: the operations that read every
@@ -564,26 +600,22 @@ Four consequences:
   now is: vectorised on all eight backends, and reached by
   `xs.map((x: f64): f64 => x * k)` without the wrapper being written, for a
   literal k or a captured one (`ATLAS-PLATFORM-PLAN.md` §3.4's four steps,
-  with the measurements), allocating its own result so no
-  sized-array primitive was needed, and chosen over the dot product
+  with the measurements). Its fresh-output form allocates the result, so no
+  sized-array primitive was needed. It was chosen over the dot product
   because a reduction may not reassociate (`ARRAY-ALGEBRA.md` §3) while a
   multiply has nothing to reassociate. The same kernel now reaches the
   ndarray `map` of that shape over a packed receiver (§6). `inner` and
   `outer` are recognized (§6) and still lowered as the scalar loop; which
   of THEIR sites a kernel replaces, and how a site's element functions are
   proved to be the arithmetic the kernel implements, is not decided here.
-  §1 and §8 say what licenses an in-place elementwise op; nothing here
-  takes it — the ndarray kernel allocates its own result.
-- **In-place through a handle.** The consuming-handle plus unique-storage
-  rule in §1 is stated, not implemented; nothing in `std/ndarray` writes.
-  §6's layout analysis decides the `is_packed()` conjunct §8 adds to it,
-  and decides nothing else: "consumed" and "unique" are the reuse passes'
-  and the run-time guard's, not this one's.
-- **Acting on a layout.** A `metadata` verdict licenses a rewrite —
-  dropping the run-time branch, or selecting a contiguous kernel over a
-  strided walk — and nothing takes it. The analysis reports; §6 says so.
+  The primary compiler's literal-scale kernel can donate its buffer through
+  the ownership plan and runtime guard described in §6.
+- **Other in-place operations through a handle.** Donation currently covers
+  the packed literal-scale kernel. General `map` and `zip_with` still allocate
+  their result buffers. Layout analysis proves packed order; the ownership
+  plan and runtime guard establish the right to modify storage.
+- **Other layout rewrites.** The primary compiler selects the packed scale
+  kernel. Eliminating metadata operations' runtime branches is separate work.
 - **Static shapes.** §4.
-- **The self-host.** `std/ndarray` compiles under the self-host where its
-  element type does: a combinator handed a function over a 64-bit element
-  is still refused on its wasm route (#9838), which this module does not
-  yet do but phase 4 will.
+- **The self-host.** The primary compiler's ndarray kernel, storage and
+  algebra tests cover x86-64, ARM64 and WASM, including `f64` closures.

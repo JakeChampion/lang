@@ -226,6 +226,15 @@ plans. Its switch is `FERN_SELFHOST_NO_REUSE=1`.
 `-array-report` interface above describes the retained Go analysis. Both
 interfaces and their reason tags are documented in `ARRAY-ALGEBRA.md`.
 
+Packed ndarray literal-scale kernels use the same typed ownership layer.
+`__scale_f64` keeps its borrowed source contract; physical lowering can reuse
+a source unit already owned by the frame when the plan drops it at the call.
+A guarded record-field take can supply that unit from a consumed ndarray.
+The buffer must also pass a runtime uniqueness test. Shared inputs use the
+fresh-output kernel directly; metadata construction still allocates as needed.
+The final `scale storage` report and `FERN_SELFHOST_NO_REUSE` switch cover this
+path. See `ARRAY-SHAPES.md` for its layout and refusal contracts.
+
 **Visibility.** `fip` / `fbip` reach the shape: E053 admits
 `xs.map(f)` on an `own` receiver the way it admits constructors
 (the checker cannot tell which `map` R7 writes through its

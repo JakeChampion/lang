@@ -2,7 +2,6 @@
 // facts or alternate backend ABI enter this boundary.
 import "./ir";
 import "./irtables";
-import "./fnsigs";
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
@@ -860,8 +859,7 @@ function scratch_base(f: ssasem.Func): i32 {
 function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
   // A handle has no box, so there is nothing under it to walk — and
   // no schema either, which is what the record arm below would go looking
-  // for. `caller_sigs` asks this of every parameter type, so a handle
-  // reaches here on any program that opens one.
+  // for.
   if (semtypes.is_handle(t)) {
     return false;
   }
@@ -5432,6 +5430,7 @@ function with_set_op(p: ssaunits.Plan, ins: ssa.SInst, elem: typeinfo.Type): ir.
 // The uniqueness test at run time (`sole_owned_base`) is what keeps a shared
 // donor immutable: its buffer is copied before the first write.
 // The reuse layer's off switch (`no_reuse`) turns it off with the pairings.
+// The same table also marks scale kernels admitted by scale_reason below.
 function in_place_maps(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, idx: i32[][], links: i32[], pure: util.NameIndex, no_reuse: boolean): boolean[] {
   let out: boolean[] = [];
   while (out.len() < f.graph.nvals) {
@@ -5444,14 +5443,55 @@ function in_place_maps(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, idx: i32[
     let pos: i32 = 0;
     while (pos < b.insts.len()) {
       let ins: ssa.SInst = b.insts[pos];
-      if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, "__arrm_map__")
-        && map_reason(f, modes, at(p, idx, b.id, pos, 0 - 1), links, pure, ins) == semarrayreport.storage_guarded_reuse()) {
-        out = out.with(ins.result, true);
+      if (array_reuse_candidate(ins)) {
+        let step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
+        if (in_place_array(f, modes, p, step, links, pure, ins)) {
+          out = out.with(ins.result, true);
+        }
       }
       pos = pos + 1;
     }
   }
   return out;
+}
+
+function array_reuse_candidate(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.call() && (ins.str == "__scale_f64" || util.str_has_prefix(ins.str, "__arrm_map__"));
+}
+
+function in_place_array(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, step: ssaunits.Step, links: i32[], pure: util.NameIndex, ins: ssa.SInst): boolean {
+  if (ins.str == "__scale_f64") {
+    return scale_reason(f, p, step, links, ins) == semarrayreport.scale_storage_guarded_reuse();
+  }
+  return map_reason(f, modes, step, links, pure, ins) == semarrayreport.storage_guarded_reuse();
+}
+
+// The scale builtin lends its argument, but a unit already owned by this
+// frame and dropped immediately after the call may instead become the result.
+// This includes a guarded record-field take admitted by the typed planner.
+// Borrowed fields and still-live values cannot donate. The dynamic buffer
+// uniqueness test remains necessary even when the record itself was unique.
+function scale_reason(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, links: i32[], ins: ssa.SInst): i32 {
+  if (util.has_str(f.shadows, ins.str)) {
+    return semarrayreport.scale_storage_builtin_shadowed();
+  }
+  if (ins.args.len() != 2 || !semtypes.equal(f.values[ins.args[0]], f.values[ins.result])) {
+    return semarrayreport.scale_storage_shape_unsupported();
+  }
+  if (links[ins.result] >= 0) {
+    return semarrayreport.scale_storage_borrow_linked_result();
+  }
+  let recv: i32 = ins.args[0];
+  if (!p.owned[recv]) {
+    return semarrayreport.scale_storage_receiver_borrowed();
+  }
+  if (util.index_of_i32(step.drops, recv) < 0) {
+    return semarrayreport.scale_storage_receiver_still_live();
+  }
+  if (supplied(step, recv)) {
+    return semarrayreport.scale_storage_receiver_supplied();
+  }
+  return semarrayreport.scale_storage_guarded_reuse();
 }
 
 function map_reason(f: ssasem.Func, modes: i32[], step: ssaunits.Step, links: i32[], pure: util.NameIndex, ins: ssa.SInst): i32 {
@@ -5522,6 +5562,33 @@ pub function map_report(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, pure: ut
   return out;
 }
 
+pub function scale_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site[] {
+  let out: semarrayreport.Site[] = [];
+  let idx: i32[][] = ssaunits.step_index(p);
+  let links: i32[] = links_of(f, p, idx);
+  let disabled: boolean = irtables.reuse_layer_disabled();
+  for b in f.graph.blocks {
+    let pos: i32 = 0;
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.call() && ins.str == "__scale_f64") {
+        let why: i32 = scale_reason(f, p, at(p, idx, b.id, pos, 0 - 1), links, ins);
+        if (disabled && why == semarrayreport.scale_storage_guarded_reuse()) {
+          why = semarrayreport.scale_storage_reuse_disabled();
+        }
+        let storage: string = "fresh-kernel-buffer";
+        if (why == semarrayreport.scale_storage_guarded_reuse()) {
+          storage = "unique-reuse/shared-copy";
+        } else if (why == semarrayreport.scale_storage_builtin_shadowed()) {
+          storage = "user-call";
+        }
+        out = out.append(semarrayreport.Site { owner: f.graph.name, stage: ins.str + "@v" + util.i32_to_string(ins.result), plan: "scale; ownership lowering", reason: why, storage: storage });
+      }
+      pos = pos + 1;
+    }
+  }
+  return out;
+}
+
 function same_wide_array(a: typeinfo.Type, b: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(arr) = a {
     return !arr.view && ssasem.is_wide(arr.elem) && semtypes.equal(a, b);
@@ -5561,6 +5628,9 @@ function without(xs: i32[], v: i32): i32[] {
 // box and index: the frame's scratch slots are typed once per function, and a
 // 64-bit element in one would collide with a narrow use of the same slot.
 function map_in_place(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  if (ins.str == "__scale_f64") {
+    return scale_in_place(r, f, ins);
+  }
   let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
   let fn: i32 = ins.args[1];
   let buf: i32 = scratch_base(f);
@@ -5596,6 +5666,27 @@ function map_in_place(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIns
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(buf));
   return emit(r, ir.op_store_local(ins.result));
+}
+
+// Each branch completes allocation before its vector loop. Unlike a general
+// map, scale has a fresh-buffer kernel: the shared arm writes the transformed
+// result directly, avoiding a full memcpy followed by a second pass.
+function scale_in_place(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let base: i32 = ins.args[0];
+  r = emit(r, ir.op_load_local(base));
+  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(base));
+  r = emit(r, ir.op_load_local(ins.args[1]));
+  r = emit(r, ir.op_scale_f64_in_place());
+  r = emit(r, ir.op_store_local(ins.result));
+  r = emit(r, ir.op_else());
+  r = emit(r, ir.op_load_local(base));
+  r = emit(r, ir.op_load_local(ins.args[1]));
+  r = emit(r, ir.op_scale_f64());
+  r = emit(r, ir.op_store_local(ins.result));
+  r = release(r, base, f.values[base], f);
+  return emit(r, ir.op_end());
 }
 
 // The cursor cluster. `map_iter` is the only allocation of the five, a fresh
@@ -7137,175 +7228,6 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
     e = pop(e);
   }
   return e;
-}
-
-// A produced function whose borrowability rows caller_sigs rewrites. `name` is
-// the key an AST caller looks it up by, `<Base>.<name>` for a method.
-// `receiver` says parameter 0 is a receiver, which has no position in the AST's
-// per-parameter rows; an associated function has none.
-pub struct Callee { name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, receiver: boolean }
-
-// caller_sigs replaces every callee's borrowability rows with the ones its
-// verified contract gives, in callee order.
-pub function caller_sigs(sg: fnsigs.FnSigs, callees: Callee[]): fnsigs.FnSigs {
-  let borrows: string[] = sg.borrowable_params;
-  for c in callees {
-    let first: i32 = 0;
-    if (c.receiver) {
-      first = 1;
-    }
-    borrows = borrow_rows(borrows, c.name, counted_tiers(c.f, c.modes, first), bare_flags(c.f, c.modes, c.plan, first));
-  }
-  return fnsigs.FnSigs { ...sg, borrowable_params: borrows };
-}
-
-// The AST caller's release of an argument it built follows the callee's
-// parameter rows, which its readers took from the callee's SYNTAX: a borrowed
-// parameter handed on to a counted one reads as consumed there, and an
-// argument the rows call neither borrowed nor counted is taken to be the
-// callee's, so the caller never releases it. The contract decides here: a
-// borrowed reference parameter is only ever read or retained, which is the
-// counted-tier row — every reference the callee keeps was retained, so
-// exactly one release stays with the caller — and never the bare row, which
-// promises the callee keeps no reference at all. A counted parameter takes
-// the one count the caller hands over, which is the row-less reading already.
-// The tier is the parameter's type, as the AST readers key it; the result
-// needs no test, since a returned parameter is a retained one here.
-function counted_tier(t: typeinfo.Type): string {
-  if let typeinfo.TypeArray(a) = t {
-    if (!ssasem.reference(a.elem) || ssasem.is_string(a.elem)) {
-      return "ACNT:";
-    }
-    if (named(a.elem) != "") {
-      return "DCNT:";
-    }
-    return "";
-  }
-  if (ssasem.is_string(t)) {
-    return "SCNT:";
-  }
-  if let typeinfo.TypeStruct(_) = t {
-    return "PCNT:";
-  }
-  if let typeinfo.TypeUnion(_) = t {
-    return "ECNT:";
-  }
-  if let typeinfo.TypeTuple(_) = t {
-    return "TCNT:";
-  }
-  return "";
-}
-
-function counted_tiers(f: ssasem.Func, modes: i32[], first: i32): string[] {
-  let out: string[] = [];
-  let i: i32 = first;
-  while (i < modes.len()) {
-    if (modes[i] == ssaunits.borrow_mode()) {
-      out = out.append(counted_tier(f.params[i]));
-    } else {
-      out = out.append("");
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
-function tier_flags(tiers: string[], prefix: string): string {
-  let flags: string = "";
-  let any: boolean = false;
-  for tier in tiers {
-    if (tier == prefix || prefix == "CNT:" && tier != "") {
-      flags = flags + "1";
-      any = true;
-    } else {
-      flags = flags + "0";
-    }
-  }
-  if (!any) {
-    return "";
-  }
-  return flags;
-}
-
-function borrow_rows(own reg: string[], name: string, tiers: string[], bare_row: string): string[] {
-  reg = fnsigs.borrow_reg_set(reg, name, bare_row);
-  return fnsigs.borrow_reg_set(reg, "CNT:" + name, tier_flags(tiers, "CNT:"));
-}
-
-// The bare row promises the callee keeps no reference to the argument once
-// it returns, which an AST caller's element sweep relies on to free what the
-// argument holds. A borrowed parameter keeps nothing when no unit of it, or of
-// anything projected from it, is retained, and nothing projected from it is
-// handed to a call other than a dyn dispatch, which lends its operands.
-function bare_flags(f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, first: i32): string {
-  if (!plan.ok) {
-    return "";
-  }
-  let borrows: boolean = false;
-  for m in modes {
-    if (m == ssaunits.borrow_mode()) {
-      borrows = true;
-    }
-  }
-  if (!borrows) {
-    return "";
-  }
-  let a: ssasem.Analysis = plan.analysis;
-  if (!a.ok) {
-    return "";
-  }
-  let flags: string = "";
-  let any: boolean = false;
-  let i: i32 = first;
-  while (i < modes.len()) {
-    let v: i32 = param_value(f, i);
-    if (v >= 0 && modes[i] == ssaunits.borrow_mode() && keeps_nothing(f, plan, a, v)) {
-      flags = flags + "1";
-      any = true;
-    } else {
-      flags = flags + "0";
-    }
-    i = i + 1;
-  }
-  if (!any) {
-    return "";
-  }
-  return flags;
-}
-
-function param_value(f: ssasem.Func, index: i32): i32 {
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (ins.kind_tag == 6 && ins.imm == index) {
-        return ins.result;
-      }
-    }
-  }
-  return 0 - 1;
-}
-
-function keeps_nothing(f: ssasem.Func, plan: ssaunits.Plan, a: ssasem.Analysis, param: i32): boolean {
-  for step in plan.steps {
-    for item in step.supplies {
-      if (item.mode == ssaunits.retain_unit() && derives(a, item.value, param)) {
-        return false;
-      }
-    }
-  }
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      let handed: boolean = ins.kind_tag == ssasem.call_value() || ins.kind_tag == ssasem.call() && !ssasem.is_dyn_call(ins.str);
-      if (!handed) {
-        continue;
-      }
-      for arg in ins.args {
-        if (derives(a, arg, param)) {
-          return false;
-        }
-      }
-    }
-  }
-  return true;
 }
 
 function derives(a: ssasem.Analysis, v: i32, root: i32): boolean {
