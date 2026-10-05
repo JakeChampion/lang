@@ -2351,6 +2351,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// a key or a value has no K or V to meet (#10214). A destination binds
 		// both, and a literal's own inserts bind them from its entries.
 		{"mapnew-chain-unbound-columns-e038", "import \"core/map\";\nfunction main(): i32 { return map_new(2).insert(\"a\", 1).len(); }\n", []string{"E038"}},
+		{"mapnew-chain-annotated-result-e003-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8).insert(\"x\", 5).insert(\"y\", 7); return m.get_or(\"y\", 0) + m.len(); }\n", []string{"E003", "E038"}},
+		{"mapnew-cleared-annotated-result-e003", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8).cleared(); return m.len(); }\n", []string{"E003"}},
+		{"mapnew-keys-annotated-result-e003", "import \"core/map\";\nfunction main(): i32 { let ks: string[] = map_new(8).keys(); return ks.len(); }\n", []string{"E003"}},
+		{"mapnew-values-annotated-result-e003", "import \"core/map\";\nfunction main(): i32 { let vs: i32[] = map_new(8).values(); return vs.len(); }\n", []string{"E003"}},
+		{"mapnew-get-return-e002-e038", "import \"core/map\";\nfunction f(): Option[i32] { return map_new(8).get(\"x\"); }\nfunction main(): i32 { return 0; }\n", []string{"E002", "E038"}},
+		{"mapnew-get-or-return-e002-e038", "import \"core/map\";\nfunction f(): i32 { return map_new(8).get_or(\"x\", 0); }\nfunction main(): i32 { return 0; }\n", []string{"E002", "E038"}},
+		{"mapnew-iter-annotated-result-e003", "import \"core/map\";\nfunction main(): i32 { let it: MapIter[string, i32] = map_new(8).iter(); return 0; }\n", []string{"E003"}},
+		// Pins without's unbound-key E038; E003 is the tuple-to-Map mismatch,
+		// independent of whether the result preserves unbound columns.
+		{"mapnew-without-annotated-result-e003-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8).without(\"x\"); return m.len(); }\n", []string{"E003", "E038"}},
+		{"mapnew-annotated-chain-clean", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert(\"x\", 5).insert(\"y\", 7); return m.get_or(\"y\", 0) + m.len(); }\n", nil},
 		{"mapnew-local-unbound-key-e038", "import \"core/map\";\nfunction main(): i32 { let m = map_new(2); if (m.has(\"a\")) { return 1; } return 0; }\n", []string{"E038"}},
 		{"mapnew-local-unbound-insert-e038", "import \"core/map\";\nfunction main(): i32 { let m = map_new(2); return m.insert(1, 2).len(); }\n", []string{"E038"}},
 		{"mapnew-annotated-insert-clean", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(2); m = m.insert(\"a\", 1); return m.get_or(\"a\", 0); }\n", nil},

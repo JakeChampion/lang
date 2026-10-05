@@ -11,8 +11,7 @@ import (
 //
 // Each `want` is the native interpreter's answer, except where that
 // interpreter cannot run the program: the raw-memory intrinsics, `chr`, the
-// slice traps (134, SIGABRT) and a `map_new(n).insert(..)` chain the native
-// checker cannot infer (#4451). There it is the answer the compiled program
+// slice traps (134, SIGABRT). There it is the answer the compiled program
 // gave when the case was pinned, checked by hand.
 func TestSelfHostAsmIRPath(t *testing.T) {
 	cli := newStrictCLI(t)

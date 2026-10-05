@@ -38,10 +38,12 @@ func TestSelfHostStructDeepDropIRArm64(t *testing.T) {
 	// so the is_unique gate passes and `__struct_drop_Inner` releases `inner.items`
 	// before the inner box is freed. The inner is read back before the drop; a wrong
 	// free of the live buffer would corrupt it. items[0..15] sum to 136, + tag 7 = 143.
+	// A runtime element keeps the array and enclosing boxes on the heap.
 	run(t, `struct Inner { items: i32[] }
 struct Outer { inner: Inner, tag: i32 }
+@noinline function runtime(n: i32): i32 { return n; }
 function main(): i32 {
-    let o: Outer = Outer { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, tag: 7 };
+    let o: Outer = Outer { inner: Inner { items: [runtime(1),2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, tag: 7 };
     let sum: i32 = 0; let j: i32 = 0;
     while (j < 16) { sum = sum + o.inner.items[j]; j = j + 1; }
     return sum + o.tag;

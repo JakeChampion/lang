@@ -21,6 +21,55 @@ var interpStdlibModloadCases = []struct {
 	name string
 	src  string
 }{
+	{"char-unicode-methods", `import "std/unicode";
+import "std/string";
+struct Scalar { value: char }
+function identity[T](x: T): T { return x; }
+function upper(c: char): char { return c.to_upper(); }
+function main(): i32 {
+  if ((97 as char).to_upper() != 'A') { return 1; }
+  if ('Σ'.to_lower() != 'σ') { return 2; }
+  let inferred = 'é';
+  if (inferred.to_upper() != 'É') { return 3; }
+  let scalars: char[] = ['a', '\u{10428}'];
+  if (scalars[1].to_upper() != '\u{10400}') { return 4; }
+  let pair = ('a', 'b');
+  if (pair.1.to_upper() != 'B') { return 5; }
+  let record = Scalar { value: 'é' };
+  if (record.value.to_upper() != 'É') { return 6; }
+  if (upper(identity('a')).to_lower() != 'a') { return 8; }
+  let make = (): char => { return 'é'; };
+  if (make().to_upper() != 'É') { return 9; }
+  if (!'\u{0669}'.is_digit() || !'\u{4E2D}'.is_letter()) { return 10; }
+  if ('ß'.to_upper() != 'ß' || "ß".to_upper() != "SS") { return 11; }
+  let wide: i64 = 0x10428;
+  if ((wide as char).to_upper() != '\u{10400}') { return 12; }
+  let unsigned: u32 = 233;
+  if ((unsigned as char).to_upper() != 'É') { return 13; }
+  let wide_unsigned: u64 = 97;
+  if ((wide_unsigned as char).to_upper() != 'A') { return 14; }
+  return 7;
+}`},
+	{"char-distinct-method-dispatch", `function (c: char) marker(): i32 { return 1; }
+function (n: i32) marker(): i32 { return 2; }
+function (b: u8) byte_marker(): i32 { return 3; }
+function main(): i32 {
+  let c = 'a';
+  if (c.marker() != 1 || (97 as char).marker() != 1) { return 1; }
+  if ((c as i32).marker() != 2 || (97).marker() != 2) { return 2; }
+  if ((c as u8).byte_marker() != 3) { return 3; }
+  return 7;
+}`},
+	{"char-captures", `import "std/unicode";
+function main(): i32 {
+  let c = 'a';
+  let read = (): char => { return c; };
+  c = 'z';
+  if (read().to_upper() != 'Z') { return 1; }
+  let change = (): char => { c = 'é'; return c; };
+  if (change().to_upper() != 'É' || read().to_upper() != 'É') { return 2; }
+  return 7;
+}`},
 	// The issue's repro: `__string_case_fold` — alloc a buffer, fill it byte
 	// by byte, pack it back.
 	{"ascii-case-fold", "import \"std/string\";\nfunction main(): i32 {\n  let s: string = \"AbC\";\n  if (s.to_ascii_lower() == \"abc\" && s.to_ascii_upper() == \"ABC\") { return 7; }\n  return 1;\n}\n"},

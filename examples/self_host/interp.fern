@@ -26,7 +26,9 @@ import "std/utf8";
 
 // =================== VALUES ====================
 
-pub struct VInt { v: i32 }
+// char uses the same numeric payload as i32 but has a distinct method surface.
+// Keep that identity in values so inferred bindings and container reads retain it.
+pub struct VInt { v: i32, is_char: boolean }
 
 // VInt64 holds a 64-bit integer (an i64 literal or the result of 64-bit
 // arithmetic). The value is stored as two i32 halves rather than a
@@ -115,7 +117,7 @@ pub struct VErr { msg: string }
 // (E057: scalars and strings, no composites, for the same cycle reason) lines up
 // with E049's, which is why this needs two scalar-shaped variants rather than a
 // single Cell[Value]. A program's own cells are VCell below.
-pub struct VCellI { c: Cell[i32] }
+pub struct VCellI { c: Cell[i32], is_char: boolean }
 
 pub struct VCellF { c: Cell[f64] }
 
@@ -147,7 +149,26 @@ pub struct VType { name: string }
 pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VType;
 
 function v_int(n: i32): Value {
-  return VInt { v: n };
+  return VInt { v: n, is_char: false };
+}
+
+function char_value(v: Value): Value {
+  if let VInt(n) = v {
+    if (n.is_char) {
+      return v;
+    }
+  }
+  if (is_int_like(v)) {
+    return VInt { v: vint_as_i64(v) as i32, is_char: true };
+  }
+  return v;
+}
+
+function int_type_name(n: VInt): string {
+  if (n.is_char) {
+    return "char";
+  }
+  return "i32";
 }
 
 function v_type(n: string): Value {
@@ -239,6 +260,9 @@ function zero_value_of(type_name: string): Value {
 }
 
 function coerce_int_width(val: Value, type_name: string): Value {
+  if (type_name == "char") {
+    return char_value(val);
+  }
   if (type_name == "i64" || type_name == "u64") {
     // A declared u64 also (re)tags the pattern unsigned — the value plane
     // is untyped, so this and the `as u64` cast are the only two places
@@ -977,7 +1001,7 @@ function (e: Env) lookup(name: string): Value {
 function deref_cell(v: Value): Value {
   match (v) {
     VCellI(ci) => {
-      return v_int(ci.c.get());
+      return VInt { v: ci.c.get(), is_char: ci.is_char };
     },
     VCellF(cf) => {
       return VFloat { v: cf.c.get() };
@@ -1280,13 +1304,13 @@ function is_cell(v: Value): boolean {
 function cell_for(v: Value): Value {
   match (v) {
     VInt(n) => {
-      return VCellI { c: cell_new(n.v) };
+      return VCellI { c: cell_new(n.v), is_char: n.is_char };
     },
     VBool(bb) => {
       if (bb.v) {
-        return VCellI { c: cell_new(1) };
+        return VCellI { c: cell_new(1), is_char: false };
       }
-      return VCellI { c: cell_new(0) };
+      return VCellI { c: cell_new(0), is_char: false };
     },
     VFloat(f) => {
       return VCellF { c: cell_new(f.v) };
@@ -2489,6 +2513,9 @@ function eval_unary(op: string, ov: Value): Value {
   // low byte gives. u8 is the only sub-i32 integer type in the language, so
   // this is the whole runtime-truncation surface. (An out-of-range u8
   // *literal* is a separate compile-time E047, not a runtime concern here.)
+  if (op == "as_char") {
+    return char_value(ov);
+  }
   if (op == "as_u8" || op == "as_byte") {
     match (ov) {
       VInt(i) => {
@@ -2516,26 +2543,7 @@ function eval_unary(op: string, ov: Value): Value {
   // into i32 range, e.g. `(5000000000 as i32)`; a VUint keeps its bit
   // pattern and drops the unsigned tag).
   if (op == "as_i32") {
-    match (ov) {
-      VInt(i) => {
-        return v_int(i.v);
-      },
-      VInt64(i) => {
-        return v_int(i.lo);
-      },
-      VUint(u) => {
-        return v_int(u.v);
-      },
-      VFloat(f) => {
-        return v_int(f.v as i32);
-      },
-      VFloat32(f) => {
-        return v_int(f.v as i32);
-      },
-      _ => {
-        return v_err("`as` integer cast operand not numeric");
-      }
-    }
+    return cast_i32_value(ov);
   }
   // `as u32` is the same 32-bit narrowing but tags the pattern unsigned. A
   // float source is the unsigned SATURATING truncation instead (see
@@ -2683,6 +2691,30 @@ function eval_unary(op: string, ov: Value): Value {
     return ov;
   }
   return v_err("unknown unary op: " + op);
+}
+
+// An explicit i32 cast drops scalar identity along with any wider payload.
+function cast_i32_value(v: Value): Value {
+  match (v) {
+    VInt(i) => {
+      return v_int(i.v);
+    },
+    VInt64(i) => {
+      return v_int(i.lo);
+    },
+    VUint(u) => {
+      return v_int(u.v);
+    },
+    VFloat(f) => {
+      return v_int(f.v as i32);
+    },
+    VFloat32(f) => {
+      return v_int(f.v as i32);
+    },
+    _ => {
+      return v_err("`as` integer cast operand not numeric");
+    }
+  }
 }
 
 // eval_number_literal parses a numeric literal to a Value. Kept OUT of
@@ -3514,8 +3546,8 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
 // the value carries no name to dispatch on.
 function tyarg_of_value(v: Value): string {
   match (v) {
-    VInt(_) => {
-      return "i32";
+    VInt(n) => {
+      return int_type_name(n);
     },
     VInt64(w) => {
       if (w.unsigned) {
@@ -3615,8 +3647,8 @@ function value_type_name(v: Value): string {
     VString(_) => {
       return "string";
     },
-    VInt(_) => {
-      return "i32";
+    VInt(n) => {
+      return int_type_name(n);
     },
     VInt64(iv64) => {
       if (iv64.unsigned) {

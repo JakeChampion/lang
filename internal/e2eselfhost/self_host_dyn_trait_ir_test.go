@@ -13,24 +13,25 @@ var dynTraitIRCases = []struct {
 	name     string
 	src      string
 	expected int
+	static   bool
 }{
 	// The motivating case: a heterogeneous `dyn Shape[]` iterated in a loop.
 	// 3*3 + 2*5 = 9 + 10 = 19.
-	{"heterogeneous-array",
-		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function sum(xs: dyn Shape[]): i32 { let t: i32 = 0; for x in xs { t = t + x.area(); } return t; } function main(): i32 { let xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }]; return sum(xs); }`, 19},
+	{name: "heterogeneous-array",
+		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function sum(xs: dyn Shape[]): i32 { let t: i32 = 0; for x in xs { t = t + x.area(); } return t; } function main(): i32 { let xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }]; return sum(xs); }`, expected: 19},
 	// A `dyn Shape` SCALAR param, receiving a Circle. 4*4 = 16.
-	{"param-circle",
-		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function ar(s: dyn Shape): i32 { return s.area(); } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let c: Circle = Circle { r: n(4) }; return ar(c); }`, 16},
+	{name: "param-circle",
+		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function ar(s: dyn Shape): i32 { return s.area(); } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let c: Circle = Circle { r: n(4) }; return ar(c); }`, expected: 16},
 	// Same param, receiving a Rect — the OTHER impl arm. 2*5 = 10.
-	{"param-rect",
-		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function ar(s: dyn Shape): i32 { return s.area(); } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let r: Rect = Rect { w: n(2), h: 5 }; return ar(r); }`, 10},
+	{name: "param-rect",
+		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function ar(s: dyn Shape): i32 { return s.area(); } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let r: Rect = Rect { w: n(2), h: 5 }; return ar(r); }`, expected: 10},
 	// A trait method taking an ARGUMENT, dispatched dynamically. 5 * 3 = 15.
-	{"method-with-arg",
-		`trait Sc { function sc(self: Self, k: i32): i32; } struct A { v: i32 } struct B { v: i32 } impl Sc for A { function sc(self: Self, k: i32): i32 { return self.v * k; } } impl Sc for B { function sc(self: Self, k: i32): i32 { return self.v + k; } } function f(s: dyn Sc): i32 { return s.sc(3); } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let a: A = A { v: n(5) }; return f(a); }`, 15},
+	{name: "method-with-arg",
+		src: `trait Sc { function sc(self: Self, k: i32): i32; } struct A { v: i32 } struct B { v: i32 } impl Sc for A { function sc(self: Self, k: i32): i32 { return self.v * k; } } impl Sc for B { function sc(self: Self, k: i32): i32 { return self.v + k; } } function f(s: dyn Sc): i32 { return s.sc(3); } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let a: A = A { v: n(5) }; return f(a); }`, expected: 15},
 	// Three impls in a heterogeneous array — exercises a longer compare-branch
 	// chain. 3*3 + 2*5 + 7 = 9 + 10 + 7 = 26.
-	{"three-impls",
-		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } struct Unit { } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } impl Shape for Unit { function area(self: Self): i32 { return 7; } } function sum(xs: dyn Shape[]): i32 { let t: i32 = 0; for x in xs { t = t + x.area(); } return t; } function main(): i32 { let xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }, Unit { }]; return sum(xs); }`, 26},
+	{name: "three-impls",
+		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } struct Unit { } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } impl Shape for Unit { function area(self: Self): i32 { return 7; } } function sum(xs: dyn Shape[]): i32 { let t: i32 = 0; for x in xs { t = t + x.area(); } return t; } function main(): i32 { let xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }, Unit { }]; return sum(xs); }`, expected: 26},
 
 	// --- `dyn` over PRIMITIVE / string receivers (docs/DYN-TRAITS.md §4.2.3) ---
 	// A primitive value has no shape pointer, so it is heap-boxed at the coercion
@@ -39,41 +40,41 @@ var dynTraitIRCases = []struct {
 	// value from offset 8 before calling `<prim>.<method>`.
 
 	// `dyn` over i32, SCALAR param. The arg 41 is boxed at the call; show() adds 1.
-	{"prim-i32-scalar",
-		`trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self + 1; } } function run(s: dyn Show): i32 { return s.show(); } function main(): i32 { let x: i32 = 41; return run(x); }`, 42},
+	{name: "prim-i32-scalar",
+		src: `trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self + 1; } } function run(s: dyn Show): i32 { return s.show(); } function main(): i32 { let x: i32 = 41; return run(x); }`, expected: 42},
 	// `dyn` over i32 with a method ARGUMENT. 5 * 3 = 15 (the unboxed receiver 5,
 	// the plain arg 3).
-	{"prim-i32-method-arg",
-		`trait Sc { function sc(self: Self, k: i32): i32; } impl Sc for i32 { function sc(self: Self, k: i32): i32 { return self * k; } } function f(s: dyn Sc): i32 { return s.sc(3); } function main(): i32 { let a: i32 = 5; return f(a); }`, 15},
+	{name: "prim-i32-method-arg",
+		src: `trait Sc { function sc(self: Self, k: i32): i32; } impl Sc for i32 { function sc(self: Self, k: i32): i32 { return self * k; } } function f(s: dyn Sc): i32 { return s.sc(3); } function main(): i32 { let a: i32 = 5; return f(a); }`, expected: 15},
 	// `dyn` over `string`: the value is a one-word string-box pointer, boxed like
 	// any primitive. show() returns its length. len("hello") = 5.
-	{"prim-string",
-		`trait Show { function show(self: Self): i32; } impl Show for string { function show(self: Self): i32 { return self.len(); } } function run(s: dyn Show): i32 { return s.show(); } function main(): i32 { let x: string = "hello"; return run(x); }`, 5},
+	{name: "prim-string",
+		src: `trait Show { function show(self: Self): i32; } impl Show for string { function show(self: Self): i32 { return self.len(); } } function run(s: dyn Show): i32 { return s.show(); } function main(): i32 { let x: string = "hello"; return run(x); }`, expected: 5},
 	// A homogeneous `dyn`-over-i32 ARRAY: each element is boxed at the array
 	// literal, then iterated + dispatched through runtime shape. 3 + 4 + 5 = 12.
-	{"prim-i32-array",
-		`trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self; } } function sum(xs: dyn Show[]): i32 { let t: i32 = 0; for x in xs { t = t + x.show(); } return t; } function main(): i32 { let xs: dyn Show[] = [3, 4, 5]; return sum(xs); }`, 12},
+	{name: "prim-i32-array",
+		src: `trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self; } } function sum(xs: dyn Show[]): i32 { let t: i32 = 0; for x in xs { t = t + x.show(); } return t; } function main(): i32 { let xs: dyn Show[] = [3, 4, 5]; return sum(xs); }`, expected: 12},
 
 	// --- SCALAR `dyn` coercion at var-init / assignment / return (§4.3) ---
 	// `let d: dyn Show = <i32>` — the primitive init is heap-boxed at the
 	// binding (op_dyn_box); `d.show()` dispatches through the boxed shape and
 	// unboxes the receiver. show() adds 1: 41 + 1 = 42.
-	{"prim-i32-var-init",
-		`trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self + 1; } } function main(): i32 { let d: dyn Show = 41; return d.show(); }`, 42},
+	{name: "prim-i32-var-init",
+		src: `trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self + 1; } } function main(): i32 { let d: dyn Show = 41; return d.show(); }`, expected: 42},
 	// `let d: dyn Show = <Circle>` — a STRUCT init flows UNBOXED, and the slot's
 	// type is "dyn Show" (NOT "Circle") so `d.show()` dispatches DYNAMICALLY
 	// (regression: must not static-dispatch to Circle.show). 4*4 = 16.
-	{"struct-var-init",
-		`trait Show { function show(self: Self): i32; } struct Circle { r: i32 } impl Show for Circle { function show(self: Self): i32 { return self.r * self.r; } } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let d: dyn Show = Circle { r: n(4) }; return d.show(); }`, 16},
+	{name: "struct-var-init",
+		src: `trait Show { function show(self: Self): i32; } struct Circle { r: i32 } impl Show for Circle { function show(self: Self): i32 { return self.r * self.r; } } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let d: dyn Show = Circle { r: n(4) }; return d.show(); }`, expected: 16},
 	// `d = <i32>` — reassigning a SCALAR dyn local boxes the primitive RHS at
 	// the assignment. Init with 10 (show -> 11), then reassign 41 (show -> 42).
-	{"prim-i32-assign",
-		`trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self + 1; } } function main(): i32 { let d: dyn Show = 10; d = 41; return d.show(); }`, 42},
+	{name: "prim-i32-assign",
+		src: `trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self + 1; } } function main(): i32 { let d: dyn Show = 10; d = 41; return d.show(); }`, expected: 42},
 	// `return <i32>` from a SCALAR `dyn Show`-returning function: the primitive
 	// is boxed at the return site; the caller binds the box as a dyn local and
 	// dispatches. 5 -> show() returns 5: pick().show() = 5.
-	{"prim-i32-return",
-		`trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self; } } function pick(): dyn Show { return 5; } function main(): i32 { let d: dyn Show = pick(); return d.show(); }`, 5},
+	{name: "prim-i32-return",
+		src: `trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self; } } function pick(): dyn Show { return 5; } function main(): i32 { let d: dyn Show = pick(); return d.show(); }`, expected: 5},
 
 	// --- `e as? T` downcast (docs/DYN-TRAITS.md §9) ---
 	// The downcast reads the dyn value's offset-0 shape and compares it to T's
@@ -82,32 +83,35 @@ var dynTraitIRCases = []struct {
 
 	// HIT: a `dyn Shape` holding a Circle, `s as? Circle` → Some(circle); the
 	// bound value is usable as a Circle (field `r`). r = 7.
-	{"downcast-hit",
-		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Circle) { Some(c) => { return c.r; }, None => { return 0; } } } function main(): i32 { let c: Circle = Circle { r: 7 }; return dc(c); }`, 7},
+	{name: "downcast-hit",
+		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Circle) { Some(c) => { return c.r; }, None => { return 0; } } } function main(): i32 { let c: Circle = Circle { r: 7 }; return dc(c); }`, expected: 7},
 	// MISS: a `dyn Shape` holding a Rect, `s as? Circle` → None → 0.
-	{"downcast-miss",
-		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Circle) { Some(c) => { return c.r; }, None => { return 0; } } } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let r: Rect = Rect { w: n(2), h: 5 }; return dc(r); }`, 0},
+	{name: "downcast-miss",
+		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Circle) { Some(c) => { return c.r; }, None => { return 0; } } } function main(): i32 { let r: Rect = Rect { w: 2, h: 5 }; return dc(r); }`, expected: 0, static: true},
+	// Runtime payloads also exercise the heap-backed downcast.
+	{name: "downcast-miss-dynamic",
+		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Circle) { Some(c) => { return c.r; }, None => { return 0; } } } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let r: Rect = Rect { w: n(2), h: 5 }; return dc(r); }`, expected: 0},
 	// The OTHER target on the same value: a `dyn Shape` Rect, `s as? Rect` → Some;
 	// w*h = 2*5 = 10.
-	{"downcast-hit-rect",
-		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Rect) { Some(re) => { return re.w * re.h; }, None => { return 0; } } } function main(): i32 { let r: Rect = Rect { w: 2, h: 5 }; return dc(r); }`, 10},
+	{name: "downcast-hit-rect",
+		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Rect) { Some(re) => { return re.w * re.h; }, None => { return 0; } } } function main(): i32 { let r: Rect = Rect { w: 2, h: 5 }; return dc(r); }`, expected: 10},
 	// HETEROGENEOUS `dyn Shape[]`: downcast each element to Circle and count the
 	// hits. [Circle, Rect, Circle] → 2 circles.
 	// An ENUM target: its box carries the shape of the variant it holds, so
 	// the downcast tests every variant. circle(5) and square(2) hit, a Dot
 	// misses: 5 + 4*10 + 0*100.
-	{"downcast-enum-target",
-		`enum Form { circle(i32), square(i32) } struct Dot { n: i32 } trait Shape { function area(self: Self): i32; } impl Shape for Form { function area(self: Self): i32 { match (self) { circle(r) => { return r; }, square(w) => { return w * w; } } } } impl Shape for Dot { function area(self: Self): i32 { return self.n; } } function to_form(s: dyn Shape): i32 { match (s as? Form) { Some(f) => { return f.area(); }, None => { return 0; } } } function main(): i32 { return to_form(Form.circle(5)) + to_form(Form.square(2)) * 10 + to_form(Dot { n: 4 }) * 100; }`, 45},
+	{name: "downcast-enum-target",
+		src: `enum Form { circle(i32), square(i32) } struct Dot { n: i32 } trait Shape { function area(self: Self): i32; } impl Shape for Form { function area(self: Self): i32 { match (self) { circle(r) => { return r; }, square(w) => { return w * w; } } } } impl Shape for Dot { function area(self: Self): i32 { return self.n; } } function to_form(s: dyn Shape): i32 { match (s as? Form) { Some(f) => { return f.area(); }, None => { return 0; } } } function main(): i32 { return to_form(Form.circle(5)) + to_form(Form.square(2)) * 10 + to_form(Dot { n: 4 }) * 100; }`, expected: 45},
 	// A MISS on a concrete that owns a string: the None arm reads the dyn value
 	// again and the census must still balance. 4 + 7*10.
-	{"downcast-string-owner-miss",
-		`import "std/string";
-struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: Self): i32; } impl Tag for Named { function t(self: Self): i32 { return self.s.len(); } } impl Tag for Plain { function t(self: Self): i32 { return self.n; } } function probe(d: dyn Tag): i32 { match (d as? Plain) { Some(p) => { return p.n; }, None => { return 100 + d.t(); } } } function main(): i32 { let a: i32 = probe(Named { s: "ab" + "cd" }); let b: i32 = probe(Plain { n: 7 }); return a - 100 + b * 10; }`, 74},
+	{name: "downcast-string-owner-miss",
+		src: `import "std/string";
+struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: Self): i32; } impl Tag for Named { function t(self: Self): i32 { return self.s.len(); } } impl Tag for Plain { function t(self: Self): i32 { return self.n; } } function probe(d: dyn Tag): i32 { match (d as? Plain) { Some(p) => { return p.n; }, None => { return 100 + d.t(); } } } function main(): i32 { let a: i32 = probe(Named { s: "ab" + "cd" }); let b: i32 = probe(Plain { n: 7 }); return a - 100 + b * 10; }`, expected: 74},
 	// A downcast bound to an annotated local rather than matched in place.
-	{"downcast-binding",
-		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function radius(s: dyn Shape): i32 { let o: Option[Circle] = s as? Circle; match (o) { Some(c) => { return c.r; }, None => { return 0; } } } function main(): i32 { return radius(Circle { r: 6 }) + radius(Rect { w: 2, h: 3 }) * 10; }`, 6},
-	{"downcast-array-count",
-		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function count(xs: dyn Shape[]): i32 { let n: i32 = 0; for x in xs { match (x as? Circle) { Some(c) => { n = n + 1; }, None => { } } } return n; } function main(): i32 { let xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }, Circle { r: 1 }]; return count(xs); }`, 2},
+	{name: "downcast-binding",
+		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function radius(s: dyn Shape): i32 { let o: Option[Circle] = s as? Circle; match (o) { Some(c) => { return c.r; }, None => { return 0; } } } function main(): i32 { return radius(Circle { r: 6 }) + radius(Rect { w: 2, h: 3 }) * 10; }`, expected: 6},
+	{name: "downcast-array-count",
+		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function count(xs: dyn Shape[]): i32 { let n: i32 = 0; for x in xs { match (x as? Circle) { Some(c) => { n = n + 1; }, None => { } } } return n; } function main(): i32 { let xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }, Circle { r: 1 }]; return count(xs); }`, expected: 2},
 
 	// --- MULTI-TRAIT `dyn A + B` downcast (docs/DYN-TRAITS.md §10). The
 	// self-host downcast is SHAPE-based (a variant_is test of the dyn
@@ -116,11 +120,14 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 	// shape, exactly like a single-trait one) downcasts for free. These pin
 	// that it parses + lowers + runs.
 	// HIT: a `dyn Show + Weigh` holding an Apple, `d as? Apple` → Some; g = 7.
-	{"downcast-multi-hit",
-		`trait Show { function show(self: Self): i32; } trait Weigh { function weight(self: Self): i32; } struct Apple { g: i32 } struct Brick { kg: i32 } impl Show for Apple { function show(self: Self): i32 { return self.g; } } impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } } impl Show for Brick { function show(self: Self): i32 { return self.kg; } } impl Weigh for Brick { function weight(self: Self): i32 { return self.kg; } } function dc(d: dyn Show + Weigh): i32 { match (d as? Apple) { Some(a) => { return a.g; }, None => { return 0; } } } function main(): i32 { let x: Apple = Apple { g: 7 }; return dc(x); }`, 7},
+	{name: "downcast-multi-hit",
+		src: `trait Show { function show(self: Self): i32; } trait Weigh { function weight(self: Self): i32; } struct Apple { g: i32 } struct Brick { kg: i32 } impl Show for Apple { function show(self: Self): i32 { return self.g; } } impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } } impl Show for Brick { function show(self: Self): i32 { return self.kg; } } impl Weigh for Brick { function weight(self: Self): i32 { return self.kg; } } function dc(d: dyn Show + Weigh): i32 { match (d as? Apple) { Some(a) => { return a.g; }, None => { return 0; } } } function main(): i32 { let x: Apple = Apple { g: 7 }; return dc(x); }`, expected: 7},
 	// MISS: a `dyn Show + Weigh` holding a Brick, `d as? Apple` → None → 0.
-	{"downcast-multi-miss",
-		`trait Show { function show(self: Self): i32; } trait Weigh { function weight(self: Self): i32; } struct Apple { g: i32 } struct Brick { kg: i32 } impl Show for Apple { function show(self: Self): i32 { return self.g; } } impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } } impl Show for Brick { function show(self: Self): i32 { return self.kg; } } impl Weigh for Brick { function weight(self: Self): i32 { return self.kg; } } function dc(d: dyn Show + Weigh): i32 { match (d as? Apple) { Some(a) => { return a.g; }, None => { return 99; } } } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let x: Brick = Brick { kg: n(3) }; return dc(x); }`, 99},
+	{name: "downcast-multi-miss",
+		src: `trait Show { function show(self: Self): i32; } trait Weigh { function weight(self: Self): i32; } struct Apple { g: i32 } struct Brick { kg: i32 } impl Show for Apple { function show(self: Self): i32 { return self.g; } } impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } } impl Show for Brick { function show(self: Self): i32 { return self.kg; } } impl Weigh for Brick { function weight(self: Self): i32 { return self.kg; } } function dc(d: dyn Show + Weigh): i32 { match (d as? Apple) { Some(a) => { return a.g; }, None => { return 99; } } } function main(): i32 { let x: Brick = Brick { kg: 3 }; return dc(x); }`, expected: 99, static: true},
+	// Runtime payloads also exercise the heap-backed downcast.
+	{name: "downcast-multi-miss-dynamic",
+		src: `trait Show { function show(self: Self): i32; } trait Weigh { function weight(self: Self): i32; } struct Apple { g: i32 } struct Brick { kg: i32 } impl Show for Apple { function show(self: Self): i32 { return self.g; } } impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } } impl Show for Brick { function show(self: Self): i32 { return self.kg; } } impl Weigh for Brick { function weight(self: Self): i32 { return self.kg; } } function dc(d: dyn Show + Weigh): i32 { match (d as? Apple) { Some(a) => { return a.g; }, None => { return 99; } } } @noinline function n(k: i32): i32 { return k; } function main(): i32 { let x: Brick = Brick { kg: n(3) }; return dc(x); }`, expected: 99},
 
 	// --- STRING-returning `dyn Trait` methods, chained (#5142). The dispatch
 	// returns the string in the result register; a string method chained
@@ -132,21 +139,21 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 	// method signature carries the return type; a "dyn <Trait>.<method>" entry
 	// in str_ret_fns makes the chained lowering track the string.
 	// `d.name().len()` on an SSO-inline string ("hello", <=7 bytes) → 5.
-	{"dyn-string-len-chained",
-		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { let p: P = P { tag: "hello" }; let d: dyn Named = p; return d.name().len(); }`, 5},
+	{name: "dyn-string-len-chained",
+		src: `trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { let p: P = P { tag: "hello" }; let d: dyn Named = p; return d.name().len(); }`, expected: 5},
 	// Same on a HEAP string (>7 bytes, out-of-line data) → 27.
-	{"dyn-string-len-heap",
-		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { let p: P = P { tag: "this is a long string value" }; let d: dyn Named = p; return d.name().len(); }`, 27},
+	{name: "dyn-string-len-heap",
+		src: `trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { let p: P = P { tag: "this is a long string value" }; let d: dyn Named = p; return d.name().len(); }`, expected: 27},
 	// Materialising into a `let s: string` first was the workaround — pin that
 	// it still works (the slot type already carried the string). → 5.
-	{"dyn-string-len-via-var",
-		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { let p: P = P { tag: "hello" }; let d: dyn Named = p; let s: string = d.name(); return s.len(); }`, 5},
+	{name: "dyn-string-len-via-var",
+		src: `trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { let p: P = P { tag: "hello" }; let d: dyn Named = p; let s: string = d.name(); return s.len(); }`, expected: 5},
 	// Concat chained on a dyn string result: (d.name() + "cd").len() = 2 + 2 = 4.
-	{"dyn-string-concat-chained",
-		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { let p: P = P { tag: "ab" }; let d: dyn Named = p; return (d.name() + "cd").len(); }`, 4},
+	{name: "dyn-string-concat-chained",
+		src: `trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { let p: P = P { tag: "ab" }; let d: dyn Named = p; return (d.name() + "cd").len(); }`, expected: 4},
 	// A `dyn Named` PARAM, chained `.len()` inside the callee. len("hiya") = 4.
-	{"dyn-string-len-param",
-		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function f(d: dyn Named): i32 { return d.name().len(); } function main(): i32 { let p: P = P { tag: "hiya" }; return f(p); }`, 4},
+	{name: "dyn-string-len-param",
+		src: `trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function f(d: dyn Named): i32 { return d.name().len(); } function main(): i32 { let p: P = P { tag: "hiya" }; return f(p); }`, expected: 4},
 	// Precision guard (#5151, root-caused + fixed by #5149): a `dyn Foo` whose
 	// method `bar` returns i32, alongside an UNRELATED inherent `S.bar()` that
 	// returns a string. expr_is_str's dyn-receiver arm used to scan str_ret_fns
@@ -158,8 +165,8 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 	// on heap contents). The mis-lowering was deterministic in the shared
 	// irlower, not an uninitialized read; #5149's exact-qualified
 	// "dyn <Trait>.<method>" lookup eliminates it on every backend. 9 + 3 = 12.
-	{"dyn-i32-vs-unrelated-string",
-		`trait Foo { function bar(self: Self): i32; } struct A { n: i32 } impl Foo for A { function bar(self: Self): i32 { return self.n; } } struct S { s: string } impl S { function bar(self: Self): string { return self.s; } } function main(): i32 { let a: A = A { n: 9 }; let d: dyn Foo = a; let sv: S = S { s: "xyz" }; return d.bar() + sv.bar().len(); }`, 12},
+	{name: "dyn-i32-vs-unrelated-string",
+		src: `trait Foo { function bar(self: Self): i32; } struct A { n: i32 } impl Foo for A { function bar(self: Self): i32 { return self.n; } } struct S { s: string } impl S { function bar(self: Self): string { return self.s; } } function main(): i32 { let a: A = A { n: 9 }; let d: dyn Foo = a; let sv: S = S { s: "xyz" }; return d.bar() + sv.bar().len(); }`, expected: 12},
 
 	// --- NUMERIC-returning `dyn Trait` methods, chained in arithmetic. Same
 	// "result type not tracked onto the dispatch result" class as the string
@@ -169,23 +176,23 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 	// i64_ret_fns / f64_ret_fns fix each; the `if (r == …) 1 else 0` returns 1
 	// only when the arithmetic is done at the correct width.
 	// i64: 5_000_000_000 + 1 == 5_000_000_001 (truncates to garbage at i32).
-	{"dyn-i64-chained",
-		`trait Big { function v(self: Self): i64; } struct P { n: i64 } impl Big for P { function v(self: Self): i64 { return self.n; } } function main(): i32 { let p: P = P { n: 5000000000 }; let d: dyn Big = p; let r: i64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, 1},
+	{name: "dyn-i64-chained",
+		src: `trait Big { function v(self: Self): i64; } struct P { n: i64 } impl Big for P { function v(self: Self): i64 { return self.n; } } function main(): i32 { let p: P = P { n: 5000000000 }; let d: dyn Big = p; let r: i64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, expected: 1},
 	// u64 uses the i64 path — same fix.
-	{"dyn-u64-chained",
-		`trait U { function v(self: Self): u64; } struct P { n: u64 } impl U for P { function v(self: Self): u64 { return self.n; } } function main(): i32 { let p: P = P { n: 5000000000 }; let d: dyn U = p; let r: u64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, 1},
+	{name: "dyn-u64-chained",
+		src: `trait U { function v(self: Self): u64; } struct P { n: u64 } impl U for P { function v(self: Self): u64 { return self.n; } } function main(): i32 { let p: P = P { n: 5000000000 }; let d: dyn U = p; let r: u64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, expected: 1},
 	// f64: 2.5 + 0.5 == 3.0 (integer add on the float bits gives a wrong value).
-	{"dyn-f64-chained",
-		`trait Fl { function f(self: Self): f64; } struct S { v: f64 } impl Fl for S { function f(self: Self): f64 { return self.v; } } function main(): i32 { let s: S = S { v: 2.5 }; let d: dyn Fl = s; let r: f64 = d.f() + 0.5; if (r == 3.0) { return 1; } return 0; }`, 1},
+	{name: "dyn-f64-chained",
+		src: `trait Fl { function f(self: Self): f64; } struct S { v: f64 } impl Fl for S { function f(self: Self): f64 { return self.v; } } function main(): i32 { let s: S = S { v: 2.5 }; let d: dyn Fl = s; let r: f64 = d.f() + 0.5; if (r == 3.0) { return 1; } return 0; }`, expected: 1},
 	// f32 uses the f64 twin for value ops — same fix.
-	{"dyn-f32-chained",
-		`trait F { function v(self: Self): f32; } struct P { n: f32 } impl F for P { function v(self: Self): f32 { return self.n; } } function main(): i32 { let p: P = P { n: 2.5 }; let d: dyn F = p; let r: f32 = d.v() + 0.5; if (r == 3.0) { return 1; } return 0; }`, 1},
+	{name: "dyn-f32-chained",
+		src: `trait F { function v(self: Self): f32; } struct P { n: f32 } impl F for P { function v(self: Self): f32 { return self.n; } } function main(): i32 { let p: P = P { n: 2.5 }; let d: dyn F = p; let r: f32 = d.v() + 0.5; if (r == 3.0) { return 1; } return 0; }`, expected: 1},
 	// Regression guard for a non-scalar return that DOES track + route IR: an
 	// array `.len()` on the dispatch result. (A struct-field or Option-match on a
 	// dyn dispatch result currently bails — a legit
 	// IR-subset gap, not a miscompile — so those shapes aren't pinned here.)
-	{"dyn-array-len-chained",
-		`trait Arr { function make(self: Self): i32[]; } struct S { n: i32 } impl Arr for S { function make(self: Self): i32[] { return [self.n, self.n, self.n]; } } function main(): i32 { let s: S = S { n: 1 }; let d: dyn Arr = s; return d.make().len(); }`, 3},
+	{name: "dyn-array-len-chained",
+		src: `trait Arr { function make(self: Self): i32[]; } struct S { n: i32 } impl Arr for S { function make(self: Self): i32[] { return [self.n, self.n, self.n]; } } function main(): i32 { let s: S = S { n: 1 }; let d: dyn Arr = s; return d.make().len(); }`, expected: 3},
 
 	// --- DIRECTLY-INDEXED dyn-array dispatch results (`d.make()[i]`, no
 	// explicitly-typed intermediate `let xs: T[]`). The element WIDTH/type of the
@@ -198,11 +205,11 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 	// miscompile — so it is not pinned here and the i64arr registry gets no dyn
 	// entry.)
 	// f64[] element: [2.5, 3.5][1] + 1.0 == 4.5.
-	{"dyn-arr-f64-direct-index",
-		`trait Arr { function make(self: Self): f64[]; } struct S { v: f64 } impl Arr for S { function make(self: Self): f64[] { return [self.v, self.v + 1.0]; } } function main(): i32 { let s: S = S { v: 2.5 }; let d: dyn Arr = s; let r: f64 = d.make()[1] + 1.0; if (r == 4.5) { return 1; } return 0; }`, 1},
+	{name: "dyn-arr-f64-direct-index",
+		src: `trait Arr { function make(self: Self): f64[]; } struct S { v: f64 } impl Arr for S { function make(self: Self): f64[] { return [self.v, self.v + 1.0]; } } function main(): i32 { let s: S = S { v: 2.5 }; let d: dyn Arr = s; let r: f64 = d.make()[1] + 1.0; if (r == 4.5) { return 1; } return 0; }`, expected: 1},
 	// string[] element, chained `.len()`: ["ab","hello"][1].len() == 5.
-	{"dyn-arr-string-direct-index",
-		`trait Arr { function make(self: Self): string[]; } struct S { s: string } impl Arr for S { function make(self: Self): string[] { return [self.s, "hello"]; } } function main(): i32 { let s: S = S { s: "ab" }; let d: dyn Arr = s; return d.make()[1].len(); }`, 5},
+	{name: "dyn-arr-string-direct-index",
+		src: `trait Arr { function make(self: Self): string[]; } struct S { s: string } impl Arr for S { function make(self: Self): string[] { return [self.s, "hello"]; } } function main(): i32 { let s: S = S { s: "ab" }; let d: dyn Arr = s; return d.make()[1].len(); }`, expected: 5},
 }
 
 // TestSelfHostDynTraitIR compiles each case with the self-host CLI for
@@ -218,7 +225,15 @@ func TestSelfHostDynTraitIR(t *testing.T) {
 				if code != tc.expected {
 					t.Fatalf("exited %d, want %d\n%s", code, tc.expected, stderr)
 				}
-				assertBalancedCensus(t, stderr)
+				if tc.static {
+					// Static probes must not allocate or release heap objects.
+					allocs, frees, live := leakSummaryOf(t, tc.name, stderr)
+					if allocs != 0 || frees != 0 || live != 0 {
+						t.Fatalf("static probe: allocs=%d frees=%d live=%d, want all zero", allocs, frees, live)
+					}
+				} else {
+					assertBalancedCensus(t, stderr)
+				}
 			})
 		}
 	}
