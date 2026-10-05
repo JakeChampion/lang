@@ -884,6 +884,12 @@ function test_target_is_normalised(): test.TestOutcome {
   if (target_of("GET", "/%41../b") != "/A../b") {
     return test.fail("a segment that only ends in dots stays: " + target_of("GET", "/%41../b"));
   }
+  if (target_of("GET", "/.a/b../..c") != "/.a/b../..c") {
+    return test.fail("segments that only start or end in dots stay: " + target_of("GET", "/.a/b../..c"));
+  }
+  if (target_of("GET", "/a/b/../../c/") != "/c/") {
+    return test.fail("two segments dropped: " + target_of("GET", "/a/b/../../c/"));
+  }
   if (target_of("GET", "/a%20b/%C3%A4") != "/a b/ä") {
     return test.fail("decoded once: " + target_of("GET", "/a%20b/%C3%A4"));
   }
@@ -1170,6 +1176,12 @@ function test_path_escapes_must_be_utf8(): test.TestOutcome {
   }
   if (target_of("GET", "/a%C3/b") != "refused 400") {
     return test.fail("%C3 alone: " + target_of("GET", "/a%C3/b"));
+  }
+  if (target_of("GET", "/%FF/../a") != "refused 400") {
+    return test.fail("%FF in a segment a .. drops: " + target_of("GET", "/%FF/../a"));
+  }
+  if (target_of("GET", "/%C3%A9/../a") != "/a") {
+    return test.fail("UTF-8 in a segment a .. drops: " + target_of("GET", "/%C3%A9/../a"));
   }
   return test.assert_eq(status_of("GET /%FF HTTP/1.1\r\nHost: h\r\n\r\n"), 400);
 }
