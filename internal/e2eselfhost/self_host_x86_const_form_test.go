@@ -10,9 +10,7 @@ import (
 )
 
 // The emitter-shape gates for asm_ir.fern's register path on constants: the
-// immediate operand forms and the constant materialisation forms — the
-// self-host mirror of native's const_alu_fold_test.go and
-// const_zero_xor_test.go (internal/codegen/x86_64).
+// immediate operand forms and the constant materialisation forms.
 //
 // Each case asserts two things that have to travel together: the selected
 // form is present in the function that produces it and the form it replaces

@@ -295,18 +295,13 @@ the prefix and executes BSR / BSF, which answer a different question and are
 undefined at a zero input. So a sub-baseline CPU miscomputes **silently** there
 instead of crashing.
 
-**The x86-64 level is what the default backend already emits, not a raise.**
-`internal/codegen/x86_64`'s byte kernels run 32-byte AVX2 main loops —
-`vmovdqu` / `vpcmpeqb` / `vpbroadcastb` / `vpmovmskb` on `ymm`, 16 emitted
-instructions with no cpuid check anywhere — so any binary linking one of those
-kernels has required AVX2 for as long as they have existed. The self-host's
-byte kernels (`__fern_count_byte`, `__fern_memchr`, `__fern_rmemchr`,
-`__fern_ascii_run`) run the same 32-byte AVX2 main loops ahead of their
-16-byte SSE2 ones, and `OpClz` / `OpCtz` / `OpPopcount` lower to `lzcnt` /
-`tzcnt` / `popcnt`, so both backends sit at v3. The self-host's x86-64
-emitter runs the same three tiers in its four byte kernels, through the five
-VEX forms its in-process assembler encodes (`x86_native.fern`), so its output
-sits at v3 too.
+**The x86-64 level is what the backend already emits, not a raise.** The
+self-host's byte kernels (`__fern_count_byte`, `__fern_memchr`,
+`__fern_rmemchr`, `__fern_ascii_run`) run 32-byte AVX2 main loops —
+`vmovdqu` / `vpcmpeqb` / `vpbroadcastb` / `vpmovmskb` on `ymm`, with no cpuid
+check anywhere — ahead of their 16-byte SSE2 ones, through the five VEX forms
+its in-process assembler encodes (`x86_native.fern`), and `OpClz` / `OpCtz` /
+`OpPopcount` lower to `lzcnt` / `tzcnt` / `popcnt`, so its output sits at v3.
 
 x86-64-v3 is the standard name for the class that has it, and no real
 part carries AVX2 without v3's other bits. The AMD floor moves with it: Jaguar

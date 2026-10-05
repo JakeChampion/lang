@@ -163,13 +163,16 @@ group is one PR, after the re-point.
    request past 32 bits, where the self-host sizes it in 64 bits and runs
    the program to its answer.
 4. **The direct-caller PRs**, one per row of the table above.
-5. **The deletions.** `internal/codegen/{x86_64,arm64,wasmbin}` (the SSA pair
-   is gone, with `internal/ssa` and `internal/semir`),
-   `internal/native/{x86_64,arm64}` (the assembler the tests link with;
-   `internal/native/elf` and the Mach-O writer stay if `cmd/fern` keeps a
-   Go link path), `cmd/dump_arm64`, and
-   `internal/sourcelint`'s codegen-boundary population. `docs/TEST-GATES.md`
-   loses its native rows and `docs/BACKEND-PARITY.md` its per-backend table.
+5. **The deletions.** DONE for `internal/codegen/{x86_64,arm64}` and
+   `cmd/dump_arm64`, with the two native-assembler benchmarks in
+   `internal/e2eharness` that emitted through them and the IR helpers only
+   they reached (`ir.StackHeights`, `ir.ConstArrayByteRows`, `fdlibm.Off`);
+   `internal/sourcelint`'s codegen-boundary allowlist is empty. Still to go:
+   `internal/codegen/wasmbin`, whose preview-3 tests wait on #11530, and
+   `internal/native/{x86_64,arm64}`, the assemblers some self-host tests
+   still link with (`internal/native/elf` and the Mach-O writer stay if
+   anything keeps a Go link path). `docs/BACKEND-PARITY.md` then loses its
+   per-backend table.
 6. **DONE: `cmd/fern` is the launcher** (#4451). Go keeps the parser, checker
    and interpreter, which the oracle needs, and the report, package and
    literate modes. Every `-target` compile execs the self-host compiler
@@ -187,5 +190,5 @@ CI lanes keep their names: `test-e2e-x86_64`, `test-e2e-arm64` and
 target is compiled by the self-host. The "native test runners" wording goes
 in step 5. Since step 3 every `internal/e2e`
 lane builds `fern.fern` once from the driver cache, and a self-host change
-runs them; `test-fernsmith` and `examples` never read the self-host and keep
-skipping a change to it.
+runs them, as it does `examples`, which compiles through `fern`;
+`test-fernsmith` never reads the self-host and keeps skipping a change to it.
