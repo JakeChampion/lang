@@ -1,9 +1,6 @@
 package e2eselfhost
 
-import (
-	"os/exec"
-	"testing"
-)
+import "testing"
 
 // #8240: a self-host caller freed a struct box while a live binding still
 // named it.
@@ -32,10 +29,8 @@ import (
 // for: remove them and every case here passes against a broken compiler.
 //
 // Differential against `fern -interp`, not a written-down number: native and
-// the interpreter both answer correctly, so the oracle is real. Assertions are
-// on the ANSWER and __rc_underflow_count() — deliberately never on live_bytes,
-// because this shape still leaks 56 B on the self-host legs (pre-existing, and
-// unrelated to the free), so a byte assertion would fail for the wrong reason.
+// the interpreter both answer correctly, so the oracle is real. The leak census
+// must balance as well.
 var selfHostBorrowedStructParamCases = []struct {
 	name string
 	src  string
@@ -50,11 +45,9 @@ var selfHostBorrowedStructParamCases = []struct {
 	{"return-alias-passthrough", "struct St { ops: i32[], names: string[], ctrl: i32 }\n@noinline\nfunction (s: St) emit(op: i32): St {\n    return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };\n}\n@noinline\nfunction ret_alias(n: i32, s: St): St {\n    let st: St = s;\n    let i: i32 = 0;\n    while (i < n) { st = st.emit(i); i = i + 1; }\n    return st;\n}\nfunction main(): i32 {\n    let s: St = St { ops: [], names: [\"alpha\"], ctrl: 0 };\n    let s1: St = s.emit(1);\n    let a: St = ret_alias(0, s1);\n    let junk: St = St { ops: [7], names: [\"zzz\"], ctrl: 42 };\n    if (junk.ctrl != 42) { return 81; }\n    return a.ctrl + __rc_underflow_count();\n}"},
 
 	// The other side of the compare: the local IS rebound before the return, so
-	// a FRESH box comes back and the caller's box is genuinely dead. What this
-	// row can show is only that the non-equal path still answers correctly —
-	// the release it must keep is a LEAK question, and a leak moves neither the
-	// exit code nor __rc_underflow_count(). That direction is carried by the
-	// leak matrix and the conformance leak census, not here.
+	// a FRESH box comes back and the caller's box is genuinely dead. The census
+	// is what checks the release this path must keep; a leak moves neither the
+	// exit code nor __rc_underflow_count().
 	{"return-alias-rebound", "struct St { ops: i32[], names: string[], ctrl: i32 }\n@noinline\nfunction (s: St) emit(op: i32): St {\n    return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };\n}\n@noinline\nfunction ret_alias(n: i32, s: St): St {\n    let st: St = s;\n    let i: i32 = 0;\n    while (i < n) { st = st.emit(i); i = i + 1; }\n    return st;\n}\nfunction main(): i32 {\n    let s: St = St { ops: [], names: [\"alpha\"], ctrl: 0 };\n    let s1: St = s.emit(1);\n    let a: St = ret_alias(2, s1);\n    let junk: St = St { ops: [7], names: [\"zzz\"], ctrl: 42 };\n    if (junk.ctrl != 42) { return 81; }\n    return a.ctrl + __rc_underflow_count();\n}"},
 
 	// Control: an ARRAY param handed back the same way. Arrays keep the
@@ -68,6 +61,7 @@ var selfHostBorrowedStructParamCases = []struct {
 // both exit 42 without the fix.
 func TestSelfHostBorrowedStructParamReturnX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
+	t.Setenv("FERN_LEAKCHECK", "1")
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
@@ -81,15 +75,13 @@ func TestSelfHostBorrowedStructParamReturnX86_64(t *testing.T) {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			progBin := buildBin(t, gcc, dir, "bsp_"+tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
+			stderr, code := hevRun(t, runner, progBin)
+			if code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
+			}
+			allocs, frees, live := parseLeakcheck(t, tc.name, stderr)
+			if allocs == 0 || allocs != frees || live != 0 {
+				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", tc.name, allocs, frees, live)
 			}
 		})
 	}
@@ -101,6 +93,7 @@ func TestSelfHostBorrowedStructParamReturnX86_64(t *testing.T) {
 func TestSelfHostBorrowedStructParamReturnArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
+	t.Setenv("FERN_LEAKCHECK", "1")
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
@@ -113,10 +106,7 @@ func TestSelfHostBorrowedStructParamReturnArm64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
-			progBin := buildBin(t, arm64gcc, dir, "bsp_"+tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
+			if code := arm64Census(t, arm64gcc, qemu, "bsp_"+tc.name, string(asm)); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
 			}
 		})

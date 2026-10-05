@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -30,20 +29,13 @@ import (
 // class was under test — it cost this repo a full round on #5474's gate, whose churn cases
 // hoist the string for that reason.
 //
-// Two shapes stay UNCREDITED on purpose, both because the alternative is an
-// over-release rather than a leak:
-//
-//   - A literal local that is also a CONCAT OPERAND (`let pre = "ab"; let q = pre + "x";`
-//     — 800/598/4832, still leaking). The shared escape gate expr_unsafe_for treats any
-//     ident operand of a binary op as an escape, so `pre` earns no credit. That gate
-//     backs every reclaim class, not just strings, so widening it is a cross-class change
-//     needing its own gating rather than part of this change.
-//   - A literal local that is the receiver of `.to_string()`. On a string receiver that
-//     call is the IDENTITY, so its result aliases the receiver's box and the concat-temp
-//     machinery frees that result as an inline-consumed temp; crediting the local too
-//     would release the same box twice. litstr_tostring_receiver excludes it, which is
-//     what keeps TestSelfHostStrConcatTemp's `tostring-string-recv-alias-safe` pinned at
-//     exactly two sites.
+// A literal local that is the receiver of `.to_string()` stays UNCREDITED on purpose,
+// because the alternative is an over-release: on a string receiver that call is the
+// IDENTITY, so its result aliases the receiver's box and the concat-temp machinery frees
+// that result as an inline-consumed temp; crediting the local too would release the same
+// box twice. litstr_tostring_receiver excludes it, which is what keeps
+// TestSelfHostStrConcatTemp's `tostring-string-recv-alias-safe` pinned at exactly two
+// sites.
 //
 // The credit also stays out of str_local_binding_is_fresh, whose ~20 other callers drive
 // the accumulator and concat-temp analyses: folding it in there made `s = "reset"` read
@@ -90,12 +82,10 @@ function main(): i32 {
 }`, 0},
 	// The OVER-RELEASE guard on that credit, and the reason the freshness half is a
 	// whole-program proof rather than "it is a call". `ident` returns its PARAMETER, so
-	// its result ALIASES the caller's box — freeing it at the binding would release a
-	// string the caller still holds. str_return_is_fresh declines a bare-ident return, so
-	// `ident` never enters str_fresh_ret_fns and the local is left to leak, which is the
-	// conservative direction. Reading every value back afterwards turns a wrong admission
-	// into a wrong ANSWER rather than only a byte count.
-	{"strfresh-identity-ret-refused", `function ident(s: string): string { return s; }
+	// its result ALIASES the caller's box — releasing it at the binding as if it were
+	// fresh would free a string the caller still holds. Reading every value back
+	// afterwards turns a wrong admission into a wrong ANSWER rather than only a byte count.
+	{"strfresh-identity-ret-safe", `function ident(s: string): string { return s; }
 function main(): i32 {
     let keep: string = "abcd";
     let acc: i32 = 0;
@@ -149,9 +139,10 @@ function main(): i32 {
 }
 
 // TestSelfHostLitStrLocalReclaimIRX86_64 drives the cases through the self-hosted x86-64
-// compiler (asm_run), heap-bump + underflow guarded.
+// compiler (asm_run), heap-bump, census and underflow guarded.
 func TestSelfHostLitStrLocalReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
+	t.Setenv("FERN_LEAKCHECK", "1")
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
 	if err != nil {
@@ -169,15 +160,13 @@ func TestSelfHostLitStrLocalReclaimIRX86_64(t *testing.T) {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			stderr, code := hevRun(t, runner, bin)
+			if code != tc.want {
 				t.Errorf("%s = %d, want %d (98 = literal string local leaked; 99 = over-release/underflow; 97 = value corrupted)", tc.name, code, tc.want)
+			}
+			allocs, frees, live := parseLeakcheck(t, tc.name, stderr)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", tc.name, allocs, frees, live)
 			}
 		})
 	}

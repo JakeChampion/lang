@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -37,21 +36,11 @@ import (
 // slot records its element type in neither arrarr_elem (populated only for `T[][]`, and
 // only for four scalar tags) nor struct_type.
 //
-// The bounded-churn cases HOIST `let pre: string = "ab"` above the loop deliberately.
-// A literal-initialised string local declared INSIDE a loop body leaks 24 B/iteration on
-// x86-64 and arm64 (wasm is flat) regardless of what else the loop does — the plain
-// `i32[]` control leaks it identically, with no rc element anywhere — so leaving it in
-// the loop would make these cases fail on a defect they are not testing — the first cut
-// of this gate did exactly that, reading 98 on x86-64 and arm64 while wasm passed, which
-// looks just like a partial fix to the class under test. Tracked as #6582.
+// The negative cases extract an element — a match over `xs[0]`, a bound element, a
+// returned array — so freeing that element while a binding aliases its payload is a
+// double free. Each must compute the exact value with the underflow detector at zero.
 //
-// SOUNDNESS: admission here is deliberately much tighter than its siblings'. The only
-// admitted use of the local is `xs.len()`; ANY element extraction — `xs[i]` bare, as a
-// match scrutinee, or a bound payload — leaves the local un-credited and leak-safe.
-// The hazard in this class is a double-free rather than a leak: a match arm can bind an
-// element's payload, and freeing that element while the binding aliases it corrupts the
-// self-compile. The negative cases below pin that fallback: each leaks by design and
-// must still compute the exact value with the underflow detector at zero.
+// Every case must also leave a balanced census.
 var arrEnumReclaimCases = []struct {
 	name string
 	src  string
@@ -115,8 +104,8 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// MATCH-EXTRACT negative: a match over `xs[0]` binding the payload. Un-credited and
-	// leak-safe; the bound string must read back exactly (2 + 1 = 3 per round over 50
+	// MATCH-EXTRACT negative: a match over `xs[0]` binding the payload. The bound
+	// string must read back exactly (2 + 1 = 3 per round over 50
 	// rounds = 150, %251 = 150, %97 = 53) with the detector at zero.
 	{"arrenum-match-extract-safe", `enum E { A(string), B }
 function main(): i32 {
@@ -149,7 +138,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 97;
 }`, 53},
-	// ESCAPE-VIA-RETURN negative: the array leaves the frame, so nothing may be freed.
+	// ESCAPE-VIA-RETURN negative: the array leaves the frame, so mk must not free it.
 	{"arrenum-escape-fn-safe", `enum E { A(string), B }
 function mk(pre: string): E[] { let xs: E[] = [E.A(pre + "x"), E.B]; return xs; }
 function main(): i32 {
@@ -162,9 +151,10 @@ function main(): i32 {
 }
 
 // TestSelfHostArrEnumReclaimIRX86_64 drives the cases through the self-hosted x86-64
-// compiler (asm_run), heap-bump + underflow guarded.
+// compiler (asm_run), heap-bump, census and underflow guarded.
 func TestSelfHostArrEnumReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
+	t.Setenv("FERN_LEAKCHECK", "1")
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
 	if err != nil {
@@ -182,15 +172,13 @@ func TestSelfHostArrEnumReclaimIRX86_64(t *testing.T) {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			stderr, code := hevRun(t, runner, bin)
+			if code != tc.want {
 				t.Errorf("%s = %d, want %d (98 = enum-array elements leaked; 99 = over-release/underflow; 97 = value corrupted)", tc.name, code, tc.want)
+			}
+			allocs, frees, live := parseLeakcheck(t, tc.name, stderr)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", tc.name, allocs, frees, live)
 			}
 		})
 	}
