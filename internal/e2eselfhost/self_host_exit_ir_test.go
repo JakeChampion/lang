@@ -107,8 +107,8 @@ func TestSelfHostExitIRWasm(t *testing.T) {
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
-			if !bytes.Contains(wat, []byte("call $proc_exit")) {
-				t.Fatalf("%s: no call $proc_exit in wat — did not lower through the wasm IR path", tc.name)
+			if !bytes.Contains(wat, []byte("call $__fern_proc_exit")) {
+				t.Fatalf("%s: no call $__fern_proc_exit in wat — did not lower through the wasm IR path", tc.name)
 			}
 			watFile := filepath.Join(dir, "ex_prog.wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {

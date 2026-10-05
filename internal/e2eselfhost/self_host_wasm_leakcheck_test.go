@@ -21,8 +21,8 @@ import (
 // pop — a pop is an alloc too), in $__fern_arr_dec's rc==1 free and
 // $__fern_alloc_reuse's mispaired-donor free (each before the bsz slot is
 // overwritten by the freelist next-pointer), and a $__fern_lc_report on
-// stderr wired through a flag-gated reporting $proc_exit — so the exit() op
-// and $_start both report through one definition, with the raw preview1
+// stderr wired through a flag-gated reporting $__fern_proc_exit — so the exit() op
+// and $__fern_start both report through one definition, with the raw preview1
 // import renamed underneath it.
 //
 // Counts are asserted as properties (balanced / unbalanced / zero), matching
@@ -107,15 +107,15 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 53, verdict: "leaky",
 		},
 		{
-			// HEAP-FREE, returning main: the report goes through $_start's
-			// $proc_exit and must link with no allocator emitted.
+			// HEAP-FREE, returning main: the report goes through $__fern_start's
+			// $__fern_proc_exit and must link with no allocator emitted.
 			name: "heapfree_return",
 			src:  `function main(): i32 { return 7; }`,
 			want: 7, verdict: "zero",
 		},
 		{
 			// HEAP-FREE through the exit() op — the other path into the
-			// reporting $proc_exit.
+			// reporting $__fern_proc_exit.
 			name: "heapfree_exit_builtin",
 			src:  `function main(): i32 { exit(9); return 0; }`,
 			want: 9, verdict: "zero",
@@ -223,9 +223,9 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 	}
 }
 
-// `--invoke main` calls the export and never reaches $proc_exit, so the export
+// `--invoke main` calls the export and never reaches $__fern_proc_exit, so the export
 // reports on its return — once, with the result still printed. A main that
-// leaves through exit() reports through $proc_exit instead, and only there.
+// leaves through exit() reports through $__fern_proc_exit instead, and only there.
 func TestSelfHostWasmLeakcheckReportsOnInvoke(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm leakcheck invoke e2e")
@@ -301,7 +301,7 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 // A wasi:cli/run component reports the census too, the form `fern -target
 // wasm32-wasi` writes by default: from its run entry when main returns, and
 // from its exit shim when the program exits. Its stderr is a preview-2 stream
-// whose $fd_write shim allocates, so the line also checks that the report's
+// whose $__fern_fd_write shim allocates, so the line also checks that the report's
 // own writes are not counted in it.
 func TestSelfHostWasmLeakcheckComponent(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

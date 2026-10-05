@@ -103,7 +103,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// component_shape sends an exit-using program to the io wrap (shape 14).
 		{"noio-exit-refused", false, `function main(): i32 { exit(0); return 0; }`, false, nil},
 
-		// Mode 2 — stdout. The $fd_write shim serves every writer, so print /
+		// Mode 2 — stdout. The $__fern_fd_write shim serves every writer, so print /
 		// write / putchar all use the same two imports.
 		{"io-write", true, `function main(): i32 { write("hi"); return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
@@ -119,7 +119,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		{"io-eprint-only", true, `function main(): i32 { eprint("just-err"); return 0; }`, true,
 			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout"}},
 		// exit adds wasi:cli/exit last (component_full_io_exit's shape); the IR
-		// emits `call $proc_exit`, which the mode-2 shim defines over it.
+		// emits `call $__fern_proc_exit`, which the mode-2 shim defines over it.
 		{"io-exit", true, `function main(): i32 { write("bye"); exit(0); return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/exit@0.2.0 exit"}},
 
@@ -196,7 +196,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 
 			// Every component core exports main + _lang_run and none exports
 			// _start, whichever emitter produced it.
-			for _, want := range []string{`(export "main" (func $main))`, `(export "_lang_run" (func $_lang_run))`} {
+			for _, want := range []string{`(export "main" (func $main))`, `(export "_lang_run" (func $__fern_lang_run))`} {
 				if !strings.Contains(wat, want) {
 					t.Errorf("component core is missing %s", want)
 				}
