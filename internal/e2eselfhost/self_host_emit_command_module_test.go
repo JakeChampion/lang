@@ -14,9 +14,8 @@ import (
 // core module plus a `_start` that runs main and exits with its value. The
 // self-host's core module is already that shape, so the spelling produces the
 // same bytes as `-emit core-module`, `wasmtime run` exits with main's value,
-// and the form is refused for the other wasm target, as native refuses it
-// (#11408). Without -o every binary wasm form is refused, the default
-// component included, while -emit asm still prints the module's text.
+// and the form is refused for the other wasm target, and without -o, as native
+// refuses it (#11408).
 func TestSelfHostEmitCommandModule(t *testing.T) {
 	cli := newStrictCLI(t)
 	wasmtime := e2eharness.Wasmtime(t)
@@ -25,23 +24,12 @@ func TestSelfHostEmitCommandModule(t *testing.T) {
 	if err := os.WriteFile(src, []byte("function main(): i32 { return 7; }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	handler := filepath.Join(dir, "handler.fern")
-	if err := os.WriteFile(handler, []byte("import \"std/http\";\nimport \"std/serve\";\nimport \"std/platform\";\nfunction handle(req: HttpRequest, plat: platform.Platform): HttpResponse { return http.ok(\"hi\"); }\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	build := func(form, target, out string) ([]byte, error) {
-		entry := src
-		if target == "wasm32-wasi-http" {
-			entry = handler
-		}
-		args := []string{"-target", target}
-		if form != "" {
-			args = append(args, "-emit", form)
-		}
+		args := []string{"-target", target, "-emit", form}
 		if out != "" {
 			args = append(args, "-o", out)
 		}
-		cmd := runX86_64Bin(cli.runner, cli.bin, append(args, entry, cli.stdlib)...)
+		cmd := runX86_64Bin(cli.runner, cli.bin, append(args, src, cli.stdlib)...)
 		cmd.Env = childEnv()
 		return cmd.CombinedOutput()
 	}
@@ -69,18 +57,7 @@ func TestSelfHostEmitCommandModule(t *testing.T) {
 		t.Errorf("-emit command-module for wasm32-wasi-http: err=%v, want the refusal native gives\n%s", err, out)
 	}
 	// A binary module has nowhere to go without -o; stdout is not it.
-	for _, c := range []struct{ form, target string }{
-		{"command-module", "wasm32-wasi"},
-		{"core-module", "wasm32-wasi"},
-		{"", "wasm32-wasi"},
-		{"core-module", "wasm32-wasi-http"},
-		{"", "wasm32-wasi-http"},
-	} {
-		if out, err := build(c.form, c.target, ""); err == nil || !bytes.Contains(out, []byte("-o OUTPUT")) {
-			t.Errorf("-target %s -emit %q with no -o: err=%v, want a refusal naming -o OUTPUT\n%s", c.target, c.form, err, out)
-		}
-	}
-	if out, err := build("asm", "wasm32-wasi", ""); err != nil || !bytes.Contains(out, []byte("(module")) {
-		t.Errorf("-emit asm with no -o: err=%v, want the module's text on stdout\n%s", err, out)
+	if out, err := build("command-module", "wasm32-wasi", ""); err == nil || !bytes.Contains(out, []byte("-o OUTPUT")) {
+		t.Errorf("-emit command-module with no -o: err=%v, want a refusal naming -o OUTPUT\n%s", err, out)
 	}
 }

@@ -33,3 +33,28 @@ func TestCompileArgsEmitDefault(t *testing.T) {
 		}
 	}
 }
+
+// TestStdoutRefusal: a wasm compile with no -o is refused unless it asked for
+// text, and a native one never is.
+func TestStdoutRefusal(t *testing.T) {
+	for _, c := range []struct {
+		target, out, emit string
+		refused           bool
+	}{
+		{"wasm32-wasi", "", "", true},
+		{"wasm32-wasi-http", "", "", true},
+		{"wasm32-wasi", "", "core-module", true},
+		{"wasm32-wasi", "", "command-module", true},
+		{"wasm32-wasi", "", "asm", false},
+		{"wasm32-wasi", "prog.wasm", "", false},
+		{"x86-64-linux", "", "", false},
+	} {
+		err := stdoutRefusal(compileRequest{target: c.target, out: c.out, emit: c.emit})
+		if (err != nil) != c.refused {
+			t.Errorf("-target %s -o %q -emit %q: refused=%v (%v), want %v", c.target, c.out, c.emit, err != nil, err, c.refused)
+		}
+		if err != nil && (!strings.Contains(err.Error(), "-o OUTPUT") || (c.emit != "" && !strings.Contains(err.Error(), c.emit))) {
+			t.Errorf("-target %s -emit %q: %q should name -o OUTPUT and the form", c.target, c.emit, err)
+		}
+	}
+}
