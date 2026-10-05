@@ -1,0 +1,80 @@
+// Compare this identical workload with FERN_NO_ARRAY_FUSION=1 and enabled.
+// Time and count only the pipeline; verify every prefix outside the timer.
+import "std/array";
+import "std/string";
+
+@noinline
+function pipeline(xs: i64[], filtered: boolean): i64[] {
+  if (filtered) {
+    return xs.filter((x: i64): boolean => x % 3i64 == 0i64)
+      .map((x: i64): i64 => x * 5i64 + 7i64)
+      .scan(0i64, (a: i64, x: i64): i64 => a + x);
+  }
+  return xs.map((x: i64): i64 => x * 5i64 + 7i64)
+    .scan(0i64, (a: i64, x: i64): i64 => a + x);
+}
+
+function correct(xs: i64[], out: i64[], filtered: boolean): boolean {
+  let acc = 0i64;
+  let at: i32 = 0;
+  for x in xs {
+    if (!filtered || x % 3i64 == 0i64) {
+      acc = acc + x * 5i64 + 7i64;
+      if (at >= out.len() || out[at] != acc) {
+        return false;
+      }
+      at = at + 1;
+    }
+  }
+  return out.len() == at;
+}
+
+function main(): i32 {
+  let argv = args();
+  let n: i32 = 2000;
+  let rounds: i32 = 2;
+  let filtered: boolean = false;
+  if (argv.len() > 1) {
+    n = argv[1].parse_int_or(n);
+  }
+  if (argv.len() > 2) {
+    rounds = argv[2].parse_int_or(rounds);
+  }
+  if (argv.len() > 3) {
+    filtered = argv[3] == "1";
+  }
+  if (n < 0 || n > 1000000 || rounds < 1) {
+    return 1;
+  }
+  let xs: i64[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    xs = xs.append(i as i64);
+    i = i + 1;
+  }
+  let calls = 0i64;
+  let fresh = 0i64;
+  let elapsed = 0i64;
+  let checksum = 0i64;
+  let r: i32 = 0;
+  while (r < rounds) {
+    let a0 = __heap_alloc_count();
+    let b0 = __heap_bump_bytes();
+    let t0 = monotonic_ns();
+    let out = pipeline(xs, filtered);
+    elapsed = elapsed + monotonic_ns() - t0;
+    calls = calls + __heap_alloc_count() - a0;
+    fresh = fresh + __heap_bump_bytes() - b0;
+    if (!correct(xs, out, filtered)) {
+      return 2;
+    }
+    if (out.len() > 0) {
+      checksum = checksum + out[out.len() - 1];
+    }
+    r = r + 1;
+  }
+  print("{\"n\":" + n.to_string() + ",\"rounds\":" + rounds.to_string()
+    + ",\"checksum\":" + checksum.to_string() + ",\"alloc_calls\":" + calls.to_string()
+    + ",\"fresh_bytes\":" + fresh.to_string() + ",\"ns_per_scan\":" + (elapsed / (rounds as i64)).to_string() + "}");
+  return 0;
+}

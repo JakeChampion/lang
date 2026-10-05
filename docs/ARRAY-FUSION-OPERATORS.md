@@ -2,8 +2,8 @@
 
 Status: `internal/ir/array_fusion.go` (#9731) and the primary compiler's
 `examples/self_host/semfuse.fern` (#11072) implement the `map`/`filter` stages
-and `fold`/`reduce` sinks below. The scan section describes an unimplemented
-extension. This document states what each array operator contributes to a
+and `fold`/`reduce` sinks below. The primary compiler also implements `scan`
+as a materializing sink. This document states what each operator contributes to a
 fused loop, and why composing those contributions gives the guarantee
 `docs/ITERATOR-FUSION-CONTRACT.md` clause 1 asks for.
 
@@ -153,32 +153,60 @@ index order and the fragments above do not license any other order. A
 tree reduction is a different `step`/`finish` pair and needs the
 explicit opt-in that document requires.
 
-### `scan(z, h)`: proposed prefix sink
+### `scan(z, h)`: prefix sink
 
-Neither compiler currently fuses scan. The primary report names such a site
-`operator-outside-algebra`. The following fragments describe the proposed
-extension, not the code emitted today.
+The primary compiler fuses map/filter chains into scan. The Go bootstrap
+compiler retains its eager scan implementation.
 
 ```
-init:    acc = z; out = <buffer of length n>
-step:    acc = h(acc, x); out[i] = acc
+init:    acc = z; out = <empty buffer with capacity n>
+step:    acc = h(acc, x); out.append(acc)
 finish:  result is out
 ```
 
-**`scan` is a sink that materializes, and saying so is the point.** Its
-output has the same length as its input, so it cannot be fused away —
-but it can still be fused *into*: the buffer is sized once in `init`
-from a length already known, so the pipeline pays one allocation instead
-of the O(log n) geometric regrows the eager combinator pays today.
+Scan materializes one prefix value per arriving element, excluding the initial
+seed. The original input length is an upper bound after any number of filters,
+so one reservation suffices even when the output length is unknown. Filtered
+elements carry both the accumulator and output unchanged to the next iteration.
+Append updates the actual length only after initializing the next element.
 
-The original minimum viable design includes scan to demonstrate that a
-materializing operator composes with the same fragment interface. That part
-remains unimplemented. The shipped first slice uses reduction sinks; scan
-still needs loop generation, cardinality handling after filters, allocation
-and semantic tests, and measurement.
+The typed `array_reserve` operation requires an owned scalar array and an i32
+capacity. Physical lowering keeps the layout in each backend: packed bytes or
+word slots on native targets, and the appropriate element stride on Wasm.
+Negative capacities and Wasm byte-size overflow abort before allocation.
+Ownership planning accounts for the output array through its loop phi.
 
-In that design, a `scan` in the middle of a chain would end one fused loop
-and begin another.
+A scan in the middle of a chain ends one fused loop and can feed another.
+Its observable prefix array remains materialized. Effectful callbacks, shared
+intermediates and non-scalar accumulators retain the existing refusal rules.
+`FERN_ARRAY_REPORT=1` identifies fused scans with
+`storage=no-intermediate-arrays/one-output-buffer`.
+
+`TestSelfHostArrayFusionScan*` checks values, callback effects, scalar widths,
+floating order and RC balance on all three primary targets. Allocation tests
+require exactly one output allocation, including empty and all-filtered scans,
+with input construction and verification excluded from the count. The repeatable
+native benchmark is `examples/array_pipeline/map_scan.fern`; build it with
+fusion enabled and disabled and run `2000 200 0` or `2000 200 1` for filtered
+input. It verifies every prefix outside the timed region.
+
+On Apple M3 Pro arm64-darwin, 2026-10-05, nine alternating processes per
+build used 2,000 input elements. A two-round pilot preceded 200 rounds with
+only that argument changed. Every prefix and both builds' checksums agreed.
+
+| Pipeline | Fusion disabled, ns/scan | Fusion enabled, ns/scan | Allocator calls, disabled/enabled | Fresh bytes, disabled/enabled |
+| --- | ---: | ---: | ---: | ---: |
+| map.scan | 8,318 (8,133-8,578) | 2,120 (2,000-2,241) | 4,000 / 200 | 40,960 / 16,384 |
+| filter.map.scan | 6,761 (6,445-7,778) | 1,612 (1,503-1,866) | 5,400 / 200 | 10,240 / 16,384 |
+
+Times are medians with observed ranges; allocation counters cover all 200
+calls. Reserving the input-length bound trades spare capacity for avoiding
+growth. The filtered case keeps one element in three and used more fresh
+bytes with fusion, as the table shows. The enabled benchmark's native text
+section was 22,024 bytes, versus 22,312 with fusion disabled.
+The compiler's native text grew by 7,136 bytes for the scan graph construction,
+typed reservation checks, ownership integration and three backend emitters.
+No size baseline was changed.
 
 ## Deliberately not in the first slice
 
@@ -253,7 +281,7 @@ labelled Go analysis. See `ARRAY-ALGEBRA.md` for the closed refusal tags.
 The primary fusion report recognizes `map`, `filter`, `fold`, `reduce`,
 `scan`, `zip`, `take`, `take_while`, `drop`, `drop_while`, `flat_map`,
 `flatten`, `chunks`, `chunks_exact`, `windows`, `partition`, `enumerate`
-and `reverse`. Only the first four belong to the implemented fusion algebra;
+and `reverse`. Only the first five belong to the primary fusion algebra;
 the others report `operator-outside-algebra`. This report does not inventory
 every std/array helper. Calls outside this recognized set produce no site
 line, so silence is not evidence that such a call fused or avoided allocation.

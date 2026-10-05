@@ -332,7 +332,7 @@ including zero counts, with these closed tags:
 | Tag | Meaning |
 | --- | --- |
 | `fused` | The pass replaced this chain with one traversal. |
-| `no-producer` | A reduction has no recognized producer feeding it. |
+| `no-producer` | A sink has no recognized map/filter producer feeding it. |
 | `intermediate-shared` | More than one use prevents eliminating an intermediate. |
 | `control-flow-boundary` | Producer and consumer are in different blocks. |
 | `effect-boundary` | An intervening instruction prevents stage reordering. |
@@ -340,14 +340,17 @@ including zero counts, with these closed tags:
 | `element-fn-effectful` | An element function reaches an effect. |
 | `non-scalar` | The chain needs counted elements or an unsupported accumulator. |
 | `result-escapes` | A materializing stage returns its array. |
-| `no-reduction-sink` | A remaining producer has no fusible reduction consumer. |
-| `operator-outside-algebra` | A recognized combinator, such as scan, is outside this pass. |
+| `no-reduction-sink` | A remaining producer has no fusible fold, reduce or scan consumer. |
+| `operator-outside-algebra` | A recognized combinator, such as reverse, is outside this pass. |
 | `disabled` | `FERN_NO_ARRAY_FUSION=1` prevented rewriting. |
 
 `storage=no-intermediate-arrays` describes the eliminated arrays, not closure
 environments or a reduction's result box. A refusal says
 `storage=deferred-to-ownership`: an unfused map may still become an in-place
 loop during ownership lowering.
+Fused scans report `storage=no-intermediate-arrays/one-output-buffer`: one
+buffer holds the prefixes, with capacity reserved at the original input length
+and actual length determined by the elements that pass every filter.
 
 The `map storage` section reads the final selected ownership plans, using the
 same decision function that performs the R7 rewrite. `guarded-reuse` means

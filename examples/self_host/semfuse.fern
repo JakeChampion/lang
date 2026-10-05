@@ -1,14 +1,13 @@
 // Producer-consumer fusion of std/array pipelines (#11072): a chain of `map`
-// and `filter` stages ending in `fold` or `reduce` becomes one loop, and the
-// intermediate arrays are never built. The self-host half of
-// internal/ir/array_fusion.go, run on the typed semantic graphs every backend
-// lowers from, before ownership is planned, so the loop carries no counts of
-// its own.
+// and `filter` stages ending in `fold`, `reduce` or `scan` becomes one loop.
+// Intermediate arrays are never built; scan reserves its output once. This
+// extends internal/ir/array_fusion.go on the typed semantic graphs every
+// backend lowers from, before ownership planning accounts for the output.
 //
 // docs/ARRAY-FUSION-OPERATORS.md is the contract: each stage contributes a
 // step (pass through, rebind, or skip), the fused body is the steps
-// concatenated, and `fold` and `reduce` differ only in how the accumulator is
-// seeded and finished. docs/ARRAY-ALGEBRA.md §1 is the purity boundary: every
+// concatenated. Each sink seeds and finishes its accumulator; scan also appends
+// each prefix to its output. docs/ARRAY-ALGEBRA.md §1 is the purity boundary: every
 // element function is a closure built here whose body reaches no effect, since
 // fusing interleaves the stages' calls.
 //
@@ -87,7 +86,7 @@ function context(funcs: ssasem.Func[], names: string[], usable: boolean[], repor
     if (report) {
       report_verbs = report_verbs.append(v);
     }
-    if (!util.has_str(["map", "filter", "fold", "reduce"], v)) {
+    if (!util.has_str(["map", "filter", "fold", "reduce", "scan"], v)) {
       v = "";
     }
     verbs = verbs.append(v);
@@ -284,7 +283,7 @@ function sink_verb(ins: ssa.SInst, cx: Context): string {
     return "";
   }
   let v: string = verb_at(cx, ins.str);
-  if (v == "fold" && ins.args.len() == 3 || v == "reduce" && ins.args.len() == 2) {
+  if ((v == "fold" || v == "scan") && ins.args.len() == 3 || v == "reduce" && ins.args.len() == 2) {
     return v;
   }
   return "";
@@ -323,7 +322,7 @@ function absent_producer(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): De
       }
       return Decision { reason: semarrayreport.fusion_intermediate_shared(), stage: d.pos };
     }
-    if (d.block == c.block && ins.kind_tag == ssasem.call() && report_verb(cx, ins.str) != "") {
+    if (d.block == c.block && ins.kind_tag == ssasem.call() && report_verb(cx, ins.str) != "" && sink_verb(ins, cx) == "") {
       return Decision { reason: semarrayreport.fusion_operator_outside_algebra(), stage: d.pos };
     }
   }
@@ -403,7 +402,11 @@ function chain_text(c: Chain): string {
 }
 
 function fused_site(f: ssasem.Func, c: Chain, name: string): semarrayreport.Site {
-  return semarrayreport.Site { owner: name, stage: stage_name(f.graph.blocks[c.block].insts[c.sink]), plan: chain_text(c) + "; one traversal", reason: semarrayreport.fusion_fused(), storage: "no-intermediate-arrays" };
+  let storage: string = "no-intermediate-arrays";
+  if (c.verb == "scan") {
+    storage = "no-intermediate-arrays/one-output-buffer";
+  }
+  return semarrayreport.Site { owner: name, stage: stage_name(f.graph.blocks[c.block].insts[c.sink]), plan: chain_text(c) + "; one traversal", reason: semarrayreport.fusion_fused(), storage: storage };
 }
 
 function escapes(f: ssasem.Func, value: i32): boolean {
@@ -500,6 +503,9 @@ function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
     }
   }
   if (c.verb == "fold" && (!scalar(f.values[sink.result]) || !semtypes.equal(f.values[sink.args[1]], f.values[sink.result]))) {
+    return c.sink;
+  }
+  if (c.verb == "scan" && (!scalar(element(f.values[sink.result])) || !semtypes.equal(f.values[sink.args[1]], element(f.values[sink.result])))) {
     return c.sink;
   }
   return 0 - 1;
@@ -638,12 +644,16 @@ function fresh(s: Build, n: i32): Build {
   return Build { ...s, next: s.next + n };
 }
 
-// The loop's carried values: the cursor, the accumulator, and for `reduce`
-// whether anything has arrived. Each back edge supplies one of each.
-struct Loop { head: i32, i: i32, acc: i32, seen: i32, next_i: i32, backs: i32[], accs: i32[], seens: i32[] }
+// The loop carries the cursor and accumulator, plus an arrival flag for an
+// unpeeled reduce or an output array for scan. Every back edge supplies them.
+struct Loop { head: i32, i: i32, acc: i32, seen: i32, out: i32, next_i: i32, backs: i32[], accs: i32[], seens: i32[], outs: i32[] }
 
-function back(l: Loop, from: i32, acc: i32, seen: i32): Loop {
-  return Loop { ...l, backs: l.backs.append(from), accs: l.accs.append(acc), seens: l.seens.append(seen) };
+function back(l: Loop, from: i32, acc: i32, seen: i32, out: i32): Loop {
+  let outs: i32[] = l.outs;
+  if (l.out >= 0) {
+    outs = outs.append(out);
+  }
+  return Loop { ...l, backs: l.backs.append(from), accs: l.accs.append(acc), seens: l.seens.append(seen), outs: outs };
 }
 
 struct Stepped { s: Build, l: Loop, e: i32 }
@@ -664,7 +674,7 @@ function steps(f: ssasem.Func, c: Chain, s: Build, l: Loop, e: i32): Stepped {
       let yes: i32 = keep.s.next;
       s = close(fresh(keep.s, 2), brif(keep.v, yes, yes + 1));
       s = close(open(s, yes + 1, [from]), br(l.head));
-      l = back(l, yes + 1, l.acc, l.seen);
+      l = back(l, yes + 1, l.acc, l.seen, l.out);
       s = open(s, yes, [from]);
     }
     j = j + 1;
@@ -680,7 +690,11 @@ function sink_step(c: Chain, combine: i32, t: typeinfo.Type, st: Stepped, yes: i
   let l: Loop = st.l;
   if (c.verb == "fold" || l.seen < 0) {
     let a: Emitted = emit(s, ssasem.call_value(), t, [combine, l.acc, st.e], 0, "");
-    return Stepped { s: close(a.s, br(l.head)), l: back(l, a.s.id, a.v, l.seen), e: st.e };
+    let out: Emitted = Emitted { s: a.s, v: l.out };
+    if (c.verb == "scan") {
+      out = emit(a.s, ssasem.append(), a.s.values[l.out], [l.out, a.v], 0, "");
+    }
+    return Stepped { s: close(out.s, br(l.head)), l: back(l, out.s.id, a.v, l.seen, out.v), e: st.e };
   }
   let from: i32 = s.id;
   let comb: i32 = s.next;
@@ -689,12 +703,15 @@ function sink_step(c: Chain, combine: i32, t: typeinfo.Type, st: Stepped, yes: i
   s = close(a.s, br(comb + 2));
   s = close(open(s, comb + 1, [from]), br(comb + 2));
   let joined: Emitted = emit(open(s, comb + 2, [comb, comb + 1]), 8, t, [a.v, st.e], 0, "");
-  return Stepped { s: close(joined.s, br(l.head)), l: back(l, comb + 2, joined.v, yes), e: st.e };
+  return Stepped { s: close(joined.s, br(l.head)), l: back(l, comb + 2, joined.v, yes, l.out), e: st.e };
 }
 
 // The sink's finish, left in the sink's own result: fold's accumulator, or
 // reduce's `Some(acc)`, `None` when nothing arrived.
 function finish(f: ssasem.Func, c: Chain, s: Build, l: Loop, result: i32): Build {
+  if (c.verb == "scan") {
+    return emit_at(s, 7, [l.out], result);
+  }
   if (c.verb == "fold") {
     return emit_at(s, 7, [l.acc], result);
   }
@@ -710,7 +727,7 @@ function finish(f: ssasem.Func, c: Chain, s: Build, l: Loop, result: i32): Build
 }
 
 // The header's phis, completed once every back edge is known.
-function header(s: Build, l: Loop, entry: i32, start: i32, init: i32, unseen: i32): Build {
+function header(s: Build, l: Loop, entry: i32, start: i32, init: i32, unseen: i32, output: i32): Build {
   let at: i32 = 0;
   while (s.blocks[at].id != l.head) {
     at = at + 1;
@@ -727,6 +744,9 @@ function header(s: Build, l: Loop, entry: i32, start: i32, init: i32, unseen: i3
   if (l.seen >= 0) {
     phis = phis.append(ssa.SInst { kind_tag: 8, result: l.seen, args: prepend(unseen, l.seens), imm: 0, str: "" });
   }
+  if (l.out >= 0) {
+    phis = phis.append(ssa.SInst { kind_tag: 8, result: l.out, args: prepend(output, l.outs), imm: 0, str: "" });
+  }
   for ins in h.insts {
     phis = phis.append(ins);
   }
@@ -734,7 +754,17 @@ function header(s: Build, l: Loop, entry: i32, start: i32, init: i32, unseen: i3
   return Build { ...s, blocks: s.blocks.with(at, full) };
 }
 
-struct Opened { s: Build, l: Loop, init: i32, unseen: i32, yes: i32, start: i32, entry: i32 }
+struct Opened { s: Build, l: Loop, init: i32, unseen: i32, yes: i32, start: i32, entry: i32, output: i32 }
+
+function scan_buffer(f: ssasem.Func, c: Chain, o: Opened, capacity: i32): Opened {
+  if (c.verb != "scan") {
+    return o;
+  }
+  let result: i32 = f.graph.blocks[c.block].insts[c.sink].result;
+  let out: Emitted = emit(o.s, ssasem.array_reserve(), f.values[result], [capacity], 0, "");
+  let s: Build = Build { ...out.s, values: out.s.values.append(f.values[result]) };
+  return Opened { ...o, s: s, output: out.v, l: Loop { ...o.l, out: out.s.values.len() } };
+}
 
 // What runs once before the loop: the invariant length, cursor and seed.
 // A peeled reduction starts at one; other sinks start at zero.
@@ -752,10 +782,10 @@ function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i
   let start: Emitted = emit(n.s, 1, i32t, [], first, "");
   s = start.s;
   let sink: ssa.SInst = f.graph.blocks[c.block].insts[c.sink];
-  let o: Opened = Opened { s: s, l: Loop { head: 0, i: 0, acc: 0, seen: 0 - 1, next_i: 0, backs: [], accs: [], seens: [] }, init: 0, unseen: 0 - 1, yes: 0 - 1, start: start.v, entry: s.id };
+  let o: Opened = Opened { s: s, l: Loop { head: 0, i: 0, acc: 0, seen: 0 - 1, out: 0 - 1, next_i: 0, backs: [], accs: [], seens: [], outs: [] }, init: 0, unseen: 0 - 1, yes: 0 - 1, start: start.v, entry: s.id, output: 0 - 1 };
   if (seed >= 0) {
     o = Opened { ...o, init: seed };
-  } else if (c.verb == "fold") {
+  } else if (c.verb == "fold" || c.verb == "scan") {
     o = Opened { ...o, init: sink.args[1] };
   } else {
     let z: Emitted = emit(s, ssasem.zero(), acc_t, [], 0, "");
@@ -763,6 +793,7 @@ function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i
     let yes: Emitted = emit(no.s, 2, bool_t, [], 1, "");
     o = Opened { ...o, s: yes.s, init: z.v, unseen: no.v, yes: yes.v };
   }
+  o = scan_buffer(f, c, o, n.v);
   s = o.s;
   let head: i32 = s.next;
   let l: Loop = Loop { ...o.l, head: head, i: s.values.len(), acc: s.values.len() + 1 };
@@ -800,7 +831,7 @@ function peel_seed(f: ssasem.Func, c: Chain, s: Build): Peeled {
   let none: Emitted = emit(open(s, empty, [from]), ssasem.variant_new(), f.values[result], [], 0, "None");
   s = open(close(none.s, br(empty + 2)), empty + 1, [from]);
   let value: Emitted = emit(s, ssasem.array_get(), element(f.values[c.base]), [c.base, zero.v], 1, "");
-  let no_loop: Loop = Loop { head: 0 - 1, i: 0 - 1, acc: 0 - 1, seen: 0 - 1, next_i: 0 - 1, backs: [], accs: [], seens: [] };
+  let no_loop: Loop = Loop { head: 0 - 1, i: 0 - 1, acc: 0 - 1, seen: 0 - 1, out: 0 - 1, next_i: 0 - 1, backs: [], accs: [], seens: [], outs: [] };
   let st: Stepped = steps(f, c, value.s, no_loop, value.v);
   return Peeled { s: st.s, seed: st.e, empty: empty, none: none.v, join: empty + 2 };
 }
@@ -826,6 +857,9 @@ function fuse(f: ssasem.Func, c: Chain): ssasem.Func {
   if (c.verb == "reduce") {
     acc_t = element(f.values[sink.args[0]]);
   }
+  if (c.verb == "scan") {
+    acc_t = element(f.values[sink.result]);
+  }
   let s: Build = Build { values: f.values, blocks: [], id: b.id, preds: b.preds, insts: kept_before(b, c), next: next_block_id(g) };
   let peeled: Peeled = peel_seed(f, c, s);
   let o: Opened = enter(f, c, peeled.s, acc_t, peeled.seed);
@@ -838,7 +872,7 @@ function fuse(f: ssasem.Func, c: Chain): ssasem.Func {
     s = Build { ...s, insts: s.insts.append(b.insts[p]) };
     p = p + 1;
   }
-  s = header(close(s, b.term), st.l, o.entry, o.start, o.init, o.unseen);
+  s = header(close(s, b.term), st.l, o.entry, o.start, o.init, o.unseen, o.output);
   let graph: ssa.SFunc = ssa.SFunc { ...g, blocks: spliced(g, c.block, s.blocks), nvals: s.values.len() };
   let gone: string[] = [sink.str];
   for at in c.stages {
