@@ -117,7 +117,7 @@ pub struct VErr { msg: string }
 // (E057: scalars and strings, no composites, for the same cycle reason) lines up
 // with E049's, which is why this needs two scalar-shaped variants rather than a
 // single Cell[Value]. A program's own cells are VCell below.
-pub struct VCellI { c: Cell[i32], is_char: boolean }
+pub struct VCellI { c: Cell[i32], is_char: boolean, is_bool: boolean }
 
 pub struct VCellF { c: Cell[f64] }
 
@@ -1001,6 +1001,9 @@ function (e: Env) lookup(name: string): Value {
 function deref_cell(v: Value): Value {
   match (v) {
     VCellI(ci) => {
+      if (ci.is_bool) {
+        return VBool { v: ci.c.get() != 0 };
+      }
       return VInt { v: ci.c.get(), is_char: ci.is_char };
     },
     VCellF(cf) => {
@@ -1304,13 +1307,13 @@ function is_cell(v: Value): boolean {
 function cell_for(v: Value): Value {
   match (v) {
     VInt(n) => {
-      return VCellI { c: cell_new(n.v), is_char: n.is_char };
+      return VCellI { c: cell_new(n.v), is_char: n.is_char, is_bool: false };
     },
     VBool(bb) => {
       if (bb.v) {
-        return VCellI { c: cell_new(1), is_char: false };
+        return VCellI { c: cell_new(1), is_char: false, is_bool: true };
       }
-      return VCellI { c: cell_new(0), is_char: false };
+      return VCellI { c: cell_new(0), is_char: false, is_bool: true };
     },
     VFloat(f) => {
       return VCellF { c: cell_new(f.v) };
