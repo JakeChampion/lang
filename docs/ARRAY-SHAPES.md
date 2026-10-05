@@ -466,10 +466,11 @@ Measured on arm64-darwin on 2026-10-05 with
 `examples/array_pipeline/ndarray_scale.fern`: the same candidate compiler,
 kernel enabled versus `FERN_NO_SCALE_KERNEL=1`, 1,000 elements, 200 rounds
 per process, nine alternating runs of each build. Median time per map was
-253 ns enabled and 2,235 ns disabled (8.83x). Every checksum agreed. Cold
-allocator calls fell from 15 to 6 and fresh bytes from 10,392 to 8,288.
-Steady counters over 200 rounds were 3,200 versus 1,400 allocator calls and
-10,392 versus 8,344 fresh bytes. Counters include metadata and result checks;
+253 ns enabled and 2,235 ns disabled (8.83x). Every checksum agreed. The
+enabled build used 6 cold allocator calls and 8,288 fresh bytes; the disabled
+build used 15 and 10,392. Over 200 rounds, the enabled build used 1,400
+allocator calls and 8,344 fresh bytes; the disabled build used 3,200 and
+10,392. Counters include metadata and result checks;
 timing covers only the map. The first result stays live across the run, and
 every later result is checked after its timer. This is a native measurement
 for this input size, not a claim about other targets or shapes.
