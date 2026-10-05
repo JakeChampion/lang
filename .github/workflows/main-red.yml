@@ -1,9 +1,9 @@
 name: Main red
 
-# Main's gate lanes run through ci-main.yml, which calls ci.yml with full
-# coverage at each selected main tip. Pending pushes coalesce because a
-# rebase-merge replays commits onto a main their PR's CI never saw. So the
-# signal exists and is correct. What was missing is anything that CONSUMES it.
+# Main's gate lanes run through ci-main.yml, which calls ci.yml at each main
+# tip it selects. Pending pushes coalesce because a rebase-merge replays commits
+# onto a main their PR's CI never saw. So the signal exists and is correct. What
+# was missing is anything that CONSUMES it.
 #
 # 967393aaf is the case that prompted this: `Test units`, `Test e2e self-host`
 # and `Bootstrap` all concluded `failure` on main at 07:12, and nothing said so.
@@ -24,6 +24,12 @@ name: Main red
 # lane with a cancelled job and no failed one is not one either: main is never
 # reaped by cancel-on-failure.yml, so that is a person's cancel.
 #
+# One skip IS a verdict. ci.yml's `changes` job skips a lane on main when the
+# merged pull request's run passed it at the identical tree, and annotates
+# itself with those lanes. A red lane is never skipped as "unchanged since main
+# last passed it", so while PRs keep merging that proof is the only green it
+# gets: ignoring it would leave the issue open after the lane was fixed.
+#
 # Deliberately NOT a fixer. Every auto-remedy available here is one that can
 # also paper over a real regression: re-pinning a size baseline silently raises
 # the ceiling the next one is measured against (that is how checker_modload_run
@@ -42,6 +48,7 @@ on:
 
 permissions:
   actions: read
+  checks: read
   contents: read
   issues: write
 
@@ -102,6 +109,24 @@ jobs:
               lanes.get(lane).push(j);
             }
 
+            // The lanes `changes` skipped because the merged PR's run passed
+            // them at this exact tree: { pr, run, lanes }, or null.
+            const PROVEN_TITLE = "Lanes proven by the merged pull request";
+            const changesJob = jobs.find((j) => j.name.replace(/^Validate \/ /, "") === "changes");
+            let proof = null;
+            if (changesJob) {
+              try {
+                const notes = await github.paginate(
+                  github.rest.checks.listAnnotations,
+                  { owner, repo, check_run_id: changesJob.id, per_page: 100 },
+                );
+                const note = notes.find((a) => a.title === PROVEN_TITLE);
+                if (note) proof = JSON.parse(note.message);
+              } catch (e) {
+                core.warning(`could not read the lanes the merged PR proved: ${e.message}`);
+              }
+            }
+
             const open = await github.paginate(
               github.rest.issues.listForRepo,
               { owner, repo, state: "open", labels: LABEL, per_page: 100 },
@@ -116,14 +141,20 @@ jobs:
               const existing = open.find((i) => i.title === titleFor(lane));
 
               if (failed.length === 0) {
-                // Green only when something ran and nothing was cut short.
-                const inconclusive = succeeded.length === 0 ||
-                  laneJobs.some((j) => j.conclusion === "cancelled");
+                // Green when something ran and nothing was cut short, or when
+                // every job skipped because the merged PR's run passed the lane.
+                const cancelled = laneJobs.some((j) => j.conclusion === "cancelled");
+                const proved = succeeded.length === 0 && !cancelled &&
+                  proof !== null && proof.lanes.includes(lane);
+                const inconclusive = cancelled || (succeeded.length === 0 && !proved);
                 if (inconclusive || !existing) continue;
                 await github.rest.issues.createComment({
                   owner, repo, issue_number: existing.number,
-                  body: `\`${lane}\` is green on main again at \`${short}\`.\n\n` +
-                        `[Run](${run.html_url}) · closing.`,
+                  body: proved
+                    ? `\`${lane}\` passed on #${proof.pr}'s [run](${context.serverUrl}/${owner}/${repo}/actions/runs/${proof.run}) at the tree main has at \`${short}\`, ` +
+                      `so main's [run](${run.html_url}) skipped it · closing.`
+                    : `\`${lane}\` is green on main again at \`${short}\`.\n\n` +
+                      `[Run](${run.html_url}) · closing.`,
                 });
                 await github.rest.issues.update({
                   owner, repo, issue_number: existing.number, state: "closed",
@@ -150,10 +181,11 @@ jobs:
                 `- Run: ${run.html_url}\n` +
                 `- Failing jobs: ${failed.map((j) => `\`${j.name}\``).join(", ")}\n` +
                 stage0Hint +
-                `\nMain's selected commits run every lane (ci-main.yml), and cancel-on-failure.yml ` +
-                `deliberately spares main — so this lane ran to completion and the ` +
-                `failing-job list above is the whole set for it, not just the first.\n\n` +
-                `This issue closes itself when \`${lane}\` next concludes success on main.`;
+                `\ncancel-on-failure.yml deliberately spares main, so this lane ran to ` +
+                `completion and the failing-job list above is the whole set for it, not ` +
+                `just the first.\n\n` +
+                `This issue closes itself when \`${lane}\` next passes on main, or on the ` +
+                `run of the merged pull request whose tree main skipped re-testing.`;
 
               if (existing) {
                 await github.rest.issues.createComment({
