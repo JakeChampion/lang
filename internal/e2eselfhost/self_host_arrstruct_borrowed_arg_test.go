@@ -179,6 +179,7 @@ function rd(src: Inner[], i: i32): i32 { let p: P = P { f: src, n: i }; return (
 // callee, or letting an element outlive a call, reclaims everything and reads
 // its values back intact.
 func TestSelfHostArrStructBorrowedArgX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

@@ -27,7 +27,7 @@ import (
 // one) = 9, which is also what native returns for the same two files.
 const ownEnumQualifierLib = `enum E { Wrap(i32), Nil }
 
-pub function probe(n: i32): i32 {
+@noinline pub function probe(n: i32): i32 {
     let a: E = E.Wrap(3);
     let b: E = E.Wrap(n);
     let u: E = E.Nil;

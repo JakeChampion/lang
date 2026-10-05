@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"testing"
 )
 
@@ -155,6 +156,7 @@ func TestArm64MatchScrutineeReclaim(t *testing.T) {
 }
 
 func TestWASMMatchScrutineeReclaim(t *testing.T) {
+	e2eharness.BoxedProbes(t)
 	for _, mk := range []func(string) string{matchScrutineeExprBumpSrc, matchScrutineeStmtBumpSrc, matchScrutineeLiteralBumpSrc} {
 		small := runWasm(t, mk("50"))
 		large := runWasm(t, mk("5000"))

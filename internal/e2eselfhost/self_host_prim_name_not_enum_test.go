@@ -114,6 +114,7 @@ func TestSelfHostPrimNameNotEnumX86_64(t *testing.T) {
 // lowering reads its 8-byte elements and reclaims every array; the want is
 // bin/fern -interp's.
 func TestSelfHostUsizeArrayFieldRefused(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

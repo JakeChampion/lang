@@ -30,6 +30,7 @@ func seqArrays(n int, tail string) (string, int) {
 // byte-identical fixpoint and std-test gates separately prove soundness on the
 // compiler's own sources.
 func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
+	boxedProbes(t)
 	cli := newStrictCLI(t)
 	emit := func(t *testing.T, src string) string {
 		t.Helper()

@@ -75,6 +75,10 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 		return out
 	}
 
+	// The reach edit's target stays a call: a leaf the entry splices leaves
+	// lib3's unit too, which is the inliner working, not a reach leak.
+	edit("lib3.fern", "pub function m3_f1(", "@noinline pub function m3_f1(")
+
 	hits, misses := concat("cold")
 	pmWantSets(t, "cold", hits, misses, []string{}, all)
 
@@ -108,7 +112,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read lib3: %v", err)
 	}
-	keep := "pub function m3_keep(xs: i32[]): i32 { return xs.len(); }\n"
+	keep := "@noinline pub function m3_keep(xs: i32[]): i32 { return xs.len(); }\n"
 	if err := os.WriteFile(filepath.Join(proj, "lib3.fern"), append(b3, keep...), 0o644); err != nil {
 		t.Fatalf("write lib3: %v", err)
 	}

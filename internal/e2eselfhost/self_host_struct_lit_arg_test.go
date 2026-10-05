@@ -151,6 +151,7 @@ function main(): i32 {
 // TestSelfHostStructLitArgX86_64 — a struct literal handed to a borrowing callee
 // is freed after the call, and every callee that could keep it stays refused.
 func TestSelfHostStructLitArgX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

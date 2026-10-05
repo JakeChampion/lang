@@ -93,7 +93,7 @@ func runCaptureEnv(t *testing.T, runner []string, bin string, stdin []byte, env 
 		cmd = exec.Command(runner[0], args...)
 	}
 	cmd.Stdin = bytes.NewReader(stdin)
-	cmd.Env = env
+	cmd.Env = probeEnv(env...)
 	out, err := cmd.Output()
 	if err != nil {
 		var stderr []byte

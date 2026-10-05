@@ -118,9 +118,12 @@ func TestSelfHostNestedFnProduction(t *testing.T) {
 				t.Errorf("flat spelling produced %d of %d — the control regressed, so the "+
 					"nested/flat comparison below proves nothing.\n%s", fp, fm, flat)
 			}
-			if np != fp {
-				t.Errorf("nested produced %d, flat produced %d: where the function is written "+
-					"is not a fact about what the typed path can lower.", np, fp)
+			// A body spliced into its caller is lowered there, so it counts with
+			// what was produced.
+			nl, fl := np+censusCount(t, nested, "spliced"), fp+censusCount(t, flat, "spliced")
+			if nl != fl {
+				t.Errorf("nested lowered %d, flat lowered %d: where the function is written "+
+					"is not a fact about what the typed path can lower.", nl, fl)
 			}
 		})
 	}

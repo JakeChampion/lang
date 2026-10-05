@@ -9,13 +9,13 @@
 # belongs to the change that earns it; a number RISING is a volume regression
 # no runtime detector reports. Regenerate with FERN_ALLOC_COUNT_DUMP=1 — never
 # hand-edit a number without a measured run.
-scalar_only           1   struct box only
+scalar_only           0   none: the struct, read only by its fields, is split into them
 bare_arr              1   array buffer only
-arr_field             2   struct box + array buffer
+arr_field             1   array buffer only: the struct is split into its fields
 bare_str_sso          1   one string block: there is no inline small-string form (#7351)
-str_field_sso         2   struct box + one string block, for the same reason
+str_field_sso         1   one string block, for the same reason; the struct is split into its fields
 bare_str_heap         1   one block per heap string
-str_field_heap        2   struct box + one string block
-capture_free_fn_value 1   the struct box alone: the capture-free function value is a static cell (#9839)
-arr_and_str_heap      3   struct box + array buffer + one string block
+str_field_heap        1   one string block: the struct is split into its fields
+capture_free_fn_value 0   none: the capture-free function value is a static cell (#9839) and the struct is split
+arr_and_str_heap      2   array buffer + one string block: the struct is split into its fields
 str_self_append_chain 6   eight `+` per round: the accumulator grows in place (__fern_str_grow, #10960), else a fresh __fern_str_concat box

@@ -146,7 +146,7 @@ func CompileWithSelfHost(t testing.TB, compiler, target, src, binPath string, we
 		cmd := exec.Command(compiler, append(args, "-o", binPath, src, stdlib)...)
 		// The driver cache keys a build by its sources and compiler alone, so
 		// no FERN_* knob a test sets for the driver's run may reach its build.
-		cmd.Env = ChildEnv()
+		cmd.Env = strippedEnv()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("%s -target %s %s: %v\n%s", filepath.Base(compiler), target, filepath.Base(src), err, out)
 		}

@@ -282,7 +282,7 @@ func TestSelfHostModloadIRProbeX86_64(t *testing.T) {
 		// so f lowers (`f: ir`).
 		"main.fern": "" +
 			"import \"./helper\";\n" +
-			"function f(n: i32): i32 { return helper.dbl(n) + 1; }\n" +
+			"@noinline function f(n: i32): i32 { return helper.dbl(n) + 1; }\n" +
 			"function main(): i32 { return f(20); }\n",
 	}
 	for name, src := range files {

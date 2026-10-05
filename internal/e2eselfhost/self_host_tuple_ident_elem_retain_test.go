@@ -262,6 +262,7 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 // of allocs is the leak this closes; frees ABOVE allocs would mean the sweep and
 // the rebind store both claimed one reference, which is a double free.
 func TestSelfHostTupleIdentElemRetainX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

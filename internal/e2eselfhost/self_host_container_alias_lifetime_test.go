@@ -23,12 +23,12 @@ func containerAliasStringSource(rebuild string, rounds int, shared bool) string 
     print(first[1]);
     return second;`
 	}
-	return `function rebuild(names: string[]): string[] {
+	return `@noinline function rebuild(names: string[]): string[] {
     let out: string[] = [];
     ` + rebuild + `
     return out;
 }
-function load(): string[] {
+@noinline function load(): string[] {
     let names: string[] = [];
     names = names.append("aa" + "!");
     names = names.append("bb" + "!");
@@ -43,7 +43,7 @@ function churn(): i32 {
     }
     return junk.len();
 }
-function exercise(): i32 {
+@noinline function exercise(): i32 {
     let i: i32 = 0;
     while (i < ` + fmt.Sprint(rounds) + `) {
         let a: string[] = load();

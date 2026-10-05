@@ -28,8 +28,8 @@ var fieldOwnMoveCases = []struct {
 }{
 	{"field-move-value-and-rc", `struct Cfi { rules: i32[], n: i32 }
 struct Asm { code: i32[], cfi: Cfi }
-function record(own s: Cfi, v: i32): Cfi { return Cfi { rules: s.rules.append(v), n: s.n + 1 }; }
-function step(own a: Asm, v: i32): Asm {
+@noinline function record(own s: Cfi, v: i32): Cfi { return Cfi { rules: s.rules.append(v), n: s.n + 1 }; }
+@noinline function step(own a: Asm, v: i32): Asm {
     a = Asm { ...a, cfi: record(a.cfi, v) };
     a = Asm { ...a, code: a.code.append(v) };
     return a;

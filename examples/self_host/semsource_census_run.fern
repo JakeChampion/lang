@@ -12,7 +12,9 @@
 // cannot lower it, the production pipeline shakes it out before lowering, and
 // which templates an entry leaves uninstantiated says more about that entry's
 // imports than about the language. Counting it as a refusal buried 66,429 of
-// them in the corpus histogram, 44% of every refusal there.
+// them in the corpus histogram, 44% of every refusal there. A function the
+// inliner spliced into every caller is counted apart too, as `spliced`: its
+// body is lowered in its callers.
 //
 //   $ fern -embed internal/stdlib -o census semsource_census_run.fern
 //   $ census <entry.fern>
@@ -179,6 +181,7 @@ function report(merged: parser.Module, tab: irtables.StructTab): void {
   let n_lowered: i32 = 0;
   let n_instances: i32 = 0;
   let n_bodyless: i32 = 0;
+  let n_spliced: i32 = 0;
   let refusals: Hist = Hist { keys: [], counts: [] };
   let leaves: Hist = Hist { keys: [], counts: [] };
   let plan_why: Hist = Hist { keys: [], counts: [] };
@@ -197,6 +200,8 @@ function report(merged: parser.Module, tab: irtables.StructTab): void {
     let p: semsource.Produced = built.decls[i];
     if (p.bodyless) {
       n_bodyless = n_bodyless + 1;
+    } else if (p.dropped) {
+      n_spliced = n_spliced + 1;
     } else if (!p.ok) {
       refusals = hist_bump(refusals, p.why);
       leaves = hist_bump(leaves, leaf(p.why));
@@ -226,7 +231,8 @@ function report(merged: parser.Module, tab: irtables.StructTab): void {
   }
   print("functions      " + util.i32_to_string(total));
   print("bodyless       " + util.i32_to_string(n_bodyless));
-  print("measured       " + util.i32_to_string(total - n_bodyless));
+  print("spliced        " + util.i32_to_string(n_spliced));
+  print("measured       " + util.i32_to_string(total - n_bodyless - n_spliced));
   print("produced       " + util.i32_to_string(n_produced));
   print("planned        " + util.i32_to_string(n_planned));
   print("lowered        " + util.i32_to_string(n_lowered));

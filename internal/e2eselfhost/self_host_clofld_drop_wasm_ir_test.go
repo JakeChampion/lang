@@ -15,6 +15,7 @@ import (
 // scale (the WAT carries the $__sem_release_H call); a bare closure IDENT
 // field value and a BASE COPY keep their aliases callable.
 func TestSelfHostClofldDropWasmIR(t *testing.T) {
+	boxedProbes(t)
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping clofld drop wasm IR e2e")
 	}
