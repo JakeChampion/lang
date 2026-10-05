@@ -6914,6 +6914,9 @@ function raw_floor_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
 
 // The byte scans over a lent string.
 function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
+  if (ins.str == "__outer_mul_f64") {
+    return Lowered { found: true, r: emit(r, ir.op_outer_mul_f64()) };
+  }
   if (ins.str == "__sum_bytes") {
     return Lowered { found: true, r: emit(r, ir.op_sum_bytes()) };
   }

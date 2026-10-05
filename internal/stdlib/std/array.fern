@@ -821,6 +821,13 @@ pub function scale_f64(arr: f64[], k: f64): f64[] {
   return __scale_f64(arr, k);
 }
 
+// Every a[i] * b[j], with i as the outer index. Inputs remain unchanged.
+// The result is empty if either input is empty. A result length greater
+// than the largest i32 aborts with the bounds status before allocation.
+pub function outer_mul_f64(a: f64[], b: f64[]): f64[] {
+  return __outer_mul_f64(a, b);
+}
+
 // `add_f64(a, b)` — the element-wise sum `a[i] + b[i]`. On a length mismatch
 // the result runs to the shorter length (the longer tail is dropped); empty in,
 // empty out. The vector-addition companion to `scale_f64`.

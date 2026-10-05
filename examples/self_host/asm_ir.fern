@@ -5905,7 +5905,33 @@ function emit_mismatch_x86(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+function emit_outer_mul_f64(s: asmcore.EmitState): asmcore.EmitState {
+  let a: asmcore.LabelOut = asmcore.fresh_label(s);
+  let b: asmcore.LabelOut = asmcore.fresh_label(a.state);
+  let c: asmcore.LabelOut = asmcore.fresh_label(b.state);
+  let d: asmcore.LabelOut = asmcore.fresh_label(c.state);
+  s = d.state;
+  // Allocate before any vector becomes live. Source lengths are at most i32,
+  // so their 64-bit product cannot overflow before the bounds comparison.
+  s = s.write("    popq %rsi\n    popq %rdx\n    movq (%rdx), %rdi\n    imulq (%rsi), %rdi\n    cmpq $2147483647, %rdi\n    ja __fern_oob_abort\n");
+  s = s.write("    pushq %rdx\n    pushq %rsi\n    call __fern_arr_box\n    popq %rsi\n    popq %rdx\n");
+  s = s.write("    leaq 8(%rax), %r11\n    xorq %r8, %r8\n    movq (%rsi), %r10\n    testq %r10, %r10\n    jz " + d.name + "\n    andq $-2, %r10\n");
+  s = s.write(a.name + ":\n    cmpq (%rdx), %r8\n    jge " + d.name + "\n");
+  s = s.write("    movsd 8(%rdx,%r8,8), %xmm1\n    unpcklpd %xmm1, %xmm1\n    xorq %rcx, %rcx\n");
+  s = s.write(b.name + ":\n    cmpq %r10, %rcx\n    jge " + c.name + "\n");
+  // The left operand stays left, including for NaN payload selection.
+  s = s.write("    movupd 8(%rsi,%rcx,8), %xmm0\n    movapd %xmm1, %xmm2\n    mulpd %xmm0, %xmm2\n    movupd %xmm2, (%r11)\n    addq $16, %r11\n    addq $2, %rcx\n    jmp " + b.name + "\n");
+  s = s.write(c.name + ":\n    cmpq (%rsi), %rcx\n    jge " + c.name + "_next\n");
+  s = s.write("    movsd 8(%rsi,%rcx,8), %xmm0\n    movapd %xmm1, %xmm2\n    mulsd %xmm0, %xmm2\n    movsd %xmm2, (%r11)\n    addq $8, %r11\n");
+  s = s.write(c.name + "_next:\n    addq $1, %r8\n    jmp " + a.name + "\n");
+  s = s.write(d.name + ":\n    pushq %rax\n");
+  return s.need("heap");
+}
+
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  if (o.kind_tag == 381) {
+    return emit_outer_mul_f64(s);
+  }
   if (o.kind_tag == 225 || o.kind_tag == 358) {  // memchr / memchr_bytes
     // operand stack [box, byte, from] (from on top) -> i32 index or -1.
     //

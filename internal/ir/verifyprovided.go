@@ -333,6 +333,7 @@ var providedSigs = map[string]providedSig{
 	"__rc_underflow_count":             {-1, rWord},
 	"__rmemchr":                        {-1, rWord},
 	"__scale_f64":                      {-1, rWord},
+	"__outer_mul_f64":                  {-1, rWord},
 	"__round_f64":                      {-1, rFloat},
 	"__sin_f64":                        {-1, rFloat},
 	"__slice_idx":                      {2, rWord},

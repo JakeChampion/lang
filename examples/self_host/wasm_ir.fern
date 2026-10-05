@@ -509,6 +509,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_scale_f64(cache)) {
     out = out.append("@uses_scale_f64");
   }
+  if (module_emits_op_cached(cache, "outer_mul_f64")) {
+    out = out.append("@uses_outer_mul_f64");
+  }
   if (module_uses_crc32_cksum(cache)) {
     out = out.append("@uses_crc32_cksum");
   }
@@ -7133,6 +7136,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
 // arm emits -- wrong code that looks plausible. asm_ir carries the same guard
 // for the same reason.
 function emit_str_op_wat(o: ir.Op): string {
+  if (o.kind_tag == 381) {
+    return "    call $__fern_outer_mul_f64\n";
+  }
   if (o.kind_tag == 359) {
     return "    call $__fern_count_byte_bytes\n";
   }
@@ -9874,6 +9880,36 @@ pub function scale_f64_helper(): string {
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $c)))\n";
   o = o + "    (local.get $o))\n";
+  return o;
+}
+
+// Each row splats its left operand and visits the right input in order.
+// No reduction or operand exchange is permitted, including in the odd tail.
+pub function outer_mul_f64_helper(): string {
+  let o: string = "";
+  o = o + "  (func $__fern_outer_mul_f64 (param $a i32) (param $b i32) (result i32)\n";
+  o = o + "    (local $n i32) (local $m i32) (local $size i64) (local $o i32) (local $p i32) (local $i i32) (local $j i32) (local $pairs i32) (local $left f64) (local $vv v128)\n";
+  o = o + "    (local.set $n (i32.load (local.get $a)))\n    (local.set $m (i32.load (local.get $b)))\n";
+  o = o + "    (local.set $size (i64.mul (i64.extend_i32_u (local.get $n)) (i64.extend_i32_u (local.get $m))))\n";
+  o = o + "    (if (i64.gt_u (local.get $size) (i64.const 2147483647)) (then (unreachable)))\n";
+  o = o + "    (local.set $o (call $__fern_arr_elems (i32.wrap_i64 (local.get $size)) (i32.const 8)))\n";
+  o = o + "    (i32.store (local.get $o) (i32.wrap_i64 (local.get $size)))\n";
+  o = o + "    (i32.store offset=4 (local.get $o) (i32.wrap_i64 (local.get $size)))\n";
+  o = o + "    (if (i32.eqz (local.get $m)) (then (return (local.get $o))))\n";
+  o = o + "    (local.set $p (i32.add (local.get $o) (i32.const 8)))\n";
+  o = o + "    (local.set $pairs (i32.and (local.get $m) (i32.const -2)))\n";
+  o = o + "    (block $done (loop $row\n";
+  o = o + "      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n";
+  o = o + "      (local.set $left (f64.load offset=8 (i32.add (local.get $a) (i32.mul (local.get $i) (i32.const 8)))))\n";
+  o = o + "      (local.set $vv (f64x2.splat (local.get $left)))\n      (local.set $j (i32.const 0))\n";
+  o = o + "      (block $tail (loop $pair\n";
+  o = o + "        (br_if $tail (i32.ge_u (local.get $j) (local.get $pairs)))\n";
+  o = o + "        (v128.store (local.get $p) (f64x2.mul (local.get $vv) (v128.load (i32.add (i32.add (local.get $b) (i32.const 8)) (i32.mul (local.get $j) (i32.const 8))))))\n";
+  o = o + "        (local.set $p (i32.add (local.get $p) (i32.const 16)))\n        (local.set $j (i32.add (local.get $j) (i32.const 2)))\n        (br $pair)))\n";
+  o = o + "      (if (i32.lt_u (local.get $j) (local.get $m)) (then\n";
+  o = o + "        (f64.store (local.get $p) (f64.mul (local.get $left) (f64.load offset=8 (i32.add (local.get $b) (i32.mul (local.get $j) (i32.const 8))))))\n";
+  o = o + "        (local.set $p (i32.add (local.get $p) (i32.const 8)))))\n";
+  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n      (br $row)))\n    (local.get $o))\n";
   return o;
 }
 
@@ -14803,6 +14839,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@uses_scale_f64")) {
     parts = parts.append(scale_f64_helper());
+  }
+  if (need(needs, "@uses_outer_mul_f64")) {
+    parts = parts.append(outer_mul_f64_helper());
   }
   if (need(needs, "@uses_crc32_cksum")) {
     parts = parts.append(crc32_cksum_helper());

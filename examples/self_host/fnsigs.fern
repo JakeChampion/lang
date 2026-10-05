@@ -14241,6 +14241,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
   let keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
+  keys = keys.append("__outer_mul_f64");
   let has_write: boolean = false;
   let has_write_some: boolean = false;
   for fn in funcs {
@@ -14271,6 +14272,9 @@ function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
 // A position past the string's end reads as not borrowable, which is what the
 // i32 parameters want.
 function copying_builtin_flags(key: string): string {
+  if (key == "__outer_mul_f64") {
+    return "11";
+  }
   if (key == "__mismatch") {
     return "10100";
   }

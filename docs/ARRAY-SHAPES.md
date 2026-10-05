@@ -564,6 +564,26 @@ Allocator calls fell from 6,200 to 3,600 and fresh bytes from 20,248 to
 20,016. Every result and both inputs were checked outside the timer.
 This is the scalar baseline for subsequent product kernels.
 
+The primary compiler also provides `std/array.outer_mul_f64(a, b)`, backed
+by `__outer_mul_f64`. It borrows two flat `f64[]` inputs and allocates a fresh
+array in left-index-first order: element `i * b.len() + j` is `a[i] * b[j]`.
+Empty inputs produce an empty array. A length product above signed i32
+aborts before allocation (status 134 on native targets, a bounds trap on
+WebAssembly). SSE2, NEON and WebAssembly SIMD each multiply two right-hand
+elements per iteration, with an ordered scalar tail. Operand order is
+preserved, including NaN payload selection; no vector value survives a call.
+
+An explicit-kernel probe in the same benchmark, on Apple M3 Pro,
+arm64-darwin, 2026-10-05, compared 32-by-32 results over 200 rounds in nine
+alternating processes. The packed scalar stdlib path measured a median
+2,540 ns per outer product (range 2,493-3,064); the kernel probe measured
+297 ns (284-323). Allocator calls were 3,600 versus 2,000, and fresh bytes
+20,016 versus 10,472. Both modes checked all results and both source arrays
+outside the timer. Only the round count changed from the two-round pilot.
+This measures explicit kernel use on those inputs. Ndarray `outer` still
+uses the scalar path until the compiler proves its element function and
+both packed layouts; this measurement alone does not authorize a rewrite.
+
 General `map` and `zip_with` allocate their result even when the receiver is
 consumed and unique. The primary compiler can donate the packed literal-scale
 map's data buffer under the ownership and uniqueness conditions in §6.

@@ -1,8 +1,10 @@
-// Native probe: left length, right length, rounds, packed scalar probe (0/1).
+// Native probe: left length, right length, rounds, mode (0 stdlib, 1 scalar,
+// 2 explicit kernel). The explicit kernel probe requires packed inputs.
 // Check every result and both inputs outside the timed region. The packed
 // probe retains the ordinary element-function call and append semantics.
 import "std/ndarray";
 import "std/string";
+import "std/array";
 
 function input(n: i32, bias: i32): ndarray.NdArray[f64] {
   let data: f64[] = [];
@@ -37,8 +39,11 @@ function ordinary_outer(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64]): ndarr
 }
 
 @noinline
-function run_outer(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64], packed: boolean): ndarray.NdArray[f64] {
-  if (packed) {
+function run_outer(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64], mode: i32): ndarray.NdArray[f64] {
+  if (mode == 2) {
+    return ndarray.from_flat(array.outer_mul_f64(a.to_flat(), b.to_flat()), a.shape().concat(b.shape()));
+  }
+  if (mode == 1) {
     return packed_outer(a, b, (x: f64, y: f64): f64 => x * y);
   }
   return ordinary_outer(a, b);
@@ -75,7 +80,7 @@ function main(): i32 {
   let n: i32 = 32;
   let m: i32 = 32;
   let rounds: i32 = 2;
-  let packed: boolean = false;
+  let variant: i32 = 0;
   if (argv.len() > 1) {
     n = argv[1].parse_int_or(n);
   }
@@ -86,9 +91,9 @@ function main(): i32 {
     rounds = argv[3].parse_int_or(rounds);
   }
   if (argv.len() > 4) {
-    packed = argv[4] == "1";
+    variant = argv[4].parse_int_or(0);
   }
-  if (n < 1 || m < 1 || rounds < 1 || n > 2147483647 / m) {
+  if (n < 1 || m < 1 || rounds < 1 || n > 2147483647 / m || variant < 0 || variant > 2) {
     return 1;
   }
   let a: ndarray.NdArray[f64] = input(n, 1);
@@ -99,7 +104,7 @@ function main(): i32 {
   let r: i32 = 0;
   while (r < rounds) {
     let start: i64 = monotonic_ns();
-    let out: ndarray.NdArray[f64] = run_outer(a, b, packed);
+    let out: ndarray.NdArray[f64] = run_outer(a, b, variant);
     elapsed = elapsed + monotonic_ns() - start;
     if (!correct(out, a, b, n, m)) {
       return 2;
@@ -109,8 +114,11 @@ function main(): i32 {
   let calls: i64 = __heap_alloc_count() - mark_calls;
   let bytes: i64 = __heap_bump_bytes() - mark_bytes;
   let mode: string = "ordinary";
-  if (packed) {
+  if (variant == 1) {
     mode = "packed";
+  }
+  if (variant == 2) {
+    mode = "kernel";
   }
   print("{\"n\":" + n.to_string() + ",\"m\":" + m.to_string() + ",\"rounds\":" + rounds.to_string() + ",\"mode\":\"" + mode + "\",\"alloc_calls\":" + calls.to_string() + ",\"fresh_bytes\":" + bytes.to_string() + ",\"ns_per_outer\":" + (elapsed / (rounds as i64)).to_string() + "}");
   return 0;
