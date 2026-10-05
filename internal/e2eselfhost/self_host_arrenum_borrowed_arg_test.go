@@ -68,7 +68,7 @@ function main(): i32 {
 
 func arrenumBorrowCases() []arrenumShareCase {
 	producer := "mkv(seed())"
-	literal := "[E.A([seed(), 8])]"
+	literal := "[E.A(id([seed(), 8]))]"
 	mk := func(decls, src, use string) string {
 		return arrenumBorrowDecl + decls + arrenumBorrowMain(src, use)
 	}
@@ -81,9 +81,12 @@ func arrenumBorrowCases() []arrenumShareCase {
 			want: 6, balance: true,
 		},
 		{
-			// The same, literal-bound — the binding source is not the axis.
+			// The same, literal-bound — the binding source is not the axis. The
+			// payload goes through id so it is built on the heap rather than
+			// placed as a constant.
 			name: "borrowed_arg_literal",
-			src: mk(`function rd(src: E[], i: i32): i32 { return (src.len() + i) % 101; }`,
+			src: mk(`function rd(src: E[], i: i32): i32 { return (src.len() + i) % 101; }
+function id(xs: i32[]): i32[] { return xs; }`,
 				literal, "rd(keep, r)"),
 			want: 6, balance: true,
 		},

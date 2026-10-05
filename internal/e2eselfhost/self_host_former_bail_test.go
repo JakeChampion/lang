@@ -6,7 +6,8 @@ import "testing"
 // a loop over the innermost level of a 4-deep nested array, and a
 // value-position match binding an 8-byte-element array payload — which the
 // typed lowering produces. Each must answer what the interpreter does, with a
-// balanced census, on both register targets.
+// balanced census, on both register targets. The nested array's rows go through
+// id so it is built on the heap rather than placed as a constant.
 func TestSelfHostFormerBailsRun(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct {
@@ -14,8 +15,9 @@ func TestSelfHostFormerBailsRun(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"nested-for", `function main(): i32 {
-    let hyper: i32[][][][] = [[[[1]], [[2, 3]]]];
+		{"nested-for", `function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 {
+    let hyper: i32[][][][] = [[[id([1])], [id([2, 3])]]];
     let sum = 0;
     for cube in hyper { for plane in cube { for row in plane { for v in row { sum = sum + v; } } } }
     return sum;

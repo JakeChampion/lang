@@ -26,10 +26,13 @@ func TestSelfHostStructArrElemDropIRArm64(t *testing.T) {
 
 	// ARRAY-ELEMENT shape + value: two `Inner` elements each holding an `items` buffer,
 	// read back before the drop. items sums (1..8)=36 and (9..16)=100, + tag 3 = 139.
+	// Both probes pass items through id so it is built on the heap rather than placed
+	// as a constant.
 	run(t, `struct Inner { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 struct S { elems: Inner[], tag: i32 }
 function main(): i32 {
-    let s: S = S { elems: [Inner { items: [1,2,3,4,5,6,7,8] }, Inner { items: [9,10,11,12,13,14,15,16] }], tag: 3 };
+    let s: S = S { elems: [Inner { items: id([1,2,3,4,5,6,7,8]) }, Inner { items: id([9,10,11,12,13,14,15,16]) }], tag: 3 };
     let sum: i32 = 0; let e: i32 = 0;
     while (e < 2) {
         let j: i32 = 0;
@@ -43,9 +46,10 @@ function main(): i32 {
 	// (a register-clobber bug in the helper's x19/x20 save/restore or the box reload would
 	// corrupt the loop / heap). mk returns 20; exit 0.
 	run(t, `struct Inner { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 struct S { elems: Inner[], tag: i32 }
 function mk(): i32 {
-    let s: S = S { elems: [Inner { items: [1,2,3,4,5,6,7,8] }, Inner { items: [9,10,11,12,13,14,15,16] }], tag: 3 };
+    let s: S = S { elems: [Inner { items: id([1,2,3,4,5,6,7,8]) }, Inner { items: id([9,10,11,12,13,14,15,16]) }], tag: 3 };
     return s.elems[0].items[0] + s.elems[1].items[7] + s.tag;
 }
 function main(): i32 {

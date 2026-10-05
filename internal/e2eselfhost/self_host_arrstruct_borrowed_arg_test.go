@@ -74,7 +74,7 @@ function main(): i32 {
 
 func arrstructBorrowCases() []arrstructBorrowCase {
 	producer := "mkv(seed())"
-	literal := "[Inner { xs: [seed(), 8] }]"
+	literal := "[Inner { xs: id([seed(), 8]) }]"
 	mk := func(decls, src, use string) string {
 		return arrstructBorrowDecl + decls + arrstructBorrowMain(src, use)
 	}
@@ -87,9 +87,11 @@ func arrstructBorrowCases() []arrstructBorrowCase {
 			want: 6,
 		},
 		{
-			// The same, literal-bound — the binding source is not the axis.
+			// The same, literal-bound — the binding source is not the axis. The
+			// payload goes through id so it is built on the heap rather than
+			// placed as a constant.
 			name: "borrowed_arg_literal",
-			src:  mk(readOnly, literal, "rd(keep, r)"),
+			src:  mk(readOnly+"\nfunction id(xs: i32[]): i32[] { return xs; }", literal, "rd(keep, r)"),
 			want: 6,
 		},
 		{
