@@ -73,7 +73,7 @@ function main(): i32 { let base: string = "abc"; let sum: i32 = 0; let i: i32 = 
 	// aliased-RESULT contract stays isolated. Value stays correct: 3 + 3 = 6, and
 	// an over-release would show as a wrong exit rather than this count.
 	{"aliased-reclaimed-once",
-		`function mk(a: string, b: string): i32 { let s: string = a + b; let t: string = s; return s.len() + t.len(); } function main(): i32 { return mk("ab", "c"); }`,
+		`@noinline function mk(a: string, b: string): i32 { let s: string = a + b; let t: string = s; return s.len() + t.len(); } function main(): i32 { return mk("ab", "c"); }`,
 		6, true, "mk"},
 	// NEGATIVE: a RETURNED fresh string escapes its producer → h must not free it.
 	// The box is handed to the caller, and freeing it in h would leave main reading

@@ -28,7 +28,7 @@ function (p: Par) advance(): Par {
     return Par { toks: p.toks, pos: p.pos + 1 };
 }
 
-function parse_sts(p0: Par): (St[], Par) {
+@noinline function parse_sts(p0: Par): (St[], Par) {
     let body: St[] = [];
     let p: Par = p0;
     while (p.pos < 3) {
@@ -39,7 +39,7 @@ function parse_sts(p0: Par): (St[], Par) {
     return (body, p);
 }
 
-function parse_block(p0: Par): (St[], Par) {
+@noinline function parse_block(p0: Par): (St[], Par) {
     let p: Par = p0;
     let (r_body, r_p) = parse_sts(p);
     p = r_p;
