@@ -181,10 +181,12 @@ function main(): i32 {
 		{
 			// The rc-ARRAY-field element struct, which "ARRSTRUCTF:" owns. Here to
 			// pin the two registries disjoint: the new one must not claim it, and
-			// it must stay balanced.
+			// it must stay balanced. ys goes through id so each element is built on
+			// the heap rather than placed as a constant.
 			name: "arrfield_elem_stays_arrstruct",
 			src: `struct Q { ys: i32[], n: i32 }
-function mkq(): Q[] { let a: Q[] = [Q { ys: [1, 2], n: 1 }, Q { ys: [3], n: 2 }]; return a; }
+function id(xs: i32[]): i32[] { return xs; }
+function mkq(): Q[] { let a: Q[] = [Q { ys: id([1, 2]), n: 1 }, Q { ys: id([3]), n: 2 }]; return a; }
 function round(i: i32): i32 { let v: Q[] = mkq(); return v.len() + v[0].ys.len(); }` + structarrProdMain,
 			want: 53, balance: true,
 		},

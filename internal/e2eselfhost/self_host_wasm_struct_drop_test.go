@@ -57,11 +57,13 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 		},
 		// STRUCT-array field (Inner[]): the buffer and each element box are
 		// released. 400k cycles stay bounded (a buffer-only free would still leak
-		// the elements and exceed the cap).
+		// the elements and exceed the cap). Each v is offset from a heap read so
+		// every element box is built on the heap rather than placed as a constant.
 		{
 			"struct-array-field-reclaim",
 			"struct Inner { v: i32 } struct Nest { inners: Inner[] } " +
-				"function mk(): i32 { let nz: Nest = Nest { inners: [Inner{v:1},Inner{v:2},Inner{v:3},Inner{v:4},Inner{v:5},Inner{v:6},Inner{v:7},Inner{v:8}] }; return nz.inners[0].v + nz.inners[7].v; } " +
+				"function id(xs: i32[]): i32[] { return xs; } " +
+				"function mk(): i32 { let o: i32 = id([0])[0]; let nz: Nest = Nest { inners: [Inner{v:o+1},Inner{v:o+2},Inner{v:o+3},Inner{v:o+4},Inner{v:o+5},Inner{v:o+6},Inner{v:o+7},Inner{v:o+8}] }; return nz.inners[0].v + nz.inners[7].v; } " +
 				"function main(): i32 { let s: i32 = 0; let k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 9; }",
 			"$__sem_drop_Nest",
 			"call $__fern_arr_dec",

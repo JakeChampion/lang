@@ -52,10 +52,13 @@ function main(): i32 {
 	// CYCLE SAFETY: a tree (`Node { kids: Node[] }`) must NOT infinitely recurse.
 	// `kids` is an array-of-struct (the k_box element walk, shallow per element);
 	// Node has no direct nested-struct field, so no deep-drop edge is created. A
-	// churn building a 2-node tree each iteration stays correct + terminating.
+	// churn building a 2-node tree each iteration stays correct + terminating. The
+	// leaf reads v off the heap so the tree is built on the heap rather than placed as
+	// a constant.
 	run(t, `struct Node { kids: Node[], v: i32 }
+function id(xs: i32[]): i32[] { return xs; }
 function mk(): i32 {
-    let leaf: Node = Node { kids: [], v: 5 };
+    let leaf: Node = Node { kids: [], v: id([5])[0] };
     let root: Node = Node { kids: [leaf], v: 3 };
     return root.v + root.kids[0].v;
 }

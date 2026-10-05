@@ -4608,7 +4608,8 @@ function static_name(f: ssasem.Func, ins: ssa.SInst): string {
 }
 
 // A static box's field words with each `@<value>` replaced by the packing of
-// the box that value is, in braces (ir.const_struct_ref).
+// the box that value is, in braces (ir.const_struct_ref), and each `$<value>`
+// by its string literal's (ir.const_str_word).
 function static_values(f: ssasem.Func, p: ssaunits.Plan, words: string): string {
   let out: string = "";
   for w in ir.const_struct_values(words) {
@@ -4618,6 +4619,8 @@ function static_values(f: ssasem.Func, p: ssaunits.Plan, words: string): string 
     if (w.len() > 0 && w[0] == b'@') {
       let v: i32 = util.lit_to_i32(slice_unchecked(w, 1, w.len()) + "");
       out = out + "{" + static_name(f, p.defs[v]) + "|" + static_values(f, p, p.constants[v]) + "}";
+    } else if (w.len() > 0 && w[0] == b'$') {
+      out = out + ir.const_str_word(p.defs[util.lit_to_i32(slice_unchecked(w, 1, w.len()) + "")].str);
     } else {
       out = out + w;
     }

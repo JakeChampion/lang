@@ -2,13 +2,14 @@ package e2eselfhost
 
 import "testing"
 
-// A record or variant whose every field is a narrow scalar constant is one
-// static box (#8920), as the AST lowering has placed struct literals since
-// #6149. Each probe runs 100 rounds and prints its result times 1000 plus the
-// heap allocations the rounds made. origin, the TInt and TVoid members and
-// the Shade payload allocate nothing; named holds a string, fresh a parameter
-// and rebuild's first record a loop counter, so each still allocates once a
-// round. rebuild's second record is constant, so the first one's box is
+// A record or variant whose every field is a constant is one static box
+// (#8920), as the AST lowering has placed struct literals since #6149. A
+// string literal is a static box, so a field or element holding one is a
+// constant too. Each probe runs 100 rounds and prints its result times 1000
+// plus the heap allocations the rounds made. origin, the TInt and TVoid
+// members, the Shade payload, named's string field and names' string elements
+// allocate nothing; fresh holds a parameter and rebuild's first record a loop
+// counter, so each still allocates once a round. rebuild's second record is constant, so the first one's box is
 // released where it dies rather than held for a construction that no longer
 // takes it. An empty array literal is one static box too: leaf's record
 // allocates and its args do not, and later's push onto those args makes the
@@ -196,7 +197,7 @@ function main(): i32 {
 func TestSelfHostStaticBoxes(t *testing.T) {
 	// Before static boxes the first three lines ended 100, 200 and 100, and
 	// leaf_rounds ended 200.
-	want := "500000\n3300000\n2000000\n10100100\n4950100\n5450100\n4950100\n800200\n301200100\n3000\n800100\n10400100\n300000\n200100\n700000\n"
+	want := "500000\n3300000\n2000000\n10100000\n4950100\n5450100\n4950100\n800200\n301200100\n3000\n800100\n10400100\n300000\n200000\n700000\n"
 	runSemanticProgram(t, "staticbox", staticBoxProgram,
 		[]string{"origin", "t_int", "t_void", "named", "mixed", "fresh", "width", "shade", "rebuild",
 			"origin_rounds", "member_rounds", "shade_rounds", "named_rounds", "fresh_rounds", "rebuild_rounds",

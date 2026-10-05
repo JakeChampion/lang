@@ -95,10 +95,13 @@ function main(): i32 {
 	// CYCLE SAFETY: a tree (`Node { kids: Node[] }`) must NOT infinitely recurse.
 	// `kids` is an array-of-struct (the k_box element walk, shallow per element);
 	// Node has no direct nested-struct field, so no deep-drop edge is created. A
-	// churn building a 2-node tree each iteration stays correct + terminating.
+	// churn building a 2-node tree each iteration stays correct + terminating. The
+	// leaf reads v off the heap so the tree is built on the heap rather than placed as
+	// a constant.
 	run(t, `struct Node { kids: Node[], v: i32 }
+function id(xs: i32[]): i32[] { return xs; }
 function mk(): i32 {
-    let leaf: Node = Node { kids: [], v: 5 };
+    let leaf: Node = Node { kids: [], v: id([5])[0] };
     let root: Node = Node { kids: [leaf], v: 3 };
     return root.v + root.kids[0].v;
 }
@@ -134,11 +137,15 @@ function main(): i32 {
 	// The full chain __struct_drop_A → _B → _C must be emitted; the depth-3 `name`
 	// string + `xs` buffer are reclaimed each iteration. Bounded (exit 0) after,
 	// unbounded (137) if any level short-circuits. xs[0]+xs[1]=1, +name.len() 3 = 4.
+	// name and xs go through ids and id so the chain is built on the heap rather than
+	// placed as a constant.
 	run(t, `struct C { name: string, xs: i32[] }
+function ids(s: string): string { return s; }
+function id(xs: i32[]): i32[] { return xs; }
 struct B { c: C, y: i32 }
 struct A { b: B, z: i32 }
 function mk(): i32 {
-    let a: A = A { b: B { c: C { name: "abc", xs: [0, 1] }, y: 9 }, z: 4 };
+    let a: A = A { b: B { c: C { name: ids("abc"), xs: id([0, 1]) }, y: 9 }, z: 4 };
     return a.b.c.xs[0] + a.b.c.xs[1] + a.b.c.name.len();
 }
 function main(): i32 {

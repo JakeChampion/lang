@@ -159,10 +159,11 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// source has no other owner: a stray release would show as the
 			// census moving away from its rename control, not as an
 			// underflow.
+			// `id` keeps keep's outer array a heap box around its static rows.
 			name: "optarrarr_collide",
-			src: `
+			src: `function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
-    let keep: Option[i32[][]] = Some([[7, 8], [9, 10]]);
+    let keep: Option[i32[][]] = Some([id([7, 8]), [9, 10]]);
     let t: i32 = 0;
     if (i % 2 == 0) { let o: Option[i32[][]] = Some([[i, i + 1], [i + 2, i + 3]]); match (o) { Some(p) => { t = t + p.len(); }, None => {} } }
     if (i % 2 == 1) { let o: Option[i32[][]] = keep; match (o) { Some(p) => { t = t + p.len(); }, None => {} } }
@@ -175,9 +176,9 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		{
 			// Its pairwise control.
 			name: "optarrarr_renamed",
-			src: `
+			src: `function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
-    let keep: Option[i32[][]] = Some([[7, 8], [9, 10]]);
+    let keep: Option[i32[][]] = Some([id([7, 8]), [9, 10]]);
     let t: i32 = 0;
     if (i % 2 == 0) { let o: Option[i32[][]] = Some([[i, i + 1], [i + 2, i + 3]]); match (o) { Some(p) => { t = t + p.len(); }, None => {} } }
     if (i % 2 == 1) { let u: Option[i32[][]] = keep; match (u) { Some(p) => { t = t + p.len(); }, None => {} } }

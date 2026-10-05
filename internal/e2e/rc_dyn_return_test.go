@@ -133,19 +133,21 @@ func TestDynReturnedBorrowBounded(t *testing.T) {
 // through a local it initialises. Each arm's yield takes its own unit
 // (emitCountedYield), which the caller then owns. On wasm the branch yields
 // the two-word `[data, vtable]` pair, and a variant match still frees its
-// fresh scrutinee.
+// fresh scrutinee. Each name goes through ids so it is built on the heap
+// rather than placed as a constant.
 func TestDynReturnedBorrowThroughABranch(t *testing.T) {
 	const head = `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
 impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }
+function ids(s: string): string { return s; }
 `
 	const body = `
 function main(): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
     while (i < 3) {
-        let x: Box = Box { name: "ab" + "c" };
-        let y: Box = Box { name: "d" + "e" };
+        let x: Box = Box { name: ids("ab") + "c" };
+        let y: Box = Box { name: ids("d") + "e" };
         let p: dyn Label = pick(i % 2, x, y);
         t = t + p.a() + x.name.len() + y.name.len();
         i = i + 1;
@@ -162,7 +164,7 @@ function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { return match (tag
 		// The scrutinee's own dyn payload, bound and yielded: the yield retains
 		// it before the scrutinee's deep drop releases the box's reference.
 		{"variant_payload_yielded", `enum Holder { Has(dyn Label), Empty }
-function mk(c: i32): Holder { if (c == 0) { return Holder.Has(Box { name: "ab" + "c" }); } return Holder.Empty; }
+function mk(c: i32): Holder { if (c == 0) { return Holder.Has(Box { name: ids("ab") + "c" }); } return Holder.Empty; }
 function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { return match (mk(c)) { Has(d) => d, Empty => m }; }`},
 	}
 	for _, c := range cases {
