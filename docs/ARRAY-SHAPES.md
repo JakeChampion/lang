@@ -601,8 +601,8 @@ and ownership census run with the rewrite enabled and disabled on x86-64,
 arm64 and WebAssembly.
 
 For the final ndarray rewrite, the same machine, inputs and nine alternating
-processes measured 268 ns per outer product (245-310) with rewriting enabled
-versus 2,511 ns (2,419-2,869) with `FERN_NO_PRODUCT_KERNEL=1`. Both builds ran
+processes measured 279 ns per outer product (259-295) with rewriting enabled
+versus 2,554 ns (2,489-2,715) with `FERN_NO_PRODUCT_KERNEL=1`. Both builds ran
 the ordinary stdlib-call mode, with every output and both inputs checked
 outside the timer. Over 200 rounds, allocator calls were 1,600 versus 3,600
 and fresh bytes 10,472 versus 20,016. The two-round pilot changed only its
