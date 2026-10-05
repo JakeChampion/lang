@@ -1486,9 +1486,8 @@ function sysno_arm64_darwin(name: string): string {
   // No syncfs row: XNU has no per-filesystem flush, and rt_src_fd_syncfs
   // branches on the target rather than issuing a number that is not one.
   // XNU has no mknodat — this is mknod(2), which takes no directory
-  // descriptor. The row keeps the Linux spelling so the two tables
-  // pair up (selfhost_sysno_parity_test); rt_src_mknod branches on
-  // the target for the argument shape.
+  // descriptor. The row keeps the Linux spelling so the tables pair up;
+  // rt_src_mknod branches on the target for the argument shape.
   if (name == "mknodat") {
     return "14";
   }
@@ -8960,7 +8959,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
     import_iface: "", import_wit: "", all_type_params: [],
     bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
     is_pub: true,
-    is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [],
+    is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [],
   };
   return parser.Module { ...mod, funcs: mod.funcs.append(entry), top_stmts: [] };
 }

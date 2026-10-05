@@ -42,15 +42,6 @@ func InstI64TruncF64U(buf []byte) []byte { return append(buf, 0xb1) }
 // out-of-range value clamps to the destination's INT_MIN / INT_MAX
 // (or 0 / UINT_MAX for the unsigned variants).
 
-func InstI32TruncSatF32S(buf []byte) []byte { return append(buf, 0xfc, 0x00) }
-func InstI32TruncSatF32U(buf []byte) []byte { return append(buf, 0xfc, 0x01) }
-func InstI32TruncSatF64S(buf []byte) []byte { return append(buf, 0xfc, 0x02) }
-func InstI32TruncSatF64U(buf []byte) []byte { return append(buf, 0xfc, 0x03) }
-func InstI64TruncSatF32S(buf []byte) []byte { return append(buf, 0xfc, 0x04) }
-func InstI64TruncSatF32U(buf []byte) []byte { return append(buf, 0xfc, 0x05) }
-func InstI64TruncSatF64S(buf []byte) []byte { return append(buf, 0xfc, 0x06) }
-func InstI64TruncSatF64U(buf []byte) []byte { return append(buf, 0xfc, 0x07) }
-
 // ---- Int -> float conversions (0xB2..0xB5, 0xB7..0xBA) ----
 
 func InstF32ConvertI32S(buf []byte) []byte { return append(buf, 0xb2) }

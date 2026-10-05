@@ -580,7 +580,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     params: [], ret_type: "i32", body: body, line: 0, col: 0,
     import_iface: "", import_wit: "", all_type_params: [],
     bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
-    is_const: false, is_pub: true, is_package: false, ret_fn_ret: "", ret_fn_param_types: "", module: "", impl_trait: "", dyn_traits: [],
+    is_const: false, is_pub: true, is_package: false, ret_fn_ret: "", ret_fn_param_types: "", module: "", impl_trait: "", dyn_traits: [], streams: [],
   };
   return parser.Module { ...entry, funcs: entry.funcs.append(main) };
 }
@@ -2089,7 +2089,7 @@ pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: str
     inferred_consts: inferred,
     todo_sites: e.todo_sites,
   };
-  return parser.resolve_dyn_traits(parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred))));
+  return parser.lower_stream_signatures(parser.resolve_dyn_traits(parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred)))));
 }
 
 // mangled_inferred_consts names every const written without a type, across
@@ -2230,10 +2230,10 @@ pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], 
   let out: PerModule[] = [];
   let j: i32 = 0;
   while (j < imports.len()) {
-    out = out.append(PerModule { ns: imports[j].name, mod: parser.substitute_const_refs(mods[j], table), is_entry: false });
+    out = out.append(PerModule { ns: imports[j].name, mod: parser.lower_stream_signatures(parser.substitute_const_refs(mods[j], table)), is_entry: false });
     j = j + 1;
   }
-  out = out.append(PerModule { ns: "__entry", mod: parser.substitute_const_refs(e, table), is_entry: true });
+  out = out.append(PerModule { ns: "__entry", mod: parser.lower_stream_signatures(parser.substitute_const_refs(e, table)), is_entry: true });
   return out;
 }
 

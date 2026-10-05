@@ -222,22 +222,12 @@ offsets, function signatures, IR ops — all unchanged in
 behaviour. The full native e2e suite (HTTP / files / streams /
 reader-writer) passes.
 
-## Native backend mirror — NOT YET STARTED
+## Native backend mirror — moot for the Go backends
 
-The arm64 + x86_64 backends still use their own LSB-tagged
-SSO scheme (see `internal/codegen/arm64/arm64.go` and
-`internal/codegen/x86_64/x86_64.go`). Mirroring the wasm
-two-word ABI on natives would touch:
-
-- `internal/codegen/arm64/arm64.go` — every string runtime
-  helper + `emitInlineIdxHelper` + the SSO scratch slot at
-  `__fern_str_idx_scratch`.
-- `internal/codegen/x86_64/x86_64.go` — same shape.
-
-Native already uses 8-byte slots, so the two-word form would
-fit naturally. But the LSB-tagged inline encoding would need
-to flip to top-bit-tagged to share `fernstring.PackInlineNative`
-with the IR layer.
+This item was scoped at the Go arm64 and x86-64 code generators, which used
+their own LSB-tagged SSO scheme. They are deleted (#11557). A two-word flip
+on the native ISAs, if it is still wanted, is self-host work in
+`examples/self_host/asm_ir.fern` and `asm_arm64_ir.fern`.
 
 Once natives flip, the target-aware splits in the IR collapse
 back to ptrW-agnostic forms:

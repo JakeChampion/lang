@@ -11,9 +11,8 @@ name: Test units
 #   internal/fernsmith — its own workflow (fuzz corpus + generator
 #                        machinery; ~60s).
 #
-# Matrix per host arch so backend-tagged unit tests (e.g.
-# internal/codegen/wasmbin, internal/ir invariants) get exercised
-# under both ABIs.
+# Matrix per host arch so backend-tagged unit tests (e.g. the
+# internal/ir invariants) get exercised under both ABIs.
 #
 # THE RUNTIMES ARE INSTALLED HERE, not assumed absent. Every wasm test in
 # these packages opens with an `exec.LookPath("wasmtime")` and every arm64
@@ -66,8 +65,8 @@ jobs:
         id: day
         run: echo "stamp=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
       # wasmtime, because this lane owns the wasm UNIT packages and no other
-      # lane runs them: internal/codegen/wasmbin,
-      # internal/wasm/{component,componenttype,simd,playground} and cmd/fern's
+      # lane runs them: internal/wasm/{component,componenttype,simd,playground}
+      # and cmd/fern's
       # component-runtime cases. 902 test sites across internal/ open with
       # `exec.LookPath("wasmtime")` and t.Skip() without it, and a skipped test
       # reports `ok` — so the lane was green while never executing a module

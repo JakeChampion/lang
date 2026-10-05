@@ -423,7 +423,7 @@ Lowering (boxed). The builder branches on `b.dynBoxed()` (= `ptrW
   stays uniform across backends — only how `data`/`vtable` are obtained
   (deref cell vs inline) differs.
 
-x86-64 backend (`internal/codegen/x86_64/x86_64.go`):
+x86-64 backend (the Go `internal/codegen/x86_64`, deleted in #11557):
 
 - `OpConstVtable` interns + materialises a `.rodata` cell
   (`__vtable_<trait>_<concrete>`) holding `len(methods)` 8-byte absolute
@@ -442,7 +442,7 @@ x86-64 backend (`internal/codegen/x86_64/x86_64.go`):
   `Info.DynCoercions` whole-program instead kept the impl methods of a
   coercion in a function nothing calls (#4114).
 
-arm64 backend (`internal/codegen/arm64/arm64.go`, slice 2d): the exact
+arm64 backend (the Go `internal/codegen/arm64`, deleted in #11557; slice 2d): the exact
 structural mirror of x86-64 — same boxed representation, same IR (zero IR
 changes), same vtable cells, just AArch64 instruction selection (AAPCS64).
 

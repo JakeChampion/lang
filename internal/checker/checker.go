@@ -4709,71 +4709,22 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// Colorless stream result: an `@import async function f(): stream[T]` is
 	// delivered incrementally over the wire but, under the colorless model,
 	// yields the fully-collected `T[]` at the call site (docs/STREAM-TYPE-SURFACE.md).
-	// Rewrite the effective return type to `T[]` here — before FuncSigs and every
-	// other fn.ReturnType reader — and stash the element type so codegen knows to
-	// use the stream-collect ABI rather than the single-block list lowering.
+	// Rewrite the effective return type to `T[]` here, before FuncSigs and every
+	// other fn.ReturnType reader.
 	for _, fn := range prog.Funcs {
 		if fn.ImportIface != "" && fn.Async {
 			if st, ok := fn.ReturnType.(ast.StreamType); ok && st.Elem != nil {
-				fn.StreamResultElem = st.Elem
 				fn.ReturnType = ast.ArrayType{Elem: st.Elem}
 			}
 			// Colorless stream PARAMETER (the mirror of the result transform): an
 			// `@import async function f(s: stream[T])` accepts an eager `T[]` at the
-			// call site (the wrapper creates a stream and write-streams the array's
-			// elements over the wire). Rewrite each `stream[T]` param to `T[]` and
-			// stash the element type so codegen uses the stream-produce ABI.
+			// call site. Rewrite each `stream[T]` param to `T[]`.
 			for i := range fn.Params {
 				if st, ok := fn.Params[i].Type.(ast.StreamType); ok && st.Elem != nil {
-					if fn.StreamParamElems == nil {
-						fn.StreamParamElems = map[int]ast.Type{}
-					}
-					fn.StreamParamElems[i] = st.Elem
 					fn.Params[i].Type = ast.ArrayType{Elem: st.Elem}
 				}
 			}
 		}
-	}
-
-	// Lazy stream iteration (L2): the parser leaves `for x in f(args)` as an
-	// ast.ForEach when `f` is a u8 async stream import (every other iterand was
-	// lowered to the array `.len()`+index loop at parse time). Lower those
-	// surviving ForEach nodes HERE — after modload has mangled cross-module call
-	// sites, so the synthesised `f$open` tracks the (possibly mangled) import
-	// name — into a per-element read loop (ast.DesugarForEachStream), and register
-	// the codegen-helper signatures the loop calls. The helpers (`f$open`,
-	// `__stream_next_u8`, `__stream_drop`) are emitted by wasmbin
-	// (internal/codegen/wasmbin/extern.go). See docs/STREAM-TYPE-SURFACE.md.
-	streamElem := map[string]ast.Type{}
-	elemKinds := map[string]ast.Type{} // kind → element type, for the __stream_elem_<kind> sigs
-	for _, fn := range prog.Funcs {
-		if fn.ImportIface == "" || fn.StreamResultElem == nil {
-			continue
-		}
-		if kind := ast.StreamElemKind(fn.StreamResultElem); kind != "" {
-			streamElem[fn.Name] = fn.StreamResultElem
-			elemKinds[kind] = fn.StreamResultElem
-			// Per-import open helper: the import's scalar params → an i32 cursor
-			// pointer (the awaited stream-result lower wrapped in a read cursor).
-			params := make([]ast.Type, len(fn.Params))
-			for i, p := range fn.Params {
-				params[i] = p.Type
-			}
-			c.info.FuncSigs[fn.Name+"$open"] = &ast.FuncType{Params: params, Result: ast.NumberType{Width: 32, Signed: true}}
-		}
-	}
-	if len(streamElem) > 0 {
-		i32 := ast.NumberType{Width: 32, Signed: true}
-		// __stream_next(cursor) -> i32 (1 = element read into the cursor, 0 = EOF);
-		// __stream_drop(cursor) -> () ; both element-type-agnostic.
-		c.info.FuncSigs["__stream_next"] = &ast.FuncType{Params: []ast.Type{i32}, Result: i32}
-		c.info.FuncSigs["__stream_drop"] = &ast.FuncType{Params: []ast.Type{i32}, Result: ast.VoidType{}}
-		// __stream_elem_<kind>(cursor) -> T : reads the buffered element as its
-		// scalar type, one per distinct element kind actually used.
-		for kind, elem := range elemKinds {
-			c.info.FuncSigs["__stream_elem_"+kind] = &ast.FuncType{Params: []ast.Type{i32}, Result: elem}
-		}
-		lowerStreamForEachProgram(prog, streamElem)
 	}
 
 	// First pass: gather all top-level signatures so functions can call
@@ -5323,8 +5274,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// Skipped silently when both handle() and main() are
 	// user-defined — don't surprise users who want their
 	// own main alongside the wasi-http handler.
-	// The wasi-http entry wrapper (internal/codegen/wasmbin/wasi_http.go)
-	// is hand-written wasm, which cannot instantiate a handler generic over
+	// The native wasm backend's wasi-http entry wrapper, deleted with #11530,
+	// was hand-written wasm, which cannot instantiate a handler generic over
 	// its platform, so it calls a synthesised `__fern_wasi_handle(req)`
 	// that hands `handle` the host platform in Fern. Synthesised whenever a
 	// two-parameter `handle` and std/platform are present; other targets

@@ -1,9 +1,9 @@
 // examples/self_host/ir.fern — the stack-machine IR for the self-hosted
 // compiler, mirroring native's internal/ir (`ir.Op` / `[]Op`). This is the
-// layer the native PRODUCTION backends (arm64 / x86-64 / wasmbin) consume,
-// and the layer where Perceus reference counting lives (alias-inc, the
-// exit dec sweep, drop specialization, reuse tokens are all emitted here as
-// `call_direct` to `__fern_rc_*` helpers during AST -> IR lowering).
+// layer every self-host backend consumes, and the layer where Perceus
+// reference counting lives (alias-inc, the exit dec sweep, drop
+// specialization, reuse tokens are all emitted here as `call_direct` to
+// `__fern_rc_*` helpers during AST -> IR lowering).
 //
 // RC is lowered to IR once here and each backend instruction-selects an
 // opcode, rather than every backend hand-writing its own RC emission.

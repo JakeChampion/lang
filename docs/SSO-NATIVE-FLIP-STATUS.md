@@ -7,7 +7,7 @@ string/SSO e2e, cross-backend differential parity, and the full e2e suite
 
 **x86-64 is NOT on the two-word ABI.** It has inline SSO, but in the
 single-word LSB-tagged form (`ssoTagBit`, 7-byte cap, in
-`internal/codegen/x86_64/x86_64.go`): it never sets `ast.TwoWordOverride`, so
+the Go x86-64 emitter, deleted in #11557): it never sets `ast.TwoWordOverride`, so
 `ast.UseTwoWordStrings(8)` is false for the whole of its emit. Mirroring
 the flip there is still the future work sketched under "Then: x86_64".
 

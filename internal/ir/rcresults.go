@@ -27,9 +27,9 @@
 //
 // # Read the body, not the name
 //
-// Every entry here was read off the helper's definition in
-// `internal/codegen/wasmbin/runtime.go` and its siblings, which
-// `rcsigs.go` names as the canonical one. The names mislead often enough
+// Every entry here was read off the helper's definition in the native wasm
+// backend's runtime (deleted with #11530), which `rcsigs.go` names as the
+// canonical one. The names mislead often enough
 // that this is the whole method:
 //
 //   - `__alloc_u8` sounds like the raw allocator beside it and is not:
@@ -663,21 +663,4 @@ func RcHelperResult(name string) (RcResult, bool) {
 		return RcResultNone, true
 	}
 	return RcResultNone, false
-}
-
-// RcHelperResultClassified reports whether the name has a decision on
-// the result axis at all — the total predicate the completeness gates
-// enumerate against, the twin of RcHelperClassified.
-func RcHelperResultClassified(name string) bool {
-	if resolved, ok := builtinRuntimeAlias(name); ok {
-		name = resolved
-	}
-	if _, ok := rcResultUnmodelled[name]; ok {
-		return true
-	}
-	if rcResultOwned[name] || rcResultImmortal[name] || rcResultRaw[name] ||
-		rcResultBorrow[name] || rcResultOperand[name] || rcResultNonPointer[name] {
-		return true
-	}
-	return isGeneratedDrop(name)
 }

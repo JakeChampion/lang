@@ -1814,10 +1814,9 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
 // the ENTRY module only (like the heap runtime), so a per-module sibling's
 // `call` resolves against this one definition.
 //
-// These are fdlibm's kernels, log's table-driven one aside, over the same
-// reduction and the same `roundsd $0` as internal/codegen/x86_64's
-// emitFloatTranscendentalsRuntime (ties-to-EVEN, matching arm64's `frintn`;
-// the reductions pick a different k otherwise). The self-host cannot import Go, so the .Lfc_* table below is a
+// These are fdlibm's kernels, log's table-driven one aside, rounding the
+// reduction with `roundsd $0` (ties-to-EVEN, matching asm_arm64_ir.fern's
+// `frintn`; the reductions pick a different k otherwise). The self-host cannot import Go, so the .Lfc_* table below is a
 // literal copy of internal/fdlibm's — whose selfhost_parity_test pins
 // it entry for entry, so editing one side alone fails a test rather than
 // diverging quietly. They replace the x87 sequences this backend inlined

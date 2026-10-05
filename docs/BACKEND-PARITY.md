@@ -1,13 +1,11 @@
 # Backend parity tracker
 
-Three code-generation backends ship in the Go compiler, all stack-machine
-emitters lowering the flat `ir.Program`: `internal/codegen/{arm64,x86_64,wasmbin}`.
-`-backend flat` names that emitter explicitly and is the only value `cmd/fern`
-accepts. The Go register-allocating backends (`arm64ssa`, `x86_64ssa`, the
-experimental `-backend typed-ssa`, and `internal/ssa` and `internal/semir`
-under them) were deleted in step 5 of `docs/NATIVE-RETIREMENT.md`; the
-self-host compiler's register path (`fern-selfhost -backend ssa`,
-`docs/SELFHOST-SSA-BACKEND.md`) is the one SSA emitter. Background:
+The Go compiler generates no code: its emitters, the stack-machine
+`internal/codegen/{arm64,x86_64,wasmbin}` and the register-allocating
+`arm64ssa` / `x86_64ssa`, were deleted in step 5 of
+`docs/NATIVE-RETIREMENT.md`. Every `-target` compile runs the self-host
+compiler: its register path (`-backend ssa`, `docs/SELFHOST-SSA-BACKEND.md`)
+on the native ISAs, its stack machine (`-backend flat`) on wasm. Background:
 `docs/SSA-DECISION.md`, #4112, #8822.
 
 `internal/e2e/arm64_default_string_reclaim_test.go` holds the arm64 default to
@@ -58,13 +56,10 @@ wins do not exist there (`docs/SELFHOST-SSA-BACKEND.md`, "The other
 backends"). One other
 difference remains: `-emit asm` has no native counterpart — native always
 links, and the text form is how the self-host's emitters are observed in
-isolation (docs/TOOLCHAIN-SELF-HOSTING.md). `wasm32-wasi-http` is built
-differently on the two sides and answers the same requests: native emits the
-handler entry as wasm instructions (`internal/codegen/wasmbin/wasi_http.go`),
-the self-host appends `std/wasi_http` — the entry written in Fern over
-`@import` externs — and composes the core against the embedded proxy world
-(`examples/self_host/wit_compose.fern`); `TestSelfHostWasiHttpTargetMatchesNative`
-is the differential.
+isolation (docs/TOOLCHAIN-SELF-HOSTING.md). For `wasm32-wasi-http` the
+self-host appends `std/wasi_http`, the entry written in Fern over `@import`
+externs, and composes the core against the embedded proxy world
+(`examples/self_host/wit_compose.fern`).
 
 ## Internal networking syscall floor
 
@@ -594,15 +589,13 @@ Both native backends exit `ExitArenaExhausted` (125) when the arena runs out.
 On wasm the equivalent event is `memory.grow` returning -1, and `__fern_alloc`
 raises `unreachable` there — so the failure is attributable to the allocator,
 with its caller chain, but the process dies as a trap rather than carrying a
-status. Both wasm emitters behave the same way (`internal/codegen/wasmbin`'s
-`buildAllocBody`, `examples/self_host/wasm_ir.fern`'s `$__fern_alloc`).
+status (`examples/self_host/wasm_ir.fern`'s `$__fern_alloc`).
 
 Fix plan: call `wasi_proc_exit(125)` instead of trapping. The cost is the
 reason it has not been done — that import is reached only through
 `__fern_exit`, so wiring the allocator to it puts a WASI import into every
 allocating module, including the zero-import core modules and the `--invoke`
-bare-core path, and `internal/codegen/wasmbin/build_test.go` pins import shape
-in both directions. Scope: small in the emitter, wide in what it perturbs.
+bare-core path. Scope: small in the emitter, wide in what it perturbs.
 
 This is now the only wasm emitter, so the trap IS the wasm behaviour. The
 retired `wasmssa` never grew at all — one fixed page — which was a separate
