@@ -83,8 +83,8 @@ to a handler that answers `__heap_bump_bytes()`, and the figure a tenth of
 the way in must be the figure at the last request (under qemu the arm64 leg
 sends 10k). They hold the bump high-water mark still; they do not count
 allocations, which every request still makes (the framing path's, criterion
-B). `TestSelfHostFramingAllocs` counts those: what parsing a hello request and serializing its reply allocate
-per request on x86-64, arm64 and wasm, pinned per target as a ratchet.
+B). `TestSelfHostFramingAllocs` counts those: what parsing a hello request, with the one parsed before it
+as the parse's `prev`, and serializing its reply allocate per request on x86-64, arm64 and wasm, pinned per target as a ratchet.
 A count above its pin fails as a regression and one below it fails until the
 pin is lowered, so `docs/NET-P0-MESSAGE-LAYER-PLAN.md`'s slices each move
 it in the PR that earns the drop. `TestHTTPHandlerCensus` and its wasm and self-host twins are the leak

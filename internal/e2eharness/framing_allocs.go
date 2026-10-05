@@ -11,10 +11,11 @@ import (
 const FramingAllocsRounds = 1000
 
 // FramingAllocsSource is #9853's framing-path allocation probe: a hello
-// request with three headers parsed the way std/serve parses one, and a
-// hello reply, built once, serialized the way std/serve serializes one, each counted
-// separately with __heap_alloc_count over FramingAllocsRounds rounds after
-// one warm round. The report goes to stderr.
+// request with three headers parsed the way std/serve parses one, with the
+// request parsed before it as the parse's `prev`, and a hello
+// reply, built once, serialized the way std/serve serializes one, each
+// counted separately with __heap_alloc_count over FramingAllocsRounds
+// rounds after one warm round. The report goes to stderr.
 func FramingAllocsSource() string {
 	return fmt.Sprintf(`import "std/bench";
 import "std/http";
@@ -23,10 +24,10 @@ import "std/http";
 // builds everything a server keeps however much of it this probe reads.
 @noinline function keep(f: http.HttpFramed): i32 { return f.len; }
 
-function parse_once(buf: u8[], limits: http.HttpLimits): i32 {
-  match (http.http_parse_request_framed_from(buf, 0, limits)) {
-    http.Framed(f) => { return keep(f); },
-    _ => { return 0; }
+function parse_once(buf: u8[], limits: http.HttpLimits, prev: http.HttpFramed): http.HttpFramed {
+  match (http.http_parse_request_framed_from(buf, 0, limits, prev)) {
+    http.Framed(f) => { return f; },
+    _ => { return http.http_framed_none(); }
   }
 }
 
@@ -38,12 +39,14 @@ function main(): i32 {
   let buf: u8[] = "GET / HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.5.0\r\nAccept: */*\r\n\r\n".bytes();
   let limits: http.HttpLimits = http.http_limits();
   let resp: HttpResponse = http.ok("hello");
-  let parsed: i32 = parse_once(buf, limits);
+  let f: http.HttpFramed = parse_once(buf, limits, http.http_framed_none());
+  let parsed: i32 = keep(f);
   let wire: i32 = serialize_once(resp);
   let a0: i64 = bench.alloc_count();
   let i: i32 = 0;
   while (i < %[1]d) {
-    parsed = parsed + parse_once(buf, limits);
+    f = parse_once(buf, limits, http.http_framed_kept(f));
+    parsed = parsed + keep(f);
     i = i + 1;
   }
   let a1: i64 = bench.alloc_count();

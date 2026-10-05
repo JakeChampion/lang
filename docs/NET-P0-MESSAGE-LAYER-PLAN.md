@@ -247,3 +247,41 @@ on #4451, as slice 2 was.
    handler borrows it, and the response is serialized into the connection's
    buffer and sent from there. Designed against the residue slices 1 to 5
    leave, which sets what has to be donated.
+
+   The residue, traced at `origin/main` 612791ce2: the self-host parse's 15
+   are 13 kept (8 strings, the method, the path and three names and
+   values; the two field arrays; the field map; the body's stream; the
+   request), the `HttpFramed` wrapper, and the `Ok` box
+   `__parse_header_bytes` returns, which has four callers, so the inliner
+   leaves it a call. The serialize's 3 are the builder's two blocks and the
+   copy `buf_take_bytes` makes.
+
+   Done for the parse, by sharing instead of filling in place. Filling in
+   place needs strings and arrays a parse may rewrite, which Fern does not
+   have, and a handler that keeps its request, or parks holding it, would
+   make the donor shared anyway. The serve loop keeps the request it took
+   last, on any connection, less any body (`http_framed_kept`), and every
+   parse takes it as `prev`: a string it would copy that holds the same text as `prev`'s at
+   the same place is `prev`'s, a field block repeating `prev`'s is `prev`'s
+   map, and a bodiless request repeating `prev` is `prev`, framing
+   included. A value is immutable, so sharing an equal one is the same
+   whoever else holds it: no uniqueness check, no new language surface and
+   no compiler work, the same on both compilers and every target. Parse 15
+   to 1 on the self-host, and 43, 53 and 49 to 1 on the Go compiler, for a
+   client repeating its request. A request that differs pays for what
+   differs: a new path costs the path, the request and its framing. The
+   donor is one per loop rather than one per connection because a donor
+   per connection is a head held by every idle keep-alive connection: 3.2
+   KiB each in the held-connection gate, against its 1 KiB bound.
+
+   Left: the `Ok` box, slice 7, and the serialize's 3, slice 8. The gate's
+   probe parses from one call site, where the inliner splits the `Framed`
+   case; `std/serve` parses from six, so its parse also builds the `Framed`
+   box, which slice 7 removes too.
+7. **A small variant returns without a box.** `Ok(h)` of a function with
+   several callers, and `Framed(f)` of the parse itself, are built only for
+   each caller to take apart at once. Returned in registers, as a pair of the
+   tag and the payload, they are never built, in every program.
+8. **The response is serialized into a buffer the connection keeps.** A
+   builder cleared instead of freed, with the reply sent from it, removes
+   its two blocks and the copy.

@@ -1255,10 +1255,17 @@ serializer.
   request answered as HTTP/1.1 on a connection that persists, as RFC
   9110 §7.8 allows a server with no protocol to switch to;
   a higher HTTP/1 minor version is read as HTTP/1.1, RFC 9112 §2.3).
-  `http_parse_request_framed_from(buf, from)` is the same parse over
-  `buf[from, len)`, so a loop answering pipelined requests moves an
-  offset instead of copying the buffer forward, with `len` counted from
-  `from`. The path a handler sees is the request-target (§3.2) as
+  `http_parse_request_framed_from(buf, from, limits, prev)` is the same
+  parse over `buf[from, len)`, so a loop answering pipelined requests
+  moves an offset instead of copying the buffer forward, with `len`
+  counted from `from`. `prev` is a request parsed before it, a serve
+  loop's last: a method, path, field name or value with the same text as
+  `prev`'s at the same place is `prev`'s string, and a request repeating
+  `prev` with no body is `prev`, so clients repeating their requests cost
+  no allocation. `http_framed_none()` is the `prev` of a loop's first
+  request, and `http_framed_kept(f)` is what a loop keeps of `f` for the
+  next: `f` less its body and trailers.
+  The path a handler sees is the request-target (§3.2) as
   `http_request_target(method, target)` gives it: an origin-form target
   (`/a/b?q`) or an absolute-form one (`http://host/a/b?q`, accepted from
   any client, §3.2.2) becomes the path decoded once and with its dot
@@ -1306,8 +1313,8 @@ serializer.
   chunk-flood cannot hold more buffer than any other request. The caps
   are an `HttpLimits { request_line, header_bytes, header_fields, body }`:
   `http_limits()` is 8 KiB, 32 KiB, 100 fields and 1 MiB, what
-  `http_parse_request_framed` uses; `http_parse_request_framed_from(buf,
-  from, limits)` takes them, and a serve loop reads them from
+  `http_parse_request_framed` uses; `http_parse_request_framed_from`
+  takes them, and a serve loop reads them from
   `serve.Config.limits`. `http_request_bytes_cap(limits)` (header block,
   blank line, body and chunk framing, each at its cap) is the most a
   connection buffers without a complete request.

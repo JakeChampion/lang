@@ -1524,9 +1524,9 @@ function other_field_get(ins: ssa.SInst, root: i32, field: i32): boolean {
 // the instruction it is read only through projections of its OTHER fields —
 // the functional update `R { ...r, xs: f(r.xs) }` — with nothing anchored to
 // the projected field, and nothing anchored to the record any other way,
-// still live. The record must not leave the block either, so a loop that
-// reaches the same record again is refused; a loop-carried record is a fresh
-// phi each round.
+// still live. A later block may read the record only through its other
+// fields too (`named_after`), so a loop that reaches the same record again is
+// refused; a loop-carried record is a fresh phi each round.
 //
 // What this proves is that THIS frame never reads the field again, so the
 // buffer may be grown in place by the instruction, or by a callee it is
@@ -1551,7 +1551,7 @@ function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
     return none;
   }
   let b: ssa.SBlock = f.graph.blocks[bi];
-  if (ssalive.live_out_has(a.flow, bi, root)) {
+  if (ssalive.live_out_has(a.flow, bi, root) && named_after(f, a.flow, bi, root, get)) {
     return none;
   }
   let i: i32 = pos + 1;

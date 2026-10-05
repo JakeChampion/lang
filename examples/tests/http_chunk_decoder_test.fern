@@ -17,7 +17,7 @@ const HEAD: string = "POST /up HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked
 // `body` (the chunked bytes and whatever follows them).
 function walked(body: string, limits: http.HttpLimits): string {
   let wire: string = HEAD + body;
-  match (http.http_parse_request_framed_from(wire.bytes(), 0, limits)) {
+  match (http.http_parse_request_framed_from(wire.bytes(), 0, limits, http.http_framed_none())) {
     http.Framed(f) => {
       return "ok:" + string_from_bytes_unchecked(f.request.body_bytes()) + "|" + fields(f.request.trailers) + "|rest=" + (wire.len() - f.len).to_string();
     },
