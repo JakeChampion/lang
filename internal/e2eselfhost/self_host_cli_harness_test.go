@@ -49,6 +49,19 @@ func (c *selfHostCLI) emit(t *testing.T, src, target string, env ...string) stri
 	return out
 }
 
+// wasmComponent compiles src to a wasm32-wasi component, the target's
+// default output form.
+func (c *selfHostCLI) wasmComponent(t *testing.T, src string, env ...string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "main.wasm")
+	cmd := runX86_64Bin(c.runner, c.bin, "-target", "wasm32-wasi", "-o", bin, src, c.stdlib)
+	cmd.Env = append(os.Environ(), env...)
+	if msg, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("self-host CLI -target wasm32-wasi %s: %v\n%s", src, err, msg)
+	}
+	return bin
+}
+
 // x86Binary compiles src for x86-64 Linux and links it.
 func (c *selfHostCLI) x86Binary(t *testing.T, src string, env ...string) string {
 	t.Helper()

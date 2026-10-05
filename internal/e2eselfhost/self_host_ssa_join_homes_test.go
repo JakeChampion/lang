@@ -15,9 +15,8 @@ import (
 // loop header's phis, which live through the whole body. A merge phi that
 // takes a home of its own copies every one of them on every arm's edge; one
 // that shares the header phi's home copies nothing (ssa.chain_dead_at_def).
-// Keep the assembly subject separate when the single-use inliner is enabled.
-const joinHomeProg = `@noinline
-function f(ops: i32[]): i32 {
+// f is called once, so @noinline keeps the inliner from folding it into main.
+const joinHomeProg = `@noinline function f(ops: i32[]): i32 {
   let v0: i32 = 0; let v1: i32 = 0; let v2: i32 = 0; let v3: i32 = 0; let v4: i32 = 0;
   let v5: i32 = 0; let v6: i32 = 0; let v7: i32 = 0; let v8: i32 = 0; let v9: i32 = 0;
   let v10: i32 = 0; let v11: i32 = 0; let v12: i32 = 0; let v13: i32 = 0; let v14: i32 = 0;
