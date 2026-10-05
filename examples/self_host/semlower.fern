@@ -863,9 +863,7 @@ function wasm_gated(typed: parser.Module): parser.Module {
 }
 
 function substitution_of(im: parser.Module, debug_lines: boolean): ircore.Sub {
-  // The typed lowering reads im; the AST lowering's tables read its erasure.
-  let lowered: parser.Module = parser.erase_view_module(im);
-  let stab: irtables.StructTab = irtables.struct_tab(lowered.structs);
+  let stab: irtables.StructTab = irtables.struct_tab(parser.erase_view_structs(im.structs));
   util.arr_push_cliff_report("sem:gated", 0);
   let sub: ircore.Sub = substitution(im, stab, debug_lines);
   return ircore.Sub { ...sub, rt_lower: runtime_bodies };
@@ -934,7 +932,7 @@ pub function verdict_ok(mod: parser.Module, target: string): boolean {
     return false;
   }
   let im: parser.Module = verdict_module(t.mod, target);
-  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_module(im).structs), false);
+  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), false);
   let i: i32 = 0;
   while (i < inf.rows.keep.len()) {
     if (!inf.rows.keep[i] && inf.rows.why[i].len() > 0) {
@@ -960,7 +958,7 @@ pub function verdict_annotated(annotated: parser.Module, target: string): Verdic
     return Verdict { ok: false, errors: t.errs, rows: [] };
   }
   let im: parser.Module = verdict_module(t.mod, target);
-  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_module(im).structs), false);
+  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), false);
   let rows: VerdictRow[] = [];
   let ok: boolean = true;
   let i: i32 = 0;

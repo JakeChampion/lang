@@ -3721,9 +3721,8 @@ Two reasons it was not landed, both worth inheriting:
 1. **It does not touch the lexer at all**, which is where the leak is.
    `skip_trivia(l: Lex)` is the representative shape and it disqualifies on
    appearances the projection rule does not cover: METHOD RECEIVERS (`l.at_end()`,
-   `l.peek_byte()`), an INDEX TARGET (`l.src[we]`, whose result is a scalar byte
-   and so is a pure read the rule cannot see through), and a self-reassignment
-   (`l = l.advance_to(we)`). Covering those needs per-method retention summaries
+   `l.peek_byte()`) and an INDEX TARGET (`l.src[we]`, whose result is a scalar
+   byte and so is a pure read the rule cannot see through). Covering those needs per-method retention summaries
    plus a real "pure read" classifier — a different, bigger piece of work than a
    projection tweak, and the honest prerequisite for the 40k blocks.
 
