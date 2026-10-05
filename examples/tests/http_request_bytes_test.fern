@@ -442,7 +442,7 @@ function test_chunked_body_is_decoded(): test.TestOutcome {
       return test.fail("the chunked request was not framed");
     }
   }
-  match (http.http_parse_request_framed_from(wire.bytes(), wire_chunked().len(), http.http_limits())) {
+  match (http.http_parse_request_framed_from(wire.bytes(), wire_chunked().len(), http.http_limits(), http.http_framed_none())) {
     http.Framed(f) => {
       if (f.request.path != "/next") {
         return test.fail("behind the chunked request: " + f.request.path);
@@ -745,7 +745,7 @@ function test_framed_length_covers_headers_and_body(): test.TestOutcome {
 
 function test_framed_from_reads_the_request_behind(): test.TestOutcome {
   let wire: string = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
-  match (http.http_parse_request_framed_from(wire.bytes(), wire_post().len(), http.http_limits())) {
+  match (http.http_parse_request_framed_from(wire.bytes(), wire_post().len(), http.http_limits(), http.http_framed_none())) {
     http.Framed(f) => {
       if (f.request.path != "/next") {
         return test.fail("the request behind the offset was not the one parsed: " + f.request.path);
@@ -763,6 +763,137 @@ function test_framed_from_reads_the_request_behind(): test.TestOutcome {
     },
     http.Malformed(_) => {
       return test.fail("malformed");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// `framed_after(wire, prev)` — the request `wire` frames with `prev` as
+// the request before it.
+function framed_after(wire: string, prev: http.HttpFramed): Option[http.HttpFramed] {
+  match (http.http_parse_request_framed_from(wire.bytes(), 0, http.http_limits(), prev)) {
+    http.Framed(f) => {
+      return Some(f);
+    },
+    _ => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// `framed_differs(a, b)` — the first thing two framed requests disagree
+// on, or "".
+function framed_differs(a: http.HttpFramed, b: http.HttpFramed): string {
+  if (a.request.method != b.request.method || a.request.path != b.request.path) {
+    return "request line: " + a.request.method + " " + a.request.path + " against " + b.request.method + " " + b.request.path;
+  }
+  if (a.len != b.len || a.keep_alive != b.keep_alive || a.version != b.version) {
+    return "framing: " + a.len.to_string() + " " + a.version + " against " + b.len.to_string() + " " + b.version;
+  }
+  if (body_text(a.request) != body_text(b.request)) {
+    return "body: " + body_text(a.request) + " against " + body_text(b.request);
+  }
+  if (a.request.headers.len() != b.request.headers.len() || a.request.trailers.len() != b.request.trailers.len()) {
+    return "field counts: " + a.request.headers.len().to_string() + " against " + b.request.headers.len().to_string();
+  }
+  let i: i32 = 0;
+  while (i < a.request.headers.len()) {
+    if (a.request.headers.names[i] != b.request.headers.names[i] || a.request.headers.values[i] != b.request.headers.values[i]) {
+      return "field " + i.to_string() + ": " + a.request.headers.names[i] + ": " + a.request.headers.values[i] + " against " + b.request.headers.names[i] + ": " + b.request.headers.values[i];
+    }
+    i = i + 1;
+  }
+  i = 0;
+  while (i < a.request.trailers.len()) {
+    if (a.request.trailers.names[i] != b.request.trailers.names[i] || a.request.trailers.values[i] != b.request.trailers.values[i]) {
+      return "trailer " + i.to_string();
+    }
+    i = i + 1;
+  }
+  return "";
+}
+
+// A request parsed with the one before it as `prev`, kept whole or as a
+// serve loop keeps it, is the request parsed with nothing before it, how
+// much or little of `prev` it repeats.
+function test_framed_after_a_request_is_framed_alone(): test.TestOutcome {
+  let wires: string[] = [
+    "GET / HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.5.0\r\nAccept: */*\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.5.0\r\nAccept: */*\r\n\r\n",
+    "GET /other HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.5.0\r\nAccept: */*\r\n\r\n",
+    "GET /other HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.6.0\r\nAccept: */*\r\n\r\n",
+    "GET /other HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.6.0\r\n\r\n",
+    "GET /other HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.6.0\r\nAccept: */*\r\nX-Extra: 1\r\n\r\n",
+    "GET /other HTTP/1.1\r\nhost: localhost:8080\r\nUser-Agent: curl/8.6.0\r\nAccept: */*\r\nX-Extra: 1\r\n\r\n",
+    "GET /other HTTP/1.1\r\nhost:   localhost:8080 \r\nUser-Agent: curl/8.6.0\r\nAccept: */*\r\nX-Extra: 1\r\n\r\n",
+    "GET /%61b HTTP/1.1\r\nhost: localhost:8080\r\n\r\n",
+    "GET /%61b HTTP/1.1\r\nhost: localhost:8080\r\n\r\n",
+    "POST /other HTTP/1.1\r\nHost: localhost:8080\r\nContent-Length: 5\r\n\r\nhello",
+    "POST /other HTTP/1.1\r\nHost: localhost:8080\r\nContent-Length: 5\r\n\r\nhello",
+    "GET /other HTTP/1.1\r\nHost: localhost:8080\r\n\r\n",
+    "POST /other HTTP/1.1\r\nHost: localhost:8080\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nX-Sum: 1\r\n\r\n",
+    "GET /other HTTP/1.1\r\nHost: localhost:8080\r\n\r\n",
+    "GET /other HTTP/1.1\r\nHost: localhost:8080\r\nConnection: close\r\n\r\n",
+    "GET /other HTTP/1.0\r\nHost: localhost:8080\r\nConnection: close\r\n\r\n",
+    "GET /other HTTP/1.0\r\nHost: localhost:8080\r\nConnection: close\r\n\r\n",
+  ];
+  let whole: http.HttpFramed = http.http_framed_none();
+  let kept: http.HttpFramed = http.http_framed_none();
+  let i: i32 = 0;
+  while (i < wires.len()) {
+    match (framed(wires[i])) {
+      Some(alone) => {
+        match (framed_after(wires[i], whole)) {
+          Some(f) => {
+            let d: string = framed_differs(f, alone);
+            if (d != "") {
+              return test.fail("request " + i.to_string() + " after the one before it: " + d);
+            }
+            whole = f;
+          },
+          None => {
+            return test.fail("request " + i.to_string() + " did not frame after the one before it");
+          }
+        }
+        match (framed_after(wires[i], kept)) {
+          Some(f) => {
+            let d: string = framed_differs(f, alone);
+            if (d != "") {
+              return test.fail("request " + i.to_string() + " after what a serve loop kept: " + d);
+            }
+            kept = http.http_framed_kept(f);
+          },
+          None => {
+            return test.fail("request " + i.to_string() + " did not frame after what a serve loop kept");
+          }
+        }
+      },
+      None => {
+        return test.fail("request " + i.to_string() + " did not frame");
+      }
+    }
+    i = i + 1;
+  }
+  return test.pass();
+}
+
+// What a serve loop keeps of a request has no body or trailers, and the
+// rest of the request unchanged.
+function test_framed_kept_drops_the_body(): test.TestOutcome {
+  match (framed(wire_post())) {
+    Some(f) => {
+      let k: http.HttpFramed = http.http_framed_kept(f);
+      if (k.request.body_len() != 0) {
+        return test.fail("the kept request has a body of " + k.request.body_len().to_string());
+      }
+      if (k.request.method != "POST" || k.request.path != "/echo" || k.request.headers.len() != 3) {
+        return test.fail("the kept request lost its head");
+      }
+      return test.assert_eq(body_text(f.request), "hello");
+    },
+    None => {
+      return test.fail("parse failed");
     }
   }
   return test.fail("unreachable");
@@ -1206,6 +1337,8 @@ function main(): i32 {
   r = r.it("empty line before the request", test_empty_line_before_the_request);
   r = r.it("framed length covers headers and body", test_framed_length_covers_headers_and_body);
   r = r.it("framed from reads the request behind", test_framed_from_reads_the_request_behind);
+  r = r.it("framed after a request is framed alone", test_framed_after_a_request_is_framed_alone);
+  r = r.it("framed kept drops the body", test_framed_kept_drops_the_body);
   r = r.it("framed persistence follows the version and connection", test_framed_persistence_follows_the_version_and_connection);
   r = r.it("serialize names the connection", test_serialize_names_the_connection);
   r = r.it("parse holds no view into the wire", test_parse_holds_no_view_into_the_wire);
