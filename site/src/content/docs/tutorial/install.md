@@ -50,8 +50,28 @@ go build -o ~/.local/bin/fern ./cmd/fern
 
 Building needs **Go 1.26+** ([download](https://go.dev/dl/)) and nothing
 else. Compiling a Fern program needs nothing else either — no `gcc`, no
-`clang`, no `ld`. Pass `-cc` (for example `-cc clang`) if you would
-rather use your own assembler and linker.
+`clang`, no `ld`.
+
+## The first compile
+
+`fern` compiles through Fern's self-hosted compiler. It uses
+`$FERN_SELFHOST` when that is set, else a `fern-selfhost` in the same
+directory as `fern`. With neither, the first compile downloads the stage0
+compiler pinned in `bootstrap/stage0.lock` from the project's GitHub
+releases, checks its sha256, and builds the self-hosted compiler from the
+sources inside `fern`. That takes about a minute, once per version; the
+result is cached under your user cache directory (`~/.cache/fern` on
+Linux, `~/Library/Caches/fern` on macOS).
+
+To compile on a machine without network access, build the compiler once
+from a checkout where you have it:
+
+```bash
+make bootstrap                       # writes bin/fern-selfhost
+export FERN_SELFHOST=$PWD/bin/fern-selfhost
+```
+
+or copy `bin/fern-selfhost` next to `fern`.
 
 ## Verify the install
 
