@@ -38,7 +38,7 @@ function main(): i32 { let xs: i32[] = [1, 2, 3, 19, 0, 7]; return f(xs); }
 `
 
 // Each arm of f's chain is its own sum and the jump: a load, the add and a
-// store when the sum is spilled, at most four instructions.
+// store when the sum is spilled, at most three instructions.
 func TestSelfHostSSAJoinPhiSharesTheHeaderHome(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()

@@ -23,10 +23,12 @@ own. With more carried values than registers, every arm's edge then copied
 each untouched value from the header's home into the merge's, through the
 frame.
 
-The two never hold different values on any path: the header phi is dead by
-the time the merge phi is defined, because every path past the merge reaches
-the back edge through the merge phi, not the header phi. Liveness by position
-says they overlap. Liveness by path says they do not.
+The two are never live at once on any path. Past the merge, the value is
+read through the merge phi: every read of the header phi lies on the paths
+into the merge, and the back edge reads the merge phi, not the header phi. So
+no read of the header phi is reachable from where the merge phi is defined
+without passing the header again. Liveness by position says they overlap.
+Liveness by path says they do not.
 
 ## The change
 

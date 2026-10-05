@@ -1240,7 +1240,11 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     // the two never live at once. First fit wins; the phi mate first.
     let placed: boolean = false;
     // -2 stands for `wish[v]`, which names a register rather than a value.
-    let cands: i32[] = [mates.alt[v], mates.hint[v], 0 - 2, def_a[v], def_b[v]];
+    let cands: i32[] = [];
+    if (mates.alt[v] != mates.hint[v]) {
+      cands = cands.append(mates.alt[v]);
+    }
+    cands = cands.append(mates.hint[v]).append(0 - 2).append(def_a[v]).append(def_b[v]);
     let ci: i32 = 0;
     while (ci < cands.len() && !placed) {
       let h: i32 = cands[ci];
@@ -1601,7 +1605,9 @@ function shares_operand_home(op: string): boolean {
 // every merge of an else-if chain inside the loop, the hint is the first
 // operand that dies by the phi instead, and `alt[r]` is the outliving one. The
 // two overlap by position only, so the phi shares alt's home when no path has
-// both live at once (chain_dead_at_def).
+// both live at once (chain_dead_at_def). A phi already marked carried, as the
+// last merge's phis are by the loop header laid out before them, gets no alt:
+// the carried hint covers it.
 struct Mates { hint: i32[], carried: boolean[], alt: i32[] }
 
 function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mates {
@@ -1613,6 +1619,7 @@ function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mat
     carried = carried.append(false);
     i = i + 1;
   }
+  // Both start all -1, sharing one buffer: the first write to either copies it.
   let alt: i32[] = hint;
   let pos: i32 = 0;
   for blk in f.blocks {
