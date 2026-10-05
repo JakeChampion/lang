@@ -1,4 +1,5 @@
 // Compare this identical workload with FERN_NO_ARRAY_FUSION=1 and enabled.
+// A fourth argument, "loop", selects the handwritten while/append control.
 // Time and count only the pipeline; verify every prefix outside the timer.
 import "std/array";
 import "std/string";
@@ -9,6 +10,30 @@ function pipeline(xs: i64[], filtered: boolean): i64[] {
     return xs.filter((x: i64): boolean => x % 3i64 == 0i64).map((x: i64): i64 => x * 5i64 + 7i64).scan(0i64, (a: i64, x: i64): i64 => a + x);
   }
   return xs.map((x: i64): i64 => x * 5i64 + 7i64).scan(0i64, (a: i64, x: i64): i64 => a + x);
+}
+
+@noinline
+function hand_loop(xs: i64[], filtered: boolean): i64[] {
+  let out: i64[] = [];
+  let acc = 0i64;
+  let i: i32 = 0;
+  if (filtered) {
+    while (i < xs.len()) {
+      let x = xs[i];
+      if (x % 3i64 == 0i64) {
+        acc = acc + x * 5i64 + 7i64;
+        out = out.append(acc);
+      }
+      i = i + 1;
+    }
+  } else {
+    while (i < xs.len()) {
+      acc = acc + xs[i] * 5i64 + 7i64;
+      out = out.append(acc);
+      i = i + 1;
+    }
+  }
+  return out;
 }
 
 function correct(xs: i64[], out: i64[], filtered: boolean): boolean {
@@ -31,6 +56,7 @@ function main(): i32 {
   let n: i32 = 2000;
   let rounds: i32 = 2;
   let filtered: boolean = false;
+  let variant: string = "pipeline";
   if (argv.len() > 1) {
     n = argv[1].parse_int_or(n);
   }
@@ -40,9 +66,13 @@ function main(): i32 {
   if (argv.len() > 3) {
     filtered = argv[3] == "1";
   }
-  if (n < 0 || n > 1000000 || rounds < 1) {
+  if (argv.len() > 4) {
+    variant = argv[4];
+  }
+  if (n < 0 || n > 1000000 || rounds < 1 || variant != "pipeline" && variant != "loop") {
     return 1;
   }
+  let use_loop = variant == "loop";
   let xs: i64[] = [];
   let i: i32 = 0;
   while (i < n) {
@@ -58,7 +88,7 @@ function main(): i32 {
     let a0 = __heap_alloc_count();
     let b0 = __heap_bump_bytes();
     let t0 = monotonic_ns();
-    let out = pipeline(xs, filtered);
+    let out = if (use_loop) { hand_loop(xs, filtered) } else { pipeline(xs, filtered) };
     elapsed = elapsed + monotonic_ns() - t0;
     calls = calls + __heap_alloc_count() - a0;
     fresh = fresh + __heap_bump_bytes() - b0;
@@ -70,7 +100,7 @@ function main(): i32 {
     }
     r = r + 1;
   }
-  print("{\"n\":" + n.to_string() + ",\"rounds\":" + rounds.to_string()
+  print("{\"variant\":\"" + variant + "\",\"n\":" + n.to_string() + ",\"rounds\":" + rounds.to_string()
     + ",\"checksum\":" + checksum.to_string() + ",\"alloc_calls\":" + calls.to_string()
     + ",\"fresh_bytes\":" + fresh.to_string() + ",\"ns_per_scan\":" + (elapsed / (rounds as i64)).to_string() + "}");
   return 0;

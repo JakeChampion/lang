@@ -208,6 +208,31 @@ The compiler's native text grew by 7,136 bytes for the scan graph construction,
 typed reservation checks, ownership integration and three backend emitters.
 No size baseline was changed.
 
+The benchmark also accepts `loop` as its fourth argument, selecting a
+handwritten while/append implementation with the same prefix semantics.
+For example, `2000 20000 1 loop` runs the filtered control. The language has
+no public scalar-array capacity reservation, so this control grows its output
+through ordinary append; the fused loop reserves its input-length bound once.
+
+With the final ready-successor layout described below, a two-round pilot and
+200-round run preceded 20,000 rounds, changing only the round count. Nine
+alternating processes per variant on the same Apple M3 Pro gave:
+
+| Pipeline | Fusion disabled, ns/scan | Fusion enabled, ns/scan | Handwritten loop, ns/scan |
+| --- | ---: | ---: | ---: |
+| map.scan | 8,936 (8,645-9,212) | 2,301 (2,184-5,039) | 2,609 (2,563-3,465) |
+| filter.map.scan | 7,069 (6,751-7,530) | 2,016 (1,970-2,850) | 2,487 (2,364-2,826) |
+
+All prefixes and checksums agreed. Across 20,000 scans, the fused variants
+made 20,000 allocator calls each. The handwritten loops made 200,000 and
+180,000 calls, respectively, versus 400,000 and 540,000 with fusion disabled.
+Fused fresh bytes were 16,384 in both cases. The handwritten loops used
+20,480 and zero fresh bytes, while the eager variants used 40,960 and 10,240.
+Zero fresh bytes in the filtered control reflects freelist reuse, not zero
+allocations. The fused output's larger reserved capacity remains a cost even
+though it avoids growth calls. Empty, singleton, short and 257-element inputs
+also pass the benchmark's prefix checks with both variants and fusion settings.
+
 ## Deliberately not in the first slice
 
 The contract's difficulty order, with what each one needs beyond the
