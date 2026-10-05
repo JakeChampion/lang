@@ -489,7 +489,14 @@ world-driven composer (P2) wires it.
      func(...) -> record line { p: point, q: point }`; reads `l.p.x`/`l.q.y`) and
      `TestExternRecordResultDeepNestedCustomProvider` (three levels —
      `outer { l: mid, r: mid }` / `mid { p: point, n: s32 }` / `point { x, y }`;
-     reads `o.l.p.x` … `o.r.n`).
+     reads `o.l.p.x` … `o.r.n`). Self-host: `extern_record_param_supported`
+     and `extern_record_result_supported` take the same leaves (a u8, an
+     `s32`/`u32`, a bool, a 64-bit integer or a float, or a nested record of
+     them), and the driver refuses an `@import` record outside them
+     (`wasm_unsupported_import`) instead of declaring an import no host
+     matches. Gated by `TestSelfHostExternRecordWideFieldsCustomProvider`,
+     `TestSelfHostExternRecordResultWallClock` and
+     `TestSelfHostExternRecordOutsideTheBridgeIsRefused`.
    - **Tuple params + results — ✅ done (Go).** A Fern tuple is laid out exactly
      like a struct (rc header + elements at the same packing), so the record
      machinery generalises to tuples for free: `externCompositeFieldTypes`

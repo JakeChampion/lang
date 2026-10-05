@@ -2106,6 +2106,32 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
   return "";
 }
 
+// wasm_unsupported_import is the diagnostic for the first `@import` whose
+// record parameter or result the canonical-ABI bridge cannot flatten, or "".
+pub function wasm_unsupported_import(mod: parser.Module): string {
+  let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
+  let why: string = " fields must be integers, floats, booleans or records of them, at most 16 leaves in all";
+  let i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    let f: parser.FuncDecl = mod.funcs[i];
+    if (is_sync_extern(f)) {
+      if (is_struct_type(stab, f.ret_type) && !extern_record_result_supported(mod, f.ret_type)) {
+        return "error: @import " + f.name + " returns record " + f.ret_type + ", which wasm cannot lower: its" + why;
+      }
+      let p: i32 = 0;
+      while (p < f.params.len()) {
+        let pt: string = f.params[p].type_name;
+        if (is_struct_type(stab, pt) && !extern_record_param_supported(mod, pt)) {
+          return "error: @import " + f.name + " takes record " + pt + ", which wasm cannot lower: its" + why;
+        }
+        p = p + 1;
+      }
+    }
+    i = i + 1;
+  }
+  return "";
+}
+
 // wasm_unsupported_message is the diagnostic every wasm entry prints for an
 // unsupported builtin, so the wording cannot drift between them. timer_fd gets
 // a pointer at its wasm analog; there is no analog to suggest for subprocess.
@@ -4035,6 +4061,11 @@ pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: 
   let unsupported: string = wasm_unsupported_builtin(lm);
   if (unsupported.len() > 0) {
     eprint(wasm_unsupported_message(unsupported));
+    exit(1);
+  }
+  let bad_import: string = wasm_unsupported_import(lm);
+  if (bad_import.len() > 0) {
+    eprint(bad_import);
     exit(1);
   }
   let mode: i32 = 0;
@@ -14961,24 +14992,11 @@ function extern_param_repacks(t: string): boolean {
   return extern_array_param_supported(t) || t == "boolean[]";
 }
 
-// extern_record_param_supported is true for an `@import` record (struct)
-// parameter the wrapper can flatten to its fields. A self-host struct value is
-// [type-id@0][field@+4 each in a 4-byte slot]. The canonical record flattens to
-// one i32 per field, including the sub-word integer (u8), which the
-// wrapper reads with a width+sign-aware load (extern_field_load_op) so the
-// pushed i32 is correctly zero-extended. Scoped to 1..16 fields, each an
-// 8-/32-bit integer.
-// extern_field_is_scalar reports whether a record field type is a flattenable
-// scalar (an 8-/32-bit integer — every self-host slot is i32-class).
+// extern_field_is_scalar reports whether a record field type flattens to one
+// leaf: an 8-/32-bit integer as an i32, a 64-bit integer as an i64, a float as
+// its own core type.
 pub function extern_field_is_scalar(ft: string): boolean {
-  return ft == "i32" || ft == "u32" || ft == "u8" || ft == "boolean";
-}
-
-// extern_param_field_scalar is a record field a record PARAMETER flattens to
-// one leaf: extern_field_is_scalar, or a 64-bit integer or a float, each
-// passed as its own core type.
-function extern_param_field_scalar(ft: string): boolean {
-  return extern_field_is_scalar(ft) || ft == "i64" || ft == "u64" || is_float_type(ft);
+  return ft == "i32" || ft == "u32" || ft == "u8" || ft == "boolean" || ft == "i64" || ft == "u64" || is_float_type(ft);
 }
 
 // extern_param_field_load reads a record parameter's scalar leaf at `addr` as
@@ -15006,7 +15024,7 @@ function extern_record_leaf_valtypes(mod: parser.Module, t: string): string[] {
       let j: i32 = 0;
       while (j < mod.structs[i].fields.len()) {
         let ft: string = mod.structs[i].fields[j].type_name;
-        if (extern_param_field_scalar(ft)) {
+        if (extern_field_is_scalar(ft)) {
           out = out.append(extern_core_valtype(ft));
         } else {
           out = util.append_all(out, extern_record_leaf_valtypes(mod, ft));
@@ -15033,7 +15051,7 @@ pub function extern_record_leaf_count(mod: parser.Module, t: string): i32 {
       let j: i32 = 0;
       while (j < n) {
         let ft: string = mod.structs[i].fields[j].type_name;
-        if (extern_param_field_scalar(ft)) {
+        if (extern_field_is_scalar(ft)) {
           leaves = leaves + 1;
         } else {
           leaves = leaves + extern_record_leaf_count(mod, ft);
@@ -15115,7 +15133,7 @@ pub function extern_record_param_supported(mod: parser.Module, t: string): boole
       let j: i32 = 0;
       while (j < n) {
         let ft: string = mod.structs[i].fields[j].type_name;
-        if (!extern_param_field_scalar(ft) && !extern_record_nestable(mod, ft)) {
+        if (!extern_field_is_scalar(ft) && !extern_record_nestable(mod, ft)) {
           return false;
         }
         j = j + 1;
@@ -15129,18 +15147,17 @@ pub function extern_record_param_supported(mod: parser.Module, t: string): boole
 }
 
 // extern_record_result_supported is the result-side gate: 1..16 fields, each a
-// scalar (8-/32-bit integer) OR a nested record (flattened inline by the
+// scalar (extern_field_is_scalar) OR a nested record (flattened inline by the
 // canonical ABI, to **arbitrary depth** via extern_record_nestable). The
-// sub-word field (u8) is supported via a dual layout — the canonical
-// return-area packs it at its natural 1-byte size + alignment
+// canonical return area packs each field at its natural size + alignment
 // (extern_canon_top_off / extern_canon_record_size_nested), which differs from
-// the self-host struct's 4-byte slots; the wrapper reads it with a
-// width-aware load and stores it into the wider slot, allocating a separate
+// the self-host struct's 8-byte slots; the wrapper reads each field with a
+// width-aware load and stores it into its slot, allocating a separate
 // inner struct per nested node (one scratch local per nesting level).
 //
 // Single-leaf-via-nested is rejected: a 1-leaf record returns by value (Direct),
 // but the by-value wrapper can't reconstruct a nested struct, so only a single
-// *scalar* field is Direct-eligible (mirrors the Go ExternRecordResult path).
+// *scalar* field is Direct-eligible.
 pub function extern_record_result_supported(mod: parser.Module, t: string): boolean {
   let i: i32 = 0;
   while (i < mod.structs.len()) {
@@ -15907,10 +15924,9 @@ pub function extern_plain_enum_sid(mod: parser.Module, t: string, dloc: string):
   return "(i32.const 0)";
 }
 
-// field of type `ft` from its 4-byte slot, leaving its canonical i32 on the
-// stack. The sub-word integer uses a width-aware load so the value is correctly
-// zero-extended (the self-host stores it in a 4-byte little-endian slot,
-// so the low byte at the field offset is the meaningful one).
+// extern_field_load_op is the load reading an 8-/32-bit integer field as its
+// canonical i32: a sub-word integer is read width-aware so it is
+// zero-extended (the low byte at the field offset is the meaningful one).
 pub function extern_field_load_op(ft: string): string {
   if (ft == "u8" || ft == "boolean") {
     return "i32.load8_u";
@@ -15919,12 +15935,44 @@ pub function extern_field_load_op(ft: string): string {
 }
 
 // extern_canon_field_size returns the canonical-ABI memory size (== alignment)
-// of a record field type: u8 → 1, else 4.
+// of a record field type.
 pub function extern_canon_field_size(ft: string): i32 {
   if (ft == "u8" || ft == "boolean") {
     return 1;
   }
+  if (ft == "i64" || ft == "u64" || ft == "f64" || ft == "float") {
+    return 8;
+  }
   return 4;
+}
+
+// extern_canon_load reads a record field's canonical value at `addr`.
+function extern_canon_load(ft: string, addr: string): string {
+  if (ft == "i64" || ft == "u64") {
+    return "(i64.load " + addr + ")";
+  }
+  if (ft == "f32") {
+    return "(f32.load " + addr + ")";
+  }
+  if (is_float_type(ft)) {
+    return "(f64.load " + addr + ")";
+  }
+  return "(" + extern_field_load_op(ft) + " " + addr + ")";
+}
+
+// extern_slot_store stores the canonical value `v` of a field of type `ft`
+// into its self-host struct slot at `addr`, which holds an f32 as an f64.
+function extern_slot_store(ft: string, addr: string, v: string): string {
+  if (ft == "i64" || ft == "u64") {
+    return "(i64.store " + addr + " " + v + ")";
+  }
+  if (ft == "f32") {
+    return "(f64.store " + addr + " (f64.promote_f32 " + v + "))";
+  }
+  if (is_float_type(ft)) {
+    return "(f64.store " + addr + " " + v + ")";
+  }
+  return "(i32.store " + addr + " " + v + ")";
 }
 
 // extern_canon_field_align returns the canonical-ABI alignment of a result-record
@@ -16031,7 +16079,8 @@ pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string
     let coff: i32 = canon_base + extern_canon_top_off(mod, tn, rc);
     let foff: string = util.i32_to_string(xbox_field_off(rc));
     if (extern_field_is_scalar(rcft)) {
-      parts = parts.append("    (i32.store (i32.add (local.get " + dst + ") (i32.const " + foff + ")) (" + extern_field_load_op(rcft) + " (i32.add (local.get $rb) (i32.const " + util.i32_to_string(coff) + "))))\n");
+      let canon: string = extern_canon_load(rcft, "(i32.add (local.get $rb) (i32.const " + util.i32_to_string(coff) + "))");
+      parts = parts.append("    " + extern_slot_store(rcft, "(i32.add (local.get " + dst + ") (i32.const " + foff + "))", canon) + "\n");
     } else {
       let inner_local: string = "$inner" + util.i32_to_string(depth);
       let inf: i32 = struct_field_count(stab, rcft);
@@ -16061,7 +16110,7 @@ pub function extern_emit_record_param_leaves(mod: parser.Module, base_expr: stri
   while (fi < n) {
     let ft: string = struct_field_type_at(stab, tn, fi);
     let field_expr: string = "(i32.add " + base_expr + " (i32.const " + util.i32_to_string(xbox_field_off(fi)) + "))";
-    if (extern_param_field_scalar(ft)) {
+    if (extern_field_is_scalar(ft)) {
       parts = parts.append(" " + extern_param_field_load(ft, field_expr));
     } else {
       parts = parts.append(extern_emit_record_param_leaves(mod, "(i32.load " + field_expr + ")", ft));
@@ -16362,6 +16411,7 @@ function extern_core_param(mod: parser.Module, t: string): string {
 }
 
 pub function extern_imports(mod: parser.Module): string {
+  let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   let parts: string[] = [];
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
@@ -16374,9 +16424,9 @@ pub function extern_imports(mod: parser.Module): string {
         parts = parts.append("  (import \"" + f.import_iface + "\" \"" + f.import_wit + "\" (func $" + f.name + "__import");
         parts = parts.append(extern_core_params(mod, f));
         if (extern_record_ret_direct(mod, f.ret_type)) {
-          // Single-field record result: returned by value (all
-          // self-host record fields are i32), no return area.
-          parts = parts.append(" (result i32)))\n");
+          // Single-field record result: returned by value as its field's
+          // core type, no return area.
+          parts = parts.append(" (result " + extern_core_valtype(struct_field_type_at(stab, f.ret_type, 0)) + ")))\n");
         } else if (is_extern_composite_ret(mod, f.ret_type)) {
           // Composite result: trailing return-area pointer, no result.
           parts = parts.append(" (param i32)))\n");
@@ -17651,9 +17701,9 @@ pub function extern_wrappers(mod: parser.Module): string {
         parts = parts.append(")\n");
       }
     } else if (is_sync_extern(f) && extern_record_ret_direct(mod, f.ret_type)) {
-      // single-field record result (P4c): returned by value (one i32),
-      // no return area. The wrapper materializes the one-field self-host
-      // struct (type-id@0, field@+4) from the import's i32 result.
+      // single-field record result (P4c): returned by value, no return
+      // area. The wrapper materializes the one-field self-host struct from
+      // the import's result.
       parts = parts.append("  (func $" + f.name);
       let dp: i32 = 0;
       while (dp < f.params.len()) {
@@ -17664,20 +17714,21 @@ pub function extern_wrappers(mod: parser.Module): string {
       parts = parts.append("    (local $s i32)\n");
       parts = parts.append("    (local.set $s " + xbox_new(xbox_bytes(1)) + ")\n");
       parts = parts.append("    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(stab, f.ret_type)) + "))\n");
-      // field @ xbox_field_off(0) = the import's by-value i32 result.
-      parts = parts.append("    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(xbox_field_off(0)) + ")) (call $" + f.name + "__import");
+      let dcall: string[] = ["(call $" + f.name + "__import"];
       let da: i32 = 0;
       while (da < f.params.len()) {
-        parts = parts.append(" " + extern_core_arg(f.params[da].type_name, "$ep" + util.i32_to_string(da)));
+        dcall = dcall.append(" " + extern_core_arg(f.params[da].type_name, "$ep" + util.i32_to_string(da)));
         da = da + 1;
       }
-      parts = parts.append("))\n");
+      dcall = dcall.append(")");
+      let dslot: string = "(i32.add (local.get $s) (i32.const " + util.i32_to_string(xbox_field_off(0)) + "))";
+      parts = parts.append("    " + extern_slot_store(struct_field_type_at(stab, f.ret_type, 0), dslot, util.str_join_chunks(dcall)) + "\n");
       parts = parts.append("    (local.get $s))\n");
     } else if (is_sync_extern(f) && extern_record_result_supported(mod, f.ret_type)) {
       // record result (P4c): a multi-field record returns indirectly; the
       // host writes the fields into the return area at the canonical memory
-      // layout (sub-word fields pack tighter than the self-host struct's
-      // 4-byte slots; a nested record is inlined). The wrapper reads each
+      // layout (fields pack at their natural size rather than the self-host
+      // struct's 8-byte slots; a nested record is inlined). The wrapper reads each
       // field at its canonical offset (width+sign-aware) and stores it into
       // the self-host struct (type-id@0, fields in the consumer's slots — see
       // xbox_field_off). A nested record field gets its own inner struct,

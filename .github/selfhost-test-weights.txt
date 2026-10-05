@@ -463,6 +463,9 @@ TestSelfHostErasedWideArrayGateNarrowWasm 4
 TestSelfHostErrDeferIR 2
 TestSelfHostErrorTraitIR 2
 TestSelfHostExplicitTypeArgsIR 2
+TestSelfHostExternRecordOutsideTheBridgeIsRefused 35
+TestSelfHostExternRecordResultWallClock 35
+TestSelfHostExternRecordWideFieldsCustomProvider 20
 TestSelfHostF32ElemTagArm64 3
 TestSelfHostF32ElemTagWasm 3
 TestSelfHostF32ElemTagX86_64 3
