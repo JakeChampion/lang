@@ -14198,6 +14198,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // without importing it fails at load with `unknown func`. This is half of
   // what the AST emitter did and the IR path did not.
   parts = parts.append(extern_imports(mod, xslot_ir()));
+  if (lifts_async(mod, mode)) {
+    parts = parts.append(async_lift_imports(mod));
+  }
   // The literal + constant regions decide how much memory has to exist
   // before anything runs, so they are gathered ahead of the memory section
   // rather than at their first use below.
@@ -15004,6 +15007,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // entry reports on its way out, as mode 0's exported main does.
   parts = parts.append("  (export \"main\" (func $main))\n");
   parts = parts.append(xps);
+  if (lifts_async(mod, mode)) {
+    parts = parts.append(async_lift_wrappers(mod));
+  }
   parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize));
   parts = parts.append("  (export \"_lang_run\" (func $_lang_run)))\n");
   return util.str_join_chunks(parts);
@@ -17461,6 +17467,91 @@ pub function extern_exports(mod: parser.Module, slot: i32): string {
       parts = parts.append("  (export \"" + x.iface + "#" + x.wit + "\" (func $" + x.func_name + "))\n");
     }
     i = i + 1;
+  }
+  return util.str_join_chunks(parts);
+}
+
+// lifts_async reports whether the module's async functions are lifted as
+// async exports: on the wasi:cli/run component's core (mode 2) only. The
+// proxy world takes none (emitforms refuses one there), and the preview1
+// core has no component to lift into.
+function lifts_async(mod: parser.Module, mode: i32): boolean {
+  return mode == 2 && !module_is_proxy(mod) && async_exports(mod).len() > 0;
+}
+
+// async_exports is the module's `async function`s with a body: each is an
+// async-lifted component export. A body-less `@import(...) async` is an import.
+pub function async_exports(mod: parser.Module): parser.FuncDecl[] {
+  let out: parser.FuncDecl[] = [];
+  for f in mod.funcs {
+    if (f.async && f.import_iface.len() == 0) {
+      out = out.append(f);
+    }
+  }
+  return out;
+}
+
+// async_lift_valtype is the component valtype byte an async export lifts a
+// Fern scalar of type `t` as, or -1 for a type it cannot lift yet.
+pub function async_lift_valtype(t: string): i32 {
+  let names: string[] = ["boolean", "u8", "i32", "u32", "i64", "u64", "f32", "f64"];
+  let vts: i32[] = [127, 125, 122, 121, 120, 119, 118, 117];
+  let i: i32 = 0;
+  while (i < names.len()) {
+    if (t == names[i]) {
+      return vts[i];
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// async_lift_imports declares each async export's task.return: the core
+// function the export hands its result to, imported the way wit-bindgen names
+// it and supplied by the composer's `canon task.return`.
+function async_lift_imports(mod: parser.Module): string {
+  let parts: string[] = [];
+  for f in async_exports(mod) {
+    let p: string = "";
+    if (returns_value(f.ret_type)) {
+      p = " (param " + extern_core_valtype(f.ret_type) + ")";
+    }
+    parts = parts.append("  (import \"[export]$root\" \"[task-return]" + f.name + "\" (func $__fern_task_return_" + f.name + p + "))\n");
+  }
+  return util.str_join_chunks(parts);
+}
+
+// async_lift_wrappers emits each async export's core entry, exported as
+// `[async-lift]NAME`: it calls the Fern function with its parameters, hands
+// the result to task.return and returns nothing, which ends the task. An f32
+// crosses as an f32 where the Fern function holds it as an f64.
+function async_lift_wrappers(mod: parser.Module): string {
+  let parts: string[] = [];
+  for f in async_exports(mod) {
+    let head: string = "  (func $__fern_async_lift_" + f.name;
+    let args: string = "";
+    let i: i32 = 0;
+    while (i < f.params.len()) {
+      let t: string = f.params[i].type_name;
+      head = head + " (param " + extern_core_valtype(t) + ")";
+      if (t == "f32") {
+        args = args + " (f64.promote_f32 (local.get " + util.i32_to_string(i) + "))";
+      } else {
+        args = args + " (local.get " + util.i32_to_string(i) + ")";
+      }
+      i = i + 1;
+    }
+    let call: string = "(call $" + f.name + args + ")";
+    let body: string = "";
+    if (!returns_value(f.ret_type)) {
+      body = "    (drop " + call + ")\n    (call $__fern_task_return_" + f.name + ")";
+    } else if (f.ret_type == "f32") {
+      body = "    (call $__fern_task_return_" + f.name + " (f32.demote_f64 " + call + "))";
+    } else {
+      body = "    (call $__fern_task_return_" + f.name + " " + call + ")";
+    }
+    parts = parts.append(head + "\n" + body + ")\n");
+    parts = parts.append("  (export \"[async-lift]" + f.name + "\" (func $__fern_async_lift_" + f.name + "))\n");
   }
   return util.str_join_chunks(parts);
 }
