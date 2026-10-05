@@ -443,15 +443,29 @@ function remaining_site(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], b
   return semarrayreport.Site { owner: name, stage: stage_name(f.graph.blocks[bi].insts[why.stage]), plan: plan + "; not fused", reason: why.reason, storage: "deferred-to-ownership" };
 }
 
+// A sink's verdict covers all single-use producers in its chain, including
+// refused chains. Those stages must not independently claim to lack a sink.
+function covered_stages(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], bi: i32): i32[] {
+  let covered: i32[] = [];
+  let k: i32 = 0;
+  while (k < f.graph.blocks[bi].insts.len()) {
+    let c: Chain = chain_at(f, cx, uses, defs, bi, k);
+    covered = util.append_all(covered, c.stages);
+    k = k + 1;
+  }
+  return covered;
+}
+
 function remaining_sites(f: ssasem.Func, cx: Context, name: string, enabled: boolean): semarrayreport.Site[] {
   let out: semarrayreport.Site[] = [];
   let uses: i32[] = use_counts(f.graph);
   let defs: Def[] = defs_of(f.graph);
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
+    let covered: i32[] = covered_stages(f, cx, uses, defs, bi);
     let k: i32 = 0;
     for ins in f.graph.blocks[bi].insts {
-      if (ins.kind_tag == ssasem.call() && report_verb(cx, ins.str) != "") {
+      if (ins.kind_tag == ssasem.call() && report_verb(cx, ins.str) != "" && util.index_of_i32(covered, k) < 0) {
         out = out.append(remaining_site(f, cx, uses, defs, bi, k, name, enabled));
       }
       k = k + 1;
