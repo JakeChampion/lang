@@ -13,10 +13,8 @@ import (
 // is proven by CORRECTNESS, the underflow detector and a balanced census;
 // heavy heap churn stays on the x86 leg.
 //
-// It also pins the x10-staleness fix in emit_arm64_struct_drop_one's k_str
-// arm: __fern_str_free clobbers x10 (freelist-head scratch), and before the
-// fix a `string` field ordered BEFORE another rc field left x10 stale, so the
-// NEXT field's arm freed through a garbage box pointer.
+// It also covers a `string` field ordered BEFORE another rc field, whose free
+// once left a scratch register stale for the NEXT field's release.
 func TestSelfHostStrArrFieldReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

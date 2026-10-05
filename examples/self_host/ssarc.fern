@@ -2522,9 +2522,6 @@ function named(t: typeinfo.Type): string {
 // that reaches itself still has a finite lowering. The helper releases the
 // box's CHILDREN ONLY: its caller has already proved __fern_rc_is_unique(box)
 // and releases the box itself once the helper returns.
-//
-// Distinct from the AST path's __struct_drop_<T>, which guards each nested
-// field itself and hands back the box. The two are not interchangeable.
 pub function drop_helper_name(t: typeinfo.Type): string {
   return "__sem_drop_" + ssasem.type_key(t);
 }

@@ -364,7 +364,7 @@ function main(): i32 {
 }
 
 // TestSelfHostStrArrFieldBufferReleaseIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler (emit_ir_struct_drop_one / emit_ir_field_reclaim_one).
+// self-hosted x86-64 compiler.
 func TestSelfHostStrArrFieldBufferReleaseIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
