@@ -612,6 +612,25 @@ General `map` and `zip_with` allocate their result even when the receiver is
 consumed and unique. The primary compiler can donate the packed literal-scale
 map's data buffer under the ownership and uniqueness conditions in §6.
 
+`inner` uses direct row/contracted-index/column addressing when both operands
+are packed. Output positions retain reading order, and each output calls
+`mul` then `add` for every increasing contracted index. Captured state and
+noncommutative callbacks therefore observe the same sequence as the strided
+walk. Geometry comes from shapes, so a zero contracted extent produces the
+initial accumulator at every output. Output-shape validation precedes the
+packed branch; an empty output returns before deriving unused sub-products.
+
+On Apple M3 Pro, arm64-darwin, 2026-10-05, the ordinary-call mode of
+`examples/array_pipeline/ndarray_inner.fern` compared the original and packed
+stdlib builds at 32-by-32-by-32 over 200 rounds in nine alternating processes.
+The original median was 153,062 ns (151,526-161,258), and the packed median
+141,225 ns (140,203-145,197). Both checked every output bit and source element
+outside timing, with an initial accumulator of 0.25. Only rounds changed
+from the two-round pilot. Allocator calls rose from 3,800 to 4,000 because
+the two packed predicates build stride arrays while the packed path removes
+one index array; fresh bytes stayed at 10,472. This is a scalar improvement,
+not evidence for an inner SIMD kernel.
+
 ## 8. Broadcasting
 
 **Normative.** Two shapes broadcast when, aligned at their **last**

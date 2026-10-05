@@ -1,0 +1,157 @@
+// Native probe: rows, contracted extent, columns, rounds, mode (0 stdlib,
+// 1 packed scalar probe). Verify every output and both inputs outside timing.
+import "std/ndarray";
+import "std/string";
+
+function input(rows: i32, columns: i32, bias: i32): ndarray.NdArray[f64] {
+  let data: f64[] = [];
+  let i: i32 = 0;
+  while (i < rows * columns) {
+    data = data.append((i % 127 + bias) as f64 * 0.125);
+    i = i + 1;
+  }
+  return ndarray.from_flat(data, [rows, columns]);
+}
+
+@noinline
+function packed_inner(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64], init: f64, mul: (f64, f64) => f64, add: (f64, f64) => f64): ndarray.NdArray[f64] {
+  let xs: f64[] = a.to_flat();
+  let ys: f64[] = b.to_flat();
+  let rows: i32 = a.shape()[0];
+  let extent: i32 = a.shape()[1];
+  let columns: i32 = b.shape()[1];
+  let out: f64[] = [];
+  let i: i32 = 0;
+  while (i < rows) {
+    let j: i32 = 0;
+    while (j < columns) {
+      let acc: f64 = init;
+      let k: i32 = 0;
+      while (k < extent) {
+        acc = add(acc, mul(xs[i * extent + k], ys[k * columns + j]));
+        k = k + 1;
+      }
+      out = out.append(acc);
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return ndarray.from_flat(out, [rows, columns]);
+}
+
+@noinline
+function ordinary_inner(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64], init: f64): ndarray.NdArray[f64] {
+  return a.inner(b, init, (x: f64, y: f64): f64 => x * y, (x: f64, y: f64): f64 => x + y);
+}
+
+@noinline
+function run_inner(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64], init: f64, mode: i32): ndarray.NdArray[f64] {
+  if (mode == 1) {
+    return packed_inner(a, b, init, (x: f64, y: f64): f64 => x * y, (x: f64, y: f64): f64 => x + y);
+  }
+  return ordinary_inner(a, b, init);
+}
+
+@noinline
+function multiply(x: f64, y: f64): f64 {
+  return x * y;
+}
+
+@noinline
+function plus(x: f64, y: f64): f64 {
+  return x + y;
+}
+
+function correct(out: ndarray.NdArray[f64], a: ndarray.NdArray[f64], b: ndarray.NdArray[f64], init: f64): boolean {
+  let rows: i32 = a.shape()[0];
+  let extent: i32 = a.shape()[1];
+  let columns: i32 = b.shape()[1];
+  if (out.shape().len() != 2 || out.shape()[0] != rows || out.shape()[1] != columns || !out.is_packed()) {
+    return false;
+  }
+  let values: f64[] = out.to_flat();
+  let xs: f64[] = a.to_flat();
+  let ys: f64[] = b.to_flat();
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    if (xs[i] != (i % 127 + 1) as f64 * 0.125) {
+      return false;
+    }
+    i = i + 1;
+  }
+  i = 0;
+  while (i < ys.len()) {
+    if (ys[i] != (i % 127 + 3) as f64 * 0.125) {
+      return false;
+    }
+    i = i + 1;
+  }
+  i = 0;
+  while (i < rows) {
+    let j: i32 = 0;
+    while (j < columns) {
+      let acc: f64 = init;
+      let k: i32 = 0;
+      while (k < extent) {
+        acc = plus(acc, multiply(xs[i * extent + k], ys[k * columns + j]));
+        k = k + 1;
+      }
+      if (f64_bits(values[i * columns + j]) != f64_bits(acc)) {
+        return false;
+      }
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  let rows: i32 = 32;
+  let extent: i32 = 32;
+  let columns: i32 = 32;
+  let rounds: i32 = 2;
+  let mode: i32 = 0;
+  if (argv.len() > 1) {
+    rows = argv[1].parse_int_or(rows);
+  }
+  if (argv.len() > 2) {
+    extent = argv[2].parse_int_or(extent);
+  }
+  if (argv.len() > 3) {
+    columns = argv[3].parse_int_or(columns);
+  }
+  if (argv.len() > 4) {
+    rounds = argv[4].parse_int_or(rounds);
+  }
+  if (argv.len() > 5) {
+    mode = argv[5].parse_int_or(mode);
+  }
+  if (rows < 1 || extent < 1 || columns < 1 || rounds < 1 || mode < 0 || mode > 1) {
+    return 1;
+  }
+  if (rows > 2147483647 / extent || extent > 2147483647 / columns || rows > 2147483647 / columns) {
+    return 1;
+  }
+  let a: ndarray.NdArray[f64] = input(rows, extent, 1);
+  let b: ndarray.NdArray[f64] = input(extent, columns, 3);
+  let init: f64 = 0.25;
+  let mark_calls: i64 = __heap_alloc_count();
+  let mark_bytes: i64 = __heap_bump_bytes();
+  let elapsed: i64 = 0i64;
+  let r: i32 = 0;
+  while (r < rounds) {
+    let start: i64 = monotonic_ns();
+    let out: ndarray.NdArray[f64] = run_inner(a, b, init, mode);
+    elapsed = elapsed + monotonic_ns() - start;
+    if (!correct(out, a, b, init)) {
+      return 2;
+    }
+    r = r + 1;
+  }
+  let calls: i64 = __heap_alloc_count() - mark_calls;
+  let bytes: i64 = __heap_bump_bytes() - mark_bytes;
+  print("{\"rows\":" + rows.to_string() + ",\"extent\":" + extent.to_string() + ",\"columns\":" + columns.to_string() + ",\"rounds\":" + rounds.to_string() + ",\"mode\":" + mode.to_string() + ",\"alloc_calls\":" + calls.to_string() + ",\"fresh_bytes\":" + bytes.to_string() + ",\"ns_per_inner\":" + (elapsed / (rounds as i64)).to_string() + "}");
+  return 0;
+}

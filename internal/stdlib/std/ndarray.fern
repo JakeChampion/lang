@@ -603,6 +603,12 @@ pub function (a: NdArray[T]) inner[T, A](b: NdArray[T], init: A, mul: (T, T) => 
   let shape: i32[] = join(drop_axis(a.shape, ra - 1), drop_axis(b.shape, 0));
   let out: A[] = [];
   let total: i32 = count_of(shape);
+  if (total == 0) {
+    return from_flat(out, shape);
+  }
+  if (a.is_packed() && b.is_packed()) {
+    return from_flat(packed_inner(a.data, b.data, extent_before(a.shape, ra - 1), n, extent_after(b.shape, 0), init, mul, add), shape);
+  }
   let idx: i32[] = zeros(shape.len());
   let i: i32 = 0;
   while (i < total) {
@@ -619,6 +625,30 @@ pub function (a: NdArray[T]) inner[T, A](b: NdArray[T], init: A, mul: (T, T) => 
     i = i + 1;
   }
   return from_flat(out, shape);
+}
+
+// Packed operands give a row/K/column indexing scheme. Preserve output
+// reading order and the mul-then-add call sequence for every increasing K.
+// Geometry comes from shapes, not data lengths, so K=0 still emits init for
+// every output. The caller checks the output count before deriving geometry.
+function packed_inner[T, A](xs: T[], ys: T[], rows: i32, extent: i32, columns: i32, init: A, mul: (T, T) => A, add: (A, A) => A): A[] {
+  let out: A[] = [];
+  let i: i32 = 0;
+  while (i < rows) {
+    let j: i32 = 0;
+    while (j < columns) {
+      let acc: A = init;
+      let k: i32 = 0;
+      while (k < extent) {
+        acc = add(acc, mul(xs[i * extent + k], ys[k * columns + j]));
+        k = k + 1;
+      }
+      out = out.append(acc);
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 // `fold_all(init, f)` — every element folded in reading order.
