@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"math"
 	"strconv"
-	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
 )
@@ -111,23 +110,4 @@ func fnReachesRawFloor(fn *ast.FuncDecl) bool {
 // key can share one static array.
 func ConstArrayKey(op Op) string {
 	return strconv.Itoa(int(op.I32)) + ":" + op.Str
-}
-
-// ConstArrayByteRows is an OpConstArray's element bytes as the operand lists
-// of assembler `.byte` lines. An empty array still gets one byte, so its
-// label addresses storage of its own, as .LArr_Empty's does.
-func ConstArrayByteRows(op Op) []string {
-	if op.Str == "" {
-		return []string{"0"}
-	}
-	var rows []string
-	for at := 0; at < len(op.Str); at += 16 {
-		end := min(at+16, len(op.Str))
-		row := make([]string, 0, end-at)
-		for i := at; i < end; i++ {
-			row = append(row, strconv.Itoa(int(op.Str[i])))
-		}
-		rows = append(rows, strings.Join(row, ", "))
-	}
-	return rows
 }

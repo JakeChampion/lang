@@ -1,16 +1,12 @@
 package wasmbin
 
-// Thin, hermetic property tests for the wasm backend — the third
-// sibling alongside internal/codegen/arm64/emit_property_test.go and
-// internal/codegen/x86_64/emit_property_test.go.
+// Thin, hermetic property tests for the wasm backend.
 //
-// wasmbin is the largest of the three backends (the active wasm
-// emitter, ~6k lines of runtime + ~3k lines of section assembly).
-// build_test.go exercises end-to-end compile + wasmtime runs;
-// determinism_test.go pins reproducibility on a small map-indexed
-// matrix. This file adds the missing third axis: a feature spread
-// matching the native backends' featureMatrix so a "this construct
-// doesn't lower" regression surfaces here as a single named subtest
+// wasmbin is the native wasm emitter (~6k lines of runtime + ~3k lines of
+// section assembly). build_test.go exercises end-to-end compile + wasmtime
+// runs; determinism_test.go pins reproducibility on a small map-indexed
+// matrix. This file adds the third axis: a feature spread, so a "this
+// construct doesn't lower" regression surfaces here as a single named subtest
 // failure instead of falling through to an opaque e2e break.
 //
 // As with the native suites the assertions are spelling-independent:

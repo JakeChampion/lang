@@ -104,7 +104,7 @@ jobs:
 
       - name: go vet
         if: matrix.shard == 1
-        run: go vet ./internal/codegen/arm64/... ./internal/e2e/... ./internal/interp/...
+        run: go vet ./internal/e2e/... ./internal/interp/...
 
       - name: go test (Darwin interpreter timestamps, renames and xattrs)
         if: matrix.shard == 1 && steps.gate.outputs.signed != 'true'

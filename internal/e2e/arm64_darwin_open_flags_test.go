@@ -18,9 +18,6 @@ import (
 // Both are invisible to a test that only writes to a fresh path, which is why
 // this checks the semantics against a PRE-EXISTING file. The macos-15 lane
 // executes these; everywhere else they still prove the target builds.
-//
-// The textual sibling is TestArm64DarwinOpenFlagsAreXNUs in
-// internal/codegen/arm64, which runs on every host.
 
 // buildAndRunDarwin compiles `prog` for arm64-darwin and, on Apple Silicon,
 // runs it in `dir`. Returns false when the run was skipped.
