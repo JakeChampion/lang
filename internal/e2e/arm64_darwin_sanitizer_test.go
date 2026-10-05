@@ -11,13 +11,12 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// TestArm64DarwinSanitize runs the sanitizer probes from sanitizer_test.go
-// through the CLI (`-target arm64-darwin -sanitize`) and the in-process
-// Mach-O writer. The Linux legs prove the arm64 generator carries the whole
-// mode; this one proves the Darwin image does too, on the one host that can
-// launch it, with the same message text and exit status as x86-64. It is
-// also the only sanitizer gate that runs natively on an Apple Silicon dev
-// machine. Builds everywhere; executes only on Apple Silicon.
+// TestArm64DarwinSanitize runs the self-host's sanitizer probes from
+// sanitizer_test.go through the CLI (`-target arm64-darwin -sanitize`). The
+// Linux legs prove the arm64 generator carries the whole mode; this one proves
+// the Darwin image does too, on the one host that can launch it. It is also
+// the only sanitizer gate that runs natively on an Apple Silicon dev machine.
+// Builds everywhere; executes only on Apple Silicon.
 func TestArm64DarwinSanitize(t *testing.T) {
 	bin := buildFernCLI(t)
 	cases := []struct {
@@ -33,19 +32,23 @@ func TestArm64DarwinSanitize(t *testing.T) {
 	}{
 		{name: "clean_run_is_silent", src: sanCleanSrc, sanitize: true, wantExit: 0, census: true},
 		{
-			name: "use_after_free_reported", src: sanUseAfterFreeSrc, sanitize: true,
+			name: "use_after_free_reported", src: sanStaleTouchSrc, sanitize: true,
 			wantExit:   e2eharness.ExitSanitizer,
 			wantStderr: []string{"fern-sanitizer: use-after-free (touched a quarantined block)", "backtrace:"},
 			noStderr:   []string{"rc over-release"},
 		},
+		// The second release lands on the quarantine's poison before the
+		// underflow test can see a zero, so a double free is reported as the
+		// touch it is (TestSelfHostOverReleaseReportArm64 pins the
+		// over-release report itself).
 		{
 			name: "double_free_reported", src: sanDoubleFreeSrc, sanitize: true,
 			wantExit:   e2eharness.ExitSanitizer,
-			wantStderr: []string{"fern-sanitizer: rc over-release (double free)", "backtrace:"},
+			wantStderr: []string{"fern-sanitizer: use-after-free (touched a quarantined block)", "backtrace:"},
 		},
 		// Flag off, the same stale touch recycles the block and bumps a
 		// recycled rc word: exit 0 and nothing on stderr.
-		{name: "use_after_free_silent_without_sanitize", src: sanUseAfterFreeSrc, sanitize: false, wantExit: 0},
+		{name: "use_after_free_silent_without_sanitize", src: sanStaleTouchSrc, sanitize: false, wantExit: 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
