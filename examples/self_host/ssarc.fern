@@ -856,6 +856,9 @@ function scratch_base(f: ssasem.Func): i32 {
 // A parent owns one unit per reference field. Shared parents release only
 // their own unit; the final parent release walks children before its box.
 // Array/tuple/struct opcodes preserve the production native/Wasm layouts.
+// The answer for a type must not depend on which body of a module asks:
+// with_drop_helpers settles each record and enum type at the first body
+// whose table holds it (Helpers.seen).
 function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
   // A handle has no box, so there is nothing under it to walk — and
   // no schema either, which is what the record arm below would go looking
@@ -2781,33 +2784,43 @@ function optimized_helper(h: irtables.LowerResult): irtables.LowerResult {
 // iterating it also reaches the types the bodies themselves call.
 pub function drop_helpers(f: ssasem.Func): irtables.LowerResult[] {
   let none: string[] = [];
-  return helpers_not_in(f, util.name_index(none));
+  return helpers_not_in(f, util.name_index(none), util.name_index(none)).rows;
 }
 
 // Helpers is the drop helpers collected over a module's bodies, with an index
 // over their symbols: a helper is generated once per module, by the first
 // function whose schema names its type. Every function's table is built from
 // the module's one declaration set, so a later function's body would be the
-// same one.
-pub struct Helpers { rows: irtables.LowerResult[], done: util.NameIndex }
+// same one. `seen` holds the record and enum types (ssasem.type_key) an
+// earlier function's schema held: their helpers are in `rows`, or they have
+// none.
+pub struct Helpers { rows: irtables.LowerResult[], done: util.NameIndex, seen: util.NameIndex }
 
 pub function no_helpers(): Helpers {
-  let none: irtables.LowerResult[] = [];
-  return Helpers { rows: none, done: util.name_index(row_names(none)) };
+  let none: string[] = [];
+  return Helpers { rows: [], done: util.name_index(none), seen: util.name_index(none) };
 }
 
-// with_drop_helpers adds the helpers of f whose symbols h does not carry yet.
+// with_drop_helpers adds the helpers of f whose symbols h does not carry yet,
+// skipping the record and enum types h has seen.
 pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
-  let out: Helpers = h;
-  for fresh in helpers_not_in(f, h.done) {
-    out = Helpers { rows: out.rows.append(fresh), done: out.done.added(fresh.name) };
+  let fresh: Fresh = helpers_not_in(f, h.done, h.seen);
+  let out: Helpers = Helpers { ...h, seen: fresh.seen };
+  for row in fresh.rows {
+    out = Helpers { ...out, rows: out.rows.append(row), done: out.done.added(row.name) };
   }
   return out;
 }
 
-// helpers_not_in is drop_helpers less the symbols `done` carries.
-function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irtables.LowerResult[] {
+// Fresh is helpers_not_in's answer: the helpers, and `seen` with the record
+// and enum types of the schema added.
+struct Fresh { rows: irtables.LowerResult[], seen: util.NameIndex }
+
+// helpers_not_in is drop_helpers less the symbols `done` carries, and less the
+// record and enum types `seen` holds.
+function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameIndex): Fresh {
   let out: irtables.LowerResult[] = [];
+  let grown: util.NameIndex = seen;
   let sc: SchemaScan = schema_scan(f);
   if (sc.bytes) {
     for h in ssabytes.helpers() {
@@ -2817,10 +2830,18 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irtables.LowerRes
     }
   }
   for rec in f.records.list {
-    out = append_helpers(out, rec.ty, f, done);
+    let k: string = ssasem.type_key(rec.ty);
+    if (!seen.has(k)) {
+      out = append_helpers(out, rec.ty, f, done);
+      grown = grown.added(k);
+    }
   }
   for e in f.enums {
-    out = append_helpers(out, e.ty, f, done);
+    let k: string = ssasem.type_key(e.ty);
+    if (!seen.has(k)) {
+      out = append_helpers(out, e.ty, f, done);
+      grown = grown.added(k);
+    }
   }
   for v in boxed_columns(sc.maps) {
     if (!outlined_release(v, f) && !done.has(release_helper_name(v))) {
@@ -2838,7 +2859,7 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irtables.LowerRes
   for t in routed_keyed_maps(sc.maps, f) {
     out = append_keyed_closures(out, t, done);
   }
-  return out;
+  return Fresh { rows: out, seen: grown };
 }
 
 // append_helpers adds t's drop and release helpers when t has children, each
