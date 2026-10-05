@@ -49,13 +49,14 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
   // poll of the in-flight run reports.
   process.env.CI_CHANGES_POLL_MS = "1";
   process.env.CI_CHANGES_WAIT_MINUTES = String(waitMinutes);
-  const outputs = {}, warnings = [], failed = [], infos = [];
+  const outputs = {}, warnings = [], failed = [], infos = [], notices = [];
   let listings = 0;
   const core = {
     setOutput: (k, v) => (outputs[k] = v),
     setFailed: (m) => failed.push(m),
     warning: (m) => warnings.push(m),
     info: (m) => infos.push(m),
+    notice: (m, props) => notices.push({ message: m, ...props }),
     summary: { addHeading() { return this; }, addRaw() { return this; }, addTable() { return this; }, async write() {} },
   };
   const context = {
@@ -106,7 +107,7 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
     },
   };
   await run(github, context, core);
-  return { lanes: outputs.lanes ? JSON.parse(outputs.lanes) : null, warnings, failed, listings, infos };
+  return { lanes: outputs.lanes ? JSON.parse(outputs.lanes) : null, warnings, failed, listings, infos, notices };
 }
 
 let failures = 0;
@@ -175,6 +176,10 @@ const trimmedTo = (r) => Object.keys(r.lanes).filter((l) => r.lanes[l]);
 r = await decide({ event: "push", proof: proofOf() });
 check("identical tree: every passed lane skips, perf runs",
   Object.keys(r.lanes).filter((l) => r.lanes[l]), ["perf"]);
+// main-red.yml closes a red lane's issue off this annotation.
+check("identical tree: the proven lanes are annotated by display name for main-red.yml",
+  r.notices.filter((n) => n.title === "Lanes proven by the merged pull request").map((n) => JSON.parse(n.message)),
+  [{ pr: 7, run: 99, lanes: laneKeys.filter((l) => l !== "perf").map((l) => display[l]) }]);
 r = await decide({ event: "push", proof: proofOf({ headTree: "other" }) });
 check("different tree: every lane runs, and says why",
   [all(r), r.infos.some((m) => m.includes("the pushed tree differs from the head of #7"))], [true, true]);
