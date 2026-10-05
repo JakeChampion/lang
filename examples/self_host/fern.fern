@@ -3187,6 +3187,7 @@ function run(): i32 {
   // compiler's core module already has both (and exports `main`, #10768), so
   // the two forms are one artifact here and the spelling is accepted for the
   // one target native gives it (#11408).
+  let emit_spelled: string = emit;
   if (emit == "command-module") {
     if (target != "wasm32-wasi") {
       eprint("fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)");
@@ -3204,7 +3205,11 @@ function run(): i32 {
   }
   // A wasm component or core module is binary; stdout takes only its text.
   if (out_path.len() == 0 && emit != "asm" && platforms.for_target(target).isa == "wasm32") {
-    eprint("fern: -target " + target + " writes a binary; pass -o OUTPUT, or -emit asm for its text");
+    if (emit_spelled.len() > 0) {
+      eprint("fern: -emit " + emit_spelled + " for -target " + target + " writes a binary; pass -o OUTPUT");
+    } else {
+      eprint("fern: -target " + target + " writes a binary component; pass -o OUTPUT, or -emit asm for its text");
+    }
     return 2;
   }
   if (shared) {
