@@ -220,8 +220,7 @@ on #4451, as slice 2 was.
    line hands `__target_path` its range of the buffer, and a path that needs
    work is decoded and has its dot segments removed in one byte array, with
    UTF-8 checked only when an escape decoded past ASCII. Parse 35 to 28 on
-   the self-host; the Go compiler goes 43 to 38 on x86-64, 53 to 46 on arm64
-   and 49 to 42 on wasm.
+   the self-host.
 5. **The head parse returns by writing, not by boxing.** The helpers that
    return a tuple, `Option` or `Result` once per request are the 14 rows
    above. Which fix applies is decided by the first measurement of this
