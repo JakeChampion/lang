@@ -9269,6 +9269,14 @@ function mc_is_binding(e: ast.Expr, name: string): boolean {
   return false;
 }
 
+// mc_mentions_stmts reports whether `name` appears anywhere in a statement
+// list — as an identifier, or as an assignment's target, which is a bare
+// string on the statement rather than an expression and so needs the
+// statement visitor rather than the expression one.
+//
+// It folds through astwalk, so a new parser node is covered here the moment
+// astwalk covers it. The hand-written walk it replaced ended in a
+// `_ => false` arm, which silently did not search whatever it did not name.
 function mc_mentions_stmts(stmts: ast.Stmt[], name: string): boolean {
   function see_expr(n: ast.Expr, own acc: boolean): boolean {
     match (n) {

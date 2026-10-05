@@ -17658,8 +17658,8 @@ pub function extern_wrappers(mod: parser.Module): string {
       parts = parts.append(" (local.get $rb))\n");
       parts = parts.append("    (local.set $d (i32.load8_u (local.get $rb)))\n");
       // Materialize [struct_id@0][payload in slot 1] (struct_id mapped from
-      // disc); box sized for the join by xbox_bytes — `wide` for an 8-byte
-      // payload, SlotCount slots for a multi-field one.
+      // disc); box sized for the join by xbox_bytes — SlotCount fields for a
+      // multi-field one.
       let poff: string = util.i32_to_string(xbox_field_off(0));
       if (vmf) {
         // Multi-field: the matched arm's fields, each at its natural offset

@@ -3909,6 +3909,10 @@ pub function rt_src_create_dir_all(t: string): string {
   return "function __fern_create_dir_all(path: string): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = 0; let j: i32 = 1; while (j < plen) { if (path[j] == 47) { if (path[j - 1] != 47) { __raw_store8(pathz, j, 0); rc = " + mk + "; __raw_store8(pathz, j, 47); } } j = j + 1; } rc = " + mk + "; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { if (rc != 0 - 17) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } } return Ok(()); }";
 }
 
+// rt_src_chdir backs `chdir(path)` (#9090, syscall-leaf) → Result[void,
+// IoError]. chdir(2) — the move `getcwd` only ever reported. ENOENT, ENOTDIR
+// and EACCES all reach the caller rather than being folded away; `env -C` has
+// to name which one it was.
 pub function rt_src_chdir(t: string): string {
   return "function __fern_chdir(path: string): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = __syscall3(" + sysno(t, "chdir") + ", pathz as i64, 0, 0) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
 }
@@ -3994,6 +3998,14 @@ pub function rt_src_signal_disposition_read(t: string): string {
   return "function __fern_signal_disposition(sig: i32): i32 { let act: usize = __raw_scratch(32); __store_i64(act, 0 as i64); __store_i64(__raw_addr(act, 8), 0 as i64); __store_i64(__raw_addr(act, 16), 0 as i64); __store_i64(__raw_addr(act, 24), 0 as i64); let rc: i32 = __syscall4(" + sysno(t, "sigaction") + ", sig as i64, 0, act as i64, 8) as i32; if (rc < 0) { return rc; } let h: i64 = __load_i64(act); if (h == (0 as i64)) { return 0; } if (h == (1 as i64)) { return 1; } return 2; }";
 }
 
+// rt_src_create_dir backs `create_dir(path, mode)` (#8883, syscall-leaf) →
+// Result[void, IoError]. NUL-terminate the path, mkdirat(AT_FDCWD, path, mode)
+// and report the errno as it came: EEXIST is an error here, not the silent
+// success create_dir_all folds it into, because `mkdir(1)` is entirely about
+// that distinction. The kernel masks `mode` with the process umask exactly as
+// POSIX says; a caller that wants the mode verbatim clears the umask around
+// the call. Same body on every native target; only the mkdirat number and
+// AT_FDCWD come from `t`.
 pub function rt_src_create_dir(t: string): string {
   return "function __fern_create_dir(path: string, mode: i32): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = __syscall3(" + sysno(t, "mkdirat") + ", " + at_fdcwd(t) + ", pathz as i64, mode as i64) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
 }
