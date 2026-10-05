@@ -2637,8 +2637,7 @@ pub function op_mapiter_advance(): Op {
 // `i32_imm`. Every backend lays the box out on 8-byte slots — x86/arm64
 // `[shape_ptr, f0, f1, …]` with field i at (i+1)*8, wasm `[type_id, f0, f1, …]`
 // with field i at 8 + i*8 — so a field's offset is its INDEX alone, and an f64
-// or i64 field shifts nothing after it. (The AST emitter's 4-byte
-// `struct_field_off` layout is a different one and retires with wasm.fern.)
+// or i64 field shifts nothing after it.
 // Reading a WIDE field still needs its width: on wasm the slot holds a pointer
 // in its low 4 bytes, so width 0 selects the i32 load that recovers one, and a
 // double read that way would be its low half.
@@ -2783,17 +2782,6 @@ pub function const_struct_ref(word: string): string {
 // (its funcref index on wasm) where the shape pointer would go.
 pub function op_const_closure(body: string): Op {
   return op_const_struct("&fn:" + body, 0, "");
-}
-
-// op_const_array is const_struct's array case: a literal of constant narrow
-// scalars as one static array box shared by every evaluation, `values` its
-// comma-separated elements. Its length and capacity are both the element count
-// under the immortal rc, so a push onto it finds no room and grows into a
-// fresh box, and `with` fails the uniqueness test and copies. The raw floor
-// tests nothing, so a literal whose storage it reaches is not placed
-// (ssaunits.raw_reached).
-pub function op_const_array(values: string): Op {
-  return op_const_struct("&arr", 0, values);
 }
 
 // A constant u8 literal the typed lowering packs (ir.packed): every backend
@@ -3026,10 +3014,6 @@ pub function op_call_indirect(argc: i32): Op {
 // its previous op, byte for byte.
 pub function op_call_indirect_sig(argc: i32, sig: string): Op {
   return Op { decl: 0 - 1, kind_tag: 150, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: sig };
-}
-
-pub function op_call_closure(argc: i32): Op {
-  return Op { decl: 0 - 1, kind_tag: 151, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 // structured control flow — i32_imm is the block-type (block/loop/if) or
@@ -8081,30 +8065,6 @@ pub function is_commutative_kind(id: i32): boolean {
   return id == kind_id("add") || id == kind_id("mul")
     || id == kind_id("and") || id == kind_id("or") || id == kind_id("xor")
     || id == kind_id("eq") || id == kind_id("ne");
-}
-
-// ---- identity ----------------------------------------------------------
-//
-// Field-by-field, not by rendering: render_op shows only the fields an opcode
-// uses, so two ops differing in an unrendered field would print alike.
-pub function op_equal(a: Op, b: Op): boolean {
-  return a.kind_tag == b.kind_tag && a.i32_imm == b.i32_imm && a.i64_imm == b.i64_imm
-    && a.f64_imm == b.f64_imm && a.width == b.width && a.unsigned == b.unsigned
-    && a.str == b.str && a.decl == b.decl;
-}
-
-pub function ops_equal(a: Op[], b: Op[]): boolean {
-  if (a.len() != b.len()) {
-    return false;
-  }
-  let i: i32 = 0;
-  while (i < a.len()) {
-    if (!op_equal(a[i], b[i])) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
 }
 
 // ---- printing ----------------------------------------------------------

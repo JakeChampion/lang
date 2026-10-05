@@ -4716,10 +4716,6 @@ function current_loop(s: State): Loop {
   return s.loops[s.loops.len() - 1];
 }
 
-function with_loop(s: State, l: Loop): State {
-  return State { ...s, loops: s.loops.with(s.loops.len() - 1, l) };
-}
-
 // A labelled exit leaves the loop the label names and every loop inside it:
 // the edge records the environment at that loop's entry, so the bindings the
 // inner loops made die on it.
