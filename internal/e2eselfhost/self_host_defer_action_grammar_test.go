@@ -10,8 +10,9 @@ import (
 )
 
 // The action after `defer` or `errdefer` is a block, an expression or an
-// assignment, as the native parser has it (#11602). Any other statement is a
-// P001 at its first token, from both front ends.
+// assignment, as the native parser has it (#11602); `assert(...)` is an
+// expression there, which the self-host parses to its desugared `if`. Any
+// other statement is a P001 at its first token, from both front ends.
 func TestSelfHostDeferActionGrammar(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	const prog = "struct P { x: i32 }\nfunction f(): i32 { return 1; }\nfunction main(): i32 {\n  let s: i32 = 0;\n  loop {\n    %s %s\n    break;\n  }\n  return s;\n}\n"
@@ -21,6 +22,7 @@ func TestSelfHostDeferActionGrammar(t *testing.T) {
 		"s += 1;",
 		"{ s = s + 1; }",
 		"{ for i in 0..2 { s = s + i; } }",
+		"assert(s >= 0);",
 	}
 	rejected := []struct{ action, token string }{
 		{"for i in 0..2 { s = s + i; }", "for"},
@@ -46,6 +48,9 @@ func TestSelfHostDeferActionGrammar(t *testing.T) {
 			}
 			if out, err := check(h.cli, src, h.stdlib); err != nil {
 				t.Errorf("self-host rejects `%s %s`: %v\n%s", kw, action, err, out)
+			}
+			if out, _ := check(h.native, src); strings.Contains(out, "error[P001]") {
+				t.Errorf("native does not parse `%s %s`:\n%s", kw, action, out)
 			}
 		}
 		for i, r := range rejected {
