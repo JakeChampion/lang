@@ -592,11 +592,14 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 	t.Run("emits-struct-array-field-drop", func(t *testing.T) {
 		asm := cli.emit(t, "x86-64-linux",
 			"struct E { v: i32 } struct H { es: E[] } function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let h = H { es: [E { v: id([1])[0] }] }; h = H { es: [E { v: id([2])[0] }] }; return h.es[0].v; }")
-		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
-			t.Errorf("expected a struct-array field buffer drop (__fern_arr_dec) at struct reclamation; not found")
+		// Read off H's drop helper alone: the program's own temporaries release
+		// through the same helper calls.
+		body := asmFuncBody(t, asm, "__fn___sem_drop_H")
+		if n := strings.Count(body, "call __fn___fern_arr_dec"); n < 2 {
+			t.Errorf("expected H's drop to release each element and then the buffer (__fern_arr_dec at least twice), got %d:\n%s", n, body)
 		}
-		if rcIsUniqueSites(asm) == 0 {
-			t.Errorf("expected the element-walk sole-owner gate (__fern_rc_is_unique) at the struct-array field drop; not found")
+		if rcIsUniqueSites(body) == 0 {
+			t.Errorf("expected the element-walk sole-owner gate in H's drop; not found:\n%s", body)
 		}
 	})
 }
