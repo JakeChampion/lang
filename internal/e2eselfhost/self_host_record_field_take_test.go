@@ -134,6 +134,115 @@ func TestSelfHostRecordFieldTakeAcrossBlocks(t *testing.T) {
 	}
 }
 
+// A projection a call or instruction takes may leave a record that later
+// blocks read only through its other fields (ssaunits.projection_root). In
+// `step` the spliced `kept` branches inside the update, so `c` is read after
+// the branch, through its other fields alone: `a` and `b` are taken and
+// updated in place, where they were copied every call. `reread` reads the
+// taken field again in a later block and `again` reaches the take again round
+// a loop, so both keep the field the record's.
+//
+// The exit code: 1 for a wrong value, 2 for an allocation in the update loop,
+// 99 for a count that went under.
+const withTakeAcrossBlocksProg = `import "std/bench";
+
+struct F { n: i32, s: string }
+struct C { a: i32[], b: i32[], n: i32, last: F }
+
+function kept(f: F): F {
+  if (f.s.len() == 0) {
+    return f;
+  }
+  return F { ...f, s: "" };
+}
+
+@noinline function step(c: C, at: i32, f: F): C {
+  return C { ...c, a: c.a.with(at, c.a[at] + f.n), b: c.b.with(at, 1), last: kept(f) };
+}
+
+@noinline function reread(c: C, at: i32, flag: boolean): i32 {
+  let w: i32[] = c.a.with(at, 100);
+  let s: i32 = 0;
+  if (flag) {
+    s = c.a[at];
+  }
+  return w[at] + s + c.n;
+}
+
+@noinline function again(c: C): i32 {
+  let t: i32 = 0;
+  let i: i32 = 0;
+  while (i < 3) {
+    let w: i32[] = c.a.with(0, i);
+    t = t + w[0] + c.a[0];
+    i = i + 1;
+  }
+  return t;
+}
+
+function eight(): i32[] {
+  let xs: i32[] = [];
+  let i: i32 = 0;
+  while (i < 8) {
+    xs = xs.append(i);
+    i = i + 1;
+  }
+  return xs;
+}
+
+function main(): i32 {
+  let f: F = F { n: 2, s: "" };
+  let c: C = C { a: eight(), b: eight(), n: 3, last: f };
+  let a0: i64 = bench.alloc_count();
+  let i: i32 = 0;
+  while (i < 100) {
+    c = step(c, i % 8, f);
+    i = i + 1;
+  }
+  let a1: i64 = bench.alloc_count();
+  if (c.a[5] != 29 || c.b[5] != 1 || reread(c, 3, true) != 132 || again(c) != 81) {
+    return 1;
+  }
+  if (a1 != a0) {
+    return 2;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return 0;
+}
+`
+
+func TestSelfHostWithTakeAcrossBlocks(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "with_take.fern")
+	if err := os.WriteFile(src, []byte(withTakeAcrossBlocksProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tg := range h.targets {
+		bin := filepath.Join(dir, tg.target+".bin")
+		build := exec.Command(h.cli, "-O", "-target", tg.target, "-o", bin, src, h.stdlib)
+		build.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
+		if combined, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("%s: building: %v\n%s", tg.target, err, combined)
+		}
+		run := exec.Command(bin)
+		if len(tg.runner) > 0 {
+			run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
+		}
+		var stderr strings.Builder
+		run.Stderr = &stderr
+		_ = run.Run()
+		if got := run.ProcessState.ExitCode(); got != 0 {
+			t.Errorf("%s: exit %d, want 0 (1: a value came back wrong, 2: the update copied, 99: a count went under)", tg.target, got)
+		}
+		if !strings.Contains(stderr.String(), "live_bytes=0") {
+			t.Errorf("%s: %q, want every block freed", tg.target, stderr.String())
+		}
+	}
+}
+
 func TestSelfHostRecordFieldTake(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
