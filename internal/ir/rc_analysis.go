@@ -1508,8 +1508,9 @@ var copyingBuiltinArgs = map[string][]int{
 	"__sum_bytes":                      {0},
 	// __scale_f64 reads its array and writes a fresh one; nothing of the
 	// input is retained.
-	"__scale_f64":     {0},
-	"__outer_mul_f64": {0, 1},
+	"__scale_f64":         {0},
+	"__outer_mul_f64":     {0, 1},
+	"__inner_mul_add_f64": {0, 1},
 	// The string is the SECOND operand of __crc32_cksum; the first is the
 	// carried CRC word, which owns nothing.
 	"__crc32_cksum":       {1},

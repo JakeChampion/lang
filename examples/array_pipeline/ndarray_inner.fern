@@ -1,6 +1,7 @@
 // Native probe: rows, contracted extent, columns, rounds, mode (0 stdlib,
-// 1 packed scalar probe). Verify every output and both inputs outside timing.
+// 1 packed scalar probe, 2 SIMD kernel). Check outputs and inputs outside timing.
 import "std/ndarray";
+import "std/array";
 import "std/string";
 
 function input(rows: i32, columns: i32, bias: i32): ndarray.NdArray[f64] {
@@ -46,6 +47,9 @@ function ordinary_inner(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64], init: 
 
 @noinline
 function run_inner(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64], init: f64, mode: i32): ndarray.NdArray[f64] {
+  if (mode == 2) {
+    return ndarray.from_flat(array.inner_mul_add_f64(a.to_flat(), b.to_flat(), a.shape()[0], a.shape()[1], b.shape()[1], init), [a.shape()[0], b.shape()[1]]);
+  }
   if (mode == 1) {
     return packed_inner(a, b, init, (x: f64, y: f64): f64 => x * y, (x: f64, y: f64): f64 => x + y);
   }
@@ -128,7 +132,7 @@ function main(): i32 {
   if (argv.len() > 5) {
     mode = argv[5].parse_int_or(mode);
   }
-  if (rows < 1 || extent < 1 || columns < 1 || rounds < 1 || mode < 0 || mode > 1) {
+  if (rows < 1 || extent < 1 || columns < 1 || rounds < 1 || mode < 0 || mode > 2) {
     return 1;
   }
   if (rows > 2147483647 / extent || extent > 2147483647 / columns || rows > 2147483647 / columns) {

@@ -7606,6 +7606,7 @@ function byte_scan_contracts(): ssasem.Contract[] {
     // The one over an ARRAY: the f64[] is lent and a fresh f64[] comes back.
     ssasem.Contract { name: "__scale_f64", params: [typeinfo.TypeArray { elem: t_f64(), view: false }, t_f64()], modes: [lent, value], result: typeinfo.TypeArray { elem: t_f64(), view: false } },
     ssasem.Contract { name: "__outer_mul_f64", params: [typeinfo.TypeArray { elem: t_f64(), view: false }, typeinfo.TypeArray { elem: t_f64(), view: false }], modes: [lent, lent], result: typeinfo.TypeArray { elem: t_f64(), view: false } },
+    ssasem.Contract { name: "__inner_mul_add_f64", params: [typeinfo.TypeArray { elem: t_f64(), view: false }, typeinfo.TypeArray { elem: t_f64(), view: false }, t_i32(), t_i32(), t_i32(), t_f64()], modes: [lent, lent, value, value, value, value], result: typeinfo.TypeArray { elem: t_f64(), view: false } },
     ssasem.Contract { name: "__crc32_cksum", params: [t_i32(), t_string()], modes: [value, lent], result: t_i32() },
     ssasem.Contract { name: "__crc32_cksum_array", params: [t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [value, lent], result: t_i32() },
     ssasem.Contract { name: "__ascii_run", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },

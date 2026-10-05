@@ -414,7 +414,28 @@ function emit_outer_mul_f64(s: asmcore.EmitState): asmcore.EmitState {
   return s.mark_heap();
 }
 
+function emit_inner_mul_add_f64(s: asmcore.EmitState): asmcore.EmitState {
+  let label: asmcore.LabelOut = asmcore.fresh_label(s);
+  s = label.state;
+  let lb: string = label.name;
+  s = s.write("    ldr x6, [sp], #16\n    ldr x5, [sp], #16\n    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n");
+  s = s.write("    cmp w3, #0\n    b.lt __fern_oob_abort\n    cmp w4, #0\n    b.lt __fern_oob_abort\n    cmp w5, #0\n    b.lt __fern_oob_abort\n    mov w3, w3\n    mov w4, w4\n    mov w5, w5\n");
+  s = s.write("    mul x7, x3, x4\n    ldr x8, [x1]\n    cmp x7, x8\n    b.ne __fern_oob_abort\n    mul x7, x4, x5\n    ldr x8, [x2]\n    cmp x7, x8\n    b.ne __fern_oob_abort\n    mul x0, x3, x5\n    mov x8, #1\n    lsl x8, x8, #31\n    sub x8, x8, #1\n    cmp x0, x8\n    b.hi __fern_oob_abort\n");
+  s = s.write("    stp x1, x2, [sp, #-16]!\n    stp x3, x4, [sp, #-16]!\n    stp x5, x6, [sp, #-16]!\n    bl __fern_arr_box\n    ldp x5, x6, [sp], #16\n    ldp x3, x4, [sp], #16\n    ldp x1, x2, [sp], #16\n");
+  s = s.write("    cmp x3, #0\n    b.eq " + lb + "_done\n    cmp x5, #0\n    b.eq " + lb + "_done\n    add x7, x1, #8\n    add x8, x0, #8\n    add x2, x2, #8\n    dup v3.2d, x6\n");
+  s = s.write(lb + "_row:\n    mov x9, #0\n" + lb + "_pair:\n    add x10, x9, #1\n    cmp x10, x5\n    b.ge " + lb + "_tail\n    add x11, x2, x9, lsl #3\n    dup v2.2d, x6\n    mov x10, #0\n");
+  s = s.write(lb + "_k:\n    cmp x10, x4\n    b.ge " + lb + "_store\n    ldr x12, [x7, x10, lsl #3]\n    dup v1.2d, x12\n    ld1 {v0.2d}, [x11]\n    fmul v1.2d, v1.2d, v0.2d\n    fadd v2.2d, v2.2d, v1.2d\n    add x11, x11, x5, lsl #3\n    add x10, x10, #1\n    b " + lb + "_k\n");
+  s = s.write(lb + "_store:\n    st1 {v2.2d}, [x8]\n    add x8, x8, #16\n    add x9, x9, #2\n    b " + lb + "_pair\n");
+  s = s.write(lb + "_tail:\n    cmp x9, x5\n    b.ge " + lb + "_next\n    add x11, x2, x9, lsl #3\n    fmov d2, d3\n    mov x10, #0\n");
+  s = s.write(lb + "_scalar:\n    cmp x10, x4\n    b.ge " + lb + "_scalar_store\n    add x12, x7, x10, lsl #3\n    ldr d1, [x12]\n    ldr d0, [x11]\n    fmul d1, d1, d0\n    fadd d2, d2, d1\n    add x11, x11, x5, lsl #3\n    add x10, x10, #1\n    b " + lb + "_scalar\n");
+  s = s.write(lb + "_scalar_store:\n    str d2, [x8]\n    add x8, x8, #8\n" + lb + "_next:\n    add x7, x7, x4, lsl #3\n    sub x3, x3, #1\n    cmp x3, #0\n    b.ne " + lb + "_row\n" + lb + "_done:\n    str x0, [sp, #-16]!\n");
+  return s.mark_heap();
+}
+
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  if (o.kind_tag == 382) {
+    return emit_inner_mul_add_f64(s);
+  }
   if (o.kind_tag == 381) {
     return emit_outer_mul_f64(s);
   }

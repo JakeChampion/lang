@@ -628,8 +628,30 @@ The original median was 153,062 ns (151,526-161,258), and the packed median
 outside timing, with an initial accumulator of 0.25. Only rounds changed
 from the two-round pilot. Allocator calls rose from 3,800 to 4,000 because
 the two packed predicates build stride arrays while the packed path removes
-one index array; fresh bytes stayed at 10,472. This is a scalar improvement,
-not evidence for an inner SIMD kernel.
+one index array; fresh bytes stayed at 10,472.
+
+`std/array.inner_mul_add_f64(a, b, rows, extent, columns, init)` provides an
+explicit packed contraction kernel. It validates dimensions, input lengths
+and the signed-i32 output limit before allocating a fresh result. Each output
+starts at `init` and performs a separate multiply then add for every increasing
+contracted index. A zero extent copies `init` exactly, including signed zero
+and NaN bits. Inputs remain unchanged. SSE2, NEON and WASM SIMD process two
+independent output columns together, with a scalar odd-column tail. There is
+no horizontal reduction, reassociation or fused multiply-add.
+
+On the same machine and date, the benchmark's ordinary packed scalar mode
+and explicit kernel mode measured medians of 141,920 ns (140,200-152,193) and
+10,748 ns (10,468-10,897), respectively. Inputs were 32-by-32-by-32 with an
+initial accumulator of 0.25; nine alternating processes ran 200 rounds after
+a two-round pilot. Every output bit and source element was checked outside
+timing. Allocator calls were 4,000 versus 2,000 and fresh bytes 10,472 versus
+10,456. These measurements compare explicit kernel use with the stdlib call;
+automatic inner-kernel selection is not yet implemented.
+
+Adding the explicit mode increased this benchmark's native text by 1,064
+bytes, with unchanged data size. Compiling the previous benchmark source
+with the new compiler produced an identical executable: unused kernel support
+adds no code to that program.
 
 ## 8. Broadcasting
 
@@ -684,8 +706,9 @@ Four consequences:
   multiply has nothing to reassociate. The same kernel now reaches the
   ndarray `map` of that shape over a packed receiver (§6). The primary
   compiler also selects binary-multiply `outer` sites with two packed
-  operands, using the exact body proof above. `inner` retains its scalar
-  reduction order; a kernel for it remains separate work.
+  operands, using the exact body proof above. The explicit inner kernel in
+  §7 preserves scalar reduction order; automatic selection remains separate
+  work.
   The primary compiler's literal-scale kernel can donate its buffer through
   the ownership plan and runtime guard described in §6.
 - **Other in-place operations through a handle.** Donation currently covers

@@ -512,6 +512,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_emits_op_cached(cache, "outer_mul_f64")) {
     out = out.append("@uses_outer_mul_f64");
   }
+  if (module_emits_op_cached(cache, "inner_mul_add_f64")) {
+    out = out.append("@uses_inner_mul_add_f64");
+  }
   if (module_uses_crc32_cksum(cache)) {
     out = out.append("@uses_crc32_cksum");
   }
@@ -7139,6 +7142,9 @@ function emit_str_op_wat(o: ir.Op): string {
   if (o.kind_tag == 381) {
     return "    call $__fern_outer_mul_f64\n";
   }
+  if (o.kind_tag == 382) {
+    return "    call $__fern_inner_mul_add_f64\n";
+  }
   if (o.kind_tag == 359) {
     return "    call $__fern_count_byte_bytes\n";
   }
@@ -9885,6 +9891,28 @@ pub function scale_f64_helper(): string {
 
 // Each row splats its left operand and visits the right input in order.
 // No reduction or operand exchange is permitted, including in the odd tail.
+pub function inner_mul_add_f64_helper(): string {
+  let o: string = "  (func $__fern_inner_mul_add_f64 (param $a i32) (param $b i32) (param $rows i32) (param $extent i32) (param $columns i32) (param $init f64) (result i32)\n";
+  o = o + "    (local $size i64) (local $out i32) (local $p i32) (local $left i32) (local $right i32) (local $row i32) (local $col i32) (local $k i32) (local $acc v128) (local $sacc f64)\n";
+  for dim in ["rows", "extent", "columns"] {
+    o = o + "    (if (i32.lt_s (local.get $" + dim + ") (i32.const 0)) (then (unreachable)))\n";
+  }
+  o = o + "    (if (i64.ne (i64.mul (i64.extend_i32_u (local.get $rows)) (i64.extend_i32_u (local.get $extent))) (i64.extend_i32_u (i32.load (local.get $a)))) (then (unreachable)))\n";
+  o = o + "    (if (i64.ne (i64.mul (i64.extend_i32_u (local.get $extent)) (i64.extend_i32_u (local.get $columns))) (i64.extend_i32_u (i32.load (local.get $b)))) (then (unreachable)))\n";
+  o = o + "    (local.set $size (i64.mul (i64.extend_i32_u (local.get $rows)) (i64.extend_i32_u (local.get $columns))))\n";
+  o = o + "    (if (i64.gt_u (local.get $size) (i64.const 2147483647)) (then (unreachable)))\n";
+  o = o + "    (local.set $out (call $__fern_arr_elems (i32.wrap_i64 (local.get $size)) (i32.const 8)))\n    (i32.store (local.get $out) (i32.wrap_i64 (local.get $size)))\n    (i32.store offset=4 (local.get $out) (i32.wrap_i64 (local.get $size)))\n";
+  o = o + "    (if (i64.eqz (local.get $size)) (then (return (local.get $out))))\n    (local.set $p (i32.add (local.get $out) (i32.const 8)))\n";
+  o = o + "    (block $done (loop $row_loop\n      (br_if $done (i32.ge_u (local.get $row) (local.get $rows)))\n      (local.set $col (i32.const 0))\n      (local.set $left (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (i32.mul (local.get $row) (local.get $extent)) (i32.const 8))))\n";
+  o = o + "      (block $tail (loop $pair\n        (br_if $tail (i32.ge_u (i32.add (local.get $col) (i32.const 1)) (local.get $columns)))\n        (local.set $right (i32.add (i32.add (local.get $b) (i32.const 8)) (i32.mul (local.get $col) (i32.const 8))))\n        (local.set $acc (f64x2.splat (local.get $init)))\n        (local.set $k (i32.const 0))\n";
+  o = o + "        (block $store (loop $dot\n          (br_if $store (i32.ge_u (local.get $k) (local.get $extent)))\n          (local.set $acc (f64x2.add (local.get $acc) (f64x2.mul (f64x2.splat (f64.load (i32.add (local.get $left) (i32.mul (local.get $k) (i32.const 8))))) (v128.load (local.get $right)))))\n          (local.set $right (i32.add (local.get $right) (i32.mul (local.get $columns) (i32.const 8))))\n          (local.set $k (i32.add (local.get $k) (i32.const 1)))\n          (br $dot)))\n";
+  o = o + "        (v128.store (local.get $p) (local.get $acc))\n        (local.set $p (i32.add (local.get $p) (i32.const 16)))\n        (local.set $col (i32.add (local.get $col) (i32.const 2)))\n        (br $pair)))\n";
+  o = o + "      (if (i32.lt_u (local.get $col) (local.get $columns)) (then\n        (local.set $right (i32.add (i32.add (local.get $b) (i32.const 8)) (i32.mul (local.get $col) (i32.const 8))))\n        (local.set $sacc (local.get $init))\n        (local.set $k (i32.const 0))\n";
+  o = o + "        (block $scalar_store (loop $scalar\n          (br_if $scalar_store (i32.ge_u (local.get $k) (local.get $extent)))\n          (local.set $sacc (f64.add (local.get $sacc) (f64.mul (f64.load (i32.add (local.get $left) (i32.mul (local.get $k) (i32.const 8)))) (f64.load (local.get $right)))))\n          (local.set $right (i32.add (local.get $right) (i32.mul (local.get $columns) (i32.const 8))))\n          (local.set $k (i32.add (local.get $k) (i32.const 1)))\n          (br $scalar)))\n        (f64.store (local.get $p) (local.get $sacc))\n        (local.set $p (i32.add (local.get $p) (i32.const 8)))))\n";
+  o = o + "      (local.set $row (i32.add (local.get $row) (i32.const 1)))\n      (br $row_loop)))\n    (local.get $out))\n";
+  return o;
+}
+
 pub function outer_mul_f64_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_outer_mul_f64 (param $a i32) (param $b i32) (result i32)\n";
@@ -14842,6 +14870,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@uses_outer_mul_f64")) {
     parts = parts.append(outer_mul_f64_helper());
+  }
+  if (need(needs, "@uses_inner_mul_add_f64")) {
+    parts = parts.append(inner_mul_add_f64_helper());
   }
   if (need(needs, "@uses_crc32_cksum")) {
     parts = parts.append(crc32_cksum_helper());

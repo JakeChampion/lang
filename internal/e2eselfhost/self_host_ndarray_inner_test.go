@@ -127,7 +127,7 @@ func TestSelfHostNdarrayInnerBenchmark(t *testing.T) {
 	for _, target := range selfHostFusionTargets {
 		t.Run(target, func(t *testing.T) {
 			bin := e2eharness.CompileSelfHostFile(t, target, src, nil)
-			for _, mode := range []string{"0", "1"} {
+			for _, mode := range []string{"0", "1", "2"} {
 				out, err := runScaleTarget(t, target, bin, "3", "5", "7", "2", mode).CombinedOutput()
 				if err != nil {
 					t.Fatalf("inner benchmark mode=%s: %v\n%s", mode, err, out)

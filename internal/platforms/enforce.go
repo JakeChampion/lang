@@ -392,11 +392,12 @@ var gatedBuiltins = map[string]string{
 // target-specific lowering rather than a capability an artifact could be
 // refused.
 var coreBuiltins = map[string]bool{
-	"__outer_mul_f64": true,
-	"exit":            true,
-	"isatty":          true,
-	"target_os":       true,
-	"target_arch":     true,
+	"__outer_mul_f64":     true,
+	"__inner_mul_add_f64": true,
+	"exit":                true,
+	"isatty":              true,
+	"target_os":           true,
+	"target_arch":         true,
 	// Answered on every target: Darwin asks libSystem's getpwuid(3), and
 	// the rest answer 0, meaning use the files, which is the truth there
 	// (#9815).

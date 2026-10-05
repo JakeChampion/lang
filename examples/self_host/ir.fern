@@ -911,6 +911,12 @@ pub function op_outer_mul_f64(): Op {
   return op0(381);
 }
 
+// [a, b, rows, extent, columns, init] -> fresh packed f64[]. Borrow inputs,
+// validate geometry before allocation, and accumulate each output in K order.
+pub function op_inner_mul_add_f64(): Op {
+  return op0(382);
+}
+
 // Physical ownership lowering has already established unique storage and
 // transfers its unit to the result. This form allocates nothing itself.
 pub function op_scale_f64_in_place(): Op {
@@ -4544,6 +4550,9 @@ function kind_id_len16(name: string): i32 {
 }
 
 function kind_id_len17(name: string): i32 {
+  if (name == "inner_mul_add_f64") {
+    return 382;
+  }
   if (name == "crc32_cksum_array") {
     return 373;
   }
@@ -5641,6 +5650,9 @@ pub function kind_name(id: i32): string {
   if (id == 381) {
     return "outer_mul_f64";
   }
+  if (id == 382) {
+    return "inner_mul_add_f64";
+  }
   if (id == 377) {
     return "lsetxattr_bytes";
   }
@@ -6041,7 +6053,7 @@ function kind_pops(t: i32): i32 {
   if (t == 245 || t == 378) {  // mismatch: a, ao, b, bo, n
     return 5;
   }
-  if (t == 228) {  // syscall5
+  if (t == 228 || t == 382) {  // syscall5, inner_mul_add_f64
     return 6;
   }
   if (t == 323) {  // syscall6: nr + 6 args
@@ -8334,7 +8346,7 @@ pub function op_needs_heap(o: Op): boolean {
 }
 
 pub function op_allocates(tag: i32): boolean {
-  if (tag == 381) {
+  if (tag == 381 || tag == 382) {
     return true;
   }
   if (tag == 348 || tag == 349 || tag == 350 || tag == 352) {  // byte array plus Result wrapper
@@ -8542,7 +8554,7 @@ pub function op_allocates(tag: i32): boolean {
 // than logic: every `||` is one row of a table, there is no path through it to
 // get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 381 || tag == 380 || tag == 373 || tag == 368 || tag == 369 || tag == 361 || tag == 379 || tag == 378 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
+  return tag == 382 || tag == 381 || tag == 380 || tag == 373 || tag == 368 || tag == 369 || tag == 361 || tag == 379 || tag == 378 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
     || tag == 104 || tag == 105 || tag == 106
     || tag == 107 || tag == 108 || tag == 109
     || tag == 111 || tag == 113 || tag == 98
