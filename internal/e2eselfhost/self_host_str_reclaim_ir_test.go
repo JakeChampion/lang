@@ -83,7 +83,7 @@ function main(): i32 { let base: string = "abc"; let sum: i32 = 0; let i: i32 = 
 	// caller-side reclaim is the point of the registry, not a violation of this
 	// case.
 	{"returned-not-reclaimed",
-		`function h(x: string, y: string): string { let s: string = x + y; return s; } function main(): i32 { return h("xy", "z").len(); }`,
+		`@noinline function h(x: string, y: string): string { let s: string = x + y; return s; } function main(): i32 { return h("xy", "z").len(); }`,
 		3, false, "h"},
 	// ANNOTATED i32 `.to_string()` in a loop: reclaimed each iter. On the self-host the
 	// helper boxes at an allocation boundary (unlike native's mid-buffer emitter),
@@ -150,7 +150,7 @@ func TestSelfHostStrReclaimIRX86_64(t *testing.T) {
 			// emitted) is not a call, so counting the call form isolates the reclaim.
 			reclaims := countUserStrFreeReclaims(asm)
 			if tc.scope != "" {
-				reclaims = countCallsInFn(asm, tc.scope, "__fn___fern_str_free")
+				reclaims = countCallsInFn(t, asm, tc.scope, "__fn___fern_str_free")
 			}
 			if tc.mustReclaim && reclaims == 0 {
 				t.Errorf("%s: expected a fresh-string reclaim (call __fn___fern_str_free), found none — the string leaks", tc.name)

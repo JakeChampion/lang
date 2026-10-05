@@ -177,7 +177,7 @@ func TestSelfHostStrConcatTempIRX86_64(t *testing.T) {
 			}
 			reclaims := countUserStrFreeReclaims(asm)
 			if tc.scope != "" {
-				reclaims = countCallsInFn(asm, tc.scope, "__fn___fern_str_free")
+				reclaims = countCallsInFn(t, asm, tc.scope, "__fn___fern_str_free")
 			}
 			if tc.wantReclaims < 0 && reclaims == 0 {
 				t.Errorf("%s: expected a fresh-operand reclaim (call __fn___fern_str_free), found none — the temp leaks", tc.name)
