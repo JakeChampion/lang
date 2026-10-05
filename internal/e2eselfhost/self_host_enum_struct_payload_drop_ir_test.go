@@ -24,6 +24,8 @@ import (
 // The leak/reclaim signal is heap exhaustion: a long fall-through churn that leaks
 // the payload's array buffer (and box) each iteration exhausts the bump heap and is
 // SIGKILLed (137); with the deep-drop reclaiming them the churn stays bounded (0).
+// Each items array goes through id so the payload is built on the heap rather than
+// placed as a constant.
 // Variant constructors are UNQUALIFIED (`Full(..)`, not `Box.Full(..)`) — the
 // fresh-ctor analysis matches a bare-ident callee.
 func TestSelfHostEnumStructPayloadDropIRX86_64(t *testing.T) {
@@ -62,9 +64,10 @@ func TestSelfHostEnumStructPayloadDropIRX86_64(t *testing.T) {
 	// enum box each iteration → bounded (exit 0). Asserts __struct_drop_Inner is
 	// emitted; an undroppable enum leaks until SIGKILL (137).
 	run(t, `struct Inner { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 enum Box { Full(Inner), Empty }
 function mk(): i32 {
-    let b: Box = Full(Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] });
+    let b: Box = Full(Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) });
     match (b) {
         Full(_) => {},
         Empty => {},
@@ -81,9 +84,10 @@ function main(): i32 {
 	// post-arm reclaim deep-drops it. A wrong free of a live buffer (or a double-free)
 	// would corrupt the read. items[0]+items[15] = 1 + 16 = 17.
 	run(t, `struct Inner { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 enum Box { Full(Inner), Empty }
 function f(): i32 {
-    let b: Box = Full(Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] });
+    let b: Box = Full(Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) });
     let r: i32 = 0;
     match (b) {
         Full(inner) => { r = inner.items[0] + inner.items[15]; },
