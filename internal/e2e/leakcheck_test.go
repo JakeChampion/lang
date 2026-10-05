@@ -508,7 +508,6 @@ const loopAliasNoIncSrc = `function main(): i32 {
 }`
 
 func TestX86_64LeakCheckLoopConstructionMove(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	for _, tc := range []struct {
 		name string
 		src  string
@@ -535,7 +534,6 @@ func TestX86_64LeakCheckLoopConstructionMove(t *testing.T) {
 }
 
 func TestArm64LeakCheckLoopConstructionMove(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	for _, tc := range []struct {
 		name string
 		src  string
@@ -760,7 +758,6 @@ function main(): i32 {
 }`
 
 func TestX86_64LeakCheckNestedTupleElem(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	for _, tc := range []struct {
 		name string
 		src  string
@@ -782,7 +779,6 @@ func TestX86_64LeakCheckNestedTupleElem(t *testing.T) {
 }
 
 func TestArm64LeakCheckNestedTupleElem(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	for _, tc := range []struct {
 		name string
 		src  string
@@ -902,7 +898,6 @@ const ctorRetainedDropOrderSrc = `function main(): i32 {
 }`
 
 func TestX86_64LeakCheckCtorRetainedDropOrder(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	_, stderr, code := runLeakCheckX86_64(t, ctorRetainedDropOrderSrc)
 	if code != 14 {
 		t.Fatalf("exit=%d, want 14 — the read is wrong, not just its accounting", code)
@@ -915,7 +910,6 @@ func TestX86_64LeakCheckCtorRetainedDropOrder(t *testing.T) {
 }
 
 func TestArm64LeakCheckCtorRetainedDropOrder(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	_, stderr, code := runLeakCheckArm64(t, ctorRetainedDropOrderSrc)
 	if code != 14 {
 		t.Fatalf("exit=%d, want 14 — the read is wrong, not just its accounting", code)
@@ -927,7 +921,6 @@ func TestArm64LeakCheckCtorRetainedDropOrder(t *testing.T) {
 }
 
 func TestX86_64LeakCheckCtorRetainedLoopSource(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	for _, tc := range []struct {
 		name string
 		src  string
@@ -955,7 +948,6 @@ func TestX86_64LeakCheckCtorRetainedLoopSource(t *testing.T) {
 }
 
 func TestArm64LeakCheckCtorRetainedLoopSource(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	for _, tc := range []struct {
 		name string
 		src  string
@@ -1092,7 +1084,6 @@ const enumScalarNestedTupleSrc = `function main(): i32 {
 }`
 
 func TestX86_64LeakCheckEnumStringPayloadBox(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	for _, tc := range []struct {
 		name string
 		src  string
@@ -1122,7 +1113,6 @@ func TestX86_64LeakCheckEnumStringPayloadBox(t *testing.T) {
 }
 
 func TestArm64LeakCheckEnumStringPayloadBox(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	for _, tc := range []struct {
 		name string
 		src  string

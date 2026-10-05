@@ -86,22 +86,19 @@ jobs:
         with:
           build-cache-key: ${{ steps.day.outputs.stamp }}
           wasmtime: true
-      # qemu-aarch64 for the arm64 EXECUTION tests in the unit packages —
-      # internal/native/elf's *RunsUnderQemu cases — plus the aarch64 binutils/gcc that
-      # internal/native/arm64's gas oracle and internal/e2eharness's
-      # native-linker parity gate assemble against. Same lookup-and-skip shape
-      # as wasm: without these the tests report `ok` having executed nothing.
+      # qemu-aarch64 for the arm64 EXECUTION tests in the unit packages, plus
+      # the aarch64 binutils/gcc that internal/e2eharness's native-linker
+      # parity gate assembles against. Same lookup-and-skip shape as wasm:
+      # without these the tests report `ok` having executed nothing.
       #
       # `qemu-user` rather than the action's `qemu-user-static` default,
       # because these tests LookPath("qemu-aarch64"), which is the name that
       # package provides.
       #
       # The CROSS compiler only on the x86 leg. The aarch64 leg already has a
-      # native gcc/as (Arm64Tooling takes that path), and the two tests that
-      # name `aarch64-linux-gnu-as` outright — internal/native/arm64's gas
-      # oracle and CFI profile — are covered by the x86 leg; asking an arm64
-      # runner for a cross package it may not carry would trade a real skip for
-      # an infrastructure red.
+      # native gcc/as (Arm64Tooling takes that path); asking an arm64 runner
+      # for a cross package it may not carry would trade a real skip for an
+      # infrastructure red.
       - name: aarch64 runtime + assembler (arm64 execution tests)
         uses: ./.github/actions/apt-cross-toolchain
         with:
@@ -129,31 +126,6 @@ jobs:
           done
           [ "$fail" -eq 0 ] || exit 1
           qemu-aarch64 --version | head -1
-      # llvm-mc second oracle for the assembler differential lanes
-      # (internal/native/{x86_64,arm64} TestEncodingsAgainstLLVMMC, #7895):
-      # the tests skip when llvm-mc is absent, so this install is what makes
-      # that lane real. One leg only — llvm-mc cross-encodes both targets, so
-      # the arm64 leg would repeat the same work. Same tolerable-failure
-      # shape as setup-fern's lld step: a failed install merely skips the
-      # lane, but a hung apt must not eat the job.
-      - name: Ensure llvm-mc (assembler second oracle)
-        if: ${{ matrix.host == 'x86_64' }}
-        run: |
-          if command -v llvm-mc >/dev/null 2>&1 || command -v llvm-mc-18 >/dev/null 2>&1; then
-            echo "llvm-mc already present"
-            exit 0
-          fi
-          if ! sudo timeout 120 apt-get update -qq; then
-            echo "apt-get update failed or timed out; the llvm-mc oracle lane will skip" >&2
-            exit 0
-          fi
-          if ! sudo timeout 120 apt-get install -y -qq llvm; then
-            echo "llvm install failed or timed out; the llvm-mc oracle lane will skip" >&2
-            exit 0
-          fi
-          if command -v llvm-mc >/dev/null 2>&1; then
-            llvm-mc --version | head -2
-          fi
       - name: go test (units, ${{ matrix.group }} packages)
         # internal/e2eharness's arm64 native-link parity gate runs ONLY here, so
         # a t.Skip would cover nothing: Arm64Tooling turns it into a failure.
@@ -184,8 +156,8 @@ jobs:
         #     cmd/ferndoc, one of which (the -async-provider params bundling
         #     test) had gone red under the wasmtime v46 component-model-async
         #     port and nobody could see it (#5490).
-        #   - ./internal/native/... likewise: the pure-Go assembler and
-        #     ELF/Mach-O linkers every self-host driver build goes through.
+        #   - ./internal/native/... likewise, the pure-Go assemblers and
+        #     linkers since retired.
         # A fourth was live when the list was replaced: internal/embed had a
         # test file and no lane ran it.
         #

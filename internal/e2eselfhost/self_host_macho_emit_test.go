@@ -11,7 +11,7 @@ import (
 // Mach-O executable writer (examples/self_host/macho.fern) — the Darwin
 // counterpart of TestSelfHostELF and the container half of the native
 // binary backend (the part that aims to remove the external clang/ld64
-// link step, mirroring the Go reference internal/native/macho/*.go).
+// link step).
 //
 // macho.fern is intentionally import-free, so this test reads it from disk
 // and concatenates it with a self-test main() that (a) builds Mach-O

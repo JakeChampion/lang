@@ -2,10 +2,7 @@ package e2eselfhost
 
 import (
 	"fmt"
-	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/native/arm64"
 )
 
 // The arm64 load/store offset differential.
@@ -28,10 +25,7 @@ import (
 // 8, 16 and 255. Not one of the selection boundaries is among them, and
 // the largest is 255 — the last value before the rule changes.
 //
-// internal/native/arm64 is the oracle. It is the right one: it gets all
-// eleven boundaries right, checked directly against
-// aarch64-linux-gnu-as + objdump, and it reaches them by a different path
-// than the self-host does.
+// GNU as is the oracle.
 
 // memSize pairs a load/store mnemonic with the access size that scales its
 // imm12 — the number the whole selection rule turns on.
@@ -99,48 +93,14 @@ func arm64MemCases() []string {
 	return out
 }
 
-// TestSelfHostArm64MemOffsetsMatchNative byte-compares every encodable
-// (form, base, offset) through both assemblers.
-func TestSelfHostArm64MemOffsetsMatchNative(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	bin := buildAsmBenchDriver(t, gcc)
-
+// TestSelfHostArm64MemOffsetsMatchGas byte-compares every encodable
+// (form, base, offset) against GNU as.
+func TestSelfHostArm64MemOffsetsMatchGas(t *testing.T) {
 	cases := arm64MemCases()
 	if len(cases) < 200 {
 		t.Fatalf("the matrix produced only %d cases; it is meant to be a product of forms, bases and offsets", len(cases))
 	}
-
-	// The oracle, one line at a time so a native refusal names its own line.
-	want := make([]uint32, 0, len(cases))
-	kept := make([]string, 0, len(cases))
-	for _, c := range cases {
-		b, _, err := arm64.AssembleProgram(c+"\n", 0x400000)
-		if err != nil {
-			t.Errorf("%-32s internal/native/arm64 rejects it, so it cannot be the oracle: %v", c, err)
-			continue
-		}
-		if len(b) != 4 {
-			t.Errorf("%-32s native emitted %d bytes, want one word", c, len(b))
-			continue
-		}
-		want = append(want, uint32(b[0])|uint32(b[1])<<8|uint32(b[2])<<16|uint32(b[3])<<24)
-		kept = append(kept, c)
-	}
-
-	var prog strings.Builder
-	prog.WriteString(".text\n_start:\n")
-	for _, c := range kept {
-		prog.WriteString("    " + c + "\n")
-	}
-	got := assembleSelfHost(t, bin, runner, prog.String())
-	if len(got) != len(kept) {
-		t.Fatalf("the self-host assembler produced %d words for %d instructions — it dropped or split one", len(got), len(kept))
-	}
-	for i, c := range kept {
-		if got[i] != want[i] {
-			t.Errorf("%-32s self-host %08x, internal/native/arm64 %08x", c, got[i], want[i])
-		}
-	}
+	compareArm64Cases(t, cases)
 }
 
 // TestSelfHostArm64RefusesUnencodableOffsets is the other half. An offset

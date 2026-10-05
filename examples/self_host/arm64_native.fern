@@ -15,8 +15,7 @@
 // machine-code encoder: one function per instruction form, each appending
 // the 4-byte fixed-width little-endian encoding to an `i32[]` byte buffer.
 // It is the arm64 counterpart of x86_native.fern PART 1 and the assembler half of
-// the arm64-darwin native-binary path (the container half is macho.fern),
-// mirroring the Go reference internal/native/arm64/arm64.go.
+// the arm64-darwin native-binary path (the container half is macho.fern).
 //
 // AArch64 instructions are all exactly 32 bits, little-endian. Each
 // encoder is pinned byte-for-byte against the Go reference (itself pinned
@@ -539,7 +538,7 @@ function arm64_movz(buf: i32[], rd: i32, imm16: i32, shift: i32, w: boolean): i3
 // member of the move-wide family that took no width and so assembled `movk w4,
 // #imm, lsl #16` as the 64-bit MOVK — the same shape as movn silently emitting
 // nothing (#6060), and caught the same way, by
-// TestSelfHostArm64WholeProgramMatchesNative differing from GNU as in one bit.
+// TestSelfHostArm64WholeProgramMatchesGas differing from GNU as in one bit.
 function arm64_movk(buf: i32[], rd: i32, imm16: i32, shift: i32, w: boolean): i32[] {
   let word: i64 = arm64_movk_word(rd, imm16, shift);
   if (w) {
@@ -1227,9 +1226,8 @@ pub function arm64_asm_label_off(a: Arm64Asm, name: string): i32 {
 // to link the self-host compiler's own text because its `bl __fern_*` calls
 // exceed imm26's ±128 MB, and this assembler links that text without comment.
 //
-// The native assembler checks (internal/native/arm64/asm.go, "outside the
-// signed %d-bit range") and inserts veneers for imm26 (veneer.go). This is the
-// refuse-first half of that parity: a diagnostic instead of a wrong branch.
+// The retired Go assembler inserted veneers for imm26; this refuses instead:
+// a diagnostic rather than a wrong branch.
 
 // arm64_branch_field_bits is the immediate width a fixup kind patches: imm26
 // for b/bl, imm19 for b.cond/cbz/cbnz, imm14 for tbz/tbnz.
@@ -2182,7 +2180,7 @@ function arm64_cls(buf: i32[], rd: i32, rn: i32, w: boolean): i32[] {
 
 // ---- AArch64 bitmask (logical) immediate encoder ----
 //
-// A port of the Go reference's encodeBitmask (internal/native/arm64), for
+// The encoder for
 // the 64-bit `and/orr/eor Xd, Xn, #imm` immediate forms. Returns the
 // (N, immr, imms) fields and whether `imm` is a legal bitmask immediate.
 // Pinned vs llvm-mc. The few i64 bit-twiddles Fern lacks natively are
@@ -2501,7 +2499,7 @@ function arm64_rbit(buf: i32[], rd: i32, rn: i32, w: boolean): i32[] {
 //
 // Two encodings carry most of the vector surface. Both read `size` as a
 // field, which is what makes them general where the byte-only kernels below
-// are not, and both are shared verbatim with internal/native/arm64.
+// are not.
 
 // arm64_vec3same encodes three-registers-same-arrangement: the integer ALU
 // ops, the bitwise ops (where `size` selects the OPERATION, not a width),
@@ -5325,9 +5323,9 @@ function arm64_gas_addsub_operand_unsupported(mnem: string, ops: string[]): bool
 
 // ---- the by-name instruction families ----
 //
-// Each family has a predicate (generated from internal/native/arm64tbl, the
-// table the native assembler dispatches from, so the two assemblers cannot
-// disagree about which mnemonics exist), a shape guard feeding p.unknown,
+// Each family has a predicate (generated from internal/arm64tbl, whose rows
+// TestSelfHostArm64TableRowsMatchGas checks against GNU as), a shape guard
+// feeding p.unknown,
 // and an emitter. An emitter may be reached after its guard has already
 // recorded a refusal; it returns the assembler unchanged on a shape it
 // cannot index safely.
@@ -10550,8 +10548,7 @@ function arm64_gas_assemble(src: string): Arm64Asm {
 // executable writer for the self-hosted *native* backend. This is
 // the Darwin counterpart of elf.fern (Linux): the container half of the
 // native-binary path that aims to remove the external `clang` / `ld64`
-// link step the self-host currently shells out to for arm64-darwin
-// (mirroring the Go reference internal/native/macho/*.go).
+// link step the self-host currently shells out to for arm64-darwin.
 //
 // The image is a PIE, dyld-loaded executable: __PAGEZERO, an r-x __TEXT
 // segment holding the Mach-O header + load commands + machine code, an
@@ -11630,7 +11627,7 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
 
 // ---- call-frame information: `.cfi_*` directives into a .eh_frame image ----
 //
-// The self-host port of internal/native/cfi. Both self-host assemblers carry
+// Both self-host assemblers carry
 // an IDENTICAL copy of this recorder and renderer — this module is
 // import-free by design (see the head of the file), so it cannot share one —
 // and TestImportFreeModulesDoNotDrift holds the two copies in step, function
@@ -11638,8 +11635,8 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
 // shared code.
 //
 // Every profile is pinned from GNU as, never from the DWARF spec's prose;
-// TestSelfHostCfiMatchesNative pins the rendered bytes to the native
-// renderer's, and through it to gas.
+// TestSelfHostCfiMatchesGas* pins the rendered bytes to GNU as and ld's, and
+// TestSelfHostCfiArm64Darwin the Mach-O profile to llvm-mc's.
 //
 // Offsets are recorded as .text byte offsets at the point the directive is
 // seen. The recorder never moves them: the x86 assembler's branch relaxation
