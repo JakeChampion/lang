@@ -98,7 +98,7 @@ const closureRebindReleaseWant = 76
 // the desugar cannot lift, and replays at the function's exit, so the block
 // keeps the local rather than moving it out (#10496). ids builds the string
 // array on the heap rather than placing it as a constant.
-const vblockDeferUnliftedSrc = `function ids(s: string): string { return s; }
+const vblockDeferUnliftedSrc = `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let r = 0;
     let c = 1;
