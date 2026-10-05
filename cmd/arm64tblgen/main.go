@@ -1,6 +1,5 @@
 // Command arm64tblgen writes the self-host arm64 assembler's vocabulary from
-// internal/native/arm64tbl, the table the Go assembler reads directly — the
-// arm64 twin of cmd/x86tblgen.
+// internal/arm64tbl — the arm64 twin of cmd/x86tblgen.
 //
 // Two kinds of block are rewritten in place in
 // examples/self_host/arm64_native.fern: one per Advanced SIMD class, and the
@@ -19,8 +18,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jakechampion/lang/internal/arm64tbl"
 	"github.com/jakechampion/lang/internal/fmtsource"
-	"github.com/jakechampion/lang/internal/native/arm64tbl"
 )
 
 // markers brackets one generated block: the class name appears in both.

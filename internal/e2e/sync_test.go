@@ -28,9 +28,9 @@
 // measured, both succeed.) So a transposition of the two — and they are
 // adjacent on both Linux targets, though not on Darwin, where they are 95 and
 // 187 — passes everything below. That pair is held instead by
-// TestSyscallNumbersMatchTheKernelTable in each native backend, which compares
-// the hand-written table against Go's own generated zsysnum transcription of
-// the same kernel source.
+// TestSelfHostSysnoMatchesTheKernelTables (internal/e2eselfhost), which
+// compares the self-host's hand-written tables against Go's own generated
+// zsysnum transcription of the same kernel sources.
 //
 // The Go side then reads the bytes back through os.ReadFile, so a write the
 // program believed it had flushed is checked against the tree rather than

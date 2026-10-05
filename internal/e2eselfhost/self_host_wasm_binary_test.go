@@ -309,8 +309,10 @@ func assembleWithWatbin(t *testing.T, wasmtime, asmWatPath, dir, name string) st
 // programs above produce: the same host function imported twice under two
 // names (the emitter's runtime and an @import extern both naming it), which
 // a component refuses as a duplicate import and the assembler merges into
-// one; and a `local.get` by number inside a folded expression, the export
-// wrappers' spelling, which the folded encoder used to resolve by name only.
+// one; a `local.get` by number inside a folded expression, the export
+// wrappers' spelling, which the folded encoder used to resolve by name only;
+// and a named local after an unnamed param and an unnamed local run, the
+// async-import wrapper's shape, which the assembler used to number from 0.
 func TestSelfHostWasmBinaryComponentCoreShapes(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -333,6 +335,11 @@ func TestSelfHostWasmBinaryComponentCoreShapes(t *testing.T) {
   (func $twice (param i32) (result i32) (local i32)
     (local.set 1 (i32.add (local.get 0) (local.get 0)))
     (local.get 1))
+  (func $after_unnamed (param i32) (result i32) (local i32 i32) (local $n i32)
+    (local.set 2 (i32.const 100))
+    (local.set $n (i32.add (local.get 0) (i32.const 1)))
+    (i32.add (local.get $n) (i32.sub (local.get 2) (i32.const 100))))
+  (export "after_unnamed" (func $after_unnamed))
   (func $start
     (drop (call $w2 (i32.const 1) (i32.const 8) (i32.const 1) (i32.const 20)))
     (drop (call $w1 (i32.const 1) (i32.const 8) (i32.const 1) (i32.const 20)))
@@ -361,6 +368,13 @@ func TestSelfHostWasmBinaryComponentCoreShapes(t *testing.T) {
 	}
 	if string(out) != "ok\nok\n" {
 		t.Errorf("stdout = %q; want both writes through the merged import", out)
+	}
+	out, err = exec.Command(wasmtime, "run", "--invoke", "after_unnamed", wasmPath, "41").Output()
+	if err != nil {
+		t.Fatalf("wasmtime --invoke after_unnamed: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "42" {
+		t.Errorf("after_unnamed(41) = %s, want 42: $n must be local 3, after the param and the two unnamed locals", got)
 	}
 }
 

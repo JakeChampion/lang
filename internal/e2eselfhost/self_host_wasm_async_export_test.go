@@ -90,10 +90,10 @@ import "std/platform";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse { return http.ok("hi"); }
 `
 	for _, c := range []struct{ name, target, src, want string }{
-		{"string-param", "wasm32-wasi", "async function f(s: string): i32 { return 1; }\n", "parameter s has type string, which an async export cannot lift yet"},
-		{"string-result", "wasm32-wasi", "async function f(): string { return \"x\"; }\n", "the result type string is one an async export cannot lift yet"},
+		{"string-param", "wasm32-wasi", "async function f(s: string): i32 { return 1; }\n", "parameter s has type string, which an async export cannot take yet"},
+		{"string-result", "wasm32-wasi", "async function f(): string { return \"x\"; }\n", "the result type string is one an async export cannot take yet"},
 		{"camel-case", "wasm32-wasi", "async function fooBar(): i32 { return 1; }\n", "async function fooBar: the name has no kebab-case form"},
-		{"http", "wasm32-wasi-http", handler + "async function f(): i32 { return 1; }\n", "async function f is an async export, which only -target wasm32-wasi lifts"},
+		{"http", "wasm32-wasi-http", handler + "async function f(): i32 { return 1; }\n", "async function f: only -target wasm32-wasi lifts an async export or lowers an async import"},
 	} {
 		srcPath := filepath.Join(dir, c.name+".fern")
 		src := c.src

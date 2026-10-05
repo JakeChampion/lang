@@ -1,8 +1,7 @@
 package wasi:sockets@0.2.0;
 
 // Vendored subset of wasi:sockets/udp@0.2.0 — the methods the wasm
-// backend emits for the datagram sockets (internal/codegen/wasmbin/
-// wasi_udp.go): bind the socket and read its address back, open the
+// backend emits for the datagram sockets (examples/self_host/wasm_ir.fern): bind the socket and read its address back, open the
 // stream pair (to any peer, or connected to one), receive with a
 // readiness subscription, wait for a send permit (check-send /
 // subscribe) and send outgoing-datagrams. The full API adds the

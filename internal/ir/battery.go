@@ -69,11 +69,6 @@ func OptimizeProgram(prog *Program, ptrW int32) {
 
 // OptimizeFunctions runs the per-function tail of the battery: the
 // rewrites that need no whole-program information.
-//
-// It is separate because internal/fernrt runs only this half. That
-// package hands out runtime helpers looked up BY NAME, so a pass that
-// inlines a helper into its sole caller and culls the original would
-// remove the very function a later lookup asks for.
 func OptimizeFunctions(prog *Program) {
 	// A condition that inlining has just exposed — `if (is_digit(c))` now
 	// carrying the callee's `&&` — becomes a chain of branches.

@@ -64,8 +64,7 @@ jobs:
       # preflight, which fails the JOB when a requested tool is missing.
       #
       # No qemu here: nothing in this package looks one up. The units lane
-      # keeps its own, for the arm64 execution tests in internal/native and
-      # internal/codegen that do.
+      # keeps its own, for the arm64 execution tests that do.
       - uses: ./.github/actions/setup-fern
         with:
           build-cache-key: ${{ steps.day.outputs.stamp }}

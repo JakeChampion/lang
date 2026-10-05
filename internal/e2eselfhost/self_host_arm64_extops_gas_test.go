@@ -9,7 +9,7 @@ import (
 // to the self-host arm64 assembler (examples/self_host/arm64_native.fern)
 // against aarch64-linux-gnu-as, through the in-process bench driver — the
 // same no-qemu, encodings-only pattern as
-// TestSelfHostArm64AsmEncodingMatchesNative. Every `want` below is what
+// TestSelfHostArm64AsmEncodingMatchesGas. Every `want` below is what
 // GNU as emits for the same line (read back with objdump — never
 // hand-derived, since a wrong field placement usually still assembles as
 // some other valid instruction); each family checks low AND high register

@@ -19,8 +19,6 @@
 // skipped and counted, so the worst an omission costs is coverage.
 package ir
 
-import "sort"
-
 // providedSig is what a backend-provided callee consumes and produces.
 type providedSig struct {
 	// argSlots is how many operand-stack slots the call's arguments
@@ -514,36 +512,4 @@ var providedSigs = map[string]providedSig{
 	"write_file_exec":                  {-1, rWord},
 
 	"string_from_bytes_range_unchecked": {-1, rString},
-}
-
-// ProvidedCallee reports the verifier's record of a backend-provided
-// callee: how many operand-stack slots its arguments occupy under the
-// two-word string ABI (-1 when that depends on the instantiation and no
-// static answer exists), and how many its result occupies. ok is false
-// for a name the table does not know.
-//
-// Exported so a backend that owns the real signature can be asked
-// whether it agrees — see TestProvidedSigsAgreeWithWasmRuntime. Nothing
-// in the compiler consults it.
-func ProvidedCallee(name string, twoWordStr bool) (argSlots, resultSlots int, ok bool) {
-	sig, ok := providedSigs[name]
-	if !ok {
-		return 0, 0, false
-	}
-	return sig.argSlots, len(sig.result.slots(twoWordStr)), true
-}
-
-// ProvidedCalleeNames lists every callee the table records, sorted.
-//
-// Exported for the same reason as ProvidedCallee, one step further: a
-// backend can be asked not just whether it agrees about a name it knows,
-// but whether it can lower the whole set. Nothing in the compiler
-// consults it.
-func ProvidedCalleeNames() []string {
-	names := make([]string, 0, len(providedSigs))
-	for name := range providedSigs {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }

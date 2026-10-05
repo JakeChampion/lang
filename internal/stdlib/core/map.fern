@@ -14,8 +14,7 @@
 // (`(Map[K,V], K, V) → void` etc.) and the IR rewrites
 // `__method_Map_*` / `map_new` calls to these `_impl`
 // counterparts at codegen time — same shape as the
-// `__array_append_jsonvalue → __array_append_string` alias
-// in internal/codegen/wasm/wasm_ir.go.
+// `__array_append_jsonvalue → __array_append_string` alias.
 //
 // kv buffer layout (Map's `data` field points here):
 //

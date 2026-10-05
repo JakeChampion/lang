@@ -3,8 +3,8 @@
 //
 // Spec: https://webassembly.github.io/spec/core/binary/instructions.html#vector-instructions
 //
-// This package exists for the same reason `internal/native/x86_64/sse.go`
-// grew packed-byte ops and `internal/native/arm64` grew DUP/LD1/CMEQ: the
+// This package exists for the same reason the native assemblers grew
+// packed-byte ops and DUP/LD1/CMEQ: the
 // fused-intrinsic vector kernels of docs/ATLAS-PLATFORM-PLAN.md §3 live
 // BELOW the IR, in the emitters, and an emitter can only emit what its
 // assembler can encode. Nothing in Fern had ever asked wasm for a vector
@@ -30,9 +30,9 @@
 //
 // This is a hand-written list of the forms kernels have asked for, not a
 // generated table, so each new domain pays per instruction. That is the
-// distinction docs/ATLAS-PLATFORM-PLAN.md §3.4 draws against
-// internal/native/arm64, whose generated tables carry whole classes and
-// so owed nothing for the same kernel.
+// distinction docs/ATLAS-PLATFORM-PLAN.md §3.4 draws against the arm64
+// assembler, whose generated tables (internal/arm64tbl) carry whole classes
+// and so owed nothing for the same kernel.
 package simd
 
 import "github.com/jakechampion/lang/internal/wasm/leb128"

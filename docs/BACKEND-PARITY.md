@@ -1,107 +1,93 @@
-# Backend parity tracker
+# Targets and backends
 
-Three code-generation backends ship in the Go compiler, all stack-machine
-emitters lowering the flat `ir.Program`: `internal/codegen/{arm64,x86_64,wasmbin}`.
-`-backend flat` names that emitter explicitly and is the only value `cmd/fern`
-accepts. The Go register-allocating backends (`arm64ssa`, `x86_64ssa`, the
-experimental `-backend typed-ssa`, and `internal/ssa` and `internal/semir`
-under them) were deleted in step 5 of `docs/NATIVE-RETIREMENT.md`; the
-self-host compiler's register path (`fern-selfhost -backend ssa`,
-`docs/SELFHOST-SSA-BACKEND.md`) is the one SSA emitter. Background:
+The Go compiler generates no code: its emitters, the stack-machine
+`internal/codegen/{arm64,x86_64,wasmbin}` and the register-allocating
+`arm64ssa` / `x86_64ssa`, were deleted in step 5 of
+`docs/NATIVE-RETIREMENT.md`. Every `-target` compile runs the self-host
+compiler: its register path (`-backend ssa`, `docs/SELFHOST-SSA-BACKEND.md`)
+on the native ISAs, its stack machine (`-backend flat`) on wasm. Background:
 `docs/SSA-DECISION.md`, #4112, #8822.
 
-`internal/e2e/arm64_default_string_reclaim_test.go` holds the arm64 default to
-flat retention across two input sizes; its census reads a constant 16 B at
-every input size.
+`internal/e2e/arm64_default_string_reclaim_test.go` holds the default arm64
+build to retention that does not grow with the input: a string passed to a
+user function is reclaimed.
 
 Targets are `<isa>-<environment>` (#6529): the ISA half picks the backend, the
 environment half says what the host provides. Neither is implied — there is no
-bare `arm64` meaning arm64-Linux.
+bare `arm64` meaning arm64-Linux. There is no x86-64 Darwin target.
 
 | target | ISA | environment | object format | ABI | status |
 | ------ | --- | ----------- | ------------- | --- | ------ |
 | arm64-linux | arm64 | linux | ELF | AAPCS64 | primary target |
-| arm64-darwin | arm64 | darwin | Mach-O | AAPCS64 + Apple's syscall vector | shares `EmitWithOptions` with arm64-linux |
+| arm64-darwin | arm64 | darwin | Mach-O | AAPCS64 + Apple's syscall vector | the arm64-linux emitter, its text rewritten for XNU (`darwinize` in `asm_arm64_ir.fern`) |
 | arm64-android | arm64 | android | ELF (ET_DYN, PIE) | AAPCS64 | same syscalls as arm64-linux |
-| x86-64-linux | x86-64 | linux | ELF | System V AMD64 | newer; some gaps |
-| wasm32-wasi | wasm32 | wasi | wasm32 module | wasm CC + WASI | the "everything" backend |
-| wasm32-wasi-http | wasm32 | wasi-http | component | wasi:http/incoming-handler | proxy world; std/fetch sends through wasi:http/outgoing-handler, self-host only (docs/WASI-PREVIEW2.md) |
+| x86-64-linux | x86-64 | linux | ELF | System V AMD64 | supported |
+| wasm32-wasi | wasm32 | wasi | wasm32 module | wasm CC + WASI | a wasi:cli/run component by default |
+| wasm32-wasi-http | wasm32 | wasi-http | component | wasi:http/incoming-handler | proxy world; std/fetch sends through wasi:http/outgoing-handler (docs/WASI-PREVIEW2.md) |
 | arm64-freestanding, x86-64-freestanding | | freestanding | — | — | declared + type-checkable; no emitter yet (#6510) |
 
-Two axes are deliberately NOT in the name: `-backend` selects an emitter for
-the same target (the self-host's `ssa` or `flat`; `cmd/fern` has only `flat`),
-and `-emit` an alternate output form (#6536).
-`wasm32-wasi` has three: the default composes a wasi:cli/run component,
-`-emit core-module` writes the raw core module (no entry point — `wasmtime run`
-on one calls nothing), and `-emit command-module` writes a WASI preview-1
-command, the same core bytes plus a `_start` that runs main and exits with its
-value. The self-host's core module carries that `_start` (and exports `main`,
-#10768) already, so there the two spellings write one artifact (#11408). The
-exit code is what separates the last two from the first: a
-`wasi:cli/run` component reports ok or err and nothing wider, so `return 42`
-reaches the host as 1. A `main` that returns NOTHING exits 0 on all three
-(#9233): the natives used to hand the kernel whatever the last call left in
-the return register, which made the status a stable fact about the emitted
-code — `print(s + "d")` exited 232 on x86-64 and 144 on arm64 — where wasm's
-`SynthCliRun` had always supplied the zero. Both used to be spelled as targets (`arm64-ssa`, `wasm-bin`), which is
-what let the old `wasm-ssa` spelling skip capability enforcement entirely.
+Two axes are deliberately NOT in the name: `-backend` names the target's
+emitter, and `-emit` an alternate output form (#6536). Each target has one
+emitter, and `-backend` may only name it: `ssa`, the register path, on both
+native ISAs; `flat`, the stack machine, on wasm, which has no register path
+and is not getting one — wasm is a stack machine with locals, so the register
+path's wins do not exist there (`docs/SELFHOST-SSA-BACKEND.md`, "The other
+backends").
 
-The **self-host driver spells targets the same way** since #6635 — it took the
-whole scheme, both axes: `-target <isa>-<environment>`, `-emit asm` for the
-emitter's text (GAS on the natives, WAT on wasm) and `-emit core-module` for a
-raw wasm module, `-backend flat|ssa` to select the emitter, and `fern -targets` to list
-them. So a build command moves between the two compilers unchanged. The
-DEFAULT emitter on the self-host driver is the register path on both native
-ISAs and the stack machine on wasm, which has no register path and is not
-getting one — wasm is a stack machine with locals, so the register path's
-wins do not exist there (`docs/SELFHOST-SSA-BACKEND.md`, "The other
-backends"). One other
-difference remains: `-emit asm` has no native counterpart — native always
-links, and the text form is how the self-host's emitters are observed in
-isolation (docs/TOOLCHAIN-SELF-HOSTING.md). `wasm32-wasi-http` is built
-differently on the two sides and answers the same requests: native emits the
-handler entry as wasm instructions (`internal/codegen/wasmbin/wasi_http.go`),
-the self-host appends `std/wasi_http` — the entry written in Fern over
-`@import` externs — and composes the core against the embedded proxy world
-(`examples/self_host/wit_compose.fern`); `TestSelfHostWasiHttpTargetMatchesNative`
-is the differential.
+`wasm32-wasi` has two output forms: the default composes a wasi:cli/run
+component, and `-emit core-module` and `-emit command-module` both write the
+core module, a WASI preview-1 command with a `_start` that runs main and exits
+with its value, which also exports `main` (#10768, #11408). The exit code is
+what separates them: a `wasi:cli/run` component reports ok or err and nothing
+wider, so `return 42` reaches the host as 1. A `main` that returns nothing
+exits 0 (#9233, `internal/e2e/void_main_exit_test.go`).
+
+`cmd/fern` passes `-target`, `-emit` and `-backend` through to the self-host
+driver unchanged (`cmd/fern/selfhost.go`), and `fern -targets` lists the
+targets. `-emit asm` stops at the emitter's text (GAS on the natives, WAT on
+wasm); it is what a native compile with neither `-o` nor `-emit` prints, and
+how the emitters are observed in isolation
+(docs/TOOLCHAIN-SELF-HOSTING.md). For `wasm32-wasi-http` the
+self-host appends `std/wasi_http`, the entry written in Fern over `@import`
+externs, and composes the core against the embedded proxy world
+(`examples/self_host/wit_compose.fern`).
 
 ## Internal networking syscall floor
 
 `__syscall3` through `__syscall6` (#9853, #4451) pass a syscall number and
 three to six machine-word operands and return the kernel's word, negative
 errno on failure on every target. `__store_u8(addr, v)` writes the low byte
-of `v`. Both compilers lower the same names, so a socket primitive is one
-Fern body per compiler rather than assembly per backend. They are runtime
+of `v`. Every native target lowers the same names, so a socket primitive is
+one Fern body rather than assembly per target. They are runtime
 intrinsics with a `__` prefix, not public builtins: `internal/platforms`
 gates them under the `syscall` capability only the hosted-native profile
 grants, they carry no package capability, and networking APIs built on them
 still need their own classifications.
 
-| Target | Go compiler | self-host |
-| --- | --- | --- |
-| x86-64-linux | inline `syscall`, sixth argument in `r9` | `syscall`, sixth argument in `r9` |
-| arm64-linux | `svc #0`, number in `x8` | `svc #0`, sixth argument in `x5` |
-| arm64-darwin | `svc #0x80`, number in `x16`, carry-flagged errno negated | `svc #0x80`, negative errno on failure |
-| wasm32-wasi | E066: the target has no `syscall` capability | rejected by the self-host wasm drivers |
-| interp | never reached: refused with the target, not at run time | — |
+| Target | lowering |
+| --- | --- |
+| x86-64-linux | `syscall`, number in `rax`, sixth argument in `r9` |
+| arm64-linux | `svc #0`, number in `x8`, sixth argument in `x5` |
+| arm64-darwin | `svc #0x80`, number in `x16`, carry-flagged errno negated |
+| wasm32-wasi | E066: the target has no `syscall` capability |
+| interp | never reached: refused with the target, not at run time |
 
-`FERN_SANDBOX=1` on x86-64, on both compilers, records a floor call whose
-number is a literal like any other syscall, and refuses a program whose
-number is a run-time operand, which the seccomp allowlist cannot cover.
+`FERN_SANDBOX=1` on x86-64 records a floor call whose number is a literal
+like any other syscall, and refuses a program whose number is a run-time
+operand, which the seccomp allowlist cannot cover.
 
-On the Go compiler `tcp_listen`, `tcp_listen_with`, `tcp_connect`,
-`tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`,
-`tcp_socket_ctl`, `tcp_recv`, `tcp_send`, `udp_send`, `udp_bind`,
-`udp_connect`, `udp_sendto` and `udp_recvfrom` are one Fern body
-each in `internal/fernrt` over this floor, on x86-64-linux, arm64-linux and
-arm64-darwin and on both backends of each ISA (the sockaddr's leading
-`sin_len` byte, the option numbers and `MSG_NOSIGNAL` are the Darwin
-differences); wasm keeps its wasi:sockets bodies, and the interpreter its
-Go ones. The bytes floor the last three are written on, `__str_bytes` and
-`__arr_set_len`, is provided on every native backend, on wasm and by the
-self-host (`docs/RUNTIME-IN-FERN.md`); the interpreter has no floor, as it
-has none of the raw floor.
+The syscall-floor probe (`internal/e2e/native_syscall_floor_test.go`) maps a
+file at a nonzero offset, reads distinct bytes back, unmaps and closes, pins
+the errno of a bad descriptor, and round-trips bytes through the byte store.
+The Darwin legs run in the Apple Silicon lane.
+
+`tcp_listen`, `tcp_listen_with`, `tcp_connect`, `tcp_accept`,
+`tcp_local_port`, `tcp_close`, `tcp_socket_ctl`, `tcp_recv`, `tcp_send`,
+`udp_send`, `udp_bind`, `udp_connect`, `udp_sendto` and `udp_recvfrom` are
+one Fern body each in `asmcore.fern` over this floor, on x86-64-linux,
+arm64-linux and arm64-darwin (the sockaddr's leading `sin_len` byte, the
+option numbers and `MSG_NOSIGNAL` are the Darwin differences); wasm has
+wasi:sockets bodies in `wasm_ir.fern`, and the interpreter Go ones.
 
 Every socket primitive that takes an address takes it as a `u8[]` of its
 network-order bytes, four for IPv4 and sixteen for IPv6, and opens the
@@ -138,7 +124,7 @@ into the same words), and
 `reuse_port` is ignored: a port is one socket's there. Every other op and the backlog behave the same on every
 target. A wasi:sockets `result<_, error-code>` puts the error-code at byte
 1 (a handle, tuple or address payload puts it at 4, a u64 count at 8);
-both compilers' wasm socket bodies read the byte the result's shape names,
+the wasm socket bodies read the byte the result's shape names,
 so a refused bind or dial reports its errno rather than whatever the area
 held.
 
@@ -189,7 +175,7 @@ each a descriptor or -errno (-ENAMETOOLONG for a path longer than the
 address holds, 107 bytes on Linux and 103 on Darwin, before any socket
 exists; a held path is -EADDRINUSE, and the socket file is not unlinked
 first), which `tcp_accept`, `tcp_recv`, `tcp_send` and `tcp_close` take.
-Fern bodies on both compilers (Darwin leads the address with sun_len) and
+Fern bodies in `asmcore.fern` (Darwin leads the address with sun_len) and
 the net package in the interpreter. Native only: the `unix` capability is
 in no wasi profile, so E066 refuses them on both wasm worlds at check time,
 and std/net's `listen_unix`, `connect_unix` and `accept` wrap them.
@@ -202,7 +188,7 @@ interest in `arg`, 1 readable and 2 writable, op 2 stops watching it, op 3
 closes the set) and `reactor_wait(r, events, timeout_ms)`, which fills
 `events` with (fd, readiness) pairs, readiness 1 readable, 2 writable and 4
 an error or hang-up, and answers the pair count, 0 on the timeout (-1 waits
-without one), or -errno. Fern bodies on both compilers natively; on wasm a
+without one), or -errno. Fern bodies natively; on wasm a
 watch subscribes the pollables a record's kind names (a listener or a
 connect under way through tcp-socket.subscribe, a connection through its
 input and output streams, a datagram socket through its datagram streams)
@@ -229,45 +215,36 @@ Driver seam wraps the floor as `watch`, `unwatch`, `wait`, `watch_signal`,
 its leg with `ready_at`, and the serve loops run on it.
 
 Per target, every socket primitive is provided as follows. "Fern body" is
-the one body per compiler over the syscall floor (`internal/fernrt` and
-`asmcore.fern`), the same on x86-64-linux and arm64-linux under both
-backends and on arm64-darwin with its sockaddr length byte, option numbers
-and `MSG_NOSIGNAL` value. wasi-http is the proxy world, whose profile grants
-none of `tcp`, `unix` or `reactor`, so E066 refuses each of these at check
-time there.
+the one body in `asmcore.fern` over the syscall floor, the same on
+x86-64-linux and arm64-linux and on arm64-darwin with its sockaddr length
+byte, option numbers and `MSG_NOSIGNAL` value. wasi-http is the proxy world,
+whose profile grants none of `tcp`, `unix` or `reactor`, so E066 refuses each
+of these at check time there.
 
 | Primitive | Linux natives | arm64-darwin | wasm32-wasi | wasi-http | interp |
 | --- | --- | --- | --- | --- | --- |
-| `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_recv`, `tcp_send` | Fern body | Fern body | wasi:sockets/tcp bodies (`wasi_tcp.go`, `wasm_ir.fern`); a "fd" is the 16-byte record | E066 | net package |
+| `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_recv`, `tcp_send` | Fern body; `tcp_pollable` answers the descriptor itself | Fern body; `tcp_pollable` answers the descriptor itself | wasi:sockets/tcp bodies (`wasm_ir.fern`); a "fd" is the 16-byte record | E066 | net package |
 | `tcp_connect` (packed IPv4) | Fern body | Fern body | boxes the address for `tcp_connect_with` | E066 | net package |
 | `tcp_listen_with`, `tcp_connect_with` (byte address) | Fern body | Fern body | `__fern_ip_flat` then start-bind or start-connect; a started connect is kind 4 | E066 | net package, `JoinHostPort`; a started connect is finished before answering |
 | `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5, 7, 9 and 10 through wasi:sockets; 1, 3 and 6 `-ENOTSUP`; every op but 9 and 10 `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv` and `tcp_send` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket; ops 9 and 10 read the descriptor's own sockaddr |
 | `tcp_recv_into` | Fern body, `read(2)` | Fern body | non-blocking read on the input stream, `-EAGAIN` when empty | E066 | a read through the descriptor |
 | `tcp_sendfile` | Fern body, `sendfile(2)`, the file advanced by what the socket took | Fern body, the position read and moved around Darwin's offset-and-length form | `-ENOTSUP`: the serve loop reads the file and sends the piece | E066 | a read of the open file then one socket write, the file moved back over what the socket did not take |
 | `udp_send` | Fern body, dotted-quad parse | Fern body | `udp_bind` then `udp_sendto` then close | E066 | net package |
-| `udp_bind`, `udp_connect`, `udp_sendto`, `udp_recvfrom` (byte address) | Fern body | Fern body; `EISCONN` for a named address on a connected socket | wasi:sockets/udp bodies (`wasi_udp.go`, `wasm_ir.fern`); `recvfrom` blocks on the incoming pollable | E066 | raw descriptors, the kernel's errnos |
+| `udp_bind`, `udp_connect`, `udp_sendto`, `udp_recvfrom` (byte address) | Fern body | Fern body; `EISCONN` for a named address on a connected socket | wasi:sockets/udp bodies (`wasm_ir.fern`); `recvfrom` blocks on the incoming pollable | E066 | raw descriptors, the kernel's errnos |
 | `unix_listen`, `unix_connect` | Fern body | Fern body, `sun_len` head | E066: no `unix` | E066 | net package |
 | `reactor_new`, `reactor_ctl`, `reactor_wait` | Fern body, epoll | Fern body, kqueue | a table of wasi:io pollables; signals `-ENOTSUP` | E066: no `reactor` | an epoll or kqueue set over the handles; signals through a pipe |
 
-The probe maps a file at a nonzero offset, reads distinct bytes back, unmaps
-and closes, pins the errno of a bad descriptor, and round-trips bytes through
-the byte store. The Darwin legs run in the Apple Silicon lane.
+On arm64-darwin `poll(fds, timeout_ms)` reaches `kqueue`/`kevent`
+(`asmcore.fern`'s `rt_src_poll_kqueue`). It ignores negative fds and failed
+registrations, returns the lowest ready caller index (including duplicate
+fds), and supports zero, positive and negative timeouts. The temporary kqueue
+and event storage are released on each call. Linux uses `poll` on x86-64 and
+`ppoll` on arm64; wasm polls WASI pollables. The persistent reactor is the
+`reactor_*` floor above; `poll` remains the one-shot wait the async
+combinators use.
 
-The self-host's `poll(fds, timeout_ms)` now reaches `kqueue`/`kevent` on
-arm64-darwin, replacing its unconditional `-1` stub. It ignores negative fds
-and failed registrations, returns the lowest ready caller index (including
-duplicate fds), and supports zero, positive and negative timeouts. The temporary
-kqueue and event storage are released on each call. Linux keeps its existing
-`poll`/`ppoll` implementation; wasm keeps its WASI pollable implementation.
-The Go bootstrap Darwin helper uses the same reverse registration and
-`EV_RECEIPT` approach, preserving the lowest caller index for duplicate fds
-and allowing valid readiness alongside failed registrations. Bootstrap flat
-and SSA helpers also reclaim their temporary poll storage on every path.
-The persistent reactor is the `reactor_*` floor above; `poll` remains the
-one-shot wait the async combinators use.
-
-Both WebAssembly compilers implement compatibility `poll` timeouts by adding
-an owned monotonic-clock timer to the borrowed pollable list. A timer-only
+On wasm `poll` implements its timeout by adding an owned monotonic-clock
+timer to the borrowed pollable list. A timer-only
 result returns `-1`; a negative timeout creates no timer. Milliseconds are
 widened before conversion to nanoseconds, and each call releases the temporary
 list, returned indices, return area and timer. Direct `wasm_poll` remains an
@@ -300,8 +277,8 @@ self-host's byte kernels (`__fern_count_byte`, `__fern_memchr`,
 `__fern_rmemchr`, `__fern_ascii_run`) run 32-byte AVX2 main loops —
 `vmovdqu` / `vpcmpeqb` / `vpbroadcastb` / `vpmovmskb` on `ymm`, with no cpuid
 check anywhere — ahead of their 16-byte SSE2 ones, through the five VEX forms
-its in-process assembler encodes (`x86_native.fern`), and `OpClz` / `OpCtz` /
-`OpPopcount` lower to `lzcnt` / `tzcnt` / `popcnt`, so its output sits at v3.
+its in-process assembler encodes (`x86_native.fern`), and the `clz` / `ctz` /
+`popcount` ops lower to `lzcnt` / `tzcnt` / `popcnt`, so its output sits at v3.
 
 x86-64-v3 is the standard name for the class that has it, and no real
 part carries AVX2 without v3's other bits. The AMD floor moves with it: Jaguar
@@ -312,11 +289,12 @@ of it is used. AVX-512 is deliberately not taken: Intel removed it from
 consumer parts at Alder Lake, so a v4 baseline would drop hardware a v3 one
 keeps.
 
-**The two assemblers encode more than the baselines cover, on purpose.** An
-assembler that cannot spell an instruction cannot be told to gate it, so both
-the Go and the self-host assemblers accept every mnemonic in `x86tbl` /
-`arm64tbl` unconditionally; what a *code generator* may reach for is the
-baseline's question, not theirs.
+**The assemblers encode more than the baselines cover, on purpose.** An
+assembler that cannot spell an instruction cannot be told to gate it, so
+`x86_native.fern` and `arm64_native.fern` accept every mnemonic in the tables
+`cmd/x86tblgen` / `cmd/arm64tblgen` generate from `internal/x86tbl` /
+`internal/arm64tbl`, unconditionally; what a *code generator* may reach for is
+the baseline's question, not theirs.
 
 **What the arm64 raise cost, and what it did not buy.** The crypto extensions
 are what `pmull.1q` needs (#9128), and the only declared hardware without them
@@ -342,197 +320,6 @@ refute a baseline claim; the qemu lane is a correctness gate, not a portability
 one. Under the old baseline that was a hazard (green in CI, SIGILL on a Pi);
 under this one there is nothing left below us for it to miss.
 
-Wasm is the broadest because it was where Map / State / file I/O / preview2
-HTTP landed first. The native backends have caught up on the edge-handler
-critical path (`function handle(req): resp` → HTTP/1.1 server). Everything
-else is on this list.
-
-Each section is a self-contained piece of work — a single PR or two.
-We can pick any of them next; nothing here is blocking.
-
----
-
-## Critical user-visible gaps
-
-These are language features that *compile on wasm but won't compile or
-will silently misbehave on a native target.* Highest leverage.
-
-### ~~Maps on x86-64~~ ✅ done
-
-Landed: `map_new` / `__method_Map_*` / `__method_MapIter_*` dispatch
-table mirroring arm64, plus the supporting runtimes (`__store_i32` /
-`__load_i32` / `__store_ptr` / `__load_ptr` / `__ptr_width` /
-`__memset`). The Fern Map runtime in `internal/stdlib/core/map.fern`
-compiles unchanged. `TestX86_64Map` covers set/get, grow-past-capacity,
-string keys, and iter-after-delete.
-
-### File I/O on both native backends — partial
-
-`read_file` / `write_file` work on arm64 + x86-64 today. Both
-runtimes wrap `openat(2)` / `read(2)` / `write(2)` / `close(2)`
-/ `fstat(2)` and hand-roll the `Result[string, IoError]` and
-`Option[IoError]` boxes to match the IR enum layout (16-byte
-heap obj with `tag:i32 @0` + pointer payload `@8` on native;
-24-byte for `Other(string, string)`; 8-byte for payload-less
-variants). Shared `__fern_io_error(errno, path)` runtime does
-the errno → variant mapping (ENOENT → NotFound, EACCES →
-PermissionDenied, EEXIST → AlreadyExists, EINTR → Interrupted,
-EILSEQ → InvalidUtf8 — synthetic, dispatched by `read_file`'s
-UTF-8 validation via `__fern_utf8_valid`, 84 on Linux / 92 on
-Darwin / WASI errno 25; no file syscall produces it — default →
-Other(path, strerror(errno))). The message is glibc's text for
-the errno from the one table in `internal/strerror`, in the
-target OS's numbering, on every backend and in the self-host
-(pinned by `TestSelfHostTableMatches`); an errno outside the
-table reads `Unknown error N`. The errno itself is the host's:
-wasmtime answers a read on a directory with `bad-descriptor`
-where Linux says EISDIR, so the wasm message there is `Bad file
-descriptor`, not `Is a directory`.
-
-Coverage: `Test{Arm64,X86_64}ReadFileOk` /
-`...ReadFileNotFound` / `...WriteFileOk` /
-`...ReadWriteFileRoundtrip` per backend, plus
-`...ReadFileBytesOk` / `...ReadFileBytesNotFound` for
-`read_file_bytes(path): Result[u8[], IoError]` — the raw
-sibling whose Ok payload is a `u8[]` in the `__alloc_u8` box
-shape (#5714).
-
-arm64-darwin parity: `read_file` and `now_unix_ms` are ported
-to Darwin syscalls — `fstat` uses `fstat64` (BSD 339) with
-`st_size` at the 64-bit-inode `struct stat` offset 96 (vs
-Linux's 48), and `now_unix_ms` uses `gettimeofday` (BSD 116,
-`struct timeval` → `tv_usec/1000`) since Darwin has no
-`clock_gettime` syscall. Validated by `TestArm64DarwinNativeReadFile`
-and the `now_unix_ms` case in `TestArm64DarwinNativeMachO`, which
-execute on the macOS arm64 runner.
-
-Reader / Writer file API ✅ landed: `open_reader` /
-`open_writer` / `open_appender` + `Reader.read_line` /
-`read_chunk` / `close` + `Writer.write` / `close` on both
-natives. Same handle layout (4-byte i32 `fd` at +0; the
-allocator rounds up to 16). `stdin()` / `stdout()` /
-`stderr()` now return real `Reader` / `Writer` struct
-pointers (fd = 0 / 1 / 2) so `stdin().read_line()` flows
-through the same `__fern_reader_read_line` runtime as
-`open_reader("f").read_line()`. Shared
-`__fern_close_fd_box` backs both `Reader.close` and
-`Writer.close`. Coverage: `TestArm64ReadLine` plus
-`Test{Arm64,X86_64}ReaderWriter` (open + append + read
-round-trip, `read_chunk` partial reads, line-by-line
-streaming).
-
-### ~~`State[T]` persistent storage + two-cursor allocator~~ ❌ REMOVED
-
-These shipped on both natives and were then **removed** with the
-`state` feature (and the arena reset that motivated the second
-cursor). For the record, what existed was: `state { let NAME: T
-= INIT; }` blocks lowering to labelled `.data`/`.bss` slots via
-`OpLoadGlobal`/`OpStoreGlobal`; a synthesised `__state_init`
-start function; and a two-cursor bump allocator (an
-`__fern_alloc_mode` byte selecting a transient vs. a persistent
-region, toggled around state-rooted call sites so a state Map's
-grow survived `arena_restore`).
-
-All of it is gone: no `state` syntax, no AST/checker/IR support,
-no `OpPersistent*` ops, and the allocator is back to a single
-bump cursor (`__fern_heap_ptr`/`_end`) reclaimed by reference
-counting. The `Test*State*` cases were removed with the feature.
-
----
-
-## Missing IR ops
-
-Ranked by how likely user code is to hit them.
-
-### ~~`OpExtendI32S` / `OpExtendI32U` / `OpWrapI64` on arm64~~ ✅ done
-
-Landed in PR #281. arm64 now has `sxtw x0, w0` for the signed
-extension, `mov w0, w0` for both the unsigned extension and the
-wrap (32-bit reg form implicitly zero-extends), and a new
-`OpConstI64` lowering via `ldr x0, =N` (literal pool). Linux +
-Darwin share the encoding so arm64-darwin gets parity for free.
-
-### ~~`OpSignExtend8` / `OpSignExtend16` / `OpLoadI8S` / `OpLoadI16U` / `OpLoadI16S` / `OpStoreI16`~~ ❌ REMOVED
-
-Sub-i32 sign-extension and halfword element load/store. Used by
-the `i8`/`i16`/`u16` cast and array-element paths. `i8`/`i16`/`u16`
-(and the never-used `isize`) were retired in #4408 — the language
-now ships `i32/i64/u8/u32/u64/f32/f64/usize` only. `OpStoreI8` and
-`OpLoadByte` (zero-extended byte, `u8`) survive; every signed- or
-16-bit-width op above no longer exists in `internal/ir`. The
-`TestArm64SubI32` / `TestX86_64SubI32` cases these used to cover
-(`i32_to_i8_sign_preserved`, `i8_array_signed_sum`, etc.) were
-removed or narrowed to `u8` alongside the ops.
-
-### ~~`OpLoadGlobal` / `OpStoreGlobal` / `OpPersistentSet` / `OpPersistentRestore`~~ ❌ REMOVED
-
-These IR ops existed only to support the `state` feature
-(global-slot loads/stores and the persistent-allocator-mode
-toggle). They were removed with it — the ops no longer exist in
-`internal/ir`. See the "`State[T]` persistent storage" section
-above.
-
----
-
-## Test coverage parity (no missing codegen, just no tests)
-
-Tests that exist on wasm and would help cover existing native codegen.
-Adding them is a copy-paste of the wasm test with a different runner.
-
-### x86-64 lacks (vs arm64)
-
-- ~~`TestX86_64Map`~~ ✅ landed alongside the x86-64 Map runtime
-- ~~`TestX86_64IndirectCall`~~ ✅ landed (function-value-in-var smoke test)
-- ~~`TestX86_64Arena`~~ ✅ landed
-- ~~`TestX86_64EprintExit`~~ ✅ landed
-- `TestX86_64DarwinBuilds` — N/A; no Darwin x86-64 target
-
-### Both natives lack (vs wasm)
-
-- ~~`Test*Defer` (defer with conditional / early-return)~~ ✅ both
-- ~~`Test*FStringInterpolation`~~ ✅ both
-- ~~`Test*Generic*`~~ ✅ `TestArm64Generic` / `TestX86_64Generic`
-- ~~`Test*Tuple*`~~ ✅ both
-- ~~`Test*ForEach*`~~ ✅ both
-- ~~`Test*IfLet*`~~ ✅ both
-- ~~`Test*SubI32*`~~ ❌ REMOVED — `i8`/`i16`/`u16` were retired
-  (#4408); `u8[]` sub-i32 coverage lives on in
-  `TestArm64SubI32ArithmeticWraps` / the x86-64 equivalent.
-- ~~`Test*State*`~~ ✅ landed alongside `State[T]`
-- ~~`Test*ReadFile*` / `Test*WriteFile*` / `Test*OpenAppender`~~
-  ✅ both natives have ReadFileOk / ReadFileNotFound / WriteFileOk
-  / ReadWriteFileRoundtrip + the Reader/Writer suite
-
-### Smaller test gaps (low priority)
-
-- ~~arm64 had no `TestArm64ReadLine` test function~~ ✅ landed
-  alongside the Reader / Writer file API PR.
-
----
-
-## Working order suggestion
-
-The dependency graph is mostly flat. A reasonable greedy order by
-risk × leverage:
-
-1. ~~**`OpExtendI32S` / `OpExtendI32U` / `OpWrapI64` on arm64**~~ ✅
-   (PR #281)
-2. ~~**Map on x86-64**~~ ✅ (PR #282)
-3. ~~**`OpSignExtend8` / `OpSignExtend16` + sub-i32 typed loads
-   on both natives**~~ ✅ (PR #283)
-4. ~~**File I/O on both natives**~~ ✅ — `read_file` + `write_file`
-   in PR #284; `open_reader` / `open_writer` / `open_appender` +
-   `Reader.*` / `Writer.*` in this batch (Reader / Writer file API).
-5. ~~**`State[T]` on both natives**~~ ✅ (PR #286, program-lifetime
-   interpretation).
-6. ~~**Test-coverage parity**~~ ✅ folded into the parity-test batch
-   (PR #287) plus each feature PR.
-
-When picking any one of these, the pattern is the same as the closures
-PR (#279): mirror the wasm version, add tests at the level the wasm
-suite exercises, and re-run the full suite (including wasm e2e) before
-opening the PR.
-
 ---
 
 ## Supported OS / runtime versions
@@ -549,9 +336,8 @@ runtime. The CI runner labels reflect that policy:
   works (build + test + examples). Pinning to anything OLDER
   than what's currently in `.github/workflows/macos.yml` is
   explicitly not supported.
-- wasm: `wasmtime` pinned to a specific version in
-  `.github/workflows/ci.yml`. Bumps land as part of the dep refresh
-  cycle.
+- wasm: `wasmtime` pinned to a specific version in `mise.toml`. Bumps
+  land as part of the dep refresh cycle.
 
 If a future macOS release breaks something:
 1. **Preferred**: fix the codegen for the new version.
@@ -569,50 +355,46 @@ Items that are known-broken in some configuration but considered too
 costly (or too speculative) to fix right now. Each entry should have a
 concrete fix plan and a rough scope estimate.
 
-### Line coverage (`-cover`) is native x86-64 / arm64 and self-host Linux
+### Line coverage (`-cover`) is x86-64-linux and arm64-linux only
 
 `-cover` (#5548, `docs/COVERAGE.md`) instruments every executable source line
 and every source-level conditional with counters and dumps the table at exit.
-On native the instrumentation is an IR pass, but each backend still has to emit
-the counter array, the report table, and the exit-seam call — only the x86-64
-and arm64 stack-machine emitters do, matching `-sanitize`'s reach. The
-self-host instruments the source instead (`cover.fern`), so
-both of its Linux targets have it through the same emitters every build uses.
+The self-host instruments the source (`cover.fern`), and the counter table
+and its report are written on the raw-memory floor (`__raw_cover`,
+`__raw_alloc`, `__raw_load_ptr`, …), which the wasm emitter does not lower.
 
-`ir.LowerWith` **errors** when `ast.CoverEnabled` is set and the caller did not
-pass `CoverPoints()`, so a wasm build under `-cover` refuses rather than
-producing an uninstrumented binary. A coverage run that silently measures zero
-is the failure mode that gate exists to prevent.
+The driver refuses `-cover` for every target but x86-64-linux and
+arm64-linux rather than producing an uninstrumented binary. A coverage run
+that silently measures zero is the failure mode that refusal exists to
+prevent.
 
-Fix plan for wasm: a linear-memory counter region plus a report loop over it,
-written out through the same `fd_write` the string printers use. Scope: the
-loop is the work — the counter bump itself is `i64.load` / `add` / `store`.
+Fix plan for wasm: the counter table and report as hand-written WAT helpers,
+the way wasm serves the other raw-floor runtime helpers (`wasm_ir.fern`).
+Scope: the report loop is the work — the counter bump itself is `i64.load` /
+`add` / `store`.
 
 ### Heap exhaustion exits 125 on the natives, traps on wasm
 
-Both native backends exit `ExitArenaExhausted` (125) when the arena runs out.
-On wasm the equivalent event is `memory.grow` returning -1, and `__fern_alloc`
-raises `unreachable` there — so the failure is attributable to the allocator,
-with its caller chain, but the process dies as a trap rather than carrying a
-status. Both wasm emitters behave the same way (`internal/codegen/wasmbin`'s
-`buildAllocBody`, `examples/self_host/wasm_ir.fern`'s `$__fern_alloc`).
+The native targets exit 125 when the arena runs out (`.Lalloc_oom` in
+`asm_ir.fern` and `asm_arm64_ir.fern`). On wasm the equivalent event is
+`memory.grow` returning -1, and `$__fern_alloc` raises `unreachable` there —
+so the failure is attributable to the allocator, with its caller chain, but
+the process dies as a trap rather than carrying a status
+(`examples/self_host/wasm_ir.fern`'s `$__fern_alloc`).
 
-Fix plan: call `wasi_proc_exit(125)` instead of trapping. The cost is the
-reason it has not been done — that import is reached only through
-`__fern_exit`, so wiring the allocator to it puts a WASI import into every
-allocating module, including the zero-import core modules and the `--invoke`
-bare-core path, and `internal/codegen/wasmbin/build_test.go` pins import shape
-in both directions. Scope: small in the emitter, wide in what it perturbs.
+Fix plan: call `$proc_exit` with 125 instead of trapping. The cost is the
+reason it has not been done — the import-free component core (mode 1 of
+`wasm_ir.fern`'s module emitter) has no `$proc_exit`, so wiring the allocator
+to it puts a WASI import into every allocating module. Scope: small in the
+emitter, wide in what it perturbs.
 
-This is now the only wasm emitter, so the trap IS the wasm behaviour. The
-retired `wasmssa` never grew at all — one fixed page — which was a separate
-subset limitation of that relooper-era emitter, not this one.
+### Tail-call optimisation — every target
 
-### Tail-call optimisation — wired on every backend
-
-The `ir.TailCallOptimize` pass runs on x86-64, arm64, and wasm (the same
-one-line wiring in each), so every backend gets O(1) stack depth on self-tail
-recursion.
+The typed lowering turns a self-recursive call in tail position, and a tail
+call modulo cons, into a loop before any emitter sees the body
+(`ssasem.tail_recursion`, #9692, #10462), so self-tail recursion runs in
+constant stack depth on x86-64, arm64 and wasm
+(`internal/e2eselfhost/self_host_sem_tail_recursion_test.go`).
 
 ### Pointer-width handling on arm64-darwin's high heap — how it works
 
@@ -621,230 +403,16 @@ address hint, so `__fern_alloc` puts the heap at 0x1000_0000 (256 MiB) and
 every Linux lane runs with heap pointers that fit in 32 bits; macOS ignores
 the hint and relocates the mapping above 4 GiB. A pointer handled 32 bits
 wide is therefore correct on every cheap lane and wrong only on Apple
-hardware. `arm64codegen.Options.HighHeapProbe` raises the hint to
-0x2_0000_0000 (8 GiB) — the 0x1000_0000 value is a FLOOR, not a fixed point:
-the rc below-heap guards classify `ptr >= 0x10000000` as heap, so it may be
-raised but never lowered — and qemu-aarch64 honours the raised hint. The gate
-is `internal/e2e/arm64_high_heap_test.go` (`TestArm64HighHeap*`, picked up by
-the ordinary `-run TestArm64` selection); `FERN_HIGH_HEAP=1` gives the same
-build from the driver for reproducing one by hand. The self-host arm64 emitter
-reads the same `FERN_HIGH_HEAP=1` at emit time and its gate is
-`internal/e2eselfhost/self_host_arm64_high_heap_test.go`
+hardware. `FERN_HIGH_HEAP=1` in the compiler's environment raises the hint to
+0x2_0000_0000 (8 GiB) at emit time (`asm_arm64_ir.fern`), and qemu-aarch64
+honours the raised hint. The gates are `internal/e2e/arm64_high_heap_test.go`
+(`TestArm64HighHeap*`, picked up by the ordinary `-run TestArm64` selection)
+and `internal/e2eselfhost/self_host_arm64_high_heap_test.go`
 (`TestSelfHostArm64HighHeap*`). What neither reproduces: only the arena moves,
 so a truncation of a `.rodata`, image or stack address still needs the
-`macos-15` lane.
-
-All pointer-shaped values (string / array / struct / enum / slice / tuple)
-round-trip through 8-byte slots on arm64-darwin's high heap. Two pieces drive
-that:
-
-- **`WidthPtr`**, a sentinel on `Op.Width` in the IR, which each backend resolves
-  to its own heap-pointer width — 4 on wasm32, 8 on arm64.
-- **`ast.IsPointerType`**, the type-side classifier, which drives stride / offset
-  / store-width selection in `payloadSlotSize`, `structFieldLayout`,
-  `tupleElemLayout`, `arrayElemStoreOp`, and `ast.ElemSizeBytesFor`.
-
-- **`Op.Width`** on the IR ops that touch a heap pointer. The default is i32,
-  so a bare `OpLoad` / `OpEq` on a pointer is a truncation: `WidthPtr` is not
-  an optimisation there, it is the correctness case. The IR's inline map
-  builders and its pointer-IDENTITY tests (map CoW retain, array / map
-  overwrite dec, the consumed-arg guard, dyn-vtable comparison) all carry it.
-
-Map operations (`set` / `get_or` / `has` / `delete` / `iter` / `len` / `keys` /
-`values`) cover all combinations of i32 / string K/V. Closures with captures
-lower on every backend (`OpMakeClosure` / `OpMakeEnv` / `OpCallClosureDirect` —
-see `arm64.go:emitMakeClosureOrEnv` and the x86-64 mirror); the `ptrW`-aware
-capture layout from `closureconv` lines up with the load side (`payloadLoadOp`
-on a CaptureRef emits `WidthPtr`). Coverage: 8 `TestArm64Closure*` cases, with
-matching counts on x86-64 and wasm.
-
-### arm64-darwin heap-address truncation in Map runtime — RESOLVED
-
-**Resolution**: the `core/map` runtime is now `usize`-pointered
-throughout — every Map handle / buffer / entry pointer is a `usize`
-local or parameter (`NumberType{Width: WidthPtr}`: 8 bytes native,
-4 bytes wasm32), so heap pointers above 4 GiB no longer shed their
-high half. No `i32`-typed pointer locals remain anywhere in
-`internal/stdlib` (Map / string / slice runtimes). The `usize` type
-the fix plan below proposed now exists, and the migration landed with
-it. The `.fern` runtime is only half the surface, though: the IR
-lowers `keys()` / `values()` on a wide-scalar column inline
-(`emitWideMapKeys` / `emitWideMapValues`) rather than through
-`core/map`, and those builders deref the Map handle themselves — with
-a default-width (i32) `OpLoad` until the high-heap gate below caught
-it. Re-added regression guard: the `map_heap_string_values` case in
-`internal/e2e/arm64_darwin_native_test.go` builds a `Map[string,
-string]` with concat-built (heap, >4 GiB on macOS) keys + values and
-asserts they round-trip on a real Apple Silicon runner (exit 42).
-
-The historical analysis below is retained for context.
-
-**Scope**: macOS-only.
-
-**Symptom**: `Map[K, V]` values that are HEAP-allocated pointers
-(e.g. runtime-built strings via `+` concat, structs, arrays) get
-truncated when stored in Map value slots. Values that come from
-`.rodata` (string literals) work fine because they live below 4 GiB
-in the binary's address space; the heap on macOS-14+ is typically
-above 4 GiB.
-
-**Root cause**: the prelude declares pointer-holding locals as `i32`:
-
-```
-let buf: i32 = __load_ptr(m);   // truncates a 64-bit heap pointer
-```
-
-On wasm32 this is correct (pointers are 32-bit). On native (Linux +
-Darwin) the runtime stores 8 bytes via `__store_ptr`, but the Fern
-variable's `i32` declaration sheds the high 32 bits. Linux's
-`__fern_alloc` hints `0x10000000` so heap pointers happen to fit in
-32 bits; macOS ignores the hint and returns high addresses, exposing
-the truncation.
-
-**Status (historical)**: **confirmed on macOS CI** (PR #291's probe
-test tripped the bug — heap-allocated string values stored in a `Map`
-value slot get truncated on macOS-latest runners). The probe was
-removed at the time to keep CI green; it has since been re-added (see
-the Resolution note above) now that the `usize` migration fixes the
-underlying truncation.
-
-**Fix plan (revised after looking at Nature lang's type
-system)**: introduce a target-aware **`usize` Fern type** modelled
-on Nature's `int` (native-width signed) / `uint` (native-width
-unsigned). Concretely:
-
-- 4 bytes on wasm32; 8 bytes on native (arm64, x86-64).
-- The type checker handles `usize` via a dedicated
-  `NumberType{Width: WidthPtr}` marker that backends resolve to
-  their target width. We already have `WidthPtr` for `OpLoad` /
-  `OpStore` — extending it to type-level uses the same machinery.
-- Mixed-width arithmetic policy: `usize + i32` auto-widens the
-  `i32` (via the cast inserter from PR #292). `usize + i64` is a
-  hard error on wasm32 (i64 doesn't fit in the slot) — explicit
-  cast required. On native both are 8 bytes, so the auto-widen
-  collapses to identity.
-- Helper signatures change from `__alloc(n: i32) → usize` and
-  `__load_ptr(addr: usize) → usize` etc. Prelude pointer locals
-  become `let X: usize = __alloc(...)`.
-
-Why this beats the spike's "everything is i64" approach:
-
-- **Wasm32 stays 4-byte-pointer-native.** No `i32.wrap_i64`
-  shims at every memory op; no IR-level cast hack for `i64 →
-  string` on wasm32 (which is the blocker the spike hit).
-- **Same code generates the right width on every target** with no
-  per-target branches in the prelude — the type system carries the
-  intent.
-- **Adds a building block that's useful elsewhere** — array
-  indexing, slice lengths, file sizes, anywhere "size of a thing
-  in memory" appears.
-
-Variant (never implemented, now moot): also add `isize` for
-signed native-width offsets (Rust / Nature have both). #4408
-retired the idea outright — `isize` had zero uses and `usize`
-alone covers every demonstrated need.
-
-### Spike status (post PR #292 attempt)
-
-Tried option (2) end-to-end. Got far enough to confirm scope:
-
-- **Checker changes** are tractable — `addrType = NumberType{Width:
-  64}` on the address-taking helpers, plus auto-widening for binops
-  / comparisons / function args (the auto-widening half landed
-  cleanly in PR #292).
-- **Prelude rewrite** is ~140 sites across the Map / string / slice
-  runtimes (pointer-typed `let X: i32 = __alloc(...)` → `i64`,
-  function signatures, return types). Mechanical but laborious.
-- **Native backends** work without code changes — they already
-  treat 8-byte slots and 64-bit registers as the default.
-- **Wasm32 hits a new blocker**: the IR's `i64 → string` cast is a
-  reinterpret no-op everywhere, but on wasm32 the underlying
-  memory access (`i32.load` / `call $__str_eq`) needs an i32
-  pointer, not i64. Currently the IR doesn't have a target-aware
-  "wrap-to-ptr-width" op. Fixing this needs ONE of:
-    - A new target-aware IR op (e.g. `OpWrapToPtr`, no-op on
-      native / `i32.wrap_i64` on wasm32).
-    - Or: widen wasm32's `$__str_eq` and all other helpers that
-      take string-pointer args to accept `i64`, internally
-      `i32.wrap_i64`-ing.
-    - Or: restructure the prelude to type-pun string keys as
-      `string` directly rather than i64 (requires per-K
-      monomorphisation in the Map runtime — touches Item 2 below
-      too).
-
-Estimate: ~2–3 more days of careful work touching IR + wasm
-runtime + prelude, with cross-target testing.
-
-### ~~Wide-scalar Map keys / values (i64 / u64 / f64)~~ — RESOLVED
-
-> **Status: RESOLVED.** The runtime-tag scheme was extended instead of the
-> type-hash monomorphisation sketched below: `mapKeyKindTag` gained
-> **kind 2 = wide-scalar-boxed** (i64 / u64 / f64 keys box into a heap cell
-> when `ptrW < 8`, with `__map_hash` / `__map_lookup` dereferencing the
-> 8-byte value), `mapValKindTag` was widened to kinds 0..3, and wide-scalar
-> V types go through `emitWideMapSet` / `emitWideMapGet`. wasm e2e coverage:
-> `TestWASMWideKeyMapBasic` / `…HasDelete` / `…Overwrite` / `…Grow` /
-> `…HighBitsDistinct` / `…U64` / `…StringV` / `…KeysSnapshot` plus the
-> wide-V `TestWASMMapValuesWideI64` / `…F64` series
-> (`internal/e2e/wasm_e2e_test.go`). See the RESOLVED entry in
-> `ROADMAP-AND-SELF-HOSTING.md` Part 1 item 3. The full per-(K,V)
-> monomorphisation remains a separate, unstarted perf lever
-> (`MAP-SPECIALIZATION.md`, #4368). The original analysis below is kept as
-> the historical record (note it predates prelude removal).
-
-**Scope**: wasm-only. The natives (x86-64 + arm64 Linux qemu) now
-work for `Map[i64, i32]`, `Map[i32, f64]`, `Map[i64, string]`,
-`Map[string, i64]`, `Map[u64, i32]`, etc. — each operand-stack slot
-is 8 bytes on the natives so the prelude's `(m: i32, k: i32, v: i32)`
-signatures coincidentally pass i64 / f64 values through without
-truncation, and `__store_ptr` / `__load_ptr` flow the full 8 bytes
-through.
-
-**Symptom (wasm only)**: `wasm-tools component new` rejects
-`Map[i64, *]` with `type mismatch: expected i32, found i64`. The
-typed operand stack on wasm32 enforces strict matching against
-`__map_set_impl(i32, i32, i32)` etc., so the IR's `i64` push for
-the key fails validation.
-
-**Root cause**: the prelude's Map runtime hardcodes an entry stride
-of `2 * __ptr_width()` and assumes K / V both fit in pointer-width
-slots. Natives sidestep this via slot-wider-than-declared-type
-coincidence; wasm32 doesn't.
-
-**Fix plan (revised after looking at Nature lang's `map<T,U>`
-implementation)**: emit a **compile-time type hash** per instantiation
-and dispatch a single polymorphic runtime function via that hash.
-Nature's `std/builtin/map.n` does this with `@reflect_hash()`; the
-runtime takes `anyptr` for the key/value and switches on the
-per-instantiation hash constant to pick the right load/store width
-+ hash function + comparison.
-
-Translating to our shape:
-
-- Mangle `K` and `V` into stable u32 hashes at the checker layer
-  (`mapKeyHash(t) → u32`, `mapValHash(t) → u32`).
-- Replace today's `keyKind` / `valKind` runtime fields (i32 enums:
-  0 = i32, 1 = string) with the full hash. Same buffer-header
-  layout otherwise.
-- Per-instantiation `entryStride` computed from
-  `widthOf(K) + widthOf(V)` (no longer hardcoded `2 * __ptr_width()`).
-- The Map impl's `__load_ptr` / `__load_i32` calls become a small
-  switch on the per-entry-half hash — i32 → `__load_i32`, i64 →
-  `__load_i64`, string/array/struct → `__load_ptr`, f64 →
-  `__load_f64`.
-
-**Shares scope with the arm64-darwin truncation item above.** With
-type-hash dispatch, the Map runtime stops carrying `let entryK: i64
-= __load_ptr(...)` locals at the Fern level (the value flows as
-`anyptr` + per-call width-tagged load). That side-steps the wasm32
-"cast i64 → string" blocker we hit in the spike — the Map runtime
-no longer needs an `i64 → string` cast at all because string-keyed
-maps would dispatch through `__load_ptr` → `string` directly.
-
-Multi-day refactor. Doing this together with Item 1 (usize) is
-probably the right shape — both touch the prelude's typed-pointer
-locals, and the type-hash dispatch makes the wasm32 blocker
-disappear.
+`macos-15` lane, where the `map_heap_string_values` case in
+`internal/e2e/arm64_darwin_native_test.go` round-trips concat-built keys and
+values through a `Map[string, string]`.
 
 ---
 
@@ -853,167 +421,35 @@ disappear.
 Tracked here because the language targets lightweight CLI tools
 and edge-handler-style HTTP servers — every byte allocated per
 request and every cycle on the hot path matters. Each entry has
-a rough impact estimate (mem / speed), a scope estimate, and a
-sketch of the design. Mostly **breaking** changes — sequence
+a rough impact estimate (mem / speed) and a sketch of the
+design. Mostly **breaking** changes — sequence
 them with care.
 
-### ~~1. Register-based `Result[T, IoError]` / `Option[T]` returns~~ ✅ done
-
-**Impact:** zero-alloc fallible-call returns; saves the 8/16 B
-heap-box alloc per `Option[T]` / `Result[T, E]` return for
-every i32-shaped or pointer-shaped payload type. Edge-handler
-workloads that do file I/O + JSON parse + HTTP write no longer
-allocate on the happy path.
-
-**Status:** Done. The pair-form ABI lowers a function whose
-body returns only variant literals (`Some(x)` / `None` /
-`Ok(x)` / `Err(e)` — and tail calls into other pair-form fns,
-and ternaries thereof) as a `(tag, payload)` register pair:
-- **wasm**: `(result i32 i32)` multi-value return (PR #332,
-  #334);
-- **x86_64**: `(rax, rdx)` per SysV (PR #336);
-- **arm64**: `(x0, x1)` per AAPCS64 (PR #336).
-Match-style consumers (`if let` / `match` / `let else`) skip
-the heap-box rebox and dispatch on the tag register directly.
-User-defined two-variant enums matching the canonical
-"payload-carrying variant + nullary variant" shape opt in
-automatically (PR #333).
-
-Landed across 17 PRs (#320–#336). Six-lens review of the
-midpoint shape captured in `docs/PR-326-REVIEW.md`.
-
-### 2. Inline small strings (SSO) — shipped; x86-64 two-word flip open
+### 1. Inline small strings (SSO)
 
 **Impact:** zero-alloc for strings ≤ N bytes; significant for
-short keys, status codes, header names. Before SSO, every
-runtime-built short string allocated ≥ 16 bytes (alloc
-round-up). The cap is now 7 bytes on wasm32 and 15 on arm64;
-x86-64 keeps the 7-byte single-word form.
+short keys, status codes, header names. Every runtime-built
+string is a heap allocation today: a string is a two-word box,
+`[data, len]`, on the natives and one `[len][bytes]` block on
+wasm, with no inline form on any target.
 
-**Shipped first (wasm, single-i32 form, 3-byte cap — since
-superseded by the two-word flip below)**:
-PRs #351–#364 landed the single-i32 tiny SSO encoding (top-bit
-flag + 3-bit length + up-to-3 inline bytes, see
-`fernstring.PackTinyWasm`) without widening the operand-stack
-ABI. Producer flips on `$__str_concat` / `$__str_slice` /
-`$string_from_bytes_unchecked` / `$__bytes_to_lang_string` / `$args` /
-`$__stream_read_line` / `Reader.read_chunk` / `$tcp_recv` /
-`OpConstStr` literals + HTTP wrapper method preinterns. Stream-
-write seam (`$__fern_str_data_ptr`) skips the promote-to-heap
-alloc on inline-form values written to `$__streams_write`. See
-`docs/SSO-PLAN.md` for the full architecture + remaining-work
-list.
+### 2. Per-instantiation Map entry sizing
 
-**Since shipped:** the two-word ABI flip (`(data_ptr, len)` on
-the operand stack, top bit of `len` flags inline) landed on
-wasm32 and on arm64, and both natives got their own
-`$__fern_str_*` runtime-helper siblings — see
-`docs/SSO-NATIVE-FLIP-STATUS.md`. The `Map[string, V]` hash
-concern is gone with them: `__str_idx` spills an inline
-string's pair to a fixed scratch slot instead of promoting the
-key to the heap, so indexed reads in the hash no longer
-allocate.
+**Impact:** `Map[i32, i32]` entries drop from 16 B → 8 B on the
+natives (50% memory). `Map[i32, u8]` would drop further (4 B +
+1 B = 8 B with alignment).
 
-**Remaining:**
+Every `core/map` entry is `2 * __ptr_width()` bytes whatever K
+and V are (`internal/stdlib/core/map.fern`). Sizing it per
+instantiation is the per-(K, V) monomorphisation in
+`docs/MAP-SPECIALIZATION.md`.
 
-  - **x86-64 two-word flip.** x86-64 alone stays on the
-    single-word LSB-tagged form (7-byte cap vs arm64's 15); it
-    never sets `ast.TwoWordOverride`. Mirroring the arm64 flip
-    is the last piece, sketched under "Then: x86_64" in
-    `SSO-NATIVE-FLIP-STATUS.md`.
-
-**Scope:** medium-large, one backend.
-
-### 3. Pack the operand-stack into 8-byte slots
-
-**Impact:** halves operand-stack memory; tighter stack frames
-mean smaller working-set; fewer cache misses on deep call chains.
-The code-size win is the bigger one: a spill pair drops from
-16 bytes of encoding (`sub rsp, 16` / `mov [rsp], rax` and back)
-to 2 (`push rax` / `pop rax`).
-
-**Status:** DONE on x86-64 (#4111): `slotBytes = 8`, real
-`push` / `pop`, and 16-byte alignment restored at call
-boundaries only. Measured on `examples/self_host/fern.fern`
-linked for `x86-64-linux`: executable segment 22,206,407 ->
-17,692,055 bytes, **-20.3%**.
-
-arm64 still pushes 16-byte slots (`str x0, [sp, #-16]!`). AAPCS64
-wants a 16-byte-aligned sp for any sp-relative access, not just
-at calls, so the arm64 flip is a harder change than x86-64's and
-the win is narrower — pairing two 8-byte spills into one
-`stp` / `ldp` is the shape to aim at.
-
-**How the x86-64 alignment is kept:** the generator tracks the
-live operand depth (`opBytes`) and pads 8 bytes before a call
-only when the depth is odd; with stack arguments the pad is
-folded into the overflow area so it cannot move the outgoing
-args. `TestEmittedCallsAre16ByteAligned` re-derives rsp from the
-emitted text and fails on any call reached at an odd multiple of
-8 — a counter bug would otherwise be invisible until a C callee
-faulted.
-
-**Scope for arm64:** medium. Touches every push/pop, operand-
-stack offset calculations (closure captures, callee-save spills,
-multi-arg call ABI). Per-test re-verification.
-
-### 4. Per-instantiation Map entry sizing (depends on Item 2)
-
-**Impact:** `Map[i32, i32]` entries drop from 16 B → 8 B (50%
-memory). `Map[i32, u8]` would drop further (4 B + 1 B = 8 B with
-alignment).
-
-Already covered by the wide-K/V item above; reiterated here as
-the immediate memory win the type-hash dispatch unlocks. Build
-on top of the Item 2 work.
-
-### ~~5. Inline closures with zero captures~~ ✅ done
-
-**Impact landed:** no more 16-byte heap pair per zero-capture
-closure-value pass. The classic case — `tryThing(my_lambda)`
-where `my_lambda` captures nothing — now materialises as a
-static `.rodata` cell (natives) or `closuresBase + 8*ti` static
-pointer (wasm), zero alloc.
-
-**What shipped:** new `ir.InlineZeroCaptureClosures` pass runs
-after `ElideClosurePair` in every backend's optimisation
-pipeline. Rewrites `OpMakeClosure(target, n=0)` →
-`OpConstFunc(target)`; both ops produce a pair-pointer of the
-same shape (fn_ptr at +0, env_ptr=0 at +ptrW) but OpConstFunc
-materialises it via a static cell. ElideClosurePair already
-covers the direct-call case (`let f = MakeClosure; ... f(args)`)
-by rewriting to OpMakeEnv; this pass closes the orthogonal
-escape case where the value flows past direct-call dispatch
-(arg to a function-typed param, returned, stored in a field).
-Wasm cell init also stopped skipping hoisted entries — every
-in-table function now gets a static cell.
-
-### 6. Reduce 4-byte length prefix to varint for short strings
+### 3. Reduce the 4-byte length prefix to varint for short strings
 
 **Impact:** small (saves 0–3 bytes per string), but cumulative
 on JSON / HTTP payloads with many short field names. Probably
-not worth the complexity.
+not worth the complexity. The 4-byte prefix is wasm's string
+block; a native string box holds its length in a full word.
 
 **Status:** mentioned for completeness; would interact with SSO
-(Item 2 in this list).
-
-### Working order
-
-Items 1 + 2 of this list are the highest-impact memory wins; both
-depend on the language-level work (`usize`, type-hash Map
-dispatch). Item 3 is independent and is a pure memory/speed win
-for any program. Item 4 lands as a side effect of the wide-K/V
-fix. Items 5 / 6 are smaller and optional.
-
-Suggested sequencing:
-
-1. **`usize` Fern type** (parity Item 1) — building block.
-2. **Type-hash Map dispatch** (parity Item 2) — unlocks Items 4
-   and 5.
-3. **8-byte operand-stack slots** (perf Item 3) — independent;
-   parallelisable with 1 & 2.
-4. **Register-based Result/Option** (perf Item 1) — large, do
-   after 1–3 settle.
-5. **Inline small strings** (perf Item 2) — wasm single-i32
-   form **shipped** in PRs #351–#364; two-word ABI flip + the
-   native backend mirror still ahead.
+(Item 1 in this list).

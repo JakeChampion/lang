@@ -29,7 +29,7 @@ pub struct Composed { bytes: i32[], refused: string }
 // WorldWired is the per-import lowering plan for a core against a world, and
 // the prefix it composes on: the world imports plus the resource types
 // surfaced so far (aliased in the order first met).
-struct WorldWired { o: i32[], n_type: i32, plan: wit_decode.WitImportPlan, kinds: i32[], insts: i32[], rts: i32[], res_names: string[], res_types: i32[], refused: string }
+struct WorldWired { o: i32[], n_type: i32, n_inst: i32, plan: wit_decode.WitImportPlan, kinds: i32[], insts: i32[], rts: i32[], res_names: string[], res_types: i32[], async_ifaces: string[], async_insts: i32[], stream_elems: string[], stream_types: i32[], refused: string }
 
 function drop_prefix(): string {
   return "[resource-drop]";
@@ -85,14 +85,14 @@ function refuse(w: WorldWired, why: string): WorldWired {
 // an export's types need, and what those read — and plans each core import's
 // lowering against the world: 0 no-opt, 1 memory, 2 memory + realloc, 3 a
 // resource drop (with the surfaced resource type in rts), 4 an async export's
-// task.return (with its result valtype in rts).
-function wire_world(tbody: i32[], ci: wit_decode.WitCoreImports, req_ifaces: string[], req_names: string[], lifts: watbin.AsyncLift[]): WorldWired {
+// task.return (with its result valtype in rts), 5 / 6 an async lower, 7 / 8 a
+// waitable intrinsic (wire_intrinsic).
+function wire_world(tbody: i32[], ci: wit_decode.WitCoreImports, req_ifaces: string[], req_names: string[], asy: watbin.AsyncSurface): WorldWired {
   let ifaces: string[] = req_ifaces;
   let wanted: string[] = req_names;
   let k: i32 = 0;
   while (k < ci.names.len()) {
-    // A task.return is the component's own, not the world's.
-    if (ci.ifaces[k] != task_return_iface()) {
+    if (world_supplied(ci.ifaces[k], ci.names[k])) {
       ifaces = ifaces.append(ci.ifaces[k]);
       wanted = wanted.append(world_name(ci.names[k]));
     }
@@ -101,14 +101,51 @@ function wire_world(tbody: i32[], ci: wit_decode.WitCoreImports, req_ifaces: str
   let plan: wit_decode.WitImportPlan = wit_decode.wit_import_plan(tbody, ifaces, wanted);
   let o: i32[] = watbin.component_preamble();
   o = watbin.wcat(o, wit_decode.wit_emit_world_imports(tbody, plan));
-  let w: WorldWired = WorldWired { o: o, n_type: plan.n_type, plan: plan, kinds: [], insts: [], rts: [], res_names: [], res_types: [], refused: "" };
+  let w: WorldWired = WorldWired { o: o, n_type: plan.n_type, n_inst: plan.n_inst, plan: plan, kinds: [], insts: [], rts: [], res_names: [], res_types: [], async_ifaces: [], async_insts: [], stream_elems: [], stream_types: [], refused: "" };
+  w = import_async_ifaces(w, tbody, asy.lowers);
+  w = define_stream_types(w, ci);
   let i: i32 = 0;
-  while (i < ci.ifaces.len()) {
-    w = wire_import(w, tbody, lifts, ci.ifaces[i], ci.names[i]);
-    if (w.refused.len() > 0) {
-      return w;
-    }
+  while (i < ci.ifaces.len() && w.refused.len() == 0) {
+    w = wire_import(w, tbody, asy, ci.ifaces[i], ci.names[i]);
     i = i + 1;
+  }
+  return w;
+}
+
+// world_supplied reports whether the world supplies the core import `name`
+// from `iface`. A task.return, a waitable intrinsic and an async lower are
+// the component's own.
+function world_supplied(iface: string, name: string): boolean {
+  return iface != task_return_iface() && iface != intrinsic_iface() && !is_async_lower(name);
+}
+
+function intrinsic_iface(): string {
+  return "$root";
+}
+
+function is_async_lower(name: string): boolean {
+  return watbin.lowered_name(name) != name;
+}
+
+// import_async_ifaces imports each interface the async imports `lowers` name,
+// as an instance of an async func per import: the world does not declare it,
+// so the component does.
+function import_async_ifaces(w: WorldWired, tbody: i32[], lowers: watbin.AsyncLower[]): WorldWired {
+  for l in lowers {
+    if (!util.has_str(w.async_ifaces, l.iface)) {
+      if (wit_decode.wit_world_declares(tbody, l.iface)) {
+        return refuse(w, "async import from " + l.iface + ", an interface the world declares");
+      }
+      let mine: watbin.AsyncLower[] = [];
+      for m in lowers {
+        if (m.iface == l.iface) {
+          mine = mine.append(m);
+        }
+      }
+      let o: i32[] = watbin.wcat(w.o, watbin.comp_type_async_instance(mine));
+      o = watbin.wcat(o, watbin.comp_import_instance(l.iface, w.n_type));
+      w = WorldWired { ...w, o: o, n_type: w.n_type + 1, n_inst: w.n_inst + 1, async_ifaces: w.async_ifaces.append(l.iface), async_insts: w.async_insts.append(w.n_inst) };
+    }
   }
   return w;
 }
@@ -123,9 +160,15 @@ function world_name(name: string): string {
 }
 
 // wire_import plans the lowering of the core import `name` from `iface`.
-function wire_import(w: WorldWired, tbody: i32[], lifts: watbin.AsyncLift[], iface: string, name: string): WorldWired {
+function wire_import(w: WorldWired, tbody: i32[], asy: watbin.AsyncSurface, iface: string, name: string): WorldWired {
+  if (iface == intrinsic_iface()) {
+    return wire_intrinsic(w, name);
+  }
+  if (is_async_lower(name)) {
+    return wire_async_lower(w, asy.lowers, iface, name);
+  }
   if (iface == task_return_iface()) {
-    let vt: i32 = task_return_result(lifts, name);
+    let vt: i32 = task_return_result(asy.lifts, name);
     if (vt < 0 - 1) {
       return refuse(w, "core imports " + name + " from " + iface + " for no async export");
     }
@@ -155,6 +198,110 @@ function wire_import(w: WorldWired, tbody: i32[], lifts: watbin.AsyncLift[], ifa
   return WorldWired { ...w, kinds: w.kinds.append(kind), insts: w.insts.append(inst), rts: w.rts.append(rt) };
 }
 
+// stream_op is the import kind of the stream intrinsic `name`, which a core
+// imports from `$root` suffixed with its element's WIT name, and that
+// element; (-1, "") for another name. Read and write go through the memory
+// (9, 10); new and the two drops are canons of the stream type alone
+// (11..13).
+function stream_op(name: string): (i32, string) {
+  let ops: string[] = ["[stream-read]", "[stream-write]", "[stream-new]", "[stream-drop-readable]", "[stream-drop-writable]"];
+  let j: i32 = 0;
+  while (j < ops.len()) {
+    let pre: string = ops[j];
+    if (name.len() > pre.len() && slice_unchecked(name, 0, pre.len()) == pre) {
+      return (9 + j, name_from(name, pre.len()));
+    }
+    j = j + 1;
+  }
+  return (0 - 1, "");
+}
+
+// wit_elem_valtype is the component valtype of a stream element's WIT name.
+function wit_elem_valtype(e: string): i32 {
+  let names: string[] = ["bool", "u8", "s32", "u32", "s64", "u64", "f32", "f64"];
+  let vts: i32[] = [127, 125, 122, 121, 120, 119, 118, 117];
+  let i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == e) {
+      return vts[i];
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// define_stream_types defines a component type `stream<T>` for each element
+// the core's stream intrinsics name, for those canons to be typed by.
+function define_stream_types(w: WorldWired, ci: wit_decode.WitCoreImports): WorldWired {
+  let k: i32 = 0;
+  while (k < ci.names.len() && w.refused.len() == 0) {
+    let (op, e) = stream_op(ci.names[k]);
+    if (ci.ifaces[k] == intrinsic_iface() && op >= 0 && !util.has_str(w.stream_elems, e)) {
+      let vt: i32 = wit_elem_valtype(e);
+      if (vt < 0) {
+        return refuse(w, "core imports " + ci.names[k] + ", a stream of no element type the composer knows");
+      }
+      w = WorldWired { ...w, o: watbin.wcat(w.o, watbin.comp_type_stream(vt)), n_type: w.n_type + 1, stream_elems: w.stream_elems.append(e), stream_types: w.stream_types.append(w.n_type) };
+    }
+    k = k + 1;
+  }
+  return w;
+}
+
+// wire_intrinsic plans an intrinsic from `$root`: a stream op (kinds 9..13,
+// the stream type in rts); waitable-set.wait, which writes its event into the
+// user module's memory, so is trampolined (kind 7); and the operand-free
+// waitable canons (kind 8, the opcode in rts).
+function wire_intrinsic(w: WorldWired, name: string): WorldWired {
+  let (op, e) = stream_op(name);
+  if (op >= 0) {
+    let t: i32 = w.stream_types[util.index_of_str(w.stream_elems, e)];
+    return WorldWired { ...w, kinds: w.kinds.append(op), insts: w.insts.append(0), rts: w.rts.append(t) };
+  }
+  if (name == "[waitable-set-wait]") {
+    return WorldWired { ...w, kinds: w.kinds.append(7), insts: w.insts.append(0), rts: w.rts.append(0) };
+  }
+  let names: string[] = ["[waitable-set-new]", "[waitable-join]", "[subtask-drop]", "[waitable-set-drop]"];
+  let ops: i32[] = [31, 35, 13, 34];
+  let j: i32 = 0;
+  while (j < names.len()) {
+    if (names[j] == name) {
+      return WorldWired { ...w, kinds: w.kinds.append(8), insts: w.insts.append(0), rts: w.rts.append(ops[j]) };
+    }
+    j = j + 1;
+  }
+  return refuse(w, "core imports " + name + " from " + intrinsic_iface() + ", which is no intrinsic the composer supplies");
+}
+
+// wire_async_lower plans the async lower of an import of the interface
+// import_async_ifaces imported: kind 6, with the realloc, when the host
+// writes a string or list result into the module's memory, else kind 5.
+function wire_async_lower(w: WorldWired, lowers: watbin.AsyncLower[], iface: string, name: string): WorldWired {
+  let j: i32 = 0;
+  while (j < w.async_ifaces.len()) {
+    if (w.async_ifaces[j] == iface) {
+      let kind: i32 = 5;
+      if (lower_result_in_memory(lowers, iface, watbin.lowered_name(name))) {
+        kind = 6;
+      }
+      return WorldWired { ...w, kinds: w.kinds.append(kind), insts: w.insts.append(w.async_insts[j]), rts: w.rts.append(0) };
+    }
+    j = j + 1;
+  }
+  return refuse(w, "core imports " + name + " from " + iface + " for no async import");
+}
+
+// lower_result_in_memory reports whether async import `name` of `iface`
+// returns a string (0x73) or a list (a 0x70 defined type).
+function lower_result_in_memory(lowers: watbin.AsyncLower[], iface: string, name: string): boolean {
+  for l in lowers {
+    if (l.iface == iface && l.name == name && l.result.len() > 0) {
+      return l.result[0] == 115 || l.result[0] == 112;
+    }
+  }
+  return false;
+}
+
 // task_return_iface is the core import module an async export's task.return
 // comes from (wasm_ir.async_lift_imports).
 function task_return_iface(): string {
@@ -166,29 +313,33 @@ function task_return_iface(): string {
 // export has that name.
 function task_return_result(lifts: watbin.AsyncLift[], name: string): i32 {
   for l in lifts {
+    if ("[task-return]" + l.core_name == name && l.result.len() == 0) {
+      return 0 - 1;
+    }
     if ("[task-return]" + l.core_name == name) {
-      return l.result;
+      return l.result[0];
     }
   }
   return 0 - 2;
 }
 
 // compose_run composes `core` — a command exporting `_lang_run` — into a
-// wasi:cli/run component of the world, also exporting each of `lifts`.
-pub function compose_run(tbody: i32[], core: i32[], lifts: watbin.AsyncLift[]): Composed {
+// wasi:cli/run component of the world, also exporting the async exports of
+// `asy` and importing the interfaces its async imports name.
+pub function compose_run(tbody: i32[], core: i32[], asy: watbin.AsyncSurface): Composed {
   let ci: wit_decode.WitCoreImports = wit_decode.wit_core_func_imports(core);
-  let w: WorldWired = wire_world(tbody, ci, [], [], lifts);
+  let w: WorldWired = wire_world(tbody, ci, [], [], asy);
   if (w.refused.len() > 0) {
     return Composed { bytes: [], refused: w.refused };
   }
   let o: i32[] = watbin.wcat(w.o, watbin.comp_core_module_section(core));
-  o = watbin.wcat(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, ci.results, w.rts, w.n_type, w.plan.n_inst, 0, "_lang_run", lifts));
+  o = watbin.wcat(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, ci.results, w.rts, w.n_type, w.n_inst, 0, "_lang_run", asy.lifts));
   return Composed { bytes: o, refused: "" };
 }
 
 // component_from_world is compose_run's bytes, empty on refusal.
 pub function component_from_world(tbody: i32[], core: i32[]): i32[] {
-  return compose_run(tbody, core, []).bytes;
+  return compose_run(tbody, core, watbin.AsyncSurface { lifts: [], lowers: [] }).bytes;
 }
 
 // compose_http composes `core` — a reactor exporting
@@ -199,7 +350,7 @@ pub function component_from_world(tbody: i32[], core: i32[]): i32[] {
 pub function compose_http(tbody: i32[], core: i32[]): Composed {
   let ci: wit_decode.WitCoreImports = wit_decode.wit_core_func_imports(core);
   let http_iface: string = "wasi:http/types@0.2.0";
-  let w: WorldWired = wire_world(tbody, ci, [http_iface, http_iface], ["incoming-request", "response-outparam"], []);
+  let w: WorldWired = wire_world(tbody, ci, [http_iface, http_iface], ["incoming-request", "response-outparam"], watbin.AsyncSurface { lifts: [], lowers: [] });
   if (w.refused.len() > 0) {
     return Composed { bytes: [], refused: w.refused };
   }
@@ -210,6 +361,6 @@ pub function compose_http(tbody: i32[], core: i32[]): Composed {
   let (w2, req_t) = surface_resource(w, http_inst, "incoming-request");
   let (w3, out_t) = surface_resource(w2, http_inst, "response-outparam");
   let o: i32[] = watbin.wcat(w3.o, watbin.comp_core_module_section(core));
-  o = watbin.wcat(o, watbin.component_suffix_http(ci.ifaces, ci.names, w3.kinds, w3.insts, ci.params, ci.results, w3.rts, w3.n_type, w3.plan.n_inst, 0, req_t, out_t));
+  o = watbin.wcat(o, watbin.component_suffix_http(ci.ifaces, ci.names, w3.kinds, w3.insts, ci.params, ci.results, w3.rts, w3.n_type, w3.n_inst, 0, req_t, out_t));
   return Composed { bytes: o, refused: "" };
 }

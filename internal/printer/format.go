@@ -2556,6 +2556,8 @@ func formatType(t ast.Type) string {
 		return formatType(x.Elem) + "[]"
 	case ast.SliceType:
 		return "[" + formatType(x.Elem) + "]"
+	case ast.StreamType:
+		return "stream[" + formatType(x.Elem) + "]"
 	case ast.TupleType:
 		out := "("
 		for i, e := range x.Elems {

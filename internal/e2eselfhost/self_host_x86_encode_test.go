@@ -11,7 +11,7 @@ import (
 // TestSelfHostX86Encode exercises the self-hosted x86-64 machine-code
 // encoding primitives (examples/self_host/x86_native.fern) — slice 2a of
 // the native binary backend (the assembler half; the container half is
-// elf.fern). It mirrors internal/native/x86_64/asm.go's byte emission.
+// elf.fern).
 //
 // x86_native.fern is import-free, so this test concatenates it with a
 // self-test main() that encodes each instruction and asserts the bytes

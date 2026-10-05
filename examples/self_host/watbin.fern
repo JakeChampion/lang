@@ -902,31 +902,39 @@ function func_result_types(fnode: SExpr): string[] {
   return out;
 }
 
-// local_names lists a defined func's local index space: params first
-// (named), then `(local $name type)` decls.
+// local_names lists a defined func's local index space: params first, then
+// `(local …)` decls. An unnamed entry takes its slot as "", so the names
+// after it keep their indices.
 function local_names(fnode: SExpr): string[] {
   let out: string[] = [];
   let stop: i32 = func_header_end(fnode);
   let i: i32 = 2;
   while (i < stop) {
-    let c: SExpr = fnode.items[i];
-    if (node_head(c) == "param") {
-      if (c.items.len() >= 2 && c.items[1].text[0] == b'$') {
-        out = out.append(c.items[1].text);
-      }
+    if (node_head(fnode.items[i]) == "param") {
+      out = add_slot_names(out, fnode.items[i]);
     }
     i = i + 1;
   }
   i = 2;
   while (i < stop) {
-    let c2: SExpr = fnode.items[i];
-    // Only NAMED locals (`(local $name type)`) enter the name space; the
-    // abbreviated unnamed form is referenced by numeric index (the flat
-    // encoder uses the index directly, never the name table).
-    if (node_head(c2) == "local" && c2.items.len() >= 2 && c2.items[1].text.len() > 0 && c2.items[1].text[0] == b'$') {
-      out = out.append(c2.items[1].text);
+    if (node_head(fnode.items[i]) == "local") {
+      out = add_slot_names(out, fnode.items[i]);
     }
     i = i + 1;
+  }
+  return out;
+}
+
+// add_slot_names appends the names a `(param …)` / `(local …)` node gives
+// its slots: `$name` for the named single form, "" for each type of a bare run.
+function add_slot_names(out: string[], c: SExpr): string[] {
+  if (c.items.len() >= 2 && c.items[1].text.len() > 0 && c.items[1].text[0] == b'$') {
+    return out.append(c.items[1].text);
+  }
+  let k: i32 = 1;
+  while (k < c.items.len()) {
+    out = out.append("");
+    k = k + 1;
   }
   return out;
 }
@@ -3010,16 +3018,6 @@ function comp_canon_lower_noopts(funcidx: i32): i32[] {
   return wsection(8, b);
 }
 
-// canon lower carrying a single `memory` option.
-function comp_canon_lower_mem(funcidx: i32, memidx: i32): i32[] {
-  let b: i32[] = [1, 1, 0];
-  b = leb_u32(b, funcidx);
-  b = b.append(1);
-  b = b.append(3);
-  b = leb_u32(b, memidx);
-  return wsection(8, b);
-}
-
 // canon lift a core func into a component func of the given type, no opts.
 function comp_canon_lift_noopts(corefunc: i32, typeidx: i32): i32[] {
   let b: i32[] = [1, 0, 0];
@@ -3092,56 +3090,107 @@ function comp_canon_resource_drop(rt: i32): i32[] {
   return wsection(8, b);
 }
 
-// canon lower carrying both `memory` and `realloc` options (for imports whose
-// canonical-ABI shape returns a heap-allocated list/string).
-function comp_canon_lower_mem_realloc(funcidx: i32, memidx: i32, realloc: i32): i32[] {
-  let b: i32[] = [1, 1, 0];
-  b = leb_u32(b, funcidx);
-  b = b.append(2);
-  b = b.append(3);
-  b = leb_u32(b, memidx);
-  b = b.append(4);
-  b = leb_u32(b, realloc);
-  return wsection(8, b);
-}
-
 // AsyncLift is one async-lifted export: the component func `name` (kebab
-// case), its parameters as component valtype bytes and its result's (-1 for
-// none). The core module exports its entry as `[async-lift]CORE_NAME` and
-// imports its task.return as `[task-return]CORE_NAME` from `[export]$root`.
-pub struct AsyncLift { name: string, core_name: string, param_names: string[], param_types: i32[], result: i32 }
+// case), its parameter types and its result's ([] for none). A type is a
+// primitive valtype byte, or a defined type's body (`list<T>`, a tuple). The
+// core module exports its entry as `[async-lift]CORE_NAME` and imports its
+// task.return as `[task-return]CORE_NAME` from `[export]$root`.
+pub struct AsyncLift { name: string, core_name: string, param_names: string[], param_types: i32[][], result: i32[] }
 
-// comp_resultlist appends a func type's results: one anonymous valtype, or
-// none when `vt` is -1.
-function comp_resultlist(b: i32[], vt: i32): i32[] {
-  if (vt < 0) {
+// AsyncLower is one async import: the function `name` of interface `iface`,
+// typed as AsyncLift is. The core module imports it as `[async-lower]NAME`
+// from `iface`.
+pub struct AsyncLower { iface: string, name: string, param_names: string[], param_types: i32[][], result: i32[] }
+
+// AsyncSurface is a module's async exports and imports.
+pub struct AsyncSurface { lifts: AsyncLift[], lowers: AsyncLower[] }
+
+// comp_resultlist appends a func type's results: one anonymous valtype, its
+// encoding `vt`, or none when `vt` is empty.
+function comp_resultlist(b: i32[], vt: i32[]): i32[] {
+  if (vt.len() == 0) {
     b = b.append(1);
     return b.append(0);
   }
-  b = b.append(0);
-  return b.append(vt);
+  return wcat(b.append(0), vt);
 }
 
-// canon task.return: a core func taking the result `vt` (nothing when -1).
+// canon task.return: a core func taking the primitive result `vt` (nothing
+// when -1).
 function comp_canon_task_return(vt: i32): i32[] {
-  let b: i32[] = [1, 9];
-  b = comp_resultlist(b, vt);
+  let r: i32[] = [];
+  if (vt >= 0) {
+    r = [vt];
+  }
+  let b: i32[] = comp_resultlist([1, 9], r);
   b = b.append(0);
   return wsection(8, b);
 }
 
-// component type `async func(params) -> result` for an async export.
-function comp_type_async_func(l: AsyncLift): i32[] {
-  let b: i32[] = [1, 67];
-  b = leb_u32(b, l.param_types.len());
+// async_functype appends `async func(params) -> result`: names and valtype
+// encodings in parallel, the result's empty for none.
+function async_functype(b: i32[], names: string[], vts: i32[][], result: i32[]): i32[] {
+  b = b.append(67);
+  b = leb_u32(b, vts.len());
   let i: i32 = 0;
-  while (i < l.param_types.len()) {
-    b = wname(b, l.param_names[i]);
-    b = b.append(l.param_types[i]);
+  while (i < vts.len()) {
+    b = wcat(wname(b, names[i]), vts[i]);
     i = i + 1;
   }
-  b = comp_resultlist(b, l.result);
-  return wsection(7, b);
+  return comp_resultlist(b, result);
+}
+
+// component type `async func(params) -> result` for an async export, whose
+// types are all primitive.
+function comp_type_async_func(l: AsyncLift): i32[] {
+  return wsection(7, async_functype([1], l.param_names, l.param_types, l.result));
+}
+
+// InstanceTypes is an instance type's decls so far and its local type count.
+struct InstanceTypes { b: i32[], n: i32 }
+
+// instance_valtype is type `t`'s valtype inside an instance type: a primitive
+// as is, a defined type declared first and referenced by its local index.
+function instance_valtype(it: InstanceTypes, t: i32[]): (InstanceTypes, i32[]) {
+  if (t.len() <= 1) {
+    return (it, t);
+  }
+  let b: i32[] = wcat(it.b.append(1), t);
+  return (InstanceTypes { b: b, n: it.n + 1 }, leb_u32([], it.n));
+}
+
+// comp_type_async_instance is the instance type an interface's async imports
+// `lowers` are exported from: each one's defined types, its func type, then
+// its export.
+pub function comp_type_async_instance(lowers: AsyncLower[]): i32[] {
+  let it: InstanceTypes = InstanceTypes { b: [], n: 0 };
+  for l in lowers {
+    let vts: i32[][] = [];
+    for t in l.param_types {
+      let (it2, vt) = instance_valtype(it, t);
+      it = it2;
+      vts = vts.append(vt);
+    }
+    let (it3, rvt) = instance_valtype(it, l.result);
+    let fb: i32[] = async_functype(it3.b.append(1), l.param_names, vts, rvt);
+    let eb: i32[] = wname(wcat(fb, [4, 0]), l.name);
+    eb = eb.append(1);
+    it = InstanceTypes { b: leb_u32(eb, it3.n), n: it3.n + 1 };
+  }
+  return wsection(7, wcat(leb_u32([1, 66], it.n + lowers.len()), it.b));
+}
+
+// comp_type_stream is the component type `stream<vt>`.
+pub function comp_type_stream(vt: i32): i32[] {
+  return wsection(7, [1, 102, 1, vt]);
+}
+
+// comp_import_instance imports an instance of type `typeidx` as `name`.
+pub function comp_import_instance(name: string, typeidx: i32): i32[] {
+  let b: i32[] = wname([1, 0], name);
+  b = b.append(5);
+  b = leb_u32(b, typeidx);
+  return wsection(10, b);
 }
 
 // canon lift a core func with the `async` option and no callback: the
@@ -3155,14 +3204,83 @@ function comp_canon_lift_async(corefunc: i32, typeidx: i32): i32[] {
   return wsection(8, b);
 }
 
-// comp_canon_typed is the canon built-in an import of kind 3 or 4 lowers to:
-// a resource.drop of resource type `typeop`, or a task.return of result
-// valtype `typeop`.
+// comp_canon_typed is the canon built-in an import of kind 3, 4, 8 or 11..13
+// lowers to: a resource.drop of resource type `typeop`, a task.return of
+// result valtype `typeop`, the operand-free intrinsic whose opcode is
+// `typeop`, or a stream intrinsic of stream type `typeop`.
 function comp_canon_typed(kind: i32, typeop: i32): i32[] {
   if (kind == 3) {
     return comp_canon_resource_drop(typeop);
   }
-  return comp_canon_task_return(typeop);
+  if (kind == 4) {
+    return comp_canon_task_return(typeop);
+  }
+  if (kind >= 11) {
+    // stream.new (0x0e), stream.drop-readable (0x13), stream.drop-writable
+    // (0x14), each of the stream type `typeop`.
+    let ops: i32[] = [14, 19, 20];
+    return wsection(8, leb_u32([1, ops[kind - 11]], typeop));
+  }
+  return wsection(8, [1, typeop]);
+}
+
+// trampolined reports whether an import of kind `k` lowers to a canon over the
+// user module's memory, so reaches the module through a trampoline table
+// filled once the module is instantiated.
+function trampolined(k: i32): boolean {
+  return k == 1 || k == 2 || k >= 5 && k <= 7 || k == 9 || k == 10;
+}
+
+// lowers_realloc reports whether an import of kind `k` lowers with the user
+// module's cabi_realloc as well.
+function lowers_realloc(k: i32): boolean {
+  return k == 2 || k == 6;
+}
+
+// lowered_name is the instance export a core import `name` lowers: the name
+// itself, or for an async lower the name past its `[async-lower]` prefix.
+pub function lowered_name(name: string): string {
+  let pre: string = "[async-lower]";
+  if (name.len() <= pre.len() || slice_unchecked(name, 0, pre.len()) != pre) {
+    return name;
+  }
+  let bytes: u8[] = [];
+  let i: i32 = pre.len();
+  while (i < name.len()) {
+    bytes = bytes.append(name[i]);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bytes);
+}
+
+// suffix_memory_canon emits the canon a trampolined import of kind `k` is
+// filled with, over core memory 0: waitable-set.wait, an async stream.read or
+// stream.write of stream type `typeop`, or a lower of the instance's function,
+// aliased first as component func `n_cfunc`. Returns the bytes and the next
+// component func index.
+function suffix_memory_canon(o: i32[], k: i32, inst: i32, name: string, typeop: i32, n_cfunc: i32, realloc_f: i32): (i32[], i32) {
+  if (k == 7) {
+    return (wcat(o, wsection(8, [1, 32, 0, 0])), n_cfunc);
+  }
+  if (k == 9 || k == 10) {
+    return (wcat(o, wsection(8, wcat(leb_u32([1, k + 6], typeop), [2, 6, 3, 0]))), n_cfunc);
+  }
+  o = wcat(o, comp_alias_inst_func(inst, lowered_name(name)));
+  let opts: i32[] = [3, 0];
+  let n_opts: i32 = 1;
+  if (k == 5 || k == 6) {
+    opts = [6, 3, 0];
+    n_opts = 2;
+  }
+  if (lowers_realloc(k)) {
+    opts = opts.append(4);
+    opts = leb_u32(opts, realloc_f);
+    n_opts = n_opts + 1;
+  }
+  let b: i32[] = [1, 1, 0];
+  b = leb_u32(b, n_cfunc);
+  b = leb_u32(b, n_opts);
+  return (wcat(o, wsection(8, wcat(b, opts))), n_cfunc + 1);
 }
 
 // export a component func at the top level under `name`.
@@ -3197,11 +3315,16 @@ function suffix_group_find(order: string[], iface: string): i32 {
 //   imp_iface     wasi:X interface the user module imports the func from
 //   imp_name      method / func / [resource-drop] name
 //   imp_kind      0 no-opt, 1 memory trampoline, 2 memory+realloc, 3 resource.drop,
-//                 4 an async export's task.return
+//                 4 an async export's task.return, 5 an async lower (memory),
+//                 6 an async lower (memory + realloc), 7 waitable-set.wait
+//                 (memory), 8 a waitable intrinsic, 9 / 10 stream.read /
+//                 stream.write (memory), 11..13 stream.new /
+//                 drop-readable / drop-writable
 //   imp_inst      component-instance index of imp_iface (from Phase A)
 //   imp_params    lowered core signature the trampoline mirrors (kinds 1/2)
 //   imp_typeop    surfaced resource type index (kind 3); the result
-//                 valtype, -1 for none (kind 4)
+//                 valtype, -1 for none (kind 4); the canon opcode (kind 8);
+//                 the stream type (kinds 9..13)
 // n_type0 / n_inst0 are the component type / instance counts after Phase A;
 // user_mod is the user core module index; core_export is the lifted entry.
 // SuffixWired is the composed suffix up to (not including) its export tail:
@@ -3240,7 +3363,7 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   // Phase B: trampoline + table-fill cores per memory import.
   i = 0;
   while (i < n) {
-    if (imp_kind[i] == 1 || imp_kind[i] == 2) {
+    if (trampolined(imp_kind[i])) {
       tramp_mod = tramp_mod.with(i, n_mod);
       n_mod = n_mod + 1;
       o = wcat(o, comp_core_module_section(shim_trampoline_core(imp_params[i], imp_results[i])));
@@ -3253,7 +3376,7 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   // Phase C: instantiate the trampolines.
   i = 0;
   while (i < n) {
-    if (imp_kind[i] == 1 || imp_kind[i] == 2) {
+    if (trampolined(imp_kind[i])) {
       tramp_inst = tramp_inst.with(i, n_coreinst);
       n_coreinst = n_coreinst + 1;
       o = wcat(o, comp_core_instance_instantiate(tramp_mod[i]));
@@ -3276,13 +3399,13 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
       idx = n_corefunc;
       o = wcat(o, comp_canon_lower_noopts(cf));
       n_corefunc = n_corefunc + 1;
-    } else if (k >= 3) {
+    } else if (trampolined(k)) {
       idx = n_corefunc;
-      o = wcat(o, comp_canon_typed(k, imp_typeop[i]));
+      o = wcat(o, comp_alias_core_func(tramp_inst[i], "0"));
       n_corefunc = n_corefunc + 1;
     } else {
       idx = n_corefunc;
-      o = wcat(o, comp_alias_core_func(tramp_inst[i], "0"));
+      o = wcat(o, comp_canon_typed(k, imp_typeop[i]));
       n_corefunc = n_corefunc + 1;
     }
     let gi: i32 = suffix_group_find(order, imp_iface[i]);
@@ -3322,13 +3445,8 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   let need_realloc: boolean = false;
   i = 0;
   while (i < n) {
-    if (imp_kind[i] == 1) {
-      need_mem = true;
-    }
-    if (imp_kind[i] == 2) {
-      need_mem = true;
-      need_realloc = true;
-    }
+    need_mem = need_mem || trampolined(imp_kind[i]);
+    need_realloc = need_realloc || lowers_realloc(imp_kind[i]);
     i = i + 1;
   }
   if (need_mem) {
@@ -3342,29 +3460,21 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   }
   i = 0;
   while (i < n) {
-    if (imp_kind[i] == 1 || imp_kind[i] == 2) {
+    if (trampolined(imp_kind[i])) {
       tbl = tbl.with(i, n_coretab);
       n_coretab = n_coretab + 1;
       o = wcat(o, comp_alias_core_export(1, tramp_inst[i], "$imports"));
     }
     i = i + 1;
   }
-  // Phase G: memory lowers.
+  // Phase G: the canons over the memory.
   i = 0;
   while (i < n) {
-    if (imp_kind[i] == 1) {
-      o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
-      let cfg: i32 = n_cfunc;
-      n_cfunc = n_cfunc + 1;
+    if (trampolined(imp_kind[i])) {
+      let (o2, nc) = suffix_memory_canon(o, imp_kind[i], imp_inst[i], imp_name[i], imp_typeop[i], n_cfunc, realloc_f);
+      o = o2;
+      n_cfunc = nc;
       coref = coref.with(i, n_corefunc);
-      o = wcat(o, comp_canon_lower_mem(cfg, 0));
-      n_corefunc = n_corefunc + 1;
-    } else if (imp_kind[i] == 2) {
-      o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
-      let cfr: i32 = n_cfunc;
-      n_cfunc = n_cfunc + 1;
-      coref = coref.with(i, n_corefunc);
-      o = wcat(o, comp_canon_lower_mem_realloc(cfr, 0, realloc_f));
       n_corefunc = n_corefunc + 1;
     }
     i = i + 1;
@@ -3372,7 +3482,7 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   // Phase H: fill each trampoline table with its lowered func, instantiate fixup.
   i = 0;
   while (i < n) {
-    if (imp_kind[i] == 1 || imp_kind[i] == 2) {
+    if (trampolined(imp_kind[i])) {
       let arg: i32 = n_coreinst;
       o = wcat(o, comp_core_instance_from_exports(["$imports", "0"], [1, 0], [tbl[i], coref[i]]));
       n_coreinst = n_coreinst + 1;

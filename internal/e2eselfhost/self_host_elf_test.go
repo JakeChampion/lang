@@ -10,7 +10,7 @@ import (
 // TestSelfHostELF exercises the self-hosted static ELF-64 executable
 // writer (examples/self_host/elf.fern) — the first slice of the native
 // binary backend (the container half that aims to remove the external
-// gcc/ld link step, mirroring the Go reference internal/native/elf/elf.go).
+// gcc/ld link step).
 //
 // elf.fern is intentionally import-free, so this test reads it from disk
 // and concatenates it with a self-test main() that builds ELF images and

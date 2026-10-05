@@ -1,73 +1,82 @@
 package e2eselfhost
 
 import (
-	"encoding/binary"
 	"strings"
 	"testing"
 
-	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
-	"github.com/jakechampion/lang/internal/native/arm64tbl"
+	"github.com/jakechampion/lang/internal/arm64tbl"
 )
 
-// TestSelfHostArm64TableRowsMatchNative is the vocabulary gate between the
-// two arm64 assemblers, read from the table both are built from (#7903).
+// TestSelfHostArm64TableRowsMatchGas is the vocabulary gate for the self-host
+// arm64 assembler, read from arm64tbl (#7903).
 //
-// internal/native/arm64tbl.Scalar lists every mnemonic either assembler
-// dispatches by name, with a representative instruction per row. The Go
-// assembler routes on the family the table names; the self-host's
-// predicates and arm64_gas_known are generated from the same rows
-// (cmd/arm64tblgen's staleness test holds the committed output to it). So
-// the SET of mnemonics cannot drift any more. What can still go wrong is a
-// row the self-host's dispatch does not reach — the movn shape of #6060, a
-// mnemonic in the allow-list with no arm to encode it, which drops the
-// instruction silently — and that is what assembling every row through
-// both sides and comparing the word catches.
-//
-// The gate this replaced read the mnemonic set out of the Fern source with
-// a regular expression and probed a hand-kept list. It could not see a
-// family dispatched by pattern, and its condition-alias exclusion
-// `^b\.?[a-z]{2}$` also matched `brk` and `blr`, so `brk` — which native
-// assembled and the self-host did not — sat unreported inside it.
-func TestSelfHostArm64TableRowsMatchNative(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	bin := buildAsmBenchDriver(t, gcc)
-
+// arm64tbl.Scalar lists every mnemonic the self-host dispatches by name, with
+// a representative instruction per row; the self-host's predicates and
+// arm64_gas_known are generated from the same rows (cmd/arm64tblgen's
+// staleness test holds the committed output to it). So the SET of mnemonics
+// cannot drift. What can still go wrong is a row the self-host's dispatch does
+// not reach — the movn shape of #6060, a mnemonic in the allow-list with no
+// arm to encode it, which drops the instruction silently — and that is what
+// assembling every row through the self-host and GNU as and comparing the
+// words catches.
+func TestSelfHostArm64TableRowsMatchGas(t *testing.T) {
+	var cases, layout []string
 	for _, fam := range arm64tbl.Scalar {
 		for _, o := range fam.Ops {
-			probe := fam.ProbeFor(o)
-			src := ".text\n_start:\n" + probe + "\n"
-			text, _, err := nativearm64.AssembleProgram(src, 0x400000)
-			if err != nil {
-				t.Errorf("%-32s internal/native/arm64 rejects its own table probe: %v", probe, err)
-				continue
-			}
 			if o.Layout {
-				// The word depends on where each assembler places the
-				// sections; acceptance is what the row pins, and the
-				// self-host's is checked without comparing.
-				if refused := refusalsFor(t, bin, runner, src); len(refused) > 0 {
-					t.Errorf("%-32s the self-host assembler REFUSES it (%s)", probe, strings.Join(refused, ", "))
-				}
-				continue
-			}
-			var want []uint32
-			for i := 0; i+4 <= len(text); i += 4 {
-				want = append(want, binary.LittleEndian.Uint32(text[i:]))
-			}
-			if refused := refusalsFor(t, bin, runner, src); len(refused) > 0 {
-				t.Errorf("%-32s the self-host assembler REFUSES it (%s); native emits %08x", probe, strings.Join(refused, ", "), want)
-				continue
-			}
-			got := assembleSelfHost(t, bin, runner, src)
-			if len(got) != len(want) {
-				t.Errorf("%-32s self-host produced %d words, native %d", probe, len(got), len(want))
-				continue
-			}
-			for i := range want {
-				if got[i] != want[i] {
-					t.Errorf("%-32s word %d: self-host %08x, internal/native/arm64 %08x", probe, i, got[i], want[i])
-				}
+				layout = append(layout, fam.ProbeFor(o))
+			} else {
+				cases = append(cases, fam.ProbeFor(o))
 			}
 		}
 	}
+	compareArm64Cases(t, cases)
+
+	// A layout row's word depends on where the image places the sections;
+	// acceptance is what it pins.
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+	for _, probe := range layout {
+		if refused := refusalsFor(t, bin, runner, ".text\n_start:\n"+probe+"\n"); len(refused) > 0 {
+			t.Errorf("%-32s the self-host assembler REFUSES it (%s)", probe, strings.Join(refused, ", "))
+		}
+	}
+}
+
+// TestSelfHostArm64VecTableRowsMatchGas is the same gate for the Advanced
+// SIMD classes in arm64tbl.VecTables: every mnemonic of every class, in an
+// operand shape every row of the class accepts.
+func TestSelfHostArm64VecTableRowsMatchGas(t *testing.T) {
+	forms := map[string]string{
+		"arm64_v3int_entry":      "%s v0.16b, v1.16b, v2.16b",
+		"arm64_vlogical_entry":   "%s v0.16b, v1.16b, v2.16b",
+		"arm64_vcmpzero_entry":   "%s v0.16b, v1.16b, #0",
+		"arm64_v2misc_entry":     "%s v0.16b, v1.16b",
+		"arm64_vfp3_entry":       "%s v0.4s, v1.4s, v2.4s",
+		"arm64_vfp2_entry":       "%s v0.4s, v1.4s",
+		"arm64_vfpcmpzero_entry": "%s v0.4s, v1.4s, #0.0",
+		"arm64_vshift_entry":     "%s v0.4s, v1.4s, #3",
+		"arm64_vpermute_opc":     "%s v0.16b, v1.16b, v2.16b",
+		"arm64_across_entry":     "%s b0, v1.16b",
+		"arm64_pairlong_entry":   "%s v0.8h, v1.16b",
+		"arm64_vpolylong_entry":  "%s v0.8h, v1.8b, v2.8b",
+	}
+	var cases []string
+	for _, tbl := range arm64tbl.VecTables {
+		form, ok := forms[tbl.FernFn]
+		if !ok {
+			t.Fatalf("no probe form for %s", tbl.FernFn)
+		}
+		for _, o := range tbl.Ops {
+			probe := strings.Replace(form, "%s", o.Mnemonic, 1)
+			if tbl.FernFn == "arm64_across_entry" && o.Bool() {
+				probe = o.Mnemonic + " h0, v1.16b" // widening: one class up
+			}
+			if tbl.FernFn == "arm64_vpolylong_entry" && o.Bool() {
+				probe = o.Mnemonic + " v0.8h, v1.16b, v2.16b" // the `2` is the Q bit
+			}
+			cases = append(cases, probe)
+		}
+	}
+	compareArm64Cases(t, cases)
 }

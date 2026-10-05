@@ -205,7 +205,7 @@ together (no half-step, since it flips the working eager behavior).
    chunk into a growing length-prefixed Fern array until the stream reports EOF.
    This needs a `stream.read` (+ `stream.drop-readable`) intrinsic imported under
    `""` (mirror the waitable intrinsics registered for the await loop) and the
-   composer (`BuildAsyncImportsAwaitComponent`) to provide them — `stream.read`
+   composer (`BuildAsyncStreamImportComponent`) to provide them — `stream.read`
    trampolined over the consumer memory (the `BuildStreamExportImportComponent`
    consumer path already proved the read side). This slice is comparable in size
    to the pending-await wiring.
@@ -293,12 +293,28 @@ streaming wire — the wire is incremental, the Fern surface is eager).
     composer provisioning (stream.write trampolined over the consumer memory) +
     the host sink provider + e2e — a direct mirror of slices 3a/3b/4.
 
-## Status — result side COMPLETE; param side started
+## Status — DONE in the self-host (#11530)
 
-The `stream[T]` Fern *result* surface is shipped end to end; a `stream[T]` flows
-from a host export into Fern source as a colorlessly-collected `T[]`. The
-*parameter* surface (produce side) is started: P1 (checker) merged, P2 mechanics
-pinned + runnable (above), P2 codegen/composer/e2e remaining.
+On `-target wasm32-wasi` the self-host compiler takes `stream[T]` in an async
+`@import`'s signature, for the scalar elements `boolean`, `u8`, `i32`, `u32`,
+`i64`, `u64`, `f32` and `f64`.
+
+- `parser.lower_stream_signatures`, run by `flatten.bundle`, rewrites each
+  stream slot to `T[]` and records it in `FuncDecl.streams`, so callers see an
+  array.
+- A stream result is read to EOF into a doubling buffer, then lifted as a list
+  result is (`wasm_ir.stream_result_collect`).
+- A `T[]` argument is written out through a fresh stream's writable end, which
+  is then dropped (`stream_param_opens` / `stream_param_writes`).
+- The composer defines a `stream<T>` component type per element. It wires
+  `stream.read` / `stream.write` through the memory trampoline (kinds 9 and
+  10) and `stream.new` / the drops as plain canons (kinds 11..13).
+
+Iteration is eager: `for x in` walks the collected array. The lazy cursor
+below was the native wasm backend's, and went with it. Test:
+`TestSelfHostWasmAsyncStream`.
+
+The rest of this section records the native backend's history.
 
 - Channels at the ABI/composer level: **DONE** (see
   `docs/WASI-PREVIEW3-ASYNC-PLAN.md`).
@@ -318,11 +334,9 @@ directions; `for x in stream` **eager** iteration (`TestWasmP3StreamForIn`); and
 the **CLI auto-bundle** — `fern -target wasm32-wasi -emit core-module -async-provider PATH` (or
 `-async-provider WITNAME=PATH`, repeatable) bundles bring-your-own provider
 component(s) so async `@import`s (scalar params + result, **single or multiple**)
-yield one self-contained runnable component (via
-`BuildAsyncImportsAwaitComponent`); plus `-async-export` lifting param'd async
+yield one self-contained runnable component; plus `-async-export` lifting param'd async
 functions. Both flags left the CLI when `fern` began compiling through the
-self-host (step 6 of `docs/NATIVE-RETIREMENT.md`); the self-host's preview-3
-surface is #11530.
+self-host (step 6 of `docs/NATIVE-RETIREMENT.md`).
 
 Done: **lazy `for x in stream`** — L1 (the `ast.ForEach` centralization, #3963),
 L2 (the lazy codegen + atomic eager→lazy flip for u8 streams), and the **general-T**

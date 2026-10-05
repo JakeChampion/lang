@@ -3504,117 +3504,82 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 // form) in a freshly-parsed program to its loop, right after parse and before
 // any downstream pass — so modload / constfold / the checker / codegen all see
 // the desugared block, exactly as the old parse-time desugar did. The ForEach
-// node exists only so a single decl-aware lowering owns the choice (array
-// `.len()`+index today; a `stream[T]` per-element read loop later). Covers every
+// node exists only so a single decl-aware lowering owns the choice. Covers every
 // body root: functions, hoisted methods, trait default methods, and const
 // initialisers (lambdas / block-exprs within are reached through the expr walk).
 func desugarForEachProgram(prog *ast.Program) {
-	// A `for x in f(args)` whose callee `f` is a module-local `@import async
-	// function f(): stream[T]` iterates the stream LAZILY (element-at-a-time off
-	// the wire), so its ForEach node is LEFT for the checker to desugar once the
-	// stream rewrite has run (docs/STREAM-TYPE-SURFACE.md, L2). Every other
-	// iterand (arrays, strings) is lowered here, at parse time, to the `.len()` +
-	// index C-style loop via ast.DesugarForEachArray. Build that stream-import
-	// name set first so the lowering can tell the two apart.
-	streamFns := map[string]bool{}
-	for _, fn := range prog.Funcs {
-		if fn.ImportIface != "" && fn.Async {
-			// Lazy iteration covers any SCALAR element (u8 / i32 / i64 / f64 / …):
-			// the cursor desugar separates the EOF flag from the value read, so
-			// there's no `-1`-sentinel ambiguity (ast.DesugarForEachStream). A
-			// non-scalar element (string / struct / enum) has no StreamElemKind and
-			// still iterates EAGERLY via the array desugar (collect-then-iterate).
-			// See docs/STREAM-TYPE-SURFACE.md.
-			if st, ok := fn.ReturnType.(ast.StreamType); ok && ast.StreamElemKind(st.Elem) != "" {
-				streamFns[fn.Name] = true
-			}
-		}
-	}
 	for _, fn := range prog.Funcs {
 		if fn.Body != nil {
-			desugarForEachStmt(fn.Body, streamFns)
+			desugarForEachStmt(fn.Body)
 		}
 	}
 	for _, tr := range prog.Traits {
 		for i := range tr.Methods {
 			if tr.Methods[i].Body != nil {
-				desugarForEachStmt(tr.Methods[i].Body, streamFns)
+				desugarForEachStmt(tr.Methods[i].Body)
 			}
 		}
 	}
 	for _, cn := range prog.Consts {
-		desugarForEachExpr(cn.Value, streamFns)
+		desugarForEachExpr(cn.Value)
 	}
-}
-
-// isLazyStreamIter reports whether iterand `e` is a direct call `f(args)` to a
-// module-local async stream import `f` — the one for-in shape that iterates
-// lazily and therefore keeps its ast.ForEach node for the checker to lower.
-func isLazyStreamIter(e ast.Expr, streamFns map[string]bool) bool {
-	call, ok := e.(*ast.Call)
-	if !ok {
-		return false
-	}
-	id, ok := call.Callee.(*ast.Ident)
-	return ok && streamFns[id.Name]
 }
 
 // desugarForEachStmt recursively lowers every ForEach reachable from s, returning
 // the replacement for s. `*ast.Block`-typed fields are mutated in place (return
 // ignored); plain `ast.Stmt` fields (brace-less loop/if bodies can be a bare
 // ForEach) get the return assigned back by the caller.
-func desugarForEachStmt(s ast.Stmt, streamFns map[string]bool) ast.Stmt {
+func desugarForEachStmt(s ast.Stmt) ast.Stmt {
 	switch x := s.(type) {
 	case nil:
 		return nil
 	case *ast.ForEach:
-		x.Body = desugarForEachStmt(x.Body, streamFns)
-		desugarForEachExpr(x.Iter, streamFns)
-		// A lazy stream iterand keeps its ForEach node for the checker (L2),
-		// and so does a destructuring header, whose lowering is chosen by the
-		// iterand's type; every other iterand lowers to the array
-		// `.len()`+index loop here.
-		if x.Pattern != nil || isLazyStreamIter(x.Iter, streamFns) {
+		x.Body = desugarForEachStmt(x.Body)
+		desugarForEachExpr(x.Iter)
+		// A destructuring header keeps its ForEach node for the checker, whose
+		// lowering is chosen by the iterand's type; every other iterand lowers
+		// to the array `.len()`+index loop here.
+		if x.Pattern != nil {
 			return x
 		}
 		return ast.DesugarForEachArray(x)
 	case *ast.Block:
 		for i := range x.Stmts {
-			x.Stmts[i] = desugarForEachStmt(x.Stmts[i], streamFns)
+			x.Stmts[i] = desugarForEachStmt(x.Stmts[i])
 		}
 	case *ast.If:
-		desugarForEachExpr(x.Cond, streamFns)
-		x.Then = desugarForEachStmt(x.Then, streamFns)
+		desugarForEachExpr(x.Cond)
+		x.Then = desugarForEachStmt(x.Then)
 		if x.Else != nil {
-			x.Else = desugarForEachStmt(x.Else, streamFns)
+			x.Else = desugarForEachStmt(x.Else)
 		}
 	case *ast.While:
-		desugarForEachExpr(x.Cond, streamFns)
-		x.Body = desugarForEachStmt(x.Body, streamFns)
+		desugarForEachExpr(x.Cond)
+		x.Body = desugarForEachStmt(x.Body)
 	case *ast.Loop:
-		x.Body = desugarForEachStmt(x.Body, streamFns)
+		x.Body = desugarForEachStmt(x.Body)
 	case *ast.For:
 		if x.Init != nil {
-			x.Init = desugarForEachStmt(x.Init, streamFns)
+			x.Init = desugarForEachStmt(x.Init)
 		}
-		desugarForEachExpr(x.Cond, streamFns)
+		desugarForEachExpr(x.Cond)
 		if x.Step != nil {
-			x.Step = desugarForEachStmt(x.Step, streamFns)
+			x.Step = desugarForEachStmt(x.Step)
 		}
-		x.Body = desugarForEachStmt(x.Body, streamFns)
+		x.Body = desugarForEachStmt(x.Body)
 	case *ast.Match:
-		desugarForEachExpr(x.Tag, streamFns)
+		desugarForEachExpr(x.Tag)
 		for _, arm := range x.Arms {
-			desugarForEachStmt(arm.Body, streamFns)
+			desugarForEachStmt(arm.Body)
 		}
 	case *ast.Var:
-		desugarForEachExpr(x.Init, streamFns)
+		desugarForEachExpr(x.Init)
 	case *ast.ExprStmt:
-		desugarForEachExpr(x.Expr, streamFns)
+		desugarForEachExpr(x.Expr)
 	case *ast.Return:
-		desugarForEachExpr(x.Value, streamFns)
+		desugarForEachExpr(x.Value)
 	case *ast.Destructure:
-		desugarForEachExpr(x.Init, streamFns)
+		desugarForEachExpr(x.Init)
 	case *ast.FuncDecl:
 		// A nested named function is a STATEMENT here, and its body is a
 		// separate block this walk has to enter: nothing else lowers it, and a
@@ -3625,14 +3590,14 @@ func desugarForEachStmt(s ast.Stmt, streamFns map[string]bool) ast.Stmt {
 		// nil Body, and a nil *ast.Block in an ast.Stmt is not `== nil`, so it
 		// reaches the Block case and dereferences. The top-level walks above
 		// guard the same way.
-		x.Body = desugarForEachStmt(x.Body, streamFns).(*ast.Block)
+		x.Body = desugarForEachStmt(x.Body).(*ast.Block)
 	}
 	return s
 }
 
 // desugarForEachExpr lowers for-in nested inside a block-expression or lambda
 // body within an expression tree.
-func desugarForEachExpr(e ast.Expr, streamFns map[string]bool) {
+func desugarForEachExpr(e ast.Expr) {
 	if e == nil {
 		return
 	}
@@ -3640,10 +3605,10 @@ func desugarForEachExpr(e ast.Expr, streamFns map[string]bool) {
 		switch x := n.(type) {
 		case *ast.BlockExpr:
 			for i := range x.Stmts {
-				x.Stmts[i] = desugarForEachStmt(x.Stmts[i], streamFns)
+				x.Stmts[i] = desugarForEachStmt(x.Stmts[i])
 			}
 		case *ast.Lambda:
-			desugarForEachStmt(x.Body, streamFns)
+			desugarForEachStmt(x.Body)
 		}
 		return true
 	})

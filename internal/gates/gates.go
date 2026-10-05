@@ -122,7 +122,7 @@ func Ambient(entry string, prog *ast.Program) diag.Errors {
 // errors. Tree-shake first so unused imported stdlib wrappers don't trip
 // gates: this mirrors each backend's own pre-shake (same dyn-dispatch roots
 // + -shared exports; backends re-shake idempotently), including wasi-http's
-// drop of the synthesised serve `main` (see internal/codegen/wasmbin/build.go).
+// drop of the synthesised serve `main`.
 //
 // Returns nil when the target has no descriptor or nothing violates its
 // capability set. NOTE this mutates prog by tree-shaking it.

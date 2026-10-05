@@ -1486,9 +1486,8 @@ function sysno_arm64_darwin(name: string): string {
   // No syncfs row: XNU has no per-filesystem flush, and rt_src_fd_syncfs
   // branches on the target rather than issuing a number that is not one.
   // XNU has no mknodat — this is mknod(2), which takes no directory
-  // descriptor. The row keeps the Linux spelling so the two tables
-  // pair up (selfhost_sysno_parity_test); rt_src_mknod branches on
-  // the target for the argument shape.
+  // descriptor. The row keeps the Linux spelling so the tables pair up;
+  // rt_src_mknod branches on the target for the argument shape.
   if (name == "mknodat") {
     return "14";
   }
@@ -3217,8 +3216,7 @@ function rt_src_udp_send_mode(t: string, raw: boolean, packed: boolean): string 
   return "function " + name + "(host: string, port: i32, data: " + dtype + "): i32 { let o0: i32 = 0; let o1: i32 = 0; let o2: i32 = 0; let oct: i32 = 0; let idx: i32 = 0; let i: i32 = 0; let bad: i32 = 0; let dig: i32 = 0; let hn: i32 = host.len(); while (i < hn) { let c: i32 = host[i] as i32; if (c == 46) { if (dig == 0) { bad = 1; } if (idx == 0) { o0 = oct; } else if (idx == 1) { o1 = oct; } else if (idx == 2) { o2 = oct; } else { bad = 1; } idx = idx + 1; oct = 0; dig = 0; } else { if (c < 48) { bad = 1; } if (c > 57) { bad = 1; } oct = oct * 10 + (c - 48); dig = dig + 1; if (oct > 255) { bad = 1; } } i = i + 1; } if (bad != 0) { return -3; } if (idx != 3) { return -3; } if (dig == 0) { return -3; } let fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 2, 0) as i32; if (fd < 0) { return fd; } let host_be: i32 = o0 | (o1 << 8) | (o2 << 16) | (oct << 24); let sa: usize = __raw_scratch(16); " + sockaddr_v4(t, "sa") + " let rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, 16) as i32; if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rc; } " + prep + " let w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, " + ptr + " as i64, data.len() as i64) as i32; __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return w; }";
 }
 
-// The datagram sockets (#9853), each the twin of the Fern body in
-// internal/fernrt/runtime.fern: a socket bound to addr:port, connect(2)
+// The datagram sockets (#9853): a socket bound to addr:port, connect(2)
 // fixing a peer, one sendto(2) to an address or (an empty one) the peer,
 // and one recvfrom(2) into the caller's u8[].
 pub function rt_src_udp_bind(t: string, packed: boolean): string {
@@ -3286,8 +3284,7 @@ function elem_store(packed: boolean, arr: string, i: string, v: string): string 
 }
 
 // The reactor floor (#9853): a readiness set that outlives one wait, epoll
-// on Linux and kqueue on Darwin, the same contract as the Go compiler's
-// bodies in internal/fernrt/runtime.fern. reactor_wait writes (fd,
+// on Linux and kqueue on Darwin. reactor_wait writes (fd,
 // readiness) pairs into the caller's i32[], one word per slot.
 pub function rt_src_reactor_new(t: string): string {
   if (t == "arm64-darwin") {
@@ -8960,7 +8957,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
     import_iface: "", import_wit: "", all_type_params: [],
     bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
     is_pub: true,
-    is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [],
+    is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [],
   };
   return parser.Module { ...mod, funcs: mod.funcs.append(entry), top_stmts: [] };
 }

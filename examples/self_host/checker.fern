@@ -1702,7 +1702,36 @@ function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
 // `typevars` is every parameter spelling that is a type VARIABLE of the
 // callee, each once in parameter order, as gc_is_typevar_name recognises
 // them: what the call binding and the literal settling read.
-pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[], module: string }
+// `refs` is a generic signature's parameter spellings parsed, then its return
+// spelling's, which every call to it binds against; empty for any other
+// (sig_param_ref, sig_ret_ref).
+pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[], module: string, refs: parser.TypeRef[] }
+
+function sig_param_ref(sig: FuncSig, i: i32): parser.TypeRef {
+  if (sig.refs.len() > 0) {
+    return sig.refs[i];
+  }
+  return parser.parse_type_ref(sig.param_type_names[i]);
+}
+
+function sig_ret_ref(sig: FuncSig): parser.TypeRef {
+  if (sig.refs.len() > 0) {
+    return sig.refs[sig.param_type_names.len()];
+  }
+  return parser.parse_type_ref(sig.ret_type_name);
+}
+
+// generic_sig_refs is FuncSig.refs for a signature with these spellings.
+function generic_sig_refs(all_type_params: string[], param_type_names: string[], ret_type_name: string): parser.TypeRef[] {
+  let out: parser.TypeRef[] = [];
+  if (all_type_params.len() == 0) {
+    return out;
+  }
+  for sp in param_type_names {
+    out = out.append(parser.parse_type_ref(sp));
+  }
+  return out.append(parser.parse_type_ref(ret_type_name));
+}
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -2674,7 +2703,7 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
   let empty: typeinfo.Type[] = [];
   let nob: string[] = [];
   let non: string[] = [];
-  return FuncSig { receiver: "", name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, param_names: [], is_const: false, typevars: [], module: "" };
+  return FuncSig { receiver: "", name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, param_names: [], is_const: false, typevars: [], module: "", refs: [] };
 }
 
 // tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
@@ -5430,7 +5459,7 @@ function sig_call_type(sig: FuncSig, name: string, c: ast.ExprCall, s: Scope): t
       }
     }
     if (bn.len() > 0) {
-      let gsubst: typeinfo.Type = type_from_ref_subst(parser.parse_type_ref(sig.ret_type_name), bn, bt, s.type_names());
+      let gsubst: typeinfo.Type = type_from_ref_subst(sig_ret_ref(sig), bn, bt, s.type_names());
       if (!type_contains_unknown(gsubst)) {
         return gsubst;
       }
@@ -5445,7 +5474,7 @@ function arg_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typei
   let (bn, bt) = written_type_bindings(sig, c, s);
   let i: i32 = 0;
   while (i < sig.param_type_names.len() && i < c.args.len()) {
-    let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[i]), binding_arg_type(c.args[i], s), sig.type_params, s.type_names(), bn, bt);
+    let (bn2, bt2) = gc_bind_param(sig_param_ref(sig, i), binding_arg_type(c.args[i], s), sig.type_params, s.type_names(), bn, bt);
     bn = bn2;
     bt = bt2;
     i = i + 1;
@@ -5486,7 +5515,7 @@ function written_type_arg_diags(sig: FuncSig, c: ast.ExprCall, ai: i32, at: type
     return none;
   }
   let (wn, wt) = written_type_bindings(sig, c, s);
-  let pref: parser.TypeRef = parser.parse_type_ref(sig.param_type_names[ai]);
+  let pref: parser.TypeRef = sig_param_ref(sig, ai);
   if (wn.len() == 0 || !type_ref_names_any(pref, wn)) {
     return none;
   }
@@ -5538,7 +5567,7 @@ function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name
   if (c.type_args.len() > 0) {
     return out;
   }
-  let ret: parser.TypeRef = parser.parse_type_ref(sig.ret_type_name);
+  let ret: parser.TypeRef = sig_ret_ref(sig);
   for tp in sig.all_type_params {
     let (named, all_empty) = empty_array_positions(sig.param_type_names, c.args, tp);
     if (util.index_of_str(bn, tp) < 0 && !type_ref_names_any(ret, [tp]) && !bound_names_tp(sig.type_bounds, tp) && all_empty) {
@@ -5725,7 +5754,7 @@ function dest_bound_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag
       if (bound_arg_diags(sig, c, cn, ct, s).len() > 0) {
         return none;
       }
-      let (dn, dt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), dest, sig.type_params, s.type_names(), bn, bt);
+      let (dn, dt) = gc_bind_param(sig_ret_ref(sig), dest, sig.type_params, s.type_names(), bn, bt);
       if (dn.len() == bn.len()) {
         return none;
       }
@@ -7300,7 +7329,8 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
         tvs = tvs.append(spelling);
       }
     }
-    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs, module: fd.module });
+    let rtn: string = parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
+    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: rtn, param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs, module: fd.module, refs: generic_sig_refs(fd.all_type_params, ptn, rtn) });
     i = i + 1;
   }
   return out;
@@ -14443,12 +14473,12 @@ function fn_value_binds(sig: FuncSig, dest: typeinfo.TypeFunc, s: Scope): (strin
   }
   let i: i32 = 0;
   while (i < dest.param_types.len()) {
-    let (pn, pt) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[i]), dest.param_types[i], sig.all_type_params, s.type_names(), ns, ts);
+    let (pn, pt) = gc_bind_param(sig_param_ref(sig, i), dest.param_types[i], sig.all_type_params, s.type_names(), ns, ts);
     ns = pn;
     ts = pt;
     i = i + 1;
   }
-  let (rn, rt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), dest.ret_type, sig.all_type_params, s.type_names(), ns, ts);
+  let (rn, rt) = gc_bind_param(sig_ret_ref(sig), dest.ret_type, sig.all_type_params, s.type_names(), ns, ts);
   return (rn, rt);
 }
 
@@ -14503,7 +14533,7 @@ function bound_param_dest(c: ast.ExprCall, di: i32, dest: typeinfo.Type, s: Scop
       return dest;
     }
     let (bn, bt) = call_type_bindings(sig, c, s);
-    return type_from_ref_subst(parser.parse_type_ref(sig.param_type_names[di]), bn, bt, s.type_names());
+    return type_from_ref_subst(sig_param_ref(sig, di), bn, bt, s.type_names());
   }
   return dest;
 }
@@ -18239,43 +18269,70 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtin
 // ow_result_borrows settles the least fixed point described at
 // ow_fresh_owners. After the first round only a function calling one the
 // previous round marked can change its answer, so only those are examined again.
+// Only a pending function can be marked, so each pending body's calls to one
+// are gathered once (ow_calls_to) and every round reads them.
 function ow_result_borrows(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex): util.NameIndex {
   let none: string[] = [];
   let borrows: util.NameIndex = util.name_index(none);
   let pending: parser.FuncDecl[] = [];
+  let pnames: string[] = [];
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
       continue;
     }
     if (ow_type_is_pointer(fn.ret_type, ofuncs)) {
       pending = pending.append(fn);
+      pnames = pnames.append(fn.name);
     }
+  }
+  let pindex: util.NameIndex = util.name_index(pnames);
+  let calls: string[][] = [];
+  for fn in pending {
+    calls = calls.append(ow_calls_to(fn, pindex));
   }
   let first: boolean = true;
   let marked: util.NameIndex = util.name_index(none);
   while (first || marked.names.len() > 0) {
     let now_marked: string[] = [];
     let unmarked: parser.FuncDecl[] = [];
-    for fn in pending {
-      if ((first || ow_calls_any(fn, marked)) && ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
+    let unmarked_calls: string[][] = [];
+    let i: i32 = 0;
+    while (i < pending.len()) {
+      let fn: parser.FuncDecl = pending[i];
+      if ((first || ow_calls_any(calls[i], marked)) && ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
         borrows = borrows.added(fn.name);
         now_marked = now_marked.append(fn.name);
       } else {
         unmarked = unmarked.append(fn);
+        unmarked_calls = unmarked_calls.append(calls[i]);
       }
+      i = i + 1;
     }
     first = false;
     marked = util.name_index(now_marked);
     pending = unmarked;
+    calls = unmarked_calls;
   }
   return borrows;
 }
 
-function ow_calls_any(fn: parser.FuncDecl, names: util.NameIndex): boolean {
+// ow_calls_to is the callee name of each call in `fn`'s body that `names`
+// holds, a method call's by its field name.
+function ow_calls_to(fn: parser.FuncDecl, names: util.NameIndex): string[] {
   let hits: astwalk.CallSite[] = [];
   for st in fn.body {
     hits = astwalk.collect_calls_stmt(st, names, hits);
-    if (hits.len() > 0) {
+  }
+  let out: string[] = [];
+  for h in hits {
+    out = out.append(h.name);
+  }
+  return out;
+}
+
+function ow_calls_any(callees: string[], names: util.NameIndex): boolean {
+  for n in callees {
+    if (names.has(n)) {
       return true;
     }
   }
@@ -25220,7 +25277,7 @@ function use_callback_slot(sig: FuncSig, c: ast.ExprCall, s: Scope): typeinfo.Ty
     i = i + 1;
   }
   let (bn, bt) = arg_bindings(sig, ast.ExprCall { ...c, args: written }, s);
-  let slot: parser.TypeRef = parser.parse_type_ref(sig.param_type_names[at]);
+  let slot: parser.TypeRef = sig_param_ref(sig, at);
   let f: parser.TypeRef = parser.ref_ungroup(slot);
   if (!parser.ref_is_fn_value(slot) || f.args.len() < 2) {
     return sig.param_types[at];
@@ -25838,7 +25895,7 @@ function gcall_sig(c: ast.ExprCall, s: Scope): FuncSig {
       return s.sigs.sigs[at];
     }
   }
-  return FuncSig { receiver: "", name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false, typevars: [], module: "" };
+  return FuncSig { receiver: "", name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false, typevars: [], module: "", refs: [] };
 }
 
 // lit_bound_typevar: every argument declared as `tp` is an untyped integer
@@ -25859,7 +25916,7 @@ function lit_bound_typevar(sig: FuncSig, c: ast.ExprCall, tp: string, s: Scope):
         return false;
       }
       n = n + 1;
-    } else if (type_ref_names_any(parser.parse_type_ref(sig.param_type_names[k]), [tp])) {
+    } else if (type_ref_names_any(sig_param_ref(sig, k), [tp])) {
       return false;
     }
     k = k + 1;
@@ -25884,7 +25941,7 @@ function gcall_open_tvars(e: ast.Expr, s: Scope): (ast.Expr, string[]) {
   }
   if let ast.ExprCall(c) = ce {
     let sig: FuncSig = gcall_sig(c, s);
-    let ret: parser.TypeRef = parser.parse_type_ref(sig.ret_type_name);
+    let ret: parser.TypeRef = sig_ret_ref(sig);
     for tp in sig.typevars {
       if (type_ref_names_any(ret, [tp]) && lit_bound_typevar(sig, c, tp, s)) {
         tvs = tvs.append(tp);
@@ -25904,7 +25961,7 @@ function gcall_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer):
   }
   if let ast.ExprCall(c) = ce {
     let sig: FuncSig = gcall_sig(c, s);
-    let (bn, bt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), lifted, sig.typevars, s.type_names(), [], []);
+    let (bn, bt) = gc_bind_param(sig_ret_ref(sig), lifted, sig.typevars, s.type_names(), [], []);
     let out: LitInfer = st;
     let i: i32 = 0;
     while (i < bn.len()) {

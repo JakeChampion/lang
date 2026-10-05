@@ -52,11 +52,10 @@ to match; all P3 async/stream/future e2e tests pass under v46:
    imports** each awaited async function (`dep<i>`), and the outer component
    links a **sibling** provider instance into it — so the consumer→provider
    call crosses a component-instance boundary. See
-   `buildAsyncConsumerComponent` / `buildAsyncImportsAwaitOuter` and the
+   `buildAsyncImportsAwaitOuter` and the
    `PutComponentImportSectionFuncs` /
    `PutInstanceSectionInstantiateComponentWithFuncArgs` emitters. All the
-   import/stream/future consumer builders (`BuildAsyncImportsAwaitComponent`,
-   `BuildAsyncStreamImportComponent`, `BuildAsyncStreamParamImportComponent`,
+   stream/future consumer builders (`BuildAsyncStreamImportComponent`, `BuildAsyncStreamParamImportComponent`,
    `BuildStreamCollectComponent`, `BuildStreamExportImportComponent`,
    `BuildFutureExportImportComponent`, `BuildPendingAwaitComponent`) were
    converted to this sibling shape.
@@ -145,7 +144,48 @@ A program with an async export always composes against the `fern` world, never
 a fixed framing. Tests: `TestSelfHostWasmAsyncExport{,Refusals}`
 (`internal/e2eselfhost`), with `TestParseAsyncModifier` for the keyword.
 
+**Status — async imports, DONE in the self-host** (`stream[T]` too, see `docs/STREAM-TYPE-SURFACE.md`). On
+`-target wasm32-wasi`, an `@import(iface, name) async function` of an
+interface the `fern` world does not declare makes the component import that
+interface, as an instance of async funcs typed from the Fern signatures. Each
+import is lowered with `canon lower async` over the core module's memory,
+through the composer's existing memory trampoline. The core module:
+
+- imports the lower as `(iface, "[async-lower]NAME")`, with core signature
+  `(params, retptr) -> status`;
+- imports the waitable intrinsics from `$root`
+  (`[waitable-set-new]`, `[waitable-join]`, `[waitable-set-wait]`,
+  `[subtask-drop]`, `[waitable-set-drop]`);
+- gives each import a wrapper (`wasm_ir.async_lower_wrapper`). The wrapper
+  marshals the params with the sync extern wrapper's helpers
+  (`extern_param_decls`, `extern_param_prologue`, `extern_marshal_args`),
+  then calls the lower with a 16-byte area from the heap. When the status is
+  not RETURNED, it waits on the subtask in a waitable set of its own. Then it
+  reads the result, lifting a string or list with `extern_composite_lift`,
+  and frees the area.
+
+Parameters are scalars, strings, lists and tuples of `i32` / `u32`, flattening
+to at most four core values (more would go through memory). A result is a
+scalar, a string or a list. A string or list result lowers with the realloc
+option too (kind 6), so the host writes it into the consumer's memory. An
+interface the world declares is refused, since the component would import it
+twice.
+
+Tests: `TestSelfHostWasmAsyncImport{,Memory,Refusals}`. The providers are WAT
+components linked with `wasm-tools compose`. Some of their functions yield,
+so the wait runs.
+
 ## Next epic — the async IMPORT / await side (scoped, tooling-confirmed)
+
+The sections below record how the native wasmbin backend built this. The
+Fern-compiling tests they name now run on the self-host:
+`TestSelfHostWasmAsyncImport` for scalars and `TestSelfHostWasmAsyncImportMemory`
+for strings, lists and tuples. The Go builders named below for async imports
+and their providers (`BuildAsyncImport{,s}AwaitComponent` and
+`BuildAsyncLiftedExportComponent{Params,MemParams,StringParamStringResult,TupleParam}`)
+went with those tests: the self-host composes these shapes itself
+(`wit_compose`). The `wasm-tools compose` links stand in for their provider
+bundling.
 
 The export side is complete (above). The remaining P3 capability is the
 async *import* — a guest that **awaits** a host/peer async function, the
@@ -261,25 +301,25 @@ async import.** Both halves landed together (coupled-for-correctness):
   self-contained component, no host needed for the import), and lifts the
   consumer's async core export with `canon lift async`. Both async-ABI
   directions run together.
-- **e2e** (`TestWasmP3AsyncImportFromFern`): real Fern source
+- **e2e** (`TestSelfHostWasmAsyncImport`): real Fern source
   (`@import async function dep(): i32` + colorless `async function run()
   { return dep(); }`) compiles, composes against a bundled provider, and
   returns 42 under `wasmtime -W
   component-model-async,component-model-async-stackful --invoke 'run()'`.
-- **scalar params** (`TestWasmP3AsyncImportParamsFromFern`): an async
+- **scalar params** (`TestSelfHostWasmAsyncImport`): an async
   import that takes arguments — `@import async function add(a: i32, b:
   i32): i32` + colorless `run() { return add(40, 2); }` — round-trips
   through the `(a, b, retptr) -> status` lower against a param-taking
   provider (`add: async func(u32, u32) -> u32`, built by
   `BuildAsyncLiftedExportComponentParams`), returning 42. The wasmbin
   wrapper forwards each scalar param ahead of the return-area pointer.
-- **64-bit result** (`TestWasmP3AsyncImportI64ResultFromFern`): an async
+- **64-bit result** (`TestSelfHostWasmAsyncImport`): an async
   import `big(): u64` returning 4294967338 (2^32 + 42) round-trips
   through the same `(retptr) -> i32 status` lower — the wide result lands
   in the 8-byte return area, and the wrapper reads it with `i64.load`
   (width-selected by the result valtype). The `run` export returns
   42 iff the awaited u64 matches, so a truncated read would fail the check.
-- **multiple imports** (`TestWasmP3AsyncImportMultiFromFern`): a program
+- **multiple imports** (`TestSelfHostWasmAsyncImport`): a program
   that awaits TWO async imports from distinct interfaces and sums them —
   `one()+two()` → 42. `component.BuildAsyncImportsAwaitComponent` takes a
   slice of `AsyncImportSpec` and lowers each import `async` over the
@@ -370,7 +410,7 @@ drives the full pending path:
   alongside each dep-lower. The function was rewritten to track every
   index space with running counters (the waitable glue made the
   closed-form formulas unmaintainable).
-- **e2e** (`TestWasmP3AsyncImportPendingFromFern`): a real Fern
+- **e2e** (`TestSelfHostWasmAsyncImport`): a real Fern
   `@import("test:dep/d","compute") async function dep(): i32` + `async
   function run() { return dep(); }`, compiled through wasmbin, composed
   against a **deferring** nested provider
@@ -378,7 +418,7 @@ drives the full pending path:
   before `task.return`, so the consumer's lower returns STARTED and the
   loop body actually executes), runs `run()` under wasmtime's async
   features → **42**. This is the deferring counterpart of the
-  sync-provider `TestWasmP3AsyncImportFromFern`.
+  sync-provider `TestSelfHostWasmAsyncImport`.
 
 **Also remaining (smaller):** string/array/composite async import results
 (needs the `realloc` option on `canon lower async` — unproven; the lower
@@ -433,7 +473,7 @@ All three pieces landed:
 - (b) **wasmbin string lift**: `scanExternImports`' async branch handles a
   `string` result (`buildExternAsyncStringResultWrapper`, pulling in
   `__fern_str_copy` + `cabi_realloc`; `TestScanExternImportsAsyncString`).
-- (c) **e2e**: `TestWasmP3AsyncImportStringFromFern` compiles a real Fern
+- (c) **e2e**: `TestSelfHostWasmAsyncImportMemory` compiles a real Fern
   `@import async function fetch(): string` + `async function run(): i32 {
   let s = fetch(); return s.len(); }`, composes it against the proven
   string provider, and runs `run()` under wasmtime's async features → **5**
@@ -461,7 +501,7 @@ consumer half landed: the wasmbin async-import branch lifts a numeric-array
 result (`buildExternAsyncListResultWrapper` — the array sibling of the
 string wrapper: drops the status, copies count*stride bytes past a length
 prefix), and the composer's `NeedsRealloc` lower supplies the bytes.
-`TestWasmP3AsyncImportListFromFern` compiles a real Fern `@import async
+`TestSelfHostWasmAsyncImportMemory` compiles a real Fern `@import async
 function fetch(): u8[]` + `run() { let xs = fetch(); if (xs.len()==5 &&
 xs[0]==104 && xs[4]==111) return 42; }`, composes it against the list
 provider, and runs `run()` → **42** — the array flows colorlessly with the
@@ -493,7 +533,7 @@ landed too: the wasmbin async-import branch normalises a single string
 `canon lower async` call `(ptr, len, retptr) -> status` — **memory option only,
 no realloc on the consumer** (the param bytes are the caller's; the provider's
 lift realloc copies them into the callee).
-`TestWasmP3AsyncImportStringParamFromFern` compiles a real Fern `@import async
+`TestSelfHostWasmAsyncImportMemory` compiles a real Fern `@import async
 function send(s: string): i32` + `run() { return send("hello"); }`, composes it
 against the string-param provider, and runs `run()` → **5**. So a string
 argument flows colorlessly into an awaited import.
@@ -511,7 +551,7 @@ caller's, no realloc on the consumer side); the provider lifts a defined
 (`[async, memory, realloc]` over a bump cabi_realloc, the param materialised in
 the callee's memory). `buildExternAsyncArrayParamWrapper` is the array sibling of
 `buildExternAsyncStringParamWrapper` (no `__fern_str_*` helpers).
-`TestWasmP3AsyncImportListParamFromFern` compiles a real Fern `@import async
+`TestSelfHostWasmAsyncImportMemory` compiles a real Fern `@import async
 function recv(xs: u8[]): i32` + `run() { let xs: u8[] = [104,…,111]; return
 recv(xs); }`, composes it against the list-param provider (reusing the
 string-param core, which task-returns the length), and runs `run()` → **5**.
@@ -529,7 +569,7 @@ and reads the scalar result; `scanExternImports` emits the full canonical param
 flattening (`canonicalExternParamValtypes` + retptr). The provider side adds the
 general `component.BuildAsyncLiftedExportComponentMemParams` (`[async, memory,
 realloc]` lift over a pre-encoded param-valtype vector).
-`TestWasmP3AsyncImportMixedMultiParamFromFern` compiles a real Fern
+`TestSelfHostWasmAsyncImportMemory` compiles a real Fern
 `@import async function fetch(url: string, n: i32): i32` + `run() { return
 fetch("hi", 40); }`, composes it against the mixed-param provider (which
 task-returns `len + n`), and runs `run()` → **42** (len "hi" = 2, + 40).
@@ -544,7 +584,7 @@ result there and pulls in `cabi_realloc` (the lower's realloc materialises the
 result bytes in the consumer's memory — `NeedsRealloc`). The provider side adds
 `component.BuildAsyncLiftedExportComponentStringParamStringResult`, which unions
 the `[memory, realloc]` param lift with the gMem-trampolined string `task.return`
-result. `TestWasmP3AsyncImportStringParamStringResultFromFern` compiles a real
+result. `TestSelfHostWasmAsyncImportMemory` compiles a real
 Fern `@import async function echo(s: string): string` + `run() { let r =
 echo("hello"); return r.len(); }`, composes it against the echo provider, and
 runs `run()` → **5**. So a mem param and a composite result now flow together
@@ -560,7 +600,7 @@ async branch dropped its scalar/string/array-only param gate (unlowerable params
 are already rejected by the shared param-validation loop) and emits the full
 canonical flattening (`canonicalExternParamValtypes`). The provider side adds
 `component.BuildAsyncLiftedExportComponentTupleParam` (a defined `tuple`/record
-param type, plain async lift). `TestWasmP3AsyncImportTupleParamFromFern` compiles
+param type, plain async lift). `TestSelfHostWasmAsyncImportMemory` compiles
 a real Fern `@import async function add(p: (i32, i32)): i32` + `run() { let p =
 (10, 32); return add(p); }` → **42** (the tuple flattens to `(x, y)`).
 

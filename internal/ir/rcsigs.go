@@ -125,8 +125,8 @@ func one(index int, e RcEffect, resultIsOperand bool) RcSig {
 }
 
 // rcRuntimeSigs is every runtime helper that moves a reference count,
-// with its effect read off the helper's own definition in
-// `internal/codegen/wasmbin/runtime.go`.
+// with its effect read off the helper's own definition in the native wasm
+// backend's runtime (deleted with #11530).
 var rcRuntimeSigs = map[string]RcSig{
 	"__fern_rc_inc":  one(0, RcRetain, true),
 	"__fern_str_inc": one(0, RcRetain, true),
@@ -622,23 +622,6 @@ func RcHelperClassified(name string) bool {
 	}
 	_, aliased := builtinRuntimeAlias(name)
 	return aliased
-}
-
-// RcClassifiedRuntimeNames lists every runtime helper this file names,
-// so the completeness test can also catch an entry for a helper that no
-// longer exists.
-func RcClassifiedRuntimeNames() []string {
-	out := make([]string, 0, len(rcRuntimeSigs)+len(rcUnmodelled)+len(rcInert))
-	for n := range rcRuntimeSigs {
-		out = append(out, n)
-	}
-	for n := range rcUnmodelled {
-		out = append(out, n)
-	}
-	for n := range rcInert {
-		out = append(out, n)
-	}
-	return out
 }
 
 // generatedDropPrefixes are the per-type drop functions lowering
