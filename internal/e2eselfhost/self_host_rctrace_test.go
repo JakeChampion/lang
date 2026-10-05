@@ -110,7 +110,7 @@ func runCaptureEnv(t *testing.T, runner []string, bin string, stdin []byte, env 
 // self-host driver.
 func hevCompile(t *testing.T, runner []string, driverBin, src string, env []string) string {
 	t.Helper()
-	full := append([]string{"PATH=/usr/bin:/bin"}, env...)
+	full := probeEnv(append([]string{"PATH=/usr/bin:/bin"}, env...)...)
 	asm := runCaptureEnv(t, runner, driverBin, []byte(src), full)
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")

@@ -138,3 +138,26 @@ func (c *selfHostCLI) exitOfFile(t *testing.T, src, target string, stdin []byte,
 	t.Fatalf("exitOf: unsupported target %s", target)
 	return "", 0
 }
+
+// boxedProbes compiles the test's programs as e2eharness.BoxedProbe does.
+func boxedProbes(t *testing.T) {
+	t.Helper()
+	t.Setenv("FERN_SEM_INLINE", "")
+	boxed = true
+	t.Cleanup(func() { boxed = false })
+}
+
+// boxed is set for the length of a boxedProbes test, so a child whose
+// environment is built from nothing gets the setting without inheriting it.
+var boxed bool
+
+func probeEnv(env ...string) []string {
+	if boxed {
+		return append(env, e2eharness.BoxedProbe)
+	}
+	return env
+}
+
+func childEnv(extra ...string) []string {
+	return e2eharness.SelfHostChildEnv(probeEnv(extra...)...)
+}

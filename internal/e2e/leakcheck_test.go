@@ -36,8 +36,14 @@ import (
 // "stderr only, stdout untouched", so combined output won't do).
 func runLeakCheckX86_64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
+	return runLeakCheckX86_64Env(t, src, nil)
+}
+
+// runLeakCheckX86_64Env is runLeakCheckX86_64 with env added to the compile's.
+func runLeakCheckX86_64Env(t *testing.T, src string, env []string) (string, string, int) {
+	t.Helper()
 	runner := e2eharness.X86_64Runner(t)
-	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetX86_64Linux, src, []string{"FERN_LEAKCHECK=1"})
+	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetX86_64Linux, src, append([]string{"FERN_LEAKCHECK=1"}, env...))
 	return runSplit(t, runX86_64Bin(runner, bin))
 }
 
@@ -45,15 +51,26 @@ func runLeakCheckX86_64(t *testing.T, src string) (string, string, int) {
 // runs in CI).
 func runLeakCheckArm64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
-	return runLeakCheckArm64Args(t, src)
+	return runLeakCheckArm64With(t, src, nil, nil)
+}
+
+// runLeakCheckArm64Env is runLeakCheckArm64 with env added to the compile's.
+func runLeakCheckArm64Env(t *testing.T, src string, env []string) (string, string, int) {
+	t.Helper()
+	return runLeakCheckArm64With(t, src, env, nil)
 }
 
 // runLeakCheckArm64Args is runLeakCheckArm64 with args handed to the program
 // as its argv[1..].
 func runLeakCheckArm64Args(t *testing.T, src string, args ...string) (string, string, int) {
 	t.Helper()
+	return runLeakCheckArm64With(t, src, nil, args)
+}
+
+func runLeakCheckArm64With(t *testing.T, src string, env, args []string) (string, string, int) {
+	t.Helper()
 	qemu := e2eharness.Arm64Runner(t)
-	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, src, []string{"FERN_LEAKCHECK=1"})
+	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, src, append([]string{"FERN_LEAKCHECK=1"}, env...))
 	return runSplit(t, runArm64Bin(qemu, bin, args...))
 }
 
@@ -518,7 +535,7 @@ func TestX86_64LeakCheckLoopConstructionMove(t *testing.T) {
 		{"alias-without-inc", loopAliasNoIncSrc, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			_, stderr, code := runLeakCheckX86_64Env(t, tc.src, []string{e2eharness.BoxedProbe})
 			if code != tc.exit {
 				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
 			}
@@ -544,7 +561,7 @@ func TestArm64LeakCheckLoopConstructionMove(t *testing.T) {
 		{"alias-without-inc", loopAliasNoIncSrc, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, stderr, code := runLeakCheckArm64(t, tc.src)
+			_, stderr, code := runLeakCheckArm64Env(t, tc.src, []string{e2eharness.BoxedProbe})
 			if code != tc.exit {
 				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
 			}
@@ -766,7 +783,7 @@ func TestX86_64LeakCheckNestedTupleElem(t *testing.T) {
 		{"tuple-in-struct", tupleInStructScalarSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			_, stderr, code := runLeakCheckX86_64Env(t, tc.src, []string{e2eharness.BoxedProbe})
 			allocs, frees, live := parseLeakCheckLine(t, stderr)
 			if allocs == 0 {
 				t.Fatalf("no allocations recorded — fixture drift (exit %d)", code)
@@ -787,7 +804,7 @@ func TestArm64LeakCheckNestedTupleElem(t *testing.T) {
 		{"tuple-in-struct", tupleInStructScalarSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, stderr, code := runLeakCheckArm64(t, tc.src)
+			_, stderr, code := runLeakCheckArm64Env(t, tc.src, []string{e2eharness.BoxedProbe})
 			allocs, frees, live := parseLeakCheckLine(t, stderr)
 			if allocs == 0 {
 				t.Fatalf("no allocations recorded — fixture drift (exit %d)", code)
@@ -898,7 +915,7 @@ const ctorRetainedDropOrderSrc = `function main(): i32 {
 }`
 
 func TestX86_64LeakCheckCtorRetainedDropOrder(t *testing.T) {
-	_, stderr, code := runLeakCheckX86_64(t, ctorRetainedDropOrderSrc)
+	_, stderr, code := runLeakCheckX86_64Env(t, ctorRetainedDropOrderSrc, []string{e2eharness.BoxedProbe})
 	if code != 14 {
 		t.Fatalf("exit=%d, want 14 — the read is wrong, not just its accounting", code)
 	}
@@ -910,7 +927,7 @@ func TestX86_64LeakCheckCtorRetainedDropOrder(t *testing.T) {
 }
 
 func TestArm64LeakCheckCtorRetainedDropOrder(t *testing.T) {
-	_, stderr, code := runLeakCheckArm64(t, ctorRetainedDropOrderSrc)
+	_, stderr, code := runLeakCheckArm64Env(t, ctorRetainedDropOrderSrc, []string{e2eharness.BoxedProbe})
 	if code != 14 {
 		t.Fatalf("exit=%d, want 14 — the read is wrong, not just its accounting", code)
 	}
@@ -932,7 +949,7 @@ func TestX86_64LeakCheckCtorRetainedLoopSource(t *testing.T) {
 		{"outer-alias", ctorOuterAliasSrc, 149},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			_, stderr, code := runLeakCheckX86_64Env(t, tc.src, []string{e2eharness.BoxedProbe})
 			if code != tc.exit {
 				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
 			}
@@ -959,7 +976,7 @@ func TestArm64LeakCheckCtorRetainedLoopSource(t *testing.T) {
 		{"outer-alias", ctorOuterAliasSrc, 149},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, stderr, code := runLeakCheckArm64(t, tc.src)
+			_, stderr, code := runLeakCheckArm64Env(t, tc.src, []string{e2eharness.BoxedProbe})
 			if code != tc.exit {
 				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
 			}
@@ -1097,7 +1114,7 @@ func TestX86_64LeakCheckEnumStringPayloadBox(t *testing.T) {
 		{"scalar-nested-in-tuple", enumScalarNestedTupleSrc, 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			_, stderr, code := runLeakCheckX86_64Env(t, tc.src, []string{e2eharness.BoxedProbe})
 			if code != tc.exit {
 				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
 			}
@@ -1126,7 +1143,7 @@ func TestArm64LeakCheckEnumStringPayloadBox(t *testing.T) {
 		{"scalar-nested-in-tuple", enumScalarNestedTupleSrc, 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, stderr, code := runLeakCheckArm64(t, tc.src)
+			_, stderr, code := runLeakCheckArm64Env(t, tc.src, []string{e2eharness.BoxedProbe})
 			if code != tc.exit {
 				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
 			}

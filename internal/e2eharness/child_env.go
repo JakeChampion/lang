@@ -43,6 +43,11 @@ func ChildEnv(extra ...string) []string {
 	return append(env, extra...)
 }
 
+// BoxedProbe compiles with the semantic inliner off, for a probe that pins the
+// rc plan for a tuple, record or variant box the inliner would split into its
+// parts, leaving nothing on the heap to count.
+const BoxedProbe = "FERN_SEM_INLINE="
+
 // SelfHostVerify turns on the self-host compiler's re-checks of its own
 // passes without the IR gate's coverage line. A plain compile skips them, so
 // a test compiling a program with the self-host compiler sets this. A driver

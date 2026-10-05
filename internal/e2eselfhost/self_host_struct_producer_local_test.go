@@ -243,6 +243,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 // its caller the same reclaim credit the literal-returning form does, and the
 // hazard shapes answer correctly.
 func TestSelfHostStructProducerLocalX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

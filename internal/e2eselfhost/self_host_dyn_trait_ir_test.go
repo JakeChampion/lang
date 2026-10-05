@@ -217,6 +217,7 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 // constant fields is a static box, so a probe whose census needs a heap box
 // takes one field from n(), or a string field from ids().
 func TestSelfHostDynTraitIR(t *testing.T) {
+	boxedProbes(t)
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
 		for _, tc := range dynTraitIRCases {
