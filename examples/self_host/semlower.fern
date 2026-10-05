@@ -33,6 +33,7 @@ import "./semtypes";
 import "./typeinfo";
 import "./util";
 import "./semarrayreport";
+import "./semndprune";
 
 // Every body the substitution is considering, declarations first (aligned with
 // mod.funcs) and then the instances the declarations asked for. `n1` is the
@@ -606,7 +607,8 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug
   // The declaration-less bodies are merged by symbol here, where the rule
   // lives, so the emit path's tail is a plain append.
   let extra: irtables.LowerResult[] = ssarc.merge_helpers(instances, helpers.rows);
-  return ircore.Sub { ...ircore.no_sub(), bodies: bodies, extra: extra, contracts: contract_rows(built.contracts, r), records: inf.records };
+  let kept: semndprune.Result = semndprune.unused_adapter(mod, bodies, extra);
+  return ircore.Sub { ...ircore.no_sub(), bodies: kept.bodies, extra: kept.extra, contracts: contract_rows(built.contracts, r), records: inf.records };
 }
 
 // contract_rows spells what a caller's lowering reads of the functions it

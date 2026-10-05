@@ -828,6 +828,14 @@ pub function outer_mul_f64(a: f64[], b: f64[]): f64[] {
   return __outer_mul_f64(a, b);
 }
 
+// Packed matrix contraction: a is rows*extent, b is extent*columns.
+// Each result starts at init and adds a[row,k]*b[k,column] in increasing k.
+// Negative dimensions, mismatched lengths or oversized results abort. Inputs
+// are borrowed and unchanged; zero extent yields rows*columns copies of init.
+pub function inner_mul_add_f64(a: f64[], b: f64[], rows: i32, extent: i32, columns: i32, init: f64): f64[] {
+  return __inner_mul_add_f64(a, b, rows, extent, columns, init);
+}
+
 // `add_f64(a, b)` — the element-wise sum `a[i] + b[i]`. On a length mismatch
 // the result runs to the shorter length (the longer tail is dropped); empty in,
 // empty out. The vector-addition companion to `scale_f64`.

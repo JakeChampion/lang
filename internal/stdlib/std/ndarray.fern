@@ -594,15 +594,18 @@ function base_of[T](a: NdArray[T], idx: i32[], idx_from: i32, axis_from: i32, co
 pub function (a: NdArray[T]) inner[T, A](b: NdArray[T], init: A, mul: (T, T) => A, add: (A, A) => A): NdArray[A] {
   let ra: i32 = a.shape.len();
   let rb: i32 = b.shape.len();
-  if (ra < 1 || rb < 1 || a.shape[ra - 1] != b.shape[0]) {
-    shape_error();
-  }
+  let shape: i32[] = inner_shape(a.shape, b.shape);
   let n: i32 = a.shape[ra - 1];
   let sa: i32 = a.strides[ra - 1];
   let sb: i32 = b.strides[0];
-  let shape: i32[] = join(drop_axis(a.shape, ra - 1), drop_axis(b.shape, 0));
   let out: A[] = [];
   let total: i32 = count_of(shape);
+  if (total == 0) {
+    return from_flat(out, shape);
+  }
+  if (a.is_packed() && b.is_packed()) {
+    return from_flat(packed_inner(a.data, b.data, extent_before(a.shape, ra - 1), n, extent_after(b.shape, 0), init, mul, add), shape);
+  }
   let idx: i32[] = zeros(shape.len());
   let i: i32 = 0;
   while (i < total) {
@@ -619,6 +622,53 @@ pub function (a: NdArray[T]) inner[T, A](b: NdArray[T], init: A, mul: (T, T) => 
     i = i + 1;
   }
   return from_flat(out, shape);
+}
+
+// Shared rank and contraction checks for the scalar walk and packed adapter.
+// Each caller checks the returned shape's count before computing any output.
+function inner_shape(a: i32[], b: i32[]): i32[] {
+  if (a.len() < 1 || b.len() < 1 || a[a.len() - 1] != b[0]) {
+    shape_error();
+  }
+  return join(drop_axis(a, a.len() - 1), drop_axis(b, 0));
+}
+
+// The typed planner proves both operands packed and both callbacks exactly
+// multiply then add before selecting this private adapter. Visible shape
+// checks remain here; empty output must precede unused subshape products.
+function inner_kernel(a: NdArray[f64], b: NdArray[f64], init: f64): NdArray[f64] {
+  let shape: i32[] = inner_shape(a.shape, b.shape);
+  let total: i32 = count_of(shape);
+  if (total == 0) {
+    return from_flat([], shape);
+  }
+  let last: i32 = a.shape.len() - 1;
+  let data: f64[] = __inner_mul_add_f64(a.data, b.data, extent_before(a.shape, last), a.shape[last], extent_after(b.shape, 0), init);
+  return from_flat(data, shape);
+}
+
+// Packed operands give a row/K/column indexing scheme. Preserve output
+// reading order and the mul-then-add call sequence for every increasing K.
+// Geometry comes from shapes, not data lengths, so K=0 still emits init for
+// every output. The caller checks the output count before deriving geometry.
+function packed_inner[T, A](xs: T[], ys: T[], rows: i32, extent: i32, columns: i32, init: A, mul: (T, T) => A, add: (A, A) => A): A[] {
+  let out: A[] = [];
+  let i: i32 = 0;
+  while (i < rows) {
+    let j: i32 = 0;
+    while (j < columns) {
+      let acc: A = init;
+      let k: i32 = 0;
+      while (k < extent) {
+        acc = add(acc, mul(xs[i * extent + k], ys[k * columns + j]));
+        k = k + 1;
+      }
+      out = out.append(acc);
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 // `fold_all(init, f)` — every element folded in reading order.

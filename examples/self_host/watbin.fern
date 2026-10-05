@@ -1373,6 +1373,9 @@ function simd_opcode(op: string): i32 {
   if (op == "f64x2.mul") {
     return 242;
   }
+  if (op == "f64x2.add") {
+    return 240;
+  }
   return 0 - 1;
 }
 
@@ -1386,7 +1389,7 @@ function simd_has_memarg(op: string): boolean {
 // encode them post-order without a per-op branch.
 function simd_arity(op: string): i32 {
   // v128.store takes the address then the value, like the scalar stores.
-  if (op == "i8x16.eq" || op == "f64x2.mul" || op == "v128.store") {
+  if (op == "i8x16.eq" || op == "f64x2.mul" || op == "f64x2.add" || op == "v128.store") {
     return 2;
   }
   return 1;

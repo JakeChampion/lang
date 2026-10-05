@@ -162,17 +162,19 @@ site includes its receiver layout, the second operand's layout for binary
 operations, resolved element-function names, and a literal axis or rank where
 available. A computed axis is `?`, never guessed.
 
-The current kernels are packed `f64` map with a capture-free literal scale
-and packed `f64` outer product with a capture-free binary multiply.
+The current kernels are packed `f64` map with a capture-free literal scale,
+outer product with a capture-free binary multiply, and inner product with
+capture-free binary multiply and add.
 `scale-kernel` is recorded by the rewrite itself with
 `storage=deferred-to-ownership`. The final `scale storage` report states whether
 the scale kernel uses a fresh buffer or guarded reuse. `outer-mul-kernel`
-always reports `storage=fresh-kernel-buffer`. Other operations remain ordinary
+and `inner-mul-add-kernel`
+always report `storage=fresh-kernel-buffer`. Other operations remain ordinary
 scalar combinators. Their closed refusal tags are:
 
 | Tag | Planner gate |
 | --- | --- |
-| `disabled` | An otherwise eligible site was disabled by `FERN_NO_SCALE_KERNEL=1` (map) or `FERN_NO_PRODUCT_KERNEL=1` (outer). |
+| `disabled` | An otherwise eligible site was disabled by `FERN_NO_SCALE_KERNEL=1` (map) or `FERN_NO_PRODUCT_KERNEL=1` (outer or inner). |
 | `layout-unknown` | Packed layout was not proved. |
 | `layout-strided` | A metadata transform prevents a packed proof. |
 | `layout-row-major` | Row-major order is known, but packed storage is not. |
@@ -180,10 +182,11 @@ scalar combinators. Their closed refusal tags are:
 | `element-fn-captures` | The closure carries captures. |
 | `element-not-literal-scale` | The body is not exactly element times an `f64` literal. |
 | `element-not-binary-multiply` | The body is not exactly the left element times the right element, in that order. |
-| `constructor-unavailable` | A required `from_flat`, shape-join or shape-check helper is unavailable. |
+| `element-not-binary-add` | The body is not exactly accumulator plus product, in that order. |
+| `constructor-unavailable` | A required constructor, shape helper or checked kernel adapter is unavailable. |
 | `builtin-shadowed` | A user declaration shadows the selected kernel builtin. |
 | `unsupported-operation` | No kernel currently replaces this algebra operation. |
-| `unsupported-element-type` | This is not a supported `f64` map or outer instance. |
+| `unsupported-element-type` | This is not a supported `f64` map, outer or inner instance. |
 
 The histogram includes zero counts. Reporting on and off must emit identical
 code; tests compare assembly and verify kernel instructions at reported sites.
@@ -203,12 +206,12 @@ Buffer reuse does not promise that the whole operation allocates nothing.
 `borrow-linked-result`, `builtin-shadowed`, and `shape-unsupported`.
 `FERN_SELFHOST_NO_REUSE=1` disables donation while retaining the fresh-buffer
 SIMD kernel; `FERN_NO_SCALE_KERNEL=1` disables the ndarray scale rewrite.
-`FERN_NO_PRODUCT_KERNEL=1` disables the outer rewrite. Intrinsic refusal
+`FERN_NO_PRODUCT_KERNEL=1` disables the outer and inner rewrites. Intrinsic refusal
 reasons survive both switches; only otherwise eligible sites report `disabled`.
 
 Layout facts come from the same interprocedural analysis that gates rewrites.
-The report does not call an `inner` site a kernel. An `outer` site must pass
-both packed-layout proofs and the exact element-body proof below.
+Outer and inner sites must pass both packed-layout proofs and the exact
+element-body proofs below before the report identifies them as kernels.
 
 **Retained Go analysis.** The older `-array-report` interface described below
 is labelled as Go analysis and does not describe primary compiler output.
@@ -473,10 +476,11 @@ Measured on arm64-darwin on 2026-10-05 with
 `examples/array_pipeline/ndarray_scale.fern`: the same candidate compiler,
 kernel enabled versus `FERN_NO_SCALE_KERNEL=1`, 1,000 elements, 200 rounds
 per process, nine alternating runs of each build. Median time per map was
-253 ns enabled and 2,235 ns disabled (8.83x). Every checksum agreed. Cold
-allocator calls fell from 15 to 6 and fresh bytes from 10,392 to 8,288.
-Steady counters over 200 rounds were 3,200 versus 1,400 allocator calls and
-10,392 versus 8,344 fresh bytes. Counters include metadata and result checks;
+253 ns enabled and 2,235 ns disabled (8.83x). Every checksum agreed. The
+enabled build used 6 cold allocator calls and 8,288 fresh bytes; the disabled
+build used 15 and 10,392. Over 200 rounds, the enabled build used 1,400
+allocator calls and 8,344 fresh bytes; the disabled build used 3,200 and
+10,392. Counters include metadata and result checks;
 timing covers only the map. The first result stays live across the run, and
 every later result is checked after its timer. This is a native measurement
 for this input size, not a claim about other targets or shapes.
@@ -625,6 +629,72 @@ General `map` and `zip_with` allocate their result even when the receiver is
 consumed and unique. The primary compiler can donate the packed literal-scale
 map's data buffer under the ownership and uniqueness conditions in §6.
 
+`inner` uses direct row/contracted-index/column addressing when both operands
+are packed. Output positions retain reading order, and each output calls
+`mul` then `add` for every increasing contracted index. Captured state and
+noncommutative callbacks therefore observe the same sequence as the strided
+walk. Geometry comes from shapes, so a zero contracted extent produces the
+initial accumulator at every output. Output-shape validation precedes the
+packed branch; an empty output returns before deriving unused sub-products.
+
+On Apple M3 Pro, arm64-darwin, 2026-10-05, the ordinary-call mode of
+`examples/array_pipeline/ndarray_inner.fern` compared the original and packed
+stdlib builds at 32-by-32-by-32 over 200 rounds in nine alternating processes.
+The original median was 153,062 ns (151,526-161,258), and the packed median
+141,225 ns (140,203-145,197). Both checked every output bit and source element
+outside timing, with an initial accumulator of 0.25. Only rounds changed
+from the two-round pilot. Allocator calls rose from 3,800 to 4,000 because
+the two packed predicates build stride arrays while the packed path removes
+one index array; fresh bytes stayed at 10,472.
+
+`std/array.inner_mul_add_f64(a, b, rows, extent, columns, init)` provides an
+explicit packed contraction kernel. It validates dimensions, input lengths
+and the signed-i32 output limit before allocating a fresh result. Each output
+starts at `init` and performs a separate multiply then add for every increasing
+contracted index. A zero extent copies `init` exactly, including signed zero
+and NaN bits. Inputs remain unchanged. SSE2, NEON and WASM SIMD process two
+independent output columns together, with a scalar odd-column tail. There is
+no horizontal reduction, reassociation or fused multiply-add.
+
+On the same machine and date, the benchmark's ordinary packed scalar mode
+and explicit kernel mode measured medians of 141,920 ns (140,200-152,193) and
+10,748 ns (10,468-10,897), respectively. Inputs were 32-by-32-by-32 with an
+initial accumulator of 0.25; nine alternating processes ran 200 rounds after
+a two-round pilot. Every output bit and source element was checked outside
+timing. Allocator calls were 4,000 versus 2,000 and fresh bytes 10,472 versus
+10,456. These measurements compare explicit kernel use with the packed scalar
+stdlib call, before automatic selection.
+
+Adding the explicit mode increased this benchmark's native text by 1,064
+bytes, with unchanged data size. Compiling the previous benchmark source
+with the new compiler produced an identical executable: unused kernel support
+adds no code to that program.
+
+The primary typed planner selects the inner kernel when both operands are
+proved packed and the resolved callbacks are exactly `x * y` and `acc + value`,
+with `f64` parameters and results. Captures, calls, extra arithmetic and reversed
+operands retain the scalar path. A private checked adapter preserves rank and
+contraction validation, output-shape prefix overflow, arbitrary initial values
+and the early empty-output return. Geometry comes from shapes even when the
+contracted extent is zero. The result has canonical packed metadata, including
+when an input's extent-one strides are noncanonical. The rewrite respects
+builtin shadowing and `FERN_NO_PRODUCT_KERNEL=1`.
+
+With automatic selection, the same ordinary `inner` source measured a median
+of 6,311 ns (6,081-8,294) enabled and 133,321 ns (128,254-181,689) disabled on
+the Apple M3 Pro on 2026-10-05. Nine alternating processes ran 200 rounds at
+32-by-32-by-32 after a two-round pilot, checking every output bit and input
+element outside timing. Allocator calls were 2,000 versus 4,000; fresh bytes
+were 10,472 in both builds. The enabled executable used 1,112 more text bytes
+for the checked adapter and kernel, with unchanged data size.
+
+Source tree shaking retains the adapter until typed selection. When no site
+uses it, final lowering removes the adapter and its otherwise unused ordinary
+ndarray callees while preserving exports, shared callees and function-address
+references. This removes 1,104 unused text bytes from the disabled probe and
+restores its previous text size. Separate-module tests cover both enabled and
+disabled linking on x86-64 and arm64.
+
 ## 8. Broadcasting
 
 **Normative.** Two shapes broadcast when, aligned at their **last**
@@ -678,8 +748,8 @@ Four consequences:
   multiply has nothing to reassociate. The same kernel now reaches the
   ndarray `map` of that shape over a packed receiver (§6). The primary
   compiler also selects binary-multiply `outer` sites with two packed
-  operands, using the exact body proof above. `inner` retains its scalar
-  reduction order; a kernel for it remains separate work.
+  operands, using the exact body proof above. It also selects the inner kernel
+  in §7 after proving both callbacks, preserving scalar reduction order.
   The primary compiler's literal-scale kernel can donate its buffer through
   the ownership plan and runtime guard described in §6.
 - **Other in-place operations through a handle.** Donation currently covers
@@ -687,8 +757,8 @@ Four consequences:
   their result buffers. Layout analysis proves packed order; the ownership
   plan and runtime guard establish the right to modify storage.
 - **Other layout rewrites.** The primary compiler selects packed scale and
-  outer-multiply kernels. Eliminating metadata operations' runtime branches
-  is separate work.
+  outer-multiply and inner-multiply-add kernels. Eliminating metadata
+  operations' runtime branches is separate work.
 - **Static shapes.** §4.
 - **The self-host.** The primary compiler's ndarray kernel, storage and
   algebra tests cover x86-64, ARM64 and WASM, including `f64` closures.
