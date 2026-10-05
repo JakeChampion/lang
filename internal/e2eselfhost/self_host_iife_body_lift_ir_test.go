@@ -77,6 +77,71 @@ function main(): i32 {
     });
     return fs[0](40i32) & 63i32;
 }`, 41},
+	// A lambda passed as a call argument inside a value-position match's GUARD.
+	// A match on an enum keeps its guards as guards (a literal scrutinee's
+	// if-chain makes each one an if condition), and the IIFE body walk skipped
+	// guards, so the lifted `__lam_N` reached the lowering unboxed. Reduced from
+	// nightly differential seed 82671.
+	{"lambda-in-enum-match-guard", `function f(g: (i32) => i32): i32 { return g(1i32); }
+function main(): i32 {
+    let v: Result[i32, i32] = Ok(819i32);
+    return (match (v) { Ok(a) when (f(((x: i32) => 274i32)) > 3i32) => 42i32, Ok(b) => 7i32, Err(e) => 9i32 });
+}`, 42},
+	// The same, with a lambda capturing a local and the arm's payload binding.
+	{"capturing-lambda-in-enum-match-guard", `function f(g: (i32) => i32): i32 { return g(1i32); }
+function main(): i32 {
+    let k: i32 = 40i32;
+    let o: Option[i32] = Some(3i32);
+    return (match (o) { Some(n) when (f(((x: i32) => x + k + n)) == 44i32) => n + 20i32, Some(m) => 1i32, None => 2i32 });
+}`, 23},
+	// The guard is FALSE, so the answer depends on the rewritten guard running.
+	{"false-lambda-guard-falls-through", `function f(g: (i32) => i32): i32 { return g(1i32); }
+function main(): i32 {
+    let k: i32 = 40i32;
+    let o: Option[i32] = Some(3i32);
+    return (match (o) { Some(n) when (f(((x: i32) => x + k + n)) > 1000i32) => 42i32, Some(m) => m + 4i32, None => 2i32 });
+}`, 7},
+	// A literal payload folds into the guard beside the written one.
+	{"lambda-guard-on-literal-payload", `function f(g: (i32) => i32): i32 { return g(1i32); }
+function main(): i32 {
+    let v: Result[i32, i32] = Ok(0i32);
+    return (match (v) { Ok(0i32) when (f(((x: i32) => 274i32)) > 3i32) => 42i32, Ok(a) => 7i32, Err(e) => 9i32 });
+}`, 42},
+	// A value-position `if` of lambdas handed through a generic passthrough to
+	// a fn-typed parameter. The passthrough boxing took only a bare lambda or
+	// fn name, so the arms stayed raw. Reduced from nightly seed 78232.
+	{"lambda-iife-through-passthrough", `function id[T](x: T): T { return x; }
+function g(p: (i32) => i32): i32 { return p(3i32); }
+function main(): i32 {
+    let b: boolean = true;
+    return g(id((if (b) { ((x: i32) => x + 30i32) } else { ((x: i32) => 206i32) })));
+}`, 33},
+	// The `if`'s CONDITION holds lambdas too. Walking the condition changed the
+	// body, and that returned before the arm values were boxed. Reduced from
+	// nightly seed 76638.
+	{"lambda-iife-with-lambda-in-condition", `function g(p1: ((i32) => i32)[]): boolean { return p1.len() > 1i32; }
+function main(): i32 {
+    let fs: ((i32) => i32)[] = [(if (g([((x: i32) => x), ((x: i32) => 4i32)])) { ((x: i32) => x + 40i32) } else { ((x: i32) => 136i32) })];
+    return fs[0](3i32);
+}`, 43},
+	// A call in a fn-typed argument slot whose own argument is a lambda: the
+	// slot's boxing returned a non-passthrough call untouched, so its arguments
+	// were never walked. Reduced from nightly seed 76233.
+	{"lambda-in-call-at-fn-slot", `function lf(n: u8, g: (i32) => i32): (i32) => i32 { return g; }
+function main(): i32 {
+    let h: (i32) => i32 = lf(1u8, lf(7u8, ((x: i32) => x + 2i32)));
+    return h(4i32);
+}`, 6},
+	// A local function called from a value-position `if` that also yields a
+	// lambda. The `if` is hoisted with the local function as a capture, which
+	// made it a value and stopped its direct-call lift, and nothing boxed it.
+	// Reduced from nightly seed 78835.
+	{"local-fn-called-in-hoisted-iife", `function main(): i32 {
+    function lf(k: i32): (i32) => i32 { return ((x: i32) => x + k); }
+    let b: boolean = true;
+    let h: (i32) => i32 = (if (b) { lf(3i32) } else { ((x: i32) => 216i32) });
+    return h(1i32);
+}`, 4},
 }
 
 // TestSelfHostIifeBodyLiftIRX86_64 drives the production x86-64 IR path and
