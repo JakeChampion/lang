@@ -27,8 +27,7 @@ function to_u8(b: i32[]): u8[] { let o: u8[] = []; let i: i32 = 0; while (i < b.
 
 // TestSelfHostArm64Encode exercises the self-hosted AArch64 machine-code
 // encoder (examples/self_host/arm64_encode.fern) — the assembler half of
-// the arm64-darwin native-binary path (the container half is macho.fern),
-// mirroring internal/native/arm64/arm64.go.
+// the arm64-darwin native-binary path (the container half is macho.fern).
 //
 // arm64_encode.fern is import-free, so this test concatenates it with a
 // self-test main() that encodes each instruction and asserts the bytes

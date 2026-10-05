@@ -12,11 +12,10 @@ const (
 	// SSEIntHalf is x86_gas_sse_int_op — the packed-INTEGER forms, all
 	// 66-prefixed.
 	SSEIntHalf
-	// SSENoHalf marks a row both assemblers keep OUT of their tables.
-	// movdqa / movdqu are the only ones: AT&T decides store-versus-load from
-	// which operand is the xmm, so each side routes them to a dedicated
-	// encoder (x86_gas_movdq, and the direction check in asm.go's insn)
-	// rather than a table lookup that assumes a direction.
+	// SSENoHalf marks a row kept OUT of both lookups. movdqa / movdqu are
+	// the only ones: AT&T decides store-versus-load from which operand is
+	// the xmm, so they go to a dedicated encoder (x86_gas_movdq) rather
+	// than a table lookup that assumes a direction.
 	SSENoHalf
 )
 
@@ -141,17 +140,6 @@ var SSEOps = []SSEOp{
 	// Not in either half — see SSENoHalf.
 	{"movdqu", 0xF3, 0x6F, SSENoHalf},
 	{"movdqa", 0x66, 0x6F, SSENoHalf},
-}
-
-// SSEOpMap is the flat lookup the Go assembler dispatches on, movdqa/movdqu
-// included: that pair leaves the self-host's TABLES, not the vocabulary, and
-// the Go side still resolves them here after its own direction check.
-func SSEOpMap() map[string]struct{ Prefix, Op byte } {
-	m := make(map[string]struct{ Prefix, Op byte }, len(SSEOps))
-	for _, o := range SSEOps {
-		m[o.Mnemonic] = struct{ Prefix, Op byte }{o.Prefix, o.Op}
-	}
-	return m
 }
 
 // SSEHalfOps is the rows of one half, in dispatch order.

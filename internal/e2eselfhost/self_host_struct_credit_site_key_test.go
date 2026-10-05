@@ -203,7 +203,6 @@ function round(i: i32): i32 {
 // which the exit code cannot see — and which is where a site key that resolves to
 // NO credit shows up.
 func TestSelfHostStructCreditSiteKeyX86_64(t *testing.T) {
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

@@ -19,13 +19,9 @@ func FramingAllocsSource() string {
 	return fmt.Sprintf(`import "std/bench";
 import "std/http";
 
-// keep stands for the handler a server hands the request to, so the parse
-// builds everything a server keeps however much of it this probe reads.
-@noinline function keep(f: http.HttpFramed): i32 { return f.len; }
-
 function parse_once(buf: u8[], limits: http.HttpLimits): i32 {
   match (http.http_parse_request_framed_from(buf, 0, limits)) {
-    http.Framed(f) => { return keep(f); },
+    http.Framed(f) => { return f.len; },
     _ => { return 0; }
   }
 }

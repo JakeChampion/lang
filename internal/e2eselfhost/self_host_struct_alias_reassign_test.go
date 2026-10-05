@@ -173,7 +173,6 @@ function round(i: i32): i32 {
 
 // TestSelfHostStructAliasReassignX86_64 is the leak-accounting leg.
 func TestSelfHostStructAliasReassignX86_64(t *testing.T) {
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

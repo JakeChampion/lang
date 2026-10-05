@@ -18,8 +18,8 @@ import (
 // table (-g) being the oracle, by a different path from the CFI offsets.
 //
 // Both Linux targets, structurally, on any host: nothing here runs the
-// binary. The bytes themselves are pinned to native's, and through it to
-// gas, by TestSelfHostCfiMatchesNative.
+// binary. The bytes themselves are pinned to GNU as and ld's by
+// TestSelfHostCfiMatchesGas*.
 func TestSelfHostUnwindData(t *testing.T) {
 	gcc, _ := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

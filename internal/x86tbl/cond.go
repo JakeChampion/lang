@@ -1,13 +1,12 @@
-// Package x86tbl is the single source of truth for the x86-64 encoding tables
-// both assemblers need (#7903).
+// Package x86tbl is the single source of truth for the vocabulary of the
+// self-host x86-64 assembler, examples/self_host/x86_native.fern (#7903).
 //
-// There are two x86-64 assemblers — internal/native/x86_64 in Go and
-// examples/self_host/x86_native.fern in Fern — and they must agree byte for
-// byte. Every drift found so far has been the same shape: not an encoding-logic
-// bug, but a VOCABULARY one, where one side reaches a mnemonic or an operand
-// form the other does not (#8000, 63 mnemonics; #8020, 13; #8071, 23 condition
-// spellings). So this package holds the vocabulary, the Go assembler consumes
-// it directly, and cmd/x86tblgen writes the Fern side from it.
+// Every assembler defect found so far has been the same shape: not an
+// encoding-logic bug, but a VOCABULARY one, where the assembler fails to reach
+// a mnemonic or an operand form (#8000, 63 mnemonics; #8020, 13; #8071, 23
+// condition spellings). So this package holds the vocabulary, cmd/x86tblgen
+// writes the Fern side from it, and internal/e2eselfhost's table tests
+// assemble every row through the self-host and GNU as.
 //
 // The mechanism follows cmd/floattablegen and cmd/unicodegen, which already
 // generate .fern between marker comments: the self-host language has
@@ -50,17 +49,6 @@ var Conds = []Cond{
 	{13, []string{"ge", "nl"}},
 	{14, []string{"le", "ng"}},
 	{15, []string{"g", "nle"}},
-}
-
-// CondCodes is the flat spelling-to-code map the Go assembler dispatches on.
-func CondCodes() map[string]byte {
-	m := make(map[string]byte, 28)
-	for _, c := range Conds {
-		for _, s := range c.Spellings {
-			m[s] = c.Code
-		}
-	}
-	return m
 }
 
 // CondSpellings is every spelling in table order — the enumeration the parity

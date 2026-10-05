@@ -44,40 +44,40 @@ func TestUnitLaneRequestsWasmtime(t *testing.T) {
 
 // TestArm64RunTestsFallBackToNative pins the second half. The lane also runs
 // on ubuntu-24.04-arm, which can execute an arm64 binary with no emulator at
-// all — but a bare qemu lookup skips there too. Every run helper must use the
-// qemuOrNative fallback instead.
+// all — but a bare qemu lookup skips there too. A run helper must fall back
+// to running the binary natively instead.
 //
 // internal/e2eselfhost is excluded: it has its own lane, which installs qemu.
 func TestArm64RunTestsFallBackToNative(t *testing.T) {
-	pkgs := []string{
-		filepath.Join("..", "native", "elf"),
-		filepath.Join("..", "native", "arm64"),
-	}
-	for _, dir := range pkgs {
-		files, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
-		if err != nil {
-			t.Fatalf("glob %s: %v", dir, err)
-		}
-		if len(files) == 0 {
-			t.Errorf("no test files under %s — if the package moved, update this gate with it", dir)
-			continue
-		}
-		for _, f := range files {
-			b, err := os.ReadFile(f)
+	scanned := 0
+	for _, root := range []string{"..", filepath.Join("..", "..", "cmd")} {
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
-				t.Fatalf("read %s: %v", f, err)
+				return err
 			}
-			body := string(b)
-			// The fallback's own definition contains the lookup, so a file
-			// that defines qemuOrNative is allowed to name it.
-			if strings.Contains(body, "func qemuOrNative(") {
-				continue
+			if d.IsDir() && d.Name() == "e2eselfhost" {
+				return filepath.SkipDir
 			}
-			if strings.Contains(body, `LookPath("qemu-aarch64")`) {
-				t.Errorf("%s looks qemu up directly instead of calling qemuOrNative, so its run tests skip on the "+
-					"arm64 runner that could execute them natively (#8472)", filepath.ToSlash(f))
+			if d.IsDir() || !strings.HasSuffix(path, "_test.go") || strings.HasSuffix(path, "unit_lane_runtimes_test.go") {
+				return nil
 			}
+			scanned++
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(string(b), `LookPath("qemu-aarch64")`) {
+				t.Errorf("%s looks qemu up directly, so its run tests skip on the arm64 runner that could "+
+					"execute them natively (#8472)", filepath.ToSlash(path))
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
+	}
+	if scanned == 0 {
+		t.Fatal("no test files scanned — the walk is reading the wrong tree")
 	}
 }
 

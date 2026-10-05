@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/native/arm64"
 )
 
 // The arm64 operand-form differential (#7903 phase 5).
@@ -14,9 +12,8 @@ import (
 // addressing-mode product, and the mov/push/pop/branch product — and between
 // them they found eleven defects, nine of them silent. arm64 had one: the
 // load/store offset differential (#8088). Every defect any of them found came
-// from a family with no table on at least one side, or from a boundary no
-// probe sat on, and arm64's non-memory families are exactly that: dispatched
-// by hand on both sides with nothing comparing the two form by form.
+// from a family with no table, or from a boundary no probe sat on, and arm64's
+// non-memory families are exactly that: dispatched by hand.
 //
 // AArch64 hides more encoding choices behind one written syntax than x86 does,
 // which is what makes the product worth building rather than sampling:
@@ -34,9 +31,7 @@ import (
 //   - `lsl x1, x2, #3` is a ubfm alias whose two fields are both derived from
 //     the shift amount, and `lsl x1, x2, x3` is a different instruction.
 //
-// internal/native/arm64 is the oracle, as in the memory differential: it is
-// pinned to aarch64-linux-gnu-as, and it reaches its answers by a different
-// path than the self-host does.
+// GNU as is the oracle, as in the memory differential.
 
 // arm64FormCases builds the product. Each entry is one instruction; both
 // assemblers must produce the same word.
@@ -228,52 +223,46 @@ func arm64FormCases() []string {
 	return out
 }
 
-// TestSelfHostArm64FormsMatchNative byte-compares every case through both
-// assemblers. A self-host refusal is a failure, not a skip: a refused line is
-// an instruction that would have left the word stream.
-func TestSelfHostArm64FormsMatchNative(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	bin := buildAsmBenchDriver(t, gcc)
-
+// TestSelfHostArm64FormsMatchGas byte-compares every case against GNU as. A
+// self-host refusal is a failure, not a skip: a refused line is an
+// instruction that would have left the word stream.
+func TestSelfHostArm64FormsMatchGas(t *testing.T) {
 	cases := arm64FormCases()
 	if len(cases) < 300 {
 		t.Fatalf("the matrix produced only %d cases; it is meant to be a product of families, forms and widths", len(cases))
 	}
+	compareArm64Cases(t, cases)
+}
 
-	// The oracle, one line at a time so a native refusal names its own line
-	// rather than poisoning the whole batch.
-	want := make([]uint32, 0, len(cases))
-	kept := make([]string, 0, len(cases))
-	for _, c := range cases {
-		b, _, err := arm64.AssembleProgram(c+"\n", 0x400000)
-		if err != nil {
-			t.Errorf("%-40s internal/native/arm64 rejects it, so it cannot be the oracle: %v", c, err)
-			continue
-		}
-		if len(b) != 4 {
-			t.Errorf("%-40s native emitted %d bytes, want one word", c, len(b))
-			continue
-		}
-		want = append(want, uint32(b[0])|uint32(b[1])<<8|uint32(b[2])<<16|uint32(b[3])<<24)
-		kept = append(kept, c)
-	}
+// compareArm64Cases assembles each case, one program per case, with GNU as
+// and with the self-host assembler and compares the words. A case may span
+// lines and define labels. A case GNU as rejects is a failure of the case
+// rather than of the self-host.
+func compareArm64Cases(t *testing.T, cases []string) {
+	t.Helper()
+	gas := gnuArm64Oracle(t)
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
 
 	// One line per driver run. A batch would be faster, but a refusal in a
 	// batch reports a tag and not the line that produced it, and which FORM
 	// was refused is the whole finding.
-	for i, c := range kept {
-		if refused := refusalsFor(t, bin, runner, ".text\n_start:\n    "+c+"\n"); len(refused) > 0 {
-			t.Errorf("%-40s the self-host assembler REFUSES it (%s); native emits %08x",
-				c, strings.Join(refused, ", "), want[i])
+	for _, c := range cases {
+		src := ".text\n_start:\n    " + c + "\n"
+		text, rejected := gas.program(t, src)
+		if rejected != "" {
+			t.Errorf("%-40q GNU as rejects it, so it cannot be the oracle: %s", c, rejected)
 			continue
 		}
-		got := assembleSelfHost(t, bin, runner, ".text\n_start:\n    "+c+"\n")
-		if len(got) != 1 {
-			t.Errorf("%-40s the self-host assembler produced %d words, want one", c, len(got))
+		want := arm64Words(text)
+		if refused := refusalsFor(t, bin, runner, src); len(refused) > 0 {
+			t.Errorf("%-40q the self-host assembler REFUSES it (%s); GNU as emits %08x",
+				c, strings.Join(refused, ", "), want)
 			continue
 		}
-		if got[0] != want[i] {
-			t.Errorf("%-40s self-host %08x, internal/native/arm64 %08x", c, got[0], want[i])
+		got := assembleSelfHost(t, bin, runner, src)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("%-40q self-host %08x, GNU as %08x", c, got, want)
 		}
 	}
 }
@@ -285,25 +274,26 @@ func TestSelfHostArm64FormsMatchNative(t *testing.T) {
 // what it does now; before #7903 phase 5 it encoded `movn x1, #0` and loaded
 // -1 instead.
 //
-// The row asserts native still ENCODES it, so it fails the day the gap closes
+// The row asserts GNU as still ENCODES it, so it fails the day the gap closes
 // rather than outliving it.
 func TestSelfHostArm64RefusesUnencodableForms(t *testing.T) {
+	gas := gnuArm64Oracle(t)
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
 
 	lines := []string{"mov x1, #4294967295"}
 	for _, ln := range lines {
-		if _, _, err := arm64.AssembleProgram(ln+"\n", 0x400000); err != nil {
-			t.Errorf("%-40s internal/native/arm64 refuses it too, so this row does not "+
-				"describe a self-host gap — check it: %v", ln, err)
+		if _, rejected := gas.program(t, ".text\n"+ln+"\n"); rejected != "" {
+			t.Errorf("%-40s GNU as refuses it too, so this row does not "+
+				"describe a self-host gap — check it: %s", ln, rejected)
 		}
 	}
 	checkRefusedSelfHost(t, bin, runner, lines)
 }
 
 // TestSelfHostArm64RefusesUnencodableImmediates pins the other direction: an
-// immediate NEITHER assembler can encode must be refused by both, not masked
-// into a different number by one of them.
+// immediate GNU as cannot encode must be refused by the self-host too, not
+// masked into a different number.
 //
 // imm12 is twelve unsigned bits, optionally shifted left twelve, so it holds
 // 0..4095 and the multiples of 4096 up to 0xFFF000 — nothing between two
@@ -312,6 +302,7 @@ func TestSelfHostArm64RefusesUnencodableForms(t *testing.T) {
 // `sub sp, sp, #4096` became `sub sp, sp, #0`: a function needing a frame
 // that large allocated none at all, and nothing failed at assemble time.
 func TestSelfHostArm64RefusesUnencodableImmediates(t *testing.T) {
+	gas := gnuArm64Oracle(t)
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
 
@@ -337,8 +328,8 @@ func TestSelfHostArm64RefusesUnencodableImmediates(t *testing.T) {
 		"orr w1, w2, #0x300000001",
 	}
 	for _, ln := range lines {
-		if _, _, err := arm64.AssembleProgram(ln+"\n", 0x400000); err == nil {
-			t.Errorf("%-40s internal/native/arm64 ACCEPTS it, so it is encodable after all "+
+		if _, rejected := gas.program(t, ".text\n"+ln+"\n"); rejected == "" {
+			t.Errorf("%-40s GNU as ACCEPTS it, so it is encodable after all "+
 				"and the self-host should encode it rather than refuse", ln)
 		}
 	}

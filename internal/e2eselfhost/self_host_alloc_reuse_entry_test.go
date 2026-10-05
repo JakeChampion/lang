@@ -34,7 +34,6 @@ function main(): i32 {
 var allocReuseStackEntry = regexp.MustCompile(`__fn___fern_alloc_reuse:\n\s+movq 16\(%rsp\), %rax\n\s+movq 8\(%rsp\), %rsi\n__fn___fern_alloc_reuse\.r:\n`)
 
 func TestSelfHostAllocReuseRegisterEntry(t *testing.T) {
-	boxedProbes(t)
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "reuse.fern")

@@ -34,9 +34,7 @@ import "./semndarray";
 // same graph again: None before that, and again once a rewrite moves the graph.
 // view_escape carries a definite typed source escape (1 array, 2 string).
 // Other refusals and callers refused transitively leave it at zero.
-// `dropped` marks a function the inliner spliced into every caller and that
-// nothing names any more: its body is gone and nothing emits one.
-pub struct Produced { ok: boolean, why: string, func: ssasem.Func, modes: i32[], template: boolean, key: string, requests: Request[], bodyless: boolean, analysis: Option[ssasem.Analysis], view_escape: i32, dropped: boolean }
+pub struct Produced { ok: boolean, why: string, func: ssasem.Func, modes: i32[], template: boolean, key: string, requests: Request[], bodyless: boolean, analysis: Option[ssasem.Analysis], view_escape: i32 }
 
 // An instance a produced body asks for: the template's declaration key, the
 // instance's symbol, and the type each variable binds.
@@ -5649,7 +5647,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
   let graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-  return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [] }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
+  return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [] }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0 };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], debug_lines: boolean): State {
@@ -6725,7 +6723,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo)
   // it checks, and before anything downstream plans ownership over it (#9692).
   f = ssasem.tail_recursion(f, name);
   f = ssabounds.proven_indices(f);
-  return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false, analysis: None, view_escape: 0, dropped: false }, memo: table.memo };
+  return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false, analysis: None, view_escape: 0 }, memo: table.memo };
 }
 
 // unresolved_result_spelling names what the refusal failed ON. A type that did
@@ -7941,7 +7939,7 @@ function template_verdict(key: string, instances: Produced[]): Produced {
   for p in instances {
     if (p.key == key) {
       seen = true;
-      if (!p.ok && !p.dropped) {
+      if (!p.ok) {
         return template_entry(key, false, p.why, false);
       }
     }
@@ -8325,10 +8323,7 @@ function produce_module(mod: parser.Module, verify: boolean, debug_lines: boolea
   let all: Produced[] = anchored.all;
   names = anchored.names;
   if (verify) {
-    // Fusion first: it recognises a pipeline by its calls to std/array's
-    // combinators, which a function called once would otherwise absorb.
-    let inlined: Spliced = inline_leaves(fuse_pipelines(all, names), names, mod);
-    all = scale_ndarray_maps(without_unnamed(inlined.all, names, inlined.spliced, mod), names, mod);
+    all = scale_ndarray_maps(fuse_pipelines(inline_leaves(all, names, mod.funcs), names), names, mod);
   }
   decls = [];
   instances = [];
@@ -8399,34 +8394,26 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
   return out;
 }
 
-// Tiny leaves and functions called once spliced into their callers, and
-// constructions read only by their parts split into those parts (seminline).
-// A declaration marked @noinline stays a call, and so does every instance; so
-// does a `fip` or `fbip` one, whose allocation claim is checked on its body. `FERN_SEM_INLINE=`
+// Tiny scalar leaves spliced into their callers (seminline). A declaration
+// marked @noinline stays a call, and so does every instance. `FERN_SEM_INLINE=`
 // (set but empty) turns the pass off, for comparing a build against itself.
-struct Spliced { all: Produced[], spliced: boolean[] }
-
-function inline_leaves(all: Produced[], names: string[], mod: parser.Module): Spliced {
+function inline_leaves(all: Produced[], names: string[], decls: parser.FuncDecl[]): Produced[] {
   if (!inline_on()) {
-    return Spliced { all: all, spliced: [] };
+    return all;
   }
   let funcs: ssasem.Func[] = [];
-  let modes: i32[][] = [];
   let inlinable: boolean[] = [];
   let rewrite: boolean[] = [];
-  let unnamed: boolean[] = [];
   let i: i32 = 0;
   while (i < all.len()) {
     let p: Produced = all[i];
     let usable: boolean = p.ok && !p.template && !p.bodyless;
     funcs = funcs.append(p.func);
-    modes = modes.append(p.modes);
     rewrite = rewrite.append(usable);
-    inlinable = inlinable.append(usable && i < mod.funcs.len() && !mod.funcs[i].no_inline && !mod.funcs[i].fip && !mod.funcs[i].fbip);
-    unnamed = unnamed.append(outside_unnamed(p, names[i], i, mod));
+    inlinable = inlinable.append(usable && i < decls.len() && !decls[i].no_inline);
     i = i + 1;
   }
-  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed);
+  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, inlinable, rewrite);
   let result: Produced[] = [];
   i = 0;
   while (i < all.len()) {
@@ -8437,74 +8424,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module): Sp
     result = result.append(p);
     i = i + 1;
   }
-  return Spliced { all: result, spliced: out.spliced };
-}
-
-// `all` with each function the inliner spliced away entirely dropped: spliced
-// wherever it was called, and named by no instruction left in any body.
-// `main`, methods, runtime helpers, imports and exports are named from outside
-// the bodies, and keep theirs. A dropped entry is skipped as a refusal is, so
-// nothing analyses, plans or lowers it again, but is reported as no refusal.
-function without_unnamed(all: Produced[], names: string[], spliced: boolean[], mod: parser.Module): Produced[] {
-  let gone: boolean[] = unnamed(all, names, spliced, mod);
-  let out: Produced[] = [];
-  let i: i32 = 0;
-  while (i < all.len()) {
-    if (gone[i]) {
-      out = out.append(Produced { ...all[i], ok: false, why: "spliced into every caller", func: refuse("").func, analysis: None, dropped: true });
-    } else {
-      out = out.append(all[i]);
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
-function unnamed(all: Produced[], names: string[], spliced: boolean[], mod: parser.Module): boolean[] {
-  let candidates: string[] = [];
-  let at: i32[] = [];
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < all.len()) {
-    let candidate: boolean = i < spliced.len() && spliced[i] && outside_unnamed(all[i], names[i], i, mod);
-    if (candidate) {
-      candidates = candidates.append(names[i]);
-      at = at.append(i);
-    }
-    out = out.append(candidate);
-    i = i + 1;
-  }
-  if (candidates.len() == 0) {
-    return out;
-  }
-  let ix: util.NameIndex = util.name_index(candidates);
-  for p in all {
-    for b in p.func.graph.blocks {
-      for ins in b.insts {
-        let k: i32 = ix.find(ins.str);
-        if (k >= 0) {
-          out = out.with(at[k], false);
-        }
-      }
-    }
-  }
-  return out;
-}
-
-function outside_unnamed(p: Produced, name: string, i: i32, mod: parser.Module): boolean {
-  if (p.template || p.bodyless || !p.ok || name == "main" || util.str_has_prefix(name, "__") || util.contains(name, ".")) {
-    return false;
-  }
-  return i >= mod.funcs.len() || decl_unnamed(mod.funcs[i], mod);
-}
-
-function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {
-  for x in mod.exports {
-    if (x.func_name == fd.name) {
-      return false;
-    }
-  }
-  return fd.receiver_type.len() == 0 && fd.import_iface == "";
+  return result;
 }
 
 function inline_on(): boolean {
@@ -8695,7 +8615,7 @@ pub function with_inferred_modes(b: Built): Built {
     }
     i = i + 1;
   }
-  return Built { ...b, decls: decls, instances: instances, contracts: inferred.table };
+  return Built { decls: decls, instances: instances, contracts: inferred.table, names: b.names, dyn_arms: b.dyn_arms };
 }
 
 // Which rows the inference moved, in the order `semlower.rows_planned` walks

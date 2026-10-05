@@ -82,7 +82,7 @@ function main(): i32 {
 	// freed the caller's box, seed.a would be corrupted. 5 + (5+10+20) = 40.
 	run(t, `struct C { a: i32, n: i32 }
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
-@noinline function thread(c: C): i32 { c = c.step(10); c = c.step(20); return c.a; }
+function thread(c: C): i32 { c = c.step(10); c = c.step(20); return c.a; }
 function main(): i32 {
     let seed: C = C { a: 5, n: 0 };
     let t: i32 = thread(seed);
@@ -158,7 +158,7 @@ function main(): i32 {
 	// snapshot_dec.)
 	run(t, `struct C { a: i32, n: i32 }
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
-@noinline function build(c: C): i32 {
+function build(c: C): i32 {
     let k: i32 = 0;
     while (k < 50) { c = c.step(k); k = k + 1; }
     return c.a;
@@ -179,7 +179,6 @@ func TestSelfHostSnapshotParamReclaimWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm snapshot-param reclaim e2e")
 	}
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "wasm_run.fern")

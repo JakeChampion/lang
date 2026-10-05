@@ -15,7 +15,7 @@
 // encoding primitives for the self-hosted *native* backend (slice 2a of the
 // native-binary track; the container half is elf.fern). This is the
 // assembler half: it turns instructions into the raw bytes an ELF .text
-// section holds, mirroring internal/native/x86_64/asm.go.
+// section holds.
 //
 // Strategy (matching the wasm binary track): the eventual native emitter
 // will *assemble the already-tested asm.fern text* — tokenize → parse →
@@ -203,7 +203,7 @@ function x86_ret(own buf: i32[]): i32[] {
 // ---- width-generic integer encoders ----
 //
 // `size` is the operand width in bits (8/16/32/64), taken from the AT&T
-// mnemonic suffix. Shared rules, mirroring internal/native/x86_64: a
+// mnemonic suffix. Shared rules: a
 // 16-bit op carries the 0x66 prefix, an 8-bit op selects the byte opcode
 // (opbase without |1), and a byte register 4..7 (spl..dil) forces an
 // otherwise-empty REX — unprefixed, the same numbers select ah..bh.
@@ -2204,7 +2204,7 @@ function x86_str_split(s: string, sep: string): string[] {
 // whose `code` / `rodata` sections elf.fern wraps into a runnable binary —
 // the final wiring that removes the external `as` + `ld` step.
 //
-// Coverage mirrors internal/native/x86_64's surface (#7886/#7893): the
+// Coverage (#7886/#7893): the
 // integer families at all four operand widths (ALU with carry/borrow, the
 // F6/F7 and FE/FF one-operand groups, shifts/rotates and shld/shrd, the
 // bt group, xadd/cmpxchg/xchg and the validated lock prefix, the string
@@ -3683,10 +3683,9 @@ function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: str
 // ---- suffix-family machinery ----
 //
 // The AT&T mnemonic surface is organised as families keyed on the base
-// mnemonic (suffix stripped) with the operand width taken from the suffix,
-// mirroring internal/native/x86_64's per-family encoders. Anything a
-// family cannot encode is RECORDED (SH-005) — a wrong-width encode is the
-// silent-widening class the native side fixed in #3544/#7886.
+// mnemonic (suffix stripped) with the operand width taken from the suffix.
+// Anything a family cannot encode is RECORDED (SH-005) — a wrong-width
+// encode is the silent-widening class #3544/#7886 fixed.
 
 // x86_gas_bad records an unsupported instruction shape (SH-005).
 function x86_gas_bad(own a: X86Asm, what: string): X86Asm {
@@ -5355,7 +5354,7 @@ function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string
 // BEGIN GENERATED SSE TABLES (cmd/x86tblgen) — do not edit by hand.
 // x86_gas_sse_fp_op: the scalar/packed FLOAT half of the two-byte-opcode
 // SSE table (`[pfx] 0F op /r`, xmm destination), packed as pfx*256+op;
-// -1 when absent. Mirrors internal/native/x86_64's sseOps.
+// -1 when absent.
 function x86_gas_sse_fp_op(mnem: string): i32 {
   match (mnem) {
     "addsd" => {
@@ -6745,7 +6744,7 @@ struct RelaxPass { new_start: i32[], new_size: i32[], prefix: i32[], before: i32
 
 // x86_relax_settle finds the branch decisions from the first round's layout
 // rather than by assembling a round per step, settling sizes the way GNU as
-// does (internal/native/x86_64/relax.go): passes over the events in offset
+// does: passes over the events in offset
 // order, each branch judged against the layout as it stands mid-pass. A
 // target behind the branch sits at this pass's position; one ahead at the
 // last pass's position plus the growth so far, except across a pad, which
@@ -8031,7 +8030,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
 
 // ---- call-frame information: `.cfi_*` directives into a .eh_frame image ----
 //
-// The self-host port of internal/native/cfi. Both self-host assemblers carry
+// Both self-host assemblers carry
 // an IDENTICAL copy of this recorder and renderer — this module is
 // import-free by design (see the head of the file), so it cannot share one —
 // and TestImportFreeModulesDoNotDrift holds the two copies in step, function
@@ -8039,8 +8038,8 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
 // shared code.
 //
 // Every profile is pinned from GNU as, never from the DWARF spec's prose;
-// TestSelfHostCfiMatchesNative pins the rendered bytes to the native
-// renderer's, and through it to gas.
+// TestSelfHostCfiMatchesGas* pins the rendered bytes to GNU as and ld's, and
+// TestSelfHostCfiArm64Darwin the Mach-O profile to llvm-mc's.
 //
 // Offsets are recorded as .text byte offsets at the point the directive is
 // seen. The recorder never moves them: the x86 assembler's branch relaxation

@@ -16,8 +16,7 @@ import (
 // All but fneg and frinta of that unary family were missing, so the
 // assembler rejected the asm_arm64 emitter's own output for any program
 // using __sqrt_f64 / floor / ceil / trunc / abs: `in-process assembler hit
-// an instruction it does not yet support: fsqrt`. Their encodings are
-// verified here against internal/native/arm64's FABS / FSQRT / FRINT*.
+// an instruction it does not yet support: fsqrt`.
 func TestSelfHostArm64Float(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 float e2e")

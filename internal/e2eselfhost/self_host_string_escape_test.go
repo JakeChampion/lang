@@ -11,9 +11,6 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
-
-	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
-	nativeelf "github.com/jakechampion/lang/internal/native/elf"
 )
 
 // The self-host's two GAS assemblers read back the escapes its own emitter
@@ -34,8 +31,8 @@ import (
 // throughout.
 //
 // The x86-64 half runs the program, which is the strongest form available. The
-// arm64 half compares assembled .rodata against internal/native/arm64 on the
-// same GAS text — no qemu, and the layer the bug is actually in.
+// arm64 half compares assembled .data against GNU as on the same GAS text — no
+// qemu, and the layer the bug is actually in.
 
 // escapeCases are literals whose bytes exercise the decoder. Each is written as
 // Fern source and as the bytes it must produce.
@@ -91,7 +88,7 @@ function digit(x: i32): string {
 `
 }
 
-func TestSelfHostStringEscapesMatchNativeX86_64(t *testing.T) {
+func TestSelfHostStringEscapesX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("string-escape differential runs only natively (argv paths)")
@@ -99,7 +96,6 @@ func TestSelfHostStringEscapesMatchNativeX86_64(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	nativeBin := buildFernCLIBin(t)
 	stdlib, err := filepath.Abs(filepath.Join("..", "stdlib"))
 	if err != nil {
 		t.Fatalf("stdlib path: %v", err)
@@ -111,30 +107,16 @@ func TestSelfHostStringEscapesMatchNativeX86_64(t *testing.T) {
 			if err := os.WriteFile(src, []byte(escapeProbeSource(c.src)), 0o644); err != nil {
 				t.Fatalf("write: %v", err)
 			}
-			out := t.TempDir()
-			for _, b := range []struct {
-				label string
-				args  []string
-				bin   string
-			}{
-				{"native", []string{"-target", "x86-64-linux", "-o", filepath.Join(out, "n"), src}, filepath.Join(out, "n")},
-				{"self-host", []string{"-target", "x86-64-linux", "-o", filepath.Join(out, "s"), src, stdlib}, filepath.Join(out, "s")},
-			} {
-				cli := nativeBin
-				if b.label == "self-host" {
-					cli = driverBin
-				}
-				if o, err := exec.Command(cli, b.args...).CombinedOutput(); err != nil {
-					t.Fatalf("%s compile failed: %v\n%s", b.label, err, o)
-				}
-				o, err := exec.Command(b.bin).Output()
-				if err != nil {
-					t.Fatalf("%s program failed: %v", b.label, err)
-				}
-				got := parseByteLines(t, string(o))
-				if !bytes.Equal(got, c.want) {
-					t.Errorf("%s: literal %q read back as % d, want % d", b.label, c.src, got, c.want)
-				}
+			bin := filepath.Join(t.TempDir(), "s")
+			if o, err := exec.Command(driverBin, "-target", "x86-64-linux", "-o", bin, src, stdlib).CombinedOutput(); err != nil {
+				t.Fatalf("compile failed: %v\n%s", err, o)
+			}
+			o, err := exec.Command(bin).Output()
+			if err != nil {
+				t.Fatalf("program failed: %v", err)
+			}
+			if got := parseByteLines(t, string(o)); !bytes.Equal(got, c.want) {
+				t.Errorf("literal %q read back as % d, want % d", c.src, got, c.want)
 			}
 		})
 	}
@@ -161,15 +143,10 @@ func parseByteLines(t *testing.T, out string) []byte {
 
 // The arm64 half. arm64_native's decoder is a hand-mirrored copy of x86_native's
 // — the two assemblers are deliberately import-free — and an untested mirror is
-// how they drift, so it is compared against internal/native/arm64 rather than
-// assumed to match its twin.
-//
-// The oracle is the same one TestSelfHostArm64AsmEncodingMatchesNative uses, for
-// the same reason: internal/native/arm64 is what `bin/fern -target arm64-linux`
-// runs in production and is itself gated against gcc's assembly of the same
-// text, so "self-host agrees with native" transitively means "self-host agrees
-// with gcc" without a cross-toolchain on this host.
-func TestSelfHostArm64GasEscapesMatchNative(t *testing.T) {
+// how they drift, so it is checked against GNU as rather than assumed to match
+// its twin.
+func TestSelfHostArm64GasEscapesMatchGas(t *testing.T) {
+	gas := gnuArm64Oracle(t)
 	gcc, runner := x86_64Tooling(t)
 	bench := buildAsmBenchDriver(t, gcc)
 
@@ -181,17 +158,14 @@ func TestSelfHostArm64GasEscapesMatchNative(t *testing.T) {
 			esc := gasEscape(c.want)
 			snippet := ".text\n.globl _start\n_start:\n    ret\n.data\n    .ascii \"" + esc + "\"\n"
 
-			_, wantData, err := nativearm64.AssembleProgram(snippet, nativeelf.TextVAddr)
-			if err != nil {
-				t.Fatalf("native assembler rejected %q (the oracle must accept it): %v", snippet, err)
-			}
+			wantData := gas.data(t, snippet)
 			if !bytes.Equal(wantData, c.want) {
 				t.Fatalf("the oracle itself decoded %q to % d, want % d — the escaping in this test is wrong", esc, wantData, c.want)
 			}
 
-			// The self-host pads .data out to an 8-byte boundary where the
-			// native oracle returns it unpadded, so the comparison is over the
-			// literal's own length. The padding is legitimate section layout;
+			// The self-host pads .data out to an 8-byte boundary where GNU as
+			// leaves it unpadded, so the comparison is over the literal's own
+			// length. The padding is legitimate section layout;
 			// what is under test is the bytes the decoder produced.
 			got := assembleSelfHostData(t, bench, runner, snippet)
 			if len(got) < len(c.want) {
