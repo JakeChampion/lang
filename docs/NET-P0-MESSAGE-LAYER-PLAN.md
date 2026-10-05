@@ -272,7 +272,12 @@ on #4451, as slice 2 was.
    differs: a new path costs the path, the request and its framing. The
    donor is one per loop rather than one per connection because a donor
    per connection is a head held by every idle keep-alive connection: 3.2
-   KiB each in the held-connection gate, against its 1 KiB bound.
+   KiB each in the held-connection gate, against its 1 KiB bound. A parse
+   with no request before it (`http_parse_request_framed`) builds its
+   request fresh, so a caller it is spliced into still keeps the request in
+   registers; the checks against an empty donor cost the `http_hello`
+   bench, which parses that way, 2% more instructions on x86-64, and the
+   same rounds parsed with the donor cost 10% fewer than before.
 
    Left: the `Ok` box, slice 7, and the serialize's 3, slice 8. The gate's
    probe parses from one call site, where the inliner splits the `Framed`
