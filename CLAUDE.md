@@ -236,18 +236,17 @@ posted comment cannot be edited; only a follow-up can correct it.
    file) — its §9
    predecessor in `docs/RC-PERCEUS-SELF-HOST-PORT.md` holds everything before
    2026-08-20 — and `docs/SELFHOST-PERCEUS-REUSE.md`.
-3. **Retire the native backends.** The prerequisites, and which are open, are
-   `docs/NATIVE-CONVERGENCE.md §3a` and `docs/NATIVE-FREEZE.md`.
+3. **DONE (2026-10-05) — the native backends retired.** `internal/codegen`,
+   `internal/native` and `internal/fernrt` are deleted, and `cmd/fern` execs the
+   self-host for every `-target` compile. Go keeps the parser, checker and
+   interpreter, the oracle. Record: `docs/NATIVE-RETIREMENT.md`.
 
 When a PR merges with no more specific instruction, the default next task is the
-next open step of the AST-lowering retirement, then the next open prerequisite of
-goal 3, or the next self-host leak in `docs/rc-log/`.
+next self-host leak in `docs/rc-log/`.
 
-**The self-host compiler is becoming the default, so its output wins performance
-ties.** A change that makes self-host-built code faster and native-built code
-slower is a GOOD trade — take it, and say what it cost. This does not license a
-caller-side workaround: fix the compiler where the compiler is what is slow, so
-every caller gains on both backends instead of one caller gaining on one.
+**Fix slow code in the compiler, not at the call site.** Where a program is slow
+because of what the compiler emits for it, fix the compiler, so every caller
+gains on every target instead of one caller gaining on one.
 
 **Verify tracker state against the code before picking anything up.** Issues here
 have repeatedly lagged reality — #4451 / #4363 / #4346 all described work that
@@ -258,8 +257,8 @@ native-touching work. `docs/NATIVE-CONVERGENCE.md` is the policy: `internal/`
 accepts only bugfixes, oracle needs, and what the self-host sources require to
 bootstrap (the "Go 1.4 rule"). New language surface lands self-host-first. A
 native-only feature that still lands is an exception to argue for on #4451,
-and any issue/PR adding native-only surface (`internal/ir`, `internal/interp`,
-the codegen backends) or touching the differential/parity suites references
+and any issue/PR adding native-only surface (`internal/ir`, `internal/interp`)
+or touching the differential/parity suites references
 #4451, so the debt stays visible in one place.
 
 ## Engineering bar (non-negotiable)
