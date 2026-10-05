@@ -3118,16 +3118,27 @@ function p2_ok_ret(bytes: string): string {
 // preopened, or -1 when it granted none. get-directories mints a fresh handle
 // on every call and the set is fixed at instantiation, so the answer is
 // fetched once and cached (-2 = not yet asked) — asking per operation grows
-// the host's resource table without bound.
+// the host's resource table without bound. The host writes the list of
+// (descriptor, path) entries and each path through cabi_realloc; only the
+// first handle is kept, so the paths and the list are released here.
 function preopen_func_p2(): string {
   let o: string = "  (global $__fern_preopen (mut i32) (i32.const -2))\n";
   o = o + "  (func $__fern_preopen_p2 (result i32)\n";
-  o = o + "    (local $ra i32)\n";
+  o = o + "    (local $ra i32) (local $list i32) (local $n i32) (local $e i32)\n";
   o = o + "    (if (i32.eq (global.get $__fern_preopen) (i32.const -2)) (then\n";
   o = o + "      (local.set $ra (call $__fern_alloc (i32.const 8)))\n";
   o = o + "      (call $get_directories (local.get $ra))\n";
+  o = o + "      (local.set $list (i32.load (local.get $ra)))\n";
+  o = o + "      (local.set $n (i32.load offset=4 (local.get $ra)))\n";
   o = o + "      (global.set $__fern_preopen (i32.const -1))\n";
-  o = o + "      (if (i32.load offset=4 (local.get $ra)) (then (global.set $__fern_preopen (i32.load (i32.load (local.get $ra))))))\n";
+  o = o + "      (if (local.get $n) (then (global.set $__fern_preopen (i32.load (local.get $list)))))\n";
+  o = o + "      (local.set $e (local.get $list))\n";
+  o = o + "      (block $done (loop $paths\n";
+  o = o + "        (br_if $done (i32.ge_u (local.get $e) (i32.add (local.get $list) (i32.mul (local.get $n) (i32.const 12)))))\n";
+  o = o + "        (call $__fern_raw_free (i32.load offset=4 (local.get $e)) (i32.load offset=8 (local.get $e)))\n";
+  o = o + "        (local.set $e (i32.add (local.get $e) (i32.const 12)))\n";
+  o = o + "        (br $paths)))\n";
+  o = o + "      (call $__fern_raw_free (local.get $list) (i32.mul (local.get $n) (i32.const 12)))\n";
   o = o + "      (call $__fern_raw_free (local.get $ra) (i32.const 8))))\n";
   o = o + "    (global.get $__fern_preopen))\n";
   return o;
