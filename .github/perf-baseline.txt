@@ -161,7 +161,7 @@ aarch64/closure_call.ir	139968083
 aarch64/enum_match.text	1137
 aarch64/enum_match.ir	106200081
 aarch64/http_hello.text	23304
-aarch64/http_hello.ir	49672373
+aarch64/http_hello.ir	43656373
 aarch64/int_loop.text	101
 aarch64/int_loop.ir	18000025
 aarch64/map_int.text	7119
