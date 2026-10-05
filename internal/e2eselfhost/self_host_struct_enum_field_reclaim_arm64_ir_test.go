@@ -30,10 +30,12 @@ func TestSelfHostStructEnumFieldReclaimIRArm64(t *testing.T) {
 	// scalar). `Rect(7)` is fresh (no construction inc); the enum
 	// box is read back via match before the drop, so a wrong free would corrupt it.
 	// Value: match on Rect(7) → 7 + n(5) = 12.
+	// Both probes use runtime payloads so the census exercises heap reclamation.
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
+@noinline function runtime(n: i32): i32 { return n; }
 function main(): i32 {
-    let t: Tagged = Tagged { e: Rect(7), n: 5 };
+    let t: Tagged = Tagged { e: Rect(runtime(7)), n: 5 };
     let r: i32 = 0;
     match (t.e) { Rect(v) => { r = v; }, _ => { r = 0; } }
     return r + t.n;
@@ -45,10 +47,11 @@ function main(): i32 {
 	// build/drop cycles staying correct (value 0) proves balance on the arm64 arm.
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
+@noinline function runtime(n: i32): i32 { return n; }
 function churn(n: i32): i32 {
     let bad: i32 = 0; let i: i32 = 0;
     while (i < n) {
-        let s: Shape = Rect(9);
+        let s: Shape = Rect(runtime(9));
         let t: Tagged = Tagged { e: s, n: 1 };
         match (t.e) { Rect(v) => { if (v != 9) { bad = 1; } }, _ => { bad = 1; } }
         i = i + 1;

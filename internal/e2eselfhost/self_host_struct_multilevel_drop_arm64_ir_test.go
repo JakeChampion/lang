@@ -32,11 +32,13 @@ func TestSelfHostStructMultiLevelDropIRArm64(t *testing.T) {
 	// fresh sole-owned literal (rc 1). The deep value is read back before the drop; a
 	// premature free of a live buffer would corrupt it. items[0..15] sum 136 + b.bt 2 +
 	// a.at 7 = 145.
+	// Both probes use a runtime element to keep the array and boxes on the heap.
 	run(t, `struct C { items: i32[] }
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
+@noinline function runtime(n: i32): i32 { return n; }
 function main(): i32 {
-    let a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
+    let a: A = A { b: B { c: C { items: [runtime(1),2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
     let sum: i32 = 0; let j: i32 = 0;
     while (j < 16) { sum = sum + a.b.c.items[j]; j = j + 1; }
     return sum + a.b.bt + a.at;
@@ -47,8 +49,9 @@ function main(): i32 {
 	run(t, `struct C { items: i32[] }
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
+@noinline function runtime(n: i32): i32 { return n; }
 function mk(): i32 {
-    let a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
+    let a: A = A { b: B { c: C { items: [runtime(1),2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
     return a.b.c.items[0] + a.b.c.items[15] + a.b.bt + a.at;
 }
 function main(): i32 {
