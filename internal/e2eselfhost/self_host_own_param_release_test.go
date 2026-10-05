@@ -309,7 +309,6 @@ function churn(i: i32): i32 { let a: string = w(i) + w(i + 1); let b: string = w
 // TestSelfHostOwnParamReleaseX86_64 — every row balances at live_bytes 0 with
 // no rc underflow, on the census leg and again under the quarantining allocator.
 func TestSelfHostOwnParamReleaseX86_64(t *testing.T) {
-	boxedProbes(t)
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
 	for _, tc := range ownParamReleaseCases() {

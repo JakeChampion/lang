@@ -2,26 +2,25 @@ package arm64tbl
 
 import "strings"
 
-// Family is one group of mnemonics both assemblers route through a single
-// encoder arm: internal/native/arm64 dispatches on the family name, and
-// cmd/arm64tblgen writes the family lookup (arm64_gas_family, with an
-// `arm64_fam_<Name>` index and an `arm64_gas_is_<Name>` predicate per
-// family) into examples/self_host/arm64_native.fern, which its dispatch
-// compares against instead of spelling the mnemonics again. A mnemonic is
-// therefore reachable on both sides or on neither.
+// Family is one group of mnemonics the self-host assembler routes through a
+// single encoder arm: cmd/arm64tblgen writes the family lookup
+// (arm64_gas_family, with an `arm64_fam_<Name>` index and an
+// `arm64_gas_is_<Name>` predicate per family) into
+// examples/self_host/arm64_native.fern, which its dispatch compares against
+// instead of spelling the mnemonics again.
 //
-// The encoder logic stays hand-written on each side; what the table holds is
-// the vocabulary, the operand shape a representative instruction takes, and —
-// where both sides carry a per-mnemonic base word (the scalar FP set, the
+// The encoder logic stays hand-written; what the table holds is the
+// vocabulary, the operand shape a representative instruction takes, and —
+// where the encoder needs a per-mnemonic base word (the scalar FP set, the
 // carry chain, the widening multiplies, the negated logicals, the conditional
-// selects) — that word, so the two encoders read one constant.
+// selects) — that word.
 type Family struct {
 	Name string
 	Doc  string
 	// Probe is a representative instruction with %s standing for the
-	// mnemonic. It is the test inventory: the native assembler must accept
-	// it for every row, and the self-host assembler must encode it to the
-	// same word. A row whose shape differs overrides it.
+	// mnemonic. It is the test inventory: the self-host assembler must
+	// encode it to GNU as's word for every row. A row whose shape differs
+	// overrides it.
 	Probe string
 	// Base names the Fern base-word lookup this family generates, "" when
 	// the family's encoder computes its word from the mnemonic instead.
@@ -39,8 +38,8 @@ type ScalarOp struct {
 	// Probe overrides the family probe for this row.
 	Probe string
 	// Layout marks a row whose encoding depends on where the image places
-	// its sections (adrp), so the two assemblers are compared on acceptance
-	// alone rather than on the word.
+	// its sections (adrp), so the self-host is checked on acceptance alone
+	// rather than on the word.
 	Layout bool
 }
 
@@ -53,23 +52,13 @@ func (f Family) ProbeFor(o ScalarOp) string {
 	return strings.Replace(p, "%s", o.Mnemonic, 1)
 }
 
-// Mnemonics is the family's vocabulary in table order.
-func (f Family) Mnemonics() []string {
-	out := make([]string, 0, len(f.Ops))
-	for _, o := range f.Ops {
-		out = append(out, o.Mnemonic)
-	}
-	return out
-}
-
-// Scalar is every mnemonic the two arm64 assemblers dispatch by NAME. The
-// Advanced SIMD classes in VecTables are dispatched by table lookup on an
+// Scalar is every mnemonic the self-host arm64 assembler dispatches by NAME.
+// The Advanced SIMD classes in VecTables are dispatched by table lookup on an
 // arranged first operand and are not repeated here; the conditional
-// branches are matched by pattern (b.<cond> and b<cond>) on both sides.
+// branches are matched by pattern (b.<cond> and b<cond>).
 //
-// Every probe is pinned against GNU as through internal/native/arm64, whose
-// own tests read their expectations from `aarch64-linux-gnu-as` rather
-// than from the manual.
+// Every probe is checked against `aarch64-linux-gnu-as` by
+// internal/e2eselfhost's TestSelfHostArm64TableRowsMatchGas.
 var Scalar = []Family{
 	{Name: "fixed", Doc: "no operands", Probe: "%s", Ops: []ScalarOp{{Mnemonic: "ret"}, {Mnemonic: "nop"}}},
 	{Name: "sys", Doc: "an imm16 exception class", Probe: "%s #1", Ops: []ScalarOp{{Mnemonic: "svc"}, {Mnemonic: "brk"}}},
@@ -255,21 +244,3 @@ var scalarIndex = func() map[string][2]int {
 	}
 	return m
 }()
-
-// FamilyOf looks a mnemonic up. ok is false for a spelling no family lists.
-func FamilyOf(mnem string) (fam *Family, op *ScalarOp, ok bool) {
-	idx, found := scalarIndex[mnem]
-	if !found {
-		return nil, nil, false
-	}
-	return &Scalar[idx[0]], &Scalar[idx[0]].Ops[idx[1]], true
-}
-
-// ScalarMnemonics is the whole by-name vocabulary in table order.
-func ScalarMnemonics() []string {
-	var out []string
-	for _, f := range Scalar {
-		out = append(out, f.Mnemonics()...)
-	}
-	return out
-}

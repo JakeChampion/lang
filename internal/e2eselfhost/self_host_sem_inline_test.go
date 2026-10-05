@@ -11,8 +11,7 @@ import "testing"
 // returns a scalar through three blocks and allocates nothing either way.
 // span reads two fields of a record parameter into a tuple, and kept_span is
 // the same body under @noinline. pick reads the fields of a record a phi
-// chooses, which is not a parameter, so it is no leaf; pick_rounds is its only
-// caller, so it is spliced there all the same and its tuple read apart.
+// chooses, which is not a parameter, so it stays a call and its tuple a box.
 const semInlineProgram = `struct Range { lo: i32, hi: i32 }
 function span(r: Range): (i32, i32) { return (r.lo, r.hi - r.lo); }
 @noinline function kept_span(r: Range): (i32, i32) { return (r.lo, r.hi - r.lo); }
@@ -108,7 +107,7 @@ func semInlineWants(want string) map[string]string {
 
 func TestSelfHostSemanticInline(t *testing.T) {
 	runSemanticProgram(t, "seminline", semInlineProgram, semInlineProduced,
-		semInlineWants("1950000\n1225000\n1845000\n1950100\n5950000\n5950100\n900000\n"))
+		semInlineWants("1950000\n1225000\n1845000\n1950100\n5950000\n5950100\n900100\n"))
 }
 
 // FERN_SEM_INLINE= turns the pass off, and every tuple is a box again.

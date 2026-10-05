@@ -1,5 +1,5 @@
 // Command x86tblgen writes the self-host x86-64 assembler's encoding tables
-// from internal/native/x86tbl, the table the Go assembler reads directly.
+// from internal/x86tbl, the table the Go assembler reads directly.
 //
 // The two assemblers must agree byte for byte, and every drift found so far
 // has been vocabulary rather than encoding logic — one side reaching a
@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/jakechampion/lang/internal/fmtsource"
-	"github.com/jakechampion/lang/internal/native/x86tbl"
+	"github.com/jakechampion/lang/internal/x86tbl"
 )
 
 // block is one marker-delimited region this command owns.
@@ -188,7 +188,7 @@ func genFixedTable() string {
 		for _, by := range f.Bytes {
 			args = append(args, fmt.Sprint(by))
 		}
-		for _, s := range f.ATTSpellings() {
+		for _, s := range f.Spellings {
 			rows = append(rows, fmt.Sprintf("%q => { return x86_pack%d(%s); }", s, len(f.Bytes), strings.Join(args, ", ")))
 		}
 	}
@@ -206,7 +206,7 @@ function x86_gas_rep_ok(mnem: string): boolean {
 			continue
 		}
 		terms := make([]string, 0, 2)
-		for _, s := range f.ATTSpellings() {
+		for _, s := range f.Spellings {
 			terms = append(terms, fmt.Sprintf("mnem == %q", s))
 		}
 		fmt.Fprintf(&b, "    if (%s) { return true; }\n", strings.Join(terms, " || "))
@@ -227,7 +227,7 @@ func genSSETables() string {
 	var b strings.Builder
 	b.WriteString("// x86_gas_sse_fp_op: the scalar/packed FLOAT half of the two-byte-opcode\n" +
 		"// SSE table (`[pfx] 0F op /r`, xmm destination), packed as pfx*256+op;\n" +
-		"// -1 when absent. Mirrors internal/native/x86_64's sseOps.\n")
+		"// -1 when absent.\n")
 	writeSSEHalf(&b, "x86_gas_sse_fp_op", x86tbl.SSEFloatHalf)
 	b.WriteString("\n// x86_gas_sse_int_op: the packed-INTEGER half of the SSE table (all\n" +
 		"// 66-prefixed). The psll/psrl/psra entries here are the by-%xmm-count\n" +

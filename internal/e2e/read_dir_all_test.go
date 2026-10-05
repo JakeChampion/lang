@@ -155,8 +155,8 @@ func TestWASMReadDirAll(t *testing.T) {
 // three native backends while every single-builtin test stayed green.
 // Reported by pullfrog on #9290.
 //
-// The assemblers refuse a duplicate named .text label now
-// (internal/native/*/), so the collision is a build error rather than a
+// The assembler refuses a duplicate named .text label now, so the
+// collision is a build error rather than a
 // wrong image; this runs the pair anyway, because the refusal is a
 // backstop and the answer being right is the property.
 const readDirAllWithRemoveSource = `function main(): i32 {

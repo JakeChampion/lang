@@ -117,7 +117,6 @@ function main(): i32 {
 
 // TestSelfHostScalarEnumArrReclaimX86_64 pins the leak accounting.
 func TestSelfHostScalarEnumArrReclaimX86_64(t *testing.T) {
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

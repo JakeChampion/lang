@@ -350,7 +350,6 @@ function main(): i32 {
 }`
 
 func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
-	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

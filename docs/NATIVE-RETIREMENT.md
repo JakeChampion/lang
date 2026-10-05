@@ -163,7 +163,7 @@ group is one PR, after the re-point.
    request past 32 bits, where the self-host sizes it in 64 bits and runs
    the program to its answer.
 4. **The direct-caller PRs**, one per row of the table above.
-5. **The deletions.** DONE for all of `internal/codegen`.
+5. **The deletions.** DONE for `internal/codegen` and `internal/native`.
    - `internal/codegen/{x86_64,arm64}` and `cmd/dump_arm64` went with the two
      native-assembler benchmarks in `internal/e2eharness` that emitted through
      them, and the IR helpers only they reached (`ir.StackHeights`,
@@ -184,10 +184,21 @@ group is one PR, after the re-point.
      wasmbin read. The checker's wasi-http `__fern_wasi_handle` synthesis
      stays: the Go capability gates and tree-shaker root it.
 
-   Still to go: `internal/native/{x86_64,arm64}`, the assemblers some self-host tests
-   still link with (`internal/native/elf` and the Mach-O writer stay if
-   anything keeps a Go link path). `docs/BACKEND-PARITY.md` then loses its
-   per-backend table.
+   - `internal/native/{x86_64,arm64,elf,macho,cfi,gasstr,suggest}` went once
+     no self-host test took the Go assemblers as its oracle. The encoding
+     differentials, the table-row gates, the whole-program gates and the CFI
+     gates compare the self-host assemblers with GNU as (and ld, for the
+     unwind sections at fixed addresses) on the same AT&T or AArch64 text, so
+     the Intel twin every x86 case carried for the Go assembler went too. The
+     Darwin `__eh_frame` is pinned to llvm-mc's bytes, since the self-host
+     lanes do not install LLVM. The vocabulary tables the self-host's lookups
+     are generated from moved to `internal/x86tbl` and `internal/arm64tbl`,
+     without their Intel spellings and probes.
+
+   - `internal/fernrt`, the Go compiler's Fern-written runtime helpers, had
+     no importer once the emitters went, and went with the IR options only
+     it passed. `docs/BACKEND-PARITY.md` lost its per-backend comparisons
+     and describes the self-host's targets only.
 6. **DONE: `cmd/fern` is the launcher** (#4451). Go keeps the parser, checker
    and interpreter, which the oracle needs, and the report, package and
    literate modes. Every `-target` compile execs the self-host compiler

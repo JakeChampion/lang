@@ -1,13 +1,11 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/native/x86_64"
-	"github.com/jakechampion/lang/internal/native/x86tbl"
+	"github.com/jakechampion/lang/internal/x86tbl"
 )
 
 const x86NativeFern = "../../examples/self_host/x86_native.fern"
@@ -49,23 +47,6 @@ func TestMarkersArePresent(t *testing.T) {
 	}
 }
 
-// TestGoAssemblerAcceptsEverySpelling closes the loop on the other side: the
-// table is only a single source of truth if the Go assembler actually reaches
-// every spelling in it, in all three families that share it.
-func TestGoAssemblerAcceptsEverySpelling(t *testing.T) {
-	for _, cond := range x86tbl.CondSpellings() {
-		for _, probe := range []string{
-			"l0:\nj" + cond + " l0",
-			"set" + cond + " cl",
-			"cmov" + cond + " rax, rcx",
-		} {
-			if _, _, err := x86_64.AssembleProgram(probe+"\n", 0x400000); err != nil {
-				t.Errorf("%q: the Go assembler rejects a spelling the shared table lists: %v", probe, err)
-			}
-		}
-	}
-}
-
 // TestEverySpellingIsDistinct guards the table's own shape: a duplicated
 // spelling would silently give one of its two codes, and a duplicate is easy
 // to introduce when adding aliases by hand.
@@ -81,26 +62,6 @@ func TestEverySpellingIsDistinct(t *testing.T) {
 	}
 	if len(seen) != 28 {
 		t.Errorf("the table lists %d spellings, want the 28 GNU as accepts", len(seen))
-	}
-}
-
-// TestGoAssemblerAcceptsEverySSEOp closes the loop on the Go side for the SSE
-// vocabulary: the table is only a single source of truth if the assembler
-// generated from it actually reaches every row.
-//
-// Both operand shapes, because the table's own doc says the rows are the
-// `xmm <- xmm/mem` forms and a row that only worked register-to-register
-// would be half a form.
-func TestGoAssemblerAcceptsEverySSEOp(t *testing.T) {
-	for _, o := range x86tbl.SSEOps {
-		for _, probe := range []string{
-			o.Mnemonic + " xmm1, xmm2",
-			o.Mnemonic + " xmm1, [rax]",
-		} {
-			if _, _, err := x86_64.AssembleProgram(probe+"\n", 0x400000); err != nil {
-				t.Errorf("%q: the Go assembler rejects a form the shared table lists: %v", probe, err)
-			}
-		}
 	}
 }
 
@@ -145,48 +106,12 @@ func TestSSEIntHalfIsAll66Prefixed(t *testing.T) {
 	}
 }
 
-// TestGoAssemblerAcceptsEveryGroupSpelling is the group-table twin: every
-// spelling in every ModRM.reg-extension family assembles through the Go
-// assembler in the form the family takes, so a spelling in the table is a
-// spelling both assemblers reach.
-func TestGoAssemblerAcceptsEveryGroupSpelling(t *testing.T) {
-	forms := map[string]string{
-		x86tbl.ALU.Name:     "%s rax, rcx",
-		x86tbl.Shift.Name:   "%s rax, 3",
-		x86tbl.Unary.Name:   "%s rax",
-		x86tbl.IncDec.Name:  "%s rax",
-		x86tbl.BitTest.Name: "%s rax, 3",
-	}
-	for _, g := range x86tbl.Groups {
-		form, ok := forms[g.Name]
-		if !ok {
-			t.Fatalf("group %q has no probe form here", g.Name)
-		}
-		for _, sp := range g.Spellings() {
-			probe := fmt.Sprintf(form, sp)
-			if _, _, err := x86_64.AssembleProgram(probe+"\n", 0x400000); err != nil {
-				t.Errorf("%q: %v", probe, err)
-			}
-		}
-	}
-	// And the lock set reaches the prefix path.
-	for _, sp := range x86tbl.LockableSpellings() {
-		probe := "lock " + sp + " qword ptr [rbx], rax"
-		if sp == "inc" || sp == "dec" || sp == "not" || sp == "neg" {
-			probe = "lock " + sp + " qword ptr [rbx]"
-		}
-		if _, _, err := x86_64.AssembleProgram(probe+"\n", 0x400000); err != nil {
-			t.Errorf("%q: %v", probe, err)
-		}
-	}
-}
-
-// TestGoAssemblerAcceptsEveryNamedRow: every row of the by-name vocabulary
-// assembles through the Go assembler in its own probe, so a family added
-// to the table without a dispatch arm, or a probe naming a shape the
-// encoder refuses, fails here. The self-host side of the same rows is
-// internal/e2eselfhost's TestSelfHostX86TableRowsMatchNative.
-func TestGoAssemblerAcceptsEveryNamedRow(t *testing.T) {
+// TestNamedRowsAreWellFormed guards the by-name vocabulary's own shape: a
+// duplicated AT&T spelling would dispatch to one of its two rows, and a probe
+// that does not start with its spelling probes some other row. The self-host
+// side of the same rows is internal/e2eselfhost's
+// TestSelfHostX86TableRowsMatchGas.
+func TestNamedRowsAreWellFormed(t *testing.T) {
 	seenATT := map[string]bool{}
 	for _, fam := range x86tbl.Named {
 		if len(fam.Ops) == 0 {
@@ -202,24 +127,18 @@ func TestGoAssemblerAcceptsEveryNamedRow(t *testing.T) {
 				}
 				seenATT[o.ATT] = true
 			}
-			if o.Probe == "" || o.ATTProbe == "" {
-				t.Errorf("%s/%s: both probes are required", fam.Name, o.Intel)
+			if o.ATTProbe == "" {
+				t.Errorf("%s/%s: the AT&T probe is required", fam.Name, o.ATT)
 				continue
-			}
-			if !strings.HasPrefix(o.Probe, o.Intel+" ") && o.Probe != o.Intel {
-				t.Errorf("%s: probe %q does not start with the Intel mnemonic", o.Intel, o.Probe)
 			}
 			if o.ATT != "" && !strings.HasPrefix(o.ATTProbe, o.ATT) {
 				t.Errorf("%s: AT&T probe %q does not start with the spelling", o.ATT, o.ATTProbe)
 			}
-			if _, _, err := x86_64.AssembleProgram(o.Probe+"\n", 0x400000); err != nil {
-				t.Errorf("%s (%s): %v", o.Probe, fam.Name, err)
-			}
 		}
 	}
 	for _, g := range x86tbl.Groups {
-		if g.Probe == "" || g.ATTProbe == "" {
-			t.Errorf("group %q needs both probe templates", g.Name)
+		if g.ATTProbe == "" {
+			t.Errorf("group %q needs a probe template", g.Name)
 		}
 	}
 }

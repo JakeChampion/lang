@@ -65,7 +65,7 @@ so explicitly.
 
 | Doc | Status | What it is |
 | --- | --- | --- |
-| `BACKEND-PARITY.md` | [tracker] | Cross-backend feature/limitation tracker + macOS support stance. |
+| `BACKEND-PARITY.md` | [reference] | The targets, the syscall floor, the CPU baselines, the macOS support stance and known limitations. |
 | `NATIVE-CONVERGENCE.md` | [policy] | How `internal/` and the self-host converge; freeze preconditions in #4451. |
 | `PLAYGROUND-SELFHOST-WASM.md` | [record] | Measured answer to §3a precondition 4 (#6643): what it costs to rebuild the browser playground on the self-host compiler. Not size- or memory-bound — 2.3 MB against the current bundle's 28.5 MB, running under wasmtime at 104 MiB. The compiling driver now runs hosted in wasm with no preopens; what is left is the interpret entry point (the self-host interpreter has no I/O at all), the JS bindings, and the LSP. |
 | `ROADMAP-AND-SELF-HOSTING.md` | [record] | 2026-05-15 tech-debt + self-host-readiness snapshot; live roadmap is CLAUDE.md + issues. |

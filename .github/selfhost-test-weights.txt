@@ -60,19 +60,18 @@ TestSelfHostAppendValueSemanticsWasmIR 2
 TestSelfHostAppendValueSemanticsX86_64 3
 TestSelfHostArm64AcceptsTheLastLegalOffset 3
 TestSelfHostArm64Adrp 3
-TestSelfHostArm64AsmEncodingMatchesNative 2
+TestSelfHostArm64AsmEncodingMatchesGas 2
 TestSelfHostArm64AsmLiteralPool64Bit 2
 TestSelfHostArm64AsmMemoryLinear 3
 TestSelfHostArm64AsmNumericLocalLabels 2
 TestSelfHostArm64AsmUnresolvedBranchRefused 3
 TestSelfHostArm64BitOpsGas 2
 TestSelfHostArm64Bitmask 3
-TestSelfHostArm64BranchConditionsMatchNative 3
 TestSelfHostArm64BranchRange 3
 TestSelfHostArm64Branches 2
 TestSelfHostArm64CarryMulGas 3
 TestSelfHostArm64CondCmpSelGas 2
-TestSelfHostArm64ConditionsMatchNative 3
+TestSelfHostArm64ConditionsMatchGas 3
 TestSelfHostArm64DarwinAssemblesRealRuntime 5
 TestSelfHostArm64DarwinBssOnlyImage 2
 TestSelfHostArm64DarwinBuilds 3
@@ -119,7 +118,7 @@ TestSelfHostArm64UnsignedDivIR 2
 TestSelfHostArm64VectorGeneralGas 3
 TestSelfHostArm64VectorLaneGas 2
 TestSelfHostArm64VectorWidenAcrossGas 2
-TestSelfHostArm64WholeProgramMatchesNative 3
+TestSelfHostArm64WholeProgramMatchesGas 3
 TestSelfHostArrArgReclaimIRArm64 3
 TestSelfHostArrArgReclaimWasmIR 2
 TestSelfHostArrArrAliasWasm 2
@@ -257,7 +256,7 @@ TestSelfHostCaptureFreeFnValue 3
 TestSelfHostCaptureLambdaX86IR 2
 TestSelfHostCastArm64 2
 TestSelfHostCellWasmIR 2
-TestSelfHostCfiMatchesNativeX86_64 4
+TestSelfHostCfiMatchesGasX86_64 4
 TestSelfHostChainedFnArgCallIRArm64 2
 TestSelfHostChainedFnArgCallWasmIR 2
 TestSelfHostCharMethodsArm64 4
@@ -1314,7 +1313,7 @@ TestSelfHostStringCharacterSet 2
 TestSelfHostStringConcatCopySearchDoesNotLeak 2
 TestSelfHostStringConstructors 2
 TestSelfHostStringEscapesIR 2
-TestSelfHostStringEscapesMatchNativeX86_64 3
+TestSelfHostStringEscapesX86_64 3
 TestSelfHostStringFieldStoreReleaseSanitizeX86_64 2
 TestSelfHostStringFieldStoreReleaseWasm 2
 TestSelfHostStringFieldStoreReleaseX86_64 2
@@ -1638,7 +1637,7 @@ TestSelfHostX86ConditionSpellingsGas 3
 TestSelfHostX86ConvertExtendGas 3
 TestSelfHostX86ElfExitRuns 3
 TestSelfHostX86Encode 3
-TestSelfHostX86FormsMatchNative 3
+TestSelfHostX86FormsMatchGas 3
 TestSelfHostX86FrameRuns 3
 TestSelfHostX86Gas 3
 TestSelfHostX86GasByteImmRuns 3
@@ -1662,7 +1661,7 @@ TestSelfHostX86LabelProgramRuns 3
 TestSelfHostX86Labels 3
 TestSelfHostX86LoopRuns 3
 TestSelfHostX86MaxRuns 4
-TestSelfHostX86MovBranchFormsMatchNative 3
+TestSelfHostX86MovBranchFormsMatchGas 3
 TestSelfHostX86MovzbWidthGas 3
 TestSelfHostX86RipImmediateStoreLinks 2
 TestSelfHostX86RodataRuns 3
@@ -1670,5 +1669,5 @@ TestSelfHostX86ScaleProbe 3
 TestSelfHostX86ShiftBtCmovGas 3
 TestSelfHostX86SseFloatExtGas 3
 TestSelfHostX86SsePackedGas 3
-TestSelfHostX86TableRowsMatchNative 3
+TestSelfHostX86TableRowsMatchGas 3
 TestSelfHostX86WholeProgramMatchesGNUAs 3

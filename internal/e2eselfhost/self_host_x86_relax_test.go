@@ -7,8 +7,8 @@ import (
 )
 
 // TestSelfHostX86GasRelaxation pins the self-host assembler's branch
-// relaxation byte for byte: the native assembler's relaxation cases
-// (internal/native/x86_64/relax_test.go), whose bytes are GNU as's, plus two
+// relaxation byte for byte: the retired Go assembler's relaxation cases,
+// whose bytes are GNU as's, plus two
 // cascades where a later branch's growth pushes an earlier one out of rel8
 // range, alignment pads among them (x86_relax_settle settles all of them on
 // the first round's layout).

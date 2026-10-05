@@ -203,8 +203,7 @@ Five PRs, each shippable. Breaking changes are fine — single user.
   (38 uses total, full per-stride backend cost) were retired —
   the surviving set is `i32`/`i64`/`u8`/`u32`/`u64`/`f32`/`f64`/`usize`.
   The status notes below describe the shipped-then-retired
-  sub-i32 machinery as historical record; see
-  `docs/BACKEND-PARITY.md` for the current opcode set.
+  sub-i32 machinery as historical record.
 - Default literal type stays `i32`. Literals are polymorphic in
   expected-type context: `let x: i64 = 1` works without a cast.
 - Explicit conversion only (`x as i64`); no implicit widening.

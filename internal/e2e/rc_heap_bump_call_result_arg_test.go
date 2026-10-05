@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"github.com/jakechampion/lang/internal/e2eharness"
 	"testing"
 )
 
@@ -77,7 +76,6 @@ func TestArm64CallResultArgReclaim(t *testing.T) {
 }
 
 func TestWASMCallResultArgReclaim(t *testing.T) {
-	e2eharness.BoxedProbes(t)
 	for _, c := range []struct {
 		name string
 		src  func(string) string
