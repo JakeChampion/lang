@@ -52,15 +52,14 @@ stable op ID alongside the existing registry.
 These tests prove the syscall floor needed by the networking runtime. They
 do not establish socket correctness, leak freedom or a performance result.
 
-The Go compiler's copy of that floor (`__syscall3` … `__syscall6`,
-`__store_u8`) is gated by `TestNativeSyscallFloor` in `internal/e2e`, one leg
-per native backend (x86-64 and arm64),
+Through the fern CLI the floor (`__syscall3` … `__syscall6`, `__store_u8`)
+is gated by `TestNativeSyscallFloor` in `internal/e2e`, one leg per ISA
+(x86-64 and arm64),
 `TestArm64DarwinNativeSyscallFloor` in the macOS lane, and
 `TestSyscallFloorRefusedOnWasm`, which wants the E066 refusal to name the
 callee. `TestSelfHostSyscallFloorX86_64` / `…Arm64` run the same probe
-through the self-host driver. `TestRawSyscallRefusedUnderSandbox` in
-`internal/codegen/x86_64` and `TestSelfHostSandboxRefusesRunTimeSyscallNumber`
-in `internal/e2eselfhost` pin that `FERN_SANDBOX=1` records a literal
+through the self-host driver. `TestSelfHostSandboxRefusesRunTimeSyscallNumber`
+in `internal/e2eselfhost` pins that `FERN_SANDBOX=1` records a literal
 syscall number and refuses a run-time one rather than emitting a filter
 that kills the program at its first call; the `sockets` case of
 `TestSeccompDoesNotBreakWorkingPrograms` runs the self-host's Fern-bodied
@@ -1029,31 +1028,6 @@ Worth knowing so you do not assume coverage you do not have:
   **extend the sequence gate to a collector's codes and capture from the
   UNMODIFIED code before converting it.** Captured after the fact, the rows
   pin whatever the conversion did.
-
-- **Operand-stack balance in the EMITTED native asm — now gated on arm64, by
-  `TestOperandStackBalancedAcrossTwoWordDiscard`**
-  (`internal/codegen/arm64/stack_balance_test.go`). Two separate things hide a
-  stack-discipline break on the natives, and they cover for each other.
-
-  First, `ir.Verify`'s stack half is *wasm validation*, deliberately: after a
-  `br` the operand stack is polymorphic and `end` truncates it back to the
-  frame height. A residual slot on a path that ends in a branch is therefore
-  legal there and correctly not reported — but arm64 maps the operand stack
-  onto `sp` and re-syncs it at no label, so the same IR leaks. `ir.Verify` is
-  not, and cannot be, the gate for this class on a native backend.
-
-  Second, the arm64 epilogue's `mov sp, x29` restores `sp` from the frame
-  pointer, so the leaked slots die with the frame and the program still
-  returns the right answer. #7303 leaked 2 x 16 bytes per call of every
-  function whose match arm bound an unread `string`, and no exit-code
-  assertion anywhere in the tree could see it. Inlining, which deletes the
-  callee epilogue, turns it into five miscompiles.
-
-  So the invariant is checked by walking the emitted text: depth through
-  straight-line code, per-label agreement across branches, zero at the return
-  label. Anything sp-touching the walk does not model fails the test rather
-  than being skipped. There is no equivalent gate on x86-64 (which has no
-  two-word values on its operand stack).
 
 - **A checker driver that DIED, versus one that found nothing — now
   distinguished, by `checkerDriverFault`** (`internal/e2eselfhost`). The checker

@@ -8,13 +8,12 @@ import (
 	"strings"
 )
 
-// Assemble parses a subset of GAS AArch64 assembly text — the dialect
-// internal/codegen/arm64 emits — into machine code, routing each
+// Assemble parses a subset of GAS AArch64 assembly text — the dialect the
+// retired Go arm64 code generator emitted — into machine code, routing each
 // instruction through the encoders and the label-aware Assembler.
 //
-// This is the integration seam of the native-binary path: it reuses
-// the existing (proven) code generator unchanged and turns its textual
-// output into bytes, validated byte-for-byte against aarch64-linux-gnu-as.
+// It turned the Go code generator's textual output into bytes, validated
+// byte-for-byte against aarch64-linux-gnu-as.
 //
 // Coverage grows incrementally: labels, the no-op-for-.text
 // directives, the integer / bitfield / conditional / scalar-FP /

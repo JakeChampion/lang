@@ -215,16 +215,6 @@ func LogData() []uint64 {
 	return out
 }
 
-// Off is the byte offset of the named coefficient within an emitted table.
-func Off(name string) int {
-	for i, c := range Coeffs {
-		if c.Name == name {
-			return i * 8
-		}
-	}
-	panic("fdlibm: no coefficient named " + name)
-}
-
 // TwoOverPiBits is 2/pi in binary, MSB-first, one limb per 64 fraction bits
 // starting at 2^-1 in limb 1 — the window Payne-Hanek indexes with the
 // argument's own exponent. The leading zero limb lets that index start above

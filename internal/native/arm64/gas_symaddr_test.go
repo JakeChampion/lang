@@ -53,8 +53,8 @@ func gnuAsLinkedText(t *testing.T, as, objcopy, src string, textVAddr uint64) []
 func hexAddr(v uint64) string { return "0x" + strconv.FormatUint(v, 16) }
 
 // symAddrSrc is an adrp/:lo12: pair against a real .rodata symbol — the
-// exact sequence internal/codegen/arm64's adrpAdd emits for every static
-// data reference on ELF.
+// exact sequence the Go arm64 code generator's adrpAdd emitted for every
+// static data reference on ELF.
 const symAddrSrc = `.text
 _start:
 	adrp x0, msg
