@@ -299,8 +299,8 @@ func TestRevClsReject(t *testing.T) {
 }
 
 // TestExtRegAddressing pins the extended-register addressing forms —
-// the documented codegen workaround gap (internal/codegen/arm64 emits a
-// separate sxtw/add today because the assembler lacked these).
+// the documented codegen workaround gap (the Go arm64 code generator emitted
+// a separate sxtw/add because the assembler lacked these).
 // Expectations from aarch64-linux-gnu-as. Note the byte access: an
 // explicit `#0` amount sets the S bit where the bare extend leaves it
 // clear, and GNU as distinguishes the two spellings the same way.

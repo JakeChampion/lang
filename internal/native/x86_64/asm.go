@@ -1,5 +1,5 @@
 // Package x86_64 is a pure-Go assembler for the subset of x86-64 the
-// Fern code generator (internal/codegen/x86_64) emits, in Intel syntax
+// retired Go x86-64 code generator emitted, in Intel syntax
 // (`.intel_syntax noprefix`). It is the x86-64 counterpart of
 // internal/native/arm64: AssembleProgram turns the emitted `.s` text
 // into a .text blob (plus .rodata) ready to drop into a static ELF-64

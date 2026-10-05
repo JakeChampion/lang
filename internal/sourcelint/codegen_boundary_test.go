@@ -22,9 +22,7 @@ import (
 // This pins the boundary. Only the packages below may import an
 // internal/codegen package from non-test code; each of them goes with the
 // backends. The list shrinks as they are deleted and never grows.
-var codegenImporters = map[string]bool{
-	"cmd/dump_arm64": true,
-}
+var codegenImporters = map[string]bool{}
 
 const codegenImportPrefix = `github.com/jakechampion/lang/internal/codegen`
 

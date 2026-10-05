@@ -24,12 +24,6 @@ package ir
 // here rather than in a backend. Backend-SPECIFIC aliases (wasm routing `print`
 // to its `__fern_print` runtime helper, say) do not belong in this map — a
 // backend that has its own naming keeps its own table and merges this one in.
-//
-// NOT yet the single source of truth: internal/codegen/arm64 and
-// internal/codegen/x86_64 still carry these pairs as `switch` arms with
-// per-case side effects (`g.usesX = true`), so converting them is a separate
-// refactor. If you add a Map method, add it here AND to those two switches
-// until that lands.
 var CodegenAliases = map[string]string{
 	"map_new":             "map_new_impl",
 	"__method_Map_len":    "__map_len_impl",
