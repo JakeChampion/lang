@@ -16193,7 +16193,9 @@ pub struct OwnFunc { name: string, flags: boolean[], arr: boolean[] }
 // `structs` holds every struct name and every enum that owns one, `decls` the
 // enum and union-alias names only a whole module carries, and `ctors` every
 // declared struct or variant, a call to which is a fresh construction.
-pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex }
+// A method's row is keyed `Type.method` (ow_method_key), its receiver the
+// first flag; `methods` names the methods that take their receiver `own`.
+pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex, methods: util.NameIndex }
 
 struct MovedEntry { mname: string, mline: i32 }
 
@@ -16968,7 +16970,12 @@ function lu_try_at(x: ast.Expr, own found: boolean): boolean {
 }
 
 // lu_call collects the keys of `c`'s own-position arguments that die at it.
+// It has no types, so a method that takes its receiver `own` is known by name:
+// the receiver's key is only read where the call guard resolved that method.
 function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    return lu_receiver(fa, e, outer, has_outer, site, fx, acc);
+  }
   let cname: string = ow_ident_name(c.callee);
   if (cname.len() == 0 || util.has_str(fx.params, cname) || !ow_is_own_func(fx.ofuncs, cname)) {
     return acc;
@@ -16984,6 +16991,15 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
       }
     }
     i = i + 1;
+  }
+  return acc;
+}
+
+function lu_receiver(fa: ast.ExprFieldAccess, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
+  if let ast.ExprIdent(rid) = fa.obj {
+    if (fx.ofuncs.methods.has(fa.field) && lu_dies(fx, e, "", 0, rid, outer, has_outer, site)) {
+      return acc.append(lu_key(rid.line, rid.col));
+    }
   }
   return acc;
 }
@@ -17224,44 +17240,25 @@ function ow_count_ident(e: ast.Expr, name: string): i32 {
 }
 
 // ow_self_move_admits recognizes the #4873 step-0 shape for
-// `target = <value>`: value is a plain-ident-callee call to an own-func,
-// target occurs EXACTLY ONCE in the whole RHS (excluding the top-level
-// callee ident), and that occurrence is a direct bare-ident argument in
-// an `own` position. Byte-matches the native SelfReassignOwnMoveArg so
+// `target = <value>`: value is a call to an own-func or an own method,
+// target occurs EXACTLY ONCE in its arguments (a method's receiver among
+// them), and that occurrence is a direct bare-ident argument in an `own`
+// position. Byte-matches the native SelfReassignOwnMoveArg so
 // the two checkers admit identical programs.
 function ow_self_move_admits(target: string, value: ast.Expr, ctx: OwnCtx): boolean {
-  match (value) {
-    ast.ExprCall(c) => {
-      match (c.callee) {
-        ast.ExprIdent(cid) => {
-          if (!ow_is_own_func(ctx.ofuncs, cid.name)) {
-            return false;
-          }
-          if (ow_count_ident_list(c.args, target) != 1) {
-            return false;
-          }
-          let flags: boolean[] = ow_func_flags(ctx.ofuncs, cid.name);
-          let i: i32 = 0;
-          while (i < c.args.len() && i < flags.len()) {
-            match (c.args[i]) {
-              ast.ExprIdent(aid) => {
-                if (aid.name == target) {
-                  return flags[i];
-                }
-              },
-              _ => {}
-            }
-            i = i + 1;
-          }
-          return false;
-        },
-        _ => {
-          return false;
+  if let ast.ExprCall(c) = value {
+    let oc: OwnCall = ow_own_call(c, ctx);
+    if (oc.flags.len() == 0 || ow_count_ident_list(oc.args, target) != 1) {
+      return false;
+    }
+    let i: i32 = 0;
+    while (i < oc.args.len() && i < oc.flags.len()) {
+      if let ast.ExprIdent(aid) = oc.args[i] {
+        if (aid.name == target) {
+          return oc.flags[i];
         }
       }
-    },
-    _ => {
-      return false;
+      i = i + 1;
     }
   }
   return false;
@@ -17365,42 +17362,81 @@ function ow_field_move_fields(target: string, value: ast.Expr, ctx: OwnCtx): str
   return out;
 }
 
-// ow_guard_call: E051 — each argument passed to an `own` parameter of a
-// plain (ident-callee) callee must be an owned value.
+// OwnCall is a call's arguments in its callee's parameter order, a method's
+// receiver first, beside the callee's `own` flags: empty when it takes
+// nothing `own`.
+struct OwnCall { args: ast.Expr[], flags: boolean[] }
+
+function ow_own_call(c: ast.ExprCall, ctx: OwnCtx): OwnCall {
+  let key: string = ow_method_key(c, ctx);
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (key.len() > 0) {
+      let args: ast.Expr[] = [fa.obj];
+      for a in c.args {
+        args = args.append(a);
+      }
+      return OwnCall { args: args, flags: ow_func_flags(ctx.ofuncs, key) };
+    }
+  }
+  return OwnCall { args: c.args, flags: ow_call_arg_flags(c.callee, ctx) };
+}
+
+// ow_guard_call: E051 — each argument passed to an `own` parameter, a method's
+// receiver included, must be an owned value.
 function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   let out: util.Diag[] = [];
-  match (c.callee) {
-    ast.ExprIdent(id) => {
-      if (util.has_str(ctx.bound, id.name)) {
-        return out;
+  let oc: OwnCall = ow_own_call(c, ctx);
+  let i: i32 = 0;
+  while (i < oc.args.len() && i < oc.flags.len()) {
+    if (oc.flags[i] && !ow_is_owned_expr(oc.args[i], ctx)) {
+      // The argument is the anchor, as native's is; a kind that carries no
+      // position of its own falls back to the call.
+      let aline: i32 = ast.expr_line(oc.args[i]);
+      let acol: i32 = ast.expr_col(oc.args[i]);
+      if (aline <= 0) {
+        aline = c.line;
+        acol = c.col;
       }
-      if (ow_is_own_func(ctx.ofuncs, id.name)) {
-        let flags: boolean[] = ow_func_flags(ctx.ofuncs, id.name);
-        let i: i32 = 0;
-        while (i < c.args.len() && i < flags.len()) {
-          if (flags[i] && !ow_is_owned_expr(c.args[i], ctx)) {
-            // The argument is the anchor, as native's is; a kind that carries no
-            // position of its own falls back to the call.
-            let aline: i32 = ast.expr_line(c.args[i]);
-            let acol: i32 = ast.expr_col(c.args[i]);
-            if (aline <= 0) {
-              aline = c.line;
-              acol = c.col;
-            }
-            out = out.append(dg_at("E051", "argument to owned parameter must be an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one", aline, acol));
-          }
-          i = i + 1;
-        }
-      }
-    },
-    _ => {}
+      out = out.append(dg_at("E051", "argument to owned parameter must be an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one", aline, acol));
+    }
+    i = i + 1;
   }
   return out;
 }
 
+// ow_walk_call is the precise affine model over a call: an owned value is
+// CONSUMED only when passed to an `own` parameter; an argument to a borrowed
+// parameter is a read (borrow), not a move — so a borrowing helper can be
+// passed an owned value and the value still used / consumed afterwards. The
+// callee is a borrow (function ref / closure / method receiver) unless it is
+// a method taking its receiver `own`.
+function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+  let d: util.Diag[] = ow_guard_call(c, ctx);
+  let oc: OwnCall = ow_own_call(c, ctx);
+  let m: MovedEntry[] = moved;
+  // A method's receiver leads the arguments and is walked as one.
+  if (oc.args.len() == c.args.len()) {
+    let rc: OwnWalk = ru_borrow(c.callee, m, ctx);
+    m = rc.moved;
+    d = util.append_diags(d, rc.diags);
+  }
+  let i: i32 = 0;
+  while (i < oc.args.len()) {
+    let ra: OwnWalk = ru_borrow(oc.args[i], m, ctx);
+    if (i < oc.flags.len() && oc.flags[i]) {
+      ra = ru_expr(oc.args[i], m, ctx);
+    }
+    m = ra.moved;
+    d = util.append_diags(d, ra.diags);
+    i = i + 1;
+  }
+  return OwnWalk { moved: m, diags: d };
+}
+
 // ow_call_arg_flags returns the callee's per-parameter `own` flags for a
 // plain (ident-callee) call, or an empty list when the callee is not an
-// own-func or not a plain ident (a method / closure callee borrows its args).
+// own-func or not a plain ident (a closure callee borrows its args; a method
+// is ow_own_call's case).
 // Drives the precise affine model: an argument is consumed only at an `own`
 // position.
 function ow_call_arg_flags(callee: ast.Expr, ctx: OwnCtx): boolean[] {
@@ -17482,27 +17518,7 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         },
         _ => {}
       }
-      let d0: util.Diag[] = ow_guard_call(c, ctx);
-      // The callee is a borrow (function ref / closure / method receiver).
-      let rc: OwnWalk = ru_borrow(c.callee, moved, ctx);
-      let m: MovedEntry[] = rc.moved;
-      let d: util.Diag[] = util.append_diags(d0, rc.diags);
-      // Precise affine model: an owned value is CONSUMED only when passed
-      // to an `own` parameter; an argument to a borrowed parameter is a
-      // read (borrow), not a move — so a borrowing helper can be passed an
-      // owned value and the value still used / consumed afterwards.
-      let flags: boolean[] = ow_call_arg_flags(c.callee, ctx);
-      let i: i32 = 0;
-      while (i < c.args.len()) {
-        let ra: OwnWalk = ru_borrow(c.args[i], m, ctx);
-        if (i < flags.len() && flags[i]) {
-          ra = ru_expr(c.args[i], m, ctx);
-        }
-        m = ra.moved;
-        d = util.append_diags(d, ra.diags);
-        i = i + 1;
-      }
-      return OwnWalk { moved: m, diags: d };
+      return ow_walk_call(c, moved, ctx);
     },
     ast.ExprBinary(b) => {
       let r1: OwnWalk = ru_expr(b.left, moved, ctx);
@@ -17861,15 +17877,19 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
 function collect_own_funcs(mod: parser.Module): OwnFuncs {
   let out: OwnFunc[] = [];
   let names: string[] = [];
+  let methods: string[] = [];
   for func in mod.funcs {
-    let any_own: boolean = false;
+    let any_own: boolean = func.receiver_own;
     let flags: boolean[] = [];
     let arr: boolean[] = [];
+    if (func.receiver_name.len() > 0) {
+      flags = flags.append(func.receiver_own);
+      arr = arr.append(ow_type_is_array(func.receiver_type));
+    }
     for param in func.params {
       let o: boolean = param.own;
       flags = flags.append(o);
-      let tn: string = param.type_name;
-      arr = arr.append(tn.len() >= 2 && tn[tn.len() - 2] == b'[' && tn[tn.len() - 1] == b']');
+      arr = arr.append(ow_type_is_array(param.type_name));
       if (o) {
         any_own = true;
       }
@@ -17877,6 +17897,13 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
     if (any_own && func.receiver_name.len() == 0) {
       out = out.append(OwnFunc { name: func.name, flags: flags, arr: arr });
       names = names.append(func.name);
+    } else if (any_own) {
+      let key: string = util.base_type_name(func.receiver_type) + "." + func.name;
+      out = out.append(OwnFunc { name: key, flags: flags, arr: arr });
+      names = names.append(key);
+      if (func.receiver_own) {
+        methods = methods.append(func.name);
+      }
     }
   }
   let structs: string[] = [];
@@ -17895,7 +17922,33 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   for alias in mod.aliases {
     decls = decls.append(alias.name);
   }
-  return OwnFuncs { rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls), ctors: util.name_index(ctors) };
+  return OwnFuncs { rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls), ctors: util.name_index(ctors), methods: util.name_index(methods) };
+}
+
+function ow_type_is_array(tn: string): boolean {
+  return tn.len() >= 2 && tn[tn.len() - 2] == b'[' && tn[tn.len() - 1] == b']';
+}
+
+// ow_method_key is the own-func row of a method call, `Type.method` by the
+// receiver's checked type, or "" when the callee is no such method.
+function ow_method_key(c: ast.ExprCall, ctx: OwnCtx): string {
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    let tname: string = "";
+    match (check_expr(fa.obj, ctx.scope)) {
+      typeinfo.TypeStruct(st) => {
+        tname = st.name;
+      },
+      typeinfo.TypeUnion(u) => {
+        tname = u.name;
+      },
+      _ => {}
+    }
+    let key: string = tname + "." + fa.field;
+    if (tname.len() > 0 && ow_is_own_func(ctx.ofuncs, key)) {
+      return key;
+    }
+  }
+  return "";
 }
 
 // ow_type_is_pointer reports whether a declared type SPELLING is
@@ -18285,14 +18338,13 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
 // guard). No-op when the module declares no `own` parameter anywhere, so
 // ordinary programs are untouched. The result-borrow fixpoint always spans the
 // module; only the bodies `focus` admits (in_focus) are walked.
-pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
+pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: string[]): util.Diag[] {
   let ofuncs: OwnFuncs = collect_own_funcs(mod);
   let builtins: util.NameIndex = util.name_index(ow_fresh_builtins());
   let borrows: util.NameIndex = ow_result_borrows(mod, ofuncs, builtins);
   let fresh: string[] = ow_fresh_owners(mod, ofuncs, builtins, borrows);
   let fresh_methods: string[] = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   let fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins);
-  let env: ModuleEnv = module_env(mod);
   let out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
@@ -18300,6 +18352,9 @@ pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
     }
     let owned: string[] = [];
     let borrowed: string[] = [];
+    if (fn.receiver_own && ow_ownable_type(fn.receiver_type)) {
+      owned = owned.append(fn.receiver_name);
+    }
     for param in fn.params {
       if (param.own && ow_ownable_type(param.type_name)) {
         owned = owned.append(param.name);
@@ -18615,8 +18670,7 @@ function e049_find(stmts: ast.Stmt[], enclosing: NameTy[]): util.Diag[] {
   return out;
 }
 
-pub function e049_diags(mod: parser.Module, focus: string[]): util.Diag[] {
-  let env: ModuleEnv = module_env(mod);
+pub function e049_diags(mod: parser.Module, env: ModuleEnv, focus: string[]): util.Diag[] {
   let out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
@@ -21807,11 +21861,12 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // because a call that did not resolve was left as written.
   let (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
   let mod: parser.Module = prepared_module(filled);
-  let mt: ModuleTypes = check_module_pass(mod, fda_diags, []);
+  let env: ModuleEnv = module_env(mod);
+  let mt: ModuleTypes = check_module_pass(mod, env, fda_diags, []);
   if (mt.diags.len() > 0) {
     return mt;
   }
-  let clones: parser.FuncDecl[] = instantiated_clones(mod, module_env(mod));
+  let clones: parser.FuncDecl[] = instantiated_clones(mod, env);
   if (clones.len() == 0) {
     return mt;
   }
@@ -21821,7 +21876,8 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     funcs = funcs.append(cl);
     names = names.append(cl.name);
   }
-  let rt: ModuleTypes = check_module_pass(parser.Module { ...mod, funcs: funcs }, [], names);
+  let cmod: parser.Module = parser.Module { ...mod, funcs: funcs };
+  let rt: ModuleTypes = check_module_pass(cmod, module_env(cmod), [], names);
   if (rt.diags.len() == 0) {
     return mt;
   }
@@ -21854,43 +21910,24 @@ function prepared_module(filled: parser.Module): parser.Module {
   return parser.Module { ...revalued, structs: parser.inject_builtin_enums(revalued.structs) };
 }
 
-// check_module_pass types a prepared module; `fda_diags` are the default
-// filling's diagnostics, reported first.
-function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: string[]): ModuleTypes {
-  // Collect struct decls first; func sigs + union aliases
-  // both use them to resolve names. Union aliases come next
-  // so func sigs can reference union-typed params / returns.
-  // Union NAMES are needed before the struct sigs so a struct field
-  // typed as a union (or union array) resolves rather than going
-  // unknown. The full UnionSig table (with variants) still comes after.
-  let import_paths: string[] = import_paths_of(mod);
+// check_module_pass types a prepared module against its tables, `env`, which
+// module_env built from it; `fda_diags` are the default filling's diagnostics,
+// reported first.
+function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.Diag[], focus: string[]): ModuleTypes {
+  let import_paths: string[] = env.imports;
   let rnames: string[] = resource_names(mod);
-  let structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), rnames);
-  let struct_names: string[] = [];
-  for sd in structs {
-    struct_names = struct_names.append(sd.name);
-  }
-  let unions: UnionSig[] = collect_union_sigs(mod);
-  // Register enum decls as union sigs (variants = variant names) so an
-  // enum-typed scrutinee types to TypeUnion and the E030 exhaustiveness
-  // check (plus union-variant assignability) covers enums the same way
-  // it covers `type X = A | B` aliases. The self-host's own source uses
-  // no enum decls, so this is inert on the bundle; it enables
-  // exhaustiveness for user / corpus enum matches.
-  for ed in mod.enums {
-    unions = unions.append(enum_union_sig(ed));
-  }
+  let st: SigTable = env.sigs;
+  let stt: StructTable = env.structs;
+  let ut: UnionTable = env.unions;
+  let methods: MethodTable = env.methods;
+  let sigs: FuncSig[] = st.sigs;
+  let structs: StructSig[] = stt.structs;
+  let unions: UnionSig[] = ut.unions;
+  let union_names: string[] = ut.index.names;
   let well_typed: boolean = true;
-  if (!validate_union_sigs(unions, struct_names)) {
+  if (!validate_union_sigs(unions, stt.index.names)) {
     well_typed = false;
   }
-  let union_names: string[] = union_sig_names(unions);
-  let tn: TypeNames = with_spellings(type_names(struct_names, union_names, rnames), mod);
-  let sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
-  let st: SigTable = sig_table(sigs);
-  let stt: StructTable = struct_table(structs, rnames, tn.spellings);
-  let ut: UnionTable = union_table(unions);
-  let methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
   let body_diags: util.Diag[] = [];
   let ambig: string[] = ambiguous_variants(mod.enums);
   // E067 runs only when the module declares a @must_consume type — the
@@ -21907,7 +21944,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   // first. Every function is summarised rather than only the ones whose
   // declared return spelling looks like a slice: an inferred-return body
   // can hand one back too, which is why the walk below runs unfiltered.
-  let call_impls: parser.ImplInfo[] = assoc_func_impls(mod.impls, mod.funcs);
+  let call_impls: parser.ImplInfo[] = env.impls;
   let slc_fns: parser.FuncDecl[] = [];
   let slc_scopes: Scope[] = [];
   let slc_sums: ViewSum[] = [];
@@ -22341,7 +22378,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   if (focus.len() == 0) {
     decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), e021_diags(mod)), derive_diags);
   }
-  let dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, decl_diags), body_diags), own_diags(mod, focus)), e049_diags(mod, focus)), e021_object_safety_diags(mod, focus)), e060_e062_diags(mod, focus)));
+  let dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, decl_diags), body_diags), own_diags(mod, env, focus)), e049_diags(mod, env, focus)), e021_object_safety_diags(mod, focus)), e060_e062_diags(mod, focus)));
   if (dd.len() > 0) {
     well_typed = false;
   }
@@ -22351,12 +22388,13 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
 // ModuleEnv is the module-level name environment: the four indexed tables a
 // Scope carries plus the module's own import paths — everything
 // build_func_scope and new_scope_full need to place a statement in the scope
-// check_module would check it in. Kept in sync with check_module's head, which
-// builds the same tables alongside the intermediate arrays its own diagnostic
-// passes go on to read.
+// check_module would check it in. check_module builds it once per pass and
+// every walk of that pass reads it.
 struct ModuleEnv { sigs: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[] }
 
 function module_env(mod: parser.Module): ModuleEnv {
+  // Union NAMES come before the struct sigs, so a struct field typed as a
+  // union resolves rather than going unknown; func sigs read both.
   let rnames: string[] = resource_names(mod);
   let structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), rnames);
   let struct_names: string[] = [];
@@ -22364,6 +22402,8 @@ function module_env(mod: parser.Module): ModuleEnv {
     struct_names = struct_names.append(sd.name);
   }
   let unions: UnionSig[] = collect_union_sigs(mod);
+  // An enum registers as a union sig, so an enum-typed scrutinee types to
+  // TypeUnion and E030 exhaustiveness covers it as it covers an alias.
   for ed in mod.enums {
     unions = unions.append(enum_union_sig(ed));
   }

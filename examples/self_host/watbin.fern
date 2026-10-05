@@ -3105,6 +3105,76 @@ function comp_canon_lower_mem_realloc(funcidx: i32, memidx: i32, realloc: i32): 
   return wsection(8, b);
 }
 
+// AsyncLift is one async-lifted export: the component func `name` (kebab
+// case), its parameters as component valtype bytes and its result's (-1 for
+// none). The core module exports its entry as `[async-lift]CORE_NAME` and
+// imports its task.return as `[task-return]CORE_NAME` from `[export]$root`.
+pub struct AsyncLift { name: string, core_name: string, param_names: string[], param_types: i32[], result: i32 }
+
+// comp_resultlist appends a func type's results: one anonymous valtype, or
+// none when `vt` is -1.
+function comp_resultlist(b: i32[], vt: i32): i32[] {
+  if (vt < 0) {
+    b = b.append(1);
+    return b.append(0);
+  }
+  b = b.append(0);
+  return b.append(vt);
+}
+
+// canon task.return: a core func taking the result `vt` (nothing when -1).
+function comp_canon_task_return(vt: i32): i32[] {
+  let b: i32[] = [1, 9];
+  b = comp_resultlist(b, vt);
+  b = b.append(0);
+  return wsection(8, b);
+}
+
+// component type `async func(params) -> result` for an async export.
+function comp_type_async_func(l: AsyncLift): i32[] {
+  let b: i32[] = [1, 67];
+  b = leb_u32(b, l.param_types.len());
+  let i: i32 = 0;
+  while (i < l.param_types.len()) {
+    b = wname(b, l.param_names[i]);
+    b = b.append(l.param_types[i]);
+    i = i + 1;
+  }
+  b = comp_resultlist(b, l.result);
+  return wsection(7, b);
+}
+
+// canon lift a core func with the `async` option and no callback: the
+// stackful lift, whose core func returns once task.return has run.
+function comp_canon_lift_async(corefunc: i32, typeidx: i32): i32[] {
+  let b: i32[] = [1, 0, 0];
+  b = leb_u32(b, corefunc);
+  b = b.append(1);
+  b = b.append(6);
+  b = leb_u32(b, typeidx);
+  return wsection(8, b);
+}
+
+// comp_canon_typed is the canon built-in an import of kind 3 or 4 lowers to:
+// a resource.drop of resource type `typeop`, or a task.return of result
+// valtype `typeop`.
+function comp_canon_typed(kind: i32, typeop: i32): i32[] {
+  if (kind == 3) {
+    return comp_canon_resource_drop(typeop);
+  }
+  return comp_canon_task_return(typeop);
+}
+
+// export a component func at the top level under `name`.
+function comp_export_one_func(name: string, funcidx: i32): i32[] {
+  let b: i32[] = [1, 0];
+  b = wname(b, name);
+  b = b.append(1);
+  b = leb_u32(b, funcidx);
+  b = b.append(0);
+  return wsection(11, b);
+}
+
 // suffix_group_find returns the index of `iface` in `order`, or -1.
 function suffix_group_find(order: string[], iface: string): i32 {
   let i: i32 = 0;
@@ -3126,10 +3196,12 @@ function suffix_group_find(order: string[], iface: string): i32 {
 // Imports are passed as parallel arrays (length = number of imports):
 //   imp_iface     wasi:X interface the user module imports the func from
 //   imp_name      method / func / [resource-drop] name
-//   imp_kind      0 no-opt, 1 memory trampoline, 2 memory+realloc, 3 resource.drop
+//   imp_kind      0 no-opt, 1 memory trampoline, 2 memory+realloc, 3 resource.drop,
+//                 4 an async export's task.return
 //   imp_inst      component-instance index of imp_iface (from Phase A)
 //   imp_params    lowered core signature the trampoline mirrors (kinds 1/2)
-//   imp_resourceT surfaced resource type index (kind 3)
+//   imp_typeop    surfaced resource type index (kind 3); the result
+//                 valtype, -1 for none (kind 4)
 // n_type0 / n_inst0 are the component type / instance counts after Phase A;
 // user_mod is the user core module index; core_export is the lifted entry.
 // SuffixWired is the composed suffix up to (not including) its export tail:
@@ -3140,7 +3212,7 @@ struct SuffixWired { o: i32[], n_cfunc: i32, n_corefunc: i32, n_inst: i32, user_
 // lowerings, the user module's instantiation and its memory / realloc /
 // table plumbing — leaving the export tail to the caller: component_suffix
 // lifts a wasi:cli/run entry, component_suffix_http an incoming-handler.
-function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_resourceT: i32[], n_inst0: i32, user_mod: i32): SuffixWired {
+function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_typeop: i32[], n_inst0: i32, user_mod: i32): SuffixWired {
   let n: i32 = imp_iface.len();
   let o: i32[] = [];
   let none: i32[] = [];
@@ -3204,9 +3276,9 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
       idx = n_corefunc;
       o = wcat(o, comp_canon_lower_noopts(cf));
       n_corefunc = n_corefunc + 1;
-    } else if (k == 3) {
+    } else if (k >= 3) {
       idx = n_corefunc;
-      o = wcat(o, comp_canon_resource_drop(imp_resourceT[i]));
+      o = wcat(o, comp_canon_typed(k, imp_typeop[i]));
       n_corefunc = n_corefunc + 1;
     } else {
       idx = n_corefunc;
@@ -3314,8 +3386,8 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
 
 // component_suffix wires the imports and lifts `core_export` (the user
 // module's `() -> i32` run entry) as wasi:cli/run.
-pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
-  let w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_resourceT, n_inst0, user_mod);
+pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_typeop: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string, lifts: AsyncLift[]): i32[] {
+  let w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_typeop, n_inst0, user_mod);
   let o: i32[] = w.o;
   let run_core_f: i32 = w.n_corefunc;
   o = wcat(o, comp_alias_core_func(w.user_inst, core_export));
@@ -3324,7 +3396,19 @@ pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind:
   o = wcat(o, comp_canon_lift_noopts(run_core_f, n_type0 + 1));
   let run_inst: i32 = w.n_inst;
   o = wcat(o, comp_instance_one_func("run", lifted));
-  return wcat(o, comp_export_one_instance("wasi:cli/run@0.2.0", run_inst));
+  o = wcat(o, comp_export_one_instance("wasi:cli/run@0.2.0", run_inst));
+  // Each async export: alias its core entry, give it an async func type, lift
+  // it with the async option and export it. The export is itself a new
+  // component func, so each lift takes two func indices.
+  let i: i32 = 0;
+  while (i < lifts.len()) {
+    o = wcat(o, comp_alias_core_func(w.user_inst, "[async-lift]" + lifts[i].core_name));
+    o = wcat(o, comp_type_async_func(lifts[i]));
+    o = wcat(o, comp_canon_lift_async(run_core_f + 1 + i, n_type0 + 2 + i));
+    o = wcat(o, comp_export_one_func(lifts[i].name, lifted + 1 + 2 * i));
+    i = i + 1;
+  }
+  return o;
 }
 
 // component_suffix_http wires the imports and lifts the user module's core
@@ -3336,8 +3420,8 @@ pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind:
 // surfaced from the imported wasi:http/types instance ahead of the suffix
 // (comp_alias_inst_type); the own<> wrappers and the func type are types
 // n_type0 .. n_type0 + 2.
-pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, req_t: i32, out_t: i32): i32[] {
-  let w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_resourceT, n_inst0, user_mod);
+pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_typeop: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, req_t: i32, out_t: i32): i32[] {
+  let w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_typeop, n_inst0, user_mod);
   let o: i32[] = w.o;
   let handle_core_f: i32 = w.n_corefunc;
   o = wcat(o, comp_alias_core_func(w.user_inst, "wasi:http/incoming-handler@0.2.0#handle"));
@@ -3368,7 +3452,7 @@ function no_results(n: i32): i32[][] {
 // drop a failed stream call's wasi:io/error (type 1 in the fixed prefixes).
 // The drop is lowered right after the last wasi:io/streams entry, where
 // native's composer puts it.
-function component_suffix_io(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
+function component_suffix_io(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_typeop: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
   let at: i32 = 0;
   let i: i32 = 0;
   while (i < imp_iface.len()) {
@@ -3400,11 +3484,11 @@ function component_suffix_io(imp_iface: string[], imp_name: string[], imp_kind: 
       kind = kind.append(imp_kind[i]);
       inst = inst.append(imp_inst[i]);
       params = params.append(imp_params[i]);
-      res = res.append(imp_resourceT[i]);
+      res = res.append(imp_typeop[i]);
     }
     i = i + 1;
   }
-  return component_suffix(iface, name, kind, inst, params, no_results(params.len()), res, n_type0, n_inst0, user_mod, core_export);
+  return component_suffix(iface, name, kind, inst, params, no_results(params.len()), res, n_type0, n_inst0, user_mod, core_export, []);
 }
 
 // blocking_write_name / write_sig: the one memory import every write-shape

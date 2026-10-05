@@ -17,6 +17,7 @@ import "./ownership";
 import "./util";
 import "./seminline";
 import "./semfuse";
+import "./semndarray";
 
 // One body's production. A TEMPLATE declaration — one spelling type variables
 // — has no body of its own: it is produced once per instantiation its callers
@@ -8327,7 +8328,7 @@ function produce_module(mod: parser.Module, verify: boolean, debug_lines: boolea
     // Fusion first: it recognises a pipeline by its calls to std/array's
     // combinators, which a function called once would otherwise absorb.
     let inlined: Spliced = inline_leaves(fuse_pipelines(all, names), names, mod);
-    all = without_unnamed(inlined.all, names, inlined.spliced, mod);
+    all = scale_ndarray_maps(without_unnamed(inlined.all, names, inlined.spliced, mod), names, mod);
   }
   decls = [];
   instances = [];
@@ -8541,6 +8542,67 @@ function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
     i = i + 1;
   }
   return result;
+}
+
+function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module): Produced[] {
+  if (!util.has_str(names, "__smm_ndarray__NdArray_map__f64__f64")) {
+    return all;
+  }
+  match (env("FERN_NO_SCALE_KERNEL")) {
+    Some(v) => {
+      if (v == "1") {
+        return all;
+      }
+    },
+    None => {}
+  }
+  let funcs: ssasem.Func[] = [];
+  let usable: boolean[] = [];
+  for p in all {
+    funcs = funcs.append(p.func);
+    usable = usable.append(p.ok && !p.template && !p.bodyless);
+  }
+  let open: boolean[] = ndarray_open(all, names, mod, funcs);
+  let out: semndarray.Scaled = semndarray.scale_maps(funcs, names, usable, open);
+  let result: Produced[] = [];
+  let i: i32 = 0;
+  while (i < all.len()) {
+    let p: Produced = all[i];
+    if (out.rewritten[i]) {
+      p = Produced { ...p, func: out.funcs[i], analysis: None };
+    }
+    result = result.append(p);
+    i = i + 1;
+  }
+  return result;
+}
+
+function ndarray_open(all: Produced[], names: string[], mod: parser.Module, funcs: ssasem.Func[]): boolean[] {
+  // A direct-call census does not account for exported functions, methods
+  // invoked through dyn dispatch, or closure entry points. Keep their
+  // parameters unknown even when their visible callers all pass packed data.
+  let roots: string[] = ["main"];
+  for fd in mod.funcs {
+    // Flattening makes every declaration public inside the merged module.
+    // Source visibility is not an external entry point; mod.exports is.
+    if (fd.receiver_type != "") {
+      roots = roots.append(parser.decl_key(fd));
+    }
+  }
+  for ex in mod.exports {
+    roots = roots.append(ex.func_name);
+  }
+  for f in funcs {
+    roots = ownership.address_taken(f, roots);
+  }
+  let root_index: util.NameIndex = util.name_index(roots);
+  let open: boolean[] = [];
+  let j: i32 = 0;
+  while (j < all.len()) {
+    open = open.append(root_index.find(names[j]) >= 0 || root_index.find(all[j].key) >= 0 || closure_body_produced(all[j]));
+    j = j + 1;
+  }
+  return open;
 }
 
 function fusion_on(): boolean {

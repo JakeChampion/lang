@@ -21,7 +21,8 @@ import (
 // `async` is STAMPED onto the FuncDecl and reprinted by `-fmt`; `opaque` is
 // DROPPED, because native's E021 opaque-access rule needs per-decl module
 // provenance the self-host checker does not carry. Neither mark changes
-// codegen — the self-host emits no component-model async surface (#6636) —
+// codegen on the paths below — only the wasm32-wasi component lifts an async
+// function, as an export too (TestSelfHostWasmAsyncExport) —
 // so the contract these tests pin is that each form parses, checks clean,
 // and reaches codegen as an ordinary function / struct decl, plus that both
 // names stay usable as ordinary identifiers. The `async` bit's own

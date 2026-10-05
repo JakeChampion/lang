@@ -396,6 +396,10 @@ jobs:
               if (provenOff.length) {
                 core.info(`${provenOff.length} lane(s) skipped: they passed on #${proven.pr}'s run ${proven.run} at this exact tree` +
                   (proven.waited ? ` (waited ${proven.waited} min for it)` : ""));
+                // main-red.yml reads this annotation to close a red lane's issue
+                // that main itself will not re-run while PRs keep proving it.
+                core.notice(JSON.stringify({ pr: proven.pr, run: proven.run, lanes: provenOff.map((l) => display[l]) }),
+                  { title: "Lanes proven by the merged pull request" });
               }
               if (unchanged.length) {
                 core.info(`${unchanged.length} lane(s) skipped: nothing they read changed since main last passed them (${unchanged.join(", ")})`);

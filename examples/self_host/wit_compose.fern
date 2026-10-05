@@ -8,7 +8,7 @@
 // a user-supplied WIT (bring-your-own); the path is identical.
 //
 // Two export shapes: compose_run lifts the core's `_lang_run` as
-// wasi:cli/run, compose_http its `wasi:http/incoming-handler@0.2.0#handle`
+// wasi:cli/run, and its async exports with the async option; compose_http its `wasi:http/incoming-handler@0.2.0#handle`
 // as the incoming-handler interface (`fern -target wasm32-wasi-http`).
 //
 // A `[resource-drop]<res>` core import is not a function of the interface: it
@@ -84,67 +84,111 @@ function refuse(w: WorldWired, why: string): WorldWired {
 // core imports and the (interface, export) pairs `req_ifaces` / `req_names`
 // an export's types need, and what those read — and plans each core import's
 // lowering against the world: 0 no-opt, 1 memory, 2 memory + realloc, 3 a
-// resource drop (with the surfaced resource type in rts).
-function wire_world(tbody: i32[], ci: wit_decode.WitCoreImports, req_ifaces: string[], req_names: string[]): WorldWired {
+// resource drop (with the surfaced resource type in rts), 4 an async export's
+// task.return (with its result valtype in rts).
+function wire_world(tbody: i32[], ci: wit_decode.WitCoreImports, req_ifaces: string[], req_names: string[], lifts: watbin.AsyncLift[]): WorldWired {
+  let ifaces: string[] = req_ifaces;
   let wanted: string[] = req_names;
-  for name in ci.names {
-    if (is_resource_drop(name)) {
-      wanted = wanted.append(name_from(name, drop_prefix().len()));
-    } else {
-      wanted = wanted.append(name);
+  let k: i32 = 0;
+  while (k < ci.names.len()) {
+    // A task.return is the component's own, not the world's.
+    if (ci.ifaces[k] != task_return_iface()) {
+      ifaces = ifaces.append(ci.ifaces[k]);
+      wanted = wanted.append(world_name(ci.names[k]));
     }
+    k = k + 1;
   }
-  let plan: wit_decode.WitImportPlan = wit_decode.wit_import_plan(tbody, util.append_all(req_ifaces, ci.ifaces), wanted);
+  let plan: wit_decode.WitImportPlan = wit_decode.wit_import_plan(tbody, ifaces, wanted);
   let o: i32[] = watbin.component_preamble();
   o = watbin.wcat(o, wit_decode.wit_emit_world_imports(tbody, plan));
   let w: WorldWired = WorldWired { o: o, n_type: plan.n_type, plan: plan, kinds: [], insts: [], rts: [], res_names: [], res_types: [], refused: "" };
   let i: i32 = 0;
   while (i < ci.ifaces.len()) {
-    let iface: string = ci.ifaces[i];
-    let name: string = ci.names[i];
-    let inst: i32 = wit_decode.wit_import_instance_index(tbody, plan, iface);
-    if (inst < 0) {
-      return refuse(w, "core imports interface " + iface + " not declared by the world");
+    w = wire_import(w, tbody, lifts, ci.ifaces[i], ci.names[i]);
+    if (w.refused.len() > 0) {
+      return w;
     }
-    let kind: i32 = 0;
-    let rt: i32 = 0;
-    if (is_resource_drop(name)) {
-      let res: string = name_from(name, drop_prefix().len());
-      if (!wit_decode.wit_iface_has_resource(tbody, iface, res)) {
-        return refuse(w, "world interface " + iface + " has no resource " + res + " to drop");
-      }
-      let (w2, rt2) = surface_resource(w, inst, res);
-      w = w2;
-      rt = rt2;
-      kind = 3;
-    } else {
-      if (!wit_decode.wit_iface_func_lookup(tbody, iface, name).found) {
-        return refuse(w, "interface " + iface + " has no function " + name);
-      }
-      kind = wit_decode.wit_classify(tbody, iface, name);
-    }
-    w = WorldWired { ...w, kinds: w.kinds.append(kind), insts: w.insts.append(inst), rts: w.rts.append(rt) };
     i = i + 1;
   }
   return w;
 }
 
+// world_name is the world export a core import `name` needs: the resource
+// itself for a resource drop, else the function.
+function world_name(name: string): string {
+  if (is_resource_drop(name)) {
+    return name_from(name, drop_prefix().len());
+  }
+  return name;
+}
+
+// wire_import plans the lowering of the core import `name` from `iface`.
+function wire_import(w: WorldWired, tbody: i32[], lifts: watbin.AsyncLift[], iface: string, name: string): WorldWired {
+  if (iface == task_return_iface()) {
+    let vt: i32 = task_return_result(lifts, name);
+    if (vt < 0 - 1) {
+      return refuse(w, "core imports " + name + " from " + iface + " for no async export");
+    }
+    return WorldWired { ...w, kinds: w.kinds.append(4), insts: w.insts.append(0), rts: w.rts.append(vt) };
+  }
+  let inst: i32 = wit_decode.wit_import_instance_index(tbody, w.plan, iface);
+  if (inst < 0) {
+    return refuse(w, "core imports interface " + iface + " not declared by the world");
+  }
+  let kind: i32 = 0;
+  let rt: i32 = 0;
+  if (is_resource_drop(name)) {
+    let res: string = name_from(name, drop_prefix().len());
+    if (!wit_decode.wit_iface_has_resource(tbody, iface, res)) {
+      return refuse(w, "world interface " + iface + " has no resource " + res + " to drop");
+    }
+    let (w2, rt2) = surface_resource(w, inst, res);
+    w = w2;
+    rt = rt2;
+    kind = 3;
+  } else {
+    if (!wit_decode.wit_iface_func_lookup(tbody, iface, name).found) {
+      return refuse(w, "interface " + iface + " has no function " + name);
+    }
+    kind = wit_decode.wit_classify(tbody, iface, name);
+  }
+  return WorldWired { ...w, kinds: w.kinds.append(kind), insts: w.insts.append(inst), rts: w.rts.append(rt) };
+}
+
+// task_return_iface is the core import module an async export's task.return
+// comes from (wasm_ir.async_lift_imports).
+function task_return_iface(): string {
+  return "[export]$root";
+}
+
+// task_return_result is the result valtype of the async export whose
+// task.return the core imports as `name` (-1 for none), or -2 when no async
+// export has that name.
+function task_return_result(lifts: watbin.AsyncLift[], name: string): i32 {
+  for l in lifts {
+    if ("[task-return]" + l.core_name == name) {
+      return l.result;
+    }
+  }
+  return 0 - 2;
+}
+
 // compose_run composes `core` — a command exporting `_lang_run` — into a
-// wasi:cli/run component of the world.
-pub function compose_run(tbody: i32[], core: i32[]): Composed {
+// wasi:cli/run component of the world, also exporting each of `lifts`.
+pub function compose_run(tbody: i32[], core: i32[], lifts: watbin.AsyncLift[]): Composed {
   let ci: wit_decode.WitCoreImports = wit_decode.wit_core_func_imports(core);
-  let w: WorldWired = wire_world(tbody, ci, [], []);
+  let w: WorldWired = wire_world(tbody, ci, [], [], lifts);
   if (w.refused.len() > 0) {
     return Composed { bytes: [], refused: w.refused };
   }
   let o: i32[] = watbin.wcat(w.o, watbin.comp_core_module_section(core));
-  o = watbin.wcat(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, ci.results, w.rts, w.n_type, w.plan.n_inst, 0, "_lang_run"));
+  o = watbin.wcat(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, ci.results, w.rts, w.n_type, w.plan.n_inst, 0, "_lang_run", lifts));
   return Composed { bytes: o, refused: "" };
 }
 
 // component_from_world is compose_run's bytes, empty on refusal.
 pub function component_from_world(tbody: i32[], core: i32[]): i32[] {
-  return compose_run(tbody, core).bytes;
+  return compose_run(tbody, core, []).bytes;
 }
 
 // compose_http composes `core` — a reactor exporting
@@ -155,7 +199,7 @@ pub function component_from_world(tbody: i32[], core: i32[]): i32[] {
 pub function compose_http(tbody: i32[], core: i32[]): Composed {
   let ci: wit_decode.WitCoreImports = wit_decode.wit_core_func_imports(core);
   let http_iface: string = "wasi:http/types@0.2.0";
-  let w: WorldWired = wire_world(tbody, ci, [http_iface, http_iface], ["incoming-request", "response-outparam"]);
+  let w: WorldWired = wire_world(tbody, ci, [http_iface, http_iface], ["incoming-request", "response-outparam"], []);
   if (w.refused.len() > 0) {
     return Composed { bytes: [], refused: w.refused };
   }

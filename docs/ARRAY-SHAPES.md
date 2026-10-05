@@ -319,12 +319,12 @@ still settles at the meet over its arms, so one whose base arm is a
 function whose declared result is not a handle reads `unknown`, and so
 does one the program does not define.
 
-What a return summary cannot reach is the other direction. A receiver
-that is its own function's **parameter** claims nothing, because layouts
-would have to travel from callers into callees, and they do not. Over
-`examples/tests/ndarray_test.fern` that is the whole remainder: 14 of 43
-reported rows read `unknown` before the summary and 1 after, and the one
-is a parameter.
+The retained Go report only propagates return summaries. Its parameter
+receivers remain unknown: over `examples/tests/ndarray_test.fern`, 14 of 43
+reported rows read `unknown` before those summaries and 1 after, a parameter.
+The primary compiler's typed analysis also propagates arguments from callers
+into callees, as described below. The historical Go report's counts do not
+measure that analysis.
 
 Each storage-sensitive site then carries a verdict, closed and tagged
 like the kernel sets above, tallied under `FERN_ARRAY_REPORT=1`:
@@ -367,6 +367,52 @@ a strided handle the same rewrite computes DIFFERENT numbers rather than
 the same ones faster, which is why the gate is the proof and not the
 verb. Everything else still runs the scalar loop, and nothing fuses or
 donates on this side.
+
+The primary Fern compiler reaches the same kernel through
+`examples/self_host/semndarray.fern`, on typed semantic values before ownership
+planning. `semndlayout.fern` carries the layout lattice through constructors,
+structural operations, copies, joins, helper returns and direct-call arguments.
+Its return summary meets every return, and each parameter meets every caller's
+argument. A helper called with both packed and strided handles therefore
+cannot take a packed-only kernel, regardless of caller order.
+The element function must be a capture-free closure whose body is exactly
+the element multiplied by an `f64` literal. It constructs the result through
+`from_flat`, which preserves the shape and produces canonical row-major
+strides. Ownership planning retains the shared shape and releases temporary
+storage through its ordinary rules.
+
+The analysis distinguishes an unseen fact from an unknown layout. Facts only
+lose precision as the fixed point propagates; recursive calls and loop phis
+participate without a guessed iteration limit. A packed seed can prove a
+packed recursive result. A mixed recursive edge loses that proof. Remaining
+unseen facts become unknown and propagate again before any rewrite uses them.
+
+Explicit exports, methods and closure entry points keep unknown parameters,
+because a direct-call census cannot account for all their callers. Source
+visibility is different: flattening has merged the modules and marked their
+declarations public, so `is_pub` does not describe external entry points.
+Hand-written record literals, fields, cells and unresolved calls also claim
+nothing. No nominal type alone proves storage layout.
+
+Captured factors and unresolved element functions still use scalar maps.
+These are coverage limits, not claims that those cases cannot be optimized.
+`FERN_NO_SCALE_KERNEL=1` disables this rewrite. The primary gate
+checks emitted instructions as well as values: a packed map emits the SIMD
+scale, while mixed callers, indirect calls, exports and unproven recursive
+returns retain their map calls. Reporting parity and broader element-function
+proofs remain part of #9727.
+
+Measured on arm64-darwin on 2026-10-05 with
+`examples/array_pipeline/ndarray_scale.fern`: the same candidate compiler,
+kernel enabled versus `FERN_NO_SCALE_KERNEL=1`, 1,000 elements, 200 rounds
+per process, nine alternating runs of each build. Median time per map was
+253 ns enabled and 2,235 ns disabled (8.83x). Every checksum agreed. Cold
+allocator calls fell from 15 to 6 and fresh bytes from 10,392 to 8,288.
+Steady counters over 200 rounds were 3,200 versus 1,400 allocator calls and
+10,392 versus 8,344 fresh bytes. Counters include metadata and result checks;
+timing covers only the map. The first result stays live across the run, and
+every later result is checked after its timer. This is a native measurement
+for this input size, not a claim about other targets or shapes.
 
 ## 7. Elementwise, and along an axis
 

@@ -1,0 +1,75 @@
+// Compile the same source with and without FERN_NO_SCALE_KERNEL=1.
+// Input size and round count are runtime parameters. Both builds must print
+// the same checksum. Counters include the handle's metadata, not just data.
+import "std/ndarray";
+import "std/string";
+
+@noinline
+function scale(xs: f64[]): ndarray.NdArray[f64] {
+  return ndarray.from_flat(xs, [xs.len()]).map((x: f64): f64 => x * 2.0);
+}
+
+function checksum(a: ndarray.NdArray[f64]): i64 {
+  let result: i64 = 0 as i64;
+  let i: i32 = 0;
+  let xs: f64[] = a.to_flat();
+  while (i < xs.len()) {
+    result = result + xs[i] as i64;
+    i = i + 1;
+  }
+  return result;
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  let n: i32 = 1000;
+  let rounds: i32 = 2;
+  if (argv.len() > 1) {
+    n = argv[1].parse_int_or(n);
+  }
+  if (argv.len() > 2) {
+    rounds = argv[2].parse_int_or(rounds);
+  }
+  if (n < 1 || rounds < 1) {
+    return 1;
+  }
+  let xs: f64[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    xs = xs.append((i % 127) as f64);
+    i = i + 1;
+  }
+
+  let cold_a: i64 = __heap_alloc_count();
+  let cold_b: i64 = __heap_bump_bytes();
+  let first: ndarray.NdArray[f64] = scale(xs);
+  let cold_allocs: i64 = __heap_alloc_count() - cold_a;
+  let cold_bytes: i64 = __heap_bump_bytes() - cold_b;
+  let expected: i64 = checksum(first);
+
+  let mark_a: i64 = __heap_alloc_count();
+  let mark_b: i64 = __heap_bump_bytes();
+  let elapsed: i64 = 0 as i64;
+  let sum: i64 = 0 as i64;
+  i = 0;
+  while (i < rounds) {
+    let start: i64 = monotonic_ns();
+    let out: ndarray.NdArray[f64] = scale(xs);
+    elapsed = elapsed + monotonic_ns() - start;
+    // Read every result after the timer, so verification neither dominates
+    // the kernel measurement nor lets the output become dead.
+    let got: i64 = checksum(out);
+    if (got != expected) {
+      return 2;
+    }
+    sum = sum + got;
+    i = i + 1;
+  }
+  let allocs: i64 = __heap_alloc_count() - mark_a;
+  let bytes: i64 = __heap_bump_bytes() - mark_b;
+  if (checksum(first) != expected || xs[0] != 0.0) {
+    return 3;
+  }
+  print("{\"n\":" + n.to_string() + ",\"rounds\":" + rounds.to_string() + ",\"checksum\":" + sum.to_string() + ",\"cold_allocs\":" + cold_allocs.to_string() + ",\"cold_bytes\":" + cold_bytes.to_string() + ",\"steady_allocs\":" + allocs.to_string() + ",\"steady_bytes\":" + bytes.to_string() + ",\"ns_per_round\":" + (elapsed / (rounds as i64)).to_string() + "}");
+  return 0;
+}
