@@ -1,17 +1,20 @@
-// Tiny scalar leaves spliced into their callers, then tuples read apart.
+// Tiny scalar leaves spliced into their callers, then constructions read apart.
 //
 // A leaf here computes only on scalars and tuples of them, reading a record
 // parameter's scalar fields at most, and calls nothing. Splicing it moves no
 // count: every value it makes is a word or a fresh tuple the splice then takes
-// apart, and a field read is planned in the caller like any other. A tuple
-// built and only read, which is what a spliced `(ok, value)` return becomes,
-// is never allocated: each read takes the element straight from the
-// construction, through the phi that joins several returns, and a
-// construction nothing reads is dropped.
+// apart, and a field read is planned in the caller like any other. A tuple,
+// record or variant built and only read, which is what a spliced `(ok, value)`
+// return becomes, is never allocated: each read takes the part straight from
+// the construction, through the phi that joins several returns, and a
+// construction nothing reads is dropped. This runs before the count planner, so
+// a part read off the construction is planned like the operand it is.
 import "./ssa";
+import "./util";
 import "./ssasem";
 import "./typeinfo";
-import "core/map";
+import "./semtypes";
+import "./semrecords";
 
 // Past these a leaf is not tiny, and splicing it grows its callers more than
 // the call it removes costs.
@@ -21,6 +24,13 @@ function max_leaf_insts(): i32 {
 
 function max_leaf_blocks(): i32 {
   return 16;
+}
+
+// A function called from one place is spliced there whatever it computes, as
+// long as it is no larger than this: the original goes once the splice leaves
+// it unreferenced (ircore.cull_spliced_leaves), so the program does not grow.
+function max_once_insts(): i32 {
+  return 400;
 }
 
 function max_splices(): i32 {
@@ -33,48 +43,152 @@ function max_caller_insts(): i32 {
   return 1500;
 }
 
-// `funcs[i]` is spliced into its callers when `inlinable[i]` and it is a leaf;
-// `rewrite[i]` says which functions may be rewritten at all. `names[i]` is the
-// key a call to `funcs[i]` carries.
 // What the pass made of each function, and whether it rewrote the graph: a
 // caller holding an analysis of what it handed in keeps it only where the
-// graph came back as it went in.
-pub struct Inlined { funcs: ssasem.Func[], rewritten: boolean[] }
+// graph came back as it went in. `spliced` marks the functions spliced
+// wherever they are called, which need no body once nothing names them.
+pub struct Inlined { funcs: ssasem.Func[], rewritten: boolean[], spliced: boolean[] }
 
 struct Rewrite { f: ssasem.Func, changed: boolean }
 
-pub function inline_leaves(funcs: ssasem.Func[], names: string[], inlinable: boolean[], rewrite: boolean[]): Inlined {
-  let leaves: Map[string, i32] = map_new(64);
-  let any: boolean = false;
+// `funcs[i]` is spliced into its callers when `inlinable[i]` and it is a leaf,
+// or called once and `unnamed[i]`: nothing outside the bodies names it, so the
+// splice leaves no second copy. `rewrite[i]` says which functions may be
+// rewritten at all. `names[i]` is the key a call to `funcs[i]` carries.
+pub function inline_leaves(funcs0: ssasem.Func[], names: string[], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[]): Inlined {
+  let ix: util.NameIndex = util.name_index(names);
+  let calls: i32[] = call_counts(funcs0, ix);
+  let leaves: boolean[] = [];
+  let once: boolean[] = [];
   let i: i32 = 0;
-  while (i < funcs.len()) {
-    if (inlinable[i] && leaf(funcs[i])) {
-      leaves = leaves.insert(names[i], i);
-      any = true;
-    }
+  while (i < funcs0.len()) {
+    let is_leaf: boolean = inlinable[i] && leaf(funcs0[i]);
+    leaves = leaves.append(is_leaf);
+    once = once.append(!is_leaf && inlinable[i] && unnamed[i] && calls[i] == 1 && spliceable(funcs0[i], max_once_insts()));
     i = i + 1;
   }
-  let out: ssasem.Func[] = [];
-  let rewritten: boolean[] = [];
+  let out: Inlined = split_all(splice_rounds(funcs0, rewrite, Spliceable { ix: ix, leaves: leaves, once: once }), rewrite);
+  let spliced: boolean[] = [];
   i = 0;
-  while (i < funcs.len()) {
-    let f: ssasem.Func = funcs[i];
-    let changed: boolean = false;
-    if (rewrite[i]) {
-      if (any && count_insts(f.graph) <= max_caller_insts()) {
-        let spliced: Rewrite = splice_calls(f, funcs, leaves);
-        f = spliced.f;
-        changed = spliced.changed;
-      }
-      let split: Rewrite = split_tuples(f);
-      f = split.f;
-      changed = changed || split.changed;
-    }
-    out = out.append(f);
-    rewritten = rewritten.append(changed);
+  while (i < funcs0.len()) {
+    spliced = spliced.append(leaves[i] || once[i]);
     i = i + 1;
   }
-  return Inlined { funcs: out, rewritten: rewritten };
+  return Inlined { ...out, spliced: spliced };
+}
+
+// The functions spliced wherever they are called, by index into the
+// function list `ix` names: leaves at once, and functions called once when
+// the ones they call once are in them.
+struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[] }
+
+// A function called once is spliced only after the ones it calls once are in
+// it, so a chain of them folds from the bottom up.
+function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable): Inlined {
+  let out: Inlined = Inlined { funcs: funcs0, rewritten: [], spliced: [] };
+  for f in funcs0 {
+    out = Inlined { ...out, rewritten: out.rewritten.append(false) };
+  }
+  let round: i32 = 0;
+  let more: boolean = true;
+  while (more && round < 16) {
+    let ready: boolean[] = [];
+    let j: i32 = 0;
+    while (j < out.funcs.len()) {
+      ready = ready.append(sp.leaves[j] || sp.once[j] && !calls_any(out.funcs[j], sp.ix, sp.once, j));
+      j = j + 1;
+    }
+    let next: Round = splice_round(out, rewrite, sp.ix, ready);
+    more = next.changed;
+    out = next.out;
+    round = round + 1;
+  }
+  return out;
+}
+
+struct Round { out: Inlined, changed: boolean }
+
+function splice_round(prev: Inlined, rewrite: boolean[], ix: util.NameIndex, ready: boolean[]): Round {
+  let r: Round = Round { out: prev, changed: false };
+  let i: i32 = 0;
+  while (i < prev.funcs.len()) {
+    if (rewrite[i] && count_insts(r.out.funcs[i].graph) <= max_caller_insts()) {
+      let spliced: Rewrite = splice_calls(r.out.funcs[i], r.out.funcs, ix, ready);
+      if (spliced.changed) {
+        r = Round { out: Inlined { ...r.out, funcs: r.out.funcs.with(i, spliced.f), rewritten: r.out.rewritten.with(i, true) }, changed: true };
+      }
+    }
+    i = i + 1;
+  }
+  return r;
+}
+
+function split_all(prev: Inlined, rewrite: boolean[]): Inlined {
+  let out: Inlined = prev;
+  let i: i32 = 0;
+  while (i < out.funcs.len()) {
+    if (rewrite[i]) {
+      let split: Rewrite = split_constructions(out.funcs[i]);
+      out = Inlined { ...out, funcs: out.funcs.with(i, split.f), rewritten: out.rewritten.with(i, out.rewritten[i] || split.changed) };
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// How many direct calls name each function, over every body.
+function call_counts(funcs: ssasem.Func[], ix: util.NameIndex): i32[] {
+  let out: i32[] = [];
+  for f in funcs {
+    out = out.append(0);
+  }
+  for f in funcs {
+    for b in f.graph.blocks {
+      for ins in b.insts {
+        let j: i32 = called(ins, ix);
+        if (j >= 0) {
+          out = out.with(j, out[j] + 1);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// The function a direct call names, as an index into `ix`, or -1.
+function called(ins: ssa.SInst, ix: util.NameIndex): i32 {
+  if (ins.kind_tag != ssasem.call()) {
+    return 0 - 1;
+  }
+  return ix.find(ins.str);
+}
+
+// Whether `f` still calls a function `marked` other than function `self`.
+function calls_any(f: ssasem.Func, ix: util.NameIndex, marked: boolean[], self: i32): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      let j: i32 = called(ins, ix);
+      if (j >= 0 && j != self && marked[j]) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Whether `splice` can copy `f`'s body: one entry with no predecessor, no
+// environment, only return and branch terminators, and at most `limit`
+// instructions.
+function spliceable(f: ssasem.Func, limit: i32): boolean {
+  if (f.graph.takes_env || f.graph.blocks.len() == 0 || f.graph.blocks[f.graph.entry].preds.len() > 0) {
+    return false;
+  }
+  for b in f.graph.blocks {
+    if (b.term.kind_tag < 1 || b.term.kind_tag > 3) {
+      return false;
+    }
+  }
+  return count_insts(f.graph) <= limit;
 }
 
 function scalar(t: typeinfo.Type): boolean {
@@ -150,15 +264,16 @@ function leaf(f: ssasem.Func): boolean {
   return records == record_params && n <= max_leaf_insts();
 }
 
-// The leaf a call instruction names, as an index into `funcs`, or -1.
-function leaf_callee(ins: ssa.SInst, leaves: Map[string, i32]): i32 {
-  if (ins.kind_tag != ssasem.call()) {
+// The ready function a call instruction names, as an index into `funcs`, or -1.
+function ready_callee(ins: ssa.SInst, ix: util.NameIndex, ready: boolean[]): i32 {
+  let j: i32 = called(ins, ix);
+  if (j < 0 || !ready[j]) {
     return 0 - 1;
   }
-  return leaves.get_or(ins.str, 0 - 1);
+  return j;
 }
 
-function splice_calls(f0: ssasem.Func, funcs: ssasem.Func[], leaves: Map[string, i32]): Rewrite {
+function splice_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, ready: boolean[]): Rewrite {
   let f: ssasem.Func = f0;
   let done: i32 = 0;
   let bi: i32 = 0;
@@ -166,8 +281,9 @@ function splice_calls(f0: ssasem.Func, funcs: ssasem.Func[], leaves: Map[string,
     let k: i32 = 0;
     let spliced: boolean = false;
     while (k < f.graph.blocks[bi].insts.len() && !spliced) {
-      let at: i32 = leaf_callee(f.graph.blocks[bi].insts[k], leaves);
-      if (at >= 0 && funcs[at].graph.name != f.graph.name) {
+      let at: i32 = ready_callee(f.graph.blocks[bi].insts[k], ix, ready);
+      if (at >= 0 && funcs[at].graph.name != f.graph.name
+        && count_insts(f.graph) + count_insts(funcs[at].graph) <= max_caller_insts()) {
         f = splice(f, bi, k, funcs[at]);
         done = done + 1;
         spliced = true;
@@ -246,9 +362,9 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
       }
       let args: i32[] = [];
       for a in ins.args {
-        args = args.append(vmap[a]);
+        args = args.append(mapped(vmap, a));
       }
-      insts = insts.append(ssa.SInst { ...ins, result: vmap[ins.result], args: args });
+      insts = insts.append(ssa.SInst { ...ins, result: mapped(vmap, ins.result), args: args });
     }
     let preds: i32[] = [];
     for p in cb.preds {
@@ -260,15 +376,30 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
     let t: ssa.STerm = cb.term;
     if (t.kind_tag == 1) {
       rets = rets.append(first + j);
-      ret_vals = ret_vals.append(vmap[t.value]);
+      if (t.value >= 0) {
+        ret_vals = ret_vals.append(vmap[t.value]);
+      }
       t = br(cont);
     } else if (t.kind_tag == 2) {
       t = br(first + index_of(ids, t.target));
     } else {
-      t = ssa.STerm { ...t, cond: vmap[t.cond], t: first + index_of(ids, t.t), f: first + index_of(ids, t.f) };
+      t = ssa.STerm { ...t, cond: mapped(vmap, t.cond), t: first + index_of(ids, t.t), f: first + index_of(ids, t.f) };
     }
     copied = copied.append(ssa.SBlock { id: first + j, insts: insts, term: t, preds: preds });
     j = j + 1;
+  }
+  let values: typeinfo.Type[] = f.values;
+  for t in callee.values {
+    values = values.append(t);
+  }
+  // One returned value stands for the call's result in every use, where the
+  // types agree: a copy of it would count as a second owner.
+  let swap: i32[] = [];
+  if (call.result >= 0 && ret_vals.len() == 1 && semtypes.equal(values[call.result], values[ret_vals[0]])) {
+    while (swap.len() <= call.result) {
+      swap = swap.append(0 - 1);
+    }
+    swap = swap.with(call.result, ret_vals[0]);
   }
   let head: ssa.SInst[] = [];
   let tail: ssa.SInst[] = [];
@@ -276,7 +407,7 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
   if (ret_vals.len() == 1) {
     kind = 7;
   }
-  if (call.result >= 0) {
+  if (call.result >= 0 && ret_vals.len() > 0 && swap.len() == 0) {
     tail = tail.append(ssa.SInst { kind_tag: kind, result: call.result, args: ret_vals, imm: 0, str: "" });
   }
   let p: i32 = 0;
@@ -312,11 +443,96 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
     blocks = blocks.append(cb);
   }
   blocks = blocks.append(ssa.SBlock { id: cont, insts: tail, term: b.term, preds: rets });
-  let values: typeinfo.Type[] = f.values;
-  for t in callee.values {
-    values = values.append(t);
+  let joined: ssasem.Func = with_tables(f, callee, vmap);
+  return ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: swapped_blocks(blocks, swap), nvals: base + callee.graph.nvals }, values: values, dbg_vals: swapped_all(swap, joined.dbg_vals) };
+}
+
+// `f` with the tables `callee`'s body reads added to its own: the contracts of
+// what it calls, its record and enum schemas, its environment and dyn rows, its
+// anchors, and under `-g` its bindings, renumbered by `vmap`.
+function with_tables(f: ssasem.Func, callee: ssasem.Func, vmap: i32[]): ssasem.Func {
+  let calls: ssasem.Contract[] = f.calls;
+  for c in callee.calls {
+    if (ssasem.find_contract_in(calls, c.name) < 0) {
+      calls = calls.append(c);
+    }
   }
-  return ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks, nvals: base + callee.graph.nvals }, values: values };
+  let records: semrecords.Record[] = f.records.list;
+  let grew: boolean = false;
+  for r in callee.records.list {
+    if (!has_record(records, r.ty)) {
+      records = records.append(r);
+      grew = true;
+    }
+  }
+  let table: semrecords.Records = f.records;
+  if (grew) {
+    table = semrecords.records_of(records);
+  }
+  let enums: semrecords.Enum[] = f.enums;
+  for e in callee.enums {
+    if (!has_enum(enums, e.ty)) {
+      enums = enums.append(e);
+    }
+  }
+  let anchors: ssasem.Anchor[] = f.anchors;
+  for a in callee.anchors {
+    if (!ssasem.anchored(anchors, a.name)) {
+      anchors = anchors.append(a);
+    }
+  }
+  let dbg_vals: i32[] = f.dbg_vals;
+  let dbg_names: string[] = f.dbg_names;
+  let i: i32 = 0;
+  while (i < callee.dbg_vals.len()) {
+    dbg_vals = dbg_vals.append(mapped(vmap, callee.dbg_vals[i]));
+    dbg_names = dbg_names.append(callee.dbg_names[i]);
+    i = i + 1;
+  }
+  return ssasem.Func { ...f, calls: calls, records: table, enums: enums, envs: with_rows(f.envs, callee.envs), anchors: anchors, dyns: with_rows(f.dyns, callee.dyns), dbg_vals: dbg_vals, dbg_names: dbg_names };
+}
+
+function has_record(list: semrecords.Record[], t: typeinfo.Type): boolean {
+  for r in list {
+    if (semtypes.equal(r.ty, t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function has_enum(list: semrecords.Enum[], t: typeinfo.Type): boolean {
+  for e in list {
+    if (semtypes.equal(e.ty, t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function with_rows(rows: ssasem.EnvRow[], more: ssasem.EnvRow[]): ssasem.EnvRow[] {
+  let out: ssasem.EnvRow[] = rows;
+  for m in more {
+    let seen: boolean = false;
+    for r in out {
+      if (semtypes.equal(r.fn_ty, m.fn_ty) && semtypes.equal(r.env_ty, m.env_ty)) {
+        seen = true;
+      }
+    }
+    if (!seen) {
+      out = out.append(m);
+    }
+  }
+  return out;
+}
+
+// `v` renumbered into the caller; a missing value, such as a void result,
+// stays missing.
+function mapped(vmap: i32[], v: i32): i32 {
+  if (v < 0 || v >= vmap.len()) {
+    return v;
+  }
+  return vmap[v];
 }
 
 function index_of(xs: i32[], x: i32): i32 {
@@ -330,63 +546,102 @@ function index_of(xs: i32[], x: i32): i32 {
   return 0 - 1;
 }
 
-// ---- tuples read apart ---------------------------------------------------
+// ---- constructions read apart ---------------------------------------------
 
-struct Def { block: i32, pos: i32 }
+// Each value's defining instruction and the index of its block, by value; a
+// value nothing defines has kind 0 and block -1.
+struct Defs { insts: ssa.SInst[], blocks: i32[] }
 
-function defs_of(g: ssa.SFunc): Def[] {
-  let out: Def[] = [];
+function no_inst(): ssa.SInst {
+  return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+}
+
+function defs_of(g: ssa.SFunc): Defs {
+  let insts: ssa.SInst[] = [];
+  let blocks: i32[] = [];
   let v: i32 = 0;
   while (v < g.nvals) {
-    out = out.append(Def { block: 0 - 1, pos: 0 - 1 });
+    insts = insts.append(no_inst());
+    blocks = blocks.append(0 - 1);
     v = v + 1;
   }
   let bi: i32 = 0;
   while (bi < g.blocks.len()) {
-    let k: i32 = 0;
-    while (k < g.blocks[bi].insts.len()) {
-      let r: i32 = g.blocks[bi].insts[k].result;
-      if (r >= 0 && r < out.len()) {
-        out = out.with(r, Def { block: bi, pos: k });
+    for ins in g.blocks[bi].insts {
+      if (ins.result >= 0 && ins.result < insts.len()) {
+        insts = insts.with(ins.result, ins);
+        blocks = blocks.with(ins.result, bi);
       }
-      k = k + 1;
     }
     bi = bi + 1;
   }
-  return out;
+  return Defs { insts: insts, blocks: blocks };
 }
 
-function def_inst(g: ssa.SFunc, defs: Def[], v: i32): ssa.SInst {
-  let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
-  if (v < 0 || v >= defs.len() || defs[v].block < 0) {
+function def_inst(defs: Defs, v: i32): ssa.SInst {
+  if (v < 0 || v >= defs.insts.len()) {
+    return no_inst();
+  }
+  return defs.insts[v];
+}
+
+// Whether `k` builds a box a read can see through.
+function builds(k: i32): boolean {
+  return k == ssasem.tuple_new() || k == ssasem.record_new() || k == ssasem.variant_new();
+}
+
+// Whether `k` reads a part of a box, or tests which variant it holds.
+function reads_part(k: i32): boolean {
+  return k == ssasem.tuple_get() || k == ssasem.record_get() || k == ssasem.variant_get() || k == ssasem.variant_is();
+}
+
+// What `read` answers on the box `built` constructs: one of its operands, a
+// constant flag for a variant test, or, for a variant's field read on a box
+// holding another variant, nothing the read can reach, so any value of its
+// type stands in. `ok` is false when the read does not fit the construction.
+struct Part { ok: boolean, value: i32, flag: i32, filler: boolean }
+
+function part(built: ssa.SInst, read: ssa.SInst): Part {
+  let none: Part = Part { ok: false, value: 0 - 1, flag: 0 - 1, filler: false };
+  let k: i32 = read.kind_tag;
+  if (k == ssasem.variant_is()) {
+    if (built.kind_tag != ssasem.variant_new()) {
+      return none;
+    }
+    let flag: i32 = 0;
+    if (built.str == read.str) {
+      flag = 1;
+    }
+    return Part { ok: true, value: 0 - 1, flag: flag, filler: false };
+  }
+  let fits: boolean = k == ssasem.tuple_get() && built.kind_tag == ssasem.tuple_new()
+    || k == ssasem.record_get() && built.kind_tag == ssasem.record_new()
+    || k == ssasem.variant_get() && built.kind_tag == ssasem.variant_new();
+  if (!fits) {
     return none;
   }
-  return g.blocks[defs[v].block].insts[defs[v].pos];
-}
-
-// The tuple construction a value is, through copies, or -1.
-function construction(g: ssa.SFunc, defs: Def[], v: i32): i32 {
-  let x: i32 = v;
-  let steps: i32 = 0;
-  while (steps < 64) {
-    let d: ssa.SInst = def_inst(g, defs, x);
-    if (d.kind_tag == ssasem.tuple_new()) {
-      return x;
-    }
-    if (d.kind_tag != 7 || d.args.len() != 1) {
-      return 0 - 1;
-    }
-    x = d.args[0];
-    steps = steps + 1;
+  if (k == ssasem.variant_get() && built.str != read.str) {
+    return Part { ok: true, value: 0 - 1, flag: 0 - 1, filler: true };
   }
-  return 0 - 1;
+  if (read.imm < 0 || read.imm >= built.args.len()) {
+    return none;
+  }
+  return Part { ok: true, value: built.args[read.imm], flag: 0 - 1, filler: false };
 }
 
-// Every read of a known construction reads its element instead, a read of a
-// phi joining constructions reads a per-element phi, and a construction or
-// joining phi left unread is dropped.
-function split_tuples(f0: ssasem.Func): Rewrite {
-  if (!reads_tuples(f0.graph)) {
+// One round's rewrites, applied together once every read is resolved: the
+// value each read becomes (`swap`, -1 where it stays), the flags and stand-ins
+// the entry gains after its parameters, and the per-part phis that go at the
+// head of the block of the phi they split. `defs` and `values` grow with them.
+struct Head { block: i32, ins: ssa.SInst }
+
+struct Edits { defs: Defs, values: typeinfo.Type[], swap: i32[], entry: ssa.SInst[], heads: Head[], kept: boolean[] }
+
+// Every read of a known construction reads its part instead, a read of a phi
+// joining constructions reads a per-part phi, and a construction, or a phi or
+// copy of one, left unread is dropped.
+function split_constructions(f0: ssasem.Func): Rewrite {
+  if (!reads_parts(f0.graph)) {
     return Rewrite { f: f0, changed: false };
   }
   let f: ssasem.Func = f0;
@@ -394,36 +649,9 @@ function split_tuples(f0: ssasem.Func): Rewrite {
   let changed: boolean = true;
   let rewritten: boolean = false;
   while (changed && round < 8) {
-    changed = false;
-    let g: ssa.SFunc = f.graph;
-    let defs: Def[] = defs_of(g);
-    let bi: i32 = 0;
-    while (bi < g.blocks.len()) {
-      let k: i32 = 0;
-      while (k < g.blocks[bi].insts.len()) {
-        let ins: ssa.SInst = g.blocks[bi].insts[k];
-        if (ins.kind_tag == ssasem.tuple_get() && ins.args.len() == 1 && scalar(f.values[ins.result])) {
-          let src: Source = element_source(f, g, defs, ins.args[0], ins.imm, bi);
-          if (src.value >= 0) {
-            f = src.f;
-            g = f.graph;
-            let copy: ssa.SInst = ssa.SInst { kind_tag: 7, result: ins.result, args: [src.value], imm: 0, str: "" };
-            g = with_inst(g, bi, k + src.shift, copy);
-            f = ssasem.Func { ...f, graph: g };
-            if (src.shift > 0 || g.nvals > defs.len()) {
-              defs = defs_of(g);
-            }
-            changed = true;
-          }
-        }
-        k = k + 1;
-      }
-      bi = bi + 1;
-    }
-    let swept: ssasem.Func = drop_unread(f);
-    if (swept.graph.blocks.len() > 0 && count_insts(swept.graph) != count_insts(f.graph)) {
-      changed = true;
-    }
+    let split: Rewrite = split_round(f);
+    let swept: ssasem.Func = drop_unread(split.f);
+    changed = split.changed || count_insts(swept.graph) != count_insts(split.f.graph);
     f = swept;
     rewritten = rewritten || changed;
     round = round + 1;
@@ -431,10 +659,35 @@ function split_tuples(f0: ssasem.Func): Rewrite {
   return Rewrite { f: f, changed: rewritten };
 }
 
-function reads_tuples(g: ssa.SFunc): boolean {
+// Every read that resolves, rewritten at once.
+function split_round(f: ssasem.Func): Rewrite {
+  let defs: Defs = defs_of(f.graph);
+  let swap: i32[] = [];
+  let v: i32 = 0;
+  while (v < f.graph.nvals) {
+    swap = swap.append(0 - 1);
+    v = v + 1;
+  }
+  let e: Edits = Edits { defs: defs, values: f.values, swap: swap, entry: [], heads: [], kept: kept_values(f.graph) };
+  let any: boolean = false;
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (reads_part(ins.kind_tag) && ins.args.len() == 1 && splittable(f, defs, ins.args[0])) {
+        e = resolve(f, e, ins);
+        any = any || e.swap[ins.result] >= 0;
+      }
+    }
+  }
+  if (!any) {
+    return Rewrite { f: f, changed: false };
+  }
+  return Rewrite { f: applied(f, e), changed: true };
+}
+
+function reads_parts(g: ssa.SFunc): boolean {
   for b in g.blocks {
     for ins in b.insts {
-      if (ins.kind_tag == ssasem.tuple_get()) {
+      if (reads_part(ins.kind_tag)) {
         return true;
       }
     }
@@ -442,63 +695,276 @@ function reads_tuples(g: ssa.SFunc): boolean {
   return false;
 }
 
-struct Source { f: ssasem.Func, value: i32, shift: i32 }
-
-// The value element `idx` of tuple `v` is, adding a per-element phi when `v`
-// is a phi of constructions. `shift` is how many instructions that added in
-// front of the read when the phi joins the read's own block, at its head.
-function element_source(f: ssasem.Func, g: ssa.SFunc, defs: Def[], v: i32, idx: i32, read_block: i32): Source {
-  let none: Source = Source { f: f, value: 0 - 1, shift: 0 };
-  let c: i32 = construction(g, defs, v);
-  if (c >= 0) {
-    let d: ssa.SInst = def_inst(g, defs, c);
-    if (idx < 0 || idx >= d.args.len()) {
-      return none;
-    }
-    return Source { f: f, value: d.args[idx], shift: 0 };
+// Whether a read of `v` may be split: `v` is a construction or a phi, and
+// holds no view, since a view may only move and a part phi would retain it.
+function splittable(f: ssasem.Func, defs: Defs, v: i32): boolean {
+  let k: i32 = def_inst(defs, through_copies(defs, v)).kind_tag;
+  if (!builds(k) && k != 8) {
+    return false;
   }
-  let phi: ssa.SInst = def_inst(g, defs, v);
-  if (phi.kind_tag != 8) {
-    return none;
-  }
-  let elems: i32[] = [];
-  for a in phi.args {
-    let ca: i32 = construction(g, defs, a);
-    if (ca < 0) {
-      return none;
-    }
-    let da: ssa.SInst = def_inst(g, defs, ca);
-    if (idx < 0 || idx >= da.args.len()) {
-      return none;
-    }
-    elems = elems.append(da.args[idx]);
-  }
-  let ty: typeinfo.Type = element_type(f.values[v], idx);
-  let nv: i32 = g.nvals;
-  let pb: i32 = defs[v].block;
-  let blk: ssa.SBlock = g.blocks[pb];
-  let insts: ssa.SInst[] = [ssa.SInst { kind_tag: 8, result: nv, args: elems, imm: 0, str: "" }];
-  for ins in blk.insts {
-    insts = insts.append(ins);
-  }
-  let ng: ssa.SFunc = ssa.SFunc { ...g, nvals: nv + 1, blocks: g.blocks.with(pb, ssa.SBlock { ...blk, insts: insts }) };
-  let shift: i32 = 0;
-  if (pb == read_block) {
-    shift = 1;
-  }
-  return Source { f: ssasem.Func { ...f, graph: ng, values: f.values.append(ty) }, value: nv, shift: shift };
+  return !ssasem.holds_view(f, f.values[v]);
 }
 
-function element_type(t: typeinfo.Type, idx: i32): typeinfo.Type {
-  if let typeinfo.TypeTuple(tt) = t {
-    return tt.elements[idx];
+// `v` past any copies.
+function through_copies(defs: Defs, v: i32): i32 {
+  let x: i32 = v;
+  let steps: i32 = 0;
+  while (steps < 64) {
+    let d: ssa.SInst = def_inst(defs, x);
+    if (d.kind_tag != 7 || d.args.len() != 1) {
+      return x;
+    }
+    x = d.args[0];
+    steps = steps + 1;
   }
-  return t;
+  return x;
 }
 
-function with_inst(g: ssa.SFunc, bi: i32, k: i32, ins: ssa.SInst): ssa.SFunc {
-  let b: ssa.SBlock = g.blocks[bi];
-  return ssa.SFunc { ...g, blocks: g.blocks.with(bi, ssa.SBlock { ...b, insts: b.insts.with(k, ins) }) };
+// The values something other than a part read needs whole: an operand of
+// any other instruction or a terminator, and what a copy or phi of one copies.
+// A box kept anyway is still built, so reading a reference part off it would
+// only add a second owner of the part, and its variant reads stay together so
+// each projection keeps the test that guards it.
+function kept_values(g: ssa.SFunc): boolean[] {
+  let kept: boolean[] = [];
+  while (kept.len() < g.nvals) {
+    kept = kept.append(false);
+  }
+  for b in g.blocks {
+    for ins in b.insts {
+      if (!reads_part(ins.kind_tag) && ins.kind_tag != 7 && ins.kind_tag != 8) {
+        kept = all_kept(kept, ins.args);
+      }
+    }
+    if (b.term.kind_tag == 1) {
+      kept = all_kept(kept, [b.term.value]);
+    }
+    if (b.term.kind_tag == 3) {
+      kept = all_kept(kept, [b.term.cond]);
+    }
+  }
+  let moved: boolean = true;
+  while (moved) {
+    moved = false;
+    for b in g.blocks {
+      for ins in b.insts {
+        if ((ins.kind_tag == 7 || ins.kind_tag == 8) && marked(kept, ins.result) && !all_of(kept, ins.args)) {
+          kept = all_kept(kept, ins.args);
+          moved = true;
+        }
+      }
+    }
+  }
+  return kept;
+}
+
+function marked(flags: boolean[], v: i32): boolean {
+  return v >= 0 && v < flags.len() && flags[v];
+}
+
+function all_of(kept: boolean[], vs: i32[]): boolean {
+  for v in vs {
+    if (v >= 0 && v < kept.len() && !kept[v]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function all_kept(kept: boolean[], vs: i32[]): boolean[] {
+  let out: boolean[] = kept;
+  for v in vs {
+    if (v >= 0 && v < out.len()) {
+      out = out.with(v, true);
+    }
+  }
+  return out;
+}
+
+// `e` with `read` resolved, when its operand is a construction or phis of
+// constructions, all the way down.
+function resolve(f: ssasem.Func, e: Edits, read: ssa.SInst): Edits {
+  let w: Walk = part_of(f, Walk { e: e, value: 0 - 1, ok: true, phis: [], parts: [] }, read, read.args[0], 0);
+  if (!w.ok) {
+    return e;
+  }
+  return Edits { ...w.e, swap: w.e.swap.with(read.result, w.value) };
+}
+
+// One step of a read's resolution: the edits so far, the value found, and
+// the part phi already made for each phi met, so a loop's phi is split once.
+struct Walk { e: Edits, value: i32, ok: boolean, phis: i32[], parts: i32[] }
+
+// What `read` answers on `v`: a construction's part; a stand-in where `v` is
+// a stand-in itself, on a path no read reaches; or, for a phi, a phi of what
+// it answers on each operand, at the head of the phi's block.
+function part_of(f: ssasem.Func, w: Walk, read: ssa.SInst, v: i32, depth: i32): Walk {
+  let fail: Walk = Walk { ...w, ok: false };
+  if (depth > 32) {
+    return fail;
+  }
+  let ty: typeinfo.Type = f.values[read.result];
+  let x: i32 = through_copies(w.e.defs, v);
+  if (marked(w.e.kept, x) && (!scalar(ty) || read.kind_tag == ssasem.variant_is() || read.kind_tag == ssasem.variant_get())) {
+    return fail;
+  }
+  let d: ssa.SInst = def_inst(w.e.defs, x);
+  if (builds(d.kind_tag) || d.kind_tag == ssasem.zero()) {
+    let p: Part = Part { ok: true, value: 0 - 1, flag: 0, filler: read.kind_tag != ssasem.variant_is() };
+    if (builds(d.kind_tag)) {
+      p = part(d, read);
+    }
+    if (!p.ok) {
+      return fail;
+    }
+    let placed: Placed = part_value(w.e, p, ty);
+    return Walk { ...w, e: placed.e, value: placed.value };
+  }
+  if (d.kind_tag != 8) {
+    return fail;
+  }
+  let seen: i32 = index_of(w.phis, x);
+  if (seen >= 0) {
+    return Walk { ...w, value: w.parts[seen] };
+  }
+  let nv: i32 = w.e.values.len();
+  let pb: i32 = w.e.defs.blocks[x];
+  let placeholder: Defs = Defs { insts: w.e.defs.insts.append(no_inst()), blocks: w.e.defs.blocks.append(pb) };
+  let cur: Walk = Walk { e: Edits { ...w.e, defs: placeholder, values: w.e.values.append(ty) }, value: 0 - 1, ok: true, phis: w.phis.append(x), parts: w.parts.append(nv) };
+  let args: i32[] = [];
+  for a in d.args {
+    cur = part_of(f, cur, read, a, depth + 1);
+    if (!cur.ok) {
+      return fail;
+    }
+    args = args.append(cur.value);
+  }
+  let ins: ssa.SInst = ssa.SInst { kind_tag: 8, result: nv, args: args, imm: 0, str: "" };
+  let defs: Defs = Defs { insts: cur.e.defs.insts.with(nv, ins), blocks: cur.e.defs.blocks };
+  return Walk { ...cur, e: Edits { ...cur.e, defs: defs, heads: cur.e.heads.append(Head { block: pb, ins: ins }) }, value: nv };
+}
+
+struct Placed { e: Edits, value: i32 }
+
+// The value a part names, adding a flag or a stand-in to the entry, where it
+// reaches every read.
+function part_value(e: Edits, p: Part, ty: typeinfo.Type): Placed {
+  if (p.value >= 0) {
+    return Placed { e: e, value: p.value };
+  }
+  let nv: i32 = e.values.len();
+  let ins: ssa.SInst = ssa.SInst { kind_tag: 2, result: nv, args: [], imm: p.flag, str: "" };
+  if (p.filler) {
+    ins = ssa.SInst { kind_tag: ssasem.zero(), result: nv, args: [], imm: 0, str: "" };
+  }
+  let defs: Defs = Defs { insts: e.defs.insts.append(ins), blocks: e.defs.blocks.append(0 - 1) };
+  return Placed { e: Edits { ...e, defs: defs, values: e.values.append(ty), entry: e.entry.append(ins) }, value: nv };
+}
+
+// `f` with a round's edits written in, in one pass over its blocks.
+function applied(f: ssasem.Func, e: Edits): ssasem.Func {
+  let g: ssa.SFunc = f.graph;
+  let blocks: ssa.SBlock[] = [];
+  let bi: i32 = 0;
+  while (bi < g.blocks.len()) {
+    let b: ssa.SBlock = g.blocks[bi];
+    let insts: ssa.SInst[] = [];
+    for h in e.heads {
+      if (h.block == bi) {
+        insts = insts.append(ssa.SInst { ...h.ins, args: swapped_all(e.swap, h.ins.args) });
+      }
+    }
+    let entry: ssa.SInst[] = [];
+    if (bi == g.entry) {
+      entry = e.entry;
+    }
+    insts = util.append_all(insts, block_insts(b, entry, e.swap));
+    let t: ssa.STerm = b.term;
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...t, cond: swapped(e.swap, t.cond), value: swapped(e.swap, t.value) } });
+    bi = bi + 1;
+  }
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks, nvals: e.values.len() }, values: e.values };
+}
+
+// A block's own instructions with each resolved read a copy of what it reads,
+// every operand swapped, and `entry` placed after the parameters.
+function block_insts(b: ssa.SBlock, entry: ssa.SInst[], swap: i32[]): ssa.SInst[] {
+  let insts: ssa.SInst[] = [];
+  let placed: boolean = entry.len() == 0;
+  for ins in b.insts {
+    if (!placed && ins.kind_tag != ssasem.param()) {
+      insts = util.append_all(insts, entry);
+      placed = true;
+    }
+    if (ins.result >= 0 && ins.result < swap.len() && swap[ins.result] >= 0) {
+      insts = insts.append(ssa.SInst { kind_tag: 7, result: ins.result, args: [swapped(swap, ins.result)], imm: 0, str: "" });
+    } else {
+      insts = insts.append(ssa.SInst { ...ins, args: swapped_all(swap, ins.args) });
+    }
+  }
+  if (!placed) {
+    insts = util.append_all(insts, entry);
+  }
+  return insts;
+}
+
+// What a read resolved to stands for the read in every use, so an operand
+// reads its part directly rather than through a copy the rc plan would count.
+function swapped(swap: i32[], v: i32): i32 {
+  let x: i32 = v;
+  let steps: i32 = 0;
+  while (x >= 0 && x < swap.len() && swap[x] >= 0 && steps < 64) {
+    x = swap[x];
+    steps = steps + 1;
+  }
+  return x;
+}
+
+// `blocks` with every operand and terminator value renamed through `swap`.
+function swapped_blocks(blocks: ssa.SBlock[], swap: i32[]): ssa.SBlock[] {
+  if (swap.len() == 0) {
+    return blocks;
+  }
+  let out: ssa.SBlock[] = [];
+  for b in blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      insts = insts.append(ssa.SInst { ...ins, args: swapped_all(swap, ins.args) });
+    }
+    let t: ssa.STerm = b.term;
+    out = out.append(ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...t, cond: swapped(swap, t.cond), value: swapped(swap, t.value) } });
+  }
+  return out;
+}
+
+function swaps_any(swap: i32[], args: i32[]): boolean {
+  for a in args {
+    if (a >= 0 && a < swap.len() && swap[a] >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function swapped_all(swap: i32[], args: i32[]): i32[] {
+  if (!swaps_any(swap, args)) {
+    return args;
+  }
+  let out: i32[] = [];
+  for a in args {
+    out = out.append(swapped(swap, a));
+  }
+  return out;
+}
+
+// Whether `t` is among the types the function's constructions build.
+function built_type(f: ssasem.Func, built: typeinfo.Type[], t: typeinfo.Type): boolean {
+  for b in built {
+    if (semtypes.equal(b, t)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function count_insts(g: ssa.SFunc): i32 {
@@ -509,9 +975,77 @@ function count_insts(g: ssa.SFunc): i32 {
   return n;
 }
 
-// Tuple constructions, and phis and copies of tuples, that nothing reads.
+// Constructions, and phis and copies of a type one builds, that nothing reads.
+// A box whose type has a finalizer is kept: dropping it would skip the drop.
 function drop_unread(f: ssasem.Func): ssasem.Func {
   let g: ssa.SFunc = f.graph;
+  let built: typeinfo.Type[] = built_types(g, f);
+  if (built.len() == 0) {
+    return f;
+  }
+  let reads: i32[] = read_counts(g);
+  if (!any_unread(f, built, reads)) {
+    return f;
+  }
+  let blocks: ssa.SBlock[] = [];
+  let gone: boolean[] = [];
+  while (gone.len() < g.nvals) {
+    gone = gone.append(false);
+  }
+  for b in g.blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      if (unread_build(f, built, reads, ins)) {
+        gone = gone.with(ins.result, true);
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  }
+  return without_bindings(ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } }, gone);
+}
+
+function any_unread(f: ssasem.Func, built: typeinfo.Type[], reads: i32[]): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (unread_build(f, built, reads, ins)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// `f` without the `-g` bindings of the values in `gone`, which nothing defines.
+function without_bindings(f: ssasem.Func, gone: boolean[]): ssasem.Func {
+  let vals: i32[] = [];
+  let names: string[] = [];
+  let i: i32 = 0;
+  while (i < f.dbg_vals.len()) {
+    if (!marked(gone, f.dbg_vals[i])) {
+      vals = vals.append(f.dbg_vals[i]);
+      names = names.append(f.dbg_names[i]);
+    }
+    i = i + 1;
+  }
+  return ssasem.Func { ...f, dbg_vals: vals, dbg_names: names };
+}
+
+function built_types(g: ssa.SFunc, f: ssasem.Func): typeinfo.Type[] {
+  let built: typeinfo.Type[] = [];
+  for b in g.blocks {
+    for ins in b.insts {
+      if (builds(ins.kind_tag) && ins.result >= 0 && !built_type(f, built, f.values[ins.result])) {
+        built = built.append(f.values[ins.result]);
+      }
+    }
+  }
+  return built;
+}
+
+// How many operands and terminators name each value.
+function read_counts(g: ssa.SFunc): i32[] {
   let reads: i32[] = [];
   let v: i32 = 0;
   while (v < g.nvals) {
@@ -521,30 +1055,32 @@ function drop_unread(f: ssasem.Func): ssasem.Func {
   for b in g.blocks {
     for ins in b.insts {
       for a in ins.args {
-        if (a >= 0 && a < reads.len()) {
-          reads = reads.with(a, reads[a] + 1);
-        }
+        reads = counted(reads, a);
       }
     }
-    if (b.term.kind_tag == 1 && b.term.value >= 0 && b.term.value < reads.len()) {
-      reads = reads.with(b.term.value, reads[b.term.value] + 1);
+    if (b.term.kind_tag == 1) {
+      reads = counted(reads, b.term.value);
     }
-    if (b.term.kind_tag == 3 && b.term.cond >= 0 && b.term.cond < reads.len()) {
-      reads = reads.with(b.term.cond, reads[b.term.cond] + 1);
+    if (b.term.kind_tag == 3) {
+      reads = counted(reads, b.term.cond);
     }
   }
-  let blocks: ssa.SBlock[] = [];
-  for b in g.blocks {
-    let insts: ssa.SInst[] = [];
-    for ins in b.insts {
-      let dead: boolean = ins.result >= 0 && ins.result < reads.len() && reads[ins.result] == 0
-        && scalar_tuple(f.values[ins.result])
-        && (ins.kind_tag == ssasem.tuple_new() || ins.kind_tag == 7 || ins.kind_tag == 8);
-      if (!dead) {
-        insts = insts.append(ins);
-      }
-    }
-    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  return reads;
+}
+
+function counted(reads: i32[], v: i32): i32[] {
+  if (v < 0 || v >= reads.len()) {
+    return reads;
   }
-  return ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } };
+  return reads.with(v, reads[v] + 1);
+}
+
+function unread_build(f: ssasem.Func, built: typeinfo.Type[], reads: i32[], ins: ssa.SInst): boolean {
+  if (ins.result < 0 || ins.result >= reads.len() || reads[ins.result] != 0) {
+    return false;
+  }
+  if (!builds(ins.kind_tag) && ins.kind_tag != 7 && ins.kind_tag != 8) {
+    return false;
+  }
+  return built_type(f, built, f.values[ins.result]) && ssasem.finalizer_of(f, f.values[ins.result]) == "";
 }
