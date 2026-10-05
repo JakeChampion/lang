@@ -6,10 +6,10 @@ import (
 
 // futureEnumProgram is a Future-shaped user enum (the std/async core shape):
 // a generic-style recursive enum whose Pending variant carries a FUNCTION-typed
-// payload. main constructs Pending(41, step), matches it, and INDIRECT-calls the
-// bound continuation k(41) -> step(41) -> Ready(42), so it exits 42.
-// `pending` is `@noinline` so main cannot see that k is step and call it
-// directly.
+// payload. `pending()` builds Pending(41, step); main matches it and
+// INDIRECT-calls the bound continuation k(41) -> step(41) -> Ready(42), so it
+// exits 42. `pending` is `@noinline` so main cannot see that k is step and call
+// it directly.
 //
 // Before slice 5, the user-enum match path recovered the payload type but had no
 // path to mark a function-typed field a closure local, so lower_func bailed and
