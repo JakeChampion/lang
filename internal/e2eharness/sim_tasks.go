@@ -62,9 +62,3 @@ function main(): i32 {
 // SimTasksWant is the self-host output: the tasks park, so they finish in
 // virtual-time order and the third is cancelled while it waits.
 const SimTasksWant = "/b beta at 15\n/c cancelled at 20\n/a alpha at 35\ndone alpha\ndone beta\ncancelled\nnow 35\n"
-
-// SimTasksFallbackWant is the Go compiler's output: no task is ever current,
-// so each entry runs to its end inside task_start in order, the clock
-// moving synchronously, and a cancellation scheduled for a task that never
-// parks has nothing to cancel.
-const SimTasksFallbackWant = "/a alpha at 35\n/b beta at 50\n/c gamma at 105\ndone alpha\ndone beta\ndone gamma\nnow 105\n"

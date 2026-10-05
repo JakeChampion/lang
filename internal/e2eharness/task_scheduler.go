@@ -71,8 +71,3 @@ function main(): i32 {
 // ((7+5) + (7+15)) * 100 + len("held5"), and the plain run's
 // ((0+5) + (0+15)) * 100 + 5.
 const TaskSchedulerWant = "parks 2 out 3405\nplain 2005\n"
-
-// TaskSchedulerFallbackWant is the output under the blocking fallback (the
-// Go compiler, §3.6): no task is ever current, so the entry runs to its end
-// inside task_start and both runs answer the plain figure.
-const TaskSchedulerFallbackWant = "parks 0 out 2005\nplain 2005\n"

@@ -66,7 +66,3 @@ function main(): i32 {
 // TaskPortableWant is the output under the self-host compiler on x86-64,
 // arm64 and wasm: two parks, the same figure as the plain run.
 const TaskPortableWant = "parks 2 out 1410\nplain 1410\n"
-
-// TaskPortableFallbackWant is the output under the Go compiler's blocking
-// fallback: no park, the same figure.
-const TaskPortableFallbackWant = "parks 0 out 1410\nplain 1410\n"

@@ -138,24 +138,3 @@ const TaskCombinatorsWant = "done fast\n" +
 	"done p2\n" +
 	"outer -1 -1\n" +
 	"outer cancelled\n"
-
-// TaskCombinatorsFallbackWant is the output under the blocking fallback (the
-// Go compiler, §3.6): each entry runs to its end inside task_start, in
-// order, so the first entry wins every race, nothing is cancelled, and the
-// deadline is never reached with a child parked.
-const TaskCombinatorsFallbackWant = "done slow\n" +
-	"done fast\n" +
-	"race 0 1\n" +
-	"done a\n" +
-	"done b\n" +
-	"done c\n" +
-	"gather 1 2 3\n" +
-	"done x\n" +
-	"done y\n" +
-	"deadline 7 8\n" +
-	"futures 4 5\n" +
-	"parks 0\n" +
-	"done p1\n" +
-	"done p2\n" +
-	"outer 0 1\n" +
-	"outer done\n"

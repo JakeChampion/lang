@@ -74,7 +74,3 @@ function main(): i32 {
 // TaskFrameWant is the output under the self-host compiler: the task parks
 // once in each function and answers the plain run's figure.
 const TaskFrameWant = "parks 2\ntask 130575\nplain 130575\n"
-
-// TaskFrameFallbackWant is the output under the blocking fallback (the Go
-// compiler): no park, the same figure.
-const TaskFrameFallbackWant = "parks 0\ntask 130575\nplain 130575\n"

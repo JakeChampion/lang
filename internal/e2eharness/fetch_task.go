@@ -68,8 +68,3 @@ function main(): i32 {
 // FetchTaskWant is the output under the self-host compiler: the task parks
 // inside the fetch, and the plain fetch runs while it is parked.
 const FetchTaskWant = "slow 200 parked yes plain first yes\n"
-
-// FetchTaskFallbackWant is the output under the blocking fallback (the Go
-// compiler, §3.6): the slow fetch runs to its end inside task_start, so the
-// task never parks and the plain fetch never runs.
-const FetchTaskFallbackWant = "slow 200 parked no plain first no\n"

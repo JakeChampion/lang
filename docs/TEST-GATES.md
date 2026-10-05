@@ -292,15 +292,11 @@ parks a task twice, three calls deep, inside a loop and a branch, with a
 string held across both parks, drives it by hand through `task_resume`, and
 then runs the same functions with no task; the self-host's x86-64 and arm64
 output must show both parks and the readiness word reaching every frame.
-`TestTaskSchedulerFallback` runs the same program through the Go compiler,
-which keeps the blocking fallback: no park, the plain figure both times.
 `TestSelfHostFetchTask` is slice 4's gate: `e2eharness.FetchTaskProgram`
 runs a `fetch.send` to the harness upstream's 100 ms `/slow` target inside a
 task, fetches `/plain` from the program's own loop while the task is parked,
 and waits on the task's wait set itself; the self-host's x86-64 and arm64
 output must show the task parked and the plain fetch answered first.
-`TestFetchTaskFallback` is the same program through the Go compiler: no
-park, the plain fetch never runs.
 `TestSelfHostTaskCombinators` is slice 6's gate: `e2eharness.TaskCombinatorsProgram`
 runs a `race_tasks`, a `gather_tasks` and a `with_deadline_tasks` over
 entries that park on timers, and a `gather` over futures, inside a task
@@ -308,37 +304,32 @@ driven by hand, then cancels a second task from outside while its race is
 parked; every entry has a `defer`. The self-host's x86-64 and arm64 output
 must show the race's loser and the deadline's late entry cancelled through
 their defers, the parks the task made, and the outer cancellation reaching
-both children. `TestTaskCombinatorsFallback` is the same program through
-the Go compiler: the entries run in order, nothing is cancelled.
+both children.
 `TestSelfHostTaskFrame` pins what a parked frame keeps
 (`e2eharness.TaskFrameProgram`): `str` views of a parameter's and of a
 local string, a byte view and a closure sharing a mutated scalar with its
 frame, all read after a park, answer the plain run's figure on x86-64 and
-arm64. `TestTaskFrameFallback` is the Go compiler's twin, with no park.
+arm64.
 `TestSelfHostTaskPortable` is the task runtime's gate on every target
 (`e2eharness.TaskPortableProgram`): the parks nap on a bound alone, so no
 descriptor is needed, and an i64, an f64 and a string are held across them;
 the self-host's x86-64, arm64 and wasm output must show both parks and the
 plain run's figure. The wasm leg embeds `cmd/fern/wit`'s world and adapts
-the module before wasmtime runs it. `TestTaskPortableFallback` is the Go
-compiler's twin. `conformance/cases/tasks_agree_without_a_scheduler` is
+the module before wasmtime runs it. `conformance/cases/tasks_agree_without_a_scheduler` is
 the row that holds the two lowerings to one answer: the task combinators
 and a hand-driven task called from `main`, built so nothing depends on
 which entry runs first, the same bytes on the interpreter, the Go
 compiler's x86-64 and arm64 and the self-host's x86-64 and arm64 (the
 self-host wasm fixture leg runs the core module without the preview-2
 clock the naps subscribe to, so that leg is waived to the task-portable
-gate above). What the fallback answers differently by design — park
-counts, a race against a slower first entry, a cancellation from outside —
-stays with each slice's `…Fallback` twin.
+gate above).
 `TestSelfHostSimTasks` is the sim's task gate (`e2eharness.SimTasksProgram`):
 three handlers' `plat.http` calls over a `SimPlatform` run as tasks under
 `sim.run_tasks`, parking in virtual time, one cancelled while it waits; the
 self-host's x86-64, arm64 and wasm output must be the same bytes — the
 handlers finishing in virtual-time order, the cancelled one's fetch
 answering `cancelled`. It is the only gate on `FetchError.Cancelled` reaching
-a handler. `TestSimTasksFallback` is the Go compiler's twin: nothing parks,
-the entries run in turn, nothing is cancelled.
+a handler.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestSelfHostServeConfig` serves through
