@@ -313,42 +313,53 @@ function (l: Lex) advance_to(end: i32): Lex {
   return Lex { src: l.src, i: end, n: l.n, line: new_line, col: new_col };
 }
 
+// advance_in_line is advance_to for a run [l.i, end) that holds no newline.
+function (l: Lex) advance_in_line(end: i32): Lex {
+  if (end <= l.i) {
+    return l;
+  }
+  return Lex { src: l.src, i: end, n: l.n, line: l.line, col: l.col + (end - l.i) };
+}
+
 // skip_trivia drops whitespace and, when `keep` is set, collects `//` line
 // comments onto `acc`. Mirrors the Go lexer's `skipTrivia`, except that the Go
 // lexer always accumulates: there, comments cost an append into a GC'd slice,
 // whereas here each one copies its text into an owned string, and the compile
 // path has no consumer for them.
 function skip_trivia(l: Lex, acc: Comment[], keep: boolean): TrivResult {
-  while (!l.at_end()) {
-    let b: i32 = l.peek_byte();
-    if (is_space(b)) {
-      let we: i32 = l.i;
-      while (we < l.n && is_space(l.src[we] as i32)) {
-        we = we + 1;
-      }
-      l = l.advance_to(we);
-      continue;
-    }
-    if (b == 47 && l.i + 1 < l.n && l.src[l.i + 1] == b'/') {
+  let i: i32 = l.i;
+  let line: i32 = l.line;
+  let col: i32 = l.col;
+  while (i < l.n) {
+    let b: i32 = l.src[i] as i32;
+    if (b == 10) {
+      line = line + 1;
+      col = 1;
+      i = i + 1;
+    } else if (is_space(b)) {
+      col = col + 1;
+      i = i + 1;
+    } else if (b == 47 && i + 1 < l.n && l.src[i + 1] == b'/') {
       // `//` line comment — consume to newline (newline
       // itself is left for the next iteration's whitespace
       // path so line tracking stays simple).
-      let c_line: i32 = l.line;
-      let c_col: i32 = l.col;
-      let body: i32 = l.i + 2;
-      let ce: i32 = body;
+      let ce: i32 = i + 2;
       while (ce < l.n && l.src[ce] != b'\n') {
         ce = ce + 1;
       }
       if (keep) {
-        acc = acc.append(comment_tok(c_line, c_col, slice_unchecked(l.src, body, ce), code_before(l.src, l.i)));
+        acc = acc.append(comment_tok(line, col, slice_unchecked(l.src, i + 2, ce), code_before(l.src, i)));
       }
-      l = l.advance_to(ce);
-      continue;
+      col = col + (ce - i);
+      i = ce;
+    } else {
+      break;
     }
+  }
+  if (i == l.i) {
     return TrivResult { lex: l, comments: acc };
   }
-  return TrivResult { lex: l, comments: acc };
+  return TrivResult { lex: Lex { src: l.src, i: i, n: l.n, line: line, col: col }, comments: acc };
 }
 
 // scan_number reads the digit run + optional fractional digits +
@@ -535,13 +546,13 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
   if (l.peek_byte() == 48 && l.i + 1 < l.n
     && (l.src[l.i + 1] == b'x' || l.src[l.i + 1] == b'X')) {
     is_hex = true;
-    l = l.advance_to(l.i + 2);  // '0' then 'x' / 'X'
+    l = l.advance_in_line(l.i + 2);  // '0' then 'x' / 'X'
     let hex_start: i32 = l.i;
     let he: i32 = l.i;
     while (he < l.n && is_hex_digit(l.src[he] as i32)) {
       he = he + 1;
     }
-    l = l.advance_to(he);
+    l = l.advance_in_line(he);
     if (l.i == hex_start) {
       return NumResult { lex: l, tok: error_tok("hex literal needs at least one digit after 0x", start_line, start_col) };
     }
@@ -553,19 +564,19 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     while (de < l.n && is_digit(l.src[de] as i32)) {
       de = de + 1;
     }
-    l = l.advance_to(de);
+    l = l.advance_in_line(de);
   }
   let is_float: boolean = false;
   // Fractional part: `.<digit>+`. Suppressed for hex and right
   // after a `.` (chained tuple index).
   if (!is_hex && !after_dot && l.i + 1 < l.n && l.src[l.i] == b'.' && is_digit(l.src[l.i + 1] as i32)) {
     is_float = true;
-    l = l.advance_to(l.i + 1);  // consume `.`
+    l = l.advance_in_line(l.i + 1);  // consume `.`
     let fe: i32 = l.i;
     while (fe < l.n && is_digit(l.src[fe] as i32)) {
       fe = fe + 1;
     }
-    l = l.advance_to(fe);
+    l = l.advance_in_line(fe);
   }
   // Scientific-notation exponent: `[eE][+-]?[0-9]+`, valid on an
   // integer base (`1e3`) or a fractional one (`1.5e-2`). Only
@@ -579,15 +590,15 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     }
     if (j < l.n && is_digit(l.src[j] as i32)) {
       is_float = true;
-      l = l.advance_to(l.i + 1);  // 'e' / 'E'
+      l = l.advance_in_line(l.i + 1);  // 'e' / 'E'
       if (!l.at_end() && (l.peek_byte() == 43 || l.peek_byte() == 45)) {
-        l = l.advance_to(l.i + 1);  // sign
+        l = l.advance_in_line(l.i + 1);  // sign
       }
       let ee: i32 = l.i;
       while (ee < l.n && is_digit(l.src[ee] as i32)) {
         ee = ee + 1;
       }
-      l = l.advance_to(ee);
+      l = l.advance_in_line(ee);
     }
   }
   let text: str = slice_unchecked(l.src, begin, l.i);
@@ -599,12 +610,12 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
   let suffix: string = "";
   if (!l.at_end() && is_suffix_start(l.peek_byte())) {
     let s_begin: i32 = l.i;
-    l = l.advance_to(l.i + 1);
+    l = l.advance_in_line(l.i + 1);
     let se: i32 = l.i;
     while (se < l.n && is_digit(l.src[se] as i32)) {
       se = se + 1;
     }
-    l = l.advance_to(se);
+    l = l.advance_in_line(se);
     suffix = slice_unchecked(l.src, s_begin, l.i) + "";
     if (!is_valid_numeric_suffix(suffix)) {
       return NumResult { lex: l, tok: error_tok("unknown numeric suffix", start_line, start_col) };
@@ -647,14 +658,14 @@ function scan_radix_number(l0: Lex, base: i32, start_line: i32, start_col: i32):
   let l: Lex = l0;
   let begin: i32 = l.i;
   let prefix: string = slice_unchecked(l.src, l.i, l.i + 2) + "";
-  l = l.advance_to(l.i + 2);
+  l = l.advance_in_line(l.i + 2);
   let digits: i32[] = [];
   let e: i32 = l.i;
   while (e < l.n && is_digit(l.src[e] as i32) && l.src[e] as i32 - 48 < base) {
     digits = digits.append(l.src[e] as i32 - 48);
     e = e + 1;
   }
-  l = l.advance_to(e);
+  l = l.advance_in_line(e);
   if (digits.len() == 0) {
     return NumResult { lex: l, tok: error_tok("integer literal needs at least one digit after " + prefix, start_line, start_col) };
   }
@@ -664,12 +675,12 @@ function scan_radix_number(l0: Lex, base: i32, start_line: i32, start_col: i32):
   let suffix: string = "";
   if (!l.at_end() && is_suffix_start(l.peek_byte())) {
     let s_begin: i32 = l.i;
-    l = l.advance_to(l.i + 1);
+    l = l.advance_in_line(l.i + 1);
     let se: i32 = l.i;
     while (se < l.n && is_digit(l.src[se] as i32)) {
       se = se + 1;
     }
-    l = l.advance_to(se);
+    l = l.advance_in_line(se);
     suffix = slice_unchecked(l.src, s_begin, l.i) + "";
     if (!is_valid_numeric_suffix(suffix) || suffix[0] == b'f') {
       return NumResult { lex: l, tok: error_tok("unknown numeric suffix", start_line, start_col) };
@@ -1020,7 +1031,7 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
       re = re + 1;
     }
     out = out + slice_unchecked(l.src, l.i, re);
-    l = l.advance_to(re);
+    l = l.advance_in_line(re);
   }
   if (l.at_end()) {
     return NumResult { lex: l, tok: error_tok("unterminated string literal", start_line, start_col) };
@@ -1161,7 +1172,7 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
     }
     lit = lit + slice_unchecked(l.src, l.i, le);
     have_lit = true;
-    l = l.advance_to(le);
+    l = l.advance_in_line(le);
   }
   return NumResult { lex: l, tok: error_tok("unterminated f-string literal", start_line, start_col) };
 }
@@ -1256,7 +1267,7 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
     if (is_alpha(b)) {
       let e: i32 = ident_end(l);
       let tok: Token = ident_or_keyword(slice_unchecked(l.src, l.i, e), start_line, start_col);
-      l = l.advance_to(e);
+      l = l.advance_in_line(e);
       out = out.append(tok);
       after_dot = false;
       continue;
