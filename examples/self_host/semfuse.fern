@@ -42,8 +42,8 @@ struct Def { block: i32, pos: i32 }
 struct Decision { reason: i32, stage: i32 }
 
 // `usable[i]` says body i was produced and may be read and rewritten.
-pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boolean[], enabled: boolean, report: boolean): Fused {
-  let cx: Context = context(funcs, names, usable, report);
+pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boolean[], stdlib: string[], enabled: boolean, report: boolean): Fused {
+  let cx: Context = context(funcs, names, usable, util.name_index(stdlib), report);
   let out: ssasem.Func[] = [];
   let rewritten: boolean[] = [];
   let sites: semarrayreport.Site[] = [];
@@ -75,14 +75,17 @@ pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boole
   return Fused { funcs: out, rewritten: rewritten, sites: sites };
 }
 
-function context(funcs: ssasem.Func[], names: string[], usable: boolean[], report: boolean): Context {
+function context(funcs: ssasem.Func[], names: string[], usable: boolean[], trusted: util.NameIndex, report: boolean): Context {
   let index: util.NameIndex = util.name_index(names);
   let verbs: string[] = [];
   let report_verbs: string[] = [];
   let any: boolean = false;
   let i: i32 = 0;
   while (i < funcs.len()) {
-    let v: string = combinator(funcs[i], names[i], usable[i]);
+    let v: string = "";
+    if (usable[i] && trusted.has(names[i])) {
+      v = verb_of(names[i]);
+    }
     if (report) {
       report_verbs = report_verbs.append(v);
     }
@@ -103,9 +106,10 @@ function context(funcs: ssasem.Func[], names: string[], usable: boolean[], repor
 
 // ---- recognition ----------------------------------------------------------
 
-// The verb a name has the shape of: std/array's free function `array__<verb>`
-// or the array-method wrapper `__arrm_<verb>`, each followed by the
-// instance's `__` or `$` suffixes.
+// Name recognition follows the loader-origin check in context. Neither a
+// basename nor a call to a stdlib function proves a user's wrapper equivalent
+// to that function. The trusted free functions and array-method wrappers keep
+// these names through instantiation, with `__` or `$` suffixes.
 function verb_of(name: string): string {
   if (!util.str_has_prefix(name, "__arrm_") && !util.str_has_prefix(name, "array__")) {
     return "";
@@ -124,28 +128,6 @@ function suffix_at(name: string, from: i32): i32 {
     end = end + 1;
   }
   return end;
-}
-
-// Which combinator body `name` is. The free function is std/array's by its
-// module prefix. The method spelling is the mangling of ANY array-receiver
-// method, a user's included, so it counts only when its body delegates to the
-// free function of the same verb, as std/array's one-line wrappers do.
-function combinator(f: ssasem.Func, name: string, usable: boolean): string {
-  let v: string = verb_of(name);
-  if (!usable || v == "") {
-    return "";
-  }
-  if (util.str_has_prefix(name, "array__")) {
-    return v;
-  }
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, "array__") && verb_of(ins.str) == v) {
-        return v;
-      }
-    }
-  }
-  return "";
 }
 
 function verb_at(cx: Context, callee: string): string {

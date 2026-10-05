@@ -288,10 +288,12 @@ called.
 **Recognition is of the resolved callee, not of the mangled name.**
 `__method_Array_<verb>` is the mangling of any receiver method on arrays;
 a program that never imports `std/array` may declare its own `map` and it
-is not the algebra's. The IR derives the verb table per program: the free
-function `array__<verb>` (a prefix modload reserves) and the method
-spelling only where its body delegates to that free function, which is
-what `std/array`'s wrappers do and what a user's method cannot.
+is not the algebra's. The primary compiler derives the verb table from
+loader-supplied `std/array` declaration origin, preserved through generic
+instantiation, then matches the operation's name. A local `array.fern` does
+not gain that origin from its basename. A user's wrapper can call the genuine
+stdlib function and still change its result, so delegation alone proves
+nothing about whether the wrapper belongs to the algebra.
 
 ## 7. Diagnostics
 
