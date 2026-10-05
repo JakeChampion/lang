@@ -323,8 +323,8 @@ integer and floating widths, booleans, branch/loop joins and RC balance.
 Floating payload copies retain exact bits, including NaNs. The direct semantic
 admission fixture verifies both graphs and checks refusal boundaries.
 
-Primary runtime parity remains open for the filtered reduction. On Apple M3 Pro
-arm64-darwin, 2026-10-05,
+The measurements below track the primary compiler's path to the handwritten
+controls. On Apple M3 Pro arm64-darwin, 2026-10-05,
 nine alternating runs of the existing 2,000-element benchmarks gave these
 medians and observed ranges, in ns per round. A two-round pilot preceded the
 200-round measurements; checksums agreed throughout.
@@ -375,6 +375,47 @@ The mapped reduction reaches the control's measured timing range, but the
 filtered reduction remains slower. Removing the box alone does not close that
 gap. The native compiler text grew by 11,616 bytes for the component analysis
 and typed scalar rewrite. No size baseline was increased.
+
+The final layout pass follows a ready successor before falling back to block
+storage order. It still requires every forward predecessor to be ready and
+keeps natural-loop regions contiguous. This lets accepted filter work fall
+through instead of jumping across a rejection block. Direct layout tests cover
+reversed storage order, a join with a pending predecessor, nested loops with
+breaks and back edges, and refusal of irreducible graphs.
+
+After a two-round pilot, the same nine-process alternating protocol ran at
+200, 20,000 and 200,000 rounds, changing only that argument. At 20,000 rounds,
+the filtered pipeline measured 2,417 ns (2,405-2,552), versus 2,550 ns
+(2,514-2,776) before the layout change and 2,397 ns (2,354-2,472) for its
+same-build control. The longest run retained more timing variation:
+
+| Pipeline | Previous layout, ns/round | Ready-successor layout, ns/round | Same-build handwritten control, ns/round |
+| --- | ---: | ---: | ---: |
+| map.map.reduce | 7,253 (6,680-10,993) | 7,269 (6,809-8,268) | 7,206 (6,800-8,682) |
+| filter.map.reduce | 2,625 (2,546-2,936) | 2,570 (2,437-3,335) | 2,475 (2,371-2,613) |
+
+Both pipelines now fall within the observed control timing ranges. A separate
+native ARM64 Linux Callgrind 3.19.0 run checks instruction cost without relying
+on those timing ranges. A two-round pilot preceded 200 rounds of the same
+2,000-element programs. Counts cover each complete benchmark process:
+
+| Pipeline | Previous layout, instructions | Ready-successor layout, instructions | Same-build handwritten control, instructions |
+| --- | ---: | ---: | ---: |
+| map.map.reduce | 12,693,586 | 12,691,851 | 13,096,956 |
+| filter.map.reduce | 9,106,961 | 9,246,669 | 9,642,513 |
+
+Every variant agreed on checksums and reported zero steady allocator calls and
+fresh bytes. The new filtered layout executes more instructions than
+the old layout, but both pipelines remain below their handwritten controls.
+The native timing and instruction results meet the measured control comparison
+on these hosts; they do not establish a speedup on every machine or target.
+
+The compiler reproduces itself byte-for-byte from stage 3 to stage 4. Its
+native text shrank from 11,340,716 to 11,330,152 bytes. Nine alternating
+checker-driver assembly compilations measured medians of 2.428 seconds before
+and 2.374 seconds after, with overlapping ranges of 2.038-2.968 and
+2.034-3.801 seconds. That does not establish a compiler speedup. No size or
+performance baseline was raised.
 
 Clause 1's second half — "no unspecialised calls per element" — holds, and it
 is not something this pass does by itself. Fusion runs FIRST in

@@ -207,7 +207,17 @@ function release(l: Loops, region: boolean[], root: i32, chosen: i32, own pendin
   return pending;
 }
 
-function next_ready(l: Loops, region: boolean[], pending: i32[], done: boolean[], reps: i32[]): i32 {
+function next_ready(l: Loops, region: boolean[], pending: i32[], done: boolean[], reps: i32[], previous: i32): i32 {
+  // Follow a ready successor before the stable position-order fallback.
+  // In particular, a ready true arm can fall through instead of jumping
+  // across an unrelated ready false arm. Region and predecessor constraints
+  // still decide eligibility, including around nested loops and joins.
+  for successor in l.succ[previous] {
+    let candidate: i32 = reps[successor];
+    if (region[candidate] && !done[candidate] && pending[candidate] == 0) {
+      return candidate;
+    }
+  }
   let x: i32 = 0;
   while (x < l.n) {
     if (region[x] && !done[x] && reps[x] == x && pending[x] == 0) {
@@ -260,7 +270,7 @@ function region_order(l: Loops, region: boolean[], root: i32, out: Layout): Layo
       out = Layout { ok: true, order: out.order.append(chosen), loop_end: out.loop_end.append(0 - 1) };
     }
     pending = release(l, region, root, chosen, pending, reps);
-    chosen = next_ready(l, region, pending, done, reps);
+    chosen = next_ready(l, region, pending, done, reps, chosen);
   }
   if (!complete(l, region, done, reps)) {
     return irreducible();
