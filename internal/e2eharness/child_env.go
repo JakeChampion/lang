@@ -34,6 +34,12 @@ import (
 // The polarity is deliberate: a FERN_* variable added later is stripped by
 // default, so a new knob cannot silently start deciding an old test.
 func ChildEnv(extra ...string) []string {
+	return strippedEnv(ProbeEnv(extra...)...)
+}
+
+// strippedEnv is ChildEnv without BoxedProbes' setting, for a build cached
+// by its sources and compiler alone: a probe a test sets must not reach it.
+func strippedEnv(extra ...string) []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		if strings.HasPrefix(kv, "FERN_") {
@@ -41,7 +47,7 @@ func ChildEnv(extra ...string) []string {
 		}
 		env = append(env, kv)
 	}
-	return append(env, ProbeEnv(extra...)...)
+	return append(env, extra...)
 }
 
 // BoxedProbe compiles with the semantic inliner off, for a probe that pins the
