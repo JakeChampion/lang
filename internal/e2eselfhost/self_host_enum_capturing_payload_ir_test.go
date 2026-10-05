@@ -7,7 +7,8 @@ import (
 // capturingEnumProgram constructs a user enum whose variant carries a CAPTURING
 // closure as its function-typed payload (`Wrap((x) => { x + base })` captures
 // base), matches it, and indirect-calls the bound continuation. make(40) builds
-// Wrap(λx. x+40); k(2) -> 42.
+// Wrap(λx. x+40); k(2) -> 42. `make` is `@noinline` so main cannot see the
+// closure and call its body directly.
 //
 // Slice 5 made the match/read side mark a function-typed payload a closure local,
 // but constructing a variant with a CAPTURING payload still bailed to AST: the
@@ -20,6 +21,7 @@ import (
 // path now routes IR and dispatches env-first.
 const capturingEnumProgram = `enum Box { Wrap((i32) => i32), Empty }
 
+@noinline
 function make(base: i32): Box {
     return Wrap((x: i32): i32 => { return x + base; });
 }
