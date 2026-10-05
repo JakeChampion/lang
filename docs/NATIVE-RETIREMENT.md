@@ -140,11 +140,13 @@ group is one PR, after the re-point.
 
 ## The order
 
-1. **#10768 first.** Exporting `main` from the mode-0 core module is one
+Every step is DONE.
+
+1. **DONE: #10768 first.** Exporting `main` from the mode-0 core module is one
    line in `wasm_ir.fern`, lets `CompileAndRunWasmbinMain` keep
    `wasmtime run --invoke main`, and unblocks the wasm differential's
    uncomparable seeds.
-2. **The gap issues, largest first**, each its own PR with its fix in
+2. **DONE: the gap issues, largest first**, each its own PR with its fix in
    `examples/self_host` and its test: the `internal/e2e` test that found it
    is the gate once step 3 lands, and a row in `internal/e2eselfhost` holds
    it until then. Nothing in this list is a tracking entry: the re-point
@@ -162,7 +164,7 @@ group is one PR, after the re-point.
    keeps only its wasm leg: the Linux legs pinned native's refusal of a
    request past 32 bits, where the self-host sizes it in 64 bits and runs
    the program to its answer.
-4. **The direct-caller PRs**, one per row of the table above.
+4. **DONE: the direct-caller PRs**, one per row of the table above.
 5. **The deletions.** DONE for `internal/codegen` and `internal/native`.
    - `internal/codegen/{x86_64,arm64}` and `cmd/dump_arm64` went with the two
      native-assembler benchmarks in `internal/e2eharness` that emitted through
@@ -213,8 +215,7 @@ group is one PR, after the re-point.
 
 CI lanes keep their names: `test-e2e-x86_64`, `test-e2e-arm64` and
 `test-e2e-wasm` select by target prefix, which stays the right split when the
-target is compiled by the self-host. The "native test runners" wording goes
-in step 5. Since step 3 every `internal/e2e`
+target is compiled by the self-host. Since step 3 every `internal/e2e`
 lane builds `fern.fern` once from the driver cache, and a self-host change
 runs them, as it does `examples`, which compiles through `fern`;
 `test-fernsmith` never reads the self-host and keeps skipping a change to it.
