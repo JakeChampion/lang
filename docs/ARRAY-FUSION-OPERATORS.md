@@ -234,9 +234,12 @@ graph carries its own. Its refusals are native's — an element function that is
 not a closure built in the same body, or whose body reaches an effect; an
 intermediate read by anything but the next stage — plus one native does not
 need: the stages and the sink sit in one block with nothing between them that
-calls anything. `FERN_NO_ARRAY_FUSION=1` turns it off too. It prints no
-`-array-report`; `TestSelfHostArrayFusion*` in `internal/e2eselfhost` gate it
-on x86-64, arm64 and wasm32-wasi.
+calls anything. `FERN_NO_ARRAY_FUSION=1` turns it off too.
+`FERN_ARRAY_REPORT=1` on a compile prints this pass's actual fusion decisions
+and the final R7 map storage decisions; `-array-report` remains the separately
+labelled Go analysis. See `ARRAY-ALGEBRA.md` for the closed refusal tags.
+`TestSelfHostArrayFusion*` and `TestSelfHostArrayReport*` in
+`internal/e2eselfhost` gate the primary path on x86-64, arm64 and wasm32-wasi.
 
 Clause 1's second half — "no unspecialised calls per element" — holds, and it
 is not something this pass does by itself. Fusion runs FIRST in
@@ -345,4 +348,3 @@ the pass on and off, because that pass had already handled them. What reaches
 `ElideClosurePair` declined — one with a reader that is not a call. The fused
 form is such a shape: it re-emits the chain's `__drop_closure_value` calls,
 and those are the readers that block the earlier pass.
-

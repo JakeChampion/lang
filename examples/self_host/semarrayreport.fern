@@ -1,0 +1,49 @@
+// Primary compiler array decisions. The rewriting passes supply the sites;
+// this module only formats them and counts their closed reason tags.
+import "./util";
+
+pub struct Site { owner: string, stage: string, plan: string, reason: i32, storage: string }
+
+pub function enabled(): boolean {
+  match (env("FERN_ARRAY_REPORT")) {
+    Some(v) => {
+      return v == "1";
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// Stable ordinals are shared by the decision and its diagnostic. A successful
+// rewrite is 0; every other entry is a refusal, never a prediction of a rewrite.
+pub function reasons(): string[] {
+  return ["fused", "no-producer", "intermediate-shared", "control-flow-boundary", "effect-boundary", "element-fn-unresolved", "element-fn-effectful", "non-scalar", "result-escapes", "no-reduction-sink", "operator-outside-algebra", "disabled"];
+}
+
+pub function render(sites: Site[]): string {
+  return render_kind("typed semantic fusion", reasons(), sites);
+}
+
+pub function storage_reasons(): string[] {
+  return ["guarded-reuse", "reuse-disabled", "shape-unsupported", "borrow-linked-result", "receiver-not-consumed-param", "receiver-still-live", "receiver-supplied", "element-fn-unresolved", "element-fn-captures", "element-fn-effectful", "aliased-arguments"];
+}
+
+pub function render_kind(kind: string, tags: string[], sites: Site[]): string {
+  let counts: i32[] = [];
+  for tag in tags {
+    counts = counts.append(0);
+  }
+  let out: string = "array report: primary Fern compiler, " + kind + "\n";
+  for site in sites {
+    out = out + site.owner + ": " + site.plan + "\n  stage=" + site.stage + " reason=" + tags[site.reason] + " storage=" + site.storage + "\n";
+    counts = counts.with(site.reason, counts[site.reason] + 1);
+  }
+  out = out + kind + " decisions: " + util.i32_to_string(sites.len()) + "\n";
+  let i: i32 = 0;
+  while (i < tags.len()) {
+    out = out + "  " + tags[i] + " " + util.i32_to_string(counts[i]) + "\n";
+    i = i + 1;
+  }
+  return out;
+}

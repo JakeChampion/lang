@@ -310,7 +310,60 @@ This is the same stance as the fusion contract's clause 4, "failure is
 visible, not silent", and as `REUSE-CONTRACT.md`'s specified-not-
 best-effort framing.
 
-**It is built.** `fern -array-report FILE.fern` prints, per pipeline, the
+**Primary compiler.** Set `FERN_ARRAY_REPORT=1` on a normal compile to print
+the primary Fern compiler's typed semantic fusion decisions to stderr. The
+report identifies its compiler. Enabling it leaves the emitted program
+unchanged. A successful entry is recorded by the pass performing the rewrite:
+
+```
+maps: map -> map -> fold; one traversal
+  stage=__arrm_fold__i64__i64@v14 reason=fused storage=no-intermediate-arrays
+```
+
+Stage identities use the resolved callee and semantic value number. Refusals
+name the stage that failed a planner gate; an effect boundary names the
+intervening instruction. A partially fused pipeline reports the fused suffix
+and its retained prefix separately. The histogram counts reported decisions,
+including zero counts, with these closed tags:
+
+| Tag | Meaning |
+| --- | --- |
+| `fused` | The pass replaced this chain with one traversal. |
+| `no-producer` | A reduction has no recognized producer feeding it. |
+| `intermediate-shared` | More than one use prevents eliminating an intermediate. |
+| `control-flow-boundary` | Producer and consumer are in different blocks. |
+| `effect-boundary` | An intervening instruction prevents stage reordering. |
+| `element-fn-unresolved` | An element function is not a known closure here. |
+| `element-fn-effectful` | An element function reaches an effect. |
+| `non-scalar` | The chain needs counted elements or an unsupported accumulator. |
+| `result-escapes` | A materializing stage returns its array. |
+| `no-reduction-sink` | A remaining producer has no fusible reduction consumer. |
+| `operator-outside-algebra` | A recognized combinator, such as scan, is outside this pass. |
+| `disabled` | `FERN_NO_ARRAY_FUSION=1` prevented rewriting. |
+
+`storage=no-intermediate-arrays` describes the eliminated arrays, not closure
+environments or a reduction's result box. A refusal says
+`storage=deferred-to-ownership`: an unfused map may still become an in-place
+loop during ownership lowering.
+
+The `map storage` section reads the final selected ownership plans, using the
+same decision function that performs the R7 rewrite. `guarded-reuse` means
+`storage=unique-reuse/shared-copy`: unique input is reused and shared input is
+copied before writing. It does not claim to know a runtime reference count.
+Refusals use the closed tags `reuse-disabled`, `shape-unsupported`,
+`borrow-linked-result`, `receiver-not-consumed-param`, `receiver-still-live`,
+`receiver-supplied`, `element-fn-unresolved`, `element-fn-captures`,
+`element-fn-effectful` and `aliased-arguments`. Each names the map's semantic
+value. `combinator-buffer` means R7 kept the ordinary combinator.
+
+This report covers the map/filter/fold/reduce fusion planner, recognized
+unsupported combinators and R7 map storage. Primary ndarray kernel diagnostics
+remain separate work; this is not an all-allocation report.
+
+**Retained Go analysis.** `fern -array-report FILE.fern` prints the older Go
+IR analysis and labels it explicitly. It does not describe code emitted by
+the primary Fern compiler. Its interface below remains useful for comparing
+the two implementations. It prints, per pipeline, the
 recognized plan, whether it fused, how many of its stages materialize an
 array, and — where a chain stopped — which rule stopped it:
 

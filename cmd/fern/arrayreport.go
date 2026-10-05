@@ -15,8 +15,8 @@ import (
 // type-check the entry exactly as a compile would, lower it to IR, and print
 // the std/array combinator pipelines the IR recognises (#9730).
 //
-// Report mode only — the same lowering a build runs, with the emitted code
-// thrown away. It reads the RAW lowering rather than the optimised one, like
+// This is the retained Go analysis, not the primary compiler's build plan.
+// It reads the RAW lowering rather than the optimised one, like
 // `-append-report` beside it: the battery inlines std/array's one-line method
 // delegates, so running it first would change which spelling of each call the
 // report describes without changing what the program does.
@@ -45,6 +45,9 @@ func runArrayReport(srcPath string, w io.Writer) error {
 		return e.format(err)
 	}
 	if _, err := io.WriteString(w, ir.FormatArrayPipelines(irProg)); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, "array report: retained Go analysis (not the primary Fern compiler's emitted plan)\n"); err != nil {
 		return err
 	}
 	// FERN_ARRAY_REPORT adds the histogram, whose value is that the refusals

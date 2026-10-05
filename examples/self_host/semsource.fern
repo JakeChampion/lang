@@ -18,6 +18,7 @@ import "./util";
 import "./seminline";
 import "./semfuse";
 import "./semndarray";
+import "./semarrayreport";
 
 // One body's production. A TEMPLATE declaration — one spelling type variables
 // — has no body of its own: it is produced once per instantiation its callers
@@ -8441,7 +8442,9 @@ function inline_on(): boolean {
 // std/array combinator chains fused into one loop (semfuse).
 // `FERN_NO_ARRAY_FUSION=1` turns the pass off, as it does native's.
 function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
-  if (!fusion_on()) {
+  let enabled: boolean = fusion_on();
+  let report: boolean = semarrayreport.enabled();
+  if (!enabled && !report) {
     return all;
   }
   let funcs: ssasem.Func[] = [];
@@ -8450,7 +8453,10 @@ function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
     funcs = funcs.append(p.func);
     usable = usable.append(p.ok && !p.template && !p.bodyless);
   }
-  let out: semfuse.Fused = semfuse.fuse_pipelines(funcs, names, usable);
+  let out: semfuse.Fused = semfuse.fuse_pipelines(funcs, names, usable, enabled, report);
+  if (report) {
+    eprint(semarrayreport.render(out.sites));
+  }
   let result: Produced[] = [];
   let i: i32 = 0;
   while (i < all.len()) {

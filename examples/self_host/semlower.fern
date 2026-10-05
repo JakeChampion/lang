@@ -33,6 +33,7 @@ import "./suspend";
 import "./semtypes";
 import "./typeinfo";
 import "./util";
+import "./semarrayreport";
 
 // Every body the substitution is considering, declarations first (aligned with
 // mod.funcs) and then the instances the declarations asked for. `n1` is the
@@ -576,6 +577,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, base:
     eprint("FERN_SEM_IR: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each");
     exit(3);
   }
+  array_storage_report(mod, built, r);
   tally("module", "produced " + util.i32_to_string(n) + " of "
     + util.i32_to_string(mod.funcs.len()) + " declarations and "
     + util.i32_to_string(instances.len()) + " of "
@@ -603,6 +605,23 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, base:
   // lives, so the emit path's tail is a plain append.
   let extra: irtables.LowerResult[] = ssarc.merge_helpers(instances, helpers.rows);
   return ircore.Sub { ...ircore.no_sub(), bodies: bodies, extra: extra, sigs: sigs, records: inf.records };
+}
+
+function array_storage_report(mod: parser.Module, built: semsource.Built, r: Rows): i32 {
+  if (!semarrayreport.enabled()) {
+    return 0;
+  }
+  let sites: semarrayreport.Site[] = [];
+  let i: i32 = 0;
+  while (i < r.plans.len()) {
+    if (r.keep[i]) {
+      let p: semsource.Produced = produced_at(built, mod, i);
+      sites = util.append_all(sites, ssarc.map_report(p.func, p.modes, r.plans[i], r.pure));
+    }
+    i = i + 1;
+  }
+  eprint(semarrayreport.render_kind("map storage", semarrayreport.storage_reasons(), sites));
+  return 0;
 }
 
 // The structural key types the maps `f` holds name (#10020), each after the

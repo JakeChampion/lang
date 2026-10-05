@@ -23,15 +23,16 @@ import "./ssasem";
 import "./semtypes";
 import "./typeinfo";
 import "./util";
+import "./semarrayreport";
 
 // What the pass made of each function, and whether it rewrote the graph.
-pub struct Fused { funcs: ssasem.Func[], rewritten: boolean[] }
+pub struct Fused { funcs: ssasem.Func[], rewritten: boolean[], sites: semarrayreport.Site[] }
 
 // `index` finds a body by the name a call carries; `verbs[i]` is the std/array
 // combinator body i is, or ""; `bad[i]` says body i can reach an effect. A
 // body that was not produced is no combinator and counts as effectful. `any`
 // says the module holds a combinator at all.
-struct Context { index: util.NameIndex, verbs: string[], bad: boolean[], any: boolean }
+struct Context { index: util.NameIndex, verbs: string[], report_verbs: string[], bad: boolean[], any: boolean }
 
 // One recognised chain. `stages` are instruction positions in `block`, head
 // first, with `verbs` and the element function values `fns` beside them.
@@ -39,46 +40,66 @@ struct Chain { ok: boolean, block: i32, sink: i32, verb: string, stages: i32[], 
 
 struct Def { block: i32, pos: i32 }
 
+struct Decision { reason: i32, stage: i32 }
+
 // `usable[i]` says body i was produced and may be read and rewritten.
-pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boolean[]): Fused {
-  let cx: Context = context(funcs, names, usable);
+pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boolean[], enabled: boolean, report: boolean): Fused {
+  let cx: Context = context(funcs, names, usable, report);
   let out: ssasem.Func[] = [];
   let rewritten: boolean[] = [];
+  let sites: semarrayreport.Site[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
     let f: ssasem.Func = funcs[i];
     let changed: boolean = false;
     if (cx.any && usable[i] && cx.verbs[i] == "") {
-      let c: Chain = find_chain(f, cx);
+      let c: Chain = no_chain();
+      if (enabled) {
+        c = find_chain(f, cx);
+      }
       while (c.ok) {
+        if (report) {
+          sites = sites.append(fused_site(f, c, names[i]));
+        }
         f = fuse(f, c);
         changed = true;
         c = find_chain(f, cx);
+      }
+      if (report) {
+        sites = util.append_all(sites, remaining_sites(f, cx, names[i], enabled));
       }
     }
     out = out.append(f);
     rewritten = rewritten.append(changed);
     i = i + 1;
   }
-  return Fused { funcs: out, rewritten: rewritten };
+  return Fused { funcs: out, rewritten: rewritten, sites: sites };
 }
 
-function context(funcs: ssasem.Func[], names: string[], usable: boolean[]): Context {
+function context(funcs: ssasem.Func[], names: string[], usable: boolean[], report: boolean): Context {
   let index: util.NameIndex = util.name_index(names);
   let verbs: string[] = [];
+  let report_verbs: string[] = [];
   let any: boolean = false;
   let i: i32 = 0;
   while (i < funcs.len()) {
-    verbs = verbs.append(combinator(funcs[i], names[i], usable[i]));
-    any = any || verbs[i] != "";
+    let v: string = combinator(funcs[i], names[i], usable[i]);
+    if (report) {
+      report_verbs = report_verbs.append(v);
+    }
+    if (!util.has_str(["map", "filter", "fold", "reduce"], v)) {
+      v = "";
+    }
+    verbs = verbs.append(v);
+    any = any || v != "" || report && report_verbs[i] != "";
     i = i + 1;
   }
   // A module with no combinator body has no chain, and is spared the effect
   // analysis.
   if (!any) {
-    return Context { index: index, verbs: verbs, bad: [], any: false };
+    return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: [], any: false };
   }
-  return Context { index: index, verbs: verbs, bad: effectful(funcs, usable, index), any: true };
+  return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: effectful(funcs, usable, index), any: true };
 }
 
 // ---- recognition ----------------------------------------------------------
@@ -91,7 +112,7 @@ function verb_of(name: string): string {
     return "";
   }
   let v: string = slice_unchecked(name, 7, suffix_at(name, 7)) + "";
-  if (v == "map" || v == "filter" || v == "fold" || v == "reduce") {
+  if (util.has_str(["map", "filter", "fold", "reduce", "scan", "zip", "take", "take_while", "drop", "drop_while", "flat_map", "flatten", "chunks", "chunks_exact", "windows", "partition", "enumerate", "reverse", "sorted", "sorted_by"], v)) {
     return v;
   }
   return "";
@@ -134,6 +155,14 @@ function verb_at(cx: Context, callee: string): string {
     return "";
   }
   return cx.verbs[at];
+}
+
+function report_verb(cx: Context, callee: string): string {
+  let at: i32 = cx.index.find(callee);
+  if (at < 0 || at >= cx.report_verbs.len()) {
+    return "";
+  }
+  return cx.report_verbs[at];
 }
 
 // ---- the purity boundary --------------------------------------------------
@@ -262,7 +291,43 @@ function sink_verb(ins: ssa.SInst, cx: Context): string {
 }
 
 function admissible(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): boolean {
-  return c.stages.len() > 0 && inert_between(f.graph.blocks[c.block], c) && resolved_pure(f, cx, defs, c) && scalar_chain(f, c);
+  return decision(f, cx, defs, c).reason == 0;
+}
+
+function decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision {
+  if (c.stages.len() == 0) {
+    return absent_producer(f, cx, defs, c);
+  }
+  let between: i32 = effect_between(f.graph.blocks[c.block], c);
+  if (between >= 0) {
+    return Decision { reason: 4, stage: between };
+  }
+  let purity: Decision = purity_decision(f, cx, defs, c);
+  if (purity.reason != 0) {
+    return purity;
+  }
+  let non_scalar: i32 = non_scalar_stage(f, c);
+  if (non_scalar >= 0) {
+    return Decision { reason: 7, stage: non_scalar };
+  }
+  return Decision { reason: 0, stage: c.sink };
+}
+
+function absent_producer(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision {
+  let d: Def = defs[c.base];
+  if (d.block >= 0) {
+    let ins: ssa.SInst = f.graph.blocks[d.block].insts[d.pos];
+    if (stage_verb(ins, cx) != "") {
+      if (d.block != c.block) {
+        return Decision { reason: 3, stage: c.sink };
+      }
+      return Decision { reason: 2, stage: d.pos };
+    }
+    if (d.block == c.block && ins.kind_tag == ssasem.call() && report_verb(cx, ins.str) != "") {
+      return Decision { reason: 10, stage: d.pos };
+    }
+  }
+  return Decision { reason: 1, stage: c.sink };
 }
 
 function stage_verb(ins: ssa.SInst, cx: Context): string {
@@ -279,34 +344,121 @@ function stage_verb(ins: ssa.SInst, cx: Context): string {
 // Between the first stage and the sink, only values that read nothing but
 // their operands: the closures and the seed the stages are handed. A call
 // there would run before stages it used to follow.
-function inert_between(b: ssa.SBlock, c: Chain): boolean {
+function effect_between(b: ssa.SBlock, c: Chain): i32 {
   let p: i32 = c.stages[0] + 1;
   while (p < c.sink) {
     let k: i32 = b.insts[p].kind_tag;
     if (index_of(c.stages, p) < 0 && (k == ssasem.call() || !pure_kind(k))) {
-      return false;
+      return p;
     }
     p = p + 1;
   }
-  return true;
+  return 0 - 1;
 }
 
 // Every element function, and the sink's, is a closure built in this body
 // whose own body reaches no effect.
-function resolved_pure(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): boolean {
+function purity_decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision {
   let sink: ssa.SInst = f.graph.blocks[c.block].insts[c.sink];
+  let j: i32 = 0;
   for v in c.fns.append(sink.args[sink.args.len() - 1]) {
+    let stage: i32 = c.sink;
+    if (j < c.stages.len()) {
+      stage = c.stages[j];
+    }
     let d: Def = defs[v];
     if (d.block < 0) {
-      return false;
+      return Decision { reason: 5, stage: stage };
     }
     let ins: ssa.SInst = f.graph.blocks[d.block].insts[d.pos];
     let at: i32 = cx.index.find(ins.str);
-    if (ins.kind_tag != ssasem.closure_new() || at < 0 || cx.bad[at]) {
-      return false;
+    if (ins.kind_tag != ssasem.closure_new() || at < 0) {
+      return Decision { reason: 5, stage: stage };
+    }
+    if (cx.bad[at]) {
+      return Decision { reason: 6, stage: stage };
+    }
+    j = j + 1;
+  }
+  return Decision { reason: 0, stage: c.sink };
+}
+
+// Successful entries are captured immediately before their actual rewrite.
+// Refusals are read from the final graph, so a partially fused chain cannot
+// claim that its retained prefix was eliminated too.
+function stage_name(ins: ssa.SInst): string {
+  let name: string = ins.str;
+  if (name == "") {
+    name = "op" + util.i32_to_string(ins.kind_tag);
+  }
+  return name + "@v" + util.i32_to_string(ins.result);
+}
+
+function chain_text(c: Chain): string {
+  let out: string = "";
+  for v in c.verbs {
+    out = out + v + " -> ";
+  }
+  return out + c.verb;
+}
+
+function fused_site(f: ssasem.Func, c: Chain, name: string): semarrayreport.Site {
+  return semarrayreport.Site { owner: name, stage: stage_name(f.graph.blocks[c.block].insts[c.sink]), plan: chain_text(c) + "; one traversal", reason: 0, storage: "no-intermediate-arrays" };
+}
+
+function escapes(f: ssasem.Func, value: i32): boolean {
+  for b in f.graph.blocks {
+    if (b.term.kind_tag == 1 && b.term.value == value) {
+      return true;
     }
   }
-  return true;
+  return false;
+}
+
+function standalone_reason(f: ssasem.Func, ins: ssa.SInst, uses: i32[]): i32 {
+  if (uses[ins.result] > 1) {
+    return 2;
+  }
+  if (escapes(f, ins.result)) {
+    return 8;
+  }
+  return 9;
+}
+
+function remaining_site(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], bi: i32, k: i32, name: string, enabled: boolean): semarrayreport.Site {
+  let ins: ssa.SInst = f.graph.blocks[bi].insts[k];
+  let c: Chain = chain_at(f, cx, uses, defs, bi, k);
+  let why: Decision = Decision { reason: standalone_reason(f, ins, uses), stage: k };
+  let plan: string = report_verb(cx, ins.str);
+  if (stage_verb(ins, cx) == "" && sink_verb(ins, cx) == "") {
+    why = Decision { reason: 10, stage: k };
+  }
+  if (c.verb != "") {
+    why = decision(f, cx, defs, c);
+    plan = chain_text(c);
+  }
+  if (!enabled) {
+    why = Decision { reason: 11, stage: k };
+  }
+  return semarrayreport.Site { owner: name, stage: stage_name(f.graph.blocks[bi].insts[why.stage]), plan: plan + "; not fused", reason: why.reason, storage: "deferred-to-ownership" };
+}
+
+function remaining_sites(f: ssasem.Func, cx: Context, name: string, enabled: boolean): semarrayreport.Site[] {
+  let out: semarrayreport.Site[] = [];
+  let uses: i32[] = use_counts(f.graph);
+  let defs: Def[] = defs_of(f.graph);
+  let bi: i32 = 0;
+  while (bi < f.graph.blocks.len()) {
+    let k: i32 = 0;
+    for ins in f.graph.blocks[bi].insts {
+      if (ins.kind_tag == ssasem.call() && report_verb(cx, ins.str) != "") {
+        out = out.append(remaining_site(f, cx, uses, defs, bi, k, name, enabled));
+      }
+      k = k + 1;
+    }
+    bi = bi + 1;
+  }
+  return out;
 }
 
 function scalar(t: typeinfo.Type): boolean {
@@ -322,21 +474,21 @@ function element(t: typeinfo.Type): typeinfo.Type {
 
 // The array the chain starts from, every intermediate, and the accumulator
 // are all scalars, so no value in the loop carries a count.
-function scalar_chain(f: ssasem.Func, c: Chain): boolean {
+function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
   let b: ssa.SBlock = f.graph.blocks[c.block];
   let sink: ssa.SInst = b.insts[c.sink];
   if (!scalar(element(f.values[c.base]))) {
-    return false;
+    return c.stages[0];
   }
   for p in c.stages {
     if (!scalar(element(f.values[b.insts[p].result]))) {
-      return false;
+      return p;
     }
   }
-  if (c.verb == "fold") {
-    return scalar(f.values[sink.result]) && semtypes.equal(f.values[sink.args[1]], f.values[sink.result]);
+  if (c.verb == "fold" && (!scalar(f.values[sink.result]) || !semtypes.equal(f.values[sink.args[1]], f.values[sink.result]))) {
+    return c.sink;
   }
-  return true;
+  return 0 - 1;
 }
 
 // ---- graph helpers --------------------------------------------------------
