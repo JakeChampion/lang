@@ -4742,8 +4742,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// sites, so the synthesised `f$open` tracks the (possibly mangled) import
 	// name — into a per-element read loop (ast.DesugarForEachStream), and register
 	// the codegen-helper signatures the loop calls. The helpers (`f$open`,
-	// `__stream_next_u8`, `__stream_drop`) are emitted by wasmbin
-	// (internal/codegen/wasmbin/extern.go). See docs/STREAM-TYPE-SURFACE.md.
+	// `__stream_next_u8`, `__stream_drop`) were emitted by the native wasm
+	// backend, deleted with #11530. See docs/STREAM-TYPE-SURFACE.md.
 	streamElem := map[string]ast.Type{}
 	elemKinds := map[string]ast.Type{} // kind → element type, for the __stream_elem_<kind> sigs
 	for _, fn := range prog.Funcs {
@@ -5323,8 +5323,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// Skipped silently when both handle() and main() are
 	// user-defined — don't surprise users who want their
 	// own main alongside the wasi-http handler.
-	// The wasi-http entry wrapper (internal/codegen/wasmbin/wasi_http.go)
-	// is hand-written wasm, which cannot instantiate a handler generic over
+	// The native wasm backend's wasi-http entry wrapper, deleted with #11530,
+	// was hand-written wasm, which cannot instantiate a handler generic over
 	// its platform, so it calls a synthesised `__fern_wasi_handle(req)`
 	// that hands `handle` the host platform in Fern. Synthesised whenever a
 	// two-parameter `handle` and std/platform are present; other targets

@@ -3180,6 +3180,11 @@ pub function comp_type_async_instance(lowers: AsyncLower[]): i32[] {
   return wsection(7, wcat(leb_u32([1, 66], it.n + lowers.len()), it.b));
 }
 
+// comp_type_stream is the component type `stream<vt>`.
+pub function comp_type_stream(vt: i32): i32[] {
+  return wsection(7, [1, 102, 1, vt]);
+}
+
 // comp_import_instance imports an instance of type `typeidx` as `name`.
 pub function comp_import_instance(name: string, typeidx: i32): i32[] {
   let b: i32[] = wname([1, 0], name);
@@ -3199,15 +3204,22 @@ function comp_canon_lift_async(corefunc: i32, typeidx: i32): i32[] {
   return wsection(8, b);
 }
 
-// comp_canon_typed is the canon built-in an import of kind 3, 4 or 8 lowers
-// to: a resource.drop of resource type `typeop`, a task.return of result
-// valtype `typeop`, or the operand-free intrinsic whose opcode is `typeop`.
+// comp_canon_typed is the canon built-in an import of kind 3, 4, 8 or 11..13
+// lowers to: a resource.drop of resource type `typeop`, a task.return of
+// result valtype `typeop`, the operand-free intrinsic whose opcode is
+// `typeop`, or a stream intrinsic of stream type `typeop`.
 function comp_canon_typed(kind: i32, typeop: i32): i32[] {
   if (kind == 3) {
     return comp_canon_resource_drop(typeop);
   }
   if (kind == 4) {
     return comp_canon_task_return(typeop);
+  }
+  if (kind >= 11) {
+    // stream.new (0x0e), stream.drop-readable (0x13), stream.drop-writable
+    // (0x14), each of the stream type `typeop`.
+    let ops: i32[] = [14, 19, 20];
+    return wsection(8, leb_u32([1, ops[kind - 11]], typeop));
   }
   return wsection(8, [1, typeop]);
 }
@@ -3216,7 +3228,7 @@ function comp_canon_typed(kind: i32, typeop: i32): i32[] {
 // user module's memory, so reaches the module through a trampoline table
 // filled once the module is instantiated.
 function trampolined(k: i32): boolean {
-  return k == 1 || k == 2 || k >= 5 && k <= 7;
+  return k == 1 || k == 2 || k >= 5 && k <= 7 || k == 9 || k == 10;
 }
 
 // lowers_realloc reports whether an import of kind `k` lowers with the user
@@ -3242,12 +3254,16 @@ pub function lowered_name(name: string): string {
 }
 
 // suffix_memory_canon emits the canon a trampolined import of kind `k` is
-// filled with, over core memory 0: waitable-set.wait, or a lower of the
-// instance's function, aliased first as component func `n_cfunc`. Returns the
-// bytes and the next component func index.
-function suffix_memory_canon(o: i32[], k: i32, inst: i32, name: string, n_cfunc: i32, realloc_f: i32): (i32[], i32) {
+// filled with, over core memory 0: waitable-set.wait, an async stream.read or
+// stream.write of stream type `typeop`, or a lower of the instance's function,
+// aliased first as component func `n_cfunc`. Returns the bytes and the next
+// component func index.
+function suffix_memory_canon(o: i32[], k: i32, inst: i32, name: string, typeop: i32, n_cfunc: i32, realloc_f: i32): (i32[], i32) {
   if (k == 7) {
     return (wcat(o, wsection(8, [1, 32, 0, 0])), n_cfunc);
+  }
+  if (k == 9 || k == 10) {
+    return (wcat(o, wsection(8, wcat(leb_u32([1, k + 6], typeop), [2, 6, 3, 0]))), n_cfunc);
   }
   o = wcat(o, comp_alias_inst_func(inst, lowered_name(name)));
   let opts: i32[] = [3, 0];
@@ -3301,11 +3317,14 @@ function suffix_group_find(order: string[], iface: string): i32 {
 //   imp_kind      0 no-opt, 1 memory trampoline, 2 memory+realloc, 3 resource.drop,
 //                 4 an async export's task.return, 5 an async lower (memory),
 //                 6 an async lower (memory + realloc), 7 waitable-set.wait
-//                 (memory), 8 a waitable intrinsic
+//                 (memory), 8 a waitable intrinsic, 9 / 10 stream.read /
+//                 stream.write (memory), 11..13 stream.new /
+//                 drop-readable / drop-writable
 //   imp_inst      component-instance index of imp_iface (from Phase A)
 //   imp_params    lowered core signature the trampoline mirrors (kinds 1/2)
 //   imp_typeop    surfaced resource type index (kind 3); the result
-//                 valtype, -1 for none (kind 4); the canon opcode (kind 8)
+//                 valtype, -1 for none (kind 4); the canon opcode (kind 8);
+//                 the stream type (kinds 9..13)
 // n_type0 / n_inst0 are the component type / instance counts after Phase A;
 // user_mod is the user core module index; core_export is the lifted entry.
 // SuffixWired is the composed suffix up to (not including) its export tail:
@@ -3452,7 +3471,7 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   i = 0;
   while (i < n) {
     if (trampolined(imp_kind[i])) {
-      let (o2, nc) = suffix_memory_canon(o, imp_kind[i], imp_inst[i], imp_name[i], n_cfunc, realloc_f);
+      let (o2, nc) = suffix_memory_canon(o, imp_kind[i], imp_inst[i], imp_name[i], imp_typeop[i], n_cfunc, realloc_f);
       o = o2;
       n_cfunc = nc;
       coref = coref.with(i, n_corefunc);

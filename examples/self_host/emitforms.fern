@@ -234,7 +234,7 @@ function async_plan(full: parser.Module): AsyncPlan {
   }
   let lowers: watbin.AsyncLower[] = [];
   for f in wasm_ir.async_imports(full) {
-    let sg: AsyncSig = async_sig(f, "async import", true);
+    let sg: AsyncSig = with_streams(f, async_sig(f, "async import", true));
     if (sg.refused.len() == 0 && sg.flat > 4) {
       sg = sig_refused("its parameters flatten to more than four core values, which an async import cannot pass yet");
     }
@@ -244,6 +244,30 @@ function async_plan(full: parser.Module): AsyncPlan {
     lowers = lowers.append(watbin.AsyncLower { iface: f.import_iface, name: f.import_wit, param_names: sg.names, param_types: sg.types, result: sg.result });
   }
   return AsyncPlan { asy: watbin.AsyncSurface { lifts: lifts, lowers: lowers }, refused: "" };
+}
+
+// with_streams retypes the slots of `f` that were `stream[T]`, which
+// async_sig saw as `T[]`: each is a `stream<T>` (0x66), one handle wide.
+function with_streams(f: parser.FuncDecl, sg: AsyncSig): AsyncSig {
+  if (sg.refused.len() > 0) {
+    return sg;
+  }
+  for k in f.streams {
+    let t: string = f.ret_type;
+    if (k >= 0) {
+      t = f.params[k].type_name;
+    }
+    let vt: i32 = wasm_ir.async_lift_valtype(wasm_ir.list_elem(t));
+    if (vt < 0) {
+      return sig_refused("a stream of " + t + " elements, which an async import cannot carry yet");
+    }
+    if (k < 0) {
+      sg = AsyncSig { ...sg, result: [102, 1, vt] };
+    } else {
+      sg = AsyncSig { ...sg, types: sg.types.with(k, [102, 1, vt]), flat: sg.flat - 1 };
+    }
+  }
+  return sg;
 }
 
 function plan_refused(why: string): AsyncPlan {

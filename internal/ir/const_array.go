@@ -3,7 +3,6 @@ package ir
 import (
 	"encoding/binary"
 	"math"
-	"strconv"
 
 	"github.com/jakechampion/lang/internal/ast"
 )
@@ -104,10 +103,4 @@ func fnReachesRawFloor(fn *ast.FuncDecl) bool {
 		return !found
 	})
 	return found
-}
-
-// ConstArrayKey identifies an OpConstArray's content: two ops with the same
-// key can share one static array.
-func ConstArrayKey(op Op) string {
-	return strconv.Itoa(int(op.I32)) + ":" + op.Str
 }

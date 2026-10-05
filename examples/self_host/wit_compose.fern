@@ -29,7 +29,7 @@ pub struct Composed { bytes: i32[], refused: string }
 // WorldWired is the per-import lowering plan for a core against a world, and
 // the prefix it composes on: the world imports plus the resource types
 // surfaced so far (aliased in the order first met).
-struct WorldWired { o: i32[], n_type: i32, n_inst: i32, plan: wit_decode.WitImportPlan, kinds: i32[], insts: i32[], rts: i32[], res_names: string[], res_types: i32[], async_ifaces: string[], async_insts: i32[], refused: string }
+struct WorldWired { o: i32[], n_type: i32, n_inst: i32, plan: wit_decode.WitImportPlan, kinds: i32[], insts: i32[], rts: i32[], res_names: string[], res_types: i32[], async_ifaces: string[], async_insts: i32[], stream_elems: string[], stream_types: i32[], refused: string }
 
 function drop_prefix(): string {
   return "[resource-drop]";
@@ -101,8 +101,9 @@ function wire_world(tbody: i32[], ci: wit_decode.WitCoreImports, req_ifaces: str
   let plan: wit_decode.WitImportPlan = wit_decode.wit_import_plan(tbody, ifaces, wanted);
   let o: i32[] = watbin.component_preamble();
   o = watbin.wcat(o, wit_decode.wit_emit_world_imports(tbody, plan));
-  let w: WorldWired = WorldWired { o: o, n_type: plan.n_type, n_inst: plan.n_inst, plan: plan, kinds: [], insts: [], rts: [], res_names: [], res_types: [], async_ifaces: [], async_insts: [], refused: "" };
+  let w: WorldWired = WorldWired { o: o, n_type: plan.n_type, n_inst: plan.n_inst, plan: plan, kinds: [], insts: [], rts: [], res_names: [], res_types: [], async_ifaces: [], async_insts: [], stream_elems: [], stream_types: [], refused: "" };
   w = import_async_ifaces(w, tbody, asy.lowers);
+  w = define_stream_types(w, ci);
   let i: i32 = 0;
   while (i < ci.ifaces.len() && w.refused.len() == 0) {
     w = wire_import(w, tbody, asy, ci.ifaces[i], ci.names[i]);
@@ -197,10 +198,66 @@ function wire_import(w: WorldWired, tbody: i32[], asy: watbin.AsyncSurface, ifac
   return WorldWired { ...w, kinds: w.kinds.append(kind), insts: w.insts.append(inst), rts: w.rts.append(rt) };
 }
 
-// wire_intrinsic plans a waitable intrinsic: waitable-set.wait writes its
-// event into the user module's memory, so is trampolined (kind 7); the rest
-// are operand-free canons (kind 8, the opcode in rts).
+// stream_op is the import kind of the stream intrinsic `name`, which a core
+// imports from `$root` suffixed with its element's WIT name, and that
+// element; (-1, "") for another name. Read and write go through the memory
+// (9, 10); new and the two drops are canons of the stream type alone
+// (11..13).
+function stream_op(name: string): (i32, string) {
+  let ops: string[] = ["[stream-read]", "[stream-write]", "[stream-new]", "[stream-drop-readable]", "[stream-drop-writable]"];
+  let j: i32 = 0;
+  while (j < ops.len()) {
+    let pre: string = ops[j];
+    if (name.len() > pre.len() && slice_unchecked(name, 0, pre.len()) == pre) {
+      return (9 + j, name_from(name, pre.len()));
+    }
+    j = j + 1;
+  }
+  return (0 - 1, "");
+}
+
+// wit_elem_valtype is the component valtype of a stream element's WIT name.
+function wit_elem_valtype(e: string): i32 {
+  let names: string[] = ["bool", "u8", "s32", "u32", "s64", "u64", "f32", "f64"];
+  let vts: i32[] = [127, 125, 122, 121, 120, 119, 118, 117];
+  let i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == e) {
+      return vts[i];
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// define_stream_types defines a component type `stream<T>` for each element
+// the core's stream intrinsics name, for those canons to be typed by.
+function define_stream_types(w: WorldWired, ci: wit_decode.WitCoreImports): WorldWired {
+  let k: i32 = 0;
+  while (k < ci.names.len() && w.refused.len() == 0) {
+    let (op, e) = stream_op(ci.names[k]);
+    if (ci.ifaces[k] == intrinsic_iface() && op >= 0 && !util.has_str(w.stream_elems, e)) {
+      let vt: i32 = wit_elem_valtype(e);
+      if (vt < 0) {
+        return refuse(w, "core imports " + ci.names[k] + ", a stream of no element type the composer knows");
+      }
+      w = WorldWired { ...w, o: watbin.wcat(w.o, watbin.comp_type_stream(vt)), n_type: w.n_type + 1, stream_elems: w.stream_elems.append(e), stream_types: w.stream_types.append(w.n_type) };
+    }
+    k = k + 1;
+  }
+  return w;
+}
+
+// wire_intrinsic plans an intrinsic from `$root`: a stream op (kinds 9..13,
+// the stream type in rts); waitable-set.wait, which writes its event into the
+// user module's memory, so is trampolined (kind 7); and the operand-free
+// waitable canons (kind 8, the opcode in rts).
 function wire_intrinsic(w: WorldWired, name: string): WorldWired {
+  let (op, e) = stream_op(name);
+  if (op >= 0) {
+    let t: i32 = w.stream_types[util.index_of_str(w.stream_elems, e)];
+    return WorldWired { ...w, kinds: w.kinds.append(op), insts: w.insts.append(0), rts: w.rts.append(t) };
+  }
   if (name == "[waitable-set-wait]") {
     return WorldWired { ...w, kinds: w.kinds.append(7), insts: w.insts.append(0), rts: w.rts.append(0) };
   }

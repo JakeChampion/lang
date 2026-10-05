@@ -3022,8 +3022,8 @@ func StreamElemKind(t Type) string {
 //	}
 //
 // The callees (`f$open`, `__stream_next`, `__stream_elem_<kind>`, `__stream_drop`)
-// are codegen helpers the checker registers FuncSigs for and wasmbin emits (see
-// internal/codegen/wasmbin/extern.go). Separating the EOF flag (`__stream_next`
+// are codegen helpers the checker registers FuncSigs for and the native wasm
+// backend, deleted with #11530, emitted. Separating the EOF flag (`__stream_next`
 // → 0/1) from the value read (`__stream_elem_<kind>`) is what makes this work for
 // ANY scalar element — unlike a single `i32` with a `-1` EOF sentinel, which is
 // unambiguous only for `u8` — so `for x in` over an `i32` / `i64` / `f64` stream
