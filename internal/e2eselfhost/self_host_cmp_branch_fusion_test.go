@@ -109,12 +109,35 @@ func cmpBranchMatrix(ty string, unsigned bool, pairs [][2]uint64) string {
 			id++
 		}
 	}
+	checks = append(checks, cmpBooleanBranchChecks(&b)...)
 	b.WriteString("function main(): i32 {\n  let bad: i32 = 0;\n")
 	for _, c := range checks {
 		fmt.Fprintf(&b, "  bad = bad + sq(%s);\n", c)
 	}
 	b.WriteString("  return bad;\n}\n")
 	return b.String()
+}
+
+// Plain boolean guards can reverse branch polarity when layout swaps the
+// fallthrough. Score both inputs arithmetically, just like comparisons above.
+func cmpBooleanBranchChecks(b *strings.Builder) []string {
+	var checks []string
+	for _, nots := range []int{0, 1, 2} {
+		cond := strings.Repeat("!", nots) + "a"
+		fmt.Fprintf(b, "@noinline function bi%d(a: boolean): i32 { if (%s) { return 1; } return 0; }\n", nots, cond)
+		fmt.Fprintf(b, "@noinline function be%d(a: boolean): i32 { if (%s) { return 1; } else { return 0; } }\n", nots, cond)
+		fmt.Fprintf(b, "@noinline function bw%d(a: boolean): i32 { while (%s) { return 1; } return 0; }\n", nots, cond)
+		for _, value := range []bool{false, true} {
+			want := 0
+			if value != (nots%2 == 1) {
+				want = 1
+			}
+			for _, fn := range []string{"bi", "be", "bw"} {
+				checks = append(checks, fmt.Sprintf("%s%d(%t) - %d", fn, nots, value, want))
+			}
+		}
+	}
+	return checks
 }
 
 // signedPairs and unsignedPairs cover the orderings in both directions plus
@@ -196,12 +219,13 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 		},
 		{
 			// A boolean that is not a comparison's result: the `not` emits
-			// nothing and the branch inverts its own zero test.
+			// nothing. Layout may swap the fallthrough and invert the branch;
+			// the execution matrix checks both boolean inputs and all not depths.
 			name:    "not-only",
 			src:     "@noinline function f(a: boolean): i32 { if (!a) { return 1; } return 2; }\nfunction main(): i32 { return f(false); }",
-			wantX86: []string{`testq %r[a-z0-9]+, %r[a-z0-9]+\n    jnz `},
+			wantX86: []string{`testq %r[a-z0-9]+, %r[a-z0-9]+\n    jn?z `},
 			deadX86: []string{"setz", "movzbq"},
-			wantArm: []string{`cbnz x[0-9]+, `},
+			wantArm: []string{`cbn?z x[0-9]+, `},
 			deadArm: []string{"cset"},
 		},
 		{
