@@ -11,10 +11,9 @@ import (
 
 // TestArm64AndroidCLI exercises the `-target arm64-android` path end to end
 // through the fern CLI: it must emit a static position-independent (ET_DYN)
-// arm64 ELF — two W^X PT_LOAD segments plus PT_DYNAMIC, no W+X mapping — and
-// run correctly (under qemu-aarch64, or natively on arm64). The program uses
-// a function value so the self-relocation prologue + .rela.dyn path is
-// exercised, not just the reloc-free case.
+// arm64 ELF with no W+X mapping, and run correctly (under qemu-aarch64, or
+// natively on arm64). The program uses a function value so the
+// self-relocation at `_start` is exercised, not just the reloc-free case.
 func TestArm64AndroidCLI(t *testing.T) {
 	bin := buildFernCLI(t)
 	qemu := arm64QemuOrEmpty(t) // "" on native arm64, else qemu path; skips if neither
@@ -45,20 +44,10 @@ function main(): i32 { print("android pie"); return apply(dbl, 21); }`
 	if f.Machine != elf.EM_AARCH64 {
 		t.Errorf("e_machine = %v, want EM_AARCH64", f.Machine)
 	}
-	loads, dyn := 0, false
 	for _, p := range f.Progs {
-		switch p.Type {
-		case elf.PT_LOAD:
-			loads++
-			if p.Flags&elf.PF_W != 0 && p.Flags&elf.PF_X != 0 {
-				t.Errorf("PT_LOAD is W+X (%v) — not W^X", p.Flags)
-			}
-		case elf.PT_DYNAMIC:
-			dyn = true
+		if p.Type == elf.PT_LOAD && p.Flags&elf.PF_W != 0 && p.Flags&elf.PF_X != 0 {
+			t.Errorf("PT_LOAD is W+X (%v) — not W^X", p.Flags)
 		}
-	}
-	if loads != 2 || !dyn {
-		t.Errorf("segments: %d PT_LOAD, PT_DYNAMIC=%v; want 2 + true", loads, dyn)
 	}
 
 	// Run it: the function-value relocation must be applied by the startup

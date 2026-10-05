@@ -419,8 +419,7 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    `examples/self_host/suspend.fern`, run from `ssarc.lower` before the
    peepholes on the rows `semlower` marks. Gate: `TestSelfHostTaskScheduler`
    (a function three calls deep parks twice inside a loop and a branch, driven
-   by hand, x86-64 and arm64) and `TestTaskSchedulerFallback` (the Go
-   compiler's blocking fallback). The Go compiler and the interp carry
+   by hand, x86-64 and arm64). The Go compiler and the interp carry
    the primitives in the blocking fallback, so every stdlib module compiles
    everywhere. wasm's runtime bodies (`wasm_ir.task_funcs`, the WAT twin of
    `rt_src_task`, every word 8 bytes so a saved i64 or f64 keeps its width)
@@ -438,10 +437,9 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    all answer the same bytes, and the fixture legs, the leak census and
    the known-divergence files hold them there) and
    `examples/tests/async_combinators_test.fern` in both the interpreter's
-   runner gate and the self-host stdtest list. What the fallback answers
-   differently by design — how many times a task parked, which race entry
-   won against a slower first entry, a cancellation from outside — is what
-   each slice's `…Fallback` twin pins beside its self-host gate.
+   runner gate and the self-host stdtest list. The `…Fallback` twins that
+   pinned what the Go compiler's blocking fallback answers differently went
+   with its compile path (step 6 of `docs/NATIVE-RETIREMENT.md`).
 4. **The client suspends. Landed.** `async.wait_any(set, timeout_ms)` is
    the wait the park carries, (fd, interest) pairs under a bound, which the
    scheduler reads back as `Suspended(Wait)`. `tcp.tcp_recv_deadline`, the
@@ -451,8 +449,7 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    handles rather than a stub, and the elapsed-time heuristics that told
    the stub from a timeout went with it. Gates: `TestFetchClient` and its
    twin unchanged in output; `TestSelfHostFetchTask` runs a fetch inside a
-   hand-driven task and fetches again while it is parked;
-   `TestFetchTaskFallback` is the Go compiler's blocking twin. The serve
+   hand-driven task and fetches again while it is parked. The serve
    twin that shows one handler's wait overlapping another connection's
    request is slice 5's, with the scheduler.
 5. **The serve loop drives tasks. Landed for the stateless loop.** Each
@@ -497,7 +494,7 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    (`e2eharness.TaskCombinatorsProgram`: a race whose loser is cancelled, a
    gather, a deadline that cancels the late entry, a future gather, and a
    task cancelled from outside while its race is parked, every entry with a
-   `defer`) and `TestTaskCombinatorsFallback`. Not in this slice: `Task`'s
+   `defer`). Not in this slice: `Task`'s
    drop cancelling a still-parked task. `core/mem.Drop` runs inside the drop
    glue, and running a task's remaining code from there is not a place to
    run user code; a `Task` dropped while parked keeps its record until
@@ -505,13 +502,11 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    themselves.
 7. **The two source rules. Withdrawn (§3.5).** Views and shared mutated
    captures survive a park as the lowering stands, so no checker rule
-   refuses them; `TestSelfHostTaskFrame` and `TestTaskFrameFallback` pin
-   that instead of a code.
+   refuses them; `TestSelfHostTaskFrame` pins that instead of a code.
 8. **Sim parity. Landed (§3.8).** `Sim.advance_to` parks, `sim.run_tasks`
    drives, `Transport.read` reports a cancelled task; `TestSelfHostSimTasks`
    is the scripted upstream plus scripted disconnect test, byte-identical
-   on x86-64, arm64 and wasm through the self-host compiler, and
-   `TestSimTasksFallback` the Go compiler's twin.
+   on x86-64, arm64 and wasm through the self-host compiler.
 9. **Lazy streaming request bodies. Landed (§3.9).** `HttpRequest.body`
    pulled inside a handler parks on the connection's readability; the P1
    "bodies are read before the handler runs" restriction is lifted behind

@@ -16449,6 +16449,12 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ow_variant_known(ctx.structs, id.name, "")) {
         return true;
       }
+      // A top-level const is one static value under the immortal rc: handing
+      // it over moves nothing, and a write through the parameter copies
+      // (#11471). A local of the same name shadows it.
+      if (!util.has_str(ctx.bound, id.name) && !ctx.scope.is_bound(id.name) && ctx.scope.lookup_sig(id.name).is_const) {
+        return true;
+      }
       return ow_is_owned(ctx, id.name);
     },
     ast.ExprFieldAccess(fa) => {

@@ -188,31 +188,14 @@ func selfHostLenShape(asm string) (outside, inside int) {
 		})
 }
 
-// nativeLenShape reads the native x86-64 backend's listing: a length is one
-// `.Lstrlen_inline_N` label (the small-string arm of the tag test), and a loop
-// runs from `.LloopTop_N` to `.LloopEnd_N`.
-func nativeLenShape(asm string) (outside, inside int) {
-	return asmLenShape(asm,
-		func(l string) bool { return strings.HasPrefix(l, ".Lstrlen_inline_") && strings.HasSuffix(l, ":") },
-		func(l string) (string, bool) {
-			if strings.HasPrefix(l, ".LloopTop_") && strings.HasSuffix(l, ":") {
-				return strings.TrimSuffix(strings.TrimPrefix(l, ".LloopTop_"), ":"), true
-			}
-			return "", false
-		},
-		func(l, n string) bool { return l == ".LloopEnd_"+n+":" })
-}
-
 // TestSelfHostLICMX86_64 is the source-level half: the x86-64 the self-host
-// emits for each fixture is checked for the same shape native emits for the
-// same program, and the binary runs to the value the unhoisted program
-// computed.
+// emits for each fixture is checked for the hoisted shape, and the binary runs
+// to the value the unhoisted program computed.
 func TestSelfHostLICMX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	asmBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "asm_ir_run")
-	nativeBin := buildFernCLIBin(t)
 
 	for _, tc := range licmPrograms {
 		t.Run(tc.name, func(t *testing.T) {
@@ -222,18 +205,6 @@ func TestSelfHostLICMX86_64(t *testing.T) {
 			}
 			if out, in := selfHostLenShape(string(asm)); out != tc.outside || in != tc.inside {
 				t.Errorf("self-host asm: %d length reads outside loops and %d inside, want %d / %d:\n%s", out, in, tc.outside, tc.inside, asm)
-			}
-
-			srcPath := filepath.Join(dir, tc.name+".fern")
-			if err := os.WriteFile(srcPath, []byte(tc.src), 0o644); err != nil {
-				t.Fatalf("write source: %v", err)
-			}
-			nativeAsm, err := exec.Command(nativeBin, "-target", "x86-64-linux", srcPath).Output()
-			if err != nil {
-				t.Fatalf("native emit: %v", err)
-			}
-			if out, in := nativeLenShape(string(nativeAsm)); out != tc.outside || in != tc.inside {
-				t.Errorf("native asm: %d length reads outside loops and %d inside, want %d / %d — the two compilers no longer hoist the same shape:\n%s", out, in, tc.outside, tc.inside, nativeAsm)
 			}
 
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))

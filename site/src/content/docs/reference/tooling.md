@@ -21,7 +21,6 @@ fern -repl
 | `-target`  | `arm64` | Backend: arm64, arm64-darwin, x86-64, wasm.                |
 | `-o`       | stdout  | Output binary path. Without it, assembly prints to stdout. |
 | `--run`    | off     | Compile + execute the produced binary. Returns its exit code. |
-| `-cc`      | none    | Assemble + link through an external toolchain (`gcc`, `clang`, ...) instead of the built-in one. |
 | `-qemu`    | none    | Path to a qemu-* binary for cross-arch execution under `--run`. |
 | `-fmt`     | off     | Format the source. `-w` writes back; `-d` prints a diff.   |
 | `-interp`  | off     | Run the AST interpreter (skips codegen entirely).          |
@@ -31,8 +30,7 @@ fern -repl
 | `-g`       | off     | Emit a symbol table so debuggers and profilers can name functions. |
 | `-capabilities` | off | Report what each package can reach — net, fs, env, subprocess, time, random. |
 
-Native targets assemble *and* link without an external toolchain, so
-`-cc` is an opt-out rather than a requirement.
+Native targets assemble *and* link without an external toolchain.
 
 ## Formatter
 

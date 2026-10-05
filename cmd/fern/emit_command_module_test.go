@@ -8,17 +8,12 @@ import (
 	"testing"
 )
 
-// Neither wasm output form the CLI had could report a program's exit code.
-//
 // The default `-target wasm32-wasi` composes a wasi:cli/run component, and that
 // world's `run: func() -> result` carries ok or err and nothing wider, so
-// `return 42` reaches the host as exit 1. `-emit core-module` has no `_start`
-// at all — `wasmtime run` on one calls nothing and exits 0, which reads exactly
-// like a program that ran and succeeded.
-//
-// A WASI preview-1 COMMAND is the shape that carries the value, and the shape
-// `web/wasi-shim.js` runs, so it is what a browser needs to host a Fern program
-// — or the self-host compiler — without a component transpile.
+// `return 42` reaches the host as exit 1. A WASI preview-1 COMMAND is the shape
+// that carries the value, and the shape `web/wasi-shim.js` runs, so it is what
+// a browser needs to host a Fern program — or the self-host compiler — without
+// a component transpile.
 
 func TestEmitCommandModuleCarriesTheExitCode(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -38,28 +33,6 @@ func TestEmitCommandModuleCarriesTheExitCode(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(stdout)); got != "ran" {
 		t.Errorf("stdout %q, want %q", got, "ran")
-	}
-}
-
-// The contrast that motivates the form: the same program as a core module runs
-// nothing under `wasmtime run`, because a core module has no `_start`. Silent
-// success is the worst possible failure mode for a playground, and it is what a
-// host driving the wrong artifact gets.
-func TestEmitCoreModuleHasNoCommandEntry(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH")
-	}
-	bin := buildFernForStdoutTest(t)
-	entry := writeFern(t, "function main(): i32 {\n  print(\"ran\");\n  return 42;\n}\n")
-	out := filepath.Join(t.TempDir(), "core.wasm")
-
-	if o, err := exec.Command(bin, "-target", "wasm32-wasi", "-emit", "core-module", "-o", out, entry).CombinedOutput(); err != nil {
-		t.Fatalf("-emit core-module: %v\n%s", err, o)
-	}
-	run := exec.Command("wasmtime", "run", out)
-	stdout, _ := run.Output()
-	if len(stdout) != 0 {
-		t.Errorf("a core module has no _start, so `wasmtime run` should produce nothing; got %q", stdout)
 	}
 }
 

@@ -420,16 +420,6 @@ jobs:
             if [ "$rc" -ne 0 ]; then echo "::error::example $name failed (exit $rc)"; exit 1; fi
           done
 
-      - name: clang fallback still works (-cc opt-out)
-        if: "!cancelled() && matrix.shard == 1"
-        # The external-toolchain path must remain available via -cc.
-        run: |
-          echo 'function main(): i32 { return 7; }' > /tmp/fb.fern
-          ./bin/fern -target arm64-darwin -cc clang -o /tmp/fb /tmp/fb.fern
-          # `if` disables errexit for the (intentionally non-zero) exit.
-          if /tmp/fb; then code=0; else code=$?; fi
-          test $code -eq 7 || { echo "clang fallback exit $code, want 7"; exit 1; }
-
   # The ratchet. The catalogue runs in full and the set of test functions
   # that failed is compared against the checked-in list of utilities not
   # yet working on Darwin. A name that fails and is not on the list fails

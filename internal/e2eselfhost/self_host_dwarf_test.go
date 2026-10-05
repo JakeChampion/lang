@@ -474,8 +474,7 @@ func dwarfVars(t *testing.T, path string) (map[string]map[string]dwarfVar, map[s
 	return out, subs
 }
 
-// The self-host's answer to internal/e2e's TestDWARFLocalVars (#11410). A
-// variable's value moves between homes the register allocator picks, so its
+// Scalar locals and parameters under -g (#11410). A variable's value moves between homes the register allocator picks, so its
 // DW_AT_location is a location list: each entry a range of f's code and the
 // register (DW_OP_reg<n>) or frame slot (DW_OP_breg<fp>) the value is in
 // there. Native's fixed DW_OP_fbreg offsets do not exist here, so this checks
@@ -653,9 +652,8 @@ func checkDwarfStruct(t *testing.T, st *dwarf.StructType, name string, size int6
 	}
 }
 
-// The self-host's answer to internal/e2e's TestDWARFStructVars,
-// TestDWARFMixedStructVars and TestDWARFNestedStructVars (#11410). A struct
-// variable holds a pointer to its box, whose word 0 is the shape and whose
+// The self-host's answer to internal/e2e's TestDWARFMixedStructVars and
+// TestDWARFNestedStructVars (#11410). A struct variable holds a pointer to its box, whose word 0 is the shape and whose
 // field i is the 8-byte slot at (i+1)*8, so its type is a pointer to a struct
 // of that layout. A string field is left out and the fields after it keep
 // their offsets; a struct field is a pointer to its own box.

@@ -8,8 +8,8 @@ package wasi:filesystem@0.2.0;
 // It holds every method a filesystem builtin lowers to on either
 // backend: the via-streams behind read_file / write_file and the
 // Reader / Writer handles, stat / stat-at / set-size / sync for the
-// handle and path queries, the path mutators, the link family, and
-// read-directory with its directory-entry-stream cursor.
+// handle and path queries, advise for drop_cache, the path mutators, the
+// link family, and read-directory with its directory-entry-stream cursor.
 interface types {
     use wasi:io/streams@0.2.0.{input-stream, output-stream, error};
     use wasi:clocks/wall-clock@0.2.0.{datetime};
@@ -29,6 +29,8 @@ interface types {
         requested-write-sync, mutate-directory,
     }
 
+    enum advice { normal, sequential, random, will-need, dont-need, no-reuse }
+
     enum error-code {
         access, would-block, already, bad-descriptor, busy,
         deadlock, quota, exist, file-too-large, illegal-byte-sequence,
@@ -44,6 +46,7 @@ interface types {
         read-via-stream: func(offset: filesize) -> result<input-stream, error-code>;
         write-via-stream: func(offset: filesize) -> result<output-stream, error-code>;
         append-via-stream: func() -> result<output-stream, error-code>;
+        advise: func(offset: filesize, length: filesize, advice: advice) -> result<_, error-code>;
         open-at: func(
             path-flags: path-flags,
             path: string,

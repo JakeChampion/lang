@@ -318,9 +318,11 @@ directions; `for x in stream` **eager** iteration (`TestWasmP3StreamForIn`); and
 the **CLI auto-bundle** — `fern -target wasm32-wasi -emit core-module -async-provider PATH` (or
 `-async-provider WITNAME=PATH`, repeatable) bundles bring-your-own provider
 component(s) so async `@import`s (scalar params + result, **single or multiple**)
-yield one self-contained runnable component (`cmd/fern` `TestAsyncProviderBundle*`,
-via `BuildAsyncImportsAwaitComponent`); plus `-async-export` lifting param'd async
-functions (`TestAsyncExportParamsCLI`).
+yield one self-contained runnable component (via
+`BuildAsyncImportsAwaitComponent`); plus `-async-export` lifting param'd async
+functions. Both flags left the CLI when `fern` began compiling through the
+self-host (step 6 of `docs/NATIVE-RETIREMENT.md`); the self-host's preview-3
+surface is #11530.
 
 Done: **lazy `for x in stream`** — L1 (the `ast.ForEach` centralization, #3963),
 L2 (the lazy codegen + atomic eager→lazy flip for u8 streams), and the **general-T**

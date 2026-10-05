@@ -3192,6 +3192,10 @@ function run(): i32 {
       eprint("fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)");
       return 2;
     }
+    if (out_path.len() == 0) {
+      eprint("fern: -emit command-module writes a binary module; pass -o OUTPUT");
+      return 2;
+    }
     emit = "core-module";
   }
   if (emit.len() > 0 && emit != "asm" && emit != "core-module") {

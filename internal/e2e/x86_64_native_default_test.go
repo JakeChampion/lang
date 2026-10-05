@@ -43,9 +43,8 @@ func runX86Bin(qemu, binPath string, args ...string) *exec.Cmd {
 	return exec.Command(qemu, append([]string{binPath}, args...)...)
 }
 
-// The CLI defaults to the in-process pure-Go assembler+linker for
-// -target x86-64-linux (no external toolchain), mirroring arm64. Exercises the
-// full default path, the --run temp-binary path, and the -cc opt-out.
+// `fern -target x86-64-linux` builds with no external toolchain, mirroring
+// arm64. Exercises the default path and the --run temp-binary path.
 func TestX86_64NativeIsCLIDefault(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -54,13 +53,10 @@ func TestX86_64NativeIsCLIDefault(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	// The emulator lookup belongs in the legs that RUN a binary. Hoisted to
-	// the top it skipped the whole test on an emulator-less host, taking the
-	// exec-bit and -cc checks — neither of which runs anything — with it.
 	t.Run("default_build_is_native", func(t *testing.T) {
 		qemu := x86QemuOrEmpty(t)
 		out := filepath.Join(dir, "prog.bin")
-		// No -cc: must build with no external assembler/linker.
+		// Must build with no external assembler/linker.
 		if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, src).CombinedOutput(); err != nil {
 			t.Fatalf("default x86-64 build failed: %v\n%s", err, o)
 		}
@@ -93,12 +89,4 @@ func TestX86_64NativeIsCLIDefault(t *testing.T) {
 		}
 	})
 
-	t.Run("cc_opts_out_to_external", func(t *testing.T) {
-		// A failing -cc must make the build fail, proving the default path
-		// does NOT shell out to an external assembler/linker.
-		out := filepath.Join(dir, "prog_cc.bin")
-		if err := exec.Command(bin, "-target", "x86-64-linux", "-cc", "/bin/false", "-o", out, src).Run(); err == nil {
-			t.Errorf("expected build to fail when -cc points at a failing linker, but it succeeded")
-		}
-	})
 }

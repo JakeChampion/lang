@@ -70,13 +70,10 @@ every native leg, `TestArm64TcpListen`, the `Serve*` and `Fetch*` tests,
 the Darwin lane) and by `TestEveryHelperLowersForEveryTarget` and
 `TestHelpersCallOnlyTheFloorOrEachOther` in `internal/fernrt`.
 
-`TestBytesFloor` runs `e2eharness.BytesFloorProbe` on the same two native
-legs and `TestArm64DarwinBytesFloor` on Apple Silicon: a byte array filled
-through its data pointer and shortened by `__arr_set_len`, and an inline and
-a heap string read through `__str_bytes` with scratch to spill into and
-without. The self-host twins are `TestSelfHostBytesFloorX86_64` and
-`TestSelfHostBytesFloorArm64`, on a literal array, since the self-host's
-`as usize` on a `u8[]` gives the box rather than its first byte (#8799).
+`TestSelfHostBytesFloorX86_64` and `TestSelfHostBytesFloorArm64` run
+`e2eharness.BytesFloorProbe`: a byte array shortened by `__arr_set_len`, and
+an inline and a heap string read through `__str_bytes` with scratch to spill
+into and without.
 The bodies written on the floor, `tcp_recv`, `tcp_send` and `udp_send`, are
 gated by every socket, serve, fetch and udp test that was already on the
 builtins, on every backend.
@@ -88,8 +85,7 @@ to a handler that answers `__heap_bump_bytes()`, and the figure a tenth of
 the way in must be the figure at the last request (under qemu the arm64 leg
 sends 10k). They hold the bump high-water mark still; they do not count
 allocations, which every request still makes (the framing path's, criterion
-B). `TestFramingAllocs` (the Go compiler) and `TestSelfHostFramingAllocs`
-count those: what parsing a hello request and serializing its reply allocate
+B). `TestSelfHostFramingAllocs` counts those: what parsing a hello request and serializing its reply allocate
 per request on x86-64, arm64 and wasm, pinned per target as a ratchet.
 A count above its pin fails as a regression and one below it fails until the
 pin is lowered, so `docs/NET-P0-MESSAGE-LAYER-PLAN.md`'s slices each move
@@ -296,15 +292,11 @@ parks a task twice, three calls deep, inside a loop and a branch, with a
 string held across both parks, drives it by hand through `task_resume`, and
 then runs the same functions with no task; the self-host's x86-64 and arm64
 output must show both parks and the readiness word reaching every frame.
-`TestTaskSchedulerFallback` runs the same program through the Go compiler,
-which keeps the blocking fallback: no park, the plain figure both times.
 `TestSelfHostFetchTask` is slice 4's gate: `e2eharness.FetchTaskProgram`
 runs a `fetch.send` to the harness upstream's 100 ms `/slow` target inside a
 task, fetches `/plain` from the program's own loop while the task is parked,
 and waits on the task's wait set itself; the self-host's x86-64 and arm64
 output must show the task parked and the plain fetch answered first.
-`TestFetchTaskFallback` is the same program through the Go compiler: no
-park, the plain fetch never runs.
 `TestSelfHostTaskCombinators` is slice 6's gate: `e2eharness.TaskCombinatorsProgram`
 runs a `race_tasks`, a `gather_tasks` and a `with_deadline_tasks` over
 entries that park on timers, and a `gather` over futures, inside a task
@@ -312,37 +304,32 @@ driven by hand, then cancels a second task from outside while its race is
 parked; every entry has a `defer`. The self-host's x86-64 and arm64 output
 must show the race's loser and the deadline's late entry cancelled through
 their defers, the parks the task made, and the outer cancellation reaching
-both children. `TestTaskCombinatorsFallback` is the same program through
-the Go compiler: the entries run in order, nothing is cancelled.
+both children.
 `TestSelfHostTaskFrame` pins what a parked frame keeps
 (`e2eharness.TaskFrameProgram`): `str` views of a parameter's and of a
 local string, a byte view and a closure sharing a mutated scalar with its
 frame, all read after a park, answer the plain run's figure on x86-64 and
-arm64. `TestTaskFrameFallback` is the Go compiler's twin, with no park.
+arm64.
 `TestSelfHostTaskPortable` is the task runtime's gate on every target
 (`e2eharness.TaskPortableProgram`): the parks nap on a bound alone, so no
 descriptor is needed, and an i64, an f64 and a string are held across them;
 the self-host's x86-64, arm64 and wasm output must show both parks and the
 plain run's figure. The wasm leg embeds `cmd/fern/wit`'s world and adapts
-the module before wasmtime runs it. `TestTaskPortableFallback` is the Go
-compiler's twin. `conformance/cases/tasks_agree_without_a_scheduler` is
+the module before wasmtime runs it. `conformance/cases/tasks_agree_without_a_scheduler` is
 the row that holds the two lowerings to one answer: the task combinators
 and a hand-driven task called from `main`, built so nothing depends on
 which entry runs first, the same bytes on the interpreter, the Go
 compiler's x86-64 and arm64 and the self-host's x86-64 and arm64 (the
 self-host wasm fixture leg runs the core module without the preview-2
 clock the naps subscribe to, so that leg is waived to the task-portable
-gate above). What the fallback answers differently by design — park
-counts, a race against a slower first entry, a cancellation from outside —
-stays with each slice's `…Fallback` twin.
+gate above).
 `TestSelfHostSimTasks` is the sim's task gate (`e2eharness.SimTasksProgram`):
 three handlers' `plat.http` calls over a `SimPlatform` run as tasks under
 `sim.run_tasks`, parking in virtual time, one cancelled while it waits; the
 self-host's x86-64, arm64 and wasm output must be the same bytes — the
 handlers finishing in virtual-time order, the cancelled one's fetch
 answering `cancelled`. It is the only gate on `FetchError.Cancelled` reaching
-a handler. `TestSimTasksFallback` is the Go compiler's twin: nothing parks,
-the entries run in turn, nothing is cancelled.
+a handler.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestSelfHostServeConfig` serves through
@@ -1118,22 +1105,18 @@ Worth knowing so you do not assume coverage you do not have:
   a conformance case rather than a Go test, it also survives the freeze
   this document's own framing is organised around.
 
-- **Allocation COUNT between the two compilers — gated by
-  `TestSelfHostAllocCountMatrixX86_64`** (`internal/e2eselfhost/testdata/
-  selfhost-alloc-count-matrix.txt`). The differential below measures BYTES and
-  the leak matrix measures a clean/leak verdict; neither can see one compiler
-  spending twice as many BLOCKS as the other on the same values, which is how
-  #7351 — every self-host heap string costing a box block and a data block where
-  native's cost one — survived every reclaim fix in flight. This gate compiles
-  one corpus with both compilers under `FERN_LEAKCHECK=1` and pins
-  blocks-per-round for each side. Counts, not bytes, on purpose: one block per
-  array, one per struct box, one per heap string is a property of the value
-  graph, so it survives the header and capacity changes that make a byte budget
-  rot. `TestX86_64AllocScaling` bounds a ratio INSIDE one compiler and is blind
-  to a constant factor between two; this is the other half. The pin file's only
-  disagreeing rows today are the two SSO ones — native x86-64 keeps a string of
-  7 bytes or fewer inline in the value word and the self-host has no inline form
-  — so the file reads as the volume-divergence list.
+- **Allocation COUNT — gated by `TestSelfHostAllocCountMatrixX86_64`**
+  (`internal/e2eselfhost/testdata/selfhost-alloc-count-matrix.txt`). The leak
+  matrix measures a clean/leak verdict and cannot see a program spending more
+  BLOCKS than its values need, which is how #7351 — every self-host heap string
+  costing a box block and a data block — survived every reclaim fix in flight.
+  This gate compiles one corpus under `FERN_LEAKCHECK=1` and pins blocks per
+  round, with the interpreter's exit code as the wrong-answer oracle. Counts,
+  not bytes, on purpose: one block per array, one per struct box, one per heap
+  string is a property of the value graph, so it survives the header and
+  capacity changes that make a byte budget rot. `TestX86_64AllocScaling` bounds
+  a ratio inside one compiler and is blind to a constant factor; this pins the
+  factor.
 
 - **Allocation volume — gated by `TestSelfHostAllocDifferentialX86_64`.**
   Nothing used to measure how much a compiler allocates, which is how the two

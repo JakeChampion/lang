@@ -11,8 +11,7 @@ import (
 // #9853's framing-path allocation gate through the self-host compiler:
 // what parsing a hello request and serializing its reply allocate, per
 // request, on each target. docs/NET-P0-MESSAGE-LAYER-PLAN.md takes these
-// to zero; each slice lowers a pin. The Go compiler's twin is
-// TestFramingAllocs.
+// to zero; each slice lowers a pin.
 func TestSelfHostFramingAllocs(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
