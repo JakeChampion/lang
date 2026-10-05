@@ -9269,50 +9269,14 @@ function mc_is_binding(e: ast.Expr, name: string): boolean {
   return false;
 }
 
-// mc_mentions_list / mc_mentions_expr / mc_mentions_stmts report whether the
-// expression / statement tree references `name` at all — the lambda-capture
-// test (the native mcMentions).
-function mc_mentions_list(list: ast.Expr[], name: string): boolean {
-  for entry in list {
-    if (mc_mentions_expr(entry, name)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// mc_mentions_expr / mc_mentions_stmts report whether `name` appears anywhere
-// in an expression / statement list — as an identifier, or as an assignment's
-// target, which is a bare string on the statement rather than an expression and
-// so needs the statement visitor rather than the expression one.
+// mc_mentions_stmts reports whether `name` appears anywhere in a statement
+// list — as an identifier, or as an assignment's target, which is a bare
+// string on the statement rather than an expression and so needs the
+// statement visitor rather than the expression one.
 //
-// Both use astwalk's node fold, so a new parser node is covered here the moment
-// astwalk covers it. The hand-written pair each ended in a `_ => false` arm,
-// which silently did not search whatever it did not name.
-function mc_mentions_expr(e: ast.Expr, name: string): boolean {
-  function see_expr(n: ast.Expr, own acc: boolean): boolean {
-    match (n) {
-      ast.ExprIdent(id) => {
-        return acc || id.name == name;
-      },
-      _ => {
-        return acc;
-      }
-    }
-  }
-  function see_stmt(st: ast.Stmt, own acc: boolean): boolean {
-    match (st) {
-      ast.StmtAssign(a) => {
-        return acc || a.target == name;
-      },
-      _ => {
-        return acc;
-      }
-    }
-  }
-  return astwalk.fold_expr_nodes(e, false, see_stmt, see_expr, astwalk.descend_all);
-}
-
+// It folds through astwalk, so a new parser node is covered here the moment
+// astwalk covers it. The hand-written walk it replaced ended in a
+// `_ => false` arm, which silently did not search whatever it did not name.
 function mc_mentions_stmts(stmts: ast.Stmt[], name: string): boolean {
   function see_expr(n: ast.Expr, own acc: boolean): boolean {
     match (n) {
@@ -17252,8 +17216,7 @@ function lu_outside_nested_fn(e: ast.Expr): boolean {
 
 // ow_count_ident counts occurrences of `name` as a bare ident anywhere
 // in `e` — the exactly-once probe for the self-reassign move admission.
-// Mirrors mc_mentions_expr's variant coverage; an unhandled variant
-// counts 0, which under-counts and therefore REJECTS (fails safe: the
+// An unhandled variant counts 0, which under-counts and therefore REJECTS (fails safe: the
 // admission needs exactly 1 and a direct-arg hit).
 function ow_count_ident_list(list: ast.Expr[], name: string): i32 {
   let n: i32 = 0;
