@@ -74,7 +74,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// flat_map shape: `for y in f(x)` where `f` is a closure PARAM whose type
 		// `(T) => U[]` returns an array, so `for y in f(x)` iterates an owned
 		// array as `for x in xs` does. The bare-fn-name arg `apply(dup)` is a
-		// fn-value arg (callee_param_is_fn sees type_name "fn").
+		// fn-value arg.
 		{"fnval-ret-arr-forin", `function apply(xs: i32[], f: (i32) => i32[]): i32 { let out = 0; for x in xs { for y in f(x) { out = out + y; } } return out; } function dup(n: i32): i32[] { return [n, n]; } function main(): i32 { return apply([1, 2, 3], dup); }`, 12},
 		{"fnval-ret-arr-varlen", `function apply(xs: i32[], f: (i32) => i32[]): i32 { let c = 0; for x in xs { for y in f(x) { c = c + 1; } } return c; } function upto(n: i32): i32[] { let a: i32[] = []; let i = 0; while (i < n) { a = a.append(i); i = i + 1; } return a; } function main(): i32 { return apply([1, 2, 3], upto); }`, 6},
 		{"modulo", `function main(): i32 { return 23 % 5; }`, 3},
