@@ -93,7 +93,8 @@ function main(): i32 {
       cb = ssasem.Func { ...cb, calls: [ssasem.Contract { name: "helper", params: [word()], modes: [ssasem.value_mode()], result: word() }] };
     }
     let f = caller(cb, row == 3, row == 5, caller_size, calls);
-    let out = seminline.inline_closures([cb, f, helper], ["cb", "caller", "helper"], [row != 1, false, row != 10], [false, row != 2, false])[1];
+    let modes = [[ssasem.borrow_mode(), ssasem.value_mode()], [], [ssasem.value_mode()]];
+    let out = seminline.inline_closures([cb, f, helper], ["cb", "caller", "helper"], modes, [row != 1, false, row != 10], [false, row != 2, false])[1];
     let want: i32 = 1;
     if (row == 0 || row == 9) { want = 0; }
     if (count(out, ssasem.call_value()) != want) { return 10 + row; }
