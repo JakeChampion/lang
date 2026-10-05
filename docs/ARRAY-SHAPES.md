@@ -678,6 +678,23 @@ element outside timing. Allocator calls were 2,000 versus 4,000; fresh bytes
 were 10,472 in both builds. The enabled executable used 1,112 more text bytes
 for the checked adapter and kernel, with unchanged data size.
 
+After integrating the later fusion passes, ready-successor block layout and
+typed-contract retirement, a fresh compiler repeated both ordinary-call
+benchmarks on the same Apple M3 Pro. A two-round pilot preceded 200 rounds,
+with nine alternating processes and only `FERN_NO_PRODUCT_KERNEL` changed
+between builds. The outer inputs were 32-by-32 and the inner geometry was
+32-by-32-by-32, with the same 0.25 initial accumulator:
+
+| Operation | Kernel enabled, ns/operation | Kernel disabled, ns/operation | Allocator calls, enabled/disabled |
+| --- | ---: | ---: | ---: |
+| outer | 238 (228-246) | 2,241 (2,195-2,386) | 1,600 / 3,600 |
+| inner | 5,982 (5,717-6,350) | 128,045 (125,963-136,920) | 2,000 / 4,000 |
+
+Times are medians with observed ranges; counts cover all 200 operations.
+Every output and both inputs were verified outside timing. Fresh bytes stayed
+at 10,472/20,016 for outer and 10,472/10,472 for inner, enabled/disabled.
+Both kernels retain their measured advantage with the combined compiler.
+
 Source tree shaking retains the adapter until typed selection. When no site
 uses it, final lowering removes the adapter and its otherwise unused ordinary
 ndarray callees while preserving exports, shared callees and function-address
