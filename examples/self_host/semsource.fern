@@ -8326,7 +8326,7 @@ function produce_module(mod: parser.Module, verify: boolean, debug_lines: boolea
   let all: Produced[] = anchored.all;
   names = anchored.names;
   if (verify) {
-    all = scale_ndarray_maps(fuse_pipelines(inline_leaves(all, names, mod.funcs), names), names, mod);
+    all = scale_ndarray_maps(fuse_pipelines(inline_leaves(all, names, mod.funcs), names, mod.funcs), names, mod);
   }
   decls = [];
   instances = [];
@@ -8443,7 +8443,7 @@ function inline_on(): boolean {
 
 // std/array combinator chains fused into one loop (semfuse).
 // `FERN_NO_ARRAY_FUSION=1` turns the pass off, as it does native's.
-function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
+function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl[]): Produced[] {
   let enabled: boolean = fusion_on();
   let report: boolean = semarrayreport.enabled();
   if (!enabled && !report) {
@@ -8456,6 +8456,15 @@ function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
     usable = usable.append(p.ok && !p.template && !p.bodyless);
   }
   let out: semfuse.Fused = semfuse.fuse_pipelines(funcs, names, usable, enabled, report);
+  if (inline_on()) {
+    let inlinable: boolean[] = [];
+    let at: i32 = 0;
+    while (at < all.len()) {
+      inlinable = inlinable.append(usable[at] && at < decls.len() && !decls[at].no_inline);
+      at = at + 1;
+    }
+    out = semfuse.Fused { ...out, funcs: seminline.inline_closures(out.funcs, names, inlinable, out.rewritten) };
+  }
   if (report) {
     eprint(semarrayreport.render(out.sites));
   }

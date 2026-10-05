@@ -19,6 +19,9 @@ func TestSelfHostArrayFusionUsesKnownCallbackBodies(t *testing.T) {
 			if strings.Contains(body, "call *") || strings.Contains(body, "callq *") {
 				t.Fatalf("resolved fused callback still dispatches indirectly:\n%s", body)
 			}
+			if name != "via_capture" && strings.Contains(body, "call __fn_"+name+"$wrap") {
+				t.Fatalf("tiny capture-free callback still calls its wrapper:\n%s", body)
+			}
 		})
 	}
 	bin := buildBin(t, gcc, dir, "fusion-dispatch", asm)

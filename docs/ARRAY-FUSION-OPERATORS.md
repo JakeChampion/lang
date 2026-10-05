@@ -253,6 +253,37 @@ line, so silence is not evidence that such a call fused or avoided allocation.
 `TestSelfHostArrayFusion*` and `TestSelfHostArrayReport*` in
 `internal/e2eselfhost` gate the primary path on x86-64, arm64 and wasm32-wasi.
 
+The primary compiler now preserves a locally constructed closure's target
+through physical lowering. Captured callbacks still receive their environment;
+unknown function values retain indirect dispatch. After fusion, `seminline`
+also splices small capture-free callback bodies into the changed callers.
+It requires an unread environment parameter, respects declaration eligibility
+and `@noinline`, and retains the existing leaf, caller and splice limits.
+`FERN_SEM_INLINE=` disables this additional inlining. Unread capture-free
+closure constants are then removed before ownership and register planning.
+`TestSelfHostClosureInlineAdmission` checks these proof boundaries and verifies
+the resulting typed graphs. `TestSelfHostArrayFusionUsesKnownCallbackBodies`
+checks emitted dispatch and executes the value fixture.
+
+Primary runtime parity remains open. On Apple M3 Pro arm64-darwin, 2026-10-05,
+nine alternating runs of the existing 2,000-element benchmarks gave these
+medians and observed ranges, in ns per round. A two-round pilot preceded the
+200-round measurements; checksums agreed throughout.
+
+| Primary compiler variant | map.map.reduce | filter.map.reduce |
+| --- | ---: | ---: |
+| Before direct closure lowering | 10,505 (10,310-11,240) | 4,957 (4,766-5,168) |
+| Direct closure lowering | 8,321 (8,078-8,709) | 2,723 (2,627-2,840) |
+| Same-run handwritten control | 7,295 (7,138-7,614) | 2,392 (2,346-2,609) |
+| Inlining and dead closure removal, later run | 8,779 (8,397-10,110) | 2,886 (2,739-2,929) |
+| Later-run handwritten control | 7,618 (7,303-7,831) | 2,592 (2,446-2,688) |
+
+Inlining removed the small callback calls from the emitted loops, but these
+measurements do not establish a further runtime gain or parity. The pipelines
+still make one allocator call per round for `Some`; controls make none. Both
+have zero steady fresh bytes. The dispatch explanation and September timing
+results below describe the Go compiler and do not establish primary parity.
+
 Clause 1's second half — "no unspecialised calls per element" — holds, and it
 is not something this pass does by itself. Fusion runs FIRST in
 `OptimizeProgram`, so what the later passes see is one loop whose element
