@@ -393,7 +393,7 @@ function main(): i32 {
     // The preview1 command core, or the component core, as the CLI emits it.
     let dw: semlower.Driven = semlower.driven_annotated(merged, target);
     if (emit_form == "component-core") {
-      let shape: i32 = wasm_ir.component_shape(dw.full);
+      let shape: i32 = wasm_ir.component_shape(dw.full, dw.sub.switches);
       if (shape < 0) {
         eprint("asm_load_run: the program uses WASI imports the component wrapper does not frame");
         return 1;

@@ -12,9 +12,11 @@ import "testing"
 // released where it dies rather than held for a construction that no longer
 // takes it. An empty array literal is one static box too: leaf's record
 // allocates and its args do not, and later's push onto those args makes the
-// allocation the literal no longer does. An unsigned literal arrives as its
-// source text: u_small's 12 is placed, and u_big's 3000000000, past 2^31,
-// is left to the heap, where its word is written at the field's width.
+// allocation the literal no longer does. later's update counts its base, so
+// it writes into leaf's fresh box rather than taking another. An unsigned
+// literal arrives as its source text: u_small's 12 is placed, and u_big's
+// 3000000000, past 2^31, is left to the heap, where its word is written at
+// the field's width.
 const staticBoxProgram = `struct P { x: i32, y: i32, on: boolean }
 struct TInt { width: i32, signed: boolean }
 struct TVoid {}
@@ -194,7 +196,7 @@ function main(): i32 {
 func TestSelfHostStaticBoxes(t *testing.T) {
 	// Before static boxes the first three lines ended 100, 200 and 100, and
 	// leaf_rounds ended 200.
-	want := "500000\n3300000\n2000000\n10100100\n4950100\n5450100\n4950100\n800300\n301200100\n3000\n800100\n10400100\n300000\n200100\n700000\n"
+	want := "500000\n3300000\n2000000\n10100100\n4950100\n5450100\n4950100\n800200\n301200100\n3000\n800100\n10400100\n300000\n200100\n700000\n"
 	runSemanticProgram(t, "staticbox", staticBoxProgram,
 		[]string{"origin", "t_int", "t_void", "named", "mixed", "fresh", "width", "shade", "rebuild",
 			"origin_rounds", "member_rounds", "shade_rounds", "named_rounds", "fresh_rounds", "rebuild_rounds",
