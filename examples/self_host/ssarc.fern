@@ -14,6 +14,7 @@ import "./semrecords";
 import "./semtypes";
 import "./typeinfo";
 import "./util";
+import "./semarrayreport";
 
 function empty(why: string): irtables.LowerResult {
   return irtables.LowerResult {
@@ -5451,7 +5452,7 @@ function in_place_maps(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, idx: i32[
     while (pos < b.insts.len()) {
       let ins: ssa.SInst = b.insts[pos];
       if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, "__arrm_map__")
-        && in_place_map(f, modes, at(p, idx, b.id, pos, 0 - 1), links, pure, ins)) {
+        && map_reason(f, modes, at(p, idx, b.id, pos, 0 - 1), links, pure, ins) == semarrayreport.storage_guarded_reuse()) {
         out = out.with(ins.result, true);
       }
       pos = pos + 1;
@@ -5460,19 +5461,72 @@ function in_place_maps(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, idx: i32[
   return out;
 }
 
-function in_place_map(f: ssasem.Func, modes: i32[], step: ssaunits.Step, links: i32[], pure: util.NameIndex, ins: ssa.SInst): boolean {
-  if (ins.args.len() != 2 || ins.args[0] == ins.args[1] || links[ins.result] >= 0) {
-    return false;
+function map_reason(f: ssasem.Func, modes: i32[], step: ssaunits.Step, links: i32[], pure: util.NameIndex, ins: ssa.SInst): i32 {
+  if (ins.args.len() != 2) {
+    return semarrayreport.storage_shape_unsupported();
+  }
+  if (ins.args[0] == ins.args[1]) {
+    return semarrayreport.storage_aliased_arguments();
+  }
+  if (links[ins.result] >= 0) {
+    return semarrayreport.storage_borrow_linked_result();
   }
   let recv: i32 = ins.args[0];
-  if (!same_wide_array(f.values[recv], f.values[ins.result]) || !consumed_param(f, modes, recv)) {
-    return false;
+  if (!same_wide_array(f.values[recv], f.values[ins.result])) {
+    return semarrayreport.storage_shape_unsupported();
   }
-  if (util.index_of_i32(step.drops, recv) < 0 || supplied(step, recv)) {
-    return false;
+  if (!consumed_param(f, modes, recv)) {
+    return semarrayreport.storage_receiver_not_consumed_param();
   }
-  let fn: ssa.SInst = definition(f, ins.args[1]);
-  return fn.result == ins.args[1] && fn.kind_tag == ssasem.closure_new() && fn.args.len() == 0 && pure.has(fn.str);
+  if (util.index_of_i32(step.drops, recv) < 0) {
+    return semarrayreport.storage_receiver_still_live();
+  }
+  if (supplied(step, recv)) {
+    return semarrayreport.storage_receiver_supplied();
+  }
+  return map_element_reason(f, ins.args[1], pure);
+}
+
+function map_element_reason(f: ssasem.Func, value: i32, pure: util.NameIndex): i32 {
+  let fn: ssa.SInst = definition(f, value);
+  if (fn.result != value || fn.kind_tag != ssasem.closure_new()) {
+    return semarrayreport.storage_element_fn_unresolved();
+  }
+  if (fn.args.len() != 0) {
+    return semarrayreport.storage_element_fn_captures();
+  }
+  if (!pure.has(fn.str)) {
+    return semarrayreport.storage_element_fn_effectful();
+  }
+  return semarrayreport.storage_guarded_reuse();
+}
+
+// Called only for the final selected ownership plans. It shares the exact
+// static decision used above; it does not guess whether the runtime donor
+// will be unique. Both branches of the guard are stated in the report.
+pub function map_report(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, pure: util.NameIndex): semarrayreport.Site[] {
+  let out: semarrayreport.Site[] = [];
+  let idx: i32[][] = ssaunits.step_index(p);
+  let links: i32[] = links_of(f, p, idx);
+  let disabled: boolean = irtables.reuse_layer_disabled();
+  for b in f.graph.blocks {
+    let pos: i32 = 0;
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, "__arrm_map__")) {
+        let why: i32 = map_reason(f, modes, at(p, idx, b.id, pos, 0 - 1), links, pure, ins);
+        if (disabled && why == semarrayreport.storage_guarded_reuse()) {
+          why = semarrayreport.storage_reuse_disabled();
+        }
+        let storage: string = "combinator-buffer";
+        if (why == semarrayreport.storage_guarded_reuse()) {
+          storage = "unique-reuse/shared-copy";
+        }
+        out = out.append(semarrayreport.Site { owner: f.graph.name, stage: ins.str + "@v" + util.i32_to_string(ins.result), plan: "map; ownership lowering", reason: why, storage: storage });
+      }
+      pos = pos + 1;
+    }
+  }
+  return out;
 }
 
 function same_wide_array(a: typeinfo.Type, b: typeinfo.Type): boolean {

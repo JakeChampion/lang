@@ -132,6 +132,12 @@ language does not have. It is deleted.
 | `P005` | Input nests deeper than the parser's recursion bound | `diag_p005` |
 | `P006` | `function` in expression position | `diag_p006` |
 
+For primary compiler array fusion, map storage and ndarray kernel decisions, compile
+with `FERN_ARRAY_REPORT=1`. The report names each stage and a closed reason tag,
+including guarded reuse and why R7 declined a map. See
+[`ARRAY-ALGEBRA.md`](../docs/ARRAY-ALGEBRA.md) for the interface. The Go CLI's
+`-array-report` remains a separately labelled analysis.
+
 ## The 19 unpinned codes
 
 These have Go-side coverage but no conformance case. Most resisted the

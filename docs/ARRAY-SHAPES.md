@@ -153,6 +153,40 @@ therefore the representation: four fields the IR reads as any struct's,
 which is what lets a kernel take `data`, `shape`, `strides` and `offset`
 without a second description of them.
 
+**Primary compiler.** `FERN_ARRAY_REPORT=1` on a compile prints the actual
+ndarray kernel planner's decisions, alongside fusion and map storage. It
+lists all eight operations from §7, including calls that stay scalar. Each
+site includes its receiver layout, the second operand's layout for binary
+operations, resolved element-function names, and a literal axis or rank where
+available. A computed axis is `?`, never guessed.
+
+The current kernel is packed `f64` map with a capture-free literal scale.
+`scale-kernel` is recorded by the rewrite itself and means
+`storage=fresh-kernel-buffer`. Other operations remain ordinary scalar
+combinators. Their closed refusal tags are:
+
+| Tag | Planner gate |
+| --- | --- |
+| `disabled` | `FERN_NO_SCALE_KERNEL=1` disabled kernel rewriting. |
+| `layout-unknown` | Packed layout was not proved. |
+| `layout-strided` | A metadata transform prevents a packed proof. |
+| `layout-row-major` | Row-major order is known, but packed storage is not. |
+| `element-fn-unresolved` | The function is not a locally resolved closure body. |
+| `element-fn-captures` | The closure carries captures. |
+| `element-not-literal-scale` | The body is not exactly element times an `f64` literal. |
+| `constructor-unavailable` | The matching `from_flat` instance is unavailable. |
+| `builtin-shadowed` | A user declaration shadows the scale builtin. |
+| `unsupported-operation` | No kernel currently replaces this algebra operation. |
+| `unsupported-element-type` | This is not the supported `f64` map instance. |
+
+The histogram includes zero counts. Reporting on and off must emit identical
+code; tests compare assembly and verify kernel instructions at reported sites.
+Layout facts come from the same interprocedural analysis that gates rewrites.
+The report does not call an `inner` or `outer` site a kernel merely because
+its element functions look arithmetic.
+
+**Retained Go analysis.** The older `-array-report` interface described below
+is labelled as Go analysis and does not describe primary compiler output.
 **What it recognizes is §7's closed list**: the eight operations that are
 handed a function. `fern -array-report` lists every site under
 `std/ndarray operations`, with the element functions the site was handed,
