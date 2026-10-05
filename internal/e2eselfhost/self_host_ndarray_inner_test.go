@@ -177,7 +177,12 @@ function check(xs: f64[], ys: f64[], rows: i32, extent: i32, columns: i32, init:
       let acc = init;
       let k: i32 = 0;
       while (k < extent) { acc = add(acc, mul(xs[i * extent + k], ys[k * columns + j])); k = k + 1; }
-      if (f64_bits(data[i * columns + j]) != f64_bits(acc)) { return false; }
+      let actual = data[i * columns + j];
+      // FS-04 allows different arithmetic NaN payloads. An empty contraction
+      // copies init without arithmetic, so even its NaN bits must be exact.
+      if (extent > 0 && acc != acc) {
+        if (actual == actual) { return false; }
+      } else if (f64_bits(actual) != f64_bits(acc)) { return false; }
       j = j + 1;
     }
     i = i + 1;
@@ -200,6 +205,11 @@ function main(): i32 {
   if (!check([10000000000000000.0, 1.0, -10000000000000000.0, 2.0], [1.0, 1.0, 1.0, 1.0], 1, 4, 1, 0.0)) { return 4; }
   let shared = build(4, 3);
   if (!check(shared, shared, 2, 2, 2, -0.0)) { return 5; }
+  let seed: i32 = 0;
+  while (seed < 13) {
+    if (!check([], [], 2, 0, 5, value(seed))) { return 7; }
+    seed = seed + 1;
+  }
   if (__rc_underflow_count() != 0) { return 6; }
   return 0;
 }`
