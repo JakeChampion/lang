@@ -10,7 +10,6 @@ import (
 	"os"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 )
@@ -2982,89 +2981,6 @@ func foreachBodyStmts(fe *ForEach) []Stmt {
 	return []Stmt{fe.Body}
 }
 
-// StreamElemKind returns the canonical kind string for a scalar stream element
-// type — `u8` / `i32` / `i64` / `f64` etc. — used to name the per-element-type
-// codegen helper `__stream_elem_<kind>` (and to register its FuncSig). It is the
-// single source of truth shared by the desugar (here), the checker (sig
-// registration), and wasmbin (helper emission), so all three agree on the name.
-// Returns "" for a non-scalar element (strings / structs / enums are not
-// lazily iterable yet — they collect eagerly, same as the eager path).
-func StreamElemKind(t Type) string {
-	switch n := t.(type) {
-	case NumberType:
-		if n.Signed {
-			return "i" + strconv.Itoa(n.NormalWidth())
-		}
-		return "u" + strconv.Itoa(n.NormalWidth())
-	case FloatType:
-		return "f" + strconv.Itoa(n.NormalWidth())
-	}
-	return ""
-}
-
-// DesugarForEachStream lowers a LAZY stream `for x in f(args) { BODY }` — where
-// `f` is an `@import async function f(): stream[T]` for a scalar `T` — to a real
-// Fern loop that pulls one element at a time off the wire
-// (docs/STREAM-TYPE-SURFACE.md, L2). Unlike the array form
-// (collect-then-iterate), this never materialises the whole sequence: it opens
-// the stream once (allocating a small heap "cursor" holding the readable handle
-// + a one-element buffer), reads-and-awaits a single element per turn, and stops
-// at EOF. It expands to
-//
-//	{
-//	    var __stream_c_<ID> = f$open(args);            // cursor pointer
-//	    while (true) {
-//	        if (__stream_next(__stream_c_<ID>) == 0) { break; }   // 0 = EOF
-//	        let x: T = __stream_elem_<kind>(__stream_c_<ID>);     // buffered element
-//	        BODY
-//	    }
-//	    __stream_drop(__stream_c_<ID>);
-//	}
-//
-// The callees (`f$open`, `__stream_next`, `__stream_elem_<kind>`, `__stream_drop`)
-// are codegen helpers the checker registers FuncSigs for and the native wasm
-// backend, deleted with #11530, emitted. Separating the EOF flag (`__stream_next`
-// → 0/1) from the value read (`__stream_elem_<kind>`) is what makes this work for
-// ANY scalar element — unlike a single `i32` with a `-1` EOF sentinel, which is
-// unambiguous only for `u8` — so `for x in` over an `i32` / `i64` / `f64` stream
-// lowers the same way. A real `while` means `break` / `continue` / `return` /
-// labels in BODY all work; the per-turn read advances the cursor, so `continue`
-// re-reads the next element.
-func DesugarForEachStream(fe *ForEach, elemType Type) *Block {
-	kw := fe.P
-	call := fe.Iter.(*Call)
-	openName := call.Callee.(*Ident).Name + "$open"
-	cName := fmt.Sprintf("__stream_c_%d", fe.ID)
-	elemFn := "__stream_elem_" + StreamElemKind(elemType)
-	mkIdent := func(name string) *Ident { return &Ident{P: kw, Name: name} }
-
-	declC := &Var{P: kw, Name: cName, Init: &Call{P: kw, Callee: mkIdent(openName), Args: call.Args}}
-	breakOnEOF := &If{
-		P: kw,
-		Cond: &Binary{P: kw, Op: "==",
-			Left:  &Call{P: kw, Callee: mkIdent("__stream_next"), Args: []Expr{mkIdent(cName)}},
-			Right: &NumberLit{P: kw, Value: 0}},
-		Then: &Block{P: kw, Stmts: []Stmt{&Break{P: kw}}},
-	}
-	bindUser := &Var{P: fe.VarPos, Name: fe.Var,
-		Init: &Call{P: fe.VarPos, Callee: mkIdent(elemFn), Args: []Expr{mkIdent(cName)}}}
-
-	innerStmts := []Stmt{breakOnEOF, bindUser}
-	if blk, ok := fe.Body.(*Block); ok {
-		innerStmts = append(innerStmts, blk.Stmts...)
-	} else {
-		innerStmts = append(innerStmts, fe.Body)
-	}
-	loop := &While{
-		P:     kw,
-		Cond:  &BoolLit{P: kw, Value: true},
-		Body:  &Block{P: kw, Stmts: innerStmts},
-		Label: fe.Label,
-	}
-	drop := &ExprStmt{P: kw, Expr: &Call{P: kw, Callee: mkIdent("__stream_drop"), Args: []Expr{mkIdent(cName)}}}
-	return &Block{P: kw, Stmts: []Stmt{declC, loop, drop}, Sugar: fe}
-}
-
 // Break / Continue carry an optional Label naming an enclosing labeled
 // loop to target; empty means the innermost loop (the existing behaviour).
 type Break struct {
@@ -3771,20 +3687,6 @@ type FuncDecl struct {
 	// lowers to a core wasm import of (ImportIface, ImportWITName).
 	ImportIface   string
 	ImportWITName string
-	// StreamResultElem is set (to the element type) when an `@import async
-	// function f(): stream[T]` is normalised to its colorless effective result
-	// `T[]` — the checker rewrites ReturnType to `T[]` early and stashes `T` here
-	// so codegen knows to use the incremental stream-collect ABI (stream.read +
-	// the await loop) rather than the single-block list-result lowering. nil for
-	// every other function. See docs/STREAM-TYPE-SURFACE.md.
-	StreamResultElem Type
-	// StreamParamElems maps a parameter index to its element type when an
-	// `@import async` param is `stream[T]` — the checker rewrites that param to
-	// `T[]` (the eager array the call site passes) and records `T` here, so codegen
-	// streams the array's elements out over the wire (stream.new + write-await +
-	// drop-writable) rather than passing a single list block. nil otherwise; the
-	// mirror of StreamResultElem.
-	StreamParamElems map[int]Type
 	// ExportIface / ExportWITName bind a function (WITH a body) to a WIT
 	// *export* via an `@export("wasi:iface@x.y.z", "wit-name")` attribute
 	// (bring-your-own WIT, P6 — docs/WIT-BRING-YOUR-OWN.md): the component
