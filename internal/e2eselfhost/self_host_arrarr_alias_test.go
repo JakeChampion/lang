@@ -11,7 +11,9 @@ import (
 // a fresh unaliased local did, and an alias left every slot on the shallow
 // buffer dec, which freed the outer buffer and stranded the rows. Reads that
 // follow the first release run after fresh allocations, so a row freed early
-// shows as a wrong answer as well as under the sanitizer.
+// shows as a wrong answer as well as under the sanitizer. Constant rows and
+// strings go through id or ids so they are built on the heap rather than placed
+// as constants.
 var arrArrAliasCases = []struct {
 	name string
 	src  string
@@ -20,29 +22,33 @@ var arrArrAliasCases = []struct {
 	// checked, not the census.
 	refused bool
 }{
-	{"alias", `function main(): i32 {
-    let g: i32[][] = [[3, 1], [2, 3]];
+	{"alias", `function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 {
+    let g: i32[][] = [id([3, 1]), id([2, 3])];
     let h: i32[][] = g;
     return g.len() + h.len();
 }
 `, 4, false},
-	{"alias_chain", `function main(): i32 {
-    let g: i32[][] = [[3, 1], [2, 3]];
+	{"alias_chain", `function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 {
+    let g: i32[][] = [id([3, 1]), id([2, 3])];
     let h: i32[][] = g;
     let k: i32[][] = h;
     return g.len() + h.len() + k[1][1];
 }
 `, 7, false},
-	{"field_bind", `struct Bag { n: i32, grid: i32[][] }
+	{"field_bind", `function id(xs: i32[]): i32[] { return xs; }
+struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
-    let r: Bag = Bag { n: 3, grid: [[3, 1], [2, 3]] };
+    let r: Bag = Bag { n: 3, grid: [id([3, 1]), id([2, 3])] };
     let p = r.grid;
-    r = Bag { n: 1, grid: [[7]] };
-    let junk: i32[][] = [[8, 8], [8, 8]];
+    r = Bag { n: 1, grid: [id([7])] };
+    let junk: i32[][] = [id([8, 8]), id([8, 8])];
     return r.n + p.len() + p[1][0] + junk.len();
 }
 `, 7, false},
-	{"field_bind_loop", `struct Bag { n: i32, grid: i32[][] }
+	{"field_bind_loop", `function id(xs: i32[]): i32[] { return xs; }
+struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -50,7 +56,7 @@ function main(): i32 {
         let r: Bag = Bag { n: i, grid: [[i, 1], [2, 3]] };
         let p: i32[][] = r.grid;
         r = Bag { n: 9, grid: [[5]] };
-        let junk: i32[][] = [[8, 8], [8, 8]];
+        let junk: i32[][] = [id([8, 8]), id([8, 8])];
         acc = acc + p[0][0] + p[1][1] + r.grid[0][0] + junk.len();
         i = i + 1;
     }
@@ -58,15 +64,16 @@ function main(): i32 {
 }
 `, 46, false},
 	// A string[][] field bind whose holder is rebound first (#10548).
-	{"field_bind_strings", `struct Names { n: i32, names: string[][] }
+	{"field_bind_strings", `function ids(s: string): string { return s; }
+struct Names { n: i32, names: string[][] }
 function main(): i32 {
     let i: i32 = 0;
     let n: i32 = 0;
     while (i < 4) {
-        let r: Names = Names { n: i, names: [["a" + "b", "c"], ["d" + ""]] };
+        let r: Names = Names { n: i, names: [[ids("a") + "b", "c"], [ids("d") + ""]] };
         let p = r.names;
-        r = Names { n: 0, names: [["z" + ""]] };
-        let junk: string[][] = [["x" + "y"]];
+        r = Names { n: 0, names: [[ids("z") + ""]] };
+        let junk: string[][] = [[ids("x") + "y"]];
         n = n + p.len() + p[0][0].len() + r.names.len() + junk.len();
         i = i + 1;
     }
@@ -74,28 +81,31 @@ function main(): i32 {
 }
 `, 24, false},
 	// A literal rebound inside an `if` (#10497's remainder on the AST lowering).
-	{"literal_rebound_in_if", `function main(): i32 {
-    let q: string[][] = [["a" + "b", "c"]];
+	{"literal_rebound_in_if", `function ids(s: string): string { return s; }
+function main(): i32 {
+    let q: string[][] = [[ids("a") + "b", "c"]];
     if (q.len() == 1) {
-        q = [["x" + "y"]];
+        q = [[ids("x") + "y"]];
     }
-    let junk: string[][] = [["j" + "k"]];
+    let junk: string[][] = [[ids("j") + "k"]];
     return q[0][0].len() + q.len() + junk.len();
 }
 `, 4, false},
-	{"literal_rebound_in_if_ints", `function main(): i32 {
-    let q: i32[][] = [[1, 2], [3]];
+	{"literal_rebound_in_if_ints", `function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 {
+    let q: i32[][] = [id([1, 2]), id([3])];
     if (q.len() == 2) {
-        q = [[7]];
+        q = [id([7])];
     }
-    let junk: i32[][] = [[8, 8], [8, 8]];
+    let junk: i32[][] = [id([8, 8]), id([8, 8])];
     return q[0][0] + q.len() + junk.len();
 }
 `, 10, false},
 	// A field bind whose holder is typed from a call result (#10548's remainder).
-	{"field_bind_call_holder", `struct Names { n: i32, names: string[][] }
+	{"field_bind_call_holder", `function ids(s: string): string { return s; }
+struct Names { n: i32, names: string[][] }
 function mk(i: i32): Names {
-    return Names { n: i, names: [["a" + "b"], ["c" + ""]] };
+    return Names { n: i, names: [[ids("a") + "b"], [ids("c") + ""]] };
 }
 function main(): i32 {
     let total: i32 = 0;
@@ -162,24 +172,27 @@ function main(): i32 {
     return n;
 }
 `, 11, false},
-	{"alias_outlives_source", `function main(): i32 {
-    let g: i32[][] = [[3, 1], [2, 3]];
+	{"alias_outlives_source", `function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 {
+    let g: i32[][] = [id([3, 1]), id([2, 3])];
     let h: i32[][] = g;
     let n: i32 = g.len();
-    let junk: i32[][] = [[8, 8], [8, 8]];
-    let more: i32[] = [9, 9, 9];
+    let junk: i32[][] = [id([8, 8]), id([8, 8])];
+    let more: i32[] = id([9, 9, 9]);
     return n + h[1][0] + h[0][1] + junk.len() + more.len();
 }
 `, 10, false},
-	{"alias_takes_last_use", `function main(): i32 {
-    let g: i32[][] = [[3, 1], [2, 3]];
+	{"alias_takes_last_use", `function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 {
+    let g: i32[][] = [id([3, 1]), id([2, 3])];
     let n: i32 = g.len();
     let h: i32[][] = g;
-    let junk: i32[][] = [[8, 8], [8, 8]];
+    let junk: i32[][] = [id([8, 8]), id([8, 8])];
     return n + h[1][0] + h[0][1] + junk.len();
 }
 `, 7, false},
-	{"alias_returned", `function keep(k: i32): i32[][] {
+	{"alias_returned", `function id(xs: i32[]): i32[] { return xs; }
+function keep(k: i32): i32[][] {
     let g: i32[][] = [[k, 1], [2, 3]];
     let h: i32[][] = g;
     return h;
@@ -189,62 +202,66 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 3) {
         let q: i32[][] = keep(i);
-        let junk: i32[][] = [[8, 8], [8, 8]];
+        let junk: i32[][] = [id([8, 8]), id([8, 8])];
         acc = acc + q[0][0] + q[1][1] + junk.len();
         i = i + 1;
     }
     return acc;
 }
 `, 18, false},
-	{"alias_loop_local", `function main(): i32 {
+	{"alias_loop_local", `function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
     while (i < 5) {
         let g: i32[][] = [[i, 1], [2, 3]];
         let h: i32[][] = g;
-        let junk: i32[][] = [[8, 8], [8, 8]];
+        let junk: i32[][] = [id([8, 8]), id([8, 8])];
         acc = acc + h[0][0] + g[1][1] + junk.len() + h.len();
         i = i + 1;
     }
     return acc;
 }
 `, 45, false},
-	{"alias_rebound_in_loop", `function main(): i32 {
+	{"alias_rebound_in_loop", `function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 {
     let acc: i32 = 0;
     let h: i32[][] = [[0]];
     let i: i32 = 0;
     while (i < 5) {
         let g: i32[][] = [[i, 1], [2, 3]];
         h = g;
-        let junk: i32[][] = [[8, 8], [8, 8]];
+        let junk: i32[][] = [id([8, 8]), id([8, 8])];
         acc = acc + h[0][0] + g[1][1] + junk.len();
         i = i + 1;
     }
     return acc + h.len();
 }
 `, 37, false},
-	{"alias_swap", `function main(): i32 {
+	{"alias_swap", `function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 {
     let acc: i32 = 0;
-    let a: i32[][] = [[1, 2], [3, 4]];
-    let b: i32[][] = [[5, 6]];
+    let a: i32[][] = [id([1, 2]), id([3, 4])];
+    let b: i32[][] = [id([5, 6])];
     let i: i32 = 0;
     while (i < 4) {
         let t: i32[][] = a;
         a = b;
         b = t;
-        let junk: i32[][] = [[8, 8], [8, 8]];
+        let junk: i32[][] = [id([8, 8]), id([8, 8])];
         acc = acc + a[0][0] + b[0][1] + junk.len();
         i = i + 1;
     }
     return acc + a.len() + b.len();
 }
 `, 39, false},
-	{"alias_self_append", `function grow(k: i32): i32 {
+	{"alias_self_append", `function id(xs: i32[]): i32[] { return xs; }
+function grow(k: i32): i32 {
     let g: i32[][] = [[k, 1], [2, 3]];
     let h: i32[][] = g;
     h = h.append([k + 7]);
     g = g.append([k + 9]);
-    let junk: i32[][] = [[8, 8], [8, 8]];
+    let junk: i32[][] = [id([8, 8]), id([8, 8])];
     return g.len() + h.len() + junk.len() + h[2][0] + g[2][0] + h[0][0];
 }
 function main(): i32 {
@@ -257,7 +274,8 @@ function main(): i32 {
     return acc;
 }
 `, 81, false},
-	{"alias_escapes", `function pick(k: i32): i32[][] {
+	{"alias_escapes", `function id(xs: i32[]): i32[] { return xs; }
+function pick(k: i32): i32[][] {
     let g: i32[][] = [[k, 1], [2, 3]];
     let h: i32[][] = g;
     let n: i32 = g.len();
@@ -265,7 +283,7 @@ function main(): i32 {
 }
 function main(): i32 {
     let r: i32[][] = pick(4);
-    let junk: i32[][] = [[8, 8], [8, 8]];
+    let junk: i32[][] = [id([8, 8]), id([8, 8])];
     return r.len() + r[2][0] + r[0][0] + junk.len();
 }
 `, 11, true},

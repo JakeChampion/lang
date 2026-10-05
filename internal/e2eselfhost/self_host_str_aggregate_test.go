@@ -10,6 +10,8 @@ import (
 
 // A `str` struct field or tuple element is a view like any other `str`
 // (#9915). Each row runs through the production CLI and balances.
+// field_literal reads its scalar field off the heap so the record holding the
+// literal is built on the heap rather than placed as a constant.
 var strAggregateCases = []struct {
 	name string
 	src  string
@@ -21,7 +23,8 @@ var strAggregateCases = []struct {
 function main(): i32 { let p: (str, i32) = mk(); return p.0.len() + p.1; }
 `, 7},
 	{"field_literal", `struct H { s: str, n: i32 }
-function main(): i32 { let h: H = H { s: "abc", n: 1 }; return h.n + h.s.len(); }
+function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 { let h: H = H { s: "abc", n: id([1])[0] }; return h.n + h.s.len(); }
 `, 4},
 	{"field_view", `struct H { s: str, n: i32 }
 function mk(t: string): H { return H { s: slice_unchecked(t, 0, 3), n: 1 }; }
