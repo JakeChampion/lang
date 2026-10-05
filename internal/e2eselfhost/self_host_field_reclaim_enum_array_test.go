@@ -8,21 +8,9 @@ import (
 	"testing"
 )
 
-// #8604: `__field_reclaim_<T>` freed a replaced enum-ARRAY field's element boxes
-// without walking their variant payloads, while its sibling `__struct_drop_<T>`
-// walked them — with the walk helper emitted into the same file and simply not
-// called.
-//
-// `field_reclaim_field_ops` built the `arrarr_free` directive's pre-walk type
-// only for a struct array; there was no `is_enum_array_field_type` clause, so an
-// enum array reached the backends with an empty type and got the buffer-only
-// free. `struct_drop_field_ops` has had both arms — `elems_drop_struct` and
-// `elems_drop_enum` — all along, which is why the same field released deeply
-// when the deep drop was what reached it.
-//
-// The gate is `enum_arr_elems_walk_ok`, exactly the one the struct_drop side
-// uses, so the two helpers now decide identically rather than by two rules that
-// can drift.
+// #8604: a replaced enum-ARRAY field's element boxes were freed without
+// walking their variant payloads, while the same field released deeply when the
+// struct went out of scope.
 //
 // THE EXIT CODE DOES NOT MOVE on the leak, as with the rest of this family: the
 // leakcheck leg against native is the gate. The register and wasm legs are the

@@ -3,23 +3,19 @@
 //
 // A cached unit is not just its WAT text. Link needs the unit's METADATA too —
 // its string literals, its address-taken functions, its runtime needs, its
-// call_indirect signatures, and the three type lists behind the per-type RC helper
-// bodies. Recomputing any of that means lowering the module, which is exactly
+// call_indirect signatures. Recomputing any of that means lowering the module, which is exactly
 // the cost the cache exists to avoid, so it is all persisted alongside the text.
 //
 // Format. Every section is `<tag><count>\n` followed by `count` items, and every
 // string item is LENGTH-PREFIXED (`<len>\n<raw bytes>`) rather than delimited or
 // escaped:
 //
-//     FERNWU2\n
+//     FERNWU4\n
 //     S<n>\n  <len>\n<bytes> ...   string literals
 //     K<n>\n  <len>\n<bytes> ...   aggregate constants (ir.op_const_struct payloads)
 //     F<n>\n  <len>\n<bytes> ...   address-taken function names
 //     N<n>\n  <len>\n<bytes> ...   runtime needs (wasm_ir.needs_of)
 //     A<n>\n  <len>\n<bytes> ...   call_indirect signatures ("$fn2|ww_w")
-//     R<n>\n  <len>\n<bytes> ...   field_reclaim types
-//     D<n>\n  <len>\n<bytes> ...   struct_drop types
-//     E<n>\n  <len>\n<bytes> ...   struct_arr_elems_drop types
 //     U<len>\n<unit WAT text>
 //
 // Length prefixes rather than escaping because a string literal may contain
@@ -35,9 +31,6 @@ pub struct UnitObj {
   fns: string[],
   needs: string[],
   fn_sigs: string[],
-  frt: string[],
-  sdt: string[],
-  aet: string[],
   text: string,
 }
 
@@ -50,7 +43,7 @@ pub struct MaybeUnit { found: boolean, obj: UnitObj }
 // empty_unit is the placeholder a MaybeUnit carries on a miss; never read when
 // found is false.
 pub function empty_unit(): UnitObj {
-  return UnitObj { strs: [], caggs: [], fns: [], needs: [], fn_sigs: [], frt: [], sdt: [], aet: [], text: "" };
+  return UnitObj { strs: [], caggs: [], fns: [], needs: [], fn_sigs: [], text: "" };
 }
 
 pub struct StrsAt { items: string[], pos: i32 }
@@ -73,7 +66,7 @@ function enc_strs(tag: string, xs: string[]): string {
 // distinguish an object written by an older compiler — decode reads sections
 // positionally and a stale file would yield a wrong-but-plausible unit.
 pub function magic(): string {
-  return "FERNWU3\n";
+  return "FERNWU4\n";
 }
 
 // is_current reports whether `s` was written by this format version.
@@ -91,9 +84,6 @@ pub function encode(u: UnitObj): string {
     + enc_strs("F", u.fns)
     + enc_strs("N", u.needs)
     + enc_strs("A", u.fn_sigs)
-    + enc_strs("R", u.frt)
-    + enc_strs("D", u.sdt)
-    + enc_strs("E", u.aet)
     + "U" + util.i32_to_string(u.text.len()) + "\n" + u.text;
 }
 
@@ -141,19 +131,13 @@ pub function decode(s: string): UnitObj {
   let fn: StrsAt = dec_strs(s, kg.pos + 1);
   let nd: StrsAt = dec_strs(s, fn.pos + 1);
   let ar: StrsAt = dec_strs(s, nd.pos + 1);
-  let r: StrsAt = dec_strs(s, ar.pos + 1);
-  let d: StrsAt = dec_strs(s, r.pos + 1);
-  let e: StrsAt = dec_strs(s, d.pos + 1);
-  let tl: IntsAt = scan_int(s, e.pos + 1);
+  let tl: IntsAt = scan_int(s, ar.pos + 1);
   return UnitObj {
     strs: st.items,
     caggs: kg.items,
     fns: fn.items,
     needs: nd.items,
     fn_sigs: ar.items,
-    frt: r.items,
-    sdt: d.items,
-    aet: e.items,
     text: slice_unchecked(s, tl.pos, tl.pos + tl.items[0]) + "",
   };
 }

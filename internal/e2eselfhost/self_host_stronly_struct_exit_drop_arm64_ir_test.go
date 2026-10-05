@@ -5,10 +5,8 @@ import (
 )
 
 // TestSelfHostStrOnlyStructExitDropIRArm64 is the arm64 port of
-// TestSelfHostStrOnlyStructExitDropIRX86_64: the widened exit-sweep routing
-// lives in shared lowering, and emit_arm64_struct_drop_one's k_str arm
-// (rc-aware __fern_str_free) does the field release. Case table shared with
-// the x86-64 leg.
+// TestSelfHostStrOnlyStructExitDropIRX86_64. Case table shared with the x86-64
+// leg.
 func TestSelfHostStrOnlyStructExitDropIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range strOnlyStructExitDropCases {

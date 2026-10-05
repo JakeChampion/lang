@@ -63,7 +63,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
       - uses: ./.github/actions/selfhost-driver-cache
-      - name: build native test runners
+      - name: build the e2e test binary
         run: |
           go test -c -o "$RUNNER_TEMP/e2e-arm64.test" ./internal/e2e/
           go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers

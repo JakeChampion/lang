@@ -322,8 +322,11 @@ maps: map -> map -> fold; one traversal
 
 Stage identities use the resolved callee and semantic value number. Refusals
 name the stage that failed a planner gate; an effect boundary names the
-intervening instruction. A partially fused pipeline reports the fused suffix
-and its retained prefix separately. The histogram counts reported decisions,
+intervening instruction. A sink's chain decision covers its single-use
+intermediate stages, even when the chain is refused or fusion is disabled;
+those stages do not also report a standalone refusal. A partially fused
+pipeline reports the fused suffix and its retained prefix separately.
+The histogram counts reported decisions,
 including zero counts, with these closed tags:
 
 | Tag | Meaning |

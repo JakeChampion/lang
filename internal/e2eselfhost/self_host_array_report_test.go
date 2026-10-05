@@ -138,6 +138,24 @@ func TestSelfHostArrayReportMatchesEmission(t *testing.T) {
 		t.Fatalf("disabled fusion reported a rewrite:\n%s", disabled)
 	}
 	assertArrayReportRefusalsPreserved(t, report, disabled, "typed semantic fusion", "fused")
+	for _, text := range []string{report, disabled} {
+		// Each chain has one verdict. In particular its producers must not
+		// claim no-reduction-sink when the same chain ends at a fold.
+		for _, owner := range []string{"maps", "unresolved"} {
+			count := 0
+			for _, line := range strings.Split(text, "\n") {
+				if strings.HasPrefix(line, owner+": ") && !strings.Contains(line, "ownership lowering") {
+					count++
+					if !strings.Contains(line, " -> fold;") {
+						t.Fatalf("chain stage reported standalone: %s", line)
+					}
+				}
+			}
+			if count != 1 {
+				t.Fatalf("%s has %d chain decisions, want one:\n%s", owner, count, text)
+			}
+		}
+	}
 	disabledQuietASM, disabledQuiet := compile("0", "1", "0")
 	if disabledASM != disabledQuietASM || disabledQuiet != "" {
 		t.Fatal("disabled fusion reporting changed code or printed while quiet")
