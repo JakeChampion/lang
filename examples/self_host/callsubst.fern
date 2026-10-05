@@ -58,10 +58,6 @@ pub function subst_fcall_stmts(stmts: ast.Stmt[], fname: string, lname: string, 
   return out;
 }
 
-pub function subst_fcall_expr(e: ast.Expr, fname: string, lname: string, capargs: ast.Expr[], bindings: ast.TypedBinding[]): ast.Expr {
-  return expr(e, context(fname, lname, capargs, bindings));
-}
-
 function expr(e: ast.Expr, ctx: Context): ast.Expr {
   let (out, a, h) = astwalk.map_expr_acc(e, ctx, stmt_at, expr_at);
   return out;

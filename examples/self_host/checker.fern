@@ -9278,50 +9278,14 @@ function mc_is_binding(e: ast.Expr, name: string): boolean {
   return false;
 }
 
-// mc_mentions_list / mc_mentions_expr / mc_mentions_stmts report whether the
-// expression / statement tree references `name` at all — the lambda-capture
-// test (the native mcMentions).
-function mc_mentions_list(list: ast.Expr[], name: string): boolean {
-  for entry in list {
-    if (mc_mentions_expr(entry, name)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// mc_mentions_expr / mc_mentions_stmts report whether `name` appears anywhere
-// in an expression / statement list — as an identifier, or as an assignment's
-// target, which is a bare string on the statement rather than an expression and
-// so needs the statement visitor rather than the expression one.
+// mc_mentions_stmts reports whether `name` appears anywhere in a statement
+// list — as an identifier, or as an assignment's target, which is a bare
+// string on the statement rather than an expression and so needs the
+// statement visitor rather than the expression one.
 //
-// Both use astwalk's node fold, so a new parser node is covered here the moment
-// astwalk covers it. The hand-written pair each ended in a `_ => false` arm,
-// which silently did not search whatever it did not name.
-function mc_mentions_expr(e: ast.Expr, name: string): boolean {
-  function see_expr(n: ast.Expr, own acc: boolean): boolean {
-    match (n) {
-      ast.ExprIdent(id) => {
-        return acc || id.name == name;
-      },
-      _ => {
-        return acc;
-      }
-    }
-  }
-  function see_stmt(st: ast.Stmt, own acc: boolean): boolean {
-    match (st) {
-      ast.StmtAssign(a) => {
-        return acc || a.target == name;
-      },
-      _ => {
-        return acc;
-      }
-    }
-  }
-  return astwalk.fold_expr_nodes(e, false, see_stmt, see_expr, astwalk.descend_all);
-}
-
+// It folds through astwalk, so a new parser node is covered here the moment
+// astwalk covers it. The hand-written walk it replaced ended in a
+// `_ => false` arm, which silently did not search whatever it did not name.
 function mc_mentions_stmts(stmts: ast.Stmt[], name: string): boolean {
   function see_expr(n: ast.Expr, own acc: boolean): boolean {
     match (n) {
@@ -16232,8 +16196,10 @@ pub struct OwnFunc { name: string, flags: boolean[], arr: boolean[] }
 // `structs` holds every struct name and every enum that owns one, `decls` the
 // enum and union-alias names only a whole module carries, and `ctors` every
 // declared struct or variant, a call to which is a fresh construction.
-// A method's row is keyed `Type.method` (ow_method_key), its receiver the
-// first flag; `methods` names the methods that take their receiver `own`.
+// A method's row is keyed by its receiver's namespace (ow_receiver_ns) and its
+// name, its receiver the first flag; a trait's method is keyed by the trait,
+// for a `dyn` receiver. `methods` names the methods that take their receiver
+// `own`.
 pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex, methods: util.NameIndex }
 
 struct MovedEntry { mname: string, mline: i32 }
@@ -16892,9 +16858,10 @@ function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
   return true;
 }
 
-// lu_dies reports whether the argument `aid` (position `i` of `call`) is dead at
-// the call. `outer` is the outermost call enclosing it, when `has_outer`.
-function lu_dies(fx: LuFn, call: ast.Expr, callee: string, i: i32, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
+// lu_dies reports whether the argument `aid` of `call` is dead at the call;
+// `arr` says the parameter it binds is array-typed. `outer` is the outermost
+// call enclosing it, when `has_outer`.
+function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
   let name: string = aid.name;
   if (!lu_is_local(fx, name) || util.has_str(fx.facts.escaping, name)) {
     return false;
@@ -16910,7 +16877,7 @@ function lu_dies(fx: LuFn, call: ast.Expr, callee: string, i: i32, aid: ast.Expr
     // An enclosing call that also names x already holds it (#9879).
     return !(has_outer && astwalk.count_ident_expr(outer, name) > 1);
   }
-  if (site.in_iife || lu_arr_position(fx, callee, i)) {
+  if (site.in_iife || arr) {
     return false;
   }
   return lu_returns_before_reading(site, name);
@@ -17009,11 +16976,20 @@ function lu_try_at(x: ast.Expr, own found: boolean): boolean {
 }
 
 // lu_call collects the keys of `c`'s own-position arguments that die at it.
-// It has no types, so a method that takes its receiver `own` is known by name:
-// the receiver's key is only read where the call guard resolved that method.
+// It has no types, so a method with an `own` position is known by name: its
+// receiver's and arguments' keys are only read where the call guard resolved
+// that method. An argument that dies only if its parameter is not an array is
+// keyed with a `~` suffix, which the guard reads for a non-array position alone.
 function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   if let ast.ExprFieldAccess(fa) = c.callee {
-    return lu_receiver(fa, e, outer, has_outer, site, fx, acc);
+    if (!fx.ofuncs.methods.has(fa.field)) {
+      return acc;
+    }
+    acc = lu_method_arg(fa.obj, e, outer, has_outer, site, fx, acc);
+    for a in c.args {
+      acc = lu_method_arg(a, e, outer, has_outer, site, fx, acc);
+    }
+    return acc;
   }
   let cname: string = ow_ident_name(c.callee);
   if (cname.len() == 0 || util.has_str(fx.params, cname) || !ow_is_own_func(fx.ofuncs, cname)) {
@@ -17024,7 +17000,7 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
   while (i < c.args.len() && i < flags.len()) {
     if (flags[i]) {
       if let ast.ExprIdent(aid) = c.args[i] {
-        if (lu_dies(fx, e, cname, i, aid, outer, has_outer, site)) {
+        if (lu_dies(fx, e, lu_arr_position(fx, cname, i), aid, outer, has_outer, site)) {
           acc = acc.append(lu_key(aid.line, aid.col));
         }
       }
@@ -17034,10 +17010,13 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
   return acc;
 }
 
-function lu_receiver(fa: ast.ExprFieldAccess, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
-  if let ast.ExprIdent(rid) = fa.obj {
-    if (fx.ofuncs.methods.has(fa.field) && lu_dies(fx, e, "", 0, rid, outer, has_outer, site)) {
-      return acc.append(lu_key(rid.line, rid.col));
+function lu_method_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
+  if let ast.ExprIdent(id) = a {
+    if (lu_dies(fx, e, true, id, outer, has_outer, site)) {
+      return acc.append(lu_key(id.line, id.col));
+    }
+    if (lu_dies(fx, e, false, id, outer, has_outer, site)) {
+      return acc.append(lu_key(id.line, id.col) + "~");
     }
   }
   return acc;
@@ -17246,8 +17225,7 @@ function lu_outside_nested_fn(e: ast.Expr): boolean {
 
 // ow_count_ident counts occurrences of `name` as a bare ident anywhere
 // in `e` — the exactly-once probe for the self-reassign move admission.
-// Mirrors mc_mentions_expr's variant coverage; an unhandled variant
-// counts 0, which under-counts and therefore REJECTS (fails safe: the
+// An unhandled variant counts 0, which under-counts and therefore REJECTS (fails safe: the
 // admission needs exactly 1 and a direct-arg hit).
 function ow_count_ident_list(list: ast.Expr[], name: string): i32 {
   let n: i32 = 0;
@@ -17404,7 +17382,17 @@ function ow_field_move_fields(target: string, value: ast.Expr, ctx: OwnCtx): str
 // OwnCall is a call's arguments in its callee's parameter order, a method's
 // receiver first, beside the callee's `own` flags: empty when it takes
 // nothing `own`.
-struct OwnCall { args: ast.Expr[], flags: boolean[] }
+// `recv` says what args[0] is: RECV_NONE for a plain call, RECV_METHOD for a
+// method's receiver, with `arr` the row's array-typed positions, and RECV_DYN
+// for a `dyn` receiver: its moves count but nothing is guarded, as native
+// guards no `dyn` dispatch.
+struct OwnCall { args: ast.Expr[], flags: boolean[], arr: boolean[], recv: i32 }
+
+const RECV_NONE: i32 = 0;
+
+const RECV_METHOD: i32 = 1;
+
+const RECV_DYN: i32 = 2;
 
 function ow_own_call(c: ast.ExprCall, ctx: OwnCtx): OwnCall {
   let key: string = ow_method_key(c, ctx);
@@ -17414,10 +17402,35 @@ function ow_own_call(c: ast.ExprCall, ctx: OwnCtx): OwnCall {
       for a in c.args {
         args = args.append(a);
       }
-      return OwnCall { args: args, flags: ow_func_flags(ctx.ofuncs, key) };
+      let row: i32 = ctx.ofuncs.names.find(key);
+      let arr: boolean[] = [];
+      if (row >= 0) {
+        arr = ctx.ofuncs.rows[row].arr;
+      }
+      return OwnCall { args: args, flags: ow_func_flags(ctx.ofuncs, key), arr: arr, recv: ow_recv_kind(key) };
     }
   }
-  return OwnCall { args: c.args, flags: ow_call_arg_flags(c.callee, ctx) };
+  return OwnCall { args: c.args, flags: ow_call_arg_flags(c.callee, ctx), arr: [], recv: RECV_NONE };
+}
+
+function ow_recv_kind(key: string): i32 {
+  if (key.len() >= 4 && slice_unchecked(key, 0, 4) == "dyn ") {
+    return RECV_DYN;
+  }
+  return RECV_METHOD;
+}
+
+// ow_arg_dies: a method call's argument, at a position that is not
+// array-typed, that the last-use pass found dead under that condition
+// (lu_method_arg's `~` key).
+function ow_arg_dies(oc: OwnCall, i: i32, ctx: OwnCtx): boolean {
+  if (oc.recv != RECV_METHOD || i >= oc.arr.len() || oc.arr[i]) {
+    return false;
+  }
+  if let ast.ExprIdent(id) = oc.args[i] {
+    return util.has_str(ctx.last_use, lu_key(id.line, id.col) + "~");
+  }
+  return false;
 }
 
 // ow_guard_call: E051 — each argument passed to an `own` parameter, a method's
@@ -17427,7 +17440,8 @@ function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   let oc: OwnCall = ow_own_call(c, ctx);
   let i: i32 = 0;
   while (i < oc.args.len() && i < oc.flags.len()) {
-    if (oc.flags[i] && !ow_is_owned_expr(oc.args[i], ctx)) {
+    let exempt: boolean = oc.recv == RECV_DYN || ow_arg_dies(oc, i, ctx);
+    if (oc.flags[i] && !exempt && !ow_is_owned_expr(oc.args[i], ctx)) {
       // The argument is the anchor, as native's is; a kind that carries no
       // position of its own falls back to the call.
       let aline: i32 = ast.expr_line(oc.args[i]);
@@ -17937,11 +17951,19 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
       out = out.append(OwnFunc { name: func.name, flags: flags, arr: arr });
       names = names.append(func.name);
     } else if (any_own) {
-      let key: string = util.base_type_name(func.receiver_type) + "." + func.name;
+      let key: string = ow_receiver_ns(func.receiver_type) + "." + func.name;
       out = out.append(OwnFunc { name: key, flags: flags, arr: arr });
       names = names.append(key);
-      if (func.receiver_own) {
-        methods = methods.append(func.name);
+      methods = methods.append(func.name);
+    }
+  }
+  for td in mod.trait_decls {
+    for m in td.methods {
+      if (ow_takes_own_self(m)) {
+        let row: OwnFunc = ow_trait_row(td.name, m);
+        out = out.append(row);
+        names = names.append(row.name);
+        methods = methods.append(m.name);
       }
     }
   }
@@ -17964,30 +17986,90 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   return OwnFuncs { rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls), ctors: util.name_index(ctors), methods: util.name_index(methods) };
 }
 
+// ow_takes_own_self: a trait method whose receiver, its first parameter
+// `self`, is `own`.
+function ow_takes_own_self(m: parser.FuncDecl): boolean {
+  return m.params.len() > 0 && m.params[0].name == "self" && m.params[0].own;
+}
+
+// ow_trait_row is the row a `dyn` receiver calls trait `tname`'s method `m`
+// through, keyed `dyn Trait.method`.
+function ow_trait_row(tname: string, m: parser.FuncDecl): OwnFunc {
+  let flags: boolean[] = [];
+  let arr: boolean[] = [];
+  for param in m.params {
+    flags = flags.append(param.own);
+    arr = arr.append(ow_type_is_array(param.type_name));
+  }
+  return OwnFunc { name: "dyn " + tname + "." + m.name, flags: flags, arr: arr };
+}
+
+// ow_receiver_ns is the namespace a method with this receiver spelling is
+// called through: an array, a view, a string, or the base type name.
+function ow_receiver_ns(rt: string): string {
+  if (parser.spelling_is_view(rt)) {
+    return "[_]";
+  }
+  if (array_receiver_matches(rt, false)) {
+    return "[]";
+  }
+  return util.base_type_name(receiver_namespace(rt));
+}
+
 function ow_type_is_array(tn: string): boolean {
   return tn.len() >= 2 && tn[tn.len() - 2] == b'[' && tn[tn.len() - 1] == b']';
 }
 
-// ow_method_key is the own-func row of a method call, `Type.method` by the
-// receiver's checked type, or "" when the callee is no such method.
+// ow_method_key is the own-func row of a method call, by the receiver's
+// checked type, or "" when the callee is no such method.
 function ow_method_key(c: ast.ExprCall, ctx: OwnCtx): string {
   if let ast.ExprFieldAccess(fa) = c.callee {
-    let tname: string = "";
-    match (check_expr(fa.obj, ctx.scope)) {
-      typeinfo.TypeStruct(st) => {
-        tname = st.name;
-      },
-      typeinfo.TypeUnion(u) => {
-        tname = u.name;
-      },
-      _ => {}
-    }
-    let key: string = tname + "." + fa.field;
-    if (tname.len() > 0 && ow_is_own_func(ctx.ofuncs, key)) {
-      return key;
+    for ns in ow_type_namespaces(check_expr(fa.obj, ctx.scope)) {
+      let key: string = ns + "." + fa.field;
+      if (ow_is_own_func(ctx.ofuncs, key)) {
+        return key;
+      }
     }
   }
   return "";
+}
+
+// ow_type_namespaces is what a value of type `t` finds methods under, as
+// ow_receiver_ns and the trait rows name them.
+function ow_type_namespaces(t: typeinfo.Type): string[] {
+  match (t) {
+    typeinfo.TypeStruct(st) => {
+      return [st.name];
+    },
+    typeinfo.TypeUnion(u) => {
+      return [u.name];
+    },
+    typeinfo.TypeArray(a) => {
+      if (a.view) {
+        return ["[_]"];
+      }
+      return ["[]"];
+    },
+    typeinfo.TypeString(_) => {
+      return ["string"];
+    },
+    typeinfo.TypeMap(_) => {
+      return ["Map"];
+    },
+    typeinfo.TypeDyn(d) => {
+      let out: string[] = [];
+      for n in parser.dyn_trait_set("dyn " + d.traits) {
+        out = out.append("dyn " + n);
+      }
+      return out;
+    },
+    _ => {
+      let none: string[] = [];
+      return none;
+    }
+  }
+  let none: string[] = [];
+  return none;
 }
 
 // ow_type_is_pointer reports whether a declared type SPELLING is

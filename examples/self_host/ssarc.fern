@@ -2351,10 +2351,6 @@ function enum_name(t: typeinfo.Type): string {
   return "";
 }
 
-function walkable(t: typeinfo.Type, f: ssasem.Func): boolean {
-  return walk_shape(t, f, true);
-}
-
 function walk_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
   if let typeinfo.TypeArray(a) = t {
     return walk_shape(a.elem, f, lookup);

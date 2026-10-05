@@ -14,8 +14,7 @@ import (
 // (`enum E { V(T) }`, whose desugaring HAS `__ev`): for the union member it
 // binds the WHOLE scrutinee box pointer typed with the variant's struct name
 // (no offset-8 payload read), so a later field read (`Num(x) => x.value`)
-// resolves. This mirrors the legacy AST emitter's union-member split
-// (asm.fern:3685, `is_enum_variant` false -> bind the box itself).
+// resolves: a union member binds the box itself.
 //
 // Before the fix every one of these bailed the whole module
 // (the `__ev` read found no field, never typed the bound slot, and a later

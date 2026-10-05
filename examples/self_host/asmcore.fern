@@ -3909,35 +3909,10 @@ pub function rt_src_create_dir_all(t: string): string {
   return "function __fern_create_dir_all(path: string): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = 0; let j: i32 = 1; while (j < plen) { if (path[j] == 47) { if (path[j - 1] != 47) { __raw_store8(pathz, j, 0); rc = " + mk + "; __raw_store8(pathz, j, 47); } } j = j + 1; } rc = " + mk + "; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { if (rc != 0 - 17) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } } return Ok(()); }";
 }
 
-// rt_src_create_dir backs `create_dir(path, mode)` (#8883, syscall-leaf) →
-// Result[void, IoError]. NUL-terminate the path, mkdirat(AT_FDCWD, path, mode)
-// and report the errno as it came: EEXIST is an error here, not the silent
-// success create_dir_all folds it into, because `mkdir(1)` is entirely about
-// that distinction. The kernel masks `mode` with the process umask exactly as
-// POSIX says; a caller that wants the mode verbatim clears the umask around
-// the call. Same body on every native target; only the mkdirat number and
-// AT_FDCWD come from `t`.
 // rt_src_chdir backs `chdir(path)` (#9090, syscall-leaf) → Result[void,
 // IoError]. chdir(2) — the move `getcwd` only ever reported. ENOENT, ENOTDIR
 // and EACCES all reach the caller rather than being folded away; `env -C` has
 // to name which one it was.
-// needs_any reports whether `s` carries ANY of `names` as a need.
-//
-// The runtime-bundle gates each ask that of two to four dozen names. Spelled
-// as one `||` chain per gate every name is a branch of its own, which is most
-// of what those functions score on the complexity ratchet; asked of a list it
-// is one loop.
-pub function needs_any(s: EmitState, names: string[]): boolean {
-  let i: i32 = 0;
-  while (i < names.len()) {
-    if (s.has_need(names[i])) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
 pub function rt_src_chdir(t: string): string {
   return "function __fern_chdir(path: string): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = __syscall3(" + sysno(t, "chdir") + ", pathz as i64, 0, 0) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
 }
@@ -4023,6 +3998,14 @@ pub function rt_src_signal_disposition_read(t: string): string {
   return "function __fern_signal_disposition(sig: i32): i32 { let act: usize = __raw_scratch(32); __store_i64(act, 0 as i64); __store_i64(__raw_addr(act, 8), 0 as i64); __store_i64(__raw_addr(act, 16), 0 as i64); __store_i64(__raw_addr(act, 24), 0 as i64); let rc: i32 = __syscall4(" + sysno(t, "sigaction") + ", sig as i64, 0, act as i64, 8) as i32; if (rc < 0) { return rc; } let h: i64 = __load_i64(act); if (h == (0 as i64)) { return 0; } if (h == (1 as i64)) { return 1; } return 2; }";
 }
 
+// rt_src_create_dir backs `create_dir(path, mode)` (#8883, syscall-leaf) →
+// Result[void, IoError]. NUL-terminate the path, mkdirat(AT_FDCWD, path, mode)
+// and report the errno as it came: EEXIST is an error here, not the silent
+// success create_dir_all folds it into, because `mkdir(1)` is entirely about
+// that distinction. The kernel masks `mode` with the process umask exactly as
+// POSIX says; a caller that wants the mode verbatim clears the umask around
+// the call. Same body on every native target; only the mkdirat number and
+// AT_FDCWD come from `t`.
 pub function rt_src_create_dir(t: string): string {
   return "function __fern_create_dir(path: string, mode: i32): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = __syscall3(" + sysno(t, "mkdirat") + ", " + at_fdcwd(t) + ", pathz as i64, mode as i64) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
 }
@@ -5656,36 +5639,6 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
   return ty_unknown();
 }
 
-pub function is_enum_variant(name: string, s: EmitState): boolean {
-  let di: i32 = 0;
-  while (di < s.struct_decls.decls.len()) {
-    if (s.struct_decls.decls[di].name == name) {
-      let sd: parser.StructDecl = s.struct_decls.decls[di];
-      let fi: i32 = 0;
-      while (fi < sd.fields.len()) {
-        if (sd.fields[fi].name == "__ev") {
-          return true;
-        }
-        fi = fi + 1;
-      }
-      return false;
-    }
-    di = di + 1;
-  }
-  return false;
-}
-
-pub function is_unit_variant(name: string, s: EmitState): boolean {
-  let di: i32 = 0;
-  while (di < s.struct_decls.decls.len()) {
-    if (s.struct_decls.decls[di].name == name) {
-      return s.struct_decls.decls[di].fields.len() == 0;
-    }
-    di = di + 1;
-  }
-  return false;
-}
-
 pub function is_struct_decl_name(name: string, s: EmitState): boolean {
   let di: i32 = 0;
   while (di < s.struct_decls.decls.len()) {
@@ -5703,7 +5656,7 @@ pub function is_struct_decl_name(name: string, s: EmitState): boolean {
 // boxes (docs/DYN-TRAITS.md §4.2.3). A primitive has no runtime shape pointer,
 // so a `dyn` over it is heap-boxed at coercion; the dispatch chain matches the
 // box's offset-0 shape (the interned primitive type name) and unboxes. Distinct
-// from is_struct_decl_name (structs) and is_enum_recv (enums); an array
+// from is_struct_decl_name (structs); an array
 // receiver (recv_is_array) is excluded.
 pub function is_prim_recv_name(name: string, s: EmitState): boolean {
   if (recv_is_array(name)) {
@@ -5724,29 +5677,13 @@ pub function is_prim_recv_name(name: string, s: EmitState): boolean {
   return false;
 }
 
-pub function is_enum_recv(name: string, s: EmitState): boolean {
-  if (is_struct_decl_name(name, s)) {
-    return false;
-  }
-  if (is_int_tag(ty_from_name(name))) {
-    return false;
-  }
-  if (name == "string" || name == "bool" || name == "boolean") {
-    return false;
-  }
-  if (name == "f64" || name == "f32" || name == "float") {
-    return false;
-  }
-  return true;
-}
-
 // recv_is_array reports whether a method receiver type spelling is an ARRAY
 // (`T[]`, `i32[]`, …). Such a method (e.g. std/json's element-poly
 // `(xs: T[]) to_json[T: Json]()`) is NOT a concrete struct/enum dispatch
 // candidate — a value's runtime shape pointer never names an array method —
 // so the runtime shape-dispatch in the AST backends had to skip it. Without this
 // the array `to_json`, whose base receiver name `T` (a type parameter) passes
-// is_enum_recv's permissive default, would be picked as the enum fallback for
+// a permissive enum-receiver test, would be picked as the enum fallback for
 // EVERY `.to_json()` call and corrupt non-array receivers (#2766). Distinct
 // from a generic struct receiver like `Box[T]`, which ends in `]` but not `[]`.
 pub function recv_is_array(rt: string): boolean {
@@ -5755,33 +5692,6 @@ pub function recv_is_array(rt: string): boolean {
     return false;
   }
   return slice_unchecked(rt, n - 2, n) == "[]";
-}
-
-// find_array_method_func returns the exact in-scope name of the std/array
-// auto-discovered helper backing `a.<field>()` — `__method_Array_<field>` when
-// the program imports std/array as a single file, or the `<mod>__`-mangled name
-// the bundler produced (which ends in the bare convention name) — or "" when no
-// such function is in scope (then `a.<field>()` is a genuine unknown method).
-// Only free functions (no receiver) qualify; the `__method_Array_` suffix is
-// specific enough that no other decl collides. Shared by both asm backends so
-// the array-method-syntax dispatch can't drift between them.
-pub function find_array_method_func(field: string, s: EmitState): string {
-  let target: string = "__method_Array_" + field;
-  let tn: i32 = target.len();
-  let i: i32 = 0;
-  while (i < s.funcs.len()) {
-    let nm: string = s.funcs[i].name;
-    if (s.funcs[i].receiver_type.len() == 0) {
-      if (nm == target) {
-        return nm;
-      }
-      if (nm.len() > tn && slice_unchecked(nm, nm.len() - tn, nm.len()) == target) {
-        return nm;
-      }
-    }
-    i = i + 1;
-  }
-  return "";
 }
 
 // field_type_tag_in is the type of `field` of the declared struct
@@ -5976,10 +5886,6 @@ pub function ty_array_i64(): Ty {
 
 pub function ty_array_string(): Ty {
   return TyArrayString { tag: 0 };
-}
-
-pub function ty_fn_any(): Ty {
-  return TyFnAny { tag: 0 };
 }
 
 pub function ty_map_any(): Ty {
@@ -6183,42 +6089,6 @@ pub function is_int_array_tag(t: Ty): boolean {
   return false;
 }
 
-pub function is_unsigned_tag(t: Ty): boolean {
-  match (t) {
-    TyU32(_) => {
-      return true;
-    },
-    TyU64(_) => {
-      return true;
-    },
-    TyUsize(_) => {
-      return true;
-    },
-    TyU8(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-pub function is_unsigned_int_array_tag(t: Ty): boolean {
-  match (t) {
-    TyArrayU32(_) => {
-      return true;
-    },
-    TyArrayU64(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
 // ty_is_array_like reports whether t is any array type. All arrays now
 // carry the Perceus rc header at [data-8] (see __fern_arr_box in the
 // backends), so an alias of one is a reference-creation site that must
@@ -6242,37 +6112,6 @@ pub function ty_is_array_like(t: Ty): boolean {
     },
     TyArrayString(_) => {
       return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-// needs_rc_inc_on_alias reports whether binding/passing `e` creates a
-// new reference to an rc-tracked heap value that must be retained
-// (the Perceus inc site). Ported from the native compiler's
-// needsRcIncOnAlias (internal/ir/ir.go), scoped to arrays for Phase 1d
-// — strings / structs / enums / closures / tuples join in Phase 1e.
-// Fires for a READ of an array-typed value that already has an owner:
-//   - an Ident (let y = x),
-//   - a struct field (let y = h.items),
-//   - an index load (let y = m[i], m an array of arrays).
-// A fresh array literal or a call result is already uniquely owned at
-// rc=1 and is NOT re-incremented. A spurious inc on a mis-inferred
-// non-array is harmless — the rc-inc helper's null / low-address /
-// sentinel guards short-circuit — so this is robust to inference gaps.
-pub function needs_rc_inc_on_alias(e: ast.Expr, s: EmitState): boolean {
-  match (e) {
-    ast.ExprIdent(id) => {
-      return ty_is_array_like(s.local_type_of(id.name));
-    },
-    ast.ExprFieldAccess(_) => {
-      return ty_is_array_like(infer_expr_type(e, s));
-    },
-    ast.ExprIndex(_) => {
-      return ty_is_array_like(infer_expr_type(e, s));
     },
     _ => {
       return false;
@@ -6419,54 +6258,6 @@ pub function ty_is_u8(t: Ty): boolean {
   return false;
 }
 
-pub function ty_is_u32(t: Ty): boolean {
-  match (t) {
-    TyU32(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-pub function ty_is_u64(t: Ty): boolean {
-  match (t) {
-    TyU64(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-pub function ty_is_i64(t: Ty): boolean {
-  match (t) {
-    TyI64(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-pub function ty_is_usize(t: Ty): boolean {
-  match (t) {
-    TyUsize(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
 pub function ty_is_bool(t: Ty): boolean {
   match (t) {
     TyBool(_) => {
@@ -6494,30 +6285,6 @@ pub function ty_is_string(t: Ty): boolean {
 pub function ty_is_f64(t: Ty): boolean {
   match (t) {
     TyF64(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-pub function ty_is_struct(t: Ty): boolean {
-  match (t) {
-    TyStruct(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
-pub function ty_is_tuple(t: Ty): boolean {
-  match (t) {
-    TyTuple(_) => {
       return true;
     },
     _ => {
@@ -6853,36 +6620,6 @@ pub function ty_eq(a: Ty, b: Ty): boolean {
   return false;
 }
 
-pub function generic_value_ty(name: string, start: i32): Ty {
-  if (name.len() <= start + 1) {
-    return ty_unknown();
-  }
-  let inner: str = slice_unchecked(name, start, name.len() - 1);
-  let i: i32 = 0;
-  while (i + 1 < inner.len()) {
-    if (inner[i] == b',' && inner[i + 1] == b' ') {
-      return ty_from_name(slice_unchecked(inner, i + 2, inner.len()));
-    }
-    i = i + 1;
-  }
-  return ty_unknown();
-}
-
-pub function generic_key_is_i32(name: string, start: i32): boolean {
-  if (name.len() <= start + 1) {
-    return false;
-  }
-  let inner: str = slice_unchecked(name, start, name.len() - 1);
-  let i: i32 = 0;
-  while (i + 1 < inner.len()) {
-    if (inner[i] == b',' && inner[i + 1] == b' ') {
-      return ty_is_i32(ty_from_name(slice_unchecked(inner, 0, i)));
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
 // ty_from_ref maps a structured TypeRef (parser.parse_type_ref) to the coarse
 // asmcore Ty, replacing ty_from_name's hand-rolled byte scan (SH-021 slice 2 —
 // docs/SELF-HOST-AUDIT.md T2). It is byte-identical to the former scan across the
@@ -6929,7 +6666,7 @@ pub function ty_from_ref(t: parser.TypeRef): Ty {
   if (t.args.len() > 0) {
     // Generic. Recognised constructors carry their key/value/inner type;
     // MapIter[V] / Map[V] / Result[T] with only ONE arg (no comma in the
-    // old scan) degrade exactly as generic_value_ty / split_tuple_ret did.
+    // old scan) degrade.
     if (t.base == "MapIter") {
       if (t.args.len() >= 2) {
         return ty_mapiter(ty_from_ref(t.args[1]));
@@ -7053,58 +6790,6 @@ pub function tuple_ret_tag_at(tt: string, idx: i32): Ty {
   }
   if (idx < t.args.len()) {
     return ty_from_ref(t.args[idx]);
-  }
-  return ty_i32();
-}
-
-// The tag to bind for the idx-th name of a `let (a, b, …) = init`
-// destructure, for any arity. A tuple literal reads element idx
-// directly; a tuple-returning free function / method splits its
-// declared return type at idx.
-pub function tuple_destructure_tag_at(init: ast.Expr, idx: i32, s: EmitState): Ty {
-  match (init) {
-    ast.ExprTuple(t) => {
-      if (idx < t.elements.len()) {
-        return infer_expr_type(t.elements[idx], s);
-      }
-    },
-    ast.ExprCall(c) => {
-      match (c.callee) {
-        ast.ExprIdent(id) => {
-          let fi: i32 = 0;
-          while (fi < s.funcs.len()) {
-            if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
-              return tuple_ret_tag_at(s.funcs[fi].ret_type, idx);
-            }
-            fi = fi + 1;
-          }
-        },
-        ast.ExprFieldAccess(fa) => {
-          // The builtin map `without` returns `(Map, bool)`: bind
-          // element 0 to the receiver's own map tag so the resulting
-          // map dispatches its methods correctly (rather than
-          // mis-mangling as `__fn_i32__<method>`); the bool is i32.
-          let rcv: Ty = infer_expr_type(fa.obj, s);
-          if (fa.field == "without" && is_map(rcv)) {
-            if (idx == 0) {
-              return rcv;
-            }
-            return ty_i32();
-          }
-          if (!ty_is_unknown(rcv)) {
-            let mfi: i32 = 0;
-            while (mfi < s.funcs.len()) {
-              if (s.funcs[mfi].name == fa.field && ty_eq(struct_local_tag(s.funcs[mfi].receiver_type, s), rcv)) {
-                return tuple_ret_tag_at(s.funcs[mfi].ret_type, idx);
-              }
-              mfi = mfi + 1;
-            }
-          }
-        },
-        _ => {}
-      }
-    },
-    _ => {}
   }
   return ty_i32();
 }
@@ -8844,49 +8529,6 @@ pub function escape_for_ascii(s: string): string {
     i = i + 1;
   }
   return string_from_bytes_unchecked(out);
-}
-
-pub function is_value_fn_name(s: EmitState, name: string): boolean {
-  let fi: i32 = 0;
-  while (fi < s.funcs.len()) {
-    if (s.funcs[fi].name == name && s.funcs[fi].receiver_type.len() == 0) {
-      return true;
-    }
-    fi = fi + 1;
-  }
-  return false;
-}
-
-pub function callee_param_is_fn(s: EmitState, name: string, idx: i32): boolean {
-  // Match receiver methods as well as free functions so
-  // `f.bench("…", n, my_workload)` boxes `my_workload` the same way
-  // a free-fn call does. See asm.fern.
-  let fi: i32 = 0;
-  while (fi < s.funcs.len()) {
-    if (s.funcs[fi].name == name) {
-      if (idx < s.funcs[fi].params.len()
-        && s.funcs[fi].params[idx].type_name == "fn") {
-        return true;
-      }
-    }
-    fi = fi + 1;
-  }
-  return false;
-}
-
-pub function arg_fn_value_name(arg: ast.Expr, callee: string, idx: i32, s: EmitState): string {
-  match (arg) {
-    ast.ExprIdent(id) => {
-      if (callee_param_is_fn(s, callee, idx) && is_value_fn_name(s, id.name)) {
-        return id.name;
-      }
-      return "";
-    },
-    _ => {
-      return "";
-    }
-  }
-  return "";
 }
 
 pub function has_main(mod: parser.Module): boolean {

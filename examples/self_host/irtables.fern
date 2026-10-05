@@ -481,9 +481,8 @@ pub function tuple_type_elem_tag(t: string, n: i32): string {
 }
 
 // is_enum_like_name reports whether type name `t` denotes a (nominal) enum:
-// not a primitive, struct, array, or bracketed/tuple generic. Mirrors the AST
-// emitter's is_enum_recv heuristic (asmcore.is_enum_recv) — a bare nominal that
-// isn't anything else is an enum. Used to carry an enum-typed local / param /
+// not a primitive, struct, array, or bracketed/tuple generic — a bare nominal
+// that isn't anything else is an enum. Used to carry an enum-typed local / param /
 // receiver's type name in local_struct_type, so `x.method()` on an enum value
 // dispatches to `<Enum>.<method>` (the enum-receiver-method path).
 //
@@ -1517,7 +1516,7 @@ pub function reclaim_site_key_of(name: string, line: i32, col: i32): string {
 // was a live miscompile rather than a latent one. The copy this replaces counted
 // `let` declarations only: it did not read `for` binders, match payload binders,
 // or the comma-joined destructure form. try_lift_binding uses the count to
-// refuse the lambda lift when a name means two things, and subst_fcall_expr
+// refuse the lambda lift when a name means two things, and subst_fcall_stmts
 // rewrites `f(…)` inside `for` and `match` bodies — so a `for f in fns` over a
 // lifted `f` counted 1, the lift proceeded, and every element's call was
 // rewritten to the hoisted body. Measured 35 against the interpreter's 99.

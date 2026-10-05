@@ -698,7 +698,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Multi-payload variants (S4): a case carries >1 payload, stored at
 		// successive 4-byte slots and bound by a multi-binding match `V(a, b, …)`.
 		// The parser keeps every payload (`__ev`, `__ev1`, …); the checker's E015
-		// allows the matching arity; codegen binds each field at struct_field_off(j).
+		// allows the matching arity; codegen binds each field by position.
 		{"enum-multi-payload-2", "enum Ev { Pair(i32, i32), Single(i32), Stop } function main(): i32 { let p: Ev = Pair(3, 4); match (p) { Pair(a, b) => { return a * 10 + b; }, Single(x) => { return x; }, Stop => { return 0; } } return 0; }", 34, ""},
 		{"enum-multi-payload-3", "enum T3 { Tri(i32, i32, i32), Z } function main(): i32 { let t: T3 = Tri(1, 2, 3); match (t) { Tri(a, b, c) => { return a * 100 + b * 10 + c; }, Z => { return 0; } } return 0; }", 123, ""},
 		{"enum-multi-payload-second-arm", "enum Ev { Pair(i32, i32), Single(i32), Stop } function main(): i32 { let p: Ev = Single(9); match (p) { Pair(a, b) => { return a + b; }, Single(x) => { return x * 5; }, Stop => { return 0; } } return 0; }", 45, ""},
