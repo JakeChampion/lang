@@ -141,6 +141,13 @@ The seeded flag is what `reduce` has instead of `z`, and it costs one
 `i1` in the loop rather than an allocation. The `Option` is built in
 `finish`, once — O(1), not per element.
 
+When no stage can skip an element, both compilers instead test for an empty
+input, run the map fragments on element zero to seed the accumulator, and
+start the loop at element one. That removes the arrival flag from the loop.
+Empty input still returns `None`, and a singleton never calls the combining
+function. A chain containing a filter retains the flag because its first
+arriving element is not known in advance.
+
 `reduce` is where `docs/ARRAY-ALGEBRA.md` §3 binds: `h` is applied in
 index order and the fragments above do not license any other order. A
 tree reduction is a different `step`/`finish` pair and needs the
@@ -266,6 +273,10 @@ closure constants are then removed before ownership and register planning.
 `TestSelfHostClosureInlineAdmission` checks these proof boundaries and verifies
 the resulting typed graphs. `TestSelfHostArrayFusionUsesKnownCallbackBodies`
 checks emitted dispatch and executes the value fixture.
+It also requires a single bound test in each emitted map-only reduction loop.
+`TestSelfHostArrayFusionSeededReductionBits` checks empty and singleton inputs,
+captured map callbacks and index-order floating arithmetic on all three targets.
+Arithmetic NaNs follow FS-04; other result bits remain exact.
 
 Primary runtime parity remains open. On Apple M3 Pro arm64-darwin, 2026-10-05,
 nine alternating runs of the existing 2,000-element benchmarks gave these
@@ -292,6 +303,14 @@ establish parity. Pipelines make one allocator call per round for `Some`;
 controls make none. Both have zero steady fresh bytes. The dispatch explanation
 and September timing results below describe the Go compiler and do not
 establish primary parity.
+
+Peeling the first mapped element removes the per-iteration arrival test in
+the primary compiler too. A subsequent run with the same pilot and measurement
+protocol measured map.map.reduce at 7,316 ns (7,047-11,208), versus 7,782 ns
+(7,386-7,901) before peeling and 7,173 ns (6,997-8,520) for the handwritten
+control. The unchanged filtered pipeline measured 2,558 ns (2,508-2,806),
+with a 2,421 ns (2,350-2,642) control. Allocation counts and checksums were
+unchanged. These overlapping ranges do not establish runtime parity.
 
 Clause 1's second half — "no unspecialised calls per element" — holds, and it
 is not something this pass does by itself. Fusion runs FIRST in

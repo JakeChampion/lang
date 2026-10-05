@@ -678,7 +678,7 @@ function steps(f: ssasem.Func, c: Chain, s: Build, l: Loop, e: i32): Stepped {
 function sink_step(c: Chain, combine: i32, t: typeinfo.Type, st: Stepped, yes: i32): Stepped {
   let s: Build = st.s;
   let l: Loop = st.l;
-  if (c.verb == "fold") {
+  if (c.verb == "fold" || l.seen < 0) {
     let a: Emitted = emit(s, ssasem.call_value(), t, [combine, l.acc, st.e], 0, "");
     return Stepped { s: close(a.s, br(l.head)), l: back(l, a.s.id, a.v, l.seen), e: st.e };
   }
@@ -734,22 +734,28 @@ function header(s: Build, l: Loop, entry: i32, start: i32, init: i32, unseen: i3
   return Build { ...s, blocks: s.blocks.with(at, full) };
 }
 
-struct Opened { s: Build, l: Loop, init: i32, unseen: i32, yes: i32, start: i32 }
+struct Opened { s: Build, l: Loop, init: i32, unseen: i32, yes: i32, start: i32, entry: i32 }
 
-// What runs once before the loop: the length, read once since the array is a
-// value nothing in the loop can replace, the cursor at zero, and the seed.
+// What runs once before the loop: the invariant length, cursor and seed.
+// A peeled reduction starts at one; other sinks start at zero.
 // Test the cursor before advancing it in the body. The dominating bound also
 // proves the increment cannot overflow, which the physical SSA pass uses to
 // remove the redundant signed32 wrap without changing integer semantics.
-function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type): Opened {
+function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i32): Opened {
   let i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
   let bool_t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
   let n: Emitted = emit(s, ssasem.length(), i32t, [c.base], 0, "");
-  let start: Emitted = emit(n.s, 1, i32t, [], 0, "");
+  let first: i32 = 0;
+  if (seed >= 0) {
+    first = 1;
+  }
+  let start: Emitted = emit(n.s, 1, i32t, [], first, "");
   s = start.s;
   let sink: ssa.SInst = f.graph.blocks[c.block].insts[c.sink];
-  let o: Opened = Opened { s: s, l: Loop { head: 0, i: 0, acc: 0, seen: 0 - 1, next_i: 0, backs: [], accs: [], seens: [] }, init: 0, unseen: 0 - 1, yes: 0 - 1, start: start.v };
-  if (c.verb == "fold") {
+  let o: Opened = Opened { s: s, l: Loop { head: 0, i: 0, acc: 0, seen: 0 - 1, next_i: 0, backs: [], accs: [], seens: [] }, init: 0, unseen: 0 - 1, yes: 0 - 1, start: start.v, entry: s.id };
+  if (seed >= 0) {
+    o = Opened { ...o, init: seed };
+  } else if (c.verb == "fold") {
     o = Opened { ...o, init: sink.args[1] };
   } else {
     let z: Emitted = emit(s, ssasem.zero(), acc_t, [], 0, "");
@@ -761,7 +767,7 @@ function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type): Opened
   let head: i32 = s.next;
   let l: Loop = Loop { ...o.l, head: head, i: s.values.len(), acc: s.values.len() + 1 };
   s = Build { ...fresh(s, 3), values: s.values.append(i32t).append(acc_t) };
-  if (c.verb == "reduce") {
+  if (c.verb == "reduce" && seed < 0) {
     l = Loop { ...l, seen: s.values.len() };
     s = Build { ...s, values: s.values.append(bool_t) };
   }
@@ -771,6 +777,41 @@ function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type): Opened
   let one: Emitted = emit(open(s, head + 1, [head]), 1, i32t, [], 1, "");
   let step: Emitted = emit(one.s, 9, i32t, [l.i, one.v], 0, "+");
   return Opened { ...o, s: step.s, l: Loop { ...l, next_i: step.v } };
+}
+
+// A reduction whose stages cannot skip is seeded from index zero, behind a
+// non-empty guard. The same stage fragments run there and in the loop; the
+// combining callback runs only in the loop. Filters retain the arrival flag.
+struct Peeled { s: Build, seed: i32, empty: i32, none: i32, join: i32 }
+
+function peel_seed(f: ssasem.Func, c: Chain, s: Build): Peeled {
+  let out: Peeled = Peeled { s: s, seed: 0 - 1, empty: 0 - 1, none: 0 - 1, join: 0 - 1 };
+  if (c.verb != "reduce" || util.has_str(c.verbs, "filter")) {
+    return out;
+  }
+  let i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+  let n: Emitted = emit(s, ssasem.length(), i32t, [c.base], 0, "");
+  let zero: Emitted = emit(n.s, 1, i32t, [], 0, "");
+  let nonempty: Emitted = emit(zero.s, 9, typeinfo.TypeBool { tag: 0 }, [n.v, zero.v], 0, ">");
+  let from: i32 = s.id;
+  let empty: i32 = s.next;
+  s = close(fresh(nonempty.s, 3), brif(nonempty.v, empty + 1, empty));
+  let result: i32 = f.graph.blocks[c.block].insts[c.sink].result;
+  let none: Emitted = emit(open(s, empty, [from]), ssasem.variant_new(), f.values[result], [], 0, "None");
+  s = open(close(none.s, br(empty + 2)), empty + 1, [from]);
+  let value: Emitted = emit(s, ssasem.array_get(), element(f.values[c.base]), [c.base, zero.v], 1, "");
+  let no_loop: Loop = Loop { head: 0 - 1, i: 0 - 1, acc: 0 - 1, seen: 0 - 1, next_i: 0 - 1, backs: [], accs: [], seens: [] };
+  let st: Stepped = steps(f, c, value.s, no_loop, value.v);
+  return Peeled { s: st.s, seed: st.e, empty: empty, none: none.v, join: empty + 2 };
+}
+
+function finish_seeded(f: ssasem.Func, c: Chain, s: Build, l: Loop, p: Peeled, result: i32): Build {
+  if (p.seed < 0) {
+    return finish(f, c, s, l, result);
+  }
+  let some: Emitted = emit(s, ssasem.variant_new(), f.values[result], [l.acc], 0, "Some");
+  let from: i32 = s.id;
+  return emit_at(open(close(some.s, br(p.join)), p.join, [p.empty, from]), 8, [p.none, some.v], result);
 }
 
 // Replaces the chain with one loop. The block holding it is split: what came
@@ -786,17 +827,18 @@ function fuse(f: ssasem.Func, c: Chain): ssasem.Func {
     acc_t = element(f.values[sink.args[0]]);
   }
   let s: Build = Build { values: f.values, blocks: [], id: b.id, preds: b.preds, insts: kept_before(b, c), next: next_block_id(g) };
-  let o: Opened = enter(f, c, s, acc_t);
+  let peeled: Peeled = peel_seed(f, c, s);
+  let o: Opened = enter(f, c, peeled.s, acc_t, peeled.seed);
   let fetched: Emitted = emit(o.s, ssasem.array_get(), element(f.values[c.base]), [c.base, o.l.i], 1, "");
   let st: Stepped = steps(f, c, fetched.s, o.l, fetched.v);
   st = sink_step(c, sink.args[sink.args.len() - 1], acc_t, st, o.yes);
-  s = finish(f, c, open(st.s, o.l.head + 2, [o.l.head]), st.l, sink.result);
+  s = finish_seeded(f, c, open(st.s, o.l.head + 2, [o.l.head]), st.l, peeled, sink.result);
   let p: i32 = c.sink + 1;
   while (p < b.insts.len()) {
     s = Build { ...s, insts: s.insts.append(b.insts[p]) };
     p = p + 1;
   }
-  s = header(close(s, b.term), st.l, b.id, o.start, o.init, o.unseen);
+  s = header(close(s, b.term), st.l, o.entry, o.start, o.init, o.unseen);
   let graph: ssa.SFunc = ssa.SFunc { ...g, blocks: spliced(g, c.block, s.blocks), nvals: s.values.len() };
   let gone: string[] = [sink.str];
   for at in c.stages {

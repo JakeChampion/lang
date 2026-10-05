@@ -40,10 +40,51 @@ function fusion_scale(x: i64): i64 { return x * fusion_three(); }
 			if name == "via_map_fold" && strings.Contains(body, "__fern_arr_dec") {
 				t.Fatalf("inlined scalar callbacks still retain closure cleanup:\n%s", body)
 			}
+			if name == "via_map_map_reduce" || name == "via_order_sensitive" {
+				assertSeededReductionLoop(t, body)
+			}
 		})
 	}
 	bin := buildBin(t, gcc, dir, "fusion-dispatch", asm)
 	if out, err := runX86_64Bin(runner, bin).CombinedOutput(); err != nil {
 		t.Fatalf("fused direct callbacks: %v\n%s", err, out)
+	}
+}
+
+// The map-only reduction must have one loop with only its bound test. A
+// per-element first-arrival flag adds a second conditional branch; a call to
+// the unfused combinator leaves no loop here. Check both to avoid a vacuous pass.
+func assertSeededReductionLoop(t *testing.T, body string) {
+	t.Helper()
+	lines := strings.Split(body, "\n")
+	labels := map[string]int{}
+	loops := 0
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasSuffix(line, ":") {
+			labels[strings.TrimSuffix(line, ":")] = i
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 || !strings.HasPrefix(fields[0], "j") {
+			continue
+		}
+		start, backward := labels[fields[1]]
+		if !backward {
+			continue
+		}
+		loops++
+		tests := 0
+		for _, instruction := range lines[start : i+1] {
+			op := strings.Fields(instruction)
+			if len(op) == 2 && strings.HasPrefix(op[0], "j") && op[0] != "jmp" {
+				tests++
+			}
+		}
+		if tests != 1 {
+			t.Fatalf("seeded reduction loop has %d conditional branches, want only the bound test:\n%s", tests, body)
+		}
+	}
+	if loops != 1 {
+		t.Fatalf("seeded reduction has %d emitted loops, want one:\n%s", loops, body)
 	}
 }
