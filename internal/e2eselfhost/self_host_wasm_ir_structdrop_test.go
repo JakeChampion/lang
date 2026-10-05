@@ -16,6 +16,7 @@ import (
 // `(func $__sem_release_<T>` DEFINITION (not just the call) and that the module
 // runs to the expected exit code.
 func TestSelfHostWasmIRStructDropEmitted(t *testing.T) {
+	boxedProbes(t)
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm IR struct-drop e2e")
 	}

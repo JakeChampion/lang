@@ -3,10 +3,10 @@
 //
 // A function that reaches `__task_park` through direct calls is suspendable.
 // Its body is rewritten so that, when the park unwinds (task mode 1), every
-// frame on the way out saves its locals and the index of the call it was at
-// to the task's save area and returns a dummy, and when the scheduler runs
-// the task again (mode 2) every frame restores its locals, skips to that
-// call, and makes it again. The rewrite is the structured one: the block,
+// frame on the way out saves the locals the rest of the body reads and the
+// index of the call it was at to the task's save area and returns a dummy,
+// and when the scheduler runs the task again (mode 2) every frame restores
+// those locals, skips to that call, and makes it again. The rewrite is the structured one: the block,
 // loop and if skeleton stands, straight-line segments run only in normal
 // mode, an if's condition is routed toward the arm holding the target call
 // while rewinding, and a call site runs in normal mode or when it is the
@@ -167,9 +167,8 @@ function is_site(o: ir.Op, set: Set): boolean {
 // call index, -1 in normal mode, and the scratch an if's condition is routed
 // through), the per-op tables the structure needs, per open scope the
 // producers of the values held on the operand stack under it (which run
-// again after its end), and the spill slots the pass took: `tmps` the
-// classes of the ones this run has taken, `given` the full list a previous
-// run found, which the save and restore loops cover.
+// again after its end), the classes of the spill slots the pass took, the
+// slot liveness (live_in), and per site so far the slots it saves.
 struct Tx {
   out: ir.Op[],
   seg: ir.Op[],
@@ -180,45 +179,36 @@ struct Tx {
   end_of: i32[],
   carry: ir.Op[][],
   tmps: string[],
-  given: string[],
+  live: i32[],
+  saves: i32[][],
   why: string,
 }
 
 // transform rewrites one suspendable function's body. `r` is the lowering's
 // result before the peepholes. A value held on the operand stack across a
 // call site, a condition or a scope whose producer is not a pure value op is
-// spilled to a slot the pass adds; the slots are known only once the body
-// has been walked, so a body that needs any is walked twice, the second time
-// with the save and restore loops covering them.
+// spilled to a slot the pass adds.
 pub function transform(r: irtables.LowerResult, set: Set): irtables.LowerResult {
-  let no: string[] = [];
-  let first: Tx = run(r, set, no);
-  if (first.why != "") {
-    return irtables.LowerResult { ...r, ok: false, why: first.why };
-  }
-  if (first.tmps.len() == 0) {
-    return irtables.LowerResult { ...r, ops: first.out, n_locals: r.n_locals + 2 };
-  }
-  let again: Tx = run(r, set, first.tmps);
-  if (again.why != "") {
-    return irtables.LowerResult { ...r, ok: false, why: again.why };
+  let t: Tx = run(r, set);
+  if (t.why != "") {
+    return irtables.LowerResult { ...r, ok: false, why: t.why };
   }
   let i64s: i32[] = r.i64_slots;
   let f64s: i32[] = r.f64_slots;
   let j: i32 = 0;
-  while (j < again.tmps.len()) {
-    if (again.tmps[j] == "i64") {
+  while (j < t.tmps.len()) {
+    if (t.tmps[j] == "i64") {
       i64s = i64s.append(r.n_locals + 2 + j);
     }
-    if (again.tmps[j] == "f64") {
+    if (t.tmps[j] == "f64") {
       f64s = f64s.append(r.n_locals + 2 + j);
     }
     j = j + 1;
   }
-  return irtables.LowerResult { ...r, ops: again.out, n_locals: r.n_locals + 2 + again.tmps.len(), i64_slots: i64s, f64_slots: f64s };
+  return irtables.LowerResult { ...r, ops: t.out, n_locals: r.n_locals + 2 + t.tmps.len(), i64_slots: i64s, f64_slots: f64s };
 }
 
-function run(r: irtables.LowerResult, set: Set, given: string[]): Tx {
+function run(r: irtables.LowerResult, set: Set): Tx {
   let ops: ir.Op[] = r.ops;
   let n: i32 = ops.len();
   // Site numbering: before[i] is how many sites precede op i, so a range of
@@ -233,7 +223,7 @@ function run(r: irtables.LowerResult, set: Set, given: string[]): Tx {
     }
     i = i + 1;
   }
-  let t: Tx = Tx { out: [], seg: [], ci: r.n_locals, tc: r.n_locals + 1, before: before, else_of: [], end_of: [], carry: [], tmps: [], given: given, why: "" };
+  let t: Tx = Tx { out: [], seg: [], ci: r.n_locals, tc: r.n_locals + 1, before: before, else_of: [], end_of: [], carry: [], tmps: [], live: [], saves: [], why: "" };
   if (count == 0) {
     return Tx { ...t, out: ops };
   }
@@ -261,8 +251,7 @@ function run(r: irtables.LowerResult, set: Set, given: string[]): Tx {
     }
     i = i + 1;
   }
-  t = Tx { ...t, else_of: else_of, end_of: end_of };
-  t = prologue(t, r);
+  t = Tx { ...t, else_of: else_of, end_of: end_of, live: live_in(ops, else_of, end_of, r.n_locals) };
   i = 0;
   while (i < n && t.why == "") {
     let o: ir.Op = ops[i];
@@ -295,7 +284,8 @@ function run(r: irtables.LowerResult, set: Set, given: string[]): Tx {
   if (t.why != "") {
     return t;
   }
-  return flush(t);
+  t = flush(t);
+  return Tx { ...t, out: util.append_all(prologue(t, r), t.out) };
 }
 
 // The op index where an if's then-arm ends: its else, or its end.
@@ -349,48 +339,39 @@ function ends_control(seg: ir.Op[]): boolean {
 
 // The slots a frame saves, in the order they are pushed: the body's own,
 // then the spill slots.
-function saved_slots(t: Tx, r: irtables.LowerResult): i32[] {
-  let out: i32[] = [];
-  let s: i32 = 0;
-  while (s < r.n_locals + 2 + t.given.len()) {
-    if (s != t.ci && s != t.tc) {
-      out = out.append(s);
-    }
-    s = s + 1;
-  }
-  return out;
-}
-
-// The prologue: a rewinding frame takes its call index and its locals back
-// from the save area, the others start in normal mode.
-function prologue(t: Tx, r: irtables.LowerResult): Tx {
+// The prologue: a rewinding frame takes its call index back from the save
+// area and then the locals that site saved, the others start in normal mode.
+function prologue(t: Tx, r: irtables.LowerResult): ir.Op[] {
   let out: ir.Op[] = [ir.op_call_direct("__fern_task_mode", 0), ir.op_const_i32(2), ir.op_bin("eq", 0, false), ir.op_if(0)];
   out = out.append(ir.op_call_direct("__fern_task_pop_w", 0));
   out = out.append(ir.op_store_local(t.ci));
-  let slots: i32[] = saved_slots(t, r);
-  let i: i32 = slots.len() - 1;
-  while (i >= 0) {
-    out = out.append(ir.op_call_direct("__fern_task_pop_" + slot_class(t, r, slots[i]), 0));
-    out = out.append(ir.op_store_local(slots[i]));
-    i = i - 1;
+  let k: i32 = 0;
+  while (k < t.saves.len()) {
+    let slots: i32[] = t.saves[k];
+    if (slots.len() > 0) {
+      out = util.append_all(out, [ir.op_load_local(t.ci), ir.op_const_i32(k), ir.op_bin("eq", 0, false), ir.op_if(0)]);
+      let i: i32 = slots.len() - 1;
+      while (i >= 0) {
+        out = out.append(ir.op_call_direct("__fern_task_pop_" + slot_class(t, r, slots[i]), 0));
+        out = out.append(ir.op_store_local(slots[i]));
+        i = i - 1;
+      }
+      out = out.append(ir.op_end());
+    }
+    k = k + 1;
   }
   out = out.append(ir.op_else());
   out = out.append(ir.op_const_i32(0 - 1));
   out = out.append(ir.op_store_local(t.ci));
   out = out.append(ir.op_end());
-  return Tx { ...t, out: out };
+  return out;
 }
 
 // The save-area class of a slot: the lowering's i64 and f64 slot lists for
-// the body's own, the class a spill slot was taken with (this run's own
-// list while the slot is in it, the previous run's for the rest).
+// the body's own, the class a spill slot was taken with.
 function slot_class(t: Tx, r: irtables.LowerResult, s: i32): string {
   if (s >= r.n_locals + 2) {
-    let j: i32 = s - r.n_locals - 2;
-    if (j < t.tmps.len()) {
-      return t.tmps[j];
-    }
-    return t.given[j];
+    return t.tmps[s - r.n_locals - 2];
   }
   if (util.index_of_i32(r.i64_slots, s) >= 0) {
     return "i64";
@@ -435,9 +416,10 @@ function site(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32, k
   out = out.append(ir.op_const_i32(0 - 1));
   out = out.append(ir.op_store_local(t2.ci));
   out = out.append(ir.op_end());
-  // Unwinding: save every slot, then this site's index, and leave.
+  // Unwinding: save what the rewind reads, then this site's index, and leave.
+  let saved: i32[] = site_saves(t2, r, at, call, util.append_all(args, c.carried));
   out = util.append_all(out, [ir.op_call_direct("__fern_task_mode", 0), ir.op_const_i32(1), ir.op_bin("eq", 0, false), ir.op_if(0)]);
-  for s in saved_slots(t2, r) {
+  for s in saved {
     out = out.append(ir.op_load_local(s));
     out = out.append(ir.op_call_direct("__fern_task_push_" + slot_class(t2, r, s), 1));
     out = out.append(ir.op_drop());
@@ -448,7 +430,194 @@ function site(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32, k
   out = out.append(dummy(r));
   out = out.append(ir.op_return());
   out = out.append(ir.op_end());
-  return Tx { ...t2, out: out, seg: c.carried };
+  return Tx { ...t2, out: out, seg: c.carried, saves: t2.saves.append(saved) };
+}
+
+// site_saves is the slots a site at op `at` saves, ascending: the ones live
+// after its result's store, the ones the call itself reads, and the ones
+// loaded by what the rewind runs again before or after it — its arguments,
+// the values carried past it, and those carried past every open scope.
+function site_saves(t: Tx, r: irtables.LowerResult, at: i32, call: ir.Op, again: ir.Op[]): i32[] {
+  let n: i32 = r.n_locals + 2 + t.tmps.len();
+  let keep: boolean[] = [];
+  let s: i32 = 0;
+  while (s < n) {
+    keep = keep.append(s < r.n_locals && has_bit(t.live, (at + 1) * words(r.n_locals), s));
+    s = s + 1;
+  }
+  keep = mark_reads(keep, [call]);
+  keep = mark_reads(keep, again);
+  for held in t.carry {
+    keep = mark_reads(keep, held);
+  }
+  let out: i32[] = [];
+  s = 0;
+  while (s < n) {
+    if (keep[s] && s != t.ci && s != t.tc) {
+      out = out.append(s);
+    }
+    s = s + 1;
+  }
+  return out;
+}
+
+function mark_reads(own keep: boolean[], ops: ir.Op[]): boolean[] {
+  for o in ops {
+    let lo: i32 = read_lo(o);
+    let hi: i32 = lo + read_count(o);
+    while (lo < hi) {
+      if (lo < keep.len()) {
+        keep = keep.with(lo, true);
+      }
+      lo = lo + 1;
+    }
+  }
+  return keep;
+}
+
+// The slots an op reads are read_count(o) from read_lo(o): a load's one, a
+// dyn dispatch's receiver and arguments.
+function read_lo(o: ir.Op): i32 {
+  return o.i32_imm;
+}
+
+function read_count(o: ir.Op): i32 {
+  if (o.kind_tag == 18) {
+    return 1;
+  }
+  if (o.kind_tag == 147) {
+    return o.width;
+  }
+  return 0;
+}
+
+function words(n_slots: i32): i32 {
+  return (n_slots + 31) / 32;
+}
+
+function has_bit(bits: i32[], base: i32, s: i32): boolean {
+  return (bits[base + s / 32] & 1 << s % 32) != 0;
+}
+
+// live_in is the body's slot liveness: for op i, from i * words(n_slots),
+// the bit set of the slots some path from op i reads before writing. Entry
+// ops.len() is the exit, where nothing is live.
+function live_in(ops: ir.Op[], else_of: i32[], end_of: i32[], n_slots: i32): i32[] {
+  let n: i32 = ops.len();
+  let w: i32 = words(n_slots);
+  let f: Flow = flow(ops, else_of, end_of);
+  let live: i32[] = [];
+  let i: i32 = 0;
+  while (i < (n + 1) * w) {
+    live = live.append(0);
+    i = i + 1;
+  }
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    i = n - 1;
+    while (i >= 0) {
+      let j: i32 = 0;
+      while (j < w) {
+        let after: i32 = live[f.next[i] * w + j];
+        if (f.jump[i] >= 0) {
+          after = after | live[f.jump[i] * w + j];
+        }
+        let v: i32 = live_word(ops[i], j, after);
+        if (v != live[i * w + j]) {
+          live = live.with(i * w + j, v);
+          changed = true;
+        }
+        j = j + 1;
+      }
+      i = i - 1;
+    }
+  }
+  return live;
+}
+
+// live_word is word `j` of the slots live before `o`, from those live after.
+function live_word(o: ir.Op, j: i32, after: i32): i32 {
+  let v: i32 = after;
+  if ((o.kind_tag == 19 || o.kind_tag == 20) && o.i32_imm / 32 == j) {
+    v = v & (0 - 1 ^ 1 << o.i32_imm % 32);
+  }
+  let s: i32 = read_lo(o);
+  let hi: i32 = s + read_count(o);
+  while (s < hi) {
+    if (s / 32 == j) {
+      v = v | 1 << s % 32;
+    }
+    s = s + 1;
+  }
+  return v;
+}
+
+// Flow is each op's successors: the op control reaches next, and the other
+// one a conditional branch or an if may reach, -1 for none.
+struct Flow { next: i32[], jump: i32[] }
+
+function flow(ops: ir.Op[], else_of: i32[], end_of: i32[]): Flow {
+  let next: i32[] = [];
+  let jump: i32[] = [];
+  let open: i32[] = [];
+  let i: i32 = 0;
+  while (i < ops.len()) {
+    next = next.append(next_op(ops, i, open, end_of));
+    jump = jump.append(jump_op(ops, i, open, else_of, end_of));
+    let k: i32 = ops[i].kind_tag;
+    if (k == 152 || k == 153 || k == 154) {
+      open = open.append(i);
+    } else if (k == 156) {
+      open = sub_i32(open, 0, open.len() - 1);
+    }
+    i = i + 1;
+  }
+  return Flow { next: next, jump: jump };
+}
+
+// next_op is where control goes after op `at` falls through or branches;
+// `open` holds the openers of the scopes around it.
+function next_op(ops: ir.Op[], at: i32, open: i32[], end_of: i32[]): i32 {
+  let k: i32 = ops[at].kind_tag;
+  if (k == 157) {
+    return branch_target(ops, open, end_of, ops[at].i32_imm, ops.len());
+  }
+  if (k == ir.kind_id("return") || k == ir.kind_id("exit")) {
+    return ops.len();
+  }
+  if (k == 155) {
+    return end_of[open[open.len() - 1]];
+  }
+  return at + 1;
+}
+
+// jump_op is a brif's target and an if's else arm or end, -1 for any other.
+function jump_op(ops: ir.Op[], at: i32, open: i32[], else_of: i32[], end_of: i32[]): i32 {
+  let k: i32 = ops[at].kind_tag;
+  if (k == 158) {
+    return branch_target(ops, open, end_of, ops[at].i32_imm, ops.len());
+  }
+  if (k != 154) {
+    return 0 - 1;
+  }
+  if (else_of[at] >= 0) {
+    return else_of[at] + 1;
+  }
+  return end_of[at];
+}
+
+// branch_target is where a branch `depth` scopes out goes: a loop's head, or
+// past a block's or an if's end; out of every scope is the exit.
+function branch_target(ops: ir.Op[], open: i32[], end_of: i32[], depth: i32, n: i32): i32 {
+  if (depth >= open.len()) {
+    return n;
+  }
+  let opener: i32 = open[open.len() - 1 - depth];
+  if (ops[opener].kind_tag == 153) {
+    return opener;
+  }
+  return end_of[opener];
 }
 
 // Carried is carry_out's answer: the segment to guard, which now ends with

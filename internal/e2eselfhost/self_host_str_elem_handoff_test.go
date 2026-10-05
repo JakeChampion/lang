@@ -51,7 +51,7 @@ function split(enc: string): string[] {
   return out;
 }
 
-function bind_names(out: Sc, names: string[]): Sc {
+@noinline function bind_names(out: Sc, names: string[]): Sc {
   let i: i32 = 0;
   while (i < names.len()) {
     let nm: string = names[i];

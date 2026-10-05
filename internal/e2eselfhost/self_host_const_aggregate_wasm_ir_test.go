@@ -101,6 +101,7 @@ var constAggWasmCases = []struct {
 // wasm IR driver and asserts the emitted region shape, the placement of `$heap`
 // above it, and the runtime exit code under wasmtime.
 func TestSelfHostConstAggregateWasmIR(t *testing.T) {
+	boxedProbes(t)
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host const-aggregate wasm IR e2e")
 	}

@@ -1,6 +1,9 @@
 package e2eselfhost
 
-import "bytes"
+import (
+	"bytes"
+	"testing"
+)
 
 // countUserCalls counts `call <callee>` sites in the self-host driver's
 // emitted asm, EXCLUDING the bodies of the bundled runtime helpers (label
@@ -48,20 +51,27 @@ func isFunctionLabel(line, trimmed []byte) bool {
 // `__fn_<fn>`, for a contract about where a release lands rather than whether
 // the program contains one at all. A caller-side reclaim and a callee-side one
 // are different verdicts, and a whole-output count cannot tell them apart.
-func countCallsInFn(asm []byte, fn string, callee string) int {
+// A function the asm does not define fails the test: its count would read 0
+// whatever the contract.
+func countCallsInFn(t testing.TB, asm []byte, fn string, callee string) int {
+	t.Helper()
 	needle := []byte("call " + callee)
 	label := []byte("__fn_" + fn + ":")
 	count := 0
-	inFn := false
+	inFn, found := false, false
 	for _, line := range bytes.Split(asm, []byte("\n")) {
 		trimmed := bytes.TrimSpace(line)
 		if isFunctionLabel(line, trimmed) {
 			inFn = bytes.Equal(trimmed, label)
+			found = found || inFn
 			continue
 		}
 		if inFn && bytes.Contains(line, needle) {
 			count++
 		}
+	}
+	if !found {
+		t.Fatalf("the asm defines no __fn_%s to count calls in", fn)
 	}
 	return count
 }

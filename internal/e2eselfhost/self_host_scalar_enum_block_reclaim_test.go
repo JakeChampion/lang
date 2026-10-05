@@ -72,6 +72,7 @@ function main(): i32 {
 // inside a nested block reclaims its box, and a function mixing a top-level and
 // a nested candidate frees exactly what it allocates.
 func TestSelfHostScalarEnumBlockReclaimX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

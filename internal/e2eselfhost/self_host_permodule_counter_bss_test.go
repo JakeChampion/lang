@@ -39,7 +39,7 @@ import (
 // heap — a literal is placed statically — and a zero
 // cliff count — and so a zero cliff WEIGHT — for a program that never appends to
 // a shared buffer).
-const perModuleCounterLibSrc = `pub function probe(): i32 {
+const perModuleCounterLibSrc = `@noinline pub function probe(): i32 {
     let xs: i32[] = [];
     let i: i32 = 1;
     while (i <= 3) { xs = xs.append(i); i = i + 1; }

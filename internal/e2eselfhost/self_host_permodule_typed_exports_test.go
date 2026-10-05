@@ -26,7 +26,7 @@ func TestSelfHostPerModuleTypedHelpersLink(t *testing.T) {
 
 function (s: string) tail(n: i32): str { return slice_unchecked(s, n, s.len()); }
 
-pub function score(words: string[]): i32 {
+@noinline pub function score(words: string[]): i32 {
     let bytes: u8[] = [];
     for w in words { bytes = bytes.append((w.len() + 96) as u8); }
     let head: [u8] = bytes[0:2];

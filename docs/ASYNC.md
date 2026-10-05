@@ -299,7 +299,7 @@ and answers the index of the pair that became ready or -1 at the timeout.
 With no task current it blocks: one `poll` for a read-only set, a reactor
 made for the call otherwise. Under a scheduler it *parks*: the self-host
 compiler lowers every function that reaches the park to a resumable form, so
-the whole call chain above the wait saves its locals and returns to the
+the whole call chain above the wait saves its live locals and returns to the
 scheduler, and runs on from the wait when the scheduler resumes it. Nothing
 is written at the call site: a function that calls `wait_any`, or calls one
 that does, is lowered that way by reachability (`examples/self_host/suspend.fern`).

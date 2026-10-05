@@ -9,8 +9,7 @@ import (
 // physical lowering leaves a closure-slot lookup and indirect call per element.
 func TestSelfHostArrayFusionUsesKnownCallbackBodies(t *testing.T) {
 	gcc, runner, driver := buildModloadDriverX86(t)
-	// The ordinary pass exposes fusion_scale's scalar body, but its initial
-	// candidate table cannot yet inline it into the callback wrapper.
+	// Callback preparation must expose a chain of ordinary scalar helpers.
 	src := strings.Replace(selfHostArrayFusionSrc, "=> x * (3 as i64)", "=> fusion_scale(x)", 1)
 	if src == selfHostArrayFusionSrc {
 		t.Fatal("helper callback fixture was not inserted")
@@ -19,11 +18,16 @@ func TestSelfHostArrayFusionUsesKnownCallbackBodies(t *testing.T) {
 function fusion_three(): i64 { return 3 as i64; }
 function fusion_scale(x: i64): i64 { return x * fusion_three(); }
 `
-	asm, dir := compileSourceModload(t, runner, driver, src)
-	for _, name := range []string{
+	names := []string{
 		"via_map_fold", "via_filter_map_fold", "via_map_map_reduce",
 		"via_order_sensitive", "via_filter_reduce", "via_capture",
-	} {
+	}
+	// Keep each assembly subject separate while allowing its callbacks to inline.
+	for _, name := range names {
+		src = strings.Replace(src, "function "+name+"(", "@noinline function "+name+"(", 1)
+	}
+	asm, dir := compileSourceModload(t, runner, driver, src)
+	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
 			body := emittedBody(t, string(asm), "__fn_"+name)
 			if strings.Contains(body, "call *") || strings.Contains(body, "callq *") {

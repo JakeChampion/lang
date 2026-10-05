@@ -50,7 +50,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | Closures / lambdas | Capturing and escaping lambdas and nested named functions | **102**: 88 nested named functions across 7 modules, plus 14 arrow lambdas across 4 modules; deleting the AST lowering took irlower's lowering visitors with it, trimming FnSigs one more, deleting uncalled functions five more, and deleting fnsigs.fern seventeen. Scalar identifier counting adds three visitors that capture the queried name; the checker's value-block return walk (#9828) adds one arrow callback; wasm_ir's gate for the `scale_f64` kernel adds one op predicate; the AST lowering's cell-read desugar (#9320) added one arrow visitor; the checker's unannotated-lambda exit walk (#9518) adds one arrow callback; the AST lowering's for-loop admission for an array of structs (#10161) added eight visitors that close over the loop var or the array; its struct alias and parameter-snapshot releases (#10171, #10162) added four that close over the alias or the local; its lent-struct share marking (#10328) added two that close over the lent local; the parser's type-variable respelling (#9577) adds two arrow visitors that close over a declaration's variables; the checker's instantiation re-check (#10018) adds three that close over a scope; the AST lowering's `own` array alias (#10357) added one that closes over the name it looks for; its closure-payload arm bindings (#9841) added two that close over the binding; its conditional-leaf credit view (#10570) added one arrow visitor that closes over the local a conditional yields. wasm_ir's packed u8[] helper gates (#10987) add two; the `-cover` pass (#11140) adds two that close over its site table and its context; wasm_ir's gate for the task runtime (#9857) adds one op predicate. ircore's scale-map visitor captures the verified stdlib declarations, so a user name cannot establish the kernel contract. | pinned |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **2,026** in 66 modules — `checker.fern`, `parser.fern` and `semsource.fern` carry most of them | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
-| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **17** spellings in 6 modules (`wasm_ir`'s call set, `builtins`' mirror of `JObject`, `printer`'s line-id table for the linear-space diff (#8611), `modloader`'s fact-hash de-duplication set, `seminline`'s ordinary and closure leaf tables, and `ircore`'s unit ownership tables) | pinned |
+| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **12** spellings in 5 modules (`wasm_ir`'s call set, `builtins`' mirror of `JObject`, `printer`'s line-id table for the linear-space diff (#8611), `modloader`'s fact-hash de-duplication set, and `ircore`'s unit-owner tables) | pinned |
 | `astwalk` call sites (walkers on the shared spine) | — | **241** across 21 modules (fnsigs.fern held 25 when it was deleted) — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, `interp.fern`'s cellify scans, `lift.fern`'s cap-type and env-box-lift families, `irtables.fern`'s assign-targets family, `treeshake.fern`'s name collector, and `asmcore.fern`'s P001/P002 pre-check (#6993) | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
@@ -153,11 +153,10 @@ means finishing `str` can never help RC without also un-erasing it.
 Every self-host module imports siblings and `std/io` (which exports exactly two
 functions). Nothing else. The consequences:
 
-- **A compiler that has almost no hash map.** Seventeen `Map[K, V]` spellings in
-  six modules: `wasm_ir`'s call set, `builtins`' mirror of `JObject`,
-  `printer`'s line-id table, `modloader`'s fact-hash de-duplication set,
-  `seminline`'s leaf tables and `ircore`'s unit ownership tables.
-  Other name lookups use a linear
+- **A compiler that has almost no hash map.** Twelve `Map[K, V]` spellings in
+  175k lines, across five modules — `wasm_ir`'s call set, `builtins`' mirror
+  of `JObject`, `printer`'s line-id table, `modloader`'s fact-hash
+  de-duplication set and `ircore`'s unit-owner tables. Everything else is still a linear
   scan over a `string[]` or a hand-rolled bucket table: 290 sites comparing an
   array element to a name, 114 hand-rolled
   `contains`/`index_of`/`find` helpers, and five hand-written hash tables

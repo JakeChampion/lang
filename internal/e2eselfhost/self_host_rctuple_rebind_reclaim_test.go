@@ -31,6 +31,7 @@ function main(): i32 {
 // allocs is the leak this closes, frees ABOVE allocs would mean the assign-site
 // deep drop and the scope-exit sweep both claimed one chain (a double free).
 func TestSelfHostRcTupleRebindReclaimX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

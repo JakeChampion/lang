@@ -7819,10 +7819,11 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		// A view merged past a source that dominates the join stays a view.
 		{"a-view-of-a-dominating-source-is-not-copied", 29, semDominatingViewSource},
 		// A struct taken out of a returned tuple is updated in place while the
-		// tuple's scalar is still to be read: 3 to build, one tuple a round
-		// (#11203; 33 when the tuple kept the struct shared).
-		{"a-tuple-element-is-taken-past-a-later-sibling-read", 13, semTupleElementTakeSource},
-		{"a-destructured-element-is-taken-past-a-later-sibling-read", 13, semTupleDestructureTakeSource},
+		// tuple's scalar is still to be read: the 3 it is built from, the tuple
+		// split into its parts (#11203; 33 when the tuple kept the struct shared,
+		// 13 while each round boxed the tuple).
+		{"a-tuple-element-is-taken-past-a-later-sibling-read", 3, semTupleElementTakeSource},
+		{"a-destructured-element-is-taken-past-a-later-sibling-read", 3, semTupleDestructureTakeSource},
 		// The first field is taken past the second's read of its own field in a
 		// later block: the 4 it is built from (#11204; 14 when the first field
 		// was copied each round).

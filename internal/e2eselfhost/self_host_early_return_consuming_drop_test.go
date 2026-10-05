@@ -200,6 +200,7 @@ function round(i: i32): i32 {
 // with no rc underflow, on the census leg and again under the quarantining
 // allocator.
 func TestSelfHostEarlyReturnConsumingDropX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

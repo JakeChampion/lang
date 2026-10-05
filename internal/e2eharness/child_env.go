@@ -3,6 +3,7 @@ package e2eharness
 import (
 	"os"
 	"strings"
+	"testing"
 )
 
 // ChildEnv builds the environment for a compiler or driver child process:
@@ -33,6 +34,12 @@ import (
 // The polarity is deliberate: a FERN_* variable added later is stripped by
 // default, so a new knob cannot silently start deciding an old test.
 func ChildEnv(extra ...string) []string {
+	return strippedEnv(ProbeEnv(extra...)...)
+}
+
+// strippedEnv is ChildEnv without BoxedProbes' setting, for a build cached
+// by its sources and compiler alone: a probe a test sets must not reach it.
+func strippedEnv(extra ...string) []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		if strings.HasPrefix(kv, "FERN_") {
@@ -41,6 +48,36 @@ func ChildEnv(extra ...string) []string {
 		env = append(env, kv)
 	}
 	return append(env, extra...)
+}
+
+// BoxedProbe compiles with the semantic inliner off, for a probe that pins the
+// rc plan for a tuple, record or variant box the inliner would split into its
+// parts, leaving nothing on the heap to count.
+const BoxedProbe = "FERN_SEM_INLINE="
+
+// boxed is set for the length of a BoxedProbes test.
+var boxed bool
+
+// BoxedProbes compiles the rest of the test's programs as BoxedProbe does,
+// through ChildEnv and through children that inherit the test's environment.
+// The setting is the test's own, so a FERN_SEM_INLINE in the developer's
+// shell still reaches no ChildEnv child. A test calling it pins how the rc
+// plan treats a box the inliner would remove; the default pipeline's
+// correctness on the same shapes is the rc correctness corpus's and the
+// fixture corpus's to gate.
+func BoxedProbes(t testing.TB) {
+	t.Helper()
+	t.Setenv("FERN_SEM_INLINE", "")
+	boxed = true
+	t.Cleanup(func() { boxed = false })
+}
+
+// ProbeEnv is env with BoxedProbe added while a BoxedProbes test runs.
+func ProbeEnv(env ...string) []string {
+	if boxed {
+		return append(env, BoxedProbe)
+	}
+	return env
 }
 
 // SelfHostVerify turns on the self-host compiler's re-checks of its own

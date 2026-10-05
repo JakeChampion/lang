@@ -64,7 +64,7 @@ func TestSelfHostLoopLocalCaptureIRX86_64(t *testing.T) {
 		// loop-local capturing closure in a non-main function (g) — witnesses
 		// the lift is per-function, not main-special.
 		{"for-loop-capture-in-fn",
-			`function g(base: i32): i32 { let xs: i32[] = [1, 2, 3]; let acc: i32 = 0; for x in xs { let f: (i32) => i32 = (n: i32): i32 => { return n + base; }; acc = acc + f(x); } return acc; } function main(): i32 { return g(100) - 300; }`,
+			`@noinline function g(base: i32): i32 { let xs: i32[] = [1, 2, 3]; let acc: i32 = 0; for x in xs { let f: (i32) => i32 = (n: i32): i32 => { return n + base; }; acc = acc + f(x); } return acc; } function main(): i32 { return g(100) - 300; }`,
 			6, ".Lssa_g"},
 	}
 	for _, tc := range cases {

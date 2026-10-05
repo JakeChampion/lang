@@ -127,8 +127,9 @@ func runSemanticProgram(t *testing.T, name, program string, produced []string, w
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
+			// A function spliced into every caller was produced there.
 			for _, fn := range produced {
-				if !strings.Contains(diagnostics.String(), "produced "+fn+"\n") {
+				if !strings.Contains(diagnostics.String(), "produced "+fn+"\n") && !strings.Contains(diagnostics.String(), "spliced "+fn+"\n") {
 					t.Fatalf("%s was not produced:\n%s", fn, diagnostics.String())
 				}
 			}

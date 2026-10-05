@@ -107,6 +107,7 @@ function main(): i32 { let b: string[][] = [[w("a")],[w("b")]]; let t: i32 = 0; 
 // TestSelfHostArrArrProducerX86_64 — a nested array from a local-returning
 // producer is reclaimed, and no same-named sibling inherits its credit.
 func TestSelfHostArrArrProducerX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

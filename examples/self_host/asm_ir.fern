@@ -11853,7 +11853,8 @@ function emit_seccomp_install(s: asmcore.EmitState): asmcore.EmitState {
     exit(3);
     return s;
   }
-  s = s.write("__fern_seccomp_install:\n");
+  // The runtime may have left the stream in a data section.
+  s = s.write("    .section .text\n__fern_seccomp_install:\n");
   // prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0): what lets an unprivileged
   // process install a filter.
   s = s.write("    movq $38, %rdi\n    movq $1, %rsi\n    movq $0, %rdx\n    movq $0, %r10\n    movq $0, %r8\n    movq $157, %rax\n").syscall(157);

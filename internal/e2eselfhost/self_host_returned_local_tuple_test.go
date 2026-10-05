@@ -7,6 +7,7 @@ import "testing"
 // `return t` of a local tuple stranded the array a tuple literal released;
 // the typed lowering reads the callee's return contract and balances both.
 func TestSelfHostReturnedLocalTupleReleasesItsChild(t *testing.T) {
+	boxedProbes(t)
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct{ name, body string }{
 		{"local", "let xs: i32[] = [n];\n    let t: (i32, i32[]) = (n, xs);\n    let c: i32 = t.1[0];\n    return t;"},

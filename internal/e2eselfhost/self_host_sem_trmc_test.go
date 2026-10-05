@@ -40,7 +40,7 @@ function inc_all(xs: List): List {
 }
 
 // A bare self-tail call beside the cons: the filter, whose hole stays put.
-function drop_neg(xs: List): List {
+@noinline function drop_neg(xs: List): List {
     match (xs) {
         Cons(h, t) => { if (h < 0) { return drop_neg(t); } return Cons(h, drop_neg(t)); },
         Neg(h, t) => { return drop_neg(t); },
@@ -49,7 +49,7 @@ function drop_neg(xs: List): List {
 }
 
 // Statements before the match run each round, and a scalar parameter advances.
-function take(xs: List, n: i32): List {
+@noinline function take(xs: List, n: i32): List {
     let lim: i32 = n;
     if (lim <= 0) { return Nil; }
     match (xs) {
@@ -60,7 +60,7 @@ function take(xs: List, n: i32): List {
 }
 
 // The hole in the first payload, with the other one computed after the call.
-function to_rev(xs: List): Rev {
+@noinline function to_rev(xs: List): Rev {
     match (xs) {
         Cons(h, t) => { return Node(to_rev(t), h + 1); },
         Neg(h, t) => { return Node(to_rev(t), 0 - h); },
@@ -69,7 +69,7 @@ function to_rev(xs: List): Rev {
 }
 
 // A counted payload beside the hole.
-function tag_all(xs: SList): SList {
+@noinline function tag_all(xs: SList): SList {
     match (xs) {
         SCons(h, t) => { return SCons(h + "!", tag_all(t)); },
         SNil => { return SNil; },
@@ -77,7 +77,7 @@ function tag_all(xs: SList): SList {
 }
 
 // A plain self-tail call whose argument is a payload read out of the parameter.
-function last_of(xs: List, d: i32): i32 {
+@noinline function last_of(xs: List, d: i32): i32 {
     match (xs) {
         Cons(h, t) => { return last_of(t, h); },
         Neg(h, t) => { return last_of(t, 0 - h); },
@@ -88,7 +88,7 @@ function last_of(xs: List, d: i32): i32 {
 // The base case hands back an element of an array the frame only borrows: an
 // array parameter is never counted, and this one is passed along whole every
 // round. So the exit fill stores a unit it has to retain rather than move.
-function append_to(xs: List, tails: List[]): List {
+@noinline function append_to(xs: List, tails: List[]): List {
     match (xs) {
         Cons(h, t) => { return Cons(h, append_to(t, tails)); },
         Neg(h, t) => { return Neg(h, append_to(t, tails)); },

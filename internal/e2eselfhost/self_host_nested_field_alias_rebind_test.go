@@ -306,6 +306,7 @@ func leakSummary(t *testing.T, gcc string, runner []string, driverBin, dir, name
 // self-update reclaim everything, and the shapes the exemption must not reach
 // still answer correctly. Every program here must end at live_bytes 0.
 func TestSelfHostNestedFieldAliasRebindX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

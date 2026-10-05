@@ -6,8 +6,10 @@ package e2eharness
 // with its frame, and reads every one of them after the park. The save area
 // keeps the frame's references, so the owners of the views survive the park,
 // and a mutated capture is a heap cell both sides point at, so the closure
-// and the frame still share it afterwards. The task's figure must equal the
-// plain run's.
+// and the frame still share it afterwards. `rounds` parks in a loop and
+// reads locals after it across the back edge, in one arm of an if and after
+// a break, while an array it built first is dead by then, so a park saves
+// only the live ones. The task's figure must equal the plain run's.
 const TaskFrameProgram = `import "std/async";
 import "std/i32";
 import "std/string";
@@ -36,8 +38,33 @@ function counter(): i32 {
   return bump() * 10 + r;
 }
 
+// Locals read after a park on some paths only, and a dead array. Kept a
+// call so the suspend pass's dump names it.
+@noinline function rounds(k: i32): i32 {
+  let total: i32 = 0;
+  let far: i32 = k * 7;
+  let near: i32 = k + 1;
+  let gone: i32[] = [k, k, k];
+  total = total + gone.len();
+  let i: i32 = 0;
+  while (i < 3) {
+    let set: i32[] = [timer_fd(5), 1];
+    let r: i32 = async.wait_any(set, 0 - 1);
+    if (i == 1) {
+      total = total + near + r;
+    } else {
+      total = total + i;
+    }
+    if (i == 2) {
+      break;
+    }
+    i = i + 1;
+  }
+  return total * 100 + far;
+}
+
 function body(): i32 {
-  return hold_views("hello") + counter() * 1000;
+  return hold_views("hello") + counter() * 1000 + rounds(3) * 1000000;
 }
 
 function drive(t: async.Task[i32]): i32 {
@@ -72,5 +99,6 @@ function main(): i32 {
 `
 
 // TaskFrameWant is the output under the self-host compiler: the task parks
-// once in each function and answers the plain run's figure.
-const TaskFrameWant = "parks 2\ntask 130575\nplain 130575\n"
+// once in each of the first two functions and three times in `rounds`, and
+// answers the plain run's figure.
+const TaskFrameWant = "parks 5\ntask 921130575\nplain 921130575\n"

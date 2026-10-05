@@ -69,6 +69,7 @@ var structRCIRCases = []struct {
 // driver (asm_run, IR default-on), asserts the exit code, and (per freeAssert)
 // asserts the struct-free emission contract.
 func TestSelfHostStructRCIRX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")

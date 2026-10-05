@@ -11,6 +11,7 @@ import "testing"
 // The array goes through id so it is built on the heap rather than placed as a
 // constant.
 func TestSelfHostStructFieldDrop(t *testing.T) {
+	boxedProbes(t)
 	const prog = `struct Bag { items: i32[], n: i32 }
 function id(xs: i32[]): i32[] { return xs; }
 function use_bag(): i32 {

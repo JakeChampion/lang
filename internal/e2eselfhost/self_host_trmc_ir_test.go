@@ -152,8 +152,9 @@ function main(): i32 { let xs: List = Cons(1, Wrap(Cons(2, Nil))); if (score(ste
 	// loop would otherwise re-enter with the scrutinee unchanged, a hang rather
 	// than a wrong answer. Here the guarded `Cons` has an unguarded `Cons` sibling,
 	// so the chain is total. `1, 0, 3` exercises both arms: 2 + 0 + 4 = 6.
+	// Here and below, the subject is @noinline so main's one call stays a call.
 	asm = run(t, `enum List { Cons(i32, List), Nil }
-function step(xs: List): List {
+@noinline function step(xs: List): List {
     match (xs) {
         Cons(h, t) when h > 0 => { return Cons(h + 1, step(t)); },
         Cons(h, t) => { return Cons(0, step(t)); },
@@ -172,7 +173,7 @@ function main(): i32 { let xs: List = Cons(1, Cons(0, Cons(3, Nil))); if (score(
 	// bypasses the RC sweeps, so anything that could bind a reference-counted
 	// value declines the transform instead of leaking it.
 	asm = run(t, `enum List { Cons(i32, List), Nil }
-function step(xs: List): List {
+@noinline function step(xs: List): List {
     match (xs) {
         Cons(h, t) => { let d: i32 = h + 1; return Cons(d, step(t)); },
         Nil => { return Nil; },
@@ -192,7 +193,7 @@ function main(): i32 { if (sum(step(build(50))) != 1275) { return 1; } return __
 	// underneath it, and `take` would never terminate its take-count.
 	// build(6) = [5,4,3,2,1,0]; take 3, +1 each = [6,5,4] = 15.
 	asm = run(t, `enum List { Cons(i32, List), Nil }
-function take(xs: List, n: i32): List {
+@noinline function take(xs: List, n: i32): List {
     let lim: i32 = n;
     if (lim <= 0) { return Nil; }
     match (xs) {
@@ -212,7 +213,7 @@ function main(): i32 { if (sum(take(build(6), 3)) != 15) { return 1; } return __
 	// `return` has to reach the hole machinery rather than the function's real
 	// return. `stop_at_zero` over [3,0,4] keeps only the leading 3.
 	asm = run(t, `enum List { Cons(i32, List), Nil }
-function stop_at_zero(xs: List): List {
+@noinline function stop_at_zero(xs: List): List {
     match (xs) {
         Cons(h, t) => { if (h == 0) { return Nil; } return Cons(h, stop_at_zero(t)); },
         _ => { return Nil; },
@@ -230,7 +231,7 @@ function main(): i32 { let xs: List = Cons(3, Cons(0, Cons(4, Nil))); if (sum(st
 	// [-5,4,-3,2,-1,0] leaves [4,2,0] = 6. 200k cells also pins that the mixed
 	// cons/self loop still holds the stack flat.
 	asm = run(t, `enum List { Cons(i32, List), Nil }
-function drop_neg(xs: List): List {
+@noinline function drop_neg(xs: List): List {
     match (xs) {
         Cons(h, t) => { if (h < 0) { return drop_neg(t); } else { return Cons(h, drop_neg(t)); } },
         Nil => { return Nil; },
@@ -259,7 +260,7 @@ function main(): i32 { if (sum(drop_neg(build(200000))) != 400000) { return 1; }
 	// is trmc_hole_index's answer, not "the last field".
 	asm = run(t, `enum List { Cons(i32, List), Nil }
 enum Rev { Node(Rev, i32), End }
-function to_rev(xs: List): Rev {
+@noinline function to_rev(xs: List): Rev {
     match (xs) {
         Cons(h, t) => { return Node(to_rev(t), h + 1); },
         Nil => { return End; },
