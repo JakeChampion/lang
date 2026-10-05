@@ -18,10 +18,13 @@ func TestSelfHostEnumStructPayloadDropIRArm64(t *testing.T) {
 
 	// bound-borrow-only payload: the arm reads inner.items before the post-arm reclaim
 	// deep-drops it. items[0]+items[15] = 1 + 16 = 17. A wrong/double free corrupts it.
+	// items goes through id so the payload is built on the heap rather than placed as a
+	// constant.
 	prog := `struct Inner { items: i32[] }
+function id(xs: i32[]): i32[] { return xs; }
 enum Box { Full(Inner), Empty }
 function f(): i32 {
-    let b: Box = Full(Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] });
+    let b: Box = Full(Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) });
     let r: i32 = 0;
     match (b) {
         Full(inner) => { r = inner.items[0] + inner.items[15]; },

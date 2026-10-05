@@ -1011,7 +1011,9 @@ func TestSelfHostFieldAppendInPlaceWasmIR(t *testing.T) {
 // rc-1 buffer, whose freed block takes a freelist link over its cap word, and
 // the next append reads cap 0 with len N and copies N elements into a
 // four-element buffer (#8224). No answer separates the two forms until the
-// freelist happens to line up, so this reads the pairing off the asm.
+// freelist happens to line up, so this reads the pairing off the asm. emit
+// builds its record without a spread: a spread's base is counted, and a counted
+// base is handed over by the caller rather than bracketed.
 func TestSelfHostGrowFieldBracketReleasesRetainedX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -1020,7 +1022,7 @@ func TestSelfHostGrowFieldBracketReleasesRetainedX86_64(t *testing.T) {
 
 	const src = `
 struct St { ops: i32[], ctrl: i32 }
-function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl }; }
+function (s: St) emit(op: i32): St { return St { ops: s.ops.append(op), ctrl: s.ctrl }; }
 function outer(a: St): i32 {
     let b: St = a.emit(9);
     return a.ops.len() * 10 + b.ops.len();
