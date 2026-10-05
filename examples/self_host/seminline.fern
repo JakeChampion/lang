@@ -232,6 +232,16 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
   // view does not replace non-fused callers or remove any function body.
   let ix: util.NameIndex = util.name_index(names);
   let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable).funcs;
+  // A shared helper cannot take the single-use path. The first pass can
+  // expose its leaf body, so rebuild the leaf table before preparing its
+  // callback callers. Only callback bodies change in this second scratch pass.
+  let callbacks: boolean[] = [];
+  let ci: i32 = 0;
+  while (ci < candidates.len()) {
+    callbacks = callbacks.append(inlinable[ci] && unused_environment(candidates[ci]) >= 0);
+    ci = ci + 1;
+  }
+  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable).funcs;
   let leaves: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {

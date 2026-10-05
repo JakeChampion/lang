@@ -18,6 +18,9 @@ func TestSelfHostArrayFusionUsesKnownCallbackBodies(t *testing.T) {
 function fusion_three(): i64 { return 3 as i64; }
 function fusion_scale(x: i64): i64 { return x * fusion_three(); }
 `
+	// Sharing the helper prevents the general single-use pass from hiding a
+	// stale leaf table in callback preparation.
+	src = strings.Replace(src, "function main(): i32 {", "function main(): i32 { if (fusion_scale(2 as i64) != (6 as i64)) { return 99; }", 1)
 	names := []string{
 		"via_map_fold", "via_filter_map_fold", "via_map_map_reduce",
 		"via_order_sensitive", "via_filter_reduce", "via_capture",
