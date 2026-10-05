@@ -5813,6 +5813,9 @@ function keep_names(e: ast.Expr, own acc: string[]): string[] {
 // binding a symbol of its own, so such a use can only be the defer desugar's
 // replay of an action the scope armed.
 function escaping_bindings(body: ast.Stmt[]): string[] {
+  if (!defer_lowered(body)) {
+    return [];
+  }
   let local: string[] = list_var_uses(body, []);
   for st in body {
     local = astwalk.fold_stmt_nodes(st, local, arm_local_uses, keep_names, descend_all);
@@ -5834,6 +5837,27 @@ function escaping_bindings(body: ast.Stmt[]): string[] {
     }
   }
   return out;
+}
+
+// defer_lowered: the defer desugar gave some scope of the body, the function's
+// or a lambda's, its `__dfa_tryall` flag (parser.lower_defers_body).
+function defer_lowered(body: ast.Stmt[]): boolean {
+  let found: boolean = false;
+  for st in body {
+    found = astwalk.fold_stmt_nodes(st, found, tryall_decl, keep_found, descend_all);
+  }
+  return found;
+}
+
+function tryall_decl(st: ast.Stmt, own acc: boolean): boolean {
+  if let ast.StmtVar(v) = st {
+    return acc || v.name == "__dfa_tryall";
+  }
+  return acc;
+}
+
+function keep_found(e: ast.Expr, own acc: boolean): boolean {
+  return acc;
 }
 
 function count_of(xs: string[], name: string): i32 {
