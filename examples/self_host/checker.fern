@@ -18239,43 +18239,70 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtin
 // ow_result_borrows settles the least fixed point described at
 // ow_fresh_owners. After the first round only a function calling one the
 // previous round marked can change its answer, so only those are examined again.
+// Only a pending function can be marked, so each pending body's calls to one
+// are gathered once (ow_calls_to) and every round reads them.
 function ow_result_borrows(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex): util.NameIndex {
   let none: string[] = [];
   let borrows: util.NameIndex = util.name_index(none);
   let pending: parser.FuncDecl[] = [];
+  let pnames: string[] = [];
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
       continue;
     }
     if (ow_type_is_pointer(fn.ret_type, ofuncs)) {
       pending = pending.append(fn);
+      pnames = pnames.append(fn.name);
     }
+  }
+  let pindex: util.NameIndex = util.name_index(pnames);
+  let calls: string[][] = [];
+  for fn in pending {
+    calls = calls.append(ow_calls_to(fn, pindex));
   }
   let first: boolean = true;
   let marked: util.NameIndex = util.name_index(none);
   while (first || marked.names.len() > 0) {
     let now_marked: string[] = [];
     let unmarked: parser.FuncDecl[] = [];
-    for fn in pending {
-      if ((first || ow_calls_any(fn, marked)) && ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
+    let unmarked_calls: string[][] = [];
+    let i: i32 = 0;
+    while (i < pending.len()) {
+      let fn: parser.FuncDecl = pending[i];
+      if ((first || ow_calls_any(calls[i], marked)) && ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
         borrows = borrows.added(fn.name);
         now_marked = now_marked.append(fn.name);
       } else {
         unmarked = unmarked.append(fn);
+        unmarked_calls = unmarked_calls.append(calls[i]);
       }
+      i = i + 1;
     }
     first = false;
     marked = util.name_index(now_marked);
     pending = unmarked;
+    calls = unmarked_calls;
   }
   return borrows;
 }
 
-function ow_calls_any(fn: parser.FuncDecl, names: util.NameIndex): boolean {
+// ow_calls_to is the callee name of each call in `fn`'s body that `names`
+// holds, a method call's by its field name.
+function ow_calls_to(fn: parser.FuncDecl, names: util.NameIndex): string[] {
   let hits: astwalk.CallSite[] = [];
   for st in fn.body {
     hits = astwalk.collect_calls_stmt(st, names, hits);
-    if (hits.len() > 0) {
+  }
+  let out: string[] = [];
+  for h in hits {
+    out = out.append(h.name);
+  }
+  return out;
+}
+
+function ow_calls_any(callees: string[], names: util.NameIndex): boolean {
+  for n in callees {
+    if (names.has(n)) {
       return true;
     }
   }
