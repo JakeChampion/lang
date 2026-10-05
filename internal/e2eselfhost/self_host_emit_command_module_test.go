@@ -25,7 +25,15 @@ func TestSelfHostEmitCommandModule(t *testing.T) {
 	if err := os.WriteFile(src, []byte("function main(): i32 { return 7; }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	handler := filepath.Join(dir, "handler.fern")
+	if err := os.WriteFile(handler, []byte("import \"std/http\";\nimport \"std/serve\";\nimport \"std/platform\";\nfunction handle(req: HttpRequest, plat: platform.Platform): HttpResponse { return http.ok(\"hi\"); }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	build := func(form, target, out string) ([]byte, error) {
+		entry := src
+		if target == "wasm32-wasi-http" {
+			entry = handler
+		}
 		args := []string{"-target", target}
 		if form != "" {
 			args = append(args, "-emit", form)
@@ -33,7 +41,7 @@ func TestSelfHostEmitCommandModule(t *testing.T) {
 		if out != "" {
 			args = append(args, "-o", out)
 		}
-		cmd := runX86_64Bin(cli.runner, cli.bin, append(args, src, cli.stdlib)...)
+		cmd := runX86_64Bin(cli.runner, cli.bin, append(args, entry, cli.stdlib)...)
 		cmd.Env = childEnv()
 		return cmd.CombinedOutput()
 	}

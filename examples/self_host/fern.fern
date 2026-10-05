@@ -3203,15 +3203,6 @@ function run(): i32 {
     eprint("fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit");
     return 2;
   }
-  // A wasm component or core module is binary; stdout takes only its text.
-  if (out_path.len() == 0 && emit != "asm" && platforms.for_target(target).isa == "wasm32") {
-    if (emit_spelled.len() > 0) {
-      eprint("fern: -emit " + emit_spelled + " for -target " + target + " writes a binary; pass -o OUTPUT");
-    } else {
-      eprint("fern: -target " + target + " writes a binary component; pass -o OUTPUT, or -emit asm for its text");
-    }
-    return 2;
-  }
   if (shared) {
     if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android") {
       eprint("fern: -shared is only supported with -target x86-64, arm64, or arm64-android (got \"" + target + "\")");
@@ -3357,6 +3348,15 @@ function run(): i32 {
     return 254;
   }
 
+  // A wasm component or core module is binary; stdout takes only its text.
+  if (out_path.len() == 0 && emit != "asm" && platforms.for_target(target).isa == "wasm32") {
+    if (emit_spelled.len() > 0) {
+      eprint("fern: -emit " + emit_spelled + " for -target " + target + " writes a binary; pass -o OUTPUT");
+    } else {
+      eprint("fern: -target " + target + " writes a binary component; pass -o OUTPUT, or -emit asm for its text");
+    }
+    return 2;
+  }
   // The parse gates the `-check` path runs (#7447), for the same reason the
   // checker gate below exists: without them a build is MORE permissive than
   // `-check`, and a keyword-named function reaches codegen as a nameless
