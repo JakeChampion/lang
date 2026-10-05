@@ -121,32 +121,40 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable
 
 struct Round { out: Inlined, changed: boolean }
 
+// splice_round and split_all keep the arrays they rewrite in locals, so each
+// `.with` after the first writes in place rather than copying every body.
 function splice_round(prev: Inlined, rewrite: boolean[], ix: util.NameIndex, ready: boolean[]): Round {
-  let r: Round = Round { out: prev, changed: false };
+  let funcs: ssasem.Func[] = prev.funcs;
+  let rewritten: boolean[] = prev.rewritten;
+  let changed: boolean = false;
   let i: i32 = 0;
-  while (i < prev.funcs.len()) {
-    if (rewrite[i] && count_insts(r.out.funcs[i].graph) <= max_caller_insts()) {
-      let spliced: Rewrite = splice_calls(r.out.funcs[i], r.out.funcs, ix, ready, false);
+  while (i < funcs.len()) {
+    if (rewrite[i] && count_insts(funcs[i].graph) <= max_caller_insts()) {
+      let spliced: Rewrite = splice_calls(funcs[i], funcs, ix, ready, false);
       if (spliced.changed) {
-        r = Round { out: Inlined { ...r.out, funcs: r.out.funcs.with(i, spliced.f), rewritten: r.out.rewritten.with(i, true) }, changed: true };
+        funcs = funcs.with(i, spliced.f);
+        rewritten = rewritten.with(i, true);
+        changed = true;
       }
     }
     i = i + 1;
   }
-  return r;
+  return Round { out: Inlined { ...prev, funcs: funcs, rewritten: rewritten }, changed: changed };
 }
 
 function split_all(prev: Inlined, rewrite: boolean[], modes: i32[][]): Inlined {
-  let out: Inlined = prev;
+  let funcs: ssasem.Func[] = prev.funcs;
+  let rewritten: boolean[] = prev.rewritten;
   let i: i32 = 0;
-  while (i < out.funcs.len()) {
+  while (i < funcs.len()) {
     if (rewrite[i]) {
-      let split: Rewrite = split_constructions(out.funcs[i], modes[i]);
-      out = Inlined { ...out, funcs: out.funcs.with(i, split.f), rewritten: out.rewritten.with(i, out.rewritten[i] || split.changed) };
+      let split: Rewrite = split_constructions(funcs[i], modes[i]);
+      funcs = funcs.with(i, split.f);
+      rewritten = rewritten.with(i, rewritten[i] || split.changed);
     }
     i = i + 1;
   }
-  return out;
+  return Inlined { ...prev, funcs: funcs, rewritten: rewritten };
 }
 
 // Whether a parameter or the result of `f` holds a view, which only the frame
@@ -865,11 +873,21 @@ function scalar_field(read: ssa.SInst, ty: typeinfo.Type): boolean {
 // only add a second owner of the part, and its variant reads stay together so
 // each projection keeps the test that guards it.
 function kept_values(g: ssa.SFunc): boolean[] {
-  let spread: Spread = Spread { kept: used_whole(g), moved: true };
-  while (spread.moved) {
-    spread = copied_back(g, spread.kept);
+  let kept: boolean[] = used_whole(g);
+  let moved: boolean = true;
+  while (moved) {
+    // Mark what each kept copy or phi copies, until nothing new is marked.
+    moved = false;
+    for b in g.blocks {
+      for ins in b.insts {
+        if ((ins.kind_tag == 7 || ins.kind_tag == 8) && marked(kept, ins.result) && !all_marked(kept, ins.args)) {
+          kept = all_kept(kept, ins.args);
+          moved = true;
+        }
+      }
+    }
   }
-  return spread.kept;
+  return kept;
 }
 
 function used_whole(g: ssa.SFunc): boolean[] {
@@ -893,22 +911,6 @@ function used_whole(g: ssa.SFunc): boolean[] {
   return kept;
 }
 
-struct Spread { kept: boolean[], moved: boolean }
-
-// `kept` with what each kept copy or phi copies marked too, and whether that
-// marked anything new.
-function copied_back(g: ssa.SFunc, kept: boolean[]): Spread {
-  let out: Spread = Spread { kept: kept, moved: false };
-  for b in g.blocks {
-    for ins in b.insts {
-      if ((ins.kind_tag == 7 || ins.kind_tag == 8) && marked(out.kept, ins.result) && !all_marked(out.kept, ins.args)) {
-        out = Spread { kept: all_kept(out.kept, ins.args), moved: true };
-      }
-    }
-  }
-  return out;
-}
-
 function all_marked(flags: boolean[], vs: i32[]): boolean {
   for v in vs {
     if (v >= 0 && v < flags.len() && !flags[v]) {
@@ -922,7 +924,7 @@ function marked(flags: boolean[], v: i32): boolean {
   return v >= 0 && v < flags.len() && flags[v];
 }
 
-function all_kept(kept: boolean[], vs: i32[]): boolean[] {
+function all_kept(own kept: boolean[], vs: i32[]): boolean[] {
   let out: boolean[] = kept;
   for v in vs {
     if (v >= 0 && v < out.len()) {
@@ -1290,7 +1292,7 @@ function read_counts(f: ssasem.Func): i32[] {
   return reads;
 }
 
-function counted(reads: i32[], v: i32): i32[] {
+function counted(own reads: i32[], v: i32): i32[] {
   if (v < 0 || v >= reads.len()) {
     return reads;
   }
