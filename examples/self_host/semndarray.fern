@@ -178,10 +178,7 @@ function no_plan(reason: i32): Plan {
   return Plan { factor: no_factor(reason), ctor: 0 - 1, reason: reason };
 }
 
-function site_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[], enabled: boolean): i32 {
-  if (!enabled) {
-    return semarrayreport.kernel_disabled();
-  }
+function site_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[]): i32 {
   if (ins.kind_tag != ssasem.call() || semndlayout.operation(ins.str) != "map") {
     return semarrayreport.kernel_unsupported_operation();
   }
@@ -205,7 +202,7 @@ function site_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[], enabled: b
 }
 
 function scale_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean): Plan {
-  let why: i32 = site_refusal(f, ins, layouts, enabled);
+  let why: i32 = site_refusal(f, ins, layouts);
   if (why != semarrayreport.kernel_scale_kernel()) {
     return no_plan(why);
   }
@@ -216,6 +213,9 @@ function scale_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index:
   let ctor: i32 = from_flat_contract(funcs, index, usable, f.values[ins.result]);
   if (ctor < 0) {
     return no_plan(semarrayreport.kernel_constructor_unavailable());
+  }
+  if (!enabled) {
+    return no_plan(semarrayreport.kernel_disabled());
   }
   return Plan { factor: k, ctor: ctor, reason: semarrayreport.kernel_scale_kernel() };
 }

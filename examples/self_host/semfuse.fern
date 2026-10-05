@@ -437,7 +437,7 @@ function remaining_site(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], b
     why = decision(f, cx, defs, c);
     plan = chain_text(c);
   }
-  if (!enabled) {
+  if (!enabled && why.reason == semarrayreport.fusion_fused()) {
     why = Decision { reason: semarrayreport.fusion_disabled(), stage: k };
   }
   return semarrayreport.Site { owner: name, stage: stage_name(f.graph.blocks[bi].insts[why.stage]), plan: plan + "; not fused", reason: why.reason, storage: "deferred-to-ownership" };

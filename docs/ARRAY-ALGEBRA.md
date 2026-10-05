@@ -365,6 +365,12 @@ This report covers the map/filter/fold/reduce fusion planner, recognized
 unsupported combinators, R7 map storage and ndarray kernels. It is not an
 all-allocation report.
 
+Disabling a pass preserves each site's intrinsic refusal and failing stage.
+`disabled` or `reuse-disabled` is reported only when the site satisfies all
+of that planner's static requirements and the switch prevents its rewrite.
+An unsupported operation, unknown layout or unresolved element function
+therefore keeps the same reason with the pass enabled or disabled.
+
 **Retained Go analysis.** `fern -array-report FILE.fern` prints the older Go
 IR analysis and labels it explicitly. It does not describe code emitted by
 the primary Fern compiler. Its interface below remains useful for comparing

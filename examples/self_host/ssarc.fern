@@ -5514,7 +5514,7 @@ pub function map_report(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, pure: ut
     for ins in b.insts {
       if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, "__arrm_map__")) {
         let why: i32 = map_reason(f, modes, at(p, idx, b.id, pos, 0 - 1), links, pure, ins);
-        if (disabled) {
+        if (disabled && why == semarrayreport.storage_guarded_reuse()) {
           why = semarrayreport.storage_reuse_disabled();
         }
         let storage: string = "combinator-buffer";

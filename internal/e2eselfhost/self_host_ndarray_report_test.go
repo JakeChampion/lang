@@ -136,6 +136,7 @@ func TestSelfHostNdarrayReportMatchesEmission(t *testing.T) {
 	if strings.Contains(disabled, "reason=scale-kernel ") || !strings.Contains(disabled, "reason=disabled ") {
 		t.Fatalf("disabled scale kernel reported a rewrite:\n%s", disabled)
 	}
+	assertArrayReportRefusalsPreserved(t, report, disabled, "ndarray kernels", "scale-kernel")
 	shadowSrc := strings.Replace(ndarrayReportSrc, "function main(): i32 {", "function main(): i32 {\n  if (__scale_f64([0.0], 0.0)[0] != 99.0) { return 7; }", 1) + `
 function __scale_f64(xs: f64[], k: f64): f64[] { return [99.0]; }
 `
@@ -143,6 +144,8 @@ function __scale_f64(xs: f64[], k: f64): f64[] { return [99.0]; }
 	if strings.Contains(shadow, "reason=scale-kernel ") || !strings.Contains(shadow, "reason=builtin-shadowed ") {
 		t.Fatalf("shadowed builtin reported a kernel:\n%s", shadow)
 	}
+	_, disabledShadow, _ := compileNdarrayReport(t, runner, driver, shadowSrc, "1", "1")
+	assertArrayReportRefusalsPreserved(t, shadow, disabledShadow, "ndarray kernels", "scale-kernel")
 	shadowBin := buildBin(t, gcc, shadowDir, "ndarray-shadow", shadowASM)
 	if out, err := runX86_64Bin(runner, shadowBin).CombinedOutput(); err != nil {
 		t.Fatalf("shadowed builtin changed values: %v\n%s", err, out)

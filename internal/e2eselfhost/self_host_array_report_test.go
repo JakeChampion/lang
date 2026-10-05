@@ -133,13 +133,49 @@ func TestSelfHostArrayReportMatchesEmission(t *testing.T) {
 	if out, err := runX86_64Bin(runner, bin).CombinedOutput(); err != nil {
 		t.Fatalf("reported program: %v\n%s", err, out)
 	}
-	_, disabled := compile("1", "1", "0")
+	disabledASM, disabled := compile("1", "1", "0")
 	if strings.Contains(disabled, "reason=fused ") || !strings.Contains(disabled, "reason=disabled ") {
 		t.Fatalf("disabled fusion reported a rewrite:\n%s", disabled)
+	}
+	assertArrayReportRefusalsPreserved(t, report, disabled, "typed semantic fusion", "fused")
+	disabledQuietASM, disabledQuiet := compile("0", "1", "0")
+	if disabledASM != disabledQuietASM || disabledQuiet != "" {
+		t.Fatal("disabled fusion reporting changed code or printed while quiet")
 	}
 	_, noReuse := compile("1", "0", "1")
 	if strings.Contains(noReuse, "reason=guarded-reuse ") || !strings.Contains(noReuse, "reason=reuse-disabled ") {
 		t.Fatalf("disabled reuse reported a rewrite:\n%s", noReuse)
+	}
+	assertArrayReportRefusalsPreserved(t, report, noReuse, "map storage", "guarded-reuse")
+}
+
+// Preserve the whole site and decision line, including the failing stage,
+// rather than accepting the right tag somewhere else in the histogram.
+func assertArrayReportRefusalsPreserved(t *testing.T, enabled, disabled, kind, success string) {
+	t.Helper()
+	header := "array report: primary Fern compiler, " + kind + "\n"
+	start := strings.Index(enabled, header)
+	if start < 0 {
+		t.Fatalf("missing report section %s:\n%s", kind, enabled)
+	}
+	section := enabled[start+len(header):]
+	if end := strings.Index(section, "array report: primary Fern compiler,"); end >= 0 {
+		section = section[:end]
+	}
+	lines := strings.Split(section, "\n")
+	checked := 0
+	for i := 1; i < len(lines); i++ {
+		if !strings.HasPrefix(lines[i], "  stage=") || strings.Contains(lines[i], " reason="+success+" ") {
+			continue
+		}
+		pair := lines[i-1] + "\n" + lines[i]
+		if !strings.Contains(disabled, pair) {
+			t.Fatalf("disabled %s lost refusal:\n%s\nreport:\n%s", kind, pair, disabled)
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatalf("no intrinsic refusals checked for %s", kind)
 	}
 }
 
