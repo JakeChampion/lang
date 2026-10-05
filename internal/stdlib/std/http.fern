@@ -569,16 +569,10 @@ function __bytes_string(buf: u8[], from: i32, end: i32): string {
 // `__shared_string(buf, from, end, prev)` — buf[from, end) as a string,
 // `prev` itself when it holds those bytes.
 function __shared_string(buf: u8[], from: i32, end: i32, prev: string): string {
-  if (__range_is(buf, from, end, prev)) {
+  if (prev.len() == end - from && __bytes_are(buf, from, prev)) {
     return prev;
   }
   return __bytes_string(buf, from, end);
-}
-
-// `__range_is(buf, from, end, s)` — whether buf[from, end) holds the bytes
-// of `s`.
-function __range_is(buf: u8[], from: i32, end: i32, s: string): boolean {
-  return s.len() == end - from && __bytes_are(buf, from, s);
 }
 
 // HttpLimits — the parser's caps (RFC 9112 §2.3 leaves them to the
@@ -694,16 +688,17 @@ function __ascii_lower(b: u8): i32 {
 // `None` when a byte is a control other than HTAB (RFC 9110 §5.5 lets a
 // recipient refuse one; a lenient reading would let a VT or FF ride in a
 // token that a byte-oriented intermediary reads differently). A value
-// holding the bytes of `prev`, which passed these checks, is `prev`.
-function __field_value(buf: u8[], from: i32, end: i32, prev: string): Option[string] {
+// holding the bytes of `prev`'s value `at` (-1 for none), which passed these
+// checks, is that value.
+function __field_value(buf: u8[], from: i32, end: i32, prev: HeaderMap, at: i32): Option[string] {
   while (from < end && __is_ows(buf[from])) {
     from = from + 1;
   }
   while (end > from && __is_ows(buf[end - 1])) {
     end = end - 1;
   }
-  if (__range_is(buf, from, end, prev)) {
-    return Some(prev);
+  if (at >= 0 && prev.values[at].len() == end - from && __bytes_are(buf, from, prev.values[at])) {
+    return Some(prev.values[at]);
   }
   if (__scan_set_bytes(buf, from, FIELD_CTL) < end) {
     return None;
@@ -748,23 +743,27 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev:
       return Err(431);
     }
     let i: i32 = count - 1;
-    let was_name: string = "";
-    let was_value: string = "";
-    if (i < prev.names.len()) {
-      was_name = prev.names[i];
-      was_value = prev.values[i];
+    if (same && i >= prev.names.len()) {
+      if (i > 0) {
+        h = __leading_fields(prev, i);
+      }
+      same = false;
     }
-    match (__field_value(buf, col + 1, e, was_value)) {
+    let at_prev: i32 = 0 - 1;
+    if (same) {
+      at_prev = i;
+    }
+    match (__field_value(buf, col + 1, e, prev, at_prev)) {
       Some(v) => {
-        let name: string = __shared_string(buf, at, col, was_name);
-        let kept: boolean = same && i < prev.names.len() && name == was_name && v == was_value;
-        if (same && !kept) {
-          h = __leading_fields(prev, i);
+        if (same) {
+          let name: string = __shared_string(buf, at, col, prev.names[i]);
+          same = name == prev.names[i] && v == prev.values[i];
+          if (!same) {
+            h = __leading_fields(prev, i).append(name, v);
+          }
+        } else {
+          h = h.append(__bytes_string(buf, at, col), v);
         }
-        if (!kept) {
-          h = h.append(name, v);
-        }
-        same = kept;
       },
       None => {
         return Err(400);
@@ -1641,15 +1640,26 @@ function __request_line(buf: u8[], from: i32, end: i32, prev_path: string): (i32
 // framing a persistent connection needs, and the three-way answer, under
 // `http_limits()`.
 pub function http_parse_request_framed(buf: u8[]): HttpFraming {
-  return http_parse_request_framed_from(buf, 0, http_limits(), http_framed_none());
+  let limits: HttpLimits = http_limits();
+  match (__request_head(buf, 0, limits, http_framed_none().request)) {
+    Ok(head) => {
+      let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, head.len, head.framing, head.version, limits);
+      if (body.0 != 2) {
+        return __unframed(body.0, head.headers, head.version);
+      }
+      return Framed(__framed_new(head, body.1, body.3, body.2));
+    },
+    Err(status) => {
+      return __head_refused(status);
+    }
+  }
+  return Incomplete;
 }
 
 // `http_framed_none()` — the `prev` of a parse with no request before it:
 // it shares nothing with any request.
 pub function http_framed_none(): HttpFramed {
-  let empty: u8[] = [];
-  let req: HttpRequest = HttpRequest { method: "", path: "", body: stream.stream_from_bytes(empty), headers: headers.header_map_new(), trailers: headers.header_map_new() };
-  return HttpFramed { request: req, len: 0, keep_alive: false, version: "" };
+  return HttpFramed { request: HttpRequest { method: "", path: "", body: Stream { data: [], pos: 0, source: None }, headers: headers.header_map_new(), trailers: headers.header_map_new() }, len: 0, keep_alive: false, version: "" };
 }
 
 // `http_framed_kept(f)` — what a serve loop keeps of the request it took,
@@ -1680,23 +1690,33 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLi
         return __unframed(body.0, head.headers, head.version);
       }
       let len: i32 = body.2 - from;
-      if (__repeats(prev.request, head, body.1, body.3)) {
-        if (len == prev.len && head.keep_alive == prev.keep_alive && head.version == prev.version) {
-          return Framed(prev);
-        }
-        return Framed(HttpFramed { request: prev.request, len: len, keep_alive: head.keep_alive, version: head.version });
+      if (len == prev.len && head.keep_alive == prev.keep_alive && head.version == prev.version && __repeats(prev.request, head, body.1, body.3)) {
+        return Framed(prev);
       }
-      let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.stream_from_bytes(body.1), headers: head.headers, trailers: body.3 };
-      return Framed(HttpFramed { request: req, len: len, keep_alive: head.keep_alive, version: head.version });
+      return Framed(__framed_new(head, body.1, body.3, len));
     },
     Err(status) => {
-      if (status == 1) {
-        return Incomplete;
-      }
-      return HttpFraming.Malformed(status);
+      return __head_refused(status);
     }
   }
   return Incomplete;
+}
+
+// `__framed_new(head, body, trailers, len)` — the framed request a head and
+// its body make. A parse that never answers its `prev` builds only this, so a
+// caller it is spliced into keeps the request in registers.
+function __framed_new(head: __Head, body: u8[], trailers: HeaderMap, len: i32): HttpFramed {
+  let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.stream_from_bytes(body), headers: head.headers, trailers: trailers };
+  return HttpFramed { request: req, len: len, keep_alive: head.keep_alive, version: head.version };
+}
+
+// `__head_refused(status)` — the framing of a head `__request_head` refused:
+// `Incomplete` while less than it has arrived, else malformed.
+function __head_refused(status: i32): HttpFraming {
+  if (status == 1) {
+    return Incomplete;
+  }
+  return HttpFraming.Malformed(status);
 }
 
 // `HttpHead` — a request whose header block has arrived, its body not
