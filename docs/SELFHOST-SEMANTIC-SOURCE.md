@@ -2419,9 +2419,10 @@ stayed is now three files:
   `StructTab`, the declaration and field-type lookups), the op builders
   `ssarc` calls (`sat_binary_ops`, `chk_binary_ops`, `map_fbinop` and
   similar), and the layout and RC-body helpers the backends read;
-- `fnsigs.fern`: `FnSigs`, of which the emit reads two fields
-  (`borrowable_params`, `strfld_ok_types`) through the field-reclaim
-  admissions, and `wp_fact_rows`, the per-unit cache key's facts;
+- `fnsigs.fern`: `FnSigs` and the analyses that built it. It is since
+  deleted: the field-reclaim admissions that read it went with the per-type
+  rc helper bodies, and the per-module cache key now folds in the typed
+  lowering's contract rows (`semlower.contract_rows`) instead;
 - `lift.fern`: the AST-to-AST lambda lift (`lift_lambdas_typed`), which the
   typed path runs first.
 

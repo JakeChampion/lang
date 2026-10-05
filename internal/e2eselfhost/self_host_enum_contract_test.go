@@ -2,11 +2,9 @@ package e2eselfhost
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -59,74 +57,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; } return 0;
 }`, true})
 	return cases
-}
-
-func TestSelfHostEnumContractVerify(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	var checks strings.Builder
-	for i, tc := range []struct {
-		body string
-		ok   bool
-	}{
-		{`match (e) { Full(xs) => { return xs; }, Empty => { return [0]; } }`, true},
-		{`let alias: E = e; match (alias) { Full(xs) => { return xs; }, Empty => { return [0]; } }`, true},
-		{`match (e) { Full(xs) => { let ys = xs; return ys; }, Empty => { return [0]; } }`, true},
-		{`e = E.Full([1]); return [0];`, false},
-		{`let f = (): i32 => { match (e) { Full(xs) => { return xs[0]; }, Empty => { return 0; } } }; return [0];`, false},
-		{`return unknown(e);`, false},
-		{`while (true) { return [0]; }`, false},
-		{`let xs = [1]; let local = E.Full(xs); return xs;`, false},
-	} {
-		src := `enum E { Full(i32[]), Empty } function take(e: E): i32[] { ` + tc.body + ` }`
-		fmt.Fprintf(&checks, "if (accept(%q) != %t) { return %d; }\n", src, tc.ok, i+1)
-	}
-	source := `import "./enumcontract"; import "./parser"; import "./lexer"; import "./typeinfo";
-function region(): enumcontract.Region {
-    let mod = parser.parse_module(lexer.tokenize("enum E { Full(i32[]), Empty } function take(e: E): i32[] { match (e) { Full(xs) => { return xs; }, Empty => { return [0]; } } }"));
-    return enumcontract.import_function(mod.funcs[0], mod.structs);
-}
-
-function accept(src: string): boolean {
-    let mod = parser.parse_module(lexer.tokenize(src));
-    return enumcontract.analyze(mod.funcs[0], mod.structs).ok;
-}
-function main(): i32 {
-` + checks.String() + `
-    let r = region(); let p = enumcontract.verify(r);
-    if (!p.ok || p.borrowed.len() != 1 || !p.borrowed[0] || p.roots.len() != 0) { return 20; }
-    let effects: enumcontract.Effect[] = [];
-    for e in r.effects { if (e.kind != 2 && e.kind != 3) { effects = effects.append(e); } }
-    if (enumcontract.verify(enumcontract.Region { ...r, effects: effects }).ok) { return 21; }
-    let values = r.values;
-    let i = 0;
-    while (i < values.len()) {
-        if (values[i].kind == 5) { values = values.with(i, enumcontract.Value { ...values[i], field: 99 }); }
-        i = i + 1;
-    }
-    if (enumcontract.verify(enumcontract.Region { ...r, values: values }).ok) { return 22; }
-    if (enumcontract.verify(enumcontract.Region { ...r, params: [99] }).ok) { return 23; }
-    if (enumcontract.verify(enumcontract.Region { ...r, params: [0, 0] }).ok) { return 28; }
-    let mod = parser.parse_module(lexer.tokenize("enum E { Full(i32[]), Empty } function take(e: E): i32[] { match (e) { Full(xs) => { return xs; }, Empty => { return [0]; } } } function caller(i: i32): i32 { let e = E.Full([i]); let xs = take(e); return xs[0]; }"));
-    let leaves = enumcontract.leaves(mod.funcs, mod.structs);
-    let caller = enumcontract.analyze_calls(mod.funcs[1], mod.structs, leaves);
-    if (!caller.ok || caller.roots.len() != 1) { return 24; }
-    let invalid = enumcontract.Region { ...leaves[0], params: [99] };
-    if (enumcontract.analyze_calls(mod.funcs[1], mod.structs, [invalid]).ok) { return 25; }
-    invalid = enumcontract.Region { ...leaves[0], result: typeinfo.TypeBool { tag: 0 } };
-    if (enumcontract.analyze_calls(mod.funcs[1], mod.structs, [invalid]).ok) { return 26; }
-    invalid = enumcontract.Region { ...leaves[0], callees: leaves };
-    if (enumcontract.analyze_calls(mod.funcs[1], mod.structs, [invalid]).ok) { return 27; }
-    return 0;
-}`
-	if err := os.WriteFile(filepath.Join(dir, "enum-contract.fern"), []byte(source), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	driver := buildSelfHostBin(t, gcc, dir, "enum-contract.fern", "contract")
-	if output, err := runX86_64Bin(runner, driver).CombinedOutput(); err != nil {
-		t.Fatalf("typed contract: %v\n%s", err, output)
-	}
 }
 
 func TestSelfHostEnumContractIRArm64(t *testing.T) {

@@ -302,6 +302,7 @@ TestSelfHostCmpBranchFusion 2
 TestSelfHostCmpCoreIRX86_64 5
 TestSelfHostCmpHelpersIRX86_64 2
 TestSelfHostCompilePathEnforcesFipBudget 3
+TestSelfHostCompilerFreesWhatItAllocatesX86_64 40
 TestSelfHostComposeFromUserWorld 40
 TestSelfHostComposeFromWorld 23
 TestSelfHostComposeHttpFromProxyWorld 32
@@ -333,7 +334,6 @@ TestSelfHostCoreIntParseIR 2
 TestSelfHostCoreIntRadixIR 2
 TestSelfHostCountTypeArgs 2
 TestSelfHostCountedHandbackBorrowedX86_64 2
-TestSelfHostCountedStrArrReturnProofX86_64 11
 TestSelfHostCreateDirAllArm64IR 2
 TestSelfHostCrossTypeReuseIR 2
 TestSelfHostCrossValidationX86_64 6
@@ -424,7 +424,6 @@ TestSelfHostEnumCallTempWasm 2
 TestSelfHostEnumCallTempX86_64 2
 TestSelfHostEnumCapturingPayloadIRX86_64 2
 TestSelfHostEnumContractIRArm64 78
-TestSelfHostEnumContractVerify 6
 TestSelfHostEnumCrossReuseIR 2
 TestSelfHostEnumFieldAliasCountArm64 2
 TestSelfHostEnumFieldAliasCountSanitizeX86_64 2

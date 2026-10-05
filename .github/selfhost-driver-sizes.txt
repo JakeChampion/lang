@@ -469,14 +469,17 @@
 # inside 5%.
 # 2026-10-04: ef49ae0 pin refresh, including main 868cd698f. Source/pin
 # attribution: docs/STRING-CONSUMER-DRIVER-SIZES-2026-10-04.md.
-fern.fern/stage2 11758720
+# 2026-10-05: #11586 deletes fnsigs.fern and the whole-program analyses every
+# driver linked. The self-host binary (fern.fern/stage2) shrinks 5.3%, six
+# driver rows 5.5-5.8%. Measured by run 37318577263, driver-sizes-x86_64.
+fern.fern/stage2 11131728
 fern.fern 11772104
 asm_load_run.fern 9474160
-asm_modload_run.fern 8195000
-asm_ir_run.fern 7933432
-asm_run.fern 7274664
-wasm_ir_run.fern 7385488
-wasm_run.fern 7386112
-wasm_runio_run.fern 7387992
+asm_modload_run.fern 7746352
+asm_ir_run.fern 7483136
+asm_run.fern 6850928
+wasm_ir_run.fern 6979080
+wasm_run.fern 6979712
+wasm_runio_run.fern 6981520
 asm_pathprobe_run.fern 4433136
 checker_modload_run.fern 2649656

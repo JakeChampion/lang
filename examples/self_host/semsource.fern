@@ -106,7 +106,7 @@ struct State {
   // from (`dyn_concretes`).
   impls: parser.ImplInfo[],
   // What a `?` failure edge runs before it returns: the defer desugar's
-  // cleanup behind `__dfa_tryall` and `__dfa_tryerr` (parser.lower_defers_body).
+  // cleanup behind parser.DFA_TRYALL and parser.DFA_TRYERR (parser.lower_defers_body).
   try_cleanup: ast.Stmt[],
   // Whether that cleanup is being lowered. A `?` inside a defer action
   // (E079) would replay it again without end.
@@ -5812,6 +5812,9 @@ function keep_names(e: ast.Expr, own acc: string[]): string[] {
 // binding a symbol of its own, so such a use can only be the defer desugar's
 // replay of an action the scope armed.
 function escaping_bindings(body: ast.Stmt[]): string[] {
+  if (!defer_lowered(body)) {
+    return [];
+  }
   let local: string[] = list_var_uses(body, []);
   for st in body {
     local = astwalk.fold_stmt_nodes(st, local, arm_local_uses, keep_names, descend_all);
@@ -5835,6 +5838,27 @@ function escaping_bindings(body: ast.Stmt[]): string[] {
   return out;
 }
 
+// defer_lowered: the defer desugar gave some scope of the body, the function's
+// or a lambda's, its parser.DFA_TRYALL flag (parser.lower_defers_body).
+function defer_lowered(body: ast.Stmt[]): boolean {
+  let found: boolean = false;
+  for st in body {
+    found = astwalk.fold_stmt_nodes(st, found, tryall_decl, keep_found, descend_all);
+  }
+  return found;
+}
+
+function tryall_decl(st: ast.Stmt, own acc: boolean): boolean {
+  if let ast.StmtVar(v) = st {
+    return acc || v.name == parser.DFA_TRYALL;
+  }
+  return acc;
+}
+
+function keep_found(e: ast.Expr, own acc: boolean): boolean {
+  return acc;
+}
+
 function count_of(xs: string[], name: string): i32 {
   let n: i32 = 0;
   for x in xs {
@@ -5852,7 +5876,7 @@ function try_cleanup(body: ast.Stmt[]): ast.Stmt[] {
   for st in body {
     if let ast.StmtIf(f) = st {
       if let ast.ExprIdent(id) = f.cond {
-        if (id.name == "__dfa_tryall" || id.name == "__dfa_tryerr") {
+        if (id.name == parser.DFA_TRYALL || id.name == parser.DFA_TRYERR) {
           for c in f.then_body {
             out = out.append(c);
           }

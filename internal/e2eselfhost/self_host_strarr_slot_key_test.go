@@ -30,14 +30,6 @@ import (
 // which is the assertion at the bottom of the x86-64 runner — the colliding
 // program becomes indistinguishable from the program that never collided.
 //
-// The residual `live_bytes` those two share (64, and 104 for the struct-field
-// shape) is NOT this bug and is not fixed here: it is #7259, a struct/param
-// string[] whose type the whole-program strarrfld scan refuses to admit, and it
-// measures identically before and after this change. That is why the leak
-// assertion here is the pairwise one rather than `allocs == frees` — asserting a
-// balance these shapes do not have would mean either encoding #7259's byte count
-// as correct or dropping the case.
-//
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the native
 // x86-64 backend agreed on each — never read off the self-host run under test.
 
@@ -175,21 +167,17 @@ func TestSelfHostStrArrSlotKeyX86_64(t *testing.T) {
 					"Every string here goes through w(); a constant-folded one is an "+
 					"immortal literal (rc = -1) and measures nothing", tc.name)
 			}
-			// The two shapes that must balance: no aliasing local is involved, so
-			// #7259 does not apply and a denied credit shows up as a leak.
-			if tc.name == "fresh_only" || tc.name == "scalar_arr_unaffected" {
-				if live != 0 || allocs != frees {
-					t.Errorf("%s: %s — must balance at live_bytes 0; a site key that "+
-						"resolves to no credit leaks here, which the exit code cannot show",
-						tc.name, summary)
-				}
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must balance at live_bytes 0; a site key that "+
+					"resolves to no credit leaks here, which the exit code cannot show",
+					tc.name, summary)
 			}
 		})
 	}
 
 	// The rename is the proof. param_rename never collided (distinct names) and was
 	// correct before this change; param_alias differs from it by one identifier. If
-	// the fix is right they are now indistinguishable, residual #7259 bytes included.
+	// the fix is right they are now indistinguishable.
 	if a, b := summaries["param_alias"], summaries["param_rename"]; a != "" && b != "" && a != b {
 		t.Errorf("param_alias and param_rename must measure identically once the credit "+
 			"is keyed on the binding — the programs differ only by one identifier:\n"+
