@@ -6,6 +6,7 @@ import "./ssasem";
 import "./semtypes";
 import "./typeinfo";
 import "./util";
+import "./semndlayout";
 
 pub struct Scaled { funcs: ssasem.Func[], rewritten: boolean[] }
 
@@ -31,39 +32,6 @@ function contains(xs: i32[], x: i32): boolean {
     }
   }
   return false;
-}
-
-// Follow only identities and phis. A cycle or a missing definition proves
-// nothing; in particular a parameter is never assumed packed from its type.
-function packed_value(f: ssasem.Func, v: i32, seen: i32[]): boolean {
-  if (contains(seen, v)) {
-    return false;
-  }
-  let d: Def = definition(f, v);
-  if (!d.found) {
-    return false;
-  }
-  let ins: ssa.SInst = d.ins;
-  if ((ins.kind_tag == 7 || ins.kind_tag == 8) && ins.args.len() > 0) {
-    for a in ins.args {
-      if (!packed_value(f, a, seen.append(v))) {
-        return false;
-      }
-    }
-    return true;
-  }
-  if (ins.kind_tag != ssasem.call()) {
-    return false;
-  }
-  // These are std/ndarray's reserved module identities, not a user's
-  // similarly named methods. from_flat checks count == storage length.
-  return packed_producer(ins.str);
-}
-
-function packed_producer(name: string): boolean {
-  return util.str_has_prefix(name, "ndarray__from_flat__")
-    || util.str_has_prefix(name, "ndarray__from_flat$")
-    || util.str_has_prefix(name, "__smm_ndarray__NdArray_map__");
 }
 
 function f64_type(t: typeinfo.Type): boolean {
@@ -163,10 +131,18 @@ function from_flat_contract(funcs: ssasem.Func[], index: util.NameIndex, usable:
   return at;
 }
 
-pub function scale_maps(funcs: ssasem.Func[], names: string[], usable: boolean[]): Scaled {
+pub function scale_maps(funcs: ssasem.Func[], names: string[], usable: boolean[], open: boolean[]): Scaled {
   let index: util.NameIndex = util.name_index(names);
-  let out: ssasem.Func[] = [];
   let rewritten: boolean[] = [];
+  for f in funcs {
+    rewritten = rewritten.append(false);
+  }
+  if (index.find("__smm_ndarray__NdArray_map__f64__f64") < 0) {
+    return Scaled { funcs: funcs, rewritten: rewritten };
+  }
+  let layouts: semndlayout.Facts = semndlayout.analyze(funcs, names, usable, open);
+  let out: ssasem.Func[] = [];
+  rewritten = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
     let f: ssasem.Func = funcs[i];
@@ -176,7 +152,7 @@ pub function scale_maps(funcs: ssasem.Func[], names: string[], usable: boolean[]
       i = i + 1;
       continue;
     }
-    let result: Rewritten = scale_function(f, funcs, names, index, usable);
+    let result: Rewritten = scale_function(f, funcs, names, index, usable, layouts.values[i]);
     out = out.append(result.func);
     rewritten = rewritten.append(result.changed);
     i = i + 1;
@@ -188,15 +164,15 @@ struct Rewritten { func: ssasem.Func, changed: boolean }
 
 struct Plan { factor: Factor, ctor: i32 }
 
-function scale_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[]): Plan {
+function scale_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], layouts: i32[]): Plan {
   if (ins.kind_tag == ssasem.call() && ins.args.len() == 2
-    && ins.str == "__smm_ndarray__NdArray_map__f64__f64" && packed_value(f, ins.args[0], [])) {
+    && ins.str == "__smm_ndarray__NdArray_map__f64__f64" && layouts[ins.args[0]] == semndlayout.packed()) {
     return Plan { factor: closure_factor(f, ins.args[1], funcs, index, usable), ctor: from_flat_contract(funcs, index, usable, f.values[ins.result]) };
   }
   return Plan { factor: Factor { ok: false, literal: "" }, ctor: 0 - 1 };
 }
 
-function scale_function(f: ssasem.Func, funcs: ssasem.Func[], names: string[], index: util.NameIndex, usable: boolean[]): Rewritten {
+function scale_function(f: ssasem.Func, funcs: ssasem.Func[], names: string[], index: util.NameIndex, usable: boolean[], layouts: i32[]): Rewritten {
   let values: typeinfo.Type[] = f.values;
   let blocks: ssa.SBlock[] = [];
   let changed: boolean = false;
@@ -204,7 +180,7 @@ function scale_function(f: ssasem.Func, funcs: ssasem.Func[], names: string[], i
   for b in f.graph.blocks {
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
-      let plan: Plan = scale_plan(f, ins, funcs, index, usable);
+      let plan: Plan = scale_plan(f, ins, funcs, index, usable, layouts);
       let k: Factor = plan.factor;
       let ctor: i32 = plan.ctor;
       if (k.ok && ctor >= 0) {
