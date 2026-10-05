@@ -156,6 +156,16 @@ func TestSelfHostScaleReuseDecisions(t *testing.T) {
 			if strings.Contains(diagnostic, "reason=guarded-reuse ") || !strings.Contains(diagnostic, "reason=reuse-disabled ") {
 				t.Fatalf("disabled reuse reported success:\n%s", diagnostic)
 			}
+			for _, name := range []string{"borrowed", "borrowed_read", "still_live"} {
+				start := strings.Index(report, name+": scale; ownership lowering\n")
+				if start < 0 {
+					t.Fatalf("missing refusal for %s:\n%s", name, report)
+				}
+				lines := strings.SplitN(report[start:], "\n", 3)
+				if !strings.Contains(diagnostic, lines[0]+"\n"+lines[1]) {
+					t.Fatalf("disabled reuse lost intrinsic refusal for %s:\n%s", name, diagnostic)
+				}
+			}
 		}
 		bin := buildBin(t, gcc, dir, "scale-reuse-"+disabled, code)
 		if out, err := runX86_64Bin(runner, bin).CombinedOutput(); err != nil {

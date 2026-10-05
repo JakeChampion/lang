@@ -5470,7 +5470,7 @@ function array_reuse_candidate(ins: ssa.SInst): boolean {
 
 function in_place_array(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, step: ssaunits.Step, links: i32[], pure: util.NameIndex, ins: ssa.SInst): boolean {
   if (ins.str == "__scale_f64") {
-    return scale_reason(f, p, step, links, ins) == 0;
+    return scale_reason(f, p, step, links, ins) == semarrayreport.scale_storage_guarded_reuse();
   }
   return map_reason(f, modes, step, links, pure, ins) == semarrayreport.storage_guarded_reuse();
 }
@@ -5482,25 +5482,25 @@ function in_place_array(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, step: ss
 // uniqueness test remains necessary even when the record itself was unique.
 function scale_reason(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, links: i32[], ins: ssa.SInst): i32 {
   if (util.has_str(f.shadows, ins.str)) {
-    return 6;
+    return semarrayreport.scale_storage_builtin_shadowed();
   }
   if (ins.args.len() != 2 || !semtypes.equal(f.values[ins.args[0]], f.values[ins.result])) {
-    return 7;
+    return semarrayreport.scale_storage_shape_unsupported();
   }
   if (links[ins.result] >= 0) {
-    return 5;
+    return semarrayreport.scale_storage_borrow_linked_result();
   }
   let recv: i32 = ins.args[0];
   if (!p.owned[recv]) {
-    return 2;
+    return semarrayreport.scale_storage_receiver_borrowed();
   }
   if (util.index_of_i32(step.drops, recv) < 0) {
-    return 3;
+    return semarrayreport.scale_storage_receiver_still_live();
   }
   if (supplied(step, recv)) {
-    return 4;
+    return semarrayreport.scale_storage_receiver_supplied();
   }
-  return 0;
+  return semarrayreport.scale_storage_guarded_reuse();
 }
 
 function map_reason(f: ssasem.Func, modes: i32[], step: ssaunits.Step, links: i32[], pure: util.NameIndex, ins: ssa.SInst): i32 {
@@ -5581,13 +5581,13 @@ pub function scale_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site
     for ins in b.insts {
       if (ins.kind_tag == ssasem.call() && ins.str == "__scale_f64") {
         let why: i32 = scale_reason(f, p, at(p, idx, b.id, pos, 0 - 1), links, ins);
-        if (disabled && why != 6) {
-          why = 1;
+        if (disabled && why == semarrayreport.scale_storage_guarded_reuse()) {
+          why = semarrayreport.scale_storage_reuse_disabled();
         }
         let storage: string = "fresh-kernel-buffer";
-        if (why == 0) {
+        if (why == semarrayreport.scale_storage_guarded_reuse()) {
           storage = "unique-reuse/shared-copy";
-        } else if (why == 6) {
+        } else if (why == semarrayreport.scale_storage_builtin_shadowed()) {
           storage = "user-call";
         }
         out = out.append(semarrayreport.Site { owner: f.graph.name, stage: ins.str + "@v" + util.i32_to_string(ins.result), plan: "scale; ownership lowering", reason: why, storage: storage });
