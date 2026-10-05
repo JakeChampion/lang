@@ -6114,17 +6114,19 @@ function pair_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerR
 }
 
 // The payload a paired return sets beside its result: the operand of the
-// block's `__pair_set`, or -1.
+// block's one `__pair_set`, -1 for none, or -2 where there are several, which
+// the terminator refuses rather than hand the caller either.
 function pair_payload(b: ssa.SBlock): i32 {
-  let k: i32 = b.insts.len() - 1;
-  while (k >= 0) {
-    let ins: ssa.SInst = b.insts[k];
+  let found: i32 = 0 - 1;
+  for ins in b.insts {
     if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, sempair.pair_set_prefix())) {
-      return ins.args[0];
+      if (found >= 0) {
+        return 0 - 2;
+      }
+      found = ins.args[0];
     }
-    k = k - 1;
   }
-  return 0 - 1;
+  return found;
 }
 
 // One half of the builtin dispatch below: the result with that builtin's op
@@ -7237,6 +7239,9 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
       e = Emit { ...e, r: emit(e.r, ir.op_exit()) };
     }
     let payload: i32 = pair_payload(b);
+    if (payload == 0 - 2) {
+      return Emit { ...e, why: "a paired return sets its word twice" };
+    }
     if (b.term.kind_tag == 1 && payload >= 0) {
       e = Emit { ...e, r: emit(e.r, ir.op_load_local(payload)) };
       e = Emit { ...e, r: emit(e.r, ir.op_ret_word()) };
