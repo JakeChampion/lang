@@ -55,7 +55,10 @@ var boxed bool
 // BoxedProbes compiles the rest of the test's programs as BoxedProbe does,
 // through ChildEnv and through children that inherit the test's environment.
 // The setting is the test's own, so a FERN_SEM_INLINE in the developer's
-// shell still reaches no ChildEnv child.
+// shell still reaches no ChildEnv child. A test calling it pins how the rc
+// plan treats a box the inliner would remove; the default pipeline's
+// correctness on the same shapes is the rc correctness corpus's and the
+// fixture corpus's to gate.
 func BoxedProbes(t testing.TB) {
 	t.Helper()
 	t.Setenv("FERN_SEM_INLINE", "")
