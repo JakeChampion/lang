@@ -288,32 +288,8 @@ function (l: Lex) advance(): Lex {
   return Lex { src: l.src, i: l.i + 1, n: l.n, line: new_line, col: new_col };
 }
 
-// advance_to consumes every byte in [l.i, end) at once, allocating a
-// SINGLE Lex instead of one per byte. It tracks line/col exactly as a
-// run of `advance()` calls would (newlines reset col, bump line), so
-// it's a drop-in for the hot `while (...) { l = l.advance(); }` scan
-// loops — which otherwise allocate one throwaway Lex box per source
-// character (the dominant per-char struct allocation).
-function (l: Lex) advance_to(end: i32): Lex {
-  if (end <= l.i) {
-    return l;
-  }
-  let i: i32 = l.i;
-  let new_line: i32 = l.line;
-  let new_col: i32 = l.col;
-  while (i < end) {
-    if (l.src[i] == b'\n') {
-      new_line = new_line + 1;
-      new_col = 1;
-    } else {
-      new_col = new_col + 1;
-    }
-    i = i + 1;
-  }
-  return Lex { src: l.src, i: end, n: l.n, line: new_line, col: new_col };
-}
-
-// advance_in_line is advance_to for a run [l.i, end) that holds no newline.
+// advance_in_line consumes a run [l.i, end) that holds no newline, in one Lex:
+// the column moves by the run's length.
 function (l: Lex) advance_in_line(end: i32): Lex {
   if (end <= l.i) {
     return l;
@@ -332,6 +308,7 @@ function skip_trivia(l: Lex, acc: Comment[], keep: boolean): TrivResult {
   let col: i32 = l.col;
   while (i < l.n) {
     let b: i32 = l.src[i] as i32;
+    // Ahead of is_space, which covers the newline too.
     if (b == 10) {
       line = line + 1;
       col = 1;
@@ -340,9 +317,8 @@ function skip_trivia(l: Lex, acc: Comment[], keep: boolean): TrivResult {
       col = col + 1;
       i = i + 1;
     } else if (b == 47 && i + 1 < l.n && l.src[i + 1] == b'/') {
-      // `//` line comment — consume to newline (newline
-      // itself is left for the next iteration's whitespace
-      // path so line tracking stays simple).
+      // `//` line comment — consume to the newline, which the newline arm
+      // takes next.
       let ce: i32 = i + 2;
       while (ce < l.n && l.src[ce] != b'\n') {
         ce = ce + 1;
@@ -980,7 +956,7 @@ function scan_quoted(l: Lex, is_byte: boolean, start_line: i32, start_col: i32):
       return NumResult { lex: l, tok: error_tok("invalid UTF-8 byte in character literal", start_line, start_col) };
     }
     val = u.val;
-    l = l.advance_to(l.i + u.len);
+    l = l.advance_in_line(l.i + u.len);
   }
   if (l.at_end() || l.peek_byte() != 39) {
     if (closing_quote_ahead(l)) {

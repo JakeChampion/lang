@@ -17,12 +17,12 @@ digit run, a string piece that stops at `\n`, a comment body.
 
 - `Lex.advance_in_line(end)` moves past a run that holds no newline. It adds
   the run's length to the column and reads nothing.
-- Every scan whose run stops before a newline calls it instead of
-  `advance_to`.
+- Every scan calls it instead of `advance_to`, which walked the run to count
+  newlines, and `advance_to` goes. Each run stops before a newline: the
+  character literal's too, since `scan_quoted` refuses a raw newline before it
+  decodes the scalar.
 - `skip_trivia` counts lines and columns in locals as it scans, and builds one
   `Lex` at the end, none when there was no trivia.
-- `advance_to` is left for the character literal, whose one decoded scalar
-  can be a raw newline.
 
 ## Measured
 
