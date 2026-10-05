@@ -38,15 +38,13 @@ moves from 101.167 M to 101.171 M Ir (+0.003%), with an identical binary.
 
 ## A bare `defer` of a range loop
 
-Writing the tests for each place a range loop can sit found that
-`defer for i in 0..4 { ... }` did not compile:
-"call target has no semantic contract: __range". The desugar's `defer` arm
-kept a desugared action only when it was one statement, and a range loop
-desugars to three, so it left the loop as written. The arm now wraps several
-statements in a block, the shape `defer { ... }` already had.
+Writing the tests for each place a range loop can sit found that the
+self-host parser accepted `defer for i in 0..4 { ... }`, which the native
+parser refuses, and then failed in the lowering with "call target has no
+semantic contract: __range". The self-host parser now takes only a block, an
+expression or an assignment after `defer`, as native does (#11602), so a
+range loop in a `defer` sits in a block.
 
 `conformance/cases/range_for_nested` covers a range loop in each `if` branch,
 a `match` arm and a `defer` block, and the interpreter driver has the same
-shapes. The native parser takes only an expression or a block after `defer`,
-so the bare form is the self-host compiler's alone, and
-`TestSelfHostRangeForAsDeferAction` covers it.
+shapes.

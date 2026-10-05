@@ -106,11 +106,12 @@ func TestSelfHostOuterMulBits(t *testing.T) {
 func TestSelfHostOuterMulEmissionAndShadow(t *testing.T) {
 	gcc, runner, driver := buildModloadDriverX86(t)
 	asm, _ := compileSourceModload(t, runner, driver, outerMulSrc)
-	caller := emittedBody(t, asm, "__fn_kernel")
-	if !strings.Contains(caller, "call __fn_array__outer_mul_f64") {
-		t.Fatalf("missing stdlib kernel wrapper call:\n%s", caller)
+	body := emittedBody(t, asm, "__fn_kernel")
+	// The single-use inliner can move the wrapper's kernel into its caller.
+	// Inspect the reachable body in either form, retaining every opcode check.
+	if strings.Contains(body, "call __fn_array__outer_mul_f64") {
+		body = emittedBody(t, asm, "__fn_array__outer_mul_f64")
 	}
-	body := emittedBody(t, asm, "__fn_array__outer_mul_f64")
 	for _, op := range []string{"unpcklpd", "mulpd", "mulsd", "__fern_oob_abort"} {
 		if !strings.Contains(body, op) {
 			t.Fatalf("outer kernel missing %s:\n%s", op, body)
