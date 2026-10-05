@@ -1479,9 +1479,8 @@ func TestX86_64IfLet(t *testing.T) {
 
 // `usize` is the target-aware native-pointer-width unsigned
 // integer: 4 bytes on wasm32, 8 bytes on natives. Foundational
-// for the arm64-darwin truncation fix tracked in
-// BACKEND-PARITY.md — pointer-holding prelude locals need a
-// type whose width follows the target. The cast machinery
+// for the arm64-darwin truncation fix — pointer-holding prelude
+// locals need a type whose width follows the target. The cast machinery
 // accepts usize as a source / dest in the data-pointer hop
 // pattern (T[] / [T] / string / struct ↔ usize), and
 // settled-literal lowering picks OpConstI64 on natives so
@@ -1563,7 +1562,7 @@ func TestX86_64FloatToUsize(t *testing.T) {
 //
 // Wasm32 needs proper per-instantiation dispatch — its typed
 // stack rejects the i32 / i64 mismatch at component-validation
-// time. Tracked in BACKEND-PARITY.md as a wasm-only limitation.
+// time.
 func TestX86_64WideScalarMap(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -1888,9 +1887,7 @@ func TestX86_64ReadWriteFileRoundtrip(t *testing.T) {
 
 // Function-value-in-var: `let f: (i32, i32) => i32 = add; f(20, 22)`
 // — exercises OpConstFunc + OpCallIndirect on x86-64. Mirrors
-// TestArm64IndirectCall. The codegen has been in place since PR 2;
-// this test closes the no-coverage gap flagged in
-// BACKEND-PARITY.md.
+// TestArm64IndirectCall.
 func TestX86_64IndirectCall(t *testing.T) {
 	_, code := compileAndRunX86_64(t, `function add(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 {
