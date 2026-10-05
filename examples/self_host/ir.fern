@@ -905,6 +905,12 @@ pub function op_scale_f64(): Op {
   return op0(322);
 }
 
+// Physical ownership lowering has already established unique storage and
+// transfers its unit to the result. This form allocates nothing itself.
+pub function op_scale_f64_in_place(): Op {
+  return Op { ...op_scale_f64(), i32_imm: 1 };
+}
+
 // crc32_cksum (#9128): pops [crc, str] → the i32 CRC-32 that cksum(1) prints,
 // with the string's bytes folded into the incoming `crc`. Poly 0x04C11DB7,
 // most significant bit first, unreflected, and NO final complement — the
