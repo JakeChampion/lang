@@ -15,9 +15,7 @@ package component
 // stage bytes through memory). The producer references its OWN memory — circular
 // because it imports those canon funcs — so its stream.write + waitable-set.wait
 // go through a 2-slot gMem trampoline + fixup. The consumer uses an externalised
-// shared memory (the spike form; the production path with a wasmbin-generated
-// consumer that exports its own memory reuses the per-import trampolines of
-// BuildAsyncImportsAwaitComponent).
+// shared memory (the spike form).
 
 // buildStreamEOFProducerComponent builds the nested `prod: async func() ->
 // stream<elem>` sub-component whose core (producerCore) writes its elements,
@@ -94,7 +92,7 @@ func buildStreamEOFProducerComponent(producerCore []byte, tramp2, fixup2 []byte,
 // Proven to return its value under `wasmtime -W
 // component-model-async,component-model-async-stackful`.
 func BuildStreamCollectComponent(producerCore, consumerCore, memCore, tramp2, fixup2 []byte, elemValtype, resultValtype byte) []byte {
-	// Sibling composition (v46 — see buildAsyncConsumerComponent): the consumer
+	// Sibling composition (v46 — see buildAsyncImportsAwaitOuter): the consumer
 	// half is a nested component importing `dep0: async func() -> stream<elem>`;
 	// the outer links a sibling EOF-producer instance.
 	inner := PutComponentHeader(nil)
@@ -148,8 +146,7 @@ func BuildStreamCollectComponent(producerCore, consumerCore, memCore, tramp2, fi
 // the spike), here the consumer's memory is exported and aliased only after
 // instantiation, so the three memory-carrying canon funcs the consumer imports —
 // the dep-lower `(retptr)->status`, `waitable-set.wait`, and `stream.read` — each
-// go through their own gMem trampoline + fixup (the BuildAsyncImportsAwaitComponent
-// pattern, plus the stream.read trampoline). The memory-independent glue
+// go through their own gMem trampoline + fixup. The memory-independent glue
 // (task.return, ws-new/w-join/subtask-drop/ws-drop, stream.drop-readable) is
 // emitted directly. The EOF producer is nested (buildStreamEOFProducerComponent).
 // consumerAsyncExport is lifted async as liftExportName. See
@@ -158,7 +155,7 @@ func BuildAsyncStreamImportComponent(consumerCore, producerCore, tramp2, fixup2 
 	importIface, importWITName, consumerAsyncExport, liftExportName string,
 	elemValtype, resultValtype byte) []byte {
 	// Sibling composition (required on wasmtime v46 — see
-	// buildAsyncConsumerComponent): the consumer machinery is a nested
+	// buildAsyncImportsAwaitOuter): the consumer machinery is a nested
 	// component importing the producer's `dep0: async func() -> stream<elem>`,
 	// and the outer links a sibling EOF-producer instance to it.
 	inner := buildStreamImportConsumerComponent(consumerCore, importIface, importWITName, consumerAsyncExport, liftExportName, elemValtype, resultValtype)
@@ -383,7 +380,7 @@ func buildStreamSinkProviderComponent(sinkCore []byte, tramp2, fixup2 []byte, el
 func BuildAsyncStreamParamImportComponent(consumerCore, sinkCore, tramp2, fixup2 []byte,
 	importIface, importWITName, consumerAsyncExport, liftExportName string,
 	elemValtype, resultValtype byte) []byte {
-	// Sibling composition (v46 — see buildAsyncConsumerComponent): the consumer
+	// Sibling composition (v46 — see buildAsyncImportsAwaitOuter): the consumer
 	// imports `dep0: async func(s: stream<elem>) -> result`; the outer links a
 	// sibling host-sink instance.
 	inner := buildStreamParamImportConsumerComponent(consumerCore, importIface, importWITName, consumerAsyncExport, liftExportName, elemValtype, resultValtype)

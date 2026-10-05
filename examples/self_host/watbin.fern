@@ -3091,71 +3091,93 @@ function comp_canon_resource_drop(rt: i32): i32[] {
 }
 
 // AsyncLift is one async-lifted export: the component func `name` (kebab
-// case), its parameters as component valtype bytes and its result's (-1 for
-// none). The core module exports its entry as `[async-lift]CORE_NAME` and
-// imports its task.return as `[task-return]CORE_NAME` from `[export]$root`.
-pub struct AsyncLift { name: string, core_name: string, param_names: string[], param_types: i32[], result: i32 }
+// case), its parameter types and its result's ([] for none). A type is a
+// primitive valtype byte, or a defined type's body (`list<T>`, a tuple). The
+// core module exports its entry as `[async-lift]CORE_NAME` and imports its
+// task.return as `[task-return]CORE_NAME` from `[export]$root`.
+pub struct AsyncLift { name: string, core_name: string, param_names: string[], param_types: i32[][], result: i32[] }
 
 // AsyncLower is one async import: the function `name` of interface `iface`,
 // typed as AsyncLift is. The core module imports it as `[async-lower]NAME`
 // from `iface`.
-pub struct AsyncLower { iface: string, name: string, param_names: string[], param_types: i32[], result: i32 }
+pub struct AsyncLower { iface: string, name: string, param_names: string[], param_types: i32[][], result: i32[] }
 
 // AsyncSurface is a module's async exports and imports.
 pub struct AsyncSurface { lifts: AsyncLift[], lowers: AsyncLower[] }
 
-// comp_resultlist appends a func type's results: one anonymous valtype, or
-// none when `vt` is -1.
-function comp_resultlist(b: i32[], vt: i32): i32[] {
-  if (vt < 0) {
+// comp_resultlist appends a func type's results: one anonymous valtype, its
+// encoding `vt`, or none when `vt` is empty.
+function comp_resultlist(b: i32[], vt: i32[]): i32[] {
+  if (vt.len() == 0) {
     b = b.append(1);
     return b.append(0);
   }
-  b = b.append(0);
-  return b.append(vt);
+  return wcat(b.append(0), vt);
 }
 
-// canon task.return: a core func taking the result `vt` (nothing when -1).
+// canon task.return: a core func taking the primitive result `vt` (nothing
+// when -1).
 function comp_canon_task_return(vt: i32): i32[] {
-  let b: i32[] = [1, 9];
-  b = comp_resultlist(b, vt);
+  let r: i32[] = [];
+  if (vt >= 0) {
+    r = [vt];
+  }
+  let b: i32[] = comp_resultlist([1, 9], r);
   b = b.append(0);
   return wsection(8, b);
 }
 
-// async_functype appends `async func(params) -> result`: names and component
-// valtypes in parallel, the result -1 for none.
-function async_functype(b: i32[], names: string[], types: i32[], result: i32): i32[] {
+// async_functype appends `async func(params) -> result`: names and valtype
+// encodings in parallel, the result's empty for none.
+function async_functype(b: i32[], names: string[], vts: i32[][], result: i32[]): i32[] {
   b = b.append(67);
-  b = leb_u32(b, types.len());
+  b = leb_u32(b, vts.len());
   let i: i32 = 0;
-  while (i < types.len()) {
-    b = wname(b, names[i]);
-    b = b.append(types[i]);
+  while (i < vts.len()) {
+    b = wcat(wname(b, names[i]), vts[i]);
     i = i + 1;
   }
   return comp_resultlist(b, result);
 }
 
-// component type `async func(params) -> result` for an async export.
+// component type `async func(params) -> result` for an async export, whose
+// types are all primitive.
 function comp_type_async_func(l: AsyncLift): i32[] {
   return wsection(7, async_functype([1], l.param_names, l.param_types, l.result));
 }
 
-// comp_type_async_instance is the instance type an interface's async imports
-// `lowers` are exported from: each a local func type, then its export.
-pub function comp_type_async_instance(lowers: AsyncLower[]): i32[] {
-  let b: i32[] = [1, 66];
-  b = leb_u32(b, 2 * lowers.len());
-  let j: i32 = 0;
-  while (j < lowers.len()) {
-    b = async_functype(b.append(1), lowers[j].param_names, lowers[j].param_types, lowers[j].result);
-    b = wname(wcat(b, [4, 0]), lowers[j].name);
-    b = b.append(1);
-    b = leb_u32(b, j);
-    j = j + 1;
+// InstanceTypes is an instance type's decls so far and its local type count.
+struct InstanceTypes { b: i32[], n: i32 }
+
+// instance_valtype is type `t`'s valtype inside an instance type: a primitive
+// as is, a defined type declared first and referenced by its local index.
+function instance_valtype(it: InstanceTypes, t: i32[]): (InstanceTypes, i32[]) {
+  if (t.len() <= 1) {
+    return (it, t);
   }
-  return wsection(7, b);
+  let b: i32[] = wcat(it.b.append(1), t);
+  return (InstanceTypes { b: b, n: it.n + 1 }, leb_u32([], it.n));
+}
+
+// comp_type_async_instance is the instance type an interface's async imports
+// `lowers` are exported from: each one's defined types, its func type, then
+// its export.
+pub function comp_type_async_instance(lowers: AsyncLower[]): i32[] {
+  let it: InstanceTypes = InstanceTypes { b: [], n: 0 };
+  for l in lowers {
+    let vts: i32[][] = [];
+    for t in l.param_types {
+      let (it2, vt) = instance_valtype(it, t);
+      it = it2;
+      vts = vts.append(vt);
+    }
+    let (it3, rvt) = instance_valtype(it, l.result);
+    let fb: i32[] = async_functype(it3.b.append(1), l.param_names, vts, rvt);
+    let eb: i32[] = wname(wcat(fb, [4, 0]), l.name);
+    eb = eb.append(1);
+    it = InstanceTypes { b: leb_u32(eb, it3.n), n: it3.n + 1 };
+  }
+  return wsection(7, wcat(leb_u32([1, 66], it.n + lowers.len()), it.b));
 }
 
 // comp_import_instance imports an instance of type `typeidx` as `name`.
@@ -3194,13 +3216,13 @@ function comp_canon_typed(kind: i32, typeop: i32): i32[] {
 // user module's memory, so reaches the module through a trampoline table
 // filled once the module is instantiated.
 function trampolined(k: i32): boolean {
-  return k == 1 || k == 2 || k == 5 || k == 7;
+  return k == 1 || k == 2 || k >= 5 && k <= 7;
 }
 
 // lowers_realloc reports whether an import of kind `k` lowers with the user
 // module's cabi_realloc as well.
 function lowers_realloc(k: i32): boolean {
-  return k == 2;
+  return k == 2 || k == 6;
 }
 
 // lowered_name is the instance export a core import `name` lowers: the name
@@ -3230,7 +3252,7 @@ function suffix_memory_canon(o: i32[], k: i32, inst: i32, name: string, n_cfunc:
   o = wcat(o, comp_alias_inst_func(inst, lowered_name(name)));
   let opts: i32[] = [3, 0];
   let n_opts: i32 = 1;
-  if (k == 5) {
+  if (k == 5 || k == 6) {
     opts = [6, 3, 0];
     n_opts = 2;
   }
@@ -3278,7 +3300,8 @@ function suffix_group_find(order: string[], iface: string): i32 {
 //   imp_name      method / func / [resource-drop] name
 //   imp_kind      0 no-opt, 1 memory trampoline, 2 memory+realloc, 3 resource.drop,
 //                 4 an async export's task.return, 5 an async lower (memory),
-//                 7 waitable-set.wait (memory), 8 a waitable intrinsic
+//                 6 an async lower (memory + realloc), 7 waitable-set.wait
+//                 (memory), 8 a waitable intrinsic
 //   imp_inst      component-instance index of imp_iface (from Phase A)
 //   imp_params    lowered core signature the trampoline mirrors (kinds 1/2)
 //   imp_typeop    surfaced resource type index (kind 3); the result

@@ -134,40 +134,85 @@ pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.C
 struct AsyncPlan { asy: watbin.AsyncSurface, refused: string }
 
 // AsyncSig is an async function's component signature: parameter names and
-// valtypes, the result's (-1 for none), or why it has none.
-struct AsyncSig { names: string[], types: i32[], result: i32, refused: string }
+// types, the result's ([] for none), its flattened core param count, or why
+// it has none. A type is as watbin.AsyncLift carries it.
+struct AsyncSig { names: string[], types: i32[][], result: i32[], flat: i32, refused: string }
 
 function sig_refused(why: string): AsyncSig {
-  return AsyncSig { names: [], types: [], result: 0 - 1, refused: why };
+  return AsyncSig { names: [], types: [], result: [], flat: 0, refused: why };
 }
 
-// async_sig maps `f`'s signature to component types: names in kebab case,
-// scalars by wasm_ir.async_lift_valtype. `role` names it in a refusal.
-function async_sig(f: parser.FuncDecl, role: string): AsyncSig {
+// async_type is Fern type `t` as a component type: a scalar's valtype byte,
+// and when `mem` also a string (0x73), a list (0x70 elem) or a tuple of i32 /
+// u32 (0x6f n elems). [] when it is none of those.
+function async_type(t: string, mem: boolean): i32[] {
+  let vt: i32 = wasm_ir.async_lift_valtype(t);
+  if (vt >= 0) {
+    return [vt];
+  }
+  if (!mem) {
+    return [];
+  }
+  if (t == "string") {
+    return [115];
+  }
+  if (wasm_ir.extern_byte_array_param(t) || wasm_ir.extern_array_param_supported(t)) {
+    return [112, wasm_ir.async_lift_valtype(wasm_ir.list_elem(t))];
+  }
+  if (wasm_ir.extern_tuple_param_supported(t)) {
+    let n: i32 = wasm_ir.tuple_type_elem_count(t);
+    let out: i32[] = [111, n];
+    let i: i32 = 0;
+    while (i < n) {
+      out = out.append(wasm_ir.async_lift_valtype(wasm_ir.nth_tuple_type_elem(t, i)));
+      i = i + 1;
+    }
+    return out;
+  }
+  return [];
+}
+
+// flat_count is how many core params type `ct` flattens to.
+function flat_count(ct: i32[]): i32 {
+  if (ct[0] == 111) {
+    return ct[1];
+  }
+  if (ct[0] == 115 || ct[0] == 112) {
+    return 2;
+  }
+  return 1;
+}
+
+// async_sig maps `f`'s signature to component types, names in kebab case.
+// `mem` admits the types that cross in memory (an async import's); `role`
+// names `f` in a refusal.
+function async_sig(f: parser.FuncDecl, role: string, mem: boolean): AsyncSig {
   if (f.receiver_type.len() > 0 || f.type_params.len() > 0) {
     return sig_refused("an " + role + " must be a free, non-generic function");
   }
   let names: string[] = [];
-  let types: i32[] = [];
+  let types: i32[][] = [];
+  let flat: i32 = 0;
   for p in f.params {
-    let vt: i32 = wasm_ir.async_lift_valtype(p.type_name);
-    if (vt < 0) {
+    let ct: i32[] = async_type(p.type_name, mem);
+    if (ct.len() == 0) {
       return sig_refused("parameter " + p.name + " has type " + p.type_name + ", which an " + role + " cannot take yet");
     }
     if (kebab(p.name).len() == 0) {
       return sig_refused("parameter " + p.name + " has no kebab-case form for the component");
     }
     names = names.append(kebab(p.name));
-    types = types.append(vt);
+    types = types.append(ct);
+    flat = flat + flat_count(ct);
   }
-  let rt: i32 = 0 - 1;
+  let rt: i32[] = [];
   if (wasm_ir.returns_value(f.ret_type)) {
-    rt = wasm_ir.async_lift_valtype(f.ret_type);
-    if (rt < 0) {
+    rt = async_type(f.ret_type, mem);
+    if (rt.len() == 0 || rt[0] == 111) {
       return sig_refused("the result type " + f.ret_type + " is one an " + role + " cannot take yet");
     }
   }
-  return AsyncSig { names: names, types: types, result: rt, refused: "" };
+  return AsyncSig { names: names, types: types, result: rt, flat: flat, refused: "" };
 }
 
 // async_plan maps each async export and async import of `full` to the
@@ -177,7 +222,7 @@ function async_sig(f: parser.FuncDecl, role: string): AsyncSig {
 function async_plan(full: parser.Module): AsyncPlan {
   let lifts: watbin.AsyncLift[] = [];
   for f in wasm_ir.async_exports(full) {
-    let sg: AsyncSig = async_sig(f, "async export");
+    let sg: AsyncSig = async_sig(f, "async export", false);
     let name: string = kebab(f.name);
     if (sg.refused.len() == 0 && name.len() == 0) {
       sg = sig_refused("the name has no kebab-case form for the component export");
@@ -189,9 +234,9 @@ function async_plan(full: parser.Module): AsyncPlan {
   }
   let lowers: watbin.AsyncLower[] = [];
   for f in wasm_ir.async_imports(full) {
-    let sg: AsyncSig = async_sig(f, "async import");
-    if (sg.refused.len() == 0 && f.params.len() > 4) {
-      sg = sig_refused("more than four parameters, which an async import cannot pass yet");
+    let sg: AsyncSig = async_sig(f, "async import", true);
+    if (sg.refused.len() == 0 && sg.flat > 4) {
+      sg = sig_refused("its parameters flatten to more than four core values, which an async import cannot pass yet");
     }
     if (sg.refused.len() > 0) {
       return plan_refused("async import " + f.name + ": " + sg.refused);

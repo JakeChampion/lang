@@ -205,7 +205,7 @@ together (no half-step, since it flips the working eager behavior).
    chunk into a growing length-prefixed Fern array until the stream reports EOF.
    This needs a `stream.read` (+ `stream.drop-readable`) intrinsic imported under
    `""` (mirror the waitable intrinsics registered for the await loop) and the
-   composer (`BuildAsyncImportsAwaitComponent`) to provide them — `stream.read`
+   composer (`BuildAsyncStreamImportComponent`) to provide them — `stream.read`
    trampolined over the consumer memory (the `BuildStreamExportImportComponent`
    consumer path already proved the read side). This slice is comparable in size
    to the pending-await wiring.
@@ -318,8 +318,7 @@ directions; `for x in stream` **eager** iteration (`TestWasmP3StreamForIn`); and
 the **CLI auto-bundle** — `fern -target wasm32-wasi -emit core-module -async-provider PATH` (or
 `-async-provider WITNAME=PATH`, repeatable) bundles bring-your-own provider
 component(s) so async `@import`s (scalar params + result, **single or multiple**)
-yield one self-contained runnable component (via
-`BuildAsyncImportsAwaitComponent`); plus `-async-export` lifting param'd async
+yield one self-contained runnable component; plus `-async-export` lifting param'd async
 functions. Both flags left the CLI when `fern` began compiling through the
 self-host (step 6 of `docs/NATIVE-RETIREMENT.md`); the self-host's preview-3
 surface is #11530.

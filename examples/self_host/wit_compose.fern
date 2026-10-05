@@ -85,7 +85,7 @@ function refuse(w: WorldWired, why: string): WorldWired {
 // an export's types need, and what those read — and plans each core import's
 // lowering against the world: 0 no-opt, 1 memory, 2 memory + realloc, 3 a
 // resource drop (with the surfaced resource type in rts), 4 an async export's
-// task.return (with its result valtype in rts), 5 an async lower, 7 / 8 a
+// task.return (with its result valtype in rts), 5 / 6 an async lower, 7 / 8 a
 // waitable intrinsic (wire_intrinsic).
 function wire_world(tbody: i32[], ci: wit_decode.WitCoreImports, req_ifaces: string[], req_names: string[], asy: watbin.AsyncSurface): WorldWired {
   let ifaces: string[] = req_ifaces;
@@ -216,17 +216,33 @@ function wire_intrinsic(w: WorldWired, name: string): WorldWired {
   return refuse(w, "core imports " + name + " from " + intrinsic_iface() + ", which is no intrinsic the composer supplies");
 }
 
-// wire_async_lower plans the async lower (kind 5) of an import of the
-// interface import_async_ifaces imported.
+// wire_async_lower plans the async lower of an import of the interface
+// import_async_ifaces imported: kind 6, with the realloc, when the host
+// writes a string or list result into the module's memory, else kind 5.
 function wire_async_lower(w: WorldWired, lowers: watbin.AsyncLower[], iface: string, name: string): WorldWired {
   let j: i32 = 0;
   while (j < w.async_ifaces.len()) {
     if (w.async_ifaces[j] == iface) {
-      return WorldWired { ...w, kinds: w.kinds.append(5), insts: w.insts.append(w.async_insts[j]), rts: w.rts.append(0) };
+      let kind: i32 = 5;
+      if (lower_result_in_memory(lowers, iface, watbin.lowered_name(name))) {
+        kind = 6;
+      }
+      return WorldWired { ...w, kinds: w.kinds.append(kind), insts: w.insts.append(w.async_insts[j]), rts: w.rts.append(0) };
     }
     j = j + 1;
   }
   return refuse(w, "core imports " + name + " from " + iface + " for no async import");
+}
+
+// lower_result_in_memory reports whether async import `name` of `iface`
+// returns a string (0x73) or a list (a 0x70 defined type).
+function lower_result_in_memory(lowers: watbin.AsyncLower[], iface: string, name: string): boolean {
+  for l in lowers {
+    if (l.iface == iface && l.name == name && l.result.len() > 0) {
+      return l.result[0] == 115 || l.result[0] == 112;
+    }
+  }
+  return false;
 }
 
 // task_return_iface is the core import module an async export's task.return
@@ -240,8 +256,11 @@ function task_return_iface(): string {
 // export has that name.
 function task_return_result(lifts: watbin.AsyncLift[], name: string): i32 {
   for l in lifts {
+    if ("[task-return]" + l.core_name == name && l.result.len() == 0) {
+      return 0 - 1;
+    }
     if ("[task-return]" + l.core_name == name) {
-      return l.result;
+      return l.result[0];
     }
   }
   return 0 - 2;

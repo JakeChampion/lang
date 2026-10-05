@@ -77,17 +77,7 @@ async function noted(): i32 { note(7); return 42; }
 function main(): i32 { return 0; }
 `)
 	checkDeclares(t, printed, []string{`(import "test:dep/d"`, `(import "test:dep/e"`, `(canon waitable-set.wait`}, nil)
-	providerWat, provider := filepath.Join(dir, "provider.wat"), filepath.Join(dir, "provider.wasm")
-	if err := os.WriteFile(providerWat, []byte(asyncImportProvider), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command("wasm-tools", "parse", providerWat, "-o", provider).CombinedOutput(); err != nil {
-		t.Fatalf("wasm-tools parse provider: %v\n%s", err, out)
-	}
-	linked := filepath.Join(dir, "linked.wasm")
-	if out, err := exec.Command("wasm-tools", "compose", consumer, "-d", provider, "-o", linked).CombinedOutput(); err != nil {
-		t.Fatalf("wasm-tools compose: %v\n%s", err, out)
-	}
+	linked := linkAsyncProvider(t, dir, consumer, asyncImportProvider)
 	for _, c := range []struct{ invoke, want string }{
 		{"go()", "42"},
 		{"wide()", "4294967338"},
@@ -108,6 +98,137 @@ function main(): i32 { return 0; }
 	}
 }
 
+// asyncMemProvider exports test:dep/m, whose functions pass strings, lists
+// and a tuple in memory. Its memory and realloc live in a core module of
+// their own, so the lifts and the string / list task.returns can name them
+// before the module that uses them is instantiated.
+const asyncMemProvider = `(component
+  (core module $mm
+    (memory (export "mem") 1)
+    (global $bump (mut i32) (i32.const 4096))
+    (func (export "realloc") (param i32 i32 i32 i32) (result i32) (local $p i32)
+      (local.set $p (i32.and (i32.add (global.get $bump) (i32.sub (local.get 2) (i32.const 1))) (i32.sub (i32.const 0) (local.get 2))))
+      (global.set $bump (i32.add (local.get $p) (local.get 3)))
+      (local.get $p)))
+  (core instance $mi (instantiate $mm))
+  (alias core export $mi "mem" (core memory $mem))
+  (alias core export $mi "realloc" (core func $realloc))
+  (core func $tr_s32 (canon task.return (result s32)))
+  (core func $tr_str (canon task.return (result string) (memory $mem)))
+  (core func $tr_list (canon task.return (result (list u8)) (memory $mem)))
+  (core func $yield (canon thread.yield))
+  (core module $m
+    (import "env" "mem" (memory 1))
+    (import "" "tr-s32" (func $tr_s32 (param i32)))
+    (import "" "tr-str" (func $tr_str (param i32 i32)))
+    (import "" "tr-list" (func $tr_list (param i32 i32)))
+    (import "" "yield" (func $yield (result i32)))
+    (data (i32.const 16) "abc")
+    (func (export "send") (param i32 i32) (call $tr_s32 (local.get 1)))
+    (func (export "sum") (param $p i32) (param $n i32) (local $i i32) (local $t i32)
+      (block $d (loop $l
+        (br_if $d (i32.ge_u (local.get $i) (local.get $n)))
+        (local.set $t (i32.add (local.get $t) (i32.load8_u (i32.add (local.get $p) (local.get $i)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $l)))
+      (call $tr_s32 (local.get $t)))
+    (func (export "isum") (param $p i32) (param $n i32) (local $i i32) (local $t i32)
+      (block $d (loop $l
+        (br_if $d (i32.ge_u (local.get $i) (local.get $n)))
+        (local.set $t (i32.add (local.get $t) (i32.load (i32.add (local.get $p) (i32.mul (local.get $i) (i32.const 4))))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $l)))
+      (call $tr_s32 (local.get $t)))
+    (func (export "add") (param i32 i32) (call $tr_s32 (i32.add (local.get 0) (local.get 1))))
+    (func (export "mixed") (param i32 i32 i32) (call $tr_s32 (i32.add (local.get 1) (local.get 2))))
+    (func (export "echo") (param i32 i32) (drop (call $yield)) (call $tr_str (local.get 0) (local.get 1)))
+    (func (export "bytes") (call $tr_list (i32.const 16) (i32.const 3))))
+  (core instance $env (export "mem" (memory $mem)))
+  (core instance $lib (export "tr-s32" (func $tr_s32)) (export "tr-str" (func $tr_str))
+    (export "tr-list" (func $tr_list)) (export "yield" (func $yield)))
+  (core instance $i (instantiate $m (with "env" (instance $env)) (with "" (instance $lib))))
+  (type $send_t (func async (param "s" string) (result s32)))
+  (type $sum_t (func async (param "xs" (list u8)) (result s32)))
+  (type $isum_t (func async (param "xs" (list s32)) (result s32)))
+  (type $add_t (func async (param "p" (tuple s32 s32)) (result s32)))
+  (type $mixed_t (func async (param "url" string) (param "n" s32) (result s32)))
+  (type $echo_t (func async (param "s" string) (result string)))
+  (type $bytes_t (func async (result (list u8))))
+  (func $send (type $send_t) (canon lift (core func $i "send") async (memory $mem) (realloc $realloc)))
+  (func $sum (type $sum_t) (canon lift (core func $i "sum") async (memory $mem) (realloc $realloc)))
+  (func $isum (type $isum_t) (canon lift (core func $i "isum") async (memory $mem) (realloc $realloc)))
+  (func $add (type $add_t) (canon lift (core func $i "add") async))
+  (func $mixed (type $mixed_t) (canon lift (core func $i "mixed") async (memory $mem) (realloc $realloc)))
+  (func $echo (type $echo_t) (canon lift (core func $i "echo") async (memory $mem) (realloc $realloc)))
+  (func $bytes (type $bytes_t) (canon lift (core func $i "bytes") async (memory $mem)))
+  (instance $x (export "send" (func $send)) (export "sum" (func $sum)) (export "isum" (func $isum))
+    (export "add" (func $add)) (export "mixed" (func $mixed)) (export "echo" (func $echo)) (export "bytes" (func $bytes)))
+  (export "test:dep/m" (instance $x)))
+`
+
+// TestSelfHostWasmAsyncImportMemory pins the async imports whose values cross
+// in memory: string, list and tuple parameters, and string and list results,
+// which the host writes into the consumer's memory through its cabi_realloc.
+// echo yields, so its string result arrives after the lower has returned.
+func TestSelfHostWasmAsyncImportMemory(t *testing.T) {
+	requireWasmTools(t)
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	consumer, _ := buildAsyncComponent(t, cli, dir, `@import("test:dep/m", "send") async function send(s: string): i32;
+@import("test:dep/m", "sum") async function sum(xs: u8[]): i32;
+@import("test:dep/m", "isum") async function isum(xs: i32[]): i32;
+@import("test:dep/m", "add") async function add(p: (i32, i32)): i32;
+@import("test:dep/m", "mixed") async function mixed(url: string, n: i32): i32;
+@import("test:dep/m", "echo") async function echo(s: string): string;
+@import("test:dep/m", "bytes") async function bytes(): u8[];
+async function t_send(): i32 { return send("hello"); }
+async function t_sum(): i32 { let xs: u8[] = [1u8, 2u8, 39u8]; return sum(xs); }
+async function t_isum(): i32 { let xs: i32[] = [40, -8, 10]; return isum(xs); }
+async function t_add(): i32 { return add((20, 22)); }
+async function t_mixed(): i32 { return mixed("hi", 40); }
+async function t_echo(): i32 { let r: string = echo("hello, world"); if (r == "hello, world") { return 42; } return r.len(); }
+async function t_bytes(): i32 { let b: u8[] = bytes(); return b.len() * 100 + (b[2] as i32); }
+function main(): i32 { return 0; }
+`)
+	linked := linkAsyncProvider(t, dir, consumer, asyncMemProvider)
+	for _, c := range []struct{ invoke, want string }{
+		{"t-send()", "5"},
+		{"t-sum()", "42"},
+		{"t-isum()", "42"},
+		{"t-add()", "42"},
+		{"t-mixed()", "42"},
+		{"t-echo()", "42"},
+		{"t-bytes()", "399"},
+	} {
+		args := append(append([]string{"run"}, asyncFeatures...), "--invoke", c.invoke, linked)
+		out, err := exec.Command("wasmtime", args...).CombinedOutput()
+		if err != nil {
+			t.Errorf("--invoke %s: %v\n%s", c.invoke, err, out)
+			continue
+		}
+		if got := strings.TrimSpace(string(out)); got != c.want {
+			t.Errorf("--invoke %s = %q, want %q", c.invoke, got, c.want)
+		}
+	}
+}
+
+// linkAsyncProvider assembles the WAT provider and links it into consumer
+// with `wasm-tools compose`, returning the linked component's path.
+func linkAsyncProvider(t *testing.T, dir, consumer, providerWat string) string {
+	t.Helper()
+	watPath, provider, linked := filepath.Join(dir, "provider.wat"), filepath.Join(dir, "provider.wasm"), filepath.Join(dir, "linked.wasm")
+	if err := os.WriteFile(watPath, []byte(providerWat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("wasm-tools", "parse", watPath, "-o", provider).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools parse provider: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "compose", consumer, "-d", provider, "-o", linked).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools compose: %v\n%s", err, out)
+	}
+	return linked
+}
+
 // TestSelfHostWasmAsyncImportRefusals pins what an async import cannot lower
 // yet, and that one naming an interface the fern world declares is refused:
 // the component would import that interface twice.
@@ -115,10 +236,11 @@ func TestSelfHostWasmAsyncImportRefusals(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
 	for _, c := range []struct{ name, src, want string }{
-		{"string-param", `@import("test:dep/d", "f") async function f(s: string): i32;
-function main(): i32 { return f("x"); }`, "async import f: parameter s has type string, which an async import cannot take yet"},
+		{"struct-param", `struct P { a: i32 }
+@import("test:dep/d", "f") async function f(p: P): i32;
+function main(): i32 { return f(P { a: 1 }); }`, "async import f: parameter p has type P, which an async import cannot take yet"},
 		{"five-params", `@import("test:dep/d", "f") async function f(a: i32, b: i32, c: i32, d: i32, e: i32): i32;
-function main(): i32 { return f(1, 2, 3, 4, 5); }`, "async import f: more than four parameters"},
+function main(): i32 { return f(1, 2, 3, 4, 5); }`, "async import f: its parameters flatten to more than four core values"},
 		{"world-interface", `@import("wasi:cli/stdout@0.2.0", "get-stdout") async function f(): i32;
 function main(): i32 { return f(); }`, "async import from wasi:cli/stdout@0.2.0, an interface the world declares"},
 	} {

@@ -97,37 +97,6 @@ func TestWasmP3NestedComponentReExport(t *testing.T) {
 	}
 }
 
-// p3AsyncAddCoreModule is a hand-built async-export provider core for an async
-// import that takes PARAMETERS: it imports ("", "task-return") (i32)->() and
-// exports "add" of type (i32,i32)->() — it sums its two params and delivers the
-// result through task-return (function-return = task done), the shape a
-// param-taking async-lifted export takes.
-var p3AsyncAddCoreModule = []byte{
-	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic + version
-	// types: 0:(i32)->()  1:(i32,i32)->()
-	0x01, 0x0a, 0x02, 0x60, 0x01, 0x7f, 0x00, 0x60, 0x02, 0x7f, 0x7f, 0x00,
-	// import "" "task-return" func 0 (type 0)
-	0x02, 0x10, 0x01, 0x00, 0x0b, 't', 'a', 's', 'k', '-', 'r', 'e', 't', 'u', 'r', 'n', 0x00, 0x00,
-	// func section: 1 func of type 1
-	0x03, 0x02, 0x01, 0x01,
-	// export "add" func 1
-	0x07, 0x07, 0x01, 0x03, 'a', 'd', 'd', 0x00, 0x01,
-	// code: local.get 0, local.get 1, i32.add, call 0 (task-return), end
-	0x0a, 0x0b, 0x01, 0x09, 0x00, 0x20, 0x00, 0x20, 0x01, 0x6a, 0x10, 0x00, 0x0b,
-}
-
-// p3AsyncCore40 is an async-export provider core returning 40 (an i32.const +
-// task-return + void). Structurally identical to p3AsyncCoreModule (which
-// returns 42); only the constant differs.
-var p3AsyncCore40 = []byte{
-	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-	0x01, 0x08, 0x02, 0x60, 0x01, 0x7f, 0x00, 0x60, 0x00, 0x00,
-	0x02, 0x10, 0x01, 0x00, 0x0b, 't', 'a', 's', 'k', '-', 'r', 'e', 't', 'u', 'r', 'n', 0x00, 0x00,
-	0x03, 0x02, 0x01, 0x01,
-	0x07, 0x07, 0x01, 0x03, 'r', 'u', 'n', 0x00, 0x01,
-	0x0a, 0x08, 0x01, 0x06, 0x00, 0x41, 0x28, 0x10, 0x00, 0x0b, // i32.const 40
-}
-
 // p3AsyncConsumerCore is a hand-built consumer core module for the
 // async-import await: it imports ("","task-return") (i32)->(),
 // ("","dep-lower") (i32)->(i32), and ("mem","mem") memory; its "run"
@@ -180,8 +149,7 @@ func TestWasmP3AsyncImportAwait(t *testing.T) {
 	// boundary (a consumer that lowers a provider bundled in its OWN instance
 	// traps "cannot enter component instance"). So the consumer machinery is
 	// its own nested component ($C) that IMPORTS "dep0", and the outer wires a
-	// sibling provider instance into it — the same shape the composer's
-	// BuildAsyncImportsAwaitComponent now emits.
+	// sibling provider instance into it.
 	inner := component.PutComponentHeader(nil)
 	inner = component.PutTypeSectionOneFuncAsync(inner, nil, nil, component.CValtypeU32)   // comp type 0 (import type)
 	inner = component.PutComponentImportSectionFuncs(inner, []string{"dep0"}, []uint32{0}) // comp func 0 (dep)
