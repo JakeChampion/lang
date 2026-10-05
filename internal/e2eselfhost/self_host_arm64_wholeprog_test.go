@@ -1,19 +1,15 @@
 package e2eselfhost
 
 import (
-	"encoding/binary"
 	"strings"
 	"testing"
-
-	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
-	nativeelf "github.com/jakechampion/lang/internal/native/elf"
 )
 
-// TestSelfHostArm64WholeProgramMatchesNative is
-// TestSelfHostArm64AsmEncodingMatchesNative scaled from a hand-written snippet
+// TestSelfHostArm64WholeProgramMatchesGas is
+// TestSelfHostArm64AsmEncodingMatchesGas scaled from a hand-written snippet
 // to a WHOLE PROGRAM: it takes the arm64 emitter's own GAS text — runtime and
-// all — and requires the self-host in-process assembler and
-// internal/native/arm64 to agree on every word of it.
+// all — and requires the self-host in-process assembler and GNU as + ld to
+// agree on every word of it.
 //
 // # Why this is worth having on top of the snippet
 //
@@ -25,22 +21,18 @@ import (
 // instruction was dropped" from "the counting method is off by one" — an
 // alignment can, by naming the first index where the two streams differ.
 //
-// The blocker was that the oracle rejected the emitter's numeric local labels
-// (`1:`), so it could not read whole-program output at all. #6075 fixed that,
-// and this test is the result. On its first run it found cset assembling as its
-// 64-bit sibling 73 times — behaviourally invisible, so no execution test could
-// ever have caught it, and not a form anyone had added a snippet row for.
+// On its first run it found cset assembling as its 64-bit sibling 73 times —
+// behaviourally invisible, so no execution test could ever have caught it, and
+// not a form anyone had added a snippet row for.
 //
 // # Why adrp / add-immediate are excluded
 //
-// Those two carry ADDRESSES, and the two assemblers lay out their images
-// differently (different data-segment vaddr, different rodata placement), so
-// they legitimately differ. Everything else — every ALU op, every load/store,
-// every branch displacement, every literal-pool word — must match exactly.
-// Measured on a stdlib-using program through the full CLI (117,465 asm lines):
-// 809 divergences, all 809 adrp or add-immediate, zero in any other class
-// across 118,420 words.
-func TestSelfHostArm64WholeProgramMatchesNative(t *testing.T) {
+// Those two carry ADDRESSES, and the two images are laid out differently
+// (different data-segment vaddr, different rodata placement), so they
+// legitimately differ. Everything else — every ALU op, every load/store, every
+// branch displacement, every literal-pool word — must match exactly.
+func TestSelfHostArm64WholeProgramMatchesGas(t *testing.T) {
+	gas := gnuArm64Oracle(t)
 	gcc, runner := x86_64Tooling(t)
 
 	// Import-free on purpose: asm_ir_run has no module loader. That bounds what
@@ -92,22 +84,10 @@ function main(): i32 {
 
 	got := assembleSelfHost(t, buildAsmBenchDriver(t, gcc), runner, asm)
 
-	text, _, err := nativearm64.AssembleProgram(asm, nativeelf.TextVAddr)
-	if err != nil {
-		// A refusal here is a finding in its own right: the oracle has to be
-		// able to read whatever the emitter writes, or this gate silently
-		// covers nothing. #6075 closed four such gaps (numeric local labels,
-		// movn, FP stur/ldur, and '$' in a symbol name — every lifted-lambda
-		// wrapper is named `…$wrap0`).
-		t.Fatalf("the native assembler rejected the emitter's own output: %v", err)
-	}
-	var want []uint32
-	for i := 0; i+4 <= len(text); i += 4 {
-		want = append(want, binary.LittleEndian.Uint32(text[i:]))
-	}
+	want := arm64Words(gas.linkedText(t, asm))
 
 	if len(got) != len(want) {
-		t.Fatalf("word count differs: self-host %d, native %d — one of them dropped or added instructions", len(got), len(want))
+		t.Fatalf("word count differs: self-host %d, GNU as %d — one of them dropped or added instructions", len(got), len(want))
 	}
 
 	bad := 0
@@ -119,7 +99,7 @@ function main(): i32 {
 			continue
 		}
 		if bad < 20 {
-			t.Errorf("word %d: self-host %08x, native %08x", i, got[i], want[i])
+			t.Errorf("word %d: self-host %08x, GNU as %08x", i, got[i], want[i])
 		}
 		bad++
 	}

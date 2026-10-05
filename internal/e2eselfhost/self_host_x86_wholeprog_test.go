@@ -15,16 +15,7 @@ import (
 // saw a real program. The testl/testq sign-flag bug (#6544) is the worked
 // example — invisible on the hand-written snippets that did exist, wrong on
 // a program. This is the x86 twin of
-// TestSelfHostArm64WholeProgramMatchesNative (#7898).
-//
-// # Why GNU as, and not internal/native/x86_64
-//
-// The arm64 twin compares the two assemblers directly because both read the
-// same GAS AArch64 syntax. On x86 they do not: the emitter and
-// x86_native.fern speak AT&T while internal/native/x86_64 is Intel-dialect,
-// so there is no text both can read. GNU as reads what the emitter actually
-// writes and is the ground truth the rest of the assembler suite is pinned
-// against, so it is the stronger oracle here rather than a fallback.
+// TestSelfHostArm64WholeProgramMatchesGas (#7898).
 //
 // # Why the comparison is per-instruction and not byte-for-byte
 //

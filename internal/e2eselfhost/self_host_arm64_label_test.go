@@ -232,9 +232,8 @@ function imm26_at(code: u8[], at: i32): i32 {
 // TestSelfHostArm64BranchRange pins #6264: the three branch patchers MASK the
 // displacement into their immediate field, so before this an overflow wrapped
 // into a different, valid-looking branch with nothing reported — the assembler
-// succeeded, the binary linked, and it jumped somewhere arbitrary. The native
-// assembler both errors on this (internal/native/arm64/asm.go) and veneers the
-// imm26 case (veneer.go); this is the refuse-first half of that parity.
+// succeeded, the binary linked, and it jumped somewhere arbitrary. It is
+// refused now.
 //
 // The self-host compiler's own __text is ~56 MB, so imm26's ±128 MB is not
 // exceeded by today's build and the check is defensive there. imm19 (±1 MB)
