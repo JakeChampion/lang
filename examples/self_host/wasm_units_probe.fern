@@ -144,23 +144,11 @@ function main(): i32 {
   let needs: string[] = wasm_ir.union_strs(wasm_ir.needs_of(cache_a), wasm_ir.needs_of(cache_b));
   let fn_sigs: string[] = wasm_ir.union_strs(wasm_ir.indirect_fn_sigs(cache_a), wasm_ir.indirect_fn_sigs(cache_b));
 
-  // The per-type RC helper bodies come from the MERGED type lists, not a
-  // combined cache — the same metadata a cached link reads back. Both units
-  // resolve against one shared struct world, so a type named by both yields a
-  // single body.
-  let frt: string[] = wasm_ir.union_strs(wasm_ir.field_reclaim_types(cache_a), wasm_ir.field_reclaim_types(cache_b));
-  let sdt: string[] = wasm_ir.union_strs(wasm_ir.struct_drop_types(cache_a, stab), wasm_ir.struct_drop_types(cache_b, stab));
-  let aet: string[] = wasm_ir.union_strs(wasm_ir.struct_arr_elems_drop_types(cache_a, stab), wasm_ir.struct_arr_elems_drop_types(cache_b, stab));
-
-  // heap_base is a whole-LINK quantity (it sits past every unit's literals
-  // and aggregate constants), so it is computed from the concatenated lists,
-  // exactly as the link step computes it.
   let units: wasm_ir.WasmUnit[] = [
     wasm_ir.WasmUnit { ns: "", text: unit_a, strs: strs_a, caggs: caggs_a, fns: fns_a },
     wasm_ir.WasmUnit { ns: "$u1", text: unit_b, strs: strs_b, caggs: caggs_b, fns: fns_b },
   ];
-  let rc_bodies: string = wasm_ir.emit_ir_rc_bodies_from(im, frt, sdt, aet, wasm_ir.heap_base_for_units(units));
 
-  write(wasm_ir.emit_ir_module_units(units, im, needs, fn_sigs, rc_bodies, 0, asmcore.env_switches()));
+  write(wasm_ir.emit_ir_module_units(units, im, needs, fn_sigs, 0, asmcore.env_switches()));
   return 0;
 }

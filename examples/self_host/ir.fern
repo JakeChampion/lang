@@ -2635,9 +2635,7 @@ pub function op_mapiter_advance(): Op {
 // `struct_field_off` layout is a different one and retires with wasm.fern.)
 // Reading a WIDE field still needs its width: on wasm the slot holds a pointer
 // in its low 4 bytes, so width 0 selects the i32 load that recovers one, and a
-// double read that way would be its low half. rc-tracked fields and drop
-// specialization are the per-type __struct_drop_<T> / __field_reclaim_<T>
-// bodies each backend emits (#3457).
+// double read that way would be its low half.
 // op_struct_make builds a struct / enum-variant box from nfields values on the
 // stack. `decl_index` identifies WHICH decl `type_name` names: the backends read
 // each field's store width off it, and for a variant name two enums share the

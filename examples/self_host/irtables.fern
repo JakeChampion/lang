@@ -1579,22 +1579,6 @@ pub function enum_arr_elems_walk_ok(structs: StructTab, ename: string): boolean 
   return any_walked;
 }
 
-// enum_walk_payload_offsets: for one variant, the byte offsets of its
-// enum_walk_payload_field payloads ((k+1)*8 — shape@0, fields@8+), for the
-// element-walk emitters.
-pub function enum_walk_payload_offsets(structs: StructTab, vname: string): i32[] {
-  let out: i32[] = [];
-  let n: i32 = decl_field_count(structs, vname);
-  let fi: i32 = 0;
-  while (fi < n) {
-    if (enum_walk_payload_field(decl_field_type_at(structs, vname, fi))) {
-      out = out.append((fi + 1) * 8);
-    }
-    fi = fi + 1;
-  }
-  return out;
-}
-
 // erased_expr_uses_any: does `e` reference any of the (erased-param) names?
 function erased_expr_uses_any(e: ast.Expr, names: string[]): boolean {
   let ids: string[] = astwalk.collect_idents_expr(e, []);
