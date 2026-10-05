@@ -306,7 +306,25 @@ It also requires a single bound test in each emitted map-only reduction loop.
 captured map callbacks and index-order floating arithmetic on all three targets.
 Arithmetic NaNs follow FS-04; other result bits remain exact.
 
-Primary runtime parity remains open. On Apple M3 Pro arm64-darwin, 2026-10-05,
+After fusion, `semoption.fern` splits private `Option[scalar]` values into a
+boolean tag and a scalar payload before ownership planning. The proof covers
+the complete component connected by copies and phis, including loop phis.
+Every origin must be a local constructor, and every use must be a tag test,
+payload read, copy or phi. A return, call, container store, closure capture or
+external origin keeps the whole component boxed. Counted payloads, finalizers
+and source debug bindings also retain their existing representation.
+
+Some supplies its payload directly; None supplies an unobservable typed zero.
+Tag and payload phis follow the original predecessor order. Repeated reads
+remain reads, and escaping Options keep their public ABI. The scalar-option
+tests require zero allocations for local reductions and the expected box for
+escaping results on all three targets. They cover empty and rejected inputs,
+integer and floating widths, booleans, branch/loop joins and RC balance.
+Floating payload copies retain exact bits, including NaNs. The direct semantic
+admission fixture verifies both graphs and checks refusal boundaries.
+
+Primary runtime parity remains open for the filtered reduction. On Apple M3 Pro
+arm64-darwin, 2026-10-05,
 nine alternating runs of the existing 2,000-element benchmarks gave these
 medians and observed ranges, in ns per round. A two-round pilot preceded the
 200-round measurements; checksums agreed throughout.
@@ -339,6 +357,24 @@ protocol measured map.map.reduce at 7,316 ns (7,047-11,208), versus 7,782 ns
 control. The unchanged filtered pipeline measured 2,558 ns (2,508-2,806),
 with a 2,421 ns (2,350-2,642) control. Allocation counts and checksums were
 unchanged. These overlapping ranges do not establish runtime parity.
+
+Splitting private scalar Options removes that remaining allocation. A two-round
+pilot and 200-round run passed before scaling only the round count to 20,000,
+with nine alternating processes per variant and the same 2,000-element inputs.
+The longer run separates the filtered pipeline's remaining runtime gap from
+the short-run variation:
+
+| Pipeline | Before Option splitting, ns/round | After splitting, ns/round | Same-build handwritten control, ns/round |
+| --- | ---: | ---: | ---: |
+| map.map.reduce | 7,634 (7,603-7,714) | 7,584 (7,549-7,649) | 7,598 (7,556-8,327) |
+| filter.map.reduce | 2,724 (2,709-2,747) | 2,722 (2,703-2,736) | 2,540 (2,524-2,604) |
+
+Both optimized pipelines and their controls make zero allocator calls and use
+zero steady fresh bytes; the prior pipelines make 20,000 calls. Checksums agree.
+The mapped reduction reaches the control's measured timing range, but the
+filtered reduction remains slower. Removing the box alone does not close that
+gap. The native compiler text grew by 11,616 bytes for the component analysis
+and typed scalar rewrite. No size baseline was increased.
 
 Clause 1's second half — "no unspecialised calls per element" — holds, and it
 is not something this pass does by itself. Fusion runs FIRST in

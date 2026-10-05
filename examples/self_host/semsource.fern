@@ -17,6 +17,7 @@ import "./ownership";
 import "./util";
 import "./seminline";
 import "./semfuse";
+import "./semoption";
 import "./semndarray";
 import "./semarrayreport";
 
@@ -8473,7 +8474,7 @@ function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl
   while (i < all.len()) {
     let p: Produced = all[i];
     if (out.rewritten[i]) {
-      p = Produced { ...p, func: out.funcs[i], analysis: None };
+      p = Produced { ...p, func: semoption.split(out.funcs[i]), analysis: None };
     }
     result = result.append(p);
     i = i + 1;
