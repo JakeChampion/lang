@@ -190,7 +190,7 @@ pool and gained nothing measurable at the default GOGC (its passes copy each
 op list per round, so it is allocation all the way down); it stays sequential
 until that copying goes.
 
-## Where a whole self-host emit spends its time
+## Historical self-host emit profile (2026-10-02)
 
 callgrind over the self-host driver (`-g`, see below) emitting
 `examples/self_host/fern.fern` to x86-64 asm text, 2026-10-02: 271 G
@@ -199,16 +199,18 @@ self-host-built compiler builds from the same source (its codegen borrows
 where stage0's releases), 57 s wall on the 4-core container under other load
 (73 s to a linked binary with symbols, 3.5 GB peak). Compare drivers built by
 the same compiler: the input tree moves the count by under 0.02%, the
-building compiler by 3%. Inclusive shares, one pass each:
+building compiler by 3%. These measurements predate the removal of the FnSigs
+analysis in `40231668cf` and have not been re-measured on current main. The
+retained inclusive shares below describe that 2026-10-02 pass, one pass each;
+the deleted analysis rows are omitted. Re-measure before using these shares to
+prioritize current compiler work.
 
-- The semantic lowering (`semlower.target_substitution`) is 60%: producing
+- The semantic lowering (`semlower.target_substitution`) was 60%: producing
   the rows 40% (`ssarc.lower` of 13.5k bodies 17%, `semsource.build_module`
-  13%, the inference pass's second lowering 12%), `ircore.wp_fn_sigs` 10%
-  (of which `grow_param_flags` 3%, `strfld_reclaim_ok_types_of` 2%),
-  `regrow_sigs` 3%, lambda lifting 3%.
-- The backend (`asm_ir.emit_module_or_error_sub`) is 24%: the SSA emit of
+  13%, the inference pass's second lowering 12%) and lambda lifting 3%.
+- The backend (`asm_ir.emit_module_or_error_sub`) was 24%: the SSA emit of
   each function 12%, `asmcore.check_module` 5.5%.
-- The checker is 9%.
+- The checker was 9%.
 
 By self cost the top rows were whole-table scans, since replaced with the
 emitted asm byte-identical and the stage0-built driver's emit at 239 G
