@@ -70,7 +70,9 @@ function main(): i32 { return pick((x: f64) => (x * 2.0) as i32, 21.0); }`},
 function main(): i32 { return (apply((x: i32) => (x as i64) * 3000000000i64) / 1000000000i64) as i32; }`},
 	// Control: an all-i32 signature keeps the arity-keyed $fn<N> type and must
 	// be unaffected. If this ever fails the fallback has stopped falling back.
-	{"all-i32-control", `function apply(g: (i32) => i32): i32 { return g(5); }
+	// `@noinline` keeps the indirect call, which the inliner otherwise resolves.
+	{"all-i32-control", `@noinline
+function apply(g: (i32) => i32): i32 { return g(5); }
 function main(): i32 { return apply((x: i32) => x * 2); }`},
 
 	// --- the SHADOW rows (#7253) --------------------------------------------
