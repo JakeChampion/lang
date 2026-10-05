@@ -24,10 +24,9 @@ import (
 // so every case here reads its receiver again afterwards — a release of the
 // wrong buffer is a wrong ANSWER, not merely a byte count.
 //
-// SCALAR elements only. The grow's copy path memcpys elements without
-// retaining them, so a pointer-element copy aliases the original's elements
-// and the deep release such a buffer earns would free them out from under it.
-// pointer-elem-receiver-is-refused pins that exclusion.
+// A pointer-element copy shares the original's elements, so its release must
+// not free them out from under the receiver; pointer-elem-receiver-read-after
+// pins that.
 var consumedAppendCases = []struct {
 	name string
 	src  string
@@ -129,12 +128,9 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// REFUSED, and it must stay refused: a string[] receiver's copy path
-	// memcpys element POINTERS without retaining them, so releasing the temp
-	// through the deep walk such a buffer earns would free strings the
-	// original still holds. Values must stay correct — this one still leaks,
-	// so it is deliberately not asserted flat.
-	{"pointer-elem-receiver-is-refused", `function sink(xs: string[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i].len(); i = i + 1; } return s; }
+	// A string[] receiver: the temp shares its element strings with `ss`,
+	// which is read again after the call.
+	{"pointer-elem-receiver-read-after", `function sink(xs: string[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i].len(); i = i + 1; } return s; }
 function tag(k: i32): string { if (k == 0) { return "zero"; } return "many"; }
 function work(n: i32): i32 {
     let ss: string[] = ["alpha-" + tag(n)];
@@ -146,8 +142,13 @@ function work(n: i32): i32 {
 function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 400) { let v: i32 = work(i % 2); if (v < 0) { return 97; } acc = (acc + v) % 251; i = i + 1; }
+    while (i < 200) { let v: i32 = work(i % 2); if (v < 0) { return 97; } acc = (acc + v) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 2000) { let v: i32 = work(j % 2); if (v < 0) { return 97; } acc = (acc + v) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0, true},

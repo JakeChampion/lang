@@ -52,8 +52,8 @@ function (s: string) own2(): string { return s + ""; }
 function (s: string) idv(): str { return s; }
 `
 
-// sliceViewHeap wraps a `round` body in the churn/heap-delta harness. 4096 is far
-// under every measured leak here and far over the 0 a released box produces.
+// sliceViewHeap wraps a `round` body in the churn/heap-delta harness; the second
+// churn must leave the heap bump flat.
 func sliceViewHeap(producer string, round string) string {
 	return sliceViewPrelude + `function round(pre: string): i32 { let base: string = ` + producer + `(pre); ` + round + ` }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -65,7 +65,7 @@ function main(): i32 {
     let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
-    if (b2 - b1 >= 4096) { return 98; }
+    if (b2 != b1) { return 98; }
     return 0;
 }`
 }
@@ -82,17 +82,8 @@ var strSliceViewReleaseCases = []struct {
 	// 230400, because the slice copies. Both go to 0.
 	{"str-slice-view-release-wide-payload", sliceViewHeap("ww", `return slice_unchecked(base, 4, base.len()).own2().len();`), 0},
 	// A slice OF a slice: the root walk has to recurse through both links to reach
-	// `base`, or it stops at the inner one and releases nothing. This case pins the
-	// VALUE rather than the bytes, because the two backends leave different things
-	// behind and neither is what this change is about:
-	//
-	//	x86-64 / arm64   9600 -> 0     both boxes gone
-	//	wasm            60800 -> 48000 the OUTER copy gone, the inner one stranded
-	//
-	// The wasm remainder is the INNER slice, which is not in receiver position at
-	// all — it is the operand of the second slice — so no receiver-arm release can
-	// reach it, and there it is a full payload copy rather than a 24-byte header.
-	// That is the next lead on this shape, not something to gate here.
+	// `base`, or it stops at the inner one and releases nothing. The inner slice is
+	// the operand of the second slice, not a receiver, and must be released too.
 	{"str-slice-view-release-nested-chain", sliceViewPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let c: string = slice_unchecked(slice_unchecked(base, 4, base.len()), 1, 20).own2();
@@ -155,9 +146,10 @@ function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 
 }
 
 // TestSelfHostStrSliceViewReleaseIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler.
+// self-hosted x86-64 compiler, with the leak census on.
 func TestSelfHostStrSliceViewReleaseIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
+	t.Setenv("FERN_LEAKCHECK", "1")
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
@@ -169,15 +161,13 @@ func TestSelfHostStrSliceViewReleaseIRX86_64(t *testing.T) {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			stderr, code := hevRun(t, runner, bin)
+			if code != tc.want {
 				t.Errorf("%s = %d, want %d (98 = the view box was stranded; 99 = over-release; 97 = value corrupted)", tc.name, code, tc.want)
+			}
+			allocs, frees, live := parseLeakcheck(t, tc.name, stderr)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", tc.name, allocs, frees, live)
 			}
 		})
 	}

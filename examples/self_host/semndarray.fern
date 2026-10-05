@@ -174,9 +174,9 @@ function kernel_contract(): ssasem.Contract {
   return ssasem.Contract { name: "__scale_f64", params: [a, t], modes: [ssasem.borrow_mode(), ssasem.value_mode()], result: a };
 }
 
-function from_flat_contract(funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], t: typeinfo.Type): i32 {
+function from_flat_contract(funcs: ssasem.Func[], index: util.NameIndex, trusted: util.NameIndex, usable: boolean[], t: typeinfo.Type): i32 {
   let at: i32 = index.find("ndarray__from_flat__f64");
-  if (at < 0 || !usable[at] || !semtypes.equal(funcs[at].result, t)) {
+  if (at < 0 || !trusted.has("ndarray__from_flat__f64") || !usable[at] || !semtypes.equal(funcs[at].result, t)) {
     return 0 - 1;
   }
   return at;
@@ -197,7 +197,7 @@ function kernel_name(name: string): boolean {
     || name == "__smm_ndarray__NdArray_inner__f64__f64";
 }
 
-pub function scale_maps(funcs: ssasem.Func[], names: string[], usable: boolean[], open: boolean[], enabled: boolean, products: boolean, report: boolean): Scaled {
+pub function scale_maps(funcs: ssasem.Func[], names: string[], usable: boolean[], open: boolean[], stdlib: string[], enabled: boolean, products: boolean, report: boolean): Scaled {
   let index: util.NameIndex = util.name_index(names);
   let rewritten: boolean[] = [];
   for f in funcs {
@@ -206,7 +206,8 @@ pub function scale_maps(funcs: ssasem.Func[], names: string[], usable: boolean[]
   if (!report && !has_kernel(names)) {
     return Scaled { funcs: funcs, rewritten: rewritten, sites: [] };
   }
-  let layouts: semndlayout.Facts = semndlayout.analyze(funcs, names, usable, open);
+  let trusted: util.NameIndex = util.name_index(stdlib);
+  let layouts: semndlayout.Facts = semndlayout.analyze(funcs, names, usable, open, trusted);
   let out: ssasem.Func[] = [];
   let sites: semarrayreport.Site[] = [];
   rewritten = [];
@@ -219,7 +220,7 @@ pub function scale_maps(funcs: ssasem.Func[], names: string[], usable: boolean[]
       i = i + 1;
       continue;
     }
-    let result: Rewritten = scale_function(f, funcs, names, index, usable, layouts.values[i], enabled, products, report);
+    let result: Rewritten = scale_function(f, funcs, names, index, trusted, usable, layouts.values[i], enabled, products, report);
     out = out.append(result.func);
     rewritten = rewritten.append(result.changed);
     sites = util.append_all(sites, result.sites);
@@ -263,7 +264,7 @@ function layout_refusal(layout: i32): i32 {
   return semarrayreport.kernel_layout_row_major();
 }
 
-function scale_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean): Plan {
+function scale_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, trusted: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean): Plan {
   let why: i32 = site_refusal(f, ins, layouts);
   if (why != semarrayreport.kernel_scale_kernel()) {
     return no_plan(why);
@@ -272,7 +273,7 @@ function scale_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index:
   if (!k.ok) {
     return no_plan(k.reason);
   }
-  let ctor: i32 = from_flat_contract(funcs, index, usable, f.values[ins.result]);
+  let ctor: i32 = from_flat_contract(funcs, index, trusted, usable, f.values[ins.result]);
   if (ctor < 0) {
     return no_plan(semarrayreport.kernel_constructor_unavailable());
   }
@@ -297,9 +298,9 @@ function outer_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[]): i32 {
   return semarrayreport.kernel_outer_mul_kernel();
 }
 
-function metadata_helper(funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], name: string, params: typeinfo.Type[], result: typeinfo.Type): i32 {
+function metadata_helper(funcs: ssasem.Func[], index: util.NameIndex, trusted: util.NameIndex, usable: boolean[], name: string, params: typeinfo.Type[], result: typeinfo.Type): i32 {
   let at: i32 = index.find(name);
-  if (at < 0 || !usable[at]) {
+  if (at < 0 || !trusted.has(name) || !usable[at]) {
     return 0 - 1;
   }
   let f: ssasem.Func = funcs[at];
@@ -316,7 +317,7 @@ function metadata_helper(funcs: ssasem.Func[], index: util.NameIndex, usable: bo
   return at;
 }
 
-function outer_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean): Plan {
+function outer_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, trusted: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean): Plan {
   let why: i32 = outer_refusal(f, ins, layouts);
   if (why != semarrayreport.kernel_outer_mul_kernel()) {
     return no_plan(why);
@@ -325,10 +326,10 @@ function outer_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index:
   if (!k.ok) {
     return no_plan(k.reason);
   }
-  let ctor: i32 = from_flat_contract(funcs, index, usable, f.values[ins.result]);
+  let ctor: i32 = from_flat_contract(funcs, index, trusted, usable, f.values[ins.result]);
   let dims: typeinfo.Type = shape_type();
-  let join: i32 = metadata_helper(funcs, index, usable, "ndarray__join", [dims, dims], dims);
-  let check: i32 = metadata_helper(funcs, index, usable, "ndarray__check_shape", [dims], typeinfo.TypeVoid { tag: 0 });
+  let join: i32 = metadata_helper(funcs, index, trusted, usable, "ndarray__join", [dims, dims], dims);
+  let check: i32 = metadata_helper(funcs, index, trusted, usable, "ndarray__check_shape", [dims], typeinfo.TypeVoid { tag: 0 });
   if (ctor < 0 || join < 0 || check < 0) {
     return no_plan(semarrayreport.kernel_constructor_unavailable());
   }
@@ -353,7 +354,7 @@ function inner_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[]): i32 {
   return semarrayreport.kernel_inner_mul_add_kernel();
 }
 
-function inner_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean): Plan {
+function inner_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, trusted: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean): Plan {
   let why: i32 = inner_refusal(f, ins, layouts);
   if (why != semarrayreport.kernel_inner_mul_add_kernel()) {
     return no_plan(why);
@@ -364,7 +365,7 @@ function inner_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index:
       return no_plan(k.reason);
     }
   }
-  let adapter: i32 = metadata_helper(funcs, index, usable, "ndarray__inner_kernel", [f.values[ins.args[0]], f.values[ins.args[1]], f.values[ins.args[2]]], f.values[ins.result]);
+  let adapter: i32 = metadata_helper(funcs, index, trusted, usable, "ndarray__inner_kernel", [f.values[ins.args[0]], f.values[ins.args[1]], f.values[ins.args[2]]], f.values[ins.result]);
   if (adapter < 0) {
     return no_plan(semarrayreport.kernel_constructor_unavailable());
   }
@@ -374,14 +375,17 @@ function inner_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index:
   return Plan { ...no_plan(semarrayreport.kernel_inner_mul_add_kernel()), adapter: adapter };
 }
 
-function site_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean, products: boolean): Plan {
-  if (ins.kind_tag == ssasem.call() && semndlayout.operation(ins.str) == "outer") {
-    return outer_plan(f, ins, funcs, index, usable, layouts, products);
+function site_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, trusted: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean, products: boolean): Plan {
+  if (ins.kind_tag != ssasem.call() || !trusted.has(ins.str)) {
+    return no_plan(semarrayreport.kernel_unsupported_operation());
   }
-  if (ins.kind_tag == ssasem.call() && semndlayout.operation(ins.str) == "inner") {
-    return inner_plan(f, ins, funcs, index, usable, layouts, products);
+  if (semndlayout.operation(ins.str) == "outer") {
+    return outer_plan(f, ins, funcs, index, trusted, usable, layouts, products);
   }
-  return scale_plan(f, ins, funcs, index, usable, layouts, enabled);
+  if (semndlayout.operation(ins.str) == "inner") {
+    return inner_plan(f, ins, funcs, index, trusted, usable, layouts, products);
+  }
+  return scale_plan(f, ins, funcs, index, trusted, usable, layouts, enabled);
 }
 
 function shape_type(): typeinfo.Type {
@@ -444,7 +448,7 @@ function scale_instructions(ins: ssa.SInst, plan: Plan, funcs: ssasem.Func[], va
   return Emitted { values: values, insts: insts, calls: calls };
 }
 
-function scale_function(f: ssasem.Func, funcs: ssasem.Func[], names: string[], index: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean, products: boolean, report: boolean): Rewritten {
+function scale_function(f: ssasem.Func, funcs: ssasem.Func[], names: string[], index: util.NameIndex, trusted: util.NameIndex, usable: boolean[], layouts: i32[], enabled: boolean, products: boolean, report: boolean): Rewritten {
   let values: typeinfo.Type[] = f.values;
   let blocks: ssa.SBlock[] = [];
   let changed: boolean = false;
@@ -453,8 +457,8 @@ function scale_function(f: ssasem.Func, funcs: ssasem.Func[], names: string[], i
   for b in f.graph.blocks {
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
-      let plan: Plan = site_plan(f, ins, funcs, index, usable, layouts, enabled, products);
-      if (report && ins.kind_tag == ssasem.call() && algebra(ins.str)) {
+      let plan: Plan = site_plan(f, ins, funcs, index, trusted, usable, layouts, enabled, products);
+      if (report && ins.kind_tag == ssasem.call() && trusted.has(ins.str) && algebra(ins.str)) {
         sites = sites.append(kernel_site(f, ins, layouts, plan));
       }
       if (plan.reason == semarrayreport.kernel_inner_mul_add_kernel()) {

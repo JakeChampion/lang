@@ -521,11 +521,25 @@ pub function flip_int_cmp_kind(id: i32): i32 {
 // answers a different type than it takes, so `__arrm_map__f64` alone does not
 // say the result is f64. The lambda's own signature is what settles that.
 pub function scale_f64_maps_module(mod: parser.Module): parser.Module {
+  if (!has_array_map(mod.funcs)) {
+    return mod;
+  }
   let out: parser.FuncDecl[] = [];
   for fd in mod.funcs {
     out = out.append(parser.FuncDecl { ...fd, body: astwalk.map_stmts(fd.body, scale_map_call) });
   }
   return parser.Module { ...mod, funcs: out };
+}
+
+// has_array_map: the worklist cloned some `__arrm_map__<elem>`, without which
+// no call can name one.
+function has_array_map(funcs: parser.FuncDecl[]): boolean {
+  for fd in funcs {
+    if (util.str_has_prefix(fd.name, "__arrm_map__")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Every shape test below is spelled `if let` rather than `match`, and that is

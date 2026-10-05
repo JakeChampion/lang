@@ -277,7 +277,7 @@ function main(): i32 {
         eprint("asm_load_run: cannot read module: " + mpath);
         return 1;
       }
-      let m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
+      let m: parser.Module = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize(msrc)), ipath);
       loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: "", mod: m });
       paths = add_imports(paths, m, root);
     }

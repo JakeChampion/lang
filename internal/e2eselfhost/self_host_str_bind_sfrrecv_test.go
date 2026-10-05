@@ -14,10 +14,8 @@ import "testing"
 // and __fern_str_view_free, so a view box is returned to the freelist without
 // touching the shared data.
 //
-// Thresholds are calibrated, not inherited: the view shape leaks 24 B/round on
-// the register backends, so the 32768 the older suites use over 400 rounds would
-// not catch it. Measured base/after per round on x86-64: `tail(4)` 24 -> 0,
-// `pad2(4)` 184 -> 0, stdlib `pad_start(200, " ")` 224 -> 0.
+// A stranded view box is only 24 B/round, so the heap harness requires the
+// second churn to leave the heap bump flat rather than under a threshold.
 const strBindPrelude = `import "std/i32";
 import "std/i64";
 import "std/string";
@@ -38,8 +36,7 @@ function (s: string) ident2(): string { return s; }
 `
 
 // strBindHeap wraps a `round` body in the churn/heap-delta harness. 98 means the
-// bound result was stranded; 4096 sits 2.3x under the smallest measured leak
-// (9600 over 400 rounds) and far above the 0 a released binding produces.
+// bound result was stranded.
 func strBindHeap(round string) string {
 	return strBindPrelude + `function round(pre: string): i32 { let base: string = w(pre); ` + round + ` }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -51,7 +48,7 @@ function main(): i32 {
     let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
-    if (b2 - b1 >= 4096) { return 98; }
+    if (b2 != b1) { return 98; }
     return 0;
 }`
 }
@@ -88,7 +85,7 @@ function main(): i32 {
     let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
-    if (b2 - b1 >= 4096) { return 98; }
+    if (b2 != b1) { return 98; }
     return 0;
 }`, 0},
 	// WITNESS for the pointer compare, and the case that fails in the OPPOSITE
@@ -223,9 +220,7 @@ func TestSelfHostStrBindSfrrecvIRX86_64(t *testing.T) {
 // strBindStdlibCases run the real `std/string` through the module loader, where
 // the registry that admits `drop` is built from a SIBLING module's declarations.
 //
-// These are the helpers the issue is about. Measured base/after on x86-64 with
-// `make selfhost-cli`: `drop(2)` 24 -> 0 (a view box), `pad_start(200, " ")`
-// 224 -> 0 (a fresh box + its data).
+// These are the helpers the issue is about.
 var strBindStdlibCases = []struct {
 	name string
 	call string
@@ -260,7 +255,7 @@ function main(): i32 {
     let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
-    if (b2 - b1 >= 4096) { return 98; }
+    if (b2 != b1) { return 98; }
     return 0;
 }
 `
@@ -295,8 +290,7 @@ func TestSelfHostStrBindSfrrecvIRArm64(t *testing.T) {
 
 // TestSelfHostStrBindSfrrecvWasmIR is the wasm leg, where __fern_str_view_free
 // maps to $__fern_arr_dec — wasm slices copy, so every admitted result is an
-// ordinary owned block and the leak is box + data (120 B/round for the view
-// shape) rather than the register backends' 24.
+// ordinary owned block.
 func TestSelfHostStrBindSfrrecvWasmIR(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range strBindSfrrecvCases {
