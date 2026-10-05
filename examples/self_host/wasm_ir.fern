@@ -4077,6 +4077,16 @@ pub function wasi_subscribe_duration_import(): string {
   return "  (import \"wasi:clocks/monotonic-clock@0.2.0\" \"subscribe-duration\" (func $__fern_wasi_subscribe_duration (param i64) (result i32)))\n";
 }
 
+// pollable_drop_func emits $__fern_pollable_drop(p) -> 0, the body of
+// wasm_pollable_drop: drop the wasi:io/poll pollable. A negative token names
+// none, as poll skips one; a continuation async cancels is handed
+// async.cancelled() and may drop the word it was resumed with.
+pub function pollable_drop_func(): string {
+  return "  (func $__fern_pollable_drop (param $p i32) (result i32)\n"
+    + "    (if (i32.ge_s (local.get $p) (i32.const 0)) (then (call $__fern_wasi_pollable_drop (local.get $p))))\n"
+    + "    (i32.const 0))\n";
+}
+
 pub function wasi_pollable_drop_import(): string {
   return "  (import \"wasi:io/poll@0.2.0\" \"[resource-drop]pollable\" (func $__fern_wasi_pollable_drop (param i32)))\n";
 }
@@ -6465,11 +6475,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == 148) {  // wasm_timer_pollable
     parts = emit_wasm_wasm_timer_pollable(parts);
   } else if (o.kind_tag == 161) {  // wasm_pollable_drop
-    // wasm_pollable_drop(p: i32) -> i32. Drop the wasi:io/poll pollable
-    // resource (wasi:io/poll.[resource-drop]pollable), then push 0 for the
-    // op's i32 result. Preview-2 direct import, same component path.
-    parts = parts.append("    call $__fern_wasi_pollable_drop\n");
-    parts = parts.append("    i32.const 0\n");
+    // wasm_pollable_drop(p: i32) -> i32, through $__fern_pollable_drop.
+    parts = parts.append("    call $__fern_pollable_drop\n");
   } else if (o.kind_tag == 162) {  // wasm_block
     parts = emit_wasm_wasm_block(parts);
   } else if (o.kind_tag == 208) {  // udp_send
@@ -14398,6 +14405,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need_tcp_connect(needs)) {
     parts = parts.append(tcp_connect_with_func());
+  }
+  if (need(needs, "wasm_pollable_drop")) {
+    parts = parts.append(pollable_drop_func());
   }
   if (need(needs, "tcp_connect")) {
     parts = parts.append(tcp_connect_func());

@@ -3900,8 +3900,10 @@ func TestRunnerHeaderMapMigratedExample(t *testing.T) {
 // parser (#5714): `http_parse_request_bytes` and the text entry agree on
 // well-formed and refused requests, the framed parse tells incomplete from
 // malformed, a chunked body is decoded under its caps (#9854), the target is
-// decoded once with its dot segments removed or refused, and what the parse
-// keeps is copied out of the wire buffer rather than aliasing it.
+// decoded once with its dot segments removed or refused, what the parse
+// keeps is copied out of the wire buffer rather than aliasing it, and a
+// request parsed with the one before it as `prev` is the request parsed
+// alone.
 func TestRunnerHttpRequestBytesExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/http_request_bytes_test.fern")
@@ -3909,7 +3911,7 @@ func TestRunnerHttpRequestBytesExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: HTTP request bytes", "# pass 23", "# fail 0", "1..23"} {
+	for _, w := range []string{"# Suite: HTTP request bytes", "# pass 25", "# fail 0", "1..25"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

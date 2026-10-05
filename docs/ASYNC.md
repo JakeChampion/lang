@@ -119,8 +119,13 @@ With a blocking native `poll`, live futures always make progress.
 ## 4. `race` — first to finish wins
 
 `race` runs the futures until the **first** resolves, returns `(winnerIndex,
-value)`, and abandons the rest (happy-eyeballs / first-wins). Cancellation is
-structural: a loser is simply never resumed.
+value)`, and cancels the rest (happy-eyeballs / first-wins). A loser is
+resumed once more, with `async.cancelled()`, and releases what it holds:
+`fetch_future` closes its socket. A future of your own handles `cancelled()`
+the same way, by cleaning up and returning `Ready` without waiting on
+anything. Under a task, a wait in that path could rewind into it and release
+the same resource twice; `fetch_future`'s close is a bare `close(2)` and is
+not safe to repeat.
 
 ```fern
 import "std/async";
@@ -408,10 +413,11 @@ that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
   timer firing is the deadline. (This needed the composer to export both `now`
   and `subscribe-duration` on one `monotonic-clock` import instance — see
   `docs/ASYNC-FUTURE-UNIFICATION.md`.)
-- `race` / `gather` drop every abandoned future's pollable before teardown
-  (`__drop_losers` → `wasm_pollable_drop`), so a `race` over real wasm sockets
-  no longer leaks the losers' pollables (which are children of their sockets and
-  would otherwise trap wasmtime with "resource has children").
+- `race`, `with_deadline`, and `gather` when its wait fails cancel every
+  future they abandon (`__drop_losers`): the future's pollable is dropped
+  first, since on wasm it is a child of its socket and wasmtime traps with
+  "resource has children" otherwise, and then its continuation is resumed with
+  `cancelled()` and closes the socket.
 - `fetch_future` reads the **whole** response: its continuation re-suspends per
   chunk (`__fetch_drain`), accumulating across reads until EOF, so a body larger
   than one `recv` buffer / spread over TCP segments comes back in full while

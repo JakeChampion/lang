@@ -1442,7 +1442,8 @@ function tok_spelling(t: lexer.Token): string {
 }
 
 // defer_action is `st`, parsed at `p` after `defer`, when it is a block, an
-// expression or an assignment, and a P001 at its first token otherwise.
+// expression (`assert(...)` among them, which parses to its desugared `if`) or
+// an assignment, and a P001 at its first token otherwise.
 function defer_action(st: ast.Stmt, p: Par): ast.Stmt {
   if let ast.StmtExpr(_) = st {
     return st;
@@ -1454,7 +1455,7 @@ function defer_action(st: ast.Stmt, p: Par): ast.Stmt {
     return st;
   }
   if let ast.StmtIf(f) = st {
-    if (f.origin == "block") {
+    if (f.origin == "block" || f.origin == ORIGIN_ASSERT) {
       return st;
     }
   }

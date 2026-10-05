@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// StartDelayedUpstream listens on a loopback port and answers its first
+// StartDelayedUpstream listens on a loopback port and answers each
 // connection, after reading the request and waiting delay, with a 200
 // carrying body. It returns the port.
 func StartDelayedUpstream(t *testing.T, body string, delay time.Duration) int {
@@ -19,16 +19,20 @@ func StartDelayedUpstream(t *testing.T, body string, delay time.Duration) int {
 	t.Cleanup(func() { ln.Close() })
 	resp := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
 	go func() {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				buf := make([]byte, 256)
+				_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+				_, _ = conn.Read(buf)
+				time.Sleep(delay)
+				_, _ = conn.Write([]byte(resp))
+			}(conn)
 		}
-		defer conn.Close()
-		buf := make([]byte, 256)
-		_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-		_, _ = conn.Read(buf)
-		time.Sleep(delay)
-		_, _ = conn.Write([]byte(resp))
 	}()
 	return ln.Addr().(*net.TCPAddr).Port
 }

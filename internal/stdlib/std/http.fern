@@ -516,7 +516,7 @@ pub function http_user_agent_is_bot(ua: string): boolean {
 // want `http_parse_request` and `get_all`.
 pub function http_header_value(block: string, key: string): Option[string] {
   let bs: u8[] = block.bytes();
-  match (__parse_header_bytes(bs, 0, bs.len(), http_limits().header_fields)) {
+  match (__parse_header_bytes(bs, 0, bs.len(), http_limits().header_fields, headers.header_map_new())) {
     Ok(h) => {
       return h.get(key);
     },
@@ -564,6 +564,21 @@ function __bytes_range(buf: u8[], from: i32, end: i32): u8[] {
 
 function __bytes_string(buf: u8[], from: i32, end: i32): string {
   return string_from_bytes_range_unchecked(buf, from, end);
+}
+
+// `__shared_string(buf, from, end, prev)` — buf[from, end) as a string,
+// `prev` itself when it holds those bytes.
+function __shared_string(buf: u8[], from: i32, end: i32, prev: string): string {
+  if (__range_is(buf, from, end, prev)) {
+    return prev;
+  }
+  return __bytes_string(buf, from, end);
+}
+
+// `__range_is(buf, from, end, s)` — whether buf[from, end) holds the bytes
+// of `s`.
+function __range_is(buf: u8[], from: i32, end: i32, s: string): boolean {
+  return s.len() == end - from && __bytes_are(buf, from, s);
 }
 
 // HttpLimits — the parser's caps (RFC 9112 §2.3 leaves them to the
@@ -678,13 +693,17 @@ function __ascii_lower(b: u8): i32 {
 // optional whitespace around them (RFC 9112 §5.5, SP and HTAB only), or
 // `None` when a byte is a control other than HTAB (RFC 9110 §5.5 lets a
 // recipient refuse one; a lenient reading would let a VT or FF ride in a
-// token that a byte-oriented intermediary reads differently).
-function __field_value(buf: u8[], from: i32, end: i32): Option[string] {
+// token that a byte-oriented intermediary reads differently). A value
+// holding the bytes of `prev`, which passed these checks, is `prev`.
+function __field_value(buf: u8[], from: i32, end: i32, prev: string): Option[string] {
   while (from < end && __is_ows(buf[from])) {
     from = from + 1;
   }
   while (end > from && __is_ows(buf[end - 1])) {
     end = end - 1;
+  }
+  if (__range_is(buf, from, end, prev)) {
+    return Some(prev);
   }
   if (__scan_set_bytes(buf, from, FIELD_CTL) < end) {
     return None;
@@ -707,9 +726,12 @@ function __field_value(buf: u8[], from: i32, end: i32): Option[string] {
 // obs-text opaque; a `string` is text, so the octets have to spell
 // some), 431 for more fields than the cap. Names keep the client's
 // spelling; a value loses the SP and HTAB around it
-// (`__field_value`).
-function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32): Result[HeaderMap, i32] {
+// (`__field_value`). A block repeating `prev`'s fields is `prev`, and
+// every name or value equal to `prev`'s at its place is `prev`'s string.
+function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev: HeaderMap): Result[HeaderMap, i32] {
   let h: HeaderMap = headers.header_map_new();
+  // While every field so far repeats prev's, none is appended to h.
+  let same: boolean = true;
   let count: i32 = 0;
   let at: i32 = from;
   while (at < end) {
@@ -725,9 +747,24 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32): Resu
     if (count > fields) {
       return Err(431);
     }
-    match (__field_value(buf, col + 1, e)) {
+    let i: i32 = count - 1;
+    let was_name: string = "";
+    let was_value: string = "";
+    if (i < prev.names.len()) {
+      was_name = prev.names[i];
+      was_value = prev.values[i];
+    }
+    match (__field_value(buf, col + 1, e, was_value)) {
       Some(v) => {
-        h = h.append(__bytes_string(buf, at, col), v);
+        let name: string = __shared_string(buf, at, col, was_name);
+        let kept: boolean = same && i < prev.names.len() && name == was_name && v == was_value;
+        if (same && !kept) {
+          h = __leading_fields(prev, i);
+        }
+        if (!kept) {
+          h = h.append(name, v);
+        }
+        same = kept;
       },
       None => {
         return Err(400);
@@ -735,7 +772,24 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32): Resu
     }
     at = e + 2;
   }
+  if (same && count == prev.names.len()) {
+    return Ok(prev);
+  }
+  if (same) {
+    return Ok(__leading_fields(prev, count));
+  }
   return Ok(h);
+}
+
+// `__leading_fields(h, n)` — the map of h's first n fields.
+function __leading_fields(h: HeaderMap, n: i32): HeaderMap {
+  let out: HeaderMap = headers.header_map_new();
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(h.names[i], h.values[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `__crlf_terminated(buf, from, end)` — whether every LF in buf[from, end)
@@ -1206,7 +1260,7 @@ function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[], field
     return (1, 0, spans, trailers);
   }
   if (sep > at) {
-    match (__parse_header_bytes(buf, at, sep, fields)) {
+    match (__parse_header_bytes(buf, at, sep, fields, headers.header_map_new())) {
       Ok(h) => {
         trailers = h;
       },
@@ -1512,13 +1566,54 @@ function __unframed(kind: i32, h: HeaderMap, version: string): HttpFraming {
   return Incomplete;
 }
 
-// `__request_line(buf, from, end)` — the request line buf[from, end)
-// read: `(0, sp1, sp2, path)` with the offsets of its two spaces and the
-// path `http_request_target` gives, or `(status, _, _, _)` refusing it:
+// `__repeats(prev, head, body, trailers)` — whether the request parsed is
+// `prev` again: the same method, path and fields, and neither carries a
+// body or trailers.
+function __repeats(prev: HttpRequest, head: __Head, body: u8[], trailers: HeaderMap): boolean {
+  if (body.len() != 0 || trailers.names.len() != 0 || prev.trailers.names.len() != 0 || !__empty_body(prev.body)) {
+    return false;
+  }
+  return head.method == prev.method && head.path == prev.path && __same_fields(head.headers, prev.headers);
+}
+
+// `__empty_body(s)` — whether `s` is what `stream_from_bytes` makes of no
+// bytes.
+function __empty_body(s: Stream): boolean {
+  match (s.source) {
+    Some(_) => {
+      return false;
+    },
+    None => {
+      return s.data.len() == 0 && s.pos == 0;
+    }
+  }
+  return false;
+}
+
+// `__same_fields(a, b)` — whether two maps hold the same fields in the
+// same order.
+function __same_fields(a: HeaderMap, b: HeaderMap): boolean {
+  if (a.names.len() != b.names.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.names.len()) {
+    if (a.names[i] != b.names[i] || a.values[i] != b.values[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// `__request_line(buf, from, end, prev_path)` — the request line
+// buf[from, end) read: `(0, sp1, sp2, path)` with the offsets of its two
+// spaces and the path `http_request_target` gives (`prev_path` when it is
+// the same text), or `(status, _, _, _)` refusing it:
 // 400 for a method that is not a token, a missing space, an empty
 // target or a version that is not an HTTP-version, 505 for another
 // major version, and the target's own refusals.
-function __request_line(buf: u8[], from: i32, end: i32): (i32, i32, i32, string) {
+function __request_line(buf: u8[], from: i32, end: i32, prev_path: string): (i32, i32, i32, string) {
   let sp1: i32 = __find_byte(buf, from, end, 32 as u8);
   if (sp1 < 0 || !__is_token(buf, from, sp1)) {
     return (400, -1, -1, "");
@@ -1531,7 +1626,7 @@ function __request_line(buf: u8[], from: i32, end: i32): (i32, i32, i32, string)
   if (version_status != 0) {
     return (version_status, -1, -1, "");
   }
-  match (__target_path(buf, sp1 + 1, sp2, sp1 - from == 7 && __bytes_are(buf, from, "OPTIONS"))) {
+  match (__target_path(buf, sp1 + 1, sp2, sp1 - from == 7 && __bytes_are(buf, from, "OPTIONS"), prev_path)) {
     Ok(p) => {
       return (0, sp1, sp2, p);
     },
@@ -1546,22 +1641,53 @@ function __request_line(buf: u8[], from: i32, end: i32): (i32, i32, i32, string)
 // framing a persistent connection needs, and the three-way answer, under
 // `http_limits()`.
 pub function http_parse_request_framed(buf: u8[]): HttpFraming {
-  return http_parse_request_framed_from(buf, 0, http_limits());
+  return http_parse_request_framed_from(buf, 0, http_limits(), http_framed_none());
 }
 
-// `http_parse_request_framed_from(buf, from, limits)` — the same parse
-// over buf[from, len) under `limits`: the request behind the ones a serve
-// loop has already answered, without copying the rest of the buffer
-// forward. `len` counts from `from`.
-pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits): HttpFraming {
-  match (__request_head(buf, from, limits)) {
+// `http_framed_none()` — the `prev` of a parse with no request before it:
+// it shares nothing with any request.
+pub function http_framed_none(): HttpFramed {
+  let empty: u8[] = [];
+  let req: HttpRequest = HttpRequest { method: "", path: "", body: stream.stream_from_bytes(empty), headers: headers.header_map_new(), trailers: headers.header_map_new() };
+  return HttpFramed { request: req, len: 0, keep_alive: false, version: "" };
+}
+
+// `http_framed_kept(f)` — what a serve loop keeps of the request it took,
+// as the `prev` of its next parse: `f`, less its body and trailers when it
+// had either, so the loop holds no body between requests.
+pub function http_framed_kept(f: HttpFramed): HttpFramed {
+  if (__empty_body(f.request.body) && f.request.trailers.names.len() == 0) {
+    return f;
+  }
+  let empty: u8[] = [];
+  return HttpFramed { ...f, request: HttpRequest { ...f.request, body: stream.stream_from_bytes(empty), trailers: headers.header_map_new() } };
+}
+
+// `http_parse_request_framed_from(buf, from, limits, prev)` — the same
+// parse over buf[from, len) under `limits`: the request behind the ones a
+// serve loop has already answered, without copying the rest of the buffer
+// forward. `len` counts from `from`. `prev` is a request parsed before
+// it, a serve loop's last: a string the parse would copy that holds the
+// same text as `prev`'s at the same place is `prev`'s, and a request
+// repeating `prev` with no body is `prev`, so clients repeating their
+// requests cost no allocation. Values are immutable, so what is shared with `prev` is
+// shared whoever else holds it.
+pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpFramed): HttpFraming {
+  match (__request_head(buf, from, limits, prev.request)) {
     Ok(head) => {
       let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + head.len, head.framing, head.version, limits);
       if (body.0 != 2) {
         return __unframed(body.0, head.headers, head.version);
       }
+      let len: i32 = body.2 - from;
+      if (__repeats(prev.request, head, body.1, body.3)) {
+        if (len == prev.len && head.keep_alive == prev.keep_alive && head.version == prev.version) {
+          return Framed(prev);
+        }
+        return Framed(HttpFramed { request: prev.request, len: len, keep_alive: head.keep_alive, version: head.version });
+      }
       let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.stream_from_bytes(body.1), headers: head.headers, trailers: body.3 };
-      return Framed(HttpFramed { request: req, len: body.2 - from, keep_alive: head.keep_alive, version: head.version });
+      return Framed(HttpFramed { request: req, len: len, keep_alive: head.keep_alive, version: head.version });
     },
     Err(status) => {
       if (status == 1) {
@@ -1589,10 +1715,11 @@ pub struct HttpHead { request: HttpRequest, len: i32, keep_alive: boolean, versi
 // the body arrives.
 pub enum HttpHeading { Headed(HttpHead), HeadIncomplete, HeadMalformed(i32) }
 
-// `http_parse_request_head_from(buf, from, limits)` — the request head at
-// `from`, under `limits`.
-pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits): HttpHeading {
-  match (__request_head(buf, from, limits)) {
+// `http_parse_request_head_from(buf, from, limits, prev)` — the request
+// head at `from`, under `limits`, sharing `prev`'s strings as
+// `http_parse_request_framed_from` does.
+pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): HttpHeading {
+  match (__request_head(buf, from, limits, prev)) {
     Ok(head) => {
       let length: i32 = __declared(head.framing);
       if (length > limits.body) {
@@ -1622,11 +1749,12 @@ pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimi
 // and its body framing.
 struct __Head { method: string, path: string, headers: HeaderMap, version: string, len: i32, keep_alive: boolean, framing: __BodyFraming }
 
-// `__request_head(buf, from, limits)` — the request line and header block
-// at `from`, read and checked (the request line's rules, the header
+// `__request_head(buf, from, limits, prev)` — the request line and header
+// block at `from`, read and checked (the request line's rules, the header
 // rules, the body framing's): `Err(1)` while less than the block has
-// arrived, `Err(status)` refusing it.
-function __request_head(buf: u8[], from: i32, limits: HttpLimits): Result[__Head, i32] {
+// arrived, `Err(status)` refusing it. A method, path, name or value with
+// the text of `prev`'s is `prev`'s string.
+function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Result[__Head, i32] {
   let start: i32 = from;
   from = __past_empty_line(buf, from);
   let first_crlf: i32 = __request_line_end(buf, from, limits.request_line);
@@ -1640,7 +1768,7 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits): Result[__Head
   // its CRLF has arrived, before the rest of the block.
   let line: (i32, i32, i32, string) = (0, -1, -1, "");
   if (first_crlf >= 0) {
-    line = __request_line(buf, from, first_crlf);
+    line = __request_line(buf, from, first_crlf, prev.path);
     if (line.0 != 0) {
       return Err(line.0);
     }
@@ -1666,7 +1794,7 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits): Result[__Head
     hdr_start = headers_end;
   }
   let req_headers: HeaderMap = headers.header_map_new();
-  match (__parse_header_bytes(buf, hdr_start, headers_end, limits.header_fields)) {
+  match (__parse_header_bytes(buf, hdr_start, headers_end, limits.header_fields, prev.headers)) {
     Ok(h) => {
       req_headers = h;
     },
@@ -1688,7 +1816,7 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits): Result[__Head
       return Err(status);
     }
   }
-  return Ok(__Head { method: __bytes_string(buf, from, sp1), path: path, headers: req_headers, version: version, len: from + headers_len - start, keep_alive: __persists(version, req_headers), framing: framing });
+  return Ok(__Head { method: __shared_string(buf, from, sp1, prev.method), path: path, headers: req_headers, version: version, len: from + headers_len - start, keep_alive: __persists(version, req_headers), framing: framing });
 }
 
 // `__head_bounded(buf, from, limits, first_crlf, headers_end)` — 0 when
@@ -1749,14 +1877,15 @@ function __declared(f: __BodyFraming): i32 {
 // something else). The query is not decoded: its encoding depends on
 // what reads it (`form_decode` folds `+`, `url_decode` does not).
 pub function http_request_target(method: string, target: string): Result[string, i32] {
-  return __target_path(target.bytes(), 0, target.len(), method == "OPTIONS");
+  return __target_path(target.bytes(), 0, target.len(), method == "OPTIONS", "");
 }
 
-// `__target_path(buf, from, end, options)` — `http_request_target` over
-// the target buf[from, end), with `options` saying whether the method is
-// OPTIONS. A path with no escape and no dot segment is already its own
-// decoding, so such a target is copied out whole.
-function __target_path(buf: u8[], from: i32, end: i32, options: boolean): Result[string, i32] {
+// `__target_path(buf, from, end, options, prev)` — `http_request_target`
+// over the target buf[from, end), with `options` saying whether the method
+// is OPTIONS. A path with no escape and no dot segment is already its own
+// decoding, so such a target is copied out whole, or is `prev` when it
+// holds the same bytes.
+function __target_path(buf: u8[], from: i32, end: i32, options: boolean, prev: string): Result[string, i32] {
   if (end == from + 1 && buf[from] == 42 as u8) {
     return __asterisk_form(options);
   }
@@ -1774,7 +1903,7 @@ function __target_path(buf: u8[], from: i32, end: i32, options: boolean): Result
     return Err(400);
   }
   if (path_from < path_end && __plain_path(buf, path_from, path_end)) {
-    return Ok(__bytes_string(buf, path_from, end));
+    return Ok(__shared_string(buf, path_from, end, prev));
   }
   return __decoded_path(buf, path_from, path_end, end);
 }
@@ -2963,7 +3092,7 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
     hdr_start = headers_end;
   }
   let h: HeaderMap = headers.header_map_new();
-  match (__parse_header_bytes(buf, hdr_start, headers_end, limits.header_fields)) {
+  match (__parse_header_bytes(buf, hdr_start, headers_end, limits.header_fields, h)) {
     Ok(parsed) => {
       h = parsed;
     },

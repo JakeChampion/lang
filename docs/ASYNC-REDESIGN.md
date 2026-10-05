@@ -139,7 +139,8 @@ pub struct Future[T] { /* backend-specific payload */ }
 pub function gather[T](fs: Future[T][]): T[]
 
 // Await FIRST — happy-eyeballs / race. Returns (winnerIndex, result);
-// the losers are dropped (structural cancellation — never resumed).
+// the losers are cancelled: resumed once with cancelled(), so they
+// release what they hold.
 pub function race[T](fs: Future[T][]): (i32, T)
 
 // Await ALL within a wall-clock budget. A future that misses the
@@ -243,9 +244,9 @@ is proven; PR5 is the real design work and lands incrementally.
   union (in-memory value vs fd+continuation); PR5 replaces it with the
   IR type. The combinator *signatures* are stable across that change —
   that's the point of fixing them first.
-- **Cancellation** stays structural (a dropped future is never
-  resumed; RC/Perceus reclaims its frame). PR5's IR future additionally
-  closes a loser's fd to stop in-flight OS I/O.
+- **Cancellation** resumes a loser once with `cancelled()`, the
+  `task_cancel` convention: the continuation releases what it holds (fetch
+  closes its socket) and returns `Ready`; RC/Perceus reclaims the frame.
 - **`with_deadline` return type** (`Option[T][]`) assumes an
   `Option`/nullable in the stdlib; if absent we fall back to a
   sentinel + parallel `bool[]` ready-mask, decided in PR2.

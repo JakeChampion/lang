@@ -1048,6 +1048,7 @@ TestSelfHostProgsArm64 3
 TestSelfHostProgsX86_64 3
 TestSelfHostPubVisibilityX86_64 2
 TestSelfHostQualifiedOptResultIR 2
+TestSelfHostRaceClosesTheLoser 35
 TestSelfHostRandomBytesScratch 2
 TestSelfHostRawFree 2
 TestSelfHostRawIntrinsicsX86_64 2

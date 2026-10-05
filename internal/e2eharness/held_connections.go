@@ -243,7 +243,8 @@ func heapBumpBytes(t *testing.T, addr string) int64 {
 
 // BumpPerRequestServerSource is a single-loop server whose handler
 // answers the bump allocator's high-water mark, `__heap_bump_bytes()`,
-// with room for BumpPerRequestRounds requests on one connection.
+// with room for twice BumpPerRequestRounds requests on one connection, so
+// the warm-up CheckBumpPerRequest extends to a Date change fits.
 func BumpPerRequestServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -254,7 +255,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 function main(): i32 {
     return serve.run(%d, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle);
 }
-`, port, BumpPerRequestRounds+1)
+`, port, 2*BumpPerRequestRounds+1)
 }
 
 // BumpPerRequestRounds is #9853's per-request count: 100k requests on
@@ -262,11 +263,11 @@ function main(): i32 {
 const BumpPerRequestRounds = 100000
 
 // CheckBumpPerRequest drives BumpPerRequestServerSource over one
-// keep-alive connection for `rounds` requests: once the first tenth have
-// warmed the allocator's free lists, requests reuse what earlier ones
-// freed, so the bump high-water mark reported a tenth of the way in is
-// the one reported at the last request (#9853's per-request gate, bump
-// half).
+// keep-alive connection: once a tenth of `rounds` requests have warmed the
+// allocator's free lists and the loop has rebuilt its `Date` once, its
+// one piece of per-second work, requests reuse what earlier ones freed,
+// so the bump high-water mark reported then is the one reported nine
+// tenths of `rounds` later (#9853's per-request gate, bump half).
 func CheckBumpPerRequest(t *testing.T, addr string, rounds int) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -278,8 +279,9 @@ func CheckBumpPerRequest(t *testing.T, addr string, rounds int) {
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Minute))
 	reader := bufio.NewReader(conn)
 	warm := rounds / 10
-	var atWarm, last string
-	for i := 1; i <= rounds; i++ {
+	var atWarm, last, firstDate string
+	warmed, end := 0, rounds
+	for i := 1; i <= end; i++ {
 		if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: x\r\n\r\n"); err != nil {
 			t.Fatalf("request %d: %v", i, err)
 		}
@@ -290,11 +292,25 @@ func CheckBumpPerRequest(t *testing.T, addr string, rounds int) {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		last = string(body)
-		if i == warm {
-			atWarm = last
+		date := resp.Header.Get("Date")
+		if date == "" {
+			t.Fatalf("response %d has no Date", i)
+		}
+		if i == 1 {
+			firstDate = date
+		}
+		if warmed == 0 && i >= warm && date != firstDate {
+			warmed, atWarm = i, last
+			end = i + rounds - warm
+		}
+		if warmed == 0 && i == end {
+			if end == 2*rounds {
+				t.Fatalf("no Date change in %d requests", end)
+			}
+			end++
 		}
 	}
 	if last != atWarm {
-		t.Fatalf("bump high-water mark %s bytes at request %d but %s at request %d: a keep-alive request grows the heap", atWarm, warm, last, rounds)
+		t.Fatalf("bump high-water mark %s bytes at request %d but %s at request %d: a keep-alive request grows the heap", atWarm, warmed, last, end)
 	}
 }
