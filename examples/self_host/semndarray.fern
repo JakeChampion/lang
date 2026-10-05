@@ -57,9 +57,13 @@ function packed_value(f: ssasem.Func, v: i32, seen: i32[]): boolean {
   }
   // These are std/ndarray's reserved module identities, not a user's
   // similarly named methods. from_flat checks count == storage length.
-  return util.str_has_prefix(ins.str, "ndarray__from_flat__")
-    || util.str_has_prefix(ins.str, "ndarray__from_flat$")
-    || util.str_has_prefix(ins.str, "__smm_ndarray__NdArray_map__");
+  return packed_producer(ins.str);
+}
+
+function packed_producer(name: string): boolean {
+  return util.str_has_prefix(name, "ndarray__from_flat__")
+    || util.str_has_prefix(name, "ndarray__from_flat$")
+    || util.str_has_prefix(name, "__smm_ndarray__NdArray_map__");
 }
 
 function f64_type(t: typeinfo.Type): boolean {
@@ -87,8 +91,7 @@ function factor(f: ssasem.Func): Factor {
   // A closure wrapper has its environment first and its element second.
   // The caller has proved that the closure captures nothing, and below no
   // instruction is allowed to read fields out of that environment.
-  let element: i32 = f.params.len() - 1;
-  if (element < 0 || element > 1 || !f64_type(f.params[element]) || !f64_type(f.result) || f.graph.blocks.len() != 1) {
+  if (!factor_signature(f)) {
     return no;
   }
   let b: ssa.SBlock = f.graph.blocks[0];
@@ -97,20 +100,38 @@ function factor(f: ssasem.Func): Factor {
   }
   let result: i32 = uncopy(f, b.term.value, []);
   let mul: Def = definition(f, result);
-  if (!mul.found || mul.ins.kind_tag != 9 || mul.ins.str != "*" || mul.ins.args.len() != 2) {
+  if (!is_multiply(mul) || !factor_body(b, result)) {
     return no;
   }
+  return literal_factor(f, mul.ins);
+}
+
+function factor_signature(f: ssasem.Func): boolean {
+  let element: i32 = f.params.len() - 1;
+  return element >= 0 && element <= 1 && f64_type(f.params[element]) && f64_type(f.result) && f.graph.blocks.len() == 1;
+}
+
+function is_multiply(d: Def): boolean {
+  return d.found && d.ins.kind_tag == 9 && d.ins.str == "*" && d.ins.args.len() == 2;
+}
+
+function factor_body(b: ssa.SBlock, result: i32): boolean {
   for ins in b.insts {
     if (ins.kind_tag != 1 && ins.kind_tag != 6 && ins.kind_tag != 7 && ins.result != result) {
-      return no;
+      return false;
     }
   }
-  let left: Def = definition(f, uncopy(f, mul.ins.args[0], []));
-  let right: Def = definition(f, uncopy(f, mul.ins.args[1], []));
+  return true;
+}
+
+function literal_factor(f: ssasem.Func, mul: ssa.SInst): Factor {
+  let no: Factor = Factor { ok: false, literal: "" };
+  let left: Def = definition(f, uncopy(f, mul.args[0], []));
+  let right: Def = definition(f, uncopy(f, mul.args[1], []));
   if (!left.found || !right.found) {
     return no;
   }
-  if (left.ins.kind_tag == 6 && left.ins.imm == element && right.ins.kind_tag == 1 && f64_type(f.values[right.ins.result])) {
+  if (left.ins.kind_tag == 6 && left.ins.imm == f.params.len() - 1 && right.ins.kind_tag == 1 && f64_type(f.values[right.ins.result])) {
     return Factor { ok: true, literal: right.ins.str };
   }
   // Preserve the source's operand order, including NaN payload selection.
@@ -155,48 +176,61 @@ pub function scale_maps(funcs: ssasem.Func[], names: string[], usable: boolean[]
       i = i + 1;
       continue;
     }
-    let values: typeinfo.Type[] = f.values;
-    let blocks: ssa.SBlock[] = [];
-    let changed: boolean = false;
-    let calls: ssasem.Contract[] = f.calls;
-    for b in f.graph.blocks {
-      let insts: ssa.SInst[] = [];
-      for ins in b.insts {
-        let k: Factor = Factor { ok: false, literal: "" };
-        let ctor: i32 = 0 - 1;
-        if (usable[i] && ins.kind_tag == ssasem.call() && ins.args.len() == 2
-          && ins.str == "__smm_ndarray__NdArray_map__f64__f64" && packed_value(f, ins.args[0], [])) {
-          k = closure_factor(f, ins.args[1], funcs, index, usable);
-          ctor = from_flat_contract(funcs, index, usable, f.values[ins.result]);
-        }
-        if (k.ok && ctor >= 0) {
-          let contract: ssasem.Contract = kernel_contract();
-          let n: i32 = values.len();
-          let dims: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false }, view: false };
-          values = values.append(contract.params[0]).append(dims).append(contract.params[1]).append(contract.result);
-          insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: n, args: [ins.args[0]], imm: 0, str: "data" });
-          insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: n + 1, args: [ins.args[0]], imm: 1, str: "shape" });
-          insts = insts.append(ssa.SInst { kind_tag: 1, result: n + 2, args: [], imm: 0, str: k.literal });
-          insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: n + 3, args: [n, n + 2], imm: 0, str: contract.name });
-          insts = insts.append(ssa.SInst { ...ins, str: names[ctor], args: [n + 3, n + 1] });
-          if (ssasem.find_contract_in(calls, contract.name) < 0) {
-            calls = calls.append(contract);
-          }
-          if (ssasem.find_contract_in(calls, names[ctor]) < 0) {
-            calls = calls.append(ssasem.Contract { name: names[ctor], params: funcs[ctor].params, modes: [ssasem.borrow_mode(), ssasem.borrow_mode()], result: funcs[ctor].result });
-          }
-          changed = true;
-        } else {
-          insts = insts.append(ins);
-        }
-      }
-      blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
-    }
-    out = out.append(ssasem.Func { ...f, values: values, calls: calls, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } });
-    rewritten = rewritten.append(changed);
+    let result: Rewritten = scale_function(f, funcs, names, index, usable);
+    out = out.append(result.func);
+    rewritten = rewritten.append(result.changed);
     i = i + 1;
   }
   return Scaled { funcs: out, rewritten: rewritten };
+}
+
+struct Rewritten { func: ssasem.Func, changed: boolean }
+
+struct Plan { factor: Factor, ctor: i32 }
+
+function scale_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: util.NameIndex, usable: boolean[]): Plan {
+  if (ins.kind_tag == ssasem.call() && ins.args.len() == 2
+    && ins.str == "__smm_ndarray__NdArray_map__f64__f64" && packed_value(f, ins.args[0], [])) {
+    return Plan { factor: closure_factor(f, ins.args[1], funcs, index, usable), ctor: from_flat_contract(funcs, index, usable, f.values[ins.result]) };
+  }
+  return Plan { factor: Factor { ok: false, literal: "" }, ctor: 0 - 1 };
+}
+
+function scale_function(f: ssasem.Func, funcs: ssasem.Func[], names: string[], index: util.NameIndex, usable: boolean[]): Rewritten {
+  let values: typeinfo.Type[] = f.values;
+  let blocks: ssa.SBlock[] = [];
+  let changed: boolean = false;
+  let calls: ssasem.Contract[] = f.calls;
+  for b in f.graph.blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      let plan: Plan = scale_plan(f, ins, funcs, index, usable);
+      let k: Factor = plan.factor;
+      let ctor: i32 = plan.ctor;
+      if (k.ok && ctor >= 0) {
+        let contract: ssasem.Contract = kernel_contract();
+        let n: i32 = values.len();
+        let dims: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false }, view: false };
+        values = values.append(contract.params[0]).append(dims).append(contract.params[1]).append(contract.result);
+        insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: n, args: [ins.args[0]], imm: 0, str: "data" });
+        insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: n + 1, args: [ins.args[0]], imm: 1, str: "shape" });
+        insts = insts.append(ssa.SInst { kind_tag: 1, result: n + 2, args: [], imm: 0, str: k.literal });
+        insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: n + 3, args: [n, n + 2], imm: 0, str: contract.name });
+        insts = insts.append(ssa.SInst { ...ins, str: names[ctor], args: [n + 3, n + 1] });
+        if (ssasem.find_contract_in(calls, contract.name) < 0) {
+          calls = calls.append(contract);
+        }
+        if (ssasem.find_contract_in(calls, names[ctor]) < 0) {
+          calls = calls.append(ssasem.Contract { name: names[ctor], params: funcs[ctor].params, modes: [ssasem.borrow_mode(), ssasem.borrow_mode()], result: funcs[ctor].result });
+        }
+        changed = true;
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  }
+  return Rewritten { func: ssasem.Func { ...f, values: values, calls: calls, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } }, changed: changed };
 }
 
 function has_map(f: ssasem.Func): boolean {
