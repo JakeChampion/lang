@@ -247,7 +247,7 @@ func TestSelfHostPerModuleCacheFollowsInlinedBodyX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "driver")
 
 	proj, entry := pmCacheTree(t, "pub function leaf_val(): i32 { return 40; }\n")
-	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte("import \"./leaf\";\npub function mid_val(): i32 { return leaf.leaf_val() + 2; }\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte("import \"./leaf\";\n@noinline pub function mid_val(): i32 { return leaf.leaf_val() + 2; }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cacheDir := filepath.Join(proj, "cache")
@@ -395,7 +395,7 @@ func TestSelfHostPerModuleTransitiveInvalidationX86_64(t *testing.T) {
 	}
 	// main imports mid only; the struct it reads a field of is declared in leaf.
 	write("mid.fern", "import \"./leaf\";\n"+
-		"pub function get(): leaf.Thing { return leaf.make_thing(); }\n")
+		"@noinline pub function get(): leaf.Thing { return leaf.make_thing(); }\n")
 	write("main.fern", "import \"./mid\";\n"+
 		"function main(): i32 {\n"+
 		"    let t = mid.get();\n"+

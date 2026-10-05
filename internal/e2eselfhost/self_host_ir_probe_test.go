@@ -20,7 +20,7 @@ func irProbeCases() []irProbeCase {
 	return []irProbeCase{
 		{
 			name:        "pure-i32",
-			src:         "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(2, 3); }",
+			src:         "@noinline function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(2, 3); }",
 			wantVerdict: "module: IR",
 			wantLines:   []string{"add: ir", "main: ir"},
 		},
@@ -179,7 +179,7 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 	}
 
 	t.Run("self-contained", func(t *testing.T) {
-		rep := probe(t, "function helper(n: i32): i32 { return n * 2; }\nfunction main(): i32 { return helper(21); }", "")
+		rep := probe(t, "@noinline function helper(n: i32): i32 { return n * 2; }\nfunction main(): i32 { return helper(21); }", "")
 		for _, want := range []string{"helper: ir", "main: ir", "module: IR"} {
 			if !strings.Contains(rep, want) {
 				t.Errorf("report missing %q\n--- report ---\n%s", want, rep)
@@ -202,7 +202,7 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 	}
 
 	t.Run("decide-agrees-with-the-probe", func(t *testing.T) {
-		produced := "function helper(n: i32): i32 { return n * 2; }\nfunction main(): i32 { return helper(21); }"
+		produced := "@noinline function helper(n: i32): i32 { return n * 2; }\nfunction main(): i32 { return helper(21); }"
 		if got := decide(t, produced); got != "ir" {
 			t.Errorf("-decide on a module produced whole = %q, want \"ir\"", got)
 		}

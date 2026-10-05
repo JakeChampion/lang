@@ -199,6 +199,7 @@ function run(n: i32): V {
 function main(): i32 { return run(100).a - 4943; }`
 
 func TestSelfHostReturnedRebindReclaimArm64(t *testing.T) {
+	boxedProbes(t)
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()

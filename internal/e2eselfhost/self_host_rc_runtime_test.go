@@ -248,6 +248,7 @@ func TestSelfHostRcExitSweepX86_64(t *testing.T) {
 // but a retain inc IS still emitted when the optimization does not
 // apply, e.g. returning a non-ident array expression).
 func TestSelfHostRcMoveOnReturnX86_64(t *testing.T) {
+	boxedProbes(t)
 	cli := newStrictCLI(t)
 
 	cases := []struct {
@@ -381,6 +382,7 @@ func TestSelfHostRcSelfMutateX86_64(t *testing.T) {
 // is counted, so a struct outliving the source local does not dangle. The
 // field init retains when the source stays live and moves at its last use.
 func TestSelfHostRcConstructX86_64(t *testing.T) {
+	boxedProbes(t)
 	cli := newStrictCLI(t)
 	cases := []struct {
 		name string

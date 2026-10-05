@@ -26,7 +26,7 @@ func TestSelfHostPerModuleRoutesAgree(t *testing.T) {
 	proj := t.TempDir()
 	mustWrite(t, proj, "shapes.fern", `pub struct Point { x: i32, y: i32, tag: string }
 pub function make(x: i32, y: i32): Point { return Point { x: x, y: y, tag: "p" + "q" }; }
-pub function first[T](xs: T[], d: T): T { if (xs.len() == 0) { return d; } return xs[0]; }
+@noinline pub function first[T](xs: T[], d: T): T { if (xs.len() == 0) { return d; } return xs[0]; }
 pub function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 `)
 	mustWrite(t, proj, "mid.fern", `import "./shapes";

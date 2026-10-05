@@ -41,6 +41,7 @@ var letElseIRCases = []struct {
 // load driver (asm_load_run), asserts the IR path was taken (the reclaimed-
 // temp struct free), and asserts the matched value.
 func TestSelfHostLetElseIRX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
 	dir := t.TempDir()

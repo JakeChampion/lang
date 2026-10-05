@@ -1023,7 +1023,7 @@ func TestSelfHostGrowFieldBracketReleasesRetainedX86_64(t *testing.T) {
 	const src = `
 struct St { ops: i32[], ctrl: i32 }
 function (s: St) emit(op: i32): St { return St { ops: s.ops.append(op), ctrl: s.ctrl }; }
-function outer(a: St): i32 {
+@noinline function outer(a: St): i32 {
     let b: St = a.emit(9);
     return a.ops.len() * 10 + b.ops.len();
 }

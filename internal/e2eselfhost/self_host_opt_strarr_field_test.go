@@ -35,6 +35,7 @@ import (
 // the type. That fallback is the design, not a gap.
 
 func TestSelfHostOptStrArrFieldX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
@@ -284,6 +285,7 @@ function main(): i32 {
 // reclaim only partially. The typed lowering releases the option box, the
 // payload and the string[], with no over-release.
 func TestSelfHostOptStrArrFieldPartialReclaimX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

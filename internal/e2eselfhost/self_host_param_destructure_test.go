@@ -34,6 +34,7 @@ var paramDestructureCases = []struct {
 // path was taken (the reclaimed-temp struct free), and asserts the
 // destructured exit code.
 func TestSelfHostParamDestructureX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")

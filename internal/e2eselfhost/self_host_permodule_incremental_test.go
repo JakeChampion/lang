@@ -58,7 +58,7 @@ func TestSelfHostPerModuleIncrementalCodegenX86_64(t *testing.T) {
 	writeLeaf(leafI32)
 	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte(
 		"import \"./leaf\";\n"+
-			"pub function mid_val(): i32 {\n"+
+			"@noinline pub function mid_val(): i32 {\n"+
 			"    let x = leaf.leaf_val();\n"+
 			"    let y = x * x;\n"+
 			"    if (y > 0) { return 42; }\n"+
@@ -388,7 +388,7 @@ func TestSelfHostPerModuleObjectCacheX86_64(t *testing.T) {
 	writeLeaf("@noinline pub function leaf_val(): i32 { return 40; }\n")
 	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte(
 		"import \"./leaf\";\n"+
-			"pub function mid_val(): i32 {\n"+
+			"@noinline pub function mid_val(): i32 {\n"+
 			"    let x = leaf.leaf_val();\n"+
 			"    let y = x * x;\n"+
 			"    if (y > 0) { return 42; }\n"+

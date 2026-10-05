@@ -47,6 +47,7 @@ var boolMatchIRCases = []struct {
 // driver (asm_run, IR default-on), asserts the IR path was taken (the reclaimed-
 // temp struct free), and asserts the matched value.
 func TestSelfHostBoolMatchIRX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")

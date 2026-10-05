@@ -29,7 +29,7 @@ pub function via_lambda(): i32 {
     return f();
 }
 
-pub function keeps(): i32 {
+@noinline pub function keeps(): i32 {
     let n: Named = Named { ext: 40 };
     let ext: i32 = n.ext + 1;
     return ext + 1;

@@ -228,6 +228,7 @@ function main(): i32 {
 // that only reads its header keeps its element walk, and every callee that could
 // let an element outlive the call keeps refusing it.
 func TestSelfHostArrEnumBorrowedArgX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

@@ -100,6 +100,7 @@ func TestSelfHostCrossTypeReuseIR(t *testing.T) {
 // regressing to a no-op that stays correct only because a fresh alloc is also
 // correct.
 func TestSelfHostCrossTypeReuseFiresX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")

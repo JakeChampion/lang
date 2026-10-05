@@ -75,6 +75,10 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 		return out
 	}
 
+	// The reach edit's target stays a call: a leaf the entry splices leaves
+	// lib3's unit too, which is the inliner working, not a reach leak.
+	edit("lib3.fern", "pub function m3_f1(", "@noinline pub function m3_f1(")
+
 	hits, misses := concat("cold")
 	pmWantSets(t, "cold", hits, misses, []string{}, all)
 

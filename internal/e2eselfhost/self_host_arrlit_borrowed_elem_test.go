@@ -158,6 +158,7 @@ func writeArrlitBorrowedElemSrc(t *testing.T, name, src string) string {
 }
 
 func TestSelfHostArrlitBorrowedElemX86_64(t *testing.T) {
+	boxedProbes(t)
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrlitBorrowedElemCases {
 		src := writeArrlitBorrowedElemSrc(t, tc.name, tc.src)
@@ -178,6 +179,7 @@ func TestSelfHostArrlitBorrowedElemX86_64(t *testing.T) {
 // TestSelfHostArrlitBorrowedElemNative holds the native compiler to the same
 // answers, every row clean.
 func TestSelfHostArrlitBorrowedElemNative(t *testing.T) {
+	boxedProbes(t)
 	_, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
 	for _, tc := range arrlitBorrowedElemCases {

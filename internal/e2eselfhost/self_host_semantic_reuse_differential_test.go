@@ -417,6 +417,7 @@ function main(): i32 {
 }
 
 func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
+	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
