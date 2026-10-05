@@ -285,6 +285,7 @@ func writeTupleFieldShareSrc(t *testing.T, name, src string) string {
 }
 
 func TestSelfHostTupleFieldShareX86_64(t *testing.T) {
+	boxedProbes(t)
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tupleFieldShareCases {
 		src := writeTupleFieldShareSrc(t, tc.name, tc.src)
@@ -327,6 +328,7 @@ func TestSelfHostTupleFieldShareNative(t *testing.T) {
 }
 
 func TestSelfHostTupleFieldShareArm64(t *testing.T) {
+	boxedProbes(t)
 	armgcc, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tupleFieldShareCases {
@@ -349,6 +351,7 @@ func TestSelfHostTupleFieldShareArm64(t *testing.T) {
 }
 
 func TestSelfHostTupleFieldShareWasm(t *testing.T) {
+	boxedProbes(t)
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}

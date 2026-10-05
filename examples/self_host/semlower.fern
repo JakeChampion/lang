@@ -133,6 +133,9 @@ function produced_plan(p: semsource.Produced, view: ssaunits.SchemaView): ssauni
   if (p.template) {
     return ssaunits.refused("generic template");
   }
+  if (p.dropped) {
+    return ssaunits.refused("spliced into every caller");
+  }
   if (!p.ok) {
     return ssaunits.refused(p.why);
   }
@@ -143,7 +146,7 @@ function produced_plan(p: semsource.Produced, view: ssaunits.SchemaView): ssauni
 // the body was produced, a template's instances stand for it, or it is an
 // `@import` extern.
 function refusal(p: semsource.Produced, body: irtables.LowerResult): string {
-  if (body.ok || p.bodyless) {
+  if (body.ok || p.bodyless || p.dropped) {
     return "";
   }
   if (p.template) {
@@ -421,9 +424,10 @@ function lowers_whole_module(built: semsource.Built, keep: boolean[]): boolean {
   while (i < keep.len()) {
     if (!keep[i]) {
       if (i >= built.decls.len()) {
-        return false;
-      }
-      if (!built.decls[i].template && !built.decls[i].bodyless) {
+        if (!built.instances[i - built.decls.len()].dropped) {
+          return false;
+        }
+      } else if (!built.decls[i].template && !built.decls[i].bodyless && !built.decls[i].dropped) {
         return false;
       }
     }
@@ -538,7 +542,10 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, base:
   let n: i32 = 0;
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
-    if (r.keep[i]) {
+    if (built.decls[i].dropped) {
+      bodies = bodies.append(superseded());
+      n = n + 1;
+    } else if (r.keep[i]) {
       callees = callees.append(ssarc.Callee { name: parser.decl_key(mod.funcs[i]), f: built.decls[i].func, modes: built.decls[i].modes, plan: r.plans[i], receiver: semsource.has_receiver(mod.funcs[i]) });
       helpers = ssarc.with_drop_helpers(helpers, built.decls[i].func);
       bodies = bodies.append(r.body[i]);
@@ -560,9 +567,12 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, base:
     i = i + 1;
   }
   let instances: irtables.LowerResult[] = [];
+  let unspliced: i32 = 0;
   let at: i32 = 0;
   while (at < built.instances.len()) {
-    if (r.keep[mod.funcs.len() + at]) {
+    if (built.instances[at].dropped) {
+      unspliced = unspliced + 1;
+    } else if (r.keep[mod.funcs.len() + at]) {
       helpers = ssarc.with_drop_helpers(helpers, built.instances[at].func);
       instances = instances.append(r.body[mod.funcs.len() + at]);
     }
@@ -571,7 +581,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, base:
   sigs = ssarc.caller_sigs(sigs, callees);
   util.arr_push_cliff_report("sem:substituted", 0);
   // A refused declaration or instance fails the compile.
-  let refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len();
+  let refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len() - unspliced;
   if (refused_n > 0) {
     eprint("FERN_SEM_IR: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each");
     exit(3);
@@ -863,8 +873,8 @@ function typed_for(annotated: parser.Module, target: string): Typed {
 pub struct Verdict { ok: boolean, errors: util.Diag[], rows: VerdictRow[] }
 
 // One declaration or instance. `state` is "produced", "refused" (with `why`),
-// "template" for a generic whose instances stand for it, or "extern" for an
-// `@import` declaration.
+// "template" for a generic whose instances stand for it, "extern" for an
+// `@import` declaration, or "spliced" for one the inliner spliced away.
 pub struct VerdictRow { name: string, state: string, why: string }
 
 // verdict lowers `mod` as a driver that parsed it hands it to the emit
@@ -937,6 +947,9 @@ function verdict_row(im: parser.Module, inf: Inference, i: i32): VerdictRow {
   let p: semsource.Produced = produced_at(inf.built, im, i);
   if (p.bodyless) {
     return VerdictRow { name: name, state: "extern", why: "" };
+  }
+  if (p.dropped) {
+    return VerdictRow { name: name, state: "spliced", why: "" };
   }
   return VerdictRow { name: name, state: "template", why: "" };
 }

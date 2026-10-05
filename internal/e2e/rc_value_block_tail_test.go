@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"strconv"
 	"strings"
 	"testing"
@@ -313,6 +314,7 @@ function main(): i32 {
 // struct from the value's type; the IR's owner lookup knew only named shapes
 // and refused these with `field access on unresolved struct ""`.
 func TestFieldReadOffConditionalValue(t *testing.T) {
+	e2eharness.BoxedProbes(t)
 	const src = `struct P { x: i32, y: i32 }
 function main(): i32 {
     let t: i32 = 0;
