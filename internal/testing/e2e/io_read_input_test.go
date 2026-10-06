@@ -43,7 +43,7 @@ func TestWASMParseIntOr(t *testing.T) {
 	}
 }
 
-// read_input("-") reads all of stdin. (The component runner echoes
+// read_input("-") reads all of stdin. (The core runner's --invoke echoes
 // main's return value onto stdout, so we assert the written bytes
 // are present rather than matching stdout exactly.)
 func TestWASMReadInputStdin(t *testing.T) {

@@ -21,7 +21,7 @@ import (
 // behind read_file.
 //
 // Prints read-file-utf8-agrees on success, or FAIL and the step that
-// disagreed; the exit code says the same for the harnesses that report it.
+// disagreed; the exit code, or main's result on wasm, says the same.
 const readFileUtf8Program = `
 import "std/utf8" as utf8;
 
@@ -44,7 +44,7 @@ function agree(bytes: u8[]): boolean {
 }
 
 function fail(step: i32): i32 {
-    write("FAIL " + step.to_string());
+    write("FAIL " + step.to_string() + "\n");
     return step;
 }
 
@@ -107,7 +107,7 @@ function main(): i32 {
         if (!agree(bad)) { return fail(7); }
         off = off + 1;
     }
-    write("read-file-utf8-agrees");
+    write("read-file-utf8-agrees\n");
     return 0;
 }
 `
@@ -159,11 +159,9 @@ func TestArm64ReadFileUtf8AgreesWithStdUtf8(t *testing.T) {
 	checkReadFileUtf8Agrees(t, out, code)
 }
 
-// The component harness does not surface main's return, so this leg reads
-// the marker alone.
 func TestWASMReadFileUtf8AgreesWithStdUtf8(t *testing.T) {
 	stdout, stderr, _, _ := runWasmInDir(t, readFileUtf8Program, nil)
-	if !strings.Contains(stdout, "read-file-utf8-agrees") {
-		t.Fatalf("stdout %q stderr %q; want read-file-utf8-agrees", stdout, stderr)
+	if got := parseMainResult(t, stdout); got != 0 || !strings.Contains(stdout, "read-file-utf8-agrees") {
+		t.Fatalf("main = %d, stdout %q stderr %q; want 0 and read-file-utf8-agrees", got, stdout, stderr)
 	}
 }
