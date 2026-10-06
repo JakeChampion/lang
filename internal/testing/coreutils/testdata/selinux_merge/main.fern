@@ -1,7 +1,7 @@
 // chcon's context arithmetic, `coreutils/lib/selinux.fern`'s merge_context,
 // over inputs no machine without SELinux can reach through chcon itself:
 // internal/testing/coreutils/selinux_merge_test.go runs this and compares each line.
-import "../../../../coreutils/lib/selinux" as selinux;
+import "../../../../../coreutils/lib/selinux" as selinux;
 
 function show(ctx: string, comps: string[], set: boolean[]): void {
   match (selinux.merge_context(ctx, comps, set)) {

@@ -2,7 +2,7 @@
 // compiled for, as three numbers a Go test can read back:
 // internal/testing/coreutils/longdouble_test.go folds target_arch() and
 // target_os() for each of Fern's targets in turn and interprets this.
-import "../../../../coreutils/lib/ld" as ld;
+import "../../../../../coreutils/lib/ld" as ld;
 
 function mant(): i32 {
     return ld.format().mant;
