@@ -339,8 +339,7 @@ under a 16 GB host:
   arm64 one). Small program links take no reservation.
 
 The old in-process Go emit used `FERN_EMIT_MEMLIMIT_MB` to cap the Go heap.
-That helper remains covered by its own tests, but target compilation no longer
-calls it; it does not limit a Fern compiler subprocess.
+That helper has been removed; it did not limit a Fern compiler subprocess.
 
 If a build is still OOM-killed, lower `FERN_BUILD_MEM_BUDGET_MB` (fewer builds
 overlap), or re-create the ephemeral

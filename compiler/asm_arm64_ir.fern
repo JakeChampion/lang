@@ -7367,21 +7367,12 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
 
 function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   // 16 GiB heap arena, lazily mmap'd at hint 0x10000000 on the first
-  // allocation (mirrors the native arm64 emitAllocRuntime) rather than
-  // reserved as a huge `.bss` in the loaded image. Two payoffs: the
-  // R+W data segment stays tiny (so the binary can be a position-
-  // independent ET_DYN loaded at any base — `-target arm64-android`),
-  // and the mapping is lazy so untouched pages cost nothing (the hint
-  // must stay 0x10000000 — the NATIVE backend's below-heap rc guards
-  // key on it, and the two backends' binaries interoperate in the
-  // differential suites). Heap
-  // pointers may now exceed 4 GiB (the historical 32-bit-safe-range
-  // guideline was retired when the stage-2 self-compile's ~3.95 GiB
-  // live set outgrew every arena a 32-bit range can hold — the value
-  // plumbing is 64-bit throughout, as arm64-darwin's high heap already
-  // exercises). Matches the native arm64 backend's heapBytes
-  // (lockstep). The size (16 GiB = 1 << 34) is built in-asm via
-  // `mov #1; lsl #34` below rather than a `ldr =N` literal.
+  // allocation. Keeping it outside the image's .bss leaves the R+W segment
+  // small, including in arm64-android's position-independent ET_DYN image.
+  // Untouched pages need no physical memory. Heap pointers are 64-bit;
+  // arm64-darwin and FERN_HIGH_HEAP exercise addresses above 4 GiB.
+  // The size (16 GiB = 1 << 34) is built with mov+lsl below because the
+  // in-process assembler's literal parser cannot read that wide a constant.
   s = s.write("    .bss\n");
   s = s.write("    .align 3\n");
   // .globl for the same reason as __fern_arr_push_shared below:
@@ -7559,13 +7550,12 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    stp x8, x9, [sp, #-16]!\n");
   s = s.write("    mov x9, x0\n");  // save rounded size
   // Address-hint base, shifted left 28 below. 1 -> 0x10000000 (256 MiB) is
-  // the shipped value — keep it in lockstep with the NATIVE arm64 backend,
-  // whose below-heap rc guards classify `ptr >= 0x10000000` as heap (a lower
-  // base no-ops every native rc inc/dec). FERN_HIGH_HEAP=1 uses 32 ->
+  // the default value. The emitter's RC guards distinguish heap pointers
+  // from low-address constants. FERN_HIGH_HEAP=1 uses 32 ->
   // 0x200000000 (8 GiB) so every heap pointer carries a non-zero high half:
   // the address regime arm64-darwin runs in (XNU ignores the hint and maps
   // above the 4 GiB __PAGEZERO), reproducible under qemu-aarch64, which
-  // honours the raised hint. Same knob as arm64codegen.Options.HighHeapProbe.
+  // honours the raised hint.
   if (high_heap_probe_on()) {
     s = s.write("    mov x0, #32\n");
   } else {
@@ -7577,7 +7567,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // 32-bit (arm64_gas_atoi), so a wide constant would sign-extend and
   // mmap would fail with ENOMEM. Raised from 3.5 GiB when the arm64
   // stage-2 self-compile crossed the exit-137 alloc trap (the arm64
-  // twin of the x86 wall — see asm.fern's heap_size history): the
+  // counterpart of the x86 wall; see asm_ir.fern's heap_size history): the
   // live set measured ~3.95 GiB, past ANY arena a 32-bit-safe range
   // can hold, so the historical "heap pointers stay < 4 GiB"
   // guideline is retired here — the emit's pointer paths are 64-bit
@@ -7600,7 +7590,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // strictly account anonymous private reservations.
     s = s.write("    mov x3, #0x1002\n");
   } else {
-    s = s.write("    mov x3, #0x4022\n");  // MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE (exempt from overcommit accounting; see native arm64 heapBytes comment)
+    s = s.write("    mov x3, #0x4022\n");  // MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE: do not reserve swap for untouched arena pages
   }
   s = s.write("    mov x4, #0\n");
   s = s.write("    sub x4, x4, #1\n");  // x4 = -1 (fd)
