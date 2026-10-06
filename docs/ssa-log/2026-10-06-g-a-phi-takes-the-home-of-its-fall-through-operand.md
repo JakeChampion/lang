@@ -85,7 +85,17 @@ measures the code the allocator produces:
 |---|--:|--:|
 | stage 3, total Ir | 18.446 G | 18.370 G (−0.41%) |
 | stage 3, `ssa_lift.lift_impl`, self | 976 M | 881 M |
-| stage 2, total Ir | 18.263 G | 18.326 G (+0.34%) |
+| stage 2, total Ir | 18.263 G | 18.299 G (+0.20%) |
+
+The allocator's own cost is in `live_at_def`, the path query behind a slot
+shared between a spilled phi and its operand (`slot_hints`, `path_slot`):
+the new hint sends many more spilled phis there, and the query walked every
+block the loop reaches to find no read. A value read only in its own block
+is dead at any other block's definition, since a path back to a read enters
+that block at its top and defines the value again first; `live_at_def` now
+answers that without the walk, which took the rise from +0.34% to +0.20%.
+What remains is the queries that do walk, 31 M, and `phi_mates` no longer
+inlined, 25 M against the 25 M of `sole_readers` that is.
 
 The stage-3 compiler reproduces itself: stage 3 and stage 4 are
 byte-identical for x86-64 (10,865,480 bytes). `scripts/selfhost-emit-hashes`

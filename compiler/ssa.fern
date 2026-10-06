@@ -1142,7 +1142,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   hi = extend_loop_invariant_intervals(f, def_pos, hi);
   let cum: i32[] = calls_before(calls, total_pos);
   let cum_abi: i32[] = calls_before(abi_cl, total_pos);
-  let mates: Mates = phi_mates(f, def_pos, hi, no_home);
+  let mates: Mates = phi_mates(f, at, def_pos, hi, no_home);
   let weight: i32[] = spill_weights(f, at);
   let sole: i32[] = sole_readers(f);
 
@@ -1617,7 +1617,7 @@ function shares_operand_home(op: string): boolean {
 // the carried hint covers it.
 struct Mates { hint: i32[], carried: boolean[], alt: i32[], through: boolean[] }
 
-function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mates {
+function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: boolean[]): Mates {
   let hint: i32[] = [];
   let carried: boolean[] = [];
   let i: i32 = 0;
@@ -1629,7 +1629,6 @@ function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mat
   // Both start all -1, sharing one buffer: the first write to either copies it.
   let alt: i32[] = hint;
   let fell: boolean[] = carried;
-  let at: i32[] = block_positions(f);
   let pos: i32 = 0;
   let bi: i32 = 0;
   for blk in f.blocks {
@@ -2029,15 +2028,23 @@ function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: 
   let first: i32 = sites.start[r];
   let last: i32 = sites.start[r + 1];
   let far: boolean = false;
+  let elsewhere: boolean = false;
   let i: i32 = first;
   while (i < last) {
     if (sites.blk[i] == ab && sites.pos[i] > def_pos[a]) {
       return true;
     }
     far = far || sites.blk[i] != ab || rb != ab;
+    elsewhere = elsewhere || sites.blk[i] != rb;
     i = i + 1;
   }
   if (!far) {
+    return false;
+  }
+  // Read only in its own block, after its definition (a phi's operand
+  // is read at the predecessor's end): a path from `a` back to a read
+  // enters that block at its top and defines `r` again first.
+  if (!elsewhere && rb != ab) {
     return false;
   }
   let seen: boolean[] = sites.unseen;
