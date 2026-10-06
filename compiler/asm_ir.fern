@@ -12508,9 +12508,6 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("umask")) {
       fs_src = fs_src + " " + asmcore.rt_src_umask("x86_64");
     }
-    if (s.has_need("priority")) {
-      fs_src = fs_src + " " + asmcore.rt_src_priority("x86_64");
-    }
     if (s.has_need("write_file")) {
       fs_src = fs_src + " " + asmcore.rt_src_write_file("x86_64");
     }
@@ -12614,6 +12611,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("rlimit_nofile")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile("x86_64"), s);
+  }
+  if (s.has_need("priority")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_priority("x86_64"), s);
   }
   if (s.has_need("signal_mask")) {
     s = s.write("    .text\n");

@@ -10779,9 +10779,6 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("umask")) {
       fs_src = fs_src + " " + asmcore.rt_src_umask(tgt);
     }
-    if (s.has_need("priority")) {
-      fs_src = fs_src + " " + asmcore.rt_src_priority(tgt);
-    }
     if (s.has_need("temp_dir")) {
       fs_src = fs_src + " " + asmcore.rt_src_temp_dir(tgt);
     }
@@ -10965,6 +10962,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   if (s.has_need("rlimit_nofile")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile(tgt), s);
+  }
+  if (s.has_need("priority")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_priority(tgt), s);
   }
   if (s.has_need("signal_mask")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_mask(tgt), s);
