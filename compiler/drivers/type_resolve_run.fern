@@ -43,7 +43,7 @@ function main(): i32 {
     checker.StructSig { name: "Bar", field_names: [], field_types: [], type_params: [], field_type_names: [], variant_field_names: [], derives: [], enum_owner: "" },
   ];
   let unions: checker.UnionSig[] = [
-    checker.UnionSig { name: "Shape", variants: [], is_try: false, is_enum: true, module: "", type_params: [] },
+    checker.UnionSig { name: "Shape", variants: [], is_try: false, is_enum: true, module: "", type_params: [], instance: "" },
   ];
   let corpus: string[] = [
     "i32", "i64", "u32", "u64", "bool", "boolean", "string", "f64", "f32", "float",

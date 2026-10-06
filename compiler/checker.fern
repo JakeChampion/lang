@@ -51,25 +51,25 @@ import "./decltypes";
 // struct→union wrap fire. Inline `let t: Type = TypeI32 { ... };`
 // inside a non-return position doesn't always trigger the wrap.
 function t_i32(): typeinfo.Type {
-  return typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false };
+  return typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
 }
 
 function t_i64(): typeinfo.Type {
-  return typeinfo.TypeI32 { is_char: false, width: 64, unsigned: false };
+  return typeinfo.TypeI32 { is_char: false, width: 64, unsigned: false, polymorphic: false };
 }
 
 function t_u32(): typeinfo.Type {
-  return typeinfo.TypeI32 { is_char: false, width: 32, unsigned: true };
+  return typeinfo.TypeI32 { is_char: false, width: 32, unsigned: true, polymorphic: false };
 }
 
 function t_u64(): typeinfo.Type {
-  return typeinfo.TypeI32 { is_char: false, width: 64, unsigned: true };
+  return typeinfo.TypeI32 { is_char: false, width: 64, unsigned: true, polymorphic: false };
 }
 
 // The pointer-width unsigned integer, an address: what native's WidthPtr
 // spells, resolved by each backend.
 function t_usize(): typeinfo.Type {
-  return typeinfo.TypeI32 { is_char: false, width: typeinfo.width_ptr(), unsigned: true };
+  return typeinfo.TypeI32 { is_char: false, width: typeinfo.width_ptr(), unsigned: true, polymorphic: false };
 }
 
 function is_usize(t: typeinfo.Type): boolean {
@@ -84,13 +84,13 @@ function is_usize(t: typeinfo.Type): boolean {
 }
 
 function t_u8(): typeinfo.Type {
-  return typeinfo.TypeI32 { is_char: false, width: 8, unsigned: true };
+  return typeinfo.TypeI32 { is_char: false, width: 8, unsigned: true, polymorphic: false };
 }
 
 // `char` — a Unicode scalar value in an i32 slot (#5629). Width 32 because
 // that is the slot it occupies; `is_char` is what distinguishes it.
 function t_char(): typeinfo.Type {
-  return typeinfo.TypeI32 { is_char: true, width: 32, unsigned: false };
+  return typeinfo.TypeI32 { is_char: true, width: 32, unsigned: false, polymorphic: false };
 }
 
 // lit_is_scalar_value reports whether an integer literal's SOURCE TEXT names a
@@ -298,6 +298,24 @@ function float_result(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
 
 // Merge literal commitments before default-width equality, including tuples.
 function join_result_types(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
+  if (integer_literal_widens(a, b)) {
+    return b;
+  }
+  if (integer_literal_widens(b, a)) {
+    return a;
+  }
+  if let typeinfo.TypeI32(ai) = a {
+    if let typeinfo.TypeI32(bi) = b {
+      if (type_eq(a, b)) {
+        return typeinfo.TypeI32 { ...ai, polymorphic: ai.polymorphic && bi.polymorphic };
+      }
+    }
+  }
+  if let typeinfo.TypeUnion(au) = a {
+    if let typeinfo.TypeUnion(bu) = b {
+      return join_enum_arguments(au, bu);
+    }
+  }
   if (is_float(a) && is_float(b)) {
     return float_result(a, b);
   }
@@ -323,6 +341,46 @@ function join_result_types(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
     return a;
   }
   return t_unknown("result types disagree");
+}
+
+// An inference position absent from a constructor contributes no constraint.
+// Other unknowns still mean a failed type check, not a wildcard for joins.
+pub function unbound_enum_argument(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnknown(u) = t {
+    return util.str_has_prefix(u.reason, "unbound ");
+  }
+  return false;
+}
+
+function join_enum_arguments(a: typeinfo.TypeUnion, b: typeinfo.TypeUnion): typeinfo.Type {
+  if (a.name != b.name) {
+    return t_unknown("result enum names disagree");
+  }
+  if (a.args.len() == 0) {
+    return b;
+  }
+  if (b.args.len() == 0) {
+    return a;
+  }
+  if (a.args.len() != b.args.len()) {
+    return t_unknown("result enum arities differ");
+  }
+  let args: typeinfo.Type[] = [];
+  let i: i32 = 0;
+  while (i < a.args.len()) {
+    let joined: typeinfo.Type = a.args[i];
+    if (unbound_enum_argument(joined)) {
+      joined = b.args[i];
+    } else if (!unbound_enum_argument(b.args[i])) {
+      joined = join_result_types(joined, b.args[i]);
+      if (is_unknown(joined)) {
+        return joined;
+      }
+    }
+    args = args.append(joined);
+    i = i + 1;
+  }
+  return typeinfo.TypeUnion { name: a.name, args: args };
 }
 
 function t_array(elem: typeinfo.Type): typeinfo.Type {
@@ -1149,6 +1207,9 @@ pub function type_debug(t: typeinfo.Type): string {
     typeinfo.TypeVoid(_) => {
       return "void";
     },
+    typeinfo.TypeNever(_) => {
+      return "never";
+    },
     typeinfo.TypeUnknown(uk) => {
       return "unknown(" + uk.reason + ")";
     },
@@ -1434,6 +1495,12 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeUnknown(_) => {
       return false;
     },
+    typeinfo.TypeNever(_) => {
+      if let typeinfo.TypeNever(_) = b {
+        return true;
+      }
+      return false;
+    },
     typeinfo.TypeErased(ae) => {
       // The type variable of a generic, including a map method whose bare
       // constructor receiver left K and V unbound. Compare identity alone.
@@ -1496,7 +1563,9 @@ function is_func_type(t: typeinfo.Type): boolean {
 function type_contains_unknown(t: typeinfo.Type): boolean {
   match (t) {
     typeinfo.TypeUnknown(_) => {
-      return true;
+      // An absent enum argument is fillable, not a failed inference. This
+      // distinction also holds when the enum is nested inside a container.
+      return !unbound_enum_argument(t);
     },
     typeinfo.TypeArray(ae) => {
       return type_contains_unknown(ae.elem);
@@ -1773,7 +1842,7 @@ pub struct MethodSig { name: string, receiver_type: string, param_types: typeinf
 // payloadless variant's name is read as that variant's payload (#9900).
 // module is the bundle prefix of the import that declared the enum or alias,
 // "" for the entry module.
-pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string, type_params: string[] }
+pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string, type_params: string[], instance: string }
 
 // A flat name → type map plus the function signature table
 // plus the struct-decl table plus the union-alias table.
@@ -2103,7 +2172,7 @@ pub struct UnionTable {
 // so an enum-typed scrutinee types to TypeUnion and exhaustiveness and
 // union-variant assignability cover enums the way they cover aliases.
 function enum_union_sig(ed: parser.EnumDecl): UnionSig {
-  return UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true, module: ed.module, type_params: ed.type_params };
+  return UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true, module: ed.module, type_params: ed.type_params, instance: ed.instance };
 }
 
 // union_table indexes every union's variants by variant name. Built backward so
@@ -2511,7 +2580,7 @@ function union_sig_of_variant(name: string, unions: UnionTable): UnionSig {
     e = unions.variant_chain_next(e);
   }
   let empty_v: string[] = [];
-  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "", type_params: [] };
+  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "", type_params: [], instance: "" };
 }
 
 // union_of_variant returns the NAME of that union, or "" when none declares
@@ -3437,7 +3506,7 @@ function variant_pattern_payload_type(s: Scope, name: string, whole: typeinfo.Ty
     }
   }
   let g: typeinfo.Type = generic_variant_payload_type(s, name, whole, index);
-  if (!is_unknown(g)) {
+  if (!is_unknown(g) || lit_id(g) >= 0) {
     return g;
   }
   return variant_payload_type_at(s, name, index);
@@ -3458,7 +3527,7 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
   if (us.type_params.len() == 0 || us.type_params.len() != u.args.len()) {
     return t_unknown("not a generic enum instance");
   }
-  let ss: StructSig = variant_payload_struct(s, name);
+  let ss: StructSig = s.lookup_owned_struct(variant_pattern_name(name), u.name);
   let want: string = "__ev";
   if (index > 0) {
     want = "__ev" + util.i32_to_string(index);
@@ -3488,8 +3557,12 @@ function variant_ctor_type(s: Scope, union_name: string, name: string, c: ast.Ex
   let k: i32 = 0;
   while (k < c.args.len()) {
     let ti: i32 = payload_type_param(s, us, name, k);
-    if (ti >= 0 && is_unknown(args[ti])) {
-      args = args.with(ti, check_expr(c.args[k], s));
+    if (ti >= 0) {
+      let payload: typeinfo.Type = inferred_payload(c.args[k], s);
+      if (!unbound_enum_argument(args[ti])) {
+        payload = join_result_types(args[ti], payload);
+      }
+      args = args.with(ti, payload);
     }
     k = k + 1;
   }
@@ -3957,7 +4030,7 @@ function (s: Scope) lookup_union(name: string): UnionSig {
   }
   // Sentinel: empty name signals "no such union".
   let empty_v: string[] = [];
-  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "", type_params: [] };
+  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "", type_params: [], instance: "" };
 }
 
 // try_able_union answers whether `?` accepts an operand of this union type.
@@ -4157,7 +4230,7 @@ function ctor_payload_slot(s: Scope, owner: string, vname: string, k: i32): i32 
 // payload_type_param is the index in `us`'s type parameters of the one payload
 // `k` of variant `vname` is spelled as, or -1.
 function payload_type_param(s: Scope, us: UnionSig, vname: string, k: i32): i32 {
-  let ss: StructSig = variant_payload_struct(s, vname);
+  let ss: StructSig = s.lookup_owned_struct(variant_pattern_name(vname), us.name);
   let want: string = "__ev";
   if (k > 0) {
     want = "__ev" + util.i32_to_string(k);
@@ -4228,6 +4301,9 @@ function any_promotes_view(from: typeinfo.Type[], to: typeinfo.Type[]): boolean 
 }
 
 function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSig[]): boolean {
+  if (integer_literal_widens(from, to)) {
+    return true;
+  }
   // `str` (#4813): a borrowed view never silently promotes to an owned
   // `string` — an owning sink must materialise a copy via .to_owned().
   // Checked BEFORE type_eq, which is deliberately tag-blind. The reverse
@@ -4434,9 +4510,9 @@ function call_through_fn_value(c: ast.ExprCall, s: Scope): typeinfo.Type {
 // and the readings settle at the WIDER integer one, so `both(1, 2^62)` types
 // the call i64 instead of pinning `T` at the i32 reading of whichever argument
 // came first (#8722 part 4); native settles the same call at i64 through
-// polymorphicIntDefault. wider_int keeps the first reading whenever either side
-// is not an integer, so every non-integer shape types exactly as it did. A
-// written type argument settles the variable before any argument does.
+// polymorphicIntDefault. Enum arguments also combine the positions fixed by
+// different constructors. Other shapes keep the first reading. A written type
+// argument settles the variable before any argument does.
 function ret_typevar_arg_type(sig: FuncSig, c: ast.ExprCall, s: Scope): (typeinfo.Type, boolean) {
   let (wn, wt) = written_type_bindings(sig, c, s);
   let wi: i32 = util.index_of_str(wn, sig.ret_type_name);
@@ -4460,7 +4536,7 @@ function ret_typevar_arg_type(sig: FuncSig, c: ast.ExprCall, s: Scope): (typeinf
           has_empty = true;
         }
       } else if (bound) {
-        rt = wider_int(rt, kt);
+        rt = joined_return_argument(rt, kt);
       } else {
         rt = kt;
         bound = true;
@@ -4472,6 +4548,15 @@ function ret_typevar_arg_type(sig: FuncSig, c: ast.ExprCall, s: Scope): (typeinf
     return (empty, true);
   }
   return (rt, bound);
+}
+
+function joined_return_argument(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
+  if let typeinfo.TypeUnion(au) = a {
+    if let typeinfo.TypeUnion(bu) = b {
+      return join_enum_arguments(au, bu);
+    }
+  }
+  return wider_int(a, b);
 }
 
 // call_binds_elsewhere: some argument binds the call's return type parameter
@@ -4891,11 +4976,39 @@ function t_func_after_env(sig: FuncSig): typeinfo.Type {
 // under the self-host oversized-function compile threshold (#2720); the
 // body is self-contained on c + s.
 // builtin_ctor_type types `Some(x)` as `Option[type of x]`, so a match on the
-// value types its payload. Like native, only a payload that settles every type
-// argument does: `Ok(x)` leaves the error type open, and stays `Result`.
+// value types its payload. Result constructors retain the argument their
+// payload determines and leave the other position open for context.
+function inferred_payload(e: ast.Expr, s: Scope): typeinfo.Type {
+  let t: typeinfo.Type = check_expr(e, s);
+  if let typeinfo.TypeI32(i) = t {
+    if (!i.is_char && int_literal_tree(e)) {
+      return typeinfo.TypeI32 { ...i, polymorphic: true };
+    }
+  }
+  return t;
+}
+
+// Only an uncommitted literal can change a known enum argument's width.
+// This conversion is lossless at either width and never crosses signedness.
+function integer_literal_widens(from: typeinfo.Type, to: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(a) = from {
+    if let typeinfo.TypeI32(b) = to {
+      return a.polymorphic && !a.is_char && !b.is_char && a.unsigned == b.unsigned
+        && a.width > 0 && a.width < b.width;
+    }
+  }
+  return false;
+}
+
 function builtin_ctor_type(en: string, name: string, c: ast.ExprCall, s: Scope): typeinfo.Type {
   if (name == "Some" && c.args.len() == 1) {
-    return t_union_g(en, [check_expr(c.args[0], s)]);
+    return t_union_g(en, [inferred_payload(c.args[0], s)]);
+  }
+  if (name == "Ok" && c.args.len() == 1) {
+    return t_union_g(en, [inferred_payload(c.args[0], s), t_unknown("unbound E")]);
+  }
+  if (name == "Err" && c.args.len() == 1) {
+    return t_union_g(en, [t_unknown("unbound T"), inferred_payload(c.args[0], s)]);
   }
   return t_union(en);
 }
@@ -5025,7 +5138,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       if (!qhandled) {
         let cqu: string = qual_variant_union(fa, s);
         if (cqu.len() > 0) {
-          return t_union(cqu);
+          return variant_ctor_type(s, cqu, fa.field, c);
         }
       }
       // An ASSOCIATED (receiver-less) call on a TYPE — `i32.zero()`, or
@@ -5491,7 +5604,7 @@ function arg_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typei
   let (bn, bt) = written_type_bindings(sig, c, s);
   let i: i32 = 0;
   while (i < sig.param_type_names.len() && i < c.args.len()) {
-    let (bn2, bt2) = gc_bind_param(sig_param_ref(sig, i), binding_arg_type(c.args[i], s), sig.type_params, s.type_names(), bn, bt);
+    let (bn2, bt2) = gc_bind_param(sig_param_ref(sig, i), check_expr(c.args[i], s), sig.type_params, s.type_names(), bn, bt);
     bn = bn2;
     bt = bt2;
     i = i + 1;
@@ -7452,7 +7565,7 @@ function generic_method_ret(c: ast.ExprCall, msig: MethodSig, mb: MethodBinding,
   let bt: typeinfo.Type[] = mb.types;
   let i: i32 = 0;
   while (i < msig.param_type_names.len() && i < c.args.len()) {
-    let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(msig.param_type_names[i]), binding_arg_type(c.args[i], s), mb.full, s.type_names(), bn, bt);
+    let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(msig.param_type_names[i]), check_expr(c.args[i], s), mb.full, s.type_names(), bn, bt);
     bn = bn2;
     bt = bt2;
     i = i + 1;
@@ -7467,33 +7580,6 @@ function generic_method_ret(c: ast.ExprCall, msig: MethodSig, mb: MethodBinding,
     return msig.ret_type;
   }
   return type_from_ref_subst(parser.parse_type_ref(msig.ret_type_name), bn, bt, s.type_names());
-}
-
-// binding_arg_type is an argument's type as type-variable binding reads it. A
-// builtin `Ok(x)` / `Err(e)` types as the argless `Result` (its payload leaves
-// the other argument open); here it settles the argument its payload names.
-function binding_arg_type(a: ast.Expr, s: Scope): typeinfo.Type {
-  let t: typeinfo.Type = check_expr(a, s);
-  if let typeinfo.TypeUnion(u) = t {
-    if (u.name != "Result" || u.args.len() > 0) {
-      return t;
-    }
-    if let ast.ExprCall(ctor) = a {
-      if let ast.ExprIdent(cid) = ctor.callee {
-        if (ctor.args.len() != 1) {
-          return t;
-        }
-        let pt: typeinfo.Type = check_expr(ctor.args[0], s);
-        if (cid.name == "Ok") {
-          return t_union_g("Result", [pt, t_unknown("unbound E")]);
-        }
-        if (cid.name == "Err") {
-          return t_union_g("Result", [t_unknown("unbound T"), pt]);
-        }
-      }
-    }
-  }
-  return t;
 }
 
 // receiver_bound is `t`, spelled `spelling`, with the receiver's type
@@ -7706,6 +7792,13 @@ function type_from_spelling(name: string, tn: TypeNames): typeinfo.Type {
 // node's canonical spelling for the scalar / struct / union name compares and
 // the unknown reason; for canonical inputs (what the parser feeds every caller)
 // this equals the original substring.
+function enum_argument_from_ref(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
+  if (parser.render_type_ref(r) == "$unbound") {
+    return t_unknown("unbound lifted enum argument");
+  }
+  return type_from_ref_names(r, tn);
+}
+
 function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   // Array suffix `Elem[]` → TypeArray of the element, one `[]` peeled per level
   // (so `X[][]` nests). Checked FIRST, so a `Map[…][]` / `(A, B)[]` array wraps
@@ -7824,7 +7917,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
     // tag. Checker-behaviour-neutral: type_eq/assignability ignore union args.
     let uargs: typeinfo.Type[] = [];
     for arg in r.args {
-      uargs = uargs.append(type_from_ref_names(arg, tn));
+      uargs = uargs.append(enum_argument_from_ref(arg, tn));
     }
     return t_union_g(r.base, uargs);
   }
@@ -7853,7 +7946,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
       // has dropped by the time anything reads it back.
       let uinst: typeinfo.Type[] = [];
       for arg in r.args {
-        uinst = uinst.append(type_from_ref_names(arg, tn));
+        uinst = uinst.append(enum_argument_from_ref(arg, tn));
       }
       return t_union_g(r.base, uinst);
     }
@@ -7969,8 +8062,17 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
     return whole;
   }
   let sargs: typeinfo.Type[] = [];
-  for arg in r.args {
-    sargs = sargs.append(type_from_ref_subst(arg, tparams, targs, tn));
+  let decoded: typeinfo.Type[] = nominal_args(whole);
+  let ai: i32 = 0;
+  while (ai < r.args.len()) {
+    if (ai < decoded.len() && unbound_enum_argument(decoded[ai])) {
+      // Keep the enum resolver's internal marker while substituting the
+      // neighboring declaration variables. Other unknowns still recurse.
+      sargs = sargs.append(decoded[ai]);
+    } else {
+      sargs = sargs.append(type_from_ref_subst(r.args[ai], tparams, targs, tn));
+    }
+    ai = ai + 1;
   }
   return with_nominal_args(whole, sargs);
 }
@@ -8156,9 +8258,19 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
     }
     return (ns, ts);
   }
-  if (r.args.len() == 0 && !is_unknown(at) && !elemless_array(at) && gc_is_typevar_name(r.base, tparams, tn) && util.index_of_str(ns, r.base) < 0) {
-    ns = ns.append(r.base);
-    ts = ts.append(at);
+  if (r.args.len() == 0 && !is_unknown(at) && !elemless_array(at) && gc_is_typevar_name(r.base, tparams, tn)) {
+    let index: i32 = util.index_of_str(ns, r.base);
+    if (index < 0) {
+      ns = ns.append(r.base);
+      ts = ts.append(at);
+    } else if let typeinfo.TypeUnion(prior) = ts[index] {
+      if let typeinfo.TypeUnion(actual) = at {
+        let joined: typeinfo.Type = join_enum_arguments(prior, actual);
+        if (!is_unknown(joined)) {
+          ts = ts.with(index, joined);
+        }
+      }
+    }
   }
   return (ns, ts);
 }
@@ -8186,7 +8298,7 @@ function collect_union_sigs(mod: parser.Module): UnionSig[] {
   while (i < mod.aliases.len()) {
     let a: parser.TypeAlias = mod.aliases[i];
     if (parser.alias_registers(mod, i)) {
-      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: a.module, type_params: [] });
+      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: a.module, type_params: [], instance: "" });
     }
     i = i + 1;
   }
@@ -8487,6 +8599,9 @@ function type_label(t: typeinfo.Type): string {
     },
     typeinfo.TypeVoid(_) => {
       return "void";
+    },
+    typeinfo.TypeNever(_) => {
+      return "never";
     },
     typeinfo.TypeUnknown(_) => {
       return "unknown";
@@ -9740,11 +9855,9 @@ function must_consume_diags(fn: parser.FuncDecl, s: Scope, structs: parser.Struc
 // and every `?`, whose failure edge is a return of the lambda too (#9515).
 struct LambdaExits { types: typeinfo.Type[], bare: boolean }
 
-// Native's inferReturnType over those exits: the first known one, adopting a
-// sibling's arguments where it is a union written without them (`Ok(v)`), and
-// each exit that agrees with neither recorded as a conflict. An exit whose type
-// is not fully known, or an integer literal that adapts to its context,
-// constrains nothing here.
+// Native's inferReturnType over those exits: known enum arguments constrain
+// the result while absent arguments can be filled by another exit. Genuine
+// unknowns contribute nothing, and incompatible known types are conflicts.
 struct ExitFold { ty: typeinfo.Type, have: boolean, clash_with: typeinfo.Type[], clash: typeinfo.Type[] }
 
 function fold_exits(types: typeinfo.Type[]): ExitFold {
@@ -9759,8 +9872,8 @@ function fold_exits(types: typeinfo.Type[]): ExitFold {
       out = ExitFold { ...out, clash_with: out.clash_with.append(out.ty), clash: out.clash.append(t) };
     } else {
       if let typeinfo.TypeUnion(u) = out.ty {
-        if (u.args.len() == 0) {
-          out = ExitFold { ...out, ty: t };
+        if let typeinfo.TypeUnion(v) = t {
+          out = ExitFold { ...out, ty: join_enum_arguments(u, v) };
         }
       }
     }
@@ -9869,7 +9982,7 @@ function exit_type_known(t: typeinfo.Type): boolean {
   match (t) {
     typeinfo.TypeUnion(u) => {
       for a in u.args {
-        if (!exit_type_known(a)) {
+        if (!unbound_enum_argument(a) && !exit_type_known(a)) {
           return false;
         }
       }
@@ -9888,37 +10001,14 @@ function exit_type_known(t: typeinfo.Type): boolean {
   return true;
 }
 
-// Native's unifyReturnType: equal types, or one enum written with its
-// arguments and once without (a bare `None`).
+// Native's unifyReturnType: equal types or compatible partial enum arguments.
 function exits_unify(a: typeinfo.Type, b: typeinfo.Type): boolean {
   if let typeinfo.TypeUnion(ua) = a {
     if let typeinfo.TypeUnion(ub) = b {
-      return ua.name == ub.name && (ua.args.len() == 0 || ub.args.len() == 0 || same_union_args(ua.args, ub.args));
+      return !is_unknown(join_enum_arguments(ua, ub));
     }
   }
   return type_eq(a, b);
-}
-
-// type_eq compares unions by name alone, but an exit's union arguments are
-// part of the type it returns.
-function same_union_args(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
-  if (a.len() != b.len()) {
-    return false;
-  }
-  let i: i32 = 0;
-  while (i < a.len()) {
-    let same: boolean = type_eq(a[i], b[i]);
-    if let typeinfo.TypeUnion(ia) = a[i] {
-      if let typeinfo.TypeUnion(ib) = b[i] {
-        same = ia.name == ib.name && same_union_args(ia.args, ib.args);
-      }
-    }
-    if (!same) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
 }
 
 // lret_expr walks an expression looking for lambdas and, for each one
@@ -10130,12 +10220,12 @@ function mx_is_numeric(t: typeinfo.Type): boolean {
 // and E030 like any enum's. Any other name answers an empty sig.
 function builtin_union_sig(name: string): UnionSig {
   if (name == "Option") {
-    return UnionSig { name: name, variants: ["Some", "None"], is_try: false, is_enum: true, module: "", type_params: ["T"] };
+    return UnionSig { name: name, variants: ["Some", "None"], is_try: false, is_enum: true, module: "", type_params: ["T"], instance: "" };
   }
   if (name == "Result") {
-    return UnionSig { name: name, variants: ["Ok", "Err"], is_try: false, is_enum: true, module: "", type_params: ["T", "E"] };
+    return UnionSig { name: name, variants: ["Ok", "Err"], is_try: false, is_enum: true, module: "", type_params: ["T", "E"], instance: "" };
   }
-  return UnionSig { name: "", variants: [], is_try: false, is_enum: false, module: "", type_params: [] };
+  return UnionSig { name: "", variants: [], is_try: false, is_enum: false, module: "", type_params: [], instance: "" };
 }
 
 function mx_builtin_enum_of(name: string): string {
@@ -12322,7 +12412,7 @@ function vb_settles(body: ast.Stmt[], want: typeinfo.Type, s: Scope): boolean {
 // literal payload read at the destination's payload type as a bare literal is.
 function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   if let ast.ExprCall(c) = e {
-    if (c.args.len() != 1 || ctor_name_taken(c, s)) {
+    if (c.args.len() != 1 || !builtin_ctor_destination(c, want, s)) {
       return false;
     }
     let wa: typeinfo.Type[] = nominal_args(want);
@@ -12330,9 +12420,45 @@ function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boole
     if (at < 0 || at >= wa.len()) {
       return false;
     }
-    return settles_to(c.args[0], wa[at], s);
+    if (settles_to(c.args[0], wa[at], s)) {
+      return true;
+    }
+    // A direct Result construction widens a same-signed integer payload at
+    // the destination. This is a constructor conversion, not covariance of
+    // an already constructed enum, and Option retains its stricter rule.
+    if let typeinfo.TypeUnion(u) = want {
+      if (u.name == "Result") {
+        if let typeinfo.TypeI32(from) = check_expr(c.args[0], s) {
+          if let typeinfo.TypeI32(to) = wa[at] {
+            return !from.is_char && !to.is_char && from.unsigned == to.unsigned
+              && from.width > 0 && from.width < to.width;
+          }
+        }
+      }
+    }
+    return false;
   }
   return false;
+}
+
+// Only a constructor can convert its payload at an enum destination. A
+// same-named method or qualified function returns an already constructed
+// value, and a different enum keeps its own nominal identity.
+function builtin_ctor_destination(c: ast.ExprCall, want: typeinfo.Type, s: Scope): boolean {
+  if (ctor_name_taken(c, s) || !same_nominal(check_expr(c, s), want)) {
+    return false;
+  }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (qual_variant_union(fa, s).len() == 0) {
+      return false;
+    }
+    if let ast.ExprIdent(ns) = fa.obj {
+      if (s.has_sig(ns.name + "." + fa.field)) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 // Which of an Option's or Result's arguments a builtin variant's payload is.
@@ -22655,6 +22781,23 @@ pub function variant_sig(s: Scope, name: string, owner: string): StructSig {
   return sig;
 }
 
+// Resolve a declared variant's fields at the enum instance's arguments.
+// The caller supplies the owner-qualified signature, so equally named
+// variants in other enums cannot provide this instance's payload shape.
+pub function instantiated_variant(sig: StructSig, s: Scope, whole: typeinfo.Type): StructSig {
+  if let typeinfo.TypeUnion(u) = whole {
+    let us: UnionSig = s.lookup_union(u.name);
+    if (sig.enum_owner == u.name && us.type_params.len() > 0 && us.type_params.len() == u.args.len()) {
+      let types: typeinfo.Type[] = [];
+      for spelling in sig.field_type_names {
+        types = types.append(type_from_ref_subst(parser.parse_type_ref(spelling), us.type_params, u.args, s.type_names()));
+      }
+      return StructSig { ...sig, field_types: types };
+    }
+  }
+  return sig;
+}
+
 pub function union_sig(s: Scope, name: string): UnionSig {
   return s.lookup_union(name);
 }
@@ -25508,7 +25651,7 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
 // bound). sargs and sids are flat; sfirst[j] is struct j's first argument.
 // wkeys / wtags are the declarations whose whole type a widening already
 // decided: an array of generic struct literals a typed sibling widened.
-struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[] }
+struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[], eargs: string[], eids: i32[] }
 
 struct LitRewrite { keys: string[], tags: string[], cargs: string[], ctags: string[] }
 
@@ -25600,6 +25743,17 @@ function lit_struct_read(e: ast.Expr, s: Scope): boolean {
   if let ast.ExprIdent(id) = e {
     let (name, ids) = lit_struct_of(s.lookup(id.name));
     return name.len() > 0;
+  }
+  return false;
+}
+
+function lit_enum_read(e: ast.Expr, s: Scope): boolean {
+  if let typeinfo.TypeUnion(u) = check_expr(e, s) {
+    for arg in u.args {
+      if (lit_id(arg) >= 0) {
+        return true;
+      }
+    }
   }
   return false;
 }
@@ -25737,6 +25891,26 @@ function lit_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): L
     return demand_open(e, want, s, st);
   }
   match (want) {
+    typeinfo.TypeUnion(wu) => {
+      let sig: UnionSig = s.lookup_union(wu.name);
+      if (sig.instance != "") {
+        return lit_demand(e, s.resolve_type(sig.instance), s, st);
+      }
+      if let typeinfo.TypeUnion(have) = check_expr(e, s) {
+        if (have.name == wu.name && have.args.len() == wu.args.len()) {
+          let out: LitInfer = st;
+          let j: i32 = 0;
+          while (j < have.args.len()) {
+            let k: i32 = lit_id(have.args[j]);
+            if (k >= 0) {
+              out = lit_fix(out, [k], wu.args[j]);
+            }
+            j = j + 1;
+          }
+          return out;
+        }
+      }
+    },
     typeinfo.TypeStruct(ws) => {
       if let ast.ExprIdent(sid) = e {
         let (name, ids) = lit_struct_of(s.lookup(sid.name));
@@ -26102,7 +26276,7 @@ function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   let reads: boolean = false;
   for arg in c.args {
     let (seed, ids) = lit_tree(arg, s, []);
-    reads = reads || seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s);
+    reads = reads || seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s) || lit_enum_read(arg, s);
   }
   let pts: typeinfo.Type[] = [];
   if (reads) {
@@ -26120,12 +26294,13 @@ function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   return out;
 }
 
-// lit_value_block walks a value block whose value is read at `want`: its final
-// `return` takes it, as a plain `let`'s initializer would. The statements
-// ahead of it are walked with no result type.
+// lit_value_block walks a value block whose value is read at `want`. Every
+// return, including returns in match arms, shares that destination type.
 function lit_value_block(c: ast.ExprCall, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
   if let ast.ExprLambda(vb) = c.callee {
-    let cur: Scope = lambda_body_scope(vb, s).with_block_ret(t_unknown("value block"));
+    // Match-expression arms return before the final statement. They share
+    // the value block's destination just as its final return does.
+    let cur: Scope = lambda_body_scope(vb, s).with_block_ret(want);
     let out: LitInfer = st;
     let last: i32 = vb.body.len() - 1;
     let i: i32 = 0;
@@ -26446,6 +26621,12 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
       }
       let (seed, ids) = lit_tree(v.init, s, []);
       if (!seed) {
+        if let ast.ExprCall(call) = v.init {
+          let (enum_type, enum_state) = lit_enum_local(call, s, st);
+          if (!is_unknown(enum_type)) {
+            return (s.bind(v.name, enum_type), enum_state);
+          }
+        }
         if let ast.ExprArray(ea) = v.init {
           let wtag: string = widened_array_tag(ea, s);
           if (wtag.len() > 0) {
@@ -26504,6 +26685,13 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
     ast.StmtMatch(m) => {
       let out: LitInfer = lit_arg(m.scrutinee, s, st);
       let whole: typeinfo.Type = check_expr(m.scrutinee, s);
+      if let ast.ExprCall(call) = m.scrutinee {
+        let (enum_type, enum_state) = lit_enum_local(call, s, out);
+        if (!is_unknown(enum_type)) {
+          whole = enum_type;
+          out = enum_state;
+        }
+      }
       for arm in m.arms {
         let asc: Scope = annotate_arm_scope(arm, s, whole);
         if (arm.has_guard) {
@@ -26524,10 +26712,60 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
   return (s, st);
 }
 
-// lit_struct_local registers `let q = Same { a: 1, b: 2 }` (#10453): each type
-// argument only untyped literals bind is a class of its own, fixed at i64 when
-// one of those literals has no i32 reading. It returns the struct's name, ""
-// when no argument is literal-bound or the literal is not a generic one.
+// Constructor payloads share literal classes with later whole-enum demands
+// and match bindings. The original argument is rewritten at the chosen width.
+function lit_enum_local(c: ast.ExprCall, s: Scope, st: LitInfer): (typeinfo.Type, LitInfer) {
+  let none: typeinfo.Type = t_unknown("not a literal enum local");
+  if (ctor_name_taken(c, s)) {
+    return (none, st);
+  }
+  if let typeinfo.TypeUnion(u) = check_expr(c, s) {
+    let qualified: boolean = false;
+    if let ast.ExprFieldAccess(fa) = c.callee {
+      if let ast.ExprIdent(owner) = fa.obj {
+        if (owner.name != u.name || !is_unknown(s.lookup(owner.name))) {
+          return (none, st);
+        }
+        qualified = true;
+      } else {
+        return (none, st);
+      }
+    }
+    let args: typeinfo.Type[] = u.args;
+    let out: LitInfer = st;
+    let p: i32 = 0;
+    while (p < c.args.len()) {
+      let slot: i32 = ctor_payload_slot(s, u.name, ctor_variant_name(c), p);
+      if (qualified && u.name != "Option" && u.name != "Result") {
+        slot = payload_type_param(s, s.lookup_union(u.name), ctor_variant_name(c), p);
+      }
+      let (seed, ids) = lit_tree(c.args[p], s, []);
+      if (slot >= 0 && slot < args.len() && seed) {
+        let k: i32 = out.parent.len();
+        out = lit_link(lit_new(out, ""), ids.append(k));
+        if let typeinfo.TypeI32(known) = u.args[slot] {
+          if (!known.polymorphic) {
+            out = lit_fix(out, [k], known);
+          }
+        }
+        let prior: i32 = lit_id(args[slot]);
+        if (prior >= 0) {
+          out = lit_link(out, [prior, k]);
+        }
+        args = args.with(slot, lit_marker(k));
+        out = LitInfer { ...out, eargs: out.eargs.append(gcall_arg_key(c, p)), eids: out.eids.append(k) };
+      }
+      p = p + 1;
+    }
+    if (out.eids.len() > st.eids.len()) {
+      return (typeinfo.TypeUnion { ...u, args: args }, out);
+    }
+  }
+  return (none, st);
+}
+
+// Each type argument only untyped struct fields bind is a literal class.
+// Return the struct's name, or "" when no argument is literal-bound.
 function lit_struct_local(v: ast.StmtVar, sl: ast.ExprStructLit, s: Scope, st: LitInfer): (string, LitInfer) {
   let sig: StructSig = s.lookup_struct(sl.type_name);
   if (sig.type_params.len() == 0 || sl.has_base || util.index_of_sub(sl.type_name, "[") >= 0) {
@@ -26674,7 +26912,18 @@ function lit_rewrites(st: LitInfer): LitRewrite {
     ot = ot.append(st.wtags[wi]);
     wi = wi + 1;
   }
-  let (ck, ct) = agreed_tags(st.cargs, st.ctags);
+  let call_keys: string[] = st.cargs;
+  let call_tags: string[] = st.ctags;
+  let ei: i32 = 0;
+  while (ei < st.eargs.len()) {
+    let width: typeinfo.Type = st.width[lit_find(st, st.eids[ei])];
+    if (!is_unknown(width)) {
+      call_keys = call_keys.append(st.eargs[ei]);
+      call_tags = call_tags.append(typeinfo.spelling(width));
+    }
+    ei = ei + 1;
+  }
+  let (ck, ct) = agreed_tags(call_keys, call_tags);
   return LitRewrite { keys: ok, tags: ot, cargs: ck, ctags: ct };
 }
 
@@ -26858,6 +27107,9 @@ function lit_holds_int_literal(e: ast.Expr): boolean {
   if let ast.ExprStructLit(sl) = e {
     return lit_holds_any(sl.field_values);
   }
+  if let ast.ExprCall(c) = e {
+    return lit_holds_any(c.args);
+  }
   return false;
 }
 
@@ -26892,6 +27144,9 @@ function generic_fn_names(funcs: parser.FuncDecl[]): string[] {
 // lit_candidate_at: a declaration the inference could type.
 function lit_candidate_at(st: ast.Stmt): boolean {
   match (st) {
+    ast.StmtMatch(m) => {
+      return lit_holds_int_literal(m.scrutinee);
+    },
     ast.StmtVar(v) => {
       if (v.type_name.len() > 0 || name_has_comma(v.name)) {
         return false;
@@ -26936,7 +27191,7 @@ function lit_resolve_pending(st: LitInfer): LitInfer {
 }
 
 function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
-  let st: LitInfer = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [LIT_WIDE], width: [t_i64()], keys: [""], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [] }));
+  let st: LitInfer = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [LIT_WIDE], width: [t_i64()], keys: [""], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [], eargs: [], eids: [] }));
   let rw: LitRewrite = lit_rewrites(st);
   if (rw.keys.len() == 0 && rw.cargs.len() == 0) {
     return stmts;
