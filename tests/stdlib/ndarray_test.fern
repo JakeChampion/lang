@@ -7,7 +7,7 @@ import "std/ndarray" as ndarray;
 // and `to_flat` copy, the edges (rank 0, an empty axis), the elementwise
 // and along-an-axis operations, broadcasting, and the products. What the
 // counters prove — that the metadata operations move no elements — is
-// internal/e2e/ndarray_test.go's, which can read them.
+// internal/testing/e2e/ndarray_test.go's, which can read them.
 
 function build(n: i32): i32[] {
   let xs: i32[] = [];

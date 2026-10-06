@@ -39,7 +39,7 @@ carefully, all point the same way.
 ## TL;DR recommendation
 
 1. **Implement the `concurrent { … }` surface as a stackless CPS
-   / state-machine transform in `internal/ir`.** Each suspension
+   / state-machine transform in `internal/oracle/ir`.** Each suspension
    point (an `await` on a platform I/O op) becomes a state
    transition; the task's live locals become an explicit heap
    record. This is exactly how Rust `async fn` → `Future::poll`
@@ -403,7 +403,7 @@ debug-mode codegen — exactly the control Zig lacked.
   targets.** *High.* → **This is the decisive cross-backend
   argument:** stackful = a separate asm stack-switch per ABI
   (arm64 + x86-64 + a wasm story that doesn't natively exist);
-  stackless = one transform in `internal/ir`, all backends inherit.
+  stackless = one transform in `internal/oracle/ir`, all backends inherit.
 
 ### Structured concurrency
 - Tasks confined to a lexical scope; the scope doesn't exit until
@@ -540,7 +540,7 @@ native stack switching.
      **per-task stack** → cross-backend cost + cold-start tax, and
      **no native WASM story**.
    - Stackless (Rust/C#/old-Zig/Koka-default) is a **pure IR
-     transform** → lives once in `internal/ir`, every backend
+     transform** → lives once in `internal/oracle/ir`, every backend
      inherits, and **targets WASM with zero stack switching**.
    - Zig's removal of LLVM-coroutine async warns: own the
      transform in your *own* IR, don't rent a backend's.
@@ -566,7 +566,7 @@ concurrent {
 }
 ```
 
-Lowering (all in `internal/ir`, target-agnostic):
+Lowering (all in `internal/oracle/ir`, target-agnostic):
 - Each `task { … }` body compiles to a **stackless state machine**:
   live locals across an `await`/I/O point → an explicit heap
   record (RC'd, Perceus-managed); each suspension point → a state

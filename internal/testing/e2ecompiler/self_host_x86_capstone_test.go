@@ -1,0 +1,222 @@
+package e2ecompiler
+
+import (
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"testing"
+)
+
+// TestSelfHostX86Capstone is the milestone of the native-binary track: it
+// takes the AT&T assembly the self-hosted compiler (asm.fern) emits for a
+// real Fern program, feeds that text through the self-hosted GAS front-end
+// (x86_native.fern PART 2) + ELF writer (elf.fern), and runs the resulting binary
+// NATIVELY on x86-64 — with no external `as` or `ld` anywhere.
+//
+//   - Stage A: build asm_run.fern (source -> AT&T asm) via the Go
+//     toolchain; capture each program's asm.
+//   - Stage B: a small constant driver (x86CapstoneDriver) reads the asm
+//     from a fixed file "in.s" (so the driver compiles once and the
+//     embedded-asm size never bloats it — letting heap programs, whose asm
+//     is the whole alloc/memcpy runtime, assemble too), runs it through
+//     x86_gas_assemble + x86_resolve_data + elf, and writes the ELF to
+//     stdout. Compiled once via the self-host wasm pipeline; run per-case
+//     under `wasmtime --dir`.
+//   - Stage C: run that ELF natively; assert exit code (and stdout).
+//
+// The table spans arithmetic, loops, if/else, comparisons (setCC), calls,
+// recursion, floats, strings, and heap types (struct / array) — the last
+// exercising asm.fern's full alloc/memcpy runtime through the assembler.
+func TestSelfHostX86Capstone(t *testing.T) {
+	if runtime.GOARCH != "amd64" {
+		t.Skip("native x86-64 run requires an amd64 host")
+	}
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host x86 capstone")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern", "drivers/wasm_run.fern")
+	asmRun := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "asm_run")
+	wasmRun := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	nat := mustRead(t, "../../../compiler/x86_native.fern")
+	elf := mustRead(t, "../../../compiler/elf.fern")
+	prelude := string(nat) + "\n" + string(elf) + toU8Src
+
+	// Build the (constant) driver once.
+	driverWat := runCapture(t, gcc, runner, wasmRun, []byte(prelude+x86CapstoneDriver))
+	if len(driverWat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes for the capstone driver")
+	}
+	driverPath := filepath.Join(dir, "capstone_driver.wat")
+	if err := os.WriteFile(driverPath, driverWat, 0o644); err != nil {
+		t.Fatalf("write driver wat: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		prog    string
+		want    int
+		wantOut string
+	}{
+		{"arith", "function main(): i32 { let x: i32 = 40; let y: i32 = 2; return x + y; }\n", 42, ""},
+		{"while", "function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 7) { s = s + 6; i = i + 1; } return s; }\n", 42, ""},
+		{"ifelse", "function main(): i32 { let x: i32 = 10; if (x > 5) { return 42; } return 0; }\n", 42, ""},
+		{"call", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(40, 2); }\n", 42, ""},
+		{"recur", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }\nfunction main(): i32 { return fib(9) + 8; }\n", 42, ""},
+		{"float", "function main(): i32 { let x: f64 = 84.0; let y: f64 = 2.0; let z: f64 = x / y; return z as i32; }\n", 42, ""},
+		{"string", "function main(): i32 { write(\"hi!\"); return 0; }\n", 0, "hi!"},
+		// Heap programs: their asm is the whole alloc/RC/memcpy runtime — the
+		// mmap'd bump heap whose pointers live in `.bss` `.quad`s accessed via
+		// rip-relative movq, plus the `.skip` freelist — the full instruction
+		// + data-section surface.
+		{"struct", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p = P { x: 40, y: 2 }; return p.x + p.y; }\n", 42, ""},
+		{"array", "function main(): i32 { let a = [10, 20, 12]; let s = 0; let i = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }\n", 42, ""},
+		// String length + indexing exercise movslq reg-reg (the .len() widen)
+		// and the byte-load char access.
+		{"strlen", "function main(): i32 { let s = \"hello world\"; return s.len() as i32 + 31; }\n", 42, ""},
+		{"strchar", "function main(): i32 { let s = \"*abc\"; return s[0] as i32; }\n", 42, ""},
+		// Maps exercise the full FNV-hash / open-addressing runtime, both
+		// i32-keyed and string-keyed.
+		{"mapi32", "function main(): i32 { let m = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }\n", 42, ""},
+		{"mapstr", "function main(): i32 { let m = Map { \"a\": 40, \"b\": 2 }; return m.get_or(\"a\", 0) + m.get_or(\"b\", 0); }\n", 42, ""},
+		// The packed-SSE2 kernels, end to end through this backend's OWN
+		// assembler: the IR emitter's vector body, the GAS front end's new
+		// movdqu / pcmpeqb / pmovmskb / pshufd / bsfl encodings, the ELF
+		// writer, and the CPU. Each haystack is longer than one 16-byte block
+		// with its answer past the first one, so the vector loop runs and the
+		// scalar tail finishes — an SSE2 body that never executed would pass a
+		// short-string case unchanged.
+		{"memchr", "function main(): i32 { let s = \"aaaaaaaaaaaaaaaaaaaa*aaa\"; return __memchr(s, 42, 0) + 22; }\n", 42, ""},
+		{"asciirun", "function main(): i32 { let s = \"aaaaaaaaaaaaaaaaaaaaaaaa\"; return __ascii_run(s, 0) + 18; }\n", 42, ""},
+		// The backward kernel, whose vector body needs one encoding the other
+		// two do not: bsr. Its answer is at index 2 with a full block BELOW
+		// it, so the vector loop runs and then hands the tail a cursor — the
+		// two-entry-path shape, exercised end to end through this backend's
+		// own assembler rather than through gcc.
+		{"rmemchr", "function main(): i32 { let s = \"aa*aaaaaaaaaaaaaaaaaaaaa\"; return __rmemchr(s, 42, 23) + 40; }\n", 42, ""},
+		// The comparison kernel (#8791), whose two bands are separate bodies.
+		// The first pair is 24 bytes, so the SSE2 loop runs and the answer is
+		// past the first block; the second is 13, which never reaches a
+		// 16-byte load and takes the OVERLAPPING 8-byte windows instead —
+		// SIB-indexed 64-bit loads no scan kernel emits.
+		{"mismatch", "function main(): i32 { let a = \"aaaaaaaaaaaaaaaaaaaabaaa\"; let b = \"aaaaaaaaaaaaaaaaaaaacaaa\"; return __mismatch(a, 0, b, 0, 24) + 22; }\n", 42, ""},
+		{"mismatchwindow", "function main(): i32 { let a = \"abcdefghijklm\"; let b = \"abcdefghijXlm\"; return __mismatch(a, 0, b, 0, 13) + 32; }\n", 42, ""},
+		// NOTE: f64 `.sqrt()`/`.floor()`/`.ceil()`/`.trunc()` are an asm.fern
+		// gap — it emits `call __fn_f64__sqrt` etc. without emitting those
+		// method bodies (an undefined reference even for gcc), so they aren't
+		// capstone cases. Their SSE encoders (sqrtsd / roundsd) are
+		// byte-verified in TestSelfHostX86Encode for when asm.fern emits them.
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Stage A.
+			asmText := runCapture(t, gcc, runner, asmRun, []byte(tc.prog))
+			if len(asmText) == 0 {
+				t.Fatal("asm.fern produced no assembly")
+			}
+			// The driver reads a fixed path "in.s" (avoiding args(), which
+			// has a layout-dependent alignment bug in the self-host wasm
+			// runtime); subtests run sequentially, so overwriting is safe.
+			if err := os.WriteFile(filepath.Join(dir, "in.s"), asmText, 0o644); err != nil {
+				t.Fatalf("write asm: %v", err)
+			}
+			// Stage B: the driver reads in.s, assembles it, writes the ELF.
+			bin, err := exec.Command(wasmtime, "run", "--dir", dir+"::/", driverPath).Output()
+			if err != nil {
+				// cmd.Output puts the driver's stderr in ExitError.Stderr;
+				// without it every refusal reads as a bare "exit status 2".
+				var ee *exec.ExitError
+				if errors.As(err, &ee) {
+					t.Fatalf("wasmtime run (driver): %v\n%s", err, ee.Stderr)
+				}
+				t.Fatalf("wasmtime run (driver): %v", err)
+			}
+			if len(bin) < 4 || bin[0] != 0x7f || bin[1] != 'E' || bin[2] != 'L' || bin[3] != 'F' {
+				t.Fatalf("output is not an ELF (bad magic): % x\n--- asm ---\n%s", bin[:min(4, len(bin))], asmText)
+			}
+			// Stage C: run the self-assembled binary natively.
+			binPath := filepath.Join(dir, tc.name+".bin")
+			if err := os.WriteFile(binPath, bin, 0o755); err != nil {
+				t.Fatalf("write binary: %v", err)
+			}
+			stdout, runErr := exec.Command(binPath).Output()
+			got := 0
+			if runErr != nil {
+				ee, ok := runErr.(*exec.ExitError)
+				if !ok {
+					t.Fatalf("run failed (not an exit code): %v\n--- asm ---\n%s", runErr, asmText)
+				}
+				got = ee.ExitCode()
+			}
+			if got != tc.want {
+				t.Fatalf("exit code = %d, want %d\n--- asm ---\n%s", got, tc.want, asmText)
+			}
+			if tc.wantOut != "" && string(stdout) != tc.wantOut {
+				t.Fatalf("stdout = %q, want %q\n--- asm ---\n%s", string(stdout), tc.wantOut, asmText)
+			}
+		})
+	}
+}
+
+// x86CapstoneDriver reads the AT&T asm from the fixed path "in.s",
+// assembles it with the self-hosted GAS front-end + ELF writer, and writes
+// the runnable ELF to stdout. Reading the asm at runtime (rather than
+// embedding it in the source) keeps the driver small + constant, so it
+// compiles once and scales to large programs. A single-arm `Ok` match is
+// enough since the file always exists.
+const x86CapstoneDriver = `
+function main(): i32 {
+    match (read_file("in.s")) {
+        Ok(asmtext) => {
+            let a: X86Asm = x86_gas_assemble(asmtext);
+            // An absolute .quad <label> in data is assembled as a zero
+            // placeholder and patched only once the load address is known, so
+            // this step is not optional — skipping it leaves every static
+            // string box pointing at address 0. x86_elf_binary (fern.fern) is
+            // the pipeline this mirrors, including the order: the unknown
+            // check comes AFTER, because an unresolvable data symbol is
+            // recorded here rather than by the assembler.
+            a = x86_resolve_data(a, elf_text_vaddr_x86());
+            if (a.unknown.len() > 0) {
+// Naming the lines is the whole point of this probe: a bare
+                // exit code says an instruction was refused but not which
+                // one. Several distinct causes can be live at once, so this
+                // reports the first few rather than only the first.
+                let i: i32 = 0;
+                let msg: string = "";
+                while (i < a.unknown.len() && i < 8) {
+                    msg = msg + "unencodable: " + a.unknown[i] + "\n";
+                    i = i + 1;
+                }
+                eprint(msg);
+                return 2;
+            }
+            let entry: i32 = x86_label_off(a, "_start");
+            let tv: i64 = elf_text_vaddr_x86() as i64;
+            let hdr_len: i32 = x86_eh_frame_hdr_len(a);
+            let hv: i64 = elf_eh_hdr_vaddr_x86(a.text.len()) as i64;
+            let ev: i64 = elf_eh_frame_vaddr_x86(a.text.len(), hdr_len) as i64;
+            let eh: i32[] = x86_eh_frame(a, tv, ev);
+            let hdr: i32[] = x86_eh_frame_hdr(a, tv, ev, hv);
+            write(string_from_bytes_unchecked(elf_program_x86(a.text, hdr, eh, a.rodata, a.bss_size, entry)));
+            return 0;
+        }
+    }
+    return 1;
+}
+`
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return b
+}

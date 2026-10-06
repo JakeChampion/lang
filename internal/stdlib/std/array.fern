@@ -5,7 +5,7 @@
 // `pub function (xs: T[]) name(…)`, and is what anything usable at more
 // than one element type should be. The older
 // `pub function __method_Array_<name>(arr: i32[], …)` form, which the
-// checker auto-discovers by name (`internal/checker/checker.go`), pins a
+// checker auto-discovers by name (`internal/check/checker/checker.go`), pins a
 // concrete element type and so is only for a verb that is genuinely
 // specific to it — `join` over `string[]`, `gcd_all` over `i32[]`.
 //
@@ -267,7 +267,7 @@ pub function __method_Array_mode(arr: i32[]): Option[i32] {
 // element; longer arrays → out[0] + sep + out[1] + sep + ...
 //
 // The receiver-dispatch path lives in the checker: see
-// `Array.join` in internal/checker/checker.go. The constrained
+// `Array.join` in internal/check/checker/checker.go. The constrained
 // string-element signature there makes `nums.join(",")` on
 // i32[] surface as a clean type error rather than a missing-
 // method one.
@@ -870,7 +870,7 @@ pub function add_f64(a: f64[], b: f64[]): f64[] {
 // and monomorph rewrites them to the concrete instantiation at
 // each call site. (That substitution walker had an `*ast.Assign`
 // gap that blocked this exact shape; fixed and pinned by
-// `internal/e2e/generic_array_combinators_test.go`.)
+// `internal/testing/e2e/generic_array_combinators_test.go`.)
 //
 // Eager by design — every combinator returns a fresh array (or a
 // scalar). Allocation is a cheap single-cursor heap bump, and the

@@ -1,0 +1,4834 @@
+package e2e
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+)
+
+// `std/test` ships as a pure-Lang unit-test runner the project
+// plans to migrate to once the compiler is self-hosted (see
+// docs/ROADMAP-AND-SELF-HOSTING.md and the project notes in
+// CLAUDE.md). These tests pin the runner's contract:
+//   - exit code is 0 when every case in a suite passes
+//   - exit code is 1 when any case fails
+//   - the output is TAP-13 with the standard `ok` /
+//     `not ok` per-case lines and a `1..N` plan line
+//
+// They drive the example test files under `tests/stdlib/`
+// through `fern -interp` rather than reimplementing the
+// assertions on the Go side — that way the same examples that
+// users see in the repo are also the regression gate, and any
+// breakage in the runner shows up here.
+//
+// Each test computes the absolute path to the example with
+// `filepath.Abs` so the test still works under
+// `go test ./internal/testing/e2e/...` (where Go sets cwd to the
+// package dir, three deep from the project root).
+
+// runLangInterp runs `fern -interp <src>` and returns the
+// exit code + stdout + stderr. Shared by every runner-
+// example gate in this file.
+//
+// Calls `t.Parallel()` up front so the ~40 TestRunner*
+// gates fan out across cores. Safe because:
+//   - `buildLangBinForInterp` caches the compiled binary
+//     in a package-lifetime tempdir (not `t.TempDir()`),
+//     so parallel callers all read the same path.
+//   - Each gate uses its own `*_test.fern` source file
+//     under `tests/stdlib/`; no shared writable state.
+//   - The lang binary is read-only at this point; the
+//     `fern -interp src` subprocess gets its own stdio
+//     buffers per `exec.Command`.
+//
+// On an 8-core host this drops the runner-suite wall
+// clock from ~25s to ~5s.
+func runLangInterp(t *testing.T, bin, src string) (int, string, string) {
+	t.Helper()
+	t.Parallel()
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
+}
+
+// `tests/stdlib/arithmetic_test.fern` is the canonical
+// "all cases pass" run. Exercises assert_eq_i32 +
+// assert_{lt,le,gt,ge}_i32 + fail()/pass() and a hand-rolled
+// table walk. Exit code is 0; the TAP plan line is `1..10`.
+func TestRunnerArithmeticExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/arithmetic_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	wantSubstrings := []string{
+		"TAP version 13",
+		"# Suite: arithmetic",
+		"ok 1 - addition",
+		"ok 10 - greater or equal",
+		"1..10",
+		"# tests 10",
+		"# pass 10",
+		"# fail 0",
+	}
+	for _, w := range wantSubstrings {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/tz_test.fern` is std/tz without a clock or the host's
+// zoneinfo: POSIX rules evaluated across their transitions, a TZif v2
+// file built byte by byte (whose v1 block disagrees, so a reader on the
+// wrong table fails), its footer governing the future, and the malformed
+// inputs that must parse to None.
+func TestRunnerTzExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/tz_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: tz", "1..13", "# pass 13", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/runner_lazy_test.fern` pins the contract that makes
+// the runner's own controls real: `it(name, body)` takes the case
+// UNEVALUATED, so a case the runner drops never runs. The fixture bumps
+// a Cell from inside a filtered-out body and asserts the counter is
+// still zero — with an already-evaluated outcome (the pre-#6042 API) the
+// work was over before `it` could see it, so a filter could only
+// suppress the OUTPUT of a test that had already run.
+func TestRunnerLazyExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/runner_lazy_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	wantSubstrings := []string{
+		"ok 1 - dropped by the filter # SKIP filtered out",
+		"ok 2 - checks the dropped body never ran",
+		"ok 4 - checks the kept body ran once",
+		"# pass 3",
+		"# fail 0",
+		"# skip 1",
+	}
+	for _, w := range wantSubstrings {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/strings_test.fern` covers the string-method
+// assertion helpers (contains, starts_with, ends_with, etc.).
+// Passing suite → exit 0.
+func TestRunnerStringsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/strings_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if !strings.Contains(out, "# pass 16") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 16 passes, 0 fails\noutput:\n%s", out)
+	}
+}
+
+// `tests/stdlib/regex_test.fern` covers std/regex through the pure-Fern
+// runner: the matcher (match / search / find / anchors / classes /
+// quantifiers / alternation / (?i)), the bulk ops (count / find_all /
+// replace / replace_all / split / full_match), and the capture engine
+// (regex_captures positional + optional + quantified-last-iteration,
+// captures_all, named groups (?<name>…) + .group_named / .group_index /
+// .has_group_named, and $-template replacement incl. ${name} and $$).
+// The regex module had only Go-side coverage. Passing suite → exit 0.
+func TestRunnerRegexExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/regex_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/regex", "# pass 22", "# fail 0", "1..22"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/iter_test.fern` covers the core/iter stdlib (the
+// generic Iterator[T] protocol + Range / ArrayIter and the eager
+// drivers — sum / count / of / product / nth / last / min / max /
+// contains / count_value / fold / any / all / map / filter) through the
+// pure-Fern runner. Passing suite → exit 0.
+func TestRunnerIterExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/iter_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: core/iter", "# pass 15", "# fail 0", "1..15"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/base64_test.fern` covers std/base64 (encode / decode
+// across all three padding tails, empty input, a decode∘encode round-trip,
+// and the base64_decode_strict Some/None cases for #4384's malformed-input
+// signalling) — a deterministic codec that had only Go-side coverage.
+// (std/hex has its own sibling suite, hex_test.fern.) Passing → exit 0.
+func TestRunnerBase64ExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/base64_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/base64", "# pass 17", "# fail 0", "1..17"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/format_test.fern` covers std/format — positional `{}`
+// substitution (incl. `{{`/`}}` escapes and `{:>w}`/`{:<w}` width
+// alignment, the `+` sign and sign-aware `0` zero-pad flags), the
+// Display-accepting `format_values` / `format1`..`format4` entry points,
+// `.N` precision on numerals vs strings, the binary-IEC `format_bytes`,
+// and `format_duration_ms` (h/m/s/ms components) — a deterministic
+// formatter that had only Go-side coverage. Passing suite → exit 0.
+func TestRunnerFormatExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/format_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/format", "# pass 43", "# fail 0", "1..43"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/cmp_helpers_test.fern` covers core/cmp's generic free
+// helpers over the primitive Ord/Eq impls (min / max / clamp / lt / gte /
+// sort / is_sorted / contains / index_of / distinct / eq_arrays, incl.
+// string) — distinct from derive_test.fern's `@derive` coverage. Passing
+// suite → exit 0.
+func TestRunnerCmpHelpersExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/cmp_helpers_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: core/cmp helpers", "# pass 19", "# fail 0", "1..19"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/math_test.fern` covers the deterministic std/math
+// surface — range / range_step (half-open i32 ranges), the numeric-width
+// constants (i32_max/min, i64_max/min) and the pack_rgb bit-packer
+// (random_int is omitted as non-deterministic). Passing suite → exit 0.
+func TestRunnerMathExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/math_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/math", "# pass 16", "# fail 0", "1..16"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/path_test.fern` covers the std/path POSIX helpers
+// (string-level, no FS) — path_join / path_parent / path_file_name /
+// path_extension / path_clean / path_is_absolute / path_stem /
+// path_with_extension, incl. separator-collapsing, root-preservation,
+// trailing-slash, hidden-file, multi-extension, and `.`/`..`
+// resolution edges. Passing suite → exit 0.
+func TestRunnerPathExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/path_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/path", "# pass 28", "# fail 0", "1..28"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/hex_test.fern` covers std/hex's lowercase encode /
+// decode — round-trip fidelity, empty input, case-insensitive decode,
+// the lenient decode termination (first non-hex char or odd-length
+// tail), and the hex_decode_strict Some/None cases for #4384's
+// malformed-input signalling. Passing suite → exit 0.
+func TestRunnerHexExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/hex_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/hex", "# pass 13", "# fail 0", "1..13"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/url_test.fern` covers std/url's RFC 3986
+// percent-encoding (url_encode / url_decode — unreserved pass-through,
+// reserved escaping, lower-case + truncated decode, round-trip) and the
+// best-effort url_parse split (scheme/host/port/path/query/fragment plus
+// the empty-input None) and the RFC 3986 §3.2 authority rules — userinfo
+// at the last '@', bracketed IP-literals, port range, reg-name bytes and
+// the anchored scheme. Passing suite → exit 0.
+func TestRunnerUrlExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/url_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/url", "# pass 33", "# fail 0", "1..33"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/deflate_test.fern` covers std/deflate against streams
+// Python's zlib produced: the three block types, a 60 KB corpus with
+// matches reaching the whole window back, every optional gzip header
+// field, two members, a zlib stream, and the refusals.
+func TestRunnerDeflateExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/deflate_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/deflate", "# pass 14", "# fail 0", "1..14"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/net_test.fern` covers std/net's `is_global`, the
+// predicate behind std/fetch's block list.
+func TestRunnerNetExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/net_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/net", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/fetch_proxy_test.fern` covers std/fetch's proxy
+// selection: which variables are read and every `no_proxy` form.
+func TestRunnerFetchProxyExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/fetch_proxy_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/fetch proxies", "# pass 16", "# fail 0", "1..16"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/csv_test.fern` covers std/csv's RFC 4180 single-line
+// surface — csv_escape (quote-wrap on comma / quote / newline, interior
+// quotes doubled), csv_join (escape then comma-join) and csv_parse_line
+// (split, quoted-field commas, "" → " decode). Passing suite → exit 0.
+func TestRunnerCsvExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/csv_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/csv", "# pass 19", "# fail 0", "1..19"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/int_test.fern` covers core/int's integer-formatting
+// primitives — int_to_string (signed i32 → decimal incl. the INT_MIN
+// unsigned-safe path), parse_int_radix (bases 2..36, sign handling,
+// out-of-range / bad-digit → None) and int_to_string_radix (the inverse,
+// lowercase). Passing suite → exit 0.
+func TestRunnerIntExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/int_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: core/int", "# pass 19", "# fail 0", "1..19"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/i32_test.fern` covers std/i32's deterministic
+// receiver-method helpers — abs / signum, byte classification (is_digit /
+// is_alpha / hex_value / to_lower / to_upper), number-shape helpers
+// (reverse_digits / is_palindrome / sum_of_digits / factorial / is_prime /
+// is_perfect_square / is_multiple_of), the range checks (is_in_range
+// half-open vs is_between inclusive), and the i32::MIN digit-family edge
+// cases (#4390: digits / sum_of_digits / has_digit / reverse_digits no longer
+// silently zero when abs() can't represent the magnitude). Passing suite → exit 0.
+func TestRunnerI32ExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/i32_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i32", "# pass 32", "# fail 0", "1..32"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/i32_bit_length_test.fern` covers std/i32's bit_length — the
+// number of bits needed to represent |n| (highest set bit + 1). Zero, small
+// values, powers of two, negatives (magnitude), i32::MAX, and the i32::MIN
+// widen-to-i64 edge. On the interp gate and the self-host x86-64 + arm64 gates;
+// the Go-side TestI32BitLength pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerI32BitLengthExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/i32_bit_length_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i32 bit_length", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/i32_to_string_radix_test.fern` covers std/i32's
+// to_string_radix(base) — render an i32 in an arbitrary base (2..36), the
+// general form behind to_binary/to_oct/to_hex and the write-side inverse of
+// string.parse_int_radix. Several bases, sign, zero, out-of-range base, and a
+// round-trip. On the interp gate and the self-host x86-64 + arm64 gates (i32 ->
+// string render, self-hosts cleanly); the Go-side TestI32ToStringRadix pins
+// native compilation on all four backends. Passing → exit 0.
+func TestRunnerI32ToStringRadixExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/i32_to_string_radix_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i32 to_string_radix", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/i32_bit_arith_test.fern` covers std/i32's abs_diff (absolute
+// difference via an ordering branch) and count_zeros (complement of count_ones;
+// the two sum to 32). Kept out of i32_test to keep the self-host bundle under
+// the asm_ir IR budget; the Go-side TestI32AbsDiffCountZeros pins these across
+// all four backends. Passing suite → exit 0.
+func TestRunnerI32BitArithExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/i32_bit_arith_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i32 bit + arith", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/i64_test.fern` covers std/i64's signed-64-bit receiver
+// methods (the wider counterpart to std/i32) — abs / min / max / clamp /
+// pow (incl. a value past the i32 range) / gcd / lcm / to_string (incl.
+// negative) / is_even / is_odd / signum / is_positive|negative|zero /
+// saturating_add|sub / checked_add|sub. Passing suite → exit 0.
+func TestRunnerI64ExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/i64_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64", "# pass 18", "# fail 0", "1..18"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/i64_to_string_radix_test.fern` covers std/i64's
+// to_string_radix(base) — render an i64 in an arbitrary base (2..36) via a u64
+// magnitude, so it renders i64::MIN cleanly and exercises unsigned u64 div/rem.
+// Several bases, sign, zero, values past the i32 range, i64::MAX/MIN, and
+// out-of-range bases. On the interp gate and the self-host x86-64 + arm64 gates;
+// the Go-side TestI64ToStringRadix pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerI64ToStringRadixExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/i64_to_string_radix_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 to_string_radix", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/i64_bit_ops_test.fern` covers std/i64's bit ops (wider
+// counterparts to std/i32's): count_ones (set bits in the 64-bit two's-
+// complement rep) and bit_length (bits to represent |n|, i64::MIN special-
+// cased), over values past the i32 range. On the interp gate and the self-host
+// x86-64 + arm64 gates (both return i32); the Go-side TestI64BitOps pins native
+// compilation on all four backends. Passing → exit 0.
+func TestRunnerI64BitOpsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/i64_bit_ops_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 bit ops", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/i64_range_test.fern` covers std/i64's abs_diff (absolute
+// difference, wider counterpart to i32.abs_diff) and the range predicates
+// is_in_range (half-open) / is_between (inclusive), added for parity with
+// std/i32, over values past the i32 range. Kept out of i64_test to keep the
+// self-host bundle under the asm_ir IR budget; the Go-side TestI64AbsDiffRange
+// pins these across all four backends. Passing suite → exit 0.
+func TestRunnerI64RangeExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/i64_range_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 range", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerU64ExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/u64_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/u64", "# pass 15", "# fail 0", "1..15"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerU32ExamplePasses gates the std/u32 receiver-method helpers
+// (predicates / pow / saturating / checked) under the interpreter — the
+// counterpart to TestRunnerU64ExamplePasses. Distinct from the
+// wrapping-arithmetic suite below.
+func TestRunnerU32ExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/u32_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/u32 helpers", "# pass 4", "# fail 0", "1..4"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerU32ArithExamplePasses gates the u32 wrapping-arithmetic contract
+// suite under the interpreter. Interp-gated only: the self-host backends do not
+// yet truncate u32 `+` / `<<` results back to 32 bits (the suite header documents
+// the minimal repro + the std/crypto connection), so it is deliberately absent
+// from selfHostStdTestCases until that codegen gap closes.
+func TestRunnerU32ArithExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/u32_arith_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/u32 wrapping arithmetic", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerUintRangeExamplePasses gates the unsigned range/diff helpers added
+// to std/u32 and std/u64 (abs_diff, is_in_range, is_between) under the
+// interpreter. Interp-gated only: the MAX-value cases build u32::MAX / u64::MAX
+// via wraparound (`(0 as u32) - (1 as u32)`), and the self-host backends don't
+// yet truncate u32 arithmetic back to 32 bits (the same documented gap that
+// keeps u32_arith_test interp-only), so the u32 MAX cases would diverge there.
+// Native compilation across all four backends — incl. the unsigned-compare
+// MAX edges — is pinned by the Go-side TestUintAbsDiffRange.
+func TestRunnerUintRangeExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/uint_range_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/uint range", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerIoBufferedExamplePasses gates the std/io_buffered suite (BytesWriter,
+// BufWriter, LineReader) under the interpreter. Interp-gated only: BytesWriter holds a `u8[]` field and
+// is rebuilt immutably (`{ ...w, data }`) per write, so a writer retained to
+// scope/program exit hits the RC drop-at-exit gap on the self-host backends
+// (the same class as array_hof's flat_map/reduce/sort_by — crashes -1 during the
+// first test's teardown). Deliberately absent from selfHostStdTestCases until the
+// goal-2 RC port drops struct-holding-array locals correctly.
+func TestRunnerIoBufferedExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/io_buffered_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/io_buffered BytesWriter", "# pass 20", "# fail 0", "1..20"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerSortByAndCiExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/sort_by_and_ci_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/sort comparator + ci", "# pass 13", "# fail 0", "1..13"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerStringClassifyTransformExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/string_classify_transform_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string classify + transform", "# pass 22", "# fail 0", "1..22"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerStringSliceExtractExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/string_slice_extract_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string slice + extract", "# pass 23", "# fail 0", "1..23"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerStringEscapeCountExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/string_escape_count_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string escape + count", "# pass 19", "# fail 0", "1..19"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerStringReplaceSplitExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/string_replace_split_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string replace + split", "# pass 14", "# fail 0", "1..14"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerStringSwapCaseExamplePasses gates std/string.swap_case — toggle the
+// case of every ASCII letter — under the interpreter. Also on the self-host
+// x86-64 + arm64 gates (string return, uses assert_true); the Go-side
+// TestStringSwapCase pins native compilation on all four backends. Passing →
+// exit 0.
+func TestRunnerStringSwapCaseExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/string_swap_case_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string swap_case", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerStringZfillExamplePasses gates std/string.zfill(width) — zero-pad a
+// numeric string keeping the sign in front — under the interpreter. Also on the
+// self-host x86-64 + arm64 gates (string return, uses assert_true); the Go-side
+// TestStringZfill pins native compilation on all four backends. Passing → exit 0.
+func TestRunnerStringZfillExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/string_zfill_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string zfill", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerStringParseRadixExamplePasses gates std/string.parse_int_radix(base)
+// — the method form of the arbitrary-base (2..36) i32 parser — under the
+// interpreter. Also on the self-host x86-64 + arm64 gates (Option[i32] return,
+// uses assert_true); the Go-side TestStringParseIntRadix pins native
+// compilation on all four backends. Passing → exit 0.
+func TestRunnerStringParseRadixExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/string_parse_radix_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string parse_int_radix", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerStringPartitionExamplePasses gates std/string.partition /
+// rpartition — the Python-style three-way (head, sep, tail) split that keeps the
+// separator — under the interpreter. Also on the self-host x86-64 + arm64 gates
+// (uses assert_true, no assert_eq[i32]); the Go-side TestStringPartition pins
+// native compilation on all four backends. Passing → exit 0.
+func TestRunnerStringPartitionExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/string_partition_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string partition", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerStringRsplitOnceExamplePasses gates std/string.rsplit_once — split
+// at the LAST occurrence of a separator (the mirror of split_once) — under the
+// interpreter. Also on the self-host x86-64 + arm64 gates (uses assert_true /
+// fail / pass, no generic assert_eq[i32] monomorph); the Go-side
+// TestStringRsplitOnce pins native compilation on all four backends. Passing →
+// exit 0.
+func TestRunnerStringRsplitOnceExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/string_rsplit_once_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string rsplit_once", "# pass 9", "# fail 0", "1..9"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerStringFindAllExamplePasses gates std/string.find_all — the start
+// indices of every non-overlapping occurrence of a substring — under the
+// interpreter. Interp-gated only: the self-host compiler fails to emit the
+// generic assert_eq[i32] monomorph for this file's shape (link error, both
+// self-host backends), a self-host codegen gap unrelated to find_all (the file
+// header documents it). Native compilation on all four backends is pinned by
+// the Go-side TestStringFindAll. Passing → exit 0.
+func TestRunnerStringFindAllExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/string_find_all_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string find_all", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerTimeCalendarExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/time_calendar_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/time calendar", "# pass 15", "# fail 0", "1..15"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerTimeIsoSpanExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/time_iso_span_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/time iso + span", "# pass 14", "# fail 0", "1..14"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerTimeHttpDateExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/time_http_date_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/time http-date", "# pass 12", "# fail 0", "1..12"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/time_relative_test.fern` covers std/time's
+// Instant.relative_to humaniser — the "just now" window, past/future
+// direction, singular vs plural units, and the unit ladder. Passing →
+// exit 0; plan line `1..4`.
+func TestRunnerTimeRelativeExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/time_relative_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/time relative_to", "# pass 4", "# fail 0", "1..4"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerJsonRoundtripExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/json_roundtrip_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/json roundtrip", "# pass 28", "# fail 0", "1..28"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/json_pointer_test.fern` covers std/json's RFC 6901
+// JSON Pointer resolver (json_pointer) — object descent, array indexing,
+// the ~1/~0 key escapes, empty-pointer (whole doc) / empty-key ("/")
+// cases, and the miss paths (missing key, out-of-range / malformed
+// index, descent into a scalar, no leading slash). Passing → exit 0.
+func TestRunnerJsonPointerExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/json_pointer_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/json pointer", "# pass 11", "# fail 0", "1..11"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/utf8_test.fern` covers std/utf8 — UTF-8 codepoint
+// decode (1..4-byte, plus the stray-continuation / truncated / overlong
+// / surrogate rejections), encode (widths + U+FFFD substitution),
+// codepoint_count / codepoints, is_valid_utf8, the encode_all round
+// trip, the codepoint-indexing layer (codepoint_at / char_at /
+// substring), the byte-boundary layer (is_char_boundary /
+// floor_char_boundary / ceil_char_boundary), and the lossy walk's
+// one-U+FFFD-per-maximal-subpart rule, pinned across all four walkers.
+// Passing → exit 0.
+func TestRunnerUtf8ExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/utf8_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/utf8", "# pass 30", "# fail 0", "1..30"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/uuid_test.fern` covers std/uuid's generators by
+// shape — v4/v7 length, hyphen positions, version + variant nibbles,
+// is_uuid, and distinctness. The output is random but the assertions are
+// structural, so the TAP output is deterministic. Passing → exit 0.
+func TestRunnerUuidExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/uuid_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/uuid", "# pass 12", "# fail 0", "1..12"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/crypto_test.fern` covers std/crypto's SHA-256 +
+// HMAC-SHA256 against the standard NIST (FIPS 180-4) / RFC 4231
+// known-answer vectors (empty / "abc" / pangram, raw-digest length, an
+// HMAC vector), plus the constant-time consteq / hmac_verify / hmac_verify_hex
+// MAC-comparison helpers (#4384). This is the interp oracle; std/crypto also
+// runs in the self-host IR differential now (selfHostStdTestCases). Passing
+// suite → exit 0.
+func TestRunnerCryptoExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/crypto_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/crypto", "# pass 18", "# fail 0", "1..18"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/digest_*_test.fern` cover std/crypto's streaming digests
+// (#8278): each against its RFC / NIST known-answer vectors (empty, "abc", the
+// multi-block message, one million 'a') fed as whole strings, as 1000 updates
+// of 1000 bytes, and as 7-byte view slices — so the pending-block logic, not
+// just the round function, is what the vectors prove. `hash_checksums_test`
+// does the same for std/hash's cksum(1) CRC and the sum(1) checksums against
+// GNU coreutils' values. Interp oracle here; all of them also run in the
+// self-host IR differential (selfHostStdTestCases).
+func runnerSuitePasses(t *testing.T, file, suite string, n int) {
+	t.Helper()
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/"+file+"_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	plan := fmt.Sprintf("1..%d", n)
+	for _, w := range []string{"# Suite: " + suite, fmt.Sprintf("# pass %d", n), "# fail 0", plan} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerDigestMd5ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_md5", "std/crypto MD5", 7)
+}
+
+func TestRunnerDigestSha1ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_sha1", "std/crypto SHA-1", 7)
+}
+
+func TestRunnerDigestSha224ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_sha224", "std/crypto SHA-224", 7)
+}
+
+func TestRunnerDigestSha256ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_sha256", "std/crypto SHA-256", 7)
+}
+
+func TestRunnerDigestSha384ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_sha384", "std/crypto SHA-384", 7)
+}
+
+func TestRunnerDigestSha512ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_sha512", "std/crypto SHA-512", 7)
+}
+
+func TestRunnerDigestBlake2bExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_blake2b", "std/crypto BLAKE2b", 8)
+}
+
+func TestRunnerDigestSm3ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_sm3", "std/crypto SM3", 8)
+}
+
+func TestRunnerHashChecksumsExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "hash_checksums", "std/hash checksums", 8)
+}
+
+// `tests/stdlib/cli_test.fern` covers std/cli's spec-driven argument
+// parser (#4385 item 1): valued options in --long V / --long=V / -short V
+// forms, boolean flags, positional operands, the `--` terminator, the
+// value_or default, the error paths (unknown option / missing value /
+// value on a bool), auto-usage, subcommands, the completion generators,
+// and the roff man page. This is the interp oracle; std/cli also runs in the
+// self-host IR differential (selfHostStdTestCases).
+func TestRunnerCliExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/cli_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/cli", "# pass 34", "# fail 0", "1..34"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/option_combinators_test.fern` covers the std/option
+// COMBINATOR surface (distinct from option_and_set_ops_test, which covers the
+// std/test Option assertion helpers) — is_some / is_none / unwrap_or /
+// unwrap_or_else / map / and_then / or_else / filter / ok_or / map_or /
+// is_some_and / or / and / ok_or_else / map_or_else / zip / xor / flatten,
+// including the closure-taking generic methods. Passing suite → exit 0.
+func TestRunnerOptionCombinatorsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/option_combinators_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/option combinators", "# pass 20", "# fail 0", "1..20"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/result_combinators_test.fern` covers the std/result
+// COMBINATOR surface (distinct from result_assertions_test, which covers the
+// std/test Result assertion helpers) — is_ok / is_err / unwrap_or /
+// unwrap_or_else / map / and_then / map_err / ok / err / map_or / is_ok_and /
+// is_err_and / or / and / or_else / map_or_else / flatten, including the
+// closure-taking generic methods. Passing → exit 0.
+func TestRunnerResultCombinatorsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/result_combinators_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/result combinators", "# pass 16", "# fail 0", "1..16"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_hof_test.fern` covers the std/array higher-order
+// combinators NOT already in array_combinators_test (map/filter/fold/any/all/
+// find): flat_map, reduce (→ Option[T]), sort_by (a comparator closure), and
+// intersperse (structural, no callback).
+// Interp-gated only: these three crash the self-hosted binary at program exit
+// (a drop/RC-at-exit bug — the tests all PASS, output is byte-correct, then
+// teardown traps; see the audit log), so the suite is intentionally NOT in
+// selfHostStdTestCases. Passing suite → exit 0.
+func TestRunnerArrayHofExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_hof_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array higher-order", "# pass 18", "# fail 0", "1..18"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_extremum_by_test.fern` covers std/array's
+// comparator-driven extremum verbs `max_by` / `min_by` (free + method forms)
+// over i32 and string-length comparators: extremum, empty → None, ties keep
+// the FIRST, single element. Interp-gated only (NOT in selfHostStdTestCases):
+// a string-element `max_by`/`min_by` crashes the arm64 self-host emitter, and
+// folding these into array_hof tips its bundle over the asm_ir 512-function
+// budget — the file's header documents both. Native compilation across all
+// four backends is pinned by the Go-side TestNativeArrayMinMaxBy. Passing →
+// exit 0.
+func TestRunnerArrayExtremumByExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_extremum_by_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array extremum-by", "# pass 9", "# fail 0", "1..9"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_count_sum_by_test.fern` covers std/array's
+// closure-aggregate verbs count_where (tally of matching elements) and sum_by
+// (sum of an i32 projection over any element type), free + method forms, over
+// i32 and string arrays incl. the empty and none-match cases. Interp-gated only
+// (NOT in selfHostStdTestCases): the self-host compiler miscompiles sum_by with
+// an i32-identity projection (returns -1); the file header documents it. Native
+// compilation on all four backends is pinned by the Go-side
+// TestNativeArrayCountWhereSumBy. Passing → exit 0.
+func TestRunnerArrayCountSumByExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_count_sum_by_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array count/sum by", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_none_test.fern` covers std/array's none[T](xs, pred)
+// (free + method forms): true iff pred holds for no element, the complement of
+// any; short-circuits, vacuously true for empty. Closure over a generic T[], so
+// the i32 cases are on interp + the self-host x86-64 + arm64 gates; the Go-side
+// TestNativeArrayNone pins native compilation on all four backends (incl. a
+// string-closure case). Passing → exit 0.
+func TestRunnerArrayNoneExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_none_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array none", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_all_equal_test.fern` covers std/array's
+// all_equal[T: cmp.Eq] (free + method forms): true iff every element equals the
+// first (≤ 1 distinct value), vacuously true for length < 2. i32 cases
+// (all-equal / distinct / first-or-last differs / empty / single / free-fn) on
+// interp + the self-host x86-64 + arm64 gates. STRING-element all_equal is
+// native-differential-only (element-vs-element string compare trips the
+// self-host compiler); the Go-side TestArrayAllEqual pins native compilation on
+// all four backends. Passing → exit 0.
+func TestRunnerArrayAllEqualExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_all_equal_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array all_equal", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/eq_bound_derive_test.fern` runs the Eq-driven std/array and
+// std/set verbs over a `@derive(Eq)` STRUCT element — the element type that
+// satisfies `T: cmp.Eq` only through the derive, and so the one a body
+// comparing with the `==` operator rejected (#6846). Passing → exit 0.
+func TestRunnerEqBoundDeriveExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/eq_bound_derive_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: Eq-bound verbs on a derived element", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_min_max_index_test.fern` covers std/array's
+// max_index / min_index[T: cmp.Ord] (free + method forms): the INDEX of the
+// largest / smallest element by Ord → Option[i32] (None on empty, first on a
+// tie). i32 cases (single / empty / all-equal) on interp + the self-host x86-64
+// + arm64 gates. STRING-element min/max_index is native-differential-only: it
+// compares two array elements (xs[i].cmp(xs[best])), and that element-vs-element
+// string compare trips the self-host compiler. The Go-side TestArrayMinMaxIndex
+// pins native compilation on all four backends. Passing → exit 0.
+func TestRunnerArrayMinMaxIndexExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_min_max_index_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array min/max index", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_binary_search_test.fern` covers std/array's
+// binary_search[T: cmp.Ord] (free + method forms): O(log n) search of an
+// ascending-sorted array → Option[i32]. Found (first/middle/last), absent
+// (in-range/below/above), empty, single, and STRING elements. Fully self-host
+// gated (x86-64 + arm64) incl. strings — the return is Option[i32] (scalar), so
+// it avoids the pointer-payload gap that limits the T[]-returning generics. The
+// Go-side TestArrayBinarySearch pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerArrayBinarySearchExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_binary_search_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array binary_search", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_dedup_test.fern` covers std/array's dedup[T: cmp.Eq]
+// (free + method forms): collapse runs of CONSECUTIVE equal elements, the
+// single-pass complement of distinct. Runs / all-equal / no-dup / sorted /
+// empty (i32) cases on the interp gate and the self-host x86-64 + arm64 gates
+// (same cmp.Eq bound / monomorphisation as distinct). STRING-element dedup is
+// native-differential-only (self-host mishandles the generic cmp.Eq over
+// pointer payloads); the Go-side TestNativeArrayDedup pins native compilation on
+// all four backends. Passing → exit 0.
+func TestRunnerArrayDedupExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_dedup_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array dedup", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_accessors_test.fern` covers std/array's foundational
+// accessors is_empty / first / last / get (free + method forms): Option[T]
+// returns, None on empty / out-of-range, negative index → None. On the interp
+// gate and the self-host x86-64 + arm64 gates for the i32 cases (uses
+// assert_true + match). STRING-element first/get is native-differential-only
+// (self-host mishandles the generic Option[T] over pointer payloads); the
+// Go-side TestNativeArrayFirstLastGet pins native compilation on all four
+// backends. Passing → exit 0.
+func TestRunnerArrayAccessorsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_accessors_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array accessors", "# pass 9", "# fail 0", "1..9"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_rotate_test.fern` covers std/array's structural
+// rotation verbs rotate_left / rotate_right (free + method forms): cyclic shift
+// by n (mod len), wrap when n >= len, negative n, zero / full shift, and empty.
+// On the interp gate and the self-host x86-64 + arm64 gates (i32, structural, no
+// closures; uses assert_eq_array / assert_true). The Go-side
+// TestNativeArrayRotate pins native compilation on all four backends including
+// string-element rotation (which the self-host compiler miscompiles, so it's
+// native-differential-only). Passing → exit 0.
+func TestRunnerArrayRotateExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_rotate_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array rotate", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_batch_test.fern` covers std/array's batch verbs
+// slice / chunks / windows (#4416) — half-open clamped range, even /
+// uneven / empty chunking, and overlapping / too-wide / full-width
+// windows, including the i32[][] nested-array return shape. Passing →
+// exit 0.
+func TestRunnerArrayBatchExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_batch_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array batch", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/iter_combinators_test.fern` covers the core/iter
+// combinators NOT in iter_test (sum/count/of/product/nth/last/min/max/
+// contains/count_value/fold/any/all/map/filter): to_array / take / skip /
+// find / position / position_by / count_by. Interp-gated only: `take` / `skip`
+// over an `ArrayIter[T]` argument make the self-host monomorphiser emit an
+// invalid symbol — `bl __fn_iter__take__iter__ArrayIter[T]` with the
+// unsubstituted `[T]` (bracket chars the assembler rejects; see the audit log)
+// — so the suite is intentionally NOT in selfHostStdTestCases. Passing → exit 0.
+func TestRunnerIterCombinatorsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/iter_combinators_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: core/iter combinators", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerNumReducersExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/num_reducers_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/num reducers", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/runner_self_test.fern` is the runner's own
+// meta-test — confirms that every assertion helper returns the
+// expected TestOutcome shape on both pass and fail paths.
+// If THIS regresses, the rest of the suite reports false
+// positives.
+func TestRunnerSelfTestPasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/runner_self_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("self-test exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	// 53 meta-tests; if this number changes intentionally,
+	// update both the file and this expected count together.
+	if !strings.Contains(out, "# pass 61") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 61 passes, 0 fails\noutput:\n%s", out)
+	}
+}
+
+// `tests/stdlib/cmp_nan_total_order_test.fern` pins core/cmp's float
+// instances as a TOTAL order — NaN after every number, all NaNs one value,
+// `cmp == 0` exactly when `eq` (#8588). Before it, "neither less nor greater"
+// was read as "equal", and 0 satisfies both `<= 0` and `>= 0`, so every
+// generic range assertion passed for a NaN while asserting nothing. The
+// operators stay IEEE; only the instances are total. Passing suite → exit 0.
+func TestRunnerCmpNanTotalOrderExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/cmp_nan_total_order_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: core/cmp NaN total order", "# pass 11", "# fail 0", "1..11"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/async_combinators_test.fern` exercises the supported
+// structured-concurrency surface (docs/ASYNC-REDESIGN.md): the
+// `gather` / `race` / `with_deadline` combinators over `Future[T]`,
+// on the portable `Ready`-future path (resolves on every backend).
+// Generic over T (gather over Future[string]). Passing suite → exit 0.
+func TestRunnerAsyncCombinatorsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/async_combinators_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if !strings.Contains(out, "# pass 5") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 5 passes, 0 fails\noutput:\n%s", out)
+	}
+}
+
+// A failing suite exits 1 and emits `not ok` + a summary that
+// names the failure. Inline-source so the failure cases stay
+// adjacent to the assertions about them — a regression in the
+// failure path would be invisible if it lived in a separate
+// file the assertion didn't read.
+func TestRunnerFailingSuiteExitsOne(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+import "std/test";
+
+function test_passing(): test.TestOutcome {
+    return test.assert_eq(1 + 1, 2);
+}
+
+function test_failing(): test.TestOutcome {
+    return test.assert_eq(2 + 2, 5);
+}
+
+function main(): i32 {
+    let r: test.TestRunner = test.test_new("failure-shape");
+    r = r.it("passing", () => test_passing());
+    r = r.it("failing", () => test_failing());
+    return r.finish();
+}
+`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	gotOut := out.String()
+	wantPieces := []string{
+		"ok 1 - passing",
+		"not ok 2 - failing",
+		"  message: assert_eq: expected \"5\", got \"4\"",
+		"# pass 1",
+		"# fail 1",
+		"# failures:",
+		"failing: assert_eq: expected \"5\", got \"4\"",
+	}
+	for _, w := range wantPieces {
+		if !strings.Contains(gotOut, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+		}
+	}
+}
+
+// #8466 — the runner must not be able to under-report. A
+// `TestRunner` is a value, so a result that is not assigned back is
+// lost from that handle's counts — but `it` and `subsuite` bump the
+// `emitted` / `emitted_failed` cells every handle derived from one
+// `test_new` shares, in the same step that prints the TAP line, and
+// `finish()` takes the plan, the fail count and the exit code from
+// those. The failure's text is in the `not ok` block it printed; the
+// `# failures:` summary lists only what the finishing handle
+// recorded, so a dropped result is named there by the `# WARNING`
+// count rather than by message.
+//
+// Before the fix each of these three printed its `not ok` lines
+// and then reported `1..0`, `# fail 0`, exit 0 — a suite with a
+// failing test that a TAP consumer and a human both read as
+// clean. The numbering was TAP-invalid too: every dropped case
+// reused index 1.
+//
+// runDroppedHandleCase runs one inline source through
+// `fern -interp -` and asserts a non-zero exit plus the exact
+// plan / summary lines the printed results imply.
+func runDroppedHandleCase(t *testing.T, src string, want []string) {
+	t.Helper()
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code == 0 {
+		t.Fatalf("exit = 0, want non-zero (a printed `not ok` must fail the run)\nstdout: %s\nstderr: %s",
+			out.String(), errb.String())
+	}
+	got := out.String()
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, got)
+		}
+	}
+}
+
+const droppedHandlePreamble = `
+import "std/test";
+
+function failing(): test.TestOutcome { return test.assert_eq(1, 2); }
+function passing(): test.TestOutcome { return test.assert_eq(1, 1); }
+`
+
+// The result of `it` is discarded outright.
+func TestRunnerDroppedItResultStillFailsSuite(t *testing.T) {
+	runDroppedHandleCase(t, droppedHandlePreamble+`
+function main(): i32 {
+    let r: test.TestRunner = test.test_new("dropped-it");
+    r = r.it("kept", passing);
+    r.it("dropped result", failing);
+    return r.finish();
+}
+`, []string{
+		"ok 1 - kept",
+		"not ok 2 - dropped result",
+		"  message: assert_eq: expected \"2\", got \"1\"",
+		"1..2",
+		"# tests 2",
+		"# pass 1",
+		"# fail 1",
+		"# WARNING: 1 result(s) were discarded",
+	})
+}
+
+// A subsuite handle whose cases are never `merge`d back into the
+// parent.
+func TestRunnerUnusedSubsuiteHandleStillFailsSuite(t *testing.T) {
+	runDroppedHandleCase(t, droppedHandlePreamble+`
+function main(): i32 {
+    let r: test.TestRunner = test.test_new("unused-subsuite");
+    r = r.it("kept", passing);
+    let sub: test.TestRunner = r.subsuite("child");
+    sub = sub.it("child fails", failing);
+    return r.finish();
+}
+`, []string{
+		"ok 1 - kept",
+		"not ok 2 - child / child fails",
+		"  message: assert_eq: expected \"2\", got \"1\"",
+		"1..2",
+		"# tests 2",
+		"# pass 1",
+		"# fail 1",
+		"# WARNING: 1 result(s) were discarded",
+	})
+}
+
+// Both mistakes at once — the issue's repro verbatim. The plan
+// must count both failures and the two `not ok` lines must carry
+// DISTINCT indices (duplicate numbering is invalid TAP on its
+// own).
+func TestRunnerDroppedItAndUnusedSubsuiteTogether(t *testing.T) {
+	runDroppedHandleCase(t, droppedHandlePreamble+`
+function main(): i32 {
+    let r: test.TestRunner = test.test_new("s");
+    r.it("dropped result", failing);
+    let sub: test.TestRunner = r.subsuite("child");
+    sub = sub.it("child fails", failing);
+    return r.finish();
+}
+`, []string{
+		"not ok 1 - dropped result",
+		"not ok 2 - child / child fails",
+		"1..2",
+		"# tests 2",
+		"# pass 0",
+		"# fail 2",
+		"# WARNING: 2 result(s) were discarded",
+	})
+}
+
+// `tests/stdlib/skip_and_subsuites_test.fern` covers the
+// skip / skip_if / subsuite / merge surface. Skips don't count
+// as failures (exit 0) and the TAP stream stays monotonic
+// across subsuite boundaries — the child shares the parent's
+// `emitted` counter, so the first subsuite case prints `ok 5`
+// (not `ok 1` again) when the parent ran 4 cases first; its
+// pass / skip counts reach the summary through `merge`.
+func TestRunnerSkipAndSubsuitesExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/skip_and_subsuites_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	want := []string{
+		"ok 1 - top-level pass",
+		"ok 2 - wasmtime-only # SKIP wasmtime not on $PATH",
+		"ok 5 - arithmetic / addition",
+		"ok 7 - arithmetic / multiplication # SKIP out of scope for this slice",
+		"ok 10 - trailing top-level",
+		"# tests 10",
+		"# pass 7",
+		"# fail 0",
+		"# skip 3",
+	}
+	for _, w := range want {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/utf8_validity_property_test.fern` is #5634's closing
+// property: from a VALID UTF-8 string, no stdlib string operation hands
+// back an invalid one. It is the gate on the invariant `string` now
+// carries, and it proved worthwhile immediately — the width-padding target
+// failed on first run, because pad_start / pad_end / center repeated the
+// fill's first BYTE and so emitted a fragment of a multibyte character.
+//
+// The exemptions are part of the property: the byte-level operations
+// (`reverse_bytes`, `replace_byte`, `shift_byte`, `without_byte`,
+// `bytes`, and the `slice_unchecked` builtin) may produce invalid UTF-8
+// by contract and are deliberately not exercised. A new operation that
+// can split a code point belongs in that named group or nowhere.
+func TestRunnerUtf8ValidityProperty(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/utf8_validity_property_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - byte-count operations snap to boundaries",
+		"ok 2 - s[a:b] Some payload is always valid",
+		"ok 3 - width padding keeps validity",
+		"ok 4 - case and style conversion keeps validity",
+		"ok 5 - splitting and trimming keep validity",
+		"# pass 5",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/fuzz_example_test.fern` exercises the
+// `std/fuzz` harness on three benign properties (always-OK,
+// non-negative length, idempotent to_upper) and one transform
+// invariant (trim strips edge spaces). The seeds are arranged
+// so the mutation path actually exercises the property — eg
+// the to_upper-idempotent target includes mixed-case seeds so
+// byte flips into / out of the upper range get tested.
+func TestRunnerFuzzExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/fuzz_example_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - trivial",
+		"ok 2 - len is non-negative",
+		"ok 3 - to_upper idempotent",
+		"ok 4 - trim strips edge spaces",
+		"# pass 4",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// A fuzz target that detects a forbidden pattern in its
+// seeds (`BAD seed`) must surface the failure with the
+// offending input quoted so the failure log doubles as a
+// reproducer. Inline source keeps the assertion adjacent to
+// the target.
+func TestRunnerFuzzFailureSurfacesInputReproducer(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+import "std/fuzz";
+import "std/test";
+import "std/string";
+
+function detect_bad(input: u8[]): test.TestOutcome {
+    if (string_from_bytes_unchecked(input).contains("BAD")) { return test.fail("forbidden pattern"); }
+    return test.pass();
+}
+
+function main(): i32 {
+    let r: test.TestRunner = test.test_new("fuzz-failure");
+    r = r.fuzz("detect", ["good".bytes(), "BAD seed".bytes(), "another".bytes()], 5, detect_bad);
+    return r.finish();
+}
+`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout: %s\nstderr: %s",
+			code, out.String(), errb.String())
+	}
+	gotOut := out.String()
+	for _, w := range []string{
+		"not ok 1 - detect",
+		`seed[1] = "BAD seed"`,
+		"forbidden pattern",
+		"# fail 1",
+	} {
+		if !strings.Contains(gotOut, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+		}
+	}
+}
+
+// `tests/stdlib/process_assertions_test.fern` exercises the
+// `subprocess(cmd, args, stdin) -> ProcessResult` builtin and
+// the assert_exit / assert_stdout_eq / assert_process /
+// assert_stderr_contains family layered on top of it. The
+// fixture itself self-skips when `sh` isn't on $PATH (rare on
+// the Linux + macOS targets Lang supports, but possible in
+// stripped CI images) — so this gate accepts both the all-pass
+// outcome (POSIX tools available) and the all-skip outcome.
+//
+// The temp_dir + subprocess interplay case writes a fixture
+// to disk and runs `cat` against it, which is the smallest
+// end-to-end shape the e2e suite migration needs: spawn the
+// compiler binary, point it at a tempdir-built input, assert
+// on its output.
+func TestRunnerProcessAssertionsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/process_assertions_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if strings.Contains(out, "# SKIP sh / echo / cat not on $PATH") {
+		// CI image without POSIX shell. Report it: the assertions below are
+		// the whole test, and an accepted branch that says nothing is how a
+		// suite goes vacuous without anyone noticing.
+		t.Skip("fixture self-skipped: sh / echo / cat not on $PATH")
+	}
+	for _, w := range []string{
+		"ok 1 - echo stdout eq",
+		"ok 6 - spawn missing binary",
+		"ok 7 - temp_dir writes + reads",
+		"# pass 7",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/wide_numerics_test.fern` covers the i64 /
+// u32 / u64 assertion family. The corresponding i32 helpers
+// are pinned by `arithmetic_test.fern`; this exercises the
+// wider widths so a regression in the interp's
+// `__int_to_string_u64` override (the one Lang code in
+// `core/int.fern` whose body the interp can't run) would
+// surface here.
+func TestRunnerWideNumericsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/wide_numerics_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - i64 addition",
+		"ok 3 - u32 max",
+		"ok 4 - u64 max",
+		"# pass 5",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/filesystem_ops_test.fern` exercises the
+// `read_dir` / `remove_file` / `remove_dir_all` builtins and
+// pins the matching semantics for each — particularly the
+// "missing target" cases where remove_file is an error
+// (matches Go's `os.Remove`) but remove_dir_all is silently
+// OK (matches `os.RemoveAll`).
+func TestRunnerFilesystemOpsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/filesystem_ops_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - temp_dir returns absolute path",
+		"ok 2 - read_dir lists what we wrote",
+		"ok 4 - remove_file on missing target errors",
+		"ok 5 - remove_dir_all on missing target is ok",
+		"ok 6 - create_dir_all builds a missing chain",
+		"ok 7 - create_dir_all on an existing path is ok",
+		"ok 8 - create_dir_all under a file errors",
+		"# pass 8",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `defer_cleanup(path)` is the runner-level hook for the
+// `temp_dir(...)` lifecycle: register the path immediately,
+// run the test against it, and `finish()` calls
+// `remove_dir_all` on every registered path before the
+// process exits. We verify this end-to-end by:
+//  1. running an inline test program that creates a fresh
+//     temp dir, writes a file into it, registers the dir
+//     for cleanup, then runs an assertion against the file
+//  2. confirming exit=0 + the expected TAP output
+//  3. confirming the directory no longer exists on the host
+//     filesystem afterward (cleanup actually fired)
+//
+// We don't pin the exact tempdir path — `os.MkdirTemp`
+// picks a random suffix — but we DO grep the test output
+// for the printed path so the post-cleanup check has a
+// concrete target.
+func TestRunnerDeferCleanupRunsAtFinish(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+import "std/test";
+
+function main(): i32 {
+    let r: test.TestRunner = test.test_new("cleanup");
+    match (temp_dir("fern-cleanup-probe")) {
+        Ok(dir) => {
+            print("# tempdir: " + dir);
+            r = r.defer_cleanup(dir);
+            match (write_file(dir + "/x.txt", "x")) {
+                Ok(_) => { },
+                Err(_) => { r = r.it("write", () => test.fail("write failed")); return r.finish(); }
+            }
+            match (read_file(dir + "/x.txt")) {
+                Ok(s) => { r = r.it("roundtrip", () => test.assert_eq(s, "x")); },
+                Err(_) => { r = r.it("roundtrip", () => test.fail("read failed")); }
+            }
+        },
+        Err(_) => { r = r.skip("setup", "temp_dir failed"); }
+    }
+    return r.finish();
+}
+`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+			code, out.String(), errb.String())
+	}
+	gotOut := out.String()
+	if !strings.Contains(gotOut, "ok 1 - roundtrip") {
+		t.Errorf("expected roundtrip case in output:\n%s", gotOut)
+	}
+	// Pull the printed tempdir path back out of the stream
+	// so we can probe the host filesystem after `finish()`
+	// returns. The line shape is "# tempdir: <abs path>\n".
+	const marker = "# tempdir: "
+	mi := strings.Index(gotOut, marker)
+	if mi < 0 {
+		t.Fatalf("could not locate `%s` marker in output:\n%s", marker, gotOut)
+	}
+	rest := gotOut[mi+len(marker):]
+	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[:nl]
+	}
+	tempPath := strings.TrimSpace(rest)
+	if tempPath == "" {
+		t.Fatal("empty tempdir path parsed from output")
+	}
+	// Cleanup hook should have removed the directory before
+	// the lang process exited. Stat the path: a NotExist
+	// error is the success signal, anything else is a leak.
+	if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
+		t.Errorf("defer_cleanup did not remove %q (stat err = %v)", tempPath, err)
+	}
+}
+
+// `tests/stdlib/lang_binary_e2e_test.fern` is the canonical
+// migration-pattern example: a Lang test file spawns the
+// `lang` binary itself (path read from `$LANG_BIN`), drives
+// it through `-interp` / `-check` against inline source +
+// tempdir fixtures, and asserts on the (exit, stdout,
+// stderr) triple. This is the shape the migrated Go-side
+// e2e suite will adopt.
+//
+// We exercise both paths the example handles:
+//  1. With `$LANG_BIN` pointing at a fresh build of the
+//     compiler — every case runs and passes.
+//  2. With `$LANG_BIN` unset — the suite skips cleanly
+//     rather than failing, so dev laptops without an
+//     explicit env setup don't see false negatives.
+func TestRunnerLangBinaryE2EExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/lang_binary_e2e_test.fern")
+
+	t.Run("with LANG_BIN set", func(t *testing.T) {
+		cmd := exec.Command(bin, "-interp", src)
+		cmd.Env = append(os.Environ(), "LANG_BIN="+bin)
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != 0 {
+			t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+				code, out.String(), errb.String())
+		}
+		gotOut := out.String()
+		for _, w := range []string{
+			"ok 1 - interp returns exit code",
+			"ok 3 - check passes clean program",
+			"ok 4 - check rejects type error",
+			"ok 5 - interp reads a file",
+			"# pass 5",
+			"# fail 0",
+		} {
+			if !strings.Contains(gotOut, w) {
+				t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+			}
+		}
+	})
+
+	t.Run("without LANG_BIN — skips cleanly", func(t *testing.T) {
+		cmd := exec.Command(bin, "-interp", src)
+		// Drop LANG_BIN from the environment explicitly —
+		// the parent process may have it set.
+		env := []string{}
+		for _, kv := range os.Environ() {
+			if !strings.HasPrefix(kv, "LANG_BIN=") {
+				env = append(env, kv)
+			}
+		}
+		cmd.Env = env
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != 0 {
+			t.Fatalf("exit = %d, want 0 (skip, not fail)\nstdout: %s\nstderr: %s",
+				code, out.String(), errb.String())
+		}
+		gotOut := out.String()
+		for _, w := range []string{
+			"# SKIP LANG_BIN not set",
+			"# skip 1",
+		} {
+			if !strings.Contains(gotOut, w) {
+				t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+			}
+		}
+		if strings.Contains(gotOut, "# fail 1") {
+			t.Errorf("missing LANG_BIN should skip, not fail\noutput:\n%s", gotOut)
+		}
+	})
+}
+
+// `tests/stdlib/helpers_test.fern` covers the convenience
+// helpers layered on top of the base assertion family:
+// multi-substring (`contains_all` / `contains_any` /
+// `contains_in_order`), string-diff (`assert_eq_string_diff`
+// reports the first differing line + line number), numeric
+// range (`assert_in_range_i32` / `_i64`), file-state
+// (`assert_file_exists` / `_not_exists` / `_contents` /
+// `_contains`), and the tempdir-tuple combinator
+// `must_temp_dir(r, prefix)`.
+//
+// Every helper has a "passes when used right" case and an
+// "inverted" case that verifies the failure message embeds
+// the right context — e.g. `assert_contains_all` failure
+// names the FIRST missing needle, `assert_eq_string_diff`
+// names the line number where the values diverge.
+func TestRunnerHelpersExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/helpers_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - contains_all pass",
+		"ok 2 - contains_all names missing",
+		"ok 5 - contains_in_order rejects reorder",
+		"ok 8 - in_range_i32 below fails",
+		"ok 11 - string diff localises line",
+		"ok 15 - file contents eq",
+		"# pass 15",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/float_test.fern` pins the f32 / f64
+// assertion family + the underlying interp Float support.
+// Before this work the interp errored out on `*ast.FloatLit`,
+// which made float-touching code impossible to unit-test
+// without compiling to a backend. Now `fern -interp` handles
+// float arithmetic, comparison, casts, and the f32_bits /
+// f32_from_bits reinterpret pair.
+//
+// Twelve cases cover: tolerance-equal vs exact-equal,
+// f32 precision-loss tolerance (the 0.1+0.1+0.1 != 0.3
+// textbook example), NaN detection + the NaN-unequal-to-
+// itself property, ±0.0, ±Inf, f32_bits round-trips, and
+// the to_string digit-formatting paths incl. the >= 2^63
+// __float_int_part branch (#4379).
+func TestRunnerFloatExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/float_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - f64 addition",
+		"ok 4 - f32 precision loss tolerance",
+		"ok 6 - NaN detection",
+		"ok 8 - f32_bits gives expected pattern",
+		"ok 11 - Inf vs Inf",
+		"ok 12 - to_string digit paths",
+		"# pass 12",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/fuzz_shrink_test.fern` exercises the
+// `r.fuzz_shrink` receiver method on three benign properties
+// (no failures expected) — the harness's mutation loop runs
+// each one through `fuzz_default_iterations()` mutated
+// variants. The shrinker only kicks in on a failure, so
+// this gate confirms the no-failure path stays clean +
+// returns exit 0.
+func TestRunnerFuzzShrinkExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/fuzz_shrink_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - len non-negative",
+		"ok 2 - reverse_bytes idempotent",
+		"ok 3 - to_lower has no uppercase",
+		"# pass 3",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// The contract that justifies the shrinking layer: when a
+// fuzz target fails on a wild input, the harness MUST
+// minimise the input to a small reproducer before reporting.
+// We give it a target that fails on "BAD" anywhere in the
+// input, seed it with a long byte seed containing "BAD" buried
+// in padding, and check that the failure message reports
+// the minimised form ("BAD") alongside the raw failing
+// input (the padded original).
+//
+// The minimised form must be 3 bytes (`BAD`) — the
+// shrinker drops every other byte. If it doesn't reach
+// that minimum, the regression is in the
+// single-byte-drop / halving pass.
+func TestRunnerFuzzShrinkSurfacesMinimisedInput(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+import "std/fuzz";
+import "std/test";
+import "std/string";
+
+function detect_bad(input: u8[]): test.TestOutcome {
+    if (string_from_bytes_unchecked(input).contains("BAD")) { return test.fail("forbidden"); }
+    return test.pass();
+}
+
+function main(): i32 {
+    let r: test.TestRunner = test.test_new("shrink-failure");
+    r = r.fuzz_shrink("detect",
+                      ["lots of padding here BAD lots more padding".bytes()],
+                      5, detect_bad);
+    return r.finish();
+}
+`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout: %s\nstderr: %s",
+			code, out.String(), errb.String())
+	}
+	gotOut := out.String()
+	for _, w := range []string{
+		"not ok 1 - detect",
+		"raw     (42 bytes)",
+		`shrunk  (3 bytes): "BAD"`,
+	} {
+		if !strings.Contains(gotOut, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+		}
+	}
+}
+
+// `tests/stdlib/batch7_test.fern` is the omnibus example
+// for the seventh test-runner-migration tranche: wider-int
+// relational asserts (lt / le / gt / ge on i64 / u32 / u64),
+// `f64_bits` / `f64_from_bits`, the `stat(...)` builtin +
+// file-state helpers (`assert_is_file` / `_is_dir` /
+// `_file_size`), and `assert_json_eq` for order-independent
+// JSON comparison.
+//
+// Nineteen cases — every helper exercised in both directions
+// where applicable. The JSON cases verify the key-order-
+// independence contract that's the main reason to reach for
+// `assert_json_eq` over a plain `assert_eq_string` on the
+// serialized output.
+func TestRunnerBatch7Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/batch7_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - i64 lt",
+		"ok 8 - f64_bits gives expected pattern",
+		"ok 10 - is_file true",
+		"ok 12 - file_size matches",
+		"ok 16 - json key order independent",
+		"ok 19 - json invalid actual fails",
+		"# pass 19",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/batch8_test.fern` exercises the additions
+// from the eighth tranche: argv passthrough,
+// `--filter PATTERN` selection via `parse_filter_from_args` +
+// `test_new_filtered`, golden-file assertions, and Map
+// receiver assertions.
+//
+// Two t.Run subtests pin both the unfiltered path (all nine
+// cases run + pass) and the filtered path (only the map-
+// related cases run, the others convert to skips with reason
+// "filtered out").
+func TestRunnerBatch8Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/batch8_test.fern")
+
+	t.Run("unfiltered", func(t *testing.T) {
+		code, out, errOut := runLangInterp(t, bin, src)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+				code, out, errOut)
+		}
+		for _, w := range []string{
+			"ok 1 - argv populated",
+			"ok 5 - map has i32-i32",
+			"# golden file bootstrapped at",
+			"ok 7 - bootstrap golden",
+			"ok 9 - strict missing fails",
+			"# pass 9",
+			"# fail 0",
+		} {
+			if !strings.Contains(out, w) {
+				t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+			}
+		}
+	})
+
+	t.Run("filtered to map cases", func(t *testing.T) {
+		cmd := exec.Command(bin, "-interp", src, "--", "--filter", "map")
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != 0 {
+			t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+				code, out.String(), errb.String())
+		}
+		gotOut := out.String()
+		for _, w := range []string{
+			"argv populated # SKIP filtered out (--filter=map)",
+			"ok 5 - map has i32-i32",
+			"strict missing fails # SKIP filtered out (--filter=map)",
+			"# pass 5",
+			"# skip 4",
+		} {
+			if !strings.Contains(gotOut, w) {
+				t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+			}
+		}
+	})
+}
+
+// `tests/stdlib/float_math_test.fern` exercises the f64
+// math primitives (sqrt / pow / abs / floor / ceil / round /
+// trunc / log / exp / sin / cos) added to std/float, plus
+// the IEEE-754 classification helpers (is_nan / is_finite /
+// is_inf) and min / max / clamp. The f32 receiver path also
+// gets a single round-trip case to confirm the
+// promote-to-f64 / apply / demote wrappers work.
+//
+// Eighteen cases — every method tested with at least one
+// concrete value + a "round-trip" / "identity" property
+// where applicable (exp(log(x))==x, sin^2+cos^2==1).
+func TestRunnerFloatMathExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/float_math_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - abs(negative)",
+		"ok 7 - sqrt(2)",
+		"ok 9 - exp(log(x)) round-trips",
+		"ok 12 - sin^2 + cos^2 = 1",
+		"ok 13 - is_nan",
+		"ok 15 - is_inf (both signs)",
+		"ok 18 - f32 sqrt round-trip",
+		"# pass 18",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/float_convert_test.fern` exercises std/float's convenience
+// methods layered on the math primitives: signum (sign as a float, zero at
+// zero), lerp (precise a+(b-a)*t interpolation, incl. endpoints and
+// extrapolation), and to_radians / to_degrees (degree↔radian conversion with
+// the round-trip). f64 and f32 receivers. Kept out of float_math_test to keep
+// the self-host bundle under the asm_ir IR budget; the Go-side
+// TestFloatSignumLerp pins these across all four backends. Passing → exit 0.
+func TestRunnerFloatConvertExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/float_convert_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float convert", "# pass 11", "# fail 0", "1..11"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/float_round_to_test.fern` covers std/float's round_to(digits)
+// — round to N decimal places, half away from zero (positive digits round the
+// fraction, negative digits round to tens/hundreds), f64 and f32. On the interp
+// gate and the self-host x86-64 + arm64 gates (uses assert_eq_f64_near); the
+// Go-side TestFloatRoundTo pins native compilation on all four backends. Passing
+// → exit 0.
+func TestRunnerFloatRoundToExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/float_round_to_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float round_to", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/float_log2_log10_test.fern` covers std/float's log2 / log10 —
+// base-2 and base-10 logarithms via change-of-base (natural log ÷ ln2 / ÷ ln10),
+// f64 and f32. On the interp gate and the self-host x86-64 + arm64 gates (uses
+// assert_eq_f64_near); the Go-side TestFloatLog2Log10 pins native compilation on
+// interp/x86-64/arm64 (wasmbin skips libm transcendentals, the known gap
+// log/sin/cos share). Passing → exit 0.
+func TestRunnerFloatLog2Log10Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/float_log2_log10_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float log2/log10", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/float_exp2_exp10_test.fern` covers std/float's exp2 / exp10 —
+// base-2 and base-10 exponentials (inverses of log2 / log10), built on the
+// natural exp via 2^x = e^(x·ln2) / 10^x = e^(x·ln10), f64 and f32. On the
+// interp gate and the self-host x86-64 + arm64 gates (uses assert_eq_f64_near);
+// the Go-side TestFloatExp2Exp10 pins native compilation on interp/x86-64/arm64
+// (wasmbin skips libm transcendentals, the known gap exp/log/sin share).
+// Passing → exit 0.
+func TestRunnerFloatExp2Exp10Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/float_exp2_exp10_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float exp2/exp10", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/float_recip_copysign_midpoint_test.fern` covers std/float's
+// recip (1/x), copysign (magnitude of receiver, sign of argument), and midpoint
+// (overflow-safe halfway point), f64 and f32. Purely arithmetic, so unlike the
+// transcendentals these lower on all four backends. On the interp gate and both
+// self-host gates (uses assert_eq_f64_near); the Go-side
+// TestFloatRecipCopysignMidpoint pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerFloatRecipCopysignMidpointExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/float_recip_copysign_midpoint_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float recip/copysign/midpoint", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/i64_roots_test.fern` covers std/i64's sqrt_floor (floor of √n
+// via Newton), is_power_of_2 (n&(n-1) bit trick), and is_perfect_square
+// (sqrt_floor(n)²==n) — the i64 siblings of the std/i32 predicates, exact past
+// the i32 range. Scalar-only, so on the interp gate and both self-host gates;
+// the Go-side TestI64Roots pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerI64RootsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/i64_roots_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 roots", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/i64_intdiv_test.fern` covers std/i64's is_multiple_of,
+// next_power_of_2 (capped at 2^62, 0 above), ceil_div, and log2_floor
+// (halving-count, since i64 has no leading_zeros) — scalar integer helpers
+// ported from std/i32. On the interp gate and both self-host gates; the Go-side
+// TestI64Intdiv pins native compilation on all four backends. Passing → exit 0.
+func TestRunnerI64IntdivExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/i64_intdiv_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 intdiv", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/u64_roots_test.fern` covers std/u64's sqrt_floor,
+// is_power_of_2, next_power_of_2 (capped at 2^63, 0 above), and log2_floor —
+// unsigned root/power helpers spanning the full u64 range. On the interp gate
+// and both self-host gates; the Go-side TestU64Roots pins native compilation on
+// all four backends. Passing → exit 0.
+func TestRunnerU64RootsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/u64_roots_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/u64 roots", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/float_clamp01_absdiff_muladd_test.fern` covers std/float's
+// clamp01 (restrict to [0,1]), abs_diff (|a-b|), and mul_add (a*b+c, not a
+// fused FMA), f64 and f32. Purely arithmetic, so unlike the transcendentals
+// these lower on all four backends. On the interp gate and both self-host
+// gates; the Go-side TestFloatClamp01AbsDiffMulAdd pins native compilation on
+// all four backends. Passing → exit 0.
+func TestRunnerFloatClamp01AbsDiffMulAddExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/float_clamp01_absdiff_muladd_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float clamp01/abs_diff/mul_add", "# pass 4", "# fail 0", "1..4"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/u32_roots_test.fern` covers std/u32's sqrt_floor,
+// is_power_of_2, next_power_of_2 (capped at 2^31, 0 above), and log2_floor —
+// unsigned root/power helpers, the u32 mirror of the u64 set. On the interp gate
+// AND both self-host gates (formerly interp-only: a u32-receiver method call
+// dispatched to its SIGNED std/i32 namesake because irlower's
+// expr_recv_prim_type lacked a u32 branch, so next_power_of_2 ran the signed
+// version and spun forever past 2^31 — fixed there). The Go-side TestU32Roots
+// pins native compilation on all four backends. Passing → exit 0.
+func TestRunnerU32RootsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/u32_roots_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/u32 roots", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/i32_roots_prime_test.fern` covers std/i32's next_power_of_2
+// and is_prime at the top of the signed 32-bit range (#8467): next_power_of_2
+// caps at 2^30 and returns the 0 sentinel above it (the i64 / u32 / u64
+// convention), and is_prime bounds its trial divisor by `i <= n / i` so M31 and
+// the composites whose smallest factor sits at the root come out right. On the
+// interp gate; the Go-side TestI32RootsPrime pins native compilation on all
+// four backends. A regression hangs rather than failing. Passing → exit 0.
+func TestRunnerI32RootsPrimeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/i32_roots_prime_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i32 roots + prime", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/float_cbrt_hypot3_test.fern` covers std/float's cbrt (real
+// cube root, defined for negatives) and hypot3 (overflow-safe 3-D Euclidean
+// length), f64 and f32. On the interp gate and both self-host gates; the Go-side
+// TestFloatCbrt / TestFloatHypot3 pin native compilation (cbrt's wasmbin leg
+// skips libm pow, hypot3 covers all four). Passing → exit 0.
+func TestRunnerFloatCbrtHypot3Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/float_cbrt_hypot3_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float cbrt/hypot3", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/float_hyperbolic_test.fern` covers std/float's sinh / cosh /
+// tanh — the hyperbolic trig functions built on the natural exp, f64 and f32.
+// On the interp gate and both self-host gates; the Go-side TestFloatHyperbolic
+// pins native compilation on interp/x86-64/arm64 (wasmbin skips libm exp, the
+// gap exp/log/sin share). Passing → exit 0.
+func TestRunnerFloatHyperbolicExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/float_hyperbolic_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float sinh/cosh/tanh", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_stats_test.fern` covers std/array's variance_f64 /
+// stddev_f64 — population variance (mean of squared deviations) and its square
+// root, both Option[f64]. On the interp gate and both self-host gates; the
+// Go-side TestArrayStats pins native compilation on interp/x86-64/arm64 (the
+// wasmbin leg skips Option over a 64-bit payload, the gap avg_f64 /
+// variance_f64 share). Passing → exit 0.
+func TestRunnerArrayStatsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_stats_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 stats", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/sort_f64_test.fern` covers core/cmp's generic sort /
+// sort_desc over an f64[] — bottom-up merge sort, the float siblings of the
+// integer sorts. On the interp gate and both self-host gates; the Go-side
+// TestSortF64 pins native compilation on all four backends (f64 arrays are
+// scalar-payload, so no wasm skip). Passing → exit 0.
+func TestRunnerSortF64Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/sort_f64_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/sort f64", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_median_range_test.fern` covers std/array's median_f64
+// (averaging the two middles for even length) and range_f64 (max - min), both
+// Option[f64]. On the interp gate and both self-host gates; the Go-side
+// TestArrayMedianRange pins native compilation on interp/x86-64/arm64 (the
+// wasmbin leg skips Option over a 64-bit payload). Passing → exit 0.
+func TestRunnerArrayMedianRangeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_median_range_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 median/range", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_vector_test.fern` covers std/array's dot_f64 (dot
+// product, running to the shorter length) and norm_f64 (Euclidean / L2 norm).
+// Both return a plain f64, so on the interp gate and both self-host gates; the
+// Go-side TestArrayVector pins native compilation on all four backends (no wasm
+// skip). Passing → exit 0.
+func TestRunnerArrayVectorExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_vector_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 vector", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_distance_normalize_test.fern` covers std/array's
+// distance_f64 (Euclidean distance) and normalize_f64 (unit vector; zero /
+// empty returned unchanged). distance returns f64, normalize an f64[] — both
+// scalar payload, so on the interp gate and both self-host gates; the Go-side
+// TestArrayDistanceNormalize pins native compilation on all four backends (no
+// wasm skip). Passing → exit 0.
+func TestRunnerArrayDistanceNormalizeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_distance_normalize_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 distance/normalize", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_product_cumsum_test.fern` covers std/array's `product`
+// at an f64 element (empty = 1) and cumsum_f64 (running prefix sum).
+// product returns f64, cumsum an f64[] — both scalar payload, so on the interp
+// gate and both self-host gates; the Go-side TestArrayProductCumsum pins native
+// compilation on all four backends (no wasm skip). Passing → exit 0.
+func TestRunnerArrayProductCumsumExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_product_cumsum_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 product/cumsum", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_scale_add_test.fern` covers std/array's scale_f64
+// (scalar multiply) and add_f64 (element-wise sum, to the shorter length) — the
+// element-wise vector combinators, both f64[] returns. On the interp gate and
+// both self-host gates; the Go-side TestArrayScaleAdd pins native compilation on
+// all four backends (no wasm skip). Passing → exit 0.
+func TestRunnerArrayScaleAddExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_scale_add_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 scale/add", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_cumprod_diff_test.fern` covers std/array's cumprod_f64
+// (running product) and diff_f64 (successive differences, one shorter than the
+// input) — scan-style ops, both f64[] returns. On the interp gate and both
+// self-host gates; the Go-side TestArrayCumprodDiff pins native compilation on
+// all four backends (no wasm skip). Passing → exit 0.
+func TestRunnerArrayCumprodDiffExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_cumprod_diff_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 cumprod/diff", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/int_midpoint_test.fern` covers std/i32.midpoint and
+// std/i64.midpoint — the overflow-safe average via (a & b) + ((a ^ b) >> 1).
+// Scalar bit-ops, so on the interp gate and both self-host gates; the Go-side
+// TestIntMidpoint pins native compilation on all four backends (no wasm skip).
+// Passing → exit 0.
+func TestRunnerIntMidpointExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/int_midpoint_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/int midpoint", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/uint_midpoint_test.fern` covers std/u32.midpoint and
+// std/u64.midpoint — the overflow-safe unsigned average via
+// (a & b) + ((a ^ b) >> 1). On the interp gate AND both self-host gates
+// (formerly interp-only: `(a as u32).midpoint(...)` dispatched to the SIGNED
+// std/i32.midpoint — whose `>>` is arithmetic — because irlower's
+// expr_recv_prim_type lacked a u32 branch; fixed there). The Go-side
+// TestUintMidpoint pins native compilation on all four backends (no wasm skip).
+// Passing → exit 0.
+func TestRunnerUintMidpointExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/uint_midpoint_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/uint midpoint", "# pass 4", "# fail 0", "1..4"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/float_hypot_test.fern` covers std/float's hypot (Euclidean
+// length, overflow-safe scaled form), fract (signed fractional part), and tan
+// (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
+// gates (scalar, no closures; uses assert_eq_f64_near); the Go-side
+// TestFloatHypotFractTan pins native compilation on all four backends. Passing →
+// exit 0.
+func TestRunnerFloatHypotExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/float_hypot_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float hypot", "# pass 12", "# fail 0", "1..12"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/timing_test.fern` exercises the time
+// builtins (`now_unix_ms`, `monotonic_ns`, `sleep_ms`) and
+// the elapsed-time assertion helpers (`assert_elapsed_lt_ms`
+// / `_us`). Six cases — the failure-message case verifies
+// the contract that the diagnostic embeds both the observed
+// elapsed time AND the deadline so a flaky-bench failure
+// preserves enough state to decide whether to bump the
+// bound.
+func TestRunnerTimingExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/timing_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - now_unix_ms advances",
+		"ok 3 - sleep_ms actually sleeps",
+		"ok 5 - elapsed failure embeds context",
+		"# pass 6",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/lines_log_test.fern` exercises the
+// `assert_lines_eq(actual, expected_lines)` helper +
+// `(r).log(msg)` chainable TAP-comment emitter. Four cases
+// + interleaved log breadcrumbs verify both the matching
+// and the line-count-mismatch / first-diff-line localisation
+// paths.
+func TestRunnerLinesLogExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/lines_log_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# phase 1: positive cases",
+		"# phase 2: failure cases (inverted)",
+		"ok 1 - lines match",
+		"ok 3 - line count mismatch reports",
+		"ok 4 - first diff line localised",
+		"# pass 4",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/fuzz_corpus_test.fern` exercises the
+// `fuzz_corpus_from_dir` + `fuzz_corpus_from_dir_or` helpers
+// that load seed corpora from disk. Six cases cover the
+// loaded-seeds path, the fallback paths (missing directory
+// + empty directory), and a smoke test for the new fuzz
+// mutators (bit flip / byte duplicate / byte zero / byte max).
+func TestRunnerFuzzCorpusExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/fuzz_corpus_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - loads three seeds (skips _-prefixed)",
+		"ok 4 - missing corpus dir falls back",
+		"ok 5 - empty corpus falls back",
+		"ok 6 - new mutators don't crash",
+		"# pass 6",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/runner_bench_test.fern` exercises the bench
+// harness: `r.bench(name, iter, fn)` reports timing as a TAP
+// comment and always passes; `r.bench_max_us(name, iter, fn,
+// budget)` fails when the median exceeds the budget. We
+// verify both the comment shape (min / median / mean / max
+// fields) and the budgeted case's pass path. std/bench, a
+// separate module, has its own example and its own gate.
+func TestRunnerBenchExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/runner_bench_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# bench tiny arithmetic loop",
+		"min=", "median=", "mean=", "max=",
+		"ok 1 - tiny arithmetic loop",
+		"budget=1000000us",
+		"ok 3 - tiny loop under 1s budget",
+		"# pass 3",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_reductions_test.fern` exercises the
+// wider-int / float array reductions through the generic bounded
+// verbs that replaced std/array's per-width family (#5349):
+// `num.sum[T: Add + Zero]` for i64 / u32 / f64 totals and
+// `cmp.max_of` / `cmp.min_of[T: Ord]` for the extrema, plus
+// std/array's own `avg_i64` / `avg_f64` (no generic equivalent).
+// Eleven cases cover the happy path + empty input semantics + the
+// near-u64-max unsigned-compare correctness check.
+func TestRunnerArrayReductionsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_reductions_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - sum_i64",
+		"ok 5 - max_i64 empty returns None",
+		"ok 8 - max_u64 unsigned semantics",
+		"ok 11 - avg_f64",
+		"# pass 11",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_combinators_test.fern` exercises the
+// generic array combinators added as free functions over a
+// parametric T[] to std/array: `map` / `filter` / `fold` /
+// `any` / `all` / `find` / `enumerate` (STDLIB-ROADMAP item
+// #1). Twenty-two cases cover the happy path, empty-array
+// semantics, element-type-changing map (i32 -> string),
+// accumulator-type-differing fold, a captured-variable closure
+// through filter, both Option arms of find, a map-then-fold
+// pipeline, and the byte-exact join / join_with_last edges (#4379).
+func TestRunnerArrayCombinatorsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_combinators_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - map",
+		"ok 3 - map change type",
+		"ok 6 - filter capture",
+		"ok 9 - fold acc type",
+		"ok 16 - find some",
+		"ok 17 - find none",
+		"ok 18 - enumerate",
+		"ok 20 - map then fold",
+		"ok 21 - join edges",
+		"ok 22 - join_with_last edges",
+		"ok 23 - find_map some",
+		"ok 24 - find_map none",
+		"# pass 24",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_structural_verbs_test.fern` exercises the
+// generic structural array verbs added to std/array (#2689):
+// `reverse` / `take` / `drop` / `concat` over an arbitrary `T[]`.
+// Thirteen cases cover the happy path, empty / single-element inputs,
+// the clamping behaviour of take/drop (n <= 0 and n >= len), the
+// `take(n) ++ drop(n) == xs` complement law, and the `.concat()`
+// receiver-method form. These verbs take no callback, so (unlike the
+// combinators) they are also gated through the self-host compiler —
+// see TestSelfHostStdTestE2E.
+func TestRunnerArrayStructuralVerbsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_structural_verbs_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - reverse",
+		"ok 6 - take over length clamps",
+		"ok 8 - drop over length clamps",
+		"ok 10 - take ++ drop complement",
+		"ok 13 - concat method form",
+		"# pass 13",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/log_test.fern` exercises the leveled `Logger`
+// added to std/log (#2683): min-level threshold filtering, the five
+// levels TRACE..ERROR, structured key/value fields, and the JSON-line
+// output mode. Assertions target the pure `render(msg)` output. The
+// logger is structs + strings only, so it also runs through the
+// self-host stdtest gate (TestSelfHostStdTestE2E case "log").
+func TestRunnerLogExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/log_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - text basic",
+		"ok 3 - threshold filters below",
+		"ok 6 - json fields",
+		"ok 7 - json escaping",
+		"ok 9 - at explicit level",
+		"ok 10 - json escaping whitespace",
+		"ok 11 - json escaping control",
+		"# pass 11",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/map_verbs_test.fern` exercises the higher-level
+// Map verbs added to core/map (#2685): `entries`, `merge` / `extend`,
+// `from`, `get_or_insert`, `update`, and `contains_value`, over both i32
+// and string keys (including the word-count use case via both
+// get_or_insert and the one-pass update). Sixteen cases. These verbs use
+// Option + tuples + closures + generic map ops which the self-host
+// compiler can't lower yet, so — like the closure combinators — they are
+// gated through the interpreter rather than the self-host stdtest gate.
+func TestRunnerMapVerbsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/map_verbs_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - entries sum k+v",
+		"ok 4 - from pairs",
+		"ok 7 - merge other wins",
+		"ok 12 - get_or_insert word count",
+		"ok 13 - update word count",
+		"ok 15 - contains_value",
+		"# pass 16",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/set_eq_test.fern` exercises the order-
+// independent (multiset) array assertions:
+// `assert_set_eq_i32` / `_string` and `assert_subset_i32` /
+// `_string`. Ten cases cover passing, reversed order,
+// duplicate-multiplicity requirements (multiset semantics),
+// length mismatches, and the vacuous "empty subset of X"
+// case.
+func TestRunnerSetEqExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/set_eq_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - set_eq i32 reversed",
+		"ok 3 - set_eq i32 multiset matches",
+		"ok 4 - set_eq i32 multiset mismatch fails",
+		"ok 8 - subset i32 multiplicity required",
+		"ok 10 - subset empty is vacuous",
+		"# pass 10",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/env_unreachable_test.fern` exercises the
+// `assert_env_set` / `_unset` / `_eq` env-var assertion
+// family and `unreachable(label)`. Five cases — every
+// helper exercised in both directions where applicable,
+// plus the failure-message context checks.
+func TestRunnerEnvUnreachableExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/env_unreachable_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - PATH is set",
+		"ok 3 - env_set failure message names var",
+		"ok 5 - unreachable() embeds label + prefix",
+		"# pass 5",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/rel_tol_and_ms_bench_test.fern` exercises
+// the two batch-18 additions to std/test:
+//   - `assert_eq_f64_rel(actual, expected, rel_tol)` /
+//     `assert_eq_f32_rel` — relative-tolerance float
+//     compare, for test data whose magnitudes span many
+//     orders of magnitude.
+//   - `(r).bench_max_ms(name, iter, fn, budget_ms)` —
+//     millisecond-budget wrapper around `bench_max_us`.
+//
+// Nine assertion cases plus one ms-budget bench. We pin the
+// pass/fail counts and a couple of representative TAP lines
+// so a regression in either helper surfaces immediately.
+func TestRunnerRelTolAndMsBenchExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/rel_tol_and_ms_bench_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - rel_tol passes within ratio",
+		"ok 3 - rel_tol scale invariance",
+		"ok 4 - rel_tol zero expected falls back to abs",
+		"ok 6 - rel_tol NaN actual fails",
+		"ok 9 - rel_tol f32 mirror",
+		"# bench tiny loop under 1000ms budget",
+		"budget=1000000us",
+		"ok 10 - tiny loop under 1000ms budget",
+		"# pass 10",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/sorted_unique_range_test.fern` exercises
+// the batch-19 additions to std/test:
+//   - `assert_in_range_f64(v, lo, hi)` — inclusive float
+//     range; NaN always fails
+//   - `assert_sorted_asc_i32` / `_string` — monotonically
+//     non-decreasing; empty / single-element arrays are
+//     vacuously sorted; failure embeds the inversion index
+//   - `assert_unique_i32` / `_string` — sort-then-walk
+//     uniqueness check; failure embeds the offending value
+//
+// 19 cases total covering inclusive bounds, NaN guards,
+// inversion-index reporting, multi-magnitude inputs, and
+// the vacuous empty / single-element cases.
+func TestRunnerSortedUniqueRangeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/sorted_unique_range_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 4 - in_range_f64 below names bound",
+		"ok 6 - in_range_f64 NaN fails",
+		"ok 10 - sorted_asc_i32 equal runs ok",
+		"ok 11 - sorted_asc_i32 inversion + index",
+		"ok 15 - unique_i32 unsorted input",
+		"ok 18 - unique_string duplicate fails",
+		"# pass 19",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/float_array_strict_sort_test.fern`
+// exercises the batch-20 additions:
+//   - `assert_eq_f64_array_near` / `_f32_array_near` —
+//     element-wise float array compare with tolerance.
+//     NaN anywhere fails; length-mismatch is its own
+//     diagnostic; mismatched element reports the index.
+//   - `assert_sorted_desc_i32` / `_string` — descending
+//     order verification.
+//   - `assert_strictly_sorted_asc_i32` / `_string` —
+//     strict monotonic (sorted AND unique), rejecting
+//     equal adjacent pairs that the non-strict variant
+//     accepts.
+//
+// 15 cases.
+func TestRunnerFloatArrayStrictSortExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/float_array_strict_sort_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 3 - f64 array outside tolerance + idx",
+		"ok 4 - f64 array length mismatch",
+		"ok 5 - f64 array NaN fails",
+		"ok 6 - f32 array near pass",
+		"ok 9 - sorted_desc_i32 inversion + index",
+		"ok 12 - strict_asc_i32 rejects equal pair",
+		"ok 15 - strict_asc_string rejects equal",
+		"# pass 15",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/map_eq_and_predicates_test.fern` exercises
+// batch-21 additions:
+//   - `assert_eq_map` — full map deep equality (length +
+//     key-with-matching-value in one direction; pigeonhole
+//     gives the reverse), generic over K/V. Map iteration
+//     order isn't observable so walks `actual.keys()`
+//     rather than `iter`.
+//   - `assert_all_i32` / `_string` — ∀ predicate; vacuous
+//     pass on empty array. Failure names index + value.
+//   - `assert_any_i32` / `_string` — ∃ predicate; vacuous
+//     FAIL on empty array (mathematical convention). The
+//     test takes a `(T) => boolean` lambda or named fn.
+//
+// 16 cases total.
+func TestRunnerMapEqAndPredicatesExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/map_eq_and_predicates_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - map i32 eq pass (order-indep)",
+		"ok 3 - map i32 eq value mismatch + key",
+		"ok 4 - map i32 eq disjoint same-len fails",
+		"ok 9 - all_i32 inline lambda",
+		"ok 10 - all_i32 fail names index + value",
+		"ok 11 - all_i32 empty vacuous",
+		"ok 14 - any_i32 empty fails",
+		"# pass 16",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/wider_array_contains_count_test.fern`
+// exercises batch-22 additions:
+//   - `assert_eq_i64_array` / `_u32_array` / `_u64_array`
+//     — wider-int element-wise array equality (i32 variant
+//     was already there).
+//   - `assert_array_contains_i32` / `_string` plus the
+//     negative `_not_contains_*` mirrors — typed-array
+//     membership, complementing the existing
+//     `assert_contains(haystack: string, needle: string)`.
+//   - `assert_count_i32(arr, pred, n)` / `_string` —
+//     exact-cardinality predicate match; sits between
+//     `assert_all` (every) and `assert_any` (at least one).
+//
+// 20 cases.
+func TestRunnerWiderArrayContainsCountExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/wider_array_contains_count_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 3 - eq_i64_array reports index",
+		"ok 5 - eq_u64_array pass",
+		"ok 9 - array_contains_i32 missing",
+		"ok 10 - array_contains_i32 empty fails",
+		"ok 13 - array_not_contains_i32 fail+idx",
+		"ok 17 - count_i32 zero matches",
+		"ok 19 - count_i32 mismatch reports",
+		"# pass 20",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/one_of_none_of_test.fern` exercises
+// batch-23 additions:
+//   - `assert_one_of_i32(actual, allowed)` / `_string` —
+//     positive enumerated-set membership. Failure embeds
+//     both the actual value AND the full allowed set
+//     (rendered with appropriate quoting for the type).
+//   - `assert_none_of_i32(actual, forbidden)` / `_string`
+//     — negative enumerated-set check. Vacuously passes
+//     on an empty forbidden list.
+//
+// 13 cases.
+func TestRunnerOneOfNoneOfExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/one_of_none_of_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 5 - one_of_i32 missing renders set",
+		"ok 6 - one_of_i32 empty set always fails",
+		"ok 8 - one_of_string missing quotes both",
+		"ok 10 - none_of_i32 match reports value",
+		"ok 11 - none_of_i32 empty list vacuous",
+		"ok 13 - none_of_string match quoted",
+		"# pass 13",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/all_substring_array_test.fern` exercises
+// batch-24 additions:
+//   - `assert_all_starts_with(arr, prefix)` /
+//     `assert_all_ends_with` / `assert_all_contain` —
+//     substring property held across every element of a
+//     string array (∀ over substring relation). Failure
+//     embeds the first violation's index + value.
+//   - `assert_starts_with_any(s, prefixes)` /
+//     `assert_ends_with_any(s, suffixes)` — single-string
+//     matches at least one of the supplied options.
+//
+// 13 cases.
+func TestRunnerAllSubstringArrayExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/all_substring_array_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - all_starts_with empty vacuous",
+		"ok 3 - all_starts_with first violation",
+		"ok 5 - all_ends_with violation",
+		"ok 7 - all_contain violation",
+		"ok 10 - starts_with_any no match + count",
+		"ok 11 - starts_with_any empty list fails",
+		"ok 13 - ends_with_any no match",
+		"# pass 13",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/file_lines_and_timestamp_test.fern`
+// exercises batch-25 additions:
+//   - `assert_file_lines(path, expected_lines)` — read +
+//     line-by-line compare; delegates to `assert_lines_eq`.
+//   - `assert_file_line_count(path, n)` — line cardinality
+//     (no trailing-newline overcount).
+//   - `assert_close_to_now_ms(actual_ms, max_skew_ms)` —
+//     wall-clock timestamp recency, bidirectional skew.
+//
+// 9 cases.
+func TestRunnerFileLinesAndTimestampExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/file_lines_and_timestamp_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - file_lines exact match",
+		"ok 3 - file_lines no-trail match",
+		"ok 4 - file_lines mismatch named",
+		"ok 5 - count mismatch reports both",
+		"ok 6 - file_lines missing file",
+		"ok 8 - close_to_now_ms 1h-old fails",
+		"ok 9 - close_to_now_ms future-skew fails",
+		"# pass 9",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/option_and_set_ops_test.fern` exercises
+// batch-26 additions:
+//   - Option result family: `assert_is_some_i32` /
+//     `_string`, `assert_is_none_i32` / `_string`, and the
+//     equality-paired `assert_is_some_eq_i32` /
+//     `assert_is_some_eq_string` (i32 and string cover the
+//     bulk of practical Option payload types; lang has no
+//     generics over the payload so each gets a typed
+//     helper).
+//   - Array set relations: `assert_array_intersects_i32`
+//     / `_string` (at least one shared element; empty
+//     either side fails) and `assert_array_disjoint_i32`
+//     / `_string` (no shared element; empty either side
+//     vacuously passes). Complement to the existing
+//     `assert_set_eq_*` / `assert_subset_*` family.
+//
+// 19 cases.
+func TestRunnerOptionAndSetOpsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/option_and_set_ops_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - is_some_i32 None fails",
+		"ok 4 - is_none_i32 Some fails with value",
+		"ok 6 - is_some_eq_i32 wrong value",
+		"ok 7 - is_some_eq_i32 None distinct msg",
+		"ok 11 - is_none_string quotes payload",
+		"ok 13 - intersects_i32 no overlap + lens",
+		"ok 17 - disjoint_i32 shared names value",
+		"ok 18 - disjoint_i32 empty vacuous",
+		"# pass 19",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_prefix_suffix_subseq_test.fern`
+// exercises batch-27 additions:
+//   - `assert_array_starts_with_i32(arr, prefix)` /
+//     `_string` — `arr[0..len(prefix)] == prefix`.
+//   - `assert_array_ends_with_i32(arr, suffix)` /
+//     `_string` — same idea anchored at the tail; mismatch
+//     diagnostic uses array-coords indices so failures
+//     pinpoint the actual slot.
+//   - `assert_array_contains_subseq_i32(arr, needle)` /
+//     `_string` — contiguous-sub-array membership;
+//     order-sensitive (unlike `assert_subset_i32`).
+//
+// 20 cases (covering empty-vacuous, length-mismatch, full-
+// array-is-its-own-prefix, mismatch-at-index, the "retry
+// after partial match" scan corner of subseq).
+func TestRunnerArrayPrefixSuffixSubseqExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_prefix_suffix_subseq_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - starts_with_i32 empty vacuous",
+		"ok 4 - starts_with_i32 prefix too long",
+		"ok 5 - starts_with_i32 mismatch at index",
+		"ok 10 - ends_with_i32 arr-coords index",
+		"ok 13 - subseq_i32 at start",
+		"ok 17 - subseq_i32 order matters",
+		"ok 18 - subseq_i32 retries after partial",
+		"# pass 20",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/array_at_and_f32_range_test.fern`
+// exercises batch-28 additions:
+//   - `assert_at_i32(arr, idx, expected)` / `_string` /
+//     `_i64` — single-position spot check with a distinct
+//     diagnostic for out-of-bounds vs value-mismatch.
+//   - `assert_in_range_f32(v, lo, hi)` — f32 mirror
+//     of the existing range family; NaN inputs fail
+//     unconditionally.
+//
+// 15 cases.
+func TestRunnerArrayAtAndF32RangeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/array_at_and_f32_range_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 4 - at_i32 wrong value diag",
+		"ok 5 - at_i32 out-of-bounds high",
+		"ok 6 - at_i32 negative index",
+		"ok 7 - at_i32 empty array OOB",
+		"ok 9 - at_string embeds both",
+		"ok 11 - at_i64 wrong value",
+		"ok 13 - in_range_f32 inclusive bounds",
+		"ok 15 - in_range_f32 NaN fails",
+		"# pass 15",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/ci_string_and_log_kv_test.fern`
+// exercises batch-29 additions:
+//   - Case-insensitive string assertions (`_eq_string_ci`,
+//     `_neq_string_ci`, `_contains_ci`, `_starts_with_ci`,
+//     `_ends_with_ci`) wrapping the existing CI methods
+//     on `std/string`.
+//   - Structured-breadcrumb log methods on TestRunner:
+//     `log_kv_string` quotes the value, `log_kv_i32` /
+//     `log_kv_i64` emit unquoted numerics so awk/grep
+//     numeric filters work without stripping quotes.
+//
+// 13 cases + 3 log_kv breadcrumbs whose exact rendering
+// we pin here so a regression in the key=value shape
+// surfaces immediately.
+func TestRunnerCIStringAndLogKVExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/ci_string_and_log_kv_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - eq_string_ci different case",
+		"ok 3 - eq_string_ci mismatch raw quoted",
+		"ok 5 - neq_string_ci matches CI fails",
+		"ok 7 - contains_ci subseq",
+		"ok 11 - ends_with_ci pass",
+		// The exact breadcrumb shape — quoted string,
+		// unquoted i32, unquoted i64.
+		"# session_id=\"abc-123\"",
+		"# retry_count=3",
+		"# bytes_seen=1234567890123",
+		"# pass 13",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/result_assertions_test.fern` exercises
+// batch-30 additions:
+//   - `assert_is_ok_string(res)` / `_string_array` —
+//     Result must be Ok variant.
+//   - `assert_is_err_string(res)` / `_string_array` — Err
+//     variant; Ok-on-Err diagnostic embeds the payload
+//     (string value or array length) so a regression has
+//     its bad value in the log.
+//   - `assert_is_ok_eq_string(res, expected)` — Ok AND
+//     value matches; distinct diagnostic for the
+//     Err-when-Ok-expected case.
+//
+// Stdlib's Result error type is uniformly IoError, so the
+// helpers specialise on the Ok-type only.
+//
+// 10 cases.
+func TestRunnerResultAssertionsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/result_assertions_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - is_ok_string after successful read",
+		"ok 2 - is_ok_string on Err fails",
+		"ok 4 - is_err on Ok embeds payload",
+		"ok 6 - is_ok_eq wrong value embeds both",
+		"ok 7 - is_ok_eq Err distinct diag",
+		"ok 10 - is_err_array on Ok embeds length",
+		"# pass 10",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/process_output_shortcuts_test.fern`
+// exercises batch-31 process-result shortcuts:
+//   - `assert_exit_zero(proc)` /
+//     `assert_exit_nonzero(proc)` — sugar for the most
+//     common exit-code patterns; failure message names
+//     the actual code.
+//   - `assert_stdout_lines(proc, lines[])` /
+//     `assert_stderr_lines` — multi-line compare via
+//     `assert_lines_eq` (same "line N" failure wording).
+//   - `assert_stdout_line_count(proc, n)` /
+//     `assert_stderr_line_count` — line cardinality
+//     without pinning content.
+//
+// 10 cases.
+func TestRunnerProcessOutputShortcutsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/process_output_shortcuts_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - exit_zero on non-zero fails",
+		"ok 4 - exit_nonzero on 0 names code",
+		"ok 6 - stdout_lines mismatch line N",
+		"ok 9 - stdout_line_count wrong reports",
+		"ok 10 - stderr_line_count pass",
+		"# pass 10",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/assert_at_wider_test.fern` exercises
+// batch-32 additions filling out the `assert_at_*` spot-
+// check family for wider integer + float widths:
+//   - `assert_at_u32` / `_u64` — unsigned-int variants.
+//   - `assert_at_f64(arr, idx, expected, epsilon)` /
+//     `_f32` — float variants with mandatory tolerance;
+//     NaN inputs always fail.
+//
+// 13 cases.
+func TestRunnerAssertAtWiderExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/assert_at_wider_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - at_u32 wrong value diag",
+		"ok 3 - at_u32 out of bounds",
+		"ok 7 - at_f64 within tolerance",
+		"ok 8 - at_f64 outside tol + eps",
+		"ok 9 - at_f64 NaN actual",
+		"ok 11 - at_f64 out of bounds",
+		"ok 13 - at_f32 outside tolerance",
+		"# pass 13",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/json_detail_test.fern` exercises batch-33
+// additions — narrower JSON assertions:
+//   - `assert_json_has_key` / `assert_json_lacks_key` —
+//     top-level JObject key presence checks.
+//   - `assert_json_array_len` / `assert_json_object_size`
+//     — cardinality checks.
+//
+// All four parse via `std/json` and report distinct
+// diagnostics for invalid JSON, wrong top-level type
+// (`null` / bool / number / string / array / object — the
+// helper names what was found vs what was expected), and
+// missing/extra entries.
+//
+// 14 cases.
+func TestRunnerJSONDetailExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/json_detail_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - has_key missing names size",
+		"ok 3 - has_key invalid JSON diag",
+		"ok 4 - has_key array top-level rejected",
+		"ok 5 - has_key null top-level rejected",
+		"ok 7 - lacks_key present fails",
+		"ok 10 - array_len wrong shows both",
+		"ok 11 - array_len object rejected",
+		"ok 14 - object_size wrong shows both",
+		"# pass 14",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/json_field_eq_test.fern` exercises
+// batch-34 additions — JSON field extraction:
+//   - `assert_json_eq_field_string(json_text, key, exp)`
+//     — key is JString equal to exp.
+//   - `assert_json_eq_field_i32(json_text, key, exp)` —
+//     key is JNumber parseable to i32 and equal to exp.
+//     Decimals are rejected (not silently truncated).
+//   - `assert_json_eq_field_bool(json_text, key, exp)` —
+//     key is JBool equal to exp.
+//
+// Each helper has 5+ distinct failure modes — invalid
+// JSON, top-level not object, missing key, wrong value
+// type at that key, value mismatch — and the test file
+// pins the diagnostic for each.
+//
+// 14 cases.
+func TestRunnerJSONFieldEqExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/json_field_eq_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - field_string wrong value diag",
+		"ok 3 - field_string wrong type rejected",
+		"ok 4 - field_string missing key",
+		"ok 7 - field_i32 wrong value shows both",
+		"ok 9 - field_i32 decimal rejected",
+		"ok 13 - field_bool wrong value diag",
+		"ok 14 - field_bool wrong type rejected",
+		"# pass 14",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/string_count_and_dir_listing_test.fern`
+// exercises batch-35 additions:
+//   - `assert_string_count(haystack, needle, n)` —
+//     non-overlapping occurrence count of `needle`.
+//   - `assert_eq_dir_listing(dir, expected_names)` —
+//     multiset compare of dir contents (readdir order
+//     not observable; sorts both sides then delegates to
+//     assert_eq_string_array).
+//
+// 10 cases.
+func TestRunnerStringCountAndDirListingExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/string_count_and_dir_listing_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 4 - string_count non-overlapping",
+		"ok 5 - string_count wrong reports both",
+		"ok 6 - string_count empty haystack",
+		"ok 7 - listing matches multiset (sorted)",
+		"ok 9 - extra file flagged via length diff",
+		"ok 10 - dir_listing missing dir",
+		"# pass 10",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/string_prelude_migrated_test.fern` is a
+// proof-of-concept Lang port of `TestInterpScriptStringPrelude`
+// in `interp_script_test.go`. Same 8-property surface, but
+// instead of piping an inline Lang program through
+// `fern -interp` and grepping the exit code + stdout, the
+// new test is the program — every property becomes its own
+// TAP case via `TestRunner.it`. Demonstrates the migration
+// pattern for tests that exercise user-language behaviour
+// without poking at compiler internals.
+//
+// Both versions stay live during the wider runner-adoption
+// effort: the Go test guards the subprocess + stdout
+// shape, the Lang test guards the in-process semantics
+// once `fern -interp` itself stops being a Go target.
+func TestRunnerStringPreludeMigratedExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/string_prelude_migrated_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: string prelude (migrated)",
+		"ok 6 - s.to_upper() returns HELLO",
+		"ok 7 - s.to_lower() returns hello",
+		"ok 8 - string_from_bytes_unchecked(s.bytes()) round-trips",
+		"# pass 8",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/unions_migrated_test.fern` — Lang port
+// of `TestInterpScriptUnions` from `interp_script_test.go`.
+// Second migration in the runner-adoption effort
+// (after the string-prelude port). Original Go test pinned
+// one Add(10, 32) → 42 data point via exit-code; the
+// migrated form expands to a small table of match-arm
+// cases since once the migration cost is paid, each
+// additional `r.it(...)` is one line of marginal cost.
+// Both versions stay live until the broader cutover.
+func TestRunnerUnionsMigratedExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/unions_migrated_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: unions + match (migrated)",
+		"ok 1 - Add(10, 32) = 42",
+		"ok 4 - Add(5, -5) = 0",
+		"ok 7 - Lit(-100) = -100",
+		"# pass 7",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/header_map_migrated_test.fern` — Lang
+// port of `TestInterpScriptHeaderMap`. Third migration in
+// the runner-adoption effort. The Go original was 5
+// table-driven subprocess cases; the migrated form folds
+// them into 6 in-process `r.it(...)` cases (splitting the
+// "set replaces in place" test into a size-check + value-
+// check pair since each is one extra `r.it(...)` line).
+//
+// First migration to need an explicit `import "std/foo"`
+// (std/headers isn't in the auto-prelude) — the runner +
+// modload survive the mangled-load path here, which
+// expands the corpus of tests confirmed safe under that
+// codepath.
+func TestRunnerHeaderMapMigratedExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/header_map_migrated_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: HeaderMap (migrated)",
+		"ok 1 - case-insensitive get",
+		"ok 2 - get_all preserves insertion order",
+		"ok 3 - set replaces drops dupes (size=2)",
+		"ok 6 - get_all on missing name is empty",
+		"ok 8 - set takes the caller's spelling in place",
+		"ok 10 - names fold ASCII only",
+		"# pass 10",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/http_request_bytes_test.fern` pins the byte-based request
+// parser (#5714): `http_parse_request_bytes` and the text entry agree on
+// well-formed and refused requests, the framed parse tells incomplete from
+// malformed, a chunked body is decoded under its caps (#9854), the target is
+// decoded once with its dot segments removed or refused, what the parse
+// keeps is copied out of the wire buffer rather than aliasing it, and a
+// request parsed with the one before it as `prev` is the request parsed
+// alone.
+func TestRunnerHttpRequestBytesExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/http_request_bytes_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: HTTP request bytes", "# pass 25", "# fail 0", "1..25"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/http_chunk_decoder_test.fern` pins `http.ChunkDecoder`
+// against the whole-request parser (docs/NET-P3-SUSPENSION-PLAN.md §3.9):
+// every chunked fixture fed whole, a byte at a time and in uneven pieces
+// answers the parser's data, trailers, remainder or refusing status.
+func TestRunnerHttpChunkDecoderExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/http_chunk_decoder_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: http.ChunkDecoder against the parser", "# pass 15", "# fail 0", "1..15"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/http_body_json_test.fern` pins the typed JSON body
+// (#9854): `http.body_json[T](req)` decoding a derived `FromJson` struct,
+// and the 415 / 400 / 422 answers its three failures carry.
+func TestRunnerHttpBodyJsonExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/http_body_json_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: Typed JSON bodies", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/http_body_test.fern` pins the four bodies an HttpResponse
+// carries (#9854): text, bytes, a Stream's remainder, and a file the loop
+// reads through `http_materialize`, a missing one answered 404.
+func TestRunnerHttpBodyExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/http_body_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: HttpResponse bodies", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/mock_platform_canned_test.fern` pins the mock's canned
+// answers (#9854): `env_set`, `now_set`, `random_set` and `http_set` reach
+// the handler through the bag, the fixed values apply without them, a
+// canned row is not a call and survives `reset`, and a value with tabs and
+// newlines round-trips.
+func TestRunnerMockPlatformCannedExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/mock_platform_canned_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: mock_platform.MockPlatform canned answers", "# pass 9", "# fail 0", "1..9"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/http_respond_test.fern` pins the error side of a handler
+// (#9854): helpers that fail with `?` over `HttpError`, `http.respond`
+// answering the failure as an RFC 9457 problem, `http.problem`'s body,
+// the `ToResponse` impls for `JsonError`, `string` and `fetch.FetchError`,
+// and `respond_with` keeping the state beside the answer.
+func TestRunnerHttpRespondExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/http_respond_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: HTTP respond", "# pass 14", "# fail 0", "1..14"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/http_request_builder_test.fern` pins the handler test
+// seam (#9854): a request from `http.request` with its body methods, a
+// `mock_platform.MockPlatform`'s bag, and the HTTP assertions of `std/test` reading the
+// response back.
+func TestRunnerHttpRequestBuilderExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/http_request_builder_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: HTTP request builder", "# pass 4", "# fail 0", "1..4"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/http_request_headers_migrated_test.fern`
+// — Lang port of `TestInterpScriptHttpRequestHeaders`.
+// Fourth migration in the runner-adoption effort.
+// Original was 3 table-driven subprocess cases; migrated
+// to 5 in-process `r.it(...)` cases (split the
+// "parsed headers reachable" case into Content-Type-value
+// + header-count, and added a missing-header `get_all`
+// returns-empty-array case that the original didn't
+// pin).
+//
+// First migration that uses the larger `std/http`
+// surface — confirms `http.http_parse_request` works
+// cleanly through the runner's flat-namespace load
+// path.
+func TestRunnerHttpRequestHeadersMigratedExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/http_request_headers_migrated_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: HTTP request headers (migrated)",
+		"ok 1 - Content-Type reachable case-insensitively",
+		"ok 3 - duplicate Set-Cookie preserves insertion order",
+		"ok 4 - missing header returns None",
+		"ok 6 - X-*-Content-Length is not the body length",
+		"ok 7 - duplicate Content-Length rejected",
+		"ok 8 - Transfer-Encoding beside Content-Length rejected",
+		"ok 9 - http_header_value via HeaderMap",
+		"ok 10 - http_header_value missing returns None",
+		"ok 11 - http_header_value refuses a malformed block",
+		"ok 12 - a request with no headers parses",
+		"# pass 13",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/http_response_body_shim_test.fern` — the
+// RESPONSE half of the body forward-compatibility shim
+// (#4414 Rec §4). HttpRequest has carried body_string() /
+// body_bytes() / body_len() since the Tier-A shim; the response
+// had none, so every response-body read was still spelled
+// `.body` — the one shape the Stream[bytes] migration has to
+// rewrite. Each case compares an accessor against the same value
+// reached through a constructor, so when the field type swaps and
+// only the method bodies change, a divergence surfaces here.
+func TestRunnerHttpResponseBodyShimExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/http_response_body_shim_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: HTTP response body shim",
+		"ok 1 - body_string round-trips",
+		"ok 2 - body_len matches the string length",
+		"ok 5 - bytes constructor agrees with text",
+		"ok 7 - wire Content-Length matches the body",
+		"ok 8 - wire ends with the body",
+		"# pass 8",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/http_request_body_stream_test.fern` — the
+// request body as a `Stream` (docs/PLATFORM-RESEARCH.md Rec §4).
+// The cases that matter are the incremental ones: read_line and
+// read_n drive a cursor over a body that came off the wire, which
+// is what a handler does instead of materialising an upload. The
+// pair of "ignores a partial walk" cases pin the other half of the
+// contract — the whole-body readers answer for the buffer, so a
+// second call in a handler does not come back empty. The sourced cases
+// pull chunks from a BodySource through the same readers, the shape a
+// streamed request body has (docs/NET-P3-SUSPENSION-PLAN.md §3.9).
+func TestRunnerHttpRequestBodyStreamExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/http_request_body_stream_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: HttpRequest.body as a Stream",
+		"ok 1 - body_stream carries the body",
+		"ok 4 - read_line walks the body",
+		"ok 6 - read_n leaves the remainder",
+		"ok 7 - body_string ignores a partial walk",
+		"ok 10 - a bodyless request reads empty",
+		"ok 13 - read_line spans a chunk boundary",
+		"ok 18 - a fault is EndedEarly with its status",
+		"# pass 20",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/http_response_headers_migrated_test.fern`
+// — Lang port of `TestInterpScriptHttpResponseHeaders`.
+// Fifth migration in the runner-adoption effort.
+// Original was 4 table-driven subprocess cases; migrated
+// to 6 in-process `r.it(...)` cases — added the stronger
+// "bogus 9999 doesn't leak into wire" negative form and
+// the explicit "duplicates preserve order" invariant
+// alongside the whole-wire compare. Compares the raw
+// wire returned by `http_serialize_response` directly via
+// `assert_eq_string` instead of routing through
+// print-then-grep-stdout (cleaner since the original's
+// trailing newline was print()'s, not the wire's).
+func TestRunnerHttpResponseHeadersMigratedExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/http_response_headers_migrated_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: HTTP response headers (migrated)",
+		"ok 1 - user-set headers before auto block",
+		"ok 3 - user Content-Length overridden by auto",
+		"ok 4 - bogus Content-Length absent from wire",
+		"ok 6 - duplicate Set-Cookie preserves order",
+		"ok 7 - status reason for extended codes",
+		"ok 8 - unknown status falls back to Status",
+		"ok 9 - HEAD response has no body",
+		"ok 10 - 204 has no Content-Length or body",
+		"# pass 11",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/http_status_test.fern` covers the std/http status
+// helpers — http_status_text reason phrases and the RFC 9110
+// status-class predicates (http_is_informational/success/redirect/
+// client_error/server_error/error), incl. century boundaries and the
+// no-class result for out-of-range codes. Passing suite → exit 0;
+// plan line `1..4`.
+func TestRunnerHttpStatusExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/http_status_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/http status", "1..4", "# pass 4", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/fail_fast_test.fern` exercises the new
+// fail-fast mode added to std/test:
+//   - `test_new_fail_fast(suite)` constructor.
+//   - `(r).with_fail_fast()` post-init opt-in.
+//   - `parse_fail_fast_from_args(argv)` CLI lift.
+//
+// The contract: once any case fails, subsequent `it()`
+// calls auto-skip with reason "fail-fast: prior case
+// failed". The test exercises this by spinning up an
+// isolated child runner that deliberately fails, then
+// inspects its counters from the outer suite — keeps
+// the outer exit code clean while still pinning the
+// behaviour. The interleaved TAP output (child TAP +
+// outer TAP) is part of what we pin: the SKIP-line
+// wording shows up in the combined stream.
+func TestRunnerFailFastExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/fail_fast_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - c1 pass before fail",
+		"not ok 2 - c2 fail triggers fast",
+		"ok 3 - c3 should auto-skip after fail # SKIP fail-fast: prior case failed",
+		"ok 1 - fail-fast short-circuits post-fail",
+		"ok 2 - default mode runs every case",
+		"ok 3 - parse_fail_fast detects --fail-fast",
+		"ok 4 - parse_fail_fast no false-positive",
+		"ok 5 - with_fail_fast preserves filter",
+		"# pass 5",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/quiet_mode_test.fern` exercises the new
+// --quiet mode added to std/test:
+//   - `test_new_quiet(suite)` / `(r).with_quiet()` /
+//     `parse_quiet_from_args(argv)` — the constructor +
+//     fluent setter + CLI parser triple, matching the
+//     `--filter` / `--fail-fast` family shape.
+//   - The contract: `ok N - name` lines suppressed for
+//     passes + skips; `not ok` lines still print; the
+//     `1..N` plan + summary footer still print; counters
+//     are unaffected.
+//
+// 7 cases (isolated-child-runner pattern from
+// fail_fast_test.fern). The interleaved TAP output is
+// part of what we pin: child runners' `# Suite:` headers
+// still appear (those come from `test_new`, not quiet
+// mode), but their `ok N - p1` / `ok N - p2` per-case
+// lines are absent — proving quiet suppresses the
+// per-case prints.
+func TestRunnerQuietModeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/quiet_mode_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: quiet-counters",
+		"ok 1 - quiet preserves counters across passes",
+		"ok 7 - test_new_quiet enables flag",
+		"# pass 7",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+	// Negative check: the quiet child-runner cases (p1 /
+	// p2 / p3 inside test_quiet_preserves_counters) MUST
+	// NOT print their per-case lines. If they ever do, the
+	// suppression broke.
+	for _, suppressed := range []string{
+		"- p1",
+		"- p2",
+		"- p3",
+	} {
+		if strings.Contains(out, suppressed) {
+			t.Errorf("quiet mode failed to suppress %q in:\n%s", suppressed, out)
+		}
+	}
+}
+
+// `tests/stdlib/set_test.fern` covers std/set — the generic,
+// value-semantic Set[T] (membership, dedup, union/intersect/
+// difference, subset/equals) over both i32 and string elements. The
+// essential case is `add is pure` (test 4): the value-semantics
+// contract that an operation never mutates its receiver. Passing
+// suite → exit 0; the TAP plan line is `1..12`.
+func TestRunnerSetExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/set_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/set", "ok 4 - add is pure", "1..14", "# pass 14", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// The five persistent-collection suites (#6794). Each pins the module's
+// structural-sharing contract — a snapshot taken before an update is
+// unchanged after it — alongside its structural invariants (`is_valid`
+// after every kind of update), so a compiled backend that rewrote a
+// shared node in place would fail here as well as in the per-backend
+// differential (persistent_collections_test.go).
+func TestRunnerOrdmapExamplePasses(t *testing.T) {
+	runPersistentSuite(t, "tests/stdlib/ordmap_test.fern", "std/ordmap", "ok 4 - insert is persistent", 13)
+}
+
+func TestRunnerPmapExamplePasses(t *testing.T) {
+	runPersistentSuite(t, "tests/stdlib/pmap_test.fern", "std/pmap", "ok 4 - insert is persistent", 11)
+}
+
+func TestRunnerPvecExamplePasses(t *testing.T) {
+	runPersistentSuite(t, "tests/stdlib/pvec_test.fern", "std/pvec", "ok 3 - with is persistent", 10)
+}
+
+func TestRunnerOrdsetExamplePasses(t *testing.T) {
+	runPersistentSuite(t, "tests/stdlib/ordset_test.fern", "std/ordset", "ok 2 - add is persistent", 6)
+}
+
+func TestRunnerPsetExamplePasses(t *testing.T) {
+	runPersistentSuite(t, "tests/stdlib/pset_test.fern", "std/pset", "ok 2 - add is persistent", 5)
+}
+
+// runPersistentSuite runs one suite through `fern -interp` and checks the
+// suite header, the named persistence case, and a full-pass plan of n.
+func runPersistentSuite(t *testing.T, path, suite, persistCase string, n int) {
+	t.Helper()
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, path)
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	plan := fmt.Sprintf("1..%d", n)
+	pass := fmt.Sprintf("# pass %d", n)
+	for _, w := range []string{"# Suite: " + suite, persistCase, plan, pass, "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/ndarray_test.fern` covers std/ndarray — the counted
+// strided handle of docs/ARRAY-SHAPES.md: every structural operation
+// against the flat construction, the row-major / packed predicates, rank
+// 0 and an empty axis. The counters half (that the metadata operations
+// move no elements) is internal/testing/e2e/ndarray_test.go's. Passing suite ->
+// exit 0.
+func TestRunnerNdarrayExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/ndarray_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/ndarray", "1..17", "# pass 17", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/unicode_test.fern` covers std/unicode — simple
+// (1:1) case mapping across ASCII / Latin-1 / Greek / Cyrillic, the
+// code-point helpers, the simple-mapping caveat (ß unchanged),
+// eq_ignore_case, the character-class predicates (is_letter /
+// is_digit / is_alnum / is_whitespace / is_upper / is_lower), and the
+// static-table decode paths (#5627): the ASCII fast path, alternating
+// pair runs, large constant deltas, non-BMP mappings, and the U+FFFD
+// substitution for malformed input. Passing suite → exit 0; the TAP
+// plan line is `1..18`.
+func TestRunnerUnicodeExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/unicode_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/unicode", "1..18", "# pass 18", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/semver_test.fern` covers std/semver — SemVer 2.0.0
+// parse, canonical to_string, the §11 precedence chain (incl. the
+// numeric `beta.2 < beta.11` trap plus identifiers too wide for a
+// machine int), build-metadata-ignored, and malformed-input rejection.
+// Passing suite → exit 0; plan line `1..8`.
+func TestRunnerSemverExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/semver_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/semver", "1..8", "# pass 8", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/glob_test.fern` covers std/glob — the shell-style
+// matcher: `*` (non-separator), `?`, `**` (globstar with zero-directory
+// elision), and `[...]` classes with ranges + negation. Passing suite →
+// exit 0; plan line `1..7`.
+func TestRunnerGlobExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/glob_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/glob", "1..7", "# pass 7", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/dotenv_test.fern` covers std/dotenv — KEY=VALUE
+// parsing, trimming, comments/blanks, the `export` prefix, double- and
+// single-quoted values, last-wins, and malformed-line skipping. Passing
+// suite → exit 0; plan line `1..7`.
+func TestRunnerDotenvExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/dotenv_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/dotenv", "1..7", "# pass 7", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/rand_test.fern` covers std/rand — shuffle (a
+// permutation that leaves its input untouched), choice (always
+// in-bounds; None only on empty), and sample (k distinct elements). The
+// draws are non-deterministic, so it asserts the contracts. Passing
+// suite → exit 0; plan line `1..6`.
+func TestRunnerRandExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/rand_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/rand", "1..6", "# pass 6", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/base32_test.fern` covers std/base32 against the
+// RFC 4648 §10 known-answer vectors (every padding length) plus decode
+// round-trips. Passing suite → exit 0; plan line `1..4`.
+func TestRunnerBase32ExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/base32_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/base32", "1..6", "# pass 6", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/strdist_test.fern` covers std/strdist — Levenshtein
+// edit distance (reference cases + code-point awareness) and the
+// normalised similarity ratio. Passing suite → exit 0; plan line
+// `1..4`.
+func TestRunnerStrdistExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/strdist_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/strdist", "1..4", "# pass 4", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/table_test.fern` covers std/table — column-aligned
+// rendering (last column unpadded, short rows padded, code-point-width
+// alignment) and the header variant with its `-` rule. Passing suite →
+// exit 0; plan line `1..6`.
+func TestRunnerTableExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/table_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/table", "1..6", "# pass 6", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/textwrap_test.fern` covers std/textwrap.word_wrap —
+// greedy wrapping at word boundaries, the exact-fit boundary, long
+// words, hard-newline preservation, space collapsing, and edge widths.
+// Passing suite → exit 0; plan line `1..6`.
+func TestRunnerTextwrapExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/textwrap_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/textwrap", "1..6", "# pass 6", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/format_duration_parse_test.fern` covers
+// std/format.parse_duration_ms — single units, multi-part durations
+// with/without spaces, the i64 range beyond i32, and the None
+// rejections. Passing suite → exit 0; plan line `1..4`.
+func TestRunnerFormatDurationParseExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/format_duration_parse_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/format parse_duration_ms", "1..4", "# pass 4", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/ansi_test.fern` covers std/ansi — the SGR wrap
+// primitive, colours / bright / background / styles, and strip()
+// (removing SGR sequences while preserving surrounding and UTF-8 text).
+// Passing suite → exit 0; plan line `1..5`.
+func TestRunnerAnsiExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/ansi_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/ansi", "1..6", "# pass 6", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// An empty-suite run still produces well-formed TAP — the
+// `1..0` plan line and a `# tests 0` summary. Useful for
+// scaffolding a new test file before the first case lands.
+func TestRunnerEmptySuiteIsValidTAP(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+import "std/test";
+
+function main(): i32 {
+    let r: test.TestRunner = test.test_new("empty");
+    return r.finish();
+}
+`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	gotOut := out.String()
+	for _, w := range []string{"TAP version 13", "1..0", "# tests 0", "# pass 0", "# fail 0"} {
+		if !strings.Contains(gotOut, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+		}
+	}
+}
+
+func TestRunnerPegExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/peg_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if !strings.Contains(out, "# pass 18") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 18 passes, 0 fails\noutput:\n%s", out)
+	}
+}
+
+// A TestRunner is a value: `it()` returns a new one, so a caller who
+// forgets to assign it back loses the outcome — AFTER the TAP line has
+// already been printed. That made a suite with two printed `not ok`
+// lines report `1..0`, `# fail 0` and exit 0, which is the one failure
+// mode a test framework must not have (#8466). The same applies to a
+// subsuite that is never merged back.
+//
+// The counters now live in cells shared by every copy of the runner, so
+// finish() reports what actually reached stdout and cannot under-report
+// it. A discarded result is itself a non-zero exit: the run is known to
+// have lost information, so it is not passing.
+func TestRunnerDiscardedResultCannotReportSuccess(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+import "std/test";
+
+function failing(): test.TestOutcome { return test.assert_eq(1, 2); }
+
+function main(): i32 {
+    let r: test.TestRunner = test.test_new("discarded");
+    r.it("dropped result", failing);
+    let sub: test.TestRunner = r.subsuite("child");
+    sub = sub.it("child fails", failing);
+    return r.finish();
+}
+`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code == 0 {
+		t.Fatalf("exit = 0 for a suite that printed two `not ok` lines\nstdout: %s\nstderr: %s", out.String(), errb.String())
+	}
+	gotOut := out.String()
+	wantPieces := []string{
+		// Numbering comes from the shared counter, so the two printed
+		// cases are 1 and 2 — they were both `not ok 1` before.
+		"not ok 1 - dropped result",
+		"not ok 2 - child / child fails",
+		// The plan and the counts match the stream, not the dropped handle.
+		"1..2",
+		"# tests 2",
+		"# fail 2",
+		// And the cause is named, since the symptom alone is cryptic.
+		"result(s) were discarded",
+	}
+	for _, w := range wantPieces {
+		if !strings.Contains(gotOut, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+		}
+	}
+	if strings.Contains(gotOut, "# fail 0") {
+		t.Errorf("reported `# fail 0` with failures printed\nfull output:\n%s", gotOut)
+	}
+}
+
+// The counters must not over-report either: a correctly written suite —
+// every result assigned back, every subsuite merged — reports exactly
+// what it ran, with no discarded-result warning.
+func TestRunnerCorrectSuiteUnaffectedByDiscardTracking(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+import "std/test";
+
+function passing(): test.TestOutcome { return test.assert_eq(1, 1); }
+
+function main(): i32 {
+    let r: test.TestRunner = test.test_new("clean");
+    r = r.it("first", passing);
+    let sub: test.TestRunner = r.subsuite("child");
+    sub = sub.it("nested", passing);
+    r = r.merge(sub);
+    r = r.it("last", passing);
+    return r.finish();
+}
+`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	gotOut := out.String()
+	for _, w := range []string{
+		"ok 1 - first",
+		"ok 2 - child / nested",
+		"ok 3 - last",
+		"1..3",
+		"# pass 3",
+		"# fail 0",
+	} {
+		if !strings.Contains(gotOut, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+		}
+	}
+	if strings.Contains(gotOut, "discarded") {
+		t.Errorf("a correctly written suite reported discarded results\nfull output:\n%s", gotOut)
+	}
+}
+
+// `tests/stdlib/coreutils_ld_test.fern` covers coreutils/lib/ld — the
+// model of C's `long double` that printf, and the utilities that follow
+// it, convert and compute in. GNU's is the host's, which is x87 80-bit
+// on x86-64, IEEE binary128 on arm64 and wasm32 and plain binary64 on
+// Darwin, so the suite drives all three explicitly rather than only the
+// one this host has: `%a` digits and leading bit, the subnormal and
+// overflow edges, the exact decimal expansion, strtold, the arithmetic
+// including the division seq and numfmt need, numfmt's --round modes,
+// LDBL_DIG, and the whole-number conversion sleep reads a millisecond
+// count out of. Which format a target selects is pinned separately by
+// internal/testing/coreutils/longdouble_test.go. Passing suite -> exit 0.
+// `tests/stdlib/coreutils_resolv_test.fern` covers coreutils/lib/resolv —
+// the NSS walk gethostid makes over std/dns's two sources: nsswitch's
+// `hosts:` line with its bracketed actions and compiled-in default, and
+// the walk's reaction to each source's status (the files, the resolver
+// configuration and the wire protocol are std/dns's, under
+// TestRunnerDnsExamplePasses). Two live cases run against this machine's
+// own /etc/hosts. Passing suite -> exit 0.
+func TestRunnerCoreutilsResolvExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/coreutils_resolv_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: coreutils/lib/resolv", "1..9", "# pass 9", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/dns_test.fern` covers std/dns (#9855): the RFC 1035
+// codec both ways (names, a query, the EDNS0 OPT record, a reply with
+// compression pointers, what decode refuses, a round trip over every
+// section and record type), the answer section read through a CNAME
+// chain with each rcode, the hosts file of both families, resolv.conf's
+// defaults, caps and floors, res_search's candidate order and its
+// reaction to each failure of a scripted nameserver, and the search walk
+// over a name's plan. Two live cases run against this machine's own
+// /etc/hosts. Passing suite -> exit 0.
+func TestRunnerDnsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/dns_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/dns", "1..35", "# pass 35", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/coreutils_pwdb_test.fern` covers coreutils/lib/pwdb and
+// coreutils/lib/utmp — the two databases whoami, id, groups and logname
+// read. internal/testing/coreutils compares those utilities against GNU on the
+// machine that runs them, which cannot reach the rules that depend on
+// what is IN the databases: a malformed line, a repeated name, a gid no
+// group entry claims, getgrouplist's ordering, and the gecos field
+// `pinky` prints as a real name — where `&` stands for the login name
+// and no machine's own passwd file has one. Those take fixture text
+// here. The utmp half pins the record's byte offsets and widths, every
+// one of which is silent when wrong. Passing suite -> exit 0.
+func TestRunnerCoreutilsPwdbExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/coreutils_pwdb_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: coreutils/lib/pwdb + lib/utmp", "1..15", "# pass 15", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/coreutils_selinux_test.fern` covers coreutils/lib/selinux's
+// getcon trim, which the oracle corpus cannot reach: the context comes from
+// /proc/self/attr/current and neither `runcon` nor `id -Z` has an operand
+// pointing anywhere else, so a case only ever sees what THIS machine's kernel
+// wrote. A container under AppArmor writes a NUL and no newline, where the
+// aarch64 runner writes a context ending in one — and a newline there belongs
+// to the context, so runcon with no command prints a blank line after it.
+// Trimming it agreed with GNU on the first host and differed by a byte on the
+// second, in every no-command case at once. Passing suite -> exit 0.
+func TestRunnerCoreutilsSelinuxExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/coreutils_selinux_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: coreutils/lib/selinux", "1..7", "# pass 7", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/coreutils_ld_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: coreutils/lib/ld", "1..23", "# pass 23", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}

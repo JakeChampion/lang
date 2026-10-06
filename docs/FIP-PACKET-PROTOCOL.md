@@ -2,7 +2,7 @@
 
 What #9584 asked, measured. The programs are `examples/fip/packet_*.fern` —
 four implementations of one binary protocol, differing only in where the bytes
-live — and `internal/e2e/fip_packet_test.go` keeps their claims from rotting.
+live — and `internal/testing/e2e/fip_packet_test.go` keeps their claims from rotting.
 
 Read `docs/ALLOCATION-OBSERVABLE.md` first for what the allocation numbers mean,
 and `docs/FIP-EVENT-LOOP.md` for experiment 1. This one exists because that one

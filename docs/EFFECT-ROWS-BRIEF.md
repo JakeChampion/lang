@@ -9,7 +9,7 @@ inference-primary) and `LANGUAGE-DIRECTION.md ▸ Algebraic effects`
 
 **Outcome: the analysis ships; the surface syntax does not.** A
 `uses [...]` clause was built, measured, and then deliberately dropped —
-§2 says why. What landed is `internal/effects` (a shared call-graph +
+§2 says why. What landed is `internal/check/effects` (a shared call-graph +
 effect solver) and `fern -effects` (the per-function report). No new
 surface syntax, no new diagnostic, no commitment to an effect system.
 
@@ -81,7 +81,7 @@ finer answer to a question nobody was asking; a reader who wants to know
 what one function does can read it, and `fern -effects` prints it.
 
 **It would have frozen a vocabulary prematurely.** Putting `uses [net]`
-in the surface makes `internal/caps`' v1 names a 1.0 commitment. Rec §10
+in the surface makes `internal/pkg/caps`' v1 names a 1.0 commitment. Rec §10
 itself wanted finer names (`io.http`, `io.kv`); §4 shows three internal
 vocabularies that already disagree. Shipping syntax before that is
 settled is backwards.
@@ -127,18 +127,18 @@ vocabularies:
 
 | Where | Names | Question it answers |
 | --- | --- | --- |
-| `internal/caps` | `env fs net random subprocess time` | what a *dependency* may reach (E070) |
-| `internal/platforms` | `log stdout stdin now pollfd env args random fs fsmode cabi tcp proc subprocess arena fetch` | what a *target* provides (E066) |
+| `internal/pkg/caps` | `env fs net random subprocess time` | what a *dependency* may reach (E070) |
+| `internal/pkg/platforms` | `log stdout stdin now pollfd env args random fs fsmode cabi tcp proc subprocess arena fetch` | what a *target* provides (E066) |
 | `Platform` bag (planned) | `fetch kv secrets log now` | what the host hands the handler |
 | Rec §10 sketch | `io.http io.kv io.log` | — |
 
-The clause uses `internal/caps`' v1 set. It is the *authority* vocabulary,
+The clause uses `internal/pkg/caps`' v1 set. It is the *authority* vocabulary,
 which is the question "which effects does this function perform" actually
 is; it is already mirrored into `compiler/caps.fern` and pinned
 entry-for-entry by a parity test; and it is what `fern -capabilities`
 already prints.
 
-`internal/effects` is nevertheless **vocabulary-agnostic**: `Build` records
+`internal/check/effects` is nevertheless **vocabulary-agnostic**: `Build` records
 which builtins each function reaches, `Solve` projects that through a
 caller-supplied table. So `fern -effects` prints the same call graph under
 both shipped vocabularies, and they disagree in ways worth seeing — `net` vs
@@ -293,7 +293,7 @@ checker has already produced.
   declarations (still unshipped), Scala uses classifiers. Fern has associated
   types, so Flix's answer is available — but it is its own piece of work, and
   a prototype that guessed at it would be guessing.
-- **Not a replacement for the ambient-effect rule** (E080, `internal/ambient`,
+- **Not a replacement for the ambient-effect rule** (E080, `internal/check/ambient`,
   which grew out of the `ambient-capability` lint #4414 landed alongside
   this). That rule says a handler must reach its effects *through its bag*
   rather than around it; the analysis says what a function reaches, by
@@ -340,7 +340,7 @@ checker has already produced.
    answer it without any surface syntax.
 6. **Package granularity vs function granularity.** `caps.Analyze` attributes
    a closure's capabilities to its *defining* package — the object-capability
-   reading, deliberately. `internal/effects` attributes them to whoever
+   reading, deliberately. `internal/check/effects` attributes them to whoever
    invokes the value, because that function does perform them. Both are right
    for their own question; whether either report should say so out loud is
    open.
@@ -349,13 +349,13 @@ checker has already produced.
 
 | Piece | Path |
 | --- | --- |
-| Call graph, solver, witness chains, report | `internal/effects/` |
-| Builtin-name predicate the graph needs | `internal/checker/builtinnames.go` |
+| Call graph, solver, witness chains, report | `internal/check/effects/` |
+| Builtin-name predicate the graph needs | `internal/check/checker/builtinnames.go` |
 | Report command | `cmd/fern/effects.go` (`fern -effects`) |
-| The shipped enforcement of the same reachability, per package | `internal/caps` (E070) |
-| …and per target | `internal/platforms` (E066) |
+| The shipped enforcement of the same reachability, per package | `internal/pkg/caps` (E070) |
+| …and per target | `internal/pkg/platforms` (E066) |
 
-`internal/caps` now builds its per-package report on `internal/effects`'
+`internal/pkg/caps` now builds its per-package report on `internal/check/effects`'
 graph rather than walking the call graph a second time; that is the one
 change this makes to shipped behaviour, and it is output-identical
 (verified byte-for-byte across the 35 example programs).

@@ -42,7 +42,7 @@ tractable in an interpreter that has no ownership pass.
 
 ## The audit
 
-Every site in `internal/interp` that stores a `Value`, and whether the
+Every site in `internal/oracle/interp` that stores a `Value`, and whether the
 retain/release discipline the map COW path already runs would be correct
 if arrays consulted it.
 
@@ -159,7 +159,7 @@ uniqueness signal at all, and no way to corrupt. It was rejected on the
 cost to **reads**, which are the interpreter's hot path and are not
 implicated in the bug: every `arr[i]` would become a trie descent or a
 reroot check, on every interpreted program, including the long
-`e2eselfhost` and conformance runs. A rerooted array additionally makes
+`e2ecompiler` and conformance runs. A rerooted array additionally makes
 any Go slice taken from the buffer stale after a reroot, which is a
 sharper version of exactly the aliasing hazard the counted design is
 audited against. Paying a broad read regression to avoid a one-sided,
@@ -181,9 +181,9 @@ the fast path's word for it:
   anything beyond them is an under-count and the write is refused with an
   interpreter error rather than performed.
 
-`TestFeatureDifferentialInterpArrayCOW` (`internal/e2e`) replays the whole
+`TestFeatureDifferentialInterpArrayCOW` (`internal/testing/e2e`) replays the whole
 `TestFeatureDifferential` corpus through all three and requires identical
-output; `TestArrayWithValueSemantics` (`internal/interp`) runs the aliasing
+output; `TestArrayWithValueSemantics` (`internal/oracle/interp`) runs the aliasing
 table under all three. Deleting one `storeArray` call makes the default
 mode print 99 where every backend prints 19, `copy` still print 19, and
 `verify` name the program — which is the check working.

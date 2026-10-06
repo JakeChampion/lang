@@ -378,7 +378,7 @@ contradict comments in the tree:
 
 | # | Fix | Where | Evidence |
 |---|---|---|---|
-| 1 | ~~Share drop code between exits~~ — **done as outlining**, #6894 | `internal/ir/rc_insert.go` | §3 — −71.3% whole-compiler emit, self-host binary −42.5% |
+| 1 | ~~Share drop code between exits~~ — **done as outlining**, #6894 | `internal/oracle/ir/rc_insert.go` | §3 — −71.3% whole-compiler emit, self-host binary −42.5% |
 | 2 | ~~Peephole the push-then-discard triple~~ — **done**, P3 | `x86_64.go:peepholeTail`, arm64 twin | §2 — was 12.1% of emitted instructions; measured −13.0% on the checker driver |
 | 3 | ~~Hash the self-host `Scope` tables~~ — **sigs, array-method suffix and structs all indexed**; what is left is `names`, which is per-scope and mutable | `compiler/checker.fern` | §4e — `lookup_struct` was 3.7%, indexed for −5.6% on the self-compile; `lookup` is 2.0% |
 | 4 | Register allocation (#4112) | `internal/ssa` → new native emit | §2 — 36.5% of emitted instructions |
@@ -388,7 +388,7 @@ contradict comments in the tree:
 | 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
 | 8 | **Cut the copying** — `arr_push_grow*`, `str_slice`, `strcat`; `arr_cow_inplace` done for x86 in #6911 | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
 | 10 | ~~The reclaim / sig registries: allocation-free decode, stop copying module-wide rows per function, then INDEX the sig registries~~ — **done**, #7020 + #7026 + #7036 + #7046 + #7048, and the index in #6888 | `irlower.fern` | §4d.4 — the self-compile roughly halved across the first five and the index took another 7%. The index cost **+2.42 MB (+17.6%) of `irlower_run` binary size** (#7519's bisect) — a space-for-time trade this row now prices |
-| 11 | **The method-receiver accumulator ratchet** — `arr_push_grow_ptr` is now the top cost and half of it is copies nothing needed | `internal/ir` (native rc) | §4d.5 — 71/400 samples, 52% of copies at `RC >= 2`, concentrated in `LowerState.emit` and `Scope.bind` |
+| 11 | **The method-receiver accumulator ratchet** — `arr_push_grow_ptr` is now the top cost and half of it is copies nothing needed | `internal/oracle/ir` (native rc) | §4d.5 — 71/400 samples, 52% of copies at `RC >= 2`, concentrated in `LowerState.emit` and `Scope.bind` |
 
 **The ordering to trust is 8, then 5, then 4** — not the numbering, which is
 historical. 8 is where the time is; 5 is the only pre-existing item still
@@ -1067,7 +1067,7 @@ caller rc traffic (3 × `__drop_struct_Bld`, 2 × `__fern_alloc`, one call).
 bytes for the first and **0** for the second — a difference that follows the
 ORDER, not the spelling: whichever runs second reuses what the first left in the
 arena. Swap them and the zero swaps with it. This is why
-`internal/e2e/alloc_scaling_test.go` compiles one program per shape and runs
+`internal/testing/e2e/alloc_scaling_test.go` compiles one program per shape and runs
 each in its own process; a bump delta measured after any earlier churn in the
 same process is not a measurement of that shape.
 
@@ -1133,7 +1133,7 @@ and the discarded buffer's matching walk-drop — 33 M retains and 33 M releases
 on top of the 267 MB.
 
 **The fix removes a BOX, and three plausible candidates measured as not doing
-that.** Nothing in `internal/ir` can drop a borrowed parameter, so the obvious
+that.** Nothing in `internal/oracle/ir` can drop a borrowed parameter, so the obvious
 route is `docs/OWNERSHIP-INFERENCE-PLAN.md`'s own remaining items. All three
 were prototyped and measured against `scripts/cliff-bench` (`checker.fern`,
 281,621 crossings / 267,661,872 bytes on the base commit):
@@ -1182,7 +1182,7 @@ the paths that moved) took the cliff from 268.0 MB to **225.9 MB** and the
 crossings from 282,154 to 207,550.
 
 **Do not read that as the prize. It is not sound, and the unsoundness is in the
-direction that produces exactly that number.** `internal/e2e`'s
+direction that produces exactly that number.** `internal/testing/e2e`'s
 `TestStructFieldAppendAliasDifferential` fails on:
 
 ```fern
@@ -1361,7 +1361,7 @@ ratio compares compile TIME for the same input, not work per line.
 **Landed since this section was measured — the for-in element borrow** (the
 lead from the issue thread's 2026-08-25 comment): a read-only `for … in` loop
 element now borrows from the iterand instead of paying a retain plus a deep
-drop per iteration (`internal/ir` `computeBorrowedAliases`, third walk). The
+drop per iteration (`internal/oracle/ir` `computeBorrowedAliases`, third walk). The
 whole-compiler x86-64 emit dropped **12.4%** (10.78 M → 9.44 M lines,
 176.0 MB → 155.4 MB) and native compile user time ~8% (26.1 s → 23.9 s);
 `decl_is_struct`-family scanners lose their per-iteration

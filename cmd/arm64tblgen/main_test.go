@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/arm64tbl"
+	"github.com/jakechampion/lang/internal/tables/arm64tbl"
 )
 
 const arm64NativeFern = "../../compiler/arm64_native.fern"
@@ -50,7 +50,7 @@ func TestMarkersArePresent(t *testing.T) {
 // TestScalarRowsAreWellFormed guards the by-name vocabulary's own shape: a
 // mnemonic listed twice would dispatch to one of its two rows, and a probe
 // that does not start with its mnemonic probes some other row. The self-host
-// side of the same probes is internal/e2eselfhost's
+// side of the same probes is internal/testing/e2ecompiler's
 // TestSelfHostArm64TableRowsMatchGas.
 func TestScalarRowsAreWellFormed(t *testing.T) {
 	seen := map[string]bool{}
@@ -73,7 +73,7 @@ func TestScalarRowsAreWellFormed(t *testing.T) {
 
 // TestVecRowsAreDistinct: a mnemonic listed twice in a class would dispatch
 // to one of its two rows. The self-host side of the same rows is
-// internal/e2eselfhost's TestSelfHostArm64VecTableRowsMatchGas.
+// internal/testing/e2ecompiler's TestSelfHostArm64VecTableRowsMatchGas.
 func TestVecRowsAreDistinct(t *testing.T) {
 	for _, tbl := range arm64tbl.VecTables {
 		seen := map[string]bool{}

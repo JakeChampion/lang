@@ -164,7 +164,7 @@ PY
   stop_upstream
   if [ "$ARCH" = x86_64 ]; then
     # The per-connection heap cost, read off the test that bounds it.
-    go test ./internal/e2eselfhost -run 'TestSelfHostHeldConnectionsHeapBoundX86_64$' -count=1 -v > "$work/held.log" 2>&1 || {
+    go test ./internal/testing/e2ecompiler -run 'TestSelfHostHeldConnectionsHeapBoundX86_64$' -count=1 -v > "$work/held.log" 2>&1 || {
       echo "net-bench: the held-connections measurement failed:" >&2
       cat "$work/held.log" >&2
       exit 1

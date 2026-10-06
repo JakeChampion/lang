@@ -1,0 +1,232 @@
+package coreutils
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
+)
+
+// The self-host leg of the parity gate: every utility here compiled by the
+// SELF-HOST compiler (`compiler/fern.fern`) rather than the native
+// one, run over the same corpus, and required to agree with the native build
+// byte for byte.
+//
+// It exists because nothing else compiles this tree with the self-host
+// compiler. The gate above uses the native binary, so `coreutils/lib/gnu.fern`
+// had never been within the self-host's reach: its getopt cursor returns
+// `(Option[OptMatch], Getopt)`, a tuple whose Option element carries a struct
+// payload, and the self-host tuple lowering refused that shape — every utility
+// declaring an option bailed the module (#8407). A gap like that is invisible
+// until something compiles the tree both ways.
+//
+// The comparison is against the NATIVE binary, not against GNU: native is
+// already held to GNU byte for byte by the corpus, so agreeing with it is
+// agreeing with GNU, and a failure here says "the two compilers disagree"
+// rather than re-reporting a parity bug in both.
+
+// corpusRegistry holds each utility's cases — the SAME functions the GNU
+// parity gate calls, so this leg cannot quietly test something narrower.
+//
+// Each utility registers itself from its own internal/testing/coreutils/<util>_test.go
+// rather than being listed here, because a single shared list made every
+// coreutils PR conflict with every other one (#8840). A utility missing from
+// the registry fails TestSelfHostCoreutilsCoverage.
+var corpusRegistry = map[string]func(*testing.T) []invocation{}
+
+// registerCorpus is called from each utility's own test file at init.
+//
+// Two files claiming one utility used to be a duplicate map key, which the
+// compiler refused; splitting the list up costs that check, so it is made
+// again here.
+func registerCorpus(util string, cases func(*testing.T) []invocation) {
+	if _, dup := corpusRegistry[util]; dup {
+		panic("coreutils: registerCorpus called twice for " + util)
+	}
+	corpusRegistry[util] = cases
+}
+
+// utilNames lists the utilities in coreutils/, from the directory rather than
+// from a list here: a new one joins this gate by existing.
+func utilNames(t *testing.T) []string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(repoRoot(t), "coreutils", "*.fern"))
+	if err != nil {
+		t.Fatalf("glob coreutils: %v", err)
+	}
+	if len(matches) == 0 {
+		t.Fatal("no coreutils/*.fern found — the gate is looking in the wrong place")
+	}
+	names := make([]string, 0, len(matches))
+	for _, m := range matches {
+		names = append(names, strings.TrimSuffix(filepath.Base(m), ".fern"))
+	}
+	return names
+}
+
+// TestSelfHostCoreutilsCoverage fails when a utility has no self-host cases,
+// so adding one cannot silently skip this leg.
+func TestSelfHostCoreutilsCoverage(t *testing.T) {
+	for _, util := range utilNames(t) {
+		if _, ok := corpusRegistry[util]; !ok {
+			t.Errorf("coreutils/%s.fern is not in the corpus registry — every utility is compiled and run both ways, so add registerCorpus(%q, ...) to internal/testing/coreutils/%s_test.go", util, util, util)
+		}
+	}
+}
+
+var (
+	selfHostOnce sync.Once
+	selfHostPath string
+	selfHostFail string
+
+	selfHostBinsMu sync.Mutex
+	selfHostBins   = map[string]string{}
+	selfHostBinDir string
+)
+
+// selfHostCompiler builds the self-host compiler for the host target, once per
+// test process. It is the native compiler's own output — the same binary
+// `make selfhost-cli` produces.
+func selfHostCompiler(t *testing.T) string {
+	t.Helper()
+	selfHostOnce.Do(func() {
+		fern := e2eharness.BuildLangBinForInterp(t)
+		dir, err := os.MkdirTemp("", "fern-coreutils-selfhost-")
+		if err != nil {
+			selfHostFail = err.Error()
+			return
+		}
+		bin := filepath.Join(dir, "fern-selfhost")
+		selfHostDir := filepath.Join(repoRoot(t), "compiler")
+		// The compiler under test is built by a child process, so its sources
+		// reach the go command's test cache only if this process reads them
+		// (#9087). Without it this suite — the one that would have caught
+		// sleep_ns — keeps reporting its previous result after a change to the
+		// self-host compiler, exercising a stale one.
+		e2eharness.TrackFernSources(t, selfHostDir, "fern.fern")
+		src := filepath.Join(selfHostDir, "fern.fern")
+		out, cerr := exec.Command(fern, "-target", fernTarget(t), "-o", bin, src).CombinedOutput()
+		if cerr != nil {
+			selfHostFail = string(out)
+			return
+		}
+		selfHostPath = bin
+	})
+	if selfHostPath == "" {
+		t.Fatalf("build the self-host compiler: %s", selfHostFail)
+	}
+	return selfHostPath
+}
+
+// selfHostBin compiles coreutils/<util>.fern with the self-host compiler.
+//
+// FERN_STRICT_IR=1 is the point of the exercise: it names the function that
+// failed to lower instead of leaving a whole-module refusal to be read off a
+// downstream symptom, and it is what turns "the self-host cannot compile this
+// tree" into a message a reader can act on.
+func selfHostBin(t *testing.T, util string) string {
+	t.Helper()
+	selfHostBinsMu.Lock()
+	defer selfHostBinsMu.Unlock()
+	if bin, ok := selfHostBins[util]; ok {
+		return bin
+	}
+	if selfHostBinDir == "" {
+		dir, err := os.MkdirTemp("", "fern-coreutils-selfhost-bin-")
+		if err != nil {
+			t.Fatalf("temp dir: %v", err)
+		}
+		selfHostBinDir = dir
+	}
+	root := repoRoot(t)
+	bin := filepath.Join(selfHostBinDir, util)
+	// The compiler is itself a target binary, so it runs the same way the
+	// utilities do — under the emulator on a cross leg (docs/COREUTILS.md).
+	argv := crossArgv(selfHostCompiler(t), "-target", fernTarget(t), "-o", bin,
+		filepath.Join(root, "coreutils", util+".fern"),
+		filepath.Join(root, "internal", "stdlib"))
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("self-host compile coreutils/%s.fern: %v\n%s", util, err, out)
+	}
+	selfHostBins[util] = bin
+	return bin
+}
+
+// TestSelfHostCoreutilsParity runs every utility's corpus against its
+// self-host build and its native build and requires the two to agree.
+func TestSelfHostCoreutilsParity(t *testing.T) {
+	for _, util := range utilNames(t) {
+		cases, ok := corpusRegistry[util]
+		if !ok {
+			continue // reported by TestSelfHostCoreutilsCoverage
+		}
+		t.Run(util, func(t *testing.T) {
+			native := fernBin(t, util)
+			ours := selfHostBin(t, util)
+			for _, inv := range cases(t) {
+				t.Run(inv.name, func(t *testing.T) {
+					// Two processes per case and almost all of the cost
+					// in spawning them, so the cases run concurrently —
+					// this leg would otherwise double the package's wall
+					// time on its own. Each case is its own pair of
+					// processes with no shared state; the two binary
+					// caches they read are mutex-guarded. A case that
+					// writes a corpus file — appending stdout to it,
+					// acting as the writer a follow watches, or preparing a
+					// tree and reading it back — is the exception: two of
+					// them on one file would see each other's bytes, so
+					// those run one at a time.
+					if inv.stdoutPath == "" && len(inv.follow) == 0 &&
+						inv.prepare == nil && len(inv.artifacts) == 0 {
+						t.Parallel()
+					}
+					inv := inv.own(t)
+					inv.prep(t)
+					want := inv.run(t, native, util)
+					wantFiles := inv.readArtifacts(t)
+					inv.prep(t)
+					got := inv.run(t, ours, util)
+					diffArtifacts(t, util, inv, wantFiles, inv.readArtifacts(t), "native", "selfhost")
+					if !sameOutput(inv, want.stdout, got.stdout) {
+						t.Errorf("stdout differs for %s %s%s", util, quoteArgs(inv.args), diffBody("native", "selfhost", want.stdout, got.stdout))
+					}
+					if !sameOutput(inv, want.stderr, got.stderr) {
+						t.Errorf("stderr differs for %s %s%s", util, quoteArgs(inv.args), diffBody("native", "selfhost", want.stderr, got.stderr))
+					}
+					if want.how() != got.how() {
+						t.Errorf("status differs for %s %s: native %s, selfhost %s", util, quoteArgs(inv.args), want.how(), got.how())
+					}
+					// A utility whose output IS the files it writes
+					// (csplit) would otherwise have the two compilers
+					// compared on two silences.
+					if diff := treeDiff(want.tree, got.tree, "native", "selfhost"); diff != "" {
+						t.Errorf("the files left behind differ for %s %s\n%s", util, quoteArgs(inv.args), diff)
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestSelfHostMulticallCompilesWhole compiles the multicall dispatcher, the
+// binary a release ships, as the release does: with the self-host compiler,
+// -O, and the typed path pinned on and strict. A utility that stops lowering
+// whole fails here instead of shipping as a mixed module.
+func TestSelfHostMulticallCompilesWhole(t *testing.T) {
+	root := repoRoot(t)
+	srcDir := filepath.Join(root, "coreutils", "multicall")
+	e2eharness.TrackFernSources(t, srcDir, "fern-coreutils.fern")
+	argv := crossArgv(selfHostCompiler(t), "-O", "-target", fernTarget(t), "-o", filepath.Join(t.TempDir(), "fern-coreutils"),
+		filepath.Join(srcDir, "fern-coreutils.fern"),
+		filepath.Join(root, "internal", "stdlib"))
+	cmd := exec.Command(argv[0], argv[1:]...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("self-host compile of the multicall binary: %v\n%s", err, out)
+	}
+}

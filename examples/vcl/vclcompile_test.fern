@@ -11,7 +11,7 @@
 //
 // Whether the generated code MEANS the same thing as the interpreter is a
 // different question, and a string assertion cannot answer it. That is the
-// differential gate in internal/e2e/vcl_example_test.go, which compiles a
+// differential gate in internal/testing/e2e/vcl_example_test.go, which compiles a
 // policy, builds it, runs it, and diffs the output against `vclrun`.
 import "std/test";
 import "std/string";

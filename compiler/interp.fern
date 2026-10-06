@@ -4115,7 +4115,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
 // variables and back in as an argument.
 // That makes a handle an ADDRESS rather than a key into a table of live
 // builders, so a handle used after its free is a wild pointer here, not the
-// error internal/interp answers one with.
+// error internal/oracle/interp answers one with.
 function is_buf_builtin(name: string): boolean {
   if (name == "buf_push_bytes_range") {
     return true;
@@ -4749,7 +4749,7 @@ function call_buf_builtin(name: string, args: Value[]): Value {
 }
 
 function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
-  // The Display-taking I/O trio, matching internal/interp's builtinPrint /
+  // The Display-taking I/O trio, matching internal/oracle/interp's builtinPrint /
   // builtinWrite / builtinEprint: print and eprint append a newline, write
   // does not, and eprint goes to stderr. The interpreter is itself a Fern
   // program, so each one is the same builtin the interpreted program asked
@@ -4812,7 +4812,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   }
   // target_os(): the program runs where this interpreter runs, so the host
   // is the target — and the host is what this compiler's own target_os()
-  // names. Mirrors internal/interp's builtinTargetOS.
+  // names. Mirrors internal/oracle/interp's builtinTargetOS.
   if (name == "target_os") {
     if (args.len() != 0) {
       return v_err("target_os takes no arguments");
@@ -4820,7 +4820,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     return v_string(target_os());
   }
   // target_arch(): the ISA half, answered from this compiler's own
-  // target_arch() for the same reason. Mirrors internal/interp's
+  // target_arch() for the same reason. Mirrors internal/oracle/interp's
   // builtinTargetArch.
   if (name == "target_arch") {
     if (args.len() != 0) {
@@ -4842,7 +4842,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   //
   // The rest of the raw-memory family — `__load_i32`, `__store_ptr`,
   // `__ptr_width`, `__memset`, `__memcpy` — is deliberately absent, as it
-  // is from internal/interp. Those pretend to a flat byte address space no
+  // is from internal/oracle/interp. Those pretend to a flat byte address space no
   // boxed model has, and outside std/jni they are used only by
   // core/map.fern, whose bodies neither engine runs: Map is a native value
   // here (VMap) and in the native interpreter.
@@ -4916,7 +4916,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   // `slice_unchecked(s, a, b)` — the byte slice `s[a:b]` as a builtin:
   // same bounds contract as the ExprSlice eval (error on OOB, the
   // interp's stand-in for the codegen trap), no char-boundary check
-  // (#5634). Mirrors internal/interp's builtinSliceUnchecked.
+  // (#5634). Mirrors internal/oracle/interp's builtinSliceUnchecked.
   if (name == "slice_unchecked") {
     if (args.len() != 3) {
       return v_err("slice_unchecked: expected 3 args (s, a, b)");

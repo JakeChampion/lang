@@ -52,13 +52,13 @@ source, compiler invocation, execution and exact diagnostic/output assertion.
 ## Reproduce the compilation-only probe
 
 In a disposable worktree, save the following as
-`internal/e2eselfhost/ci_native_profile_test.go`. It deliberately does not
+`internal/testing/e2ecompiler/ci_native_profile_test.go`. It deliberately does not
 use the x86 execution-tooling gate: only the native compiler and assembler
 run. The `gcc` argument is the harness's ordinary fallback if native assembly
 fails; such a fallback must be investigated before comparing measurements.
 
 ```go
-package e2eselfhost
+package e2ecompiler
 
 import (
 	"os"
@@ -89,8 +89,8 @@ resolve. On macOS, `/usr/bin/time -l` records wall time, CPU time and peak RSS
 in bytes. On Linux use GNU time's `-v` and account for its RSS unit difference.
 
 ```sh
-go test -c -o /tmp/lang-ci-native-profile.test ./internal/e2eselfhost
-cd internal/e2eselfhost
+go test -c -o /tmp/lang-ci-native-profile.test ./internal/testing/e2ecompiler
+cd internal/testing/e2ecompiler
 /usr/bin/time -l env FERN_SELFHOST_BUILD_CACHE= /tmp/lang-ci-native-profile.test \
   -test.run '^TestCISemanticBuildProfile$' -test.count=1 -test.parallel=1 -test.v
 ```

@@ -655,7 +655,7 @@ auto-discard via `OpDrop`.
 
 Implementation: checker registers updated return types;
 `emitMapDeleteReturningTuple` and `emitMapClearReturningMap` in
-`internal/ir/ir.go` construct the result at the IR level (keeping
+`internal/oracle/ir/ir.go` construct the result at the IR level (keeping
 `__map_delete_impl` / `__map_clear_impl` in map.fern unchanged to
 avoid the `Option[usize]` layout constraint). Interpreter and
 self-host interp/checker updated to match. 6 new e2e tests
@@ -1575,7 +1575,7 @@ exit-sweep dec is, since rc accuracy is unchanged**. A mis-analysis surfaces
 as a null-slot read (trap / wrong value caught by the differential corpus),
 never a silent UAF.
 
-Measured win (`internal/e2e/rc_heap_bump_precise_drop_test.go`): 4
+Measured win (`internal/testing/e2e/rc_heap_bump_precise_drop_test.go`): 4
 sequentially-dead size-class arrays reclaim to ~1 block instead of 4 (wasm
 416 B vs the live-set 4×; natives' freelist arena makes the bump probe
 insensitive but the RSS benefit is real). Value-correctness + the
@@ -1906,7 +1906,7 @@ reuse the argument. Sliced for risk:
     consume now, so code that would become a use-after-move once Slice B lowers
     `own` args as moves is rejected up front. No runtime change — owned params
     still lower as borrowed; this only establishes the invariant the transfer +
-    reuse slices rely on. Tests: `internal/checker/owned_params_test.go` (11
+    reuse slices rely on. Tests: `internal/check/checker/owned_params_test.go` (11
     cases — consume-after-call / match / loop / non-diverging-branch FIRE;
     borrow* / diverging-branches / borrow-only / method-receiver are OK; the
     contextual-keyword disambiguation both ways) + the `E050` explanation file.
@@ -2213,13 +2213,13 @@ reuse the argument. Sliced for risk:
   - `internal/codegen/wasmbin/runtime.go:1481` `buildAllocBody` (the
     freelist-pop-or-bump body `__fern_alloc_reuse` fronts);
     `:1608` `buildFreeBody`.
-  - `internal/ir/ir.go:1696` `computeFreeEligible` (taint source for
+  - `internal/oracle/ir/ir.go:1696` `computeFreeEligible` (taint source for
     rule 2); `:2036` `computeMovedLocals` (dominance for rule 3);
     `:1984` `emitRcDecLocalsAtExit` + `:2107`
     `emitRcDecLocalsAtExitExcept` (where `OpDropReuse` replaces the
     paired dec); `:2382` the `__fern_box_free` struct-drop tail and
     `:4246` `emitEnumNew` (the alloc sites `OpAllocReuse` replaces).
-  - `internal/ir/move_on_return_test.go` — template for the
+  - `internal/oracle/ir/move_on_return_test.go` — template for the
     analysis-level tests.
 
 #### Completion ordering (decided 2026-06-02)
@@ -2309,7 +2309,7 @@ hook. Investigation overturned this doc's original "high risk" framing:
     variant-constructor calls as fresh-owned producers in `rhsTainted` +
     escape-tainting their args in the eligibility walk — a taint-analysis
     change with broad blast radius, deliberately left out.
-  - Tests: `internal/ir/enum_reuse_test.go` (6 cases) +
+  - Tests: `internal/oracle/ir/enum_reuse_test.go` (6 cases) +
     `conformance/cases/enum_reuse_churn` (cross-variant box
     reuse, array payloads, green on all four backends through both
     free-on/free-off differential gates).
@@ -2429,9 +2429,9 @@ match (and a flat closure dec leaks captures anyway), and a tuple needs
 the exit sweep's per-element deep drop. Gated on `ast.RcFreeEnabled` so
 the free-off baseline is byte-identical.
 
-Tests: `internal/ir/loop_var_drop_test.go` (dec-on-reinit fires for an
+Tests: `internal/oracle/ir/loop_var_drop_test.go` (dec-on-reinit fires for an
 eligible loop-body array var; is skipped for a closure var) +
-`internal/e2e/rc_loop_var_test.go` (array / struct / enum / string churn
+`internal/testing/e2e/rc_loop_var_test.go` (array / struct / enum / string churn
 loops, value-correct-only-if-reuse-sound folded with
 `__rc_underflow_count()`, on x86_64 + arm64 + wasm) +
 `conformance/cases/loop_var_reclaim` (free-on == free-off
@@ -2556,7 +2556,7 @@ to assert: there is no over-*retain* counter (only `__rc_underflow_count`
 for over-release), so a regression test would assert *reuse* instead — a
 loop-body-`let` program whose per-iteration buffers get reclaimed+reused
 to a bounded high-water mark, mirroring `TestX86_64FreelistReuse` /
-`pushLoopFreeSrc` in `internal/e2e/rc_freelist_test.go`.
+`pushLoopFreeSrc` in `internal/testing/e2e/rc_freelist_test.go`.
 
 ##### Testing-parity note
 
@@ -2564,7 +2564,7 @@ Earlier slices (through the move family) were developed x86_64-only and
 rode CI for arm64/wasm. 5e was developed and verified with the full
 local toolchain — arm64 via `aarch64-linux-gnu-gcc` + `qemu-aarch64`,
 wasm via `wasmtime` — through both free-on/free-off differential gates
-on all three, plus the full e2e suite (`ok internal/e2e ~424s`). A
+on all three, plus the full e2e suite (`ok internal/testing/e2e ~424s`). A
 future 5f (if the alias analysis lands) should clear the same bar: its
 failure mode (a freed-then-reused block) is the kind the no-free arena
 masks, so the free-on differential gate on every backend is the
@@ -2591,7 +2591,7 @@ seed at `heapBaseAddr` and returns `cursor − seed`; the interpreter
 returns 0 (Go allocator, no bump cursor). This unblocks the rest of
 Phase 6 (it makes RSS/allocation behaviour assertable in tests and
 profilable) and retroactively pins the reclamation wins:
-`internal/e2e/rc_heap_bump_test.go` asserts a build-and-discard loop's
+`internal/testing/e2e/rc_heap_bump_test.go` asserts a build-and-discard loop's
 bump growth is identical at N=50 and N=5000 on x86_64 + arm64 + wasm —
 the proof that Phase 5h / push-loop reclamation holds memory bounded,
 which the soundness-only tests couldn't show.
@@ -2624,7 +2624,7 @@ against its eventual free and live_bytes stays exact. x86-64 + arm64
 emission is byte-identical to a build without the feature (verified by
 `.s` diff; on the self-host `TestSelfHostHeapEventFlagOffX86_64` and
 `TestSelfHostArm64LeakcheckOffEmitsNothing` pin the no-symbols proxy).
-Tests: `internal/e2e/leakcheck_test.go` (balanced `__alloc`/`__free`
+Tests: `internal/testing/e2e/leakcheck_test.go` (balanced `__alloc`/`__free`
 loop, rc-driven drop-everything loop, deliberate leak with pinned
 counts, exit-code + stdout preservation on both seams, both backends).
 Slice 2 (parked): a uniform allocation header would upgrade the counts
@@ -2656,7 +2656,7 @@ Gated identically to the array / string siblings on `RcFreeEnabled` +
 path). Routing through the existing generated `__drop_tuple_` fn avoids
 duplicating `dropStructField` / `decValueOnStack`, the blocker the prior
 "out of scope" note cited. Verified by `Test{X86_64,Arm64,WASM}TupleHeapBumpBounded`
-(`internal/e2e/rc_heap_bump_tuple_test.go`): a plain `(i32, i32)` loop and
+(`internal/testing/e2e/rc_heap_bump_tuple_test.go`): a plain `(i32, i32)` loop and
 a deep-drop `(i32[], i32)` loop both hold a flat high-water at N=50 vs
 N=5000 (pre-fix the latter grew 2400 → 240000 B); 0 over-releases.
 **Destructure-binding reclamation — SHIPPED ON ALL THREE BACKENDS
@@ -2678,7 +2678,7 @@ alias case (`p` + temp co-own, the merged tuple slice dec's `p` first).
 First-iteration-safe via the entry zero-init (the slot is NULL, so the
 drop's `is_unique` / null guards no-op). Verified by
 `Test{X86_64,Arm64,WASM}DestructureHeapBumpBounded`
-(`internal/e2e/rc_heap_bump_destructure_test.go`): the `(i32[], i32)`
+(`internal/testing/e2e/rc_heap_bump_destructure_test.go`): the `(i32[], i32)`
 destructure loop holds a flat 96 B (plain tuple 32 B) at N=50 vs N=5000,
 with 0 over-releases over 200 iterations and value-correct sums. The
 differential gate + self-host VM/parser suites stay green.
@@ -2703,10 +2703,10 @@ so a shared field box is only dec'd. Types `dropFnNameFor` declines (Map
 handles, non-uniform / non-heap-boxed generic enums) fall back to the flat
 box dec (leak-but-never-UAF). Verified by
 `Test{X86_64,Arm64,WASM}StructEnumHeapBumpBounded`
-(`internal/e2e/rc_heap_bump_struct_enum_test.go`): a `struct{ data: i32[] }`
+(`internal/testing/e2e/rc_heap_bump_struct_enum_test.go`): a `struct{ data: i32[] }`
 and an `enum Arr(i32[])` loop both hold a flat 96 B at N=50 vs N=5000,
 with 0 over-releases over 200 iterations and value-correct sums. The full
-`internal/ir` + `internal/e2e` suite (incl. the heavy self-host VM/parser
+`internal/oracle/ir` + `internal/testing/e2e` suite (incl. the heavy self-host VM/parser
 struct/enum users + the free-on==free-off differential gate) stays green.
 **Struct reassignment-overwrite deep reclamation — SHIPPED ON ALL THREE
 BACKENDS (2026-06-02).** Closes the reassignment half of the struct gap.
@@ -2727,10 +2727,10 @@ the shared `emitStructEnumSlotDrop`, gated on `freeEligible` like the
 array / string / tuple reassignment siblings (the conservative call-arg
 taint keeps most call-RHS reassignments on the flat dec — safe). Verified
 by `Test{X86_64,Arm64,WASM}StructReassignReclaim`
-(`internal/e2e/rc_heap_bump_reassign_test.go`): a replaced-field
+(`internal/testing/e2e/rc_heap_bump_reassign_test.go`): a replaced-field
 reassignment loop holds a flat 80 B at N=50 vs N=5000 (was 1648→160048),
 and a carried-over `data: b.data` loop is value-correct with 0
-over-releases over 200 iterations. The full `internal/ir` + `internal/e2e`
+over-releases over 200 iterations. The full `internal/oracle/ir` + `internal/testing/e2e`
 suite (incl. the heavy self-host struct-reuse users + the differential
 gate) stays green.
 Known gap (follow-up): the ENUM reuse path (`tryEnumReuseOverwrite`) is
@@ -2751,11 +2751,11 @@ extracts the exit sweep's Map-drop body into a shared `emitMapSlotDrop`
 then `__fern_map_drop` for buf + handle — every helper self-guards on
 rc==1) and routes Map loop-var reinit through it. Verified by
 `Test{X86_64,Arm64,WASM}MapReinitReclaim`
-(`internal/e2e/rc_heap_bump_map_reinit_test.go`): a `Map[i32,i32]` loop
+(`internal/testing/e2e/rc_heap_bump_map_reinit_test.go`): a `Map[i32,i32]` loop
 holds a flat high-water at N=50 vs N=5000 (was 6400→640000), and a
 `Map[string,i32]` loop (string key + value columns) is value-correct with
-0 over-releases over 200 iterations. The full `internal/ir` +
-`internal/e2e` suite (incl. the heavy self-host map users + the
+0 over-releases over 200 iterations. The full `internal/oracle/ir` +
+`internal/testing/e2e` suite (incl. the heavy self-host map users + the
 differential gate) stays green.
 
 **Nested-array (array-of-array) inner-buffer reclamation — SHIPPED ON ALL
@@ -2776,7 +2776,7 @@ consults the same dispatch (so array-of-struct / -tuple reinit also
 deep-drops, matching the exit sweep). Inner arrays of rc / string elements
 keep the flat `__fern_drop_arr_ptr` (recursive deep drop — a later slice).
 Verified by `Test{X86_64,Arm64,WASM}NestedArrayReclaim`
-(`internal/e2e/rc_heap_bump_nested_array_test.go`): a `let g = [[..],[..]]`
+(`internal/testing/e2e/rc_heap_bump_nested_array_test.go`): a `let g = [[..],[..]]`
 loop holds a flat 192 B at N=50 vs N=5000 (was 3264→320064), value-correct
 with 0 over-releases over 200 iterations. The full suite (incl. self-host +
 differential gate) stays green.
@@ -2787,7 +2787,7 @@ earlier reading: a `let s = a + b` loop is actually BOUNDED, not leaking —
 the 1600→64576 ramp is a freelist warmup that PLATEAUS (N=5000 == N=50000
 == 64576 on wasm; natives read 0 because a short concat stays SSO-inline,
 no heap). `Test{X86_64,Arm64,WASM}StringConcatBounded`
-(`internal/e2e/rc_heap_bump_string_test.go`) now pins that bounded
+(`internal/testing/e2e/rc_heap_bump_string_test.go`) now pins that bounded
 high-water — the guard the over-release-only string tests lacked. Along
 the way, fixed an uninitialised read in `__fern_str_dec`'s rc==1 free:
 it freed `__fern_box_free(data, mem[data-4])`, but `__fern_alloc_rc1`
@@ -2936,7 +2936,7 @@ Next Phase-6 steps (open):
         (5000 == 50000) — a freelist warmup plateau, same shape as rc string
         concat. The earlier "320064 → 192352" half-reclaim figure was the
         pair-only free; full env reclaim closes it.
-      + Coverage: `internal/e2e/rc_heap_bump_closure_array_test.go` — scalar-
+      + Coverage: `internal/testing/e2e/rc_heap_bump_closure_array_test.go` — scalar-
         and pointer-capture `(() => i32)[]` bounded across 10x N on all three
         backends, plus an aliased-array (`let gs = fs`, rc>1) AND a
         shared-element (`[f, f]`, the same pair twice + still-live `f`)
@@ -2984,7 +2984,7 @@ Next Phase-6 steps (open):
         overwrite path, which frees soundly + bounded at the cost of a fresh
         box alloc. Scalar-only enums (which don't reuse anyway —
         `TestEnumReuseSkipsLiteralScalar`) have nothing to free.
-      + Coverage: `internal/e2e/rc_heap_bump_enum_reuse_test.go` — the bump
+      + Coverage: `internal/testing/e2e/rc_heap_bump_enum_reuse_test.go` — the bump
         probe (1616→160016 ⇒ flat 80 B), cross-variant reuse value-correct,
         and an aliased-payload + forced-reuse adversarial, each
         `__rc_underflow_count() == 0` on x86_64 / arm64 / wasm. The reuse
@@ -3017,7 +3017,7 @@ Next Phase-6 steps (open):
         `dropFnNameFor` declines). The once-per-call EXIT SWEEP stays inline
         (`emitEnumSlotDrop`) — its bounded leak doesn't need the gen-fn
         indirection, and keeping it inline preserves its golden-test codegen.
-    Coverage: `internal/e2e/rc_heap_bump_match_scrutinee_test.go` (expr + stmt
+    Coverage: `internal/testing/e2e/rc_heap_bump_match_scrutinee_test.go` (expr + stmt
     forms bounded across N on x86_64 / arm64 / wasm + an aliased-scrutinee
     UAF/over-release safety case).
   - **Scalar-literal arg taint — LITERAL HALF SHIPPED; BINARY HALF WON'T-DO
@@ -3165,7 +3165,7 @@ Plan item E3 (`docs/NICHE-BORROWS-PLAN.md`): the ICFP 2022
 frame-limited / drop-guided source selection (Lorenzen & Leijen,
 "Reference Counting with Frame-Limited Reuse") implemented behind
 `ast.RcReuseDropGuided` (default OFF, env knob
-`FERN_RC_REUSE_DROP_GUIDED=1`) in `internal/ir/rc_dropguided.go`,
+`FERN_RC_REUSE_DROP_GUIDED=1`) in `internal/oracle/ir/rc_dropguided.go`,
 as an evaluation — NOT a default flip. The flag swaps ONLY the
 pair-selection scan inside `computeReuseSources`; every proposed
 pair still passes the identical gates (`reuseClassOf`,
@@ -3200,7 +3200,7 @@ matching on the suffix-closed eligibility structure), and flow 3
 adds the one arm-drop shape. Every `general_reuse_test.go` /
 `struct_reuse_test.go` / `enum_reuse_test.go` /
 `c2_consuming_reuse_test.go` expectation holds unchanged under the
-flag (`internal/ir` suite green with `FERN_RC_REUSE_DROP_GUIDED=1`).
+flag (`internal/oracle/ir` suite green with `FERN_RC_REUSE_DROP_GUIDED=1`).
 
 **Measured numbers (x86-64, free+freelist on).**
 

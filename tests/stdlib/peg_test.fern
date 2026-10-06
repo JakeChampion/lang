@@ -7,7 +7,7 @@ import "std/peg";
 //   fern -interp tests/stdlib/peg_test.fern
 //
 // Output is TAP-13. Exit code 0 if every case passes. Gated on the
-// Go side by TestRunnerPegExamplePasses (internal/e2e/test_runner_test.go).
+// Go side by TestRunnerPegExamplePasses (internal/testing/e2e/test_runner_test.go).
 
 // Literal matching: anchored at 0, pos lands after the match.
 function test_lit_match(): test.TestOutcome {

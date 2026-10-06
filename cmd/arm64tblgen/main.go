@@ -1,5 +1,5 @@
 // Command arm64tblgen writes the self-host arm64 assembler's vocabulary from
-// internal/arm64tbl — the arm64 twin of cmd/x86tblgen.
+// internal/tables/arm64tbl — the arm64 twin of cmd/x86tblgen.
 //
 // Two kinds of block are rewritten in place in
 // compiler/arm64_native.fern: one per Advanced SIMD class, and the
@@ -17,8 +17,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jakechampion/lang/internal/arm64tbl"
-	"github.com/jakechampion/lang/internal/fmtsource"
+	"github.com/jakechampion/lang/internal/syntax/fmtsource"
+	"github.com/jakechampion/lang/internal/tables/arm64tbl"
 )
 
 // markers brackets one generated block: the class name appears in both.

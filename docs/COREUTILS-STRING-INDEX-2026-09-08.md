@@ -132,6 +132,6 @@ SSA CLI roundtrips and debug/release SSA sort GNU parity passed. The combined
 post-cache-fix regression and sort run passed in 0.056 and 2.188 s.
 `make lint-all` passed after adding benchmark artifacts, exit 0. The full native
 ARM64 Linux `go test ./... -timeout=60m` suite passed, exit 0: coreutils
-244.321 s, e2e 1649.904 s and e2eselfhost 132.977 s. No timing benchmarks ran
+244.321 s, e2e 1649.904 s and e2ecompiler 132.977 s. No timing benchmarks ran
 alongside that suite. Existing x86-64 self-host/driver-size CI failures remain
 tracked separately in #8894; this change does not repin those baselines.

@@ -8,7 +8,7 @@ opt-in surface over all of them — the thing you reach for *before* you know.
 ```sh
 fern -target x86-64-linux -sanitize -g -o prog prog.fern && ./prog
 # or, for a driver you don't invoke directly:
-FERN_SANITIZE=1 go test ./internal/e2e/ -run TestWhatever
+FERN_SANITIZE=1 go test ./internal/testing/e2e/ -run TestWhatever
 ```
 
 Both spellings do the same thing. The flag is read at **compile** time — it
@@ -95,7 +95,7 @@ same deliberate use-after-free program (`__fern_arr_dec` on an array's data
 pointer, then `__fern_rc_inc` on the retained address) trips the poisoned-read
 report with exit 124 and a backtrace on both, and the same clean program is
 silent with the same census on both
-(`internal/e2e/sanitizer_test.go`, the `TestX86_64Sanitize*` /
+(`internal/testing/e2e/sanitizer_test.go`, the `TestX86_64Sanitize*` /
 `TestArm64Sanitize*` pairs). That probe is also the recipe for reaching the
 detector from Fern: the plain `__rc_dec` builtin never frees on native, so a
 double `__rc_dec` reads rc 0 and reports over-release instead - only the

@@ -1,0 +1,204 @@
+package ir
+
+// IR-level verify-and-enable for the `fip` / `fbip` function modifiers
+// (plan E2', docs/NICHE-BORROWS-PLAN.md; the "visibility" half of
+// docs/REUSE-CONTRACT.md). The checker's E053 walk enforces the SHAPE
+// rules; this pass closes the loop by checking the ops the lowering
+// ACTUALLY emitted against the annotation's allocation budget:
+//
+//   - `fip`      — zero fresh allocation ops. The checker admits the
+//     constructor SHAPE (#9602) precisely because it cannot tell a paired
+//     rebuild from a fresh one; this is where that is decided, and the
+//     allowance of 0 means every constructor must be reuse-paired.
+//   - `fbip`     — every constructor allocation site must be reuse-PAIRED
+//     with a donor box: the general pairing (computeReuseSources), the
+//     self-overwrite hooks (tryStructReuseOverwrite /
+//     tryEnumReuseOverwrite), or the consuming-match hand-off
+//     (consumingMatchReuse). A paired site lowers to `__alloc_reuse`
+//     (an OpCallDirect) instead of OpAlloc, so the op scan below counts
+//     exactly the UN-paired fresh sites.
+//   - `fip(n)` / `fbip(n)` — at most n fresh (un-paired) constructor
+//     allocations are permitted; the count is owned here, not by the
+//     checker.
+//
+// Koka semantics note: fip/fbip is a SHAPE guarantee, not a per-execution
+// one. A paired site still carries the runtime `is_unique` guard, and its
+// shared-input fallback allocates a fresh box INSIDE the `__alloc_reuse`
+// helper — that fallback branch does NOT count as an allocation here
+// (exactly Koka's stance: on shared inputs a fip function may copy).
+//
+// The pass is strictly READ-ONLY over the emitted ops and the rc plan's
+// results — it never influences a pairing decision — and it runs on the
+// DEFAULT pairing path (plan E3's verdict: `ast.RcReuseDropGuided` stays
+// off; when the flag is on, the drop-guided selection is a superset, so
+// verification only gets easier).
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/jakechampion/lang/internal/syntax/ast"
+)
+
+// errfCode formats a positioned, coded IR diagnostic as an error value.
+// It mirrors the checker's errfCode shape (pos, code, message) so the
+// diag catalogue-completeness gate (internal/syntax/diag) can scrape this
+// package's code emissions, while staying on the IR layer's plain-error
+// channel: LowerWith callers already surface the message verbatim.
+func errfCode(pos ast.Position, code, format string, args ...any) error {
+	return fmt.Errorf("%s: %s: %s", pos, code, fmt.Sprintf(format, args...))
+}
+
+// verifyFipClaims checks every just-lowered `fip` / `fbip` function against
+// its allocation budget, once the whole program is lowered. lowered[i] is
+// prog.Funcs[i]'s lowering, nil for a body-less import.
+func verifyFipClaims(prog *ast.Program, lowered []*Func) error {
+	claimed := false
+	for _, fn := range prog.Funcs {
+		if fn.Fip || fn.Fbip {
+			claimed = true
+			break
+		}
+	}
+	if !claimed {
+		return nil
+	}
+	// The verification is defined against the DEFAULT lowering: with the
+	// Perceus free/reuse layers force-disabled (debug + differential
+	// configurations only), the pairing machinery the fbip credit rests on
+	// is deliberately off, so every constructor would read "fresh" and the
+	// claim cannot be meaningfully verified — skip instead of mis-reporting.
+	if !ast.RcFreeEnabled || !ast.RcReuseEnabled {
+		return nil
+	}
+	funcs := make([]*Func, 0, len(lowered))
+	for _, f := range lowered {
+		if f != nil {
+			funcs = append(funcs, f)
+		}
+	}
+	cx := newArrayContext(&Program{Funcs: funcs})
+	for i, fn := range prog.Funcs {
+		if lowered[i] == nil {
+			continue
+		}
+		if err := verifyFipAllocs(fn, lowered[i], cx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// verifyFipAllocs checks one lowered `fip` / `fbip` function's ops against
+// its allocation budget (see the package comment above). Returns an E068
+// error naming the function, every offending site's position, and the
+// count vs the allowance.
+//
+// A std/array `map` the checker admitted (E053 lets one through on an
+// `own` receiver) is a site here too: it is allocation-free exactly when R7
+// of docs/REUSE-CONTRACT.md writes it through the donor, and `inPlaceVerdict`
+// is the same answer the pass acts on, so a `map` it declines is counted
+// as fresh with the rule that declined it — the stage-naming diagnostic
+// #9733 asks for.
+func verifyFipAllocs(fn *ast.FuncDecl, out *Func, cx arrayContext) error {
+	if !fn.Fip && !fn.Fbip {
+		return nil
+	}
+	labels := ctorSiteLabels(fn)
+	var sites []string
+	for _, op := range out.Ops {
+		var what string
+		switch op.Kind {
+		case OpAlloc:
+			// An OpAlloc in the raw op stream is an UNCONDITIONAL fresh
+			// bump allocation at that point of the (possibly branching)
+			// program path: every reuse-paired constructor lowers to
+			// `__alloc_reuse` instead, and that helper's shared-input
+			// fallback allocates internally (exempt by design).
+			what = "heap allocation"
+			if l, ok := labels[op.Pos]; ok {
+				what = l
+			}
+		case OpStrConcat:
+			what = "string concatenation"
+		case OpMakeClosure:
+			// A closure capturing nothing is a plain function value: the
+			// battery's InlineZeroCaptureClosures turns it into a static
+			// cell before any backend emits it, so it allocates nothing.
+			// It is also the element function R7 admits.
+			if op.I32 == 0 {
+				continue
+			}
+			what = "closure construction"
+		case OpCallDirect:
+			// E053 admits `map` on an `own` root by the method NAME, and
+			// R7 recognizes only std/array's (the verb table is derived
+			// from the program). A `map` the program declared for itself
+			// is neither verified nor known to be allocation-free, so it
+			// is a site, or the claim would pass over it vacuously.
+			if v, named := arrayVerbOf(op.Str); !named || v != "map" || cx.verbs[op.Str] != "" {
+				continue
+			}
+			what = "`map` that is not std/array's, so nothing verifies it"
+		default:
+			continue
+		}
+		sites = append(sites, fmt.Sprintf("%s at %s", what, op.Pos))
+	}
+	// With the in-place pass switched off (a debug configuration, like the
+	// reuse flags above) no `map` is written through its donor, so the claim
+	// is verified against machinery that is deliberately absent; skip the
+	// sites rather than report every one.
+	if os.Getenv("FERN_NO_ARRAY_INPLACE") != "1" {
+		for _, c := range collectArrayCalls(out, cx) {
+			if _, why := inPlaceVerdict(out, c, cx); why != StorageReused {
+				sites = append(sites, fmt.Sprintf("`%s` at %s materialized by the combinator: %s",
+					c.verb, out.Ops[c.op].Pos, why.Reason()))
+			}
+		}
+	}
+	if len(sites) <= fn.FipAllowance {
+		return nil
+	}
+	kw := "fip"
+	if fn.Fbip {
+		kw = "fbip"
+	}
+	// One remedy for every tier now that the checker admits the constructor
+	// shape everywhere (#9602): a site here is an un-paired construction the
+	// author can pair or grade, in a bare `fip` exactly as in an `fbip`.
+	remedy := "pair each construction with a dead uniquely-owned donor of the same shape, hand a `map` an `own` array and a capture-free element function (R7), or grade the claim (`" + kw + "(n)`)"
+	return errfCode(fn.P, "E068",
+		"`%s` function %q allocates: %d un-reused allocation site(s) exceed the allowance of %d: %s — %s (run `fern explain E068`)",
+		kw, fn.Name, len(sites), fn.FipAllowance, strings.Join(sites, "; "), remedy)
+}
+
+// ctorSiteLabels maps the source position of every constructor expression
+// in the function body to a human-readable label, so an OpAlloc (which
+// carries the position the builder stamped at emission) can be reported
+// as the construct the user wrote. Best-effort: an alloc emitted for an
+// internal shape (an Option rebox, a TRMC loop cell, …) keeps the generic
+// "heap allocation" label.
+func ctorSiteLabels(fn *ast.FuncDecl) map[ast.Position]string {
+	m := map[ast.Position]string{}
+	if fn.Body == nil {
+		return m
+	}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.StructLit:
+			m[x.Pos()] = fmt.Sprintf("struct literal %q", x.TypeName)
+		case *ast.TupleLit:
+			m[x.Pos()] = "tuple literal"
+		case *ast.ArrayLit:
+			m[x.Pos()] = "array literal"
+		case *ast.Call:
+			if x.IsVariantCall {
+				m[x.Pos()] = "enum variant construction"
+			}
+		}
+		return true
+	})
+	return m
+}

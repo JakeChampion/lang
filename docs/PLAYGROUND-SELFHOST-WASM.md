@@ -101,7 +101,7 @@ answer. Use `--invoke main`, which appends main's return value to stdout.
 `internal/wasm/playground` (563 lines over 4 files) is the library half and
 depends on `internal/codegen/wasmbin` only; `cmd/fern-wasm` pulls in
 `codegen/arm64` and `codegen/x86_64` on top for the assembly pane, plus
-`internal/interp` and `internal/lsp`.
+`internal/oracle/interp` and `internal/tools/lsp`.
 
 So a self-host replacement is not one artifact. It is *at least* compile,
 interpret and check; the LSP is a fourth consumer and the furthest from having
@@ -277,7 +277,7 @@ targets providing it: [arm64-android arm64-darwin arm64-linux x86-64-linux]
 ```
 
 The `strbuf_*` third of this is **fixed**: `strbuf_reset` / `strbuf_append` /
-`strbuf_take` are core builtins (`internal/platforms/enforce.go:151-153`), so
+`strbuf_take` are core builtins (`internal/pkg/platforms/enforce.go:151-153`), so
 E066 never refuses them and they reach codegen on every target, and wasmbin was
 the one backend with no lowering for them at all. It has one now — a growable
 heap buffer over three scratch words, the shape the natives use as well since
@@ -291,7 +291,7 @@ analog), `write_file_exec` on `fsmode` (`path_open` has no mode argument and
 the component-model filesystem has no permission bits, #6133), and the
 `__c_call0..4` family on `cabi` (no C ABI on any wasm path) — the same
 refusals the self-host has made since #4317/#4375, moved into
-`internal/platforms` where a target property belongs.
+`internal/pkg/platforms` where a target property belongs.
 
 `sleep_ms` was the last one, and #7947 landed it: wasm CAN block, so preview-1
 takes `poll_oneoff` with a single monotonic-clock subscription and preview-2
@@ -324,14 +324,14 @@ names it does not know, so a builtin with no lowering at all passed it silently.
 has somewhere to land, and its known-missing list — empty since #7947 — is
 exact in both directions, so a fix cannot leave the table stale. Its sibling
 `TestPlatformExemptionsAreReallyRefused` re-derives the refused list from
-`internal/platforms` rather than trusting it, so moving a name there has to be
+`internal/pkg/platforms` rather than trusting it, so moving a name there has to be
 a real refusal.
 
 ### 2. The CLI driver is the wrong entry point
 
 Both compilers refuse `fern.fern` for wasm on `write_file_exec` — the
 self-host through its own `capability_violations` gate, native through
-`internal/platforms`, and now with the same E066 text on both sides.
+`internal/pkg/platforms`, and now with the same E066 text on both sides.
 
 `compiler/fern.fern` is a *CLI*: it takes argv paths, reads files,
 and writes executables. None of that is what the playground wants, and
@@ -353,7 +353,7 @@ so what remains is the driver wiring it up.
 (25 sites, plus ~15 siblings) as the shape of the work. Every one of them is
 guarded by `if len(runner) != 0`, where `runner` is empty on a native
 `linux/amd64` host and `[]string{qemu-x86_64}` otherwise
-(`internal/e2eharness/x86_64.go:39-58`). They fire under a **qemu
+(`internal/testing/e2eharness/x86_64.go:39-58`). They fire under a **qemu
 cross-runner**, never because of wasm, and none of them fires on an amd64 box.
 The real filesystem constraint is blocker 2, and it is about the driver's
 shape, not about these tests.
@@ -383,7 +383,7 @@ serves it from `go:embed` (`internal/stdlib/stdlib.go:37`). Native's mechanism �
 `-embed DIR` plus `__fern_asset("name")` / `__fern_assets()`, folded into
 ordinary string literals (`docs/EMBED.md`) — is now on both compilers:
 `compiler/embed.fern`, gated against native case for case by
-`internal/e2eselfhost/self_host_embed_test.go`. The self-host compiler embeds
+`internal/testing/e2ecompiler/self_host_embed_test.go`. The self-host compiler embeds
 its own stdlib and finds `std/io.fern` in the resulting binary by name.
 
 The stdlib itself as a wasm core module is **1,610,275 bytes raw / 458,170
@@ -422,7 +422,7 @@ What is left:
 
    Interpret now writes: `interp.fern` implements `print` / `write` / `eprint`,
    compared against the native interpreter on all three channels by
-   `internal/e2eselfhost/self_host_interp_io_test.go`. It had **no I/O builtins
+   `internal/testing/e2ecompiler/self_host_interp_io_test.go`. It had **no I/O builtins
    at all** before — no `print` anywhere in its 4,138 lines — so
    `interp_run.fern` reported an exit code and nothing else, and the exit-code
    driver test next door passed either way.
@@ -430,7 +430,7 @@ What is left:
    `putchar` landed with it, and settling its parity question found a native
    bug rather than a self-host one. Measured across all four engines, the three
    compiled backends wrote the low byte (`putchar(233)` → `e9`) and
-   `internal/interp` wrote `%c` of the argument as a rune (`c3 a9`); an
+   `internal/oracle/interp` wrote `%c` of the argument as a rune (`c3 a9`); an
    argument outside a rune's range gave U+FFFD instead of wrapping. The
    backends match `docs/FEATURE-AUDIT.md` ("`putchar` (byte)",
    `write(1, &byte, 1)`) and `TestX86_64NativePutchar`, so the interpreter was

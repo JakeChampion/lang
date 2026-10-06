@@ -1,5 +1,5 @@
 // compiler/ambient.fern — the ambient-effect rule (E080), the
-// mirror of internal/ambient.
+// mirror of internal/check/ambient.
 //
 // A function handed a platform reaches every host effect through the
 // bag: `std/platform` puts the log sink, the clocks, the environment and

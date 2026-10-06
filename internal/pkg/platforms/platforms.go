@@ -1,0 +1,439 @@
+// Package platforms hosts the per-target descriptor table that
+// declares which capabilities, handler kinds, and bindings each
+// compilation target supports.
+//
+// Background: PR #840 introduced the Platform parameter
+// (`function handle(req, plat): HttpResponse`) but every target
+// currently shares a one-field placeholder Platform struct. Per
+// docs/PLATFORM-RESEARCH.md Rec §2, the long-term shape is a
+// per-target descriptor that drives:
+//
+//   - Capability surface (fetch, kv, secrets, log, now, …) —
+//     determines what a platform can offer a handler per target.
+//   - Handler kinds (fetch, scheduled, alarm, startup, …) —
+//     determines what signatures the user can declare beyond
+//     `handle(req, plat)`.
+//   - Bindings consumed (kv namespaces, service bindings,
+//     config dictionaries) — declares the per-deployment
+//     wiring the host needs to satisfy.
+//
+// This package is Phase 1 of that design: descriptors are
+// declared as Go literals here (no file-based loader yet),
+// expose a typed surface the compiler can query, and ship one
+// entry per currently-supported target. Phase 2 will use the
+// descriptors to drive the auto-injected Platform struct shape
+// per target; Phase 3 will accept user-defined platforms via
+// `internal/pkg/platforms/<custom>/platform.fern` files.
+package platforms
+
+import (
+	"fmt"
+	"sort"
+)
+
+// Descriptor describes a compilation target's runtime surface.
+// One Descriptor per supported `-target=...` value.
+type Descriptor struct {
+	// Name is the canonical -target= flag value (e.g. "wasi-http",
+	// "arm64", "x86-64"). Lookups in `ForTarget` match this
+	// case-sensitively.
+	Name string
+
+	// Description is a one-line human-readable summary of the
+	// target. Surfaces in `fern -targets` listing output and in
+	// future LSP completions for the -target flag.
+	Description string
+
+	// Capabilities lists the host capabilities the Platform
+	// struct exposes on this target. Phase 1 just declares
+	// names; Phase 2 will pair each name with a function
+	// signature and a target-specific glue implementation.
+	Capabilities []string
+
+	// HandlerKinds lists the entry-point shapes the user can
+	// declare. The first entry is canonical (auto-`main`
+	// synthesis targets it); subsequent entries are
+	// alternative handler signatures the target accepts.
+	HandlerKinds []string
+
+	// Bindings lists the per-deployment configuration the host
+	// supplies — kv namespaces, service bindings, config maps,
+	// etc. Empty for targets that don't take per-deploy config
+	// (e.g. native arm64, x86-64). Today purely declarative;
+	// Phase 3 wires it to runtime binding-fetch glue.
+	Bindings []string
+
+	// ISA and Environment are the two halves of the target's name. ISA
+	// selects the backend; Environment selects what the host provides
+	// and therefore drives Capabilities and Entry. Callers branching on
+	// "is this wasm" or "is this Darwin" should read these rather than
+	// string-matching Name.
+	ISA         string
+	Environment string
+
+	// Entry is how the artifact is entered. It drives whether the
+	// native backends emit the process-entry runtime (`_start` /
+	// `_main` and the argc/argv/envp capture off the process stack),
+	// which only EntryProcess has.
+	Entry EntryShape
+
+	// NoBackend marks a target that is DECLARED and type-checkable
+	// but that no codegen backend emits yet, so `fern -check
+	// -target NAME` works and compiling is a clear refusal rather
+	// than a fall-through to "unknown target". The freestanding
+	// target lands this way on purpose (#6509): the constraint is
+	// worth enforcing before there is anything to enforce it on,
+	// so the codegen that follows (#6510, #6511) is written
+	// against a compiler that already rejects what it may not do.
+	NoBackend bool
+}
+
+// EntryShape names how something outside the artifact transfers control
+// into it. It is a property of the host, not the ISA, so it lives on the
+// environment alongside capabilities.
+//
+// The three shapes are genuinely different contracts, not spellings of
+// one: EntryProcess is handed a populated process stack, EntryExports is
+// never "entered" at all, and EntryReset arrives with no stack pointer.
+type EntryShape string
+
+const (
+	// EntryProcess: something above (a kernel, dyld, a wasm runtime)
+	// enters the artifact at a known symbol with a process context
+	// already set up. `_start` on Linux ELF, `_main` on Mach-O.
+	EntryProcess EntryShape = "process"
+
+	// EntryExports: the artifact is a set of exported symbols its
+	// embedder calls. Nothing enters it; there is no entry symbol to
+	// emit and no process stack to read argv off.
+	EntryExports EntryShape = "exports"
+
+	// EntryReset: the artifact owns the machine and is entered at a
+	// reset vector, with no stack pointer, no heap and no caller.
+	//
+	// Declared but not yet emitted for by any target — it exists so
+	// the kernel posture is a second value here rather than a rewrite
+	// of everything keyed on "freestanding means exported symbols".
+	// docs/BARE-METAL-PLAN.md.
+	EntryReset EntryShape = "reset"
+)
+
+// OrDefault resolves the zero value to EntryProcess, so a caller that
+// predates the field — every codegen `Options{}` literal — keeps the
+// historical behaviour of emitting the process entry.
+func (e EntryShape) OrDefault() EntryShape {
+	if e == "" {
+		return EntryProcess
+	}
+	return e
+}
+
+// environments carry the per-HOST half of a target: what the platform
+// underneath provides. Capabilities describe what the host grants, and
+// the ISA has nothing to say about whether there is a filesystem — so
+// the set lives here and each target names an environment rather than
+// repeating a list.
+//
+// That repetition is what this replaces: the four native targets
+// carried a byte-identical eleven-element list, and adding `args` and
+// `random` (#6516) meant editing the same line four times. #6529
+// carries this the rest of the way, splitting the target NAME into
+// <isa>-<environment> so the two axes are spelled separately too.
+// Capability sets live one level below the environment, on a PROFILE it
+// names. linux / darwin / android are genuinely different environments —
+// different object formats, different syscall vectors, and #6510's entry
+// shape is a per-environment property — but a host either has a
+// filesystem or it does not, and all three grant exactly the same set.
+// A shared profile keeps that list written once without pretending the
+// three environments are one.
+type capabilityProfile = []string
+
+var capabilityProfiles = map[string]capabilityProfile{
+	// The full compiled runtime surface: fs / tcp / stdin are raw
+	// syscalls. NOTE `subprocess` is deliberately absent — it is an
+	// INTERP-ONLY builtin today (internal/oracle/interp only; no codegen
+	// backend lowers it), so no compiled target grants it and E066
+	// rejects it up front instead of the old "undefined label"
+	// assembler failure.
+	//
+	// `proc` (fork/waitpid supervision — docs/CRASH-ONLY-SERVE.md D2')
+	// is native-only: wasm worlds have no processes. So are the three
+	// capabilities below, each for a reason of its own:
+	//
+	//   - `pollfd` — file descriptors a readiness primitive can wait on.
+	//     Wasm's readiness surface is wasi:io/poll pollables, which are
+	//     values rather than numbers in a per-process table.
+	//   - `fsmode` — permission bits on a filesystem entry. Preview1's
+	//     path_open takes no mode argument and the component-model
+	//     filesystem has no permission bits at all, so "executable" is
+	//     not expressible there (#6133).
+	//   - `cabi` — a C calling convention to hand a function pointer to.
+	//     Wasm reaches an unknown callee through a typed table, not
+	//     System V or AAPCS64.
+	//   - `userid` — an effective user / group id for the process.
+	//     Neither WASI preview has a notion of a user at all, so there
+	//     is nothing to report and no correct constant to report instead.
+	//   - `sysinfo` — the kernel's utsname record and the count of
+	//     processing units the process may run on. Neither WASI preview
+	//     exposes either; a guess would name a kernel the component is
+	//     not running on.
+	//   - `cwd` — a current working directory. WASI resolves every path
+	//     against a preopened descriptor, so there is none to report.
+	//   - `fsinfo` — the size and the length limits of a FILESYSTEM,
+	//     where `fs` is the files on it. Neither preview has a volume
+	//     interface at all, and a preopen is a capability handle rather
+	//     than a mount, so there is nothing to measure and no limit to
+	//     report.
+	//   - `fsnode` — a filesystem entry that is neither a file nor a
+	//     directory: a FIFO, or a character or block device node. `fs`
+	//     is the files; this is the other things an entry can be.
+	//     Neither preview has a call that creates one, and the nearest
+	//     stand-in — a regular file where a FIFO was asked for — reads
+	//     back as the wrong kind rather than as a missing one.
+	//   - `fssync` — write-back of every dirty buffer on the machine
+	//     (`sync(2)`), where `fs` is reaching the files themselves.
+	//     Neither preview has a whole-machine flush: preview 1's
+	//     `fd_sync` is one descriptor's, and a preopen is a capability
+	//     handle rather than a mount, so there is no set of filesystems
+	//     for a component to name. Doing nothing would be a flush the
+	//     caller asked for and did not get.
+	//   - `fsrename` — a rename the kernel conditions in one step:
+	//     refuse an existing destination, or exchange the two names.
+	//     Both previews' renames always replace, and a check before the
+	//     call would reopen the race the condition exists to close.
+	//   - `xattr` — an entry's extended attributes. Neither preview
+	//     has them.
+	//   - `tty` — the geometry of the terminal a descriptor is connected
+	//     to. Neither preview has an ioctl, wasi:cli's terminal-output
+	//     resource reports no size, and the two constants that could
+	//     stand in — 80x24, or 0x0 — are respectively a guess about a
+	//     terminal the component cannot see and a size no terminal has.
+	//     `isatty` is NOT this capability: it is answerable anywhere,
+	//     and the answer off a terminal is "no".
+	//   - `fsowner` — the user and the group a filesystem entry belongs
+	//     to. Distinct from `userid`, which is the PROCESS's own ids:
+	//     neither WASI preview records an owner on an entry at all
+	//     (preview 1's `filestat` has no uid or gid field, and the
+	//     component model's `descriptor-stat` none either), so there is
+	//     nothing to set and no entry whose ownership a success would
+	//     describe.
+	//   - `rlimit` — a kernel-enforced ceiling on a process resource.
+	//     Neither WASI preview has resource limits, and both constants
+	//     that could stand in — "unlimited", or a plausible 1024 — would
+	//     be measurements a component never took.
+	//
+	// The `none` profile grants none of them either: a freestanding
+	// artifact reaches platforms.coreBuiltins and nothing else.
+	//
+	// `host` — the machine's own name (`hostname`). A kernel answers it;
+	// wasi-cli grants it too and answers the empty string, since a
+	// component has no node name and saying so is the truth, not a
+	// stand-in. wasi-http gets neither this nor `args` / `env`: a proxy
+	// component has no process identity at all.
+	//
+	// `signal` — setting a signal's disposition (`signal_ignore` /
+	// `signal_default`). wasi-cli grants it as a no-op for the same
+	// reason it grants `host`: a component is never sent a signal, so
+	// there is nothing to ignore and doing nothing is the whole truth.
+	// wasi-http has no process identity, so it does not get it.
+	//
+	// `sched` — reading and setting this process's scheduling priority
+	// (`priority` / `set_priority`). Native only, and unlike `signal`
+	// there is no truthful no-op: a component that cannot be
+	// reniced would have to be told either that its nice value is 0,
+	// a measurement nothing took, or that a change it asked for
+	// landed.
+	//   - `unix` — Unix-domain sockets, a filesystem namespace for
+	//     socket endpoints. wasi:sockets has IP sockets only.
+	//   - `reactor` — a readiness set the host keeps between waits:
+	//     epoll, kqueue, or on wasm a table of wasi:io pollables.
+	"hosted-native": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "xattr", "syscall", "unix", "reactor"},
+
+	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
+	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:
+	// wasi:cli/exec-process isn't in the runtime helpers (the standing
+	// gap wasmbin's TestBuildReportsUnsupported pins).
+	"wasi-cli": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor"},
+
+	// The proxy world: an HTTP handler and nothing else. No stdout
+	// stream and no filesystem — which is what makes `stdout` meaningful
+	// as a capability distinct from `log` (#6513, #6516) — and no
+	// process, so neither `args` nor `env`: the world imports neither
+	// argv nor `wasi:cli/environment`, and a component carrying one
+	// fails to instantiate ("a matching implementation was not found in
+	// the linker") rather than reading empty. `config`, deploy-time
+	// configuration, is wasi:config/store here; every target grants it,
+	// and where there is an environment the checker renames config_get to
+	// env, so only this world's backend reads the store. `fetch` is the
+	// planned outbound capability (docs/STDLIB-DESIGN-RESEARCH.md Rec §10).
+	"wasi-proxy": {"log", "now", "config", "random", "fetch"},
+
+	// No host at all. Everything a program can still reach is
+	// platforms.coreBuiltins; docs/FREESTANDING-CORE.md has the rule
+	// and every judgement call.
+	"none": nil,
+}
+
+type environment struct {
+	profile      string
+	handlerKinds []string
+	bindings     []string
+	entry        EntryShape
+}
+
+// A process environment lists BOTH entry shapes because it compiles both: a
+// `handle` program gets the synthesised main (the supervised serve loop on
+// the hosted natives, which grant `proc`; the single-process loop on WASI
+// CLI, whose descriptor grants `tcp` and no processes), and a program that
+// writes its own `main` keeps it. The proxy world lists `handle` alone: the
+// host only ever calls the exported handler, so a `main` there has nothing
+// to run it and the compiler refuses it. The lists were once one kind each
+// on all six targets, none of them the whole truth, because nothing read the
+// field. TestHandlerKindsMatchWhatTheCompilerAccepts is what stops it
+// drifting back: it compiles both shapes for every emitting target and
+// fails if the descriptor and the compiler disagree in either direction.
+//
+// The canonical kind stays FIRST, which is what auto-`main` synthesis
+// targets and what a `scheduled` / `alarm` kind (Rec §5) would be added
+// after.
+var environments = map[string]environment{
+	"linux":   {profile: "hosted-native", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
+	"darwin":  {profile: "hosted-native", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
+	"android": {profile: "hosted-native", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
+	"wasi":    {profile: "wasi-cli", handlerKinds: []string{"main", "handle"}, entry: EntryProcess},
+
+	"wasi-http": {
+		profile:      "wasi-proxy",
+		handlerKinds: []string{"handle"},
+		// The proxy world never enters the component; the host calls
+		// the exported `handle`.
+		entry: EntryExports,
+		// The proxy world has no environment import, so `wasmtime serve
+		// --env KEY=VAL` never reaches the guest; configuration arrives
+		// through wasi:config/store as `config_get`. Named kv-namespace /
+		// service bindings are Rec §7's job.
+		bindings: nil,
+	},
+
+	// No host at all. No entry point either: a freestanding artifact is
+	// either a guest (exported symbols its embedder calls) or the host
+	// (entered at a reset vector), so this leaves room for both —
+	// docs/BARE-METAL-PLAN.md. The guest shape is what is built first;
+	// EntryReset is the second value the day a target owns the machine.
+	"freestanding": {profile: "none", entry: EntryExports},
+}
+
+// table is the target registry: every valid <isa>-<environment> pair.
+// The ISA half selects the backend; the environment half says what the
+// host provides. Neither is implied — there is no bare `arm64` meaning
+// arm64-Linux (#6529).
+var table = map[string]struct {
+	isa         string
+	environment string
+	description string
+	noBackend   bool
+}{
+	"arm64-linux": {
+		isa: "arm64", environment: "linux",
+		description: "ARM64 Linux ELF (Graviton, Raspberry Pi 4+ 64-bit, Apple Silicon via container).",
+	},
+	"arm64-darwin": {
+		isa: "arm64", environment: "darwin",
+		description: "ARM64 macOS Mach-O (native Apple Silicon Macs; no Linux container needed).",
+	},
+	"arm64-android": {
+		isa: "arm64", environment: "android",
+		description: "ARM64 Android — Linux ELF as a static position-independent " +
+			"executable (ET_DYN, W^X), so it loads at an arbitrary base under " +
+			"Android's loader. Same syscalls / AAPCS64 as arm64-linux.",
+	},
+	"arm64-freestanding": {
+		isa: "arm64", environment: "freestanding", noBackend: true,
+		description: "ARM64 with no host — no kernel, no syscalls, no process. " +
+			"Type-checkable today; no backend emits for it yet (#6510).",
+	},
+	"x86-64-linux": {
+		isa: "x86-64", environment: "linux",
+		description: "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).",
+	},
+	"x86-64-freestanding": {
+		isa: "x86-64", environment: "freestanding", noBackend: true,
+		description: "x86-64 with no host — no kernel, no syscalls, no process. " +
+			"Type-checkable today; no backend emits for it yet (#6510).",
+	},
+	"wasm32-wasi": {
+		isa: "wasm32", environment: "wasi",
+		description: "WebAssembly Component Model — CLI world (wasi:cli/run + wasi:filesystem + wasi:clocks).",
+	},
+	"wasm32-wasi-http": {
+		isa: "wasm32", environment: "wasi-http",
+		description: "WebAssembly Component Model — proxy world (wasi:http/incoming-handler).",
+	},
+}
+
+// ForTarget returns the descriptor for the given target name.
+// Unknown targets return a nil descriptor; callers should treat
+// that as a hard error (the target list should be exhaustive).
+// Mirrors `cmd/fern`'s -target flag-value set.
+func ForTarget(name string) *Descriptor {
+	t, ok := table[name]
+	if !ok {
+		return nil
+	}
+	env, ok := environments[t.environment]
+	if !ok {
+		// A target naming an environment that doesn't exist is a
+		// programming error in this file, not a user-facing one.
+		panic("platforms: target " + name + " names unknown environment " + t.environment)
+	}
+	caps, ok := capabilityProfiles[env.profile]
+	if !ok {
+		panic("platforms: environment " + t.environment + " names unknown profile " + env.profile)
+	}
+	return &Descriptor{
+		Name:         name,
+		Description:  t.description,
+		ISA:          t.isa,
+		Environment:  t.environment,
+		Capabilities: caps,
+		HandlerKinds: env.handlerKinds,
+		Bindings:     env.bindings,
+		Entry:        env.entry,
+		NoBackend:    t.noBackend,
+	}
+}
+
+// Targets returns the canonical -target= names in a stable
+// order. Used by `fern -targets`-style listings and by tests
+// that walk every supported target.
+func Targets() []string {
+	out := make([]string, 0, len(table))
+	for name := range table {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// HasCapability reports whether the target's Platform exposes
+// the named capability. Returns false for unknown targets;
+// callers should `ForTarget` first if they want to distinguish
+// "unknown target" from "target exists but no such capability."
+func HasCapability(target, capability string) bool {
+	d := ForTarget(target)
+	if d == nil {
+		return false
+	}
+	for _, c := range d.Capabilities {
+		if c == capability {
+			return true
+		}
+	}
+	return false
+}
+
+// String renders the descriptor as a one-line listing entry —
+// `name: description`. Used by `fern -targets` output.
+func (d *Descriptor) String() string {
+	return fmt.Sprintf("%s: %s", d.Name, d.Description)
+}

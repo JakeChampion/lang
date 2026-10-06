@@ -43,7 +43,7 @@ The bug was **not** in the first-pass variant-constructor unify (which
 was correct — instrumenting `sub` after the unify loop showed
 `sub = map[T:string]`, i.e. `Box[string]`). It was in the
 **post-settle refresh**, `postSettleType`'s `*ast.Call` case
-(`internal/checker/checker.go`). After `settleNumeric` widens
+(`internal/check/checker/checker.go`). After `settleNumeric` widens
 literals, that case recomputed the enum's type arguments by **pairing
 the type-arg slot `i` positionally with constructor argument `i`**:
 
@@ -80,9 +80,9 @@ the legitimate refreshes still work:
 
 ## Tests
 
-- `internal/checker/checker_test.go`: `TestVariantTypeParamFromFnPayload`
+- `internal/check/checker/checker_test.go`: `TestVariantTypeParamFromFnPayload`
   (function-payload-pinned `T` for both `T=string` and `T=i32`, plus a
   leading literal that itself widens from the destination).
-- `internal/e2e/reactor_socket_test.go`: `TestReactorFanoutBodies` now
+- `internal/testing/e2e/reactor_socket_test.go`: `TestReactorFanoutBodies` now
   exercises the generic `IoStep[string]` reactor end-to-end on x86-64 +
   arm64 (the string-result fan-out that previously needed `IoStepStr`).

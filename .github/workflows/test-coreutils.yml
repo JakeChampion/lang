@@ -5,7 +5,7 @@ name: Test coreutils
 #
 # It is one package, and it was the critical path of the whole suite: 14m40s
 # of a 15m07s units job, with every other package in that lane finishing
-# inside its shadow (internal/ir, the next largest, is 4m38s). Measurements
+# inside its shadow (internal/oracle/ir, the next largest, is 4m38s). Measurements
 # and the shard arithmetic are in docs/CI-PERFORMANCE.md.
 #
 # Its own lane rather than a matrix inside the units lane, because that is
@@ -58,7 +58,7 @@ jobs:
       - name: Cache day stamp
         id: day
         run: echo "stamp=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
-      # wasmtime because internal/coreutils/wasm_test.go opens with
+      # wasmtime because internal/testing/coreutils/wasm_test.go opens with
       # `exec.LookPath("wasmtime")` and t.Skip()s without it, and a skipped
       # test reports ok (#8472). Requesting it also arms setup-fern's
       # preflight, which fails the JOB when a requested tool is missing.
@@ -165,7 +165,7 @@ jobs:
           W=.github/coreutils-test-weights.txt
 
           mapfile -t TOPS < <(
-            go test -list '.' ./internal/coreutils/ |
+            go test -list '.' ./internal/testing/coreutils/ |
               grep -E '^Test' | grep -v "^$GIANT\$" | sort |
               scripts/shard-tests "${{ matrix.shard }}" "$NSHARD" "$W"
           )
@@ -214,17 +214,17 @@ jobs:
           # the tree later fails HERE, naming the pattern, instead of inside
           # a shard that reports a regexp error as a test failure.
           for pat in "$TOP_PAT" "$UTIL_PAT"; do
-            if ! go test -list "$pat" ./internal/coreutils/ >/dev/null 2>&1; then
+            if ! go test -list "$pat" ./internal/testing/coreutils/ >/dev/null 2>&1; then
               echo "::error::shard ${{ matrix.shard }}/$NSHARD built an invalid -run pattern: $pat" >&2
               exit 1
             fi
           done
 
           gotestsum --format pkgname-and-test-fails -- -timeout 20m \
-            -run "$TOP_PAT" ./internal/coreutils/
+            -run "$TOP_PAT" ./internal/testing/coreutils/
 
           gotestsum --format pkgname-and-test-fails -- -timeout 20m \
-            -run "$UTIL_PAT" ./internal/coreutils/
+            -run "$UTIL_PAT" ./internal/testing/coreutils/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

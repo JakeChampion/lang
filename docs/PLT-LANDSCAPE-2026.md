@@ -226,7 +226,7 @@ conditions (nothing since changes them). **Surface effect rows** stay
 deferred — and the prototype that could have reversed that instead
 confirmed it. The trigger (a real handler corpus) fired, #5320 built a
 `uses [...]` clause, measured it, and dropped it: what shipped is the
-analysis (`internal/effects`, `fern -effects`) with no surface syntax.
+analysis (`internal/check/effects`, `fern -effects`) with no surface syntax.
 `EFFECT-ROWS-BRIEF.md` §2 has the four reasons; the shortest is that an
 opt-in clause catches nothing while E070/E066 already answer the
 questions people ask, and `std/platform`'s capability bag is the
@@ -259,13 +259,13 @@ reality" caveat in `CLAUDE.md` cuts both ways):
    2026-06-22) wired it: `?` on `Result[T, E1]` in a function
    returning `Result[_, E2]` type-checks when `impl From[E1] for E2`
    exists and converts the propagated error
-   (`internal/checker/checker.go:11289` area). Verified end-to-end
+   (`internal/check/checker/checker.go:11289` area). Verified end-to-end
    with a two-enum probe program through `-interp`.
    `LANGUAGE-REVIEW-2026-07.md`'s friction #1 ("no `From`-style
    conversion") described the pre-#2697 state; a correction note now
    sits on that section.
 2. **Named arguments + parameter defaults exist** (self-host IR
-   coverage: `internal/e2eselfhost/self_host_named_args_ir_test.go`),
+   coverage: `internal/testing/e2ecompiler/self_host_named_args_ir_test.go`),
    so they are not a gap despite being absent from the feature-audit
    tables this survey started from.
 

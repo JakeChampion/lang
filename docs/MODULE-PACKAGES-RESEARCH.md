@@ -7,7 +7,7 @@
 > aliasing) has since landed, as have `pub(package)` (#3095) and
 > `std/semver` (#4886).
 
-`internal/modload/modload.go` ships a working in-tree module
+`internal/pkg/modload/modload.go` ships a working in-tree module
 system: path-derived imports, private-by-default with `pub`
 exports, recursive multi-file loading, cycle detection.
 `docs/PRELUDE-TO-MODULES.md` covers the on-going `std/…` +
@@ -579,7 +579,7 @@ Sources:
 The interesting bit is the *separation of concerns*: the
 language's module system is module shapes; the package
 manager handles *files on disk + remote retrieval*. Our
-`internal/modload` is the file-on-disk part; a future
+`internal/pkg/modload` is the file-on-disk part; a future
 `fern.toml` + remote-fetch is the package-manager part.
 
 #### What translates
@@ -816,7 +816,7 @@ abandon.
 ### 10. `import "long/path/foo" as f`
 
 **Cost: 3 days.** **Impact: small but resolves a known
-gap in `internal/modload/modload.go`.**
+gap in `internal/pkg/modload/modload.go`.**
 
 Already documented as a limitation in `modload.go`:
 

@@ -348,19 +348,19 @@ not register pressure. The order to take that in:
 
 ## Gates
 
-- `internal/e2eselfhost/self_host_ssa_lift_admits_test.go` runs
+- `internal/testing/e2ecompiler/self_host_ssa_lift_admits_test.go` runs
   `ssa_lift_admits_run.fern`, the lift's admission census over every
   registered IR op kind, and pins the kinds it declines: the three kinds no
   lowering produces. A new op kind reaches the register path through the
   flat-op arm unless `ir.op_pops` does not model it, and then it is a new
   line here rather than a refusal on every program that uses it.
-- `internal/e2eselfhost/self_host_ssa_backend_test.go` builds the CLI for
+- `internal/testing/e2ecompiler/self_host_ssa_backend_test.go` builds the CLI for
   the host, compiles each of its programs with it and with the native
   compiler for every target the host can run output for (its own ISA
   natively, the other through its qemu user emulator when present), runs
   both and compares stdout and exit status. It also pins the `-backend`
   refusals and that a second `-o` to one path replaces the executable.
-- `internal/e2eselfhost/self_host_ssa_loop_tail_label_test.go` reaches the
+- `internal/testing/e2ecompiler/self_host_ssa_loop_tail_label_test.go` reaches the
   same invariant from the SOURCE end: a self-tail-recursive function whose
   body ends in a `return`, compiled through the register path for both ISAs
   and then assembled and run. `assertNoDuplicateLocalLabels` reads the
@@ -368,7 +368,7 @@ not register pressure. The order to take that in:
   distinct blocks or functions whose `asmcore.sanitize_label` spellings
   collide, which `repeated_block_id` cannot see. It carries over the
   read_file and frontend-bundle listings too.
-- The fixture legs (`internal/e2e/fixture_selfhost_test.go`) are the corpus:
+- The fixture legs (`internal/testing/e2e/fixture_selfhost_test.go`) are the corpus:
   every program through the register path on both ISAs, against the
   expected output. A function the lift cannot take fails the compile there,
   naming the op.
@@ -382,7 +382,7 @@ not register pressure. The order to take that in:
   function onto the stack machine. Every state the lift leaves a dead block
   in must therefore carry a FRESH id — the shape `br` establishes, and what
   a loop nothing leaves alive failed to (#9688).
-  `internal/e2eselfhost/self_host_ssa_lift_blocks_test.go` lifts those op
+  `internal/testing/e2ecompiler/self_host_ssa_lift_blocks_test.go` lifts those op
   streams directly.
 
 ## What this retires, and in what order
@@ -428,7 +428,7 @@ path needs `build_func` any more. In order:
    (`docs/ssa-log/2026-09-20-every-op-through-the-stack-machines-arm.md`);
    `dyn_dispatch` followed the same day, and the sweep declines nothing.
 6. Done: the corpus lane. The fixture legs
-   (`internal/e2e/fixture_selfhost_test.go`, x86-64 and arm64) compiled every
+   (`internal/testing/e2e/fixture_selfhost_test.go`, x86-64 and arm64) compiled every
    program under `FERN_SSA_REPORT=1` and required each module's tally to
    read `0 declined`, holding the number the hand sweep measured: 866
    modules on each ISA, every one `0 declined`.

@@ -1,7 +1,7 @@
 // Producer-consumer fusion of std/array pipelines (#11072): a chain of `map`
 // and `filter` stages ending in `fold`, `reduce` or `scan` becomes one loop.
 // Intermediate arrays are never built; scan reserves its output once. This
-// extends internal/ir/array_fusion.go on the typed semantic graphs every
+// extends internal/oracle/ir/array_fusion.go on the typed semantic graphs every
 // backend lowers from, before ownership planning accounts for the output.
 //
 // docs/ARRAY-FUSION-OPERATORS.md is the contract: each stage contributes a

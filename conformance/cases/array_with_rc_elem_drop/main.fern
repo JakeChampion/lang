@@ -3,7 +3,7 @@
 // are enabled. In no-free mode the replaced element leaks (arena-only), and
 // the drop-fn body is never generated — so emitting the drop CALL there used
 // to leave an undefined `__drop_enum_<E>` symbol at link time. This exercises
-// that path without std/regex (see internal/ir emitArraySet gating).
+// that path without std/regex (see internal/oracle/ir emitArraySet gating).
 enum Slot { Text(string), Num(i32), Empty }
 
 function cell_len(c: Slot): i32 {

@@ -17,7 +17,7 @@ Reclamation (`ast.RcFreeEnabled`) and constructor reuse
 that pinned free-on == free-off and reuse-on == reuse-off on the fixture
 corpus went with the Go backends (`docs/NATIVE-RETIREMENT.md`); the
 self-host's reuse differential
-(`internal/e2eselfhost/self_host_reuse_differential_test.go`), its fixture
+(`internal/testing/e2ecompiler/self_host_reuse_differential_test.go`), its fixture
 legs and the leak census hold the property now. The guiding invariant is
 **"safe leak"**: every conservative bail-out degrades to
 decrement-without-free or skip-reuse — it leaks memory but **never**
@@ -34,7 +34,7 @@ sound even when the static analysis is imprecise.
   reuse specialization at the *field* level), general cross-local FBIP
   via reuse tokens (`computeReuseSources`, widened to cross-type by
   box-class), **C1** consuming-match shallow-free, **C2** true in-place
-  cons-cell reuse, and **TRMC** (`internal/ir/trmc.go`).
+  cons-cell reuse, and **TRMC** (`internal/oracle/ir/trmc.go`).
 - Consuming functions and methods (`own`), inherent and trait-based,
   including enum-returning; `own`-aware trait conformance; sound
   use-after-move (E050) tracking incl. `dyn` dispatch.
@@ -77,7 +77,7 @@ Ordered roughly by cost. All are *safe* leaks.
 4. **Non-uniform / generic / boxed-generic enum** boxes + payloads
    flat-dec (the box is only freed when variant layouts are uniform).
    Pinned as closed for the concrete and generic-instantiation shapes by
-   `internal/e2e/rc_map_string_column_reclaim_test.go`; a payload the
+   `internal/testing/e2e/rc_map_string_column_reclaim_test.go`; a payload the
    drop site still sees as `ParamType` is the residue.
 5. **One-level / non-uniform nested struct/enum/tuple fields** flat-dec
    their inner heap — the nested struct/array/string shape is closed and
@@ -476,7 +476,7 @@ analysis, which is independent, pure, and de-risks the design.
   non-`own` heap value, and any call not proven allocation-free. Dogfooded:
   `std/sort`'s `sort_i32_inplace_asc/_desc` are now `fip` (they sort the
   owned buffer in place, allocating nothing). Parser + checker tests both
-  directions; `internal/diag/explanations/E053.md`.
+  directions; `internal/syntax/diag/explanations/E053.md`.
 
   **Future relaxation:** Koka's `fip` also permits allocation fully matched
   by reuse (an FBIP `map` that reuses every cell). The current cut is
@@ -527,7 +527,7 @@ string-bearing struct routed through the *generated* drop (nested field /
 overwrite / consumed param) leaked its string buffers forever.
 
 Gated on the full self-host suite + the full e2e + the differential gates (all
-green); regression tests in `internal/e2e/rc_self_reassign_field_test.go`
+green); regression tests in `internal/testing/e2e/rc_self_reassign_field_test.go`
 (`TestX86_64SSAAccumThreadedParam` pins O(N) + underflow-zero for the
 threaded-param shape, plus arm64 / wasm soundness counterparts). The historical
 diagnosis and the two failed type-shape widenings are kept below.

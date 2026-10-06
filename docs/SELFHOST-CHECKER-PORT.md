@@ -10,7 +10,7 @@
 > picking up an item.
 
 Goal: grow `compiler/checker.fern` to parity with the Go
-checker (`internal/checker/checker.go`, ~6700 LOC, 50 stable diagnostic
+checker (`internal/check/checker/checker.go`, ~6700 LOC, 50 stable diagnostic
 codes E001–E051) so the Go checker can be retired as the strict gate.
 
 This is the **standalone type-checker port**. It is distinct from
@@ -66,7 +66,7 @@ emitted diagnostic codes.
 ## Slice plan
 
 Each slice is one PR, gated by the differential test
-`internal/e2e/self_host_checker_codes_test.go`: a corpus of small
+`internal/testing/e2e/self_host_checker_codes_test.go`: a corpus of small
 programs run through both checkers, asserting the self-host emits the
 same code(s) the Go checker does — restricted to
 `selfHostImplementedCodes`, which grows per slice.
@@ -1242,7 +1242,7 @@ picks them up with the right prerequisite, not as a lone checker tweak:
   following struct/enum decl (`StructDecl.must_consume` /
   `EnumDecl.must_consume`, propagated through the flatten / monomorphise
   rewrites) instead of dropping it, and `checker.fern` ports the native
-  walk (internal/checker/mustconsume.go) function-for-function as the
+  walk (internal/check/checker/mustconsume.go) function-for-function as the
   `mc_*` family: `must_consume_diags` (per-function entry; non-`own`
   params + body walk), `mc_walk_body` (finds marked bindings at every
   block depth, scope-threaded so unannotated inits resolve via
@@ -1271,7 +1271,7 @@ picks them up with the right prerequisite, not as a lone checker tweak:
 
 ## Differential testing
 
-`internal/e2eselfhost/self_host_checker_codes_test.go` compiles
+`internal/testing/e2ecompiler/self_host_checker_codes_test.go` compiles
 `checker_codes_run.fern` with the Go-built bundle compiler, runs it over
 a corpus, and asserts the printed code set equals what Go's
 `checker.Check` (formatted through `diag.Format`) reports for the same
@@ -1431,7 +1431,7 @@ checker says:
 
 Any code that appears is a false positive and belongs in the exclusion list.
 The end-to-end direction — that a gating code actually stops `-target` — is
-`TestSelfHostBuildGate{,MatchesCheck}X86_64` in `internal/e2eselfhost`.
+`TestSelfHostBuildGate{,MatchesCheck}X86_64` in `internal/testing/e2ecompiler`.
 
 ## 2026-08-18 — integer width enters the type (#7011)
 
@@ -1626,7 +1626,7 @@ the field-READ arm, which had a second message for the same mistake. `Scope`
 gained the module's `imports` (paths as written): the advice is conditional on
 the reader's own import list, and telling someone to add an import they already
 have is unfollowable in the same way a wrong module name is. `util.fern` gained
-`levenshtein` / `suggest`, the byte-indexed port of `internal/diag`'s, so the two
+`levenshtein` / `suggest`, the byte-indexed port of `internal/syntax/diag`'s, so the two
 suggest from the same budget.
 
 E043 divergences over the 750-probe corpus: **7 → 0**, with every other code's
@@ -1715,7 +1715,7 @@ as native's `discardName` does, and `printer.written_name` writes `_` back.
 
 ### Gate
 
-`TestSelfHostFormerlyExemptCodesGateX86_64` (`internal/e2eselfhost`) is the
+`TestSelfHostFormerlyExemptCodesGateX86_64` (`internal/testing/e2ecompiler`) is the
 three-way matrix the issue asked for: one program per code through native
 `-check`, self-host `-check` and self-host `-target`, asserting all three
 agree. A row that is still exempt carries the issue that owns it, and goes RED

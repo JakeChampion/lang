@@ -88,7 +88,7 @@ without an explicit consume. It is per-TYPE (the attribute sits
 on struct/enum decls) where axis 1 is per-BINDING — that
 asymmetry is fine; the obligation attaches to each binding of a
 marked type at its binding site (`mcCheckBinding`,
-`internal/checker/mustconsume.go:119`).
+`internal/check/checker/mustconsume.go:119`).
 
 **Why the lattice is this small** (vs OCaml's eight axes — §6):
 Fern's global laws collapse the rest. E048/E056 immutability
@@ -106,11 +106,11 @@ an axis; everything else is RC-counted and lifetime-free.
 ### 2.1 `own` consuming params — E050 / E051
 
 Surface: `own xs: T` on parameters and receivers (`own self`),
-contextual keyword (`internal/parser/parser.go:887,1422,1483`;
-`ast.Param.Own`, `internal/ast/ast.go:2497`).
+contextual keyword (`internal/syntax/parser/parser.go:887,1422,1483`;
+`ast.Param.Own`, `internal/syntax/ast/ast.go:2497`).
 
 Native analysis: `checkOwnedParams`
-(`internal/checker/checker.go:7428`), a flow-sensitive
+(`internal/check/checker/checker.go:7428`), a flow-sensitive
 per-function walk threading a `movedSet` (name → consume
 position). `recordExprUses` (checker.go:7538) classifies every
 owned-ident occurrence: projection targets, call callees, binary
@@ -150,7 +150,7 @@ Surface: `fip function` / `fbip function` / graded `fip(n)` /
 `Fbip` ast.go:2658, `FipAllowance` ast.go:2664).
 
 Native analysis: `checkFipFunctions`
-(`internal/checker/checker.go:6730`), a program-level default-
+(`internal/check/checker/checker.go:6730`), a program-level default-
 deny AST walk over each `fip`/`fbip` body. Rejected with E053:
 array literals, f-strings and string concat, methods off the
 whitelist (`fipNonAllocMethods` = `{len}`; plus `.with(i,v)` on an
@@ -163,7 +163,7 @@ Constructor shapes — struct / tuple literals and payload-carrying
 variant construction — are admitted in EVERY tier, `fip` included
 (#9602). The checker cannot tell a rebuild that reuses a dead
 donor's box from one that allocates a fresh box, so the IR decides:
-`verifyFipAllocs` (`internal/ir/fip_verify.go`) counts the sites
+`verifyFipAllocs` (`internal/oracle/ir/fip_verify.go`) counts the sites
 that lowered to a real `OpAlloc` rather than to `__alloc_reuse` and
 reports E068 when they exceed the allowance, which for a bare `fip`
 is zero. Rejecting the shape in the checker instead left `fip`
@@ -230,7 +230,7 @@ owned counted array; `[T]` (`ast.SliceType`) is a non-owning
 (docs/OWNERSHIP-TYPES-PLAN.md Phase A).
 
 Native analysis: `checkSliceEscape`
-(`internal/checker/checker.go:7084`) — reject `return` of a
+(`internal/check/checker/checker.go:7084`) — reject `return` of a
 slice provably viewing function-local storage: a cycle-guarded
 binding chase (`sliceBorrowsLocal` 7112,
 `sourceIsLocalStorage` 7139) bottoming out at an array literal
@@ -288,7 +288,7 @@ Surface: `@must_consume` on struct/enum decls
 docs/MUST-CONSUME.md).
 
 Native analysis: `checkMustConsume`
-(`internal/checker/mustconsume.go:42`), an at-least-once
+(`internal/check/checker/mustconsume.go:42`), an at-least-once
 obligation walk per binding of a marked type over the rest of
 its scope (`mcSeq` mustconsume.go:153): consuming uses are call
 arguments, `return`, match/if-let/let-else destructure,
@@ -323,7 +323,7 @@ differential gate (MUST-CONSUME.md "Self-host parity").
 Derived placements (all existing spellings, no new ones):
 
 - **default param** = borrowed. Borrow inference
-  (`inferParamEscapes`, `internal/ir/rc_analysis.go:344`;
+  (`inferParamEscapes`, `internal/oracle/ir/rc_analysis.go:344`;
   consumed as `paramBorrowable`, ir.go:5187) silently promotes
   non-escaping params back to borrowed under owned-by-default —
   the mode is inferred, never surfaced (the Roc stance,
@@ -585,7 +585,7 @@ mirrored secondary source rather than full-text fetches):
   axis (Owned/Borrowed/View/Static), `str` (A1/A2), the
   self-host CS slices. Note: it cites `inferParamEscapes` at
   `ir.go:3173`; the function now lives at
-  `internal/ir/rc_analysis.go:344` (minor drift, reported here).
+  `internal/oracle/ir/rc_analysis.go:344` (minor drift, reported here).
 - `docs/RC-PERCEUS-PLAN.md` — Phase 2d-borrow (the borrowed-
   parameter model) and the Perceus borrowed-parameter rule.
 - `docs/NICHE-LANGUAGE-RESEARCH.md` — Koka fip/fbip (ICFP 2023),

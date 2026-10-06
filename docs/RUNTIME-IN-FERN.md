@@ -221,7 +221,7 @@ What follows from 3.3x rather than 13x:
   measuring the fast path against a benchmark rather than by this table.
 
 **So the precondition for the hot core is narrower than "a better lowering".**
-The `len(asm) > N` assertions scattered through `internal/e2eselfhost` are what
+The `len(asm) > N` assertions scattered through `internal/testing/e2ecompiler` are what
 caught the original regression; they read as "did the module bail to the AST
 path" but they double as the only guard against codegen bloat, and raising them
 to accommodate a migration would discard exactly the signal they exist to give.
@@ -362,7 +362,7 @@ the seccomp allowlist stays exact through these helpers; a number computed
 at run time is refused.
 
 The gate on `__fern_utf8_valid` is
-`internal/e2e/read_file_utf8_differential_test.go`: every 1- and 2-byte
+`internal/testing/e2e/read_file_utf8_differential_test.go`: every 1- and 2-byte
 sequence, the 3- and 4-byte boundaries and an eight-byte ASCII word skip at
 every offset, `read_file`'s verdict against `std/utf8.is_valid_utf8`, on
 x86-64, arm64 and wasm.
@@ -397,7 +397,7 @@ wrapper and not in the table, every one of them added after a real link
 failure. All three were latent only because those needs happen to arrive
 through the wrapper today.
 
-`internal/sourcelint` now fails when a wrapper knows an edge the table does
+`internal/testing/sourcelint` now fails when a wrapper knows an edge the table does
 not. Its own first version is worth recording: it matched 36 wrappers, passed,
 and had silently skipped `mark_str_trim` — the single wrapper it was written
 for — because that one opens with comment lines before its `return`. A count
@@ -586,7 +586,7 @@ reading the set before it sees a subset of what the runtime actually emits.
 arm64 had `_start` (which gates its envp save on `heap`) ahead of the closure on
 both routes; it stayed latent only because every op site that seeds a
 heap-implying root marks `heap` alongside it, so `heap` never arrived by the
-closure alone. `internal/sourcelint` now pins the order, deriving the
+closure alone. `internal/testing/sourcelint` now pins the order, deriving the
 "volatile" need set — the names `runtime_need_deps` can add — from the table
 itself. An emitted-asm test cannot cover this: the fix is byte-neutral against
 every program that compiles today, which is the same property that hid the bug.
@@ -1027,8 +1027,8 @@ primitives can address, not what they were named for.
 1. **Differential** — emit the program both ways (helper-as-asm vs
    helper-as-Fern) and assert identical observable behaviour across the
    x86-64 absolute-exit oracle, the wasm emit oracle, and the three
-   differential suites (`internal/e2e/feature_differential_test.go` et al.).
-2. **Symbol closure** — `internal/e2e/runtime_helper_closure_test.go` must
+   differential suites (`internal/testing/e2e/feature_differential_test.go` et al.).
+2. **Symbol closure** — `internal/testing/e2e/runtime_helper_closure_test.go` must
    still pass: the emitted runtime stays symbol-closed whether a helper comes
    from asm or from compiled Fern.
 3. **Fixpoint** — re-establish `TestSelfHostLoadFixpointX86_64` +

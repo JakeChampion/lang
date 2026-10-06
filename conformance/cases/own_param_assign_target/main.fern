@@ -10,7 +10,7 @@ import "std/i32";
 // verified by compiling it with a compiler built from that broken revision,
 // which produces a correct binary. #6018 miscompiled the COMPILER — ssa.fern's
 // own params — so it surfaced as the driver segfaulting on an unrelated
-// program with no `own` in it at all. Only internal/e2eselfhost catches that
+// program with no `own` in it at all. Only internal/testing/e2ecompiler catches that
 // class; the per-module fixpoint, all 335 fixtures and the native suite were
 // green throughout.
 //

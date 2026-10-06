@@ -3,7 +3,7 @@
 // the CODE, a tab, then the MESSAGE (e.g. "E007\tundefined variable x").
 // Companion to checker_run.fern (which only signals well-typed via the
 // exit code): this driver exposes the coded diagnostics so the
-// Go-vs-self-host differential gates in internal/e2eselfhost can compare
+// Go-vs-self-host differential gates in internal/testing/e2ecompiler can compare
 // the two checkers on the same source — the SET of codes, and, for the
 // diagnostics that name a spelling to write, the message text (#7018).
 // Exits 1 when any diagnostic was emitted, 0 otherwise.

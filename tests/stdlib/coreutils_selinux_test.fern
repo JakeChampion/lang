@@ -5,7 +5,7 @@ import "../../coreutils/lib/selinux" as selinux;
 // tests/stdlib/coreutils_selinux_test.fern — the process's own security
 // context as getcon(3) reports it.
 //
-// internal/coreutils compares runcon and id against GNU on the machine that
+// internal/testing/coreutils compares runcon and id against GNU on the machine that
 // runs them, which is the right oracle and cannot reach this rule: the
 // context comes from /proc/self/attr/current, neither utility has an operand
 // pointing anywhere else, and what that file holds is the host's business.

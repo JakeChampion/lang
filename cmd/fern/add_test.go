@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/manifest"
+	"github.com/jakechampion/lang/internal/pkg/manifest"
 )
 
 func writeManifest(t *testing.T, body string) string {

@@ -4,7 +4,7 @@ What #9586 asked, measured: a request parse, a route, an update to the
 application's bounded state and a response, written three ways over one
 workload. The programs are `examples/fip/httpapp_baseline.fern`,
 `httpapp_fbip.fern` and `httpapp_fip.fern`, and
-`internal/e2e/fip_httpapp_test.go` keeps their claims from rotting. The codec
+`internal/testing/e2e/fip_httpapp_test.go` keeps their claims from rotting. The codec
 is experiment 3's (`docs/FIP-HTTP-CODEC.md`); what this adds is the
 application behind the routes, the explicit limits, and the behaviour at
 capacity. Read `docs/ALLOCATION-OBSERVABLE.md` for what the allocation

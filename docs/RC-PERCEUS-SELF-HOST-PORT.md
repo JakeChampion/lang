@@ -28,9 +28,9 @@ source of truth.
 ### Native (Go) — fully implemented
 
 Perceus in the native compiler lives almost entirely in the
-target-agnostic IR-lowering builder, `internal/ir/ir.go` (~16k LOC),
-plus reuse/TRMC passes (`internal/ir/trmc.go`,
-`internal/ir/insert_resource_drops.go`). It has **no dedicated RC
+target-agnostic IR-lowering builder, `internal/oracle/ir/ir.go` (~16k LOC),
+plus reuse/TRMC passes (`internal/oracle/ir/trmc.go`,
+`internal/oracle/ir/insert_resource_drops.go`). It has **no dedicated RC
 opcodes** — RC is realised as `OpCallDirect` to named runtime helpers
 (`__fern_rc_inc`, `__fern_rc_dec`, `__fern_rc_is_unique`,
 `__fern_box_free`, `__fern_alloc_reuse`, generated `__drop_*` handlers)
@@ -475,7 +475,7 @@ self-bootstrap) stays green between slices.
 ## 7. Test strategy
 
 Mirror the native nets in the self-host's Go-side e2e harness
-(`internal/e2e/self_host_*_test.go`, driven through `asm_run.fern` /
+(`internal/testing/e2e/self_host_*_test.go`, driven through `asm_run.fern` /
 `asm_ir_run.fern -target arm64-linux` / wasm):
 
 - **Functional**: extend `TestSelfHostAsmRun{X86_64,Arm64,WASM}` with
@@ -486,7 +486,7 @@ Mirror the native nets in the self-host's Go-side e2e harness
   builtin, as native) asserted 0 on a clean corpus; deliberate
   double-dec asserted 1. Phase-3 go/no-go signal.
 - **Memory**: peak-heap-bytes regression tests mirroring
-  `internal/e2e/rc_heap_bump_*_test.go` once free is on — a push loop
+  `internal/testing/e2e/rc_heap_bump_*_test.go` once free is on — a push loop
   reclaims to O(1) blocks, precise drops bound the live set.
 - **Determinism**: the byte-identical self-bootstrap fixed-point
   (`self_host_stage2_*_fixed_point_test.go`,
@@ -498,7 +498,7 @@ Mirror the native nets in the self-host's Go-side e2e harness
   against the native compiler on the `rcCorpus` shapes.
 
 Per CLAUDE.md: gate locally on x86-64 + wasm; let CI run the arm64 /
-qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
+qemu matrix. Run the whole `internal/testing/e2e` with `-timeout 30m`.
 
 ---
 
@@ -558,7 +558,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   backend: `ldur`/`stur` for `[ptr-8]`, `tbnz #31` sentinel, `tbnz #0`
   SSO tag, `mov x9,#0x10000` low-address guard, adrp/`:lo12:` access to
   the `__fern_rc_underflow` BSS counter). Tests consolidated into
-  `internal/e2e/self_host_rc_runtime_test.go` with a shared case table
+  `internal/testing/e2e/self_host_rc_runtime_test.go` with a shared case table
   driving both `TestSelfHostRcRuntimeX86_64` and
   `TestSelfHostRcRuntimeArm64` (the latter built + run under
   qemu-aarch64 — all six cases green). Next: wasm
@@ -3742,7 +3742,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   updated accordingly. Remaining #4354 surface unchanged otherwise
   (struct/enum/map/string[] capture kinds, closure arrays, drop thunk).
 - 2026-07-10: **Landed `?`-consumed source-box reclaim + `?`-bound string
-  ownership (#4355 slice — NATIVE internal/ir AND self-host irlower, all three
+  ownership (#4355 slice — NATIVE internal/oracle/ir AND self-host irlower, all three
   backends).** `mk(pre)?` evaluates the callee's Option/Result box into a
   scratch slot, reads the success payload, and the box is dead — but neither
   compiler ever dec'd it, so a per-iteration `?` leaked one box per evaluation
@@ -5783,7 +5783,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   #6539. The hazard cases added here deliberately use a non-capturing lambda or a
   parameter capture so they do not ride on that question.
 
-  VERIFIED: `internal/e2eselfhost/self_host_closure_field_reclaim_test.go` loses
+  VERIFIED: `internal/testing/e2ecompiler/self_host_closure_field_reclaim_test.go` loses
   its `t.Skip` (delta 0 B at both round counts), a new call-element reclaim test,
   three new hazard rows (passthrough callee, method call, closure read back out
   of a reclaimed array), `TestSelfHostPerModuleEmitAllFixpointX86_64` (764.61 s),
@@ -7218,7 +7218,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   parameter, and its write is spelled `cell[0] = v` — an index-assign that is
   E056 in surface source and synthesizable only after the checker, so it can
   never be confused with a value-semantics `.with`
-  (`internal/closureconv/boxcapture.go`, `internal/ir/ir.go` `b.assign`).
+  (`internal/oracle/closureconv/boxcapture.go`, `internal/oracle/ir/ir.go` `b.assign`).
   Porting either mechanism whole is a large change; porting the DISTINCTION is
   not.
 
@@ -7363,7 +7363,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   boundary #6242 drew.
 
   Nothing changes for the self-host, whose own lowering emits no map drop at all;
-  this is `internal/ir`, so the effect on it is via the compiler that builds it.
+  this is `internal/oracle/ir`, so the effect on it is via the compiler that builds it.
 
   VERIFIED: new `TestMapCowChainReclaim{Interp,X86_64,Wasm,Arm64}` (array,
   string and struct value columns, a live alias, a `keys()` snapshot, scalar
@@ -7460,7 +7460,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   control. New `loop-push-behind-guard-clause` row in
   `TestSelfHostAllocDifferentialX86_64`: native 0 KB / self-host 14 KB (14x,
   bound 8x) before, 0 KB / 0 KB after. Plus the 151-test rc / move / loop /
-  reuse / drop subset of `internal/e2eselfhost`, both self-host fixture legs
+  reuse / drop subset of `internal/testing/e2ecompiler`, both self-host fixture legs
   (wasm + x86-64), and the per-module whole-compiler fixpoint.
   Refs #6869 #6533 #4451.
 
@@ -7794,7 +7794,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `freshrecv-len-leak-flat` case FAILS on the parent commit; `identity-alias-safe`
   and `alternating` (both paths chosen per iteration by a runtime compare) are
   the over-release controls on both legs. Plus the str / rc / fixpoint /
-  bootstrap subset of `internal/e2eselfhost`. Refs #6544 #4451.
+  bootstrap subset of `internal/testing/e2ecompiler`. Refs #6544 #4451.
 
 - 2026-08-17 (later still): **The 24 B/round row is closed — and `str` vs
   `string` had nothing to do with it (#6544).** The previous entry named the
@@ -7853,7 +7853,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `__fern_str_free`, `__fern_str_arr_free`, …) fell through to the decrement /
   underflow path. Fixed in `x86_native.fern` with a real 32-bit `test`
   (`85 /r`, REX only to reach `r8d..r15d`). Nothing in the program corpus
-  covered it: every `internal/e2eselfhost` program test routes the emitted `.s`
+  covered it: every `internal/testing/e2ecompiler` program test routes the emitted `.s`
   through gcc — see the new `docs/TEST-GATES.md` entry.
 
   Remaining on the case, unchanged and unstarted: the `.to_owned()` receiver
@@ -7925,7 +7925,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   wrong frees a live local) and `freshrecv-len-chain-alias-safe` are the
   controls on both legs; both re-read the root's BYTE after 3000 rounds. Plus
   the str / rc / freshrecv / irverify / fixpoint / bootstrap subset of
-  `internal/e2eselfhost`. Refs #6544 #4451.
+  `internal/testing/e2ecompiler`. Refs #6544 #4451.
 
 - 2026-08-17 (later still): **A fresh string ARGUMENT was reclaimed at a
   free-function call and leaked at a METHOD call (#6544).** Found while
@@ -8016,7 +8016,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   they protect — "ALIASED operands are never freed".
 
   **That is not enough to move four of them.** The fourth was found only by the
-  98-minute whole-package `internal/e2eselfhost` run, after the targeted suites
+  98-minute whole-package `internal/testing/e2ecompiler` run, after the targeted suites
   were green and a recommendation had already been formed off a probe that
   sampled shapes chosen by the same person who wrote the change. One probe
   showing safety on shapes I thought of is a weaker statement than four
@@ -8099,7 +8099,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   and each re-reads the value the refusal protects after 4000 further rounds
   have recycled the freelist, so a wrongly granted deep drop returns garbage
   rather than merely leaking. Flatness is register-backend only, per the trap
-  above. Plus the whole `internal/e2eselfhost` package — the gate the previous
+  above. Plus the whole `internal/testing/e2ecompiler` package — the gate the previous
   entry's process note names, and the right one here: this widens deep drops
   across the self-host compiler's own sources, which is exactly the #3425 blast
   radius. Refs #6544 #3425 #4451.
@@ -8166,7 +8166,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   parent — it took the probe's own shape (the loop in its own function, `for i
   in 0..n`) to reproduce, which is worth remembering: a regression test that
   does not fail on the parent is not yet a regression test. Plus the whole
-  `internal/e2eselfhost` package. Refs #6544 #3425 #4451.
+  `internal/testing/e2ecompiler` package. Refs #6544 #3425 #4451.
 
 - 2026-08-17 (struct half, third slice): **A method that returns a fresh struct
   is a strict-fresh producer at the READ, so the temp it leaves behind is
@@ -8226,7 +8226,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   (`me()` hands the receiver back, so the "temp" would be `keep`'s own box) and
   `method-receiver-field-value-refused` (`same()` wraps `b.tag`, so the moved-out
   string would be `keep`'s), each re-reading the value the refusal protects
-  after churn has recycled the freed bytes. Plus the whole `internal/e2eselfhost`
+  after churn has recycled the freed bytes. Plus the whole `internal/testing/e2ecompiler`
   package — the gate the 2026-08-16 process note names, and the right one for a
   registry the self-host's own sources consume. Refs #6544 #6491 #4451.
 
@@ -8277,7 +8277,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   read as a CROSS-BACKEND contract, which the x86-64-only Go gate cannot: it
   runs on x86_64 / arm64 / wasm under `TestFernFixtures` and on
   `TestFernFixturesSelfHost{X86_64,Wasm}`, and agrees with native byte-for-byte.
-  Plus the whole `internal/e2eselfhost` package. Refs #6544 #6491 #4451.
+  Plus the whole `internal/testing/e2ecompiler` package. Refs #6544 #6491 #4451.
 - 2026-08-18 (struct half, fifth slice): **A strict-fresh producer's box was
   refused along with its BORROWED string field.** The field-read reclaim asks
   `owned_fresh_call_callee(..., "STRFLDF:")` for a `string` field, and that entry
@@ -8417,7 +8417,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   PER-ARGUMENT admission that fires where the whole-call gate says no, keyed on
   every appearance of the callee's parameter being a counted store or a
   non-retaining read (`inferParamCountedRetain` / `arrayParamCounted`,
-  internal/ir/rc_analysis.go). The temp is then rc 2 on the escaping path and
+  internal/oracle/ir/rc_analysis.go). The temp is then rc 2 on the escaping path and
   rc 1 otherwise, and one post-call dec nets it correctly either way. That is a
   fixpoint analysis over four param-type classifiers and is its own slice — the
   borrowed-position stash here is not a step toward it, it is the neighbouring
@@ -8556,7 +8556,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   frees `keep`'s own box a hundred times over, and `freshself-string-field-read-safe`,
   the conformance shape itself, asserting values and balance rather than the
   flatness the receiver-credit gate still caps. Plus the whole
-  `internal/e2eselfhost` package. Refs #6544 #6491 #4451.
+  `internal/testing/e2ecompiler` package. Refs #6544 #6491 #4451.
 
 - 2026-08-18 (array half): **A struct producer that seeds its array field from a
   PRODUCER CALL is strict-fresh, so its caller's binding is reclaimable (#6522
@@ -8718,7 +8718,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   The break was one layer down. Native keeps two tables — `moveSites` keyed by
   NODE gates the inc, `movedLocals` keyed by NAME gates the exit-sweep dec
-  (`internal/ir/rc_analysis.go:61-71`). The self-host collapsed the inc side
+  (`internal/oracle/ir/rc_analysis.go:61-71`). The self-host collapsed the inc side
   onto the name table: `moves_local(name)` answered "is this local moved?" at
   EVERY construction consuming it, so with two literals both retains were
   elided and one buffer was released twice. The local's own dec elision was
@@ -8815,7 +8815,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `-live-local-safe`, where the argument is a live local rather than a temp. Each
   builds a long string between the reads so a wrongly freed block is really
   recycled before the value is checked. Plus the reclaim / wasm / borrow sweep of
-  `internal/e2eselfhost`. Refs #6544 #6522 #6887 #4451.
+  `internal/testing/e2ecompiler`. Refs #6544 #6522 #6887 #4451.
 - 2026-08-18 (isolation): **The fresh-array-arg row was never blocked by the arg
   temp at all.** Settled by dumping the registry and the call-site booleans
   rather than inferring from which probes were flat — an inference that had
@@ -8969,7 +8969,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   stack inside a void `if`.
 
   VERIFIED: eight new rows on the x86 leg and four each on the arm64 / wasm legs
-  of `internal/e2eselfhost`'s string[] element reclaim suite. The two admission
+  of `internal/testing/e2ecompiler`'s string[] element reclaim suite. The two admission
   rows fail at 98 on the parent — checked through the harness, not only by
   probe. The refusals (`keep(xs)` storing the array in a returned struct;
   `fwd(pre)` handing it back out) assert values under recycling pressure rather
@@ -9353,7 +9353,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   level deeper than either helper reaches, and on wasm an enum-array field whose
   element type carries no methods classifies scalar, so BOTH helpers keep it on
   the flat dec. Regression test:
-  `internal/e2eselfhost/self_host_field_reclaim_arr_elems_test.go` (all three
+  `internal/testing/e2ecompiler/self_host_field_reclaim_arr_elems_test.go` (all three
   backends, including the append-carry case that pins the admission).
   Refs #7067 #6544 #2649 #5235 #4451.
 - 2026-08-18 (the pairing, implemented): the previous entry scoped a three-way
@@ -9525,7 +9525,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `selfhost-*-known-divergences.txt` files — the gate, since a listed case that
   starts matching native fails those legs. All three targets now print
   `3100 / 6200 / flat`, identical to native. Regression test:
-  `internal/e2eselfhost/self_host_arrarr_ident_row_reclaim_test.go` (three
+  `internal/testing/e2ecompiler/self_host_arrarr_ident_row_reclaim_test.go` (three
   backends, 7 cases; the three leak cases fail on the parent with 98).
   Refs #6527 #6887 #4451.
 - 2026-08-18: **#4351 — the three remaining `dyn`-payload holes were all
@@ -9580,7 +9580,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   non-strict-fresh (identity) callee, a method call on a PARAM receiver (no
   annotation for the AST scan to read), and a string payload behind a
   non-literal init — each pinned as a gate case rather than left untested.
-  Regression test: `internal/e2eselfhost/self_host_dyn_call_reclaim_ir_test.go`
+  Regression test: `internal/testing/e2ecompiler/self_host_dyn_call_reclaim_ir_test.go`
   (13 cases x 3 backends; the flat cases return the MEASURED bytes per round as
   their exit code, so a regression reports its own size). Refs #4351 #4451.
 - 2026-08-18 (correcting a claim in the source): the previous entry named the
@@ -9657,7 +9657,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   that admits the escape shape outright still passes both. They are dropped
   rather than kept as decoration; the four rows that ship all move measured
   bytes or pin a value the release could corrupt. Regression tests:
-  `arrArgReclaimCases` in `internal/e2eselfhost/self_host_arrarg_reclaim_ir_test.go`
+  `arrArgReclaimCases` in `internal/testing/e2ecompiler/self_host_arrarg_reclaim_ir_test.go`
   (4 new rows x 3 backends). Refs #6544 #6522 #7061 #4451.
 - 2026-08-18 (found by the slice above, and it changes what the next one is):
   **the three field-reclaim emitters do not agree on a `string[]` field.** The
@@ -9749,7 +9749,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   (499 s, including the differential against native's own rc dump), the
   per-module emit-all fixpoint, the arm64 stage-2 fixpoint including `self`,
   and the stage-2 bootstrap. Regression test:
-  `internal/e2eselfhost/self_host_consumed_append_reclaim_test.go`.
+  `internal/testing/e2ecompiler/self_host_consumed_append_reclaim_test.go`.
   Refs #6501 #4357 #4365 #4451.
 - 2026-08-18: **#4353 re-measured per backend, and the `string[]` tuple element
   position closed.** Byte figures are a 5000-round churn's
@@ -9802,7 +9802,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   array literal whose every element is a string literal or a
   `tuple_str_elem_fresh` producer); one bare-ident element keeps the shallow
   buffer-only dec, so a live local's box is never freed. Regression test:
-  `internal/e2eselfhost/self_host_tuple_strarr_reclaim_*_test.go` (5 cases x 3
+  `internal/testing/e2ecompiler/self_host_tuple_strarr_reclaim_*_test.go` (5 cases x 3
   backends; 6 of the 15 fail with the `irlower.fern` change reverted, the other
   9 being the value and aliasing controls that must pass either way).
   Refs #4353 #4451.
@@ -9817,7 +9817,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `"STRARR:"` already gives `string[]`. The binding's annotation supplies the
   element type the deep free walks; the callee's returned value escapes by return
   and keeps its shallow dec, so each box is freed once. Regression test:
-  `internal/e2eselfhost/self_host_arrtup_producer_reclaim_*_test.go` (6 cases x 3
+  `internal/testing/e2ecompiler/self_host_arrtup_producer_reclaim_*_test.go` (6 cases x 3
   backends; the two byte gates fail on the parent, the four controls — value,
   non-fresh producer returning a PARAM array, forwarded return, element alias —
   pass either way).
@@ -9907,7 +9907,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   code disagrees with it. Refs #6544 #6522 #4451.
 
   Regression tests:
-  `internal/e2eselfhost/self_host_strarr_field_buffer_release_test.go` (4 cases
+  `internal/testing/e2ecompiler/self_host_strarr_field_buffer_release_test.go` (4 cases
   x 3 backends; each flat case returns the MEASURED bytes per round as its exit
   code). The two halves are separated by the loop-rebind row: with only the
   struct-drop arm fixed it still reads 55.
@@ -9936,7 +9936,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   driver segfaults on a plain `for i in 0..10 { continue; }`; gated, both are
   green. The blast radius of a struct-drop emitter change is EVERY program the
   compiler emits, so the targeted set for one is the whole
-  `internal/e2eselfhost` package, not a regex over the reclaim tests. Instrumenting the emitter names the 31 refused fields, all of them
+  `internal/testing/e2ecompiler` package, not a regex over the reclaim tests. Instrumenting the emitter names the 31 refused fields, all of them
   functional-update accumulators of exactly that shape, so the gate is not
   guarding a hypothetical. A smaller witness is worth finding; until someone
   does, do not weaken this gate on the strength of a probe that runs clean.
@@ -9983,9 +9983,9 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   is never touched — and both are pinned as refusal cases.
 
   Regression test:
-  `internal/e2eselfhost/self_host_tuple_scalar_elem_reclaim_test.go` (5 cases x 3
+  `internal/testing/e2ecompiler/self_host_tuple_scalar_elem_reclaim_test.go` (5 cases x 3
   backends; the 3 byte gates fail on the parent on all three legs, the 2 aliasing
-  controls pass either way). Gates: the whole `internal/e2eselfhost` package,
+  controls pass either way). Gates: the whole `internal/testing/e2ecompiler` package,
   which is the targeted set for a change to what the compiler emits for its own
   sources. Refs #4353 #4451.
 - 2026-08-19: **#6522 — `alloc_flat_fresh_array_arg` is FLAT on all three
@@ -10014,7 +10014,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   re-reading the scan had already failed twice to find it.
 
   Regression tests:
-  `internal/e2eselfhost/self_host_strarr_field_transient_read_test.go` (3 cases
+  `internal/testing/e2ecompiler/self_host_strarr_field_transient_read_test.go` (3 cases
   x 3 backends): the transient positive reports 98 without the change, and the
   two lasting-alias negatives — a `.trim()` view and a bound element — pin that
   the deep walk stays refused for them (asm-checked: `__struct_drop_View` has no
@@ -10157,7 +10157,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   the nested-tuple rows above needed.
 
   Regression test:
-  `internal/e2eselfhost/self_host_nested_tuple_elem_reclaim_test.go` (5 cases x 3
+  `internal/testing/e2ecompiler/self_host_nested_tuple_elem_reclaim_test.go` (5 cases x 3
   backends). On the parent all 3 byte gates fail on all three legs; with only the
   admission fix 2 of 3 still fail per leg, so both halves are pinned
   independently. The 2 safety controls — a whole-element extraction that must
@@ -10205,7 +10205,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   because trim returns a view of its receiver. `str_borrowing_method` is the set
   that does not (it also replaced three inline copies of the same nine names).
   Those probes are the refusal half of
-  `internal/e2eselfhost/self_host_str_slice_borrow_test.go`; note the padding
+  `internal/testing/e2ecompiler/self_host_str_slice_borrow_test.go`; note the padding
   there is deliberately the SAME length as the source, because an earlier version
   with differently-sized padding passed against the unsound compiler — a freed
   buffer nothing has reused still reads correctly.
@@ -10278,7 +10278,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   - **wasm strands 32 B/round of an ARRAY value column**, in the literal and the
     insert spelling alike, before and after this change. Both natives are flat
     on the same source, so it is a wasm-side question about the kind-2 column
-    walk; `internal/e2e/map_lit_reclaim_test.go` pins the two spellings at
+    walk; `internal/testing/e2e/map_lit_reclaim_test.go` pins the two spellings at
     parity there rather than hiding the residual.
 
   **#4353 item 3 gets its oracle back.** The measurement it was filed against
@@ -10287,13 +10287,13 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   columns where the self-host still churns 40 and 88 B/round (x86-64, same
   source), so the item is a self-host gap again rather than a shared unknown.
 
-  Regression tests: `internal/e2e/map_lit_reclaim_test.go` (3 programs x 4 legs).
+  Regression tests: `internal/testing/e2e/map_lit_reclaim_test.go` (3 programs x 4 legs).
   The byte gate reads the per-round figure from the 2n delta so a fixed startup
   cost divides away; the aliasing program is what fails when the admission ships
   without the retains — exit 5 on both natives, the aliased-value and
   read-the-value-back cases together, and a two-function reduction of the pair
-  faults outright (exit 134). Gates run: `internal/ir`, `internal/interp`,
-  `internal/checker`, the whole conformance corpus (`TestFernFixtures`), the
+  faults outright (exit 134). Gates run: `internal/oracle/ir`, `internal/oracle/interp`,
+  `internal/check/checker`, the whole conformance corpus (`TestFernFixtures`), the
   map / rc / reclaim / alloc / cow / drop e2e selection, `TestWasm`, and —
   since native is what compiles the self-host driver —
   `TestSelfHostInterpDriverX86_64` plus
@@ -10403,7 +10403,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
     is real.
 
   Regression test:
-  `internal/e2eselfhost/self_host_union_tuple_elem_reclaim_test.go` (5 cases x 3
+  `internal/testing/e2ecompiler/self_host_union_tuple_elem_reclaim_test.go` (5 cases x 3
   backends; the 3 byte gates fail on the parent on all three legs, the 2 aliasing
   controls pass either way). Refs #4353 #4451.
 - 2026-08-19 (correcting the entry above): that entry's closing note said a fresh
@@ -10536,7 +10536,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   wider than anything in this run of slices.
 
   Regression test:
-  `internal/e2eselfhost/self_host_union_only_child_reclaim_test.go` (3 cases x 3
+  `internal/testing/e2ecompiler/self_host_union_only_child_reclaim_test.go` (3 cases x 3
   backends; both byte gates fail on the parent on all three legs, the aliasing
   control passes either way). Refs #4353 #4451.
 
@@ -10619,7 +10619,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   native and all three backends, before and after).
 
   Regression test:
-  `internal/e2eselfhost/self_host_match_elem_borrow_reclaim_test.go` (5 cases x 3
+  `internal/testing/e2ecompiler/self_host_match_elem_borrow_reclaim_test.go` (5 cases x 3
   backends; both byte gates fail on the parent on all three legs, the three
   safety controls — pointer payload bound, pointer payload carried out, and a
   whole-element extraction that must stay refused — pass either way).
@@ -10648,7 +10648,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   at all, so there is no reachable program the widening would move.
 
   Regression test:
-  `internal/e2eselfhost/self_host_result_elem_reclaim_test.go` (6 cases x 3
+  `internal/testing/e2ecompiler/self_host_result_elem_reclaim_test.go` (6 cases x 3
   backends; the three byte gates fail on the parent on all three legs, the three
   safety controls — a shadowed `Ok`, a bare-ident element, and an `Ok` payload
   bound and carried out of the loop — pass either way).
@@ -10760,7 +10760,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   same shape spelled `keep = m.get_or(k, fb)` is flat, which is what places the
   cause at the move-site assignment rather than at the lookup.
 
-  Regression test: `internal/e2e/map_get_reclaim_test.go` — 3 programs x 4 legs;
+  Regression test: `internal/testing/e2e/map_get_reclaim_test.go` — 3 programs x 4 legs;
   the byte gate fails on the parent on all three backends and the string-parity
   gate on arm64 and wasm (x86-64's own column leak masks it there), while the
   aliasing program passes either side, which is its job. Refs #7144 #7122 #7143
@@ -10895,7 +10895,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   commentary). Delisting is part of this change rather than follow-up: the
   fixture gate fails a listed fixture that starts PASSING, by design.
 
-  Regression test: `internal/e2eselfhost/self_host_str_chain_receiver_test.go`
+  Regression test: `internal/testing/e2ecompiler/self_host_str_chain_receiver_test.go`
   (7 cases x 3 backends). Thresholds there are calibrated rather than inherited
   — the leak is 24 B/round, so the 32768-over-400-rounds gate the sibling suites
   use would not have caught it; measured 9600 -> 0 per flat case. Refs #6544 #4451.
@@ -10992,7 +10992,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
     `result-array-payload`.
 
   Regression test:
-  `internal/e2eselfhost/self_host_union_payload_reclaim_test.go` (8 cases x 3
+  `internal/testing/e2ecompiler/self_host_union_payload_reclaim_test.go` (8 cases x 3
   backends; the five byte gates fail on the parent on all three legs, and the
   three controls — carried-out validity, a bare-ident payload, and an immortal
   `.rodata` literal that must not be freed — pass either way). Refs #4353 #4451.
@@ -11050,7 +11050,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   why the regression test gates them at different numbers rather than picking one
   loose threshold that would sit inside a 7% band on both.
 
-  Regression test: `internal/e2eselfhost/self_host_str_slice_recv_borrow_test.go`
+  Regression test: `internal/testing/e2ecompiler/self_host_str_slice_recv_borrow_test.go`
   (6 cases x 3 backends). The improvement case fails on the parent on all three
   legs; the witness above is checked against a build that skips the proof.
 
@@ -11099,7 +11099,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   generic or unparsed value column (`map_value_of` = "" or a bare type var) also
   takes none unless the value is a bare ident on an array slot.
 
-  Regression test: `internal/e2eselfhost/self_host_map_value_alias_retain_ir_test.go`
+  Regression test: `internal/testing/e2ecompiler/self_host_map_value_alias_retain_ir_test.go`
   — 4 programs x 3 legs; the three alias programs fail on the parent on x86-64
   and arm64, the fresh-value control passes either side, and the wasm leg passes
   either side as the parity gate it is. Refs #6880 #6875 #6567 #3495 #4451.
@@ -11153,7 +11153,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   returned 99.
 
   Regression test:
-  `internal/e2eselfhost/self_host_bare_ident_payload_reclaim_test.go` (4 cases x 3
+  `internal/testing/e2ecompiler/self_host_bare_ident_payload_reclaim_test.go` (4 cases x 3
   backends; the two byte gates fail on the parent on all three legs, and the two
   controls — the carried-out binding and the still-refused string payload — pass
   either way). Refs #4353 #4451.
@@ -11199,7 +11199,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   either half, so the split and its substitution helper are deleted.
 
   Regression test:
-  `internal/e2eselfhost/self_host_str_slice_view_release_test.go` (6 cases x 3
+  `internal/testing/e2ecompiler/self_host_str_slice_view_release_test.go` (6 cases x 3
   backends; the two byte gates fail on the parent on all three legs).
 
   Still open, and now the lead on this shape: a slice OF a slice. On wasm the
@@ -11254,7 +11254,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   separated them.
 
   Regression test:
-  `internal/e2eselfhost/self_host_str_slice_builtin_recv_test.go` (6 cases x 3
+  `internal/testing/e2ecompiler/self_host_str_slice_builtin_recv_test.go` (6 cases x 3
   backends; the three byte gates fail on the parent on all three legs, and the
   trim + split refusals and the source-liveness case pass either way).
   Refs #6544 #4451.
@@ -11311,7 +11311,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   use outside the tuple and the plain escape walk still refuses it.
 
   Regression test:
-  `internal/e2eselfhost/self_host_str_payload_interlock_test.go` (4 cases x 3
+  `internal/testing/e2ecompiler/self_host_str_payload_interlock_test.go` (4 cases x 3
   backends; the byte gate fails on the parent on all three legs, and the three
   controls — the escape, the carried-out binding and the untouched array twin —
   pass either way). Refs #4353 #4451.
@@ -11421,7 +11421,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   live functions. `str_local_binding_is_fresh` also stopped re-spelling the four
   method names `str_fresh_alloc_method` encapsulates.
 
-  Regression test: `internal/e2eselfhost/self_host_tostring_freshret_test.go`
+  Regression test: `internal/testing/e2ecompiler/self_host_tostring_freshret_test.go`
   (6 cases x 3 backends; the three byte gates fail on the parent on all three
   legs). Refs #4353 #4451.
 - 2026-08-19: **the consume family's two list params were crossed at every call
@@ -11555,7 +11555,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   change than this slice and does not block it — `some_opt_type` is where the
   false claim was made.
 
-  Regression test: `internal/e2eselfhost/self_host_map_payload_match_test.go`
+  Regression test: `internal/testing/e2ecompiler/self_host_map_payload_match_test.go`
   (6 cases x 3 backends). It asserts on WHETHER EACH CASE LOWERED, not only on
   the exit code: the bug was a refusal to lower, so a regression would otherwise
   reappear as a test that never runs its program. The refusal case additionally
@@ -11604,7 +11604,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   in a tuple element or struct field, all need a map ELEMENT kind the array side
   does not carry. That is the next slice in this area, not this one.
 
-  Regression test: `internal/e2eselfhost/self_host_maparr_ident_test.go`
+  Regression test: `internal/testing/e2ecompiler/self_host_maparr_ident_test.go`
   (5 cases x 3 backends). Three fail on the parent — as exit `-1`, death by
   signal — and the two controls (the element read, and a plain map local whose
   ops must all still dispatch) pass either way. Every want adjudicated against
@@ -11668,7 +11668,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   already, or in leaksafe/reuse predicates where an array of maps is a legitimate
   member of the accepted set.
 
-  Regression test: `internal/e2eselfhost/self_host_maparr_elem_test.go`
+  Regression test: `internal/testing/e2ecompiler/self_host_maparr_elem_test.go`
   (12 cases x 3 backends). On the parent four bail and one segfaults; the two
   controls — a genuine Map struct FIELD and a genuine Map TUPLE ELEMENT, whose
   ops must all still dispatch — pass either way, which is what keeps the two new
@@ -11721,7 +11721,7 @@ parameterised emitter each now (`emit_ir_map_free_variant`,
 `emit_arm64_map_free_variant`), which is what made adding `_va` / `_ksva` two
 lines instead of a hundred.
 
-Regression test: `internal/e2eselfhost/self_host_map_box_column_reclaim_ir_test.go`
+Regression test: `internal/testing/e2ecompiler/self_host_map_box_column_reclaim_ir_test.go`
 (5 cases x 3 backends). Three discriminate — the two flatness cases and
 `read-then-recycle` — and fail on the parent on every leg; the two controls
 (`read-back-no-over-release`, which is what caught the missing retain, and the

@@ -36,7 +36,7 @@ Every code claim below was verified against the file at the cited line
 Collection mutators are lowered to flat calls whose result is the
 (possibly fresh) receiver buffer. The CoW seam — `__map_cow_inplace`
 (`internal/stdlib/core/map.fern:154`) and the nested-array CoW at
-`internal/ir/ir.go:9885` — does the right thing at runtime:
+`internal/oracle/ir/ir.go:9885` — does the right thing at runtime:
 
 - **rc ≤ 1 (uniquely held):** mutate in place, return the *same* handle.
 - **rc > 1 (aliased):** deep-copy, return a *fresh* handle (rc = 1); the
@@ -48,10 +48,10 @@ The reassignment form threads that result back:
 m = m.set(k, v);   // correct under both branches
 ```
 
-and the IR even recognises it: `isSelfMapMutation` (`internal/ir/ir.go`,
+and the IR even recognises it: `isSelfMapMutation` (`internal/oracle/ir/ir.go`,
 ~`14211`) emits a *conditional* dec of the old handle only when CoW
 actually copied. But the **bare-statement form discards the result**
-(`*ast.ExprStmt` → `OpDrop`, `internal/ir/ir.go:7671`):
+(`*ast.ExprStmt` → `OpDrop`, `internal/oracle/ir/ir.go:7671`):
 
 ```fern
 m.set(k, v);       // result dropped
@@ -75,7 +75,7 @@ function main(): i32 {
 ```
 
 There is **no checker analysis** that flags this — the checker only
-gates E048/E049 (`internal/checker/checker.go:6882-6905`); `isSelfMapMutation`
+gates E048/E049 (`internal/check/checker/checker.go:6882-6905`); `isSelfMapMutation`
 is a *syntactic* check, not an aliasing analysis. The interpreter plan
 already records the same hazard as "loses bare-statement mutation"
 (`docs/INTERP-MAP-COW-PLAN.md:59`), but the compiled backends share it.
@@ -116,7 +116,7 @@ and an assertion. The bytes the in-place path emits are unchanged.
 ### 3a. Rename for intent
 
 Every collection op already returns the collection (verified in
-`internal/checker/checker.go:1350-1404`: `set`→`Map`, `clear`→`Map`,
+`internal/check/checker/checker.go:1350-1404`: `set`→`Map`, `clear`→`Map`,
 `delete`→`(Map, bool)`, `push`/indexed `set`→`T[]`). We rename so the
 name *reads as a value producer*, matching the struct-update idiom and
 the Roc/Clojure precedent:
@@ -161,7 +161,7 @@ E055: result of `Map.insert` is unused; assign it back
 ```
 
 Implementation site: the `*ast.ExprStmt` arm of the checker
-(currently lowered straight to `OpDrop` at `internal/ir/ir.go:7671`).
+(currently lowered straight to `OpDrop` at `internal/oracle/ir/ir.go:7671`).
 The checker already has the method-name → signature map
 (`c.info.FuncSigs`, populated at `checker.go:1350`), so the result type
 is known at the statement; gate on "callee is a registered collection
@@ -275,7 +275,7 @@ to run in place will instead copy if the value turns out to be aliased.
 We make that observable with the assertion mechanism **that already
 exists** — `fip`.
 
-`fip function` is checked at `internal/checker/checker.go:3920` and
+`fip function` is checked at `internal/check/checker/checker.go:3920` and
 already emits **E053** for the relevant violation:
 
 > ``fip`` function %q may not write to a non-`own` heap value (triggers a

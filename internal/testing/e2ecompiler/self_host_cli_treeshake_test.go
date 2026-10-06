@@ -1,0 +1,504 @@
+package e2ecompiler
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// fnLabels returns the emitted function labels in a GAS text, in order.
+//
+// Both compilers label a function at column 0 as `__fn_<name>:` or
+// `__method_<name>:`, so this is a count of what the artifact actually carries
+// rather than of what was loaded.
+func fnLabels(asm string) []string {
+	re := regexp.MustCompile(`(?m)^(__fn_[A-Za-z_0-9]+|__method_[A-Za-z_0-9]+):`)
+	var out []string
+	for _, m := range re.FindAllStringSubmatch(asm, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// TestSelfHostCLIPrunesStdlibImportClosureX86_64 pins that `fern.fern` — the
+// self-hosted CLI, the binary the whole toolchain ships — prunes the functions
+// a program cannot reach before it emits.
+//
+// It did not. `treeshake.treeshake` was called in exactly one place there, on
+// the diagnostics side of `capability_violations`, and its result was thrown
+// away; the module handed to codegen was the whole merged import closure. One
+// `import "std/string"` reaches core/int, core/bigint, std/array and
+// std/unicode transitively, so bench/string_count_byte emitted 958
+// functions and 81,463 instructions against the native compiler's 27 and 640 —
+// 127x, on a benchmark both compilers had a checked-in size baseline for.
+//
+// Neither baseline could see it. `.github/perf-baseline-selfhost.txt` compares
+// the self-host against ITSELF across the three targets, and
+// `.github/perf-baseline.txt` covers the native compiler; the two count the
+// same thing the same way (`grep -c '^[[:space:]]'` over the same `.s`) on the
+// same benchmark names and are never read against each other. This test is
+// that missing comparison, as a gate rather than an advisory lane.
+//
+// Two assertions, because the count alone is a weak claim. NAMED dead
+// functions must be absent — the shape internal/testing/e2e/treeshake_backend_dce_test
+// uses, and the one that says what was pruned rather than how much. And the
+// total must stay under a ceiling, which is what catches a whole closure
+// surviving again. The ceiling is deliberately loose: the self-host shake
+// over-approximates reachability BY NAME, so `==` in any reachable line keeps
+// every `*.eq` in the program and `<` keeps every `*.cmp` — 69 functions
+// against native's 1 on the case below. A tight ratchet would fail on an
+// unrelated stdlib edit; the defect this exists to catch is two orders of
+// magnitude, not a few percent.
+//
+// Native only: the CLI takes host filesystem paths as argv, so a qemu runner
+// would not resolve them (mirrors TestSelfHostStdTestE2E).
+func TestSelfHostCLIPrunesStdlibImportClosureX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading CLI test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	const src = `import "std/string";
+function main(): i32 {
+    let s: string = "hello world";
+    if (s.starts_with("hello")) { return 0; }
+    return 1;
+}
+`
+	prog := filepath.Join(dir, "ts_stdlib_prog.fern")
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatalf("write program: %v", err)
+	}
+	asmPath := filepath.Join(dir, "ts_stdlib_prog.s")
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("self-host compile failed: %v\n%s", err, out)
+	}
+	asmBytes, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatalf("read asm: %v", err)
+	}
+	asm := string(asmBytes)
+	labels := fnLabels(asm)
+
+	// std/string functions this program cannot reach. `starts_with` is the one
+	// it calls; `eq` and `cmp` survive the operator over-approximation. These
+	// six are reached by neither route, so each one present is a prune that did
+	// not happen.
+	for _, dead := range []string{
+		"__fn_string__repeat",
+		"__fn_string__contains",
+		"__fn_string__index_of",
+		"__fn_string__last_index_of",
+		"__fn_string__ends_with",
+		"__fn_string__split",
+	} {
+		if strings.Contains(asm, "\n"+dead+":") {
+			t.Errorf("%s is emitted, but nothing in the program can reach it — the import closure was not pruned", dead)
+		}
+	}
+	if !strings.Contains(asm, "\n__fn_string__starts_with:") {
+		t.Errorf("__fn_string__starts_with is NOT emitted, but main calls it — the prune dropped a reachable function")
+	}
+
+	// The ceiling check. 69 with the prune, 958 without it.
+	const ceiling = 300
+	if len(labels) > ceiling {
+		t.Errorf("self-host emitted %d functions for a program using one std/string method, ceiling %d — "+
+			"a count this high means the transitive import closure survived to codegen", len(labels), ceiling)
+	}
+
+	// The prune must not have changed the answer.
+	bin := buildBin(t, gcc, dir, "ts_stdlib_prog", asm)
+	run := exec.Command(bin)
+	_ = run.Run()
+	if code := run.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("pruned program exited %d, want 0", code)
+	}
+}
+
+// TestSelfHostTreeshakeKeepsDropFinalizerX86_64 pins the one root the walk
+// cannot discover for itself.
+//
+// A `Drop` finalizer has no call site anywhere in the program: its only caller
+// is the `__drop_struct_<C>` glue lowering synthesises AFTER the prune runs. So
+// a reachability walk seeded from `main` drops it, and the glue is then left
+// naming a symbol nothing emitted. treeshake roots every `Drop` impl's methods
+// whole-program for the same reason native's `treeshake.DropImplMethods` does —
+// gating it on whether a live function can hold a `C` is type reachability this
+// pass does not compute.
+func TestSelfHostTreeshakeKeepsDropFinalizerX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading CLI test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	// `drop` is never spelled in this program — not as a call, not as a field
+	// access — so nothing but the impl root can keep it.
+	const src = `import "core/mem";
+import "std/i32";
+struct W { n: i32 }
+impl mem.Drop for W {
+    function drop(self: Self): void { print("drop " + self.n.to_string()); }
+}
+function main(): i32 {
+    let a: W = W { n: 7 };
+    return a.n - 7;
+}
+`
+	prog := filepath.Join(dir, "ts_drop_prog.fern")
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatalf("write program: %v", err)
+	}
+	asmPath := filepath.Join(dir, "ts_drop_prog.s")
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("self-host compile failed: %v\n%s", err, out)
+	}
+	asmBytes, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatalf("read asm: %v", err)
+	}
+	if !strings.Contains(string(asmBytes), "\n__fn_W__drop:") {
+		t.Errorf("__fn_W__drop is not emitted: the prune dropped the Drop finalizer, which the drop glue names")
+	}
+}
+
+// TestSelfHostTreeshakeKeepsDerivedMethodsX86_64 pins the second root of that
+// kind, and the one that actually broke.
+//
+// A `@derive`d method has no syntactic call site either: the map lowering emits
+// the call to a key type's `hash` after the prune has run. So
+// `@derive(cmp.Eq, cmp.Hash) struct Sku` used as a map key lost `Sku.hash`, and
+// the wasm leg rejected the module for calling a function it never defines —
+// conformance/cases/map_iter_struct_value, map_struct_enum_keys and
+// map_struct_key_grow, which are the corpus gate on this and are why the roots
+// are not a matter of reasoning about which ones might be needed.
+//
+// The root is by RECEIVER, not by a list of derivable method names, so a new
+// derive is covered without a second place to remember.
+func TestSelfHostTreeshakeKeepsDerivedMethodsX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading CLI test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	// `hash` is never spelled here; only the map lowering asks for it. The
+	// enum's derives ride its variants' declarations while the methods take
+	// the ENUM as receiver, so `Tag.hash` is the case a root by the variant's
+	// own name misses.
+	const src = `import "core/map";
+import "core/cmp";
+
+@derive(cmp.Eq, cmp.Hash)
+struct Sku { code: i32 }
+
+@derive(cmp.Eq, cmp.Hash)
+enum Tag { A(i32), B }
+
+function main(): i32 {
+    let m: Map[Sku, i32] = map_new(8);
+    m = m.insert(Sku { code: 5 }, 7);
+    let t: Map[Tag, i32] = map_new(8);
+    t = t.insert(A(1), 2);
+    return m.get_or(Sku { code: 5 }, 0) - 7 + t.get_or(A(1), 0) - 2;
+}
+`
+	prog := filepath.Join(dir, "ts_derive_prog.fern")
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatalf("write program: %v", err)
+	}
+	asmPath := filepath.Join(dir, "ts_derive_prog.s")
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("self-host compile failed: %v\n%s", err, out)
+	}
+	asmBytes, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatalf("read asm: %v", err)
+	}
+	asm := string(asmBytes)
+	for _, sym := range []string{"__fn_Sku__hash", "__fn_Tag__hash"} {
+		if !strings.Contains(asm, "\n"+sym+":") {
+			t.Errorf("%s is not emitted: the prune dropped a @derive'd method the map lowering calls", sym)
+		}
+	}
+
+	// Every function the artifact calls must be one it defines. This is the
+	// property the wasm leg enforces by rejecting the module, stated directly
+	// on the x86-64 text so a failure names the symbol.
+	callRe := regexp.MustCompile(`(?m)^[ \t]+call[ \t]+(__fn_[A-Za-z_0-9]+|__method_[A-Za-z_0-9]+)\b`)
+	defined := map[string]bool{}
+	for _, l := range fnLabels(asm) {
+		defined[l] = true
+	}
+	var missing []string
+	seen := map[string]bool{}
+	for _, m := range callRe.FindAllStringSubmatch(asm, -1) {
+		if !defined[m[1]] && !seen[m[1]] {
+			seen[m[1]] = true
+			missing = append(missing, m[1])
+		}
+	}
+	if len(missing) != 0 {
+		t.Errorf("the artifact calls %d function(s) it does not define: %s — the prune dropped something reachable",
+			len(missing), strings.Join(missing, ", "))
+	}
+}
+
+// TestSelfHostTreeshakeQualifiesArithmeticRootsX86_64 pins the receiver-qualified
+// arithmetic roots.
+//
+// `refs` is a set of SIMPLE names, so a bare `add` root from any `a + b` kept
+// `add` for every type in the program. On a minimal std/string program that was
+// 24 functions, 12 of them core/bigint's `BigInt.add` / `sub` / `negate` and the
+// `__bi_*` helpers behind them, reached by nothing the program does
+// (docs/PERFORMANCE-AUDIT-2026-08.md §4f, which sizes it by REMOVAL — counting
+// the operator-method impls in the output over-counts by more than 2x, because
+// `eq` and `cmp` are held by explicit `.eq(...)` field accesses regardless).
+//
+// Only the six arithmetic methods resolve by receiver. The comparisons cannot:
+// `annotate_module` stamps ExprBinary.ty with the type of the WHOLE expression,
+// which for `==` is `boolean` and names no impl.
+//
+// The program below is the discriminating case in both directions — it adds two
+// `V`s and, inside `V.add`, two i32s — so it must keep `V.add`, `V.neg` and
+// `i32.add` while dropping every other type's.
+func TestSelfHostTreeshakeQualifiesArithmeticRootsX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading CLI test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	const src = `import "std/num";
+
+struct V { n: i32 }
+impl num.Add for V { function add(self: Self, o: Self): Self { return V { n: self.n + o.n }; } }
+impl num.Neg for V { function neg(self: Self): V { return V { n: 0 - self.n }; } }
+
+function main(): i32 {
+    let a: V = V { n: 3 };
+    let b: V = V { n: 4 };
+    let c: V = a + b;
+    let d: V = -c;
+    return d.n + 7;
+}
+`
+	prog := filepath.Join(dir, "ts_arith_prog.fern")
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatalf("write program: %v", err)
+	}
+	asmPath := filepath.Join(dir, "ts_arith_prog.s")
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("self-host compile failed: %v\n%s", err, out)
+	}
+	asmBytes, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatalf("read asm: %v", err)
+	}
+	asm := string(asmBytes)
+
+	// Kept: the overload the program invokes, and the scalar impl its own body
+	// reaches. A user impl is the case most at risk — the receiver has to
+	// resolve against the tag a struct carries, which is its nominal name.
+	for _, live := range []string{"__fn_V__add", "__fn_V__neg", "__fn_i32__add"} {
+		if !strings.Contains(asm, "\n"+live+":") {
+			t.Errorf("%s is NOT emitted, but the program reaches it — the qualified root dropped a live impl", live)
+		}
+	}
+	// Dropped: every other type's `add`, which a bare root would have kept.
+	for _, dead := range []string{
+		"__fn_bigint__BigInt__add",
+		"__fn_i64__add",
+		"__fn_u32__add",
+		"__fn_u64__add",
+		"__fn_f32__add",
+		"__fn_f64__add",
+	} {
+		if strings.Contains(asm, "\n"+dead+":") {
+			t.Errorf("%s is emitted, but nothing in the program adds that type — the root was not qualified", dead)
+		}
+	}
+
+	// And the answer is unchanged.
+	bin := buildBin(t, gcc, dir, "ts_arith_prog", asm)
+	run := exec.Command(bin)
+	_ = run.Run()
+	if code := run.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("operator-overload program exited %d, want 0", code)
+	}
+}
+
+// TestSelfHostTreeshakeKeepsDisplayToStringX86_64 pins that the prune keeps
+// the `to_string` a displayed value dispatches to, and only that one.
+//
+// The checker rewrites `write(q)` to `write(q.to_string())` in its annotate
+// pass (docs/TRAITS.md §3a), so the source never spells the method. The CLI
+// — the one compile path that treeshakes unconditionally — used to prune
+// before annotating, so the walk saw no call to `Q.to_string` and dropped it,
+// and the pre-codegen Display gate then refused the program for having no
+// `to_string` at all, three lines under the one it has (#9989). Native
+// compiles it and prints `Q!`. The shake now runs on the annotated module.
+//
+// The root is qualified by the receiver's stamped type, so it keeps THIS
+// struct's `to_string` and not every type's — the std/i32, std/i64 and
+// core/bigint methods below are all in the import closure and all dropped.
+// The program deliberately spells no `.to_string()` of its own on an
+// unstamped receiver: a bare name in the reachable set keeps all of them.
+func TestSelfHostTreeshakeKeepsDisplayToStringX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading CLI test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	const src = `import "std/i32";
+import "std/i64";
+
+struct Q { a: i32 }
+function (q: Q) to_string(): string { return "Q!"; }
+
+function main(): i32 {
+    let q: Q = Q { a: 7 };
+    write(q);
+    return 0;
+}
+`
+	prog := filepath.Join(dir, "ts_display_prog.fern")
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatalf("write program: %v", err)
+	}
+	asmPath := filepath.Join(dir, "ts_display_prog.s")
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("self-host compile failed: %v\n%s", err, out)
+	}
+	asmBytes, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatalf("read asm: %v", err)
+	}
+	asm := string(asmBytes)
+
+	if !strings.Contains(asm, "\n__fn_Q__to_string:") {
+		t.Errorf("__fn_Q__to_string is not emitted: the prune dropped the method the display lowering calls")
+	}
+	for _, dead := range []string{
+		"__fn_i32__to_string",
+		"__fn_i64__to_string",
+		"__fn_boolean__to_string",
+		"__fn_bigint__BigInt__to_string",
+	} {
+		if strings.Contains(asm, "\n"+dead+":") {
+			t.Errorf("%s is emitted, but nothing in the program displays that type — the display root was not qualified", dead)
+		}
+	}
+
+	bin := buildBin(t, gcc, dir, "ts_display_prog", asm)
+	run := exec.Command(bin)
+	out, err := run.Output()
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got := string(out); got != "Q!" {
+		t.Errorf("program printed %q, want %q — the display rewrite reached the wrong method", got, "Q!")
+	}
+	if code := run.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("display program exited %d, want 0", code)
+	}
+}
+
+// TestSelfHostTreeshakeFieldReadKeepsNoMethodX86_64 pins that a field read
+// names no method. The shake keeps a method by its simple name when a call
+// spells it (`x.eq(...)` keeps every `*.eq`), and it once kept one for a bare
+// field read too: a struct with a field named `connect`, read but never
+// called, kept every `connect` method in the program, fetch's socket
+// transport among them, and a wasi-http handler failed E066 on the sockets
+// that transport reaches. A method is never a value in Fern, so a read
+// cannot reach one; a call through the same spelling still keeps it.
+func TestSelfHostTreeshakeFieldReadKeepsNoMethodX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading CLI test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	const src = `struct Bounds { probe: i32 }
+struct Dialer { tries: i32 }
+function (d: Dialer) probe(): i32 {
+    return d.tries + 41;
+}
+struct Pinger { n: i32 }
+function (p: Pinger) ping(): i32 {
+    return p.n * 2;
+}
+function main(): i32 {
+    let b: Bounds = Bounds { probe: 3 };
+    let p: Pinger = Pinger { n: b.probe };
+    return p.ping();
+}
+`
+	prog := filepath.Join(dir, "ts_field_read.fern")
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatalf("write program: %v", err)
+	}
+	asmPath := filepath.Join(dir, "ts_field_read.s")
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("self-host compile failed: %v\n%s", err, out)
+	}
+	asmBytes, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatalf("read asm: %v", err)
+	}
+	labels := strings.Join(fnLabels(string(asmBytes)), " ")
+	if strings.Contains(labels, "probe") {
+		t.Errorf("Dialer.probe is emitted, but the program only reads the field `probe`:\n%s", labels)
+	}
+	if !strings.Contains(labels, "ping") {
+		t.Errorf("Pinger.ping is NOT emitted, but main calls it:\n%s", labels)
+	}
+	bin := buildBin(t, gcc, dir, "ts_field_read", string(asmBytes))
+	run := exec.Command(bin)
+	_ = run.Run()
+	if code := run.ProcessState.ExitCode(); code != 6 {
+		t.Errorf("program exited %d, want 6", code)
+	}
+}

@@ -415,7 +415,7 @@ IR can fuse*. Strymonas defines what "can fuse" should mean: a
 **guaranteed, compositional contract** (like Koka's guaranteed
 reuse — specified behavior, not best-effort optimization). The
 staging mechanism itself would arrive with comptime; near-term,
-the contract can be an `internal/ir` fusion pass over the
+the contract can be an `internal/oracle/ir` fusion pass over the
 existing cursor-iterator protocol with a documented operator
 algebra. Rating: adaptable (design principle now, mechanism
 later).
@@ -580,7 +580,7 @@ verified; the rest descend from architectural to ergonomic.
    (strymonas POPL 2017). When lazy iterators return to the
    agenda, adopt the compositional guarantee ("if each operator
    is non-allocating, the composed pipeline is") as an
-   `internal/ir` pass over the cursor protocol with a documented
+   `internal/oracle/ir` pass over the cursor protocol with a documented
    operator algebra — the same specified-not-best-effort stance
    as item 1.
 7. **Per-request fault isolation (crash-only handlers)** —

@@ -28,7 +28,7 @@ with "this is how TS does it" when a better shape exists.
 Fern is **general-purpose**. The two workloads it grew up around — small
 fast-startup CLI tools and short-lived edge-function-style HTTP servers — are
 where it is most polished, but they are no longer the boundary. Long-running,
-allocation-heavy programs are in scope: the self-hosted compiler is exactly such
+allocation-heavy programs are in scope: the compiler itself is exactly such
 a program, and it is what drove the move from arena-and-forget to reference
 counting. When a design choice trades general-purpose fitness for a narrow
 edge/CLI optimisation, weigh that trade explicitly rather than assuming
@@ -71,8 +71,8 @@ opt-in `-march`-style flag — not as runtime dispatch, which stays off the tabl
 Per-backend support table, version-support stance, and known limitations:
 `docs/BACKEND-PARITY.md`.
 
-The IR layer is target-agnostic; **new optimisations belong in `internal/ir`** so
-all backends benefit.
+The compiler's IR (`compiler/ir.fern` and the passes over it) is target-agnostic;
+**new optimisations belong there** so all backends benefit.
 
 **ARM32 was retired.** The codebase shipped an arm32 backend through early 2026
 — it was the original target — but cross-backend parity work became untenable
@@ -115,7 +115,7 @@ user can provide.
 - **Batch independent tool calls.** Reads, greps and builds that do not depend
   on each other belong in one response; each extra turn costs a round trip, and
   on a 4-core container those add up faster than the work itself.
-- **Edit surgically; never rewrite a file to change part of it.** The self-host
+- **Edit surgically; never rewrite a file to change part of it.** The compiler's
   sources run to thousands of lines, and a whole-file rewrite buries the change
   in a diff nobody can review.
 - **Write plainly.** Commit messages, PR bodies and `docs/` are read by people.
@@ -142,7 +142,7 @@ without being asked — the user prefers that to manual CI polling. Pause only f
 a genuine fork (an ambiguous review comment, an architectural decision).
 
 **Open the PR EARLY.** CI is faster than this dev machine: this is a 4-core
-container where `internal/e2e` runs 45+ minutes in one process, while CI shards
+container where `internal/testing/e2e` runs 45+ minutes in one process, while CI shards
 the same work across machines. So the moment the *targeted* suites for what you
 touched are green, push and open the PR, and let any long sweep you started keep
 running alongside it. Say in the PR body which suites you ran and which are still
@@ -238,11 +238,11 @@ posted comment cannot be edited; only a follow-up can correct it.
    2026-08-20 — and `docs/SELFHOST-PERCEUS-REUSE.md`.
 3. **DONE (2026-10-05) — the native backends retired.** `internal/codegen`,
    `internal/native` and `internal/fernrt` are deleted, and `cmd/fern` execs the
-   self-host for every `-target` compile. Go keeps the parser, checker and
+   compiler for every `-target` compile. Go keeps the parser, checker and
    interpreter, the oracle. Record: `docs/NATIVE-RETIREMENT.md`.
 
 When a PR merges with no more specific instruction, the default next task is the
-next self-host leak in `docs/rc-log/`.
+next compiler leak in `docs/rc-log/`.
 
 **Fix slow code in the compiler, not at the call site.** Where a program is slow
 because of what the compiler emits for it, fix the compiler, so every caller
@@ -270,8 +270,8 @@ use a construct only once a published stage0 can compile it
   authoritative and are not, what nothing gates at all, and the rc diagnostic
   modes in the order you reach for them. The headline trap: the fixpoint is
   SELF-REFERENTIAL — it proves the compiler reproduces itself and is structurally
-  blind to a stable miscompile — so on self-host lowering changes
-  `internal/e2eselfhost` is PRIMARY and the fixpoint secondary. #6018 passed the
+  blind to a stable miscompile — so on lowering changes
+  `internal/testing/e2ecompiler` is PRIMARY and the fixpoint secondary. #6018 passed the
   per-module fixpoint AND all 335 fixtures AND the native suite while segfaulting
   the driver.
 - **Run the targeted suites before you push; leave whole-package sweeps to CI.**
@@ -388,7 +388,7 @@ it.
 
 - **Literate programming** (`.fern.md`, tangle/weave, multi-module documents,
   importable literate libraries) — `docs/LITERATE.md`. Engine:
-  `internal/literate`. When extending the chunk grammar or the remap, add cases
+  `internal/tools/literate`. When extending the chunk grammar or the remap, add cases
   at the layer you touched; the **diagnostic remap (generated line → document
   line) is the most regression-prone surface**.
 - **Test runner** — `internal/stdlib/std/test.fern`, the pure-Fern TAP-13 runner
@@ -396,16 +396,16 @@ it.
   `import "std/test";` and call qualified (`test.test_new`, `test.assert_eq`,
   `test.fail`, …) with the type written `test.TestRunner`; receiver methods
   (`.it`, `.finish`) stay bare. Examples in `tests/stdlib/`; the Go-side gate is
-  `internal/e2e/test_runner_test.go`. **When adding an assertion helper, add a
+  `internal/testing/e2e/test_runner_test.go`. **When adding an assertion helper, add a
   case to `runner_self_test.fern` covering both the passing and the failing
   path** — the failure-reporting contract (predicate name in the message, actual
   + expected both quoted) is the runner's most regression-prone surface. Migration
   audit: `docs/TEST-RUNNER-MIGRATION.md`.
 - **Linter** (`fern -lint`, cyclomatic complexity, `[lint]` config, `// fern-lint:
-  allow` suppression) — `docs/LINT.md`. Engine: `internal/lint`. It runs on the
+  allow` suppression) — `docs/LINT.md`. Engine: `internal/tools/lint`. It runs on the
   PARSE tree, so a rule needing types belongs in the checker instead. This
   repository's own Fern sources are held to a complexity RATCHET
-  (`internal/lint/repo_gate_test.go`): its two numbers per tree may not move in
+  (`internal/tools/lint/repo_gate_test.go`): its two numbers per tree may not move in
   either direction, and a per-function exception is an `allow` comment on the
   function, never a row in that table.
 - **Bootstrap** (`make bootstrap`, `bootstrap/stage0.lock`, `make distcheck`) —
@@ -414,17 +414,17 @@ it.
 - **Module loading** — there is no prelude injector; a program sees only what it
   `import`s. `docs/PRELUDE-TO-MODULES.md` covers mangling, the transitive-import
   dedupe, `pub use` re-exports, and the in-memory (`modload.LoadSource`) path.
-- **Self-host SSA backend** (`-backend ssa`, per-function register allocation,
-  the only emitter on the native ISAs, the self-host half of #4112) —
+- **SSA backend** (`-backend ssa`, per-function register allocation,
+  the only emitter on the native ISAs, the compiler half of #4112) —
   `docs/SELFHOST-SSA-BACKEND.md`. A function the lift cannot take is a
   refusal naming the op, never a fall-through; the stack machine survives only
   as the per-op arms the register path runs for the OS floor (`emit_stack_op`).
-- **Capabilities** — two independent systems. `internal/platforms` gates what a
+- **Capabilities** — two independent systems. `internal/pkg/platforms` gates what a
   *target* provides (the OS boundary; E066 post-tree-shake) —
   `docs/FREESTANDING-CORE.md` has the core-vs-host rule and every judgement call.
-  `internal/caps` gates what a *package* may reach — `docs/PACKAGE-CAPABILITIES-BRIEF.md`.
+  `internal/pkg/caps` gates what a *package* may reach — `docs/PACKAGE-CAPABILITIES-BRIEF.md`.
   **A new builtin usually needs classifying in both**; a completeness test in each
-  fails when one is missed. The self-host mirrors both — the target half in
+  fails when one is missed. The compiler mirrors both — the target half in
   `compiler/platforms.fern`, the package half in
   `compiler/caps.fern` — each pinned entry-for-entry by a parity test
   in the Go package it mirrors, so **a new builtin is now four classifications**.

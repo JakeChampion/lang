@@ -100,7 +100,7 @@ Per-builtin work unit (×8 builtins × 3 backends):
 > stays `"fn"`, so codegen and the modload fixpoint are byte-identical.
 > See `docs/SELF-HOST-FN-PAYLOAD-VARIANT-GAP.md` for the full root cause.
 >
-> Pinned by `internal/e2eselfhost/self_host_fn_payload_variant_ir_test.go`
+> Pinned by `internal/testing/e2ecompiler/self_host_fn_payload_variant_ir_test.go`
 > (x86-64 and wasm, all five shapes each). Only the async *runtime*
 > builtins (Blocker 1 / the #4315–#4320 poll / timer / socket set) remain
 > for the end-to-end `std/async`-on-IR payoff. The historical analysis

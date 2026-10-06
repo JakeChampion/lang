@@ -29,7 +29,7 @@ is at least 2^-4 in magnitude, so absolute error is what the last place sees),
 the near-1 one on error relative to log1p(r). The table is computed at the
 same precision. Nothing here is transcribed.
 
-The output is internal/fdlibm/logtab.go, the copy every Go emitter and the
+The output is internal/tables/fdlibm/logtab.go, the copy every Go emitter and the
 interpreter read, plus the region between the generator's markers in each of
 the three self-host emitters, which cannot import Go.
 """
@@ -43,7 +43,7 @@ import sys
 from decimal import Decimal as D
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-GO_TARGET = os.path.join(ROOT, "internal", "fdlibm", "logtab.go")
+GO_TARGET = os.path.join(ROOT, "internal", "tables", "fdlibm", "logtab.go")
 SELF_HOST = os.path.join(ROOT, "compiler")
 ASM_TARGETS = [os.path.join(SELF_HOST, "asm_ir.fern"), os.path.join(SELF_HOST, "asm_arm64_ir.fern")]
 WASM_TARGET = os.path.join(SELF_HOST, "wasm_ir.fern")

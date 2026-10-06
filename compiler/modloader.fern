@@ -116,7 +116,7 @@ function res_read(dir: string, rel: string): Resolved {
 // Native has had the same thing since the prelude was retired, in two pieces:
 // `stdlib.Resolve` for the embedded std/ + core/ tree and `LoadWith`'s
 // override map for the LSP's unsaved buffers, both consulted before the
-// filesystem resolver (`internal/modload/modload.go`).
+// filesystem resolver (`internal/pkg/modload/modload.go`).
 //
 // `srcs` is parallel to `paths` — the tree's idiom for a small keyed table
 // (embed.Assets, fern.fern's VendorSet), and a linear scan over a few dozen
@@ -395,7 +395,7 @@ function load_locked(dir: string, name: string): Resolved {
 }
 
 // load_from_store resolves a url/hash dependency from the per-machine
-// content-addressed store (internal/pkgcache layout: <root>/<hex>/, with
+// content-addressed store (internal/pkg/pkgcache layout: <root>/<hex>/, with
 // root = $FERN_CACHE_DIR/pkgs when set, else <user-cache-dir>/fern/pkgs).
 // Mirrors native pkgcache.Root(): an explicit $FERN_CACHE_DIR wins and is
 // NOT fallen through on a miss; otherwise the user cache dir is

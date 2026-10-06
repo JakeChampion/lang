@@ -1,5 +1,5 @@
 // compiler/ir.fern — the stack-machine IR for the self-hosted
-// compiler, mirroring native's internal/ir (`ir.Op` / `[]Op`). This is the
+// compiler, mirroring native's internal/oracle/ir (`ir.Op` / `[]Op`). This is the
 // layer every self-host backend consumes, and the layer where Perceus
 // reference counting lives (alias-inc, the exit dec sweep, drop
 // specialization, reuse tokens are all emitted here as `call_direct` to
@@ -10,7 +10,7 @@
 // (ssa.fern is the DOWNSTREAM optimiser, lifted FROM this IR; it is a
 // different, higher layer.)
 //
-// Representation (mirrors internal/ir/ir.go, but pointer-free — the
+// Representation (mirrors internal/oracle/ir/ir.go, but pointer-free — the
 // self-host's value-semantics style, matching ssa.fern: a function body is
 // an `Op[]` flat stack-machine stream; structured control flow is the
 // block/loop/if/end/br/brif scope discipline, exactly as native and wasm).
@@ -27,7 +27,7 @@ import "./util";
 // ---- Op ----------------------------------------------------------------
 
 // Op is one stack-machine instruction. Field meanings mirror native's
-// `ir.Op` (internal/ir/ir.go:515):
+// `ir.Op` (internal/oracle/ir/ir.go:515):
 //   kind_tag — the opcode id (see kind_id and the constructors below).
 //   i32      — the immediate for "const_i32"; the local index for
 //              load_local / store_local / tee_local; the block-type for
@@ -3101,7 +3101,7 @@ pub function op_return(): Op {
 // ---- integer op-kind registry (issue #4394 lever 2) --------------------
 //
 // The canonical string<->int op-kind mapping, mirroring native's `ir.OpKind`
-// enum + its `String()` / `intOp` (internal/ir/ir.go:44, :344, :13652).
+// enum + its `String()` / `intOp` (internal/oracle/ir/ir.go:44, :344, :13652).
 //
 // The conversion this registry was staged for has LANDED: `Op` carries
 // `kind_tag: i32` and no string kind, and every backend dispatch ladder
@@ -5799,7 +5799,7 @@ pub function kind_name(id: i32): string {
 // ---- int-keyed classifier predicates -----------------------------------
 //
 // The forward-looking, int-keyed twins of native's `isConstOp` /
-// `isTerminator` / `isFoldableBinary` (internal/ir/constprop.go:313,
+// `isTerminator` / `isFoldableBinary` (internal/oracle/ir/constprop.go:313,
 // dce.go:110, fold.go:281). They take a `kind_id` so that once `Op` carries
 // its int tag the backend passes / optimisation gates become int compares with
 // no string traffic. Written against `kind_id("...")` rather than raw literal
@@ -6774,7 +6774,7 @@ function fold_bool64(c: boolean): i64 {
 // ---- strength reduction ------------------------------------------------
 //
 // reduce_strength rewrites the `<expr> ; const K ; <binop>` adjacency into a
-// cheaper equivalent — the op-list twin of native's internal/ir/strength.go.
+// cheaper equivalent — the op-list twin of native's internal/oracle/ir/strength.go.
 // No dataflow is needed: the constant sits immediately before the binary that
 // consumes it, so one linear walk finds every site.
 //
@@ -6851,7 +6851,7 @@ function log2_i32(n: i32): i32 {
   return r;
 }
 
-// ---- magic-number reciprocals (native internal/ir/magic.go) --------------
+// ---- magic-number reciprocals (native internal/oracle/ir/magic.go) --------------
 //
 // The constants that turn a division by a compile-time constant into a
 // multiply-high plus a shift: Granlund–Montgomery as in Hacker's Delight
@@ -7104,7 +7104,7 @@ pub function reduce_strength(ops: Op[]): Op[] {
   return reduce_strength_ex(ops).ops;
 }
 
-// ---- dead-code elimination (#6638, native internal/ir/dce.go) -----------
+// ---- dead-code elimination (#6638, native internal/oracle/ir/dce.go) -----------
 //
 // An op list routinely carries stretches that cannot be reached because an
 // earlier op in the same scope already left it. The commonest shape is the
@@ -7176,7 +7176,7 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
   return ops;
 }
 
-// ---- zero-slot uniqueness guards (native internal/ir/zeroslot.go) -------
+// ---- zero-slot uniqueness guards (native internal/oracle/ir/zeroslot.go) -------
 //
 // Lowering emits an `__fern_rc_is_unique`-gated drop for every droppable local
 // at a scope exit, whether or not the slot was assigned on the path that
@@ -7431,7 +7431,7 @@ pub function optimize_ops(ops: Op[], n_params: i32, n_locals: i32): OptimizedOps
   return finish_ops(strength_fixpoint(fold_const_binaries(prune_zero_slot_guards(ops, n_params))), n_locals);
 }
 
-// ---- loop-invariant code motion (#8245, native internal/ir/licm.go) ------
+// ---- loop-invariant code motion (#8245, native internal/oracle/ir/licm.go) ------
 //
 // hoist_loop_invariants lifts a loop-invariant `str_len` out of a loop's
 // HEADER: the run of ops between `loop` and the first op that can branch or
@@ -7439,7 +7439,7 @@ pub function optimize_ops(ops: Op[], n_params: i32, n_locals: i32): OptimizedOps
 // `while (i < s.len())` re-reads the length on every iteration.
 //
 // The header rule differs from native's: endsLoopHeader in
-// internal/ir/licm.go (frozen) also stops at `block`. Native opens a `while`'s
+// internal/oracle/ir/licm.go (frozen) also stops at `block`. Native opens a `while`'s
 // break block before the `loop`, so its condition is never behind one; the
 // typed lowering opens blocks inside the loop, ahead of the condition. Native's
 // rotated `while` does open a block right after `loop`, which leaves its header
@@ -7693,7 +7693,7 @@ function licm_stored_locals(ops: Op[], lo: i32, hi: i32, n: i32): boolean[] {
 // ---- tee fusion --------------------------------------------------------
 //
 // fuse_tee collapses the `store_local X ; load_local X` adjacency into a single
-// `tee_local X` — the op-list twin of native's internal/ir/tee.go (#6638).
+// `tee_local X` — the op-list twin of native's internal/oracle/ir/tee.go (#6638).
 //
 // The pattern arrives from the closure inliner's arg-bind round trip, from a
 // `let x = …` immediately read, and from the assignment-as-expression lowering.
@@ -7708,7 +7708,7 @@ function licm_stored_locals(ops: Op[], lo: i32, hi: i32, n: i32): boolean[] {
 // after dead-code elimination, so a pair the DCE walk exposes is still caught.
 // Idempotent: a tee_local matches neither arm, so a second run is a no-op.
 // propagate_copies drops a `tee_local X` whose slot NOTHING else touches — the
-// op-list half of native's internal/ir/copyprop.go (#6638).
+// op-list half of native's internal/oracle/ir/copyprop.go (#6638).
 //
 // A tee writes the slot and keeps the value on the operand stack. When no other
 // op in the function reads, stores or tees that slot, the write is dead and the
@@ -7748,7 +7748,7 @@ function licm_stored_locals(ops: Op[], lo: i32, hi: i32, n: i32): boolean[] {
 // shape #6704 withdrew for costing +50% emit-all, so it needs something cheaper
 // than a parameter on a recursive walk.
 // const_propagate replaces a `load_local X` with the constant last stored to X —
-// the straight-line core of native's internal/ir/constprop.go (#6638). It catches
+// the straight-line core of native's internal/oracle/ir/constprop.go (#6638). It catches
 // what fuse_tee and propagate_copies structurally cannot: a store and load that
 // are NOT adjacent.
 //

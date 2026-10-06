@@ -19,7 +19,7 @@ path that was chosen.
 
 Native has **two** IRs, and they are not the same layer:
 
-- **`internal/ir`** — a **stack-machine** IR (`ir.Op` / `[]Op`:
+- **`internal/oracle/ir`** — a **stack-machine** IR (`ir.Op` / `[]Op`:
   push/pop operand stack, structured control flow via
   `block`/`loop`/`if`/`end`/`br`/`brif`). This is what the **production
   backends consume**: `arm64codegen.Emit(prog, info)` /
@@ -29,7 +29,7 @@ Native has **two** IRs, and they are not the same layer:
   tokens are all emitted as `OpCallDirect` to `__fern_rc_*` helpers
   during AST→IR lowering.
 - **`internal/ssa`** — an SSA optimiser IR with ~29 passes, **lifted
-  from** `internal/ir` (`ssa.LiftFromIR`). It carries two roles: analysis
+  from** `internal/oracle/ir` (`ssa.LiftFromIR`). It carries two roles: analysis
   (ownership / units / certify), which is what this document depends on, and
   the `arm64ssa` / `x86_64ssa` emitters behind `-backend ssa`, which are
   measured but not defaulted.
@@ -41,10 +41,10 @@ The self-host today:
   so every RC emission is hand-written three times;
 - *does* already have `ssa.fern` (3730 LOC) — but that mirrors the
   **higher** `internal/ssa` optimiser (i32-subset, with AST fallback),
-  **not** the `internal/ir` stack IR.
+  **not** the `internal/oracle/ir` stack IR.
 
 So the layer Option A adds is precisely the one the self-host lacks and
-the one Perceus needs: a port of **`internal/ir`** (the `[]Op` stack IR
+the one Perceus needs: a port of **`internal/oracle/ir`** (the `[]Op` stack IR
 + the AST→IR lowering `builder`), with the three backends re-targeted to
 consume `Op[]`. The existing `ssa.fern` can later be re-based to *lift
 from* the new IR (mirroring `ssa.LiftFromIR`), unifying both IRs under
@@ -135,7 +135,7 @@ which is the entire reason for choosing Option A.
   control flow, drop, return) + `render_op`. Type-checks standalone
   (`fern -check`); imported by nobody, so bootstrap-inert.
 - **Slice 1 — IR round-trip test.** A Go-side e2e
-  (`internal/e2e/self_host_ir_test.go`) that builds a small `Op[]` via
+  (`internal/testing/e2e/self_host_ir_test.go`) that builds a small `Op[]` via
   the constructors and asserts `render_op` output — pins the data shape
   and printer the way `ssa.fern` is pinned.
 - **Slice 2 — `irlower.fern` skeleton.** AST→IR for the i32 spine
@@ -170,12 +170,12 @@ Same nets as the existing self-host work, plus IR-specific ones:
   both exist (slice 3+), so the switch-over is provably behaviour-
   preserving before the AST path is deleted.
 - **Matrix.** Gate locally on x86-64 + wasm; let CI run arm64/qemu
-  (CLAUDE.md). Whole `internal/e2e` with `-timeout 30m`.
+  (CLAUDE.md). Whole `internal/testing/e2e` with `-timeout 30m`.
 
 ## 7. Risks
 
 - **Scope.** This is the largest single refactor on the self-host —
-  native's `internal/ir` + lowering is thousands of LOC and the three
+  native's `internal/oracle/ir` + lowering is thousands of LOC and the three
   emitters are large. Mitigation: the parallel-path migration (§3) keeps
   every slice green and independently revertable; no big-bang switch.
 - **Two emitters in lockstep, again.** Re-targeting three backends
@@ -299,7 +299,7 @@ path lives in **separate modules** — `asm_ir.fern` (the IR emitter +
 `emit_module_ir`) and `asm_ir_run.fern` (a `-ir` differential driver) —
 imported by nobody else. `asm.fern` and `asm_run.fern` stay **byte-for-byte
 unchanged**, so the fixpoint and every existing harness are untouched. The
-gate is `internal/e2e/self_host_asm_ir_path_test.go`
+gate is `internal/testing/e2e/self_host_asm_ir_path_test.go`
 (`TestSelfHostAsmIRPath`): each program compiled through asm.fern BOTH ways
 (AST `emit_module` vs IR `emit_module_ir`), asserting identical exit codes.
 
@@ -336,7 +336,7 @@ gate is `internal/e2e/self_host_asm_ir_path_test.go`
 
 To make the IR path the default, the isolation that protected the bootstrap
 must finally give way — these steps are deliberately deferred to a careful,
-dedicated pass (highest regression risk; `internal/e2eselfhost` is the master
+dedicated pass (highest regression risk; `internal/testing/e2ecompiler` is the master
 gate, with the fixpoint alongside it — the fixpoint is self-referential and
 cannot see a miscompile that is stable across the compiler's own sources; see
 [TEST-GATES.md](TEST-GATES.md)):
@@ -418,7 +418,7 @@ defaults; then retire the AST emit path.
 
 **All Perceus lives on the IR — never in a backend.** This is how native is
 structured, and it is the rule for porting the remaining opts. Native does
-Perceus in two layers, both target-agnostic (`internal/ir`):
+Perceus in two layers, both target-agnostic (`internal/oracle/ir`):
 
 1. **RC insertion during AST→IR lowering** (`ir.LowerWith`): alias-inc, the
    exit dec-sweep, move-on-return / move-on-construction, and the drop calls
@@ -528,7 +528,7 @@ Both tracks ride the SHARED irlower, so each slice lands on all three backends:
    then closures / maps / floats. As composite types land, the IR-eligibility
    gate (`all_eligible`) admits more modules — eventually the compiler itself.
 2. **Port the remaining native Perceus opts as IR-level passes** (native does
-   them on `internal/ir`; see "Perceus opts port" above) as the types that
+   them on `internal/oracle/ir`; see "Perceus opts port" above) as the types that
    exercise them arrive:
    - **structs/enums** unlock construction-store retains, **drop
      specialization** (per-type `__drop_*` bodies vs. a generic helper), and
@@ -742,7 +742,7 @@ does not install it), so the failure is latent rather than blocking.
 
 This is the "actual Perceus-parity work" for structs whose fields are themselves
 rc-tracked (arrays / strings / nested structs / enums). It mirrors native's
-model in `internal/ir/ir.go`, which is **box-only-alias + per-field
+model in `internal/oracle/ir/ir.go`, which is **box-only-alias + per-field
 retain-on-construction + recursive drop-on-unique**:
 
 - **Alias** a struct value → inc the **box header only** (`__fern_rc_inc`); the
@@ -814,7 +814,7 @@ correct Perceus and the double-free is gone at the source.
 ## Phase A: full IR (native parity), then Phase B: direct Perceus port
 
 Decision (refined): **complete the self-host IR to full feature parity with
-native's `internal/ir` FIRST — in leak-mode — then do a single direct port of
+native's `internal/oracle/ir` FIRST — in leak-mode — then do a single direct port of
 native's Perceus**, rather than interleaving RC into a partial IR. Rationale:
 interleaving "widen coverage" with "get RC right" per-construct is what produced
 the bail-heavy heuristics and the RC bugs (the AST-wasm double-free; the struct
@@ -1692,7 +1692,7 @@ over-release detector + the byte-identical x86-64 fixpoint:
 
   **Prerequisite for any further deep-drop widening (`string[]`, nested-struct,
   struct-array fields — all even larger inlined blocks):** emit one
-  `__drop_<StructType>` helper FUNCTION per type (as native `internal/ir/ir.go`
+  `__drop_<StructType>` helper FUNCTION per type (as native `internal/oracle/ir/ir.go`
   does — see the `__drop_arr_*` / `__drop_dyn_*` family) and CALL it at each
   reclamation site, so the per-type drop code is emitted once, not inlined N times.
   Until that mechanism exists in the self-host backend, the field-drop must stay

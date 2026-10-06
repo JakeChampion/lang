@@ -126,15 +126,15 @@ results.
   pass) and `Sim.rng_state()` supports lockstep assertions. Suite:
   `tests/stdlib/sim_fault_test.fern` (incl. a pinned cross-backend
   flaky(50) golden) with interp/native/wasm gates in
-  `internal/e2e/sim_fault_test.go`.
+  `internal/testing/e2e/sim_fault_test.go`.
 - **fernsmith integration**: random combinator programs × random
   seeds, differential across backends — extends the existing
   numeric-property harness pattern to concurrency.
 
   **Status: shipped (#5360 slice 4).** Like the numeric-property
-  harness (and unlike `internal/fernsmith`, which generates scalar
+  harness (and unlike `internal/testing/fernsmith`, which generates scalar
   control-flow programs with no stdlib surface), the generator is a
-  dedicated one in `internal/e2e/sim_property_test.go`: each program
+  dedicated one in `internal/testing/e2e/sim_property_test.go`: each program
   builds a seeded `Sim` + `Net` with 1–3 scripted endpoints (random
   latencies / chunk schedules, ~half faulted incl. flaky with random
   p), runs 1–3 random `gather_on` / `race_on` / `with_deadline_on`

@@ -9,10 +9,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jakechampion/lang/internal/diag"
-	"github.com/jakechampion/lang/internal/lint"
-	"github.com/jakechampion/lang/internal/manifest"
-	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/pkg/manifest"
+	"github.com/jakechampion/lang/internal/syntax/diag"
+	"github.com/jakechampion/lang/internal/syntax/parser"
+	"github.com/jakechampion/lang/internal/tools/lint"
 )
 
 // runLint implements `fern -lint PATH...`: parse each Fern source under

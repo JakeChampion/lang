@@ -33,7 +33,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jakechampion/lang/internal/fmtsource"
+	"github.com/jakechampion/lang/internal/syntax/fmtsource"
 )
 
 // ---------------------------------------------------------------- alphabet

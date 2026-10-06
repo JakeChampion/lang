@@ -19,7 +19,7 @@ bootstrap/bootstrap.sh stage0        # print the verified stage0's path, nothing
 ```
 
 `stage0` is for a caller that compiles with the pin itself: the self-host test
-harness (`internal/e2eharness/self_host_compiler.go`) builds every test driver
+harness (`internal/testing/e2eharness/self_host_compiler.go`) builds every test driver
 with it, so the drivers are held to the pin the way `fern.fern` is.
 
 Everything lands in `build/bootstrap/`: the cached stage0 under

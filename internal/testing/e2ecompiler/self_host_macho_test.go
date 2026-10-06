@@ -1,0 +1,641 @@
+package e2ecompiler
+
+import (
+	"bytes"
+	"debug/macho"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
+	"github.com/jakechampion/lang/internal/tools/tty"
+)
+
+// TestSelfHostArm64DarwinBuilds exercises the self-hosted compiler's
+// arm64-darwin (Mach-O) target — compiler/fern.fern's
+// `-target arm64-darwin`. Since the flip (slice 3q) this path is fully
+// in-process: asm_arm64.darwinize emits the GAS text, and arm64_native
+// assembles + links + signs the Mach-O binary directly — no `.s`, no
+// clang/ld64.
+//
+// Two host modes:
+//
+//   - Off Apple Silicon (the Linux CI box): the CLI is built with the Go
+//     x86-64 backend so it runs on the host; we assert each emitted file is
+//     a well-formed arm64 Mach-O executable. qemu-aarch64 only speaks the
+//     Linux ABI, so we can't run the result.
+//
+//   - On the macOS arm64 CI runner: the CLI is built FOR arm64-darwin through
+//     the driver's own in-process Mach-O path so it runs natively, then we
+//     run it to emit each program's binary and EXECUTE it, checking exit
+//     codes. This is the decisive runtime check of the self-host Darwin path,
+//     and every failure in it is a hard failure — a launch failure most of
+//     all, since a container the kernel rejects (#6042) is the single thing
+//     this test is best placed to catch.
+//
+// darwinize() reuses asm_arm64.fern's instruction selection and only
+// reskins the assembler dialect (@PAGE/@PAGEOFF addressing, Mach-O
+// sections, _main entry) and remaps the number-compatible syscalls
+// (read/write/close/openat/lseek/exit/mmap) to the BSD vector with
+// `svc #0x80`. Supported surface is the core language; the ABI-divergent
+// syscalls (clock_gettime/getrandom/fstat/subprocess) are out of scope —
+// see the darwinize doc comment.
+func TestSelfHostArm64DarwinBuilds(t *testing.T) {
+	native := runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
+
+	// Stage the full self-host project (lexer/parser/asm via the helper,
+	// plus the rest of the modules fern.fern imports).
+	dir := writeSelfHostAsmProject(t)
+	// fern.fern's full transitive import closure beyond what
+	// writeSelfHostAsmProject stages (asm / lexer / parser). The ssa* modules
+	// were added by the self-host SSA pipeline; arm64_native.fern is the
+	// in-process arm64-darwin assembler/linker the flipped path imports.
+	copySelfHostDriver(t, dir, "fern.fern")
+
+	// Build the self-host CLI for the host so it runs natively. Nothing here
+	// shells out to a linker any more: the CLI writes the Mach-O binary
+	// directly, and so does the build of the CLI itself.
+	var fernBin string
+	if native {
+		fernBin = buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
+	} else {
+		// Cross from Linux: the CLI is an x86-64 host binary; its emitted
+		// arm64-darwin binaries are checked structurally (qemu can't run
+		// Mach-O).
+		gcc, runner := x86_64Tooling(t)
+		if len(runner) != 0 {
+			t.Skip("self-host CLI driver runs only natively (argv paths)")
+		}
+		fernBin = buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	}
+
+	cases := []struct {
+		name     string
+		src      string
+		wantExit int
+	}{
+		// Plain integer return — exercises only the exit syscall.
+		{"exit_42", `function main(): i32 { return 42; }`, 42},
+		// Arithmetic — register ops, no runtime.
+		{"arith", `function main(): i32 { let x = 6; let y = 7; return x * y; }`, 42},
+		// Control flow + recursion.
+		{"fib", `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(10); }`, 55},
+		// String concat — exercises the heap (.bss bump allocator) +
+		// the @PAGE/@PAGEOFF addressing of a runtime-built string.
+		{"concat", `function main(): i32 { let s: string = "hello, " + "world!"; return s.len(); }`, 13},
+		// The string builder assembled IN-PROCESS: __fern_strbuf_grow's
+		// mov-with-hw-select / lsl / b.hs / cbnz must encode, and a 108,000-byte
+		// build grows the 64 KiB buffer twice before the take.
+		{"strbuf_grow", `function main(): i32 {
+    strbuf_reset();
+    let i: i32 = 0;
+    while (i < 3000) { strbuf_append("0123456789abcdefghijklmnopqrstuvwxyz"); i = i + 1; }
+    let s: string = strbuf_take();
+    if (s.len() != 108000) { return 1; }
+    if ((s[65536] as i32) != (s[16] as i32)) { return 2; }
+    if ((s[107999] as i32) != (s[35] as i32)) { return 3; }
+    strbuf_append("ok");
+    let t: string = strbuf_take();
+    if (t.len() != 2) { return 4; }
+    return 42;
+}`, 42},
+		// Stdout — print lowers to the write syscall (64 -> 4) and a
+		// .rodata (__TEXT,__const) string literal.
+		{"print", `function main(): i32 { print("hi"); return 0; }`, 0},
+		// A literal shaped like the emitter's own `:lo12:` operands: its bytes
+		// must survive darwinize (#8400).
+		{"lo12_literal", `function main(): i32 {
+    let s: string = "    add x9, x9, :lo12:.Lfern_relanchor";
+    if (s.len() != 38) { return 1; }
+    if ((s[16] as i32) != 58) { return 2; }
+    if ((s[21] as i32) != 58) { return 3; }
+    if ((s[37] as i32) != 114) { return 4; }
+    return 42;
+}`, 42},
+		// Struct + receiver method dispatch.
+		{"struct_method", `struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { let x = Box { v: 4 }; return x.scale(3); }`, 12},
+		// Arrays — literal, index, length, loop.
+		{"array_sum", `function main(): i32 { let a = [1, 2, 3, 4, 5]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
+		// Option payload + match — exercises the enum-box runtime.
+		{"option", `function pick(n: i32): Option[i32] { if (n == 0) { return None; } return Some(n + 1); } function main(): i32 { match (pick(41)) { Some(v) => { return v; }, None => { return 0; } } return 99; }`, 42},
+		// now_unix_ms — the Darwin gettimeofday(116) port (vs Linux
+		// clock_gettime). A plausible post-2023 wall-clock value → 7.
+		{"now_unix_ms", `function main(): i32 { let t: i64 = now_unix_ms(); if (t > 1700000000000) { return 7; } return 1; }`, 7},
+		// random_bytes — the Darwin chunked getentropy(500) port (vs
+		// Linux getrandom). Assert the length round-trips AND the bytes
+		// were actually written (OR of 8 bytes != 0 → the syscall filled
+		// the buffer; a zero OR would mean it silently failed).
+		{"random_bytes", `function main(): i32 { let b: u8[] = random_bytes(8); if (b.len() != 8) { return 1; } let v: i32 = 0; let i: i32 = 0; while (i < 8) { v = v | (b[i] as i32); i = i + 1; } if (v != 0) { return 7; } return 2; }`, 7},
+		// The packed-NEON kernels (ATLAS-PLATFORM-PLAN §3), which is the only
+		// path that exercises arm64_native.fern's vector encodings: the CLI
+		// assembles its own emitted text in-process, so an unencodable
+		// mnemonic is recorded on p.unknown and the CLI refuses to emit —
+		// visible here as "self-host emit failed" rather than as a wrong
+		// answer. Each haystack's answer is past the first 16-byte block, so
+		// the vector loop runs on the executing half of this lane too.
+		{"memchr", `function main(): i32 { let s = "aaaaaaaaaaaaaaaaaaaa*aaa"; return __memchr(s, 42, 0) + 22; }`, 42},
+		{"ascii_run", `function main(): i32 { let s = "aaaaaaaaaaaaaaaaaaaaaaaa"; return __ascii_run(s, 0) + 18; }`, 42},
+		// Static aggregate constant (#6149) — a struct literal of constants is
+		// interned as a __DATA block whose first word is an ABSOLUTE pointer to
+		// the shape string. dyld slides a PIE image, so that word needs an
+		// LC_DYLD_INFO_ONLY rebase opcode; without one the shape compare in the
+		// match fails, both arms fall through, and the synthesized fall-off-the-
+		// end block returns 0 (#6259). Only an EXECUTED binary catches that —
+		// the structural half of this test passes either way — and only with
+		// ASLR on, which is why running it under lldb reports a pass.
+		{"const_agg_union", `struct Add { l: i32, r: i32 }
+struct Lit { v: i32 }
+type Expr = Add | Lit;
+function eval(e: Expr): i32 { match (e) { Add(a) => { return a.l + a.r; }, Lit(l) => { return l.v; } } }
+function main(): i32 { let e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42},
+	}
+
+	// darwinKnownGaps names the cases this path does NOT yet handle, each with
+	// the reason. They are recorded rather than asserted so the lane is green
+	// on the gaps it cannot fix — but a listed case that starts working is a
+	// FAILURE telling you to delete its entry, so the list cannot become a
+	// silent skip list (which is how the whole exec half of this test went
+	// unrun for as long as it did).
+	// Empty since #6917. Its one entry was udp_send, "returns 94, not the sent
+	// byte count" — 94 being whatever was in the result register, because the op
+	// had no backend case and the emitter dropped the call. It has a handler now.
+	darwinKnownGaps := map[string]string{}
+
+	// runCase: emit `src` via the self-host CLI for arm64-darwin straight to
+	// a Mach-O binary, assert it's a valid arm64 Mach-O, and (on Apple
+	// Silicon) execute it and check the exit code.
+	runCase := func(name, src string, wantExit int) {
+		t.Run(name, func(t *testing.T) {
+			gap, isGap := darwinKnownGaps[name]
+			// fail reports a defect: a hard error normally, a logged note for a
+			// listed gap. Every caller returns immediately after.
+			fail := func(format string, args ...any) {
+				if isGap {
+					t.Logf("known gap (%s): "+format, append([]any{gap}, args...)...)
+					return
+				}
+				t.Errorf(format, args...)
+			}
+
+			srcPath := filepath.Join(dir, name+".fern")
+			if err := os.WriteFile(srcPath, []byte(src+"\n"), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			binPath := filepath.Join(dir, name+".bin")
+			out, err := exec.Command(fernBin, "-target", "arm64-darwin", "-o", binPath, srcPath).CombinedOutput()
+			if err != nil {
+				// The self-host CLI is itself a fresh Mach-O the kernel may
+				// reject, and that launch failure is environmental rather than
+				// a compiler regression — but ONLY when the CLI never ran. If
+				// it produced a diagnostic it ran and failed, and skipping
+				// there hides exactly the class of bug this test exists for:
+				// #6042's arena failure printed "heap arena exhausted" and was
+				// read as a skip on every Apple Silicon run. Split on the
+				// output: silent launch failure skips, a CLI with output fails.
+				if native && len(bytes.TrimSpace(out)) == 0 {
+					t.Skipf("self-host CLI did not launch (err=%v, no output)", err)
+				}
+				fail("self-host emit failed: %v\n%s", err, out)
+				return
+			}
+
+			// Structural validation (runs on every host).
+			raw, err := os.ReadFile(binPath)
+			if err != nil {
+				t.Fatalf("read bin: %v", err)
+			}
+			f, err := macho.NewFile(bytes.NewReader(raw))
+			if err != nil {
+				fail("output is not a parseable Mach-O: %v", err)
+				return
+			}
+			if f.Type != macho.TypeExec || f.Cpu != macho.CpuArm64 {
+				fail("got type=%v cpu=%v, want EXECUTE/arm64", f.Type, f.Cpu)
+				return
+			}
+
+			if !native {
+				return // structural-only off Apple Silicon
+			}
+			if err := os.Chmod(binPath, 0o755); err != nil {
+				t.Fatalf("chmod: %v", err)
+			}
+			cmd := exec.Command(binPath)
+			runErr := cmd.Run()
+			ps := cmd.ProcessState
+			if ps == nil || !ps.Exited() {
+				// A kernel rejection is THE failure this test exists to catch
+				// (#6042), so it must not be a skip: the static LC_UNIXTHREAD
+				// container was SIGKILLed at exec for every program here, and
+				// a skip reported that as nothing to see.
+				fail("Mach-O did not run to a normal exit (err=%v, state=%v)", runErr, ps)
+				return
+			}
+			if code := ps.ExitCode(); code != wantExit {
+				fail("self-host arm64-darwin %q exit = %d, want %d", name, code, wantExit)
+				return
+			}
+			if isGap && native {
+				t.Errorf("%q is listed in darwinKnownGaps (%s) but now passes — delete its entry", name, gap)
+			}
+		})
+	}
+
+	for _, c := range cases {
+		runCase(c.name, c.src, c.wantExit)
+	}
+
+	// read_file — exercises openat/lseek/read/close (number-compatible
+	// Darwin syscalls) plus the carry-flag errno normalisation darwinize
+	// injects so the self-host's `x0 < 0` error checks see Linux-shaped
+	// -errno. The Ok path reads a known file and returns its length; the
+	// missing-file path must hit the Err arm (proving errno normalisation
+	// works — without it openat's +errno would look like a valid fd).
+	const rfContent = "hello, fern!" // 12 bytes
+	okPath := filepath.Join(dir, "rf_data.txt")
+	if err := os.WriteFile(okPath, []byte(rfContent), 0o644); err != nil {
+		t.Fatalf("write rf data: %v", err)
+	}
+	runCase("read_file_ok",
+		`function main(): i32 { match (read_file("`+okPath+`")) { Ok(s) => { return s.len(); }, Err(e) => { return 99; } } }`,
+		len(rfContent))
+	runCase("read_file_missing",
+		`function main(): i32 { match (read_file("`+filepath.Join(dir, "no_such_file_zzz")+`")) { Ok(s) => { return s.len(); }, Err(e) => { return 99; } } }`,
+		99)
+
+	// write_file — openat(O_WRONLY|O_CREAT|O_TRUNC)/write/close. The Darwin
+	// open flags (1537) and AT_FDCWD (-2) differ from Linux. Round-trip:
+	// write a long string, overwrite with a short one (exercises O_TRUNC —
+	// without it the file would keep trailing bytes), read back, return the
+	// length. Expect 2, not 11, iff O_TRUNC took effect.
+	wfPath := filepath.Join(dir, "wf_data.txt")
+	runCase("write_file_trunc_roundtrip",
+		`function main(): i32 {
+  match (write_file("`+wfPath+`", "longcontent")) { Err(e) => { return 91; }, Ok(_) => {} }
+  match (write_file("`+wfPath+`", "hi")) { Err(e) => { return 92; }, Ok(_) => {} }
+  match (read_file("`+wfPath+`")) { Ok(s) => { return s.len(); }, Err(e) => { return 93; } }
+}`,
+		2)
+
+	// stat — newfstatat(79) -> Darwin fstatat(470); the struct stat layout
+	// differs (st_mode u16@4 / st_size@96 on Darwin vs u32@16 / @48 on
+	// Linux). stat_file: a regular file reports is_file + its size; stat_dir:
+	// a directory reports is_dir; stat_missing: a bad path hits the Err arm
+	// (needs the errno normalization too).
+	// fs.size is i64, so it needs an explicit narrow to leave an i32 function.
+	// Without the `as i32` this case was simply ill-typed — the native compiler
+	// rejects it with E002 — and the self-host reported it as "module is not IR-
+	// eligible", which read as an IR-subset gap and was recorded as one for as
+	// long as the lane could not go red (#6164).
+	runCase("stat_file",
+		`function main(): i32 { match (stat("`+okPath+`")) { Ok(fs) => { if (fs.is_file) { return fs.size as i32; } return 1; }, Err(e) => { return 99; } } }`,
+		len(rfContent))
+	runCase("stat_dir",
+		`function main(): i32 { match (stat("`+dir+`")) { Ok(fs) => { if (fs.is_dir) { return 7; } return 1; }, Err(e) => { return 99; } } }`,
+		7)
+	runCase("stat_missing",
+		`function main(): i32 { match (stat("`+filepath.Join(dir, "no_such_stat_zzz")+`")) { Ok(fs) => { return 1; }, Err(e) => { return 99; } } }`,
+		99)
+
+	// statfs — BSD 345, whose record shares NOTHING with Linux's: f_bsize is a
+	// u32 at 0 with f_iosize beside it at 4, the five counts are u64 from 8,
+	// and there is no name-length member at all, so both limits come from real
+	// pathconf(2) calls (BSD 191) that Linux has no equivalent of. The block
+	// size carries the width trap: read 64 bits wide it drags f_iosize into the
+	// high half, which is a plausible-looking multi-terabyte answer rather than
+	// a fault, so the ceiling is the assertion that catches it. The host's own
+	// numbers are not available here (this case is generated on Linux and run
+	// on the macOS runner), so the rest is the nesting the record must satisfy.
+	runCase("statfs",
+		`function main(): i32 {
+  match (statfs("`+dir+`")) {
+    Ok(fs) => {
+      if (fs.block_size <= (0 as i64)) { return 1; }
+      if (fs.block_size > (1048576 as i64)) { return 2; }
+      if (fs.blocks <= (0 as i64)) { return 3; }
+      if (fs.blocks_free > fs.blocks) { return 4; }
+      if (fs.blocks_avail > fs.blocks_free) { return 5; }
+      if (fs.files_free > fs.files) { return 6; }
+      if (fs.name_max <= (0 as i64)) { return 8; }
+      if (fs.name_max > (4096 as i64)) { return 9; }
+      if (fs.path_max <= (0 as i64)) { return 10; }
+      // Darwin has no f_frsize; the fundamental block size is f_bsize.
+      if (fs.frag_size != fs.block_size) { return 13; }
+      if (fs.fs_type <= (0 as i64)) { return 14; }
+      match (statfs("`+filepath.Join(dir, "no_such_statfs_zzz", "x")+`")) { Ok(g) => { return 11; }, Err(e) => {} }
+      return 7;
+    },
+    Err(e) => { return 12; }
+  }
+}`,
+		7)
+
+	// window_size — TIOCGWINSZ, whose request number is Darwin's own
+	// (0x40087468 vs Linux's 0x5413). A wrong number answers ENOTTY, which is
+	// indistinguishable from a correct one asked about a pipe, so this case
+	// runs against a REAL pty of a size no terminal defaults to. It builds its
+	// own binary rather than going through runCase, which redirects.
+	t.Run("window_size", func(t *testing.T) {
+		srcPath := filepath.Join(dir, "window_size.fern")
+		if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
+  match (window_size(1)) {
+    Ok(ws) => {
+      if (ws.rows != (13 as i64)) { return 21; }
+      if (ws.cols != (57 as i64)) { return 22; }
+      return 7;
+    },
+    Err(e) => { return 23; }
+  }
+}
+`), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		binPath := filepath.Join(dir, "window_size.bin")
+		if out, err := exec.Command(fernBin, "-target", "arm64-darwin", "-o", binPath, srcPath).CombinedOutput(); err != nil {
+			t.Fatalf("self-host emit failed: %v\n%s", err, out)
+		}
+		if !native {
+			return // structural-only off Apple Silicon, as runCase is
+		}
+		if err := os.Chmod(binPath, 0o755); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+		master, slave, err := tty.OpenPTY()
+		if err != nil {
+			t.Fatalf("OpenPTY: %v", err)
+		}
+		defer master.Close()
+		if err := tty.SetWindowSize(int(slave.Fd()), 13, 57); err != nil {
+			t.Fatalf("set pty size: %v", err)
+		}
+		done := make(chan struct{})
+		go func() {
+			_, _ = io.Copy(io.Discard, master)
+			close(done)
+		}()
+		cmd := exec.Command(binPath)
+		cmd.Stdout = slave
+		_ = cmd.Run()
+		slave.Close()
+		<-done
+		ps := cmd.ProcessState
+		if ps == nil || !ps.Exited() {
+			t.Fatalf("Mach-O did not run to a normal exit (state=%v)", ps)
+		}
+		if code := ps.ExitCode(); code != 7 {
+			t.Errorf("on a 13x57 pty: exit = %d, want 7 (21 = wrong rows, 22 = wrong cols, 23 = Err)", code)
+		}
+	})
+
+	// remove_file — unlinkat(35) -> Darwin 472, AT_FDCWD -2. Full file
+	// lifecycle: write a file, delete it, then stat must report it gone
+	// (the Err arm). Returns 7 iff write + remove + the "now gone" stat
+	// all behaved.
+	rmPath := filepath.Join(dir, "rm_target.txt")
+	runCase("remove_file_lifecycle",
+		`function main(): i32 {
+  match (write_file("`+rmPath+`", "x")) { Err(e) => { return 1; }, Ok(_) => {} }
+  match (remove_file("`+rmPath+`")) { Err(e) => { return 2; }, Ok(_) => {} }
+  match (stat("`+rmPath+`")) { Ok(fs) => { return 3; }, Err(e) => { return 7; } }
+}`,
+		7)
+
+	// monotonic_ns — Darwin reads CNTVCT_EL0/CNTFRQ_EL0 (mach_absolute_time
+	// is exactly this on Apple Silicon) instead of clock_gettime. Two
+	// back-to-back reads must be monotonic and nonzero. If CNTVCT_EL0 were
+	// not EL0-readable the binary would SIGILL → runCase reports a skip,
+	// not a failure.
+	runCase("monotonic_ns",
+		`function main(): i32 { let a: i64 = monotonic_ns(); let b: i64 = monotonic_ns(); if (b >= a) { if (a > 0) { return 7; } } return 1; }`,
+		7)
+
+	// temp_dir — builds /tmp/<prefix>-<ns> (ns from monotonic_ns, so this
+	// also exercises CNTVCT) and mkdirat()s it (Darwin #475, AT_FDCWD -2).
+	// Returns Ok(path) with a nonempty path on success.
+	runCase("temp_dir",
+		`function main(): i32 { match (temp_dir("fern-darwin-test")) { Ok(d) => { if (d.len() > 0) { return 7; } return 1; }, Err(e) => { return 2; } } }`,
+		7)
+
+	// read_dir + remove_dir_all — the full fs-builtins lifecycle on
+	// Darwin, reusing fsBuiltinsProgram: temp_dir, write_file, stat,
+	// read_dir, remove_dir_all, then stat must report the tree gone.
+	// read_dir/remove_dir_all map getdents64(61) -> getdirentries64(344)
+	// and diverge from Linux on AT_FDCWD (-2), O_DIRECTORY (0x100000),
+	// the 64-bit-inode dirent name offset (21, vs 19), the basep 4th arg
+	// getdirentries64 requires, and AT_REMOVEDIR (0x80). Returns 42 only
+	// if every step round-trips.
+	runCase("fs_builtins_lifecycle", fsBuiltinsProgram, 42)
+
+	// chmod — fchmodat (Darwin BSD 467, where Linux's is 53/268), with the
+	// flags word Linux's three-argument form does not have. The low TWELVE
+	// bits land verbatim, so setuid survives; a backend that masked to 0o777
+	// before the syscall reports 0o755 here. The sticky bit is deliberately
+	// not among them: BSD restricts S_ISVTX on a non-directory to the
+	// superuser, and this runner is not one.
+	chmodPath := filepath.Join(dir, "chmod_target.txt")
+	runCase("chmod_roundtrip",
+		`function main(): i32 {
+  match (write_file("`+chmodPath+`", "x")) { Err(e) => { return 1; }, Ok(_) => {} }
+  match (chmod("`+chmodPath+`", 2541)) { Err(e) => { return 2; }, Ok(_) => {} }
+  match (stat("`+chmodPath+`")) { Ok(f) => { if ((f.mode & (4095 as u32)) != (2541 as u32)) { return 3; } }, Err(e) => { return 4; } }
+  match (chmod("`+filepath.Join(dir, "no_such_chmod_zzz")+`", 420)) { Ok(_) => { return 5; }, Err(e) => {} }
+  return 7;
+}`,
+		7)
+
+	// set_file_times — the one primitive with no shared body at all: XNU has
+	// no utimensat syscall, so this lowers to setattrlist (BSD 221) over an
+	// attribute list naming only the timestamps that are not omitted, packed
+	// in ASCENDING attribute-bit order — modification time before access
+	// time, the reverse of the timespec pair Linux wants. Both halves of both
+	// timestamps, the omit bit and the now bits are read back through stat,
+	// so a list built in the wrong order, a dropped nanosecond half, an
+	// ignored omit bit or a now bit that named nothing is a wrong number
+	// rather than a plausible one; the now bits name a gettimeofday reading,
+	// and with both set the options carry FSOPT_UTIMES_NULL, which stat
+	// cannot see (the caller owns the file) and the arm64 codegen test pins.
+	sftPath := filepath.Join(dir, "sft_target.txt")
+	runCase("set_file_times_roundtrip",
+		`function main(): i32 {
+  match (write_file("`+sftPath+`", "x")) { Err(e) => { return 1; }, Ok(_) => {} }
+  match (set_file_times("`+sftPath+`", 1111111111, 222333444, 1444555666, 777888999, 0)) { Err(e) => { return 2; }, Ok(_) => {} }
+  match (stat("`+sftPath+`")) {
+    Ok(f) => {
+      if (f.atime != (1111111111 as i64)) { return 3; }
+      if (f.atime_nsec != (222333444 as i64)) { return 4; }
+      if (f.mtime != (1444555666 as i64)) { return 5; }
+      if (f.mtime_nsec != (777888999 as i64)) { return 6; }
+    },
+    Err(e) => { return 7; }
+  }
+  match (set_file_times("`+sftPath+`", 9, 9, 1777888999, 864213579, 2)) { Err(e) => { return 8; }, Ok(_) => {} }
+  match (stat("`+sftPath+`")) {
+    Ok(f) => {
+      if (f.atime != (1111111111 as i64)) { return 9; }
+      if (f.mtime != (1777888999 as i64)) { return 10; }
+      if (f.mtime_nsec != (864213579 as i64)) { return 11; }
+    },
+    Err(e) => { return 12; }
+  }
+  match (set_file_times("`+filepath.Join(dir, "no_such_sft_zzz")+`", 1, 0, 1, 0, 0)) { Ok(_) => { return 13; }, Err(e) => {} }
+  match (set_file_times("`+sftPath+`", 5, 5, 5, 5, 12)) { Err(e) => { return 14; }, Ok(_) => {} }
+  match (stat("`+sftPath+`")) {
+    Ok(f) => {
+      if (f.atime <= (1750000000 as i64)) { return 15; }
+      if (f.mtime != (1777888999 as i64)) { return 16; }
+    },
+    Err(e) => { return 17; }
+  }
+  match (set_file_times("`+sftPath+`", 5, 5, 5, 5, 24)) { Err(e) => { return 18; }, Ok(_) => {} }
+  match (stat("`+sftPath+`")) {
+    Ok(f) => {
+      if (f.atime <= (1750000000 as i64)) { return 19; }
+      if (f.mtime <= (1750000000 as i64)) { return 20; }
+    },
+    Err(e) => { return 21; }
+  }
+  return 42;
+}`,
+		42)
+
+	// sleep_ms — Darwin has no nanosleep syscall, so this lowers to
+	// select(0, NULL, NULL, NULL, &timeval) (sysno 93). A short sleep
+	// must return normally (a wrong syscall number would SIGILL → runCase
+	// reports a skip, not a failure; a clean exit 7 proves select ran).
+	runCase("sleep_ms",
+		`function main(): i32 { sleep_ms(5); return 7; }`,
+		7)
+
+	// sleep_ns — the same select(2), except the timeval's subsecond field is
+	// MICROseconds, so the nanosecond remainder is rounded UP into it: the
+	// pause is never shorter than asked, at the finest unit this target has.
+	// The sub-microsecond interval is the one that would truncate to a zero
+	// timeval under a plain divide, so it is the interval worth passing.
+	//
+	// The third interval is in the last microsecond of its second, where the
+	// rounding reaches 1000000 µs — out of range for a timeval, so select
+	// returns EINVAL and skips the pause unless the carry into tv_sec is
+	// there. That one is measured rather than merely survived.
+	runCase("sleep_ns",
+		`function main(): i32 { sleep_ns(5000000 as i64); sleep_ns(400 as i64); `+
+			`let t0: i64 = monotonic_ns(); sleep_ns(999999500 as i64); `+
+			`if (monotonic_ns() - t0 < (999999500 as i64)) { return 1; } return 7; }`,
+		7)
+
+	// process_alive — kill(pid, 0) on Darwin is BSD sysno 37, and the trap's
+	// carry-flag error has to reach the helper already normalised to -errno or
+	// every pid reads dead. launchd is pid 1 on every macOS, and Darwin's pid
+	// ceiling is five digits, so 4194304 can never be a process. The
+	// non-positive spellings name process groups and answer false with no
+	// syscall at all.
+	runCase("process_alive",
+		`function main(): i32 {
+  if (!process_alive(1)) { return 90; }
+  if (process_alive(4194304)) { return 91; }
+  if (process_alive(0)) { return 92; }
+  if (process_alive(0 - 1)) { return 93; }
+  return 7;
+}`,
+		7)
+
+	// rlimit_nofile — getrlimit is BSD sysno 194 and RLIMIT_NOFILE is 8 here,
+	// not Linux's 7. A failing call (wrong syscall number) normalises to i64
+	// max and an unclamped RLIM_INFINITY reads negative, so the range is what
+	// separates a real ceiling from both. It does NOT pin the resource id: a
+	// wrong one still answers some plausible ceiling, and only the Linux legs
+	// compare against a limit the harness itself imposed. The upper bound is
+	// i32 max rather than a round million because a machine may legitimately
+	// be configured well above that — 1,048,576 on the dev Mac this was
+	// written on — and i64 max is still nine orders of magnitude away.
+	runCase("rlimit_nofile",
+		`function main(): i32 {
+  let n: i64 = rlimit_nofile();
+  if (n < (4 as i64)) { return 90; }
+  if (n > (2147483647 as i64)) { return 91; }
+  return 7;
+}`,
+		7)
+
+	// subprocess — fork/exec on Darwin: pipe() (sysno 42, two fds in
+	// x0/x1) instead of pipe2, fork() (sysno 2, x1 child-flag) instead of
+	// clone, dup3->dup2 (90) / execve (59) / wait4 (7) via darwin_sysno.
+	// envp comes from the C-ABI _main(argc, argv, envp) entry (x2), now
+	// captured correctly. echo "hi" resolves via the /bin/<cmd> fallback;
+	// exit 0 and 3 bytes of stdout ("hi\n") prove the happy path.
+	runCase("subprocess_echo",
+		`function main(): i32 {
+  let r: ProcessResult = subprocess("echo", ["hi"], "");
+  if (r.exit_code != 0) { return 90; }
+  return r.stdout.len();
+}`,
+		3)
+
+	// subprocess exit-code decode: `sh -c "exit 7"` -> exit_code 7
+	// (WIFEXITED/WEXITSTATUS, status>>8, shared with Linux).
+	runCase("subprocess_exit_code",
+		`function main(): i32 {
+  let r: ProcessResult = subprocess("sh", ["-c", "exit 7"], "");
+  return r.exit_code;
+}`,
+		7)
+
+	// subprocess stdin->stdout round-trip: feed "piped" to `cat`, capture
+	// its stdout. Exercises the parent's write(in_w)/read(out_r) pipe path
+	// (5 bytes back).
+	runCase("subprocess_stdin",
+		`function main(): i32 {
+  let r: ProcessResult = subprocess("cat", [], "piped");
+  if (r.exit_code != 0) { return 90; }
+  return r.stdout.len();
+}`,
+		5)
+
+	// subprocess spawn-failure: a command that resolves nowhere must hit
+	// the child's exit(127) after all execve attempts fail (POSIX
+	// convention), surfaced as exit_code 127.
+	runCase("subprocess_missing",
+		`function main(): i32 {
+  let r: ProcessResult = subprocess("fern-no-such-binary-zzz-7349", [], "");
+  return r.exit_code;
+}`,
+		127)
+
+	// tcp_listen/tcp_close — exercises the Darwin socket(97)/bind(104)/
+	// listen(106)/close(6) syscalls and the sockaddr_in sin_len byte
+	// without needing a client: bind an ephemeral high port (39xxx),
+	// confirm the listener fd is valid, then close it. Returns 7 iff the
+	// whole socket→bind→listen→close path succeeded. (A full client/
+	// server round-trip runs under qemu in TestSelfHostTcpServerArm64;
+	// here we just prove the Darwin syscalls don't fault.)
+	runCase("tcp_listen_close",
+		`function main(): i32 {
+  let fd: i32 = tcp_listen(39517);
+  if (fd < 0) { return 1; }
+  if (tcp_close(fd) < 0) { return 2; }
+  return 7;
+}`,
+		7)
+
+	// udp_send — exercises the Darwin socket(97)/connect(98)/write(4)/close(6)
+	// path and the dotted-quad host parse. On a datagram socket connect only
+	// records the peer, so connect-then-write sends the same packet as sendto
+	// while staying within __syscall3. UDP is connectionless, so a send to a
+	// local port with no receiver still succeeds and returns the byte count
+	// (the datagram is simply dropped). Returns the 3 payload bytes iff
+	// socket→parse→connect→write→close all worked.
+	runCase("udp_send",
+		`function main(): i32 { return udp_send("127.0.0.1", 39518, "abc"); }`,
+		3)
+}
+
+// buildSelfHostBinArm64Darwin builds a self-host driver (fernName, in dir with
+// its imports) as a native arm64-darwin Mach-O with the stage0 pin, through the
+// self-host's own assembler and Mach-O writer, and returns its path. The build
+// is cached by source closure, so the Darwin tests share one compile.
+func buildSelfHostBinArm64Darwin(t *testing.T, dir, fernName, out string) string {
+	t.Helper()
+	return buildSelfHostBinFor(t, dir, fernName, out, e2eharness.TargetArm64Darwin)
+}

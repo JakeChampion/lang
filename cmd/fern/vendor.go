@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/jakechampion/lang/internal/manifest"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/pkgcache"
+	"github.com/jakechampion/lang/internal/pkg/manifest"
+	"github.com/jakechampion/lang/internal/pkg/modload"
+	"github.com/jakechampion/lang/internal/pkg/pkgcache"
 )
 
 // runVendor implements `fern -vendor [START]`: flatten the full

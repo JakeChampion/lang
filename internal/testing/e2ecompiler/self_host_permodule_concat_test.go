@@ -1,0 +1,257 @@
+package e2ecompiler
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// writeConcatFixture generates a program that lands inside the over-budget
+// per-module rescue band of both drivers: nMod sibling modules x nFn i32
+// functions (701 merged funcs — above the 512 gate, below the 1500 cap), every
+// one of them live, since each module's functions chain to the next and the
+// entry calls each chain's head. asm_modload_run gates on the raw count and
+// asm_load_run on the live one, so the chains are what put the latter past
+// the budget. Every pruned unit is IR-eligible. Generated and stdlib-free, so
+// it is deterministic and cannot drift onto another path because some stdlib
+// helper stopped lowering.
+//
+// The tail of each chain builds a variant of a builtin enum, so every unit
+// interns the same shape symbol: the concat has one definition of it to keep
+// and nMod-1 to drop, which the link step checks.
+//
+// Returns the entry path and the module count.
+func writeConcatFixture(t *testing.T, dir string) (string, int) {
+	t.Helper()
+	return writeConcatFixtureShape(t, dir, true)
+}
+
+// writeFlatConcatFixture is the same program with every function a leaf,
+// `return x + <m*nFn+f>;`, and only each module's f0 reached from the entry.
+// The object-cache test edits a function the reach set drops and then widens
+// the reach, which needs functions nothing calls; asm_modload_run gates on the
+// raw count, so the flat shape still lands in the rescue band there.
+func writeFlatConcatFixture(t *testing.T, dir string) (string, int) {
+	t.Helper()
+	return writeConcatFixtureShape(t, dir, false)
+}
+
+func writeConcatFixtureShape(t *testing.T, dir string, chained bool) (string, int) {
+	t.Helper()
+	const nMod, nFn = 7, 100
+	proj := filepath.Join(dir, "concatproj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	var imports, calls strings.Builder
+	want := 0
+	for m := 0; m < nMod; m++ {
+		var lib strings.Builder
+		if chained {
+			for f := 0; f < nFn-1; f++ {
+				fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { return m%d_f%d(x) + 1; }\n", m, f, m, f+1)
+			}
+			fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { let e: IoError = NotFound(\"p\"); match (e) { NotFound(_) => { return x; }, _ => { return 0 - 1; } } }\n", m, nFn-1)
+			want += nFn // the argument 1, plus one per link of the chain
+		} else {
+			for f := 0; f < nFn; f++ {
+				fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { return x + %d; }\n", m, f, m*nFn+f)
+			}
+			want += 1 + m*nFn // m*nFn+0 added to the argument 1
+		}
+		if err := os.WriteFile(filepath.Join(proj, fmt.Sprintf("lib%d.fern", m)), []byte(lib.String()), 0o644); err != nil {
+			t.Fatalf("write lib%d: %v", m, err)
+		}
+		fmt.Fprintf(&imports, "import \"./lib%d\";\n", m)
+		if m > 0 {
+			calls.WriteString(" + ")
+		}
+		fmt.Fprintf(&calls, "lib%d.m%d_f0(1)", m, m)
+	}
+	entry := fmt.Sprintf("%s\nfunction main(): i32 {\n    let t: i32 = %s;\n    if (t == %d) { return 0; }\n    return 1;\n}\n",
+		imports.String(), calls.String(), want)
+	entryPath := filepath.Join(proj, "entry.fern")
+	if err := os.WriteFile(entryPath, []byte(entry), 0o644); err != nil {
+		t.Fatalf("write entry: %v", err)
+	}
+	return entryPath, nMod
+}
+
+// assertConcatProduced pins WHICH path emitted `asm`: per-unit `.S<ns>_<idx>`
+// string pools mean the per-module concat, whole-program `.S<idx>` labels mean
+// the merged IR path or the AST emitter. Without this the tests below would keep
+// passing silently if the over-budget rescue stopped engaging — i.e. would stop
+// testing the thing they are named for.
+func assertConcatProduced(t *testing.T, asm []byte) {
+	t.Helper()
+	if !regexp.MustCompile(`(?m)^\.S[A-Za-z_][A-Za-z0-9_]*_[0-9]+:`).Match(asm) {
+		t.Fatalf("expected per-unit string pools (.S<ns>_<idx>) — the per-module concat; " +
+			"got none, so the over-budget rescue did not engage")
+	}
+	if regexp.MustCompile(`(?m)^\.S[0-9]+:`).Match(asm) {
+		t.Errorf("found whole-program string labels (.S<idx>) — this routed the merged " +
+			"path, not the per-module concat")
+	}
+}
+
+// buildConcatDriver builds asm_modload_run from the harness base set plus its own
+// import closure. The driver is always host-native (x86-64 here): it emits for
+// either target via `-target`, so only ONE build is needed for both legs below.
+func buildConcatDriver(t *testing.T, gcc string) (string, string) {
+	t.Helper()
+	dir := writeSelfHostAsmProject(t)
+	// Base set plus asm_modload_run's own imports (modloader pulls in fern_toml).
+	copySelfHostDriver(t, dir, "drivers/asm_modload_run.fern")
+	return dir, buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "mmr")
+}
+
+// TestSelfHostPerModuleConcatX86_64 gives asm_modload_run's over-budget
+// per-module concat (emit_per_module_concat, #5676) its FIRST end-to-end
+// coverage on x86-64: emit → assemble → link → run.
+//
+// Why this did not exist before. The one test named for the over-budget rescue,
+// TestSelfHostOverBudgetPerModuleIR, documents in its own header that it does
+// NOT reach the concat, and concludes "nothing in the suite has" a program that
+// does. That conclusion was drawn from asm_load_run, which treeshakes its merged
+// module in place BEFORE consulting the size gate, so its gate always sees the
+// small live closure. asm_modload_run is different: it gates on the RAW merged
+// count (`asm_ir.lift_lambdas(module_with_builtins(merged)).funcs.len()`) and
+// treeshakes only afterwards, to derive the reachable-name set. So the concat IS
+// reachable there for any bundle over 512 raw functions — the coverage gap was
+// reachability of the FIXTURE, not of the code.
+//
+// The assertions are ordered so a failure says which half broke:
+//   - concat produced this, not the merged/AST path (assertConcatProduced).
+//   - assembles + links  =>  no duplicate or dangling cross-unit symbols. This is
+//     the half that actually fails: the units emit one-per-program symbols that
+//     rely on dedupe_weak_defs, and a dangling runtime-helper reference links
+//     nowhere. Exactly this caught a real arm64 defect (see the arm64 sibling).
+//   - runs to exit 0  =>  the cross-unit calls compute the right value. main
+//     returns 0 only if the sum across all 7 modules matches, so a miscompiled
+//     cross-unit call is a nonzero exit rather than a silent pass.
+//
+// Native only: the driver resolves sibling imports by host path from argv.
+func TestSelfHostPerModuleConcatX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading driver test runs only natively (argv paths)")
+	}
+	dir, mmr := buildConcatDriver(t, gcc)
+	entryPath, nMod := writeConcatFixture(t, dir)
+
+	// Multi-module, and past the raw 512-function gate.
+	cnt, err := exec.Command(mmr, entryPath, "-per-module-count").Output()
+	if err != nil {
+		t.Fatalf("-per-module-count failed: %v", err)
+	}
+	if got := strings.TrimSpace(string(cnt)); got != fmt.Sprint(nMod+1) {
+		t.Fatalf("-per-module-count = %q, want %d (entry + %d libs)", got, nMod+1, nMod)
+	}
+
+	asm, err := exec.Command(mmr, entryPath).Output()
+	if err != nil || len(asm) == 0 {
+		t.Fatalf("over-budget concat emit failed: %v (len=%d)", err, len(asm))
+	}
+	assertConcatProduced(t, asm)
+
+	bin := buildBin(t, gcc, dir, "concat_prog", string(asm))
+	rc := exec.Command(bin)
+	_ = rc.Run()
+	if code := rc.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("per-module concat program exited %d, want 0 (cross-unit calls miscompiled)", code)
+	}
+}
+
+// TestSelfHostAsmLoadRunConcatX86_64 is the same emit → assemble → link → run
+// for asm_load_run's own over-budget per-module concat, the path a program
+// with more than 512 live functions takes through that driver (and so
+// through TestSelfHostStdTestE2E). The link is the assertion that matters:
+// every unit defines the `.weak` shape symbol the fixture's shared variant
+// interns, and one stream holding two definitions is an assembler error
+// unless the concat dedupes them.
+func TestSelfHostAsmLoadRunConcatX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading driver test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	mmc := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "mmc")
+	entryPath, _ := writeConcatFixture(t, dir)
+	stdlibRoot, err := filepath.Abs("../../stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+
+	asm, err := exec.Command(mmc, entryPath, stdlibRoot).Output()
+	if err != nil || len(asm) == 0 {
+		t.Fatalf("over-budget concat emit failed: %v (len=%d)", err, len(asm))
+	}
+	assertConcatProduced(t, asm)
+
+	bin := buildBin(t, gcc, dir, "load_concat_prog", string(asm))
+	rc := exec.Command(bin)
+	_ = rc.Run()
+	if code := rc.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("per-module concat program exited %d, want 0 (cross-unit calls miscompiled)", code)
+	}
+}
+
+// TestSelfHostPerModuleConcatArm64 is the arm64 leg, and the reason the arm64
+// merged-leg rescue could not simply be asserted into place.
+//
+// The rescue landed once (#5937) with CI fully green — every aarch64 lane
+// included — and was still a regression, because nothing in the suite drove the
+// path: run against this fixture, a runtime helper's call into another helper
+// did not link (#5937 was reverted).
+//
+// This test is what makes that verifiable rather than asserted: the link step is
+// the assertion, since a dangling cross-unit symbol is invisible to emit-only
+// checks. Keeping it means a future regression in the arm64 unit path's
+// runtime-helper symbols fails here instead of silently going green.
+//
+// This is an x86-HOST test that cross-emits for arm64: the driver is the
+// x86-64 build (buildSelfHostBin) run on the host, and only the EMITTED
+// program is arm64, the shape the driver legs of the TestSelfHost*Arm64
+// family share. The module self-tests are the family's other shape: the pin
+// builds the module itself for arm64 (buildSelfHostBinFor) and qemu runs it.
+// The path under test here is the cross-emit one.
+//
+// So the requirements are: a native x86-64 host to exec the driver, plus the
+// aarch64 cross toolchain to assemble/link/run the emitted program. On a native
+// arm64 runner this cannot work at all — the driver is the wrong architecture
+// (`fork/exec …/mmr: exec format error`), which is exactly what an earlier
+// attempt to run this on the aarch64 lane hit.
+//
+// CI coverage therefore depends on the x86 shards HAVING the cross toolchain;
+// without it this skips, as 11 sibling *Arm64 tests silently did. The selfhost
+// workflow now installs gcc-aarch64-linux-gnu + qemu-user-static on the x86_64
+// shards for exactly that reason.
+func TestSelfHostPerModuleConcatArm64(t *testing.T) {
+	hostGcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("the self-host driver is built for x86-64-linux, so it must run on a native x86-64 host")
+	}
+	armGcc, qemu := arm64Tooling(t) // skips when the aarch64 cross toolchain is absent
+	dir, mmr := buildConcatDriver(t, hostGcc)
+	entryPath, _ := writeConcatFixture(t, dir)
+
+	asm, err := exec.Command(mmr, entryPath, "-target", "arm64-linux").Output()
+	if err != nil || len(asm) == 0 {
+		t.Fatalf("arm64 over-budget concat emit failed: %v (len=%d)", err, len(asm))
+	}
+	assertConcatProduced(t, asm)
+
+	// Assembling + linking with the aarch64 toolchain is the real assertion: this
+	// is what a dangling cross-unit runtime symbol fails.
+	bin := buildBin(t, armGcc, dir, "concat_prog_arm64", string(asm))
+	rc := runArm64Bin(qemu, bin)
+	_ = rc.Run()
+	if code := rc.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("arm64 per-module concat program exited %d, want 0 (cross-unit calls miscompiled)", code)
+	}
+}

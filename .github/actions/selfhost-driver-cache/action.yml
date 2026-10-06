@@ -7,7 +7,7 @@ description: >
   The drivers (asm_ir_run.fern, fern.fern, ...) are compiled by the pinned
   stage0 compiler at 90-300 s each (docs/LOCAL-DEV-LOOP.md), and the e2e
   harness keys each one by its source closure, the target, the stage0
-  binary's bytes and the stdlib tree (internal/e2eharness,
+  binary's bytes and the stdlib tree (internal/testing/e2eharness,
   CachedDriverBinFor): a static freestanding binary from the same compiler
   and sources is the same bytes on every runner, which is what makes the
   directory safe to carry between runs. The Actions-cache key is the hash of

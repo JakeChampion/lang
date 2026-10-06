@@ -46,7 +46,7 @@ webkit = { url = "https://example.com/webkit.tar.gz",
 kv = { path = "../kv", capabilities = ["net"] }    # capability grant
 ```
 
-The parser (`internal/manifest`) is a strict TOML subset — sections,
+The parser (`internal/pkg/manifest`) is a strict TOML subset — sections,
 quoted strings, inline tables — and rejects anything else with a
 pointed error. A bare `helper = "1.2.0"` is a versioned (MVS) dependency (see below);
 `helper = "1.2"` errors (versions are MAJOR.MINOR.PATCH).
@@ -194,7 +194,7 @@ Inside a manifest-governed package, an import resolves in this order:
 
 Rules 3/5/6/8 are the resolver-side isolation invariant from the
 research: a package can only reach dependencies it declares — enforced
-in `resolveImport` (`internal/modload`), not by directory layout.
+in `resolveImport` (`internal/pkg/modload`), not by directory layout.
 Vendored mode (rule 4) and workspace mode (rule 3) both preserve it:
 only declared deps resolve.
 
@@ -259,7 +259,7 @@ no-build-time-network constraint). A versioned dep whose lock is missing
 errors pointing at `fern -resolve`; a locked url version absent from the
 store errors pointing at `fern -fetch` (which also populates url
 versions from a committed lock, for fresh-machine offline builds). MVS
-implementation: `internal/mvs` (semver, index parse, the fixpoint,
+implementation: `internal/pkg/mvs` (semver, index parse, the fixpoint,
 lockfile read/write).
 
 ## Native vs self-hosted coverage
@@ -316,7 +316,7 @@ the summary against native's. Only the verdicts: the *explanations* are not
 comparable while the self-host checker is partial (#4346).
 
 Version RESOLUTION is the self-host's since #6640: `compiler/mvs.fern`
-ports native's `internal/mvs` — version precedence, the index format, the
+ports native's `internal/pkg/mvs` — version precedence, the index format, the
 max-of-the-minimums fixpoint, top-level `[exclude]` round-up, and the
 `fern.lock` text — and `fern -resolve <ABS-DIR>` drives it. The two
 compilers are pinned against each other by

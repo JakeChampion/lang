@@ -333,7 +333,7 @@ Two latent bugs surfaced and got fixed in passing:
 
 ## Testing strategy
 
-- The WASM e2e suite (internal/e2e/wasm_e2e_test.go +
+- The WASM e2e suite (internal/testing/e2e/wasm_e2e_test.go +
   wasm_preview2_test.go) all goes through the component pipeline:
   `wasm.EmitWithOptions{PrintMainResult: true}` →
   `wasm-tools component embed`/`new --adapt` →

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
 // `fern -fetch` end-to-end: an app declares a url+hash dependency, fetch

@@ -24,7 +24,7 @@ lockfile = true
 [env]
 # The one mise release the repo runs: scripts/toolchain-env installs exactly
 # it, and every jdx/mise-action step passes it as `version:`.
-# internal/sourcelint keeps them equal.
+# internal/testing/sourcelint keeps them equal.
 FERN_MISE_VERSION = "2026.9.1"
 
 [tools]

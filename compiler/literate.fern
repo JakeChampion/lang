@@ -1,4 +1,4 @@
-// compiler/literate.fern — a port of internal/literate
+// compiler/literate.fern — a port of internal/tools/literate
 // (the Knuth-style tangle engine) into Fern itself.
 //
 // A literate Fern program is a Markdown document whose `fern` code
@@ -11,7 +11,7 @@
 // compiler. Tangling is a pure `string -> string` transform: it
 // slots in ahead of `lexer.tokenize` in pipeline.fern, so the rest
 // of the self-hosted pipeline needs no changes to compile a literate
-// document. (The Go implementation lives in internal/literate; this
+// document. (The Go implementation lives in internal/tools/literate; this
 // is the parity port that lets the feature survive the Go retirement.)
 //
 // Parity with the Go engine covers: out-of-order chunk references,
@@ -506,7 +506,7 @@ pub function tangle_chunk(src: string, name: string): TangleResult {
 // PATH (expanding `<<ref>>` chunks like the `<<*>>` root). One document
 // can declare several, so a multi-module program is written as one
 // document and partitioned into modules. This mirrors the Go engine's
-// `TangleFiles` / `EntryFile` (internal/literate/tanglefiles.go).
+// `TangleFiles` / `EntryFile` (internal/tools/literate/tanglefiles.go).
 
 // FilePiece is one body line of a `file=PATH` block, tagged with its
 // output path, document line, and whether the block was marked `entry`.

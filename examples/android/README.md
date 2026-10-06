@@ -20,7 +20,7 @@ fern -target arm64-android -shared \
 This emits an `ET_DYN`, W^X, position-independent `.so` with the exported
 symbols in its dynamic symbol table — the artifact an APK ships under
 `lib/arm64-v8a/libfern.so`. The Fern→`.so` build and the JNI ABI are
-covered by the test suite (`internal/e2e/shared_lib_test.go`,
+covered by the test suite (`internal/testing/e2e/shared_lib_test.go`,
 `TestAndroidJNIExampleBuilds`); the `dlopen`+call mechanics are validated
 on the host in the same file.
 

@@ -24,7 +24,7 @@
 
 The fourth:
 
-> The flat-IR optimizer in `internal/ir/` grows enough ad-hoc cross-block
+> The flat-IR optimizer in `internal/oracle/ir/` grows enough ad-hoc cross-block
 > analysis that we'd be reimplementing SSA badly — at which point doing it
 > properly wins.
 
@@ -33,11 +33,11 @@ control-flow analysis over the flat op stream:
 
 | | lines | what it hand-rolls |
 |---|---|---|
-| `internal/ir/rc_analysis.go` | 5458 | the whole ownership plan, over AST + checker tables |
-| `internal/ir/verifystack.go` | 746 | operand-stack dataflow with its own scope stack |
-| `internal/ir/verifyrc.go` | 374 | backward bracket matching, forward reachability that skips sibling arms |
-| `internal/ir/rc_dropguided.go` | 250 | reuse-token flow that "dies at any control-flow join it cannot soundly cross" |
-| `internal/ir/rc_cross_branch.go` | 136 | cross-block reuse pairing |
+| `internal/oracle/ir/rc_analysis.go` | 5458 | the whole ownership plan, over AST + checker tables |
+| `internal/oracle/ir/verifystack.go` | 746 | operand-stack dataflow with its own scope stack |
+| `internal/oracle/ir/verifyrc.go` | 374 | backward bracket matching, forward reachability that skips sibling arms |
+| `internal/oracle/ir/rc_dropguided.go` | 250 | reuse-token flow that "dies at any control-flow join it cannot soundly cross" |
+| `internal/oracle/ir/rc_cross_branch.go` | 136 | cross-block reuse pairing |
 | `compiler/irverifyrc.fern` | 416 | the same reachability walk, again, in Fern |
 | `compiler/irverifystack.fern` | 305 | the same stack dataflow, again, in Fern |
 
@@ -53,7 +53,7 @@ plan rests on the fourth alone.
 
 ## The measurement that makes this actionable
 
-`internal/ir` emits **15,516** reference-count operations across the 1,347
+`internal/oracle/ir` emits **15,516** reference-count operations across the 1,347
 programs the conformance corpus lowers. Of those:
 
 - **10,506** are attributable to a named local (`OpLoadLocal n; OpRcInc`)
@@ -81,13 +81,13 @@ language", and its reconciliation section records the arm64 corpus
 differential's first run finding "four wrong answers and 56 heap SIGSEGVs".
 Both are stale.
 
-Measured 2026-08-26 and pinned in `internal/e2e/arm64_ssa_differential_test.go`:
+Measured 2026-08-26 and pinned in `internal/testing/e2e/arm64_ssa_differential_test.go`:
 
 > over 286 corpus programs there is **no SSA coverage gap left at all**: 281
 > compared, **0 ssa-refused**, 5 baseline-rejected (two deliberately-invalid
 > probes and three that need `subprocess`, which no compiled target provides).
 
-And `internal/e2e/testdata/arm64-ssa-diff-known-divergences.txt` is **all
+And `internal/testing/e2e/testdata/arm64-ssa-diff-known-divergences.txt` is **all
 header and no rows** — "the whole corpus either agrees or is refused". The four
 wrong answers and 56 SIGSEGVs were fixed.
 

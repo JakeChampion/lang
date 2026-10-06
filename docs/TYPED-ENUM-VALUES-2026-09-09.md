@@ -167,7 +167,7 @@ preserve the full runs, not only their medians.
 Reproduction:
 
 ```sh
-go test ./internal/semir ./internal/ssa ./internal/sourcelint -count=1
+go test ./internal/semir ./internal/ssa ./internal/testing/sourcelint -count=1
 go test -race ./internal/semir -count=1
 FERN_REQUIRE_ARM64_SSA_DIFF=1 go test ./internal/semir -count=1
 FERN_REQUIRE_ARM64_SSA_DIFF=1 go test ./cmd/fern -run '^TestTypedSSA' -count=1

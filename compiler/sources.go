@@ -1,6 +1,6 @@
 // Package compiler embeds the self-host compiler's sources. `fern` compiles
 // them with the pinned stage0 when no self-host compiler is installed
-// (internal/launcher).
+// (internal/tools/launcher).
 package compiler
 
 import "embed"
