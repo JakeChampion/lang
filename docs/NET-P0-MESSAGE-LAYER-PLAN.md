@@ -343,7 +343,7 @@ per request there.)
 
 | Allocations | Where |
 | ---: | --- |
-| 1 | `__fern_reactor_wait` builds its kernel-facing events scratch, 792 bytes for 64 `epoll_event`s and a header, and frees it per wait |
+| 1 | `__fern_reactor_wait` built its kernel-facing events scratch, 792 bytes for 64 `epoll_event`s and a header, and freed it per wait (slice 6) |
 | 1 | `__serve_read`'s `(conns, eof)` tuple |
 | 1 | the read's one copy of what it took (`__bytes_range`) |
 | 3 | the parse: the `Framed` box the loop keeps whole (§5.3's slice 7), and two in `__request_head`, its head record among them. A server calls three parse entry points, so `__request_head` has three callers and stays a function, where the framing probe's one caller has it spliced and read apart |
@@ -397,7 +397,13 @@ is preferred where it covers a case, since every program gains.
    10.
 6. **The helpers' tuples and records.** By the compiler where a pairing
    or a splice covers them, otherwise by threading state the way the
-   parse does. Partly done: a tuple of two values that each fit a word,
+   parse does. The reactor's row is done: the kernel writes its events
+   into the array `wait_into` is given, behind its length word, and each
+   is turned into its pair where it lies (from the last down for epoll,
+   whose events are smaller than a pair; upwards for kqueue, whose are
+   larger, so Darwin takes half the room per wait). 10 to 9. The wasm
+   wait still builds its pollable list and slot table per wait. Partly
+   done: a tuple of two values that each fit a word,
    returned by a function whose every caller takes it apart,
    returns in two words as a variant does (`sempair`,
    `docs/SELFHOST-SSA-BACKEND.md`), so `__serve_read` and

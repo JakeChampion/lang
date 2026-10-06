@@ -3350,8 +3350,14 @@ pub function rt_src_reactor_ctl(t: string): string {
     + "if (op != 1 && op != 2) { return 0 - 22; } let interest: i32 = arg & 7; if (op == 2) { interest = 0; } " + watch + " }";
 }
 
-// The pairs are written one word per slot into the caller's array through
-// its box: word 1 is the first element.
+// The kernel writes its events into the caller's array itself, behind the
+// length word, and each is turned into its (fd, readiness) pair where it
+// lies, so a wait allocates nothing. A pair is two words; an epoll_event
+// is 12 bytes on x86-64 and 16 on arm64, so the events are walked from the
+// last down, each read before the pair that overlaps it is written; a
+// kevent is 32 bytes, so those are walked upwards, and the array holds half
+// as many as it has pairs of room. An array with room for one pair holds no
+// kevent, so that one goes through the scratch buffer with the timespec.
 function epoll_wait_src(t: string): string {
   let size: string = "16";
   let data_at: string = "8";
@@ -3359,25 +3365,26 @@ function epoll_wait_src(t: string): string {
     size = "12";
     data_at = "4";
   }
-  return "let buf: usize = __raw_alloc(cap * " + size + "); let n: i32 = __syscall6(" + sysno(t, "epoll_pwait") + ", r_fd as i64, buf as i64, cap as i64, timeout_ms as i64, 0, 8) as i32; "
-    + "let b: usize = __raw_arr_ptr(events); let i: i32 = 0; while (i < n) { let e: i32 = i * " + size + "; let bits: i32 = __raw_load8(buf, e); let ready: i32 = 0; "
+  return "let b: usize = __raw_arr_ptr(events); let buf: usize = __raw_addr(b, 8); let n: i32 = __syscall6(" + sysno(t, "epoll_pwait") + ", r_fd as i64, buf as i64, cap as i64, timeout_ms as i64, 0, 8) as i32; "
+    + "let i: i32 = n - 1; while (i >= 0) { let e: i32 = i * " + size + "; let bits: i32 = __raw_load8(buf, e); let ready: i32 = 0; "
     + "if ((bits & 1) != 0) { ready = ready | 1; } if ((bits & 4) != 0) { ready = ready | 2; } if ((bits & 24) != 0) { ready = ready | 4; } "
     + "let fd: i32 = __raw_load8(buf, e + " + data_at + ") | (__raw_load8(buf, e + " + data_at + " + 1) << 8) | (__raw_load8(buf, e + " + data_at + " + 2) << 16) | (__raw_load8(buf, e + " + data_at + " + 3) << 24); "
     + "if (fd < 0) { let sfd: i32 = __raw_load8(buf, e + " + data_at + " + 4) | (__raw_load8(buf, e + " + data_at + " + 5) << 8) | (__raw_load8(buf, e + " + data_at + " + 6) << 16) | (__raw_load8(buf, e + " + data_at + " + 7) << 24); let drain: usize = __raw_scratch(128); __syscall3(" + sysno(t, "read") + ", sfd as i64, drain as i64, 128); ready = 1; } "
-    + "__raw_store_ptr(b, i * 2 + 1, fd as usize); __raw_store_ptr(b, i * 2 + 2, ready as usize); i = i + 1; } "
-    + "let buf_own: string = __raw_string(buf, cap * " + size + "); return n;";
+    + "__raw_store_ptr(b, i * 2 + 1, fd as usize); __raw_store_ptr(b, i * 2 + 2, ready as usize); i = i - 1; } "
+    + "return n;";
 }
 
 function kqueue_wait_src(t: string): string {
-  return "let buf: usize = __raw_alloc(cap * 32 + 16); let ts: usize = __raw_addr(buf, cap * 32); let tmo: usize = 0 as usize; "
+  return "let b: usize = __raw_arr_ptr(events); let buf: usize = __raw_addr(b, 8); let kcap: i32 = cap / 2; let ts: usize = __raw_scratch(48); let tmo: usize = 0 as usize; "
+    + "if (kcap < 1) { kcap = 1; buf = __raw_addr(ts, 16); } "
     + "if (timeout_ms >= 0) { __raw_store_ptr(ts, 0, (timeout_ms / 1000) as usize); __raw_store_ptr(ts, 1, ((timeout_ms % 1000) * 1000000) as usize); tmo = ts; } "
-    + "let n: i32 = __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, 0, 0, buf as i64, cap as i64, tmo as i64) as i32; "
-    + "let b: usize = __raw_arr_ptr(events); let i: i32 = 0; while (i < n) { let e: i32 = i * 32; let ready: i32 = 2; if (__raw_load8(buf, e + 8) == 255) { ready = 1; } "
+    + "let n: i32 = __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, 0, 0, buf as i64, kcap as i64, tmo as i64) as i32; "
+    + "let i: i32 = 0; while (i < n) { let e: i32 = i * 32; let ready: i32 = 2; if (__raw_load8(buf, e + 8) == 255) { ready = 1; } "
     + "if ((__raw_load8(buf, e + 11) & 192) != 0) { ready = ready | 4; } "
     + "let fd: i32 = __raw_load8(buf, e) | (__raw_load8(buf, e + 1) << 8) | (__raw_load8(buf, e + 2) << 16) | (__raw_load8(buf, e + 3) << 24); "
     + "if (__raw_load8(buf, e + 8) == 250) { ready = 1; fd = 0 - fd; } if (__raw_load8(buf, e + 8) == 251) { ready = 1; fd = 0 - 15; } "
     + "__raw_store_ptr(b, i * 2 + 1, fd as usize); __raw_store_ptr(b, i * 2 + 2, ready as usize); i = i + 1; } "
-    + "let buf_own: string = __raw_string(buf, cap * 32 + 16); return n;";
+    + "return n;";
 }
 
 // rt_src_task backs the task primitives (docs/NET-P3-SUSPENSION-PLAN.md
