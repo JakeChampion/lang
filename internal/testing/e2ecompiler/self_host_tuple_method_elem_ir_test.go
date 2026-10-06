@@ -46,7 +46,7 @@ var tupleMethodElemCases = []struct {
 	{"literal-arms-unchanged", `function gen(c: boolean): (i32, i64) { return ((if (c) { 7i32 } else { 6i32 }), 165i64); } function main(): i32 { let t: (i32, i64) = gen(true); return (t.0 + (t.1 as i32)) & 63i32; }`, 44},
 }
 
-// TestSelfHostTupleMethodElemIRX86_64 — the x86-64 IR path (asm_ir_run `-ir`).
+// TestSelfHostTupleMethodElemIRX86_64 — the x86-64 IR path (asm_ir_run).
 func TestSelfHostTupleMethodElemIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -55,7 +55,7 @@ func TestSelfHostTupleMethodElemIRX86_64(t *testing.T) {
 
 	for _, tc := range tupleMethodElemCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -85,7 +85,7 @@ func TestSelfHostTupleMethodElemIRArm64(t *testing.T) {
 
 	for _, tc := range tupleMethodElemCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

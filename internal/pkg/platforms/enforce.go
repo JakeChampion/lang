@@ -196,6 +196,7 @@ var gatedBuiltins = map[string]string{
 	"lstat":            "fs",
 	"read_dir":         "fs",
 	"read_dir_all":     "fs",
+	"read_dir_ino":     "fs",
 	"remove_file":      "fs",
 	"remove_dir_all":   "fs",
 	"create_dir_all":   "fs",
@@ -307,6 +308,11 @@ var gatedBuiltins = map[string]string{
 	// (docs/FREESTANDING-CORE.md).
 	"signal_ignore":  "signal",
 	"signal_default": "signal",
+	// Catching is the same surface, and wasi-cli's answer the same kind:
+	// the catch installs and no signal is ever taken, which is exactly
+	// what happens in a world that delivers none.
+	"signal_catch": "signal",
+	"signal_taken": "signal",
 	// The mask and the read side of the same disposition surface.
 	"signal_mask":        "signal",
 	"signal_disposition": "signal",

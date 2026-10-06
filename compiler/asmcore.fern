@@ -98,8 +98,8 @@ pub struct EmitState {
   // use_ir: the parallel-path migration's IR opt-in
   // (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3), left on. Nothing routes
   // around it any more — the AST emitters are gone and every backend is
-  // IR-or-error — so the remaining readers (wasm_ir.should_use_ir_core, the
-  // `-ir` drivers) only ever see it set.
+  // IR-or-error — so its remaining readers (wasm_ir.ir_route_ok and
+  // wasm_ir.emit_core_or_error_sub) only ever see it set.
   use_ir: boolean,
   // str_ns: per-module namespace for string-literal `.rodata` labels, for
   // per-module translation-unit emit (#3451 step 3 / #3455). Empty (the
@@ -2267,14 +2267,17 @@ pub function atflag(t: string, name: string): string {
   return "0";
 }
 
-// direntoff gives the byte offsets inside one directory record. d_reclen is at
-// 16 on both, but the name is not: Linux's linux_dirent64 is
+// direntoff gives the byte offsets inside one directory record. d_ino is at 0
+// and d_reclen at 16 on both, but the name is not: Linux's linux_dirent64 is
 // { u64 d_ino; s64 d_off; u16 d_reclen @16; u8 d_type @18; char d_name[] @19 }
 // while XNU's dirent carries a second u16 (d_namlen @18) before d_type, putting
 // the name at 21. Getting this wrong reads a directory of names shifted by two
 // bytes, which is the kind of bug that looks like corruption rather than an
 // offset.
 pub function direntoff(t: string, name: string): string {
+  if (name == "ino") {
+    return "0";
+  }
   if (t == "arm64-darwin") {
     if (name == "name") {
       return "21";
@@ -2910,9 +2913,8 @@ pub function rt_src_rlimit_nofile(t: string): string {
 // `handler` is the whole difference between the two: SIG_IGN is 1, SIG_DFL 0.
 //
 // One 32-byte scratch serves all three targets. Linux's kernel sigaction is
-// {handler, flags, restorer, mask} on x86-64 and {handler, flags, mask} on
-// arm64; XNU's is {handler, tramp, mask, flags}. Only `sa_handler`, at offset 0
-// on all three, is non-zero for a plain disposition, so the other three words
+// {handler, flags, restorer, mask} on both ISAs; XNU's is {handler, tramp,
+// mask, flags}. Only `sa_handler`, at offset 0 on all three, is non-zero for a plain disposition, so the other three words
 // are stored as zero rather than branched on — __raw_scratch does not hand back
 // cleared memory. SA_RESTORER is a DELIVERY requirement and neither disposition
 // ever builds a signal frame, so a zero sa_flags is correct here.
@@ -2922,6 +2924,27 @@ pub function rt_src_rlimit_nofile(t: string): string {
 // __syscall4.
 pub function rt_src_signal_disposition(t: string, name: string, handler: string): string {
   return "function __fern_" + name + "(sig: i32): i32 { let act: usize = __raw_scratch(32); __raw_store_ptr(act, 0, " + handler + "); __raw_store_ptr(act, 1, 0); __raw_store_ptr(act, 2, 0); __raw_store_ptr(act, 3, 0); return __syscall4(" + sysno(t, "sigaction") + ", sig as i64, act as i64, 0, 8) as i32; }";
+}
+
+// rt_src_signal_catch backs `signal_catch(sig)` (syscall-leaf) -> the
+// sigaction return. `handler` is the backend's __fern_sig_catcher, which sets
+// the signal's byte in __fern_sig_flags and returns; `ret` is how a handler
+// gets back: Linux's SA_RESTORER routine, which calls rt_sigreturn, or XNU's
+// sa_tramp, which calls the handler and then sigreturn. The stack-op arm
+// passes both addresses, since the runtime floor cannot name a label.
+//
+// Linux, both ISAs: {handler, flags, restorer, mask}, flags SA_RESTART
+// (0x10000000) | SA_RESTORER (0x04000000). XNU: {handler, tramp, mask: u32,
+// flags: u32}, so the third word is SA_RESTART (2) shifted into the flags
+// half. SA_RESTART makes a read or write the signal interrupts resume rather
+// than fail with EINTR, so a caller polls at a point of its own choosing. The
+// bound keeps signal_taken's index inside the 65-byte flag table.
+pub function rt_src_signal_catch(t: string): string {
+  let words: string = "__raw_store_ptr(act, 1, 335544320); __raw_store_ptr(act, 2, ret);";
+  if (t == "arm64-darwin") {
+    words = "__raw_store_ptr(act, 1, ret); __store_i64(__raw_addr(act, 16), 8589934592 as i64);";
+  }
+  return "function __fern_signal_catch(sig: i32, handler: usize, ret: usize): i32 { if (sig < 1 || sig > 64) { return 0 - 22; } let act: usize = __raw_scratch(32); __raw_store_ptr(act, 0, handler); " + words + " __raw_store_ptr(act, 3, 0); return __syscall4(" + sysno(t, "sigaction") + ", sig as i64, act as i64, 0, 8) as i32; }";
 }
 
 // sockaddr_head writes the first two bytes of a `sockaddr_in`, which is the one
@@ -4517,26 +4540,38 @@ pub function rt_src_read_file_bytes(t: string, packed: boolean): string {
 // Linux value on Darwin means O_NDELAY|O_ASYNC, so the open SUCCEEDS and the
 // first read fails — see oflag.
 pub function rt_src_read_dir(t: string): string {
-  return rt_src_read_dir_like(t, "__fern_read_dir", true);
+  return rt_src_read_dir_like(t, "__fern_read_dir", true, false);
 }
 
 // rt_src_read_dir_all backs `read_dir_all(path)`: the same drain with the
 // "." / ".." records kept, in the order the directory reader reports them.
 pub function rt_src_read_dir_all(t: string): string {
-  return rt_src_read_dir_like(t, "__fern_read_dir_all", false);
+  return rt_src_read_dir_like(t, "__fern_read_dir_all", false, false);
 }
 
-// rt_src_read_dir_like is the source both share. `skip_dots` wraps the
-// per-entry append in the "." / ".." test.
-function rt_src_read_dir_like(t: string, fname: string, skip_dots: boolean): string {
+// rt_src_read_dir_ino backs `read_dir_ino(path)`: read_dir's drain, appending
+// a DirEntry of each name and the d_ino its record carries.
+pub function rt_src_read_dir_ino(t: string): string {
+  return rt_src_read_dir_like(t, "__fern_read_dir_ino", true, true);
+}
+
+// rt_src_read_dir_like is the source all three share. `skip_dots` wraps the
+// per-entry append in the "." / ".." test; `ino` makes each entry a DirEntry.
+function rt_src_read_dir_like(t: string, fname: string, skip_dots: boolean, ino: boolean): string {
   let nameoff: string = direntoff(t, "name");
+  let elem: string = "string";
+  let entry: string = "__raw_string(nbuf, nlen)";
+  if (ino) {
+    elem = "DirEntry";
+    entry = "DirEntry { name: __raw_string(nbuf, nlen), ino: __load_i64(__raw_addr(buf, pos + " + direntoff(t, "ino") + ")) }";
+  }
   let guard_open: string = "";
   let guard_close: string = "";
   if (skip_dots) {
     guard_open = "let skip: i32 = 0; if (nlen == 1) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { skip = 1; } } if (nlen == 2) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { if (__raw_load8(buf, pos + " + nameoff + " + 1) == 46) { skip = 1; } } } if (skip == 0) { ";
     guard_close = "} ";
   }
-  return "function " + fname + "(path: string): Result[string[], IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "rd_directory") + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } let basep: usize = __raw_alloc(8); let names: string[] = []; let done: i32 = 0; while (done == 0) { let buf: usize = __raw_alloc(65536); let n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd as i64, buf as i64, 65536, basep as i64) as i32; if (n <= 0) { done = 1; } else { let pos: i32 = 0; while (pos < n) { let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; let nlen: i32 = 0; while (__raw_load8(buf, pos + " + nameoff + " + nlen) != 0) { nlen = nlen + 1; } " + guard_open + "let nbuf: usize = __raw_alloc(nlen); let k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + " + nameoff + " + k)); k = k + 1; } names = names.append(__raw_string(nbuf, nlen)); " + guard_close + "pos = pos + reclen; } } let buf_own: string = __raw_string(buf, 65536); } let basep_own: string = __raw_string(basep, 8); __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Ok(names); }";
+  return "function " + fname + "(path: string): Result[" + elem + "[], IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "rd_directory") + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } let basep: usize = __raw_alloc(8); let names: " + elem + "[] = []; let done: i32 = 0; while (done == 0) { let buf: usize = __raw_alloc(65536); let n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd as i64, buf as i64, 65536, basep as i64) as i32; if (n <= 0) { done = 1; } else { let pos: i32 = 0; while (pos < n) { let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; let nlen: i32 = 0; while (__raw_load8(buf, pos + " + nameoff + " + nlen) != 0) { nlen = nlen + 1; } " + guard_open + "let nbuf: usize = __raw_alloc(nlen); let k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + " + nameoff + " + k)); k = k + 1; } names = names.append(" + entry + "); " + guard_close + "pos = pos + reclen; } } let buf_own: string = __raw_string(buf, 65536); } let basep_own: string = __raw_string(basep, 8); __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Ok(names); }";
 }
 
 // rt_src_remove_dir_all backs `remove_dir_all(path)` (#2649, the last fs leaf) →
@@ -5587,6 +5622,9 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           }
           if (id.name == "read_dir" || id.name == "read_dir_all") {
             return ty_array_string();
+          }
+          if (id.name == "read_dir_ino") {
+            return ty_array();
           }
           // Arbitrary free / module function returning
           // Option[T] or Result[T, …] — see asm.fern.
@@ -7127,6 +7165,10 @@ function builtin_i32_names(): string[] {
     // balances — the same shape as sleep_ms above.
     "signal_ignore",
     "signal_default",
+    // signal_catch(sig) -> the same sigaction return; signal_taken(sig) ->
+    // boolean, in an integer slot like isatty's.
+    "signal_catch",
+    "signal_taken",
     // signal_mask(how, mask) -> the previously-blocked mask as an i64,
     // in an integer slot like the clocks'; signal_disposition(sig) ->
     // a small enumerated i32.
@@ -7431,6 +7473,9 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   }
   if (id.name == "read_dir" || id.name == "read_dir_all") {
     return ty_result(ty_array_string());
+  }
+  if (id.name == "read_dir_ino") {
+    return ty_result(ty_array());
   }
   if (id.name == "environ") {
     return ty_array_string();
@@ -8246,7 +8291,7 @@ pub function runtime_need_deps(name: string): string[] {
     let d8: string[] = ["heap", "arr_push", "arr_push_owned", "str_concat"];
     return d8;
   }
-  if (name == "read_dir" || name == "read_dir_all") {
+  if (name == "read_dir" || name == "read_dir_all" || name == "read_dir_ino") {
     // __fern_read_dir (#2649) builds the result string[] with .append() — same
     // arr_push / arr_push_owned pairing as str_split. (Its call to __fern_io_error
     // is not a need: io_error is emitted inside the fs bundle alongside read_dir.)
@@ -10162,7 +10207,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_write_file_bytes", "__fn___fern_write_file_bytes_u8",
     "__fn___fern_reader_read_chunk_bytes", "__fn___fern_reader_read_chunk_bytes_u8", "__fn___fern_writer_write_bytes", "__fn___fern_writer_write_bytes_u8", "__fn___fern_writer_write_some_bytes", "__fn___fern_writer_write_some_bytes_u8",
     "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir",
-    "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_remove_file",
+    "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_read_dir_ino", "__fn___fern_remove_file",
     "__fn___fern_create_dir_all",
     "__fn___fern_create_dir", "__fn___fern_remove_dir",
     "__fn___fern_create_link", "__fn___fern_create_symlink",
@@ -10176,6 +10221,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_hostname",
     "__fn___fern_signal_ignore", "__fn___fern_signal_default",
     "__fn___fern_signal_mask", "__fn___fern_signal_disposition",
+    "__fn___fern_signal_catch",
     "__fn___fern_chdir",
     "__fern_strbuf_reset", "__fern_strbuf_take",
     // The capacity-carrying string builder (#8773). __fern_buf_reserve is

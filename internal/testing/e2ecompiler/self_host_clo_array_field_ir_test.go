@@ -57,7 +57,7 @@ var cloArrayFieldCallCases = []struct {
 }
 
 // TestSelfHostCloArrayFieldCallIRX86_64 — the x86-64 asm.fern fix, through the
-// production driver (asm_ir_run `-ir`).
+// production driver (asm_ir_run).
 func TestSelfHostCloArrayFieldCallIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -66,7 +66,7 @@ func TestSelfHostCloArrayFieldCallIRX86_64(t *testing.T) {
 
 	for _, tc := range cloArrayFieldCallCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -87,7 +87,7 @@ func TestSelfHostCloArrayFieldCallIRX86_64(t *testing.T) {
 
 // TestSelfHostCloArrayFieldCallIRArm64 — CI-gated arm64 counterpart of the
 // asm_arm64.fern fix (same callee-dispatch fallthrough), via the arm64 IR path
-// (asm_ir_run `-target arm64-linux -ir`). Mirrors TestSelfHostTupleFnIRArm64.
+// (asm_ir_run `-target arm64-linux`). Mirrors TestSelfHostTupleFnIRArm64.
 func TestSelfHostCloArrayFieldCallIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -100,7 +100,7 @@ func TestSelfHostCloArrayFieldCallIRArm64(t *testing.T) {
 
 	for _, tc := range cloArrayFieldCallCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}

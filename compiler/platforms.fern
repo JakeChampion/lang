@@ -351,6 +351,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "lstat", capability: "fs" },
     Gate { builtin: "read_dir", capability: "fs" },
     Gate { builtin: "read_dir_all", capability: "fs" },
+    Gate { builtin: "read_dir_ino", capability: "fs" },
     Gate { builtin: "remove_file", capability: "fs" },
     Gate { builtin: "remove_dir_all", capability: "fs" },
     Gate { builtin: "create_dir_all", capability: "fs" },
@@ -447,6 +448,11 @@ pub function gated_builtins(): Gate[] {
     // deliver to and does not get them at all.
     Gate { builtin: "signal_ignore", capability: "signal" },
     Gate { builtin: "signal_default", capability: "signal" },
+    // Catching is the same surface: on wasi-cli the catch installs and
+    // no signal is ever taken, which is what a world delivering none
+    // does.
+    Gate { builtin: "signal_catch", capability: "signal" },
+    Gate { builtin: "signal_taken", capability: "signal" },
     // The C-ABI FFI shims. Enumerated rather than matched with
     // ircore.is_c_call so this table stays the one place the
     // classification lives; the checker registers exactly these fifteen.

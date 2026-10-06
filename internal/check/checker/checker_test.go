@@ -1355,6 +1355,37 @@ func TestWasmReactorBuiltinSigs(t *testing.T) {
 	}
 }
 
+// read_dir_ino(path) answers Result[DirEntry[], IoError]: each element's
+// name is a string and its ino an i64, and DirEntry is a built-in a program
+// may not declare again.
+func TestReadDirInoSig(t *testing.T) {
+	ok := `function main(): i32 {
+    match (read_dir_ino(".")) {
+        Ok(es) => {
+            let e: DirEntry = es[0];
+            let n: string = e.name;
+            let ino: i64 = e.ino;
+            return n.len();
+        },
+        Err(_) => { return 1; },
+    }
+}`
+	if err := checkSource(t, ok); err != nil {
+		t.Errorf("read_dir_ino should type-check, got: %v", err)
+	}
+	for _, bad := range []string{
+		`function main(): i32 { match (read_dir_ino(".")) { Ok(es) => { let n: i32 = es[0].ino; return n; }, Err(_) => { return 1; } } }`,
+		`function main(): i32 { match (read_dir_ino(".")) { Ok(es) => { let s: string[] = es; return 0; }, Err(_) => { return 1; } } }`,
+		`function main(): i32 { match (read_dir_ino(1)) { Ok(_) => { return 0; }, Err(_) => { return 1; } } }`,
+		`struct DirEntry { name: string }
+function main(): i32 { return 0; }`,
+	} {
+		if err := checkSource(t, bad); err == nil {
+			t.Errorf("want a type error, got none:\n%s", bad)
+		}
+	}
+}
+
 // A generic enum whose type parameter is determined by a payload at a
 // non-leading position — in particular a function-typed payload whose
 // result is the type parameter — must infer that parameter from the

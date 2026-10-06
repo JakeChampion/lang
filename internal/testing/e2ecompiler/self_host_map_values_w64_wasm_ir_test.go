@@ -15,7 +15,7 @@ import (
 // snapshots the live cells and dereferences each into a fresh i64[]. Before this,
 // a wide `.values()` kept the whole module on the legacy AST wasm emitter
 // (module_has_wide_map_val_cached). Each case pipes a single program to the
-// `wasm_ir_run -ir` driver (maps are builtins there), asserts the WAT reached
+// `wasm_ir_run` driver (maps are builtins there), asserts the WAT reached
 // $__fern_map_values_w64, then runs under wasmtime and checks the exit code.
 func TestSelfHostMapValuesW64WasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -51,9 +51,9 @@ func TestSelfHostMapValuesW64WasmIR(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			wat, err := cmd.Output()

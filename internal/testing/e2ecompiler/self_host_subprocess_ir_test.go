@@ -55,7 +55,7 @@ func TestSelfHostSubprocessIR(t *testing.T) {
     return 0;
 }`
 
-	cmd := exec.Command(driverBin, "-ir")
+	cmd := exec.Command(driverBin)
 	cmd.Stdin = bytes.NewReader([]byte(src))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {

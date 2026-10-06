@@ -147,7 +147,7 @@ func TestSelfHostTupleOptStructElemIRX86_64(t *testing.T) {
 	for _, tc := range tupleOptStructElemCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src))
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
@@ -175,7 +175,7 @@ func TestSelfHostTupleOptStructElemIRArm64(t *testing.T) {
 	for _, tc := range tupleOptStructElemCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
 			cmd := runArm64Bin(qemu, progBin)
 			_ = cmd.Run()
@@ -204,9 +204,9 @@ func TestSelfHostTupleOptStructElemWasmIR(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			wat, err := cmd.Output()
@@ -233,7 +233,7 @@ func TestSelfHostTupleOptStructElemWasmIR(t *testing.T) {
 // its payload, so its tag comes from the checker's stamped result type — the
 // second gate that carried the same scalar-only payload restriction, and the
 // spelling `Getopt.next`'s callers use. It runs on the module-LOADING compiler
-// rather than the `-ir` driver above, because only that path carries the
+// rather than the stdin drivers above, because only that path carries the
 // stamp; under the driver the element is unclassifiable for want of a type,
 // which is a different gap from this one.
 const tupleOptStructStampedSrc = `struct S { id: i32, v: string }
@@ -295,7 +295,7 @@ func TestSelfHostTupleOptStructElemStampedX86_64(t *testing.T) {
 // CONSTRUCTION tag was missing, so `(c, Some(e))` refused the module while a
 // bare enum element and `let o: Option[E] = Some(e)` both lowered.
 //
-// It is pinned on the module-LOADING compiler rather than the `-ir` driver
+// It is pinned on the module-LOADING compiler rather than the stdin drivers
 // above, and that distinction is the whole test: under the driver these cases
 // pass WITHOUT the fix, because the payload has no stamped type there and
 // elem_type_tag falls to its i32 default instead of naming the enum. Only the

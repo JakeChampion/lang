@@ -14,8 +14,9 @@ import (
 // directory printed 32767 lines. The buffer grows now. The program seeds
 // 4096 names of 253 bytes each: more than 1 MiB of records on both the
 // Linux getdents64 and the Darwin getdirentries64 layouts, so a drain that
-// stops at the first capacity lists fewer than it wrote. Exit codes name
-// the failing step.
+// stops at the first capacity lists fewer than it wrote. read_dir_ino is
+// the same drain, so it must list them all too, each with its inode. Exit
+// codes name the failing step.
 const readDirLargeSource = `function main(): i32 {
     match (create_dir_all("d")) { Err(_) => { return 1; }, Ok(_) => {} }
     let al: string[] = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"];
@@ -41,11 +42,20 @@ const readDirLargeSource = `function main(): i32 {
     let m: i32 = 0;
     match (read_dir_all("d")) { Ok(ns) => { m = ns.len(); }, Err(_) => { return 6; } }
     if (m != 4098) { return 7; }
+    let k: i32 = 0;
+    match (read_dir_ino("d")) {
+        Ok(es) => {
+            k = es.len();
+            for e in es { if (e.ino == 0) { return 9; } }
+        },
+        Err(_) => { return 8; }
+    }
+    if (k != 4096) { return 10; }
     return 0;
 }
 `
 
-// readDirLargeNative compiles the program with the Go compiler for target
+// readDirLargeNative compiles the program with `fern -target` for target
 // and returns the binary path, in a fresh directory the run can seed.
 func readDirLargeNative(t *testing.T, target string) (bin, dir string) {
 	t.Helper()

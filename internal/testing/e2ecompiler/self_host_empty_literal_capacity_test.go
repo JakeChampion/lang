@@ -124,20 +124,20 @@ func TestSelfHostEmptyLiteralCapacity(t *testing.T) {
 					var cmd *exec.Cmd
 					switch target {
 					case "x86-64-linux":
-						asm := runCaptureStrictIR(t, gcc, runner, driver, []byte(tc.src), "-ir")
+						asm := runCaptureStrictIR(t, gcc, runner, driver, []byte(tc.src))
 						cmd = runX86_64Bin(runner, buildBin(t, gcc, dir, tc.name, string(asm)))
 					case "x86-64-sanitize":
 						asm := hevCompile(t, runner, driver, tc.src, []string{"FERN_SANITIZE=1"})
 						cmd = runX86_64Bin(runner, buildBin(t, gcc, dir, tc.name+"-san", asm))
 					case "arm64-linux":
 						armgcc, armrunner := arm64Tooling(t)
-						asm := runCaptureStrictIR(t, gcc, runner, driver, []byte(tc.src), "-target", target, "-ir")
+						asm := runCaptureStrictIR(t, gcc, runner, driver, []byte(tc.src), "-target", target)
 						cmd = runArm64Bin(armrunner, buildBinArm64(t, armgcc, dir, tc.name, string(asm)))
 					case "wasm32-wasi":
 						if _, err := exec.LookPath("wasmtime"); err != nil {
 							t.Fatal(err)
 						}
-						wat := runCapture(t, gcc, runner, wasm, []byte(tc.src), "-ir")
+						wat := runCapture(t, gcc, runner, wasm, []byte(tc.src))
 						path := filepath.Join(dir, tc.name+".wat")
 						if err := os.WriteFile(path, wat, 0o644); err != nil {
 							t.Fatal(err)

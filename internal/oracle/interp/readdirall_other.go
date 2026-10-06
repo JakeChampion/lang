@@ -7,15 +7,16 @@ import "os"
 // readDirAll on a platform whose directory reader `syscall` does not
 // expose in raw form. It does not report `.` and `..` separately, so
 // the honest answer is the list read_dir gives — which is what the
-// WASI preview-2 backend answers with for the same reason.
-func readDirAll(path string) ([]string, error) {
+// WASI preview-2 backend answers with for the same reason. Nor does it
+// hand back an inode, so every `ino` is 0, as on preview 2.
+func readDirAll(path string) ([]dirent, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, len(entries))
+	out := make([]dirent, len(entries))
 	for i, e := range entries {
-		names[i] = e.Name()
+		out[i] = dirent{name: e.Name()}
 	}
-	return names, nil
+	return out, nil
 }

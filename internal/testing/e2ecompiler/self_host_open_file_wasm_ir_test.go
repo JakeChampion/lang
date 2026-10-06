@@ -34,9 +34,9 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 	run := func(t *testing.T, src string) int {
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, "-ir")
+			cmd = exec.Command(driverBin)
 		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		wat, err := cmd.Output()

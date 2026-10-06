@@ -95,7 +95,7 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 		"dyn-reassigned-excluded", 0)
 }
 
-// TestSelfHostDynStructReclaimWasmIR: the wasm sibling through the -ir driver.
+// TestSelfHostDynStructReclaimWasmIR: the wasm sibling through the wasm_ir_run driver.
 func TestSelfHostDynStructReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping dyn struct reclaim wasm IR e2e")
@@ -128,9 +128,9 @@ function main(): i32 { let v: i32 = churn(1000); if (__rc_underflow_count() != 0
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			wat, err := cmd.Output()

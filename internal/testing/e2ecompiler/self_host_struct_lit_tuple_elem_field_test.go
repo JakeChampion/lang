@@ -100,7 +100,7 @@ func TestSelfHostStructLitTupleElemFieldX86_64(t *testing.T) {
 					src := tupleElemFieldSrc(run, rounds)
 					want := interpExit(t, interpBin, src)
 					asm := runCaptureEnv(t, runner, driverBin, []byte(src),
-						[]string{"PATH=/usr/bin:/bin", "FERN_STRICT_IR=1", "FERN_LEAKCHECK=1"}, "-ir")
+						[]string{"PATH=/usr/bin:/bin", "FERN_STRICT_IR=1", "FERN_LEAKCHECK=1"})
 					if len(asm) == 0 {
 						t.Fatal("self-host compiler emitted 0 bytes")
 					}
@@ -133,7 +133,7 @@ func TestSelfHostStructLitTupleElemFieldSanitizeX86_64(t *testing.T) {
 			src := tupleElemFieldSrc(tc.direct, tupleElemFieldRounds[1])
 			want := interpExit(t, interpBin, src)
 			asm := runCaptureEnv(t, runner, driverBin, []byte(src),
-				[]string{"PATH=/usr/bin:/bin", "FERN_STRICT_IR=1", "FERN_SANITIZE=1"}, "-ir")
+				[]string{"PATH=/usr/bin:/bin", "FERN_STRICT_IR=1", "FERN_SANITIZE=1"})
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}

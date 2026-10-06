@@ -116,7 +116,7 @@ func TestSelfHostGuardBoundsX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	emit := func(t *testing.T, src string) string {
-		asm := string(runCapture(t, gcc, runner, driverBin, []byte(src+"\n"), "-ir"))
+		asm := string(runCapture(t, gcc, runner, driverBin, []byte(src+"\n")))
 		if !strings.Contains(asm, ".Lssa_") {
 			t.Fatalf("did not lower through the IR (no .Lssa_ labels)")
 		}
@@ -210,9 +210,9 @@ func TestSelfHostGuardBoundsWasm(t *testing.T) {
 	run := func(t *testing.T, name, src string) int {
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, "-ir")
+			cmd = exec.Command(driverBin)
 		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(src + "\n"))
 		wat, err := cmd.Output()

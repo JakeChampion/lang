@@ -89,7 +89,7 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 		"closure-param-capture-balanced", 0)
 }
 
-// TestSelfHostClosureEnvRcWasmIR: the wasm sibling through the -ir driver.
+// TestSelfHostClosureEnvRcWasmIR: the wasm sibling through the wasm_ir_run driver.
 func TestSelfHostClosureEnvRcWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping closure-env RC wasm IR e2e")
@@ -115,9 +115,9 @@ function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_byte
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			wat, err := cmd.Output()

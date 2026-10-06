@@ -2,8 +2,10 @@ package coreutils
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -428,6 +430,116 @@ func TestDDProgress(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The info signal mid-copy (#9243): GNU's SIGINFO, which is SIGUSR1 on Linux.
+// It writes the statistics report and the copy carries on.
+//
+// dd reads three bytes from a FIFO and blocks on the next read; the signal
+// arrives there, and the writer closes the FIFO only after it. GNU's handler
+// interrupts the read and prints at once; Fern's raises a flag the copy loop
+// reads at the record boundary, which here is the end of input. Either way
+// the report holds the one record read before the signal, so the two stderrs
+// match with only the durations masked — and a dd the signal killed, or one
+// whose read failed with EINTR, would not finish at all.
+func TestDDInfoSignal(t *testing.T) {
+	info := syscall.SIGUSR1
+	if runtime.GOOS == "darwin" {
+		info = syscall.Signal(29) // SIGINFO, which GNU catches where it exists
+	}
+	duration := regexp.MustCompile(`copied, [0-9.e+-]+ s, [0-9.]+ [kMGTPE]?B/s`)
+	run := func(bin string, env []string, args ...string) (string, *os.ProcessState) {
+		t.Helper()
+		dir := t.TempDir()
+		fifo := filepath.Join(dir, "slow")
+		if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		wrote := make(chan struct{})
+		release := make(chan struct{})
+		go func() {
+			// Opening for writing blocks until dd opens the read end.
+			f, err := os.OpenFile(fifo, os.O_WRONLY, 0)
+			if err != nil {
+				close(wrote)
+				return
+			}
+			f.Write([]byte("abc"))
+			close(wrote)
+			<-release
+			f.Close()
+		}()
+		argv := crossArgv(bin, append([]string{"if=slow", "of=out"}, args...)...)
+		cmd := exec.Command(argv[0], argv[1:]...)
+		cmd.Dir = dir
+		cmd.Env = append(baseEnv(), env...)
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		<-wrote
+		// Long enough for dd to have read the three bytes and to be
+		// waiting on the next read, under qemu too.
+		time.Sleep(500 * time.Millisecond)
+		if err := cmd.Process.Signal(info); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(500 * time.Millisecond)
+		close(release)
+		done := make(chan struct{})
+		go func() {
+			cmd.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			cmd.Process.Kill()
+			<-done
+			t.Fatalf("%s did not finish after the FIFO closed\nstderr: %q", bin, stderr.String())
+		}
+		return duration.ReplaceAllString(stderr.String(), "copied, T s, R/s"), cmd.ProcessState
+	}
+	for _, c := range []struct {
+		name string
+		env  []string
+		args []string
+		// reports is how many record-count reports stderr carries.
+		reports int
+	}{
+		{"noxfer", nil, []string{"status=noxfer"}, 2},
+		{"default status", nil, nil, 2},
+		{"none", nil, []string{"status=none"}, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			want, wst := run(referenceBin(t, "dd"), c.env, c.args...)
+			got, gst := run(fernBin(t, "dd"), c.env, c.args...)
+			if gst.ExitCode() != wst.ExitCode() {
+				t.Errorf("exit = %d, gnu %d\nstderr: %q", gst.ExitCode(), wst.ExitCode(), got)
+			}
+			if got != want {
+				t.Errorf("stderr differs with the durations masked\n gnu: %q\nfern: %q", want, got)
+			}
+			if n := strings.Count(got, "records in\n"); n != c.reports {
+				t.Errorf("%d reports, want %d: %q", n, c.reports, got)
+			}
+		})
+	}
+	// POSIX leaves SIGUSR1 its default action, and GNU follows it under
+	// POSIXLY_CORRECT where SIGUSR1 stands in for SIGINFO: the signal kills.
+	t.Run("POSIXLY_CORRECT", func(t *testing.T) {
+		if runtime.GOOS == "darwin" {
+			t.Skip("Darwin has SIGINFO, which POSIXLY_CORRECT does not touch")
+		}
+		for _, bin := range []string{referenceBin(t, "dd"), fernBin(t, "dd")} {
+			_, st := run(bin, []string{"POSIXLY_CORRECT=1"}, "status=noxfer")
+			ws, ok := st.Sys().(syscall.WaitStatus)
+			if !ok || !ws.Signaled() || ws.Signal() != syscall.SIGUSR1 {
+				t.Errorf("%s: %v, want death by SIGUSR1", bin, st)
+			}
+		}
+	})
 }
 
 func TestDDHelp(t *testing.T) {

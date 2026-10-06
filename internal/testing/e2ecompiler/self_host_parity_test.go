@@ -107,7 +107,7 @@ func TestSelfHostParityCorpusX86_64IR(t *testing.T) {
 			if !strings.HasSuffix(strings.TrimRight(probe, "\n"), "module: IR") {
 				t.Fatalf("fixture does not route IR (corpus contract):\n%s", probe)
 			}
-			asm := runParityDriver(t, runner, driver, tc.src, "-ir")
+			asm := runParityDriver(t, runner, driver, tc.src)
 			bin := buildBin(t, gcc, dir, tc.name+"_x86", asm)
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
@@ -137,7 +137,7 @@ func TestSelfHostParityCorpusArm64IR(t *testing.T) {
 	driver := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "parity_driver_arm64")
 	for _, tc := range parityCases(t) {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runParityDriver(t, x86runner, driver, tc.src, "-target", "arm64-linux", "-ir")
+			asm := runParityDriver(t, x86runner, driver, tc.src, "-target", "arm64-linux")
 			bin := buildBinArm64(t, arm64gcc, dir, tc.name+"_arm64", asm)
 			gotOut, gotExit := runBin(runArm64Bin(qemu, bin), "")
 			if gotExit != tc.wantExit {
@@ -162,7 +162,7 @@ func TestSelfHostParityCorpusWasmIR(t *testing.T) {
 	driver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "parity_driver_wasm")
 	for _, tc := range parityCases(t) {
 		t.Run(tc.name, func(t *testing.T) {
-			wat := runParityDriver(t, runner, driver, tc.src, "-ir")
+			wat := runParityDriver(t, runner, driver, tc.src)
 			watFile := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watFile, []byte(wat), 0o644); err != nil {
 				t.Fatalf("write wat: %v", err)

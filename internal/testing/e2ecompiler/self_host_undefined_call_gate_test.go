@@ -194,17 +194,16 @@ func TestSelfHostWasmUndefinedCallGate(t *testing.T) {
 	drivers := []struct {
 		name string
 		bin  string
-		args []string
 	}{
-		{"wasm_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run"), nil},
-		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run"), []string{"-ir"}},
+		{"wasm_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")},
+		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run")},
 	}
 	const rejectSrc = "function main(): i32 { return totally_undefined_fn(1); }"
 	const acceptSrc = "function dbl(n: i32): i32 { return n * 2; }\n" +
 		"function main(): i32 { let f = dbl; return f(21); }"
 	for _, d := range drivers {
 		t.Run(d.name+"/reject", func(t *testing.T) {
-			out, errOut, code := runDriverAllowFail(t, runner, d.bin, rejectSrc, d.args...)
+			out, errOut, code := runDriverAllowFail(t, runner, d.bin, rejectSrc)
 			if code != 1 {
 				t.Errorf("driver exited %d, want 1 (reject)", code)
 			}
@@ -216,7 +215,7 @@ func TestSelfHostWasmUndefinedCallGate(t *testing.T) {
 			}
 		})
 		t.Run(d.name+"/accept", func(t *testing.T) {
-			out, errOut, code := runDriverAllowFail(t, runner, d.bin, acceptSrc, d.args...)
+			out, errOut, code := runDriverAllowFail(t, runner, d.bin, acceptSrc)
 			if code != 0 {
 				t.Fatalf("driver exited %d (stderr %q), want 0 (accept)", code, errOut)
 			}

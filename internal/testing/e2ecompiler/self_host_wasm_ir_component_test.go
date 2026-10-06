@@ -11,7 +11,7 @@ import (
 
 // TestSelfHostWasmIRComponentAdapter is the IR-path twin of
 // TestSelfHostWasmComponentAdapter (#3457 phase 1 / #4315): it proves the
-// self-host wasm *IR* path (wasm_ir_run -ir) produces a preview1 command core
+// self-host wasm *IR* path (wasm_ir_run) produces a preview1 command core
 // that composes — via `wasm-tools component new --adapt` — into a wasi:cli/run
 // component that runs under wasmtime with real I/O.
 //
@@ -47,19 +47,19 @@ func TestSelfHostWasmIRComponentAdapter(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run")
 
-	// emitIR pipes src to the driver with -ir and returns the emitted WAT.
+	// emitIR pipes src to the driver and returns the emitted WAT.
 	emitIR := func(t *testing.T, src string) []byte {
 		t.Helper()
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, "-ir")
+			cmd = exec.Command(driverBin)
 		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		wat, err := cmd.Output()
 		if err != nil || len(wat) == 0 {
-			t.Fatalf("wasm_ir_run -ir failed for %q: %v", src, err)
+			t.Fatalf("wasm_ir_run failed for %q: %v", src, err)
 		}
 		return wat
 	}

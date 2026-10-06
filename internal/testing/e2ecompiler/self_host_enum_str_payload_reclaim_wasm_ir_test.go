@@ -14,7 +14,7 @@ import (
 // $__fern_arr_dec (a wasm heap string is one inline rc-headered block), so the
 // same IR-level payload drops release the payload there. Bounded high-water
 // (__heap_bump_bytes flat across a second churn) + the over-release detector
-// (__rc_underflow_count → 99) + values, on the -ir driver path.
+// (__rc_underflow_count → 99) + values, through the wasm_ir_run driver.
 func TestSelfHostEnumStrPayloadReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host enum string-payload reclaim wasm IR e2e")
@@ -51,9 +51,9 @@ function main(): i32 { let v: i32 = churn(1000); if (__rc_underflow_count() != 0
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			wat, err := cmd.Output()

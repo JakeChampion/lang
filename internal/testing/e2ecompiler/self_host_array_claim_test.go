@@ -148,13 +148,13 @@ func TestSelfHostArrayClaimContracts(t *testing.T) {
 						cmd = runX86_64Bin(runner, buildBin(t, gcc, dir, tc.name, asm))
 					case "arm64-linux":
 						armgcc, armrunner := arm64Tooling(t)
-						asm := runCaptureStrictIR(t, gcc, runner, driver, []byte(tc.source), "-target", target, "-ir")
+						asm := runCaptureStrictIR(t, gcc, runner, driver, []byte(tc.source), "-target", target)
 						cmd = runArm64Bin(armrunner, buildBinArm64(t, armgcc, dir, tc.name, string(asm)))
 					case "wasm32-wasi":
 						if _, err := exec.LookPath("wasmtime"); err != nil {
 							t.Fatal(err)
 						}
-						wat := runCapture(t, gcc, runner, wasm, []byte(tc.source), "-ir")
+						wat := runCapture(t, gcc, runner, wasm, []byte(tc.source))
 						path := filepath.Join(dir, tc.name+".wat")
 						if err := os.WriteFile(path, wat, 0o644); err != nil {
 							t.Fatal(err)

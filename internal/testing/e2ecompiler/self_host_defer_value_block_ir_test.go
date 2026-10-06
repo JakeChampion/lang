@@ -304,7 +304,7 @@ func TestSelfHostDeferValueBlockBindingsIRWasm(t *testing.T) {
 	for _, tc := range deferValueBlockBindingCases(t) {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			cmd := runX86_64Bin(runner, driver, "-ir")
+			cmd := runX86_64Bin(runner, driver)
 			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 			cmd.Stdin = strings.NewReader(tc.src)
 			wat, err := cmd.Output()

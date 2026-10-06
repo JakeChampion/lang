@@ -24,10 +24,10 @@
 // where the default mode recovers.
 //
 // THE DEADLINE is a forked child that sleeps and exits. GNU arms a SIGALRM
-// and lets the handler interrupt its wait; Fern cannot observe a delivered
-// signal (#9243), so the clock is a process instead and ONE blocking
-// `proc_waitpid(-1)` wakes on whichever finishes first — the command or the
-// timer. `proc_waitpid_nohang` then says which, since a child already reaped
+// and lets the handler interrupt its wait; a Fern catch only raises a flag
+// and resumes the wait (#9243), so the clock is a process instead and ONE
+// blocking `proc_waitpid(-1)` wakes on whichever finishes first — the
+// command or the timer. `proc_waitpid_nohang` then says which, since a child already reaped
 // answers ECHILD where a live one answers -1. The timer is reaped before
 // timeout exits and holds nothing the command can see; the only trace is one
 // extra process in the group while the command runs.
@@ -49,9 +49,9 @@
 //
 // NOT IMPLEMENTED: forwarding a signal that arrives at timeout itself. GNU
 // handles SIGINT / SIGQUIT / SIGHUP / SIGTERM / SIGXCPU by passing them on to
-// the command and then dying of them, which needs a signal a program can
-// observe — #9243. Nothing else here depends on it, and no invocation in the
-// corpus reaches it.
+// the command and then dying of them, which needs a signal that wakes the
+// blocked wait — `signal_catch`'s flag does not (#9243). Nothing else here
+// depends on it, and no invocation in the corpus reaches it.
 import "std/string";
 import "std/array";
 import "./lib/gnu";

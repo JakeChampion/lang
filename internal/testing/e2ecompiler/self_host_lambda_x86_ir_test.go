@@ -12,7 +12,7 @@ import (
 // lambda passed directly as a call argument. lift.lift_lambdas hoists it to a
 // top-level __lam_<k> function and rewrites the argument to a bare reference, so
 // it lowers through slice 1's const_func/call_indirect with no new IR ops. Pinned
-// to hardcoded oracle exit codes via the asm_ir_run `-ir` path.
+// to hardcoded oracle exit codes via the asm_ir_run driver.
 func TestSelfHostLambdaX86IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -23,9 +23,9 @@ func TestSelfHostLambdaX86IR(t *testing.T) {
 		t.Helper()
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, "-ir")
+			cmd = exec.Command(driverBin)
 		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		emitted, err := cmd.Output()

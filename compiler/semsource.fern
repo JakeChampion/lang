@@ -7464,6 +7464,8 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "tcp_recv_into", params: [t_i32(), bytes], modes: [v, b], result: t_i32() },
     ssasem.Contract { name: "signal_ignore", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_default", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "signal_catch", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "signal_taken", params: [t_i32()], modes: [v], result: t_bool() },
     ssasem.Contract { name: "signal_disposition", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_mask", params: [t_i32(), t_i64()], modes: [v, v], result: t_i64() },
     ssasem.Contract { name: "proc_exec", params: [t_string(), strs], modes: [b, b], result: t_i32() },
@@ -7881,6 +7883,7 @@ function union_result_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "read_file_bytes", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
     ssasem.Contract { name: "read_dir", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_string(), view: false }) },
     ssasem.Contract { name: "read_dir_all", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_string(), view: false }) },
+    ssasem.Contract { name: "read_dir_ino", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeStruct { name: "DirEntry", args: [] }, view: false }) },
     ssasem.Contract { name: "stat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) },
     ssasem.Contract { name: "lstat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) },
   ];

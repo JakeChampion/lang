@@ -107,7 +107,7 @@ func TestSelfHostHandbackRebindX86_64(t *testing.T) {
 	for _, tc := range selfHostHandbackRebindCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -140,7 +140,7 @@ func TestSelfHostHandbackRebindArm64(t *testing.T) {
 	for _, tc := range selfHostHandbackRebindCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
@@ -171,9 +171,9 @@ func TestSelfHostHandbackRebindWasmIR(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
 			wat, err := cmd.Output()

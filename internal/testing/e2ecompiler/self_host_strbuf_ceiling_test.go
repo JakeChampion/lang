@@ -35,7 +35,7 @@ func TestSelfHostStrbufGrowsPastOldCeilingArm64(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
-	asm := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(e2eharness.StrbufCeilingProbe), "-target", "arm64-linux", "-ir"))
+	asm := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(e2eharness.StrbufCeilingProbe), "-target", "arm64-linux"))
 	if !strings.Contains(asm, "bl __fern_strbuf_grow") {
 		t.Fatal("the emitted __fern_strbuf_append never calls __fern_strbuf_grow; the buffer is still fixed")
 	}

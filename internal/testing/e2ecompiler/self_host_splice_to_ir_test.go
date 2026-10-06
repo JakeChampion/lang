@@ -128,7 +128,7 @@ func TestSelfHostSpliceToIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runCapture(t, gcc, runner, driverBin, []byte(selfHostSpliceToSource(dir, true)), "-ir")
+	asm := runCapture(t, gcc, runner, driverBin, []byte(selfHostSpliceToSource(dir, true)))
 	if !bytes.Contains(asm, []byte("call __fn___fern_reader_splice")) {
 		t.Fatal("asm has no `call __fn___fern_reader_splice`: the op did not reach the runtime leaf")
 	}
@@ -151,7 +151,7 @@ func TestSelfHostSpliceToArm64IR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(selfHostSpliceToSource(dir, true)), "-target", "arm64-linux", "-ir")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(selfHostSpliceToSource(dir, true)), "-target", "arm64-linux")
 	if !bytes.Contains(asm, []byte("bl __fn___fern_reader_splice")) {
 		t.Fatal("asm has no `bl __fn___fern_reader_splice`: the op did not reach the runtime leaf")
 	}
@@ -173,7 +173,7 @@ func TestSelfHostSpliceToWasmIRUnsupported(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	wat := runCapture(t, gcc, runner, driverBin, []byte(selfHostSpliceToSource("", false)), "-ir")
+	wat := runCapture(t, gcc, runner, driverBin, []byte(selfHostSpliceToSource("", false)))
 	if !bytes.Contains(wat, []byte("call $__fern_reader_splice")) {
 		t.Fatal("wat has no `call $__fern_reader_splice`: the op did not reach the runtime leaf")
 	}

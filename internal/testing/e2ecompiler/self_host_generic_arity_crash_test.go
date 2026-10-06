@@ -135,9 +135,9 @@ func TestSelfHostGenericArityNoCrashX86_64(t *testing.T) {
 
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driver, "-ir")
+				cmd = exec.Command(driver)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driver), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driver)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
 			var stdout, stderr bytes.Buffer
@@ -174,7 +174,7 @@ func TestSelfHostGenericArityStillCompilesX86_64(t *testing.T) {
 				t.Fatalf("%s: interp oracle = %d, want %d — the test program is invalid, "+
 					"not the compiler", tc.name, want, tc.want)
 			}
-			asm := string(runCapture(t, gcc, runner, driver, []byte(tc.src+"\n"), "-ir"))
+			asm := string(runCapture(t, gcc, runner, driver, []byte(tc.src+"\n")))
 			if len(asm) == 0 {
 				t.Fatalf("%s: driver emitted 0 bytes", tc.name)
 			}

@@ -184,7 +184,7 @@ func TestSelfHostFieldReadMove(t *testing.T) {
 			check("arm64", eb.String(), cmd.ProcessState.ExitCode())
 
 			wat := filepath.Join(dir, tc.name+".wat")
-			if err := os.WriteFile(wat, runCaptureEnv(t, x86runner, wasmDriver, src, env("FERN_LEAKCHECK=1"), "-ir"), 0o644); err != nil {
+			if err := os.WriteFile(wat, runCaptureEnv(t, x86runner, wasmDriver, src, env("FERN_LEAKCHECK=1")), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			stderr, code = runWasmCensus(t, wat)

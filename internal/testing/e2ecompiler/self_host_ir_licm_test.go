@@ -258,7 +258,7 @@ func TestSelfHostLICMWasmIR(t *testing.T) {
 
 	for _, tc := range licmPrograms {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := runX86_64Bin(runner, driverBin, "-ir")
+			cmd := runX86_64Bin(runner, driverBin)
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			wat, err := cmd.Output()
 			if err != nil || len(wat) == 0 {

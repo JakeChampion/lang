@@ -237,7 +237,11 @@ function main(): i32 {
 the directory holds them — sort the result if that matters. `read_dir_all`
 is the same call with the two dot entries kept, for a program that has to
 show them where the directory put them rather than somewhere of its own
-choosing.
+choosing. `read_dir_ino` is `read_dir` with each name's inode number beside
+it, as a `DirEntry { name, ino }`, for a walk that orders or identifies
+entries by inode without a `stat` per entry. `ino` is 0 where the platform
+supplies none: WASI preview 2 carries no inode at all, so `lstat` reports 0
+there too.
 
 ## Run another program
 

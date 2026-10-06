@@ -16,7 +16,7 @@ import (
 // wasm_ir.wasm_helper_symbol to the hand-written $__fern_str_join WAT
 // (wasm.str_join_helper, gated on @uses_arr_str_join). Before this, a join module
 // fell back to the legacy AST wasm emitter. Each case pipes a single program to
-// the `wasm_ir_run -ir` driver (which resolves no stdlib, so `.join` is a builtin
+// the `wasm_ir_run` driver (which resolves no stdlib, so `.join` is a builtin
 // the lowering intercepts), asserts the emitted WAT reached the join helper, then runs
 // it under wasmtime and checks the joined string's length as the exit code.
 func TestSelfHostJoinWasmIR(t *testing.T) {
@@ -51,9 +51,9 @@ func TestSelfHostJoinWasmIR(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			wat, err := cmd.Output()

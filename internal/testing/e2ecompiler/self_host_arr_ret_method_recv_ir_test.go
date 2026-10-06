@@ -88,7 +88,7 @@ func TestSelfHostArrRetMethodRecvIRX86_64(t *testing.T) {
 
 	for _, tc := range arrRetMethodRecvCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src))
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
@@ -114,7 +114,7 @@ func TestSelfHostArrRetMethodRecvIRArm64(t *testing.T) {
 
 	for _, tc := range arrRetMethodRecvCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
 			cmd := runArm64Bin(qemu, progBin)
 			_ = cmd.Run()
@@ -139,7 +139,7 @@ func TestSelfHostArrRetMethodRecvIRWasm(t *testing.T) {
 
 	for _, tc := range arrRetMethodRecvCases {
 		t.Run(tc.name, func(t *testing.T) {
-			wat := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			wat := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src))
 			watFile := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
 				t.Fatalf("write wat: %v", err)

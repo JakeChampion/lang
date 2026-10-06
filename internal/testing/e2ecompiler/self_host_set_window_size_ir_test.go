@@ -99,7 +99,7 @@ func TestSelfHostSetWindowSizeIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runCapture(t, gcc, runner, driverBin, []byte(selfHostSetWindowSizeSource), "-ir")
+	asm := runCapture(t, gcc, runner, driverBin, []byte(selfHostSetWindowSizeSource))
 	if len(asm) == 0 {
 		t.Fatal("driver emitted no asm")
 	}
@@ -125,7 +125,7 @@ func TestSelfHostSetWindowSizeArm64IR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(selfHostSetWindowSizeSource), "-target", "arm64-linux", "-ir")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(selfHostSetWindowSizeSource), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("driver emitted no asm")
 	}

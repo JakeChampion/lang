@@ -97,7 +97,7 @@ func TestSelfHostNestedParamType(t *testing.T) {
 						if _, err := exec.LookPath("wasmtime"); err != nil {
 							t.Skip("wasmtime not on PATH")
 						}
-						wat := runCapture(t, gcc, runner, wasmDriver, []byte(tc.src), "-ir")
+						wat := runCapture(t, gcc, runner, wasmDriver, []byte(tc.src))
 						path := filepath.Join(t.TempDir(), "out.wat")
 						if err := os.WriteFile(path, wat, 0o644); err != nil {
 							t.Fatal(err)

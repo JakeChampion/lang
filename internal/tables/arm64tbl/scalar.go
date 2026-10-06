@@ -228,6 +228,11 @@ var Scalar = []Family{
 			{Mnemonic: "sxtl", Word: 4, Probe: "sxtl v0.8h, v1.8b"}, {Mnemonic: "sxtl2", Word: 6, Probe: "sxtl2 v0.4s, v1.8h"},
 			{Mnemonic: "uxtl", Word: 5, Probe: "uxtl v0.2d, v1.2s"}, {Mnemonic: "uxtl2", Word: 7, Probe: "uxtl2 v0.8h, v1.16b"},
 		}},
+	{Name: "swap", Doc: "the LSE swap: plain, acquire, release and both, word or doubleword by register and byte by suffix",
+		Probe: "%s x2, x0, [x1]",
+		Ops: []ScalarOp{{Mnemonic: "swp"}, {Mnemonic: "swpa"}, {Mnemonic: "swpl"}, {Mnemonic: "swpal", Probe: "swpal w2, w0, [x1]"},
+			{Mnemonic: "swpb", Probe: "swpb w2, w0, [x1]"}, {Mnemonic: "swpab", Probe: "swpab w2, w0, [x1]"},
+			{Mnemonic: "swplb", Probe: "swplb w2, w0, [x1]"}, {Mnemonic: "swpalb", Probe: "swpalb w2, w0, [x1]"}}},
 }
 
 // scalarIndex maps a mnemonic to its family and row.

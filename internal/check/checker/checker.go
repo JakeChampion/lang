@@ -840,6 +840,16 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "btime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
+		// DirEntry — one `read_dir_ino(path)` entry: the base name
+		// and the inode number the directory reader hands back with
+		// it. `ino` is 0 where the platform does not supply one.
+		{
+			Name: "DirEntry",
+			Fields: []ast.Param{
+				{Name: "name", Type: ast.StringType{}},
+				{Name: "ino", Type: ast.NumberType{Width: 64, Signed: true}},
+			},
+		},
 		// FsStat — `statfs(path)` shape: what a FILESYSTEM reports
 		// about itself, where FileStat reports about one entry on it.
 		// The six counts are `statfs(2)`'s, and the two limits are
@@ -2924,6 +2934,25 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// read_dir_ino(path): Result[DirEntry[], IoError] — read_dir's
+	// list, in the same order and without `.` / `..`, with each
+	// name's inode number from the same directory record, so a walk
+	// that orders or identifies entries by inode needs no stat per
+	// entry.
+	//
+	// `ino` is 0 where the platform's directory reader does not
+	// supply one: wasm32-wasi preview 2, whose directory-entry has
+	// no inode. A caller needing the number there falls back to
+	// `lstat` for those entries. Preview 1's `d_ino` is the host's
+	// identifier for the file, the same one `stat` reports there,
+	// which is not the kernel's inode number.
+	c.info.FuncSigs["read_dir_ino"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.StructType{Name: "DirEntry"}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// stat(path): Result[FileStat, IoError] — pull file
 	// metadata. `is_file` / `is_dir` distinguish the kind;
 	// `size` carries byte size for regular files (and the
@@ -3171,12 +3200,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	// signal_ignore(sig) / signal_default(sig): i32 — set one
-	// signal's disposition to SIG_IGN or back to SIG_DFL. No
-	// handler-installing form: a handler runs as a second context
-	// against non-atomic refcounts (docs/BARE-METAL-PLAN.md), and
-	// the two dispositions are what a utility actually needs —
-	// `tee -i` is `signal(SIGINT, SIG_IGN)` and its
-	// `--output-error` family is the same move on SIGPIPE, which
+	// signal's disposition to SIG_IGN or back to SIG_DFL — what a
+	// utility needs most: `tee -i` is `signal(SIGINT, SIG_IGN)` and
+	// its `--output-error` family is the same move on SIGPIPE, which
 	// turns a death into an EPIPE the write can report (#8792).
 	// The signal number is the caller's: `std/signal` names the
 	// two that are portable rather than putting a number here.
@@ -3194,6 +3220,28 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	c.info.FuncSigs["signal_default"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
 		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// signal_catch(sig): i32 / signal_taken(sig): boolean — observe a
+	// signal without running Fern code when it arrives (#9243). The
+	// handler signal_catch installs touches no Fern object: it sets
+	// one per-signal flag and returns, so it cannot race a reference
+	// count (docs/BARE-METAL-PLAN.md). signal_taken reads the flag
+	// and clears it in one exchange, so a signal arriving between the
+	// read and the clear is not lost; several arrivals between two
+	// polls read as one. The caller polls at a point of its choosing —
+	// dd at the record boundary, for its SIGUSR1 report.
+	//
+	// signal_catch returns what signal_ignore does: 0, or a negative
+	// errno (SIGKILL / SIGSTOP and numbers outside 1..64 are EINVAL).
+	// The handler is installed SA_RESTART, so a blocking read or write
+	// in the copy loop is resumed rather than failing with EINTR.
+	c.info.FuncSigs["signal_catch"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["signal_taken"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.BoolType{},
 	}
 	// signal_mask(how, mask): i64 — sigprocmask(2). `mask` is a bit
 	// per signal, bit (sig-1), and `how` says what to do with it:
@@ -3215,14 +3263,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	}
 	// signal_disposition(sig): i32 — the READ side of the two
 	// setters above: 0 if `sig` is at its default, 1 if it is
-	// ignored, 2 if a handler is installed. A negative errno for a
-	// signal number the kernel rejects.
-	//
-	// 2 is reachable even though Fern cannot install a handler: the
-	// disposition is INHERITED across exec, so a Fern program can be
-	// started by something that installed one. Reporting what is
-	// there is the whole point — `env --list-signal-handling` prints
-	// the dispositions the child will inherit.
+	// ignored, 2 if a handler is installed (signal_catch's). A
+	// negative errno for a signal number the kernel rejects.
 	c.info.FuncSigs["signal_disposition"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
 		Result: ast.NumberType{Width: 32, Signed: true},

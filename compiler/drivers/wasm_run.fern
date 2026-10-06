@@ -20,15 +20,8 @@ import "../util";
 import "../semlower";
 
 function main(): i32 {
-  // `-decide`: print the ROUTING verdict ("ir" / "refused") instead of emitting.
-  // The wasm side had no such probe — its drivers expose only `-ir`, which
-  // FORCES the IR path and so bypasses the gates whose declines are exactly
-  // what an IR-or-error reroute turns into hard errors. Enumerating those
-  // declines from Go test literals does not work either: a test file that
-  // mentions a driver does not mean its programs are fed to that driver
-  // (self_host_x86_gas_test.go names wasm_run.fern while its programs are
-  // x86), so an extraction sweep silently probes the wrong backend. This is
-  // the wasm sibling of asm_pathprobe_run / `-ir-probe`.
+  // `-decide`: print the ROUTING verdict ("ir" / "refused") instead of
+  // emitting — the wasm sibling of asm_pathprobe_run / `-ir-probe`.
   let decide: boolean = false;
   let av: string[] = args();
   let ai: i32 = 1;

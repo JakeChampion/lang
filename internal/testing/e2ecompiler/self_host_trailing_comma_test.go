@@ -135,7 +135,7 @@ func TestSelfHostTrailingCommaWasmIR(t *testing.T) {
 			if want != tc.exit {
 				t.Fatalf("interp oracle %d disagrees with the table's %d — fix the case", want, tc.exit)
 			}
-			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(wat) == 0 {
 				t.Fatal("self-host wasm compiler emitted 0 bytes")
 			}

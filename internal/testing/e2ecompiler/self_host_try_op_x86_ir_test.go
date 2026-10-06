@@ -70,7 +70,7 @@ func TestSelfHostTryOpX86IR(t *testing.T) {
 	}
 	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_pathprobe_run.fern", "pathprobe")
 
-	// asm_ir_run driver: emits asm via the IR path under -ir.
+	// asm_ir_run driver: emits asm via the IR path.
 	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
@@ -78,9 +78,9 @@ func TestSelfHostTryOpX86IR(t *testing.T) {
 		t.Helper()
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, "-ir")
+			cmd = exec.Command(driverBin)
 		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		out, err := cmd.Output()

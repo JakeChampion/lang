@@ -17,7 +17,7 @@ import (
 // the IR path via the same boxed 8-byte rc cells as i64/u64: the cell stores raw
 // bytes, so get/values/get_or/iter reuse the *_w64 helpers with an f64<->i64
 // reinterpret at the scalar set value / get_or default+result / mapiter value.
-// Each case pipes a single program to the `wasm_ir_run -ir` driver (maps are
+// Each case pipes a single program to the `wasm_ir_run` driver (maps are
 // builtins there), asserts the WAT reached the wide runtime, then runs under
 // wasmtime. Values cross-checked against the native interpreter.
 func TestSelfHostMapF64ValueWasmIR(t *testing.T) {
@@ -54,9 +54,9 @@ func TestSelfHostMapF64ValueWasmIR(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			wat, err := cmd.Output()

@@ -50,7 +50,7 @@ var fnptrArrayRebindCases = []struct {
 }
 
 // TestSelfHostFnptrArrayRebindIRX86_64 — the x86-64 leg, through the production
-// driver (asm_ir_run `-ir`).
+// driver (asm_ir_run).
 func TestSelfHostFnptrArrayRebindIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -59,7 +59,7 @@ func TestSelfHostFnptrArrayRebindIRX86_64(t *testing.T) {
 
 	for _, tc := range fnptrArrayRebindCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -92,7 +92,7 @@ func TestSelfHostFnptrArrayRebindIRArm64(t *testing.T) {
 
 	for _, tc := range fnptrArrayRebindCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -121,9 +121,9 @@ func TestSelfHostFnptrArrayRebindIRWasm(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			wat, err := cmd.Output()

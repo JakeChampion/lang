@@ -102,7 +102,7 @@ func TestSelfHostRecordVariantX86_64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := []byte(tc.src + "\n")
 			want := interpExit(t, interpBin, string(prog))
-			asm := runCapture(t, gcc, runner, driverBin, prog, "-ir")
+			asm := runCapture(t, gcc, runner, driverBin, prog)
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -133,7 +133,7 @@ func TestSelfHostRecordVariantArm64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := []byte(tc.src + "\n")
 			want := interpExit(t, interpBin, string(prog))
-			asm := runCapture(t, x86gcc, x86runner, driverBin, prog, "-target", "arm64-linux", "-ir")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, prog, "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
@@ -163,9 +163,9 @@ func TestSelfHostRecordVariantWasm(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src+"\n")
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
 			wat, err := cmd.Output()

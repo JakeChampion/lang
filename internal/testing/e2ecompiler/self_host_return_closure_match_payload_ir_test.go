@@ -43,7 +43,7 @@ var returnMatchPayloadIRCases = []struct {
 }
 
 // TestSelfHostReturnMatchPayloadIRX86_64 — the x86-64 fix, through the
-// production driver (asm_ir_run `-ir`).
+// production driver (asm_ir_run).
 func TestSelfHostReturnMatchPayloadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -52,7 +52,7 @@ func TestSelfHostReturnMatchPayloadIRX86_64(t *testing.T) {
 
 	for _, tc := range returnMatchPayloadIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -85,7 +85,7 @@ func TestSelfHostReturnMatchPayloadIRArm64(t *testing.T) {
 
 	for _, tc := range returnMatchPayloadIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

@@ -52,14 +52,14 @@ func TestSelfHostLargeTierFreelistX86_64(t *testing.T) {
 `
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
-		cmd = exec.Command(driverBin, "-ir")
+		cmd = exec.Command(driverBin)
 	} else {
-		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 	}
 	cmd.Stdin = bytes.NewReader([]byte(prog))
 	emitted, err := cmd.Output()
 	if err != nil || len(emitted) == 0 {
-		t.Fatalf("driver -ir failed: %v", err)
+		t.Fatalf("driver failed: %v", err)
 	}
 	asm := string(emitted)
 	for _, sym := range []string{"__fern_large_freelist", "__fern_large_push", ".Lalloc_large"} {

@@ -47,7 +47,7 @@ func TestSelfHostArrStrJoinScaleX86_64(t *testing.T) {
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runCapture(t, gcc, runner, driverBin, []byte(arrStrJoinScaleSrc), "-ir")
+	asm := runCapture(t, gcc, runner, driverBin, []byte(arrStrJoinScaleSrc))
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}

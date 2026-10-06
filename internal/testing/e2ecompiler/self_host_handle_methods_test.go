@@ -169,7 +169,7 @@ func TestSelfHostHandleMethodsIR(t *testing.T) {
 
 	src := selfHostHandleMethodSource(selfHostHandleProbeFile(t, dir), filepath.Join(dir, "resized.txt"),
 		filepath.Join(dir, "seeked.txt"))
-	asm := runCapture(t, gcc, runner, driverBin, []byte(src), "-ir")
+	asm := runCapture(t, gcc, runner, driverBin, []byte(src))
 	if len(asm) == 0 {
 		t.Fatal("driver emitted no asm")
 	}
@@ -199,7 +199,7 @@ func TestSelfHostHandleMethodsArm64IR(t *testing.T) {
 
 	src := selfHostHandleMethodSource(selfHostHandleProbeFile(t, dir), filepath.Join(dir, "resized.txt"),
 		filepath.Join(dir, "seeked.txt"))
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(src), "-target", "arm64-linux", "-ir")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(src), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("driver emitted no asm")
 	}
@@ -308,9 +308,9 @@ func TestSelfHostHandleStatSeekWasmIR(t *testing.T) {
 `
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
-		cmd = exec.Command(driverBin, "-ir")
+		cmd = exec.Command(driverBin)
 	} else {
-		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 	}
 	cmd.Stdin = bytes.NewReader([]byte(src))
 	wat, err := cmd.Output()
