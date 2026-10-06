@@ -41,28 +41,13 @@
 // a warning and the backslash dropped for anything else, `\'`
 // included).
 //
-// ## What this build cannot answer
-//
-// Some of the record's fields have no primitive behind them, and the
-// directives that read them are REFUSED rather than answered with a
-// plausible-looking value:
-//
-//   - on Darwin, the file system's type NAME (`%T`), which GNU reads
-//     from `f_fstypename`; `statfs` reports the type number only, and
-//     Darwin's is an index into the running kernel's VFS list rather
-//     than a fixed magic (#11255). The default `-f` block carries it.
-//     On Linux the number IS the name, through `lib/fstype.fern`.
+// Filesystem names come from the kernel on Darwin. Linux reports a magic
+// number, translated through `lib/fstype.fern` to match GNU's names.
 //
 // `%C` reads a FILE's SELinux context the way a libselinux build of GNU
 // does: the `security.selinux` attribute, so a kernel without SELinux
 // answers ENODATA. A GNU built `--without-selinux` answers ENOTSUP from
 // gnulib's stub instead, whatever the attribute holds.
-//
-// Printing GNU's own "unknown" rendering for that — a zeroed magic
-// number — would be a fiction on a filesystem that does report one, and
-// the oracle corpus would then be measuring our invention. The refusal
-// names the directive, comes only once the operand has been read (GNU
-// reports a file it cannot stat before it formats anything), and exits 1.
 //
 // The birth time (`%w`, `%W`) is FileStat's own: statx(2) on Linux,
 // st_birthtimespec on Darwin, and zero where the filesystem records none,
@@ -161,9 +146,6 @@ function help_text(): string {
   out = out + "--terse --file-system is equivalent to the following FORMAT:\n";
   out = out + "    " + fs_terse_format();
   out = out + "\n";
-  out = out + "This build cannot report, on Darwin, the file system's type name (%T),\n";
-  out = out + "which refuses the default --file-system output there. See\n";
-  out = out + "JakeChampion/lang issue 11255.\n";
   return out;
 }
 
@@ -832,7 +814,7 @@ function stat_zero(): FileStat {
 }
 
 function fsstat_zero(): FsStat {
-  return FsStat { block_size: 0 as i64, blocks: 0 as i64, blocks_free: 0 as i64, blocks_avail: 0 as i64, files: 0 as i64, files_free: 0 as i64, name_max: 0 as i64, path_max: 0 as i64, fs_type: 0 as i64, fsid: 0 as i64, frag_size: 0 as i64 };
+  return FsStat { block_size: 0 as i64, blocks: 0 as i64, blocks_free: 0 as i64, blocks_avail: 0 as i64, files: 0 as i64, files_free: 0 as i64, name_max: 0 as i64, path_max: 0 as i64, fs_type: 0 as i64, fsid: 0 as i64, frag_size: 0 as i64, fs_type_name: "" };
 }
 
 // ---- rendering one directive ------------------------------------------------
@@ -1126,6 +1108,9 @@ function render_fs(d: Directive, it: FsItem, qi: Quoting): (Rendered, Quoting) {
     return (ok_rendered(out_hex(d, fs.fs_type as u64)), qi);
   }
   if (c == 84) {
+    if (target_os() == "darwin") {
+      return (ok_rendered_bytes(out_string(d, fs.fs_type_name)), qi);
+    }
     return (ok_rendered_bytes(out_string(d, fstype_text(fs.fs_type))), qi);
   }
   return (unknown_rendered(), qi);
@@ -1143,28 +1128,10 @@ function fstype_text(magic: i64): string {
   }
 }
 
-// ---- the refusal --------------------------------------------------------------
-// `blocked(d, fs_mode)` — the name of the field this build has no
-// primitive for when `d` reads one, else "". See the header for what
-// stands behind each.
-function blocked(d: Directive, fs_mode: boolean): string {
-  if (d.conv == 0) {
-    return "";
-  }
-  if (fs_mode) {
-    if (d.conv == 84 && target_os() == "darwin") {
-      return "%T";
-    }
-    return "";
-  }
-  return "";
-}
-
 // `render_pieces` walks the format for one operand, writing each piece
 // straight into the output buffer, and dies where GNU dies: on `%%`
-// wearing a modifier, and on a directive this build cannot answer. Both
-// leave the text already written in place, which is what makes
-// `stat -c '[%5%]' f` write its `[` before the diagnostic.
+// wearing a modifier. This leaves the text already written in place, so
+// `stat -c '[%5%]' f` writes its `[` before the diagnostic.
 function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boolean, it: Item, fs: FsItem, z: tz.Zone, qi: Quoting): (io_buffered.BufWriter, boolean, Quoting) {
   let w: io_buffered.BufWriter = o;
   let q: Quoting = qi;
@@ -1183,10 +1150,6 @@ function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boole
     let d: Directive = pieces[i].dir;
     if (d.conv == 37) {
       gnu.die(w, gnu.quote(d.text) + ": invalid directive", 1);
-    }
-    let stop: string = blocked(d, fs_mode);
-    if (stop != "") {
-      gnu.die(w, stop + " is not supported on this system", 1);
     }
     let rq: (Rendered, Quoting) = (unknown_rendered(), q);
     if (fs_mode) {
@@ -1334,7 +1297,7 @@ function fsstat_fallback(name: string, original: IoError): Result[FsStat, IoErro
   return Err(original);
 }
 
-function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline: boolean, qi: Quoting, builtin: string): (io_buffered.BufWriter, boolean, Quoting) {
+function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline: boolean, qi: Quoting): (io_buffered.BufWriter, boolean, Quoting) {
   let w: io_buffered.BufWriter = o;
   let probe: Result[FsStat, IoError] = statfs(name);
   if (target_os() == "darwin") {
@@ -1344,9 +1307,6 @@ function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline:
   }
   match (probe) {
     Ok(fs) => {
-      if (builtin != "") {
-        gnu.die(w, builtin, 1);
-      }
       let it: FsItem = FsItem { name: name, fs: fs };
       let empty_st: Item = Item { name: name, st: stat_zero(), link: "", is_link: false, deref: false, owner: "", group: "" };
       let rendered: (io_buffered.BufWriter, boolean, Quoting) = render_pieces(w, pieces, true, empty_st, it, tz.utc_zone(), qi);
@@ -1419,20 +1379,14 @@ pub function main(): i32 {
     gnu.die_usage("missing operand", 1);
   }
 
-  // Darwin's default file-system block names a field no primitive reports,
-  // so there is nothing to render; the refusal waits until the operand has
-  // been read, because GNU reports an operand it cannot stat before it ever
-  // formats one. See the header. A built-in layout carries its own
-  // newlines, and the default file one has a second shape for a device.
+  // A built-in layout carries its own newlines, and the default file one
+  // has a second shape for a device.
   let newline: boolean = !escapes;
-  let builtin: string = "";
   let device_format: string = format;
   if (!have_format) {
     newline = false;
     if (fs_mode && terse) {
       format = fs_terse_format();
-    } else if (fs_mode && target_os() == "darwin") {
-      builtin = "--file-system requires %T, which is not supported on this system";
     } else if (fs_mode) {
       format = fs_default_format();
     } else if (terse) {
@@ -1470,7 +1424,7 @@ pub function main(): i32 {
     }
     let ok: boolean = true;
     if (fs_mode) {
-      let res: (io_buffered.BufWriter, boolean, Quoting) = do_fs(o, pieces, name, newline, quoting, builtin);
+      let res: (io_buffered.BufWriter, boolean, Quoting) = do_fs(o, pieces, name, newline, quoting);
       o = res.0;
       ok = res.1;
       quoting = res.2;
