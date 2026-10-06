@@ -1,6 +1,6 @@
 # Partial enum constructor inference
 
-**Status:** Implemented; local validation passed, CI pending
+**Status:** Implemented; conversion-parity follow-up locally validated, CI pending
 **Context(s):** Compiler
 **Date:** 2026-10-06
 
@@ -58,6 +58,12 @@ payload type whether the constructor is bound to a local or matched directly.
 - Inferred return types join known enum arguments from every exit before
   settling arguments that remain absent. Conflicting known payloads still
   produce a diagnostic.
+- Direct `Result` construction permits lossless widening between fixed-width
+  integers of the same signedness. It rejects narrowing and signedness changes.
+  `Option` and already-constructed values retain their stricter rules. Bare and
+  qualified constructors preserve the same payload facts. Contextual literal
+  range checks descend through constructor payloads, including nested enums;
+  ordinary functions and methods with constructor-like names are excluded.
 
 ## Testing Strategy
 
@@ -79,3 +85,7 @@ The public behavior is defined by issue #10165. Contextual completion handles
 a single inhabited variant; broader enum conversions and inference from later
 reassignment remain separate work. Narrowing and unsigned literal contexts
 check ranges, and concrete widths remain fixed.
+
+Issue #11655 verifies conversion parity between the Go oracle and primary
+compiler. Its regression corpus checks return, binding and argument contexts,
+legal widening, rejected conversions and contextual literal overflow.
