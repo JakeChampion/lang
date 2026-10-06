@@ -45,7 +45,8 @@ pub trait Driver {
     function drop_token(self: Self, tok: i32): i32;
     function watch(self: Self, fd: i32, interest: i32): i32;
     function unwatch(self: Self, fd: i32): i32;
-    function wait(self: Self, max: i32, timeout_ms: i32): i32[];
+    function wait_into(self: Self, own events: i32[], timeout_ms: i32): i32[];
+    function wait(self: Self, max: i32, timeout_ms: i32): i32[] { … }
     function close(self: Self): i32;
 }
 ```

@@ -67,7 +67,12 @@ pub enum Future[T] {
 // drops it, and
 // `wait(max, timeout_ms)` is the (fd, readiness) pairs of up to `max`
 // ready descriptors, readiness 1 readable, 2 writable and 4 an error or
-// hang-up: empty on the timeout (-1 waits without one) and on an error. A
+// hang-up: empty on the timeout (-1 waits without one) and on an error.
+// `wait_into(events, timeout_ms)` is the same wait written into an array the
+// caller keeps, so a loop that waits again and again allocates nothing: the
+// pairs fill `events` from the start, as many as it has room for, and when
+// fewer arrive the pair after the last has readiness -1 (`ready_pairs`
+// counts them). `wait` is `wait_into` over a fresh array. A
 // host may report readiness spuriously, so a reader reads until -EAGAIN;
 // a descriptor is unwatched before it is closed. `watch_signal(sig)` makes
 // a signal a readiness event, reported as the pair (-sig, 1) and no longer
@@ -88,11 +93,43 @@ pub trait Driver {
   function drop_token(self: Self, tok: i32): i32;
   function watch(self: Self, fd: i32, interest: i32): i32;
   function unwatch(self: Self, fd: i32): i32;
-  function wait(self: Self, max: i32, timeout_ms: i32): i32[];
+  function wait_into(self: Self, own events: i32[], timeout_ms: i32): i32[];
+  function wait(self: Self, max: i32, timeout_ms: i32): i32[] {
+    let got: i32[] = self.wait_into(event_room(max), timeout_ms);
+    return got.take(ready_pairs(got) * 2);
+  }
   function watch_signal(self: Self, sig: i32): i32;
   function unwatch_signal(self: Self, sig: i32): i32;
   function watch_parent(self: Self): i32;
   function close(self: Self): i32;
+}
+
+// event_room(max) — an events array for `wait_into` with room for `max`
+// pairs and none in it yet.
+pub function event_room(max: i32): i32[] {
+  let events: i32[] = [];
+  while (events.len() < max * 2) {
+    events = events.append(0);
+  }
+  return end_pairs(events, 0);
+}
+
+// ready_pairs(events) — how many (fd, readiness) pairs `wait_into` left at
+// the start of `events`.
+pub function ready_pairs(events: i32[]): i32 {
+  let n: i32 = 0;
+  while (n * 2 + 1 < events.len() && events[n * 2 + 1] >= 0) {
+    n = n + 1;
+  }
+  return n;
+}
+
+// end_pairs(events, n) — `events` with its pairs ending after the first `n`.
+pub function end_pairs(own events: i32[], n: i32): i32[] {
+  if (n * 2 + 1 < events.len()) {
+    return events.with(n * 2 + 1, -1);
+  }
+  return events;
 }
 
 // RealDriver — the production Driver: each wait is exactly the builtin
@@ -187,17 +224,10 @@ impl Driver for RealDriver {
     }
     return reactor_ctl(r, 2, fd, 0);
   }
-  function wait(self: RealDriver, max: i32, timeout_ms: i32): i32[] {
-    let none: i32[] = [];
+  function wait_into(self: RealDriver, own events: i32[], timeout_ms: i32): i32[] {
     let r: i32 = __real_reactor(self);
-    if (r < 0 || max <= 0) {
-      return none;
-    }
-    let events: i32[] = [];
-    let i: i32 = 0;
-    while (i < max * 2) {
-      events = events.append(0);
-      i = i + 1;
+    if (r < 0 || events.len() < 2) {
+      return end_pairs(events, 0);
     }
     // A wait a signal interrupted is waited again for what is left of the
     // timeout: epoll_wait fails with EINTR after a stop and continue even
@@ -209,16 +239,16 @@ impl Driver for RealDriver {
       if (timeout_ms >= 0) {
         let ns: i64 = deadline - monotonic_ns();
         if (ns <= 0 as i64) {
-          return none;
+          return end_pairs(events, 0);
         }
         wait_ms = ((ns + 999999 as i64) / (1000000 as i64)) as i32;
       }
       n = reactor_wait(r, events, wait_ms);
     }
     if (n <= 0) {
-      return none;
+      return end_pairs(events, 0);
     }
-    return events.take(n * 2);
+    return end_pairs(events, n);
   }
   function watch_signal(self: RealDriver, sig: i32): i32 {
     if (__real_signal_fd(self, sig) >= 0) {
