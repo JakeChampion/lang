@@ -19417,7 +19417,7 @@ function e057_cell_elem_ok(a: parser.TypeRef): boolean {
   if (a.base == "i32" || a.base == "i64" || a.base == "u8" || a.base == "u32" || a.base == "u64" || a.base == "usize") {
     return true;
   }
-  return a.base == "f32" || a.base == "f64" || a.base == "boolean" || a.base == "string" && a.array_depth == 0;
+  return a.base == "f32" || a.base == "f64" || a.base == "float" || a.base == "boolean" || a.base == "string" && a.array_depth == 0;
 }
 
 function is_scalar_array_cell_elem(t: typeinfo.Type): boolean {
@@ -19426,8 +19426,8 @@ function is_scalar_array_cell_elem(t: typeinfo.Type): boolean {
       return false;
     }
     match (a.elem) {
-      typeinfo.TypeI32(_) => {
-        return true;
+      typeinfo.TypeI32(i) => {
+        return !i.is_char;
       },
       typeinfo.TypeFloat(_) => {
         return true;
