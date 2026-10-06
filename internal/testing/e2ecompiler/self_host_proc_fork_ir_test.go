@@ -148,7 +148,7 @@ func TestSelfHostProcForkWasmRejected(t *testing.T) {
 		args []string
 	}{
 		{"wasm_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run"), nil},
-		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run"), []string{"-ir"}},
+		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run"), nil},
 	}
 	const src = "function main(): i32 { let pid: i32 = proc_fork(); if (pid == 0) { exit(3); } return proc_waitpid(pid); }"
 	for _, d := range drivers {

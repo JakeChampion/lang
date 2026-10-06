@@ -68,7 +68,7 @@ func TestSelfHostWasmArityGate(t *testing.T) {
 		args []string
 	}{
 		{"wasm_run", astDriver, nil},
-		{"wasm_ir_run", irDriver, []string{"-ir"}},
+		{"wasm_ir_run", irDriver, nil},
 	}
 	for _, d := range drivers {
 		for _, tc := range rejects {

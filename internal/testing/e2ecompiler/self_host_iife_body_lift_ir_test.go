@@ -165,7 +165,7 @@ func TestSelfHostIifeBodyLiftIRX86_64(t *testing.T) {
 
 	for _, tc := range iifeBodyLiftIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -207,7 +207,7 @@ func TestSelfHostNestedIifeStaysWholeX86_64(t *testing.T) {
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	stdout, stderr, code := runDriver(t, runner, driverBin, []byte(nestedIifeGateSrc), true, "-ir")
+	stdout, stderr, code := runDriver(t, runner, driverBin, []byte(nestedIifeGateSrc), true)
 	if strings.Contains(stderr, "FERN_STRICT_IR:") {
 		t.Fatalf("nested value-position desugar bailed:\n%s", stderr)
 	}
@@ -247,7 +247,7 @@ func TestSelfHostIifeBodyLiftIRArm64(t *testing.T) {
 
 	for _, tc := range iifeBodyLiftIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

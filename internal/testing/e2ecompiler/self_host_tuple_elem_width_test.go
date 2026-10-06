@@ -227,7 +227,7 @@ func TestSelfHostTupleElemWidthX86_64(t *testing.T) {
 	for _, tc := range tupleElemWidthCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tupleElemWidthPrelude + tc.src + "\n")
-			asm := runCaptureStrictIR(t, gcc, runner, driverBin, src, "-ir")
+			asm := runCaptureStrictIR(t, gcc, runner, driverBin, src)
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			out, _ := runX86_64Bin(runner, progBin).Output()
 			if string(out) != tc.want {
@@ -253,7 +253,7 @@ func TestSelfHostTupleElemWidthWasmIR(t *testing.T) {
 	for _, tc := range tupleElemWidthCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tupleElemWidthPrelude + tc.src + "\n")
-			wat := runCaptureStrictIR(t, gcc, runner, driverBin, src, "-ir")
+			wat := runCaptureStrictIR(t, gcc, runner, driverBin, src)
 			watFile := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
 				t.Fatalf("write wat: %v", err)

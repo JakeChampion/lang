@@ -109,7 +109,7 @@ func TestSelfHostStrIndexBoundsWasm(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			cmd := exec.Command(driverBin, "-ir")
+			cmd := exec.Command(driverBin)
 			cmd.Stdin = bytes.NewReader([]byte(c.src))
 			cmd.Env = []string{"PATH=/usr/bin:/bin"}
 			var emitErr strings.Builder

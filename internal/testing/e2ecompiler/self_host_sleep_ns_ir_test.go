@@ -79,7 +79,7 @@ func TestSelfHostSleepNsIRX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runSleepNsDriver(t, runner, driverBin, sleepNsSelfHostSource, "-ir")
+	asm := runSleepNsDriver(t, runner, driverBin, sleepNsSelfHostSource)
 	if !bytes.Contains(asm, []byte("call __fn___fern_sleep_ns")) {
 		t.Fatalf("emitted asm has no `call __fn___fern_sleep_ns` — sleep_ns did not lower through the x86-64 IR path")
 	}
@@ -106,7 +106,7 @@ func TestSelfHostSleepNsIRArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runSleepNsDriver(t, x86runner, driverBin, sleepNsSelfHostSource, "-target", "arm64-linux", "-ir")
+	asm := runSleepNsDriver(t, x86runner, driverBin, sleepNsSelfHostSource, "-target", "arm64-linux")
 	if !bytes.Contains(asm, []byte("bl __fn___fern_sleep_ns")) {
 		t.Fatalf("emitted asm has no `bl __fn___fern_sleep_ns` — sleep_ns did not lower through the arm64 IR path")
 	}
@@ -132,7 +132,7 @@ func TestSelfHostSleepNsIRWasm(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	wat := runSleepNsDriver(t, runner, driverBin, sleepNsSelfHostSource, "-ir")
+	wat := runSleepNsDriver(t, runner, driverBin, sleepNsSelfHostSource)
 	if !bytes.Contains(wat, []byte("call $__fern_sleep_ns")) {
 		t.Fatal("sleep_ns did not reach the wasm IR runtime path (no call $__fern_sleep_ns in WAT)")
 	}

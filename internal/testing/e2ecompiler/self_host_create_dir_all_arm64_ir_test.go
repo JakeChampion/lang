@@ -42,7 +42,7 @@ func TestSelfHostCreateDirAllArm64IR(t *testing.T) {
     }
 }`
 
-	driverArgs := []string{"-target", "arm64-linux", "-ir"}
+	driverArgs := []string{"-target", "arm64-linux"}
 	var cmd *exec.Cmd
 	if len(x86runner) == 0 {
 		cmd = exec.Command(driverBin, driverArgs...)

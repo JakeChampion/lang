@@ -78,7 +78,7 @@ func TestSelfHostBinderScopeIRX86_64(t *testing.T) {
 	for _, tc := range binderScopeCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -113,7 +113,7 @@ func TestSelfHostBinderScopeWasmIR(t *testing.T) {
 	for _, tc := range binderScopeCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			wat := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			wat := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(wat) == 0 {
 				t.Fatal("self-host wasm compiler emitted 0 bytes")
 			}

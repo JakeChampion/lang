@@ -127,9 +127,9 @@ func TestSelfHostCountRunsIRWasm(t *testing.T) {
 
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
-		cmd = exec.Command(driverBin, "-ir")
+		cmd = exec.Command(driverBin)
 	} else {
-		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 	}
 	cmd.Stdin = strings.NewReader(countRunsIRProg)
 	wat, err := cmd.Output()

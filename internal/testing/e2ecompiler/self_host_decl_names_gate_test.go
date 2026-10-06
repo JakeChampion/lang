@@ -190,7 +190,7 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 		{"sentinel-and-untyped", both, "parser-side unknown"},
 	} {
 		t.Run("asm_ir_run-ir/"+tc.name, func(t *testing.T) {
-			out, stderr, code := runDeclGate(t, runner, irBin, []byte(tc.src), "-ir")
+			out, stderr, code := runDeclGate(t, runner, irBin, []byte(tc.src))
 			if code == 0 || len(out) != 0 {
 				t.Fatalf("driver exited %d with %d bytes, want a refusal before codegen", code, len(out))
 			}
@@ -199,7 +199,7 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 			}
 		})
 	}
-	out, stderr, code := runDeclGate(t, runner, irBin, []byte("function main(): i32 { return 42; }\n"), "-ir")
+	out, stderr, code := runDeclGate(t, runner, irBin, []byte("function main(): i32 { return 42; }\n"))
 	if code != 0 || len(out) == 0 {
 		t.Fatalf("asm_ir_run -ir exited %d with %d bytes for a legal program\n%s", code, len(out), stderr)
 	}
@@ -291,7 +291,7 @@ func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 		args []string
 	}{
 		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run"), nil},
-		{"wasm_ir_run-ir", "", []string{"-ir"}},
+		{"wasm_ir_run-ir", "", nil},
 		{"wasm_runio_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run"), nil},
 		{"wasm_runio_run-decide", "", []string{"-decide"}},
 	}

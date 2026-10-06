@@ -170,7 +170,7 @@ func TestSelfHostMknodIR(t *testing.T) {
 
 	work := t.TempDir()
 	dev := selfHostMknodDevAllowed(t, work)
-	cmd := exec.Command(driverBin, "-ir")
+	cmd := exec.Command(driverBin)
 	cmd.Stdin = bytes.NewReader([]byte(selfHostMknodSource(work, dev)))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {
@@ -203,7 +203,7 @@ func TestSelfHostMknodIRArm64(t *testing.T) {
 
 	work := t.TempDir()
 	dev := selfHostMknodDevAllowed(t, work)
-	cmd := exec.Command(driverBin, "-target", "arm64-linux", "-ir")
+	cmd := exec.Command(driverBin, "-target", "arm64-linux")
 	cmd.Stdin = bytes.NewReader([]byte(selfHostMknodSource(work, dev)))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {

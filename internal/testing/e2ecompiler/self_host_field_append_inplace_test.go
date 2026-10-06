@@ -920,7 +920,7 @@ func TestSelfHostFieldAppendInPlaceX86_64(t *testing.T) {
 	for _, tc := range selfHostFieldAppendCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -953,7 +953,7 @@ func TestSelfHostFieldAppendInPlaceArm64(t *testing.T) {
 	for _, tc := range selfHostFieldAppendCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
@@ -982,7 +982,7 @@ func TestSelfHostFieldAppendInPlaceWasmIR(t *testing.T) {
 	for _, tc := range selfHostFieldAppendCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			wat := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			wat := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(wat) == 0 {
 				t.Fatal("self-host wasm compiler emitted 0 bytes")
 			}
@@ -1034,7 +1034,7 @@ function main(): i32 {
     return outer(a);
 }`
 
-	body := asmFuncBody(t, string(runCaptureStrictIR(t, gcc, runner, driverBin, []byte(src), "-ir")), "__fn_outer")
+	body := asmFuncBody(t, string(runCaptureStrictIR(t, gcc, runner, driverBin, []byte(src))), "__fn_outer")
 	lines := strings.Split(body, "\n")
 	// The retained buffer is the operand pushed for the retain call — a
 	// register the allocator chose, or a spill slot — and the release must
@@ -1131,7 +1131,7 @@ function main(): i32 {
 
 	run := func(t *testing.T, src string) int {
 		t.Helper()
-		asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(src), "-ir")
+		asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(src))
 		if len(asm) == 0 {
 			t.Fatal("self-host compiler emitted 0 bytes")
 		}

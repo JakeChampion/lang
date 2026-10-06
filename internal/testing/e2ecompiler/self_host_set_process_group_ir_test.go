@@ -130,7 +130,7 @@ func TestSelfHostSetProcessGroupIRX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runSelfHostDriverStdin(t, runner, driverBin, setProcessGroupSelfHostSource, "-ir")
+	asm := runSelfHostDriverStdin(t, runner, driverBin, setProcessGroupSelfHostSource)
 	if !bytes.Contains(asm, []byte("call __fn___fern_set_process_group")) {
 		t.Fatalf("emitted asm has no `call __fn___fern_set_process_group` — set_process_group did not lower through the x86-64 IR path")
 	}
@@ -154,7 +154,7 @@ func TestSelfHostSetProcessGroupIRArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runSelfHostDriverStdin(t, x86runner, driverBin, setProcessGroupSelfHostSource, "-target", "arm64-linux", "-ir")
+	asm := runSelfHostDriverStdin(t, x86runner, driverBin, setProcessGroupSelfHostSource, "-target", "arm64-linux")
 	if !bytes.Contains(asm, []byte("bl __fn___fern_set_process_group")) {
 		t.Fatalf("emitted asm has no `bl __fn___fern_set_process_group` — set_process_group did not lower through the arm64 IR path")
 	}
@@ -180,7 +180,7 @@ func TestSelfHostSetProcessGroupIRWasmRefused(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	cmd := runX86_64Bin(runner, driverBin, "-ir")
+	cmd := runX86_64Bin(runner, driverBin)
 	cmd.Stdin = strings.NewReader(setProcessGroupWasmProbe)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

@@ -80,7 +80,7 @@ func TestSelfHostClockSettimeIRX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runSelfHostDriverStdin(t, runner, driverBin, clockSelfHostSource(t), "-ir")
+	asm := runSelfHostDriverStdin(t, runner, driverBin, clockSelfHostSource(t))
 	for _, call := range []string{"call __fn___fern_clock_resolution", "call __fn___fern_clock_set"} {
 		if !bytes.Contains(asm, []byte(call)) {
 			t.Fatalf("emitted asm has no `%s` — the pair did not lower through the x86-64 IR path", call)
@@ -99,7 +99,7 @@ func TestSelfHostClockSettimeIRArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runSelfHostDriverStdin(t, x86runner, driverBin, clockSelfHostSource(t), "-target", "arm64-linux", "-ir")
+	asm := runSelfHostDriverStdin(t, x86runner, driverBin, clockSelfHostSource(t), "-target", "arm64-linux")
 	for _, call := range []string{"bl __fn___fern_clock_resolution", "bl __fn___fern_clock_set"} {
 		if !bytes.Contains(asm, []byte(call)) {
 			t.Fatalf("emitted asm has no `%s` — the pair did not lower through the arm64 IR path", call)
@@ -147,7 +147,7 @@ function main(): i32 {
     return 0;
 }
 `, linuxClockResolution(t))
-	wat := runSelfHostDriverStdin(t, runner, driverBin, src, "-ir")
+	wat := runSelfHostDriverStdin(t, runner, driverBin, src)
 	for _, call := range []string{"call $__fern_clock_resolution", "call $__fern_clock_set"} {
 		if !bytes.Contains(wat, []byte(call)) {
 			t.Fatalf("emitted WAT has no `%s` — the pair did not lower through the wasm IR path", call)

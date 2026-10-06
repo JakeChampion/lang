@@ -137,7 +137,7 @@ func TestSelfHostProcExecAsWasmRejected(t *testing.T) {
 		args []string
 	}{
 		{"wasm_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run"), nil},
-		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run"), []string{"-ir"}},
+		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run"), nil},
 	}
 	const src = `function main(): i32 { return proc_exec_as("/bin/true", ["true"], []); }`
 	for _, d := range drivers {

@@ -165,7 +165,7 @@ func TestSelfHostFnParamShadowsModuleFn(t *testing.T) {
 				t.Fatalf("%s: interp oracle = %d, want %d — the test program is invalid, "+
 					"not the compiler", tc.name, want, tc.want)
 			}
-			asm := string(runCapture(t, gcc, runner, driver, []byte(tc.src+"\n"), "-ir"))
+			asm := string(runCapture(t, gcc, runner, driver, []byte(tc.src+"\n")))
 			if len(asm) == 0 {
 				t.Fatalf("%s: driver emitted 0 bytes", tc.name)
 			}

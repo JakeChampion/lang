@@ -108,7 +108,7 @@ func TestSelfHostStatfsIR(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	work := t.TempDir()
-	cmd := exec.Command(driverBin, "-ir")
+	cmd := exec.Command(driverBin)
 	cmd.Stdin = bytes.NewReader([]byte(statfsProbeSource(t, work)))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {
@@ -141,7 +141,7 @@ func TestSelfHostStatfsArm64IR(t *testing.T) {
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	work := t.TempDir()
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(statfsProbeSource(t, work)), "-target", "arm64-linux", "-ir")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(statfsProbeSource(t, work)), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the statfs program")
 	}
@@ -175,9 +175,9 @@ func TestSelfHostStatfsWasmIRRefused(t *testing.T) {
 `
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
-		cmd = exec.Command(driverBin, "-ir")
+		cmd = exec.Command(driverBin)
 	} else {
-		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 	}
 	cmd.Stdin = bytes.NewReader([]byte(src))
 	var stdout, stderr bytes.Buffer

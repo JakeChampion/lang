@@ -49,7 +49,7 @@ func TestSelfHostValueBlockResultTypesIR(t *testing.T) {
 					if want := interpExit(t, interpBin, tc.source); want != tc.want {
 						t.Fatalf("interpreter exit %d, want %d", want, tc.want)
 					}
-					args := []string{"-ir"}
+					var args []string
 					if target == "arm64" {
 						args = append(args, "-target", "arm64-linux")
 					}

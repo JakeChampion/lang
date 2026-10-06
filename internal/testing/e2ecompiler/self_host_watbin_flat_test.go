@@ -123,7 +123,7 @@ function main(): i32 {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			flatWat := pipe(irDriver, []byte(tc.src), "-ir")
+			flatWat := pipe(irDriver, []byte(tc.src))
 			if len(flatWat) == 0 || !bytes.Contains(flatWat, []byte("i32.const")) {
 				t.Fatalf("ir driver did not emit flat WAT for %q:\n%s", tc.src, flatWat)
 			}

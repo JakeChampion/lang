@@ -38,7 +38,7 @@ function iota(): i32[] { return [10, 20, 30, 40]; }
 function main(): i32 { return 0; }
 `
 	// `-ir` forces the IR path, which is the path under test.
-	out, stderr, code := runDriver(t, runner, driverBin, []byte(exporter), false, "-ir")
+	out, stderr, code := runDriver(t, runner, driverBin, []byte(exporter), false)
 	if code != 0 {
 		t.Fatalf("IR emit failed (exit %d): %s", code, stderr)
 	}
@@ -71,7 +71,7 @@ func TestSelfHostIRExportBridgeInert(t *testing.T) {
 
 	const plain = "struct P { x: i32, y: i32 }\n" +
 		"function main(): i32 { let p = P { x: 40, y: 2 }; let a = [p.x, p.y]; let s = \"hi\"; return a[0] + a[1] + s.len(); }\n"
-	pout, pstderr, pcode := runDriver(t, runner, driverBin, []byte(plain), false, "-ir")
+	pout, pstderr, pcode := runDriver(t, runner, driverBin, []byte(plain), false)
 	if pcode != 0 {
 		t.Fatalf("IR emit failed (exit %d): %s", pcode, pstderr)
 	}

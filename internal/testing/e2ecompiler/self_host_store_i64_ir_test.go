@@ -45,9 +45,9 @@ func TestSelfHostStoreI64IRX86_64(t *testing.T) {
 
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
-		cmd = exec.Command(driverBin, "-ir")
+		cmd = exec.Command(driverBin)
 	} else {
-		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 	}
 	cmd.Stdin = bytes.NewReader([]byte(storeI64Src + "\n"))
 	asm, err := cmd.Output()
@@ -87,9 +87,9 @@ func TestSelfHostStoreI64IRArm64(t *testing.T) {
 
 	var cmd *exec.Cmd
 	if len(x86runner) == 0 {
-		cmd = exec.Command(driverBin, "-target", "arm64-linux", "-ir")
+		cmd = exec.Command(driverBin, "-target", "arm64-linux")
 	} else {
-		cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), "-target", "arm64-linux", "-ir")...)
+		cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), "-target", "arm64-linux")...)
 	}
 	cmd.Stdin = bytes.NewReader([]byte(storeI64Src + "\n"))
 	asm, err := cmd.Output()

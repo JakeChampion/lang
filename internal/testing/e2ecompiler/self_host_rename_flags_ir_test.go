@@ -64,7 +64,7 @@ func TestSelfHostRenameFlagsIR(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	work := t.TempDir()
-	cmd := exec.Command(driverBin, "-ir")
+	cmd := exec.Command(driverBin)
 	cmd.Stdin = bytes.NewReader([]byte(selfHostRenameFlagsSource(work)))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {
@@ -95,7 +95,7 @@ func TestSelfHostRenameFlagsIRArm64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	work := t.TempDir()
-	cmd := exec.Command(driverBin, "-target", "arm64-linux", "-ir")
+	cmd := exec.Command(driverBin, "-target", "arm64-linux")
 	cmd.Stdin = bytes.NewReader([]byte(selfHostRenameFlagsSource(work)))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {

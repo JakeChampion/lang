@@ -43,9 +43,9 @@ func TestSelfHostLambdaReachesIR(t *testing.T) {
 	src := `@noinline function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x + 1; }, 41); }`
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
-		cmd = exec.Command(driverBin, "-ir")
+		cmd = exec.Command(driverBin)
 	} else {
-		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 	}
 	cmd.Stdin = bytes.NewReader([]byte(src))
 	wat, err := cmd.Output()
@@ -70,9 +70,9 @@ func TestSelfHostLambdaReachesIR(t *testing.T) {
 	src2 := `function main(): i32 { let f = (x: i32): i32 => { return x * 2; }; return f(21); }`
 	var cmd2 *exec.Cmd
 	if len(runner) == 0 {
-		cmd2 = exec.Command(driverBin, "-ir")
+		cmd2 = exec.Command(driverBin)
 	} else {
-		cmd2 = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+		cmd2 = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 	}
 	cmd2.Stdin = bytes.NewReader([]byte(src2))
 	wat2, err := cmd2.Output()

@@ -148,7 +148,7 @@ func TestSelfHostWriterIRArm64(t *testing.T) {
 
 	compile := func(t *testing.T, name, src string) string {
 		t.Helper()
-		asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(src+"\n"), "-target", "arm64-linux", "-ir")
+		asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(src+"\n"), "-target", "arm64-linux")
 		if len(asm) == 0 {
 			t.Fatalf("self-host arm64 compiler emitted 0 bytes for %s", name)
 		}

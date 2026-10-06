@@ -90,7 +90,7 @@ func TestSelfHostWindowSizeIR(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	build := func(src, name string) string {
-		cmd := exec.Command(driverBin, "-ir")
+		cmd := exec.Command(driverBin)
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		asm, err := cmd.Output()
 		if err != nil || len(asm) == 0 {
@@ -128,7 +128,7 @@ func TestSelfHostWindowSizeIRArm64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	build := func(src, name string) string {
-		cmd := exec.Command(driverBin, "-target", "arm64-linux", "-ir")
+		cmd := exec.Command(driverBin, "-target", "arm64-linux")
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		asm, err := cmd.Output()
 		if err != nil || len(asm) == 0 {

@@ -197,7 +197,7 @@ func TestSelfHostWasmUndefinedCallGate(t *testing.T) {
 		args []string
 	}{
 		{"wasm_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run"), nil},
-		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run"), []string{"-ir"}},
+		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run"), nil},
 	}
 	const rejectSrc = "function main(): i32 { return totally_undefined_fn(1); }"
 	const acceptSrc = "function dbl(n: i32): i32 { return n * 2; }\n" +

@@ -94,7 +94,7 @@ func TestSelfHostStrElemHandoffX86_64(t *testing.T) {
 
 	want := interpExit(t, interpBin, strElemHandoffSrc)
 	asm := runCaptureEnv(t, runner, driverBin, []byte(strElemHandoffSrc),
-		[]string{"PATH=/usr/bin:/bin", "FERN_STRICT_IR=1", "FERN_SANITIZE=1"}, "-ir")
+		[]string{"PATH=/usr/bin:/bin", "FERN_STRICT_IR=1", "FERN_SANITIZE=1"})
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}

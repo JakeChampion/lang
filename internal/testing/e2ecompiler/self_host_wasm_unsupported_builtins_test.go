@@ -65,7 +65,7 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 		bin  string
 		args []string
 	}{
-		{"wasm_ir_run", irDriver, []string{"-ir"}},
+		{"wasm_ir_run", irDriver, nil},
 		{"wasm_run", prodDriver, nil},
 	}
 	rejected := []struct {

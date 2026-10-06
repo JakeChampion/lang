@@ -69,7 +69,7 @@ func TestSelfHostStrEqLengthSweepX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := string(runCapture(t, gcc, runner, driverBin, []byte(strEqLengthSweepSrc), "-ir"))
+	asm := string(runCapture(t, gcc, runner, driverBin, []byte(strEqLengthSweepSrc)))
 	if len(asm) == 0 {
 		t.Fatal("self-host emitted 0 bytes")
 	}

@@ -122,7 +122,7 @@ func TestSelfHostOptIndexRecoveryIRWasm(t *testing.T) {
 
 	for _, tc := range optIndexRecoveryCases {
 		t.Run(tc.name, func(t *testing.T) {
-			wat, stderr, code := runDriver(t, runner, driverBin, []byte(tc.src), true, "-ir")
+			wat, stderr, code := runDriver(t, runner, driverBin, []byte(tc.src), true)
 			if code != 0 || len(wat) == 0 {
 				t.Fatalf("%s did not lower on the wasm IR path (exit %d):\n%s", tc.name, code, stderr)
 			}

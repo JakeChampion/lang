@@ -95,7 +95,7 @@ func TestSelfHostStatFieldsIR(t *testing.T) {
 	file, link := selfHostStatProbeTree(t, dir)
 	src := selfHostStatFieldsSource(file, link, os.Geteuid(), os.Getegid())
 
-	cmd := exec.Command(driverBin, "-ir")
+	cmd := exec.Command(driverBin)
 	cmd.Stdin = bytes.NewReader([]byte(src))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {
@@ -164,7 +164,7 @@ function main(): i32 {
 }
 `, readable, runnable, missing, os.Geteuid(), os.Getegid())
 
-	cmd := exec.Command(driverBin, "-ir")
+	cmd := exec.Command(driverBin)
 	cmd.Stdin = bytes.NewReader([]byte(src))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {
@@ -226,9 +226,9 @@ func TestSelfHostStatFieldsWasmIR(t *testing.T) {
 
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
-		cmd = exec.Command(driverBin, "-ir")
+		cmd = exec.Command(driverBin)
 	} else {
-		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 	}
 	cmd.Stdin = bytes.NewReader([]byte(src))
 	wat, err := cmd.Output()

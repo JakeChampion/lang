@@ -74,7 +74,7 @@ func TestSelfHostDupOntoIR(t *testing.T) {
 
 	out := filepath.Join(dir, "out.txt")
 	src := selfHostDupOntoSource(filepath.Join(dir, "data.txt"), out)
-	asm := runCapture(t, gcc, runner, driverBin, []byte(src), "-ir")
+	asm := runCapture(t, gcc, runner, driverBin, []byte(src))
 	if len(asm) == 0 {
 		t.Fatal("driver emitted no asm")
 	}
@@ -103,7 +103,7 @@ func TestSelfHostDupOntoArm64IR(t *testing.T) {
 
 	out := filepath.Join(dir, "out.txt")
 	src := selfHostDupOntoSource(filepath.Join(dir, "data.txt"), out)
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(src), "-target", "arm64-linux", "-ir")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(src), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("driver emitted no asm")
 	}
@@ -153,7 +153,7 @@ func TestSelfHostDupOntoWasmIRUnsupported(t *testing.T) {
     return 0;
 }
 `
-	wat := runCapture(t, gcc, runner, driverBin, []byte(src), "-ir")
+	wat := runCapture(t, gcc, runner, driverBin, []byte(src))
 	if len(wat) == 0 {
 		t.Fatal("driver emitted no wat")
 	}

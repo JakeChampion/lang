@@ -51,7 +51,7 @@ func runStrictIRExit(t *testing.T, src, name string) int {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
-	asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(src), "-ir")
+	asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(src))
 	progBin := buildBin(t, gcc, dir, name, string(asm))
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
@@ -71,7 +71,7 @@ func runStrictIRExitArm64(t *testing.T, src, name string) int {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
-	asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(src), "-target", "arm64-linux", "-ir")
+	asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(src), "-target", "arm64-linux")
 	progBin := buildBin(t, arm64gcc, dir, name, string(asm))
 	cmd := runArm64Bin(qemu, progBin)
 	_ = cmd.Run()

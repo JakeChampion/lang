@@ -245,7 +245,7 @@ func TestSelfHostWithAliasIRArm64(t *testing.T) {
 					t.Fatalf("interpreter violated snapshot contract: exit %d", want)
 				}
 			}
-			asm := runCaptureStrictIR(t, gcc, runner, driver, []byte(tc.main), "-target", "arm64-linux", "-ir")
+			asm := runCaptureStrictIR(t, gcc, runner, driver, []byte(tc.main), "-target", "arm64-linux")
 			binary := buildBin(t, armGCC, dir, tc.name, string(asm))
 			cmd := runArm64Bin(armRunner, binary)
 			output, err := cmd.CombinedOutput()
@@ -325,9 +325,9 @@ func TestSelfHostWithAliasIRWasm(t *testing.T) {
 			}
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader(src)
 			wat, err := cmd.Output()

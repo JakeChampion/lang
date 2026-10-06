@@ -166,7 +166,7 @@ func TestSelfHostStrbufTakeReclaimLoop(t *testing.T) {
     }
     return last;
 }`
-	asm := string(runCapture(t, gcc, runner, driverBin, []byte(src+"\n"), "-ir"))
+	asm := string(runCapture(t, gcc, runner, driverBin, []byte(src+"\n")))
 	progBin := buildBin(t, gcc, dir, "strbuf_reclaim", asm)
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
