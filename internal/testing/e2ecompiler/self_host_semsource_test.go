@@ -13,8 +13,8 @@ import (
 // The checked-source producer (semsource.fern) is the typed frontend import of
 // the self-hosted pre-RC pipeline: checked syntax in, verified semantic values
 // out. The print driver pins the produced graphs, types and parameter modes;
-// the executable driver runs produced functions through the unit planner and
-// physical RC lowering inside an otherwise AST-lowered program on every target.
+// the executable driver runs the whole program through the unit planner and
+// physical RC lowering on every target.
 
 const semsourcePrintFixture = `
 import "std/string";
@@ -3906,17 +3906,16 @@ function main(): i32 {
 // chain_build(2): Link(3, Link(2, End)) = 5, plus the shared tail d = 2 → 7;
 // chain_build(0): 1 + 0 = 1. Chain is the recursive DECLARED enum, the layout
 // the compiler's own sources never exercise.
-// mk_s2(4).a = 4: a struct with no reference field, so the AST caller releases
-// it with the box dec alone.
+// mk_s2(4).a = 4: a struct with no reference field, so the caller releases it
+// with the box dec alone.
 // The shared projection is 8: w.s.a stays 1 because the reuse demand on a
 // shared donor forks to a fresh box rather than writing through, c.a = 5 and
 // d.b = 2. This is the path the bare-name row makes reachable, and the guard
 // that keeps it safe lives in the reuse emitters, not in the row's gate.
 // size_of(fill(2)) = 3 and sum_all = 2 + 3 + 4 = 9; fresh_size(1) = 3 + 4 = 7;
 // eat_size(fill(5)) = 3; "hello" is 5 bytes; grown_size(3) is "abccc" = 5 and
-// grown_size(0) is "ab" = 2; inner_size reads [1, 2] = 2. The P is a literal
-// main owns rather than a make() result, which an AST caller still leaks by
-// the documented floor in ssarc.box_only_result.
+// grown_size(0) is "ab" = 2; inner_size reads [1, 2] = 2 from a P literal
+// main owns.
 // grow_to(9) is [0..8]: 9 long, summing to 36; grow_to(0) is empty.
 // borrow_acc(g, 3) is 12 and g is still 9 long afterwards.
 // The not-moved receivers all copy: push_borrowed over fill(2) sums 18 and

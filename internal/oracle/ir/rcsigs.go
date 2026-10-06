@@ -506,7 +506,7 @@ var rcInert = map[string]bool{
 	"signal_mask": true, "signal_disposition": true,
 	"__wasi_errno_of_code": true,
 
-	"__alloc": true, "__alloc_u8": true, "__fern_string_bytes_copy": true, "__arr_idx": true,
+	"__alloc": true, "__alloc_u8": true, "__alloc_i32": true, "__alloc_i64": true, "__alloc_bool": true, "__fern_string_bytes_copy": true, "__arr_idx": true,
 	"__arr_idx_1": true, "__arr_idx_1_nc": true, "__arr_idx_8": true,
 	"__arr_idx_8_nc": true, "__arr_idx_nc": true, "__build_io_error": true, "__fern_abs_f64": true,
 	"__fern_alloc": true, "__fern_alloc_box": true, "__fern_alloc_rc1": true,
