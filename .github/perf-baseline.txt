@@ -98,9 +98,9 @@ x86_64/struct_drop.ir	369260237
 x86_64/tokenize.text	984
 x86_64/tokenize.ir	36950039
 x86_64/utf8_ingest_unchecked.text	15112
-x86_64/utf8_ingest_unchecked.ir	7285881	3
+x86_64/utf8_ingest_unchecked.ir	6900274	3
 x86_64/utf8_ingest_validated.text	15357
-x86_64/utf8_ingest_validated.ir	10368087	3
+x86_64/utf8_ingest_validated.ir	10020680	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -201,6 +201,6 @@ aarch64/struct_drop.ir	438420325
 aarch64/tokenize.text	1170
 aarch64/tokenize.ir	38580038
 aarch64/utf8_ingest_unchecked.text	16324
-aarch64/utf8_ingest_unchecked.ir	7722332	3
+aarch64/utf8_ingest_unchecked.ir	7313626	3
 aarch64/utf8_ingest_validated.text	16575
-aarch64/utf8_ingest_validated.ir	11314649	3
+aarch64/utf8_ingest_validated.ir	10935525	3

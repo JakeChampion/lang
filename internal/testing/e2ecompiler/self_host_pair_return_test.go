@@ -1,6 +1,8 @@
 package e2ecompiler
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -314,13 +316,160 @@ function main(): i32 {
 }
 `
 
+// The pairing under the suspend pass: a function that may park returns in
+// two words like any other, since the pass keeps the read of the word with
+// the call's store, ahead of the mode test it adds after the call. The
+// program parks inside a task through a paired pair and a paired Result,
+// which must answer right after the rewind, and calls both, and a function
+// the classifier counts as able to park for its call through a value, in a
+// loop that must allocate nothing. The total is the interpreter's.
+const pairSuspendProg = `import "std/async";
+import "std/bench";
+
+struct Box2 { n: i32, s: string }
+
+// Parks on a bound alone when asked, then returns a pair.
+@noinline function parked_pair(n: i32, b: Box2, park: boolean): (Box2, boolean) {
+  let k: i32 = n;
+  if (park) {
+    let none: i32[] = [];
+    k = k + async.wait_any(none, 1) + 2;
+  }
+  return (b, k % 2 == 0);
+}
+
+// Parks when asked, then returns a Result.
+@noinline function parked_res(n: i32, b: Box2, park: boolean): Result[Box2, i32] {
+  let k: i32 = n;
+  if (park) {
+    let none: i32[] = [];
+    k = k + async.wait_any(none, 1) + 2;
+  }
+  if (k % 2 == 0) {
+    return Ok(b);
+  }
+  return Err(k);
+}
+
+// Calls through a value, so it counts as able to park once the program has
+// a parking closure in it.
+@noinline function via(n: i32, f: (i32) => i32, b: Box2): (Box2, boolean) {
+  return (b, f(n) % 2 == 0);
+}
+
+function half(n: i32): i32 {
+  return n / 2;
+}
+
+function body(b: Box2): i32 {
+  let total: i32 = 0;
+  let f: (i32) => i32 = half;
+  let i: i32 = 0;
+  let a0: i64 = bench.alloc_count();
+  while (i < 12) {
+    let p: (Box2, boolean) = parked_pair(i, b, false);
+    total = total + p.0.n;
+    if (p.1) {
+      total = total + 1;
+    }
+    match (parked_res(i, b, false)) {
+      Ok(x) => {
+        total = total + x.n + x.s.len();
+      },
+      Err(e) => {
+        total = total + e * 100;
+      }
+    }
+    let v: (Box2, boolean) = via(i, f, b);
+    total = total + v.0.n;
+    if (v.1) {
+      total = total + 1;
+    }
+    i = i + 1;
+  }
+  let a1: i64 = bench.alloc_count();
+  if (a1 != a0) {
+    return 0 - 2;
+  }
+  let q: (Box2, boolean) = parked_pair(3, b, true);
+  total = total + q.0.s.len();
+  if (q.1) {
+    total = total + 1000;
+  }
+  match (parked_res(4, b, true)) {
+    Ok(x) => {
+      total = total + x.n * 10000;
+    },
+    Err(e) => {
+      total = total + e * 10000;
+    }
+  }
+  return total;
+}
+
+function drive(t: async.Task[i32]): i32 {
+  let st: async.TaskStatus[i32] = async.task_start(t);
+  let parks: i32 = 0;
+  while (true) {
+    match (st) {
+      Done(v) => {
+        if (parks != 2) {
+          return 0 - 3;
+        }
+        return v;
+      },
+      Suspended(w) => {
+        parks = parks + 1;
+        let woke: i32 = async.wait_any(w.set, w.timeout_ms);
+        st = async.task_resume(t, woke);
+      },
+      Cancelled => {
+        return 0 - 4;
+      }
+    }
+  }
+  return 0 - 4;
+}
+
+function main(): i32 {
+  let s: string = "hey" + "".to_string();
+  let b: Box2 = Box2 { n: 7, s: s };
+  let t: async.Task[i32] = async.task_new(() => body(b));
+  let total: i32 = drive(t);
+  async.task_free(t);
+  print(total.to_string());
+  if (total == 0 - 2) {
+    return 2;
+  }
+  if (total != 54843) {
+    return 1;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return 0;
+}
+`
+
 func TestSelfHostPairReturn(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}}
+	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}}
 	for _, prog := range progs {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			t.Run(prog.name+"/"+target, func(t *testing.T) {
-				stderr, code := cli.exitOf(t, prog.src, target, "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1")
+				var stderr string
+				var code int
+				if target == "wasm32-wasi" && prog.name == "suspend" {
+					// The task runtime imports wasi:io's poll, which only the
+					// component form provides.
+					src := filepath.Join(t.TempDir(), "main.fern")
+					if err := os.WriteFile(src, []byte(prog.src), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					stderr, code = runWasmCensus(t, cli.wasmComponent(t, src, "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1"))
+				} else {
+					stderr, code = cli.exitOf(t, prog.src, target, "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1")
+				}
 				if code != 0 {
 					t.Errorf("exit %d, want 0 (1: a wrong value, 2: the loop allocated, 99: a count went under)\n%s", code, stderr)
 				}

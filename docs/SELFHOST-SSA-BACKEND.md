@@ -172,17 +172,20 @@ payload beside it: in `%rdx` on x86-64, x1 on arm64 and the global
 register is in either pool, and neither an epilogue nor a call's result store
 touches it, so the callee sets the word as the last thing before it returns
 and the caller reads it as the first thing after it stores the call's result.
+The suspend pass keeps that read in a site's group with the call and its
+store, ahead of the mode test it adds after a call that may park
+(`suspend.group_end`), so a function that may suspend returns in two words
+like any other.
 A function whose result is a tuple of two values that each fit a word
 returns the same way: the first element is its result and the
 second the word. A caller rebuilds the pair from the two, and split reads
 its projections off the construction, so the pair is never built; a return
 that is not a construction (a join of two, a parameter) is projected in the
-callee. A triple, or a pair with an element wider than a word, stays boxed. `TestSelfHostPairReturn` covers both shapes on the three targets.
+callee. A triple, or a pair with an element wider than a word, stays boxed. `TestSelfHostPairReturn` covers both shapes on the three targets, a pair and a Result returned across a park among them.
 
 `sempair`, which `seminline` runs once nothing more is spliced, chooses the
-functions: nothing outside the bodies names one, every body that names it
-calls it directly, and it never suspends, so every call to it is rewritten
-with it. A caller rebuilds the variant as a branch on the position joining
+functions: nothing outside the bodies names one and every body that names
+it calls it directly, so every call to it is rewritten with it. A caller rebuilds the variant as a branch on the position joining
 one construction per variant, and split reads a match on the call off those
 constructions, so the variant is never built. A function is paired only when
 every caller takes the value apart, by matching on it, projecting it, or
