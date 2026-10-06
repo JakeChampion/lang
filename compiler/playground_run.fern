@@ -252,7 +252,11 @@ function run(): i32 {
   // With a sealed overlay that is inert: nothing below resolve_module ever sees
   // the empty root.
   let ov: modloader.Overlay = embedded_stdlib();
-  let (loaded, files, missing) = modloader.load_imports_with_files(ov, "stdin", entry);
+  let g: modloader.Graph = modloader.load_graph(ov, "stdin", entry, "");
+  entry = g.entry;
+  let loaded: flatten.LoadedModule[] = g.loaded;
+  let files: string[] = g.files;
+  let missing: string[] = g.missing;
   if (modloader.report_unresolved(missing, "playground")) {
     return 1;
   }

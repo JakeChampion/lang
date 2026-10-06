@@ -276,7 +276,10 @@ function main(): i32 {
       let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
       // An unresolved import is the failure mode that once produced a whole
       // phantom refusal class, so the census refuses to count past one.
-      let (loaded, missing) = modloader.load_imports(embedded_stdlib(), entry_path, entry);
+      let g: modloader.Graph = modloader.load_graph(embedded_stdlib(), entry_path, entry, "");
+      entry = g.entry;
+      let loaded: flatten.LoadedModule[] = g.loaded;
+      let missing: string[] = g.missing;
       if (modloader.report_unresolved(missing, "semsource_census_run")) {
         return 2;
       }

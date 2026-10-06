@@ -41,7 +41,10 @@ function main(): i32 {
   match (read_file(entry_path)) {
     Ok(src) => {
       let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
-      let (loaded, missing) = modloader.load_imports(modloader.no_overlay(), entry_path, entry);
+      let g: modloader.Graph = modloader.load_graph(modloader.no_overlay(), entry_path, entry, "");
+      entry = g.entry;
+      let loaded: flatten.LoadedModule[] = g.loaded;
+      let missing: string[] = g.missing;
       if (modloader.report_unresolved(missing, "platforms_reach_run")) {
         return 1;
       }
