@@ -16,10 +16,7 @@ func TestSelfHostFipHttpCodecAgreesAndDoesNotAllocate(t *testing.T) {
 	dir := t.TempDir()
 	run := func(variant string) e2eharness.FipHttpReport {
 		t.Helper()
-		src, err := filepath.Abs(filepath.Join("..", "..", "..", "examples", "fip", "http_"+variant+".fern"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		src := e2eharness.RepoPath("examples", "fip", "http_"+variant+".fern")
 		bin := filepath.Join(dir, "http_"+variant)
 		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-o", bin, src, cli.stdlib)
 		cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")

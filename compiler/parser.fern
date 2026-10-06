@@ -12031,7 +12031,7 @@ function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, 
 // variable only the payload names.
 function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFns, vars: string[], binds: MEnv): MEnv {
   if let ast.ExprCall(c) = arg {
-    let vname: string = ctor_variant_name(c.callee, funcs.enums);
+    let vname: string = ctor_variant_name(c.callee, funcs.enums, env, funcs);
     if (vname.len() > 0) {
       let owner: i32 = genum_owner_of_variant(funcs.enums, vname);
       if (owner < 0) {
@@ -16999,16 +16999,24 @@ function struct_lit_spelling(sl: ast.ExprStructLit, env: MEnv, funcs: MFns): str
   return whole;
 }
 
-// ctor_variant_name: the variant a call's callee constructs when it names one
-// bare (`Leaf`) or qualified by its generic enum (`Tree.Leaf`); "" otherwise.
-function ctor_variant_name(callee: ast.Expr, enums: EnumDecl[]): string {
+// Candidate name for a bare or enum-qualified construction. Callers verify
+// enum membership; bindings win over bare variants and a path's type head.
+function ctor_variant_name(callee: ast.Expr, enums: EnumDecl[], env: MEnv, funcs: MFns): string {
   match (callee) {
     ast.ExprIdent(cid) => {
+      if (str_list_contains(env.mnames, cid.name)) {
+        return "";
+      }
+      if (genum_owner_of_variant(enums, cid.name) >= 0 || cid.name == "Some" || cid.name == "Ok" || cid.name == "Err") {
+        if (fda_known_func(cid.name, funcs.decls)) {
+          return "";
+        }
+      }
       return cid.name;
     },
     ast.ExprFieldAccess(cfa) => {
       if let ast.ExprIdent(oid) = cfa.obj {
-        if (genum_index(enums, oid.name) >= 0) {
+        if (!str_list_contains(env.mnames, oid.name) && genum_index(enums, oid.name) >= 0) {
           return cfa.field;
         }
       }
@@ -17041,7 +17049,7 @@ function bound_spelling(name: string, tparams: string[], binds: MEnv): string {
 // construction `callee(args)`, its parameters bound from the payload types;
 // "" when the callee is not a variant or a parameter stays unbound.
 function variant_ctor_spelling(callee: ast.Expr, args: ast.Expr[], env: MEnv, funcs: MFns): string {
-  let vname: string = ctor_variant_name(callee, funcs.enums);
+  let vname: string = ctor_variant_name(callee, funcs.enums, env, funcs);
   if (vname.len() == 0) {
     return "";
   }
@@ -17138,7 +17146,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       // object names a generic enum — otherwise `s.len()` (a method call,
       // structurally identical: ExprCall over ExprFieldAccess) would be
       // mis-read as constructing a variant named `len`.
-      let vname: string = ctor_variant_name(c.callee, enums);
+      let vname: string = ctor_variant_name(c.callee, enums, env, funcs);
       // A variant construction whose instantiation resolves (from the
       // annotation or the payload args) flows each payload's DECLARED
       // field type, instantiated, into the corresponding arg — so a
@@ -17182,8 +17190,12 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       // generic `Non` struct and the dangling reference bailed the module
       // (#5247).
       let calleeFn: string = "";
-      if (vname.len() > 0 && owner < 0) {
-        calleeFn = vname;
+      if (owner < 0) {
+        if let ast.ExprIdent(cid) = c.callee {
+          if (!str_list_contains(env.mnames, cid.name)) {
+            calleeFn = cid.name;
+          }
+        }
       }
       let nargs: ast.Expr[] = [];
       let cur: Insts = ins;
@@ -17212,7 +17224,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       // A bare unit-variant construction `Nn` — needs the expected
       // annotation to pin its instantiation (no payload to infer from).
       let owner: i32 = genum_owner_of_variant(enums, id.name);
-      if (owner >= 0) {
+      if (owner >= 0 && !str_list_contains(env.mnames, id.name) && !fda_known_func(id.name, funcs.decls)) {
         let key: string = genum_key_from_anno(expected, enums[owner].name, enums);
         if (key.len() > 0) {
           let nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
@@ -17295,7 +17307,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       // form is a call, handled in the ExprCall arm above.
       match (fa.obj) {
         ast.ExprIdent(oid) => {
-          if (genum_index(enums, oid.name) >= 0) {
+          if (!str_list_contains(env.mnames, oid.name) && genum_index(enums, oid.name) >= 0) {
             let owner: i32 = genum_owner_of_variant(enums, fa.field);
             if (owner >= 0) {
               let key: string = genum_key_from_anno(expected, enums[owner].name, enums);
@@ -17312,7 +17324,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       return RExpr { rexpr: ast.ExprFieldAccess { obj: ob.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: ob.rins };
     },
     ast.ExprLambda(lm) => {
-      let lb: RStmts = me_stmts(lm.body, env, lm.ret_type, enums, structs, funcs, ins);
+      let lb: RStmts = me_stmts(lm.body, bind_params(env, lm.params), lm.ret_type, enums, structs, funcs, ins);
       let lins: Insts = me_collect_slot(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, enums, lb.rins3);
       for lp in lm.params {
         lins = me_collect_slot(lp.type_name, lp.fn_ret, lp.fn_param_types, enums, lins);
@@ -17504,7 +17516,7 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
       // original-spelling type (`Opt[(i32) => i32]`, `Pair[string, i32]`),
       // so ge_inst_of derives the same key the construction rewrite used
       // and the arms rewrite to the mangled variants (#5298 follow-up).
-      let vgn: string = ctor_variant_name(c.callee, enums);
+      let vgn: string = ctor_variant_name(c.callee, enums, env, funcs);
       let vgo: i32 = 0 - 1;
       if (vgn.len() > 0) {
         vgo = genum_owner_of_variant(enums, vgn);
@@ -17758,7 +17770,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
         // original-spelling type args (`Sm(n)` over `Opt[Opt[i32]]` →
         // n: `Opt[i32]`; `Bin(l, k, v, r, s)` over `OrdNode[i32,
         // string]` → l: `OrdNode[i32, string]`, k: i32, v: string).
-        let armenv: MEnv = env;
+        let armenv: MEnv = mono_arm_env(env, m.arms[i].pattern, sty, funcs);
         if (gi.ok) {
           let gidx: i32 = genum_index(enums, gi.base);
           if (gidx >= 0) {
@@ -17766,7 +17778,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
             cur = cur.iadd_arg(gi.base, gi.key, genum_single_arg(sty));
             let cts: string[] = type_args_of(sty);
             if (cts.len() == enums[gidx].type_params.len()) {
-              armenv = me_bind_pat_vars(m.arms[i].pattern, enums[gidx], cts, structs, env);
+              armenv = me_bind_pat_vars(m.arms[i].pattern, enums[gidx], cts, structs, armenv);
             }
           }
         }

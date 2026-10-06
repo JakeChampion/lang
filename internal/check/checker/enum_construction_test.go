@@ -23,6 +23,20 @@ function f(): Result[i64, string] { let m: Mark[i32, boolean] = Marked(1); let b
 			[]string{"Mark[i32, boolean]/Marked(i32)", "Mark[string, i64]/Blank()", "Result[i64, string]/Ok(i64)"}},
 		{"qualified constructor", `enum Wide[T] { Value(T) } function f(): Wide[f32] { return Wide.Value(3.14); }`,
 			[]string{"Wide[f32]/Value(f32)"}},
+		{"qualified builtin behind function", `function Ok(n: i32): Result[u8, string] { return Result.Ok(1u8); }
+function f(): Result[u8, string] { return Ok(300); }`,
+			[]string{"Result[u8, string]/Ok(u8)"}},
+		{"qualified variant behind function", `enum Box[T] { Packed(T) }
+function Packed(n: i32): i32 { return n; }
+function f(): Box[string] { let n = Packed(3); return Box.Packed("value"); }`,
+			[]string{"Box[string]/Packed(string)"}},
+		{"qualified variant behind local", `enum Box[T] { Packed(T) }
+function f(): Box[string] { let Packed = 3; return Box.Packed("value"); }`,
+			[]string{"Box[string]/Packed(string)"}},
+		{"qualified variant with ambiguous bare function", `enum A { Value(i32) } enum B { Value(string) }
+function Value(n: i32): B { return B.Value("value"); }
+function f(): B { let direct = Value(3); let call = Value; return call(3); }`,
+			[]string{"B/Value(string)"}},
 		{"nested enum payloads", `function f(): Option[Option[i64]] { return Some(None); }`,
 			[]string{"Option[Option[i64]]/Some(Option[i64])", "Option[i64]/None()"}},
 		{"declared payload context without destination", `enum Outer { Wrap((Option[i64], Option[string][])) }

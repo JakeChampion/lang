@@ -7464,14 +7464,25 @@ pub function hoist_loop_invariants(ops: Op[], n_locals: i32): OptimizedOps {
   // The slot bound is read once; a hoist's cache slots are past n_locals,
   // so the bound follows the count.
   let maxs: i32 = cp_max_slot(ops);
+  // stored[slot] is the index of the loop whose body last marked the slot
+  // written, plus one; one array serves every loop of the function.
+  let stored: i32[] = [];
+  while (stored.len() <= maxs) {
+    stored = stored.append(0);
+  }
   // Later loops first: rewriting one shifts every index after it, and
   // walking backwards keeps the indices of the loops still to visit valid.
   let i: i32 = ops.len() - 1;
   while (i >= 0) {
     if (cur.ops[i].kind_tag == k_loop) {
-      cur = licm_hoist_from_loop(cur, i, maxs);
+      let h: Hoisted = licm_hoist_from_loop(cur, i, maxs, stored);
+      cur = h.cur;
+      stored = h.stored;
       if (cur.n_locals - 1 > maxs) {
         maxs = cur.n_locals - 1;
+        while (stored.len() <= maxs) {
+          stored = stored.append(0);
+        }
       }
     }
     i = i - 1;
@@ -7479,26 +7490,29 @@ pub function hoist_loop_invariants(ops: Op[], n_locals: i32): OptimizedOps {
   return cur;
 }
 
+struct Hoisted { cur: OptimizedOps, stored: i32[] }
+
 // licm_hoist_from_loop rewrites the one loop opening at loop_idx; maxs is
 // the highest slot any op names.
-function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32): OptimizedOps {
+function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32, own stored: i32[]): Hoisted {
   let ops: Op[] = cur.ops;
   let end: i32 = licm_scope_end(ops, loop_idx);
   if (end < 0) {
-    return cur;
+    return Hoisted { cur: cur, stored: stored };
   }
   let hdr_end: i32 = licm_header_end(ops, loop_idx);
-  let stored: boolean[] = licm_stored_locals(ops, loop_idx + 1, end, maxs + 1);
-  let order: i32[] = licm_candidates(ops, loop_idx, hdr_end, stored);
+  let mark: i32 = loop_idx + 1;
+  stored = licm_stored_locals(ops, loop_idx + 1, end, stored, mark);
+  let order: i32[] = licm_candidates(ops, loop_idx, hdr_end, stored, mark);
   if (order.len() == 0) {
-    return cur;
+    return Hoisted { cur: cur, stored: stored };
   }
   // slot_for[src] is the cache slot for an operand in `order`, -1 otherwise.
   // Only an operand the body never stores to is in it, so a hit already says
   // the read is invariant.
   let slot_for: i32[] = [];
   let s: i32 = 0;
-  while (s < stored.len()) {
+  while (s <= maxs) {
     slot_for = slot_for.append(0 - 1);
     s = s + 1;
   }
@@ -7559,7 +7573,7 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32): Opti
       j = j + 1;
     }
   }
-  return OptimizedOps { ops: out, n_locals: cur.n_locals + slots };
+  return Hoisted { cur: OptimizedOps { ops: out, n_locals: cur.n_locals + slots }, stored: stored };
 }
 
 // licm_data_slots gives each hoisted operand (slot_for) whose data address
@@ -7588,7 +7602,7 @@ function licm_data_slots(ops: Op[], loop_idx: i32, end: i32, slot_for: i32[], ne
 // licm_candidates is every local the header takes a length of without the
 // body ever storing to it, in first-read order so the emitted prologue is
 // stable; an operand read twice is listed once.
-function licm_candidates(ops: Op[], loop_idx: i32, hdr_end: i32, stored: boolean[]): i32[] {
+function licm_candidates(ops: Op[], loop_idx: i32, hdr_end: i32, stored: i32[], mark: i32): i32[] {
   let k_load: i32 = kind_id("load_local");
   let k_len: i32 = kind_id("str_len");
   let order: i32[] = [];
@@ -7596,7 +7610,7 @@ function licm_candidates(ops: Op[], loop_idx: i32, hdr_end: i32, stored: boolean
   while (j + 1 < hdr_end) {
     if (ops[j].kind_tag == k_load && ops[j + 1].kind_tag == k_len) {
       let src: i32 = ops[j].i32_imm;
-      if (!stored[src] && !licm_listed(order, src)) {
+      if (stored[src] != mark && !licm_listed(order, src)) {
         order = order.append(src);
       }
     }
@@ -7667,23 +7681,17 @@ function licm_scope_end(ops: Op[], open: i32): i32 {
   return 0 - 1;
 }
 
-// licm_stored_locals marks every slot ops[lo, hi) writes, indexed by slot over
-// [0, n), the whole list's slot range. A slot written anywhere in the loop is
-// not invariant, wherever in the body the write sits.
-function licm_stored_locals(ops: Op[], lo: i32, hi: i32, n: i32): boolean[] {
+// licm_stored_locals stamps `mark` on every slot ops[lo, hi) writes. A slot
+// written anywhere in the loop is not invariant, wherever in the body the
+// write sits.
+function licm_stored_locals(ops: Op[], lo: i32, hi: i32, own stored: i32[], mark: i32): i32[] {
   let k_store: i32 = kind_id("store_local");
   let k_tee: i32 = kind_id("tee_local");
-  let stored: boolean[] = [];
-  let s: i32 = 0;
-  while (s < n) {
-    stored = stored.append(false);
-    s = s + 1;
-  }
   let j: i32 = lo;
   while (j < hi) {
     let t: i32 = ops[j].kind_tag;
     if (t == k_store || t == k_tee) {
-      stored = stored.with(ops[j].i32_imm, true);
+      stored = stored.with(ops[j].i32_imm, mark);
     }
     j = j + 1;
   }
