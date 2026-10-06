@@ -2375,17 +2375,32 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
     return f;
   }
   let nvals: i32 = f.nvals;
+  // `blocks` is written from the first block that splices a leaf on, and a
+  // block's `insts` from its first spliced call on.
   let blocks: SBlock[] = [];
-  for b in f.blocks {
+  let copying: boolean = false;
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let b: SBlock = f.blocks[bi];
     let insts: SInst[] = [];
-    for ins in b.insts {
+    let spliced: boolean = false;
+    let k: i32 = 0;
+    while (k < b.insts.len()) {
+      let ins: SInst = b.insts[k];
       let at: i32 = 0 - 1;
       if (ins.kind_tag == 11) {
         at = leaf_index(leaves, ins.str, ins.args.len());
       }
       if (at < 0) {
-        insts = insts.append(ins);
+        if (spliced) {
+          insts = insts.append(ins);
+        }
+        k = k + 1;
         continue;
+      }
+      if (!spliced) {
+        insts = insts_before(b.insts, k);
+        spliced = true;
       }
       let leaf: SFunc = leaves[at].func;
       let map: i32[] = [];
@@ -2410,8 +2425,21 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
       if (ins.result >= 0) {
         insts = insts.append(SInst { kind_tag: 7, result: ins.result, args: [map[leaf.blocks[0].term.value]], imm: 0, str: "" });
       }
+      k = k + 1;
     }
-    blocks = blocks.append(SBlock { ...b, insts: insts });
+    if (spliced) {
+      if (!copying) {
+        blocks = blocks_before(f.blocks, bi);
+        copying = true;
+      }
+      blocks = blocks.append(SBlock { ...b, insts: insts });
+    } else if (copying) {
+      blocks = blocks.append(b);
+    }
+    bi = bi + 1;
+  }
+  if (!copying) {
+    return f;
   }
   return SFunc { ...f, nvals: nvals, blocks: blocks };
 }
@@ -2419,7 +2447,7 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
 function leaf_index(leaves: Leaf[], name: string, argc: i32): i32 {
   let i: i32 = 0;
   while (i < leaves.len()) {
-    if (leaves[i].name == name && leaves[i].func.nparams == argc) {
+    if (leaves[i].func.nparams == argc && leaves[i].name == name) {
       return i;
     }
     i = i + 1;
@@ -2447,18 +2475,76 @@ pub function prune_trivial_phis(f: SFunc): Formed {
     flat = flat.append(resolve_repl(repl, i));
     i = i + 1;
   }
+  // `nblocks` is written from the first block that changes on, and a block's
+  // `ninsts` from its first dropped phi or rewritten instruction on.
   let nblocks: SBlock[] = [];
-  for blk in f.blocks {
+  let copying: boolean = false;
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let blk: SBlock = f.blocks[bi];
     let ninsts: SInst[] = [];
-    for ins in blk.insts {
-      if (ins.kind_tag == 8 && flat[ins.result] != ins.result) {
-        continue;
+    let changed: boolean = false;
+    let k: i32 = 0;
+    while (k < blk.insts.len()) {
+      let ins: SInst = blk.insts[k];
+      let gone: boolean = ins.kind_tag == 8 && flat[ins.result] != ins.result;
+      let moved: boolean = !gone && args_move(ins, flat);
+      if (!changed && (gone || moved)) {
+        ninsts = insts_before(blk.insts, k);
+        changed = true;
       }
-      ninsts = ninsts.append(rewrite_args(ins, flat));
+      if (changed && !gone) {
+        if (moved) {
+          ninsts = ninsts.append(rewrite_args(ins, flat));
+        } else {
+          ninsts = ninsts.append(ins);
+        }
+      }
+      k = k + 1;
     }
-    nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, flat), preds: blk.preds });
+    let term: STerm = blk.term;
+    if (term_moves(term, flat)) {
+      term = rewrite_term(term, flat);
+      if (!changed) {
+        ninsts = blk.insts;
+        changed = true;
+      }
+    }
+    if (changed) {
+      if (!copying) {
+        nblocks = blocks_before(f.blocks, bi);
+        copying = true;
+      }
+      nblocks = nblocks.append(SBlock { ...blk, insts: ninsts, term: term });
+    } else if (copying) {
+      nblocks = nblocks.append(blk);
+    }
+    bi = bi + 1;
   }
-  return Formed { f: SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env }, repl: flat };
+  if (!copying) {
+    return Formed { f: f, repl: flat };
+  }
+  return Formed { f: SFunc { ...f, blocks: nblocks }, repl: flat };
+}
+
+// args_move reports whether `resolved` maps any operand of `ins` elsewhere.
+function args_move(ins: SInst, resolved: i32[]): boolean {
+  for a in ins.args {
+    if (a >= 0 && resolved[a] != a) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function term_moves(t: STerm, resolved: i32[]): boolean {
+  if (t.kind_tag == 1) {
+    return resolved[t.value] != t.value;
+  }
+  if (t.kind_tag == 3) {
+    return resolved[t.cond] != t.cond;
+  }
+  return false;
 }
 
 // repeated_block_id names the first block id that appears twice in `f.blocks`,
@@ -3376,6 +3462,26 @@ pub function prune_dead(f: SFunc): SFunc {
     nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
   }
   return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
+}
+
+function insts_before(insts: SInst[], n: i32): SInst[] {
+  let out: SInst[] = [];
+  let j: i32 = 0;
+  while (j < n) {
+    out = out.append(insts[j]);
+    j = j + 1;
+  }
+  return out;
+}
+
+function blocks_before(blocks: SBlock[], n: i32): SBlock[] {
+  let out: SBlock[] = [];
+  let j: i32 = 0;
+  while (j < n) {
+    out = out.append(blocks[j]);
+    j = j + 1;
+  }
+  return out;
 }
 
 // inst_has_effect names the instructions kept whether or not their result is
