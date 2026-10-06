@@ -17,8 +17,8 @@ let records: semrecords.Record[] = [];
 let enums: semrecords.Enum[] = [];
 let calls: ssasem.Contract[] = [];
 let anchors: ssasem.Anchor[] = [];
-let i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
-let i64t: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false };
+let i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+let i64t: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false, polymorphic: false };
 let bt: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
 let st: typeinfo.Type = typeinfo.TypeString { tag: 0 };
 let view: typeinfo.Type = typeinfo.TypeString { tag: 1 };
@@ -77,10 +77,10 @@ function change(g: ssa.SFunc, at: i32, ins: ssa.SInst): ssa.SFunc {
     return ssa.SFunc { ...g, blocks: g.blocks.with(0, b) };
 }
 function type_checks(): i32 {
-    let i: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
-    let wide: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false };
-    let u: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false };
-    let c: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: true };
+    let i: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+    let wide: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false, polymorphic: false };
+    let u: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false, polymorphic: false };
+    let c: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: true, polymorphic: false };
     let s: typeinfo.Type = typeinfo.TypeString { tag: 0 };
     let v: typeinfo.Type = typeinfo.TypeString { tag: 1 };
     let f: typeinfo.Type = typeinfo.TypeFloat { width: 64, polymorphic: false };
@@ -105,6 +105,17 @@ function type_checks(): i32 {
     if (semtypes.concrete(p, false) || semtypes.concrete(opaque, false) || semtypes.equal(typeinfo.unchecked(), typeinfo.unchecked())) { return 6; }
     let av: typeinfo.Type = typeinfo.TypeArray { elem: tuple, view: true };
     if (ssasem.type_key(array) == ssasem.type_key(av)) { return 7; }
+    let never: typeinfo.Type = typeinfo.TypeNever { tag: 0 };
+    let unit_type: typeinfo.Type = typeinfo.TypeVoid { tag: 0 };
+    if (!semtypes.equal(never, never) || semtypes.equal(never, unit_type)) { return 8; }
+    if (semtypes.concrete(never, false) || semtypes.concrete(never, true)) { return 9; }
+    let partial: typeinfo.Type = typeinfo.TypeUnion { name: "Result", args: [i, never] };
+    let unit: typeinfo.Type = typeinfo.TypeUnion { name: "Result", args: [i, unit_type] };
+    if (!semtypes.concrete(partial, false) || semtypes.equal(partial, unit)) { return 10; }
+    if (ssasem.type_key(partial) == ssasem.type_key(unit)) { return 11; }
+    let literal: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: true };
+    let inferred: typeinfo.Type = typeinfo.TypeUnion { name: "Result", args: [literal, never] };
+    if (semtypes.equal(literal, i) || semtypes.concrete(literal, false) || semtypes.concrete(inferred, false)) { return 12; }
     return 0;
 }
 `
@@ -128,7 +139,7 @@ graph = ssa.SFunc { name: "lend", nparams: 1, nvals: 2, entry: 7, takes_env: fal
 `
 
 const semanticByteView = `
-let byte: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false };
+let byte: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false };
 let bv: typeinfo.Type = typeinfo.TypeArray { elem: byte, view: true };
 params = [st]; types = [st, bv]; result = bv;
 graph = ssa.SFunc { name: "byte_view", nparams: 1, nvals: 2, entry: 7, takes_env: false, blocks: [
@@ -198,6 +209,7 @@ func semanticCases() []struct{ name, change, want string } {
 		{"return-type", "result = view;", "return type"},
 		{"missing-return", "let b = graph.blocks[0]; b = ssa.SBlock { ...b, term: ret(0 - 1) }; graph = ssa.SFunc { ...graph, blocks: [b] };", "missing return value"},
 		{"unknown-type", "types = types.with(5, typeinfo.unchecked());", "unresolved value type"},
+		{"never-value", "types = types.with(5, typeinfo.TypeNever { tag: 0 });", "unresolved value type"},
 		{"polymorphic-type", "types = types.with(5, typeinfo.TypeFloat { width: 64, polymorphic: true });", "unresolved value type"},
 		{"opaque-signature", "types = types.with(5, typeinfo.TypeFunc { param_types: [], param_own: [], ret_type: st, params_known: false });", "unresolved value type"},
 		{"string-constant", `graph = change(graph, 5, ssa.SInst { kind_tag: 5, result: 5, args: [], imm: 0, str: "a" });`, ""},

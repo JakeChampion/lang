@@ -2,18 +2,12 @@
 // Keep this module independent of AST, parser, checker and physical IR so
 // checked syntax and pre-RC semantic values can carry the same type directly.
 
-// TypeI32 models EVERY integer width — i32 / i64 / u32 / u64 — distinguished
-// by (width, unsigned). The checker stays width-LENIENT for assignability
-// (type_eq treats all integer types as interchangeable, matching the port's
-// long-standing loose-int behaviour), but width is carried so method DISPATCH
-// keys (which compare the declared receiver-type spelling) can recover "i64" /
-// "u32" / "u64" at a call site. Actual codegen width lives in asmcore's `Ty`.
-// The integer-shaped scalars, plus `char`. `is_char` marks a Unicode scalar
-// value (#5629): it occupies an i32 slot, so it shares this variant and stays
-// interchangeable with i32 under type_eq — but it dispatches its own method
-// surface (std/unicode declares seven `char`-receiver methods), which is what
-// the flag is read for. Replaces a dead `tag` filler field that nothing read.
-pub struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean }
+// Every integer width shares this variant. Width and signedness participate
+// in type identity; `is_char` distinguishes Unicode scalars from integers
+// even though a char occupies the same physical slot as an i32.
+// `polymorphic` is an inference fact for an unsuffixed constructor payload.
+// Semantic lowering settles it before admitting the type to typed IR.
+pub struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean, polymorphic: boolean }
 
 // The POINTER width, which a `usize` carries: an address, 32 bits on wasm and
 // the whole 64-bit slot on the register backends, resolved by each backend
@@ -175,6 +169,11 @@ pub struct TypeHandle { resource: string, borrowed: boolean }
 // in statement position and an invisible wildcard in value position (#6649).
 pub struct TypeVoid { tag: i32 }
 
+// An uninhabited payload after inference closes: no value can have this type.
+// Unlike void, it cannot be constructed with (). It may name an absent enum
+// payload, but never a produced value or a generic declaration's variable.
+pub struct TypeNever { tag: i32 }
+
 pub struct TypeUnknown { reason: string }
 
 // A type VARIABLE of a generic declaration, carrying the name it is written
@@ -184,7 +183,7 @@ pub struct TypeUnknown { reason: string }
 // TypeUnknown, which means the checker could not work a type out at all.
 pub struct TypeErased { name: string }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeUnknown | TypeErased;
+pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeNever | TypeUnknown | TypeErased;
 
 pub function unchecked(): Type {
   return TypeUnknown { reason: "not yet checked" };
@@ -384,6 +383,9 @@ pub function spelling(t: Type): string {
     },
     TypeVoid(_) => {
       return "void";
+    },
+    TypeNever(_) => {
+      return "";
     },
     TypeUnknown(_) => {
       return "";

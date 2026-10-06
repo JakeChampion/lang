@@ -133,27 +133,27 @@ struct State {
 struct Value { s: State, id: i32 }
 
 function t_i32(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
 }
 
 function t_u8(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false };
+  return typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false };
 }
 
 function t_u32(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false };
+  return typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false, polymorphic: false };
 }
 
 function t_u64(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 64, unsigned: true, is_char: false };
+  return typeinfo.TypeI32 { width: 64, unsigned: true, is_char: false, polymorphic: false };
 }
 
 function t_i64(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false };
+  return typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false, polymorphic: false };
 }
 
 function t_usize(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false };
+  return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
 }
 
 function t_bool(): typeinfo.Type {
@@ -566,6 +566,11 @@ function bound_type(s: State, name: string, scope: checker.Scope): typeinfo.Type
 // unsuffixed literal is. The same holds for one inside a container or a
 // variant: `let xs = [1.5]` is an f64[], and `Some(1.5)` an Option[f64].
 function settled(t: typeinfo.Type): typeinfo.Type {
+  if let typeinfo.TypeI32(i) = t {
+    if (i.polymorphic) {
+      return typeinfo.TypeI32 { ...i, polymorphic: false };
+    }
+  }
   if let typeinfo.TypeFloat(f) = t {
     if (f.polymorphic) {
       return typeinfo.TypeFloat { width: f.width, polymorphic: false };
@@ -584,10 +589,28 @@ function settled(t: typeinfo.Type): typeinfo.Type {
   if let typeinfo.TypeMap(m) = t {
     return typeinfo.TypeMap { key: settled(m.key), value: settled(m.value) };
   }
+  if let typeinfo.TypeStruct(r) = t {
+    let args: typeinfo.Type[] = [];
+    for arg in r.args {
+      args = args.append(settled(arg));
+    }
+    return typeinfo.TypeStruct { ...r, args: args };
+  }
+  if let typeinfo.TypeFunc(f) = t {
+    let params: typeinfo.Type[] = [];
+    for p in f.param_types {
+      params = params.append(settled(p));
+    }
+    return typeinfo.TypeFunc { ...f, param_types: params, ret_type: settled(f.ret_type) };
+  }
   if let typeinfo.TypeUnion(u) = t {
     let args: typeinfo.Type[] = [];
     for a in u.args {
-      args = args.append(settled_payload(a));
+      if (checker.unbound_enum_argument(a)) {
+        args = args.append(typeinfo.TypeNever { tag: 0 });
+      } else {
+        args = args.append(settled_payload(a));
+      }
     }
     return typeinfo.TypeUnion { ...u, args: args };
   }
@@ -678,7 +701,7 @@ function literal_type(suffix: string): typeinfo.Type {
     return t_u8();
   }
   if (suffix == "char") {
-    return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: true };
+    return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: true, polymorphic: false };
   }
   if (suffix == "u32") {
     return t_u32();
@@ -926,7 +949,7 @@ function arm_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32)
   if (layout == semrecords.layout_option()) {
     return builtin_payloads(whole, name);
   }
-  let sig: checker.StructSig = checker.variant_shape_sig(s.scope, name, union_name(whole));
+  let sig: checker.StructSig = checker.instantiated_variant(checker.variant_shape_sig(s.scope, name, union_name(whole)), s.scope, whole);
   return Payloads { found: sig.name.len() > 0, types: sig.field_types, unit: false };
 }
 
@@ -934,7 +957,7 @@ function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: 
   if (layout == semrecords.layout_option()) {
     return builtin_payloads(whole, name);
   }
-  let sig: checker.StructSig = checker.variant_sig(s.scope, name, union_name(whole));
+  let sig: checker.StructSig = checker.instantiated_variant(checker.variant_sig(s.scope, name, union_name(whole)), s.scope, whole);
   return Payloads { found: sig.name.len() > 0, types: sig.field_types, unit: false };
 }
 
@@ -3533,7 +3556,7 @@ function type_head(obj: ast.Expr, s: State): string {
 }
 
 function qualified_variant(e: ast.Expr, head: string, name: string, args: ast.Expr[], s: State, expected: typeinfo.Type): Value {
-  let whole: typeinfo.Type = literal_union(e, s, expected);
+  let whole: typeinfo.Type = settled_union(settled(literal_union(e, s, expected)), name, args, s);
   if (union_name(whole) != head || !names_variant(s, whole, name)) {
     return refused(s, "unsupported qualified path: " + head + "." + name);
   }
@@ -3541,7 +3564,7 @@ function qualified_variant(e: ast.Expr, head: string, name: string, args: ast.Ex
 }
 
 function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
-  let whole: typeinfo.Type = literal_union(e, s, expected);
+  let whole: typeinfo.Type = settled_union(settled(literal_union(e, s, expected)), name, c.args, s);
   if (union_name(whole) == head && names_variant(s, whole, name)) {
     return variant(name, whole, c.args, s);
   }
@@ -3699,6 +3722,97 @@ function request(s: State, key: string, name: string, b: ssasem.Binding): State 
   return State { ...s, requests: s.requests.append(Request { key: key, name: name, binding: b }) };
 }
 
+// Read an enum clone's nominal origin from frontend metadata, never from its
+// mangled name. Generic declarations remain available to resolve the spelling.
+function enum_origin(t: typeinfo.Type, s: State): typeinfo.Type {
+  let sig: checker.UnionSig = checker.union_sig(s.scope, union_name(t));
+  if (sig.instance != "") {
+    return settled(resolved(checker.spelled_type(s.scope, sig.instance), s.template, s.binding, s.scope));
+  }
+  return t;
+}
+
+function completes_enum(from: typeinfo.Type, to: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnion(a) = from {
+    if let typeinfo.TypeUnion(b) = to {
+      if (a.name != b.name || a.args.len() != b.args.len() || !semtypes.concrete(to, false)) {
+        return false;
+      }
+      let i: i32 = 0;
+      while (i < a.args.len()) {
+        if (!semtypes.is_never(a.args[i]) && !semtypes.equal(a.args[i], b.args[i]) && !widens_to(a.args[i], b.args[i])) {
+          return false;
+        }
+        i = i + 1;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+// Completing absent arguments changes only impossible variants. Match the
+// sole inhabited source variant by its declaration position; clone names
+// differ; each payload must agree or have a lossless numeric widening.
+function completing_variant(from: typeinfo.Type, to: typeinfo.Type, s: State): i32 {
+  if (!semtypes.concrete(to, false) || !completes_enum(enum_origin(from, s), enum_origin(to, s))) {
+    return 0 - 1;
+  }
+  let source: semrecords.Variant[] = typed_variants(s, from);
+  let dest: semrecords.Variant[] = typed_variants(s, to);
+  if (source.len() != dest.len()) {
+    return 0 - 1;
+  }
+  let chosen: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < source.len()) {
+    if (semrecords.inhabited(source[i])) {
+      if (chosen >= 0 || !completable_payloads(source[i].fields, dest[i].fields)) {
+        return 0 - 1;
+      }
+      chosen = i;
+    }
+    i = i + 1;
+  }
+  return chosen;
+}
+
+function completable_payloads(a: semrecords.Field[], b: semrecords.Field[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.len()) {
+    if (!semtypes.equal(a[i].ty, b[i].ty) && !widens_to(a[i].ty, b[i].ty)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// Rebuild the sole inhabited variant at its completed destination type.
+// Ordinary projection/construction operations keep ownership and exact-type
+// verification intact, including when another alias still holds the source.
+function complete_variant(v: Value, expected: typeinfo.Type, index: i32): Value {
+  let ids: i32[] = [];
+  let s: State = v.s;
+  let shape: semrecords.Variant = typed_variants(s, s.values[v.id])[index];
+  let dest: semrecords.Variant = typed_variants(s, expected)[index];
+  let i: i32 = 0;
+  while (i < shape.fields.len()) {
+    let part: Value = define(s, ssasem.variant_get(), [v.id], i, shape.name, shape.fields[i].ty);
+    part = kept_view(unaliased_view(part));
+    if (widens_to(shape.fields[i].ty, dest.fields[i].ty)) {
+      part = define(part.s, ssasem.cast(), [part.id], 0, "", dest.fields[i].ty);
+    }
+    s = part.s;
+    ids = ids.append(part.id);
+    i = i + 1;
+  }
+  return define(s, ssasem.variant_new(), ids, 0, dest.name, expected);
+}
+
 // A union-typed destination accepts any of its members, and a view-typed one
 // accepts an owned string or array, whose box it borrows. Each widening is a verified
 // operation, not an implicit reinterpretation: the value carries exactly the
@@ -3708,6 +3822,10 @@ function widen(v: Value, expected: typeinfo.Type): Value {
   let s: State = v.s;
   if (semtypes.equal(s.values[v.id], expected)) {
     return v;
+  }
+  let completed: i32 = completing_variant(s.values[v.id], expected, s);
+  if (completed >= 0) {
+    return complete_variant(v, expected, completed);
   }
   // An Option with a void payload is only ever None, so it reads as the None
   // of any Option the destination names.
@@ -4549,12 +4667,11 @@ function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry
 // The variant names a union declares: a builtin union's are its instantiation's
 // two, a declared one's come from the declarations.
 function variant_names(s: State, whole: typeinfo.Type, layout: i32): string[] {
-  if (layout != semrecords.layout_option()) {
-    return union_variants(s, union_name(whole));
-  }
   let out: string[] = [];
-  for v in builtin_variants(whole) {
-    out = out.append(v.name);
+  for v in typed_variants(s, whole) {
+    if (semrecords.inhabited(v)) {
+      out = out.append(v.name);
+    }
   }
   return out;
 }
@@ -4673,6 +4790,7 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
     return Chain { ...none, arms: Arms { ...none.arms, s: s } };
   }
   let owner: string = union_name(s.values[scrut.id]);
+  m = inhabited_arms(m, s.values[scrut.id], s);
   if ((owner == "" || union_layout(s, owner) == 0) && !only_wildcards(m)) {
     return Chain { ...none, arms: Arms { ...none.arms, s: fail(s, "unsupported match scrutinee") } };
   }
@@ -4693,6 +4811,31 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
     i = i + 1;
   }
   return Chain { arms: arms, join: join, count: count };
+}
+
+// A closed enum instantiation can prove an arm unreachable. This is a
+// type fact, not a guess about the constructor an expression happens to use.
+function inhabited_arms(m: ast.StmtMatch, whole: typeinfo.Type, s: State): ast.StmtMatch {
+  let absent: string[] = [];
+  for v in typed_variants(s, whole) {
+    if (!semrecords.inhabited(v)) {
+      absent = absent.append(v.name);
+    }
+  }
+  if (absent.len() == 0) {
+    return m;
+  }
+  let arms: ast.MatchArm[] = [];
+  for a in m.arms {
+    let name: string = "";
+    if let ast.PatVariant(pv) = a.pattern {
+      name = unqualified(pv, union_name(whole)).type_name;
+    }
+    if (util.index_of_str(absent, name) < 0) {
+      arms = arms.append(a);
+    }
+  }
+  return ast.StmtMatch { ...m, arms: arms };
 }
 
 // A match-expression: every arm carries a value to the join, where the
@@ -5413,11 +5556,13 @@ function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Bi
     return first;
   }
   // `return Ok(v)` leaves Result's error to another exit, such as a `?`.
-  let exits: typeinfo.Type = resolved(checker.exit_result(fd.body, scope), generic_decl(fd), b, scope);
+  let exits: typeinfo.Type = settled(resolved(checker.exit_result(fd.body, scope), generic_decl(fd), b, scope));
   if (semtypes.concrete(exits, true)) {
     return exits;
   }
-  return first;
+  // Only settle absent arguments after all exits have contributed: an Ok
+  // on one exit may acquire its error argument from an Err on another.
+  return settled(first);
 }
 
 // The type of a slot the lambda lift filled with a closure constructor:
@@ -5608,7 +5753,7 @@ function env_captures(fd: parser.FuncDecl, scope: checker.Scope, template: boole
       if (reads_env_slot(v.init, out.len() + 1)) {
         read = true;
         at = checker.bind_stmt(st, at);
-        out = out.append(resolved(checker.scope_type(at, v.name), template, b, at));
+        out = out.append(settled(resolved(checker.scope_type(at, v.name), template, b, at)));
       }
     }
     if (!read) {
@@ -6280,19 +6425,31 @@ function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Sche
     return builtin_enum_entry(t, s, out);
   }
   let names: string[] = union_variants(s, u.name);
-  if (names.len() == 0 || u.args.len() > 0 || layout == 0) {
+  if (names.len() == 0 || u.args.len() != checker.union_sig(s.scope, u.name).type_params.len() || layout == 0) {
     return Schemas { ...out, ok: false, why: "unsupported enum type" };
   }
-  let variants: semrecords.Variant[] = [];
-  for name in names {
-    let vs: checker.StructSig = checker.variant_shape_sig(s.scope, name, u.name);
-    if (!fields_resolved(vs)) {
-      return Schemas { ...out, ok: false, why: "unresolved variant field type" };
+  let variants: semrecords.Variant[] = typed_variants(s, t);
+  for v in variants {
+    for field in v.fields {
+      if (!semtypes.is_never(field.ty) && !semtypes.concrete(field.ty, false)) {
+        return Schemas { ...out, ok: false, why: "unresolved variant field type" };
+      }
     }
-    variants = variants.append(semrecords.Variant { name: name, fields: fields_of(vs) });
   }
   let e: semrecords.Enum = semrecords.Enum { ty: t, variants: variants, layout: layout, views: util.index_of_str(s.views, u.name) >= 0 };
   return enum_members(e, s, with_new_enum(out, e));
+}
+
+function typed_variants(s: State, whole: typeinfo.Type): semrecords.Variant[] {
+  if (union_layout(s, union_name(whole)) == semrecords.layout_option()) {
+    return builtin_variants(whole);
+  }
+  let variants: semrecords.Variant[] = [];
+  for name in union_variants(s, union_name(whole)) {
+    let sig: checker.StructSig = checker.instantiated_variant(checker.variant_shape_sig(s.scope, name, union_name(whole)), s.scope, whole);
+    variants = variants.append(semrecords.Variant { name: name, fields: fields_of(sig) });
+  }
+  return variants;
 }
 
 // A builtin union is its instantiation: `Option` with no argument names no
@@ -6308,7 +6465,7 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
   }
   for v in variants {
     for field in v.fields {
-      if (!semtypes.concrete(field.ty, false)) {
+      if (!semtypes.is_never(field.ty) && !semtypes.concrete(field.ty, false)) {
         return Schemas { ...out, ok: false, why: "unresolved variant field type" };
       }
     }
@@ -6829,7 +6986,7 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.C
   let generic: boolean = generic_decl(fd);
   let at: i32 = 0;
   while (at < names.len()) {
-    let ty: typeinfo.Type = resolved(checker.scope_type(scope, names[at]), generic, ssasem.unbound(), scope);
+    let ty: typeinfo.Type = settled(resolved(checker.scope_type(scope, names[at]), generic, ssasem.unbound(), scope));
     if (at == 0 && is_closure_body(fd)) {
       ty = env_type(fd, scope, generic, ssasem.unbound(), parser.decl_key(fd));
     }

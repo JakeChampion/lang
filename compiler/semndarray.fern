@@ -389,7 +389,7 @@ function site_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index: 
 }
 
 function shape_type(): typeinfo.Type {
-  return typeinfo.TypeArray { elem: typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false }, view: false };
+  return typeinfo.TypeArray { elem: typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false }, view: false };
 }
 
 struct Emitted { values: typeinfo.Type[], insts: ssa.SInst[], calls: ssasem.Contract[] }

@@ -31,6 +31,7 @@ func semanticRecordCases() []struct{ name, change, want string } {
 		{"record-empty-field", `records = [semrecords.Record { ...record, fields: [semrecords.Field { name: "", ty: ia }] }];`, "empty record field name"},
 		{"record-unresolved-field", `records = [semrecords.Record { ...record, fields: [semrecords.Field { name: "xs", ty: typeinfo.unchecked() }] }];`, "unresolved record field type"},
 		{"record-void-field", `records = [semrecords.Record { ...record, fields: [semrecords.Field { name: "xs", ty: typeinfo.TypeVoid { tag: 0 } }] }];`, "unresolved record field type"},
+		{"record-never-field", `records = [semrecords.Record { ...record, fields: [semrecords.Field { name: "xs", ty: typeinfo.TypeNever { tag: 0 } }] }];`, "unresolved record field type"},
 		{"record-missing-nested-schema", `records = [semrecords.Record { ...record, fields: [semrecords.Field { name: "xs", ty: typeinfo.TypeArray { elem: wideRecord, view: false } }] }];`, "missing nested record schema"},
 		{"record-inconsistent-instance-fields", `records = records.append(semrecords.Record { views: false, ty: wideRecord, fields: [record.fields[1], record.fields[0]] });`, "inconsistent record instance schema"},
 		{"record-inconsistent-instance-arity", `records = records.append(semrecords.Record { views: false, ty: typeinfo.TypeStruct { name: "Box", args: [] }, fields: record.fields });`, "inconsistent record instance schema"},

@@ -273,6 +273,11 @@ type EnumType struct {
 // needs to compare two parameters from different scopes.
 type ParamType struct{ Name string }
 
+// UnboundType is an inference position not determined by a constructor's
+// payload. It is not a declared generic parameter or a runtime representation;
+// surrounding enum context may supply it without discarding known arguments.
+type UnboundType struct{}
+
 // SelfType is the contextual `Self` type that appears inside a trait
 // declaration's method signatures and inside `impl Trait for Type`
 // bodies. The parser substitutes SelfType with the impl's concrete
@@ -508,6 +513,7 @@ func (*FuncType) isType()    {}
 func (StructType) isType()   {}
 func (EnumType) isType()     {}
 func (ParamType) isType()    {}
+func (UnboundType) isType()  {}
 func (DynTraitType) isType() {}
 func (HandleType) isType()   {}
 func (ProjType) isType()     {}
@@ -603,6 +609,7 @@ func (e EnumType) String() string {
 	return out + "]"
 }
 func (p ParamType) String() string { return p.Name }
+func (UnboundType) String() string { return "_" }
 func (SelfType) String() string    { return "Self" }
 func (d DynTraitType) String() string {
 	parts := make([]string, len(d.Traits))
@@ -1873,6 +1880,9 @@ func Equal(a, b Type) bool {
 	case ParamType:
 		y, ok := b.(ParamType)
 		return ok && x.Name == y.Name
+	case UnboundType:
+		_, ok := b.(UnboundType)
+		return ok
 	case SelfType:
 		_, ok := b.(SelfType)
 		return ok

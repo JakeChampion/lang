@@ -170,14 +170,14 @@ function resolved_structural(ty: typeinfo.Type, records: Records, enums: Enum[])
   return true;
 }
 
-function fields_error(fields: Field[], records: Records, enums: Enum[]): string {
+function fields_error(fields: Field[], records: Records, enums: Enum[], variant: boolean): string {
   let i: i32 = 0;
   while (i < fields.len()) {
     let field: Field = fields[i];
     if (field.name == "") {
       return "empty record field name";
     }
-    if (!semtypes.concrete(field.ty, false)) {
+    if (!semtypes.concrete(field.ty, false) && !(variant && semtypes.is_never(field.ty))) {
       return "unresolved record field type";
     }
     if (!resolved(field.ty, records, enums)) {
@@ -250,13 +250,24 @@ function records_error(records: Records, enums: Enum[]): string {
       }
       j = records.names.next[j];
     }
-    let why: string = fields_error(record.fields, records, enums);
+    let why: string = fields_error(record.fields, records, enums, false);
     if (why != "") {
       return why;
     }
     i = i + 1;
   }
   return "";
+}
+
+// A direct uninhabited field makes the variant impossible to construct.
+// Its ordinal stays in the schema so the inhabited variants keep their ABI.
+pub function inhabited(v: Variant): boolean {
+  for field in v.fields {
+    if (semtypes.is_never(field.ty)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function variants_error(variants: Variant[], records: Records, enums: Enum[]): string {
@@ -272,7 +283,7 @@ function variants_error(variants: Variant[], records: Records, enums: Enum[]): s
       }
       j = j + 1;
     }
-    let why: string = fields_error(variants[i].fields, records, enums);
+    let why: string = fields_error(variants[i].fields, records, enums, true);
     if (why != "") {
       return why;
     }

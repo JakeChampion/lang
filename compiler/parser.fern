@@ -421,7 +421,9 @@ pub struct ExportBinding { func_name: string, iface: string, wit: string, c_abi:
 // makes the type usable with `?`. Native enforces the two-variant shape the
 // operator lowers against (E078); this side carries the mark so the parse
 // round-trips and lowering can key on it. See docs/TRY.md.
-pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], line: i32, col: i32, must_consume: boolean, try_marker: boolean, is_pub: boolean, is_package: boolean, module: string }
+// A clone retains its original instantiated type spelling. Typed lowering
+// uses this provenance when context completes a partially inferred enum.
+pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], line: i32, col: i32, must_consume: boolean, try_marker: boolean, is_pub: boolean, is_package: boolean, module: string, instance: string }
 
 // enum_variant_names extracts the variant names from an enum's desugared
 // variant structs.
@@ -16424,29 +16426,16 @@ function ms_module(mod: Module, defer_enums: boolean): Module {
 }
 
 // ---- generic-enum monomorphisation ----------------------------------
-// The self-host historically erased generic enum type parameters: an
-// `Opt[i32]` and an `Opt[string]` shared one untyped "Opt" shape, so the
-// variant payload type stayed the bare type variable `T` and the IR path
-// couldn't resolve a payload's primitive methods (`s.len()` on a string
-// payload mis-dispatched) — so the whole module bailed to the legacy AST
-// emitter. This pass mirrors monomorphize_structs for enums: clone each
-// generic enum per concrete instantiation (`Opt[i32]` → `Opt__i32` with
-// `Sm__i32(i32)`), mangle the variant CONSTRUCTION call sites and `match`
-// arm patterns to the clone, rewrite the `Opt[i32]` annotations to
-// `Opt__i32`, and wire the cloned enums + variant structs into the
-// returned Module (the generic originals are dropped). The enum's methods
-// and derives are cloned per instantiation the way monomorphize_structs
-// clones a struct's (clone_enum_method); a method with type params of its
-// own was folded into a free generic by register_struct_method_generics
-// before this pass. Scope: a key whose every type arg is a simple nominal
-// (primitive / string / bare struct, or a struct clone such as `Box__i32`,
-// since the struct pass runs first). An enum with any use at a composite
-// key (`Opt[(i32, i32)]`) is left out of the pass entirely (me_mono_enums),
-// declaration, variants and methods erased as before: a clone beside the
-// generic original mis-dispatches on the AST lowering, which resolves an
-// enum's methods by name. The compiler source uses no generic enums
-// and the stdlib's carry no methods, so the pass is a no-op there
-// (fixpoint-safe), exactly like the generic-struct pass. See issue #3572.
+// Clone each supported concrete enum instantiation (`Opt[i32]` becomes
+// `Opt__i32` with `Sm__i32(i32)`), rewriting constructions, match patterns
+// and annotations. Methods and derives get matching clones. A method's own
+// type parameters have already been folded into a free generic by
+// register_struct_method_generics. me_mono_enums excludes keys this pass
+// cannot represent; those remain for typed lowering.
+// Generic declarations, variants and methods remain as templates for partial
+// inference. Each clone records its original type spelling so typed lowering
+// can complete absent arguments using nominal identity and exact payload
+// types, without interpreting a generated name as source type information.
 
 // genum_index returns the index of the generic EnumDecl named `name`, or -1.
 function genum_index(enums: EnumDecl[], name: string): i32 {
@@ -18016,12 +18005,9 @@ pub function monomorphize_enums(mod: Module): Module {
   // Phase 1: rewrite references in every function (body + param/ret types)
   // and the top-level statements, accumulating instantiations.
   let nfuncs: FuncDecl[] = [];
-  // A generic enum's methods are held aside: an instantiated enum gets
-  // per-instantiation clones in phase 2 and these are dropped with its
-  // declaration; one never instantiated keeps its declaration and gets
-  // them back in phase 3.
+  // Generic methods are held aside while concrete clones are produced, then
+  // retained as templates for partial instances resolved by typed lowering.
   let held: FuncDecl[] = [];
-  let held_base: string[] = [];
   let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
     let fn: FuncDecl = mod.funcs[fi];
@@ -18047,7 +18033,6 @@ pub function monomorphize_enums(mod: Module): Module {
     };
     if (owner.len() > 0) {
       held = held.append(rfn);
-      held_base = held_base.append(owner);
     } else {
       nfuncs = nfuncs.append(rfn);
     }
@@ -18060,7 +18045,7 @@ pub function monomorphize_enums(mod: Module): Module {
   // Phase 1b: collect instantiations referenced by STRUCT FIELD types — a
   // (non-generic) struct with a generic-enum-typed field (`struct S { o:
   // Opt[i32] }`) must clone `Opt__i32` too, else the passthrough field below
-  // dangles on the dropped generic `Opt`. A bare type-param field (`T`, on a
+  // refers to a missing clone. A bare type-param field (`T`, on a
   // generic enum's own variant struct) yields no instantiation, so this is a
   // no-op there.
   let sfi: i32 = 0;
@@ -18077,10 +18062,8 @@ pub function monomorphize_enums(mod: Module): Module {
   // Phase 2: generate a concrete enum + variant structs per instantiation.
   let cl_enums: EnumDecl[] = [];
   let cl_structs: StructDecl[] = [];
-  // dropped collects the generic enum names that were instantiated; their
-  // originals (+ variant structs, + held methods) are removed from the
-  // passthrough.
-  let dropped: string[] = [];
+  // Instantiated templates keep their original field spellings below.
+  let instantiated: string[] = [];
   let wi: i32 = 0;
   while (wi < ins.inames.len()) {
     let base: string = ins.inames[wi];
@@ -18165,7 +18148,7 @@ pub function monomorphize_enums(mod: Module): Module {
         }
         vi2 = vi2 + 1;
       }
-      cl_enums = cl_enums.append(EnumDecl { name: mname, variant_names: nvn, type_params: [], line: ed.line, col: ed.col, must_consume: ed.must_consume, try_marker: ed.try_marker, is_pub: true, is_package: false, module: ed.module });
+      cl_enums = cl_enums.append(EnumDecl { name: mname, variant_names: nvn, type_params: [], line: ed.line, col: ed.col, must_consume: ed.must_consume, try_marker: ed.try_marker, is_pub: true, is_package: false, module: ed.module, instance: ed.name + "[" + subst_ty_join(cts, ",", [], []) + "]" });
       let mi: i32 = 0;
       while (mi < mod.funcs.len()) {
         let mm: FuncDecl = mod.funcs[mi];
@@ -18176,20 +18159,20 @@ pub function monomorphize_enums(mod: Module): Module {
         }
         mi = mi + 1;
       }
-      if (!str_in(dropped, base)) {
-        dropped = dropped.append(base);
+      if (!str_in(instantiated, base)) {
+        instantiated = instantiated.append(base);
       }
     }
     wi = wi + 1;
   }
 
-  // Phase 3: passthrough non-dropped enums + structs, then append clones.
+  // Keep generic declarations as typed schema templates beside their clones.
+  // A constructor can leave arguments open until a later use completes them;
+  // deleting its declaration here would lose both its payload and identity.
   let out_enums: EnumDecl[] = [];
   let oei: i32 = 0;
   while (oei < mod.enums.len()) {
-    if (!str_in(dropped, mod.enums[oei].name)) {
-      out_enums = out_enums.append(mod.enums[oei]);
-    }
+    out_enums = out_enums.append(mod.enums[oei]);
     oei = oei + 1;
   }
   let k2: i32 = 0;
@@ -18202,7 +18185,10 @@ pub function monomorphize_enums(mod: Module): Module {
   let osi: i32 = 0;
   while (osi < mod.structs.len()) {
     let sd: StructDecl = mod.structs[osi];
-    if (sd.enum_owner.len() == 0 || !str_in(dropped, sd.enum_owner)) {
+    if (sd.enum_owner.len() > 0 && str_in(instantiated, sd.enum_owner)) {
+      out_structs = out_structs.append(sd);
+    }
+    if (sd.enum_owner.len() == 0 || !str_in(instantiated, sd.enum_owner)) {
       // Rewrite a kept struct's generic-enum-typed fields to the mangled
       // clone (`o: Opt[i32]` -> `o: Opt__i32`), matching the clones phase 2
       // generated; non-generic-enum field types pass through unchanged.
@@ -18224,9 +18210,7 @@ pub function monomorphize_enums(mod: Module): Module {
   }
   let hi: i32 = 0;
   while (hi < held.len()) {
-    if (!str_in(dropped, held_base[hi])) {
-      nfuncs = nfuncs.append(held[hi]);
-    }
+    nfuncs = nfuncs.append(held[hi]);
     hi = hi + 1;
   }
 
@@ -20510,7 +20494,7 @@ pub function desugar_union_aliases(mod: Module): Module {
       structs = structs.append(StructDecl { name: member, fields: [StructFieldDecl { name: "__ev", type_name: payload, fn_ret: "", fn_param_types: "" }], type_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
       vi = vi + 1;
     }
-    enums = enums.append(EnumDecl { name: al.name, variant_names: al.variants, type_params: al.type_params, line: al.line, col: al.col, must_consume: false, try_marker: false, is_pub: al.is_pub, is_package: al.is_package, module: al.module });
+    enums = enums.append(EnumDecl { name: al.name, variant_names: al.variants, type_params: al.type_params, line: al.line, col: al.col, must_consume: false, try_marker: false, is_pub: al.is_pub, is_package: al.is_package, module: al.module, instance: "" });
     i = i + 1;
   }
   return Module { ...mod, aliases: aliases, structs: structs, enums: enums };
@@ -27881,7 +27865,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
           let (tme_name, tme_variants, tme_type_params, tme_vlines, tme_p) = parse_enum_decl(p);
           p = tme_p;
           flines = record_field_lines(flines, verbatim, tme_name, tmeline, tme_vlines);
-          enums = enums.append(EnumDecl { name: tme_name, variant_names: enum_variant_names(tme_variants), type_params: tme_type_params, line: tmeline, col: tmecol, must_consume: false, try_marker: true, is_pub: decl_pub, is_package: decl_package, module: "" });
+          enums = enums.append(EnumDecl { name: tme_name, variant_names: enum_variant_names(tme_variants), type_params: tme_type_params, line: tmeline, col: tmecol, must_consume: false, try_marker: true, is_pub: decl_pub, is_package: decl_package, module: "", instance: "" });
           let tmei: i32 = 0;
           while (tmei < tme_variants.len()) {
             structs = structs.append(tme_variants[tmei]);
@@ -27927,7 +27911,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
           let (mce_name, mce_variants, mce_type_params, mce_vlines, mce_p) = parse_enum_decl(p);
           p = mce_p;
           flines = record_field_lines(flines, verbatim, mce_name, mceline, mce_vlines);
-          enums = enums.append(EnumDecl { name: mce_name, variant_names: enum_variant_names(mce_variants), type_params: mce_type_params, line: mceline, col: mcecol, must_consume: true, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "" });
+          enums = enums.append(EnumDecl { name: mce_name, variant_names: enum_variant_names(mce_variants), type_params: mce_type_params, line: mceline, col: mcecol, must_consume: true, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "", instance: "" });
           let mcei: i32 = 0;
           while (mcei < mce_variants.len()) {
             structs = structs.append(mce_variants[mcei]);
@@ -27967,7 +27951,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         let (denr_name, denr_variants, denr_type_params, denr_vlines, denr_p) = parse_enum_decl(p);
         p = denr_p;
         flines = record_field_lines(flines, verbatim, denr_name, deline, denr_vlines);
-        enums = enums.append(EnumDecl { name: denr_name, variant_names: enum_variant_names(denr_variants), type_params: denr_type_params, line: deline, col: decol, must_consume: false, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "" });
+        enums = enums.append(EnumDecl { name: denr_name, variant_names: enum_variant_names(denr_variants), type_params: denr_type_params, line: deline, col: decol, must_consume: false, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "", instance: "" });
         let dei: i32 = 0;
         while (dei < denr_variants.len()) {
           structs = structs.append(StructDecl { ...denr_variants[dei], derives: dr_derives });
@@ -28090,7 +28074,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       let (enr_name, enr_variants, enr_type_params, enr_vlines, enr_p) = parse_enum_decl(p);
       p = enr_p;
       flines = record_field_lines(flines, verbatim, enr_name, eline, enr_vlines);
-      enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, line: eline, col: ecol, must_consume: false, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "" });
+      enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, line: eline, col: ecol, must_consume: false, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "", instance: "" });
       let ei: i32 = 0;
       while (ei < enr_variants.len()) {
         structs = structs.append(enr_variants[ei]);

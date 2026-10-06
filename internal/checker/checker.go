@@ -8035,15 +8035,15 @@ type checker struct {
 	litLocals  []*litLocal
 	litLocalOf map[*ast.Var]*litLocal
 	litIdents  map[*ast.Ident]*litLocal
-	// litStructOf holds, per unannotated generic struct local, the literal
+	// litCompositeOf holds, per unannotated generic struct or enum local, the literal
 	// local each type argument only untyped literals bound is (nil for an
 	// argument something typed bound); litFields maps a read of a field at
 	// such a parameter to it.
-	litStructOf    map[*ast.Var][]*litLocal
-	litFields      map[*ast.FieldAccess]*litLocal
-	litStructReads map[*ast.Ident]*ast.Var
-	current        *ast.FuncDecl
-	loopDepth      int
+	litCompositeOf    map[*ast.Var][]*litLocal
+	litFields         map[*ast.FieldAccess]*litLocal
+	litCompositeReads map[*ast.Ident]*ast.Var
+	current           *ast.FuncDecl
+	loopDepth         int
 	// tryConvN uniquifies the temp-var name in the error-converting `?`
 	// desugar (TryOp.Lowered). See #3234.
 	tryConvN int
@@ -10117,6 +10117,14 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 			if ast.Equal(existing, actual) {
 				return true
 			}
+			if e, ok := existing.(ast.EnumType); ok {
+				if a, ok := actual.(ast.EnumType); ok {
+					if merged, ok := mergeEnumInference(e, a); ok {
+						sub[p.Name] = merged
+						return true
+					}
+				}
+			}
 			// An ARGLESS named type is the deliberate "not yet resolved"
 			// form: the variant-call path returns it when the args can't be
 			// filled from the payload alone (`Ok(8)` leaves the error type
@@ -10180,6 +10188,9 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 			return false
 		}
 		for i := range e.Args {
+			if unboundEnumArg(a.Args[i]) {
+				continue
+			}
 			if !c.unifyType(e.Args[i], a.Args[i], sub) {
 				return false
 			}
@@ -10323,11 +10334,8 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 	ae, aok := a.(ast.EnumType)
 	be, bok := b.(ast.EnumType)
 	if aok && bok && ae.Name == be.Name {
-		if len(ae.Args) == 0 && len(be.Args) > 0 {
-			return be
-		}
-		if len(be.Args) == 0 && len(ae.Args) > 0 {
-			return ae
+		if merged, ok := mergeEnumInference(ae, be); ok {
+			return merged
 		}
 	}
 	// Two instantiations of one generic struct unify argument-wise, so
@@ -10972,6 +10980,9 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 		if se, sok := src.(ast.EnumType); sok && de.Name == se.Name && len(de.Args) == len(se.Args) {
 			allOk := true
 			for i := range de.Args {
+				if unboundEnumArg(de.Args[i]) || unboundEnumArg(se.Args[i]) {
+					continue
+				}
 				if !c.assignableWith(de.Args[i], se.Args[i], false) {
 					allOk = false
 					break
@@ -13081,12 +13092,7 @@ func unifyReturnType(a, b ast.Type) (ast.Type, bool) {
 	ea, aok := a.(ast.EnumType)
 	eb, bok := b.(ast.EnumType)
 	if aok && bok && ea.Name == eb.Name {
-		if len(ea.Args) == 0 && len(eb.Args) > 0 {
-			return eb, true
-		}
-		if len(eb.Args) == 0 && len(ea.Args) > 0 {
-			return ea, true
-		}
+		return mergeEnumInference(ea, eb)
 	}
 	return a, false
 }
@@ -14457,7 +14463,10 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		c.info.VarTypes[n] = n.Type
 		c.info.Locals[c.current] = append(c.info.Locals[c.current], n)
 		if st, ok := n.Type.(ast.StructType); ok && unannotated {
-			c.beginLitStructLocal(n, st, s)
+			c.beginLitCompositeLocal(n, st.Args, s)
+		}
+		if et, ok := n.Type.(ast.EnumType); ok && unannotated {
+			c.beginLitCompositeLocal(n, et.Args, s)
 		}
 	case *ast.Destructure:
 		// `let (a, b, …) = expr;` — Init must produce a
@@ -15312,6 +15321,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		}
 	}
 	covered := map[string]bool{}
+	literalLocals := c.enumLiteralLocals(n.Tag, et, s)
 	refutableByVariant := map[string][]structArmPat{}
 	sawWildcard := false
 	for i, arm := range n.Arms {
@@ -15405,6 +15415,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			armScope.names[arm.AtBinding] = et
 		}
 		c.bindArmPayloads(arm.P, arm.Bindings, arm.BindingTypes, arm.Payloads, s, armScope)
+		c.bindEnumLiteralPayloads(n.Tag, ed, variant, arm.Bindings, arm.BindingTypes, armScope, literalLocals)
 		// Guarded arms don't fully cover the variant: the guard might be
 		// false at runtime, in which case the match falls through. Leaving
 		// `covered[...]` clear means a later unguarded arm for the same
@@ -16171,6 +16182,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		}
 	}
 	covered := map[string]bool{}
+	literalLocals := c.enumLiteralLocals(n.Tag, et, s)
 	refutableByVariant := map[string][]structArmPat{}
 	sawWildcard := false
 	var result ast.Type
@@ -16271,6 +16283,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			armScope.names[arm.AtBinding] = et
 		}
 		c.bindArmPayloads(arm.P, arm.Bindings, arm.BindingTypes, arm.Payloads, s, armScope)
+		c.bindEnumLiteralPayloads(n.Tag, ed, variant, arm.Bindings, arm.BindingTypes, armScope, literalLocals)
 		// Guarded arms don't fully cover the variant: the guard might be
 		// false at runtime, in which case the match falls through. Leaving
 		// `covered[...]` clear means a later unguarded arm for the same
@@ -17655,6 +17668,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 				for i, a := range n.Args {
 					at := c.checkExpr(a, s)
+					if i < len(vr.payloads) {
+						c.settleNumeric(a, substituteType(vr.payloads[i], sub))
+						at = c.postSettleType(a, at)
+					}
 					if i >= len(vr.payloads) || at == nil {
 						continue
 					}
@@ -17734,12 +17751,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// the `Box[string, string]` the call wants and the mismatch
 					// is named.
 					destArgs := destEnumArgs(callExpected, vr.enumName, len(ed.TypeParams))
+					numericConflict := false
 					for i, p := range ed.TypeParams {
 						pinned, ok := sub[p]
 						if !ok || destArgs == nil {
 							continue
 						}
 						if numericType(pinned) && numericType(destArgs[i]) && !ast.Equal(pinned, destArgs[i]) {
+							numericConflict = true
 							destArgs = nil
 						}
 					}
@@ -17756,8 +17775,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 							}
 						}
 						complete = false
+						args[i] = ast.UnboundType{}
 					}
 					if !complete {
+						// Keep payload facts even when another position is open.
+						// A conflicting numeric destination still follows the
+						// existing contextual widening path below.
+						if len(sub) > 0 && !numericConflict {
+							result := ast.EnumType{Name: vr.enumName, Args: args}
+							c.recordEnumConstruction(n, vr, result, resolvedPayloads, callExpected)
+							return result
+						}
 						// Couldn't fill in every parameter from
 						// the args alone (typical for a
 						// payload-less variant). Leave Args nil
@@ -19990,7 +20018,8 @@ func betterRefinement(existing, candidate ast.Type) bool {
 		if !ok || c.Name != e.Name {
 			return false
 		}
-		return len(e.Args) < len(c.Args)
+		merged, ok := mergeEnumInference(e, c)
+		return ok && !ast.Equal(e, merged) && ast.Equal(c, merged)
 	case ast.StructType:
 		c, ok := candidate.(ast.StructType)
 		if !ok || c.Name != e.Name {
@@ -20045,7 +20074,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		return
 	}
 	if id, ok := e.(*ast.Ident); ok {
-		c.settleLitStructLocal(id, hint)
+		c.settleLitCompositeLocal(id, hint)
 	}
 	switch hn := hint.(type) {
 	case ast.NumberType:
@@ -20654,7 +20683,7 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		if ll := c.litIdents[x]; ll != nil && ll.fixed {
 			return ll.width
 		}
-		if t := c.litStructType(x); t != nil {
+		if t := c.litCompositeType(x); t != nil {
 			return t
 		}
 	case *ast.FieldAccess:

@@ -15,7 +15,7 @@ import "./ssasem";
 import "./seminline";
 import "./semrecords";
 import "./typeinfo";
-function word(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
+function word(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false }; }
 function inst(k: i32, v: i32, args: i32[], imm: i32, text: string): ssa.SInst {
   return ssa.SInst { kind_tag: k, result: v, args: args, imm: imm, str: text };
 }

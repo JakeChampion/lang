@@ -48,7 +48,7 @@ graph = ssa.SFunc { name: "duplicate", nparams: 1, nvals: 2, entry: 7, takes_env
 `
 
 const unitByteViewHandback = `
-let byte: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false };
+let byte: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false };
 let bv: typeinfo.Type = typeinfo.TypeArray { elem: byte, view: true };
 types = [st, i32t, i32t, view, st, bv]; params = [st]; result = bv; modes = [2];
 calls = [contract("borrow_bytes", [st], [2], bv)];

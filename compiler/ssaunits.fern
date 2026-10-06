@@ -565,6 +565,11 @@ pub function record_unit(r: semrecords.Record, f: ssasem.Func): boolean {
 
 pub function enum_unit(e: semrecords.Enum, f: ssasem.Func): boolean {
   for vr in e.variants {
+    // An impossible variant carries no runtime units. Keep its schema and
+    // ordinal, but never admit its absent payload as an ordinary value.
+    if (!semrecords.inhabited(vr)) {
+      continue;
+    }
     for field in vr.fields {
       if (!unit_shape(field.ty, f, false)) {
         return false;

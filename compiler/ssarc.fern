@@ -1149,9 +1149,9 @@ function drop_variant_fields(own r: irtables.LowerResult, slot: i32, t: typeinfo
     return drop_payload(r, slot, e, scratch, f);
   }
   for v in e.variants {
-    if (fields_have_children(v.fields)) {
+    if (semrecords.inhabited(v) && fields_have_children(v.fields)) {
       r = emit(r, ir.op_load_local(slot));
-      r = emit(r, ir.op_variant_is(v.name));
+      r = emit(r, ir.op_variant_is(ssasem.variant_key(t, v.name)));
       r = emit(r, ir.op_if(0));
       r = drop_record_fields(r, slot, v.fields, scratch, f, false);
       r = emit(r, ir.op_end());
@@ -1209,12 +1209,12 @@ function drop_variant_chain(own r: irtables.LowerResult, t: typeinfo.Type, f: ss
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(next));
   for v in e.variants {
-    if (!fields_have_children(v.fields)) {
+    if (!semrecords.inhabited(v) || !fields_have_children(v.fields)) {
       continue;
     }
     let tail: i32 = self_tail_field(v, t);
     r = emit(r, ir.op_load_local(node));
-    r = emit(r, ir.op_variant_is(v.name));
+    r = emit(r, ir.op_variant_is(ssasem.variant_key(t, v.name)));
     r = emit(r, ir.op_if(0));
     let i: i32 = 0;
     while (i < v.fields.len()) {
@@ -2343,7 +2343,8 @@ function decl_of(f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): i
   if (ins.kind_tag == ssasem.record_new()) {
     return irtables.decl_index_of(structs, record_name(f.values[ins.result]));
   }
-  return irtables.variant_decl_index(structs, ins.str, enum_name(f.values[ins.result]));
+  let whole: typeinfo.Type = f.values[ins.result];
+  return irtables.variant_decl_index(structs, ssasem.variant_key(whole, ins.str), ssasem.type_key(whole));
 }
 
 function enum_name(t: typeinfo.Type): string {
@@ -2398,6 +2399,10 @@ function record_walk(r: semrecords.Record, f: ssasem.Func): boolean {
 
 function enum_walk(e: semrecords.Enum, f: ssasem.Func): boolean {
   for vr in e.variants {
+    // No physical payload exists for a variant with an uninhabited field.
+    if (!semrecords.inhabited(vr)) {
+      continue;
+    }
     for field in vr.fields {
       if (!walk_shape(field.ty, f, false)) {
         return false;
@@ -4449,10 +4454,10 @@ function variant(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, st
     return option_site(r, f, ins, whole);
   }
   if (ins.kind_tag == ssasem.variant_new()) {
-    return emit(r, ir.op_struct_make(ins.str, ins.args.len(), decl_of(f, ins, structs)));
+    return emit(r, ir.op_struct_make(ssasem.variant_key(whole, ins.str), ins.args.len(), decl_of(f, ins, structs)));
   }
   if (ins.kind_tag == ssasem.variant_is()) {
-    return emit(r, ir.op_variant_is(ins.str));
+    return emit(r, ir.op_variant_is(ssasem.variant_key(whole, ins.str)));
   }
   return field_get(r, f, ins);
 }
