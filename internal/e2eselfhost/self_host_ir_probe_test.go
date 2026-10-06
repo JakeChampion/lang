@@ -256,9 +256,9 @@ func TestSelfHostVerdictBoolean(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "drivers/asm_pathprobe_run.fern")
-	const src = `import "./parser";
-import "./drivers/rundriver";
-import "./semlower";
+	const src = `import "../parser";
+import "./rundriver";
+import "../semlower";
 function main(): i32 {
   let mod: parser.Module = rundriver.parse_stdin("verdict_boolean");
   for target in ["x86-64-linux", "arm64-linux", "arm64-darwin", "wasm32-wasi"] {
@@ -272,10 +272,10 @@ function main(): i32 {
   }
   return 0;
 }`
-	if err := os.WriteFile(filepath.Join(dir, "verdict_boolean.fern"), []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers", "verdict_boolean.fern"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	probe := buildSelfHostBin(t, gcc, dir, "verdict_boolean.fern", "verdict_boolean")
+	probe := buildSelfHostBin(t, gcc, dir, "drivers/verdict_boolean.fern", "verdict_boolean")
 	for _, c := range irProbeCases() {
 		t.Run(c.name, func(t *testing.T) {
 			want := "refused\n"
