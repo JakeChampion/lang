@@ -30,7 +30,7 @@ const closeIoErrorSrc = `function code_of(o: Option[IoError]): i32 {
     match (o) {
         Some(e) => {
             match (e) {
-                Other(c, msg) => { if (msg == "Bad file descriptor") { return 7; } return 5; },
+                Other(c, msg, _) => { if (msg == "Bad file descriptor") { return 7; } return 5; },
                 _ => { return 4; }
             }
         },

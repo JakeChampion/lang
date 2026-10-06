@@ -41,7 +41,7 @@ const clockSetSource = `function report(r: Result[void, IoError]): void {
         Ok(_) => { print("ok"); },
         Err(e) => {
             match (e) {
-                Other(_, msg) => { print(msg); },
+                Other(_, msg, _) => { print(msg); },
                 Unsupported => { print("Operation not supported"); },
                 _ => { print("another IoError variant"); }
             }

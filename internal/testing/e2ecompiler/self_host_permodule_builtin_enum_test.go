@@ -20,7 +20,7 @@ const perModuleBuiltinEnumLib = `pub function code(e: IoError): i32 {
     match (e) {
         NotFound(_) => { return 1; },
         InvalidUtf8(_) => { return 2; },
-        Other(_, msg) => { return msg.len(); },
+        Other(_, msg, _) => { return msg.len(); },
         _ => { return 9; },
     }
     return 9;
@@ -29,7 +29,7 @@ const perModuleBuiltinEnumLib = `pub function code(e: IoError): i32 {
 
 const perModuleBuiltinEnumEntry = `import "./lib";
 function main(): i32 {
-    return lib.code(NotFound("a")) * 100 + lib.code(InvalidUtf8("b")) * 10 + lib.code(Other("c", "xyz"));
+    return lib.code(NotFound("a")) * 100 + lib.code(InvalidUtf8("b")) * 10 + lib.code(Other("c", "xyz", 0));
 }
 `
 

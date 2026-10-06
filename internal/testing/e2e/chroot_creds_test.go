@@ -35,7 +35,7 @@ function code_of(e: IoError): i32 {
         InvalidUtf8(_) => { return 4; },
         Interrupted => { return 5; },
         Unsupported => { return 6; },
-        Other(c, m) => { return 7; }
+        Other(c, m, _) => { return 7; }
     }
 }
 
@@ -130,7 +130,7 @@ function main(): i32 {
             Ok(v) => { return 79; },
             Err(e) => {
                 match (e) {
-                    Other(p, m) => { if (m != "Operation not permitted") { return 80; } },
+                    Other(p, m, _) => { if (m != "Operation not permitted") { return 80; } },
                     _ => { return 80; }
                 }
             }
@@ -139,7 +139,7 @@ function main(): i32 {
             Ok(v) => { return 81; },
             Err(e) => {
                 match (e) {
-                    Other(p, m) => { if (m != "Operation not permitted") { return 82; } },
+                    Other(p, m, _) => { if (m != "Operation not permitted") { return 82; } },
                     _ => { return 82; }
                 }
             }
@@ -148,7 +148,7 @@ function main(): i32 {
             Ok(v) => { return 83; },
             Err(e) => {
                 match (e) {
-                    Other(p, m) => { if (m != "Operation not permitted") { return 84; } },
+                    Other(p, m, _) => { if (m != "Operation not permitted") { return 84; } },
                     _ => { return 84; }
                 }
             }

@@ -2,12 +2,17 @@
 // directory fails in read(2) with EISDIR, and the message is glibc's
 // wording for it on every target, Darwin included. The path is the
 // working directory, which exists wherever the runner starts the program.
+// The errno is EISDIR's Linux number on every target (#11296).
 function main(): i32 {
   match (read_file(".")) {
     Ok(_) => { print("read a directory"); return 1; },
     Err(e) => {
       match (e) {
-        Other(p, m) => { print(p + ": " + m); return 0; },
+        Other(p, m, n) => {
+          if (n != 21) { print("errno is not EISDIR"); return 3; }
+          print(p + ": " + m);
+          return 0;
+        },
         _ => { print("wrong variant"); return 2; }
       }
     }

@@ -564,7 +564,7 @@ function errno_of(e: IoError): i32 {
     Unsupported => {
       return 95;
     },
-    Other(_, _) => {
+    Other(_, _, _) => {
       return 1000;
     }
   }

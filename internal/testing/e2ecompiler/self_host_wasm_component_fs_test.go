@@ -34,7 +34,7 @@ function kind(e: IoError): string {
         InvalidUtf8(_) => { return "InvalidUtf8"; },
         Interrupted => { return "Interrupted"; },
         Unsupported => { return "Unsupported"; },
-        Other(_, m) => { return "Other(" + m + ")"; }
+        Other(_, m, _) => { return "Other(" + m + ")"; }
     }
 }
 

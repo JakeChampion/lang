@@ -2225,6 +2225,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"injected-variant-payload-json", "function main(): i32 { let j: JsonValue = JNumber(1.0); return 0; }\n", []string{"E036"}},
 		{"injected-variant-payload-ioerror", "function main(): i32 { let e: IoError = NotFound(3); return 0; }\n", []string{"E036"}},
 		{"injected-variant-payload-ok", "function main(): i32 { let j: JsonValue = JNumber(\"1.0\"); let e: IoError = NotFound(\"p\"); return 0; }\n", nil},
+		// IoError.Other is (path, message, errno), the errno an i32 (#11296).
+		{"injected-other-three-payloads", "function main(): i32 { let e: IoError = Other(\"p\", \"m\", 21); match (e) { Other(p, m, n) => { return n; }, _ => { return 0; } } }\n", nil},
+		{"injected-other-two-arguments", "function main(): i32 { let e: IoError = Other(\"p\", \"m\"); return 0; }\n", []string{"E036"}},
+		{"injected-other-errno-is-i32", "function main(): i32 { let e: IoError = Other(\"p\", \"m\", \"21\"); return 0; }\n", []string{"E036"}},
+		{"injected-other-two-bindings", "function main(): i32 { let e: IoError = Unsupported; match (e) { Other(p, m) => { return 1; }, _ => { return 0; } } }\n", []string{"E015"}},
+		{"injected-other-errno-binding-is-i32", "function main(): i32 { let e: IoError = Unsupported; match (e) { Other(p, m, n) => { let s: string = n; return 1; }, _ => { return 0; } } }\n", []string{"E003"}},
 		// The enclosing scope's store is judged on the VALUE's type, as native
 		// judges it: a struct that reaches no function may be stored into a
 		// captured `dyn`, a `dyn`-typed value may not (#8440).
