@@ -46,6 +46,6 @@ largest because `Loops.members` is an n×n matrix filled a cell at a time.
 
 ## What is left
 
-The `-1` fills (`ssadeps.indices` and the fourteen like it) are the same
-loop with a different constant, about 40 M together; a fill builtin that
-takes the value, or a memset-backed `with` run, would take them.
+The `-1` fills (`ssadeps.indices` and the sixteen like it) are the same
+loop with a different constant, 78 M of self cost together before the
+pushes behind them; a fill builtin that takes the value would take them.

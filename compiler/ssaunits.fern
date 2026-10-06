@@ -1921,12 +1921,13 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchor
   return out;
 }
 
-// An element read that outlives a consuming use of its array takes a unit of
-// its own at the read: retained there, released when it dies, anchored to
-// nothing. As a borrow it kept the array alive past the use, so a `.with` or
-// an append there retained the array instead of moving it and copied the
-// whole buffer (#9849). A read that dies before any such use stays a borrow
-// and costs nothing.
+// An element read still in hand when its array is consumed takes a unit of
+// its own at the read: one that outlives the consuming use, or one handed to
+// that use beside the array (`outliving`). Retained there, released when it
+// dies, anchored to nothing. As a borrow it kept the array alive past the
+// use, so a `.with`, an append or a call there retained the array instead of
+// moving it and copied the whole buffer (#9849). A read that dies before any
+// such use stays a borrow and costs nothing.
 function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   let anchored: Anchored = anchored_to(a, f.graph.nvals);
