@@ -1,18 +1,20 @@
-// std/signal — the two signal dispositions a program can set, and names for
-// the signals worth naming.
+// std/signal — the signal dispositions a program can set, a caught signal it
+// can poll for, and names for the signals worth naming.
 //
-// There is no handler-installing form. A handler runs as a second context
+// No Fern code runs when a signal arrives. A handler runs as a second context
 // against non-atomic reference counts — the same problem
-// docs/BARE-METAL-PLAN.md records for interrupt handlers — so installing one
-// is a memory-model question, not a stdlib one. What a utility actually needs
-// is the disposition: `tee -i` is SIG_IGN on SIGINT, and its whole
-// `--output-error` family is SIG_IGN on SIGPIPE so a write to a vanished
-// reader returns an error the program can report instead of killing it.
+// docs/BARE-METAL-PLAN.md records for interrupt handlers — so `catch` installs
+// one that only sets a flag, and the program reads it with `taken` at a point
+// of its own choosing. The dispositions cover the rest: `tee -i` is SIG_IGN on
+// SIGINT, and its whole `--output-error` family is SIG_IGN on SIGPIPE so a
+// write to a vanished reader returns an error the program can report instead
+// of killing it.
 //
 // Needs the `signal` target capability (`internal/pkg/platforms`). A wasi-cli
-// component grants it and both calls do nothing there: nothing in either WASI
-// world can deliver a signal, so there is no disposition to change. A
-// freestanding target has no process to deliver to and does not get it at all.
+// component grants it and every call does nothing there: nothing in either
+// WASI world can deliver a signal, so there is no disposition to change and
+// nothing is ever taken. A freestanding target has no process to deliver to
+// and does not get it at all.
 
 // SIGINT — the terminal's interrupt (^C). 2 on Linux and Darwin alike.
 pub const SIGINT: i32 = 2;
@@ -53,6 +55,28 @@ pub function ignore(sig: i32): i32 {
 // with this rather than leaving the whole process changed. Same return.
 pub function default(sig: i32): i32 {
   return signal_default(sig);
+}
+
+// `catch(sig)` — record each arrival of `sig` instead of taking its default
+// action, for `taken` to read. Same return as `ignore`.
+//
+//     signal.catch(signal.SIGHUP);
+//     while (working) {
+//         if (signal.taken(signal.SIGHUP)) { reload(); }
+//         ...
+//     }
+//
+// A read or write the signal interrupts resumes rather than failing, so the
+// program notices at its next poll, not mid-call.
+pub function catch(sig: i32): i32 {
+  return signal_catch(sig);
+}
+
+// `taken(sig)` — whether `sig` has arrived since the last call, clearing it.
+// Several arrivals between two polls read as one; a signal never caught is
+// never taken.
+pub function taken(sig: i32): boolean {
+  return signal_taken(sig);
 }
 
 // `blocked()` — the set of signals currently blocked from delivery, a bit per

@@ -284,6 +284,10 @@ var Ungated = map[string]bool{
 	// question is whether the target has signals at all.
 	"signal_ignore":  true,
 	"signal_default": true,
+	// Catching a signal is a disposition too: the handler only sets a
+	// flag this process later reads.
+	"signal_catch": true,
+	"signal_taken": true,
 	// Scheduling priority is the same shape as a signal disposition:
 	// reading it reports this process's own state, and setting it
 	// changes how this process — and, since niceness is inherited

@@ -10201,8 +10201,9 @@ pub function builtin_function_names(): string[] {
     // The kernel-enforced ceiling on this process's open descriptors,
     // which `ulimit -n` prints (#8819).
     "rlimit_nofile",
-    // signal dispositions — SIG_IGN / SIG_DFL for one signal
-    "signal_ignore", "signal_default",
+    // signal dispositions — SIG_IGN / SIG_DFL for one signal, and the
+    // flag-raising catch a program polls
+    "signal_ignore", "signal_default", "signal_catch", "signal_taken",
     // clocks + randomness + sleep + reactor readiness
     "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "sleep_ns", "random_bytes",
     "random_i32", "poll", "timer_fd", "wasm_timer_pollable",

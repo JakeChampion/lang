@@ -1615,6 +1615,8 @@ func New() *Interp {
 	i.Builtins["cpu_count"] = &Builtin{Fn: builtinCPUCount}
 	i.Builtins["signal_ignore"] = &Builtin{Fn: builtinSignalIgnore}
 	i.Builtins["signal_default"] = &Builtin{Fn: builtinSignalDefault}
+	i.Builtins["signal_catch"] = &Builtin{Fn: builtinSignalCatch}
+	i.Builtins["signal_taken"] = &Builtin{Fn: builtinSignalTaken}
 	i.Builtins["signal_mask"] = &Builtin{Fn: builtinSignalMask}
 	i.Builtins["signal_disposition"] = &Builtin{Fn: builtinSignalDisposition}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
@@ -4416,6 +4418,7 @@ func builtinSignalIgnore(_ *Interp, args []Value) (Value, error) {
 		return Number(-22), nil // -EINVAL, as the kernel answers
 	}
 	signal.Ignore(sig)
+	uncatch(sig)
 	return Number(0), nil
 }
 
@@ -4440,6 +4443,7 @@ func builtinSignalDefault(_ *Interp, args []Value) (Value, error) {
 	signal.Notify(ch, sig)
 	signal.Stop(ch)
 	signal.Reset(sig)
+	uncatch(sig)
 	return Number(0), nil
 }
 
@@ -4468,11 +4472,11 @@ func builtinSignalMask(_ *Interp, args []Value) (Value, error) {
 }
 
 // builtinSignalDisposition reads one signal's disposition: 0 default /
-// 1 ignored / 2 a handler is installed. `signal.Ignored` is the record of
-// what the two setters did — the only way a Fern program can move a
-// disposition — so a handler the Go runtime keeps for itself reads as 0 here
-// where a native sigaction would say 2. A signal number the kernel rejects
-// answers the same EINVAL the setters do.
+// 1 ignored / 2 a handler is installed. `signal.Ignored` and the catch table
+// are the record of what the three setters did — the only ways a Fern program
+// can move a disposition — so a handler the Go runtime keeps for itself reads
+// as 0 here where a native sigaction would say 2. A signal number the kernel
+// rejects answers the same EINVAL the setters do.
 func builtinSignalDisposition(_ *Interp, args []Value) (Value, error) {
 	sig, ok, err := signalArg("signal_disposition", args)
 	if err != nil {
@@ -4483,6 +4487,9 @@ func builtinSignalDisposition(_ *Interp, args []Value) (Value, error) {
 	}
 	if signal.Ignored(sig) {
 		return Number(1), nil
+	}
+	if isCaught(sig) {
+		return Number(2), nil
 	}
 	return Number(0), nil
 }

@@ -422,6 +422,8 @@ var providedSigs = map[string]providedSig{
 	"remove_file":                      {-1, rWord},
 	"signal_default":                   {1, rWord},
 	"signal_ignore":                    {1, rWord},
+	"signal_catch":                     {1, rWord},
+	"signal_taken":                     {1, rWord},
 	"signal_mask":                      {2, rWord},
 	"signal_disposition":               {1, rWord},
 	"create_dir":                       {3, rWord},

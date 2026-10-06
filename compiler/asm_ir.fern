@@ -1587,6 +1587,33 @@ function fc_pio2_reduce(prefix: string): string {
     + ".L" + prefix + "_red:\n";
 }
 
+// emit_rt_signal_flags appends what signal_catch / signal_taken share: one
+// byte per signal number in __fern_sig_flags, the handler that sets one, the
+// SA_RESTORER routine the kernel returns through, and the poll that reads and
+// clears one.
+//
+// The handler touches nothing but its byte, so it cannot race the program's
+// reference counts. The poll is one `xchg`: the memory form is atomic, so a
+// signal arriving while it runs is either read now or left for the next poll,
+// never cleared unread. %rdi is the signal; out of 1..64 nothing was taken.
+function emit_rt_signal_flags(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.any_need(["signal_catch", "signal_taken"])) {
+    return s;
+  }
+  s = s.write("    .section .bss\n    .align 8\n__fern_sig_flags: .skip 65\n    .text\n");
+  if (s.has_need("signal_catch")) {
+    s = s.write("    .globl __fern_sig_catcher\n    .globl __fern_sig_return\n__fern_sig_catcher:\n    movslq %edi, %rdi\n    leaq __fern_sig_flags(%rip), %rax\n    movb $1, (%rax,%rdi)\n    ret\n");
+    s = s.write("__fern_sig_return:\n    movq $15, %rax\n");
+    s = s.syscall(15);
+  }
+  if (s.has_need("signal_taken")) {
+    s = s.write("    .globl __fern_signal_taken\n    .type __fern_signal_taken, @function\n__fern_signal_taken:\n");
+    s = s.write("    xorl %eax, %eax\n    movl %edi, %ecx\n    subl $1, %ecx\n    cmpl $63, %ecx\n    ja .Lsig_taken_none\n");
+    s = s.write("    movslq %edi, %rdi\n    leaq __fern_sig_flags(%rip), %rcx\n    xchgb %al, (%rcx,%rdi)\n.Lsig_taken_none:\n    ret\n");
+  }
+  return s;
+}
+
 // __fern_sum_bytes(box) -> i32: every byte of the string added into a 32-bit
 // sum that wraps, the kernel native's emitSumBytesRuntime runs. psadbw against
 // a zero register sums each 8-byte half of a 16-byte block into a 64-bit lane
@@ -10369,6 +10396,18 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     }
     s = s.write("    call __fn___fern_" + sig_fn + "\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need(sig_fn);
+  } else if (o.kind_tag == 392) {  // signal_catch
+    // [sig] -> __fern_signal_catch(sig, catcher, restorer): the runtime
+    // floor cannot name a label, so the two code addresses go in as
+    // operands, param[0] on top.
+    s = s.write("    popq %rdi\n    leaq __fern_sig_return(%rip), %rax\n    pushq %rax\n    leaq __fern_sig_catcher(%rip), %rax\n    pushq %rax\n    pushq %rdi\n");
+    s = s.write("    call __fn___fern_signal_catch\n    addq $24, %rsp\n    pushq %rax\n");
+    s = s.need("signal_catch");
+  } else if (o.kind_tag == 393) {  // signal_taken
+    // [sig] -> __fern_signal_taken(%rdi=sig): the flag, cleared by the
+    // same exchange that reads it.
+    s = s.write("    popq %rdi\n    call __fern_signal_taken\n    pushq %rax\n");
+    s = s.need("signal_taken");
   } else if (o.kind_tag == 237) {  // access
     // [pathbox][mode] (mode on top) -> Result[void, IoError]. Same
     // two-operand shuffle write_file does: the stack ABI wants
@@ -12359,7 +12398,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     "eprint", "udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
     "tcp_listen_with_u8", "udp_bind_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
     "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
-    "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
+    "rlimit_nofile", "signal_ignore", "signal_default", "signal_catch", "signal_mask",
     "signal_disposition", "access",
     "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
     "fd_stat", "raw_scratch",
@@ -12707,6 +12746,11 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition("x86_64", "signal_default", "0"), s);
   }
+  if (s.has_need("signal_catch")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_catch("x86_64"), s);
+  }
+  s = emit_rt_signal_flags(s);
   if (s.has_need("geteuid")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "geteuid"), s);

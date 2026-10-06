@@ -2913,9 +2913,8 @@ pub function rt_src_rlimit_nofile(t: string): string {
 // `handler` is the whole difference between the two: SIG_IGN is 1, SIG_DFL 0.
 //
 // One 32-byte scratch serves all three targets. Linux's kernel sigaction is
-// {handler, flags, restorer, mask} on x86-64 and {handler, flags, mask} on
-// arm64; XNU's is {handler, tramp, mask, flags}. Only `sa_handler`, at offset 0
-// on all three, is non-zero for a plain disposition, so the other three words
+// {handler, flags, restorer, mask} on both ISAs; XNU's is {handler, tramp,
+// mask, flags}. Only `sa_handler`, at offset 0 on all three, is non-zero for a plain disposition, so the other three words
 // are stored as zero rather than branched on — __raw_scratch does not hand back
 // cleared memory. SA_RESTORER is a DELIVERY requirement and neither disposition
 // ever builds a signal frame, so a zero sa_flags is correct here.
@@ -2925,6 +2924,27 @@ pub function rt_src_rlimit_nofile(t: string): string {
 // __syscall4.
 pub function rt_src_signal_disposition(t: string, name: string, handler: string): string {
   return "function __fern_" + name + "(sig: i32): i32 { let act: usize = __raw_scratch(32); __raw_store_ptr(act, 0, " + handler + "); __raw_store_ptr(act, 1, 0); __raw_store_ptr(act, 2, 0); __raw_store_ptr(act, 3, 0); return __syscall4(" + sysno(t, "sigaction") + ", sig as i64, act as i64, 0, 8) as i32; }";
+}
+
+// rt_src_signal_catch backs `signal_catch(sig)` (syscall-leaf) -> the
+// sigaction return. `handler` is the backend's __fern_sig_catcher, which sets
+// the signal's byte in __fern_sig_flags and returns; `ret` is how a handler
+// gets back: Linux's SA_RESTORER routine, which calls rt_sigreturn, or XNU's
+// sa_tramp, which calls the handler and then sigreturn. The stack-op arm
+// passes both addresses, since the runtime floor cannot name a label.
+//
+// Linux, both ISAs: {handler, flags, restorer, mask}, flags SA_RESTART
+// (0x10000000) | SA_RESTORER (0x04000000). XNU: {handler, tramp, mask: u32,
+// flags: u32}, so the third word is SA_RESTART (2) shifted into the flags
+// half. SA_RESTART makes a read or write the signal interrupts resume rather
+// than fail with EINTR, so a caller polls at a point of its own choosing. The
+// bound keeps signal_taken's index inside the 65-byte flag table.
+pub function rt_src_signal_catch(t: string): string {
+  let words: string = "__raw_store_ptr(act, 1, 335544320); __raw_store_ptr(act, 2, ret);";
+  if (t == "arm64-darwin") {
+    words = "__raw_store_ptr(act, 1, ret); __store_i64(__raw_addr(act, 16), 8589934592 as i64);";
+  }
+  return "function __fern_signal_catch(sig: i32, handler: usize, ret: usize): i32 { if (sig < 1 || sig > 64) { return 0 - 22; } let act: usize = __raw_scratch(32); __raw_store_ptr(act, 0, handler); " + words + " __raw_store_ptr(act, 3, 0); return __syscall4(" + sysno(t, "sigaction") + ", sig as i64, act as i64, 0, 8) as i32; }";
 }
 
 // sockaddr_head writes the first two bytes of a `sockaddr_in`, which is the one
@@ -7145,6 +7165,10 @@ function builtin_i32_names(): string[] {
     // balances — the same shape as sleep_ms above.
     "signal_ignore",
     "signal_default",
+    // signal_catch(sig) -> the same sigaction return; signal_taken(sig) ->
+    // boolean, in an integer slot like isatty's.
+    "signal_catch",
+    "signal_taken",
     // signal_mask(how, mask) -> the previously-blocked mask as an i64,
     // in an integer slot like the clocks'; signal_disposition(sig) ->
     // a small enumerated i32.
@@ -10197,6 +10221,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_hostname",
     "__fn___fern_signal_ignore", "__fn___fern_signal_default",
     "__fn___fern_signal_mask", "__fn___fern_signal_disposition",
+    "__fn___fern_signal_catch",
     "__fn___fern_chdir",
     "__fern_strbuf_reset", "__fern_strbuf_take",
     // The capacity-carrying string builder (#8773). __fern_buf_reserve is

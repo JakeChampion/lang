@@ -367,3 +367,5 @@ clock_set=388
 clock_resolution=389
 str_hash=390
 read_dir_ino=391
+signal_catch=392
+signal_taken=393

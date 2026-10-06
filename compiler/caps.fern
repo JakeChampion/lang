@@ -201,6 +201,9 @@ pub function ungated(): string[] {
     "putchar", "print", "write", "eprint", "read_line",
     "stdin", "stdout", "stderr", "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "target_os", "target_arch", "args", "set_args", "exit",
     "signal_ignore", "signal_default",
+    // Catching is a disposition too: the handler only sets a flag this
+    // process later reads.
+    "signal_catch", "signal_taken",
     // Reading a disposition or the blocked mask reaches even less far
     // than setting one does; signal_mask writes to the same
     // process-wide state the two setters already reach.
