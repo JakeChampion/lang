@@ -7225,46 +7225,45 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   return r;
 }
 
-// Open stack-IR labels, innermost last. A label is the layout index control
-// reaches by branching to it: a `block` ends before that index, a `loop`
-// starts at it. An `if` arm is a label of its own that no branch targets.
+// Open stack-IR labels, innermost last: the first `depth` entries of
+// `labels`, the rest left from scopes already closed. A label is the layout
+// index control reaches by branching to it: a `block` ends before that
+// index, a `loop` starts at it. An `if` arm is a label of its own that no
+// branch targets.
 // `steps` is the plan's step index (ssaunits.step_index).
 // no_reuse is the #4350 §6.5 differential switch, which the AST path's reuse
 // layer answers too: with it set every construction allocates, so a program's
 // observable behaviour can be compared against its own reusing build.
 // `at` is each block's position in the block list and `ranks` its position in
 // the layout order, both by id.
-struct Emit { r: irtables.LowerResult, labels: i32[], why: string, steps: i32[][], links: i32[], no_reuse: boolean, uses: i32[], maps: boolean[], carry: Carry, at: i32[], ranks: i32[] }
+struct Emit { r: irtables.LowerResult, labels: i32[], depth: i32, why: string, steps: i32[][], links: i32[], no_reuse: boolean, uses: i32[], maps: boolean[], carry: Carry, at: i32[], ranks: i32[] }
 
 function label_if(): i32 {
   return 0 - 1;
 }
 
 function push(own e: Emit, op: ir.Op, label: i32): Emit {
-  return Emit { ...e, r: emit(e.r, op), labels: e.labels.append(label) };
+  if (e.depth < e.labels.len()) {
+    return Emit { ...e, r: emit(e.r, op), labels: e.labels.with(e.depth, label), depth: e.depth + 1 };
+  }
+  return Emit { ...e, r: emit(e.r, op), labels: e.labels.append(label), depth: e.depth + 1 };
 }
 
 function pop(own e: Emit): Emit {
-  let labels: i32[] = [];
-  let i: i32 = 0;
-  while (i < e.labels.len() - 1) {
-    labels = labels.append(e.labels[i]);
-    i = i + 1;
-  }
-  return Emit { ...e, r: emit(e.r, ir.op_end()), labels: labels };
+  return Emit { ...e, r: emit(e.r, ir.op_end()), depth: e.depth - 1 };
 }
 
 // A branch target without an open label is a layout defect; refuse the
 // function rather than emit a depth the backends would fault on.
 function depth(e: Emit, target: i32): i32 {
-  let i: i32 = e.labels.len() - 1;
+  let i: i32 = e.depth - 1;
   while (i >= 0 && e.labels[i] != target) {
     i = i - 1;
   }
   if (i < 0) {
     return 0 - 1;
   }
-  return e.labels.len() - 1 - i;
+  return e.depth - 1 - i;
 }
 
 // Each block's first position in `order`, by id, or -1 for one not in it.
@@ -7541,7 +7540,7 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
   let maps: boolean[] = in_place_maps(f, modes, p, steps, links, pure, no_reuse);
   let at: i32[] = ssa.block_positions(f.graph);
   let ranks: i32[] = order_ranks(f.graph, layout.order, at.len());
-  let e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links, no_reuse: no_reuse, uses: use_counts(f), maps: maps, carry: carried_pairs(f, p, steps, links, no_reuse), at: at, ranks: ranks }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
+  let e: Emit = region(Emit { r: frame(f), labels: [], depth: 0, why: "", steps: steps, links: links, no_reuse: no_reuse, uses: use_counts(f), maps: maps, carry: carried_pairs(f, p, steps, links, no_reuse), at: at, ranks: ranks }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
   if (e.why != "") {
     return empty(e.why);
   }
