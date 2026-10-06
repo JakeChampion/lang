@@ -7,7 +7,8 @@ import "testing"
 // allocated. Each probe runs 100 rounds and prints its result times 1000 plus
 // the heap allocations the rounds made. divmod's one return and scan's two
 // returns joined by a phi allocate nothing once spliced; kept is the same body
-// as divmod under @noinline, so its tuple is still a box a round. clamp
+// as divmod under @noinline, so its call remains, but sempair returns its two
+// scalars without a box. clamp
 // returns a scalar through three blocks and allocates nothing either way.
 // span reads two fields of a record parameter into a tuple, and kept_span is
 // the same body under @noinline. pick reads the fields of a record a phi
@@ -108,10 +109,11 @@ func semInlineWants(want string) map[string]string {
 
 func TestSelfHostSemanticInline(t *testing.T) {
 	runSemanticProgram(t, "seminline", semInlineProgram, semInlineProduced,
-		semInlineWants("1950000\n1225000\n1845000\n1950100\n5950000\n5950100\n900000\n"))
+		semInlineWants("1950000\n1225000\n1845000\n1950000\n5950000\n5950000\n900000\n"), "kept", "kept_span")
 }
 
-// FERN_SEM_INLINE= turns the pass off, and every tuple is a box again.
+// FERN_SEM_INLINE= turns off both splicing and pair returns, so every tuple
+// is a box again.
 func TestSelfHostSemanticInlineOff(t *testing.T) {
 	t.Setenv("FERN_SEM_INLINE", "")
 	runSemanticProgram(t, "seminline-off", semInlineProgram, semInlineProduced,
