@@ -21,5 +21,5 @@ func TestSelfHostServeAllocsPerRequest(t *testing.T) {
 	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1")
 	cmd := runX86_64Bin(cli.runner, bin)
 	addr, _ := e2eharness.StartInheritedServer(t, cmd)
-	e2eharness.CheckServeAllocs(t, addr, 4)
+	e2eharness.CheckServeAllocs(t, addr, 3)
 }
