@@ -7173,6 +7173,7 @@ function strength_rewrite(ks: StrengthKinds, k: i32, bop: Op): StrengthRewrite {
 // so the second site is found in the same pass.
 pub function reduce_strength_ex(ops: Op[]): StrengthResult {
   let ks: StrengthKinds = strength_kinds();
+  // `out` is written from the first rewrite on.
   let out: Op[] = [];
   let changed: boolean = false;
   let i: i32 = 0;
@@ -7180,6 +7181,9 @@ pub function reduce_strength_ex(ops: Op[]): StrengthResult {
     if (i + 1 < ops.len() && const_i32_readable(ops[i]) && ops[i + 1].width == 0) {
       let repl: StrengthRewrite = strength_rewrite(ks, const_i32_value(ops[i]), ops[i + 1]);
       if (repl.ok) {
+        if (!changed) {
+          out = fold_prefixed(ops, i, []);
+        }
         let r: i32 = 0;
         while (r < repl.ops.len()) {
           out = out.append(repl.ops[r]);
@@ -7190,10 +7194,15 @@ pub function reduce_strength_ex(ops: Op[]): StrengthResult {
         continue;
       }
     }
-    out = out.append(ops[i]);
+    if (changed) {
+      out = out.append(ops[i]);
+    }
     i = i + 1;
   }
-  return StrengthResult { ops: out, changed: changed };
+  if (changed) {
+    return StrengthResult { ops: out, changed: true };
+  }
+  return StrengthResult { ops: ops, changed: false };
 }
 
 // reduce_strength is the plain-op-list form, for callers that don't need the
@@ -7424,19 +7433,30 @@ pub function prune_zero_slot_guards(ops: Op[], n_params: i32): Op[] {
   let in_loop: boolean[] = zg_in_loop(ops);
   let k_load: i32 = kind_id("load_local");
   let k_call: i32 = kind_id("call_direct");
+  // `out` is written from the first guard on.
   let out: Op[] = [];
+  let copying: boolean = false;
   let i: i32 = 0;
   while (i < ops.len()) {
     if (ops[i].kind_tag == k_load && !in_loop[i]
       && zg_zero_guard(ops, i, n_params, first, k_call)) {
+      if (!copying) {
+        out = fold_prefixed(ops, i, []);
+        copying = true;
+      }
       out = out.append(op_const_i32(0));
       i = i + 2;
     } else {
-      out = out.append(ops[i]);
+      if (copying) {
+        out = out.append(ops[i]);
+      }
       i = i + 1;
     }
   }
-  return out;
+  if (copying) {
+    return out;
+  }
+  return ops;
 }
 
 // OptimizedOps is optimize_ops' output: the rewritten op list and the slot count
@@ -8238,21 +8258,32 @@ pub function propagate_copies(ops: Op[]): Op[] {
 pub function fuse_tee(ops: Op[]): Op[] {
   let k_store: i32 = kind_id("store_local");
   let k_load: i32 = kind_id("load_local");
+  // `out` is written from the first fused pair on.
   let out: Op[] = [];
+  let copying: boolean = false;
   let i: i32 = 0;
   while (i < ops.len()) {
     if (i + 1 < ops.len()
       && ops[i].kind_tag == k_store
       && ops[i + 1].kind_tag == k_load
       && ops[i].i32_imm == ops[i + 1].i32_imm) {
+      if (!copying) {
+        out = fold_prefixed(ops, i, []);
+        copying = true;
+      }
       out = out.append(op_tee_local(ops[i].i32_imm));
       i = i + 2;
     } else {
-      out = out.append(ops[i]);
+      if (copying) {
+        out = out.append(ops[i]);
+      }
       i = i + 1;
     }
   }
-  return out;
+  if (copying) {
+    return out;
+  }
+  return ops;
 }
 
 // is_commutative_kind reports whether `id` is an integer binary op whose
