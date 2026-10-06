@@ -7450,6 +7450,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "signal_default", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_catch", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_catch_interrupting", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "signal_raise", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_taken", params: [t_i32()], modes: [v], result: t_bool() },
     ssasem.Contract { name: "signal_disposition", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_mask", params: [t_i32(), t_i64()], modes: [v, v], result: t_i64() },

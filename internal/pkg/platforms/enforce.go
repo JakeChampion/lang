@@ -314,6 +314,9 @@ var gatedBuiltins = map[string]string{
 	"signal_catch":              "signal",
 	"signal_taken":              "signal",
 	"signal_catch_interrupting": "signal",
+	// Raising one at this process. wasi-cli answers ENOTSUP: nothing there
+	// can deliver it, and the caller has to hear that it was not taken.
+	"signal_raise": "signal",
 	// The mask and the read side of the same disposition surface.
 	"signal_mask":        "signal",
 	"signal_disposition": "signal",

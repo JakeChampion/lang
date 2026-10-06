@@ -10398,6 +10398,11 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    popq %rdi\n    pushq $" + restart + "\n    leaq __fern_sig_return(%rip), %rax\n    pushq %rax\n    leaq __fern_sig_catcher(%rip), %rax\n    pushq %rax\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_signal_catch\n    addq $32, %rsp\n    pushq %rax\n");
     s = s.need("signal_catch");
+  } else if (o.kind_tag == 395) {  // signal_raise
+    // [sig] -> __fern_signal_raise(sig) -> kill(2)'s return. [sig] IS
+    // param[0] already, as for signal_ignore.
+    s = s.write("    call __fn___fern_signal_raise\n    addq $8, %rsp\n    pushq %rax\n");
+    s = s.need("signal_raise");
   } else if (o.kind_tag == 393) {  // signal_taken
     // [sig] -> __fern_signal_taken(%rdi=sig): the flag, cleared by the
     // same exchange that reads it.
@@ -12734,6 +12739,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_catch("x86_64"), s);
   }
   s = emit_rt_signal_flags(s);
+  if (s.has_need("signal_raise")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_raise("x86_64"), s);
+  }
   if (s.has_need("geteuid")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "geteuid"), s);

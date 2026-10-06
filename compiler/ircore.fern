@@ -760,8 +760,9 @@ pub function all_runtime_need_roots(): string[] {
     // than a literal (`s.need(sig_fn)`), so a grep for `.need("` does not
     // find them either.
     "isatty", "window_size", "set_window_size", "signal_ignore", "signal_default",
-    // The flag-raising catch and its poll.
-    "signal_catch", "signal_taken",
+    // The flag-raising catch and its poll, and a signal sent to this
+    // process.
+    "signal_catch", "signal_taken", "signal_raise",
     // The liveness of one pid, delivering a signal to one, and this
     // process's descriptor ceiling.
     "process_alive", "signal_send", "set_process_group", "rlimit_nofile",

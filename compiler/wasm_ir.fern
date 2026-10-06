@@ -6645,6 +6645,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = emit_wasm_signal_disposition(parts);
   } else if (o.kind_tag == 393) {  // signal_taken
     parts = emit_wasm_signal_taken(parts);
+  } else if (o.kind_tag == 395) {  // signal_raise
+    parts = emit_wasm_signal_raise(parts);
   } else if (o.kind_tag == 278) {  // signal_mask
     parts = emit_wasm_signal_mask(parts);
   } else if (o.kind_tag == 279) {  // signal_disposition
@@ -18928,6 +18930,17 @@ function emit_wasm_signal_taken(parts: string[]): string[] {
   // nothing can arrive, so no poll ever finds one: the answer is a fact about
   // the world, not a stand-in. The signal number is on the stack and unused.
   parts = parts.append("    drop\n    i32.const 0\n");
+
+  return parts;
+}
+
+function emit_wasm_signal_raise(parts: string[]): string[] {
+  // signal_raise(sig) -> -ENOTSUP (58). Nothing in either WASI world can
+  // deliver a signal, so one cannot be raised either; unlike the setters
+  // there is no state for a no-op to leave truthfully unchanged, and the
+  // caller has to hear that the process did not take it. The signal
+  // number is on the stack and unused.
+  parts = parts.append("    drop\n    i32.const -58\n");
 
   return parts;
 }

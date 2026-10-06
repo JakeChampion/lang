@@ -93,6 +93,20 @@ pub function catch_interrupting(sig: i32): i32 {
   return signal_catch_interrupting(sig);
 }
 
+// `raise(sig)` — send `sig` to this process: 0, or a negative errno (EINVAL
+// for a number that names no signal). A signal the process does not block is
+// delivered before this returns, so after `default(sig)` one whose default
+// action ends the process ends it here — how a program that caught a signal
+// to report on it then dies of it, as its parent expects:
+//
+//     signal.default(signal.SIGINT);
+//     signal.raise(signal.SIGINT);
+//
+// On wasi-cli it answers ENOTSUP, since nothing there can deliver a signal.
+pub function raise(sig: i32): i32 {
+  return signal_raise(sig);
+}
+
 // `taken(sig)` — whether `sig` has arrived since the last call, clearing it.
 // Several arrivals between two polls read as one; a signal never caught is
 // never taken.

@@ -425,6 +425,7 @@ var providedSigs = map[string]providedSig{
 	"signal_catch":                     {1, rWord},
 	"signal_taken":                     {1, rWord},
 	"signal_catch_interrupting":        {1, rWord},
+	"signal_raise":                     {1, rWord},
 	"signal_mask":                      {2, rWord},
 	"signal_disposition":               {1, rWord},
 	"create_dir":                       {3, rWord},

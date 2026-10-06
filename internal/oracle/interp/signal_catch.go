@@ -1,6 +1,7 @@
 package interp
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/signal"
@@ -174,6 +175,29 @@ func interruptibleReader(r io.Reader) io.Reader {
 		return interruptible{f}
 	}
 	return r
+}
+
+// builtinSignalRaise mirrors the native `signal_raise(sig)`: kill(2) of this
+// process, 0 or a negative errno. Signal 0 is kill's existence check and
+// answers 0; a number past the last signal is EINVAL, as the kernel says.
+func builtinSignalRaise(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("signal_raise: expected 1 arg, got %d", len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("signal_raise: expected number arg, got %T", args[0])
+	}
+	if n < 0 || n > maxSignal {
+		return Number(-22), nil
+	}
+	if n == 0 {
+		return Number(0), nil
+	}
+	if err := raiseSelf(syscall.Signal(n)); err != nil {
+		return Number(errnoOf(err)), nil
+	}
+	return Number(0), nil
 }
 
 // builtinSignalTaken reports whether `sig` arrived since the last poll, and

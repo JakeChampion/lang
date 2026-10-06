@@ -233,10 +233,11 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//
 	// `signal` — setting a signal's disposition (`signal_ignore` /
 	// `signal_default` / `signal_catch` / `signal_catch_interrupting`)
-	// and polling a caught one (`signal_taken`). wasi-cli grants it as a
-	// no-op for the same reason it grants `host`: a component is never
-	// sent a signal, so there is nothing to ignore or catch and doing
-	// nothing is the whole truth — no catch is ever taken.
+	// and polling a caught one (`signal_taken`), and raising one at this
+	// process (`signal_raise`). wasi-cli grants it as a no-op for the same
+	// reason it grants `host`: a component is never sent a signal, so
+	// there is nothing to ignore or catch and doing nothing is the whole
+	// truth — no catch is ever taken, and a raise answers ENOTSUP.
 	// wasi-http has no process identity, so it does not get it.
 	//
 	// `sched` — reading and setting this process's scheduling priority

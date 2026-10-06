@@ -1618,6 +1618,7 @@ func New() *Interp {
 	i.Builtins["signal_catch"] = &Builtin{Fn: builtinSignalCatch}
 	i.Builtins["signal_taken"] = &Builtin{Fn: builtinSignalTaken}
 	i.Builtins["signal_catch_interrupting"] = &Builtin{Fn: builtinSignalCatchInterrupting}
+	i.Builtins["signal_raise"] = &Builtin{Fn: builtinSignalRaise}
 	i.Builtins["signal_mask"] = &Builtin{Fn: builtinSignalMask}
 	i.Builtins["signal_disposition"] = &Builtin{Fn: builtinSignalDisposition}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}

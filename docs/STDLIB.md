@@ -882,6 +882,10 @@ no-op, since nothing can deliver a signal there.
   can then fail that way, so each needs a retry.
 - `taken(sig): boolean`: whether `sig` arrived since the last call, clearing
   it. Several arrivals between two polls read as one.
+- `raise(sig)`: send `sig` to this process. One the process does not block is
+  delivered before it returns, so after `default(sig)` a fatal one ends the
+  process there: how a program dies of a signal it caught. -ENOTSUP on
+  wasi-cli.
 - `blocked()`, `block(mask)`, `unblock(mask)`, `set_blocked(mask)`, `bit(sig)`:
   the blocked set, a bit per signal at bit (sig-1); each setter answers the set
   as it was before the call.

@@ -370,3 +370,4 @@ read_dir_ino=391
 signal_catch=392
 signal_taken=393
 signal_catch_interrupting=394
+signal_raise=395

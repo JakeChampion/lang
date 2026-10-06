@@ -4162,6 +4162,11 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    adrp x1, __fern_sig_catcher\n    add x1, x1, :lo12:__fern_sig_catcher\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_signal_catch\n    add sp, sp, #64\n    str x0, [sp, #-16]!\n");
     s = s.need("signal_catch");
+  } else if (o.kind_tag == 395) {  // signal_raise
+    // [sig] -> __fern_signal_raise(sig) -> kill(2)'s return, pushed as
+    // signal_ignore's is.
+    s = s.write("    bl __fn___fern_signal_raise\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+    s = s.need("signal_raise");
   } else if (o.kind_tag == 393) {  // signal_taken
     // [sig] -> __fern_signal_taken(x0=sig): the flag, cleared by the same
     // exchange that reads it.
@@ -11052,6 +11057,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_catch(tgt), s);
   }
   s = emit_rt_signal_flags(s, darwin);
+  if (s.has_need("signal_raise")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_raise(tgt), s);
+  }
   // tcp_listen: socket + bind + listen. The sockaddr_in's only per-target
   // difference is its first two bytes (XNU has sin_len), which sockaddr_head
   // supplies.

@@ -1281,6 +1281,9 @@ function sysno_x86_64(name: string): string {
   if (name == "getppid") {
     return "110";
   }
+  if (name == "getpid") {
+    return "39";
+  }
   if (name == "setpgid") {
     return "109";
   }
@@ -1556,6 +1559,9 @@ function sysno_arm64_darwin(name: string): string {
   }
   if (name == "getppid") {
     return "39";
+  }
+  if (name == "getpid") {
+    return "20";
   }
   if (name == "setpgid") {
     return "82";
@@ -1834,6 +1840,9 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "getppid") {
     return "173";
+  }
+  if (name == "getpid") {
+    return "172";
   }
   if (name == "setpgid") {
     return "154";
@@ -2935,6 +2944,13 @@ pub function rt_src_signal_catch(t: string): string {
     words = "let flags: i64 = 0 as i64; if (restart != 0) { flags = 8589934592 as i64; } __raw_store_ptr(act, 1, ret); __store_i64(__raw_addr(act, 16), flags);";
   }
   return "function __fern_signal_catch(sig: i32, handler: usize, ret: usize, restart: i32): i32 { if (sig < 1 || sig > 64) { return 0 - 22; } let act: usize = __raw_scratch(32); __raw_store_ptr(act, 0, handler); " + words + " __raw_store_ptr(act, 3, 0); return __syscall4(" + sysno(t, "sigaction") + ", sig as i64, act as i64, 0, 8) as i32; }";
+}
+
+// rt_src_signal_raise backs `signal_raise(sig)` (syscall-leaf) -> kill(2)'s
+// return for this process's own pid. The runtime is one thread, so a signal it
+// does not block is delivered to it before kill returns.
+pub function rt_src_signal_raise(t: string): string {
+  return "function __fern_signal_raise(sig: i32): i32 { let pid: i64 = __syscall3(" + sysno(t, "getpid") + ", 0, 0, 0); return __syscall3(" + sysno(t, "kill") + ", pid, sig as i64, 0) as i32; }";
 }
 
 // sockaddr_head writes the first two bytes of a `sockaddr_in`, which is the one
@@ -7185,6 +7201,8 @@ function builtin_i32_names(): string[] {
     "signal_catch",
     "signal_catch_interrupting",
     "signal_taken",
+    // signal_raise(sig) -> kill(2)'s return.
+    "signal_raise",
     // signal_mask(how, mask) -> the previously-blocked mask as an i64,
     // in an integer slot like the clocks'; signal_disposition(sig) ->
     // a small enumerated i32.
@@ -10236,7 +10254,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_hostname",
     "__fn___fern_signal_ignore", "__fn___fern_signal_default",
     "__fn___fern_signal_mask", "__fn___fern_signal_disposition",
-    "__fn___fern_signal_catch",
+    "__fn___fern_signal_catch", "__fn___fern_signal_raise",
     "__fn___fern_chdir",
     "__fern_strbuf_reset", "__fern_strbuf_take",
     // The capacity-carrying string builder (#8773). __fern_buf_reserve is
