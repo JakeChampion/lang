@@ -1219,6 +1219,13 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         continue;
       }
     }
+    // A phi whose fall-through operand is spilled stays spilled too, to
+    // share its slot (hinted_slot): loaded into a register, it would take
+    // one an operand of a later phi in the block is still hinted at.
+    if (mh >= 0 && mates.through[v] && reg_of[mh] == 0 - 1 && hi[mh] < lo[v]) {
+      oi = oi + 1;
+      continue;
+    }
     // A phi whose outliving operand is spilled and dead where the phi is
     // defined stays spilled too, to share that slot (path_slot) rather than
     // load it into a register on every edge.
@@ -1608,7 +1615,7 @@ function shares_operand_home(op: string): boolean {
 // both live at once (chain_dead_at_def). A phi already marked carried, as the
 // last merge's phis are by the loop header laid out before them, gets no alt:
 // the carried hint covers it.
-struct Mates { hint: i32[], carried: boolean[], alt: i32[] }
+struct Mates { hint: i32[], carried: boolean[], alt: i32[], through: boolean[] }
 
 function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mates {
   let hint: i32[] = [];
@@ -1621,13 +1628,22 @@ function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mat
   }
   // Both start all -1, sharing one buffer: the first write to either copies it.
   let alt: i32[] = hint;
+  let fell: boolean[] = carried;
+  let at: i32[] = block_positions(f);
   let pos: i32 = 0;
+  let bi: i32 = 0;
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < hint.len()) {
         let dying: i32 = 0 - 1;
         let outliving: i32 = 0 - 1;
-        for a in ins.args {
+        // The dying operand arriving from the block laid out just before
+        // this one, which falls through into it.
+        let through: i32 = 0 - 1;
+        let ai: i32 = 0;
+        while (ai < ins.args.len()) {
+          let a: i32 = ins.args[ai];
+          ai = ai + 1;
           if (a < 0 || a >= hint.len() || a < no_home.len() && no_home[a]) {
             continue;
           }
@@ -1637,6 +1653,9 @@ function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mat
             }
             if (dying < 0 && hi[a] < pos) {
               dying = a;
+            }
+            if (hi[a] < pos && ai - 1 < blk.preds.len() && pred_index(at, blk.preds[ai - 1]) == bi - 1) {
+              through = a;
             }
             if (outliving < 0 && hi[a] >= pos) {
               outliving = a;
@@ -1650,6 +1669,14 @@ function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mat
         if (dying >= 0 && !carried[ins.result] && h >= 0 && hi[h] >= pos) {
           hint = hint.with(ins.result, dying);
         }
+        // An else-if chain is one merge per arm, each falling through to
+        // the next with the values the deeper arms wrote: a phi that takes
+        // the fall-through operand's home moves nothing on that path, and
+        // the arm's edge pays the one move when that arm runs.
+        if (through >= 0 && !carried[ins.result]) {
+          hint = hint.with(ins.result, through);
+          fell = fell.with(ins.result, true);
+        }
         if (!carried[ins.result]) {
           alt = alt.with(ins.result, outliving);
         }
@@ -1657,8 +1684,16 @@ function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mat
       pos = pos + 1;
     }
     pos = pos + 1;
+    bi = bi + 1;
   }
-  return Mates { hint: hint, carried: carried, alt: alt };
+  return Mates { hint: hint, carried: carried, alt: alt, through: fell };
+}
+
+function pred_index(at: i32[], id: i32): i32 {
+  if (id < 0 || id >= at.len()) {
+    return 0 - 1;
+  }
+  return at[id];
 }
 
 // position_count is the number of positions regalloc_linear numbers: one per
