@@ -2,6 +2,15 @@ package checker
 
 import "github.com/jakechampion/lang/internal/ast"
 
+// Direct Result construction can widen an integer payload before boxing it.
+// Other concrete numeric disagreements must retain their inferred arguments
+// so contextual completion cannot hide a narrowing or signedness change.
+func resultPayloadWidens(enumName string, from, to ast.Type) bool {
+	src, srcOK := from.(ast.NumberType)
+	dst, dstOK := to.(ast.NumberType)
+	return enumName == "Result" && srcOK && dstOK && src.IsSigned() == dst.IsSigned() && src.NormalWidth() > 0 && src.NormalWidth() < dst.NormalWidth()
+}
+
 // EnumConstruction is the semantic contract of one resolved constructor.
 // Type retains every result type argument, including parameters absent from
 // this variant's payloads. A partially inferred constructor keeps UnboundType

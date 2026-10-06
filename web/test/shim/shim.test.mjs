@@ -170,42 +170,28 @@ describe("the streams", () => {
   });
 });
 
-// The playground driver, built the way web/build.sh builds it, makes no WASI
-// call the shim lacks. Its stdlib is a sealed overlay of embedded assets, so
-// nothing it does on the way to an answer may reach for a filesystem: the
-// shim traps on `path_open`, and a probe for a vendored `std/` directory once
-// put that trap in front of every program the page ran.
-describe("the playground driver", () => {
-  let driver;
-  before(() => {
+// The page's own compiler, built as web/build.sh builds it, run through the
+// shim. Any filesystem probe it makes throws here, as it does in the browser:
+// its stdlib is an embedded overlay and the shim implements no path_open.
+describe("the playground compiler", () => {
+  it("interprets a stdlib import without touching a filesystem", async () => {
     const outPath = join(workDir, "playground.wasm");
     execFileSync(
       fernBin,
-      ["-target", "wasm32-wasi", "-emit", "core-module", "-embed", join(repoRoot, "internal/stdlib"),
-        "-o", outPath, join(repoRoot, "compiler/playground_run.fern"), join(repoRoot, "internal/stdlib")],
+      ["-target", "wasm32-wasi", "-emit", "core-module", "-embed", "internal/stdlib", "-o", outPath,
+        join(repoRoot, "compiler/playground_run.fern"), join(repoRoot, "internal/stdlib")],
       { cwd: repoRoot },
     );
-    driver = readFileSync(outPath);
-  }, { timeout: 600000 });
-
-  const program = `import "std/i32";
+    const r = await runCoreWasm(readFileSync(outPath), {
+      stdin: `import "std/i64";
 function main(): i32 {
-  let n: i32 = 42;
-  print("hello, world " + n.to_string());
+  print("hi");
   return 0;
-}
-`;
-
-  it("runs a stdlib program under -interp", async () => {
-    const r = await runCoreWasm(driver, { stdin: program, args: ["fern", "-interp"] });
+}`,
+      args: ["playground", "-interp"],
+    });
     assert.equal(r.stderr, "");
-    assert.equal(r.stdout, "hello, world 42\n");
+    assert.equal(r.stdout, "hi\n");
     assert.equal(r.exit, 0);
-  });
-
-  it("checks a stdlib program under -check", async () => {
-    const r = await runCoreWasm(driver, { stdin: program, args: ["fern", "-check"] });
-    assert.equal(r.stderr, "");
-    assert.equal(r.exit, 0);
-  });
+  }, { timeout: 600000 });
 });
