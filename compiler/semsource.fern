@@ -4903,8 +4903,9 @@ function header_phis(s: State, count: i32): State {
   let at: i32 = 0;
   while (at < count) {
     let entry: i32 = s.vals[at];
+    let name: string = s.names[at];
     let phi: Value = define(s, 8, [entry], 0, "", s.values[entry]);
-    s = note_binding(State { ...phi.s, vals: phi.s.vals.with(at, phi.id) }, s.names[at], phi.id);
+    s = note_binding(State { ...phi.s, vals: phi.s.vals.with(at, phi.id) }, name, phi.id);
     at = at + 1;
   }
   return s;

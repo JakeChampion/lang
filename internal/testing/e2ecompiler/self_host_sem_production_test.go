@@ -7792,6 +7792,52 @@ function main(): i32 {
 }
 `
 
+// semElementBesideArraySource hands an element of a table to a callee beside
+// the table itself, where the table dies: `copy_entry`'s `t.names[at]` and
+// `t.values[at]` next to `t`. The element read takes a unit of its own for
+// the call, so the table moves into the callee and its appends land in
+// place. As a borrow anchored to the table it pinned the table for the call,
+// and the callee copied both buffers on every append: 114 allocations for
+// this program, 46 once the reads are held.
+const semElementBesideArraySource = `
+import "std/i32";
+import "std/string";
+
+struct Table { names: string[], values: string[] }
+struct Added { t: Table, id: i32 }
+
+@noinline
+function add(t: Table, name: string, value: string): Added {
+    let id: i32 = t.values.len();
+    return Added { t: Table { ...t, names: t.names.append(name), values: t.values.append(value) }, id: id };
+}
+
+@noinline
+function copy_entry(t: Table, at: i32): Added {
+    return add(t, t.names[at], t.values[at]);
+}
+
+function main(): i32 {
+    let t: Table = Table { names: [], values: [] };
+    let i: i32 = 0;
+    while (i < 8) {
+        let a: Added = add(t, "key" + "s", "value" + "s");
+        t = a.t;
+        i = i + 1;
+    }
+    let total: i32 = 0;
+    i = 0;
+    while (i < 24) {
+        let a: Added = copy_entry(t, i % 8);
+        t = a.t;
+        total = total + a.id;
+        i = i + 1;
+    }
+    print(f"{t.names.len()}|{t.values[31]}|{total}\n");
+    return t.values.len() - 32;
+}
+`
+
 // TestSelfHostSemanticAllocationCounts pins the produced bodies' allocation
 // count on shapes where a unit decision is what decides between writing a
 // buffer in place and copying it. The answer cannot see a copy and the leak
@@ -7816,6 +7862,7 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		src    string
 	}{
 		{"element-read-outlives-the-array-write", 6, semHeldElementSource},
+		{"an-element-handed-beside-its-dying-array", 46, semElementBesideArraySource},
 		// A view merged past a source that dominates the join stays a view.
 		{"a-view-of-a-dominating-source-is-not-copied", 29, semDominatingViewSource},
 		// A struct taken out of a returned tuple is updated in place while the
