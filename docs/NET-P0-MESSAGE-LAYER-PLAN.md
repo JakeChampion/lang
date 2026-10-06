@@ -350,7 +350,7 @@ per request there.)
 | 3 | `__serve_start`: the `Task`, its closure and `run_task`'s `Done`, for a handler that never parks (slice 5) |
 | 1 | `__serve_wire`'s `__Wire` record: the tail and whether the connection persists, which follows from the tail (slice 6) |
 | 3 | `__serve_send_out`'s, `__serve_produce`'s and `__serve_ready`'s `(conns, sent)` and `(conns, more)` tuples: each has several callers, so it is not spliced, and each caller takes the tuple apart at once |
-| 2 | the handler's `http.ok`: the `HttpResponse` and its header map |
+| 2 | the handler's `http.ok`: the `HttpResponse` and its `BodyText` (the header maps were static already); a static record since slice 7 |
 
 The trace shows no `.with` copying a connection array: every update of
 `__Conns` writes its arrays in place, as the Go compiler does. The earlier
@@ -418,8 +418,13 @@ is preferred where it covers a case, since every program gains.
    able to park once a program has a park in it, and a function that may
    suspend is never paired. The three-word tuples are left for a splice
    or for threading.
-7. **The handler's response.** What is left is the response, once the
-   loop's own allocations are gone. A constant response is a static
-   record, and the donor of §5.3's slice 6 is the model for one built per
-   request.
+7. **The handler's response.** Done for a constant response, by the
+   compiler: a constructor leaf, a function that only builds its result
+   from its parameters and literals, is spliced into the calls whose
+   arguments are all literals (`seminline.constructor_leaves`), so
+   `http.ok("hello")` in a handler is one static record, the way a nullary
+   constructor's result already was. `http.ok` has two callers in the gate's
+   server, so it was never spliced before and built its `HttpResponse` and
+   `BodyText` per request. 8 to 6. A response built per request from what
+   the request holds is the donor model of §5.3's slice 6, still to do.
 

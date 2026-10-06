@@ -11,8 +11,9 @@ import "testing"
 // times and allocates nothing, where the same call with a level computed in
 // the loop stays a call, and dyn_rounds pays the card, its tag and its note
 // each round. Each probe prints its result times 1000 plus the allocations
-// the rounds made. The three constructors keep their bodies for the dynamic
-// calls.
+// the rounds made. tag and text are called once, from card, so they are
+// spliced there whatever their arguments; card keeps its body for the
+// dynamic calls.
 const constructorLeafProgram = `struct Tag { name: string, level: i32 }
 enum Note { Text(string), Blank }
 struct Card { title: string, tag: Tag, note: Note, tags: string[] }
@@ -56,7 +57,7 @@ var constructorLeafProduced = []string{"tag", "text", "card", "weigh", "lit_roun
 
 func TestSelfHostConstructorLeaves(t *testing.T) {
 	runSemanticProgram(t, "ctorleaf", constructorLeafProgram, constructorLeafProduced,
-		semInlineWants("1300000\n5950300\n"), "tag", "text", "card")
+		semInlineWants("1300000\n5950300\n"), "card")
 }
 
 // With the pass off, every call stays and every round builds its three boxes.

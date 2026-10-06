@@ -72,9 +72,11 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
     once = once.append(!is_leaf && inlinable[i] && unnamed[i] && once_spliceable(funcs0[i], calls[i]));
     i = i + 1;
   }
-  let sp: Spliceable = Spliceable { ix: ix, leaves: leaves, once: once, ctors: constructor_leaves(funcs0, ix, inlinable, leaves, once) };
-  let out: Inlined = split_all(paired_all(splice_rounds(funcs0, rewrite, sp), names, rewrite, unnamed), rewrite, modes);
-  return Inlined { ...out, spliced: spliced_away(sp, calls, call_counts(out.funcs, ix)) };
+  let sp: Spliceable = Spliceable { ix: ix, leaves: leaves, once: once, inlinable: inlinable };
+  let rounds: Inlined = splice_rounds(funcs0, rewrite, sp);
+  let ctors: boolean[] = constructor_leaves(rounds.funcs, sp);
+  let out: Inlined = split_all(paired_all(rounds, names, rewrite, unnamed), rewrite, modes);
+  return Inlined { ...out, spliced: spliced_away(sp, ctors, calls, call_counts(out.funcs, ix)) };
 }
 
 // Whether `f`, called `calls` times and no leaf, is spliced into its caller.
@@ -84,11 +86,11 @@ function once_spliceable(f: ssasem.Func, calls: i32): boolean {
 
 // The functions spliced into every one of their callers: called before the
 // pass, `calls`, and no longer after it, `left`.
-function spliced_away(sp: Spliceable, calls: i32[], left: i32[]): boolean[] {
+function spliced_away(sp: Spliceable, ctors: boolean[], calls: i32[], left: i32[]): boolean[] {
   let out: boolean[] = [];
   let i: i32 = 0;
   while (i < calls.len()) {
-    out = out.append((sp.leaves[i] || sp.once[i] || sp.ctors[i]) && calls[i] > 0 && left[i] == 0);
+    out = out.append((sp.leaves[i] || sp.once[i] || ctors[i]) && calls[i] > 0 && left[i] == 0);
     i = i + 1;
   }
   return out;
@@ -96,9 +98,11 @@ function spliced_away(sp: Spliceable, calls: i32[], left: i32[]): boolean[] {
 
 // The functions spliced wherever they are called, by index into the
 // function list `ix` names: leaves at once, functions called once when the
-// ones they call once are in them, and constructor leaves at the calls
-// whose arguments are all literals.
-struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], ctors: boolean[] }
+// ones they call once are in them, and constructor leaves, read off the
+// bodies as each round leaves them (a function called once spliced into
+// one can make it a constructor), at the calls whose arguments are all
+// literals. `inlinable` is what may be spliced at all.
+struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], inlinable: boolean[] }
 
 // A function called once is spliced only after the ones it calls once are in
 // it, so a chain of them folds from the bottom up.
@@ -110,13 +114,14 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable
   let round: i32 = 0;
   let more: boolean = true;
   while (more && round < 16) {
+    let ctors: boolean[] = constructor_leaves(out.funcs, sp);
     let ready: boolean[] = [];
     let j: i32 = 0;
     while (j < out.funcs.len()) {
-      ready = ready.append(sp.leaves[j] || sp.ctors[j] || sp.once[j] && !calls_any(out.funcs[j], sp.ix, sp.once, j));
+      ready = ready.append(sp.leaves[j] || ctors[j] || sp.once[j] && !calls_any(out.funcs[j], sp.ix, sp.once, j));
       j = j + 1;
     }
-    let next: Round = splice_round(out, rewrite, sp.ix, ready, sp.ctors);
+    let next: Round = splice_round(out, rewrite, sp.ix, ready, ctors);
     more = next.changed;
     out = next.out;
     round = round + 1;
@@ -365,7 +370,8 @@ function leaf(f: ssasem.Func): boolean {
 }
 
 // A constructor leaf builds its result from its parameters and literals and
-// nothing else: one block, every instruction a parameter, a literal, a
+// nothing else: a straight line of blocks (a function spliced into it leaves
+// its blocks behind), every instruction a parameter, a literal, a copy, a
 // construction (a record, variant, tuple or array) or a call to another
 // constructor leaf, the result a construction, and a view in none of it. It
 // is spliced into a call whose arguments are all literals, where the
@@ -375,11 +381,11 @@ function leaf(f: ssasem.Func): boolean {
 // A call with an argument computed at run time stays a call, so no
 // construction is moved into a caller that would build it there instead.
 // Scalar leaves and functions spliced once are neither.
-function constructor_leaves(funcs: ssasem.Func[], ix: util.NameIndex, inlinable: boolean[], leaves: boolean[], once: boolean[]): boolean[] {
+function constructor_leaves(funcs: ssasem.Func[], sp: Spliceable): boolean[] {
   let out: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
-    out = out.append(inlinable[i] && !leaves[i] && !once[i] && constructor_body(funcs[i]));
+    out = out.append(sp.inlinable[i] && !sp.leaves[i] && !sp.once[i] && constructor_body(funcs[i]));
     i = i + 1;
   }
   let changed: boolean = true;
@@ -387,7 +393,7 @@ function constructor_leaves(funcs: ssasem.Func[], ix: util.NameIndex, inlinable:
     changed = false;
     i = 0;
     while (i < funcs.len()) {
-      if (out[i] && !calls_constructors(funcs[i], ix, out, i)) {
+      if (out[i] && !calls_constructors(funcs[i], sp.ix, out, i)) {
         out = out.with(i, false);
         changed = true;
       }
@@ -398,33 +404,42 @@ function constructor_leaves(funcs: ssasem.Func[], ix: util.NameIndex, inlinable:
 }
 
 function constructor_body(f: ssasem.Func): boolean {
-  if (f.graph.takes_env || f.graph.blocks.len() != 1 || lends_view(f)) {
+  if (f.graph.takes_env || f.graph.blocks.len() > max_leaf_blocks() || lends_view(f)) {
     return false;
   }
-  let b: ssa.SBlock = f.graph.blocks[f.graph.entry];
-  if (b.preds.len() > 0 || b.term.kind_tag != 1 || b.term.value < 0) {
+  if (f.graph.blocks[f.graph.entry].preds.len() > 0) {
     return false;
   }
-  let built: boolean = false;
+  let returned: i32 = 0 - 1;
   let n: i32 = 0;
-  for ins in b.insts {
-    if (!constructor_kind(ins.kind_tag)) {
+  for b in f.graph.blocks {
+    if (b.term.kind_tag == 1) {
+      if (returned >= 0 || b.term.value < 0) {
+        return false;
+      }
+      returned = b.term.value;
+    } else if (b.term.kind_tag != 2) {
       return false;
     }
-    if (ins.kind_tag != ssasem.param()) {
-      n = n + 1;
+    if (b.id != f.graph.blocks[f.graph.entry].id && b.preds.len() != 1) {
+      return false;
     }
-    if (ins.result == b.term.value && construction_kind(ins.kind_tag)) {
-      built = true;
+    for ins in b.insts {
+      if (!constructor_kind(ins.kind_tag)) {
+        return false;
+      }
+      if (ins.kind_tag != ssasem.param()) {
+        n = n + 1;
+      }
     }
   }
-  return built && n <= max_leaf_insts();
+  return returned >= 0 && n <= max_leaf_insts() && construction_kind(defs_of(f.graph).insts[returned].kind_tag);
 }
 
-// A literal, a parameter, a construction, a direct call or a source
+// A literal, a parameter, a copy, a construction, a direct call or a source
 // position marker (ssa kind 35).
 function constructor_kind(k: i32): boolean {
-  return literal_kind(k) || k == ssasem.param() || k == 35 || k == ssasem.call() || construction_kind(k);
+  return literal_kind(k) || k == ssasem.param() || k == 7 || k == 35 || k == ssasem.call() || construction_kind(k);
 }
 
 function construction_kind(k: i32): boolean {
