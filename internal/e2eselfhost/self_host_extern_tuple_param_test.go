@@ -90,8 +90,8 @@ func TestSelfHostExternTupleParamCustomProvider(t *testing.T) {
 	}
 
 	// --- Self-host backend: emit the core from the tuple-param program. ---
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	const want = "pair-ok"
 	prog := `@import("local:test/sink@0.1.0", "sum-pair")

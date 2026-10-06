@@ -38,8 +38,8 @@ func TestSelfHostArm64NativeLinuxElfRuns(t *testing.T) {
 
 	// Build the Linux arm64 asm emitter (asm_ir_run.fern (-target arm64-linux), emit_module(false)).
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
-	emitBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "lxemit")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
+	emitBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "lxemit")
 
 	// Driver: arm64_native + elf.fern + main(), concatenated (no imports).
 	// Reads the asm from "in.s" in its CWD, assembles + ELF-wraps it, writes

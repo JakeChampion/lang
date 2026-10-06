@@ -30,8 +30,8 @@ func TestSelfHostWasmExternSum(t *testing.T) {
 		t.Skip("wasm_extern_sum_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_extern_sum_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "wasm_extern_sum_run.fern", "wasm_extern_sum_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_extern_sum_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_extern_sum_run.fern", "wasm_extern_sum_run")
 
 	const want = "ok  Option[i32] sum=1 opt=1\n" +
 		"ok  Option[u32] sum=1 opt=1\n" +

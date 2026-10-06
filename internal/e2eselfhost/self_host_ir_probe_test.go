@@ -91,8 +91,8 @@ func TestSelfHostIREligibilityProbe(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	// The probe driver = asm_ir_run.fern (writeSelfHostAsmProject copies its
 	// ./-imports; std/io resolves from the real stdlib root).
-	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun")
+	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "airun")
 
 	probe := func(t *testing.T, prog string) string {
 		t.Helper()
@@ -140,8 +140,8 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	// asm_load_run pulls in flatten + checker on top of the core emitter set.
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "alr")
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)
@@ -235,8 +235,8 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 func TestSelfHostPathProbePrintsRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_pathprobe_run.fern")
-	probe := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
+	copySelfHostDriver(t, dir, "drivers/asm_pathprobe_run.fern")
+	probe := buildSelfHostBin(t, gcc, dir, "drivers/asm_pathprobe_run.fern", "pathprobe")
 	for _, c := range irProbeCases() {
 		t.Run(c.name, func(t *testing.T) {
 			want := "refused"
@@ -255,9 +255,9 @@ func TestSelfHostPathProbePrintsRefused(t *testing.T) {
 func TestSelfHostVerdictBoolean(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_pathprobe_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_pathprobe_run.fern")
 	const src = `import "./parser";
-import "./rundriver";
+import "./drivers/rundriver";
 import "./semlower";
 function main(): i32 {
   let mod: parser.Module = rundriver.parse_stdin("verdict_boolean");

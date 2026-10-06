@@ -15,10 +15,10 @@ import (
 func TestSelfHostHandlerStateX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "checker_codes_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "checker_codes_run.fern", "checker_codes_run")
-	copySelfHostDriver(t, dir, "checker_run.fern")
-	formattedBin := buildSelfHostBin(t, gcc, dir, "checker_run.fern", "checker_run")
+	copySelfHostDriver(t, dir, "drivers/checker_codes_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/checker_codes_run.fern", "checker_codes_run")
+	copySelfHostDriver(t, dir, "drivers/checker_run.fern")
+	formattedBin := buildSelfHostBin(t, gcc, dir, "drivers/checker_run.fern", "checker_run")
 	const decls = `struct serve__Config { backlog: i32 }
 struct platform__Host { reactor: i32 }
 function serve__config(): serve__Config { return serve__Config { backlog: 128 }; }

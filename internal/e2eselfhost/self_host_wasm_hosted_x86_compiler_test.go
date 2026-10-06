@@ -45,9 +45,9 @@ func TestSelfHostWasmHostedX86CompilerMatchesNative(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "fern.fern", "asm_run.fern")
+	copySelfHostDriver(t, dir, "fern.fern", "drivers/asm_run.fern")
 	cli := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	entry := filepath.Join(dir, "asm_run.fern")
+	entry := filepath.Join(dir, "drivers/asm_run.fern")
 
 	// Both drivers come out of the same CLI binary, so the only variable is
 	// -target. Each emit peaks in the low gigabytes, so it takes a slot in the

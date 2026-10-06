@@ -16,7 +16,7 @@ the final sets. The result is the same set of values; the new test pins a
 loop with more values live across it than one word holds.
 
 Best of one, the 4-core container, the driver built with
-`fern -target x86-64-linux -backend ssa compiler/asm_ir_run.fern`:
+`fern -target x86-64-linux -backend ssa compiler/drivers/asm_ir_run.fern`:
 
 | build | compile |
 | --- | --- |

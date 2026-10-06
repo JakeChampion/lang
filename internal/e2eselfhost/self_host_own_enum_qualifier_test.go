@@ -67,7 +67,7 @@ function main(): i32 { return lib.probe(5); }
 func TestSelfHostOwnEnumQualifierX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "driver")
 
 	progDir := t.TempDir()
 	for name, src := range map[string]string{

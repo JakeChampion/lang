@@ -27,8 +27,8 @@ func TestSelfHostPlatformsCapabilityRules(t *testing.T) {
 		t.Skip("platforms_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "platforms_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "platforms_run.fern", "platforms_run")
+	copySelfHostDriver(t, dir, "drivers/platforms_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/platforms_run.fern", "platforms_run")
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

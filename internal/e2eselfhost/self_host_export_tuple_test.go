@@ -35,8 +35,8 @@ func TestSelfHostExportTupleResultRunsViaConsumer(t *testing.T) {
 		}
 	}
 
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/pairs@0.1.0", "make-pair")
 function make_pair(a: i32, b: i32): (i32, i32) { return (a + 1, b * 2); }

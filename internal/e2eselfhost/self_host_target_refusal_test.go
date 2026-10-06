@@ -25,8 +25,8 @@ func TestSelfHostRunDriverRefusesUnknownTarget(t *testing.T) {
 		t.Skip("driver refusal check runs natively (exit codes + stderr)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "asm_ir_run")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "asm_ir_run")
 
 	const src = "function main(): i32 { return 7; }\n"
 

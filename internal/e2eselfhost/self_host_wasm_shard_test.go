@@ -35,8 +35,8 @@ func TestSelfHostWasmFuncRangeShard(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_modload_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_modload_run.fern", "wasm_modload_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_modload_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_modload_run.fern", "wasm_modload_run")
 
 	// A single-module program with several functions to split across windows,
 	// including cross-window calls and a string literal on each side of the cut.

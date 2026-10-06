@@ -26,7 +26,7 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 	dir := writeSelfHostModloadProject(t)
 
 	// Build the driver as an x86 host binary via the native toolchain.
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "driver")
 
 	builtinsSrc, err := os.ReadFile("../../compiler/builtins.fern")
 	if err != nil {
@@ -304,7 +304,7 @@ func TestSelfHostModloadIRProbeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "driver")
 
 	progDir := t.TempDir()
 	files := map[string]string{

@@ -216,8 +216,8 @@ func compileAndRunSelfHostIR(t *testing.T, gcc string, runner []string, dir, dri
 func TestSelfHostMatchPayloadRC(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	// Active guard: the var-binding shape must stay correct (17 = 5+5+7).
 	t.Run("var_binding_across_alloc", func(t *testing.T) {

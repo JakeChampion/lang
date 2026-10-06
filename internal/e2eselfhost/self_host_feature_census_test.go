@@ -161,6 +161,8 @@ type strippedSource struct {
 func selfHostStripped(t *testing.T) []strippedSource {
 	t.Helper()
 	paths, err := filepath.Glob(langSrcAbs(t, filepath.Join("compiler", "*.fern")))
+	inDrivers, _ := filepath.Glob(langSrcAbs(t, filepath.Join("compiler", "drivers", "*.fern")))
+	paths = append(paths, inDrivers...)
 	if err != nil {
 		t.Fatalf("globbing self-host sources: %v", err)
 	}

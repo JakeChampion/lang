@@ -35,8 +35,8 @@ func TestSelfHostWasmUnsupportedOpRefused(t *testing.T) {
 		t.Skip("driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	wasmDriver := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasmdriver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	wasmDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasmdriver")
 
 	const src = `function main(): i32 { let m: i64 = __heap_mark(); __heap_release_to(m); return 0; }`
 
@@ -72,8 +72,8 @@ func TestSelfHostWasmUnsupportedOpRefused(t *testing.T) {
 	// simply started rejecting the program for an unrelated reason.
 	t.Run("x86-64-still-lowers-it", func(t *testing.T) {
 		asmDir := t.TempDir()
-		copySelfHostDriver(t, asmDir, "asm_ir_run.fern")
-		asmDriver := buildSelfHostBin(t, gcc, asmDir, "asm_ir_run.fern", "asmdriver")
+		copySelfHostDriver(t, asmDir, "drivers/asm_ir_run.fern")
+		asmDriver := buildSelfHostBin(t, gcc, asmDir, "drivers/asm_ir_run.fern", "asmdriver")
 		cmd := exec.Command(asmDriver)
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		out, err := cmd.Output()

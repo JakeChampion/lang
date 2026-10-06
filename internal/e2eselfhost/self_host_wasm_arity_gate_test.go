@@ -19,9 +19,9 @@ import (
 func TestSelfHostWasmArityGate(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern", "wasm_ir_run.fern")
-	astDriver := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
-	irDriver := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasm_ir_run")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "drivers/wasm_run.fern", "drivers/wasm_ir_run.fern")
+	astDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	irDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run")
 
 	// run pipes src to a driver and returns (stdout, stderr, exit code).
 	run := func(t *testing.T, bin string, src string, args ...string) ([]byte, []byte, int) {

@@ -125,8 +125,8 @@ func TestSelfHostSpliceToIR(t *testing.T) {
 		t.Skip("splice_to test runs only natively (opens host paths)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := runCapture(t, gcc, runner, driverBin, []byte(selfHostSpliceToSource(dir, true)), "-ir")
 	if !bytes.Contains(asm, []byte("call __fn___fern_reader_splice")) {
@@ -148,8 +148,8 @@ func TestSelfHostSpliceToArm64IR(t *testing.T) {
 		t.Skip("splice_to test runs only natively (opens host paths)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(selfHostSpliceToSource(dir, true)), "-target", "arm64-linux", "-ir")
 	if !bytes.Contains(asm, []byte("bl __fn___fern_reader_splice")) {
@@ -170,8 +170,8 @@ func TestSelfHostSpliceToWasmIRUnsupported(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(selfHostSpliceToSource("", false)), "-ir")
 	if !bytes.Contains(wat, []byte("call $__fern_reader_splice")) {

@@ -29,8 +29,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	// A fixed file in the preopened dir for read_file() cases.
 	if err := os.WriteFile(filepath.Join(dir, "rf_test.txt"), []byte("file-contents-123"), 0o644); err != nil {

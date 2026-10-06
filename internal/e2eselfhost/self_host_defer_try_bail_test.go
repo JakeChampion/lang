@@ -26,7 +26,7 @@ import (
 func TestSelfHostDeferTryOpBailsRatherThanRecursing(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "defer_try_bail_driver")
+	driverBin := buildSelfHostBin(t, gcc, shDir, "drivers/asm_modload_run.fern", "defer_try_bail_driver")
 
 	src := `function g(v: i32): Option[i32] {
     if (v < 100) { return Some(v + 1); }

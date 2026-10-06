@@ -11,7 +11,7 @@ import (
 // enumKeysDriver prints the name of every enum left after the parser's
 // monomorphisation passes, one per line.
 const enumKeysDriver = `import "./parser";
-import "./rundriver";
+import "./drivers/rundriver";
 
 function main(): i32 {
     let m: parser.Module = parser.module_with_builtins(rundriver.parse_stdin("enum_keys"));

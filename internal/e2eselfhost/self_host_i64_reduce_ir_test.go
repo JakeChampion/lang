@@ -43,16 +43,16 @@ function main(): i32 {
 func TestSelfHostI64MeanReduceIRPathX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern", "drivers/asm_pathprobe_run.fern")
 
 	// Probe: the module must route through the IR path.
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
+	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_pathprobe_run.fern", "pathprobe")
 	if got := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, []byte(i64MeanReduceProgram)))); got != "ir" {
 		t.Fatalf("i64 mean reduction routed through %q path, want \"ir\"", got)
 	}
 
 	// Run: the self-host x86-64 driver must emit a binary that returns 7.
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 	asm := runCapture(t, gcc, runner, driverBin, []byte(i64MeanReduceProgram))
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")
@@ -79,8 +79,8 @@ func TestSelfHostI64MeanReduceIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	var cmd *exec.Cmd
 	if len(runner) == 0 {

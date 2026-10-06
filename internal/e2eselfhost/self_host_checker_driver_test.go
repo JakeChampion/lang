@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,7 +21,7 @@ func TestSelfHostCheckerDriverX86_64(t *testing.T) {
 	// std/io + ./lexer + ./parser + ./checker) with the file-based asm
 	// driver via buildCheckerDriverBin — the loader resolves std/io to the
 	// vendored flat io.fern, so no ///MODULE bundle / import rewrite needed.
-	checkerBin, runner, _ := buildCheckerDriverBin(t, "checker_run.fern", false)
+	checkerBin, runner, _ := buildCheckerDriverBin(t, "drivers/checker_run.fern", false)
 
 	cases := []struct {
 		name     string
@@ -97,27 +98,26 @@ func TestSelfHostCheckerDriverArm64(t *testing.T) {
 	// Derived from the driver's own imports, not listed — see the note in
 	// buildCheckerDriverBin (#6993).
 	files := map[string]string{}
-	for _, p := range selfHostImportClosureFiles(t, "checker_run.fern") {
-		base := filepath.Base(p)
-		if base == "checker_run.fern" {
+	for _, p := range selfHostImportClosureFiles(t, "drivers/checker_run.fern") {
+		if filepath.Base(p) == filepath.Base("drivers/checker_run.fern") {
 			continue // staged below as main.fern
 		}
-		src, err := os.ReadFile(filepath.Join("../../compiler", base))
+		src, err := os.ReadFile(p)
 		if err != nil {
-			t.Fatalf("read %s: %v", base, err)
+			t.Fatalf("read %s: %v", p, err)
 		}
-		files[base] = string(src)
+		files[filepath.Base(p)] = e2eharness.FlatDriverSource(string(src))
 	}
 	ioSrc, err := os.ReadFile("../../internal/stdlib/std/io.fern")
 	if err != nil {
 		t.Fatalf("read std/io.fern: %v", err)
 	}
 	files["io.fern"] = string(ioSrc)
-	runSrc, err := os.ReadFile("../../compiler/checker_run.fern")
+	runSrc, err := os.ReadFile("../../compiler/drivers/checker_run.fern")
 	if err != nil {
 		t.Fatalf("read checker_run.fern: %v", err)
 	}
-	files["main.fern"] = string(runSrc)
+	files["main.fern"] = e2eharness.FlatDriverSource(string(runSrc))
 
 	checkerAsm, progDir := compileFilesModload(t, x86runner, driverBin, files, "-target", "arm64-linux")
 	if len(checkerAsm) == 0 {

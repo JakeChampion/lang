@@ -36,8 +36,8 @@ func TestSelfHostArrayMethodTreeshakeIR(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t) // util, parser, irtables, asm_ir, treeshake, …
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	mmc := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "mmc")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	mmc := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "mmc")
 
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {

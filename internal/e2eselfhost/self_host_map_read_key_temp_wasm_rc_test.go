@@ -40,8 +40,8 @@ func TestSelfHostMapReadKeyTempWasmRC(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	const probe = `function main(): i32 { let acc: i32 = 0; let w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } ` +
 		`let s1: i32 = (__heap_bump_bytes() as i32); let j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } ` +

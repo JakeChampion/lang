@@ -137,12 +137,12 @@ func newStdlibLoader(t *testing.T) *stdlibLoader {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &stdlibLoader{gcc: gcc, runner: runner, mmc: buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "mmc"), root: root}
+	return &stdlibLoader{gcc: gcc, runner: runner, mmc: buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "mmc"), root: root}
 }
 
 // emit compiles src for x86-64 and returns the assembly.

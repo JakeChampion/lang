@@ -22,7 +22,7 @@ import (
 // to be low enough that it runs on every change to this file.
 //
 // The behaviour on top of the table — reachability, the report, the E070
-// text — is pinned by compiler/caps_run.fern and by the
+// text — is pinned by compiler/drivers/caps_run.fern and by the
 // native/self-host differential in internal/e2eselfhost.
 
 const selfHostCapsSrc = "../../compiler/caps.fern"

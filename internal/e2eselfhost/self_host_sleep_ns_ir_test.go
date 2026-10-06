@@ -76,8 +76,8 @@ func runSleepNsDriver(t *testing.T, runner []string, driverBin, src string, args
 func TestSelfHostSleepNsIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := runSleepNsDriver(t, runner, driverBin, sleepNsSelfHostSource, "-ir")
 	if !bytes.Contains(asm, []byte("call __fn___fern_sleep_ns")) {
@@ -103,8 +103,8 @@ func TestSelfHostSleepNsIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := runSleepNsDriver(t, x86runner, driverBin, sleepNsSelfHostSource, "-target", "arm64-linux", "-ir")
 	if !bytes.Contains(asm, []byte("bl __fn___fern_sleep_ns")) {
@@ -129,8 +129,8 @@ func TestSelfHostSleepNsIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	wat := runSleepNsDriver(t, runner, driverBin, sleepNsSelfHostSource, "-ir")
 	if !bytes.Contains(wat, []byte("call $__fern_sleep_ns")) {

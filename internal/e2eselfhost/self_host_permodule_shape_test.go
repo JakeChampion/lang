@@ -37,7 +37,7 @@ func TestSelfHostPerModuleShapeParser(t *testing.T) {
 func TestSelfHostPerModuleShapeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
-	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "shape_driver")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "shape_driver")
 	testPMModuleShape(t, func(entry, flag string) (string, error) {
 		out, err := runX86_64Bin(runner, bin, entry, flag).CombinedOutput()
 		return string(out), err

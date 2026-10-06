@@ -25,7 +25,7 @@ var wideSettleRejects = []struct{ name, src string }{
 }
 
 func TestSelfHostWideLiteralSettle(t *testing.T) {
-	checkerBin, runner, _ := buildCheckerDriverBin(t, "checker_run.fern", false)
+	checkerBin, runner, _ := buildCheckerDriverBin(t, "drivers/checker_run.fern", false)
 	for _, tc := range wideSettleAccepts {
 		t.Run("accept/"+tc.name, func(t *testing.T) {
 			if code, stderr := runSelfHostChecker(t, checkerBin, runner, tc.src); code != 0 || strings.TrimSpace(stderr) != "" {

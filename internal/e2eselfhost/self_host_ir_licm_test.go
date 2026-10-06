@@ -26,8 +26,8 @@ func TestSelfHostIRLICM(t *testing.T) {
 		t.Skip("ir_licm_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ir_licm_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "ir_licm_run.fern", "ir_licm_run")
+	copySelfHostDriver(t, dir, "drivers/ir_licm_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/ir_licm_run.fern", "ir_licm_run")
 
 	const want = "" +
 		// The length is read once, before the loop, into the fresh slot 3, and
@@ -194,8 +194,8 @@ func selfHostLenShape(asm string) (outside, inside int) {
 func TestSelfHostLICMX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	asmBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "asm_ir_run")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	asmBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "asm_ir_run")
 
 	for _, tc := range licmPrograms {
 		t.Run(tc.name, func(t *testing.T) {
@@ -224,8 +224,8 @@ func TestSelfHostLICMArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	for _, tc := range licmPrograms {
 		t.Run(tc.name, func(t *testing.T) {
@@ -253,8 +253,8 @@ func TestSelfHostLICMWasmIR(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	for _, tc := range licmPrograms {
 		t.Run(tc.name, func(t *testing.T) {

@@ -57,7 +57,7 @@ var declModifierCases = []struct {
 // type checker (checker_run): the pre-#6631 failure was a spurious E001, so
 // a clean exit with empty stderr is the assertion that matters.
 func TestSelfHostDeclModifiersChecker(t *testing.T) {
-	checkerBin, runner, _ := buildCheckerDriverBin(t, "checker_run.fern", false)
+	checkerBin, runner, _ := buildCheckerDriverBin(t, "drivers/checker_run.fern", false)
 	for _, tc := range declModifierCases {
 		t.Run(tc.name, func(t *testing.T) {
 			code, stderr := runSelfHostChecker(t, checkerBin, runner, tc.src)
@@ -78,9 +78,9 @@ func TestSelfHostDeclModifiersChecker(t *testing.T) {
 func TestSelfHostDeclModifiersIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern", "drivers/asm_pathprobe_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
+	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_pathprobe_run.fern", "pathprobe")
 
 	for _, tc := range declModifierCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -115,8 +115,8 @@ func TestSelfHostDeclModifiersIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	for _, tc := range declModifierCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -159,7 +159,7 @@ func TestSelfHostDeclModifiersIRWasm(t *testing.T) {
 // array to the self-host, so the import attribute is what separates the two;
 // the last case pins that the real E052 still fires.
 func TestSelfHostImportAsyncFunctionChecks(t *testing.T) {
-	checkerBin, runner, _ := buildCheckerDriverBin(t, "checker_run.fern", false)
+	checkerBin, runner, _ := buildCheckerDriverBin(t, "drivers/checker_run.fern", false)
 	const importDecl = `@import("wasi:random/random@0.2.0", "get-random-u64")`
 	cases := []struct {
 		name, src string
@@ -218,9 +218,9 @@ func TestSelfHostOpaqueUnderAttributes(t *testing.T) {
 
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	checkerBin, checkerRunner, _ := buildCheckerDriverBin(t, "checker_run.fern", false)
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
+	checkerBin, checkerRunner, _ := buildCheckerDriverBin(t, "drivers/checker_run.fern", false)
 
 	check := func(t *testing.T, src string) string {
 		t.Helper()

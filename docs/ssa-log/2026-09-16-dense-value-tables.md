@@ -5,7 +5,7 @@
 ## What the profile said
 
 A fresh profile of `fern -target x86-64-linux -backend ssa` on
-`compiler/asm_ir_run.fern`, after the emitter and fixpoint work of
+`compiler/drivers/asm_ir_run.fern`, after the emitter and fixpoint work of
 #9463 and #9464 brought it to 32 s, put `runtime.mapassign_fast32` at 5.45 s
 cumulative, 11% of the compile. The callers were the SSA passes, all writing
 maps keyed by `Value.ID`:

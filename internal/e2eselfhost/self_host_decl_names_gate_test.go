@@ -38,8 +38,8 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostFiles(t, dir, "lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	for _, tc := range []struct {
 		name   string
@@ -147,8 +147,8 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 func TestSelfHostDeclNamesGateNativeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 	for _, tc := range []struct{ name, src, cause string }{
 		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }", "has no type"},
 		{"untyped-impl-self", "trait Conv { function conv(self: Self): i32; }\nstruct A { v: i32 }\nimpl Conv for A { function conv(self): i32 { return 1; } }\nfunction main(): i32 { return 0; }", "has no type"},
@@ -178,8 +178,8 @@ func TestSelfHostDeclNamesGateNativeX86_64(t *testing.T) {
 func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	irDir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, irDir, "asm_ir_run.fern")
-	irBin := buildSelfHostBin(t, gcc, irDir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, irDir, "drivers/asm_ir_run.fern")
+	irBin := buildSelfHostBin(t, gcc, irDir, "drivers/asm_ir_run.fern", "driver")
 
 	const untyped = "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }\n"
 	const sentinel = "function main(): i32 { return @; }\n"
@@ -207,14 +207,14 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	if len(runner) != 0 {
 		t.Skip("the loading drivers run natively; skipping under an exec runner")
 	}
-	copySelfHostDriver(t, irDir, "asm_load_run.fern")
+	copySelfHostDriver(t, irDir, "drivers/asm_load_run.fern")
 	loaders := []struct {
 		name  string
 		bin   string
 		modes [][]string
 	}{
-		{"asm_load_run", buildSelfHostBin(t, gcc, irDir, "asm_load_run.fern", "load"), [][]string{nil, {"-per-module-count"}, {"-ir-probe"}, {"-decide"}}},
-		{"asm_modload_run", buildSelfHostBin(t, gcc, writeSelfHostModloadProject(t), "asm_modload_run.fern", "modload"), [][]string{nil, {"-per-module-count"}, {"-ir-probe"}}},
+		{"asm_load_run", buildSelfHostBin(t, gcc, irDir, "drivers/asm_load_run.fern", "load"), [][]string{nil, {"-per-module-count"}, {"-ir-probe"}, {"-decide"}}},
+		{"asm_modload_run", buildSelfHostBin(t, gcc, writeSelfHostModloadProject(t), "drivers/asm_modload_run.fern", "modload"), [][]string{nil, {"-per-module-count"}, {"-ir-probe"}}},
 		{"wasm_modload_run", buildWasmModloadDriver(t, gcc), [][]string{{"-per-module-emit", "0"}, {"-per-module-count"}}},
 	}
 	// Past the 512-function IR budget the default path emits per module, which
@@ -283,16 +283,16 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	drivers := []struct {
 		name string
 		bin  string
 		args []string
 	}{
-		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasm_ir_run"), nil},
+		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run"), nil},
 		{"wasm_ir_run-ir", "", []string{"-ir"}},
-		{"wasm_runio_run", buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run"), nil},
+		{"wasm_runio_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run"), nil},
 		{"wasm_runio_run-decide", "", []string{"-decide"}},
 	}
 	drivers[1].bin, drivers[3].bin = drivers[0].bin, drivers[2].bin
@@ -347,6 +347,8 @@ func TestSelfHostEmittingDriversRunDeclGates(t *testing.T) {
 	declGate := regexp.MustCompile(`\b(refuse_decl_names|check_decl_names)\(`)
 	sentinelGate := regexp.MustCompile(`\b(refuse_parse_unknowns|parse_unknown_errors_module)\(`)
 	files, err := filepath.Glob(filepath.Join("..", "..", "compiler", "*.fern"))
+	inDrivers, _ := filepath.Glob(filepath.Join("..", "..", "compiler", "drivers", "*.fern"))
+	files = append(files, inDrivers...)
 	if err != nil || len(files) == 0 {
 		t.Fatalf("globbing the self-host sources: %v (%d files)", err, len(files))
 	}
@@ -382,8 +384,8 @@ func TestSelfHostEmittingDriversRunDeclGates(t *testing.T) {
 func buildWasmModloadDriver(t *testing.T, gcc string) string {
 	t.Helper()
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_modload_run.fern")
-	return buildSelfHostBin(t, gcc, dir, "wasm_modload_run.fern", "wasm_modload_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_modload_run.fern")
+	return buildSelfHostBin(t, gcc, dir, "drivers/wasm_modload_run.fern", "wasm_modload_run")
 }
 
 func writeTemp(t *testing.T, dir, name string, src []byte) string {

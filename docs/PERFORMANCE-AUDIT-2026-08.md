@@ -17,7 +17,7 @@ The same source, the same target, two compilers:
 | input | `bin/fern` (Go) | `bin/fern-selfhost` (Fern) | ratio |
 |---|---|---|---|
 | `compiler/fern.fern` → x86-64 asm | **58 s** | **6 m 05 s** | 6.3× |
-| `compiler/checker_run.fern` → x86-64 asm | 3.9 s | 23.3 s | 6.0× |
+| `compiler/drivers/checker_run.fern` → x86-64 asm | 3.9 s | 23.3 s | 6.0× |
 
 **Those are the numbers this audit started from and they are history — the gap
 is 3.1x as of §4g** (23.9 s against 74.6 s, measured at 6fec3ed). The rest of

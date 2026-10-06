@@ -108,9 +108,9 @@ function main(): i32 {
 func TestSelfHostEmptyLiteralCapacity(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern", "wasm_ir_run.fern")
-	driver := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-	wasm := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasmdriver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern", "drivers/wasm_ir_run.fern")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
+	wasm := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasmdriver")
 	interp := buildLangBinForInterp(t)
 	cases := emptyLitCases()
 	want := map[string]int{}

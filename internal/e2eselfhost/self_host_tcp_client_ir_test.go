@@ -73,9 +73,9 @@ func TestSelfHostTcpClientIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	port := startTcpPongServer(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "probe")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern", "drivers/asm_pathprobe_run.fern")
+	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_pathprobe_run.fern", "probe")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	src := []byte(tcpClientIRProgram(port) + "\n")
 	path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))

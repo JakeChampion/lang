@@ -49,10 +49,10 @@ func TestSelfHostStatSizeI64X86(t *testing.T) {
 		t.Skip("stat size test runs only natively (stats a host path)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	bigPath := filepath.Join(dir, "huge.bin")
 	makeSparse(t, bigPath, statSizeI64Big)
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	// Exit 0 iff s.size is the full 5 GiB; 42 flags a low-32-bit truncation.
 	src := fmt.Sprintf(`function main(): i32 {
@@ -91,9 +91,9 @@ func TestSelfHostStatSizeI64Wasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	makeSparse(t, filepath.Join(dir, "huge.bin"), statSizeI64Big)
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	src := fmt.Sprintf(`function main(): i32 {
     match (stat("huge.bin")) {

@@ -43,17 +43,17 @@ func TestSelfHostNestedClosureX86IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 
-	probeSrc, err := os.ReadFile("../../compiler/asm_pathprobe_run.fern")
+	probeSrc, err := os.ReadFile("../../compiler/drivers/asm_pathprobe_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_pathprobe_run.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_pathprobe_run.fern"), probeSrc, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_pathprobe_run.fern"), probeSrc, 0o644); err != nil {
 		t.Fatalf("write asm_pathprobe_run.fern: %v", err)
 	}
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
+	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_pathprobe_run.fern", "pathprobe")
 
-	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	emit := func(t *testing.T, src string) string {
 		t.Helper()

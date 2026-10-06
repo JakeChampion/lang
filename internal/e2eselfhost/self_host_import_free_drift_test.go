@@ -45,6 +45,8 @@ import (
 // identical). Diverging on a comment is not a bug; diverging on a statement is.
 func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	paths, err := filepath.Glob(langSrcAbs(t, filepath.Join("compiler", "*.fern")))
+	inDrivers, _ := filepath.Glob(langSrcAbs(t, filepath.Join("compiler", "drivers", "*.fern")))
+	paths = append(paths, inDrivers...)
 	if err != nil {
 		t.Fatalf("glob self-host sources: %v", err)
 	}

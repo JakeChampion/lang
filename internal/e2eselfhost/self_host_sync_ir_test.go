@@ -97,8 +97,8 @@ func TestSelfHostSyncIR(t *testing.T) {
 		t.Skip("the character-device answers this pins were measured on Linux")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	work := t.TempDir()
 	cmd := exec.Command(driverBin, "-ir")
@@ -136,8 +136,8 @@ func TestSelfHostSyncIRArm64(t *testing.T) {
 		t.Skip("the character-device answers this pins were measured on Linux")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	work := t.TempDir()
 	cmd := exec.Command(driverBin, "-target", "arm64-linux", "-ir")
@@ -169,8 +169,8 @@ func TestSelfHostSyncWasmIR(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	var cmd *exec.Cmd
 	if len(runner) == 0 {

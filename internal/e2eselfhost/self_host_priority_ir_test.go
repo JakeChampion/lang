@@ -68,8 +68,8 @@ func prioritySelfHostSource() string {
 func TestSelfHostPriorityIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := runSelfHostDriverStdin(t, runner, driverBin, prioritySelfHostSource(), "-ir")
 	for _, call := range []string{"call __fn___fern_priority", "call __fn___fern_set_priority"} {
@@ -97,8 +97,8 @@ func TestSelfHostPriorityIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := runSelfHostDriverStdin(t, x86runner, driverBin, prioritySelfHostSource(), "-target", "arm64-linux", "-ir")
 	for _, call := range []string{"bl __fn___fern_priority", "bl __fn___fern_set_priority"} {
@@ -128,8 +128,8 @@ func TestSelfHostPriorityIRArm64(t *testing.T) {
 func TestSelfHostPriorityIRWasmRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	cmd := runX86_64Bin(runner, driverBin, "-ir")
 	cmd.Stdin = strings.NewReader(prioritySelfHostSource())

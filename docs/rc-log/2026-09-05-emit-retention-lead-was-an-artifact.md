@@ -98,7 +98,7 @@ the allocating pair. That is the measurement the first run was meant to be.
 
 The other one is done, and it is the number goal 2 has been missing.
 
-`compiler/asm_ir_run.fern` — the whole compiler front-end plus both
+`compiler/drivers/asm_ir_run.fern` — the whole compiler front-end plus both
 x86-64 backends — emitted **twice from one source**, once by native and once by
 the self-host emitter, both under `FERN_LEAKCHECK`, then run on the same input.
 The subjects are real compiler modules that happen to have **no imports**, so
@@ -144,7 +144,7 @@ pointer tracking, and it is real compiler code rather than a shape guessed at.
 ```
 go run ./cmd/fern -target x86-64-linux -o fern_sh compiler/fern.fern
 FERN_LEAKCHECK=1 go run ./cmd/fern -target x86-64-linux -o drv_native \
-    compiler/asm_ir_run.fern
+    compiler/drivers/asm_ir_run.fern
 cd compiler && FERN_LEAKCHECK=1 ../fern_sh -target x86-64-linux \
     -emit asm -o drv_sh.s asm_ir_run.fern ../internal/stdlib
 gcc -nostdlib -no-pie -o drv_selfhost drv_sh.s

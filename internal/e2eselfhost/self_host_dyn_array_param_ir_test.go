@@ -80,14 +80,14 @@ func TestSelfHostDynArrayParamIR(t *testing.T) {
 func TestSelfHostDynFnTypeParamParsesX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	asmRun, err := os.ReadFile(filepath.Join("../../compiler", "asm_run.fern"))
+	asmRun, err := os.ReadFile(filepath.Join("../../compiler", "drivers/asm_run.fern"))
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), asmRun, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_run.fern"), asmRun, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 	src := []byte(dynArrayParamPrelude +
 		"function apply(f: (dyn Sh) => i32, x: dyn Sh): i32 { return f(x); }\n" +
 		"function area_of(s: dyn Sh): i32 { return s.area(); }\n" +

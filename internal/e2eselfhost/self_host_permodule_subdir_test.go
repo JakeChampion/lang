@@ -21,7 +21,7 @@ import (
 func TestSelfHostPerModuleSubdirCacheX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, shDir, "drivers/asm_modload_run.fern", "driver")
 
 	proj := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(proj, "sub"), 0o755); err != nil {

@@ -31,8 +31,8 @@ func TestSelfHostTomlCRLF(t *testing.T) {
 		t.Skip("toml_crlf_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "toml_crlf_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "toml_crlf_run.fern", "toml_crlf_run")
+	copySelfHostDriver(t, dir, "drivers/toml_crlf_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/toml_crlf_run.fern", "toml_crlf_run")
 
 	const want = "LF   name=acme\n" +
 		"LF   deps=2\n" +

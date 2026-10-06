@@ -39,8 +39,8 @@ func selfHostArm64Asm(t *testing.T, target string) string {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	out := runCaptureEnv(t, runner, bin, []byte(darwinLabelSrc),
 		[]string{"PATH=/usr/bin:/bin"}, "-target", target)
 	if len(out) == 0 {
@@ -104,8 +104,8 @@ func TestSelfHostArm64DarwinRegisterEntriesAreLocal(t *testing.T) {
 func TestSelfHostArm64DarwinStringLiteralKeepsDotL(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	out := runCaptureEnv(t, runner, bin, []byte(darwinLabelStrSrc),
 		[]string{"PATH=/usr/bin:/bin"}, "-target", "arm64-darwin")
 	if !strings.Contains(string(out), ".Lnot_a_label") {
@@ -126,8 +126,8 @@ const darwinLo12StrSrc = `function main(): i32 {
 func TestSelfHostArm64DarwinStringLiteralKeepsLo12(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	out := string(runCaptureEnv(t, runner, bin, []byte(darwinLo12StrSrc),
 		[]string{"PATH=/usr/bin:/bin"}, "-target", "arm64-darwin"))
 	if !strings.Contains(out, `:lo12:.Lfern_relanchor"`) {

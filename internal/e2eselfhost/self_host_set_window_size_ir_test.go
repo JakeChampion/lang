@@ -96,8 +96,8 @@ func TestSelfHostSetWindowSizeIR(t *testing.T) {
 		t.Skip("set_window_size test runs only natively (drives a host terminal)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := runCapture(t, gcc, runner, driverBin, []byte(selfHostSetWindowSizeSource), "-ir")
 	if len(asm) == 0 {
@@ -122,8 +122,8 @@ func TestSelfHostSetWindowSizeArm64IR(t *testing.T) {
 		t.Skip("set_window_size test runs only natively (drives a host terminal)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(selfHostSetWindowSizeSource), "-target", "arm64-linux", "-ir")
 	if len(asm) == 0 {

@@ -33,8 +33,8 @@ func TestSelfHostFerndocSelfChecks(t *testing.T) {
 		t.Skip("ferndoc_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ferndoc_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "ferndoc_run.fern", "ferndoc_run")
+	copySelfHostDriver(t, dir, "drivers/ferndoc_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/ferndoc_run.fern", "ferndoc_run")
 
 	cmd := exec.Command(bin, "-self")
 	out, _ := cmd.Output()
@@ -145,8 +145,8 @@ func TestSelfHostFerndocMatchesNative(t *testing.T) {
 		t.Skip("ferndoc_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ferndoc_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "ferndoc_run.fern", "ferndoc_run")
+	copySelfHostDriver(t, dir, "drivers/ferndoc_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/ferndoc_run.fern", "ferndoc_run")
 
 	// Generate the native pages once, from the same sources.
 	docDir := t.TempDir()
@@ -270,8 +270,8 @@ func TestSelfHostFerndocPagesMatchNative(t *testing.T) {
 		t.Skip("ferndoc_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ferndoc_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "ferndoc_run.fern", "ferndoc_run")
+	copySelfHostDriver(t, dir, "drivers/ferndoc_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/ferndoc_run.fern", "ferndoc_run")
 
 	docDir := t.TempDir()
 	gen := exec.Command("go", "run", "./../../cmd/ferndoc", "-out", docDir)

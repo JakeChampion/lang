@@ -32,8 +32,8 @@ func TestSelfHostArm64AsmMemoryLinear(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "arm64_asm_bench_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "arm64_asm_bench_run.fern", "arm64_asm_bench")
+	copySelfHostDriver(t, dir, "drivers/arm64_asm_bench_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/arm64_asm_bench_run.fern", "arm64_asm_bench")
 
 	const nInsns = 40000
 	src, nLits := gasStressProgram(nInsns)

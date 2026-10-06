@@ -105,14 +105,14 @@ func TestSelfHostSignalDispositionIRX86_64(t *testing.T) {
 		t.Skip("self-host signal-disposition test runs host-native only (needs a real SIGPIPE)")
 	}
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile(filepath.Join("../../compiler", "asm_run.fern"))
+	src, err := os.ReadFile(filepath.Join("../../compiler", "drivers/asm_run.fern"))
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	asm := runCapture(t, gcc, runner, driverBin, []byte(signalDispositionProg+"\n"))
 	if len(asm) == 0 {
@@ -156,8 +156,8 @@ func TestSelfHostSignalDispositionIRArm64(t *testing.T) {
 		t.Skip("needs a native x86 host to run the aarch64-emitting driver")
 	}
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "signal_arm64_mmc")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	mmc := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_load_run.fern", "signal_arm64_mmc")
 
 	srcFile := filepath.Join(t.TempDir(), "signal_disposition.fern")
 	if err := os.WriteFile(srcFile, []byte(signalDispositionProg+"\n"), 0o644); err != nil {

@@ -142,7 +142,7 @@ func perModuleUnits(t *testing.T, runner []string, driverBin, entry string, targ
 func TestSelfHostPerModuleCounterBSSLinkX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "counterbss")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "counterbss")
 
 	entry := writePerModuleCounterProject(t)
 	objs := perModuleUnits(t, runner, driverBin, entry, nil, 2)
@@ -172,7 +172,7 @@ func TestSelfHostPerModuleCounterBSSLinkArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "counterbssarm64")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "counterbssarm64")
 
 	entry := writePerModuleCounterProject(t)
 	objs := perModuleUnits(t, x86runner, driverBin, entry, []string{"-target", "arm64-linux"}, 2)

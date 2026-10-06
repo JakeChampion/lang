@@ -12,15 +12,15 @@ import (
 // integer oracle. In particular, u64 values must retain their high 32 bits.
 func TestSelfHostInterpBitCounts(t *testing.T) {
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "interp_run.fern")
+	copySelfHostDriver(t, dir, "drivers/interp_run.fern")
 	var driver string
 	var runner []string
 	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
-		driver = buildSelfHostBinArm64Darwin(t, dir, "interp_run.fern", "interp_run")
+		driver = buildSelfHostBinArm64Darwin(t, dir, "drivers/interp_run.fern", "interp_run")
 	} else {
 		gcc, r := x86_64Tooling(t)
 		runner = r
-		driver = buildSelfHostBin(t, gcc, dir, "interp_run.fern", "interp_run")
+		driver = buildSelfHostBin(t, gcc, dir, "drivers/interp_run.fern", "interp_run")
 	}
 	oracle := buildLangBinForInterp(t)
 	values := []uint64{0, ^uint64(0), 0xaaaaaaaaaaaaaaaa, 0x5555555555555555, 0x0123456789abcdef}

@@ -216,7 +216,7 @@ func astStmtForms(t *testing.T) []string {
 
 func TestSelfHostBindStmtScopeParity(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../compiler/bind_stmt_parity_run.fern")
+	driver, err := filepath.Abs("../../compiler/drivers/bind_stmt_parity_run.fern")
 	if err != nil {
 		t.Fatalf("abs driver path: %v", err)
 	}

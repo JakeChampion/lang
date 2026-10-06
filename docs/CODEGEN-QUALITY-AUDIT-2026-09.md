@@ -243,7 +243,7 @@ Everything else on the list below is a variation on those three.
 
 ### 2.2 The census
 
-`scripts/codegen-census -c compiler/checker_run.fern`, the self-hosted
+`scripts/codegen-census -c compiler/drivers/checker_run.fern`, the self-hosted
 checker driver — 1 074 functions, the largest realistic program in the tree:
 
 ```
@@ -421,7 +421,7 @@ already complete and already fuzzed.
 > | `coreutils/wc.fern` | 42,371 | 15,652 | **0.37×** |
 > | `coreutils/sort.fern` | 71,340 | 43,163 | **0.60×** |
 > | `coreutils/b2sum.fern` | 92,124 | 69,893 | **0.76×** |
-> | `compiler/checker_run.fern` | 753,872 | 675,775 | **0.90×** |
+> | `compiler/drivers/checker_run.fern` | 753,872 | 675,775 | **0.90×** |
 >
 > `scripts/codegen-census`, `bin/fern` at `0e1ca4b49`. The driver row is the one
 > that matters: 0.90× where §5.0's table recorded 1.44×. Both sides moved — the
@@ -921,14 +921,14 @@ Stated plainly so the gaps are not mistaken for clean bills of health.
 go build -o bin/fern ./cmd/fern
 
 # the census, per backend
-scripts/codegen-census -c compiler/checker_run.fern
+scripts/codegen-census -c compiler/drivers/checker_run.fern
 scripts/codegen-census -c bench/int_loop.fern
 
 # the exhibit
 ./bin/fern -target x86-64-linux bench/int_loop.fern | sed -n '/^__fn_main:/,/^\.size/p'
 
 # instruction repertoire
-./bin/fern -target arm64-linux compiler/checker_run.fern \
+./bin/fern -target arm64-linux compiler/drivers/checker_run.fern \
   | grep -P '^\t\S' | awk '{print $1}' | sort | uniq -c | sort -rn
 
 # the cross-language ranking (kernel-only retired instructions)

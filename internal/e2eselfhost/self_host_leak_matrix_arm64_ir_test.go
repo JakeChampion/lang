@@ -118,8 +118,8 @@ func TestSelfHostLeakMatrixIRArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_load_run.fern", "driver")
 
 	cells := leakMatrixCells()
 	seen := map[string]bool{}

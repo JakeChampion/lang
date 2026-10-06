@@ -29,8 +29,8 @@ func TestSelfHostEmptyImplAdoptedMethodGate(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	mmc := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "mmc")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	mmc := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "mmc")
 
 	progDir := t.TempDir()
 	const modSrc = `pub struct Val { n: i32 }

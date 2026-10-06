@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -106,7 +107,7 @@ func uniqueSortedCodes(in []string) []string {
 // buildCheckerCodesBin builds the single-module checker-codes driver
 // (checker_codes_run.fern). See buildCheckerDriverBin.
 func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir string) {
-	return buildCheckerDriverBin(t, "checker_codes_run.fern", false)
+	return buildCheckerDriverBin(t, "drivers/checker_codes_run.fern", false)
 }
 
 // buildCheckerDriverBin builds a self-host checker-codes driver binary: it
@@ -134,15 +135,14 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 	// that elsewhere do not reach it (#6993).
 	files := map[string]string{}
 	for _, p := range selfHostImportClosureFiles(t, driverFile) {
-		base := filepath.Base(p)
-		if base == driverFile {
+		if filepath.Base(p) == filepath.Base(driverFile) {
 			continue // staged below as main.fern
 		}
-		src, err := os.ReadFile(filepath.Join("../../compiler", base))
+		src, err := os.ReadFile(p)
 		if err != nil {
-			t.Fatalf("read %s: %v", base, err)
+			t.Fatalf("read %s: %v", p, err)
 		}
-		files[base] = string(src)
+		files[filepath.Base(p)] = e2eharness.FlatDriverSource(string(src))
 	}
 	if withFlatten {
 		src, err := os.ReadFile("../../compiler/flatten.fern")
@@ -160,7 +160,7 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 	if err != nil {
 		t.Fatalf("read %s: %v", driverFile, err)
 	}
-	files["main.fern"] = string(runSrc)
+	files["main.fern"] = e2eharness.FlatDriverSource(string(runSrc))
 
 	checkerAsm, progDir := compileFilesModload(t, runner, modDriverBin, files)
 	if len(checkerAsm) == 0 {
