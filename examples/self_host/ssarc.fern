@@ -1595,23 +1595,39 @@ function no_route(): Route {
 }
 
 // The per-function facts every route search reads: each block's position by
-// id, whether it builds, and an all-zero mark per position for a search to
-// copy and fill.
-struct RouteGraph { at: i32[], builds: boolean[], blank: i32[] }
+// id and whether it builds.
+struct RouteGraph { at: i32[], builds: boolean[] }
 
 function route_graph(f: ssasem.Func, p: ssaunits.Plan): RouteGraph {
   let builds: boolean[] = [];
-  let blank: i32[] = [];
   for b in f.graph.blocks {
     builds = builds.append(first_claim(f, p, b) >= 0);
-    blank = blank.append(0);
   }
-  return RouteGraph { at: ssa.block_positions(f.graph), builds: builds, blank: blank };
+  return RouteGraph { at: ssa.block_positions(f.graph), builds: builds };
 }
 
-function carry_route(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock): Route {
-  // mark: 1 for a block ahead that builds nothing, 2 for one that builds.
-  let mark: i32[] = g.blank;
+// What the route searches of one function mark, by block position: `seen` the
+// blocks ahead of a search's start, `way` the blocks between it and a target.
+// A mark holds the stamp of the search that made it, and each search takes a
+// fresh stamp, so none is cleared between searches.
+struct RouteMarks { seen: i32[], way: i32[], stamp: i32 }
+
+struct Searched { route: Route, marks: RouteMarks }
+
+function route_marks(n: i32): RouteMarks {
+  let seen: i32[] = [];
+  let way: i32[] = [];
+  while (seen.len() < n) {
+    seen = seen.append(0);
+    way = way.append(0);
+  }
+  return RouteMarks { seen: seen, way: way, stamp: 0 };
+}
+
+function carry_route(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, own m: RouteMarks): Searched {
+  let ahead: i32 = m.stamp + 1;
+  let seen: i32[] = m.seen;
+  let way: i32[] = m.way;
   let builds: i32[] = [];
   let work: i32[] = successors(from.term);
   let next: i32 = 0;
@@ -1619,32 +1635,38 @@ function carry_route(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock): Route {
     let id: i32 = work[next];
     next = next + 1;
     let k: i32 = g.at[id];
-    if (id == from.id || mark[k] != 0) {
+    if (id == from.id || seen[k] == ahead) {
       continue;
     }
+    seen = seen.with(k, ahead);
     if (g.builds[k]) {
       builds = builds.append(id);
-      mark = mark.with(k, 2);
     } else {
-      mark = mark.with(k, 1);
       for s in successors(f.graph.blocks[k].term) {
         work = work.append(s);
       }
     }
   }
+  m = RouteMarks { seen: seen, way: way, stamp: ahead };
   for target in builds {
-    let r: Route = route_to(f, g, from, mark, target);
-    if (r.target >= 0) {
-      return r;
+    let found: Searched = route_to(f, g, from, m, ahead, target);
+    if (found.route.target >= 0) {
+      return found;
     }
+    m = found.marks;
   }
-  return no_route();
+  return Searched { route: no_route(), marks: m };
 }
 
-function route_to(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, ahead: i32[], target: i32): Route {
-  // The blocks ahead that reach the target without passing `from`, marked 3
-  // in a copy of the caller's marks.
-  let mark: i32[] = ahead;
+// `ahead` is the stamp of the `seen` marks of the search from `from`.
+function route_to(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, own m: RouteMarks, ahead: i32, target: i32): Searched {
+  // The walk takes the predecessors of the target and of each block on the
+  // way, marked `way` at a fresh stamp. Each must be `from`, on the way, or a
+  // block ahead that builds nothing, which joins the way; any other enters the
+  // way from elsewhere.
+  let stamp: i32 = m.stamp + 1;
+  let seen: i32[] = m.seen;
+  let way: i32[] = m.way;
   let between: i32[] = [];
   let work: i32[] = f.graph.blocks[g.at[target]].preds;
   let next: i32 = 0;
@@ -1652,30 +1674,48 @@ function route_to(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, ahead: i32[],
     let id: i32 = work[next];
     next = next + 1;
     let k: i32 = g.at[id];
-    if (mark[k] == 1) {
-      between = between.append(id);
-      mark = mark.with(k, 3);
-      for pr in f.graph.blocks[k].preds {
-        work = work.append(pr);
-      }
+    if (id == from.id || way[k] == stamp) {
+      continue;
     }
-  }
-  for id in between.append(target) {
-    for pr in f.graph.blocks[g.at[id]].preds {
-      if (pr != from.id && mark[g.at[pr]] != 3) {
-        return no_route();
-      }
+    if (seen[k] != ahead || g.builds[k]) {
+      return Searched { route: no_route(), marks: RouteMarks { seen: seen, way: way, stamp: stamp } };
+    }
+    between = between.append(id);
+    way = way.with(k, stamp);
+    for pr in f.graph.blocks[k].preds {
+      work = work.append(pr);
     }
   }
   let r: Route = Route { target: target, exit_from: [], exit_to: [] };
   for id in between.append(from.id) {
     for s in successors(f.graph.blocks[g.at[id]].term) {
-      if (s != target && mark[g.at[s]] != 3) {
+      if (s != target && way[g.at[s]] != stamp) {
         r = Route { ...r, exit_from: r.exit_from.append(id), exit_to: r.exit_to.append(s) };
       }
     }
   }
-  return r;
+  return Searched { route: r, marks: RouteMarks { seen: seen, way: way, stamp: stamp } };
+}
+
+// The values that die after position `claim` of `b`, and where each dies, in
+// order, leaving out the value the instruction there defines and one a link
+// keeps: the donors a later block's construction could take.
+struct Dying { at: i32[], values: i32[] }
+
+function dying_after_claims(p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, claim: i32): Dying {
+  let out: Dying = Dying { at: [], values: [] };
+  let pos: i32 = claim + 1;
+  while (pos < b.insts.len()) {
+    if (b.insts[pos].kind_tag != 6 && b.insts[pos].kind_tag != 8) {
+      for d in at(p, idx, b.id, pos, 0 - 1).drops {
+        if (d != b.insts[pos].result && (d >= links.len() || links[d] < 0)) {
+          out = Dying { at: out.at.append(pos), values: out.values.append(d) };
+        }
+      }
+    }
+    pos = pos + 1;
+  }
+  return out;
 }
 
 function carried_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], off: boolean): Carry {
@@ -1684,8 +1724,15 @@ function carried_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i3
     return c;
   }
   let g: RouteGraph = route_graph(f, p);
+  let marks: RouteMarks = route_marks(f.graph.blocks.len());
   for b in f.graph.blocks {
-    let route: Route = carry_route(f, g, b);
+    let dying: Dying = dying_after_claims(p, idx, links, b, last_claim(f, p, b));
+    if (dying.values.len() == 0) {
+      continue;
+    }
+    let found: Searched = carry_route(f, g, b, marks);
+    marks = found.marks;
+    let route: Route = found.route;
     let target: i32 = route.target;
     if (target < 0) {
       continue;
@@ -1693,20 +1740,16 @@ function carried_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i3
     let to: ssa.SBlock = f.graph.blocks[g.at[target]];
     let build: i32 = first_claim(f, p, to);
     let slots: i32 = recipient_slots(f, p, to.insts[build]);
-    let pos: i32 = last_claim(f, p, b) + 1;
     let donor: i32 = 0 - 1;
     let drop_at: i32 = 0 - 1;
-    while (donor < 0 && pos < b.insts.len()) {
-      if (b.insts[pos].kind_tag != 6 && b.insts[pos].kind_tag != 8) {
-        for d in at(p, idx, b.id, pos, 0 - 1).drops {
-          if (donor < 0 && d != b.insts[pos].result && donor_slots(f, b, d) == slots
-            && util.index_of_i32(to.insts[build].args, d) < 0 && (d >= links.len() || links[d] < 0)) {
-            donor = d;
-            drop_at = pos;
-          }
-        }
+    let i: i32 = 0;
+    while (donor < 0 && i < dying.values.len()) {
+      let d: i32 = dying.values[i];
+      if (donor_slots(f, b, d) == slots && util.index_of_i32(to.insts[build].args, d) < 0) {
+        donor = d;
+        drop_at = dying.at[i];
       }
-      pos = pos + 1;
+      i = i + 1;
     }
     if (donor >= 0) {
       let k: i32 = c.to.len();
