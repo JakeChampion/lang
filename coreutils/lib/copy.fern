@@ -1055,13 +1055,7 @@ function copy_special(cfg: Cfg, s: State, dest: string, src: Info, existed: bool
 // because a source directory with no write bit would otherwise be
 // impossible to fill. The creation mode therefore always carries owner
 // write and search, and the final mode replaces it once the contents are in.
-// One entry of a directory being walked, carrying the inode the order
-// below sorts on. `ino` is 0 for an entry that vanished between the
-// readdir and the stat, which sorts it first — a race either way, and the
-// copy of it then reports its own `cannot stat`.
-struct DirEnt { name: string, dev: i64, ino: i64, is_dir: boolean }
-
-function dirent_cmp(a: DirEnt, b: DirEnt): i32 {
+function dirent_cmp(a: DirEntry, b: DirEntry): i32 {
   if (a.ino < b.ino) {
     return 0 - 1;
   }
@@ -1071,28 +1065,24 @@ function dirent_cmp(a: DirEnt, b: DirEnt): i32 {
   return 0;
 }
 
-// `walk_order(dir, names)` — the entries of `dir` in the order a copy
+// `walk_order(dir, entries)` — the entries of `dir` in the order a copy
 // visits them, which is ASCENDING INODE and not readdir order. Measured:
 // a directory holding `aaa`, `bbb` and a later-created `zzz` is walked
 // `aaa bbb zzz` where readdir hands back `zzz bbb aaa`, and one holding a
 // directory made before two files is walked directory-first — so it is
 // neither the filesystem's order nor names sorted nor directories first.
 //
-// The stat per entry is what readdir's own `d_ino` would give for free;
-// #9317 is the primitive that would remove it.
-function walk_order(dir: string, names: string[]): DirEnt[] {
-  let es: DirEnt[] = [];
-  let i: i32 = 0;
-  while (i < names.len()) {
-    let info: Info = lstat_of(gnu.join_path(dir, names[i]));
-    let dev: i64 = 0;
-    let ino: i64 = 0;
-    if (info.ok) {
-      dev = info.dev;
-      ino = info.ino;
+// The inode is the one readdir returned with the name. Only an entry the
+// platform gave none for is stat'ed; one that vanished before that stat
+// keeps 0 and sorts first, and its copy then reports its own `cannot stat`.
+function walk_order(dir: string, entries: DirEntry[]): DirEntry[] {
+  let es: DirEntry[] = [];
+  for e in entries {
+    if (e.ino == 0) {
+      es = es.append(DirEntry { name: e.name, ino: lstat_of(gnu.join_path(dir, e.name)).ino });
+    } else {
+      es = es.append(e);
     }
-    es = es.append(DirEnt { name: names[i], dev: dev, ino: ino, is_dir: info.is_dir });
-    i = i + 1;
   }
   return es.sort_by(dirent_cmp);
 }
@@ -1102,7 +1092,7 @@ function walk_order(dir: string, names: string[]): DirEnt[] {
 // walking into its own output.
 //
 // Only directories are ever recorded, so only a directory entry need ask:
-// the walk skips this for every file, which is what keeps the scan
+// copy_one skips this for every file, which is what keeps the scan
 // proportional to the tree's directory count rather than to its size.
 function made(st: State, dev: i64, ino: i64): boolean {
   let i: i32 = 0;
@@ -1144,35 +1134,23 @@ function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info,
     let mi: Info = lstat_of(dest);
     st = State { ...st, made_dev: st.made_dev.append(mi.dev), made_ino: st.made_ino.append(mi.ino) };
   }
-  let entries: string[] = [];
+  let entries: DirEntry[] = [];
   let readable: boolean = true;
-  match (read_dir(src_path)) {
+  match (read_dir_ino(src_path)) {
     Err(e2) => {
       st = fail(st, "cannot read directory " + gnu.quotea(src_path) + ": " + gnu.io_error_text(e2));
       readable = false;
     },
-    Ok(names) => {
-      entries = names;
+    Ok(es) => {
+      entries = es;
     }
   }
   if (readable) {
-    let order: DirEnt[] = walk_order(src_path, entries);
-    let j: i32 = 0;
-    while (j < order.len()) {
+    for e in walk_order(src_path, entries) {
       if (st.aborted) {
         break;
       }
-      if (order[j].is_dir && made(st, order[j].dev, order[j].ino)) {
-        // This entry IS the destination. Reported against the operand's
-        // own names, and the rest of the operand is abandoned — measured,
-        // `cp -r src src/bdir` leaves a sibling of `bdir` uncopied while a
-        // later command-line operand still runs.
-        st = fail(st, "cannot copy a directory, " + gnu.quotea(st.top_src) + ", into itself, " + gnu.quotea(st.top_dest));
-        st = State { ...st, aborted: true };
-      } else {
-        st = copy_one(cfg, st, gnu.join_path(src_path, order[j].name), gnu.join_path(dest, order[j].name), false);
-      }
-      j = j + 1;
+      st = copy_one(cfg, st, gnu.join_path(src_path, e.name), gnu.join_path(dest, e.name), false);
     }
   }
   let want: i32 = create_mode(cfg, src);
@@ -1217,6 +1195,14 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
     // only this one, never the into-itself report as well.
     if (existed && !dst.is_dir) {
       return fail(st, "cannot overwrite non-directory " + gnu.quotea(dest) + " with directory " + gnu.quotea(src_path));
+    }
+    if (!top && made(st, src.dev, src.ino)) {
+      // This entry IS the destination. Reported against the operand's
+      // own names, and the rest of the operand is abandoned — measured,
+      // `cp -r src src/bdir` leaves a sibling of `bdir` uncopied while a
+      // later command-line operand still runs.
+      st = fail(st, "cannot copy a directory, " + gnu.quotea(st.top_src) + ", into itself, " + gnu.quotea(st.top_dest));
+      return State { ...st, aborted: true };
     }
     return copy_dir(cfg, st, src_path, dest, src, existed, top);
   }

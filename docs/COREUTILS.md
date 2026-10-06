@@ -4455,8 +4455,12 @@ groups are the order of work. Each sub-issue names its group.
   source that cannot be asked (WASI) fall back to punching zero blocks
   at st_blksize granularity. A recursive copy walks a directory's entries in
   ascending INODE order — measured, and neither readdir order nor the
-  names sorted nor directories first — so the engine stats each entry
-  for the number readdir already had, which #9317 would give it back.
+  names sorted nor directories first — and takes each entry's number
+  from `read_dir_ino` (#9317), the `d_ino` readdir returned with the name,
+  so it stats only an entry the platform gave no number for. Whether an
+  entry is the destination being created is asked in the per-entry
+  dispatch, on the stat that dispatch makes of it anyway, as GNU's
+  copy_internal asks it of its own.
   The destination is created BEFORE the entry list is read, because a
   destination inside the source is then met as one of the walk's own
   entries: recognising it there is both what stops `cp -r d d/sub`
