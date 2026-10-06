@@ -747,7 +747,11 @@ function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conn
     if (n <= 0) {
       return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
     }
-    buf = buf.concat(scratch.take(n));
+    if (buf.len() == 0) {
+      buf = __bytes_range(scratch, 0, n);
+    } else {
+      buf = buf.concat(__bytes_range(scratch, 0, n));
+    }
     // A connection holds at most the parser's largest request unread;
     // past that the peer is treated as finished: what is complete is
     // answered, then the connection is closed.
@@ -761,16 +765,18 @@ function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conn
 // __bytes_from(buf, from) — buf[from, len) as a fresh array: the bytes
 // behind an answered request, the next pipelined request's or nothing.
 function __bytes_from(buf: u8[], from: i32): u8[] {
-  let n: i32 = buf.len() - from;
-  if (n < 0) {
-    n = 0;
+  return __bytes_range(buf, from, buf.len());
+}
+
+// __bytes_range(buf, from, end) — buf[from, end) as a fresh array in one
+// allocation, or the shared empty array when the range is empty.
+function __bytes_range(buf: u8[], from: i32, end: i32): u8[] {
+  let out: u8[] = __alloc_u8(end - from);
+  let i: i32 = 0;
+  while (from + i < end) {
+    out = out.with(i, buf[from + i]);
+    i = i + 1;
   }
-  let b: usize = buf_new(n);
-  if (n > 0) {
-    buf_push_bytes_range(b, buf, from, buf.len());
-  }
-  let out: u8[] = buf_take_bytes(b);
-  buf_free(b);
   return out;
 }
 
