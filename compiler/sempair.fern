@@ -590,11 +590,11 @@ function pair_set_contract(t: typeinfo.Type): ssasem.Contract {
 // ---- graph helpers ----------------------------------------------------------
 
 function t_i32(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
 }
 
 function t_usize(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false };
+  return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
 }
 
 function t_bool(): typeinfo.Type {

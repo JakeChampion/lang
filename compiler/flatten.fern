@@ -1595,6 +1595,7 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
       try_marker: e.try_marker,
       is_pub: true,
       is_package: false, module: ctx.prefix,
+      instance: rewrite_type_name(e.instance, ctx),
     });
     i = i + 1;
   }

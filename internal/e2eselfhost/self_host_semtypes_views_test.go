@@ -14,8 +14,8 @@ func TestSelfHostSemanticArrayViewIdentity(t *testing.T) {
 	const source = `import "./semtypes";
 import "./typeinfo";
 function main(): i32 {
-    let byte: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false };
-    let word: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+    let byte: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false };
+    let word: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
     let owned: typeinfo.Type = typeinfo.TypeArray { elem: byte, view: false };
     let view: typeinfo.Type = typeinfo.TypeArray { elem: byte, view: true };
     let words: typeinfo.Type = typeinfo.TypeArray { elem: word, view: true };

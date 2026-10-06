@@ -2546,13 +2546,10 @@ function print_if_chain(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
     return (out, g);
   }
   if (ifs.else_chained && ifs.else_body.len() == 1) {
-    match (ifs.else_body[0]) {
-      ast.StmtIf(nested) => {
-        let (nested_text, g2) = print_if_chain(nested, depth, g);
-        return (out + " else " + nested_text, g2);
-      },
-      _ => {}
-    }
+    // An if-let chain may be a match or a sugared if. Reconstruct its
+    // written form through the same printer used for a standalone statement.
+    let (nested_text, g2) = print_stmt_body(ifs.else_body[0], depth, g);
+    return (out + " else " + nested_text, g2);
   }
   let (else_text, g3) = print_block(ifs.else_body, depth, g);
   return (out + " else " + else_text, g3);

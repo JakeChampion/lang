@@ -4,7 +4,8 @@ import "github.com/jakechampion/lang/internal/ast"
 
 // EnumConstruction is the semantic contract of one resolved constructor.
 // Type retains every result type argument, including parameters absent from
-// this variant's payloads. An under-inferred constructor keeps an argless Type;
+// this variant's payloads. A partially inferred constructor keeps UnboundType
+// positions; a constructor with no inferred argument may keep an argless Type.
 // generic bodies may retain ParamTypes until monomorph rechecks their clones.
 // Consumers requiring concrete types must validate that requirement explicitly.
 // Like the other Info types, this contract belongs to the checked frontend and

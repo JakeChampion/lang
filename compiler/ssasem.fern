@@ -976,7 +976,7 @@ pub function closure_captures(c: Contract): typeinfo.Type[] {
 }
 
 function env_word(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
 }
 
 // The type a closure over `c` hands out: what its body promises minus the
@@ -2458,6 +2458,17 @@ pub function type_key(t: typeinfo.Type): string {
   return leaf_key(t);
 }
 
+// Declared generic enums have one physical variant shape per instantiation.
+// Nongeneric declarations retain their existing names and layout identity.
+pub function variant_key(t: typeinfo.Type, name: string): string {
+  if let typeinfo.TypeUnion(u) = t {
+    if (u.args.len() > 0 && u.name != "Option" && u.name != "Result") {
+      return type_key(t) + "$" + name;
+    }
+  }
+  return name;
+}
+
 // A canonical trait set, `A + b.C` or `Pair[i32, u32]`, spelled in symbol
 // characters: a letter or a digit stands for itself and every other byte,
 // `_` included, is `_` and its two hex digits, so no two sets share a key.
@@ -2487,6 +2498,9 @@ function key_args(name: string, args: typeinfo.Type[]): string {
 }
 
 function leaf_key(t: typeinfo.Type): string {
+  if (semtypes.is_never(t)) {
+    return "$never";
+  }
   if (is_void(t)) {
     return "void";
   }
@@ -3448,7 +3462,7 @@ function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: ssadeps.Dom, defs: ssa.S
     return false;
   }
   for v in f.enums[at].variants {
-    if (v.name != ins.str && !names_has(known.gone, v.name)) {
+    if (semrecords.inhabited(v) && v.name != ins.str && !names_has(known.gone, v.name)) {
       return false;
     }
   }
@@ -3986,7 +4000,7 @@ function boolean_type(): typeinfo.Type {
 }
 
 function i32_type(): typeinfo.Type {
-  return typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false };
+  return typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
 }
 
 // Whether a value of `t` holds a view anywhere in it. A declared record or
@@ -5007,7 +5021,7 @@ function loop_chain(f: Func, nparams: i32): Chain {
 }
 
 function address(): typeinfo.Type {
-  return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false };
+  return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
 }
 
 // spliced performs the rewrite: the header is block 0's instructions without

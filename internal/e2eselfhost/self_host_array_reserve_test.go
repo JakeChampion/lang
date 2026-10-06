@@ -12,7 +12,7 @@ import "./ssasem";
 import "./semrecords";
 import "./typeinfo";
 function main(): i32 {
-  let word: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+  let word: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
   let row: i32 = 0;
   while (row < 7) {
     let elem = word;

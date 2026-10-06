@@ -896,7 +896,7 @@ function lambda_capture_type(lam: ast.ExprLambda, name: string): string {
       if (tv.len() > 0) {
         return tv;
       }
-      return typeinfo.spelling(cap.ty);
+      return decltypes.capture_spelling(cap.ty);
     }
   }
   return "";

@@ -48,7 +48,7 @@ function f(): Option[i64] { let None: Option[i64] = Option.None; let value = Som
 		{"checked arithmetic rewrite", `function f(a: i64, b: i64): Option[i64] { return a +? b; }`,
 			[]string{"Option[i64]/Some(i64)", "Option[i64]/None()"}},
 		{"uninferred constructor remains incomplete", `function f(): i32 { let x = Ok(1); let n = None; return 0; }`,
-			[]string{"Result/Ok(i32)", "Option/None()"}},
+			[]string{"Result[i32, _]/Ok(i32)", "Option/None()"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
