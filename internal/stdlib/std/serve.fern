@@ -1137,16 +1137,22 @@ function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boole
 // connection whose burst left a request buffered and that the wait did
 // not report itself, so the loop answers the backlog on this pass
 // without the peer having to send anything, and once per pass.
-function __with_backlog(c: __Conns, events: i32[]): i32[] {
-  let reported: i32 = events.len();
+function __with_backlog(c: __Conns, own events: i32[]): i32[] {
+  let n: i32 = async.ready_pairs(events);
+  let reported: i32 = n * 2;
   let i: i32 = 0;
   while (i < c.fds.len()) {
     if (c.backlog[i] && !__reported(events, reported, c.fds[i])) {
-      events = events.append(c.fds[i]).append(0);
+      if (n * 2 + 1 < events.len()) {
+        events = events.with(n * 2, c.fds[i]).with(n * 2 + 1, 0);
+      } else {
+        events = events.append(c.fds[i]).append(0);
+      }
+      n = n + 1;
     }
     i = i + 1;
   }
-  return events;
+  return async.end_pairs(events, n);
 }
 
 // __reported(events, n, fd) — whether `fd` is among the first `n` entries
@@ -2161,16 +2167,18 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
+  let events: i32[] = async.event_room(64);
   // The streamed-body start, with the handler and platform bound once:
   // what `__serve_stream` runs a handler through, holding no platform of
   // its own (E080 reads a platform parameter as a handler's).
   let start: (http.HttpFramed, boolean, __Stop) => __Started = (f: http.HttpFramed, kept: boolean, st: __Stop): __Started => __serve_start(handler, plat, f, kept, http.Incomplete, opts, st);
   while (true) {
     let now: i64 = monotonic_ns();
-    let events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, now, __least_timeout(__conns_timeout(conns, now), __flights_timeout(flights, now)))));
+    events = __with_backlog(conns, drv.wait_into(events, __stop_timeout(stop, opts, now, __least_timeout(__conns_timeout(conns, now), __flights_timeout(flights, now)))));
+    let ends: i32 = async.ready_pairs(events) * 2;
     clk = __clock_tick(clk);
     let k: i32 = 0;
-    while (k + 1 < events.len()) {
+    while (k < ends) {
       let fd: i32 = events[k];
       let readiness: i32 = events[k + 1];
       k = k + 2;
@@ -2299,11 +2307,13 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], last: http.http_framed_none(), out: buf_new(4096) };
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
+  let events: i32[] = async.event_room(64);
   while (true) {
-    let events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, monotonic_ns(), __conns_timeout(conns, monotonic_ns()))));
+    events = __with_backlog(conns, drv.wait_into(events, __stop_timeout(stop, opts, monotonic_ns(), __conns_timeout(conns, monotonic_ns()))));
+    let ends: i32 = async.ready_pairs(events) * 2;
     clk = __clock_tick(clk);
     let k: i32 = 0;
-    while (k + 1 < events.len()) {
+    while (k < ends) {
       let fd: i32 = events[k];
       k = k + 2;
       let sig: i32 = __stop_signal(fd);

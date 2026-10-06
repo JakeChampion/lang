@@ -232,15 +232,15 @@ impl async.Driver for Sim {
     self.readiness.set(kept);
     return 0;
   }
-  function wait(self: Sim, max: i32, timeout_ms: i32): i32[] {
-    // wait — the virtual wait over the scripted readiness: the clock
+  function wait_into(self: Sim, own events: i32[], timeout_ms: i32): i32[] {
+    // wait_into — the virtual wait over the scripted readiness: the clock
     // advances to the earliest readiness a watched descriptor's interest
     // selects (one already due is due now), or to the timeout when that
     // comes first (no pairs). Every readiness at that time is reported,
     // in scripted order, and consumed.
-    let out: i32[] = [];
-    if (max <= 0) {
-      return out;
+    let room: i32 = events.len() / 2;
+    if (room <= 0) {
+      return async.end_pairs(events, 0);
     }
     let now_ms: i32 = (self.clock_ns.get() / 1000000) as i32;
     let best: i32 = -1;
@@ -257,13 +257,14 @@ impl async.Driver for Sim {
     }
     if (timeout_ms >= 0 && (best < 0 || now_ms + timeout_ms < best)) {
       self.clock_ns.set(self.clock_ns.get() + timeout_ms as i64 * 1000000);
-      return out;
+      return async.end_pairs(events, 0);
     }
     if (best < 0) {
-      return out;
+      return async.end_pairs(events, 0);
     }
     self.clock_ns.set(best as i64 * 1000000);
     let kept: string = "";
+    let n: i32 = 0;
     for r in __sim_rows(self.readiness.get()) {
       let fd: i32 = __sim_field(r, 0);
       let at: i32 = __sim_field(r, 1);
@@ -271,15 +272,15 @@ impl async.Driver for Sim {
       if (at < now_ms) {
         at = now_ms;
       }
-      if (at == best && (bits & __sim_interest(self, fd)) != 0 && out.len() < max * 2) {
-        out = out.append(fd);
-        out = out.append(bits);
+      if (at == best && (bits & __sim_interest(self, fd)) != 0 && n < room) {
+        events = events.with(n * 2, fd).with(n * 2 + 1, bits);
+        n = n + 1;
       } else {
         kept = kept + r[0] + ":" + r[1] + ":" + r[2] + ";";
       }
     }
     self.readiness.set(kept);
-    return out;
+    return async.end_pairs(events, n);
   }
   function watch_signal(self: Sim, sig: i32): i32 {
     // A signal is the descriptor -sig: `ready_at(-sig, at_ms, 1)` scripts

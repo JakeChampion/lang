@@ -370,8 +370,12 @@ is preferred where it covers a case, since every program gains.
    empty array. 30 to 22. The read's one copy is left, now a per-byte
    loop over at most one 4 KiB read where the builder pushed in bulk; a
    read straight into the connection's buffer would remove it.
-3. **The reactor fills an events array the loop keeps.** A wait writes
-   its readiness pairs into the loop's array instead of building one.
+3. **The reactor fills an events array the loop keeps.** Done:
+   `Driver.wait_into` writes a wait's readiness pairs into an array the
+   caller passes `own`, so each `.with` writes in place, and a readiness of
+   -1 ends the pairs when fewer arrive than fit. The loop makes its array
+   once, with `async.event_room(64)`. `wait(max, timeout_ms)` stays, as the
+   trait's default over a fresh array. 22 to 15.
 4. **The per-connection arrays are updated in place.** The loop holds
    `__Conns` uniquely, so `.with` should reuse each array. Find why it
    copies and fix that in the compiler.
