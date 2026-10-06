@@ -2677,9 +2677,10 @@ function read_before(b: ssa.SBlock, end: i32, arr: i32, index: i32): boolean {
 function unique_receivers(f: ssasem.Func, defs: ssa.SInst[], steps: Step[]): boolean[] {
   let out: boolean[] = bits(f.graph.nvals);
   let held: i32[] = holding_uses(f);
+  let at: i32[] = ssa.block_positions(f.graph);
   for st in steps {
     if (st.point >= 0) {
-      let ins: ssa.SInst = f.graph.blocks[ssa.block_index(f.graph, st.block)].insts[st.point];
+      let ins: ssa.SInst = f.graph.blocks[at[st.block]].insts[st.point];
       if (ins.kind_tag == ssasem.with() && defs[ins.args[0]].kind_tag == ssasem.with() && held[ins.args[0]] == 1
         && moved_receiver(st, ins.args[0])) {
         out = out.with(ins.result, true);
