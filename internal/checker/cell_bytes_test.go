@@ -25,7 +25,7 @@ func TestByteCellElementBoundary(t *testing.T) {
 }
 
 func TestScalarArrayCellElementBoundary(t *testing.T) {
-	for _, ty := range []string{"u8", "i32", "u32", "i64", "u64", "usize", "f32", "f64", "boolean"} {
+	for _, ty := range []string{"u8", "i32", "u32", "i64", "u64", "usize", "f32", "f64", "float", "boolean"} {
 		t.Run(ty, func(t *testing.T) {
 			src := "function main(): i32 { let a: " + ty + "[] = []; let c: Cell[" + ty + "[]] = cell_new(a); let inferred = cell_new(a); c.set(inferred.get()); return c.get().len(); }"
 			if err := checkSource(t, src); err != nil {
