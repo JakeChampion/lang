@@ -1333,19 +1333,30 @@ function cell_value(v: Value): Value {
       c.ci.set(n.v);
       return VCell { ...c, kind: "i32" };
     },
+    VUint(n) => {
+      c.ci.set(n.v);
+      return VCell { ...c, kind: "u32" };
+    },
     VBool(bb) => {
       if (bb.v) {
         c.ci.set(1);
       }
       return VCell { ...c, kind: "bool" };
     },
-    VInt64(_) => {
+    VInt64(n) => {
       c.cl.set(vint_as_i64(v));
+      if (n.unsigned) {
+        return VCell { ...c, kind: "u64" };
+      }
       return VCell { ...c, kind: "i64" };
     },
     VFloat(f) => {
       c.cf.set(f.v);
       return VCell { ...c, kind: "f64" };
+    },
+    VFloat32(f) => {
+      c.cf.set(f.v);
+      return VCell { ...c, kind: "f32" };
     },
     VString(sv) => {
       c.cs.set(sv.v);
@@ -1491,7 +1502,7 @@ function cell_set_value(c: VCell, v: Value): Value {
     }
     return v_err("Cell.set: the value is not a scalar array");
   }
-  if (c.kind == "i32" && is_i32_arg(v)) {
+  if ((c.kind == "i32" || c.kind == "u32") && is_i32_arg(v)) {
     c.ci.set(vint_bits(v));
     return v_void();
   }
@@ -1508,12 +1519,16 @@ function cell_set_value(c: VCell, v: Value): Value {
       _ => {}
     }
   }
-  if (c.kind == "i64" && is_int_like(v)) {
+  if ((c.kind == "i64" || c.kind == "u64") && is_int_like(v)) {
     c.cl.set(vint_as_i64(v));
     return v_void();
   }
   if (c.kind == "f64" && is_float_like(v)) {
     c.cf.set(vfloat_as_f64(v));
+    return v_void();
+  }
+  if (c.kind == "f32" && is_float_like(v)) {
+    c.cf.set(f32_round(vfloat_as_f64(v)));
     return v_void();
   }
   if (c.kind == "string") {
@@ -1536,14 +1551,23 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     if (c.kind == "i32") {
       return v_int(c.ci.get());
     }
+    if (c.kind == "u32") {
+      return v_uint(c.ci.get());
+    }
     if (c.kind == "bool") {
       return v_bool(c.ci.get() != 0);
     }
     if (c.kind == "i64") {
-      return box_i64(c.cl.get());
+      return v_int64(c.cl.get());
+    }
+    if (c.kind == "u64") {
+      return v_uint64(c.cl.get());
     }
     if (c.kind == "f64") {
       return VFloat { v: c.cf.get() };
+    }
+    if (c.kind == "f32") {
+      return v_float32(c.cf.get());
     }
     if (c.kind == "array") {
       return cell_array_value(c.cs.get());
