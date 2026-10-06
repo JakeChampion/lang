@@ -63,6 +63,19 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	// An owned receiver keeps its `own`: dropping it turns a consuming
+	// method into a borrowing one, which the checker then rejects at every
+	// call that hands the receiver over.
+	{"owned-receiver", `struct Counter { n: i32 }
+
+function (own c: Counter) bump(): Counter {
+  return Counter { ...c, n: c.n + 1 };
+}
+
+function (c: Counter) peek(): i32 {
+  return c.n;
+}
+`},
 	{"assert-statements", `function check(x: i32, message: string): void {
   assert(x > 0);
   assert(!(x > 10), "x is " + x.to_string());

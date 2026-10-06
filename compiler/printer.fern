@@ -3172,7 +3172,7 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
   // Receiver clause: `(recv: RecvType)` after `function` and
   // before the method name. Both fields empty for plain funcs.
   if (fd.receiver_name.len() > 0) {
-    out = out + "(" + fd.receiver_name;
+    out = out + "(" + receiver_mode(fd) + fd.receiver_name;
     if (fd.receiver_type.len() > 0) {
       out = out + ": " + fd.receiver_type;
     }
@@ -3549,6 +3549,14 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
   return (out + "}\n", g);
 }
 
+// receiver_mode is the `own ` an owned receiver is declared with, else "".
+function receiver_mode(fd: parser.FuncDecl): string {
+  if (fd.receiver_own) {
+    return "own ";
+  }
+  return "";
+}
+
 // print_impl_method emits one method at one indent level. An impl block states
 // its methods with `self` as an ordinary first PARAMETER, so a receiver — which
 // is what the decl was desugared into — is re-inserted there. A receiver-less
@@ -3561,7 +3569,7 @@ function print_impl_method(m: parser.FuncDecl, impl_tps: string[], f: Fmt): (str
   let out: string = indent_str(1) + "function " + m.name + print_type_params_except(m, impl_tps) + "(";
   let first: boolean = true;
   if (m.receiver_name.len() > 0) {
-    out = out + m.receiver_name;
+    out = out + receiver_mode(m) + m.receiver_name;
     if (m.receiver_type.len() > 0) {
       out = out + ": " + m.receiver_type;
     }
