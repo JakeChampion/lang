@@ -222,6 +222,47 @@ func CheckRecvDeadline(t *testing.T, addr string) {
 	}
 }
 
+// CheckIncompleteRequestAtEOF half-closes a connection with a request
+// left incomplete, a head cut short and then a body cut short: each is
+// answered 400 before the close, whatever the read that saw the end of
+// stream held (#11649). The blank line a client may send between requests
+// is no request, so that close gets no response; and the loop still answers a whole request after.
+// Pair it with RecvDeadlineServerSource.
+func CheckIncompleteRequestAtEOF(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	for _, tc := range []struct {
+		name, sent, want string
+	}{
+		{"head cut short", "GET / HTTP/1.1\r\nHost:", "HTTP/1.1 400"},
+		{"body cut short", "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 10\r\n\r\nabc", "HTTP/1.1 400"},
+		{"blank line", "\r\n", ""},
+	} {
+		conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+		if err != nil {
+			t.Fatalf("%s: dial: %v", tc.name, err)
+		}
+		if _, err := conn.Write([]byte(tc.sent)); err != nil {
+			t.Fatalf("%s: write: %v", tc.name, err)
+		}
+		if err := conn.(*net.TCPConn).CloseWrite(); err != nil {
+			t.Fatalf("%s: half-close: %v", tc.name, err)
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		got, _ := io.ReadAll(conn)
+		conn.Close()
+		if tc.want == "" && len(got) != 0 {
+			t.Fatalf("%s: want no response, got %q", tc.name, got)
+		}
+		if tc.want != "" && !strings.HasPrefix(string(got), tc.want) {
+			t.Fatalf("%s: want %s, got %q", tc.name, tc.want, got)
+		}
+	}
+	if resp := HTTPRoundTrip(t, addr, "/ok", 3*time.Second); !ContainsStatus200(resp) {
+		t.Fatalf("the request after the half-closed connections did not answer 200:\n%s", resp)
+	}
+}
+
 // TrappingServerSource is a supervised server with one worker whose
 // handler answers 200 on /ok and traps (an array index out of range) on
 // /boom.

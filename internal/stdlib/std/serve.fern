@@ -1079,14 +1079,29 @@ function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Confi
   return (ready.0, at, false);
 }
 
-// __serve_eof(drv, c, at) — the peer has finished sending: a response
-// still draining goes out and then closes the connection; anything else
-// closes it now.
-function __serve_eof[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
+// __serve_eof(drv, c, at, opts, clk) — the peer has finished sending: a
+// response still draining goes out and then closes the connection; a
+// request the peer left incomplete is answered 400 and closed; anything
+// else closes it now.
+function __serve_eof[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Config, clk: __Clock): __Conns {
   if (__in_flight(c, at)) {
     return __Conns { ...c, keep: c.keep.with(at, false) };
   }
+  if (__holds_request(__bytes_from(c.bufs[at], c.offs[at]))) {
+    return __serve_refuse(drv, c, at, 400, opts, clk);
+  }
   return __serve_close(drv, c, at);
+}
+
+// __holds_request(buf) — whether `buf` holds the start of a request: any
+// byte but the blank lines a client may send between requests.
+function __holds_request(buf: u8[]): boolean {
+  for b in buf {
+    if (b != 13 as u8 && b != 10 as u8) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // __serve_event(drv, c, fd, scratch, opts) — one readiness event on the
@@ -1107,12 +1122,12 @@ function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8
   return (read.0, at, read.1);
 }
 
-// __serve_finish(drv, c, fd, eof) — after an event's requests are answered:
-// the answered bytes dropped, and a peer that has finished sending
-// closed, once anything still draining has gone out. A connection whose
+// __serve_finish(drv, c, fd, eof, opts, clk) — after an event's requests are
+// answered: the answered bytes dropped, and a peer that has finished sending
+// closed, once anything still draining has gone out (`__serve_eof`). A connection whose
 // burst left a request buffered is not closed yet: the backlog answers
 // it on the next wait, whose read sees the end of stream again.
-function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boolean): __Conns {
+function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boolean, opts: Config, clk: __Clock): __Conns {
   let at: i32 = __conns_index(c, fd);
   if (at < 0) {
     return c;
@@ -1121,7 +1136,7 @@ function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boole
   if (!eof || c.backlog[at]) {
     return c;
   }
-  return __serve_eof(drv, c, at);
+  return __serve_eof(drv, c, at, opts, clk);
 }
 
 // __with_backlog(c, events) — the wait's events with one more for every
@@ -1955,7 +1970,7 @@ function __serve_answer[D: async.Driver](drv: D, c: __Conns, fl: __Flight, resp:
     None => {}
   }
   let answered: (__Conns, boolean) = __serve_respond(drv, c, at, __serve_wire(c.out, fl.method, fl.version, resp, fl.kept && c.keep[at], clk), opts, __pipeline_burst(), tail, clk);
-  return __serve_finish(drv, answered.0, fl.fd, false);
+  return __serve_finish(drv, answered.0, fl.fd, false, opts, clk);
 }
 
 // __serve_abandon(drv, c, fd) — the connection `fd` closed, when it is
@@ -2246,7 +2261,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         }
         framing = next;
       }
-      conns = __serve_finish(drv, conns, fd, ev.2);
+      conns = __serve_finish(drv, conns, fd, ev.2, opts, clk);
     }
     let due: (__Conns, __Flight[]) = __flights_expire(drv, conns, flights, opts, clk);
     conns = due.0;
@@ -2346,7 +2361,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         }
         framing = next;
       }
-      conns = __serve_finish(drv, conns, fd, ev.2);
+      conns = __serve_finish(drv, conns, fd, ev.2, opts, clk);
     }
     let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting, 0);
     conns = ended.0;
