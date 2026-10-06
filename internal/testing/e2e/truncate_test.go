@@ -156,7 +156,7 @@ func TestInterpTruncate(t *testing.T) {
 // get-directories, open-at, descriptor.set-size and a resource drop. Two
 // separate hand-written bodies, so two runs.
 func TestWASMPreview1Truncate(t *testing.T) {
-	mod := buildPreview1Module(t, truncateSource(""))
+	mod := buildWasmCore(t, truncateSource(""))
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see truncateSource)", got)

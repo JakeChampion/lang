@@ -211,7 +211,7 @@ func TestInterpSync(t *testing.T) {
 // return, where the component leg goes through descriptor.sync / sync-data and
 // a result<_, error-code>. Two separate hand-written bodies, so two runs.
 func TestWASMPreview1Sync(t *testing.T) {
-	mod := buildPreview1Module(t, syncSource("", true, false))
+	mod := buildWasmCore(t, syncSource("", true, false))
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see syncSource)", got)

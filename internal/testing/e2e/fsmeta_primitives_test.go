@@ -31,8 +31,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // fsMetaSource is the probe, parameterised by the directory its relative
@@ -200,16 +198,6 @@ func TestInterpFsMetaPrimitives(t *testing.T) {
 	fsMetaCheckTree(t, dir, true)
 }
 
-// buildPreview1Module compiles src with the self-host compiler to a bare
-// preview-1 core module — the wasm32-wasi artifact `-emit core-module`
-// produces, importing `wasi_snapshot_preview1` directly rather than through a
-// component wrapper — and returns its path.
-func buildPreview1Module(t *testing.T, src string) string {
-	t.Helper()
-	skipIfPreview2Missing(t) // the gate is wasmtime itself, which runs both
-	return e2eharness.CompileSelfHostSource(t, e2eharness.TargetWasm32Wasi, src, nil)
-}
-
 // runPreview1Module runs a preview-1 core module with `workDir` as its only
 // preopen and answers main's return value, which `--invoke` prints.
 func runPreview1Module(t *testing.T, modPath, workDir string) int {
@@ -256,7 +244,7 @@ func runPreview1ModuleStdin(t *testing.T, modPath, workDir string, stdin *os.Fil
 // timestamp as a cleared `fstflags` bit rather than a variant arm — so it is
 // a separate body from the component leg below and gets its own run.
 func TestWASMPreview1FsMetaPrimitives(t *testing.T) {
-	mod := buildPreview1Module(t, fsMetaSource("", false, true))
+	mod := buildWasmCore(t, fsMetaSource("", false, true))
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see fsMetaSource)", got)
