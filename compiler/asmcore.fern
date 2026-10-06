@@ -4958,7 +4958,8 @@ pub function scratch_size(t: string, needs_statfs: boolean): string {
 //
 // Darwin — the 64-bit-inode record, 2168 bytes: f_bsize is a u32 at 0 with
 // f_iosize sharing its word at 4, then five u64 counts, f_fsid at 48 and the
-// u32 f_type at 60. There is NO name-length member, which is why `name_max`
+// u32 f_type at 60, f_flags at 64, f_fssubtype at 68 and f_fstypename at 72
+// (MFSTYPENAMELEN, 16 bytes). There is NO name-length member, so `name_max`
 // has no row here and the Darwin body asks pathconf instead, and no
 // fundamental block size, so `frag_size` reads f_bsize.
 //
