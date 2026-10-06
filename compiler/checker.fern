@@ -4739,6 +4739,8 @@ function builtin_sigs(): string[] {
     "chmod_at(string, i32, boolean): Result[void, IoError]",
     "chown_at(string, i32, i32, boolean): Result[void, IoError]",
     "chroot(string): Result[void, IoError]",
+    "clock_resolution(): i64",
+    "clock_set(i64, i64): Result[void, IoError]",
     "cpu_count(): i32",
     "create_dir(string, i32): Result[void, IoError]",
     "create_dir_all(string): Result[void, IoError]",
@@ -4806,6 +4808,7 @@ function builtin_sigs(): string[] {
     "remove_file(string): Result[void, IoError]",
     "rename(string, string): Result[void, IoError]",
     "rlimit_nofile(): i64",
+    "set_args(string[]): void",
     "set_file_times(string, i64, i64, i64, i64, i32): Result[void, IoError]",
     "set_priority(i32): Result[void, IoError]",
     "set_process_group(i32, i32): Result[void, IoError]",
@@ -18449,7 +18452,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 // from native's table and fails when the two drift.
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
-    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "environ", "getcwd", "getgroups",
+    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "random_bytes", "read_line", "set_priority",
     "setgid", "setuid",
     "signal_send", "set_process_group", "set_window_size",

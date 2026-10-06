@@ -217,6 +217,13 @@ type invocation struct {
 	// — it is the one under which `mkdir d` is 0777 — so the field is a
 	// pointer and `withMask` writes it.
 	umask *int
+	// withoutClockPrivilege runs both sides unable to set the system
+	// clock, whatever privilege the suite has (e2eharness.
+	// WithoutClockPrivilege). It is what lets a corpus hold a VALID
+	// `date -s`: as root it would move the machine's clock, and the
+	// refusal an ordinary user gets is the one outcome both sides can be
+	// compared on anywhere.
+	withoutClockPrivilege bool
 	// ownership puts each entry's uid and gid into the tree comparison.
 	// Off by default, and deliberately: an id is one more thing that can
 	// differ between two machines for reasons that are not the utility's,
@@ -1035,6 +1042,9 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		cmd.Args = append(append(append([]string{pre[0]}, pre[1:]...), "-0", argv0, bin), inv.args...)
 	}
 	cmd.Env = append(baseEnv(), inv.env...)
+	if inv.withoutClockPrivilege {
+		e2eharness.WithoutClockPrivilege(t, cmd)
+	}
 	var workDir, crossRoot string
 	var seeded map[string]bool
 	if inv.seedTree != nil {
