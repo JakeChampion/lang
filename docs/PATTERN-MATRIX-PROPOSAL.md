@@ -224,7 +224,7 @@ the *existing* behaviour, so the switch is never a leap.
   regression*, never that the new shapes are right.
 - **This is a stop-the-world change to one subsystem.** It should not be
   attempted alongside other pattern work, and it is a poor fit for a
-  session that also has to keep rebasing on a busy `examples/self_host/`.
+  session that also has to keep rebasing on a busy `compiler/`.
 
 ## 10. What not to do
 

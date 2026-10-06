@@ -1,5 +1,5 @@
 // Command gen_selfhost_lists prints the Fern list literals
-// examples/self_host/asmcore.fern carries for the strerror table, so the
+// compiler/asmcore.fern carries for the strerror table, so the
 // self-host copy is regenerated from internal/strerror rather than
 // typed. Paste the output over the four strerror_* bodies and
 // wasi_error_code_errnos; selfhost_parity_test.go checks the result.

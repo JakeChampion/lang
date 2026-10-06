@@ -1,6 +1,6 @@
 // A `string[][]` STRUCT FIELD. Passing such a struct as a parameter refused the
 // whole module on the self-host, while native compiled and ran it — so
-// `struct Table { rows: string[][] }` (examples/proposals/csv2json.fern) could
+// `struct Table { rows: string[][] }` (tests/proposals/csv2json.fern) could
 // not be handed to any function.
 //
 // The two neighbouring spellings both lowered already, which is what made this

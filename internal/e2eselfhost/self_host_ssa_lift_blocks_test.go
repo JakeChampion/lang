@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The SSA lift (examples/self_host/ssa_lift.fern) hands each emitter a block
+// The SSA lift (compiler/ssa_lift.fern) hands each emitter a block
 // list, and the emitters write one `.Lssa_<fn>_<id>:` label per entry — so two
 // entries carrying one id spell one label twice and the assembler rejects the
 // module, naming neither the function nor the pass (#9688).

@@ -1,0 +1,314 @@
+import "std/test";
+import "std/tz";
+
+// tests/stdlib/tz_test.fern — std/tz without a clock and without the
+// host's zoneinfo: POSIX rules evaluated at the instants on either side of
+// their transitions, a TZif v2 file built here byte by byte, and the
+// malformed inputs that must parse to nothing rather than to an
+// allocation of what the header claims.
+
+// 2024-03-10 07:00:00 UTC is 02:00 EST, the US spring-forward instant;
+// 2024-11-03 06:00:00 UTC is 02:00 EDT, the fall-back instant.
+function us_rule(): tz.Zone {
+  return tz.zone_from_tz("EST5EDT,M3.2.0,M11.1.0");
+}
+
+function test_rule_standard_before_spring(): test.TestOutcome {
+  let z: tz.Zone = us_rule();
+  if (z.offset_at(1710054000i64 - 1i64) != 0 - 18000) {
+    return test.fail("EST before the gap");
+  }
+  if (z.abbrev_at(1710054000i64 - 1i64) != "EST") {
+    return test.fail("abbrev before the gap");
+  }
+  return test.assert_eq(z.is_dst_at(1710054000i64 - 1i64), false);
+}
+
+function test_rule_daylight_after_spring(): test.TestOutcome {
+  let z: tz.Zone = us_rule();
+  if (z.offset_at(1710054000i64) != 0 - 14400) {
+    return test.fail("EDT at the gap");
+  }
+  if (z.abbrev_at(1710054000i64) != "EDT") {
+    return test.fail("abbrev at the gap");
+  }
+  return test.assert_eq(z.is_dst_at(1710054000i64), true);
+}
+
+function test_rule_fall_back(): test.TestOutcome {
+  let z: tz.Zone = us_rule();
+  if (z.offset_at(1730613600i64 - 1i64) != 0 - 14400) {
+    return test.fail("EDT before the overlap");
+  }
+  return test.assert_eq(z.offset_at(1730613600i64), 0 - 18000);
+}
+
+// Southern hemisphere: DST spans the new year, and the end rule names a
+// 03:00 transition. 2024-04-06 16:00 UTC is 03:00 AEDT on Sunday the 7th,
+// the fall-back; 2024-10-05 16:00 UTC is 02:00 AEST on Sunday the 6th,
+// the spring-forward.
+function test_rule_southern_hemisphere(): test.TestOutcome {
+  let z: tz.Zone = tz.zone_from_tz("AEST-10AEDT,M10.1.0,M4.1.0/3");
+  if (z.offset_at(1712419200i64 - 1i64) != 39600) {
+    return test.fail("AEDT before April's fall-back");
+  }
+  if (z.offset_at(1712419200i64) != 36000) {
+    return test.fail("AEST after April's fall-back");
+  }
+  if (z.offset_at(1728144000i64 - 1i64) != 36000) {
+    return test.fail("AEST before October's spring-forward");
+  }
+  return test.assert_eq(z.offset_at(1728144000i64), 39600);
+}
+
+// A quoted designation with a non-hour offset, and no DST at all.
+function test_rule_quoted_fixed(): test.TestOutcome {
+  let z: tz.Zone = tz.zone_from_tz("<+0545>-5:45");
+  if (z.offset_at(0i64) != 20700) {
+    return test.fail("offset");
+  }
+  if (z.is_dst_at(1700000000i64)) {
+    return test.fail("dst");
+  }
+  return test.assert_eq(z.abbrev_at(0i64), "+0545");
+}
+
+// The bridge to std/time: the fixed offset valid at the instant.
+function test_at_is_the_offset_then(): test.TestOutcome {
+  let z: tz.Zone = us_rule();
+  let summer: TimeZone = z.at(1720000000i64);
+  let winter: TimeZone = z.at(1700000000i64);
+  if (summer.offset_seconds != 0 - 14400 || summer.name != "EDT") {
+    return test.fail("summer");
+  }
+  return test.assert_eq(winter.offset_seconds, 0 - 18000);
+}
+
+// ---- a TZif v2 file, built here ------------------------------------------
+
+function push_be32(own out: u8[], v: i64): u8[] {
+  let u: i64 = v;
+  if (u < 0i64) {
+    u = u + 4294967296i64;
+  }
+  out = out.append((u >> 24i64 & 255i64) as u8);
+  out = out.append((u >> 16i64 & 255i64) as u8);
+  out = out.append((u >> 8i64 & 255i64) as u8);
+  out = out.append((u & 255i64) as u8);
+  return out;
+}
+
+function push_be64(own out: u8[], v: i64): u8[] {
+  let i: i32 = 7;
+  while (i >= 0) {
+    out = out.append((v >> (i * 8) as i64 & 255i64) as u8);
+    i = i - 1;
+  }
+  return out;
+}
+
+function push_bytes(own out: u8[], s: string): u8[] {
+  let i: i32 = 0;
+  while (i < s.len()) {
+    out = out.append(s[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// One header: magic, version, 15 reserved bytes, the six counts.
+function push_header(own out: u8[], version: u8, timecnt: i32, typecnt: i32, charcnt: i32): u8[] {
+  out = push_bytes(out, "TZif");
+  out = out.append(version);
+  let i: i32 = 0;
+  while (i < 15) {
+    out = out.append(0 as u8);
+    i = i + 1;
+  }
+  out = push_be32(out, 0i64);
+  out = push_be32(out, 0i64);
+  out = push_be32(out, 0i64);
+  out = push_be32(out, timecnt as i64);
+  out = push_be32(out, typecnt as i64);
+  out = push_be32(out, charcnt as i64);
+  return out;
+}
+
+// A local-time type record: utoff, isdst, designation index.
+function push_type(own out: u8[], utoff: i64, isdst: u8, desig: u8): u8[] {
+  out = push_be32(out, utoff);
+  out = out.append(isdst);
+  out = out.append(desig);
+  return out;
+}
+
+// The designation table: "AAA" at 0 and "BBB" at 4, each NUL-terminated.
+function push_designations(own out: u8[]): u8[] {
+  out = push_bytes(out, "AAA");
+  out = out.append(0 as u8);
+  out = push_bytes(out, "BBB");
+  out = out.append(0 as u8);
+  return out;
+}
+
+// Two types and two transitions: at 1,000,000 from "AAA" (+1h) to "BBB"
+// (+2h, DST) and at 3,000,000 back to "AAA"; past the table a footer rule
+// says +3h. The v1 block carries a 32-bit table that must be ignored in
+// favour of the 64-bit one, so its first transition sits at 2,000,000: a
+// reader on the v1 table answers "AAA" at 1,999,999 where the v2 table
+// says "BBB".
+function fixture(): u8[] {
+  let out: u8[] = [];
+  out = push_header(out, 50 as u8, 2, 2, 8);
+  out = push_be32(out, 2000000i64);
+  out = push_be32(out, 3000000i64);
+  out = out.append(1 as u8);
+  out = out.append(0 as u8);
+  out = push_type(out, 3600i64, 0 as u8, 0 as u8);
+  out = push_type(out, 7200i64, 1 as u8, 4 as u8);
+  out = push_designations(out);
+  out = push_header(out, 50 as u8, 2, 2, 8);
+  out = push_be64(out, 1000000i64);
+  out = push_be64(out, 3000000i64);
+  out = out.append(1 as u8);
+  out = out.append(0 as u8);
+  out = push_type(out, 3600i64, 0 as u8, 0 as u8);
+  out = push_type(out, 7200i64, 1 as u8, 4 as u8);
+  out = push_designations(out);
+  out = push_bytes(out, "\n<+03>-3\n");
+  return out;
+}
+
+function test_tzif_before_and_after_transition(): test.TestOutcome {
+  match (tz.parse_tzif(fixture())) {
+    Some(z) => {
+      if (z.offset_at(999999i64) != 3600 || z.abbrev_at(999999i64) != "AAA") {
+        return test.fail("before the transition");
+      }
+      if (z.offset_at(1000000i64) != 7200 || z.abbrev_at(1000000i64) != "BBB") {
+        return test.fail("at the transition");
+      }
+      if (!z.is_dst_at(1500000i64)) {
+        return test.fail("dst flag of the second type");
+      }
+      return test.pass();
+    },
+    None => {
+      return test.fail("a well-formed file was refused");
+    }
+  }
+}
+
+// The v1 table's first transition is at 2,000,000; a reader on the 64-bit
+// table is already in the second type at 1,999,999.
+function test_tzif_reads_the_64_bit_table(): test.TestOutcome {
+  match (tz.parse_tzif(fixture())) {
+    Some(z) => {
+      return test.assert_eq(z.offset_at(1999999i64), 7200);
+    },
+    None => {
+      return test.fail("refused");
+    }
+  }
+}
+
+// Past the last transition the footer rule answers. The table's last entry
+// is +1h; the footer says +3h, so an instant far past the table shows the
+// footer was read and parsed.
+function test_tzif_footer_governs_the_future(): test.TestOutcome {
+  match (tz.parse_tzif(fixture())) {
+    Some(z) => {
+      if (z.abbrev_at(4000000000i64) != "+03") {
+        return test.fail("footer abbreviation");
+      }
+      return test.assert_eq(z.offset_at(4000000000i64), 10800);
+    },
+    None => {
+      return test.fail("refused");
+    }
+  }
+}
+
+function test_tzif_truncated_is_refused(): test.TestOutcome {
+  let whole: u8[] = fixture();
+  let cut: u8[] = [];
+  let i: i32 = 0;
+  while (i < 60) {
+    cut = cut.append(whole[i]);
+    i = i + 1;
+  }
+  match (tz.parse_tzif(cut)) {
+    Some(_) => {
+      return test.fail("a file cut inside its first block parsed");
+    },
+    None => {
+      return test.pass();
+    }
+  }
+}
+
+// A header claiming two billion transitions in a 60-byte file: refused by
+// the length check, not allocated.
+function test_tzif_absurd_count_is_refused(): test.TestOutcome {
+  let out: u8[] = [];
+  out = push_bytes(out, "TZif");
+  out = out.append(50 as u8);
+  let i: i32 = 0;
+  while (i < 15) {
+    out = out.append(0 as u8);
+    i = i + 1;
+  }
+  out = push_be32(out, 0i64);
+  out = push_be32(out, 0i64);
+  out = push_be32(out, 0i64);
+  out = push_be32(out, 2000000000i64);
+  out = push_be32(out, 1i64);
+  out = push_be32(out, 4i64);
+  out = push_type(out, 0i64, 0 as u8, 0 as u8);
+  out = push_bytes(out, "UTC");
+  out = out.append(0 as u8);
+  match (tz.parse_tzif(out)) {
+    Some(_) => {
+      return test.fail("parsed");
+    },
+    None => {
+      return test.pass();
+    }
+  }
+}
+
+function test_not_tzif_is_refused(): test.TestOutcome {
+  let bs: u8[] = [];
+  bs = push_bytes(bs, "not a zoneinfo file at all, just forty-eight bytes..");
+  match (tz.parse_tzif(bs)) {
+    Some(_) => {
+      return test.fail("parsed");
+    },
+    None => {
+      return test.pass();
+    }
+  }
+}
+
+function test_posix_rule_rejected(): test.TestOutcome {
+  let r: tz.Rule = tz.parse_posix("12");
+  return test.assert_eq(r.valid, false);
+}
+
+function main(): i32 {
+  let t: test.TestRunner = test.test_new("tz");
+  t = t.it("standard time before the spring gap", test_rule_standard_before_spring);
+  t = t.it("daylight time from the spring gap", test_rule_daylight_after_spring);
+  t = t.it("fall back", test_rule_fall_back);
+  t = t.it("southern hemisphere rule", test_rule_southern_hemisphere);
+  t = t.it("quoted designation with a non-hour offset", test_rule_quoted_fixed);
+  t = t.it("at is the offset in force then", test_at_is_the_offset_then);
+  t = t.it("tzif before and after its transition", test_tzif_before_and_after_transition);
+  t = t.it("tzif reads the 64-bit table", test_tzif_reads_the_64_bit_table);
+  t = t.it("tzif footer governs the future", test_tzif_footer_governs_the_future);
+  t = t.it("truncated tzif refused", test_tzif_truncated_is_refused);
+  t = t.it("absurd count refused", test_tzif_absurd_count_is_refused);
+  t = t.it("not tzif refused", test_not_tzif_is_refused);
+  t = t.it("posix rule without a name refused", test_posix_rule_rejected);
+  return t.finish();
+}

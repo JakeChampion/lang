@@ -6427,7 +6427,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 			// falls off the end was handed an `i32.const 0` against an
 			// i64 result, so the module was rejected — "expected i64,
 			// found i32". Every i64-returning function ending in a
-			// match hit it, `vint_as_i64` in examples/self_host's
+			// match hit it, `vint_as_i64` in compiler's
 			// interpreter among them, which is why interp.fern had
 			// never produced a valid wasm module.
 			b.emit(Op{Kind: OpConstI64, I64: 0})

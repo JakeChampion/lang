@@ -5,7 +5,7 @@ import "strings"
 // Family is one group of mnemonics the self-host assembler routes through a
 // single encoder arm: cmd/arm64tblgen writes the family lookup
 // (arm64_gas_family, with an `arm64_fam_<Name>` index per family) into
-// examples/self_host/arm64_native.fern, which its dispatch compares against
+// compiler/arm64_native.fern, which its dispatch compares against
 // instead of spelling the mnemonics again.
 //
 // The encoder logic stays hand-written; what the table holds is the

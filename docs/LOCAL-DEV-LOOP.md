@@ -101,8 +101,8 @@ analysis without measuring the code it improves. The historical #8224 result
 why the producer matters, rather than describing today's build path:
 
 ```
-./bin/fern-selfhost -g -target x86-64-linux -o /tmp/s2-new  examples/self_host/fern.fern $PWD/internal/stdlib
-/path/to/base-fern-selfhost -g -target x86-64-linux -o /tmp/s2-base examples/self_host/fern.fern $PWD/internal/stdlib
+./bin/fern-selfhost -g -target x86-64-linux -o /tmp/s2-new  compiler/fern.fern $PWD/internal/stdlib
+/path/to/base-fern-selfhost -g -target x86-64-linux -o /tmp/s2-base compiler/fern.fern $PWD/internal/stdlib
 ```
 
 ~90 s and ~1.3 GB RSS each (measured 2026-09-04). Under callgrind, valgrind does
@@ -177,7 +177,7 @@ and GC tuning below describe a current target build. Profile the self-host
 compiler with the tools below, and use `scripts/perf-history` for the tracked
 trend. Reproducing this Go profile requires the historical compiler source.
 
-Profile of `bin/fern -target x86-64-linux` on `examples/self_host/fern.fern`
+Profile of `bin/fern -target x86-64-linux` on `compiler/fern.fern`
 (4-core container, 2026-09-02, 34.9 s wall): codegen 72% — `ir.LowerWith`
 32%, `ir.OptimizeCleanup` 22%, rendering the asm text 10% — the in-process
 assembler 18.5% (of which parsing that text back is 14.5% and layout 3.8%),
@@ -200,7 +200,7 @@ op list per round); it remained sequential.
 ## Historical self-host emit profile (2026-10-02)
 
 callgrind over the self-host driver (`-g`, see below) emitting
-`examples/self_host/fern.fern` to x86-64 asm text, 2026-10-02: 271 G
+`compiler/fern.fern` to x86-64 asm text, 2026-10-02: 271 G
 instructions for the driver the pinned stage0 builds, 263 G for the one a
 self-host-built compiler builds from the same source (its codegen borrows
 where stage0's releases), 57 s wall on the 4-core container under other load
@@ -339,8 +339,7 @@ under a 16 GB host:
   arm64 one). Small program links take no reservation.
 
 The old in-process Go emit used `FERN_EMIT_MEMLIMIT_MB` to cap the Go heap.
-That helper remains covered by its own tests, but target compilation no longer
-calls it; it does not limit a Fern compiler subprocess.
+That helper has been removed; it did not limit a Fern compiler subprocess.
 
 If a build is still OOM-killed, lower `FERN_BUILD_MEM_BUDGET_MB` (fewer builds
 overlap), or re-create the ephemeral
@@ -360,9 +359,9 @@ A new test only proves something if it fails without the fix. To check that,
 restore one file to its pre-fix state:
 
 ```sh
-git checkout <parent-sha> -- examples/self_host/ssarc.fern
+git checkout <parent-sha> -- compiler/ssarc.fern
 go test ./internal/e2eselfhost/ -run TestYourNewCase > run.log 2>&1; echo "EXIT=$?"
-git checkout HEAD -- examples/self_host/ssarc.fern
+git checkout HEAD -- compiler/ssarc.fern
 ```
 
 **Do not reach for `git stash push <file>`.** Once the fix is committed the file
@@ -561,7 +560,7 @@ CI runs the full arm64 matrix on every push. Reach for qemu locally only to
 This is safe because the self-host backends **share** their entire
 target-independent frontend — the `Ty` type system, type inference, the
 pre-codegen checker, and `EmitState` + its state methods — via
-`examples/self_host/asmcore.fern`, imported by `asm_ir.fern` (x86-64),
+`compiler/asmcore.fern`, imported by `asm_ir.fern` (x86-64),
 `asm_arm64_ir.fern`, and `wasm_ir.fern`. That half cannot drift; only the
 `emit_*` instruction-selection layer is hand-maintained per target. So an
 x86-64-green change is almost always arm64-green, and CI is the backstop.
@@ -625,9 +624,9 @@ fresh `go build -o $B/fern ./cmd/fern` (absolute paths throughout: the
 self-host CLI cannot open relative ones):
 
 ```
-$B/fern    -target arm64-darwin -o $B/fern-s1 $W/examples/self_host/fern.fern      # stage 1: 8 s, 1.3 GB RSS
-$B/fern-s1 -target arm64-linux -emit asm -o $B/fern.s $W/examples/self_host/fern.fern  # 26 s, 1.0 GB, 63.3 MB of asm (#8212's shape)
-$B/fern-s1 -target arm64-darwin -o $B/fern-s2 $W/examples/self_host/fern.fern      # stage 2: 36 s, 1.4-1.7 GB, an 11 MB Mach-O
+$B/fern    -target arm64-darwin -o $B/fern-s1 $W/compiler/fern.fern      # stage 1: 8 s, 1.3 GB RSS
+$B/fern-s1 -target arm64-linux -emit asm -o $B/fern.s $W/compiler/fern.fern  # 26 s, 1.0 GB, 63.3 MB of asm (#8212's shape)
+$B/fern-s1 -target arm64-darwin -o $B/fern-s2 $W/compiler/fern.fern      # stage 2: 36 s, 1.4-1.7 GB, an 11 MB Mach-O
 ```
 
 The "arena exhaustion, exit 125" that #6872 / #7267 reported for the stage-2
@@ -663,9 +662,9 @@ default-hint compiler's (517 s, 5.4 GB). The gate for the shapes is
 `bin/fern-selfhost` built by `make selfhost-cli`:
 
 ```
-FERN_HIGH_HEAP=1 $W/bin/fern-selfhost -target arm64-linux -emit asm -o $B/fern_hh.s $W/examples/self_host/fern.fern $W/internal/stdlib
+FERN_HIGH_HEAP=1 $W/bin/fern-selfhost -target arm64-linux -emit asm -o $B/fern_hh.s $W/compiler/fern.fern $W/internal/stdlib
 aarch64-linux-gnu-gcc -static -nostdlib -o $B/fern_hh $B/fern_hh.s
-qemu-aarch64 $B/fern_hh -target arm64-linux -o $B/fern_s2 $W/examples/self_host/fern.fern $W/internal/stdlib
+qemu-aarch64 $B/fern_hh -target arm64-linux -o $B/fern_s2 $W/compiler/fern.fern $W/internal/stdlib
 ```
 
 What the probe does not move is the image, `.rodata` and the stack, which on
@@ -687,5 +686,5 @@ assembler). The darwin fixed point is gated by `bootstrap.yml`'s
 no Go); the readout above is how to measure it by hand if it regresses:
 
 ```
-FERN_CLIFF_REPORT=1 /usr/bin/time -l $B/fern-s2 -target arm64-darwin -o $B/fern-s3 $W/examples/self_host/fern.fern $W/internal/stdlib
+FERN_CLIFF_REPORT=1 /usr/bin/time -l $B/fern-s2 -target arm64-darwin -o $B/fern-s3 $W/compiler/fern.fern $W/internal/stdlib
 ```

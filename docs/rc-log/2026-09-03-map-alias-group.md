@@ -108,7 +108,7 @@ reassign consults `map_clone_sites`.
 leakcheck exact counts with `__rc_underflow_count()` folded into the exit
 and a second build of every row under `FERN_SANITIZE=1`, plus wasm-IR and
 arm64-IR exit legs — 42 subtests. Non-vacuity against the parent commit
-(`git checkout HEAD~1 -- examples/self_host/irlower.fern`, same test): the
+(`git checkout HEAD~1 -- compiler/irlower.fern`, same test): the
 9 rows the change reaches fail there at the "before" counts above, and the
 4 that must not move — the snapshot program, the control and the two
 refusals — pass on both sides, so the refusal set did not move.

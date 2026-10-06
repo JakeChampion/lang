@@ -50,6 +50,18 @@ pub function (h: HeaderMap) get(name: string): Option[string] {
   return None;
 }
 
+// `.has(name)` — whether any entry is named `name`, case-insensitive.
+pub function (h: HeaderMap) has(name: string): boolean {
+  let i: i32 = 0;
+  while (i < h.names.len()) {
+    if (h.names[i].eq_ignore_ascii_case(name)) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
 // `.get_all(name)` — every value for `name` in insertion order.
 // Returns an empty array when no entry matches (callers
 // shouldn't need to special-case "missing" separately from

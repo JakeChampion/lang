@@ -99,7 +99,7 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
   (`TestArm64SSABackendDifferential`, whose floor is the full 281 accordingly).
 
   **That corpus is not the whole language, and it excludes the program this
-  epic is about.** `arm64SSADiffCorpus` skips `examples/self_host` outright
+  epic is about.** `arm64SSADiffCorpus` skips `compiler` outright
   (`arm64_ssa_differential_test.go`), and the self-hosted compiler does NOT
   compile under `-backend ssa`. Do not read "both corpora are clean" as
   "coverage is done" — see **Phase 3 measurement** below for what is actually
@@ -555,7 +555,7 @@ of a crossover:
 
 The SSA figure there is **inferred** — instruction count × 4 off an
 instrumented emitter — because the program does not link; the proxy reads
-about 0.2% low on `miniparse`, which does. `examples/self_host/fern.fern`
+about 0.2% low on `miniparse`, which does. `compiler/fern.fern`
 cannot be measured even that way: emit stops at the parameter-count check
 before any assembly exists.
 
@@ -693,7 +693,7 @@ the wrong slot; `asmPair` rejects it now.
 
 ### The self-host compiler links, and the sizes match
 
-With the pairing in, `examples/self_host/checker_modload_run.fern` compiles,
+With the pairing in, `compiler/checker_modload_run.fern` compiles,
 links and runs under `-backend ssa` — the first time any self-host module has.
 It was the last thing the epic was for.
 
@@ -864,7 +864,7 @@ would have missed all six.
 
 ### Every self-host driver compiles
 
-**47 of 47 `examples/self_host/*_run.fern` build under `-backend ssa`.** That is
+**47 of 47 `compiler/*_run.fern` build under `-backend ssa`.** That is
 the whole tree of self-host entry points: the asm and wasm emitters, the module
 loaders, the checker, the interpreter, the IR lowerer, `ferndoc`, the capability
 and platform probes.
@@ -934,7 +934,7 @@ holds to byte-identical behaviour:
 - **Aborts are silent.** An out-of-range index exits 134 under both, but flat
   writes `fern: array index out of range` plus a backtrace and the SSA build
   writes zero bytes. Not a missing backtrace — no cause line at all.
-- **`examples/proposals/trie.fern` allocates 6.7–32× more** under SSA on
+- **`tests/proposals/trie.fern` allocates 6.7–32× more** under SSA on
   struct-element arrays updated through `.append` / `.with`, where the
   unique-reference in-place update appears to be lost. Same values; only the
   bump high-water mark differs, and it prints to stderr.
@@ -945,7 +945,7 @@ Every measurement above this line counts bytes. The corpus went from 163.7% of
 flat's `.text` to under 90%, and nothing in that record says whether the smaller
 code runs faster, slower, or the same.
 
-It ran slower. Best-of-7 over `examples/bench/*.fern` under qemu, both backends
+It ran slower. Best-of-7 over `bench/*.fern` under qemu, both backends
 built by the same compiler, with a measured 3 ms process-start floor subtracted:
 
 | bench | flat | SSA before | SSA after |
@@ -1290,7 +1290,7 @@ The first mirrors the guard `mark` already applied to integer constants.
 **One compiler, both backends.** The first comparison ran a freshly built SSA
 driver against a flat driver compiled hours earlier, because `drvrun.sh` rebuilt
 only the SSA side. That varies the compiler VERSION as well as the backend, and
-one of the three differing programs — `examples/probes/retained_param_leak.fern`
+one of the three differing programs — `tests/probes/retained_param_leak.fern`
 — was exactly that: a frame-size and RC-drop difference between two mains, not
 between two backends. It matches once both drivers come from one compiler. The
 tell was `irlower_run -slots`, which reports `main` with 9 locals in both builds:
@@ -1308,7 +1308,7 @@ The whole corpus, re-run that way with the fix in, is the number to quote:
 | `interp_run` | 285 | 0 | 1 |
 | `asm_run` | **286** | **0** | 0 |
 
-`interp_run`'s one skip is `examples/bench/array_append.fern`, where the
+`interp_run`'s one skip is `bench/array_append.fern`, where the
 interpreter runs out of memory under qemu — a skip on both sides, not a
 mismatch. Every other program in the corpus now compiles to the same bytes
 through either backend.

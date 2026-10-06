@@ -134,7 +134,7 @@ vocabularies:
 
 The clause uses `internal/caps`' v1 set. It is the *authority* vocabulary,
 which is the question "which effects does this function perform" actually
-is; it is already mirrored into `examples/self_host/caps.fern` and pinned
+is; it is already mirrored into `compiler/caps.fern` and pinned
 entry-for-entry by a parity test; and it is what `fern -capabilities`
 already prints.
 

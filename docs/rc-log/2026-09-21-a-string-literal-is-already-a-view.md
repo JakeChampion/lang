@@ -12,7 +12,7 @@ if (j < n) { spec = slice_unchecked(fmt, i + 1, j); }
 `__format_apply_spec` opens with `let fill: str = " ";` and rebinds it from
 `slice_unchecked(spec, p, p + fw)` — the same shape, the same refusal:
 `a view is lent, never retained`. Between them they held three whole
-programs to the AST lowering: `examples/tests/format_test` (238 declarations),
+programs to the AST lowering: `tests/stdlib/format_test` (238 declarations),
 `conformance/cases/format_specs` (136) and `conformance/cases/format_placeholders`
 (130). Every other refusal in those three files is contagion from these two.
 
@@ -56,7 +56,7 @@ x86-64, `FERN_SANITIZE=1` + `FERN_LEAKCHECK=1`, native x86-64 as the oracle.
 | program | before | after | AST leg holds | typed holds |
 |---|---|---|---|---|
 | the two shapes plus a literal argument and a `str[]` of literals | 0 of 4 | 4 of 4 | 3240 B in 135 blocks | 0 B |
-| `examples/tests/format_test` | 0 of 238 | 238 of 238 | — | 0 B |
+| `tests/stdlib/format_test` | 0 of 238 | 238 of 238 | — | 0 B |
 | `conformance/cases/format_specs` | 0 of 136 | 136 of 136 | — | 0 B |
 | `conformance/cases/format_placeholders` | 0 of 130 | 130 of 130 | — | 0 B |
 

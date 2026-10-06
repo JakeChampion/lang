@@ -182,7 +182,7 @@ var stmtUnionRE = regexp.MustCompile(`(?s)pub type Stmt =(.*?);`)
 
 func astStmtForms(t *testing.T) []string {
 	t.Helper()
-	p, err := filepath.Abs("../../examples/self_host/ast.fern")
+	p, err := filepath.Abs("../../compiler/ast.fern")
 	if err != nil {
 		t.Fatalf("abs ast.fern: %v", err)
 	}
@@ -216,7 +216,7 @@ func astStmtForms(t *testing.T) []string {
 
 func TestSelfHostBindStmtScopeParity(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../examples/self_host/bind_stmt_parity_run.fern")
+	driver, err := filepath.Abs("../../compiler/bind_stmt_parity_run.fern")
 	if err != nil {
 		t.Fatalf("abs driver path: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestSelfHostBindStmtScopeParity(t *testing.T) {
 				t.Errorf("bind_stmt and check_stmt left different bindings on %d statement(s):\n    %s\n\n"+
 					"    bind_stmt is check_stmt's scope half, and twelve diagnostic walkers take their scope from it. A name that resolves\n"+
 					"    in one and not the other shows up as a spurious or missing diagnostic far from the statement that caused it.\n"+
-					"    Move the two into step in examples/self_host/checker.fern; do not adjust the corpus to avoid the shape.",
+					"    Move the two into step in compiler/checker.fern; do not adjust the corpus to avoid the shape.",
 					len(diffs), strings.Join(diffs, "\n    "))
 			}
 			if runErr != nil && len(diffs) == 0 && compared >= tc.minCompared {

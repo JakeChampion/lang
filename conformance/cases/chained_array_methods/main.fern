@@ -2,7 +2,7 @@
 // #7754 this REFUSED to compile: the outer call's receiver resolved as i32
 // ("call to unknown symbol i32.append") and the self-host emitted nothing,
 // while native compiled it. It is the natural way to write a byte-buffer
-// append and appears in the repo's own examples/proposals/wal.fern.
+// append and appears in the repo's own tests/proposals/wal.fern.
 //
 // The bug was an asymmetry, not a missing feature: expr_is_f64arr and
 // expr_is_i64arr each carried a clause saying `with`/`append` preserve the

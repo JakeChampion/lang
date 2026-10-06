@@ -2,7 +2,7 @@
 
 `ownership.consumed_at`, `fnsigs.strarr_visible_producers`. Refs #8171. No emitted byte changes: the
 stage0-built compiler before and after emits the fixed older tree
-(`examples/self_host/fern.fern` at 1ae9cad) and `checker.fern` byte for
+(`compiler/fern.fern` at 1ae9cad) and `checker.fern` byte for
 byte, and the `selfhost-emit-hashes` sweep is 1,965 rows per compiler with
 0 differing, against the previous entry's tree.
 

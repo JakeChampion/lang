@@ -10,7 +10,7 @@ seven fell to three gaps, closed here.
   `struct Stage { run: (Ctx) => Result[Ctx, Fault] }`. `semrecords` requires
   their schemas, but `schema_of` never walked into a function type. So any
   body that named only `Stage` failed verification with "missing nested
-  record schema" (`examples/proposals/pipeline.fern`, and
+  record schema" (`tests/proposals/pipeline.fern`, and
   `examples/vcl/vclrun.fern`, `vclbackend_test.fern` and `vclproxy.fern`).
 - **A literal beside an operand of unknown width.** When the checker gives
   neither side of an operator a width, an unsuffixed literal is now read at

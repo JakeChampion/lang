@@ -554,7 +554,7 @@ func countSlotLoads(fn *Func) map[int32]*slotLoads {
 // work on both compilers or to say plainly which one it describes, and it is
 // the second: recognition (#9730) and fusion (#9731) live in `internal/ir`,
 // which the self-hosted compiler does not share. Its own pass
-// (examples/self_host/semfuse.fern, #11072) decides separately and reports
+// (compiler/semfuse.fern, #11072) decides separately and reports
 // nothing.
 const arrayReportCompilerNote = "This is the NATIVE compiler's plan. " +
 	"The self-hosted compiler fuses with its own pass (semfuse), " +

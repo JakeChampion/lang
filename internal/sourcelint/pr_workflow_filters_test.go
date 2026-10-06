@@ -21,7 +21,7 @@ var docOnlyPathsIgnore = []string{
 // provided every one of its jobs deletes them first (dropSelfHostAction), so
 // that a test starting to read them fails on every run of that lane.
 var selfHostOnlyPaths = []string{
-	"examples/self_host/**",
+	"compiler/**",
 	"internal/e2eselfhost/**",
 }
 

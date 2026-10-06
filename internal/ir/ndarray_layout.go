@@ -192,7 +192,7 @@ var ndarrayStorageSensitive = map[string]NdarrayLayout{
 // What a CALL to a user function yields (#9734 follow-up). The analysis above
 // follows provenance within one function and claims nothing at a call
 // boundary, which is its main imprecision: over
-// `examples/tests/ndarray_test.fern` 14 of 43 reported rows read `unknown`,
+// `tests/stdlib/ndarray_test.fern` 14 of 43 reported rows read `unknown`,
 // and 13 of those are receivers bound from a helper — almost all one `grid()`
 // whose body is a single `return ndarray.from_flat(...)`.
 //

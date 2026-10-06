@@ -8,7 +8,7 @@ import (
 )
 
 // The self-host compiler carries its own copy of Table
-// (examples/self_host/asmcore.fern) because it cannot import Go, the
+// (compiler/asmcore.fern) because it cannot import Go, the
 // same way internal/platforms and internal/caps are mirrored. Two
 // copies of an errno table go wrong the same way: one side gains an
 // entry, or a Darwin number is corrected, and the other keeps reporting
@@ -17,7 +17,7 @@ import (
 // for row, without building anything, so the gate runs on every change
 // to this package.
 
-const selfHostSrc = "../../examples/self_host/asmcore.fern"
+const selfHostSrc = "../../compiler/asmcore.fern"
 
 func readSelfHost(t *testing.T) string {
 	t.Helper()

@@ -9,7 +9,7 @@ import (
 )
 
 // TestSelfHostIRKindRegistry exercises the self-hosted stack IR's integer
-// op-kind registry (examples/self_host/ir.fern's kind_id / kind_name /
+// op-kind registry (compiler/ir.fern's kind_id / kind_name /
 // kind_count + the int-keyed classifier predicates, issue #4394 lever 2 —
 // the string->int op-kind conversion foundation).
 //
@@ -54,7 +54,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"bijection_ok=187\n" +
 		"bijection_failures=0\n" +
 		"retired=1\n" +
-		"ext_ok=176\n" +
+		"ext_ok=178\n" +
 		"ext_failures=0\n" +
 		"neg_ok=14\n" +
 		"neg_failures=0\n" +
@@ -69,7 +69,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"is_term return=1 br=1 exit=1 brif=0\n" +
 		"is_fold add=1 div_s=1 ge_s=1 fadd=0\n" +
 		"is_commute add=1 xor=1 sub=0 shl=0\n" +
-		"tag_consistency ok=177 bad=0\n"
+		"tag_consistency ok=179 bad=0\n"
 
 	// The report ends with every registered tag's id in id order, pinned by
 	// testdata/ir-kind-ids.txt. The backends dispatch on literal ids, so this
@@ -110,7 +110,7 @@ func TestSelfHostIROpConstructorTags(t *testing.T) {
 		name, id, _ := strings.Cut(line, "=")
 		ids[name] = id
 	}
-	src, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", "ir.fern"))
+	src, err := os.ReadFile(filepath.Join("..", "..", "compiler", "ir.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}

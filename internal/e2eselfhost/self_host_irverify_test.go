@@ -16,7 +16,7 @@ import (
 )
 
 // TestSelfHostIRVerifyStructure exercises the self-host IR structure verifier
-// (examples/self_host/irverify.fern, #6639 slice 1) — the port of native's
+// (compiler/irverify.fern, #6639 slice 1) — the port of native's
 // internal/ir/verify.go.
 //
 // The driver asserts each check class in BOTH directions: a malformed op
@@ -52,7 +52,7 @@ func TestSelfHostIRVerifyStructure(t *testing.T) {
 }
 
 // TestSelfHostIRVerifyStack exercises the operand-stack verifier
-// (examples/self_host/irverifystack.fern, #6639 slice 2) — the port of
+// (compiler/irverifystack.fern, #6639 slice 2) — the port of
 // native's internal/ir/verifystack.go.
 //
 // Same driver, same both-directions discipline as the structure pass above,
@@ -88,7 +88,7 @@ func TestSelfHostIRVerifyStack(t *testing.T) {
 }
 
 // TestSelfHostIRVerifyFip exercises the `fip` / `fbip` allocation-budget
-// verifier (examples/self_host/irfipverify.fern, #6639 slice 3) — the port of
+// verifier (compiler/irfipverify.fern, #6639 slice 3) — the port of
 // native's internal/ir/fip_verify.go.
 //
 // Same driver and the same both-directions discipline as the two passes above.
@@ -122,7 +122,7 @@ func TestSelfHostIRVerifyFip(t *testing.T) {
 }
 
 // TestSelfHostIRVerifyProvided exercises the callee-resolution verifier
-// (examples/self_host/irverifyprovided.fern, #6639 slice 4) — the port of
+// (compiler/irverifyprovided.fern, #6639 slice 4) — the port of
 // native's internal/ir/verifyprovided.go.
 //
 // Same driver and the same both-directions discipline as the passes above.
@@ -417,7 +417,7 @@ func stageProvidedFixture(t *testing.T, stdRoot, caseDir string) string {
 }
 
 // TestSelfHostIRVerifyRc exercises the self-host IR ownership verifier
-// (examples/self_host/irverifyrc.fern, #7791) — the mirror of native's
+// (compiler/irverifyrc.fern, #7791) — the mirror of native's
 // internal/ir/verifyrc.go.
 //
 // It checks the one invariant the reuse protocol rests on: the local whose
@@ -492,7 +492,7 @@ func skipReasons(t *testing.T, path string) map[string]bool {
 // Needs no toolchain: it is a property of the two sources.
 func TestSelfHostIRVerifyRcSkipReasonsMatchNative(t *testing.T) {
 	native := skipReasons(t, filepath.Join("..", "..", "internal", "ir", "verifyrc.go"))
-	selfHost := skipReasons(t, filepath.Join("..", "..", "examples", "self_host", "irverifyrc.fern"))
+	selfHost := skipReasons(t, filepath.Join("..", "..", "compiler", "irverifyrc.fern"))
 
 	var onlyNative, onlySelfHost []string
 	for r := range native {
@@ -563,7 +563,7 @@ func fernStringList(t *testing.T, src, fn string) []string {
 // gate against the wasm runtime registry. Only the release half is
 // mirrored, and only the release half is compared here.
 func TestSelfHostIRVerifyRcReleaseSetMatchesNative(t *testing.T) {
-	path := filepath.Join("..", "..", "examples", "self_host", "irverifyrc.fern")
+	path := filepath.Join("..", "..", "compiler", "irverifyrc.fern")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// examples/self_host/flatten.fern ports the qualified-name rewriting
+// compiler/flatten.fern ports the qualified-name rewriting
 // half of internal/modload into the self-host pipeline: a
 // cross-module reference `mod.name` is rewritten to the flat mangled
 // name `mod__name` across call / type / pattern / field positions.

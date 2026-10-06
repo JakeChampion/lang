@@ -4,7 +4,7 @@
 emitter functions between them and the per-block emit loop in `asm_ir` and
 `asm_arm64_ir`. Refs #8171. No emitted byte changes: the stage0-built
 compiler before and after emits the fixed older tree
-(`examples/self_host/fern.fern` at 1ae9cad) and `checker.fern` byte for
+(`compiler/fern.fern` at 1ae9cad) and `checker.fern` byte for
 byte on main at 9cc02c45 with #11025 and again at 219635ac, and the
 `selfhost-emit-hashes` sweep is 1,965 rows per compiler with 0 differing on
 both.

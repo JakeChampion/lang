@@ -13,7 +13,7 @@ Empty.to_string`, which reads like a missing derive rather than a
 misclassified call. Every other spelling of the same call already worked: a
 binding of the variant, an annotated binding, and a payloaded
 `Circle(1).to_string()`. Only the bare receiver went wrong, and it was the one
-`examples/tests/derive_test` uses.
+`tests/stdlib/derive_test` uses.
 
 ## The fix
 
@@ -34,7 +34,7 @@ x86-64, `FERN_SANITIZE=1` + `FERN_LEAKCHECK=1`, native x86-64 as the oracle.
 | program | before | after | typed held |
 |---|---|---|---|
 | the three spellings side by side | 0 of 110 | 110 of 110 | 0 B |
-| `examples/tests/derive_test` | 0 of 225 | 225 of 225, 22 tests pass | 0 B |
+| `tests/stdlib/derive_test` | 0 of 225 | 225 of 225, 22 tests pass | 0 B |
 
 Both answer what native answers, on all four targets, and the two lowerings
 print identical output.

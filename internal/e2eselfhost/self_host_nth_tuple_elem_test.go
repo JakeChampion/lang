@@ -6,7 +6,7 @@ import (
 )
 
 // TestSelfHostNthTupleElem pins the wasm backend's tuple-element decoder
-// (examples/self_host/wasm_ir.fern's nth_tuple_type_elem — SH-021,
+// (compiler/wasm_ir.fern's nth_tuple_type_elem — SH-021,
 // docs/SELF-HOST-AUDIT.md T2). It returns the idx-th element type of a tuple
 // spelling "(A, B, …)", or "" when the spelling isn't a tuple / idx is out of
 // range, and now decodes via the structured TypeRef (parser.parse_type_ref)

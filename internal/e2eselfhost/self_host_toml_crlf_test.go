@@ -6,7 +6,7 @@ import (
 )
 
 // TestSelfHostTomlCRLF pins the manifest reader's line handling on CRLF input
-// (examples/self_host/fern_toml.fern via util.trim — SH-020,
+// (compiler/fern_toml.fern via util.trim — SH-020,
 // docs/SELF-HOST-AUDIT.md T1).
 //
 // fern_toml splits on '\n' alone, so on a CRLF file every line arrives with a

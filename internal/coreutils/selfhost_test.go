@@ -12,7 +12,7 @@ import (
 )
 
 // The self-host leg of the parity gate: every utility here compiled by the
-// SELF-HOST compiler (`examples/self_host/fern.fern`) rather than the native
+// SELF-HOST compiler (`compiler/fern.fern`) rather than the native
 // one, run over the same corpus, and required to agree with the native build
 // byte for byte.
 //
@@ -101,7 +101,7 @@ func selfHostCompiler(t *testing.T) string {
 			return
 		}
 		bin := filepath.Join(dir, "fern-selfhost")
-		selfHostDir := filepath.Join(repoRoot(t), "examples", "self_host")
+		selfHostDir := filepath.Join(repoRoot(t), "compiler")
 		// The compiler under test is built by a child process, so its sources
 		// reach the go command's test cache only if this process reads them
 		// (#9087). Without it this suite — the one that would have caught

@@ -8,7 +8,7 @@ import (
 )
 
 // `isRuntimeHelperName` above and `is_runtime_helper_name` in
-// examples/self_host/flatten.fern are the same rule in two compilers, and the
+// compiler/flatten.fern are the same rule in two compilers, and the
 // rule only works if they agree: `core/map`'s surface is declared as concrete
 // `_impl` functions because the language has no generic method on a generic
 // struct, every backend routes `map_new` / `__method_Map_get` onto them through
@@ -22,7 +22,7 @@ import (
 // backend. It builds nothing, for the same reason the caps and platforms parity
 // tests build nothing.
 
-const selfHostFlattenSrc = "../../examples/self_host/flatten.fern"
+const selfHostFlattenSrc = "../../compiler/flatten.fern"
 
 // selfHostHelperRows pulls the string literals out of the Fern predicate's
 // body — its `map_new_impl` exact match and its two prefixes.

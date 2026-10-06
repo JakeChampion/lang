@@ -6,7 +6,7 @@ import (
 )
 
 // TestSelfHostWasmExternSum pins the wasm backend's flat-sum extern type checks
-// (examples/self_host/wasm_ir.fern's extern_sum_param_supported /
+// (compiler/wasm_ir.fern's extern_sum_param_supported /
 // extern_sum_param_is_option — SH-021, docs/SELF-HOST-AUDIT.md T2). Both now
 // decode an Option[…] / Result[…, …] spelling via the structured TypeRef
 // (parser.parse_type_ref) instead of the magic-byte `Option[` / `Result[`

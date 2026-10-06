@@ -39,7 +39,7 @@ var (
 
 func selfHostReservedNamesSource(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", "parser.fern"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "compiler", "parser.fern"))
 	if err != nil {
 		t.Fatalf("read self-host parser.fern: %v", err)
 	}

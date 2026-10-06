@@ -3,7 +3,7 @@ package e2eselfhost
 import "testing"
 
 // TestSelfHostSSALiftAdmitsEveryOp pins the production lift's admission
-// census (examples/self_host/ssa_lift_admits_run.fern): every registered IR
+// census (compiler/ssa_lift_admits_run.fern): every registered IR
 // op kind reaches the register path, as an instruction of the lift's own or
 // through the stack machine's arm for it, except the ones listed here: a
 // kind with a pop count ir.op_pops does not model cannot be bridged. A new
@@ -28,11 +28,12 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// outer_mul_f64, inner_mul_add_f64 and arr_reserve each add one admitted
 	// array operation; none adds an unmodelled stack effect.
 	// ret_word and call_word, the word a paired return passes beside its
-	// result, are two more, admitted through the flat arm.
+	// result, are two more, admitted through the flat arm. buf_clear and
+	// tcp_send_buf, which empty a builder and send from one, are two more.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=363 declined=3\n"
+		"registered=365 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()

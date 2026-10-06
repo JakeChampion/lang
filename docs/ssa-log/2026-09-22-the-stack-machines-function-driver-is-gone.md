@@ -38,7 +38,7 @@ it used to fall back to the stack machine. Gone with the driver:
   report on their own. `FERN_SSA_REPORT=1` keeps the one line it still has
   a use for, the function whose lift or emit took over 200 ms.
 
-2,453 lines leave `examples/self_host/`, 161 arrive.
+2,453 lines leave `compiler/`, 161 arrive.
 
 ## The one thing the driver had that the register path did not
 

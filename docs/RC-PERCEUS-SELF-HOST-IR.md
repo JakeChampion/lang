@@ -234,7 +234,7 @@ without lowering the entire program.
 > native-shaped IR rebuild, for whole-backend convergence with native
 > (not just RC). The rollout lives in
 > `docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md`; slice 0 (the `Op` data
-> types, `examples/self_host/ir.fern`) has landed. The analysis below
+> types, `compiler/ir.fern`) has landed. The analysis below
 > still stands as the feasibility record — note its §1 finding (the
 > Perceus *analyses* are AST-level and need no IR) carries into the
 > rebuild: the IR's payoff there is **emission de-triplication**, not

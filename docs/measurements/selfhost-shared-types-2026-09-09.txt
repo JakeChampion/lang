@@ -8,7 +8,7 @@ Host: Apple M3 Pro, macOS 15.7.9.
 
 ARM64 checker executable
   Emit with the SAME compiler:
-    fern -target arm64-linux examples/self_host/checker.fern > checker.s
+    fern -target arm64-linux compiler/checker.fern > checker.s
   Link with gcc -static -nostdlib checker.s -o checker.elf in Linux ARM64
   image be368d4b7a7c. Source snapshots differ; compiler and linker do not.
 

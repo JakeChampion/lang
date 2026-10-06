@@ -5,7 +5,7 @@ package x86tbl
 // the AT&T spelling the self-host dispatches on. The encoding fields are
 // what the family's generated Fern lookup returns for the spelling.
 type NamedOp struct {
-	// ATT is the spelling examples/self_host/x86_native.fern dispatches on.
+	// ATT is the spelling compiler/x86_native.fern dispatches on.
 	// It is empty for the SSE `movq`, which AT&T spells the same as the
 	// suffixed general-register move and which x86_gas_movq resolves by
 	// operand.

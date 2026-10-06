@@ -50,7 +50,7 @@ func TestSelfHostUndefinedCallGate(t *testing.T) {
 	compile := func(t *testing.T, src string) ([]byte, []byte, int, string) {
 		t.Helper()
 		dir := t.TempDir()
-		bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+		bsrc, err := os.ReadFile("../../compiler/builtins.fern")
 		if err != nil {
 			t.Fatalf("read builtins.fern: %v", err)
 		}

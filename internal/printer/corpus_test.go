@@ -3,18 +3,18 @@ package printer
 import (
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/corpus"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
 // The two properties in this file are CORPUS-driven: they walk every `.fern`
-// file under examples/ + internal/stdlib rather than a fixture list.
+// file under corpus.Sources rather than a fixture list.
 //
 // That is the point. #6832 added the type-check property over
 // `fmtParityCases`, a hand-maintained list, and #6812 then landed
@@ -31,55 +31,24 @@ import (
 // scripts/unit-test-packages excludes internal/e2eselfhost — so a
 // differently-named test in that package runs nowhere.
 
-// corpusRoot returns the repository root, found by walking up from the test's
-// working directory to the go.mod.
+// corpusRoot returns the repository root.
 func corpusRoot(t *testing.T) string {
 	t.Helper()
-	dir, err := os.Getwd()
+	root, err := corpus.RepoRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("go.mod not found above the test's working directory")
-		}
-		dir = parent
-	}
+	return root
 }
 
-// corpusFiles lists every `.fern` file under examples/ and internal/stdlib,
-// relative to the repository root, in sorted order.
+// corpusFiles lists every Fern source in corpus.Sources, repo-relative.
 func corpusFiles(t *testing.T, root string) []string {
 	t.Helper()
-	var out []string
-	for _, sub := range []string{"examples", filepath.Join("internal", "stdlib")} {
-		err := filepath.WalkDir(filepath.Join(root, sub), func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || filepath.Ext(path) != ".fern" {
-				return nil
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			out = append(out, rel)
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
+	files, err := corpus.Files(root, corpus.Sources)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(out) < 400 {
-		t.Fatalf("corpus walk found only %d files; the tree moved and this gate stopped covering it", len(out))
-	}
-	sort.Strings(out)
-	return out
+	return files
 }
 
 // formatSource is what `fern -fmt FILE` does: parse the one file, print it.
@@ -252,13 +221,13 @@ func TestFormatCorpusPreservesCommentBlanks(t *testing.T) {
 	}
 }
 
-// mirrorCorpus copies examples/ + internal/stdlib into a temporary directory so
+// mirrorCorpus copies corpus.Sources into a temporary directory so
 // a formatted file can be type-checked with its imports intact without writing
 // into the working tree.
 func mirrorCorpus(t *testing.T, root string) string {
 	t.Helper()
 	dst := t.TempDir()
-	for _, sub := range []string{"examples", filepath.Join("internal", "stdlib")} {
+	for _, sub := range corpus.Sources {
 		err := filepath.WalkDir(filepath.Join(root, sub), func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err

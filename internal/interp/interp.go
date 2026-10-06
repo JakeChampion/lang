@@ -682,6 +682,7 @@ func New() *Interp {
 	i.Builtins["buf_take"] = &Builtin{Fn: builtinBufTake}
 	i.Builtins["buf_take_bytes"] = &Builtin{Fn: builtinBufTakeBytes}
 	i.Builtins["buf_free"] = &Builtin{Fn: builtinBufFree}
+	i.Builtins["buf_clear"] = &Builtin{Fn: builtinBufClear}
 	// `x.len()` dispatches through three mangled names (one per
 	// receiver type the checker registers a method on); all three
 	// route to a single shared implementation that switches on the
@@ -1661,6 +1662,7 @@ func New() *Interp {
 	i.Builtins["tcp_send"] = &Builtin{Fn: builtinTcpSend}
 	i.Builtins["tcp_send_bytes"] = &Builtin{Fn: builtinTcpSendBytes}
 	i.Builtins["tcp_sendfile"] = &Builtin{Fn: builtinTcpSendfile}
+	i.Builtins["tcp_send_buf"] = &Builtin{Fn: builtinTcpSendBuf}
 	i.Builtins["tcp_connect_with"] = &Builtin{Fn: builtinTcpConnectWith}
 	i.Builtins["unix_listen"] = &Builtin{Fn: builtinUnixListen}
 	i.Builtins["unix_connect"] = &Builtin{Fn: builtinUnixConnect}
@@ -1852,6 +1854,28 @@ func builtinTcpSendBytes(i *Interp, args []Value) (Value, error) {
 		bytes[n] = byte(value.(Number))
 	}
 	return tcpSendData(i, id, bytes)
+}
+
+func builtinTcpSendBuf(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("tcp_send_buf: expected 3 args, got %d", len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_send_buf: expected number fd arg, got %T", args[0])
+	}
+	_, b, err := bufHandle(i, "tcp_send_buf", args[1])
+	if err != nil {
+		return nil, err
+	}
+	from, ok := args[2].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_send_buf: expected number from arg, got %T", args[2])
+	}
+	if from < 0 || int(from) >= len(b) {
+		return Number(0), nil
+	}
+	return tcpSendData(i, id, b[int(from):])
 }
 
 func tcpSendData(i *Interp, id Number, data []byte) (Value, error) {
@@ -6353,6 +6377,18 @@ func builtinBufTakeBytes(i *Interp, args []Value) (Value, error) {
 
 // builtinBufFree releases the builder. The handle is dead afterwards,
 // which every later use reports rather than silently accepting.
+func builtinBufClear(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("buf_clear: expected 1 arg (b), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_clear", args[0])
+	if err != nil {
+		return nil, err
+	}
+	i.bufs[h] = b[:0]
+	return Void{}, nil
+}
+
 func builtinBufFree(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("buf_free: expected 1 arg (b), got %d", len(args))

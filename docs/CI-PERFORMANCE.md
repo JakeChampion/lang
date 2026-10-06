@@ -559,7 +559,7 @@ dropped before merging.
 ### Lanes a self-host-only change cannot reach
 
 26 of the 74 commits on main from 2026-09-15 to 2026-09-22 touched only
-`examples/self_host` or `internal/e2eselfhost`, and every lane ran on each. The
+`compiler` or `internal/e2eselfhost`, and every lane ran on each. The
 x86_64 e2e, differential, fernsmith, fuzz and examples lanes select no test
 that reads either tree, and nothing outside the self-host lane imports
 `internal/e2eselfhost`. Run locally with both trees deleted, all five passed:
@@ -843,7 +843,7 @@ stage0 binary's bytes and the stdlib tree (`CachedDriverBinFor`), so the
 same key is the same bytes on any runner. `.github/actions/selfhost-driver-cache`
 restores the harness's disk cache directory from the Actions cache under a
 key that hashes the same inputs (`bootstrap/stage0.lock`,
-`examples/self_host/**`, `internal/stdlib/**`), with a prefix fallback to
+`compiler/**`, `internal/stdlib/**`), with a prefix fallback to
 the newest earlier directory, in which every driver whose own closure did
 not change still matches. Only `*.driverbin` files travel; entries older
 than seven days are dropped after the restore. Every job that builds
@@ -910,7 +910,7 @@ aarch64 shard (8.5 minutes) is two.
 
 Lint, the other required check, spent 2.0 of its 4.7 minutes in
 `fern -check sources`, and 146 of those seconds locally were
-`tools/selfhost_driver_check.sh` type-checking 47 drivers one after another,
+`scripts/selfhost_driver_check.sh` type-checking 47 drivers one after another,
 each reading the compiler's closure again. The loop runs one check per core
 now (`xargs -P`): 44 s on the 4-core container, and the stdlib loop beside it
 16 s to 5 s. The `fern test cache` step (1.2 minutes) stays serial: its two

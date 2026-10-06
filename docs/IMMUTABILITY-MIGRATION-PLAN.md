@@ -196,7 +196,7 @@ smaller than the doc implies:**
   The ~497 figure appears to count `let x: T = …` declarations and
   `a.b == c` comparisons, which the `.<field> =` substring also matches.
 - The self-host `.fern` passes contain **zero** statement-leading field
-  assignments. `examples/self_host/parser.fern`, `constfold.fern`,
+  assignments. `compiler/parser.fern`, `constfold.fern`,
   `flatten.fern` build their ASTs **bottom-up and immutably** (verified:
   every `<ident>.<field>` line in those files is a
   `let t: lexer.Token = p.peek()`-shaped declaration). The `__set_field`
@@ -209,7 +209,7 @@ This is **good news for the migration**: the self-hosted compiler — the
 riskiest, fixpoint-gated component — needs **no source migration at
 all**. It only needs its checker/emitter to keep accepting the
 `__set_field` desugar until step 4, and at step 4 the self-host
-*checker pass* (`examples/self_host/checker.fern`) must learn to reject
+*checker pass* (`compiler/checker.fern`) must learn to reject
 field assignment to match the Go checker (a parallel checker change, not
 a data-shape rewrite).
 
@@ -539,8 +539,8 @@ Once §5 lands, flip the checker to reject the two mutation targets:
 | `io_buffered.fern` receiver builder (4) | `internal/stdlib/std/io_buffered.fern:49,59,66,99` |
 | `headers.fern` receiver builder (4) | `internal/stdlib/std/headers.fern:75-76,107-108` |
 | `mock_platform.fern` receiver builder (2) | `internal/stdlib/std/mock_platform.fern:46,61` |
-| Self-host `.fern` passes do NOT mutate fields | zero statement-leading hits in `examples/self_host/*.fern`; all `<ident>.<field>` lines are `let t: T = …` |
-| `__set_field` is the self-host *desugar/emit*, not usage | `examples/self_host/parser.fern:1181-1195`, `asm.fern:4897-4901` |
+| Self-host `.fern` passes do NOT mutate fields | zero statement-leading hits in `compiler/*.fern`; all `<ident>.<field>` lines are `let t: T = …` |
+| `__set_field` is the self-host *desugar/emit*, not usage | `compiler/parser.fern:1181-1195`, `asm.fern:4897-4901` |
 | No struct-update / spread syntax exists yet | no `spread`/`...`/`StructUpdate` in `internal/parser/*.go`, `internal/ast/*.go` |
 | StructLit AST node | `internal/ast/ast.go:884-896` |
 | StructLit parses (field loop) | `internal/parser/parser.go:2747-2779` |

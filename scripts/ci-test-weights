@@ -122,7 +122,7 @@ merge() {
 #
 # Only tests the tree still defines get a row. The runs predate the tree the
 # table is written for, so a measurement can name a test deleted since; the
-# weights file's lookup is exact and tools/testname_gate.sh fails on such a
+# weights file's lookup is exact and scripts/testname_gate.sh fails on such a
 # row. FERN_WEIGHT_TREE names the tree to scan (the repository by default).
 refresh() {
   [ "$#" -ge 3 ] || usage

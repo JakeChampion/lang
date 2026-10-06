@@ -6,7 +6,7 @@ import (
 )
 
 // Fourth self-host milestone after the lexer (#609), parser (#611 /
-// #617) and checker (#619). `examples/self_host/interp.fern` is a
+// #617) and checker (#619). `compiler/interp.fern` is a
 // tree-walking interpreter written in lang — it imports `./lexer`
 // and `./parser`, evaluates the Stmt[] tree from
 // `parser.parse_program(toks)`, and produces a runtime Value

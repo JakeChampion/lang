@@ -82,7 +82,7 @@ func builtinMistypedCalls(t *testing.T) []struct{ name, src string } {
 	for _, name := range selfHostParameterisedBuiltins(t) {
 		sig, ok := sigs[name]
 		if !ok {
-			t.Errorf("examples/self_host/checker.fern gives %q parameter types and native declares no such "+
+			t.Errorf("compiler/checker.fern gives %q parameter types and native declares no such "+
 				"builtin — one of the two tables names something the other has never heard of", name)
 			continue
 		}
@@ -206,7 +206,7 @@ var (
 // has been reshaped — a gate that reads nothing passes on anything.
 func selfHostFileSection(t *testing.T, file, pattern string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", file))
+	b, err := os.ReadFile(filepath.Join("..", "..", "compiler", file))
 	if err != nil {
 		t.Fatalf("read %s: %v", file, err)
 	}

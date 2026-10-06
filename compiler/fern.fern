@@ -1,0 +1,3727 @@
+// compiler/fern.fern — the unified self-hosted `fern` CLI
+// driver. Where the older `*_run.fern` shims each hard-wired one mode
+// (asm_load_run = emit, checker_run = check, interp_run = evaluate),
+// this is a single binary that parses argv flags and dispatches:
+//
+//     fern -o OUT <entry.fern> [stdlib]     a runnable x86-64 Linux ELF
+//     fern -target arm64-linux -o OUT <e>   a runnable arm64 Linux ELF
+//     fern -target arm64-darwin -o OUT …    a runnable arm64 Mach-O
+//     fern -target wasm32-wasi <entry>      a wasi:cli/run component
+//     fern -emit asm <entry.fern>           emit the emitter's text instead
+//     fern -emit core-module -target …      a raw wasm core module
+//     fern -emit command-module -target …   the same core, named as the preview-1 command it is
+//     fern -check <entry.fern>              type-check; exit 0 ok / 1 bad
+//     fern -check <DIR>                     check a package, or every
+//                                           member of the workspace it roots
+//     fern -interp <entry.fern>             evaluate; exit = program result
+//     fern -fmt [-w | -d] <entry.fern>      format to stdout / in place / as a diff
+//     fern -targets                         list the targets + capabilities
+//     fern -resolve <ABS-DIR>               run MVS; write fern.lock
+//     fern -tangle <doc.fern.md>            literate: emit the tangled source
+//     fern -doc <module.fern | DIR>         Markdown reference pages
+//     fern -add NAME SPEC <ABS-DIR>         declare a dependency
+//     fern -vendor <ABS-DIR>                flatten the dep graph into vendor/
+//     fern -lsp [stdlib]                    a language server on stdin/stdout
+//
+// A target is `<isa>-<environment>` (#6529 / #6635): the ISA half picks the
+// backend, the environment half says what the host provides, and neither is
+// implied — there is no bare `arm64` meaning arm64-Linux. Output FORM is a
+// separate axis, `-emit`, because it is a property of the artifact and not of
+// the machine it runs on; folding it into the target name is what once let
+// a wasm output form skip capability enforcement.
+//
+// The three native targets assemble and link IN-PROCESS (x86_native /
+// arm64_native + elf.fern, or the Mach-O writer on darwin), so producing a
+// runnable binary needs nothing on $PATH — no `.s`, no gcc, no ld. `-emit asm`
+// stops at the emitter's text (GAS on the natives, WAT on wasm), which is what
+// a harness assembling with its own toolchain wants, and the only way to
+// observe an emitter in isolation.
+//
+// Codegen routes through the IR path (asm_ir / asm_arm64_ir / wasm_ir,
+// each IR-or-error per #3457) for every target. On both native ISAs, arm64
+// and x86-64, every function is register-allocated from SSA form
+// (`-backend ssa` names it; it is the only emitter there, and a function the
+// lift cannot take is a refusal naming the op). wasm emits the stack IR
+// directly: it is a stack machine with locals, so `-backend flat` names its
+// one emitter. See docs/SELFHOST-SSA-BACKEND.md.
+//
+// It is a drop-in-shaped replacement for cmd/fern: one binary hosting
+// both the x86-64 (asm_ir.fern) and arm64 (asm_arm64.fern) emitters,
+// selected at runtime by -target — where the codebase previously had
+// two separate compilers. Module loading is the import-driven,
+// file-loading scheme from asm_load_run (follow `import "./x"` to
+// sibling files; resolve `std/…` / `core/…` under an optional stdlib
+// root).
+
+import "./util";
+import "./lexer";
+import "./parser";
+import "./flatten";
+import "./asm_ir";
+import "./asm_arm64_ir";
+import "./wasm_ir";
+import "./checker";
+import "./interp";
+import "./printer";
+import "./watbin";
+import "./wit_compose";
+import "./constfold";
+import "./embed";
+import "./platforms";
+import "./caps";
+import "./modloader";
+import "./visibility";
+import "./asmcore";
+import "./fern_toml";
+import "./literate";
+import "./ferndoc";
+import "./mvs";
+import "./treeshake";
+import "./ambient";
+import "./arm64_native";
+import "./x86_native";
+import "./elf";
+import "./ircore";
+import "./emitforms";
+import "./semlower";
+import "./cover";
+import "./lsp";
+
+// blank_line_map marks the 1-based source lines that hold nothing but
+// whitespace, indexed by line number so the formatter can ask about one in
+// constant time. Element 0 is unused (there is no line 0).
+function blank_line_map(src: string): boolean[] {
+  let out: boolean[] = [false];
+  let i: i32 = 0;
+  let n: i32 = src.len();
+  let blank: boolean = true;
+  while (i < n) {
+    let b: i32 = src[i] as i32;
+    if (b == 10) {
+      out = out.append(blank);
+      blank = true;
+    } else if (b != 32 && b != 9 && b != 13) {
+      blank = false;
+    }
+    i = i + 1;
+  }
+  out = out.append(blank);
+  return out;
+}
+
+// fmt_output_is_readable is the `-fmt -w` safety net: the formatted text must
+// come back through the formatter as itself. The parser has no error list — a
+// construct it refuses becomes an Unknown node the printer spells `/*unknown*/`
+// — so re-formatting is the check that reaches both halves at once, an
+// unreadable node and a printer that is not a fixed point on its own output.
+function fmt_output_is_readable(formatted: string): boolean {
+  if (util.contains(formatted, "/*unknown")) {
+    return false;
+  }
+  return format_source(formatted) == formatted;
+}
+
+// format_source is what `-fmt` writes for a file's text.
+function format_source(src: string): string {
+  let flex: lexer.LexResult = lexer.tokenize_full(src);
+  let pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
+  return printer.format_parsed(pf, flex.comments, blank_line_map(src));
+}
+
+// read_failure is the one-line report for a file that could not be read:
+// `fern: cannot read entry file /abs/x.fern: invalid UTF-8`. An empty reason means
+// the file was not found.
+function read_failure(what: string, path: string, reason: string): string {
+  if (reason.len() == 0) {
+    reason = "not found";
+  }
+  return "fern: cannot read " + what + " " + path + ": " + reason;
+}
+
+// fmt_file is `-fmt` for ONE file: the formatted source goes to stdout, back
+// over the file (-w), to out_path (-o), or out as a unified diff (-d, exit 1
+// when it is non-empty). Formatting never loads imports, so a file is read and
+// formatted on its own. Returns the exit code for this file.
+function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
+  let esrc: string = "";
+  match (read_file(path)) {
+    Ok(s) => {
+      esrc = s;
+    },
+    Err(e) => {
+      eprint(read_failure("entry file", path, modloader.read_error_reason(e)));
+      return 1;
+    }
+  }
+  let formatted: string = format_source(esrc);
+  if (fmt_diff) {
+    let d: string = printer.unified_diff(esrc, formatted, path, path);
+    if (d.len() == 0) {
+      return 0;
+    }
+    write(d);
+    return 1;
+  }
+  if (fmt_write) {
+    if (!fmt_output_is_readable(formatted)) {
+      eprint("fern: " + path + ": refusing to write back — the formatted output does not re-parse; this is a formatter bug, please report it");
+      return 1;
+    }
+    match (write_file(path, formatted)) {
+      Err(e) => {
+        eprint("fern: cannot write back " + path + ": " + util.io_error_reason(e));
+        return 1;
+      },
+      Ok(_) => {}
+    }
+    return 0;
+  }
+  if (out_path.len() > 0) {
+    match (write_file(out_path, formatted)) {
+      Err(e) => {
+        eprint("fern: cannot write output " + out_path + ": " + util.io_error_reason(e));
+        return 1;
+      },
+      Ok(_) => {}
+    }
+  } else {
+    write(formatted);
+  }
+  return 0;
+}
+
+// Finding is one diagnostic a check reports: the language server places it in
+// a document, and `-check` prints it (finding_text). A warning rejects nothing.
+// path names the file a finding's position is in when the position alone would
+// leave it out: native names the entry on its `todo` warnings, not its errors.
+struct Finding { diag: util.Diag, warning: boolean, path: string }
+
+// Checked is a check's whole answer: its findings in report order, the entry
+// path and the module files their positions index (util.pos_str), and whether
+// the program is accepted. A rejection can carry no finding at all: an
+// ill-typed module the checker has no diagnostic for.
+struct Checked { findings: Finding[], entry: string, files: string[], ok: boolean }
+
+// errors_of wraps diagnostics that each reject the program.
+function errors_of(ds: util.Diag[]): Finding[] {
+  let out: Finding[] = [];
+  for d in ds {
+    out = out.append(Finding { diag: d, warning: false, path: "" });
+  }
+  return out;
+}
+
+// refusal is a rejection with no code and no position — a module that could
+// not be loaded — whose message `-check` prints as the whole line.
+function refusal(msg: string): Finding {
+  return Finding { diag: util.Diag { code: "", message: msg, line: 0, col: 0 }, warning: false, path: "" };
+}
+
+function has_error(fs: Finding[]): boolean {
+  for f in fs {
+    if (!f.warning) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// finding_text renders a finding as `-check` and native print it: the
+// position (util.pos_str, naming the entry file as the command line did) when
+// it is known, then `warning: `, or `error[…]: ` for a coded error — an
+// uncoded one (the const-grammar rule, a visibility error) has no tag.
+function finding_text(f: Finding, entry: string, files: string[]): string {
+  let tag: string = "";
+  if (f.warning) {
+    tag = "warning: ";
+  } else if (f.diag.code.len() > 0) {
+    tag = "error[" + f.diag.code + "]: ";
+  }
+  if (f.diag.line > 0 && f.path.len() > 0) {
+    return f.path + ":" + util.pos_str("", files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
+  }
+  if (f.diag.line > 0) {
+    return util.pos_str(entry_display(entry), files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
+  }
+  return tag + f.diag.message;
+}
+
+// entry_display is the entry path as a diagnostic names it: the path the
+// command line gave, or `<stdin>` for a program read from stdin, as native
+// spells it.
+function entry_display(entry_path: string): string {
+  if (entry_path == "-") {
+    return "<stdin>";
+  }
+  return entry_path;
+}
+
+// eprint_findings prints each finding and reports whether any rejects the
+// program.
+function eprint_findings(fs: Finding[], entry: string, files: string[]): boolean {
+  for f in fs {
+    eprint(finding_text(f, entry, files));
+  }
+  return has_error(fs);
+}
+
+// arm64_refusals renders the assembler's / linker's refusal list as ONE
+// diagnostic line and returns "" — the empty-binary sentinel every caller
+// already returns on failure, so a caller reads `return arm64_refusals(…)`.
+//
+// Two things this fixes over the three-eprint sequence it replaces. `eprint`
+// appends its own newline, so "…does not yet support: " / entry / "\n" printed
+// the reason on its own line with a blank one after it, which read as an EMPTY
+// instruction and looked like the compiler could not say what it refused
+// (#6164). And only unknown[0] was printed: a module with twenty refusals
+// reported one, so each fix revealed the next.
+//
+// `stage` names where it came from ("assembler" / "linker"), since the two are
+// different failures: an unrecognised mnemonic is an instruction-selection gap,
+// while `label:__fern_x` is an emitted call to a runtime helper the emitter did
+// not define — not an instruction at all, which the old wording insisted it was.
+function arm64_refusals(target: string, stage: string, unknown: string[]): string {
+  let msg: string = "fern: -target " + target + ": in-process " + stage
+    + " refused " + util.i32_to_string(unknown.len()) + ": ";
+  let i: i32 = 0;
+  while (i < unknown.len()) {
+    if (i > 0) {
+      msg = msg + ", ";
+    }
+    msg = msg + unknown[i];
+    i = i + 1;
+  }
+  eprint(msg);
+  return "";
+}
+
+// word_buf is the buffer an emitter hands encoded instructions to when the
+// output is a binary, 0 when it is the text.
+function word_buf(emit_text: boolean): usize {
+  if (emit_text) {
+    return 0 as usize;
+  }
+  return buf_new(1048576);
+}
+
+// words_of hands a word_buf's bytes to the image writer and frees the builder.
+function words_of(recs: usize): u8[] {
+  let words: u8[] = buf_take_bytes(recs);
+  buf_free(recs);
+  return words;
+}
+
+// arm64_elf_binary assembles arm64 Linux GAS text (from either the SSA or AST
+// emitter) into a runnable static ELF entirely in-process via arm64_native +
+// elf.fern — no `.s` + external gcc/ld. Returns the binary bytes packed into a
+// string (written verbatim by write_file), or "" if the assembler hit an
+// instruction it doesn't yet support (the caller reports it and exits 2). The
+// arm64-darwin counterpart is the macho_executable path above.
+function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string): string {
+  let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals("arm64-linux", "assembler", p.unknown);
+  }
+  let pa: arm64_native.Arm64Asm = p.asm;
+  // W^X two-segment layout: .text loads R+X at elf_text_vaddr_wx(), the
+  // unwind data the `.cfi_*` directives rendered follows it in the same
+  // segment, and the data blob (.rodata + globals + the .bss heap) loads
+  // R+W on the first page boundary past those, so no mapping is both
+  // writable and executable (required by W^X-enforcing loaders such as
+  // Android's). The unwind images are rendered before the link because
+  // the data address depends on their size; neither depends on the data.
+  let text_len: i32 = pa.text.len();
+  let tv: i64 = elf.elf_text_vaddr_wx() as i64;
+  let hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
+  let hv: i64 = elf.elf_eh_hdr_vaddr_wx(text_len) as i64;
+  let ev: i64 = elf.elf_eh_frame_vaddr_wx(text_len, hdr_len) as i64;
+  let eh: i32[] = arm64_native.arm64_eh_frame(p, tv, ev);
+  let hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, tv, ev, hv);
+  let dv: i64 = elf.elf_data_vaddr_wx_unwind(text_len, hdr.len(), eh.len()) as i64;
+  p = arm64_native.arm64_gas_link(p, tv, dv);
+  // Symbol resolution happens IN the link, so its refusals land here rather
+  // than in the parse check above. Reporting them matters more than it
+  // sounds: an unresolvable symbol used to be patched as an offset anyway,
+  // which is how a function value became an address in the middle of .data
+  // and stayed a runtime SEGV rather than a compile error (#6045).
+  if (p.unknown.len() > 0) {
+    return arm64_refusals("arm64-linux", "linker", p.unknown);
+  }
+  let pa2: arm64_native.Arm64Asm = p.asm;
+  let eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
+  if (eoff < 0) {
+    eoff = 0;
+  }
+  let bin: u8[] = elf.elf_image_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
+  if (!emit_syms) {
+    return string_from_bytes_unchecked(bin);
+  }
+  // `-g`, the W^X counterpart of the x86 path. Arm64Asm records no section
+  // per label — every label it holds is a .text label — so the section
+  // filter is -1 rather than 0.
+  let aend: i32 = pa2.text.len();
+  let nosec: i32[] = [];
+  let wide: i32[] = elf.elf_append_debug(
+    elf.elf_cat_u8([], bin), elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), pa2.text.len(),
+    elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+    elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+    elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+    cu_name, getcwd(),
+    pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
+    arm64_native.arm64_debug_frame(p, elf.elf_text_vaddr_wx() as i64),
+    arm64_var_ranges(p, tv, dv),
+  );
+  return string_from_bytes_unchecked(util.to_u8(wide));
+}
+
+// arm64_elf_binary_pie is arm64_elf_binary as a static position-independent
+// executable (the -target arm64-android path): ET_DYN at a load base of 0 so
+// the kernel can map it anywhere (Android rejects non-PIE for normal exec).
+// Now that the arm64 heap is mmap'd at the low 0x10000000 hint (not reserved
+// as a giant .bss in the loaded image), the data segment is tiny and the
+// heap lives below 4 GiB regardless of the binary's load base — so the PIE
+// runs at any base.
+//
+// The image carries no dynamic relocations, but the emitter DOES embed absolute
+// pointers: a const-aggregate block's shape word (#6149) and a static string
+// box's data word (#7080). Those are relocated at startup instead, by the loop
+// emit_ir_reloc lays down at _start — see #7112, which is what that gap cost
+// before anyone noticed (`match` on a const aggregate took no arm and the
+// program silently returned 0).
+function arm64_elf_binary_pie(asm: string, words: u8[]): string {
+  let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals("arm64-android", "assembler", p.unknown);
+  }
+  let pa: arm64_native.Arm64Asm = p.asm;
+  let tv: i64 = elf.elf_text_vaddr_pie() as i64;
+  let dv: i64 = elf.elf_data_vaddr_pie(pa.text.len()) as i64;
+  p = arm64_native.arm64_gas_link(p, tv, dv);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals("arm64-android", "linker", p.unknown);
+  }
+  let pa2: arm64_native.Arm64Asm = p.asm;
+  let eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
+  if (eoff < 0) {
+    eoff = 0;
+  }
+  return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size));
+}
+
+// x86_elf_binary assembles x86-64 Linux GAS text into a runnable static ELF
+// in-process via x86_native + elf.fern — the counterpart of
+// arm64_elf_binary. Returns the binary bytes packed into a string, or "" if
+// the assembler could not encode something (the caller exits 2).
+//
+// Single R+W+X PT_LOAD, not the two-segment W^X image arm64 uses:
+// x86_resolve fixes .rodata references against the 8-byte-padded .text
+// length, which is exactly this layout. W^X would need the assembler to
+// resolve against a page-aligned data vaddr, as arm64_gas_link does.
+function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string): string {
+  util.arr_push_cliff_report("x86:emitted", 0);
+  let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words(asm, words);
+  util.arr_push_cliff_report("x86:assembled", 0);
+  // Absolute `.quad <label>` pointers need the load address, which the ELF
+  // container picks — the analogue of arm64_gas_link's data-vaddr argument.
+  a = x86_native.x86_resolve_data(a, elf.elf_text_vaddr_x86());
+  util.arr_push_cliff_report("x86:resolved", 0);
+  // Anything unencodable means bytes were dropped, so every offset past
+  // the first is wrong — refuse rather than write it (SH-005, #6045).
+  if (a.unknown.len() > 0) {
+    eprint("fern: -target x86-64: in-process assembler could not encode: " + a.unknown[0]);
+    return "";
+  }
+  let eoff: i32 = x86_native.x86_label_off(a, "_start");
+  if (eoff < 0) {
+    eprint("fern: -target x86-64: no _start symbol in the emitted program");
+    return "";
+  }
+  // The unwind data the `.cfi_*` directives rendered, at the addresses the
+  // image places it — .text's size is final here, and the data base the
+  // assembler resolved against already accounts for these sections.
+  let tv: i64 = elf.elf_text_vaddr_x86() as i64;
+  let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
+  let hv: i64 = elf.elf_eh_hdr_vaddr_x86(a.text.len()) as i64;
+  let ev: i64 = elf.elf_eh_frame_vaddr_x86(a.text.len(), hdr_len) as i64;
+  let eh: i32[] = x86_native.x86_eh_frame(a, tv, ev);
+  let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv, ev, hv);
+  util.arr_push_cliff_report("x86:unwind", 0);
+  let bin: u8[] = elf.elf_program_x86(a.text, hdr, eh, a.rodata, a.bss_size, eoff);
+  util.arr_push_cliff_report("x86:image", 0);
+  if (!emit_syms) {
+    return string_from_bytes_unchecked(bin);
+  }
+  // `-g`: a static .symtab so nm / a debugger / a profiler can map an
+  // address back to a function, and the DWARF compilation unit over the
+  // same symbols. Only .text labels (section 0) become symbols, and the
+  // sizes span to the end of the code, which is what lets a backtrace
+  // attribute an address INSIDE a function rather than only an exact
+  // entry point.
+  let end: i32 = a.text.len();
+  let wide: i32[] = elf.elf_append_debug(
+    elf.elf_cat_u8([], bin), elf.elf_text_vaddr_x86(), elf.elf_text_off_x86(), a.text.len(),
+    elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
+    elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
+    elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
+    cu_name, getcwd(),
+    a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
+    x86_native.x86_debug_frame(a, elf.elf_text_vaddr_x86() as i64),
+    x86_var_ranges(a, elf.elf_text_vaddr_x86()),
+  );
+  return string_from_bytes_unchecked(util.to_u8(wide));
+}
+
+// shared_export_names is -export's comma-separated list, or main without one,
+// as native defaults it.
+function shared_export_names(list: string): string[] {
+  if (list.len() == 0) {
+    return ["main"];
+  }
+  return list.split(",");
+}
+
+// shared_export_refusal names the first export that is not a plain top-level
+// function of the program, "" when every one is: a C caller reaches it by
+// name, so it has to exist, and has to be one function rather than a
+// generic's or a method's family.
+function shared_export_refusal(merged: parser.Module, names: string[]): string {
+  for n in names {
+    let k: i32 = export_func_index(merged, n);
+    if (k < 0) {
+      return "-export " + n + ": the program has no top-level function " + n;
+    }
+    if (merged.funcs[k].all_type_params.len() > 0) {
+      return "-export " + n + ": a generic function has no single body to export";
+    }
+  }
+  return "";
+}
+
+function export_func_index(merged: parser.Module, name: string): i32 {
+  let i: i32 = 0;
+  while (i < merged.funcs.len()) {
+    let f: parser.FuncDecl = merged.funcs[i];
+    if (f.name == name && f.receiver_name == "" && f.import_iface == "" && f.import_wit == "") {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// export_entries is the C-ABI entry of each export, `__fern_export_<name>`,
+// which the shared object's dynamic symbol names. A self-host function takes
+// its arguments on the stack, parameter i at 16 + 8*i(%rbp) of its frame, and
+// returns in %rax; a C caller passes them in the SysV registers and its own
+// stack. The entry pushes each argument where the callee reads it, widened as
+// its type says, and hands an f64 or f32 result back in %xmm0. A Fern f32 is
+// held as the f64 it rounds to, so an f32 crosses as a conversion, not a move.
+function export_entries(merged: parser.Module, names: string[], arm64: boolean): string {
+  let out: string = "";
+  for n in names {
+    let f: parser.FuncDecl = merged.funcs[export_func_index(merged, n)];
+    if (arm64) {
+      out = out + export_entry_arm64(f);
+    } else {
+      out = out + export_entry(f);
+    }
+  }
+  return out;
+}
+
+function export_entry(f: parser.FuncDecl): string {
+  let ints: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
+  // Where each argument arrives: an integer register, an xmm register, or
+  // the caller's stack above the entry's frame record.
+  let srcs: string[] = [];
+  let ni: i32 = 0;
+  let nf: i32 = 0;
+  let stack: i32 = 16;
+  for p in f.params {
+    let fp: boolean = p.type_name == "f64" || p.type_name == "f32";
+    if (fp && nf < 8) {
+      srcs = srcs.append("%xmm" + util.i32_to_string(nf));
+      nf = nf + 1;
+    } else if (!fp && ni < 6) {
+      srcs = srcs.append(ints[ni]);
+      ni = ni + 1;
+    } else {
+      srcs = srcs.append(util.i32_to_string(stack) + "(%rbp)");
+      stack = stack + 8;
+    }
+  }
+  let out: string = "__fern_export_" + f.name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n";
+  let i: i32 = f.params.len() - 1;
+  while (i >= 0) {
+    out = out + export_arg(srcs[i], f.params[i].type_name) + "    pushq %rax\n";
+    i = i - 1;
+  }
+  out = out + "    call __fn_" + f.name + "\n";
+  if (f.ret_type == "f64") {
+    out = out + "    movq %rax, %xmm0\n";
+  } else if (f.ret_type == "f32") {
+    out = out + "    movq %rax, %xmm0\n    cvtsd2ss %xmm0, %xmm0\n";
+  }
+  return out + "    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
+}
+
+// export_arg loads one C argument into %rax as the stack ABI holds a value of
+// type `t`: a narrow integer widened by its signedness, an f32 as the f64 it
+// converts to. %xmm15 is free: SysV passes nothing in it.
+function export_arg(src: string, t: string): string {
+  if (t == "f32") {
+    if (util.str_has_prefix(src, "%xmm")) {
+      return "    cvtss2sd " + src + ", %xmm15\n    movq %xmm15, %rax\n";
+    }
+    return "    movl " + src + ", %eax\n    movd %eax, %xmm15\n    cvtss2sd %xmm15, %xmm15\n    movq %xmm15, %rax\n";
+  }
+  let load: string = "    movq " + src + ", %rax\n";
+  if (t == "i32") {
+    return load + "    movslq %eax, %rax\n";
+  }
+  if (t == "u32") {
+    return load + "    movl %eax, %eax\n";
+  }
+  if (t == "u8" || t == "boolean") {
+    return load + "    movzbl %al, %eax\n";
+  }
+  return load;
+}
+
+// export_entry_arm64 is export_entry for arm64, whose stack ABI reads
+// parameter i from [sp, #16*i] at the callee's stack entry and returns in x0.
+// The AAPCS64 caller passes integers in x0..x7 and FP values in d0..d7 (s0..s7
+// for an f32), the rest on its stack in 8-byte slots above the entry's frame
+// record. x16 and d16 are scratch: the AAPCS64 passes nothing in either.
+function export_entry_arm64(f: parser.FuncDecl): string {
+  let srcs: string[] = [];
+  let ni: i32 = 0;
+  let nf: i32 = 0;
+  let stack: i32 = 16;
+  for p in f.params {
+    let fp: boolean = p.type_name == "f64" || p.type_name == "f32";
+    if (fp && nf < 8) {
+      srcs = srcs.append(util.i32_to_string(nf));
+      nf = nf + 1;
+    } else if (!fp && ni < 8) {
+      srcs = srcs.append(util.i32_to_string(ni));
+      ni = ni + 1;
+    } else {
+      srcs = srcs.append("[x29, #" + util.i32_to_string(stack) + "]");
+      stack = stack + 8;
+    }
+  }
+  let n: i32 = f.params.len();
+  let out: string = "__fern_export_" + f.name + ":\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
+  if (n > 0) {
+    out = out + "    sub sp, sp, #" + util.i32_to_string(16 * n) + "\n";
+  }
+  let i: i32 = 0;
+  while (i < n) {
+    out = out + export_arg_arm64(srcs[i], f.params[i].type_name) + "    str x16, [sp, #" + util.i32_to_string(16 * i) + "]\n";
+    i = i + 1;
+  }
+  out = out + "    bl __fn_" + f.name + "\n";
+  if (f.ret_type == "f64") {
+    out = out + "    fmov d0, x0\n";
+  } else if (f.ret_type == "f32") {
+    out = out + "    fmov d0, x0\n    fcvt s0, d0\n";
+  }
+  return out + "    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n";
+}
+
+// export_arg_arm64 loads one AAPCS64 argument into x16 as the stack ABI holds
+// a value of type `t`. `src` is a register number, or a caller-stack operand.
+function export_arg_arm64(src: string, t: string): string {
+  if (util.str_has_prefix(src, "[")) {
+    if (t == "f32") {
+      return "    ldr s16, " + src + "\n    fcvt d16, s16\n    fmov x16, d16\n";
+    }
+    return "    ldr x16, " + src + "\n" + export_widen_arm64("x16", "w16", t);
+  }
+  if (t == "f64") {
+    return "    fmov x16, d" + src + "\n";
+  }
+  if (t == "f32") {
+    return "    fcvt d16, s" + src + "\n    fmov x16, d16\n";
+  }
+  return export_widen_arm64("x" + src, "w" + src, t);
+}
+
+// export_widen_arm64 moves x (w its low half) into x16, widened as `t` says.
+function export_widen_arm64(x: string, w: string, t: string): string {
+  if (t == "i32") {
+    return "    sxtw x16, " + w + "\n";
+  }
+  if (t == "u32") {
+    return "    mov w16, " + w + "\n";
+  }
+  if (t == "u8" || t == "boolean") {
+    return "    and x16, " + x + ", #255\n";
+  }
+  if (x == "x16") {
+    return "";
+  }
+  return "    mov x16, " + x + "\n";
+}
+
+// arm64_elf_shared is x86_elf_shared for the arm64 targets: the W^X PIE
+// image, linked at base 0 with the data on the first page past the code, and
+// every absolute data word arm64_gas_rebase_offs lists relocated
+// (R_AARCH64_RELATIVE) rather than by the _start loop, which a library never
+// runs.
+function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string): string {
+  let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals(target, "assembler", p.unknown);
+  }
+  let text_len: i32 = p.asm.text.len();
+  let tv: i32 = elf.elf_text_off_so(true);
+  let hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
+  let hv: i32 = elf.elf_eh_hdr_off_so(true, text_len);
+  let ev: i32 = elf.elf_eh_frame_off_so(true, text_len, hdr_len);
+  let eh: i32[] = arm64_native.arm64_eh_frame(p, tv as i64, ev as i64);
+  let hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, tv as i64, ev as i64, hv as i64);
+  let dv: i32 = elf.elf_data_off_so_wx(text_len, hdr.len(), eh.len());
+  p = arm64_native.arm64_gas_link(p, tv as i64, dv as i64);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals(target, "linker", p.unknown);
+  }
+  let rel_offs: i32[] = [];
+  let rel_adds: i64[] = [];
+  for off in arm64_native.arm64_gas_rebase_offs(p) {
+    rel_offs = rel_offs.append(dv + off);
+    rel_adds = rel_adds.append(le64_at(p.data, off));
+  }
+  let pa: arm64_native.Arm64Asm = p.asm;
+  let nosec: i32[] = [];
+  let sym_names: string[] = elf.elf_func_sym_names(pa.lab_names, pa.lab_offs, nosec, 0 - 1, text_len);
+  let sym_offs: i32[] = elf.elf_func_sym_offs(pa.lab_names, pa.lab_offs, nosec, 0 - 1, text_len);
+  let sym_sizes: i32[] = elf.elf_func_sym_sizes(pa.lab_names, pa.lab_offs, nosec, 0 - 1, text_len);
+  let vals: i32[] = [];
+  let sizes: i32[] = [];
+  for n in names {
+    let k: i32 = util.index_of_str(sym_names, "__fern_export_" + n);
+    vals = vals.append(tv + sym_offs[k]);
+    sizes = sizes.append(sym_sizes[k]);
+  }
+  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), true, elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  return string_from_bytes_unchecked(util.to_u8(so));
+}
+
+// x86_elf_shared links the emitted program into a shared object: the image
+// x86_elf_binary writes, loaded at base 0, whose absolute data words the
+// loader relocates (R_X86_64_RELATIVE) and whose .dynsym names each export's
+// C-ABI entry by the Fern name, the symbol dlsym looks up.
+function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string): string {
+  let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words(asm, words);
+  let tv: i32 = elf.elf_text_off_so(false);
+  a = x86_native.x86_resolve_data(a, tv);
+  if (a.unknown.len() > 0) {
+    eprint("fern: -target x86-64: in-process assembler could not encode: " + a.unknown[0]);
+    return "";
+  }
+  let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
+  let hv: i32 = elf.elf_eh_hdr_off_so(false, a.text.len());
+  let ev: i32 = elf.elf_eh_frame_off_so(false, a.text.len(), hdr_len);
+  let eh: i32[] = x86_native.x86_eh_frame(a, tv as i64, ev as i64);
+  let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv as i64, ev as i64, hv as i64);
+  // Every patched `.quad` holds base-0 address + 0, so the word itself is
+  // the addend its RELATIVE relocation adds the load base to.
+  let data_at: i32 = tv + x86_native.x86_data_base(a, a.text.len());
+  let rel_offs: i32[] = [];
+  let rel_adds: i64[] = [];
+  for off in a.dfix_offs {
+    rel_offs = rel_offs.append(data_at + off);
+    rel_adds = rel_adds.append(le64_at(a.rodata, off));
+  }
+  let end: i32 = a.text.len();
+  let sym_names: string[] = elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
+  let sym_offs: i32[] = elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
+  let sym_sizes: i32[] = elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
+  let vals: i32[] = [];
+  let sizes: i32[] = [];
+  for n in names {
+    let k: i32 = util.index_of_str(sym_names, "__fern_export_" + n);
+    vals = vals.append(tv + sym_offs[k]);
+    sizes = sizes.append(sym_sizes[k]);
+  }
+  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), false, elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  return string_from_bytes_unchecked(util.to_u8(so));
+}
+
+function le64_at(b: i32[], off: i32): i64 {
+  let v: i64 = 0;
+  let j: i32 = 7;
+  while (j >= 0) {
+    v = v << 8 as i64 | b[off + j] as i64;
+    j = j - 1;
+  }
+  return v;
+}
+
+// x86_var_ranges / arm64_var_ranges are the emitters' `-g` variable rows
+// (asmcore.DbgVars) with each range's labels resolved to .text offsets, the
+// form elf_append_debug writes .debug_loc from, and each enum type's variant
+// shapes resolved to the addresses they load at. A range whose labels did
+// not both land, that is empty, or whose enum shapes have no address, is
+// dropped.
+function x86_var_ranges(a: x86_native.X86Asm, tv: i32): elf.VarRanges {
+  let out: elf.VarRanges = elf.no_var_ranges();
+  for row in a.dvars {
+    let f: string[] = row.split("|");
+    let addrs: i64[] = [];
+    for l in shape_labels(f[2]) {
+      addrs = addrs.append(x86_native.x86_symbol_addr(a, l, tv) as i64);
+    }
+    out = var_range(out, f.with(2, with_shape_addrs(f[2], addrs)), x86_native.x86_label_off(a, f[4]), x86_native.x86_label_off(a, f[5]));
+  }
+  return out;
+}
+
+function arm64_var_ranges(p: arm64_native.Arm64GasProg, tv: i64, dv: i64): elf.VarRanges {
+  let out: elf.VarRanges = elf.no_var_ranges();
+  for row in p.asm.dvars {
+    let f: string[] = row.split("|");
+    let addrs: i64[] = [];
+    for l in shape_labels(f[2]) {
+      addrs = addrs.append(arm64_native.arm64_symbol_addr(p, l, tv, dv));
+    }
+    out = var_range(out, f.with(2, with_shape_addrs(f[2], addrs)), arm64_native.arm64_asm_label_off(p.asm, f[4]), arm64_native.arm64_asm_label_off(p.asm, f[5]));
+  }
+  return out;
+}
+
+// shape_labels is the labels an enum description names its variants'
+// shapes by, `=label` up to the next `,` or `}`.
+function shape_labels(t: string): string[] {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < t.len()) {
+    if (t[i] == b'=') {
+      let j: i32 = i + 1;
+      while (j < t.len() && t[j] != b',' && t[j] != b'}') {
+        j = j + 1;
+      }
+      out = out.append(slice_unchecked(t, i + 1, j) + "");
+      i = j;
+    } else {
+      i = i + 1;
+    }
+  }
+  return out;
+}
+
+// with_shape_addrs is the description with each shape label replaced by the
+// address it loads at, in order; "" when one has none.
+function with_shape_addrs(t: string, addrs: i64[]): string {
+  let out: string = "";
+  let k: i32 = 0;
+  let i: i32 = 0;
+  while (i < t.len()) {
+    if (t[i] != b'=') {
+      out = out + slice_unchecked(t, i, i + 1);
+      i = i + 1;
+      continue;
+    }
+    if (addrs[k] < 0 as i64) {
+      return "";
+    }
+    out = out + "=" + util.i64_to_string(addrs[k]);
+    k = k + 1;
+    i = i + 1;
+    while (i < t.len() && t[i] != b',' && t[i] != b'}') {
+      i = i + 1;
+    }
+  }
+  return out;
+}
+
+// var_range appends one row `fn|name|type|param|from|to|loc` over [lo, hi).
+function var_range(r: elf.VarRanges, f: string[], lo: i32, hi: i32): elf.VarRanges {
+  if (lo < 0 || hi <= lo || f[2] == "") {
+    return r;
+  }
+  return elf.VarRanges {
+    fns: r.fns.append(f[0]), names: r.names.append(f[1]), types: r.types.append(f[2]), params: r.params.append(f[3] == "1"),
+    lo: r.lo.append(lo), hi: r.hi.append(hi), locs: r.locs.append(f[6]),
+  };
+}
+
+// ImportQueue is the breadth-first import worklist: each path paired with the
+// directory of the module that imported it. A dependency's `import "./util"`
+// names a file beside the DEPENDENCY, and a dependency's own dependencies are
+// declared in the dependency's manifest — so an import cannot be resolved
+// without knowing where it was written (#6756). `importers` names the file
+// that wrote each path, for the diagnostic when it resolves to nothing.
+// `unrooted` is the first `std/…` or `core/…` import met with no stdlib root
+// to load it from.
+struct ImportQueue { paths: string[], dirs: string[], importers: string[], unrooted: string }
+
+// queued reports whether this import path has already been queued FROM this
+// same directory.
+function queued(paths: string[], dirs: string[], ip: string, from_dir: string): boolean {
+  let i: i32 = 0;
+  while (i < paths.len()) {
+    if (paths[i] == ip && dirs[i] == from_dir) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// queue_imports appends each of mod's loadable import paths, deduped by path
+// AND directory, each tagged with `from_dir` — mod's own directory, which is
+// what its imports resolve against — and with `importer`, mod's file.
+function queue_imports(q: ImportQueue, mod: parser.Module, importer: string, from_dir: string, root: string, deps: string[]): ImportQueue {
+  let paths: string[] = q.paths;
+  let dirs: string[] = q.dirs;
+  let importers: string[] = q.importers;
+  let unrooted: string = q.unrooted;
+  let i: i32 = 0;
+  while (i < mod.imports.len()) {
+    let ip: string = mod.imports[i].path;
+    if (root.len() == 0 && unrooted.len() == 0 && util.is_stdlib_path(ip) && !util.should_load(ip, root, deps)) {
+      unrooted = ip;
+    }
+    // Keyed on the path AND the directory it was written in. `./sort` from
+    // the entry and `./sort` from a module in sub/ are the same string and
+    // different files, so deduping on the string alone queued one of them
+    // and gave it the other's directory (#9762). Genuine duplicates are
+    // still collapsed downstream, where the RESOLVED path says so.
+    if (util.should_load(ip, root, deps) && !queued(paths, dirs, ip, from_dir)) {
+      paths = paths.append(ip);
+      dirs = dirs.append(from_dir + "");
+      importers = importers.append(importer + "");
+    }
+    i = i + 1;
+  }
+  return ImportQueue { paths: paths, dirs: dirs, importers: importers, unrooted: unrooted };
+}
+
+// is_flag is true for an argument that begins with '-'. A bare `-` is not a
+// flag: it is the conventional name for stdin, and reading it as one made
+// `fern -interp -` an unknown-flag error.
+function is_flag(a: string): boolean {
+  if (a.len() < 2) {
+    return false;
+  }
+  return a[0] == b'-';
+}
+
+// sanitize_warning is native's note on what a -target's build carries under
+// -sanitize: nothing for the whole mode (both native ISAs), the covered
+// subset where it is partial (wasm has the leak census alone), and "no
+// checks" for a target with no instrumentation.
+function sanitize_warning(target: string): string {
+  if (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-android" || target == "arm64-darwin") {
+    return "";
+  }
+  let census: string = "the leak census only, not the rc over-release or use-after-free detectors";
+  if (target == "wasm32-wasi") {
+    return "fern: warning: -sanitize on -target " + target + " carries " + census;
+  }
+  if (target == "wasm32-wasi-http") {
+    return "fern: warning: -sanitize on -target " + target + " carries " + census + " — and it prints at process exit, which a request handler never reaches";
+  }
+  return "fern: warning: -sanitize has no effect on -target " + target + " (the detectors are native x86-64 and arm64, the leak census also wasm); this build carries no checks";
+}
+
+// dw_file_table is the `.file N "path"` table a -g build's `.loc` rows index
+// (#11410): 1 the entry module and k + 2 the k-th imported module
+// (util.pos_file_index), every module listed whether or not a row names it.
+function dw_file_table(entry: string, files: string[]): string {
+  let o: string = "    .file 1 \"" + entry + "\"\n";
+  let k: i32 = 0;
+  while (k < files.len()) {
+    o = o + "    .file " + util.i32_to_string(k + 2) + " \"" + files[k] + "\"\n";
+    k = k + 1;
+  }
+  return o;
+}
+
+// flag_after_entry refuses a driver flag written after the entry file, in
+// native's words (#8465): Go's flag package stops at the first positional,
+// so reading the flag here would make the two engines read one command line
+// two ways. Native's example omits the stdlib root it has no positional for.
+function flag_after_entry(a: string): i32 {
+  eprint("fern: " + a + " comes after the source file, where driver flags are no longer parsed");
+  eprint("  a driver flag goes before FILE; an argument for the program goes after a `--` separator:");
+  eprint("    fern FILE.fern STDLIB -- " + a);
+  return 2;
+}
+
+function usage(): i32 {
+  eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module|command-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]");
+  eprint("       fern -shared [-export NAME,...] -o OUT.so <entry.fern> [stdlib-root]  (a shared object exporting the named functions, main by default)");
+  eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)");
+  eprint("       fern -targets                                (list supported targets + capabilities)");
+  eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)");
+  eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)");
+  eprint("       fern -doc [-o OUT] <module.fern>             (Markdown reference page; stdout without -o)");
+  eprint("       fern -doc -o OUTDIR <DIR>                    (one page per module under DIR)");
+  eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)");
+  eprint("       fern -vendor <ABS-DIR>                       (flatten the dependency graph into vendor/)");
+  eprint("       fern -lsp [-target T] [-embed DIR] [stdlib-root]  (language server on stdin/stdout: -check's diagnostics, -fmt)");
+  return 2;
+}
+
+// list_targets implements `-targets`: every target the descriptor table
+// answers for, with what its environment grants. The self-host descriptor
+// carries no prose description (platforms.fern says why), so a target is
+// printed as the two axes its name spells out.
+function list_targets(): i32 {
+  let all: string[] = platforms.targets();
+  let i: i32 = 0;
+  while (i < all.len()) {
+    let d: platforms.Descriptor = platforms.for_target(all[i]);
+    let line: string = d.name + ": " + d.isa + " / " + d.environment + "\n    capabilities: [";
+    let c: i32 = 0;
+    while (c < d.capabilities.len()) {
+      if (c > 0) {
+        line = line + " ";
+      }
+      line = line + d.capabilities[c];
+      c = c + 1;
+    }
+    line = line + "]\n";
+    if (!platforms.emits_code(d.name)) {
+      line = line + "    note:         check-only — no backend emits for this target yet\n";
+    }
+    write(line);
+    i = i + 1;
+  }
+  return 0;
+}
+
+// main wraps `run` in the opt-in quadratic-copy readout (FERN_CLIFF_REPORT,
+// #6056). Off by default, so an ordinary run is byte-identical in behaviour,
+// output and exit code.
+//
+// rc_underflow_guard — which asm_ir_run and wasm_ir_run DO carry on every run —
+// is deliberately NOT here yet, and that absence is a finding rather than an
+// oversight. Wrapping `run` in it immediately turned an exit-0 compile into
+// exit 120: this CLI over-releases 52 blocks compiling parser.fern and 92
+// compiling checker.fern, while emitting byte-identical output. That is the
+// #6021 signature exactly — correct output over a corrupted freelist, invisible
+// until an unrelated change shifts allocation sizes and the poisoned head is
+// popped — and it is why the production CLI being the one driver without the
+// guard mattered. It is pre-existing, not a regression: a compiler built from
+// the pre-#6043 native compiler reports the identical 52.
+//
+// Enabling the guard here is the acceptance test for that fix, so it goes in
+// with it. Adding it now would only convert a silent corruption into a broken
+// CLI. See #6057.
+function main(): i32 {
+  return util.arr_push_cliff_report("fern", run());
+}
+
+// target_writes_binary reports whether `-target t` produces a finished
+// EXECUTABLE rather than assembler text or a wasm module — the targets that
+// assemble and link in-process. Their output must land 0755, the way the
+// native CLI's does: a non-executable binary run under qemu exits 1 with no
+// output, which is indistinguishable from a program that ran and returned 1,
+// and that has already cost one investigation a fabricated reproduction
+// (#6133). A wasm core module / component is a binary too, but it is a module
+// loaded by a runtime, not something the kernel execs, so it stays 0644 — as
+// does anything `-emit asm` produced, which is text.
+function target_writes_binary(t: string, emit: string): boolean {
+  if (emit.len() > 0) {
+    return false;
+  }
+  return t == "x86-64-linux" || t == "arm64-linux" || t == "arm64-android" || t == "arm64-darwin";
+}
+
+// write_output writes the compiler's output, executable when the target
+// produced one. Both emit paths (the SSA one and the AST shell) go through it
+// so the mode rule cannot be applied at one and forgotten at the other.
+//
+// An executable replaces a regular file rather than overwriting it in place:
+// macOS caches a binary's code-signature verdict by inode, so rewriting a
+// signed executable through its existing inode leaves the kernel holding the
+// old verdict and it kills the new program at exec (SIGKILL, "Code Signature
+// Invalid") although the file's own signature is valid.
+//
+// Anything else at the path is written through and kept, the rule native's
+// writeExecutable states: a device, a FIFO or a socket is not the compiler's to
+// replace (`-o /dev/null` deleted the null device, #10034), a symlink keeps
+// pointing where it did (a dangling one creates its target), and only a path
+// that resolves to a regular file is made executable.
+function write_output(out_path: string, data: string, t: string, emit: string): Result[void, IoError] {
+  if (!target_writes_binary(t, emit)) {
+    return write_file(out_path, data);
+  }
+  if let Ok(link) = lstat(out_path) {
+    if (!link.is_file) {
+      if let Ok(st) = stat(out_path) {
+        if (!st.is_file) {
+          return write_file(out_path, data);
+        }
+      }
+      return write_file_exec(out_path, data);
+    }
+    match (remove_file(out_path)) {
+      Ok(_) => {},
+      Err(_) => {}
+    }
+  }
+  return write_file_exec(out_path, data);
+}
+
+// capability_findings is every call to a builtin the target does not grant
+// (E066 — platforms.fern), one finding per violation.
+//
+// Two passes, because reachability is the expensive half. The flat scan over
+// the whole bundle over-approximates: an imported stdlib wrapper nothing calls
+// still counts. That answer is usually "nothing", and when it is, there is no
+// reason to pay for the tree-shake — so the shake runs only once a candidate
+// exists, and it is the shaken module's answer that is reported. Native does
+// the same enforcement on an already-shaken program (cmd/fern's
+// enforceTargetCapabilities); the cheap pre-pass is only about not shaking a
+// module whose answer cannot change. An empty shaken answer is an accept: the
+// pre-pass fired on a builtin only unreachable code reaches.
+function capability_findings(merged: parser.Module, target: string): Finding[] {
+  let out: Finding[] = [];
+  if (platforms.enforce(merged, target).len() == 0) {
+    return out;
+  }
+  for v in platforms.enforce(treeshake.treeshake(merged), target) {
+    out = out.append(violation_finding("E066", platforms.violation_message(v), v.fn_module, v.line, v.col));
+  }
+  return out;
+}
+
+// ambient_findings is every host effect a handler reaches around its
+// platform (E080 — ambient.fern). Target-independent, so it runs on
+// every check and every build, on the bundle before the shake: a handler is
+// judged on what its body reaches.
+function ambient_findings(merged: parser.Module): Finding[] {
+  let out: Finding[] = [];
+  for v in ambient.enforce(merged) {
+    out = out.append(violation_finding("E080", ambient.violation_message(v), v.fn_module, v.line, v.col));
+  }
+  return out;
+}
+
+// violation_finding places a reachability violation. Only the entry module's
+// positions index the file being reported on — an imported module's line
+// numbers index ITS source, so a violation from one degrades to a
+// position-less finding whose message names the function and module instead.
+// Native's renderer makes the same split.
+function violation_finding(code: string, msg: string, fn_module: string, line: i32, col: i32): Finding {
+  if (fn_module.len() > 0) {
+    line = 0;
+  }
+  return Finding { diag: util.Diag { code: code, message: msg, line: line, col: col }, warning: false, path: "" };
+}
+
+// read_manifest parses `<dir>fern.toml`, or an empty manifest when the entry
+// has none — which is every compiler source, and a program with no packages
+// to govern.
+function read_manifest(dir_slash: string): fern_toml.Manifest {
+  match (read_file(dir_slash + "fern.toml")) {
+    Ok(src) => {
+      return fern_toml.parse(src);
+    },
+    Err(e) => {}
+  }
+  let no_deps: fern_toml.Dep[] = [];
+  let no_members: string[] = [];
+  let no_excl: string[] = [];
+  return fern_toml.Manifest {
+    name: "", lib: "lib.fern", index: "", deps: no_deps, members: no_members,
+    excl_pkg: no_excl, excl_ver: no_excl,
+  };
+}
+
+// manifest_reqs is a manifest's versioned ([package] index) dependencies as
+// MVS demands: name → its declared LOWEST acceptable version.
+function manifest_reqs(man: fern_toml.Manifest): mvs.Req[] {
+  let out: mvs.Req[] = [];
+  let i: i32 = 0;
+  while (i < man.deps.len()) {
+    if (man.deps[i].kind == "version" && man.deps[i].version.len() > 0) {
+      out = out.append(mvs.Req { pkg: man.deps[i].name + "", min: man.deps[i].version + "" });
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// find_manifest_dir walks up from `dir` to the first directory holding a
+// fern.toml, or "" when nothing governs it.
+function find_manifest_dir(dir: string): string {
+  let d: string = dir;
+  while (d.len() > 0) {
+    let found: boolean = false;
+    match (read_file(d + "/fern.toml")) {
+      Ok(s) => {
+        found = true;
+      },
+      Err(e) => {}
+    }
+    if (found) {
+      return d;
+    }
+    if (d.len() <= 1) {
+      return "";
+    }
+    let up: string = util.dir_of(d);
+    if (up.len() == 0) {
+      up = "/";
+    }
+    d = up;
+  }
+  return "";
+}
+
+// run_resolve implements `-resolve [DIR]`: read the manifest governing DIR,
+// run Minimum Version Selection over its [package] index for every versioned
+// dependency, and write the chosen versions to fern.lock. The compiler reads
+// the lock, never the index (the no-build-time-network constraint), so this
+// is the step that makes the following build offline.
+//
+// Two deliberate departures from native's `fern -resolve`. DIR must be
+// absolute: there is no working-directory builtin, and a lock recording a
+// path resolved against the wrong root is worse than a refusal. And a url
+// source cannot be materialised — fetching is native-only — so an index
+// entry MVS actually selects by url is a diagnostic rather than a download.
+function run_resolve(start: string): i32 {
+  if (start.len() == 0 || start[0] != b'/') {
+    eprint("resolve: pass an absolute path (this driver has no working-directory builtin)");
+    return 2;
+  }
+  let dir: string = start;
+  match (read_file(start)) {
+    Ok(s) => {
+      dir = util.dir_of(start);
+    },
+    Err(e) => {}
+  }
+  let mdir: string = find_manifest_dir(dir);
+  if (mdir.len() == 0) {
+    eprint("resolve: no fern.toml governs " + dir);
+    return 1;
+  }
+  let mpath: string = mdir + "/fern.toml";
+  let man: fern_toml.Manifest = read_manifest(mdir + "/");
+  let roots: mvs.Req[] = manifest_reqs(man);
+  if (roots.len() == 0) {
+    eprint("resolve: " + mpath + " declares no versioned dependencies (nothing to resolve)");
+    return 1;
+  }
+  if (man.index.len() == 0) {
+    eprint("resolve: " + mpath + " has versioned dependencies but no `index = \"…\"` under [package]");
+    return 1;
+  }
+  let ipath: string = man.index;
+  if (!mvs.is_abs(ipath)) {
+    ipath = mvs.join_path(mdir, ipath);
+  }
+  let isrc: string = "";
+  let iok: boolean = false;
+  match (read_file(ipath)) {
+    Ok(s) => {
+      isrc = s;
+      iok = true;
+    },
+    Err(e) => {}
+  }
+  if (!iok) {
+    eprint("index " + ipath + ": cannot read");
+    return 1;
+  }
+  let ix: mvs.Index = mvs.parse_index(isrc);
+  if (ix.err.len() > 0) {
+    eprint("index " + ipath + ": " + ix.err);
+    return 1;
+  }
+  ix = mvs.with_dir(ix, mvs.join_path(util.dir_of(ipath), "."));
+
+  let bans: mvs.Ban[] = [];
+  let bi: i32 = 0;
+  while (bi < man.excl_pkg.len()) {
+    bans = bans.append(mvs.Ban { pkg: man.excl_pkg[bi] + "", ver: man.excl_ver[bi] + "" });
+    bi = bi + 1;
+  }
+
+  // The step loop native spells as a `DepsOf` closure: materialise the
+  // package version MVS is asking about and hand back ITS versioned deps.
+  // That is what makes the resolution transitive, and it reads only the
+  // versions actually selected.
+  let st: mvs.State = mvs.begin(roots, bans, ix);
+  while (st.err.len() == 0 && !mvs.done(st)) {
+    let src: mvs.Source = mvs.index_source(ix, st.need_pkg, st.need_ver);
+    if (src.path.len() == 0) {
+      st = mvs.fail(st, "url sources need `fern -fetch`, which this driver does not have");
+    } else {
+      let dsrc: string = "";
+      let dok: boolean = false;
+      match (read_file(src.path + "/fern.toml")) {
+        Ok(s) => {
+          dsrc = s;
+          dok = true;
+        },
+        Err(e) => {}
+      }
+      if (!dok) {
+        st = mvs.fail(st, st.need_pkg + "@" + st.need_ver + " has no fern.toml");
+      } else {
+        st = mvs.supply(st, manifest_reqs(fern_toml.parse(dsrc)));
+      }
+    }
+  }
+  if (st.err.len() > 0) {
+    eprint(st.err);
+    return 1;
+  }
+
+  let sel: mvs.Sel[] = mvs.selected(st);
+  let lock: string = mdir + "/fern.lock";
+  match (write_file(lock, mvs.lock_text(sel))) {
+    Ok(u) => {},
+    Err(e) => {
+      eprint("resolve: cannot write " + lock + ": " + util.io_error_reason(e));
+      return 1;
+    }
+  }
+  eprint("resolve: " + util.i32_to_string(sel.len()) + " package(s) pinned in " + lock);
+  let i: i32 = 0;
+  while (i < sel.len()) {
+    eprint("  " + sel[i].name + " " + sel[i].ver);
+    i = i + 1;
+  }
+  return 0;
+}
+
+// run_add implements `-add NAME SPEC <ABS-DIR>`: append a declared dependency
+// to the nearest fern.toml. SPEC selects the source — `path:../helper`,
+// `workspace`, or `url:https://…`, which this driver refuses (recording the
+// archive's sha256 means fetching it, and fetching stays native's `-fetch`).
+//
+// The manifest is edited TEXTUALLY, so existing formatting and comments
+// survive: a dependency is a line spliced into `[dependencies]`, not a
+// re-render of a parsed tree.
+function run_add(pos: string[]): i32 {
+  if (pos.len() < 2) {
+    eprint("usage: fern -add NAME SPEC   (SPEC = path:../dir | url:https://… | workspace)");
+    return 1;
+  }
+  let name: string = pos[0];
+  let spec: string = pos[1];
+  if (pos.len() < 3) {
+    eprint("add: pass the package directory (this driver has no working-directory builtin)");
+    return 2;
+  }
+  let dir: string = pos[2];
+  if (!mvs.is_abs(dir)) {
+    eprint("add: pass an absolute directory (this driver has no working-directory builtin)");
+    return 2;
+  }
+  if (!valid_dep_name(name)) {
+    eprint("add: invalid dependency name " + mvs.quoted(name) + " (letters, digits, `_`, `-`; must not start with a digit)");
+    return 1;
+  }
+  let mdir: string = find_manifest_dir(dir);
+  if (mdir.len() == 0) {
+    eprint("add: no fern.toml governs " + dir + " — create one with a [package] table first");
+    return 1;
+  }
+  let mpath: string = mdir + "/fern.toml";
+  if (fern_toml.has_dep(read_manifest(mdir + "/"), name)) {
+    eprint("add: " + mvs.quoted(name) + " is already a dependency in " + mpath + " (edit it by hand to change its source)");
+    return 1;
+  }
+  let line: string = "";
+  if (spec == "workspace") {
+    line = name + " = { workspace = true }";
+  } else if (spec.len() >= 5 && slice_unchecked(spec, 0, 5) == "path:") {
+    let p: string = slice_unchecked(spec, 5, spec.len()) + "";
+    if (p.len() == 0) {
+      eprint("add: empty path in " + mvs.quoted(spec));
+      return 1;
+    }
+    line = name + " = { path = " + mvs.quoted(p) + " }";
+  } else if (spec.len() >= 4 && slice_unchecked(spec, 0, 4) == "url:") {
+    eprint("add: a url dependency records the archive's sha256, which means fetching it — use the native `fern -add` (this driver has no fetcher)");
+    return 1;
+  } else {
+    eprint("add: unrecognised source " + mvs.quoted(spec) + " — use path:DIR, url:HTTPS_URL, or workspace");
+    return 1;
+  }
+
+  let orig: string = "";
+  let ok: boolean = false;
+  match (read_file(mpath)) {
+    Ok(s) => {
+      orig = s;
+      ok = true;
+    },
+    Err(e) => {}
+  }
+  if (!ok) {
+    eprint("add: cannot read " + mpath);
+    return 1;
+  }
+  let updated: string = insert_dependency(orig, line);
+  // Read the edit back before committing it. Native re-parses with a strict
+  // manifest parser and refuses to write a manifest that would not load;
+  // this reader never rejects, so the equivalent check is positive — the
+  // dependency the edit claims to add has to be there when the result is
+  // parsed again.
+  if (!fern_toml.has_dep(fern_toml.parse(updated), name)) {
+    eprint("add: the edit would not declare " + mvs.quoted(name) + " — no change written");
+    return 1;
+  }
+  match (write_file(mpath, updated)) {
+    Ok(u) => {},
+    Err(e) => {
+      eprint("add: cannot write " + mpath + ": " + util.io_error_reason(e));
+      return 1;
+    }
+  }
+  eprint("add: " + line);
+  return 0;
+}
+
+// insert_dependency splices a dependency line into a manifest's
+// [dependencies] table, creating the table at EOF when there is none.
+// Everything else — formatting, comments, other sections — survives verbatim.
+function insert_dependency(src: string, line: string): string {
+  let lines: string[] = mvs.split_char(src, b'\n');
+  let i: i32 = 0;
+  while (i < lines.len()) {
+    if (util.trim(lines[i]) == "[dependencies]") {
+      let out: string = "";
+      let k: i32 = 0;
+      while (k < lines.len()) {
+        if (k > 0) {
+          out = out + "\n";
+        }
+        out = out + lines[k];
+        if (k == i) {
+          out = out + "\n" + line;
+        }
+        k = k + 1;
+      }
+      return out;
+    }
+    i = i + 1;
+  }
+  let sep: string = "\n";
+  if (src.len() > 0 && src[src.len() - 1] == b'\n') {
+    sep = "";
+  }
+  return src + sep + "\n[dependencies]\n" + line + "\n";
+}
+
+// valid_dep_name accepts letters, digits, `_` and `-`, and refuses a leading
+// digit — the manifest's own rule for a dependency key.
+function valid_dep_name(s: string): boolean {
+  if (s.len() == 0) {
+    return false;
+  }
+  if (s[0] >= b'0' && s[0] <= b'9') {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < s.len()) {
+    let c: i32 = s[i] as i32;
+    let alpha: boolean = c >= 97 && c <= 122 || c >= 65 && c <= 90;
+    let digit: boolean = c >= 48 && c <= 57;
+    if (!alpha && !digit && c != 95 && c != 45) {  // '_' '-'
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// VendorSrc is one dependency's resolved source directory, or the
+// diagnostic explaining why it has none.
+struct VendorSrc { dir: string, err: string }
+
+// VendorSet is the flat name → source-directory map vendoring builds, as
+// parallel arrays, plus the first error that stopped the walk.
+struct VendorSet { names: string[], srcs: string[], err: string }
+
+// run_vendor implements `-vendor <ABS-DIR>`: flatten the whole transitive
+// dependency graph of the manifest governing DIR into `<root>/vendor/<name>/`,
+// one directory per package keyed by its manifest `name`. After vendoring, a
+// build resolves every declared dependency out of vendor/ and reaches neither
+// the deps' original locations nor the network — which is what makes the
+// vendored tree the offline artefact.
+//
+// DIR must be absolute, the same departure `-resolve` and `-add` take: there
+// is no working-directory builtin, and a vendor tree written under the wrong
+// root is worse than a refusal. A url dependency is copied FROM the store, so
+// it is reachable here — populating the store is `fern -fetch`, which is still
+// native's.
+function run_vendor(start: string): i32 {
+  if (!mvs.is_abs(start)) {
+    eprint("vendor: pass an absolute path (this driver has no working-directory builtin)");
+    return 2;
+  }
+  let dir: string = start;
+  if (!util.is_dir(start)) {
+    let readable: boolean = false;
+    match (read_file(start)) {
+      Ok(s) => {
+        readable = true;
+      },
+      Err(e) => {}
+    }
+    if (!readable) {
+      eprint("vendor: cannot read " + start);
+      return 1;
+    }
+    dir = util.dir_of(start);
+  }
+  let mdir: string = find_manifest_dir(dir);
+  if (mdir.len() == 0) {
+    eprint("vendor: no fern.toml governs " + dir);
+    return 1;
+  }
+  let root: fern_toml.Manifest = read_manifest(mdir + "/");
+
+  // A workspace root vendors the UNION of its members' external
+  // dependencies into the root's vendor/ (members resolve out of it); a
+  // plain package vendors its own transitive deps.
+  let starts: string[] = [];
+  if (root.members.len() == 0) {
+    starts = starts.append(mdir + "");
+  } else {
+    let mi: i32 = 0;
+    while (mi < root.members.len()) {
+      let rel: string = root.members[mi];
+      mi = mi + 1;
+      let mem: string = rel;
+      if (!mvs.is_abs(rel)) {
+        mem = mvs.join_path(mdir, rel);
+      }
+      if (!has_manifest(mem)) {
+        eprint("vendor: workspace member " + mvs.quoted(rel) + " has no fern.toml");
+        return 1;
+      }
+      starts = starts.append(mem + "");
+    }
+  }
+
+  let set: VendorSet = vendor_collect(starts);
+  if (set.err.len() > 0) {
+    eprint(set.err);
+    return 1;
+  }
+
+  let vdir: string = mdir + "/vendor";
+  match (remove_dir_all(vdir)) {
+    Ok(u) => {},
+    Err(e) => {
+      eprint("vendor: clearing " + vdir);
+      return 1;
+    }
+  }
+  let i: i32 = 0;
+  while (i < set.names.len()) {
+    let err: string = copy_package(set.srcs[i], vdir + "/" + set.names[i]);
+    if (err.len() > 0) {
+      eprint("vendor: copying " + mvs.quoted(set.names[i]) + ": " + err);
+      return 1;
+    }
+    i = i + 1;
+  }
+  eprint("vendor: " + util.i32_to_string(set.names.len()) + " package(s) written to " + vdir);
+  return 0;
+}
+
+// vendor_collect walks the dependency graph breadth-first from each starting
+// manifest directory, keying every package it reaches by its manifest `name`
+// (falling back to the dependency key when the dep has no manifest of its
+// own). Workspace-member deps are skipped: they live in the workspace tree and
+// resolve by name, not out of vendor/.
+//
+// The flat namespace is what forces the collision check — two distinct
+// packages claiming one name would silently overwrite each other.
+function vendor_collect(starts: string[]): VendorSet {
+  let names: string[] = [];
+  let srcs: string[] = [];
+  let seen: string[] = [];
+  let queue: string[] = starts;
+  let qi: i32 = 0;
+  while (qi < queue.len()) {
+    let mdir: string = queue[qi];
+    qi = qi + 1;
+    if (str_index(seen, mdir) >= 0) {
+      continue;
+    }
+    seen = seen.append(mdir + "");
+    let man: fern_toml.Manifest = read_manifest(mdir + "/");
+    let di: i32 = 0;
+    while (di < man.deps.len()) {
+      let d: fern_toml.Dep = man.deps[di];
+      di = di + 1;
+      if (d.kind == "workspace") {
+        continue;
+      }
+      let src: VendorSrc = vendor_dep_dir(mdir, d);
+      if (src.err.len() > 0) {
+        return VendorSet { names: names, srcs: srcs, err: src.err };
+      }
+      let key: string = d.name + "";
+      let pkg_name: string = read_manifest(src.dir + "/").name;
+      if (pkg_name.len() > 0) {
+        key = pkg_name;
+      }
+      let at: i32 = str_index(names, key);
+      if (at >= 0) {
+        if (srcs[at] != src.dir) {
+          return VendorSet {
+            names: names, srcs: srcs,
+            err: "vendor: two different packages both named " + mvs.quoted(key)
+              + " (" + srcs[at] + " and " + src.dir + ") — package names must be unique to vendor",
+          };
+        }
+      } else {
+        names = names.append(key + "");
+        srcs = srcs.append(src.dir + "");
+      }
+      if (has_manifest(src.dir)) {
+        queue = queue.append(src.dir + "");
+      }
+    }
+  }
+  return VendorSet { names: names, srcs: srcs, err: "" };
+}
+
+// vendor_dep_dir resolves one declared dependency to the directory whose
+// sources get copied: a path dep's directory, a versioned dep's fern.lock
+// source, or a url dep's already-populated store directory.
+function vendor_dep_dir(mdir: string, d: fern_toml.Dep): VendorSrc {
+  if (d.kind == "version") {
+    return vendor_locked_dir(mdir, d.name);
+  }
+  if (d.kind == "url") {
+    let store: string = store_dir(d.hash);
+    if (store.len() == 0) {
+      return VendorSrc { dir: "", err: "dependency " + mvs.quoted(d.name) + " (" + d.hash
+        + ") is not in the package store — run `fern -fetch " + mdir + "/fern.toml` before vendoring" };
+    }
+    return VendorSrc { dir: store, err: "" };
+  }
+  if (mvs.is_abs(d.path)) {
+    return VendorSrc { dir: mvs.join_path(d.path, "."), err: "" };
+  }
+  return VendorSrc { dir: mvs.join_path(mdir, d.path), err: "" };
+}
+
+// vendor_locked_dir resolves a versioned (MVS) dependency through the
+// package's fern.lock, exactly as a build does. Without it, a versioned dep
+// names no directory at all and vendoring would silently copy the package
+// into its own vendor/ under its own name.
+function vendor_locked_dir(mdir: string, name: string): VendorSrc {
+  let lsrc: string = "";
+  let have: boolean = false;
+  match (read_file(mdir + "/fern.lock")) {
+    Ok(s) => {
+      lsrc = s;
+      have = true;
+    },
+    Err(e) => {}
+  }
+  if (!have) {
+    return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is versioned but " + mdir
+      + " has no fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
+  }
+  let lr: fern_toml.LockResult = fern_toml.parse_lock(lsrc);
+  if (lr.err.len() > 0) {
+    return VendorSrc { dir: "", err: mdir + "/" + lr.err };
+  }
+  let entries: fern_toml.LockEntry[] = lr.entries;
+  if (!fern_toml.lock_has(entries, name)) {
+    return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
+      + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
+  }
+  match (fern_toml.lock_path_of(entries, name)) {
+    Some(p) => {
+      return VendorSrc { dir: p, err: "" };
+    },
+    None => {}
+  }
+  match (fern_toml.lock_hash_of(entries, name)) {
+    Some(h) => {
+      let store: string = store_dir(h);
+      if (store.len() == 0) {
+        return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + "@"
+          + fern_toml.lock_version_of(entries, name) + " (" + h
+          + ") is not in the package store — run `fern -fetch " + mdir + "/fern.toml`" };
+      }
+      return VendorSrc { dir: store, err: "" };
+    },
+    None => {}
+  }
+  return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
+    + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
+}
+
+// store_dir returns the content-addressed store directory holding the archive
+// for a `sha256:<hex>` hash, or "" when it is absent (or the hash is not one).
+// Mirrors native pkgcache.Root(): an explicit $FERN_CACHE_DIR wins and is NOT
+// fallen through on a miss; otherwise the user cache dir is $XDG_CACHE_HOME,
+// else $HOME/.cache — with $HOME/Library/Caches tried as the darwin sibling.
+// Read-only: the store is populated and sha256-verified by `fern -fetch`.
+//
+// The hash is re-validated here even though every parse boundary already does:
+// the hex is joined onto the store root, so a later route reaching this
+// unchecked would be a directory traversal (#8464).
+function store_dir(hash: string): string {
+  let hr: fern_toml.HashResult = fern_toml.validate_hash(hash);
+  if (hr.err.len() > 0) {
+    return "";
+  }
+  let hex: string = hr.hex;
+  match (env("FERN_CACHE_DIR")) {
+    Some(d) => {
+      return dir_or_empty(d + "/pkgs/" + hex);
+    },
+    None => {}
+  }
+  match (env("XDG_CACHE_HOME")) {
+    Some(x) => {
+      return dir_or_empty(x + "/fern/pkgs/" + hex);
+    },
+    None => {}
+  }
+  match (env("HOME")) {
+    Some(h) => {
+      let linux: string = dir_or_empty(h + "/.cache/fern/pkgs/" + hex);
+      if (linux.len() > 0) {
+        return linux;
+      }
+      return dir_or_empty(h + "/Library/Caches/fern/pkgs/" + hex);
+    },
+    None => {}
+  }
+  return "";
+}
+
+function dir_or_empty(p: string): string {
+  if (util.is_dir(p)) {
+    return p;
+  }
+  return "";
+}
+
+// has_manifest reports whether a fern.toml sits directly in `dir`. Distinct
+// from read_manifest, which fabricates an empty manifest for a directory that
+// has none — a difference vendoring turns on (whether to recurse into a dep).
+function has_manifest(dir: string): boolean {
+  match (read_file(dir + "/fern.toml")) {
+    Ok(s) => {
+      return true;
+    },
+    Err(e) => {}
+  }
+  return false;
+}
+
+// str_index returns the position of `want` in `xs`, or -1.
+function str_index(xs: string[], want: string): i32 {
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    if (xs[i] == want) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+// copy_package copies a package's Fern sources into `dst`: fern.toml plus
+// every .fern / .fern.md file, preserving subdirectory layout. A nested
+// vendor/ is skipped (only the flat top-level one matters), as are
+// dot-directories — a vendored package is source, not a working tree.
+// Returns "" on success, or the diagnostic body naming what failed.
+function copy_package(src: string, dst: string): string {
+  // Relative subdirectories still to visit, "" being the package root. A
+  // worklist rather than recursion: the whole walk then shares one
+  // early-return path for the first read that fails.
+  let rels: string[] = [""];
+  let ri: i32 = 0;
+  while (ri < rels.len()) {
+    let rel: string = rels[ri];
+    ri = ri + 1;
+    let sdir: string = src;
+    if (rel.len() > 0) {
+      sdir = src + "/" + rel;
+    }
+    let entries: string[] = [];
+    let listed: boolean = false;
+    match (read_dir(sdir)) {
+      Ok(ns) => {
+        entries = ns;
+        listed = true;
+      },
+      Err(e) => {}
+    }
+    if (!listed) {
+      return "cannot read " + sdir;
+    }
+    let i: i32 = 0;
+    while (i < entries.len()) {
+      let name: string = entries[i];
+      i = i + 1;
+      let child_rel: string = name + "";
+      if (rel.len() > 0) {
+        child_rel = rel + "/" + name;
+      }
+      let child: string = src + "/" + child_rel;
+      if (util.is_dir(child)) {
+        if (name == "vendor") {
+          continue;
+        }
+        if (name.len() > 0 && name[0] == b'.') {  // and so `.` / `..`
+          continue;
+        }
+        rels = rels.append(child_rel + "");
+        continue;
+      }
+      if (!is_vendorable(name)) {
+        continue;
+      }
+      let body: string = "";
+      match (read_file(child)) {
+        Ok(s) => {
+          body = s;
+        },
+        Err(e) => {
+          return "cannot read " + child + ": " + util.io_error_reason(e);
+        }
+      }
+      let out: string = dst + "/" + child_rel;
+      match (create_dir_all(util.dir_of(out))) {
+        Ok(u) => {},
+        Err(e) => {
+          return "cannot create " + util.dir_of(out) + ": " + util.io_error_reason(e);
+        }
+      }
+      match (write_file(out, body)) {
+        Ok(u) => {},
+        Err(e) => {
+          return "cannot write " + out + ": " + util.io_error_reason(e);
+        }
+      }
+    }
+  }
+  return "";
+}
+
+// is_vendorable selects the files a vendored package consists of: its
+// manifest and its Fern sources, literate documents included.
+function is_vendorable(name: string): boolean {
+  if (name == "fern.toml") {
+    return true;
+  }
+  if (name.len() >= 8 && slice_unchecked(name, name.len() - 8, name.len()) == ".fern.md") {
+    return true;
+  }
+  if (name.len() >= 5 && slice_unchecked(name, name.len() - 5, name.len()) == ".fern") {
+    return true;
+  }
+  return false;
+}
+
+// Bundle is a loaded program: the entry module, the modules its imports
+// pulled in, the flattened whole, and the packages the capability layers
+// attribute to. `files` names each loaded module for a diagnostic, in load
+// order, which is the order of their line bases (util.pos_str). `err` is the
+// line `-check` prints when the program could not be loaded, and is empty when
+// it was.
+struct Bundle {
+  entry: parser.Module,
+  entry_ident: string,
+  root: string,
+  loaded: flatten.LoadedModule[],
+  merged: parser.Module,
+  pkgs: caps.Pkg[],
+  files: string[],
+  err: string,
+}
+
+// display_path names a module file as native's diagnostics do: a stdlib module
+// as `stdlib://<path>`, any other as the path it was read from.
+function display_path(mpath: string, root: string): string {
+  if (root.len() == 0 || !util.str_has_prefix(mpath, root)) {
+    return mpath;
+  }
+  let at: i32 = root.len();
+  if (at < mpath.len() && mpath[at] != b'/' && root[root.len() - 1] != b'/') {
+    return mpath;
+  }
+  while (at < mpath.len() && mpath[at] == b'/') {
+    at = at + 1;
+  }
+  return "stdlib://" + slice_unchecked(mpath, at, mpath.len());
+}
+
+// read_bundle_module reads one imported module for load_bundle: the resolved
+// path first, then, only when that file is absent, the manifest resolution. The
+// directory its own `./` imports resolve against is its own — a module in lib/
+// writing `import "./gnu"` means lib/gnu.fern — unless a manifest-resolved
+// dependency moves the root to its package.
+function read_bundle_module(mpath: string, from: string, ipath: string): modloader.Resolved {
+  let mdir: string = util.dir_of(mpath);
+  if (mdir.len() > 0) {
+    mdir = mdir + "/";
+  }
+  match (read_file(mpath)) {
+    Ok(src) => {
+      return modloader.Resolved { src: src, dir: mdir, ok: true, err: "", err_path: "", shown: mpath };
+    },
+    Err(e) => {
+      let reason: string = modloader.read_error_reason(e);
+      if (reason.len() > 0) {
+        return modloader.Resolved { src: "", dir: mdir, ok: false, err: reason, err_path: mpath, shown: "" };
+      }
+    }
+  }
+  // Manifest fallback: a DECLARED dependency resolves through fern.toml across
+  // the disk-resolvable forms (path, workspace member, lock, vendor tree,
+  // content-addressed store). It is the only way to reach a package that
+  // carries its own manifest — the rules above can only name a sibling file
+  // or something under the stdlib root.
+  return modloader.resolve_module(modloader.no_overlay(), from, ipath, util.module_name(ipath));
+}
+
+// load_bundle loads `entry_mod`'s transitive imports off disk and flattens
+// them into one module (the import-driven scheme from asm_load_run), or says
+// why it cannot: an import that does not resolve or forms a cycle, or an entry
+// the target has nothing to call in.
+function load_bundle(entry_path: string, entry_mod: parser.Module, root: string, target: string): Bundle {
+  let dir: string = util.dir_of(entry_path);
+  // The entry's own manifest, when it has one: it names the dependency
+  // packages, which are both a way to RESOLVE an import the sibling-file and
+  // stdlib-root rules cannot name, and the identity every capability grant
+  // is attached to (caps.fern / #6634).
+  let dir_slash: string = "";
+  if (dir.len() > 0) {
+    dir_slash = dir + "/";
+  }
+  let man: fern_toml.Manifest = read_manifest(dir_slash);
+  let deps: string[] = fern_toml.dep_names(man);
+  let pkgs: caps.Pkg[] = [root_pkg(man)];
+  let no_mods: flatten.LoadedModule[] = [];
+  let no_files: string[] = [];
+  let missing: string = emitforms.http_entry_missing(entry_mod, target);
+  if (missing.len() > 0) {
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, err: missing };
+  }
+
+  let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], importers: [], unrooted: "" }, entry_mod, entry_path, dir_slash, root, deps);
+  let loaded: flatten.LoadedModule[] = [];
+  let files: string[] = [];
+  let done_paths: string[] = [];
+  let j: i32 = 0;
+  while (j < q.paths.len()) {
+    let ipath: string = q.paths[j];
+    let from: string = q.dirs[j];
+    let importer: string = q.importers[j];
+    j = j + 1;
+    let from_dir: string = from;
+    if (from_dir.len() > 1) {
+      from_dir = slice_unchecked(from_dir, 0, from_dir.len() - 1) + "";
+    }
+    let mpath: string = util.resolve_path(ipath, from_dir, root);
+    // One module is one file, and the RESOLVED path is the only thing that
+    // says so. `./lib/gnu` from the entry and `./gnu` from a module in
+    // lib/ name the same file and load once; `./sort` from the entry and
+    // `./sort` from a module in sub/ name DIFFERENT files and must both
+    // load. Deduping on the path as written did the second one wrong and
+    // silently dropped the module (#9762).
+    if (!util.has_str(done_paths, mpath)) {
+      done_paths = done_paths.append(mpath);
+      let rm: modloader.Resolved = read_bundle_module(mpath, from, ipath);
+      if (!rm.ok) {
+        let bad: string = mpath;
+        if (rm.err.len() > 0) {
+          bad = rm.err_path;
+        }
+        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, err: "fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err) };
+      }
+      let mdir: string = rm.dir;
+      let origin: string = "";
+      if (root.len() > 0 && rm.shown == mpath) {
+        origin = ipath;
+      }
+      let m: parser.Module = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1)), origin);
+      let shown: string = display_path(rm.shown, root);
+      files = files.append(shown);
+      // Identity is the FILE, not its basename: two modules can share a
+      // basename (`std/sort` and `coreutils/sort`) and the bundler has
+      // to tell them apart to give each its own prefix (#9762).
+      m = flatten.resolve_imports(m, mdir, root);
+      loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: flatten.module_ident(mpath), mod: m });
+      // Attribute and expand against the manifest GOVERNING the importer,
+      // which is the entry's only for a direct import.
+      let from_man: fern_toml.Manifest = read_manifest(from);
+      pkgs = add_pkg(pkgs, from_man, from, ipath);
+      q = queue_imports(q, m, shown, mdir, root, fern_toml.dep_names(read_manifest(mdir)));
+    }
+  }
+  if (q.unrooted.len() > 0) {
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file" };
+  }
+  let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
+  let cycle: i32 = flatten.import_cycle(entry_r, loaded, root);
+  if (cycle >= 0) {
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, err: "fern: import cycle detected including " + files[cycle] };
+  }
+  let merged: parser.Module = flatten.bundle(entry_r, loaded, target);
+  // Fill omitted trailing args from default parameter values up front, so the
+  // checker, SSA, and interpreter all see complete calls.
+  merged = parser.fill_default_args_module(merged);
+  // A record-form variant pattern on an IMPORTED enum has no declaration to
+  // settle against until the bundle exists; parse_module resolved the
+  // same-module ones already, and the pass is idempotent.
+  merged = parser.resolve_variant_fields_module(merged);
+  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, err: "" };
+}
+
+// Loaded is a program read for checking or building, and the findings that
+// refused it before any check ran — none when it loaded.
+struct Loaded { b: Bundle, refused: Finding[] }
+
+// load_checked parses an entry's text and loads the program it roots, through
+// the gates that refuse a program before anything is checked: an entry the
+// target cannot run, a module that cannot be read, an asset nobody embedded,
+// and a reference to another module's private declaration. It takes the
+// entry's text rather than its path, so `-check` can read stdin and the
+// language server can check a document the editor has not saved.
+//
+// Visibility (#6714) is checked on the bundle, where flatten has already
+// turned `lib.hidden` into the bare `lib__hidden`, and refuses a build as well
+// as a check: native refuses to build such a program, and accepting it here
+// would be the divergence.
+function load_checked(entry_path: string, src: string, root: string, target: string, embed_dir: string): Loaded {
+  let entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(src, target)));
+  let b: Bundle = load_bundle(entry_path, entry_mod, root, target);
+  if (b.err.len() > 0) {
+    return Loaded { b: b, refused: [refusal(b.err)] };
+  }
+  let (folded, fold_errs) = fold_embedded_assets(b, embed_dir);
+  if (fold_errs.len() > 0) {
+    return Loaded { b: b, refused: fold_errs };
+  }
+  let vis: util.Diag[] = visibility.export_diags(folded.entry, folded.entry_ident, folded.loaded, folded.root);
+  return Loaded { b: folded, refused: errors_of(vis) };
+}
+
+// parse_findings is what the gates on the parser's own output report: the
+// first of the three that finds anything, since each later one would describe
+// the debris of an earlier one. Shared by `-check` and the build path, so the
+// two cannot disagree about a program that did not parse. It runs on the
+// MERGED module, before tree-shaking, because a default on an uncalled
+// function is dead code: shaking drops the declaration, and with it the only
+// evidence the source did not parse.
+//
+// - Nameless declarations (#7447). The parser has no error channel, so a
+//   keyword written where a declaration name belongs leaves an EMPTY name and
+//   consumes nothing — asmcore.check_decl_names is where that is caught.
+// - The parser's ExprUnknown markers. Anything a later pass says about one
+//   describes the marker and not the program: `let x: i32 = ;` reached
+//   `-check` as the #9053 "cannot represent yet" catch-all, and a `= ;`
+//   parameter default reached both paths as E076's non-constant rule, which is
+//   not the rule the author broke (#8739).
+// - Statements outside any declaration in a module that declares `main`, dead
+//   code the self-host used to discard in silence (#8738). Last, because a
+//   malformed declaration parses on as top-level statements, so its debris must
+//   be named by the gate that understands it.
+function parse_findings(mod: parser.Module): Finding[] {
+  let fs: Finding[] = errors_of(asmcore.check_decl_names(mod));
+  if (fs.len() == 0) {
+    fs = errors_of(asmcore.parse_unknown_errors_module(mod));
+  }
+  if (fs.len() == 0) {
+    fs = errors_of(asmcore.check_top_level_stmts(mod));
+  }
+  return fs;
+}
+
+// fold_embedded_assets loads `-embed DIR` and substitutes every asset call in
+// the bundle, returning the rewritten bundle, or the original one and why it
+// could not be.
+//
+// It runs even when no directory was given, because that is the case where
+// `__fern_asset(...)` has to be REFUSED rather than ignored: a program asking
+// for a file nobody embedded must not compile into one that silently has none.
+function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, Finding[]) {
+  let errs: Finding[] = [];
+  let assets: embed.Assets = embed.no_assets();
+  if (embed_dir.len() > 0) {
+    let lr: embed.LoadResult = embed.load(embed_dir);
+    if (lr.err.len() > 0) {
+      return (b, [refusal("fern: " + lr.err)]);
+    }
+    assets = lr.assets;
+  }
+  let folded: embed.Folded = embed.fold_assets(b.merged, assets);
+  for msg in folded.errs {
+    errs = errs.append(refusal("fern: " + msg));
+  }
+  if (errs.len() > 0) {
+    return (b, errs);
+  }
+  return (Bundle { ...b, merged: folded.module }, errs);
+}
+
+// check_source is `-check` on an entry's text: everything it reports, and its
+// verdict.
+function check_source(entry_path: string, src: string, root: string, target: string, target_given: boolean, embed_dir: string): Checked {
+  let ld: Loaded = load_checked(entry_path, src, root, target, embed_dir);
+  if (ld.refused.len() > 0) {
+    return Checked { findings: ld.refused, entry: entry_path, files: ld.b.files, ok: false };
+  }
+  return check_bundle(ld.b, entry_path, target, target_given);
+}
+
+// report_checked prints a check's findings and returns the exit code `-check`
+// answers with.
+function report_checked(c: Checked): i32 {
+  let _rejected: boolean = eprint_findings(c.findings, c.entry, c.files);
+  if (c.ok) {
+    return 0;
+  }
+  return 1;
+}
+
+// check_bundle type-checks a loaded program: what `-check` reports for it,
+// and whether it is accepted — well-typed and within every capability grant.
+function check_bundle(b: Bundle, entry_path: string, target: string, target_given: boolean): Checked {
+  let merged: parser.Module = b.merged;
+  // Native stops at its parse error and prints only that, so reporting the
+  // parse gates alone is both the correct diagnostic and the code-set parity —
+  // anything downstream of a declaration that did not parse is noise.
+  let parsed: Finding[] = parse_findings(merged);
+  if (parsed.len() > 0) {
+    return Checked { findings: parsed, entry: entry_path, files: b.files, ok: false };
+  }
+  // The coded diagnostics are the same E0XX codes the Go checker emits — see
+  // docs/SELFHOST-CHECKER-PORT.md.
+  let mt: checker.ModuleTypes = checker.check_module(merged);
+  // The capability boundary, when a target was asked for. It runs whatever
+  // the checker concluded: the scan is syntactic — a call to a named builtin
+  // — so it holds where the partial checker collapses an expression to
+  // TypeUnknown (#9053), and that is exactly where a violation would
+  // otherwise go unreported while native names it. The package boundary
+  // (E070) runs whether or not a target was named: what a dependency may
+  // reach is a property of the manifests, not of what the program is being
+  // built for.
+  let bounds: Finding[] = [];
+  if (target_given) {
+    bounds = capability_findings(merged, target);
+  }
+  bounds = util.append_all(bounds, package_findings(merged, b.pkgs));
+  bounds = util.append_all(bounds, ambient_findings(merged));
+  let fs: Finding[] = util.append_all(errors_of(mt.diags), bounds);
+  if (mt.all_well_typed) {
+    if (has_error(bounds)) {
+      return Checked { findings: fs, entry: entry_path, files: b.files, ok: false };
+    }
+    let views: Finding[] = errors_of(semlower.view_escape_diags(merged));
+    if (views.len() > 0) {
+      return Checked { findings: util.append_all(fs, views), entry: entry_path, files: b.files, ok: false };
+    }
+    return Checked { findings: util.append_all(fs, todo_warnings(merged.todo_sites, entry_path)), entry: entry_path, files: b.files, ok: true };
+  }
+  // The module is ill-typed but produced no coded diagnostic — an
+  // expression collapsed to TypeUnknown on a type the partial checker
+  // can't model yet (#9053). Surface a best-effort hint so `-check`
+  // never exits 1 silently; the native `fern` remains the full oracle.
+  if (mt.diags.len() == 0) {
+    fs = util.append_all(fs, errors_of(checker.ill_typed_hint(merged)));
+  }
+  return Checked { findings: fs, entry: entry_path, files: b.files, ok: false };
+}
+
+// todo_warnings lists the entry's remaining `todo` stubs, which an accepted
+// check still reports. An imported module's are not tracked, as native's are not.
+function todo_warnings(sites: parser.TodoSite[], entry_path: string): Finding[] {
+  let name: string = entry_display(entry_path);
+  let out: Finding[] = [];
+  for site in sites {
+    out = out.append(Finding { diag: util.Diag { code: "", message: "`todo` stub remaining", line: site.line, col: site.col }, warning: true, path: name });
+  }
+  return out;
+}
+
+// package_entry returns the entry module to type-check for the package rooted
+// at `dir`: its manifest's `lib` module when that file exists, else
+// `main.fern` (an application member), else "" — the caller reports it naming
+// both spellings, as native does.
+function package_entry(dir: string): string {
+  let lib: string = read_manifest(dir + "/").lib;
+  if (file_readable(dir + "/" + lib)) {
+    return dir + "/" + lib;
+  }
+  if (file_readable(dir + "/main.fern")) {
+    return dir + "/main.fern";
+  }
+  return "";
+}
+
+function file_readable(path: string): boolean {
+  match (read_file(path)) {
+    Ok(s) => {
+      return true;
+    },
+    Err(e) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// run_tangle implements `-tangle FILE.fern.md`: expand a literate document's
+// chunks into plain Fern source (#6751). `literate.fern` has carried the
+// engine — single-file `<<*>>`, multi-file `file=PATH`, the entry rule —
+// since it was ported; nothing called any of it until now.
+//
+// A document declaring `file=PATH` blocks tangles to one module per path,
+// each under a `// ==> path <==` banner, because a multi-module program is
+// one document and several files.
+function run_tangle(path: string, out_path: string, chunk: string): i32 {
+  let src: string = "";
+  let ok: boolean = false;
+  match (read_file(path)) {
+    Ok(s) => {
+      src = s;
+      ok = true;
+    },
+    Err(e) => {}
+  }
+  if (!ok) {
+    eprint("fern: cannot read " + path);
+    return 1;
+  }
+  // `-chunk NAME` expands one definition rather than the document, so it
+  // answers about the chunk whether or not the document has a root.
+  if (chunk.len() > 0) {
+    match (literate.tangle_chunk(src, chunk)) {
+      literate.TangleOk(o) => {
+        return tangle_emit(end_with_newline(o.code), out_path);
+      },
+      literate.TangleErr(e) => {
+        eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
+        return 1;
+      }
+    }
+  }
+  let files: literate.FilePiece[] = literate.parse_file_pieces(src);
+  if (files.len() > 0) {
+    match (literate.tangle_files(src)) {
+      literate.FileTangleOk(o) => {
+        // With `-o`, a multi-file document writes one module per
+        // path INTO that directory rather than one concatenated
+        // file: the banners are a reading aid for stdout, not a
+        // format anything consumes.
+        if (out_path.len() > 0) {
+          return tangle_write_files(o.files, out_path);
+        }
+        let out: string = "";
+        let i: i32 = 0;
+        while (i < o.files.len()) {
+          // A blank line between modules, so the banners read as
+          // separators rather than as comments on the line above.
+          if (i > 0) {
+            out = out + "\n";
+          }
+          out = out + "// ==> " + o.files[i].path + " <==\n" + end_with_newline(o.files[i].code);
+          i = i + 1;
+        }
+        return tangle_emit(out, "");
+      },
+      literate.FileTangleErr(e) => {
+        eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
+        return 1;
+      }
+    }
+  }
+  match (literate.tangle(src)) {
+    literate.TangleOk(o) => {
+      return tangle_emit(end_with_newline(o.code), out_path);
+    },
+    literate.TangleErr(e) => {
+      eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
+      return 1;
+    }
+  }
+}
+
+// end_with_newline terminates the tangled source. `join_lines` joins with
+// newlines rather than after them, so the last line arrives bare — and a
+// module whose final line has no newline is a diff against native's output
+// and an oddity in the file `-o` writes.
+function end_with_newline(code: string): string {
+  if (code.len() > 0 && code[code.len() - 1] == b'\n') {
+    return code;
+  }
+  return code + "\n";
+}
+
+// tangle_emit writes the tangled source to `-o` when one was given, else to
+// stdout — the pipeline shape `-tangle` is usually used in. A written file
+// is announced on stderr, so `-o` reports what it produced without
+// contaminating a redirected stdout.
+function tangle_emit(code: string, out_path: string): i32 {
+  if (out_path.len() == 0) {
+    write(code);
+    return 0;
+  }
+  // Parents are created, matching native's writeGeneratedFile: a `file=`
+  // root naming `sub/util.fern` writes into a subdirectory the document
+  // describes and the caller has no reason to have made.
+  let parent: string = util.dir_of(out_path);
+  if (parent.len() > 0) {
+    match (create_dir_all(parent)) {
+      Ok(u) => {},
+      Err(e) => {
+        eprint("fern: cannot create output directory " + parent + ": " + util.io_error_reason(e));
+        return 1;
+      }
+    }
+  }
+  match (write_file(out_path, code)) {
+    Ok(u) => {
+      eprint("wrote " + out_path);
+      return 0;
+    },
+    Err(e) => {
+      eprint("fern: cannot write output " + out_path + ": " + util.io_error_reason(e));
+      return 1;
+    }
+  }
+}
+
+// tangle_write_files writes one module per `file=PATH` root into `dir`,
+// subdirectory layout preserved — tangle_emit creates the parents.
+function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
+  let i: i32 = 0;
+  while (i < files.len()) {
+    let rel: string = files[i].path;
+    // Written verbatim, NOT newline-terminated: native's per-module
+    // files end where the chunk does, even though its stdout form
+    // terminates the last line. Parity is on what native writes.
+    let code: i32 = tangle_emit(files[i].code, dir + "/" + rel);
+    if (code != 0) {
+      return code;
+    }
+    i = i + 1;
+  }
+  return 0;
+}
+
+// run_doc implements `-doc`: cmd/ferndoc's Markdown reference pages, generated
+// from sources on disk rather than from a stdlib embedded at build time.
+//
+// A page is titled with a module PATH, not a file path, and the namespace half
+// of it is the containing directory's own name — `internal/stdlib/std/io.fern`
+// documents `std/io`. That is native's rule as well (its roots ARE the
+// directory names `std` and `core`), which is what makes
+//
+//     fern -doc -o D internal/stdlib/std && fern -doc -o D internal/stdlib/core
+//
+// reproduce `ferndoc -out D` exactly, and it means the namespace needs no flag
+// to carry it.
+function run_doc(path: string, out_path: string): i32 {
+  if (util.is_dir(path)) {
+    return doc_tree(path, out_path);
+  }
+  let src: string = "";
+  let read_ok: boolean = false;
+  match (read_file(path)) {
+    Ok(s) => {
+      src = s;
+      read_ok = true;
+    },
+    Err(e) => {}
+  }
+  if (!read_ok) {
+    eprint("fern: -doc: cannot read " + path);
+    return 1;
+  }
+  let page: string = ferndoc.render_page(src, doc_module_path(path_base(util.dir_of(path)), doc_stem(path_base(path))));
+  if (out_path.len() == 0) {
+    write(page);
+    return 0;
+  }
+  match (write_file(out_path, page)) {
+    Ok(u) => {
+      return 0;
+    },
+    Err(e) => {
+      eprint("fern: -doc: cannot write " + out_path + ": " + util.io_error_reason(e));
+      return 1;
+    }
+  }
+}
+
+// doc_tree walks `dir` for modules and writes one page each into `out_dir`.
+//
+// The page filename flattens a subdirectory with `_` — `wasm/convert` becomes
+// `wasm_convert.md` — so every page of a namespace is one flat directory and
+// two modules with the same basename in different subdirectories cannot
+// clobber each other. Native does the same, for the same reason.
+function doc_tree(dir: string, out_dir: string): i32 {
+  if (out_dir.len() == 0) {
+    eprint("fern: -doc <DIR> needs -o OUTDIR — a directory of pages has nowhere else to go");
+    return 2;
+  }
+  match (create_dir_all(out_dir)) {
+    Ok(u) => {},
+    Err(e) => {
+      eprint("fern: -doc: cannot create " + out_dir + ": " + util.io_error_reason(e));
+      return 1;
+    }
+  }
+  let ns: string = path_base(dir);
+  // Relative subdirectories still to visit, "" being `dir` itself. A worklist
+  // rather than recursion, matching copy_package's walk.
+  let rels: string[] = [""];
+  let ri: i32 = 0;
+  while (ri < rels.len()) {
+    let rel: string = rels[ri];
+    ri = ri + 1;
+    let sdir: string = dir;
+    if (rel.len() > 0) {
+      sdir = dir + "/" + rel;
+    }
+    let entries: string[] = [];
+    let listed: boolean = false;
+    match (read_dir(sdir)) {
+      Ok(ns2) => {
+        entries = ns2;
+        listed = true;
+      },
+      Err(e) => {}
+    }
+    if (!listed) {
+      eprint("fern: -doc: cannot read " + sdir);
+      return 1;
+    }
+    let i: i32 = 0;
+    while (i < entries.len()) {
+      let name: string = entries[i];
+      i = i + 1;
+      let child_rel: string = name + "";
+      if (rel.len() > 0) {
+        child_rel = rel + "/" + name;
+      }
+      let child: string = dir + "/" + child_rel;
+      if (util.is_dir(child)) {
+        if (name.len() > 0 && name[0] == b'.') {  // and so `.` / `..`
+          continue;
+        }
+        rels = rels.append(child_rel + "");
+        continue;
+      }
+      if (!is_doc_module(name)) {
+        continue;
+      }
+      let src: string = "";
+      let read_ok: boolean = false;
+      match (read_file(child)) {
+        Ok(s) => {
+          src = s;
+          read_ok = true;
+        },
+        Err(e) => {}
+      }
+      if (!read_ok) {
+        eprint("fern: -doc: cannot read " + child);
+        return 1;
+      }
+      let stem: string = doc_stem(child_rel);
+      let page: string = ferndoc.render_page(src, doc_module_path(ns, stem));
+      // A module with nothing public gets no page at all rather than a
+      // heading with no content under it.
+      if (page.len() == 0) {
+        continue;
+      }
+      let dest: string = out_dir + "/" + flatten_path(stem) + ".md";
+      match (write_file(dest, page)) {
+        Ok(u) => {},
+        Err(e) => {
+          eprint("fern: -doc: cannot write " + dest + ": " + util.io_error_reason(e));
+          return 1;
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+// is_doc_module selects the files a reference page is generated from: Fern
+// modules, minus the `_test_` stubs, which are fixtures rather than API.
+// `.fern.md` is excluded by the same suffix test that admits `.fern`.
+function is_doc_module(name: string): boolean {
+  if (name.len() < 6 || slice_unchecked(name, name.len() - 5, name.len()) != ".fern") {
+    return false;
+  }
+  return !(name.len() >= 6 && slice_unchecked(name, 0, 6) == "_test_");
+}
+
+// doc_stem drops a trailing `.fern`, leaving the module's path relative to its
+// namespace.
+function doc_stem(p: string): string {
+  if (p.len() >= 5 && slice_unchecked(p, p.len() - 5, p.len()) == ".fern") {
+    return slice_unchecked(p, 0, p.len() - 5) + "";
+  }
+  return p;
+}
+
+// doc_module_path joins the namespace to the module stem. A module with no
+// containing directory to name — `fern -doc io.fern` from inside it — is
+// documented under its bare name rather than under a leading slash.
+function doc_module_path(ns: string, stem: string): string {
+  if (ns.len() == 0) {
+    return stem;
+  }
+  return ns + "/" + stem;
+}
+
+// path_base is the final segment of a path, trailing slashes ignored so
+// `-doc std/` names the same namespace as `-doc std`.
+function path_base(p: string): string {
+  let end: i32 = p.len();
+  while (end > 0 && p[end - 1] == b'/') {
+    end = end - 1;
+  }
+  let start: i32 = end;
+  while (start > 0 && p[start - 1] != b'/') {
+    start = start - 1;
+  }
+  return slice_unchecked(p, start, end) + "";
+}
+
+// flatten_path replaces `/` with `_` so a nested module's page is a single
+// file in the output directory.
+function flatten_path(p: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < p.len()) {
+    if (p[i] == b'/') {
+      out = out + "_";
+    } else {
+      out = out + slice_unchecked(p, i, i + 1);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// read_stdin reads the whole of stdin, which is how `-` names a program with
+// no file behind it: a pipeline stage, an editor buffer, or a host with no
+// filesystem to open (#6643). `read_line` keeps its newline, so the lines
+// concatenate back into the source verbatim.
+function read_stdin(): string {
+  let src: string = "";
+  let more: boolean = true;
+  while (more) {
+    match (read_line()) {
+      Some(line) => {
+        src = src + line;
+      },
+      None => {
+        more = false;
+      }
+    }
+  }
+  return src;
+}
+
+// check_dir implements `-check <DIR>`: type-check the package governing DIR,
+// or — when that manifest declares a `[workspace]` — every member of it,
+// aggregating rather than stopping at the first failure, so one broken package
+// does not hide the rest. This is the workspace-wide check a multi-package
+// program wants: one command validates every member.
+function check_dir(dir: string, root: string, target: string, target_given: boolean, embed_dir: string): i32 {
+  let mdir: string = find_manifest_dir(dir);
+  if (mdir.len() == 0) {
+    eprint("check: " + dir + " is a directory with no fern.toml — pass a .fern file, or run inside a package");
+    return 1;
+  }
+  let man: fern_toml.Manifest = read_manifest(mdir + "/");
+  if (man.members.len() == 0) {
+    let entry: string = package_entry(mdir);
+    if (entry.len() == 0) {
+      eprint("no entry module in " + mdir + " (looked for " + man.lib + " and main.fern)");
+      return 1;
+    }
+    return check_file(entry, root, target, target_given, embed_dir);
+  }
+  let failed: i32 = 0;
+  let i: i32 = 0;
+  while (i < man.members.len()) {
+    let rel: string = man.members[i];
+    i = i + 1;
+    let mem: string = rel;
+    if (!mvs.is_abs(rel)) {
+      mem = mvs.join_path(mdir, rel);
+    }
+    let mentry: string = package_entry(mem);
+    if (mentry.len() == 0) {
+      eprint("FAIL " + rel + ": no entry module in " + mem + " (looked for " + read_manifest(mem + "/").lib + " and main.fern)");
+      failed = failed + 1;
+      continue;
+    }
+    if (check_file(mentry, root, target, target_given, embed_dir) != 0) {
+      eprint("FAIL " + rel);
+      failed = failed + 1;
+      continue;
+    }
+    eprint("ok   " + rel);
+  }
+  if (failed > 0) {
+    eprint("check: " + util.i32_to_string(failed) + " of " + util.i32_to_string(man.members.len()) + " workspace member(s) failed");
+    return 1;
+  }
+  eprint("check: " + util.i32_to_string(man.members.len()) + " workspace member(s) ok");
+  return 0;
+}
+
+// check_file loads one entry module and type-checks it — the single-package
+// half of `-check`, and the per-member step of the workspace half.
+function check_file(entry_path: string, root: string, target: string, target_given: boolean, embed_dir: string): i32 {
+  match (read_file(entry_path)) {
+    Ok(src) => {
+      return report_checked(check_source(entry_path, src, root, target, target_given, embed_dir));
+    },
+    Err(e) => {
+      eprint(read_failure("entry file", entry_path, modloader.read_error_reason(e)));
+      return 1;
+    }
+  }
+  return 1;
+}
+
+// Server is `-lsp`'s state: what every document is checked against, as
+// `-check` takes it, and the text of each document the editor has open with
+// the diagnostics last published for it ("" before the first), by URI.
+struct Server {
+  root: string,
+  target: string,
+  target_given: boolean,
+  embed_dir: string,
+  uris: string[],
+  srcs: string[],
+  published: string[],
+  shutdown: boolean,
+}
+
+// serve_lsp is `fern -lsp [stdlib-root]`.
+function serve_lsp(pos: string[], target: string, target_given: boolean, embed_dir: string): i32 {
+  if (pos.len() > 1) {
+    return usage();
+  }
+  let root: string = "";
+  if (pos.len() == 1) {
+    root = pos[0];
+  }
+  return run_lsp(Server { root: root, target: target, target_given: target_given, embed_dir: embed_dir, uris: [], srcs: [], published: [], shutdown: false });
+}
+
+// run_lsp is a language server on stdin and stdout (lsp.fern is the wire),
+// until the client sends `exit` or hangs up. It publishes `-check`'s findings
+// for a document whenever the editor opens or changes it, and formats one as
+// `-fmt` would. The exit code is the spec's: 0 for an `exit` after
+// `shutdown`, 1 for one without, and 2 for a stream that could not be framed.
+function run_lsp(s: Server): i32 {
+  let inp: lsp.Input = lsp.stdin_input();
+  while (true) {
+    let f: lsp.Frame = lsp.read_frame(inp);
+    inp = f.inp;
+    if (f.done) {
+      if (f.err.len() > 0) {
+        eprint("fern -lsp: " + f.err);
+        return 2;
+      }
+      return 0;
+    }
+    match (lsp.parse_message(f.body)) {
+      Some(m) => {
+        if (m.method == "exit") {
+          if (s.shutdown) {
+            return 0;
+          }
+          return 1;
+        }
+        s = lsp_handle(s, m);
+      },
+      None => {}
+    }
+  }
+  return 0;
+}
+
+// lsp_handle answers one message. A request for a method this server does
+// not implement is answered with the spec's error.
+function lsp_handle(s: Server, m: lsp.Message): Server {
+  if (m.id.len() == 0) {
+    return lsp_notification(s, m);
+  }
+  if (m.method == "initialize") {
+    lsp.send(lsp.response(m.id, lsp.initialize_result()));
+  } else if (m.method == "shutdown") {
+    s = Server { ...s, shutdown: true };
+    lsp.send(lsp.response(m.id, "null"));
+  } else if (m.method == "textDocument/formatting") {
+    lsp.send(lsp.response(m.id, lsp_formatting(s, lsp.document_uri(m.params))));
+  } else {
+    lsp.send(lsp.method_not_found(m.id, m.method));
+  }
+  return s;
+}
+
+// lsp_notification applies a notification: the editor opened, changed or
+// closed a document. Any other (`initialized`, `$/cancelRequest`, …) asks
+// nothing of this server.
+function lsp_notification(s: Server, m: lsp.Message): Server {
+  let uri: string = lsp.document_uri(m.params);
+  if (m.method == "textDocument/didOpen") {
+    return lsp_update(s, uri, lsp.get_string(lsp.get_value(m.params, "textDocument"), "text"));
+  }
+  if (m.method == "textDocument/didChange") {
+    match (lsp.changed_text(m.params)) {
+      Some(text) => {
+        return lsp_update(s, uri, text);
+      },
+      None => {}
+    }
+    return s;
+  }
+  if (m.method == "textDocument/didClose") {
+    return lsp_close(s, uri);
+  }
+  return s;
+}
+
+// lsp_update records a document's new text and publishes its diagnostics when
+// they differ from the last ones published for it. Text the server already
+// has — some editors resend it on focus — is no change at all.
+function lsp_update(s: Server, uri: string, src: string): Server {
+  let i: i32 = util.index_of_str(s.uris, uri);
+  if (i >= 0 && s.srcs[i] == src) {
+    return s;
+  }
+  if (i < 0) {
+    s = Server { ...s, uris: s.uris.append(uri), srcs: s.srcs.append(src), published: s.published.append("") };
+    i = s.uris.len() - 1;
+  } else {
+    s = Server { ...s, srcs: s.srcs.with(i, src) };
+  }
+  let ds: string = lsp.json_array(lsp_diagnostics(s, uri, src));
+  if (ds == s.published[i]) {
+    return s;
+  }
+  lsp.send(lsp.publish_diagnostics(uri, ds));
+  return Server { ...s, published: s.published.with(i, ds) };
+}
+
+// lsp_close forgets a document and clears its diagnostics, so the editor
+// keeps no stale ones for a file it is no longer showing.
+function lsp_close(s: Server, uri: string): Server {
+  let uris: string[] = [];
+  let srcs: string[] = [];
+  let published: string[] = [];
+  let i: i32 = 0;
+  while (i < s.uris.len()) {
+    if (s.uris[i] != uri) {
+      uris = uris.append(s.uris[i]);
+      srcs = srcs.append(s.srcs[i]);
+      published = published.append(s.published[i]);
+    }
+    i = i + 1;
+  }
+  lsp.send(lsp.publish_diagnostics(uri, "[]"));
+  return Server { ...s, uris: uris, srcs: srcs, published: published };
+}
+
+// lsp_diagnostics is `-check` on a document's text, as LSP diagnostics. A
+// file:// document is checked as the file it names, so its imports resolve
+// beside it; any other is checked as stdin is, against the working directory.
+// A finding in an imported module stays with that module, as native's
+// workspace mode keeps it; one with no position lands on the document.
+function lsp_diagnostics(s: Server, uri: string, src: string): string[] {
+  let path: string = lsp.uri_path(uri);
+  if (path.len() == 0) {
+    path = "-";
+  }
+  let c: Checked = check_source(path, src, s.root, s.target, s.target_given, s.embed_dir);
+  let out: string[] = [];
+  for f in c.findings {
+    if (f.diag.line < util.line_base(0)) {
+      out = out.append(lsp.diagnostic(src, f.diag.line, f.diag.col, f.diag.code, lsp_message(f.diag.message), f.warning));
+    }
+  }
+  return out;
+}
+
+// lsp_message is a finding's message as an editor shows it: a refusal is the
+// line `-check` prints, and its `fern: ` is the diagnostic's `source`.
+function lsp_message(msg: string): string {
+  if (msg.len() > 6 && slice_unchecked(msg, 0, 6) == "fern: ") {
+    return slice_unchecked(msg, 6, msg.len()) + "";
+  }
+  return msg;
+}
+
+// lsp_formatting is a formatting request's answer: one edit replacing the
+// document with what `-fmt` writes for it, or none when that is the text it
+// already has, or when the formatted text would fail `-fmt -w`'s safety net —
+// a format the editor applies is a write-back.
+function lsp_formatting(s: Server, uri: string): string {
+  let i: i32 = util.index_of_str(s.uris, uri);
+  if (i < 0) {
+    return "[]";
+  }
+  let src: string = s.srcs[i];
+  let formatted: string = format_source(src);
+  if (formatted == src || !fmt_output_is_readable(formatted)) {
+    return "[]";
+  }
+  return "[" + lsp.whole_document_edit(src, formatted) + "]";
+}
+
+// root_pkg is the entry's own package: its manifest's [package] name, or
+// `(root)` when nothing governs the program. It is never enforced or warned —
+// grants restrict DEPENDENCIES, and the program's author is trusting
+// themselves.
+function root_pkg(man: fern_toml.Manifest): caps.Pkg {
+  let name: string = "(root)";
+  if (man.name.len() > 0) {
+    name = man.name;
+  }
+  let no_grants: string[] = [];
+  return caps.Pkg { module: "", name: name, root: true, governed: false, grants: no_grants };
+}
+
+// dep_pkg_name is a dependency's REPORT name: the [package] name in its own
+// manifest, falling back to the key that declared it. Native attributes by the
+// governing manifest, so a dep declared under a different key still reports
+// under its own name.
+function dep_pkg_name(man: fern_toml.Manifest, dir_slash: string, dep: string): string {
+  match (fern_toml.dep_path(man, dep)) {
+    Some(dp) => {
+      match (read_file(dir_slash + dp + "/fern.toml")) {
+        Ok(src) => {
+          let dm: fern_toml.Manifest = fern_toml.parse(src);
+          if (dm.name.len() > 0) {
+            return dm.name;
+          }
+        },
+        Err(e) => {}
+      }
+    },
+    None => {}
+  }
+  return dep;
+}
+
+// add_pkg records the package a just-loaded module belongs to. Three cases,
+// matching native's resolver: a local sibling folds into the root package, a
+// declared dependency is its own package carrying that entry's grant, and
+// anything else (the stdlib) gets no entry at all — caps.analyze folds a
+// module with no entry into whichever package calls it.
+//
+// Only the ENTRY manifest is consulted, because that is as far as this
+// driver's loader resolves: a dependency's own dependencies are not reachable
+// from here, so there is no deeper package to attribute.
+function add_pkg(pkgs: caps.Pkg[], man: fern_toml.Manifest, dir_slash: string, import_path: string): caps.Pkg[] {
+  let mod: string = util.module_name(import_path);
+  let no_grants: string[] = [];
+  if (util.is_local(import_path)) {
+    return pkgs.append(caps.Pkg { module: mod, name: pkgs[0].name, root: true, governed: false, grants: no_grants });
+  }
+  if (fern_toml.dep_kind(man, mod).len() == 0) {
+    return pkgs;
+  }
+  return pkgs.append(caps.Pkg {
+    module: mod,
+    name: dep_pkg_name(man, dir_slash, mod),
+    root: false,
+    governed: fern_toml.dep_governed(man, mod),
+    grants: fern_toml.dep_caps(man, mod),
+  });
+}
+
+// package_findings is phase 2 of docs/PACKAGE-CAPABILITIES-BRIEF.md: hold
+// every dependency package to the grant in the manifest that declares it
+// (caps.fern — E070). A governed package reaching outside its grant is an
+// error; an ungoverned one warns and is allowed, which is the migration
+// default for manifests predating the key. The warnings come first.
+//
+// The reachability walk is skipped outright when no non-root package has any
+// function in the bundle — the common single-package compile, including every
+// compiler source.
+function package_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
+  let out: Finding[] = [];
+  if (!caps.enforceable(merged, pkgs)) {
+    return out;
+  }
+  let vs: caps.Violation[] = caps.enforce(caps.analyze(merged, pkgs), pkgs);
+  for v in vs {
+    if (!v.governed) {
+      out = out.append(Finding { diag: util.Diag { code: "", message: caps.violation_message(v), line: 0, col: 0 }, warning: true, path: "" });
+    }
+  }
+  for v in vs {
+    if (v.governed) {
+      out = out.append(Finding { diag: util.Diag { code: "E070", message: caps.violation_message(v), line: 0, col: 0 }, warning: false, path: "" });
+    }
+  }
+  return out;
+}
+
+function run(): i32 {
+  let av: string[] = args();
+
+  let entry_path: string = "";
+  let out_path: string = "";
+  let root: string = "";
+  let have_root: boolean = false;
+  // Positionals past the stdlib root are the program's own, as `-interp
+  // FILE ARG...` hands them to `args()` behind the entry's path.
+  let prog_args: string[] = [];
+  let target: string = "x86-64-linux";
+  // Output FORM, independent of the target: "" is the target's default
+  // (a linked executable, or a component on wasm), "asm" the emitter's
+  // text, "core-module" a raw wasm core module.
+  let emit: string = "";
+  let mode_check: boolean = false;
+  let mode_interp: boolean = false;
+  let mode_fmt: boolean = false;
+  // `-fmt` output destination, mirroring native: stdout by default, the input
+  // file under `-w`, a unified diff (exit 1 when it is non-empty) under `-d`.
+  let fmt_write: boolean = false;
+  let fmt_diff: boolean = false;
+  let mode_caps: boolean = false;
+  let mode_targets: boolean = false;
+  let mode_resolve: boolean = false;
+  let mode_tangle: boolean = false;
+  let chunk: string = "";
+  let mode_doc: boolean = false;
+  let mode_add: boolean = false;
+  let mode_vendor: boolean = false;
+  let mode_lsp: boolean = false;
+  // Every non-flag argument, in order. The compile modes read the first two
+  // (entry, stdlib root); `-add` takes three of its own.
+  let pos: string[] = [];
+  // -backend names the target's one emitter explicitly: `ssa`, the
+  // register-allocating emit, on the native ISAs (docs/SELFHOST-SSA-BACKEND.md);
+  // `flat`, the stack machine, on wasm. Empty is the same emitter unnamed.
+  let backend: string = "";
+  // -embed DIR: the asset bundle __fern_asset / __fern_assets resolve
+  // against. Empty means the flag was not passed, which makes any use of
+  // either builtin the error (embed.fern / docs/EMBED.md).
+  let embed_dir: string = "";
+  // `-O` is the release build: it elides every assert() check, matching
+  // native. Constant folding is NOT what this flag selects on either
+  // compiler — that runs on every build.
+  let optimize: boolean = false;
+  let emit_syms: boolean = false;
+  // -backtrace: whether a fatal abort walks the frame chain under its cause
+  // line, as native's flag of the same name; FERN_BACKTRACE is the default.
+  let backtrace: boolean = asmcore.backtrace_on();
+  // -sanitize: the heap memory-safety detectors together, as native's flag;
+  // FERN_SANITIZE is the other way to turn them on.
+  let sanitize_flag: boolean = false;
+  // -shared: a shared object exporting the -export functions (main without
+  // one) through C-ABI entries, rather than an executable (#11483).
+  let shared: boolean = false;
+  let export_list: string = "";
+  // `-cover` (or FERN_COVER=1) instruments the program with line and branch
+  // counters it reports to stderr at exit (cover.fern).
+  let cover_on: boolean = false;
+  match (env("FERN_COVER")) {
+    Some(v) => {
+      cover_on = v == "1";
+    },
+    None => {}
+  }
+  let have_entry: boolean = false;
+  // Whether -target was given, as distinct from the default above. It only
+  // matters to `-check`: native type-checks against a capability set only
+  // when asked for a target, so enforcing the default one here would refuse
+  // a program `fern -check` accepts.
+  let target_given: boolean = false;
+
+  let i: i32 = 1;
+  // Set once a `--` has separated the program's arguments from the driver's.
+  let prog_sep: boolean = false;
+  while (i < av.len()) {
+    let a: string = av[i];
+    if (have_entry) {
+      // Driver flags end at the entry file, as native's do (#8465): a later
+      // `-x` is refused rather than parsed or handed to the program unseen.
+      // The stdlib root follows the entry; the program's own arguments
+      // follow the root, behind a `--` when the first begins with `-`.
+      if (!have_root) {
+        if (is_flag(a)) {
+          return flag_after_entry(a);
+        }
+        pos = pos.append(a);
+        root = a;
+        have_root = true;
+      } else if (prog_args.len() == 0 && !prog_sep && a == "--") {
+        prog_sep = true;
+      } else if (prog_args.len() == 0 && !prog_sep && is_flag(a)) {
+        return flag_after_entry(a);
+      } else {
+        pos = pos.append(a);
+        prog_args = prog_args.append(a);
+      }
+    } else if (a == "-check") {
+      mode_check = true;
+    } else if (a == "-interp") {
+      mode_interp = true;
+    } else if (a == "-fmt") {
+      mode_fmt = true;
+    } else if (a == "-w") {
+      fmt_write = true;
+    } else if (a == "-d") {
+      fmt_diff = true;
+    } else if (a == "-backend") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      backend = av[i];
+    } else if (a == "-cover") {
+      cover_on = true;
+    } else if (a == "-g") {
+      // A static symbol table naming the functions: `.symtab` in the ELF
+      // targets' images (#6637), LC_SYMTAB in arm64-darwin's (#11409), and
+      // in the ELF images the DWARF compilation unit naming them for a
+      // debugger (#11410).
+      emit_syms = true;
+    } else if (a == "-backtrace" || a == "-backtrace=true" || a == "-backtrace=1") {
+      backtrace = true;
+    } else if (a == "-backtrace=false" || a == "-backtrace=0") {
+      backtrace = false;
+    } else if (a == "-sanitize" || a == "-sanitize=true" || a == "-sanitize=1") {
+      sanitize_flag = true;
+    } else if (a == "-sanitize=false" || a == "-sanitize=0") {
+      sanitize_flag = false;
+    } else if (a == "-shared" || a == "-shared=true" || a == "-shared=1") {
+      shared = true;
+    } else if (a == "-shared=false" || a == "-shared=0") {
+      shared = false;
+    } else if (a == "-export") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      export_list = av[i];
+    } else if (util.str_has_prefix(a, "-export=")) {
+      export_list = slice_unchecked(a, 8, a.len()) + "";
+    } else if (a == "-capabilities") {
+      mode_caps = true;
+    } else if (a == "-tangle") {
+      // Literate: expand a .fern.md document's chunks into Fern source.
+      // It reads a document, not a module, so it never loads imports.
+      mode_tangle = true;
+    } else if (a == "-doc") {
+      // Reference pages. Like -tangle it reads sources and compiles
+      // nothing, so it takes a path rather than an entry module.
+      mode_doc = true;
+    } else if (a == "-add") {
+      // Manifest editing: append a declared dependency. Takes NAME SPEC
+      // DIR positionally, not an entry module.
+      mode_add = true;
+    } else if (a == "-vendor") {
+      // Flatten the transitive dependency graph into <root>/vendor/.
+      // Like -resolve it reads manifests, so it takes a directory.
+      mode_vendor = true;
+    } else if (a == "-lsp") {
+      mode_lsp = true;
+    } else if (a == "-resolve") {
+      // Version resolution (MVS) over the manifest's [package] index,
+      // writing fern.lock. It reads manifests, not sources, so it takes
+      // a directory rather than an entry file.
+      mode_resolve = true;
+    } else if (a == "-targets") {
+      mode_targets = true;
+    } else if (a == "-chunk") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      chunk = av[i];
+    } else if (a == "-emit") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      emit = av[i];
+    } else if (a == "-O") {
+      optimize = true;
+    } else if (a == "-target") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      target = av[i];
+      target_given = true;
+    } else if (a == "-embed") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      embed_dir = av[i];
+    } else if (a == "-o") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      out_path = av[i];
+    } else if (is_flag(a)) {
+      eprint("fern: unknown flag: " + a);
+      return 2;
+    } else {
+      pos = pos.append(a);
+      entry_path = a;
+      have_entry = true;
+    }
+    i = i + 1;
+  }
+
+  // `-targets` answers from the table alone; it needs no entry file.
+  if (mode_targets) {
+    return list_targets();
+  }
+
+  // `-resolve` takes a directory (or any file inside the package), not an
+  // entry module — it reads manifests and never compiles anything.
+  if (mode_resolve) {
+    return run_resolve(entry_path);
+  }
+
+  // `-vendor` copies sources between directories and compiles nothing.
+  if (mode_vendor) {
+    if (!have_entry) {
+      return usage();
+    }
+    return run_vendor(entry_path);
+  }
+
+  // `-tangle` reads a literate document and compiles nothing.
+  if (mode_tangle) {
+    if (!have_entry) {
+      return usage();
+    }
+    return run_tangle(entry_path, out_path, chunk);
+  }
+
+  // `-doc` reads sources for their declarations and comments and compiles
+  // nothing.
+  if (mode_doc) {
+    if (!have_entry) {
+      return usage();
+    }
+    return run_doc(entry_path, out_path);
+  }
+
+  // `-add` edits a manifest and compiles nothing.
+  if (mode_add) {
+    return run_add(pos);
+  }
+
+  if (!platforms.for_target(target).known) {
+    // One eprint, not one per name: eprint appends its own newline, so a
+    // loop of them prints the target list down the left margin.
+    let msg: string = "fern: unknown -target: " + target + " (want one of:";
+    let tn: string[] = platforms.targets();
+    let ti: i32 = 0;
+    while (ti < tn.len()) {
+      msg = msg + " " + tn[ti];
+      ti = ti + 1;
+    }
+    eprint(msg + ")");
+    return 2;
+  }
+
+  // Say what a -sanitize build carries rather than accepting the flag and
+  // going quiet: silence reads as "sanitizer ran, program is clean", the one
+  // wrong conclusion this mode must never support.
+  if (sanitize_flag) {
+    let warning: string = sanitize_warning(target);
+    if (warning.len() > 0) {
+      eprint(warning);
+    }
+  }
+
+  // `-lsp` checks the documents an editor sends, so its one positional is
+  // the stdlib root.
+  if (mode_lsp) {
+    return serve_lsp(pos, target, target_given, embed_dir);
+  }
+
+  // `-check` and `-interp` with no path read the program from stdin, as
+  // native's do. Every other mode wants a file: `-fmt` writes back over one,
+  // and a compile names its output after one.
+  if (!have_entry && (mode_check || mode_interp)) {
+    entry_path = "-";
+    have_entry = true;
+  }
+  if (!have_entry) {
+    return usage();
+  }
+
+  // `-check <DIR>` checks the package governing DIR, or every member of the
+  // workspace it roots. A file argument takes the single-entry path below,
+  // and so does a bad one — `is_dir` answers false for both.
+  if (mode_check && util.is_dir(entry_path)) {
+    return check_dir(entry_path, root, target, target_given, embed_dir);
+  }
+
+  if (cover_on && mode_interp) {
+    eprint("fern: -cover instruments compiled code; -interp does not lower, so it has no coverage to report");
+    return 2;
+  }
+  if (cover_on && !mode_check && target != "x86-64-linux" && target != "arm64-linux") {
+    eprint("fern: -cover: -target " + target + " has no coverage instrumentation — build for x86-64-linux or arm64-linux, or drop -cover");
+    return 2;
+  }
+  // Native's `-emit command-module` is a WASI preview-1 command: the core
+  // bytes plus a `_start` that runs main and exits with its value, and an
+  // exported memory — the shape `wasmtime run` and a browser shim run. This
+  // compiler's core module already has both (and exports `main`, #10768), so
+  // the two forms are one artifact here and the spelling is accepted for the
+  // one target native gives it (#11408).
+  if (emit == "command-module") {
+    if (target != "wasm32-wasi") {
+      eprint("fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)");
+      return 2;
+    }
+    if (out_path.len() == 0) {
+      eprint("fern: -emit command-module writes a binary module; pass -o OUTPUT");
+      return 2;
+    }
+    emit = "core-module";
+  }
+  if (emit.len() > 0 && emit != "asm" && emit != "core-module") {
+    eprint("fern: unknown -emit: " + emit + " (want asm, core-module, command-module, or omit it for the target's default output form)");
+    return 2;
+  }
+  if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
+    eprint("fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit");
+    return 2;
+  }
+  if (shared) {
+    if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android") {
+      eprint("fern: -shared is only supported with -target x86-64, arm64, or arm64-android (got \"" + target + "\")");
+      return 1;
+    }
+    if (out_path.len() == 0 && emit != "asm") {
+      eprint("fern: -shared requires -o OUTPUT.so");
+      return 1;
+    }
+  }
+  if (backend != "" && backend != "ssa" && backend != "flat") {
+    eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)");
+    return 2;
+  }
+  // Each target has one emitter, and `-backend` may only name it: the
+  // register path on the native ISAs (docs/SELFHOST-SSA-BACKEND.md), the
+  // stack machine on wasm, which has no registers to allocate.
+  let ssa_isa: boolean = platforms.for_target(target).isa == "arm64" || platforms.for_target(target).isa == "x86-64";
+  if (backend == "ssa" && !ssa_isa) {
+    eprint("fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux)");
+    return 2;
+  }
+  if (backend == "flat" && ssa_isa) {
+    eprint("fern: -backend flat is not available for -target " + target + ": the stack machine's function emitter was retired, and the register path (-backend ssa, the default) is the only emitter on arm64 and x86-64");
+    return 2;
+  }
+
+  // `-fmt FILE...` is per-file, gofmt-style: every positional is formatted in
+  // order (none of them is a stdlib root), a failing file does not stop the
+  // rest, and the exit code is the worst one seen — so `-d` over a list exits
+  // 1 when any file needs formatting.
+  if (mode_fmt) {
+    if (out_path.len() > 0 && pos.len() > 1) {
+      eprint("fern: -fmt -o takes a single input file (" + util.i32_to_string(pos.len()) + " given)");
+      return 2;
+    }
+    let code: i32 = 0;
+    let fi: i32 = 0;
+    while (fi < pos.len()) {
+      let fc: i32 = fmt_file(pos[fi], fmt_write, fmt_diff, out_path);
+      if (fc > code) {
+        code = fc;
+      }
+      fi = fi + 1;
+    }
+    return code;
+  }
+
+  let esrc: string = "";
+  let eok: boolean = false;
+  let eerr: string = "";
+  // `-` names stdin for the two modes native reads it in, and only those:
+  // `-fmt -` and a compile from `-` are file errors under native, and the
+  // self-host accepting them would be a divergence in the permissive
+  // direction — the one that lets a program build under one compiler only.
+  if (entry_path == "-" && (mode_check || mode_interp)) {
+    esrc = read_stdin();
+    eok = true;
+  } else {
+    match (read_file(entry_path)) {
+      Ok(s) => {
+        esrc = s;
+        eok = true;
+      },
+      Err(e) => {
+        eerr = modloader.read_error_reason(e);
+      }
+    }
+  }
+  if (!eok) {
+    eprint(read_failure("entry file", entry_path, eerr));
+    return 1;
+  }
+  // -embed is folded as the program loads: __fern_asset / __fern_assets
+  // become string literals before anything else reads the tree, so the
+  // checker, the interpreter and every backend see literals and never learn
+  // that assets exist. Native folds them in the same place, ahead of
+  // checker.Check.
+  let ld: Loaded = load_checked(entry_path, esrc, root, target, embed_dir);
+  if (eprint_findings(ld.refused, entry_path, ld.b.files)) {
+    return 1;
+  }
+  let b: Bundle = ld.b;
+  let merged: parser.Module = b.merged;
+  let pkgs: caps.Pkg[] = b.pkgs;
+
+  // `-capabilities`: print the per-package capability report and stop
+  // (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 1). Report mode enforces
+  // nothing — the grants are enforced on the compile / -check / -interp
+  // paths below.
+  if (mode_caps) {
+    write(caps.format_rows(caps.analyze(merged, pkgs)));
+    return 0;
+  }
+
+  if (mode_check) {
+    return report_checked(check_bundle(b, entry_path, target, target_given));
+  }
+
+  if (mode_interp) {
+    // Package-capability gate (E070 — caps.fern): a dependency reaching
+    // past its grant is refused before the program runs, not after it has
+    // already opened the socket.
+    if (eprint_findings(package_findings(merged, pkgs), entry_path, b.files)) {
+      return 1;
+    }
+    if (eprint_findings(ambient_findings(merged), entry_path, b.files)) {
+      return 1;
+    }
+    // Evaluate via the tree-walking interpreter; the program's
+    // result becomes the process exit code (VInt → its value,
+    // VBool → 1/0), matching interp_run.fern. A non-i32/bool
+    // result exits 254.
+    let argv: string[] = [entry_path];
+    let pa: i32 = 0;
+    while (pa < prog_args.len()) {
+      argv = argv.append(prog_args[pa]);
+      pa = pa + 1;
+    }
+    let result: interp.Value = interp.eval_module_argv(merged, argv);
+    match (result) {
+      interp.VInt(iv) => {
+        return iv.v;
+      },
+      interp.VBool(bv) => {
+        if (bv.v) {
+          return 1;
+        }
+        return 0;
+      },
+      interp.VErr(ev) => {
+        // The interpreter's bottom carries WHY it stopped. Printing it is
+        // the difference between "exit 254" and a usable report: #5990 was
+        // filed against a silent 254 whose cause (an unimplemented
+        // construct) the message already named.
+        eprint("fern: interp: " + ev.msg);
+        return 254;
+      },
+      _ => {
+        return 254;
+      }
+    }
+    return 254;
+  }
+
+  // The parse gates the `-check` path runs (#7447), for the same reason the
+  // checker gate below exists: without them a build is MORE permissive than
+  // `-check`, and a keyword-named function reaches codegen as a nameless
+  // declaration.
+  if (eprint_findings(parse_findings(merged), entry_path, b.files)) {
+    return 1;
+  }
+
+  // Build gate: reject what the checker rejects BEFORE codegen, so the
+  // compiler is not MORE permissive than the native compiler / `-check`
+  // (issue #2825 — the codegen paths previously compiled forbidden field
+  // mutation like `p.x = v` straight to a working binary; #6961 — every
+  // other coded rule was reachable only through `-check`, so a checker rule
+  // ported for parity did not gate a build). Native always type-checks ahead
+  // of codegen; this is the matching gate for the self-host CLI's compile
+  // path. checker.is_build_gate_code decides the set — every coded
+  // diagnostic except the partial-port rules measured to false-positive —
+  // and a hit is reported with the same `line:col: error[CODE]: message`
+  // shape as `-check`.
+  if (eprint_findings(errors_of(checker.build_gate_diags(merged)), entry_path, b.files)) {
+    return 1;
+  }
+
+  // The target's name first, as native folds it ahead of its gates: its
+  // environment and ISA as string literals, and the branch on them the
+  // target never takes dropped (constfold.prune_literal_branches), so
+  // every gate below and the shake judge the module as built for this
+  // target. An arm that reaches what one target lacks compiles for the
+  // other: std/fetch dials on every target but wasi-http, where it sends
+  // through the host. -check and -interp returned above with the calls
+  // intact.
+  let desc: platforms.Descriptor = platforms.for_target(target);
+  merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
+  merged = constfold.prune_literal_branches(merged);
+
+  // Target-capability gate (E066 — platforms.fern): reject, before codegen,
+  // a call to a runtime builtin the target's descriptor does not grant
+  // (`subprocess` anywhere compiled, `proc_fork` / `__heap_mark` on wasm).
+  // Without it the self-host compiles a program native refuses, and the
+  // failure lands mid-build as an undefined label or, on wasm, as a
+  // host-side instantiation error.
+  // A -shared library's exports are entry points as main is, bound on the
+  // module as a WIT export is: the shake keeps them, the capability gate
+  // judges what they reach, and no pass culls one as unreferenced.
+  let shared_roots: string[] = [];
+  if (shared) {
+    shared_roots = shared_export_names(export_list);
+    let bad: string = shared_export_refusal(merged, shared_roots);
+    if (bad.len() > 0) {
+      eprint("fern: " + bad);
+      return 1;
+    }
+    for n in shared_roots {
+      merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true }) };
+    }
+  }
+  if (eprint_findings(capability_findings(merged, target), entry_path, b.files)) {
+    return 1;
+  }
+
+  // Package-capability gate (E070 — caps.fern): the other capability
+  // system, gating what a DEPENDENCY may reach rather than what the target
+  // provides. Without it the self-host builds a program native refuses.
+  if (eprint_findings(package_findings(merged, pkgs), entry_path, b.files)) {
+    return 1;
+  }
+
+  // The bag boundary (E080 — ambient.fern): a handler reaching a host
+  // effect around its platform, on either compiler.
+  if (eprint_findings(ambient_findings(merged), entry_path, b.files)) {
+    return 1;
+  }
+
+  // Constant-fold the program before codegen, on EVERY build. Native gates
+  // no constant folding behind `-O` either — `internal/constfold` runs on
+  // all four of its compile paths and the expression fold in `internal/ir`
+  // likewise — and `-O` there means assert elision, below. Gating this
+  // behind `-O` meant a default self-host build emitted a runtime call for
+  // `"ab" + "cd"` where native emitted one literal.
+  //
+  // Compile-only: applied after -check / -interp / -fmt (which return above
+  // and want the original AST), ahead of both the SSA and AST emit paths.
+  // Folding is behaviour-preserving — it skips `/` and `%` by zero, leaving
+  // the runtime error intact — so it changes only the shape of the emitted
+  // code, which is why it needs no flag.
+  merged = constfold.fold_module(merged);
+
+  // After every gate, so diagnostics and the capability checks see the
+  // program as written; before the shake, so a function nothing calls keeps
+  // its counters and reports 0.
+  if (cover_on) {
+    merged = cover.instrument(merged, b.files, entry_path);
+  }
+
+  // typed-IR (#5531): stamp each call expression with its checker-inferred
+  // result type so the IR lowering READS the type instead of re-deriving it
+  // structurally (docs/TYPED-IR-REWRITE.md). Runs after check + constfold and
+  // before every emit path, so the emit_module_ir routing sees c.ty. Deterministic,
+  // so the byte-identical self-compile fixpoint is preserved.
+  //
+  // Annotation is per-call, so an assert the elision deletes takes only its
+  // own stamps with it and the surviving ones are the same either way.
+  merged = checker.annotate_module(merged);
+
+  // -O: drop every assert() check, the one thing native spends the flag on
+  // (constfold.ElideAsserts). The condition goes with the check, which is
+  // why asserts must be side-effect-free.
+  //
+  // `-O` must narrow the emitted program and never widen the set that
+  // compiles, so the elision runs after EVERY gate: the checker and the two
+  // capability gates above. The checker is what rejects an ill-typed assert
+  // (`assert(nosuchname > 1)` is E001, #7170, #8461) before the elision can
+  // take it away.
+  if (optimize) {
+    merged = constfold.elide_asserts(merged);
+  }
+
+  // Prune functions unreachable from `main` (+ top-level statements + WIT
+  // exports), the same name-based over-approximation asm_load_run applies and
+  // native runs before platforms.Enforce. Without it a program importing one
+  // stdlib module emits that module's whole transitive closure: `import
+  // "std/string"` costs bench/string_count_byte 958 emitted functions
+  // against native's 27.
+  //
+  // After every gate, for the reason the assert elision above is: pruning can
+  // only narrow the emitted program, and running it earlier would widen the
+  // set that compiles — a module ineligible for the IR path can become
+  // eligible once the function that bails it is dropped. The checker and both
+  // capability gates therefore still see the module as written, so no
+  // diagnostic moves.
+  merged = treeshake.treeshake(merged);
+
+  if (!platforms.emits_code(target)) {
+    // Native reports the same shape from its descriptor's NoBackend flag.
+    // A freestanding target type-checks (against an empty capability set)
+    // and has nothing to lower with, so refusing here is the correct answer
+    // — the alternative is an artifact built for the wrong machine.
+    eprint("fern: -target " + target + ": check-only — no backend emits for this target yet");
+    return 2;
+  }
+
+  let typed: parser.Module = parser.module_with_builtins_typed(merged);
+  let full: parser.Module = parser.erase_view_module(typed);
+  // The typed semantic lowering, threaded into whichever emit path runs.
+  // `-g` on an ELF target carries the line table: the lowering marks each
+  // statement, the emitter renders the marks as `.loc` rows over the `.file`
+  // table prepended below, and the ELF writer encodes .debug_line (#11410).
+  let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux");
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, debug_lines), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on() } };
+  let out_asm: string = "";
+  let emit_text: boolean = emit == "asm";
+  if (target == "arm64-linux") {
+    // `-emit asm` is the arm64 emitter's GAS text, stopping short of the
+    // in-process assembler + linker the default form runs on top of it —
+    // the shape a harness wants when it assembles with its own toolchain.
+    //
+    // It is also the only way to observe the emitter in isolation, which
+    // is what corrected #6011: measured through the linked form the arm64
+    // path looked 5x hungrier than x86-64, but that compared "emit +
+    // assemble + link" against x86-64's "emit". Emitter to emitter they
+    // are at parity (1.56 GB vs 1.50 GB on an empty `main` importing
+    // std/array); the excess is all in arm64_gas_program.
+    //
+    // The default form is the in-process ELF (arm64_native + elf.fern) —
+    // no `.s` + gcc/ld.
+    let recs: usize = word_buf(emit_text);
+    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, recs);
+    util.arr_push_cliff_report("arm64:emitted", 0);
+    if (out_asm.len() == 0) {
+      return 2;
+    }
+    if (debug_lines) {
+      out_asm = dw_file_table(entry_path, b.files) + out_asm;
+    }
+    if (shared) {
+      out_asm = export_entries(merged, shared_roots, true) + out_asm;
+    }
+    if (!emit_text && shared) {
+      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    } else if (!emit_text) {
+      out_asm = arm64_elf_binary(out_asm, words_of(recs), emit_syms, entry_path);
+      util.arr_push_cliff_report("arm64:image", 0);
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    }
+  } else if (target == "arm64-android") {
+    // arm64-android is the arm64 emitter wrapped in a static-PIE (ET_DYN)
+    // image instead of the fixed-address W^X one. `-emit asm` produces the
+    // same GAS as arm64-linux: the PIE-ness is a link-time property, and
+    // the one construct that cares — the startup self-relocation loop — is
+    // emitted on both, where ET_EXEC simply computes a zero slide and skips
+    // it (#7112).
+    let recs: usize = word_buf(emit_text);
+    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, recs);
+    if (out_asm.len() == 0) {
+      return 2;
+    }
+    if (shared) {
+      out_asm = export_entries(merged, shared_roots, true) + out_asm;
+    }
+    if (!emit_text && shared) {
+      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    } else if (!emit_text) {
+      out_asm = arm64_elf_binary_pie(out_asm, words_of(recs));
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    }
+  } else if (target == "arm64-darwin") {
+    // Same arm64 code generator with the Darwin syscall builtins
+    // (gettimeofday / getentropy) selected via the darwin flag;
+    // darwinize() rewrites the emitter output into the Mach-O assembler
+    // dialect (@PAGE/@PAGEOFF, _main entry, BSD syscalls). That GAS
+    // text is then assembled + linked entirely in-process by
+    // arm64_native: arm64_gas_program parses + selects instructions,
+    // macho_text_vaddr/macho_data_vaddr fix the segment addresses,
+    // arm64_gas_link resolves @PAGE/@PAGEOFF + branch fixups against
+    // them, and macho_executable writes the signed Mach-O
+    // (ad-hoc LC_CODE_SIGNATURE — Apple Silicon refuses unsigned
+    // binaries). No external clang / ld64. The output bytes are packed
+    // into a string written verbatim by write_file (see the wasm core
+    // module for the same i32[]->u8[]->string idiom).
+    //
+    // `-emit asm` stops at the darwinized text: it is the only way to hand
+    // the emitter's output to clang, which decides whether a misbehaving
+    // binary is the emitter's fault or arm64_gas_program's.
+    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, true, sub, 0 as usize);
+    util.arr_push_cliff_report("darwin:emitted", 0);
+    out_asm = asm_arm64_ir.darwinize(out_asm);
+    util.arr_push_cliff_report("darwin:darwinized", 0);
+    if (out_asm.len() == 0) {
+      return 2;
+    }
+    if (!emit_text) {
+      let prog: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(out_asm);
+      util.arr_push_cliff_report("darwin:assembled", 0);
+      if (prog.unknown.len() > 0) {
+        let _ar: string = arm64_refusals("arm64-darwin", "assembler", prog.unknown);
+        return 2;
+      }
+      let pa: arm64_native.Arm64Asm = prog.asm;
+      // __eh_frame sits inside __TEXT between the code and __DATA, and
+      // its section header shifts the first code byte, so its LENGTH is
+      // needed before any address is. It does not depend on either
+      // address, so rendering it once at the final length and again at
+      // the final addresses is exact rather than a fixpoint.
+      let deh_len: i32 = arm64_native.arm64_eh_frame_darwin_len(prog);
+      let tv: i64 = arm64_native.macho_text_vaddr(pa.text.len(), deh_len, prog.data.len(), prog.bss_size);
+      let ev: i64 = arm64_native.macho_eh_vaddr(pa.text.len(), deh_len, prog.data.len(), prog.bss_size);
+      let dv: i64 = arm64_native.macho_data_vaddr(pa.text.len(), deh_len, prog.data.len(), prog.bss_size);
+      let deh: i32[] = arm64_native.arm64_eh_frame_darwin(prog, tv, ev);
+      util.arr_push_cliff_report("darwin:unwind", 0);
+      prog = arm64_native.arm64_gas_link(prog, tv, dv);
+      util.arr_push_cliff_report("darwin:linked", 0);
+      if (prog.unknown.len() > 0) {
+        let _lr: string = arm64_refusals("arm64-darwin", "linker", prog.unknown);
+        return 2;
+      }
+      let pa2: arm64_native.Arm64Asm = prog.asm;
+      // darwinize renames the ELF `_start` entry to `_main`; like the
+      // ELF path, resolve its label rather than assuming offset 0 — the
+      // emitter writes the entry after the user's functions.
+      let deoff: i32 = arm64_native.macho_entry_off(pa2);
+      let dreb: i32[] = arm64_native.arm64_gas_rebase_offs(prog);
+      // `-g`: the function labels into LC_SYMTAB (#11409), as the ELF
+      // targets' .symtab; a default build writes none.
+      let dsym_names: string[] = [];
+      let dsym_offs: i32[] = [];
+      if (emit_syms) {
+        dsym_names = pa2.lab_names;
+        dsym_offs = pa2.lab_offs;
+      }
+      out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable_binds(pa2.text, deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms, dsym_names, dsym_offs)));
+      util.arr_push_cliff_report("darwin:image", 0);
+    }
+  } else if (target == "wasm32-wasi" && emit_text) {
+    // WASI core module in text format (WAT). Runnable directly by
+    // `wasmtime run`; main()'s result becomes the process exit code.
+    out_asm = wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub);
+  } else if (target == "wasm32-wasi" && emit == "core-module") {
+    // Same WASI core module, assembled to the wasm *binary* format:
+    // emit WAT, then run it through the self-hosted
+    // WAT->binary assembler (watbin). The binary bytes (an i32[] of
+    // 0..255) are packed into a string whose bytes write_file / write
+    // emit verbatim, so the output file is a runnable `.wasm`.
+    out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub))));
+  } else if (target == "wasm32-wasi") {
+    // A Component-Model `wasi:cli/run` component (emitforms.wasm_component).
+    // A program the component path cannot take is rejected rather than
+    // emitting a broken component.
+    let comp: wit_compose.Composed = emitforms.wasm_component(full, sub);
+    if (comp.bytes.len() == 0) {
+      if (comp.refused.len() > 0) {
+        eprint(comp.refused);
+      }
+      return 2;
+    }
+    out_asm = string_from_bytes_unchecked(util.to_u8(comp.bytes));
+  } else if (target == "wasm32-wasi-http" && emit_text) {
+    out_asm = emitforms.wasm_http_core(full, sub);
+  } else if (target == "wasm32-wasi-http" && emit == "core-module") {
+    let hwat: string = emitforms.wasm_http_core(full, sub);
+    if (hwat.len() == 0) {
+      return 2;
+    }
+    out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(hwat)));
+  } else if (target == "wasm32-wasi-http") {
+    // A wasi:http/incoming-handler component of the proxy world.
+    let hc: wit_compose.Composed = emitforms.wasm_http_component(full, sub);
+    if (hc.bytes.len() == 0) {
+      if (hc.refused.len() > 0) {
+        eprint(emitforms.http_refused(hc.refused));
+      }
+      return 2;
+    }
+    out_asm = string_from_bytes_unchecked(util.to_u8(hc.bytes));
+  } else {
+    // #3457 slice 3: the x86 CLI path routes IR-or-error, never the legacy
+    // AST emitter. As of slice 5 asm.emit_module has no callers at all.
+    // `-emit asm` stops at that text — what a harness assembling with its
+    // own toolchain wants; the default form assembles + links it in-process
+    // (x86_native + elf.fern), so it produces a runnable binary like
+    // arm64-linux does and needs nothing on $PATH.
+    let recs: usize = word_buf(emit_text);
+    out_asm = asm_ir.emit_module_or_error_sub(full, sub, recs);
+    if (debug_lines && out_asm.len() > 0) {
+      out_asm = dw_file_table(entry_path, b.files) + out_asm;
+    }
+    if (shared && out_asm.len() > 0) {
+      out_asm = export_entries(merged, shared_roots, false) + out_asm;
+    }
+    if (!emit_text && shared) {
+      out_asm = x86_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "");
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    } else if (!emit_text) {
+      out_asm = x86_elf_binary(out_asm, words_of(recs), emit_syms, entry_path);
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    }
+  }
+  if (out_path.len() > 0) {
+    match (write_output(out_path, out_asm, target, emit)) {
+      Err(e) => {
+        eprint("fern: cannot write output " + out_path + ": " + util.io_error_reason(e));
+        return 1;
+      },
+      Ok(_) => {}
+    }
+  } else {
+    write(out_asm);
+  }
+  return 0;
+}

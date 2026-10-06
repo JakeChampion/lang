@@ -75,7 +75,7 @@ function main(): i32 {
 	// variable (`bigger__T`), whose body calls `T.cmp` -- an unknown symbol, so
 	// the gate rejected the caller and the module failed to compile. The first
 	// version of the ExprIndex arm had no such guard and broke
-	// examples/tests/array_structural_verbs_test.fern
+	// tests/stdlib/array_structural_verbs_test.fern
 	// (`test.assert_eq(array.reverse(xs)[0], 42)` -> `test__assert_eq__T` ->
 	// `T.eq`) on every backend.
 	{"typevar-elem-stays-generic", `import "std/array";
@@ -92,7 +92,7 @@ function main(): i32 {
 	// the array-method and generic-struct folds, and an associated
 	// `Type.m()`; a plain user method on a struct value inferred "unknown",
 	// the call stayed generic, and the self-host refused
-	// examples/tests/hash_checksums_test.fern with E001 on `test__assert_eq`.
+	// tests/stdlib/hash_checksums_test.fern with E001 on `test__assert_eq`.
 	// The receiver's declared method answers now, keyed the way an associated
 	// call is; the same-module and the module-qualified receiver both.
 	{"method-result-args", `import "core/cmp";

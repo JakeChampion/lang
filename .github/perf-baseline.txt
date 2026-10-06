@@ -1,4 +1,4 @@
-# Retired- and static-instruction baselines for the examples/bench corpus,
+# Retired- and static-instruction baselines for the bench corpus,
 # checked against every run by scripts/ci-check-perf.
 #
 # FORMAT: metric  value  [tolerance%]. The metric key is

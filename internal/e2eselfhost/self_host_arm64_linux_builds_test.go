@@ -11,7 +11,7 @@ import (
 )
 
 // TestSelfHostArm64LinuxBuilds is the main arm64-Linux test: the self-host CLI
-// (examples/self_host/fern.fern, `-target arm64-linux`) now emits a runnable static
+// (compiler/fern.fern, `-target arm64-linux`) now emits a runnable static
 // ELF **in-process** — asm_arm64 / ssa_arm64 produce the GAS text and
 // arm64_native + elf.fern assemble + link it, with no `.s` + gcc/ld step (the
 // flip, mirroring arm64-darwin). Unlike the darwin path (which can only be

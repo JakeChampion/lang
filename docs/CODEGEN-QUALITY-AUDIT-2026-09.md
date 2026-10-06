@@ -38,7 +38,7 @@ turns out to be the sharpest way to see it. **The assemblers can encode far more
 than the code generator ever asks for.** `internal/native/arm64` encodes `madd`,
 `csel`, `ubfx`, `cbz`, `movn`, logical bitmask immediates, shifted-register
 operands and 78 Advanced-SIMD mnemonics. In the 7 933 724 instructions the
-compiler emits for its own sources (`examples/self_host/fern.fern`, arm64),
+compiler emits for its own sources (`compiler/fern.fern`, arm64),
 `madd` appears **0 times**, `csel` 17 times, `movn`, `bfi`, `sbfx` and `rev`
 **0 times each**, and 72 of the 78 SIMD mnemonics are unreachable from any code
 path.
@@ -68,7 +68,7 @@ byte-identical compiler output.
 Retired instructions, `valgrind --tool=callgrind`, deterministic across runs,
 with each toolchain's own process-startup cost subtracted so the number is the
 kernel and not libc's initialiser. Kernels are the project's own
-`examples/bench/*.fern` with line-for-line C / Rust / Go transliterations.
+`bench/*.fern` with line-for-line C / Rust / Go transliterations.
 
 | kernel | Fern, audited | Fern, after tier A | `gcc -O0` | `gcc -O2` | `clang -O2` | `rustc -O` | Go 1.24 |
 |---|---|---|---|---|---|---|---|
@@ -163,7 +163,7 @@ the Go implementation's wall time. That ratio is what tier 3 costs.
 
 ### 2.1 The exhibit
 
-`examples/bench/int_loop.fern`, whose whole body is `sum = sum + i; i = i + 1`
+`bench/int_loop.fern`, whose whole body is `sum = sum + i; i = i + 1`
 under `while (i < 3000000)`. Fern's x86-64 loop, verbatim, against `gcc -O0`'s:
 
 As audited. The right column is `gcc -O0`; the after-tier-A form follows.
@@ -243,7 +243,7 @@ Everything else on the list below is a variation on those three.
 
 ### 2.2 The census
 
-`scripts/codegen-census -c examples/self_host/checker_run.fern`, the self-hosted
+`scripts/codegen-census -c compiler/checker_run.fern`, the self-hosted
 checker driver — 1 074 functions, the largest realistic program in the tree:
 
 ```
@@ -346,14 +346,14 @@ as a post-pass over the emitted text and re-assembling with GNU `as`:
 
 - `checker_run.fern`: 1 601 565 → 1 272 507 instructions (**−20.5%**);
   `.text` 5 317 319 → 4 584 201 bytes (**−13.8%**); 81 997 sites rewritten.
-- `examples/bench`, 22 programs: −16.8% instructions, −12.0% bytes, **all 22
+- `bench`, 22 programs: −16.8% instructions, −12.0% bytes, **all 22
   exit codes identical**.
 - Wall time, best-of-7 interleaved: `int_loop` −14.7%, `array_index` −20.9%,
   `tokenize` −17.9%, `enum_match` −10.6%, `map_int` −9.9%, `sort_ints` −5.8%.
 - End to end: both the baseline and the rewritten 5.3 MB `checker_run` drivers
   were linked and run on `tokenize.fern`, `sort_ints.fern` and
-  `self_host/util.fern` — identical exit codes and byte-identical stdout and
-  stderr, including a 330-byte diagnostic dump. On `self_host/lexer.fern` the
+  `compiler/util.fern` — identical exit codes and byte-identical stdout and
+  stderr, including a 330-byte diagnostic dump. On `compiler/lexer.fern` the
   rewritten driver runs 69 022 µs → 62 443 µs, **−9.5%**.
 
 An independent count of the pattern over the same emit, using a different
@@ -421,7 +421,7 @@ already complete and already fuzzed.
 > | `coreutils/wc.fern` | 42,371 | 15,652 | **0.37×** |
 > | `coreutils/sort.fern` | 71,340 | 43,163 | **0.60×** |
 > | `coreutils/b2sum.fern` | 92,124 | 69,893 | **0.76×** |
-> | `examples/self_host/checker_run.fern` | 753,872 | 675,775 | **0.90×** |
+> | `compiler/checker_run.fern` | 753,872 | 675,775 | **0.90×** |
 >
 > `scripts/codegen-census`, `bin/fern` at `0e1ca4b49`. The driver row is the one
 > that matters: 0.90× where §5.0's table recorded 1.44×. Both sides moved — the
@@ -475,7 +475,7 @@ backend, reachable as `-backend ssa -target arm64-linux`. Its status is better
 than `docs/SSA-DECISION.md` and the CLI's own help text say — both still
 describe it as covering "a subset of the language".
 
-Measured over all 22 `examples/bench` kernels: **every one is accepted, none
+Measured over all 22 `bench` kernels: **every one is accepted, none
 refused**, and every one produces the same exit code as the default backend
 under `qemu-aarch64`.
 
@@ -607,7 +607,7 @@ in the same PR as a follow-up commit, in its guard-elimination and
 power-of-two halves only; A8's remaining items did not — see §6.2.
 
 Each was validated the same way before the next was started: the 22
-`examples/bench` programs' exit codes against the pre-change compiler, and the
+`bench` programs' exit codes against the pre-change compiler, and the
 self-hosted compiler built by the modified backend emitting byte-identical
 assembly. The original plan, for the record:
 
@@ -711,7 +711,7 @@ cross-block analysis to.
   sits on the loop's dependency chain, so the divider's latency is exposed,
   it is worth **−17.5%** (171 ms → 141 ms over 20M iterations, reproducible to
   ±0.4pp). Where the divisions are independent of each other the out-of-order
-  engine already hides that latency and it is a wash (+0.7%). `examples/bench`
+  engine already hides that latency and it is a wash (+0.7%). `bench`
   contains only the second kind, so the corpus shows **no wall-time change at
   all** — `sort_ints` scaled 25× is 248 ms either way. The win is real and it
   is simply not a workload this corpus has; hashing, base conversion and date
@@ -866,7 +866,7 @@ The rejected patch is not in the tree; this section is what it bought.
 Stated plainly so the gaps are not mistaken for clean bills of health.
 
 - **The self-hosted compiler's own emitters.** Everything above measures the Go
-  implementation. `examples/self_host/asm_ir.fern` and `asm_arm64_ir.fern`
+  implementation. `compiler/asm_ir.fern` and `asm_arm64_ir.fern`
   are separate emitters with their own instruction selection, and per
   `docs/NATIVE-CONVERGENCE.md` they are where new surface should land first.
   A fix in `internal/codegen` is half the work. The x86-64 one has since
@@ -882,7 +882,7 @@ Stated plainly so the gaps are not mistaken for clean bills of health.
   native has carried since #4378: `checker.fern`'s x86-64 emit is 274,320 ->
   258,072 instruction lines (-5.9%) and the stage-2 compiler retires 16.18 ->
   14.17 G instructions producing it (-12.4%, callgrind). arm64 gains less
-  (-2.0% on `examples/bench` against x86-64's -4.9%) because its unfused form
+  (-2.0% on `bench` against x86-64's -4.9%) because its unfused form
   was already `cmp; cset; cbz` rather than x86-64's five-instruction
   materialisation.
 - **Whether `gcc -O2` is the right target.** A language with bounds checks,
@@ -921,21 +921,21 @@ Stated plainly so the gaps are not mistaken for clean bills of health.
 go build -o bin/fern ./cmd/fern
 
 # the census, per backend
-scripts/codegen-census -c examples/self_host/checker_run.fern
-scripts/codegen-census -c examples/bench/int_loop.fern
+scripts/codegen-census -c compiler/checker_run.fern
+scripts/codegen-census -c bench/int_loop.fern
 
 # the exhibit
-./bin/fern -target x86-64-linux examples/bench/int_loop.fern | sed -n '/^__fn_main:/,/^\.size/p'
+./bin/fern -target x86-64-linux bench/int_loop.fern | sed -n '/^__fn_main:/,/^\.size/p'
 
 # instruction repertoire
-./bin/fern -target arm64-linux examples/self_host/checker_run.fern \
+./bin/fern -target arm64-linux compiler/checker_run.fern \
   | grep -P '^\t\S' | awk '{print $1}' | sort | uniq -c | sort -rn
 
 # the cross-language ranking (kernel-only retired instructions)
 valgrind --tool=callgrind --callgrind-out-file=/dev/null ./prog   # subtract an empty main's count
 
 # the SSA comparison
-for f in examples/bench/*.fern; do
+for f in bench/*.fern; do
   d=$(./bin/fern -target arm64-linux "$f" | grep -cP '^\t\S')
   s=$(./bin/fern -backend ssa -target arm64-linux "$f" | grep -cP '^\t\S')
   echo "$f $d $s"

@@ -1312,7 +1312,7 @@ function main(): i32 {
 	// counts nothing and frees nothing; `key` and `value` read the map's own
 	// columns at the cursor and take no unit of what they answer. Refused
 	// whole before (`unsupported call target: Map[string, i32].iter`), which
-	// held `examples/tests/json_roundtrip_test` and
+	// held `tests/stdlib/json_roundtrip_test` and
 	// `conformance/cases/audit_std_json` entirely to the AST lowering.
 	//
 	// Both key-column layouts are covered: `mapiter_key` loads a string key
@@ -1394,7 +1394,7 @@ function main(): i32 {
 	// type arguments outside `-fmt`, so the monomorphiser built the instance
 	// with T still free and every reader downstream saw `Option[unknown]`:
 	// `unbound type variable`, 0 of 13. It is the root of the whole cascade in
-	// `examples/tests/iter_test` (175 declarations) and
+	// `tests/stdlib/iter_test` (175 declarations) and
 	// `iter_combinators_test` (151), both of which produce whole with it.
 	//
 	// Both impl shapes are covered deliberately: `Range` writes its element
@@ -1527,7 +1527,7 @@ function main(): i32 {
 	// through unchanged. A numeric target stays a conversion, which is what
 	// `widen` pins: 260 as u8 is still 4, not 260.
 	//
-	// One such line held `examples/tests/ndarray_test` at 0 of 254: the
+	// One such line held `tests/stdlib/ndarray_test` at 0 of 254: the
 	// refusal left an AST-built function value behind, and
 	// `semlower.ast_value_call` then refused the runner's `it` for calling a
 	// value of matching arity, taking every test in the file with it (#9940).
@@ -1562,7 +1562,7 @@ function main(): i32 {
 	// `has_array_method` is one: the contract's name ends with the convention
 	// name rather than being it.
 	//
-	// `examples/tests/array_combinators_test` went 0 of 211 to 211 of 211 on
+	// `tests/stdlib/array_combinators_test` went 0 of 211 to 211 of 211 on
 	// this, on one call to `join_with_last`.
 	{name: "an-array-helper-is-a-free-function", atLeast: 45, want: "24|a, b and c\n", src: `
 import "std/array" as array;
@@ -1592,7 +1592,7 @@ function main(): i32 {
 	// one shape left name-only. Assignability still ignores union args, so it
 	// is checker-behaviour-neutral in the same way those are.
 	//
-	// `examples/tests/sim_driver_test` went 0 of 180 to 180 of 180 on this —
+	// `tests/stdlib/sim_driver_test` went 0 of 180 to 180 of 180 on this —
 	// std/sim's `__pend[T](tok, next: async.Future[T])` returns
 	// `Pending(tok, (woken: i32) => next)`, which is this program with more
 	// around it.
@@ -5569,7 +5569,7 @@ function main(): i32 {
 `},
 	// A record holding a function value reaches, through the field, the
 	// records the function takes and hands back, so a body that names only
-	// the record still carries their schemas (examples/proposals/pipeline.fern).
+	// the record still carries their schemas (tests/proposals/pipeline.fern).
 	{name: "a-function-field-names-its-signature-records", atLeast: 3, want: "0|", src: `
 struct Ctx { value: i32 }
 struct Fault { why: string }

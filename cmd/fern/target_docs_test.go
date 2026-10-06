@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/corpus"
 	"github.com/jakechampion/lang/internal/platforms"
 )
 
@@ -21,13 +22,6 @@ import (
 // the diagnostic explanations, and the header comments of runnable examples.
 // `docs/` is excluded because it is a working record where a line may
 // legitimately quote a target that no longer exists.
-//
-// examples/self_host is excluded for a different and sharper reason: the
-// self-hosted compiler keeps its OWN -target vocabulary (`x86-64`, `arm64`,
-// `wasm`, `wasm-bin`, `wasm-component`, the `-asm` variants), which this
-// package's table does not and should not describe. That overlap is exactly
-// what the rename got wrong in both directions, so the boundary is drawn
-// once, here.
 func TestUserFacingTargetNamesResolve(t *testing.T) {
 	root := repoRoot(t)
 
@@ -63,8 +57,7 @@ func TestUserFacingTargetNamesResolve(t *testing.T) {
 func userFacingFiles(t *testing.T, root string) []string {
 	t.Helper()
 	skip := map[string]bool{
-		filepath.Join(root, "examples", "self_host"): true,
-		filepath.Join(root, "examples", "proposals"): true,
+		filepath.Join(root, "tests", "proposals"): true,
 	}
 	var out []string
 	add := func(path string, d os.DirEntry, err error) error {
@@ -83,10 +76,11 @@ func userFacingFiles(t *testing.T, root string) []string {
 		}
 		return nil
 	}
-	for _, dir := range []string{
-		filepath.Join(root, "examples"),
-		filepath.Join(root, "internal", "diag", "explanations"),
-	} {
+	var dirs []string
+	for _, r := range corpus.Programs {
+		dirs = append(dirs, filepath.Join(root, r))
+	}
+	for _, dir := range append(dirs, filepath.Join(root, "internal", "diag", "explanations")) {
 		if err := filepath.WalkDir(dir, add); err != nil {
 			t.Fatalf("walk %s: %v", dir, err)
 		}
@@ -96,13 +90,9 @@ func userFacingFiles(t *testing.T, root string) []string {
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
-	wd, err := os.Getwd()
+	root, err := corpus.RepoRoot()
 	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	root := filepath.Join(wd, "..", "..")
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("repo root %s has no go.mod: %v", root, err)
+		t.Fatal(err)
 	}
 	return root
 }

@@ -58,5 +58,5 @@ appends to a literal that already holds elements. `TestSelfHostArrPush*`,
 Routing `__memcpy` through the size-classed `__fern_memcpy` would look like
 a 0.5% gain under callgrind, which counts every `rep movsb` iteration as an
 instruction. It is not one: the arm64 emitter's note records that the
-size-classed copy measured a 10% wall-clock loss over `examples/bench` on
+size-classed copy measured a 10% wall-clock loss over `bench` on
 x86-64, where ERMSB is part of the baseline.

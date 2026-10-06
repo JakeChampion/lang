@@ -19,7 +19,7 @@ import (
 // whole-module table of the Rows.
 func TestSelfHostContractRowsFoldEveryCalleeFact(t *testing.T) {
 	read := func(name string) string {
-		b, err := os.ReadFile("../../examples/self_host/" + name)
+		b, err := os.ReadFile("../../compiler/" + name)
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}

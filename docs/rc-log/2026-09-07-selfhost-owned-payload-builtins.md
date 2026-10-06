@@ -1,7 +1,7 @@
 # The self-host's match over read_chunk / read_line owns the payload, and its read_chunk stops stranding the block (#8402)
 
-*2026-09-07* — `examples/self_host/irlower.fern` (the binding half) and
-`examples/self_host/asmcore.fern` (the runtime half), both register backends.
+*2026-09-07* — `compiler/irlower.fern` (the binding half) and
+`compiler/asmcore.fern` (the runtime half), both register backends.
 The self-host port of native's #8396 / #8399.
 
 ## The measurement

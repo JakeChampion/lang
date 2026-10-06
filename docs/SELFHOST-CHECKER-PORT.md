@@ -9,7 +9,7 @@
 > closed. This doc is a living progress log — verify the latest slice before
 > picking up an item.
 
-Goal: grow `examples/self_host/checker.fern` to parity with the Go
+Goal: grow `compiler/checker.fern` to parity with the Go
 checker (`internal/checker/checker.go`, ~6700 LOC, 50 stable diagnostic
 codes E001–E051) so the Go checker can be retired as the strict gate.
 
@@ -1393,7 +1393,7 @@ compiler accepts. Measured over every such program in four corpora:
 | `conformance/cases` | 415 of 481 |
 | `examples/` + `internal/stdlib` | ~1,400 |
 | the 512 fernsmith differential seeds (`GenMain`, seeds 0–511) | 512 of 512 |
-| `examples/self_host/*.fern` (the compiler's own sources) | all |
+| `compiler/*.fern` (the compiler's own sources) | all |
 
 Twenty codes false-positive and are excluded:
 
@@ -1562,7 +1562,7 @@ Same four-corpus sweep as #6961, run before and after:
 | `conformance/cases` | 2 (`type_param_name_collision`, `tuple_variant_payload_subpattern`) | 0 |
 | `examples/` + `internal/stdlib` + `spec/` | 0 | 0 |
 | the 512 fernsmith differential seeds | 0 | 0 |
-| `examples/self_host` (checked as `fern.fern`, the way `make check-sources` does) | 0 | 0 |
+| `compiler` (checked as `fern.fern`, the way `make check-sources` does) | 0 | 0 |
 
 The compiler's own sources draw exactly one diagnostic from their own checker —
 the pre-existing E064 — so the bootstrap never depended on the laxity and
@@ -1571,7 +1571,7 @@ nothing in the tree needed an import added.
 Checking a self-host or stdlib module FILE on its own is not the same
 measurement and does not belong in this sweep: it draws E006 for the missing
 `main` and resolves nothing its entry point would have imported. `fern.fern`
-and `tools/stdlib_check.sh` are the entry points those two corpora are checked
+and `scripts/stdlib_check.sh` are the entry points those two corpora are checked
 through.
 
 The exclusion list is now eighteen codes:
@@ -1702,7 +1702,7 @@ Same four-corpus sweep as #6961, re-run whole:
 |---|---|---|
 | `conformance/cases` | 496 of 570 | 0 |
 | `examples/` + `coreutils/` + `spec/` + `internal/stdlib` | 445 of 448 | 0 |
-| `examples/self_host` via `fern.fern` | accepted | 0 — only the uncoded #4346 hint |
+| `compiler` via `fern.fern` | accepted | 0 — only the uncoded #4346 hint |
 
 The list is empty and `is_partial_checker_gap_code` is gone: every coded
 diagnostic gates the build. Its last two entries were E013 / E018 (#8852), one

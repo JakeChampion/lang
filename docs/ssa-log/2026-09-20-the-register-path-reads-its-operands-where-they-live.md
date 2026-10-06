@@ -4,7 +4,7 @@
 machine and find single instructions to save per loop iteration. The
 self-host's register path, which is the default on both native ISAs and
 whose output wins ties, had not been put on the same scale. Retired
-instructions under callgrind, `examples/bench/int_loop` (3,000,000
+instructions under callgrind, `bench/int_loop` (3,000,000
 iterations of `sum = sum + i; i = i + 1`), x86-64:
 
 | | Ir | per iteration |
@@ -58,7 +58,7 @@ empty block the back edge jumps through (1).
 
 ## Measured
 
-Every `examples/bench` program, x86-64, retired instructions, self-host
+Every `bench` program, x86-64, retired instructions, self-host
 register path before and after, native for scale (the three map
 benchmarks are left out: the self-host's map is an association list,
 #9608, and dominates them by 1,000x whatever the emitter does):

@@ -74,13 +74,13 @@ func TestSelfHostTypesEveryIntrinsicFamily(t *testing.T) {
 		sort.Strings(untyped)
 		sort.Strings(uncontracted)
 		if len(untyped) > 0 {
-			t.Errorf("family %q: %d intrinsic(s) native types and examples/self_host/checker.fern's "+
+			t.Errorf("family %q: %d intrinsic(s) native types and compiler/checker.fern's "+
 				"intrinsic_result does not: %s\nA call to one of these types as unknown, which "+
 				"collapses the literal, array or operator holding it.",
 				family.name, len(untyped), strings.Join(untyped, ", "))
 		}
 		if len(uncontracted) > 0 {
-			t.Errorf("family %q: %d intrinsic(s) with no contract in examples/self_host/semsource.fern's "+
+			t.Errorf("family %q: %d intrinsic(s) with no contract in compiler/semsource.fern's "+
 				"intrinsic_contracts: %s\nThe semantic boundary refuses every function that calls one.",
 				family.name, len(uncontracted), strings.Join(uncontracted, ", "))
 		}
@@ -166,7 +166,7 @@ func selfHostLoweredIntrinsics(t *testing.T) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
 	for _, f := range []string{"semsource.fern", "ssarc.fern", "irtables.fern", "lift.fern", "ir.fern"} {
-		b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", f))
+		b, err := os.ReadFile(filepath.Join("..", "..", "compiler", f))
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)
 		}
@@ -272,7 +272,7 @@ func selfHostIntrinsicContracts(t *testing.T) map[string]bool {
 
 func selfHostSection(t *testing.T, file string, re *regexp.Regexp) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", file))
+	b, err := os.ReadFile(filepath.Join("..", "..", "compiler", file))
 	if err != nil {
 		t.Fatalf("read %s: %v", file, err)
 	}
@@ -314,7 +314,7 @@ func TestSelfHostParameterisesEveryTypedBuiltin(t *testing.T) {
 	}
 	sort.Strings(unchecked)
 	if len(unchecked) > 0 {
-		t.Errorf("%d builtin(s) whose result examples/self_host/checker.fern types and whose parameters it "+
+		t.Errorf("%d builtin(s) whose result compiler/checker.fern types and whose parameters it "+
 			"does not: %s\nA call to one of these infers, so nothing refuses a wrong argument and the "+
 			"self-host accepts what native rejects.", len(unchecked), strings.Join(unchecked, ", "))
 	}
@@ -370,7 +370,7 @@ func selfHostTypedBuiltins(t *testing.T, section string, members bool) map[strin
 // the typed path refuses the helper that calls it.
 func TestSelfHostRawFloorIsTypedWhole(t *testing.T) {
 	read := func(name string) string {
-		b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", name))
+		b, err := os.ReadFile(filepath.Join("..", "..", "compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -410,7 +410,7 @@ func TestSelfHostRawFloorIsTypedWhole(t *testing.T) {
 // checked against nothing, while semsource still contracts it, so the typed
 // path refuses what the checker accepted. The six __fern_* rows sat that way.
 func TestSelfHostRawFloorLookupReachesEveryRow(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", "checker.fern"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "compiler", "checker.fern"))
 	if err != nil {
 		t.Fatalf("read checker.fern: %v", err)
 	}

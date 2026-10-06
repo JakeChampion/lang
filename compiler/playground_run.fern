@@ -1,0 +1,364 @@
+// compiler/playground_run.fern — the compiler as a service: source
+// on stdin, a wasm module on stdout, and no filesystem underneath (#6643).
+//
+// This is the driver the browser playground needs and `fern.fern` is not.
+// `fern.fern` is a CLI — it takes argv paths, reads them, and writes an
+// executable — while a playground has one program in memory and nowhere to put
+// a file. `wasm_ir_run.fern` has the right SHAPE (stdin in, module out) and
+// resolves nothing: it warns about every import and carries on.
+//
+// What makes the difference is where `std/…` comes from. Native serves the
+// stdlib out of `go:embed`; the self-host CLI reads it from a root named on the
+// command line, which a wasm-hosted compiler does not have. So this driver
+// carries the stdlib as `-embed` assets and hands them to the module loader as
+// an overlay, consulted ahead of disk:
+//
+//     fern -target wasm32-wasi -emit core-module -embed internal/stdlib \
+//         -o playground.wasm compiler/playground_run.fern internal/stdlib
+//
+// `internal/stdlib` appears twice and means two different things. As `-embed`
+// it is the stdlib this driver will carry AT RUNTIME. As the trailing
+// positional it is the stdlib root resolving THIS FILE's own `import "std/io"`
+// at build time. Dropping either one produces a driver that builds and then
+// cannot resolve, or one that cannot build at all.
+//
+// The overlay is sealed, so a miss is an error rather than a disk read. That is
+// the property that makes this safe to run against untrusted source: there is
+// no path from an import to the host filesystem, and `read_file` on a wasm
+// module with no preopens would fail anyway — sealed makes it fail with a
+// diagnostic naming the import instead of a silently-skipped module.
+
+import "./asm_arm64_ir";
+import "./asm_ir";
+import "./asmcore";
+import "./checker";
+import "./constfold";
+import "./emitforms";
+import "./flatten";
+import "./interp";
+import "./ircore";
+import "./lexer";
+import "./modloader";
+import "./parser";
+import "./platforms";
+import "./semlower";
+import "./treeshake";
+import "./util";
+import "./wasm_ir";
+import "./watbin";
+import "./wit_compose";
+import "std/io";
+
+// main wraps `run` in the shared rc-over-release guard — see
+// util.rc_underflow_guard. Every self-host driver run self-checks its own heap
+// accounting; a corrupted freelist is otherwise silent (#6021).
+function main(): i32 {
+  return util.rc_underflow_guard("playground_run", run());
+}
+
+// STDLIB_EXT is the suffix an embedded module name carries and an import path
+// does not.
+const STDLIB_EXT: string = ".fern";
+
+// embedded_stdlib turns the `-embed` bundle into the module loader's overlay.
+//
+// Asset names arrive as paths relative to the embed root with the extension
+// intact — `std/io.fern` — and imports are written `std/io`, so the extension
+// comes off and nothing else is rewritten. That is exact rather than
+// approximate because no module under `internal/stdlib` imports a sibling
+// relatively: every one of them spells it package-root-relative (`import
+// "std/string"`, `import "core/int"`), which is the same key the overlay is
+// built with.
+//
+// Non-`.fern` assets are skipped. They are not modules, and an embed root can
+// legitimately hold other things.
+function embedded_stdlib(): modloader.Overlay {
+  let paths: string[] = [];
+  let srcs: string[] = [];
+  for a in __fern_assets() {
+    let name: string = a.0;
+    if (name.len() > STDLIB_EXT.len()
+      && slice_unchecked(name, name.len() - STDLIB_EXT.len(), name.len()) == STDLIB_EXT) {
+      paths = paths.append(slice_unchecked(name, 0, name.len() - STDLIB_EXT.len()) + "");
+      srcs = srcs.append(a.1 + "");
+    }
+  }
+  return modloader.Overlay { paths: paths, srcs: srcs, sealed: true };
+}
+
+// CHECK_FLAG selects the diagnostics-only mode. A playground wants the errors
+// as the user types, long before anything is worth compiling, and running the
+// whole emit path to get them means paying for a module nobody will run.
+const CHECK_FLAG: string = "-check";
+
+// INTERP_FLAG selects the evaluator. The playground's output pane needs a
+// program's OUTPUT, which compiling to wasm does not give the page directly —
+// and interp_run.fern cannot serve it, because it has no module loader: a
+// program that prints a number imports std/i32 for `to_string`, and that
+// import is exactly what interp_run drops. The overlay this driver already
+// carries is the answer, so interpret lives here.
+const INTERP_FLAG: string = "-interp";
+
+// TARGET_FLAG names the machine the compile path emits for, as the CLI's
+// `-target` does: `wasm32-wasi` (the default), `x86-64-linux`, `arm64-linux`
+// or `arm64-darwin`. The native targets stop at the emitter's assembly text,
+// which is what a playground's assembly pane shows; nothing links.
+const TARGET_FLAG: string = "-target";
+
+// EMIT_FLAG selects the wasm output form: `wat` (the default) is the core
+// module as text, `core-module` the same module assembled to the binary a
+// preview-1 host runs, and `component` the wasi:cli/run component the CLI
+// writes by default. A native target has one form, its assembly, and takes
+// no `-emit`.
+const EMIT_FLAG: string = "-emit";
+
+// report_diags prints `line:col: error[E0XX]: message` for each diagnostic,
+// with the module's path ahead of it for an imported module (util.pos_str), and
+// reports whether any were printed. An empty code renders without the
+// `error[…]` segment — some diagnostics are uncoded, and parity is on the text
+// native actually prints — and a zero line drops the position prefix, which the
+// checker still leaves on some paths.
+function report_diags(diags: util.Diag[], files: string[]): boolean {
+  for d in diags {
+    let tag: string = "";
+    if (d.code.len() > 0) {
+      tag = "error[" + d.code + "]: ";
+    }
+    if (d.line > 0) {
+      eprint(util.pos_str("", files, d.line, d.col) + ": " + tag + d.message);
+    } else {
+      eprint(tag + d.message);
+    }
+  }
+  return diags.len() > 0;
+}
+
+// check reports type errors and emits nothing. The parser's sentinels are
+// reported first, then the declaration gate, each alone: the permissive parser
+// leaves an empty name where a keyword was written and then parses the body as
+// top-level statements, so the checker downstream of it reports a cascade that
+// all points away from the cause.
+//
+// The verdict is the DIAGNOSTICS, not ModuleTypes.all_well_typed. While the
+// checker port is partial (#9053) that flag goes false for a program it merely
+// cannot model — measured on `import "std/string"; function main(): i32 {
+// return 12; }`, which yields all_well_typed = false and an empty diag list.
+// Gating on it would fail almost every program that touches the stdlib, with
+// nothing printed to act on. Reporting what the checker can actually name means
+// this under-reports where the port is incomplete rather than rejecting valid
+// programs, which is the right side to err on for an editor-facing check.
+function check(merged: parser.Module, files: string[]): i32 {
+  if (report_diags(asmcore.parse_unknown_errors_module(merged), files)) {
+    return 1;
+  }
+  if (report_diags(asmcore.check_decl_names(merged), files)) {
+    return 1;
+  }
+  if (report_diags(checker.check_module(merged).diags, files)) {
+    return 1;
+  }
+  return 0;
+}
+
+// interpret evaluates the bundle and reports the program's own exit code, the
+// same mapping fern.fern uses: an i32 result is the code, a boolean is 1/0,
+// and anything else is 254, which is outside the range a Fern `main` can
+// return and so cannot be confused with one. The evaluator's own error says
+// why it stopped, on stderr, where the page shows it: a silent 254 is an
+// empty output pane.
+//
+// The program's output has already gone to stdout/stderr by the time this
+// returns: interp.eval_module runs the builtins as it goes.
+function interpret(merged: parser.Module): i32 {
+  match (interp.eval_module(merged)) {
+    interp.VInt(i) => {
+      return i.v;
+    },
+    interp.VBool(b) => {
+      if (b.v) {
+        return 1;
+      }
+      return 0;
+    },
+    interp.VErr(e) => {
+      eprint("fern: interp: " + e.msg);
+      return 254;
+    },
+    _ => {
+      return 254;
+    }
+  }
+}
+
+function run(): i32 {
+  let mode_check: boolean = false;
+  let mode_interp: boolean = false;
+  let target: string = "wasm32-wasi";
+  let form: string = "";
+  let av: string[] = args();
+  let ai: i32 = 0;
+  while (ai < av.len()) {
+    let a: string = av[ai];
+    if (a == CHECK_FLAG) {
+      mode_check = true;
+    }
+    if (a == INTERP_FLAG) {
+      mode_interp = true;
+    }
+    if ((a == TARGET_FLAG || a == EMIT_FLAG) && ai + 1 < av.len()) {
+      if (a == TARGET_FLAG) {
+        target = av[ai + 1];
+      } else {
+        form = av[ai + 1];
+      }
+      ai = ai + 1;
+    }
+    ai = ai + 1;
+  }
+  if (!(target == "wasm32-wasi" || target == "wasm32-wasi-http" || target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin")) {
+    eprint("fern: unknown -target: " + target + " (want one of: arm64-darwin arm64-linux wasm32-wasi wasm32-wasi-http x86-64-linux)");
+    return 2;
+  }
+  if (platforms.for_target(target).isa == "wasm32") {
+    if (form.len() == 0) {
+      form = "wat";
+    }
+    if (!(form == "wat" || form == "core-module" || form == "component")) {
+      eprint("fern: unknown -emit: " + form + " (want wat, core-module or component)");
+      return 2;
+    }
+  } else if (form.len() > 0 && form != "asm") {
+    eprint("fern: -emit " + form + " is a wasm output form; -target " + target + " emits assembly text");
+    return 2;
+  }
+  let src: string = "";
+  match (io.read_all_stdin()) {
+    Ok(text) => {
+      src = text;
+    },
+    Err(_) => {
+      eprint("fern: cannot read UTF-8 stdin");
+      return 1;
+    }
+  }
+  let entry: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(src, target)));
+  let missing_handle: string = emitforms.http_entry_missing(entry, target);
+  if (missing_handle.len() > 0) {
+    eprint(missing_handle);
+    return 1;
+  }
+
+  // The entry came from stdin, so it is named `stdin` and has no directory.
+  // With a sealed overlay that is inert: nothing below resolve_module ever sees
+  // the empty root.
+  let ov: modloader.Overlay = embedded_stdlib();
+  let (loaded, files, missing) = modloader.load_imports_with_files(ov, "stdin", entry);
+  if (modloader.report_unresolved(missing, "playground")) {
+    return 1;
+  }
+
+  let merged: parser.Module = flatten.bundle(entry, loaded, target);
+  merged = parser.fill_default_args_module(merged);
+  merged = parser.resolve_variant_fields_module(merged);
+
+  if (mode_check) {
+    return check(merged, files);
+  }
+  // Ahead of the emit gates below: those reject shapes the wasm EMITTER
+  // would miscompile, and the evaluator does not emit. A program the
+  // interpreter can run is worth running even where the backend would
+  // decline it.
+  if (mode_interp) {
+    return interpret(merged);
+  }
+  return emit(merged, files, target, form);
+}
+
+// emit writes the program in the form the target selects: the emitter's
+// assembly for a native target, and for wasm the core module as text or
+// binary, or the wasi:cli/run component. The pipeline is the CLI's, so the
+// bytes are the ones `fern -target <t>` writes for the same program.
+function emit(merged: parser.Module, files: string[], target: string, form: string): i32 {
+  // The same gates the CLI and wasm_ir_run put ahead of emit: each rejects a
+  // shape the emitter would otherwise miscompile rather than refuse.
+  if (report_diags(asmcore.parse_unknown_errors_module(merged), files)) {
+    return 1;
+  }
+  let errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(merged));
+  errs = util.append_diags(errs, asmcore.check_map_new_chain(merged));
+  errs = util.append_diags(errs, asmcore.check_undefined_calls(merged));
+  errs = util.append_diags(errs, asmcore.check_decl_names(merged));
+  if (errs.len() > 0) {
+    eprint(util.format_diags_in(errs, files));
+    return 1;
+  }
+  // Tree-shaking is required here rather than an optimisation: the
+  // overlay hands the loader every stdlib module the program's imports reach,
+  // and without the shake the emitted module carries all of them. It runs on
+  // the annotated module, as in fern.fern: the checker's Display rewrite
+  // (`print(q)` to `q.to_string()`, docs/TRAITS.md §3a) is what roots the
+  // method the shake would otherwise drop.
+  let desc: platforms.Descriptor = platforms.for_target(target);
+  merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
+  merged = constfold.fold_module(merged);
+  merged = checker.annotate_module(merged);
+  merged = treeshake.treeshake(merged);
+  // Judged on the shaken module, as the CLI's E066 pass is: a builtin only
+  // unreachable stdlib code names is not a refusal.
+  if (platforms.for_target(target).isa == "wasm32") {
+    let unsupported: string = wasm_ir.wasm_unsupported_builtin(merged);
+    if (unsupported.len() > 0) {
+      eprint(wasm_ir.wasm_unsupported_message(unsupported));
+      return 1;
+    }
+  }
+
+  let typed: parser.Module = parser.module_with_builtins_typed(merged);
+  let full: parser.Module = parser.erase_view_module(typed);
+  let sub: ircore.Sub = semlower.target_substitution(typed, target, false);
+  let out: string = "";
+  if (target == "x86-64-linux") {
+    out = asm_ir.emit_module_or_error_sub(full, sub, 0 as usize);
+  } else if (target == "arm64-linux") {
+    out = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, 0 as usize);
+  } else if (target == "arm64-darwin") {
+    out = asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(full, true, sub, 0 as usize));
+  } else if (target == "wasm32-wasi-http") {
+    if (form == "wat") {
+      out = emitforms.wasm_http_core(full, sub);
+    } else if (form == "core-module") {
+      let hwat: string = emitforms.wasm_http_core(full, sub);
+      if (hwat.len() == 0) {
+        return 2;
+      }
+      out = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(hwat)));
+    } else {
+      let hc: wit_compose.Composed = emitforms.wasm_http_component(full, sub);
+      if (hc.bytes.len() == 0) {
+        if (hc.refused.len() > 0) {
+          eprint(emitforms.http_refused(hc.refused));
+        }
+        return 2;
+      }
+      out = string_from_bytes_unchecked(util.to_u8(hc.bytes));
+    }
+  } else if (form == "wat") {
+    out = wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub);
+  } else if (form == "core-module") {
+    out = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub))));
+  } else {
+    let comp: wit_compose.Composed = emitforms.wasm_component(full, sub);
+    if (comp.bytes.len() == 0) {
+      if (comp.refused.len() > 0) {
+        eprint(comp.refused);
+      }
+      return 2;
+    }
+    out = string_from_bytes_unchecked(util.to_u8(comp.bytes));
+  }
+  if (out.len() == 0) {
+    return 2;
+  }
+  write(out);
+  return 0;
+}

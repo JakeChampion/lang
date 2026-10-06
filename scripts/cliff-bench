@@ -8,7 +8,7 @@
 #   REPORT  where to write the `metric<TAB>value` report (default: stdout).
 #
 # WHY THIS EXISTS SEPARATELY FROM perf-bench. perf-bench measures programs in
-# examples/bench: small, fast, and compiled by the native compiler. This
+# bench: small, fast, and compiled by the native compiler. This
 # measures the self-hosted compiler compiling a real module, which is the only
 # place a copy regression in the compiler's own data structures shows up.
 # #6911 is the case in point: docs/LOCAL-DEV-LOOP.md recorded this workload at
@@ -35,7 +35,7 @@ REPORT="${1:-/dev/stdout}"
 # The module compiled to produce the numbers. checker.fern is the workload
 # docs/LOCAL-DEV-LOOP.md and #6911 both quote, so keep it unless the baseline
 # is regenerated in the same commit.
-SUBJECT="${FERN_CLIFF_SUBJECT:-examples/self_host/checker.fern}"
+SUBJECT="${FERN_CLIFF_SUBJECT:-compiler/checker.fern}"
 
 case "$(uname -m)" in
   x86_64)          ARCH=x86_64;  TARGET=x86-64-linux ;;
@@ -49,7 +49,7 @@ if [ ! -x bin/fern ]; then
 fi
 if [ ! -x bin/fern-selfhost ]; then
   echo "cliff-bench: building bin/fern-selfhost" >&2
-  ./bin/fern -target "$TARGET" -o bin/fern-selfhost examples/self_host/fern.fern
+  ./bin/fern -target "$TARGET" -o bin/fern-selfhost compiler/fern.fern
   chmod +x bin/fern-selfhost
 fi
 

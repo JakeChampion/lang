@@ -48,7 +48,7 @@ parity.
 
 - `make distcheck` on x86-64 Linux, this tree, as above.
 - `go test ./internal/bootstrap` (the script, with fake compilers).
-- `tools/freeze_gate.sh` reads the CI wiring and prints precondition 1 GREEN;
+- `scripts/freeze_gate.sh` reads the CI wiring and prints precondition 1 GREEN;
   every precondition is green, and `NATIVE-FREEZE.md` records the state.
 
 ## Measured elsewhere

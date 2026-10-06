@@ -46,7 +46,7 @@ func TestSelfHostPlatformBuiltinLowers(t *testing.T) {
 			}
 		}
 	}
-	bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+	bsrc, err := os.ReadFile("../../compiler/builtins.fern")
 	if err != nil {
 		t.Fatalf("read builtins.fern: %v", err)
 	}

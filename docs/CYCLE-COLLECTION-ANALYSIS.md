@@ -616,7 +616,7 @@ field mutation is **shipped, intended, and load-bearing today**.
   alias-visible mutation flagged in §1b is *intended* under today's
   reference-semantic structs, not a latent bug.
 - ~497 `obj.field = …` call sites exist across `examples/` and
-  `examples/self_host/`; the self-hosted compiler's own passes
+  `compiler/`; the self-hosted compiler's own passes
   (parser / constfold / flatten) mutate fields.
 
 So in-place field assignment is **not** an accidental gap to ban

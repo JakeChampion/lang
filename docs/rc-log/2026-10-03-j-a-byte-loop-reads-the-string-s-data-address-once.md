@@ -37,7 +37,7 @@ The compiler each tree builds from itself through the pinned stage0
 | total Ir | 20.087 G | 20.025 G (−0.31%) |
 | `util.hash_bucket`, self | 419 M | 382 M |
 
-The thirty `examples/bench` programs: +0.0014% in total, with every exit
+The thirty `bench` programs: +0.0014% in total, with every exit
 status unchanged. Only `http_hello` and the seed-dependent `map_string` and
 `utf8_ingest` rows move.
 

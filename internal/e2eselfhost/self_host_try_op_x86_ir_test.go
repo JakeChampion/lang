@@ -61,7 +61,7 @@ func TestSelfHostTryOpX86IR(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 
 	// Path-probe driver: prints "ir"/"refused" for a program on stdin.
-	probeSrc, err := os.ReadFile("../../examples/self_host/asm_pathprobe_run.fern")
+	probeSrc, err := os.ReadFile("../../compiler/asm_pathprobe_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_pathprobe_run.fern: %v", err)
 	}

@@ -21,7 +21,7 @@ import (
 // `syscall.SYS_*`, which only holds the host's GOARCH, so every table is
 // checked on every host.
 
-const sysnoSrc = "../../examples/self_host/asmcore.fern"
+const sysnoSrc = "../../compiler/asmcore.fern"
 
 // sysnoAliases maps a self-host row to the kernel name whose number it
 // carries, where the two differ on purpose (asmcore.fern says why at each

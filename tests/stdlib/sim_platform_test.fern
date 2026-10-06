@@ -1,0 +1,198 @@
+import "std/test";
+import "std/platform";
+import "std/sim";
+import "std/sim_fetch";
+import "std/sim_platform";
+import "std/mock_platform";
+import "std/fetch";
+import "std/http";
+
+// tests/stdlib/sim_platform_test.fern — a handler's platform over the
+// simulation (#9855): the sim platform answers the clock, randomness,
+// configuration and outbound HTTP from the `Sim`, the scripted network and
+// what the test set, with the same shapes the host and the mock answer.
+//
+// Run:  fern -interp tests/stdlib/sim_platform_test.fern
+
+const ORIGIN: string = "93.184.216.34";
+
+const MS: i64 = 1000000;
+
+// A network where `example.test` listens after 5 ms and answers "hi" 20 ms
+// after each request, keeping the connection.
+function __net(d: sim.Sim): sim_fetch.Net {
+  return sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 5).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "hi").after(20).kept()]);
+}
+
+function __plat(seed: i64): sim_platform.SimPlatform {
+  let d: sim.Sim = sim.new(seed);
+  return sim_platform.new(d, __net(d));
+}
+
+function __message(got: Result[HttpResponse, fetch.FetchError]): string {
+  match (got) {
+    Ok(resp) => {
+      return "status " + resp.status.to_string();
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// The handler under test: every capability through its platform.
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+  let region: string = "nowhere";
+  match (plat.config("REGION")) {
+    Some(r) => {
+      region = r;
+    },
+    None => {}
+  }
+  let upstream: string = __message(plat.http(fetch.get("http://example.test/")));
+  return http.ok(region + " " + plat.now_ms().to_string() + " " + upstream);
+}
+
+function test_config_and_secret_answer_what_was_set(): test.TestOutcome {
+  let p: sim_platform.SimPlatform = __plat(1);
+  match (p.config("REGION")) {
+    Some(v) => {
+      return test.fail("config before setting: " + v);
+    },
+    None => {}
+  }
+  match (p.secret("TOKEN")) {
+    Some(v) => {
+      return test.fail("secret before setting: " + v);
+    },
+    None => {}
+  }
+  p.config_set("REGION", "eu-west");
+  p.secret_set("TOKEN", "s3cr3t");
+  match (p.config("REGION")) {
+    Some(v) => {
+      if (v != "eu-west") {
+        return test.fail("config: " + v);
+      }
+    },
+    None => {
+      return test.fail("config: None");
+    }
+  }
+  match (p.secret("TOKEN")) {
+    Some(v) => {
+      if (v != "s3cr3t") {
+        return test.fail("secret: " + v);
+      }
+    },
+    None => {
+      return test.fail("secret: None");
+    }
+  }
+  return test.pass();
+}
+
+function test_env_answers_what_was_set(): test.TestOutcome {
+  let p: sim_platform.SimPlatform = __plat(1);
+  match (p.env("HOME")) {
+    Some(v) => {
+      return test.fail("env before setting: " + v);
+    },
+    None => {}
+  }
+  p.env_set("HOME", "/sim");
+  match (p.env("HOME")) {
+    Some(v) => {
+      return test.assert_eq(v, "/sim");
+    },
+    None => {
+      return test.fail("env: None");
+    }
+  }
+  return test.pass();
+}
+
+function test_the_clock_is_the_simulations(): test.TestOutcome {
+  let p: sim_platform.SimPlatform = __plat(1);
+  if (p.now_ms() != 0 as i64) {
+    return test.fail("now before anything: " + p.now_ms().to_string());
+  }
+  p.http(fetch.get("http://example.test/"));
+  if (p.now_ms() != 25 as i64) {
+    return test.fail("now after a 5 ms connect and a 20 ms answer: " + p.now_ms().to_string());
+  }
+  return test.assert_eq(p.elapsed_ns(), 25 as i64 * MS);
+}
+
+function test_randomness_is_the_seeds(): test.TestOutcome {
+  let a: sim_platform.SimPlatform = __plat(7);
+  let b: sim_platform.SimPlatform = __plat(7);
+  let first: i32 = a.random_i32();
+  if (first != b.random_i32()) {
+    return test.fail("two sims from one seed drew differently");
+  }
+  let c: sim_platform.SimPlatform = __plat(7);
+  c.random_i32();
+  if (c.drv.rng_state() == __plat(7).drv.rng_state()) {
+    return test.fail("a draw left the PRNG state where it was");
+  }
+  return test.pass();
+}
+
+function test_http_reaches_global_addresses_only(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).host("internal.test", ["10.0.0.1"]).listen("10.0.0.1", 80, 1).route("10.0.0.1", 80, "/", [sim_fetch.reply(200, "secret")]);
+  let p: sim_platform.SimPlatform = sim_platform.new(d, n);
+  let open: string = __message(p.http(fetch.get("http://example.test/")));
+  if (open != "status 200") {
+    return test.fail("a global origin: " + open);
+  }
+  return test.assert_eq(__message(p.http(fetch.get("http://internal.test/"))), "blocked: 10.0.0.1 is not a global address");
+}
+
+function test_http_keeps_the_connection_for_the_next_request(): test.TestOutcome {
+  let p: sim_platform.SimPlatform = __plat(1);
+  p.http(fetch.get("http://example.test/"));
+  p.http(fetch.get("http://example.test/"));
+  return test.assert_eq(p.net.connects(), 1);
+}
+
+function test_a_secret_is_logged_by_name_only(): test.TestOutcome {
+  let p: sim_platform.SimPlatform = __plat(1);
+  p.secret_set("TOKEN", "s3cr3t");
+  p.secret("TOKEN");
+  let calls: mock_platform.MockCall[] = p.calls();
+  if (calls.len() != 1) {
+    return test.fail("calls: " + calls.len().to_string());
+  }
+  if (calls[0].name != "secret" || calls[0].args != "TOKEN") {
+    return test.fail("call: " + calls[0].name + " " + calls[0].args);
+  }
+  for c in calls {
+    if (c.args.index_of("s3cr3t") >= 0) {
+      return test.fail("the secret's value is in the call log");
+    }
+  }
+  return test.pass();
+}
+
+function test_a_handler_runs_over_the_simulation(): test.TestOutcome {
+  let p: sim_platform.SimPlatform = __plat(1);
+  p.config_set("REGION", "eu-west");
+  let resp: HttpResponse = handle(http.request("GET", "/"), p);
+  return test.assert_body(resp, "eu-west 25 status 200");
+}
+
+function main(): i32 {
+  let t: test.TestRunner = test.test_new("std/sim_platform");
+  t = t.it("config and secret answer what was set", test_config_and_secret_answer_what_was_set);
+  t = t.it("env answers what was set", test_env_answers_what_was_set);
+  t = t.it("the clock is the simulation's", test_the_clock_is_the_simulations);
+  t = t.it("randomness is the seed's", test_randomness_is_the_seeds);
+  t = t.it("http reaches global addresses only", test_http_reaches_global_addresses_only);
+  t = t.it("http keeps the connection for the next request", test_http_keeps_the_connection_for_the_next_request);
+  t = t.it("a secret is logged by name only", test_a_secret_is_logged_by_name_only);
+  t = t.it("a handler runs over the simulation", test_a_handler_runs_over_the_simulation);
+  return t.finish();
+}

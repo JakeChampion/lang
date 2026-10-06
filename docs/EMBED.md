@@ -116,7 +116,7 @@ low bytes, which is also data that compresses to nearly nothing. **That
 slice is therefore not built.** If a future asset bundle does make the asm
 text hurt, the linker-splice path remains available precisely because Fern
 owns its assembler and linker (`x86_native.fern`, `arm64_native.fern`,
-`elf.fern`, `macho.fern` in `examples/self_host`).
+`elf.fern`, `macho.fern` in `compiler`).
 
 ## Compression
 
@@ -177,7 +177,7 @@ folds to the same array a `let` would hold, on both compilers.
 | Enumeration: sorted order, contents, binary bytes, empty bundle, error paths | `internal/constfold/asset_test.go` |
 | End-to-end through the native backend + the CLI diagnostics | `cmd/fern/embed_test.go` |
 | Enumeration end-to-end + the empty-bundle compile | `cmd/fern/embed_test.go` |
-| The self-host bundle + substitution, every error path | `examples/self_host/embed_run.fern`, gated by `internal/e2eselfhost/self_host_embed_test.go` |
+| The self-host bundle + substitution, every error path | `compiler/embed_run.fern`, gated by `internal/e2eselfhost/self_host_embed_test.go` |
 | Native and self-host agreeing on the same source + the same directory, symlinked entries and a symlinked root included | `internal/e2eselfhost/self_host_embed_test.go` |
 | A symlinked root, followed | `internal/embed/embed_test.go` |
 | `lstat` itself, on every backend of both compilers | `internal/e2e/lstat_native_test.go`, `internal/codegen/wasmbin/wasi_fs_dir_test.go`, `internal/e2eselfhost/self_host_lstat_test.go` |

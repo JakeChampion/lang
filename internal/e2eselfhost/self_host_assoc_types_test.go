@@ -194,7 +194,7 @@ function main(): i32 { return 0; }`,
 
 func TestSelfHostAssocTypesDifferential(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../examples/self_host/checker_codes_run.fern")
+	driver, err := filepath.Abs("../../compiler/checker_codes_run.fern")
 	if err != nil {
 		t.Fatalf("abs driver path: %v", err)
 	}

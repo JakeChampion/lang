@@ -72,7 +72,7 @@ source line — which is the half that says where to look.
 
 The census fails when a fixture is killed by a signal. On its own that
 check is worth little: measured against a compiler that segfaults
-`examples/proposals/unidiff.fern`, the conformance corpus stayed clean,
+`tests/proposals/unidiff.fern`, the conformance corpus stayed clean,
 because the crash was in `examples/` and this census covers
 `conformance/cases`.
 

@@ -11,7 +11,7 @@ import (
 )
 
 // TestSelfHostSemanticSourceCensusLoadsTheStdlib pins the one property the
-// coverage census (examples/self_host/semsource_census_run.fern) cannot be
+// coverage census (compiler/semsource_census_run.fern) cannot be
 // trusted without: that the program it measures is the WHOLE program.
 //
 // The loader drops an import it cannot resolve in silence, which is right in a

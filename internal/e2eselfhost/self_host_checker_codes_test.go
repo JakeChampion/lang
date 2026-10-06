@@ -138,14 +138,14 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 		if base == driverFile {
 			continue // staged below as main.fern
 		}
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", base))
+		src, err := os.ReadFile(filepath.Join("../../compiler", base))
 		if err != nil {
 			t.Fatalf("read %s: %v", base, err)
 		}
 		files[base] = string(src)
 	}
 	if withFlatten {
-		src, err := os.ReadFile("../../examples/self_host/flatten.fern")
+		src, err := os.ReadFile("../../compiler/flatten.fern")
 		if err != nil {
 			t.Fatalf("read flatten.fern: %v", err)
 		}
@@ -156,7 +156,7 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 		t.Fatalf("read std/io.fern: %v", err)
 	}
 	files["io.fern"] = string(ioSrc)
-	runSrc, err := os.ReadFile(filepath.Join("../../examples/self_host", driverFile))
+	runSrc, err := os.ReadFile(filepath.Join("../../compiler", driverFile))
 	if err != nil {
 		t.Fatalf("read %s: %v", driverFile, err)
 	}
@@ -2451,6 +2451,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cell-annot-field-bad", "struct P { x: i32 }\nstruct H { c: Cell[P] }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		{"cell-annot-var-bad", "struct P { x: i32 }\nfunction main(): i32 { let c: Cell[P] = cell_new(P { x: 1 }); return 0; }\n", []string{"E057"}},
 		{"cell-annot-array-ok", "function f(c: Cell[i32[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"cell-annot-char-array-bad", "function f(c: Cell[char[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-inferred-char-array-bad", "function main(): i32 { let a: char[] = [65 as char]; let c = cell_new(a); return 0; }\n", []string{"E057"}},
+		{"cell-inferred-empty-char-array-bad", "function main(): i32 { let a: char[] = []; let c = cell_new(a); return 0; }\n", []string{"E057"}},
+		{"cell-annot-float-alias-array-ok", "function main(): i32 { let a: float[] = []; let c: Cell[float[]] = cell_new(a); return c.get().len(); }\n", nil},
+		{"cell-inferred-float-alias-array-ok", "function main(): i32 { let a: float[] = []; let c = cell_new(a); return c.get().len(); }\n", nil},
 		{"cell-annot-reference-array-bad", "function f(c: Cell[string[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		{"cell-annot-scalar-arrays-ok", "function f(a: Cell[u32[]], b: Cell[i64[]], c: Cell[u64[]], d: Cell[usize[]], e: Cell[f32[]], f: Cell[f64[]], g: Cell[boolean[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-tuple-elem-bad", "struct P { x: i32 }\nfunction f(t: (i32, Cell[P])): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},

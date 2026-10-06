@@ -9,7 +9,7 @@ Starting point, measured 2026-08-26 at a limit of 10:
 
 | Tree | Ceiling | Total excess |
 |---|---|---|
-| `examples/self_host` | 472 | 19847 |
+| `compiler` | 472 | 19847 |
 | `internal/stdlib/std` | 68 | 780 |
 
 Those exact numbers no longer hold: main lands self-host changes several times

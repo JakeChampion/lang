@@ -54,7 +54,7 @@ func TestSelfHostPegExample(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
-			src := langSrcAbs(t, "examples/tests/peg_test.fern")
+			src := langSrcAbs(t, "tests/stdlib/peg_test.fern")
 			var cmd *exec.Cmd
 			switch target {
 			case "x86-64-linux":

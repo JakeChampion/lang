@@ -1613,6 +1613,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{bufH},
 		Result: ast.VoidType{},
 	}
+	// buf_clear(b) empties the builder and keeps its storage for reuse.
+	c.info.FuncSigs["buf_clear"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.VoidType{},
+	}
 	// __rc_inc / __rc_dec / __rc_get — direct access to the
 	// refcount machinery for debugging and Phase 1 testing.
 	// They bypass the normal alias-tracking that Phase 1c/d
@@ -2171,6 +2176,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// sends the piece itself.
 	c.info.FuncSigs["tcp_sendfile"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_send_buf(fd, b, from): number — one send of the builder's bytes
+	// from `from` to its end, as tcp_send_bytes sends an array: the count
+	// the kernel took, or -errno.
+	c.info.FuncSigs["tcp_send_buf"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
 	// tcp_connect_with(addr, port, nonblocking): number — a socket
@@ -3715,7 +3727,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// supported on this target" error from codegen.
 	//
 	// Named `subprocess` rather than the obvious `exec` to
-	// stay clear of `examples/self_host/vm.fern`'s long-
+	// stay clear of `compiler/vm.fern`'s long-
 	// standing `pub function exec(ops: Op[]): Value` and any
 	// user code that wraps an interpreter.
 	procResult := ast.StructType{Name: "ProcessResult"}

@@ -283,7 +283,7 @@ and all three controls stay clean. `internal/ir` stays green.
 **Then `TestArm64SSABackendDifferential` segfaults.**
 
 ```
-examples/proposals/unidiff.fern
+tests/proposals/unidiff.fern
   one build CRASHED and the other did not —
   flat: signal: segmentation fault, ssa: exit status 0
 ```
@@ -314,7 +314,7 @@ The census now checks for a signal death, since it already compiles and
 runs all 453 fixtures and was throwing the exit status away. Re-running
 it against the broken compiler says plainly what that buys: **nothing,
 for this instance.** No conformance fixture crashes; the crash was in
-`examples/proposals/unidiff.fern`, which the census does not cover. The
+`tests/proposals/unidiff.fern`, which the census does not cover. The
 check closes the SHAPE of the gap, not that occurrence of it, and
 widening the corpus to `examples/` is what would close both.
 

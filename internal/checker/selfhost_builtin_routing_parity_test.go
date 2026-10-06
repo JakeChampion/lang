@@ -42,7 +42,7 @@ func TestSelfHostRoutesEveryNativeBuiltin(t *testing.T) {
 	}
 	routed := map[string]bool{}
 	for _, f := range []string{"semlower.fern", "semsource.fern", "ssarc.fern", "constfold.fern"} {
-		b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", f))
+		b, err := os.ReadFile(filepath.Join("..", "..", "compiler", f))
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)
 		}

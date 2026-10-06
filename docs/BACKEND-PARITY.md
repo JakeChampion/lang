@@ -50,7 +50,7 @@ how the emitters are observed in isolation
 (docs/TOOLCHAIN-SELF-HOSTING.md). For `wasm32-wasi-http` the
 self-host appends `std/wasi_http`, the entry written in Fern over `@import`
 externs, and composes the core against the embedded proxy world
-(`examples/self_host/wit_compose.fern`).
+(`compiler/wit_compose.fern`).
 
 ## Internal networking syscall floor
 
@@ -229,6 +229,7 @@ of these at check time there.
 | `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5, 7, 9 and 10 through wasi:sockets; 1, 3 and 6 `-ENOTSUP`; every op but 9 and 10 `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv` and `tcp_send` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket; ops 9 and 10 read the descriptor's own sockaddr |
 | `tcp_recv_into` | Fern body, `read(2)` | Fern body | non-blocking read on the input stream, `-EAGAIN` when empty | E066 | a read through the descriptor |
 | `tcp_sendfile` | Fern body, `sendfile(2)`, the file advanced by what the socket took | Fern body, the position read and moved around Darwin's offset-and-length form | `-ENOTSUP`: the serve loop reads the file and sends the piece | E066 | a read of the open file then one socket write, the file moved back over what the socket did not take |
+| `tcp_send_buf` | Fern body, one `sendto(2)` of the builder's bytes from `from` | Fern body | the builder's bytes written to the output stream in place, as `tcp_send_bytes` writes an array | E066 | one socket write of the builder's bytes |
 | `udp_send` | Fern body, dotted-quad parse | Fern body | `udp_bind` then `udp_sendto` then close | E066 | net package |
 | `udp_bind`, `udp_connect`, `udp_sendto`, `udp_recvfrom` (byte address) | Fern body | Fern body; `EISCONN` for a named address on a connected socket | wasi:sockets/udp bodies (`wasm_ir.fern`); `recvfrom` blocks on the incoming pollable | E066 | raw descriptors, the kernel's errnos |
 | `unix_listen`, `unix_connect` | Fern body | Fern body, `sun_len` head | E066: no `unix` | E066 | net package |
@@ -380,7 +381,7 @@ The native targets exit 125 when the arena runs out (`.Lalloc_oom` in
 `memory.grow` returning -1, and `$__fern_alloc` raises `unreachable` there —
 so the failure is attributable to the allocator, with its caller chain, but
 the process dies as a trap rather than carrying a status
-(`examples/self_host/wasm_ir.fern`'s `$__fern_alloc`).
+(`compiler/wasm_ir.fern`'s `$__fern_alloc`).
 
 Fix plan: call `$__fern_proc_exit` with 125 instead of trapping. The cost is the
 reason it has not been done — the import-free component core (mode 1 of

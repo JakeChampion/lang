@@ -1,9 +1,7 @@
 package e2eharness
 
 import (
-	"math"
 	"os"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -115,67 +113,6 @@ func buildMemBudgetMB() int {
 		b = total
 	}
 	return b
-}
-
-// An in-process Go emit of a big program (the asm benches' fern.fern
-// corpus) allocates heavily, and at the default GOGC the runtime lets the
-// heap double between collections, so the process's RSS ran to twice the
-// live set. Capping the runtime's soft memory limit (GOMEMLIMIT semantics)
-// during such a build makes the GC keep the heap near the cap instead.
-// Self-host driver builds and gcc links run in a subprocess and are not
-// affected by it.
-//
-// The limit is process-wide, so it is REFCOUNTED and scaled: while n
-// heavy builds are active the limit is n * per-build-cap, and when the
-// last one releases it goes back to unlimited. Everything else in a test
-// process lives in a few hundred MB, far under any cap, so bystander
-// tests never feel it.
-var (
-	emitMemLimitMu     sync.Mutex
-	emitMemLimitActive int
-)
-
-// emitMemLimitMB is the per-heavy-build soft heap cap in MB.
-// FERN_EMIT_MEMLIMIT_MB overrides it; <= 0 disables the cap entirely. The
-// assembler's live heap on the stage-2 self-compile's asm stays under ~2.6 GB,
-// and the default leaves ~1 GB of headroom above that; a cap below the live
-// set would make the GC thrash, not save memory (it is a soft limit; the
-// process would still finish).
-// CI-DARK: FERN_EMIT_MEMLIMIT_MB — a tuning override with a default, not a
-// gate. CI exercises the default (3600), which is the configuration that
-// matters; the override exists to lower the cap on a smaller host.
-func emitMemLimitMB() int {
-	if v := strings.TrimSpace(os.Getenv("FERN_EMIT_MEMLIMIT_MB")); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil {
-			return 3600
-		}
-		return n // <= 0 disables
-	}
-	return 3600
-}
-
-// withEmitMemLimit runs fn with the Go runtime's soft memory limit capped
-// at (active heavy builds) * emitMemLimitMB. Nested/concurrent holders
-// stack the limit; the last release restores unlimited.
-func withEmitMemLimit(fn func() error) error {
-	per := emitMemLimitMB()
-	if per <= 0 {
-		return fn()
-	}
-	adjust := func(delta int) {
-		emitMemLimitMu.Lock()
-		defer emitMemLimitMu.Unlock()
-		emitMemLimitActive += delta
-		if emitMemLimitActive > 0 {
-			debug.SetMemoryLimit(int64(emitMemLimitActive) * int64(per) << 20)
-		} else {
-			debug.SetMemoryLimit(math.MaxInt64)
-		}
-	}
-	adjust(1)
-	defer adjust(-1)
-	return fn()
 }
 
 func envPositiveInt(name string) (int, bool) {

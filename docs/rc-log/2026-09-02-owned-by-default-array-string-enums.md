@@ -162,7 +162,7 @@ the `i32[]` solver-only bucket unchanged.
 
 Unique-path re-inserts (2,000 keys / 5,000 `.with`), fresh bytes over the
 whole loop: `std/pvec` 1,168 → 0 B, `std/pmap` 224 → 0 B, `std/ordmap` 48 B
-unchanged. `examples/bench/pvec_with` 1,118,676 → 642,593 allocations,
+unchanged. `bench/pvec_with` 1,118,676 → 642,593 allocations,
 `pmap_insert` 693,584 → 438,649; retired instructions −47% / −57%. A
 bare payloadless variant in argument or struct-field position
 (`kids.with(sub, Empty)`) is a function-value reference to the self-host

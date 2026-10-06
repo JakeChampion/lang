@@ -105,7 +105,7 @@ func TestSelfHostSignalDispositionIRX86_64(t *testing.T) {
 		t.Skip("self-host signal-disposition test runs host-native only (needs a real SIGPIPE)")
 	}
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))
+	src, err := os.ReadFile(filepath.Join("../../compiler", "asm_run.fern"))
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}

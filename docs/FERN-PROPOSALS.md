@@ -28,7 +28,7 @@ the native one, and that memory is reclaimed.
 These are inspirations, not a menu. Any of them is a valid target.
 
 **1. Self-host / native agreement.** Fern's self-hosted compiler
-(`examples/self_host/`) and its native Go compiler (`internal/`) are supposed
+(`compiler/`) and its native Go compiler (`internal/`) are supposed
 to compile the same language. Every place they disagree is a bug in one of
 them, and the disagreements that matter most are the ones no gate currently
 sees. The `-interp` oracle is cheap and total: run your program interpreted,
@@ -124,7 +124,8 @@ The ONLY files you may read are:
 - `site/src/content/docs/**` — the published documentation site
 - `internal/stdlib/**` — the standard library, written in Fern; a user can read
   their library's source
-- `examples/**` **except** `examples/self_host/**`
+- `examples/**`, `tests/**` and `bench/**` — example programs, the Fern-side
+  tests, and the benchmarks
 
 You are a USER of the language, and a user only has the docs. `CLAUDE.md` is
 injected into your context and you cannot unsee it — do not use it to route
@@ -159,7 +160,7 @@ Write it as a SINGLE Fern file containing:
    your program — not `assert_eq(2+2, 4)`, but the invariants that would
    actually break if you got it wrong;
 5. a `test.TestRunner` wired to run them, so the file is its own test suite
-   (`import "std/test";` — see `examples/tests/arithmetic_test.fern`).
+   (`import "std/test";` — see `tests/stdlib/arithmetic_test.fern`).
 
 Have `main` return 0 on success, so "exit 0, TAP all-pass" is the criterion on
 every leg. By the end, the file must pass ALL FIVE of these:
@@ -193,7 +194,7 @@ If along the way you conclude the app cannot be completed because of an
 incompleteness or failure in Fern, STOP and go to Phase 3 anyway. That is a
 better outcome than a finished app, not a worse one.
 
-Save the file at `examples/proposals/<name>.fern` — it ships with your PR.
+Save the file at `tests/proposals/<name>.fern` — it ships with your PR.
 
 ### Phase 3 — Pick the problem
 
@@ -234,7 +235,7 @@ Fix it at the deepest layer that owns the problem:
 - a lowering bug that shows up on one backend usually lives in `internal/ir`,
   where the fix serves every backend;
 - a self-host bug in inference, the checker, `Ty` or `EmitState` lives in
-  `examples/self_host/asmcore.fern`, which all three self-host backends share.
+  `compiler/asmcore.fern`, which all three self-host backends share.
   Editing the same thing three times in the `emit_*` layers is the wrong fix
   even when it works;
 - a diagnostic that points at the wrong place is a span bug, not a message bug.
@@ -351,8 +352,10 @@ merge main in and push. Do not stop at "pushed to the branch".
 
 - **Exit 125 is the arena; 137 is the host.** 125 (`ExitArenaExhausted`) is a
   real, reproducible failure and almost always a leak. 137 is 128+9 — the host
-  ran out of RAM; lower `FERN_BUILD_MEM_BUDGET_MB` / `FERN_EMIT_MEMLIMIT_MB`
-  and retry. Do not investigate one as the other.
+  killed the process, potentially because it ran out of RAM. Check the host's
+  OOM evidence; for overlapping harness builds, lower
+  `FERN_BUILD_MEM_BUDGET_MB` and retry. The retired Go emitter's
+  `FERN_EMIT_MEMLIMIT_MB` does not limit compiler subprocesses.
 
 - **If a test SKIPs, that is a missing dependency, not a green light.** The
   pinned wasm toolchain is wasmtime v46.0.1 + wasm-tools 1.253.0; the
@@ -360,7 +363,7 @@ merge main in and push. Do not stop at "pushed to the branch".
   `PATH` and set `FERN_WASI_ADAPTER`.
 
 - **Never commit to `main`.** One commit per PR, containing: the minimal
-  solution (simplified — this is essential) + your `examples/proposals/<name>.fern` +
+  solution (simplified — this is essential) + your `tests/proposals/<name>.fern` +
   minimal, well-designed, fast regression tests that fail if the problem comes
   back, in a general way. A regression test that only pins your exact repro is
   worth much less than one that pins the class.

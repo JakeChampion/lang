@@ -361,3 +361,5 @@ inner_mul_add_f64=382
 arr_reserve=383
 ret_word=384
 call_word=385
+buf_clear=386
+tcp_send_buf=387

@@ -54,7 +54,7 @@ func TestSelfHostKnowsEveryNativeBuiltin(t *testing.T) {
 	sort.Strings(missing)
 	t.Errorf("%d builtin(s) the native checker knows and the self-hosted compiler does not: %s\n"+
 		"Each one compiles on the native leg and fails the self-host leg with E001 at the call site.\n"+
-		"Teach examples/self_host/parser.fern's builtin_function_names(), and lower it: ircore,\n"+
+		"Teach compiler/parser.fern's builtin_function_names(), and lower it: ircore,\n"+
 		"ir (op + extension kind id), semsource, ssarc, asmcore, and asm_ir / asm_arm64_ir / wasm_ir.\n"+
 		"See #9085. Do not add an exemption here.",
 		len(missing), strings.Join(missing, ", "))
@@ -106,13 +106,13 @@ var selfHostBuiltinNamesRE = regexp.MustCompile(
 // can only sample one name at a time.
 func selfHostBuiltinNames(t *testing.T) map[string]bool {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", "parser.fern"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "compiler", "parser.fern"))
 	if err != nil {
 		t.Fatalf("read self-host parser.fern: %v", err)
 	}
 	m := selfHostBuiltinNamesRE.FindStringSubmatch(string(b))
 	if m == nil {
-		t.Fatal("cannot find builtin_function_names() in examples/self_host/parser.fern — " +
+		t.Fatal("cannot find builtin_function_names() in compiler/parser.fern — " +
 			"the pattern no longer matches, so this test proves nothing")
 	}
 	// Strip comments: the list is annotated, and a name inside a comment is
