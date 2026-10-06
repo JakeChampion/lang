@@ -328,7 +328,8 @@ calls them. What the loop does around them is counted by
 `TestSelfHostServeAllocsPerRequest`. It serves a hello handler on one
 keep-alive connection, with `/count` answering `__heap_alloc_count()`.
 Between two counts, 2,000 hello requests cost 30 allocations each on
-x86-64 at `origin/main` ac29eede9. The gate pins 30 as a ratchet.
+x86-64 at `origin/main` ac29eede9, and the gate was pinned there as a
+ratchet. Each slice moves the pin, and §6.2 records each move.
 
 The rows below are attributed from a `FERN_RC_TRACE` trace of a `-g`
 build, the one build whose return addresses resolve to functions, and
@@ -340,9 +341,9 @@ instead of 0. The 13 the `-g` build adds were struck from the parse's
 rows and the helpers' named tuples by judgement, not by a matched diff:
 a trace row is an allocation site that can fire more than once per
 request, and `-g` also changes what the passes rewrite, so the two
-builds' traces do not pair line for line. Only the gate's 30 is
-measured; the split between rows is provisional, and each slice's gate
-reading settles it.
+builds' traces do not pair line for line. The totals 30, 43 and 5 are
+measured; the split of the 30 between rows is provisional, and each
+slice's gate reading settles it.
 
 | Allocations | Where |
 | ---: | --- |
