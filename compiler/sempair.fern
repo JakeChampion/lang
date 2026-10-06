@@ -133,7 +133,7 @@ function paired_callee(ins: ssa.SInst, ix: util.NameIndex, ok: boolean[]): i32 {
 // what a copy or phi needed whole copies. A phi is needed whole too where it
 // joins anything split cannot read through: only constructions, calls to
 // candidates and other such phis can be read apart.
-function whole_values(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boolean): boolean[] {
+pub function whole_values(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boolean): boolean[] {
   return through_joins(f.graph, seeded(f, ix, ok, paired));
 }
 
@@ -175,8 +175,9 @@ function through_joins(g: ssa.SFunc, whole0: boolean[]): boolean[] {
   return whole;
 }
 
-function reads_apart(k: i32): boolean {
-  return k == ssasem.variant_is() || k == ssasem.variant_get() || k == ssasem.tuple_get();
+// A read of one part of a box: split answers it off the construction.
+pub function reads_apart(k: i32): boolean {
+  return k == ssasem.variant_is() || k == ssasem.variant_get() || k == ssasem.tuple_get() || k == ssasem.record_get();
 }
 
 // Whether every operand of `phi` is, past copies, something split reads
