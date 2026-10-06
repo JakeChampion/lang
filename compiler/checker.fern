@@ -4945,11 +4945,6 @@ function builtin_args_fit(args: ast.Expr[], params: typeinfo.Type[], s: Scope): 
 }
 
 function undeclared_call_type(name: string, s: Scope, args: ast.Expr[]): typeinfo.Type {
-  // `chr` is the self-host front end's own builtin (caps.frontend_ungated), so
-  // native's signature table has no row for it; a declared `chr` shadows it.
-  if (name == "chr" && args.len() == 1 && builtin_args_fit(args, [t_i32()], s)) {
-    return t_string();
-  }
   if let typeinfo.TypeFunc(bf) = builtin_sig(name) {
     if (bf.param_types.len() == args.len()) {
       if (!builtin_args_fit(args, bf.param_types, s)) {

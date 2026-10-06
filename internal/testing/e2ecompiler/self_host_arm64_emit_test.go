@@ -1349,36 +1349,6 @@ function main(): i32 { let s = "hi"; let t = s.to_string(); write(t); return t.l
 			"out\n",
 		},
 		{
-			"chr-uppercase-a",
-			"function main(): i32 { let c = chr(65); write(c); return c.len(); }",
-			1,
-			"A",
-		},
-		{
-			"chr-newline",
-			"function main(): i32 { let c = chr(10); write(\"before\"); write(c); write(\"after\"); return 0; }",
-			0,
-			"before\nafter",
-		},
-		{
-			"chr-zero",
-			"function main(): i32 { let c = chr(0); return c.len(); }",
-			1,
-			"",
-		},
-		{
-			"chr-concat-build-string",
-			"function main(): i32 { let msg = chr(72) + chr(105) + chr(33); write(msg); return msg.len(); }",
-			3,
-			"Hi!",
-		},
-		{
-			"chr-index-of-result",
-			"function main(): i32 { let c = chr(98); if (c == \"b\") { return 1; } return 0; }",
-			1,
-			"",
-		},
-		{
 			"exit-from-helper",
 			"function check(): i32 { exit(7); return 0; } function main(): i32 { check(); return 99; }",
 			7,

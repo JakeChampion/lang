@@ -58,7 +58,7 @@ function main(): i32 {
         if (__str_hash(s, 1) != ref(s, 1)) { return 2; }
         if (__str_hash(s, 0 - 1) != ref(s, 0 - 1)) { return 3; }
         if (__str_hash(s, 208357) != ref(s, 208357)) { return 4; }
-        s = s + chr((n * 37 + 11) % 128);
+        s = s + string_from_bytes_unchecked([((n * 37 + 11) % 128) as u8]);
         n = n + 1;
     }
     let high: string = "";

@@ -132,7 +132,7 @@ function main(): i32 {
         if (!check_filtered(b, "", s, rot)) { return 10; }
         if (!check_expanded(b, "ef", s, ex)) { return 12; }
         if (!check_expanded(b, "", s, short)) { return 13; }
-        s = s + chr((n * 7 + 1) % 128);
+        s = s + string_from_bytes_unchecked([((n * 7 + 1) % 128) as u8]);
         n = n + 1;
     }
     if (!check(b, "held", "\x00\x01\x02\x03", short)) { return 4; }
@@ -145,7 +145,7 @@ function main(): i32 {
     if (!check_expanded(b, "", big, ex)) { return 14; }
     let every: string = "";
     k = 0;
-    while (k < 384) { every = every + chr(k % 128); k = k + 1; }
+    while (k < 384) { every = every + string_from_bytes_unchecked([(k % 128) as u8]); k = k + 1; }
     if (!check_expanded(b, "gh", every, ex)) { return 15; }
     buf_free(b);
     return 42;

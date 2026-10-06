@@ -42,12 +42,12 @@ var strAccumIRCases = []struct {
 		`function main(): i32 { let x: string = "yy"; let s: string = ""; let i: i32 = 0; while (i < 3) { s = s + x; i = i + 1; } return s.len(); }`,
 		6},
 	// Memory-safety at scale: a BOUNDED accumulator (grow, then reset to a fresh 1-char
-	// chr(..) at len > 40) over 5,000,000 iterations, using a loop-invariant operand so
+	// string at len > 40) over 5,000,000 iterations, using a loop-invariant operand so
 	// there is no per-iteration literal temporary. If the growth chain leaked, resident
 	// memory would grow; a double-free would corrupt the freelist and crash / return
 	// garbage. exit 0 (fixed) with the reclaim present proves the balance (flat heap).
 	{"accum-churn-safe",
-		`function main(): i32 { let x: string = "yy"; let s: string = ""; let i: i32 = 0; while (i < 5000000) { s = s + x; if (s.len() > 40) { s = chr(65); } i = i + 1; } return 0; }`,
+		`function main(): i32 { let x: string = "yy"; let s: string = ""; let i: i32 = 0; while (i < 5000000) { s = s + x; if (s.len() > 40) { s = string_from_bytes_unchecked([65 as u8]); } i = i + 1; } return 0; }`,
 		0},
 	// UN-ANNOTATED accumulator (`let s = ""`, no `: string`): reclaimed too — the
 	// annotation is not required; the is_str type gate at the reclaim site admits the

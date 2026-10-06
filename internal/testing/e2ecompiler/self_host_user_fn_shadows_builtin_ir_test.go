@@ -23,11 +23,11 @@ function main(): i32 {
     let l: L = C(1, C(2, C(3, N)));
     return len(l);   // 3
 }`},
-	// #10344's repro: `chr` is a builtin contract, so the call is only a plain
-	// call because the module declares `chr` (ssasem.Func.shadows).
-	{"chr-i32", `
-function chr(n: i32): i32 { return n * 2; }
-function main(): i32 { return chr(21); }   // 42`},
+	// #10344: `string.repeat` is a builtin contract, so the call is only a plain
+	// call because the module declares it (ssasem.Func.shadows).
+	{"string-method-repeat", `
+function (s: string) repeat(n: i32): i32 { return n * 2; }
+function main(): i32 { return "x".repeat(21); }   // 42`},
 	// #10364: native has no `map_new_i32`, so the name is the user's. The
 	// self-host's map-literal desugar spells its constructor `__map_new_i32`.
 	{"map-new-i32", `

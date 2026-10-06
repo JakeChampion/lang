@@ -13,7 +13,7 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 `string[]` `index_of` / `contains` lowering intercept that #7451 deleted.)
 
 > **Status update (2026-07): the intrinsics below shipped and the Tier-2
-> migration is complete.** `chr`, `str_concat`, `i32_to_string`,
+> migration is complete.** `str_concat`, `i32_to_string`,
 > `str_to_upper`/`_lower`, `str_repeat`, `str_replace`,
 > `string_from_bytes_unchecked` and `str_split` all lower as Fern functions via these
 > raw-memory intrinsics.
@@ -374,26 +374,7 @@ The address of a string's bytes has its own spelling on both compilers,
 `TestSelfHostBytesFloorArm64` and `TestSelfHostStrBytesEveryTarget` gate it. A `u8[]` has no
 portable byte address, because the self-host does not pack it.
 
-## Worked example — `chr`
-
-The hand-asm (see `asm.fern`) allocates 1 data byte, stores the low byte of the
-argument, then allocs a 16-byte box `{data, 1}`. In Fern:
-
-```
-function __fern_chr(b: i32): string {
-    let p: usize = __raw_alloc(1);
-    __raw_store8(p, 0, b);
-    return __raw_string(p, 1);
-}
-```
-
-That is the entire Tier-2 vocabulary exercised in one helper: allocate, store a
-byte, box. It is the **first slice** — smallest possible proof that the floor
-works end-to-end on all four backends, with a lock-in test
-(`__fn___fern_chr` emitted, `__fern_chr:` hand-asm gone) plus the existing
-behavioural `chr` cases.
-
-## Worked example — `str_concat` (the payoff)
+## Worked example — `str_concat`
 
 ```
 function __fern_str_concat(a: string, b: string): string {
@@ -413,7 +394,7 @@ box. None needs anything beyond the table above.
 
 ## Lowering, per backend
 
-Recognition mirrors the existing bare-name runtime calls (e.g. `chr`):
+Recognition mirrors the existing bare-name runtime calls:
 
 - **AST** (`asm.fern` / `asm_arm64.fern`): a new arm in `try_emit_builtin`
   matching the `__raw_*` names, emitting the single instruction inline (no
@@ -443,8 +424,8 @@ deleting the manual bookkeeping in favour of the real call graph + deadcode.
 
 ## Migration order
 
-1. **Intrinsics + `chr`** (this slice) — land the floor with the smallest
-   possible consumer as the end-to-end proof.
+1. **Intrinsics + a one-byte string helper** (this slice) — land the floor
+   with the smallest possible consumer as the end-to-end proof.
 2. **`str_concat`** — backs `+` on strings; high-traffic, exercises the
    two-source copy loop.
 3. **`i32_to_string`** — the digit-buffer build; backs `(n).to_string()`.

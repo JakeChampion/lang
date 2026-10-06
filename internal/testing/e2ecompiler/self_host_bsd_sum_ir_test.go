@@ -34,7 +34,7 @@ function main(): i32 {
         if (__bsd_sum(s, 1) != ref(s, 1)) { return 2; }
         if (__bsd_sum(s, 32768) != ref(s, 32768)) { return 3; }
         if (__bsd_sum(s, 65535) != ref(s, 65535)) { return 4; }
-        s = s + chr((n * 37 + 11) % 128);
+        s = s + string_from_bytes_unchecked([((n * 37 + 11) % 128) as u8]);
         n = n + 1;
     }
     let high: string = "";

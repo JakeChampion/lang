@@ -973,18 +973,6 @@ pub function rt_src_u64_to_string(): string {
   return "function __fern_u64_to_string(n: u64): string { let v: u64 = n; if (v == (0 as u64)) { let z: usize = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } let nd: i32 = 0; let t: u64 = v; while (t != (0 as u64)) { nd = nd + 1; t = t / (10 as u64); } let p: usize = __raw_alloc(nd); let i: i32 = nd - 1; while (v != (0 as u64)) { __raw_store8(p, i, 48 + ((v % (10 as u64)) as i32)); v = v / (10 as u64); i = i - 1; } return __raw_string(p, nd); }";
 }
 
-// chr(n): an ASCII integer to text; other integers yield an empty string.
-pub function (s: EmitState) mark_chr(): EmitState {
-  return s.need("heap").need("chr");
-}
-
-// The legacy byte constructor also backs u8.to_ascii_string. Only ASCII can
-// form a valid single-byte UTF-8 string. Unicode scalar encoding uses the char
-// API instead; raw bytes must remain arrays.
-pub function rt_src_chr(): string {
-  return "function __fern_chr(b: i32): string { let len: i32 = 1; if (b < 0 || b > 127) { len = 0; } let p: usize = __raw_alloc(len); if (len != 0) { __raw_store8(p, 0, b); } return __raw_string(p, len); }";
-}
-
 // sysno is the ONE table of syscall numbers the Fern runtime leaves are
 // generated against (#2649). `t` is the emitting backend's target — "x86_64",
 // "arm64-linux" or "arm64-darwin" — and the returned decimal string is spliced
@@ -7351,7 +7339,6 @@ function builtin_string_names(): string[] {
     "str_to_lower",
     "str_repeat",
     "str_replace",
-    "chr",
     "__raw_string",
     "string_from_bytes_unchecked",
     "string_from_bytes_range_unchecked",
@@ -8221,7 +8208,7 @@ pub function runtime_need_deps(name: string): string[] {
   let heap: string[] = ["heap"];
   if (name == "str_concat" || name == "str_read_line" || name == "i32_to_string"
     || name == "u32_to_string" || name == "i64_to_string" || name == "u64_to_string"
-    || name == "chr" || name == "args" || name == "read_file" || name == "read_file_bytes"
+    || name == "args" || name == "read_file" || name == "read_file_bytes"
     || name == "random_bytes" || name == "write_file_bytes" || name == "write_file_bytes_u8"
     || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf" || name == "buf"
     || name == "read_file_bytes_u8" || name == "random_bytes_u8" || name == "tcp_recv_u8"
@@ -10304,7 +10291,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_alloc_reuse",
     "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
     "__fn___fern_i64_to_string", "__fn___fern_u64_to_string",
-    "__fn___fern_str_cmp", "__fn___fern_chr", "__fn___fern_snapshot_dec",
+    "__fn___fern_str_cmp", "__fn___fern_snapshot_dec",
     // string RC reclaim (#2649): a LIBRARY module that reclaims a fresh string
     // (`let b = a + a` → __fern_str_free) references this symbol; the entry
     // owns the single definition (emit_ir_runtime), so export it for the

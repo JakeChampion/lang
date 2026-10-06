@@ -1,7 +1,7 @@
 # Runtime helpers in Fern — migration design (issue #2649)
 
 Status (2026-07): **the Tier-0–2 helper migration is complete** — the
-byte-building Tier-2 set (`chr`, `str_concat`, `i32_to_string`,
+byte-building Tier-2 set (`str_concat`, `i32_to_string`,
 `str_to_upper`/`_lower`, `str_repeat`, `str_replace`,
 `string_from_bytes`, `str_split`) now lowers as Fern functions via the
 raw-memory intrinsics (`RUNTIME-INTRINSICS.md`), on top of the earlier
@@ -418,7 +418,7 @@ floor.** `raw_alloc`, `raw_store8`, `raw_load8`, `raw_string`, `raw_addr`,
 `raw_arr_box` and the `syscall*` family have no arm in the selector — they
 reach the terminal `else` and refuse. Since almost every `rt_src_*` body is
 written on that floor, **52 of the 73 sources cannot be compiled for wasm at
-all**, including every one worth having (`i32_to_string`, `chr`, `str_concat`,
+all**, including every one worth having (`i32_to_string`, `str_concat`,
 the case converters, all I/O).
 
 Intersecting the sources that avoid the floor with the single-parameter ones
@@ -1119,7 +1119,7 @@ the call site (unchanged), only the two reduce loops move to Fern.
 **don't allocate**. Every remaining helper breaks at least one of those, which
 is what the next phase has to confront:
 
-- **IR-path-integrated** — `str_to_i32`, `i32_to_string`, `chr`, `str_cmp`
+- **IR-path-integrated** — `str_to_i32`, `i32_to_string`, `str_cmp`
   are emitted *and* called on the self-host IR path too (via register-ABI calls or `__fn___fern_*` stack
   wrappers in `emit_ir_runtime` / `asm_arm64`'s runtime). Migrating one means
   reconciling the IR call convention, not just the AST call site.
@@ -1171,7 +1171,7 @@ register body (`asm.fern`) and the arm64 paths (whose AST+IR share
 `asm_arm64.emit_runtime`, so they need a coordinated change) keep their
 hand-written bodies for now — separate compiles, no symbol conflict. The point
 of this slice is the *primitive*: `emit_ir_runtime_fern_fn` now exists, so the
-remaining IR-path helpers (`i32_to_string`, `chr`, …) and the AST/arm64 copies
+remaining IR-path helpers (`i32_to_string`, …) and the AST/arm64 copies
 can follow without inventing new machinery.
 
 Validated on x86-64: `TestSelfHostAsmIRPath/str2i32-*` (behaviour incl.

@@ -65,16 +65,6 @@ function main(): i32 { return "abc".bytes().len(); }`,
 			[]string{"\n__fern_str_bytes:", ".Lir_bytes_loop"},
 		},
 		{
-			// chr — first Tier-2 helper via the raw-memory intrinsics (#2649). The IR
-			// symbol __fn___fern_chr is unchanged, but the old hand-written stack-arg
-			// body loaded its arg with `movq 8(%rsp), %rdi`; the Fern-compiled body
-			// uses the standard frame, so that load must be gone.
-			"chr",
-			`function main(): i32 { return chr(65)[0] as i32; }`,
-			"__fn___fern_chr",
-			[]string{"movq 8(%rsp), %rdi"},
-		},
-		{
 			// str_concat — backs `+` on strings. The old hand-written register-ABI
 			// body (__fern_str_concat: / .Lstrconcat_a_loop) must be gone. One
 			// operand comes from args() so the concat is not folded to a constant.

@@ -45,9 +45,6 @@ function churn(n: i32): i32 { let base: string = "xyz"; let sum: i32 = 0; let i:
 		// i in 0..49: 10*1 + 40*2 = 90.
 		{"loop-i32-to-string", `import "std/i32";
 function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 50) { let s: string = i.to_string(); sum = sum + s.len(); i = i + 1; } return sum; }`, 90},
-		// Un-annotated chr(..) reclaimed each iteration (the rc-header fix makes the
-		// wasm chr block reclaimable). Value-only. 20 iters * len 1 = 20.
-		{"unannotated-chr", `function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 20) { let s = chr(65 + i); sum = sum + s.len(); i = i + 1; } return sum; }`, 20},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

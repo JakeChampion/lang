@@ -2434,7 +2434,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
 // runtime in through one of them.
 function needs_heap_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
-    "heap", "i32_to_string", "u32_to_string", "chr",
+    "heap", "i32_to_string", "u32_to_string",
     "str_read_line", "strbuf", "buf", "reader",
     "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
     "read_dir", "read_dir_all", "read_dir_ino", "remove_file", "create_dir_all", "create_dir",
@@ -5301,9 +5301,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // __fn___fern_i32_to_string, using the raw-memory intrinsics), not a
   // hand-written body here. See the emit_ir_runtime_fern_fn call in
   // emit_module_ir_unit_flat's entry block.
-  // __fern_chr is now a Fern runtime function (#2649): see asmcore.rt_src_chr,
-  // lowered through the IR pipeline via emit_ir_runtime_fern_fn in the entry
-  // block (using the raw-memory intrinsics). No longer hand-rolled here.
   // No static `.bss` heap reservation: the arena is mmap'd lazily on the
   // first __fern_alloc call (see the .bss block + __fern_alloc above), so
   // the binary is linker-agnostic (issue #4081). Mirrors what the retired x86 AST emitter did.
@@ -11313,11 +11310,6 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_map_find") {
     s = s.need("maps");
   }
-  // chr allocates its 1-char box, so pull in the heap runtime too.
-  if (name == "__fern_chr") {
-    s = s.need("heap");
-    s = s.need("chr");
-  }
   // arr.join(sep) needs its own body + the heap runtime it fills its
   // exact-size block from (mark_arr_str_join sets both). #5328.
   if (name == "__fern_arr_str_join") {
@@ -12287,13 +12279,6 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("str_bytes")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes(), s);
-  }
-  // chr — first Tier-2 helper via the raw-memory intrinsics (#2649): alloc 1
-  // byte, store b, box it. Lowered through the IR pipeline; the heap runtime
-  // above is present (mark_chr pulls heap).
-  if (s.has_need("chr")) {
-    s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_chr(), s);
   }
   // str_concat — backs `+` on strings, now Tier-2 via the intrinsics (#2649):
   // alloc lenA+lenB, copy A then B byte-by-byte, box it. Heap-dependent (present

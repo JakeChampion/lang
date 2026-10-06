@@ -18,20 +18,3 @@ function main(): i32 {
     return 0;
 }
 `
-
-const LegacyASCIICharProgram = `function main(): i32 {
-    let n: i32 = 0;
-    while (n < 256) {
-        let text = chr(n);
-        if (n < 128) {
-            if (text.len() != 1 || text[0] as i32 != n) { return 1; }
-        } else {
-            if (text.len() != 0) { return 2; }
-        }
-        n = n + 1;
-    }
-    let invalid: i32[] = [0 - 1, 256, 1114111, 2147483647, 0 - 2147483647 - 1];
-    for value in invalid { if (chr(value).len() != 0) { return 3; } }
-    return 0;
-}
-`
