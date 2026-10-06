@@ -22,8 +22,8 @@ import (
 func TestSelfHostReadDirIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	// temp_dir -> write 2 files -> read_dir -> assert 2 entries -> remove. Exit 0
 	// only if every step succeeds and the listing has exactly 2 names.
@@ -95,8 +95,8 @@ func TestSelfHostReadDirIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	// Stage a directory "rd_dir" with three entries: a.txt, b.txt, and a subdir
 	// "sub" — names total 5+5+3 = 13 bytes (the order-independent check). The
@@ -178,8 +178,8 @@ func TestSelfHostReadDirIRWasm(t *testing.T) {
 func TestSelfHostReadDirAllIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	const src = `function main(): i32 {
     match (temp_dir("fern-readdirall-ir")) {
@@ -257,8 +257,8 @@ func TestSelfHostReadDirAllIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	rd := filepath.Join(dir, "rda_dir")
 	if err := os.Mkdir(rd, 0o755); err != nil {

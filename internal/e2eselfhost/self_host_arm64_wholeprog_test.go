@@ -73,8 +73,8 @@ function main(): i32 {
 }
 `
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	emitBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "asm_ir_run")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	emitBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "asm_ir_run")
 	asm := string(runCaptureEnv(t, runner, emitBin, []byte(program), nil, "-target", "arm64-linux"))
 	if len(asm) == 0 {
 		t.Fatal("the arm64 emitter produced no asm")

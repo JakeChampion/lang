@@ -15,6 +15,8 @@ import (
 // divisor.
 func TestTokenSliceIsSizedForTheCorpusDensity(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("..", "..", "compiler", "*.fern"))
+	inDrivers, _ := filepath.Glob(filepath.Join("..", "..", "compiler", "drivers", "*.fern"))
+	files = append(files, inDrivers...)
 	if err != nil || len(files) == 0 {
 		t.Skipf("no self-host sources to measure: %v", err)
 	}

@@ -30,9 +30,9 @@ func TestSelfHostWatbinFlat(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern", "watbin.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "drivers/wasm_ir_run.fern", "watbin.fern")
 	// The flat WAT emitter.
-	irDriver := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "ir_driver")
+	irDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "ir_driver")
 
 	// The watbin assembler: read WAT from stdin, print the module bytes as
 	// newline-separated decimals.

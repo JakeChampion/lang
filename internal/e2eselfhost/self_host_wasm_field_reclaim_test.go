@@ -25,8 +25,8 @@ func TestSelfHostFieldReclaimWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	// The reclaim churn: one build() call whose snapshot param is rebound 2M
 	// times. Bounded reclaim footprint is ~1 MiB; the pass-through leak is one

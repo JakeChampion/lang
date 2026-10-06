@@ -683,7 +683,7 @@ Today: **45 of 59 modules are core-safe.** Three results worth knowing:
   needs is a calling convention to hand a JNIEnv method pointer to.
 
 The self-host derives the same partition from its own scan (`platforms.reach`, driven by
-`compiler/platforms_reach_run.fern`), and
+`compiler/drivers/platforms_reach_run.fern`), and
 `TestSelfHostStdPartitionAgreesWithNative` requires the two derivations to match module
 for module. That is the differential the partition most needs: the two compilers
 disagreeing here means they disagree about what runs on a machine with no host, and

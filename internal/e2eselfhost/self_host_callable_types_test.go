@@ -9,8 +9,8 @@ import (
 func TestSelfHostCallableTypes(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "callable_types_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "callable_types_run.fern", "callable_types")
+	copySelfHostDriver(t, dir, "drivers/callable_types_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/callable_types_run.fern", "callable_types")
 	want := strings.Join([]string{
 		"fn()->void",
 		"opaque->unknown(fn result (the coarse tag records none))",
@@ -37,8 +37,8 @@ func TestSelfHostCallableTypes(t *testing.T) {
 func TestSelfHostCallableTypeDiagnostics(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "checker_codes_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "checker_codes_run.fern", "checker_codes")
+	copySelfHostDriver(t, dir, "drivers/checker_codes_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/checker_codes_run.fern", "checker_codes")
 	for _, tc := range []struct {
 		name string
 		src  string

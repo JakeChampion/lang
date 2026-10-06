@@ -21,8 +21,8 @@ func TestSelfHostExportAttributeCompiles(t *testing.T) {
 	runner := x86_64Runner(t)
 	dir := t.TempDir()
 
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	// An `@export` function, also called from main. The self-host must parse
 	// the attribute and compile the program.
@@ -65,8 +65,8 @@ func TestSelfHostExportScalarRunsViaConsumer(t *testing.T) {
 	}
 
 	// --- self-host emits the exporter core (a command with main + @export). ---
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/math@0.1.0", "add")
 function add(a: i32, b: i32): i32 { return a + b; }
@@ -208,8 +208,8 @@ func TestSelfHostExportStringResultRunsViaConsumer(t *testing.T) {
 	}
 
 	// self-host emits the exporter core (command with main + string @export).
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/strings@0.1.0", "greet")
 function greet(): string { return "hi"; }
@@ -344,8 +344,8 @@ func TestSelfHostExportStringParamRunsViaConsumer(t *testing.T) {
 		}
 	}
 
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/strings@0.1.0", "len-of")
 function len_of(s: string): i32 { return s.len(); }

@@ -1,0 +1,63 @@
+// compiler/wasm_runio_run.fern — stdin-driven driver for the
+// self-hosted wasm emitter's run_io wrapper. Reads Fern source from
+// stdin, runs it through lexer + parser + the typed lowering (semlower.driven) +
+// wasm_ir.emit_module_mode_or_error_sub, and
+// prints the resulting WASI core module (WAT text, wrapped for the
+// full-io component path) to stdout. Companion to wasm_run.fern (the
+// plain emit_module driver): same front end, io-wrapped emit.
+//
+// The Go-side export/component tests (self_host_p6_export_test.go and
+// the self_host_export_*_test.go family) pipe a source program in and
+// hand the WAT to wasm-tools / wasmtime. This used to live as an
+// identical inline `exp_run.fern` literal in six test files; it is a
+// stock driver so the CI warm cache covers it (see the `warm` matrix in
+// .github/workflows/test-e2e-selfhost.yml) and the copies cannot drift.
+
+import "../lexer";
+import "../parser";
+import "./rundriver";
+import "../wasm_ir";
+import "../asmcore";
+import "../semlower";
+
+function main(): i32 {
+  // `-decide`: print the routing verdict ("ir" / "refused") instead of emitting —
+  // the COMPONENT-mode sibling of wasm_run's probe. Mode 0 has been swept over
+  // the harvested corpus since #5977; component mode never had a probe at all,
+  // so its decline set was unmeasured, and those declines are exactly what an
+  // IR-or-error reroute turns into hard errors.
+  // `-reactor`: the core imports its WASI host only when the program reaches
+  // it, the form an export-only component (and a wasi:http handler) takes.
+  let decide: boolean = false;
+  let reactor: boolean = false;
+  let av: string[] = args();
+  let ai: i32 = 1;
+  while (ai < av.len()) {
+    if (av[ai] == "-decide") {
+      decide = true;
+    }
+    if (av[ai] == "-reactor") {
+      reactor = true;
+    }
+    ai = ai + 1;
+  }
+  let mod: parser.Module = rundriver.parse_stdin("wasm_runio_run");
+  if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
+    return 1;
+  }
+  let d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
+  if (decide) {
+    // The emit's own decision (component=true, io=true), reused from
+    // wasm_ir rather than restated so the probe cannot drift from the
+    // emitter it describes.
+    let plm: parser.Module = wasm_ir.route_normalized(d.full);
+    if (wasm_ir.ir_route_ok(plm, true, true, d.sub)) {
+      print("ir\n");
+    } else {
+      print("refused\n");
+    }
+    return 0;
+  }
+  write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, !reactor || wasm_ir.component_needs_host(d.full, d.sub.switches), d.sub));
+  return 0;
+}

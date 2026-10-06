@@ -39,9 +39,9 @@ func TestSelfHostArm64DarwinAssemblesRealRuntime(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostFiles(t, dir, "flatten.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "asm_ir_run.fern", "wasm_run.fern")
-	darwinEmit := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "darwin_emit")
-	wrun := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostFiles(t, dir, "flatten.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "drivers/asm_ir_run.fern", "drivers/wasm_run.fern")
+	darwinEmit := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "darwin_emit")
+	wrun := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	native := arm64NativeSrc(t)
 
 	cases := []struct{ name, src string }{

@@ -98,7 +98,7 @@ func TestSelfHostMapKeyWithNoColumnRefusesEverySurface(t *testing.T) {
 		t.Skip("self-host driver runs natively only")
 	}
 	dir := copySelfHostTree(t)
-	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "alr")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)
@@ -302,7 +302,7 @@ func TestSelfHostMonomorphisedFloatKeyStillRefusesToLower(t *testing.T) {
 		t.Skip("self-host driver runs natively only")
 	}
 	dir := copySelfHostTree(t)
-	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "alr")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)

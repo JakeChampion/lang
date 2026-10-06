@@ -24,14 +24,14 @@ import (
 func TestSelfHostCCallIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../compiler/asm_run.fern")
+	src, err := os.ReadFile("../../compiler/drivers/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	prog := `function run0(cb: usize): i32 { return __c_call0(cb) as i32; }
 function run1(cb: usize, x: usize): i32 { return __c_call1(cb, x) as i32; }
@@ -108,8 +108,8 @@ func TestSelfHostCCallIRArm64(t *testing.T) {
 	arm64gcc, _ := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	prog := `function run0(cb: usize): i32 { return __c_call0(cb) as i32; }
 function run1(cb: usize, x: usize): i32 { return __c_call1(cb, x) as i32; }

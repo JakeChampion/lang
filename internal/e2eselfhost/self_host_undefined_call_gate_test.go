@@ -190,14 +190,14 @@ function main(): i32 {
 func TestSelfHostWasmUndefinedCallGate(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern", "wasm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "drivers/wasm_run.fern", "drivers/wasm_ir_run.fern")
 	drivers := []struct {
 		name string
 		bin  string
 		args []string
 	}{
-		{"wasm_run", buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run"), nil},
-		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasm_ir_run"), []string{"-ir"}},
+		{"wasm_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run"), nil},
+		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run"), []string{"-ir"}},
 	}
 	const rejectSrc = "function main(): i32 { return totally_undefined_fn(1); }"
 	const acceptSrc = "function dbl(n: i32): i32 { return n * 2; }\n" +

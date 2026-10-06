@@ -45,7 +45,7 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 # everything else. Unset, every package, which is what the lane-coverage gate
 # and a local run read.
 heavy='/internal/(ir|printer)(/|$)'
-go list ./internal/... ./cmd/... |
+go list ./... |
   grep -vE '/internal/(e2e|e2eselfhost|fernsmith|coreutils)(/|$)' |
   case "${FERN_CI_UNIT_PACKAGE_GROUP:-}" in
     heavy) grep -E "$heavy" ;;

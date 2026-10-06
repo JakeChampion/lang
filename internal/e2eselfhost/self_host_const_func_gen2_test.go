@@ -49,7 +49,7 @@ func TestSelfHostConstFuncGen2(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
 
 	// No source patching any more. This test used to strip asm_ir.fern's
 	// 512-function IR budget in the temp-dir copy, because with the budget in
@@ -60,8 +60,8 @@ func TestSelfHostConstFuncGen2(t *testing.T) {
 	// hazard it guards is the one the removal creates.
 
 	// gen 1: native-built.
-	selfSrc := filepath.Join(dir, "asm_load_run.fern")
-	mmc1 := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "cfg_mmc1")
+	selfSrc := filepath.Join(dir, "drivers/asm_load_run.fern")
+	mmc1 := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "cfg_mmc1")
 
 	// gen 2: built by gen 1, so its own body came out of the IR emitter. The
 	// compiler imports core/map, which only the stdlib root resolves.

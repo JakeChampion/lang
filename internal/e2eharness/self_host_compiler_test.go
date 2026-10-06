@@ -121,10 +121,10 @@ func TestStdlibHashCoversTheStdlibTree(t *testing.T) {
 }
 
 func TestDriverBuildWeightIsPerDriver(t *testing.T) {
-	if w := DriverBuildWeightMB("fern.fern"); w <= DriverBuildWeightMB("asm_ir_run.fern") {
+	if w := DriverBuildWeightMB("fern.fern"); w <= DriverBuildWeightMB("drivers/asm_ir_run.fern") {
 		t.Errorf("fern.fern reserves %d MB, no more than a smaller driver", w)
 	}
-	if w := DriverBuildWeightMB("asm_ir_run.fern"); w <= 0 {
+	if w := DriverBuildWeightMB("drivers/asm_ir_run.fern"); w <= 0 {
 		t.Errorf("driver weight = %d; want positive", w)
 	}
 }

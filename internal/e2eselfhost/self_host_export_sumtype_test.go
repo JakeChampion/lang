@@ -36,8 +36,8 @@ func runSelfHostSumTypeExportCase(t *testing.T, iface, short, fqn, dep, expFern,
 		}
 	}
 
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	watBytes := runCapture(t, "", runner, driverBin, []byte(expFern))
 	expWatPath := filepath.Join(dir, "exp_core.wat")

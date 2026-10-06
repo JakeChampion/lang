@@ -36,9 +36,9 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 	batchUnits := pmEmitAllBatch
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProjectTyped(t)
-	entry := filepath.Join(dir, "asm_modload_run.fern")
+	entry := filepath.Join(dir, "drivers/asm_modload_run.fern")
 
-	gen0Bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "eafix_gen0")
+	gen0Bin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "eafix_gen0")
 
 	t.Logf("gen0: emit-all of the whole compiler (batch=%d)", batchUnits)
 	unitsG0 := emitAllWholeCompiler(t, runner, gen0Bin, entry, dir, "eafix_g0", "x86-64-linux", batchUnits, pmGoBuiltEmitMemoryMB)

@@ -222,7 +222,7 @@ the shipped artifact needs sharding.
 ```
 make build && make selfhost-cli
 ./bin/fern-selfhost -target wasm32-wasi -emit core-module \
-    -o wasm_ir_run.wasm compiler/wasm_ir_run.fern internal/stdlib
+    -o wasm_ir_run.wasm compiler/drivers/wasm_ir_run.fern internal/stdlib
 echo 'function main(): i32 { return 6 * 7; }' | wasmtime run wasm_ir_run.wasm
 
 # The page's artifact. -embed names the stdlib it CARRIES; the trailing
@@ -307,7 +307,7 @@ miscompile against — which is why #7948 had to be diagnosed by diffing the two
 TARGETS of one compiler instead — and it is no longer a witness to wait for.
 
 The IR driver is the exception, and it is a usable partial witness: the native
-toolchain compiles `compiler/wasm_ir_run.fern` to a core module that
+toolchain compiles `compiler/drivers/wasm_ir_run.fern` to a core module that
 now instantiates and compiles a program handed to it on stdin. It could always
 be *built*; it could not be *started* until the emitted memory was sized from
 the static data (the literals of a whole compiler run well past 64 KiB, and data

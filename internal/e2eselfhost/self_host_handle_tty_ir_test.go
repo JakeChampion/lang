@@ -100,8 +100,8 @@ func TestSelfHostHandleTtyIR(t *testing.T) {
 		t.Skip("handle-tty test runs only natively (drives a host terminal)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := runCapture(t, gcc, runner, driverBin, []byte(selfHostHandleTtySource), "-ir")
 	if len(asm) == 0 {
@@ -130,8 +130,8 @@ func TestSelfHostHandleTtyArm64IR(t *testing.T) {
 		t.Skip("handle-tty test runs only natively (drives a host terminal)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(selfHostHandleTtySource), "-target", "arm64-linux", "-ir")
 	if len(asm) == 0 {

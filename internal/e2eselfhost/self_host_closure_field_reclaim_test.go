@@ -60,8 +60,8 @@ func TestSelfHostClosureFieldReclaimX86_64(t *testing.T) {
 	// `live_bytes = 0`.
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "driver")
 
 	liveOf := func(name string, rounds int, closureField bool) int64 {
 		t.Helper()

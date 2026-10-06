@@ -166,7 +166,7 @@ func runFnValueRecvDispatch(t *testing.T, dir, driver, root string, runner, targ
 func TestSelfHostFnValueRecvDispatch(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
-	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "fvrd")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "fvrd")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)
@@ -185,7 +185,7 @@ func TestSelfHostFnValueRecvDispatchArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
-	driver := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "fvrd_arm64")
+	driver := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_load_run.fern", "fvrd_arm64")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)

@@ -115,8 +115,8 @@ func machoDriver(t *testing.T) (runner []string, bin string) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	return runner, buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	return runner, buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 }
 
 var (
@@ -137,10 +137,10 @@ func darwinMachoDriver(t *testing.T) string {
 			darwinDriverErr = err
 			return
 		}
-		copySelfHostDriver(t, dir, "wasm_run.fern")
+		copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 		bin := filepath.Join(dir, "wasm_run")
 		out, err := exec.Command(fern, "-target", "arm64-darwin", "-o", bin,
-			filepath.Join(dir, "wasm_run.fern")).CombinedOutput()
+			filepath.Join(dir, "drivers/wasm_run.fern")).CombinedOutput()
 		if err != nil {
 			darwinDriverErr = &driverBuildError{err: err, out: out}
 			return

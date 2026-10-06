@@ -11,7 +11,7 @@ import (
 // value (ir.op_const_i64 / ir.op_const_f64), and every backend read only the
 // text: a value-built constant emitted an empty immediate on x86-64 and arm64
 // and an empty `i64.const` / `f64.const` on wasm (#8996). The driver
-// (compiler/ir_const_numeric_run.fern) lowers this program through
+// (compiler/drivers/ir_const_numeric_run.fern) lowers this program through
 // the typed lowering, rebuilds every text constant from its value, and emits
 // through the same substitution seam the CLI uses, so the program must answer
 // exactly as it does compiled normally. The driver also exits 3 when a NaN
@@ -57,8 +57,8 @@ func irConstNumericEmit(t *testing.T, runner []string, bin, target string) strin
 func TestSelfHostIRConstNumeric(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ir_const_numeric_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "ir_const_numeric_run.fern", "ir_const_numeric_run")
+	copySelfHostDriver(t, dir, "drivers/ir_const_numeric_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/ir_const_numeric_run.fern", "ir_const_numeric_run")
 
 	t.Run("x86-64", func(t *testing.T) {
 		asm := irConstNumericEmit(t, runner, bin, "x86-64-linux")

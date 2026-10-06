@@ -23,8 +23,8 @@ func TestWasmArrayMethodSyntax(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	const sumSq = "function __method_Array_sum_squared(arr: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < arr.len()) { s = s + arr[i] * arr[i]; i = i + 1; } return s; }\n"
 	const reversed = "function __method_Array_reversed(arr: i32[]): i32[] { let out: i32[] = []; let i: i32 = arr.len() - 1; while (i >= 0) { out = out.append(arr[i]); i = i - 1; } return out; }\n"

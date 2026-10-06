@@ -29,8 +29,8 @@ import (
 // changes no output, which is exactly what makes it easy to delete by
 // accident — hence this check rather than trust.
 var guardedDrivers = []string{
-	"asm_ir_run.fern",
-	"wasm_ir_run.fern",
+	"drivers/asm_ir_run.fern",
+	"drivers/wasm_ir_run.fern",
 }
 
 func TestSelfHostDriversRunTheRcUnderflowGuard(t *testing.T) {

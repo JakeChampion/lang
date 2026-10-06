@@ -48,8 +48,8 @@ func TestSelfHostArrayLiteralIndexIR(t *testing.T) {
 		t.Skip("single-program IR driver test runs only natively")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	for _, tc := range arrLitIndexCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -78,8 +78,8 @@ func TestSelfHostArrayLiteralIndexIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	for _, tc := range arrLitIndexCases {
 		t.Run(tc.name, func(t *testing.T) {

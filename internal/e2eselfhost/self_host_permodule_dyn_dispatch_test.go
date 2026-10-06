@@ -15,7 +15,7 @@ import (
 func TestSelfHostPerModuleDynDispatchCrossModule(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "dyndispatchdriver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "dyndispatchdriver")
 
 	proj := t.TempDir()
 	mustWrite(t, proj, "shape.fern", `pub trait Area {

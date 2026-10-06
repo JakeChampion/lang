@@ -24,8 +24,8 @@ func TestSelfHostEmbedBundleAndSubstitution(t *testing.T) {
 		t.Skip("embed_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "embed_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "embed_run.fern", "embed_run")
+	copySelfHostDriver(t, dir, "drivers/embed_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/embed_run.fern", "embed_run")
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

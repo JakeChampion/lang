@@ -27,8 +27,8 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	// A long churn (500k alloc→drop cycles) under a 16 MiB cap. The bounded
 	// reclaim footprint is ~1 MiB; the pass-through leak is ~90 B/iter ≈ 45 MiB,

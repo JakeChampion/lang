@@ -13,8 +13,8 @@ import (
 func TestSelfHostFloatTypeContracts(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "float_types_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "float_types_run.fern", "float_types")
+	copySelfHostDriver(t, dir, "drivers/float_types_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/float_types_run.fern", "float_types")
 	want := strings.Join([]string{
 		"f32:concrete", "f64:concrete", "f64:concrete",
 		"array<array<f32:concrete>>", "tuple(f32:concrete,tuple(f64:concrete,f32:concrete))",
@@ -35,8 +35,8 @@ func TestSelfHostFloatTypeContracts(t *testing.T) {
 func TestSelfHostFloatWidthCheckerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "checker_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "checker_run.fern", "checker_run")
+	copySelfHostDriver(t, dir, "drivers/checker_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/checker_run.fern", "checker_run")
 	cases := []struct{ name, src, code string }{
 		{"option payload width", `function f(o: Option[f32]): f64 { match (o) { Some(x) => { return x; }, None => { return 0.5; } } }`, "E002"},
 		{"result error width", `function f(r: Result[f32, f64]): f32 { match (r) { Ok(x) => { return x; }, Err(e) => { return e; } } }`, "E002"},

@@ -70,8 +70,8 @@ const withCloneReclaimExit = 7
 func TestSelfHostWithCloneReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	interp := buildLangBinForInterp(t)
 	if got := interpExit(t, interp, withCloneReclaimSrc); got != withCloneReclaimExit {
 		t.Fatalf("interpreter = %d, want %d", got, withCloneReclaimExit)
@@ -91,8 +91,8 @@ func TestSelfHostWithCloneReclaimArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	asm := string(runCaptureEnv(t, x86runner, driverBin, []byte(withCloneReclaimSrc),
 		[]string{"PATH=/usr/bin:/bin", "FERN_LEAKCHECK=1"}, "-target", "arm64-linux"))
 	if len(asm) == 0 {
@@ -115,8 +115,8 @@ func TestSelfHostWithCloneReclaimWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasmdriver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasmdriver")
 	wat := wasmLcCompile(t, runner, driverBin, withCloneReclaimSrc, []string{"FERN_LEAKCHECK=1"})
 	stderr, exit := wasmLcRun(t, dir, "with_clone_reclaim", wat)
 	if exit != withCloneReclaimExit {

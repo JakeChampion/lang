@@ -29,8 +29,8 @@ func TestSelfHostNthTupleElem(t *testing.T) {
 		t.Skip("nth_tuple_elem_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "nth_tuple_elem_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "nth_tuple_elem_run.fern", "nth_tuple_elem_run")
+	copySelfHostDriver(t, dir, "drivers/nth_tuple_elem_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/nth_tuple_elem_run.fern", "nth_tuple_elem_run")
 
 	const want = "(i32, i32)[0]=i32\n" +
 		"(i32, i32)[1]=i32\n" +

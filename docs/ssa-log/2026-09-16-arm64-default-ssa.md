@@ -13,7 +13,7 @@ because the flip is half-done.
 
 ## arm64-linux: flip
 
-Self-host driver (`compiler/asm_run.fern`), measured on the merged
+Self-host driver (`compiler/drivers/asm_run.fern`), measured on the merged
 emitter:
 
 | | size | compile |

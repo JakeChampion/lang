@@ -37,8 +37,8 @@ func TestSelfHostExternImportRunsUnderWasmtime(t *testing.T) {
 
 	// Stage the self-host front end + wasm backend, plus a component-io driver
 	// that emits the run core (emit_module_run_io) from source on stdin.
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	const want = "self-host-extern-ok"
 	prog := `@import("wasi:random/random@0.2.0", "get-random-u64")

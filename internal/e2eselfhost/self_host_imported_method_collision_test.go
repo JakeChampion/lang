@@ -154,8 +154,8 @@ func TestSelfHostImportedMethodCollisionWasm(t *testing.T) {
 		t.Skip("the file-loading driver resolves sibling imports by host path, so it runs only natively")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_modload_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_modload_run.fern", "wasm_modload_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_modload_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_modload_run.fern", "wasm_modload_run")
 
 	for _, tc := range importedMethodCollisionCases {
 		t.Run(tc.name, func(t *testing.T) {

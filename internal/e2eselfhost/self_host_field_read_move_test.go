@@ -154,9 +154,9 @@ func TestSelfHostFieldReadMove(t *testing.T) {
 	e2eharness.Wasmtime(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern", "wasm_ir_run.fern")
-	asmDriver := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "asm_driver")
-	wasmDriver := buildSelfHostBin(t, x86gcc, dir, "wasm_ir_run.fern", "wasm_driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern", "drivers/wasm_ir_run.fern")
+	asmDriver := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "asm_driver")
+	wasmDriver := buildSelfHostBin(t, x86gcc, dir, "drivers/wasm_ir_run.fern", "wasm_driver")
 	env := func(v string) []string { return []string{"PATH=/usr/bin:/bin", v} }
 
 	for _, tc := range fieldReadMoveCases {

@@ -21,8 +21,8 @@ func TestSelfHostTcpClientIRArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	port := startTcpPongServer(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	src := []byte(tcpClientIRProgram(port) + "\n")
 	asm := runCapture(t, x86gcc, x86runner, driverBin, src, "-target", "arm64-linux")

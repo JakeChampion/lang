@@ -19,6 +19,6 @@ func WriteSelfHostAsmProject(t testing.TB) string {
 	// asm_arm64_ir.fern and semlower.fern are there for the drivers staged the
 	// same way: asm_load_run dispatches to either backend behind `-target`, and
 	// asm_run, asm_load_run and asm_ir_run lower through the typed path.
-	CopySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "treeshake.fern", "rundriver.fern", "semlower.fern")
+	CopySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "treeshake.fern", "drivers/rundriver.fern", "semlower.fern")
 	return dir
 }

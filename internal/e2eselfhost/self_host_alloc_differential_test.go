@@ -341,8 +341,8 @@ func allocRatio(recorded, measured int) int {
 func TestSelfHostAllocDifferentialX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	// selfHostExit compiles src with the self-hosted x86-64 driver, links it,
 	// runs it, and returns the exit code.
