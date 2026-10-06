@@ -30,7 +30,8 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// ret_word and call_word, the word a paired return passes beside its
 	// result, are two more, admitted through the flat arm. buf_clear and
 	// tcp_send_buf, which empty a builder and send from one, are two more.
-	// The clock, signal, set_args and read_dir_ino builtins add six more.
+	// clock_set, clock_resolution, str_hash, read_dir_ino, signal_catch and
+	// signal_taken are six more.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
