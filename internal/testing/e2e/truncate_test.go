@@ -164,18 +164,11 @@ func TestWASMPreview1Truncate(t *testing.T) {
 	truncateCheckTree(t, dir)
 }
 
-// main's return reaches us on STDOUT, not as the exit status: the harness
-// runs the module with `--invoke main`.
 func TestWASMTruncate(t *testing.T) {
-	p := buildWasmCore(t, truncateSource(""))
 	dir := t.TempDir()
-	stdout, stderr, ec := runWasmArtifact(t, p, runOpts{workDir: dir})
-	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
-	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Fatalf("main = %d, want 0 — the code names the step (see truncateSource)\nstdout:\n%s\nstderr:\n%s",
-			got, stdout, stderr)
+	out := runResultStdout(t, truncateSource(""), runOpts{workDir: dir})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see truncateSource)\nstdout:\n%s", got, out)
 	}
 	truncateCheckTree(t, dir)
 }

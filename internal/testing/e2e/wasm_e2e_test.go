@@ -173,10 +173,11 @@ func buildResultComponent(t *testing.T, src string) string {
 	return buildCLIComponent(t, wrapped)
 }
 
-// runResultStdout runs src through buildResultComponent and returns its stdout.
-func runResultStdout(t *testing.T, src string) string {
+// runResultStdout runs src through buildResultComponent under opts and
+// returns its stdout.
+func runResultStdout(t *testing.T, src string, opts runOpts) string {
 	t.Helper()
-	s, e, ec := runWasmArtifact(t, buildResultComponent(t, src), runOpts{})
+	s, e, ec := runWasmArtifact(t, buildResultComponent(t, src), opts)
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, s, e)
 	}
@@ -188,7 +189,7 @@ func runResultStdout(t *testing.T, src string) string {
 // takes, where runWasm's core module and --invoke cannot.
 func runWasmResult(t *testing.T, src string) int {
 	t.Helper()
-	return parseMainResult(t, runResultStdout(t, src))
+	return parseMainResult(t, runResultStdout(t, src, runOpts{}))
 }
 
 // isCoreModule reports whether the wasm binary at path is a core module

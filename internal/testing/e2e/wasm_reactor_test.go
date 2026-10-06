@@ -41,7 +41,7 @@ func TestWasmReactorTimerWithStdout(t *testing.T) {
     return 0;
 }`
 	// runWasmCapturingStdout trims the trailing newline + result line.
-	if got := stripMainResult(runResultStdout(t, src)); got != "tick" {
+	if got := stripMainResult(runResultStdout(t, src, runOpts{})); got != "tick" {
 		t.Errorf("wasm reactor timer + stdout: got %q, want %q", got, "tick")
 	}
 }

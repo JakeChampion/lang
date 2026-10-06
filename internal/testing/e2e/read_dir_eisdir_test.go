@@ -67,23 +67,11 @@ func TestReadDirectoryIsEisdirEveryTarget(t *testing.T) {
 			bin, qemu := e2eharness.CompileArm64Bin(t, readDirProg)
 			return e2eharness.RunArm64Bin(qemu, bin)
 		}},
-		{"wasm32-wasi", func(t *testing.T) *exec.Cmd {
-			if _, err := exec.LookPath("wasmtime"); err != nil {
-				t.Fatal("wasmtime not on PATH")
-			}
-			wasm := filepath.Join(t.TempDir(), "main.wasm")
-			fern := e2eharness.BuildLangBinForInterp(t)
-			if out, err := exec.Command(fern, "-target", "wasm32-wasi", "-o", wasm, srcPath).CombinedOutput(); err != nil {
-				t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
-			}
-			return exec.Command("wasmtime", "run", "--dir", dir, wasm)
-		}},
 		{"wasm-core", func(t *testing.T) *exec.Cmd {
-			core := e2eharness.CompileSelfHostSource(t, e2eharness.TargetWasm32Wasi, readDirProg, nil)
-			return exec.Command("wasmtime", "run", "--dir", dir, core)
+			return exec.Command("wasmtime", "run", "--dir", dir, buildWasmCore(t, readDirProg))
 		}},
 		{"wasm-component", func(t *testing.T) *exec.Cmd {
-			return exec.Command("wasmtime", "run", "--dir="+dir, buildWasmCore(t, readDirProg))
+			return exec.Command("wasmtime", "run", "--dir", dir, buildCLIComponent(t, readDirProg))
 		}},
 	}
 	for _, tc := range targets {

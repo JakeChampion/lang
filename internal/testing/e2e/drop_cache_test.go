@@ -122,15 +122,10 @@ func TestWASMPreview1DropCache(t *testing.T) {
 }
 
 func TestWASMDropCache(t *testing.T) {
-	p := buildWasmCore(t, dropCacheSource("", false))
 	dir := t.TempDir()
-	stdout, stderr, ec := runWasmArtifact(t, p, runOpts{workDir: dir})
-	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
-	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Fatalf("main = %d, want 0 — the code names the step (see dropCacheSource)\nstdout:\n%s\nstderr:\n%s",
-			got, stdout, stderr)
+	out := runResultStdout(t, dropCacheSource("", false), runOpts{workDir: dir})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see dropCacheSource)\nstdout:\n%s", got, out)
 	}
 	dropCacheCheckTree(t, dir)
 }
