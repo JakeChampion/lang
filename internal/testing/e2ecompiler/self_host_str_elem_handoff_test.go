@@ -9,19 +9,19 @@ import (
 //
 // `let nm: string = names[i]` inside a function borrowing `names` reads an
 // element the CALLER's deep free releases, and `out.bind(nm, i)` hands it to
-// a parameter that is stored (`s.names.append(name)`), which is neither
-// borrowable nor counted. A string parameter at such a position takes over
-// the argument's reference, and the element had none to give: the caller
-// then freed it under the scope that stored it. The checker's own
-// `for (k, v) in m` binding is this shape, and every self-host-built checker
-// died in Scope.bind once __fern_arr_inc_elems walked the freed element
-// (#9023). The handoff now retains the element
-// (retain_caller_elem_handoff), the store's second owner.
+// a parameter that is stored (`s.names.append(name)`). The element had no
+// count of its own to give that store: the checker's own `for (k, v) in m`
+// binding is this shape, and every self-host-built checker died in
+// Scope.bind once __fern_arr_inc_elems walked the freed element (#9023).
+// The store retains what it is handed, so the element is lent to `bind` and
+// `bind_names` retains nothing: a retain there would be a second count on
+// the element, a leak the sanitizer reports in the same line as the holder
+// scope this program never releases.
 //
 // The exit is pinned against the interpreter under the sanitizer, which stays
 // silent: a use-after-free is a `fern-sanitizer:` line and exit 124. A leak
 // line is not a finding here: the holder scope is never released by this
-// program, and its elements now correctly belong to it.
+// program, and its elements correctly belong to it.
 
 const strElemHandoffSrc = `struct Sc { names: string[], types: i32[] }
 struct FB { scope: Sc, valid: boolean }
@@ -83,8 +83,8 @@ function main(): i32 {
 }
 `
 
-// The x86-64 leg pins the retain in the handing function and runs the result
-// under the sanitizer against the interpreter's exit.
+// The x86-64 leg pins that the handing function retains nothing and runs the
+// result under the sanitizer against the interpreter's exit.
 func TestSelfHostStrElemHandoffX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -98,8 +98,8 @@ func TestSelfHostStrElemHandoffX86_64(t *testing.T) {
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}
-	if n := rcIncSites(emittedFn(t, string(asm), "bind_names")); n != 1 {
-		t.Errorf("bind_names carries %d retain(s), want exactly one: the element handed to bind", n)
+	if n := rcIncSites(emittedFn(t, string(asm), "bind_names")); n != 0 {
+		t.Errorf("bind_names carries %d retain(s), want none: the element is lent to bind, whose store retains it", n)
 	}
 	bin := buildBin(t, gcc, dir, "str_elem_handoff", string(asm))
 	stderr, code := runCaptureStderrExit(t, runner, bin)
