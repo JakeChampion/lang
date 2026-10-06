@@ -156,23 +156,29 @@ func TestInterpDirLinkPrimitives(t *testing.T) {
 	dirLinkCheckTree(t, dir)
 }
 
-// The wasm leg runs under the component's preopen, so its paths are relative
-// and `umask` is absent: WASI has no file-mode creation mask and E066 refuses
-// the builtin on that target, which is the correct answer rather than a mask
-// that describes nothing.
+// The wasm legs run under a preopen, so their paths are relative and `umask`
+// is absent: WASI has no file-mode creation mask and E066 refuses the builtin
+// on that target, which is the correct answer rather than a mask that
+// describes nothing.
 //
-// main's return reaches us on STDOUT, not as the exit status: the harness
-// runs the module with `--invoke main`.
-func TestWASMDirLinkPrimitives(t *testing.T) {
-	p := buildWasmCore(t, dirLinkSource("", false))
+// Preview 1 answers with path_create_directory, path_link, path_symlink,
+// path_readlink and path_remove_directory over an errno return; the component
+// goes through the descriptor's create-directory-at, link-at, symlink-at,
+// readlink-at and remove-directory-at. Two sets of bodies, so two runs.
+func TestWASMPreview1DirLinkPrimitives(t *testing.T) {
+	mod := buildPreview1Module(t, dirLinkSource("", false))
 	dir := t.TempDir()
-	stdout, stderr, ec := runWasmArtifact(t, p, runOpts{workDir: dir})
-	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
+	if got := runPreview1Module(t, mod, dir); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see dirLinkSource)", got)
 	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Fatalf("main = %d, want 0 — the code names the step (see dirLinkSource)\nstdout:\n%s\nstderr:\n%s",
-			got, stdout, stderr)
+	dirLinkCheckTree(t, dir)
+}
+
+func TestWASMDirLinkPrimitives(t *testing.T) {
+	dir := t.TempDir()
+	out := runResultStdout(t, dirLinkSource("", false), runOpts{workDir: dir})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see dirLinkSource)\nstdout:\n%s", got, out)
 	}
 	dirLinkCheckTree(t, dir)
 }

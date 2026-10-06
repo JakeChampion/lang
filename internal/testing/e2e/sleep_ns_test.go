@@ -71,16 +71,15 @@ func TestInterpSleepNs(t *testing.T) {
 
 // wasm is the one target that honours the full resolution without rounding:
 // preview-1's poll_oneoff timeout and preview-2's subscribe-duration are both
-// already nanoseconds. main's return reaches us on stdout, not as the exit
-// status — the harness runs the module with `--invoke main`.
-func TestWASMSleepNs(t *testing.T) {
-	p := buildWasmCore(t, sleepNsSource)
-	stdout, stderr, ec := runWasmArtifact(t, p, runOpts{})
-	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
+// already nanoseconds. They are separate bodies, so each preview gets a run.
+func TestWASMPreview1SleepNs(t *testing.T) {
+	if got := runWasm(t, sleepNsSource); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see sleepNsSource)", got)
 	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Fatalf("main = %d, want 0 — the code names the step (see sleepNsSource)\nstdout:\n%s\nstderr:\n%s",
-			got, stdout, stderr)
+}
+
+func TestWASMSleepNs(t *testing.T) {
+	if got := runWasmResult(t, sleepNsSource); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see sleepNsSource)", got)
 	}
 }

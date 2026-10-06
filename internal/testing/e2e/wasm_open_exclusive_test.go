@@ -2,12 +2,9 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // open_exclusive is O_WRONLY|O_CREAT|O_EXCL: the first open creates the
@@ -47,10 +44,12 @@ const openExclusiveProg = `function main(): i32 {
 
 const openExclusiveWant = "exists:ex.txt:new"
 
-func TestWasmOpenExclusivePreview2(t *testing.T) {
-	comp := buildWasmCore(t, openExclusiveProg)
+// openExclusiveRun runs the program as `wasm` under a fresh preopen and checks
+// both the report and the file the refused second open left alone.
+func openExclusiveRun(t *testing.T, wasm string) {
+	t.Helper()
 	dir := t.TempDir()
-	stdout, stderr, ec := runWasmArtifact(t, comp, runOpts{workDir: dir})
+	stdout, stderr, ec := runWasmArtifact(t, wasm, runOpts{workDir: dir})
 	if ec != 0 || !strings.Contains(stdout, openExclusiveWant) {
 		t.Errorf("exit %d, stdout %q (want it to contain %q)\nstderr:\n%s", ec, stdout, openExclusiveWant, stderr)
 	}
@@ -63,29 +62,10 @@ func TestWasmOpenExclusivePreview2(t *testing.T) {
 	}
 }
 
+func TestWasmOpenExclusivePreview2(t *testing.T) {
+	openExclusiveRun(t, buildCLIComponent(t, openExclusiveProg))
+}
+
 func TestWasmOpenExclusivePreview1(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH")
-	}
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(openExclusiveProg), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	wasmPath := filepath.Join(dir, "main.wasm")
-	fern := e2eharness.BuildLangBinForInterp(t)
-	if out, err := exec.Command(fern, "-target", "wasm32-wasi", "-o", wasmPath, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
-	}
-	out, err := exec.Command("wasmtime", "run", "--dir", dir, wasmPath).CombinedOutput()
-	if err != nil || !strings.Contains(string(out), openExclusiveWant) {
-		t.Fatalf("wasmtime: %v\noutput %q (want it to contain %q)", err, out, openExclusiveWant)
-	}
-	got, err := os.ReadFile(filepath.Join(dir, "ex.txt"))
-	if err != nil {
-		t.Fatalf("read back: %v", err)
-	}
-	if string(got) != "new" {
-		t.Errorf("ex.txt = %q, want %q — the refused second open truncated it", got, "new")
-	}
+	openExclusiveRun(t, buildWasmCore(t, openExclusiveProg))
 }
