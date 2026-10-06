@@ -235,3 +235,99 @@ func reportRows(out string) string {
 	sort.Strings(rows)
 	return strings.Join(rows, "; ")
 }
+
+// TestSelfHostCapsModuleBelowPackageRoot pins attribution for a module in a
+// subdirectory of its package (#11645): the dependency it imports is declared
+// in the fern.toml above it, as native's manifest walk finds it, so the
+// dependency is its own package under that manifest's grant. Both a
+// subdirectory module the entry imports and an entry below the root are
+// covered; the report is compared with native's and the grant is enforced.
+func TestSelfHostCapsModuleBelowPackageRoot(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("package capability differential runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	nativeBin := buildFernCLIBin(t)
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	const helper = "pub function save(s: string): i32 {\n  write_file(\"/tmp/fern-caps-e2e.txt\", s);\n  return 0;\n}\n"
+	const viaHelper = "import \"helper\";\npub function run(): i32 {\n  return helper.save(\"x\");\n}\n"
+	for _, layout := range []struct {
+		name  string
+		files map[string]string
+		entry string
+	}{
+		{"imported-from-subdir", map[string]string{
+			"app/main.fern":    "import \"./lib/mid\";\nfunction main(): i32 {\n  return mid.run();\n}\n",
+			"app/lib/mid.fern": viaHelper,
+		}, "app/main.fern"},
+		{"entry-in-subdir", map[string]string{
+			"app/lib/main.fern": "import \"helper\";\nfunction main(): i32 {\n  return helper.save(\"x\");\n}\n",
+		}, "app/lib/main.fern"},
+		// The dependency reaches through its own sibling module: moving the
+		// call there does not escape the grant.
+		{"dependency-sibling", map[string]string{
+			"app/main.fern":     "import \"helper\";\nfunction main(): i32 {\n  return helper.save(\"x\");\n}\n",
+			"helper/lib.fern":   "import \"./store\";\npub function save(s: string): i32 {\n  return store.write(s);\n}\n",
+			"helper/store.fern": "pub function write(s: string): i32 {\n  write_file(\"/tmp/fern-caps-e2e.txt\", s);\n  return 0;\n}\n",
+		}, "app/main.fern"},
+	} {
+		for _, grant := range []struct {
+			caps      string
+			wantBuild bool
+		}{{`["fs"]`, true}, {`["net"]`, false}} {
+			t.Run(layout.name+"/"+grant.caps, func(t *testing.T) {
+				proj := t.TempDir()
+				files := map[string]string{
+					"app/fern.toml":    "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\", capabilities = " + grant.caps + " }\n",
+					"helper/fern.toml": "[package]\nname = \"helper\"\n",
+					"helper/lib.fern":  helper,
+				}
+				for rel, src := range layout.files {
+					files[rel] = src
+				}
+				for rel, src := range files {
+					p := filepath.Join(proj, filepath.FromSlash(rel))
+					if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				entry := filepath.Join(proj, filepath.FromSlash(layout.entry))
+
+				nativeOut, err := exec.Command(nativeBin, "-capabilities", entry).CombinedOutput()
+				if err != nil {
+					t.Fatalf("native -capabilities: %v\n%s", err, nativeOut)
+				}
+				shOut, err := exec.Command(driverBin, "-capabilities", entry, stdlib).CombinedOutput()
+				if err != nil {
+					t.Fatalf("self-host -capabilities: %v\n%s", err, shOut)
+				}
+				want, got := reportRows(string(nativeOut)), reportRows(string(shOut))
+				if want != got {
+					t.Errorf("report rows differ:\nnative    %q\nself-host %q", want, got)
+				}
+				if !strings.Contains(want, "helper fs") {
+					t.Errorf("native report did not attribute fs to helper: %q", nativeOut)
+				}
+
+				build := exec.Command(driverBin, "-o", filepath.Join(proj, "app.bin"), entry, stdlib)
+				out, _ := build.CombinedOutput()
+				if built := build.ProcessState.ExitCode() == 0; built != grant.wantBuild {
+					t.Fatalf("self-host built = %v, want %v under grant %s\n%s", built, grant.wantBuild, grant.caps, out)
+				}
+				if !grant.wantBuild && !strings.Contains(string(out), `error[E070]: package "helper" reaches 'fs'`) {
+					t.Errorf("refused without naming helper's fs reach:\n%s", out)
+				}
+			})
+		}
+	}
+}
