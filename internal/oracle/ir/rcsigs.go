@@ -222,6 +222,9 @@ var rcBuiltinSigs = map[string]RcSig{
 	// Reads the rc word. Lowered inline rather than as a call, but
 	// classified so a shadowed spelling that survives is not opaque.
 	"__rc_get": one(0, RcInspect, false),
+	// (argv). The runtime keeps a unit of the array for later args()
+	// calls: the caller keeps its own, and the array gains one.
+	"set_args": one(0, RcRetain, false),
 }
 
 // rcInertBuiltins are the builtins that move no reference count on any
@@ -437,6 +440,9 @@ var rcInertBuiltins = map[string]bool{
 	// worlds, which have no scheduler knob, so they are classified
 	// here under the builtin names.
 	"priority": true, "set_priority": true,
+	// () → the wall clock's resolution, and (sec, nsec) → a Result[void]
+	// saying whether the clock was set. Scalars only, so nothing to move.
+	"clock_resolution": true, "clock_set": true,
 	"geteuid": true, "getegid": true, "hostname": true,
 	"getuid": true, "getgid": true, "__getpwuid_name": true,
 	// `getgroups` has no arguments either, and it is classified here
@@ -506,7 +512,7 @@ var rcInert = map[string]bool{
 	"signal_mask": true, "signal_disposition": true,
 	"__wasi_errno_of_code": true,
 
-	"__alloc": true, "__alloc_u8": true, "__fern_string_bytes_copy": true, "__arr_idx": true,
+	"__alloc": true, "__alloc_u8": true, "__alloc_i32": true, "__alloc_i64": true, "__alloc_bool": true, "__fern_string_bytes_copy": true, "__arr_idx": true,
 	"__arr_idx_1": true, "__arr_idx_1_nc": true, "__arr_idx_8": true,
 	"__arr_idx_8_nc": true, "__arr_idx_nc": true, "__build_io_error": true, "__fern_abs_f64": true,
 	"__fern_alloc": true, "__fern_alloc_box": true, "__fern_alloc_rc1": true,

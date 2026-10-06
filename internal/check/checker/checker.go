@@ -1438,14 +1438,21 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// args(): string[] — returns the program's command-line argv as a
 	// length-prefixed string array. The first element is conventionally
 	// the program / module path (matching argv[0] in C and os.Args[0]
-	// in Go). Building the array is one-shot and cached: the first
-	// `args()` call materialises it from libc / WASI; subsequent calls
-	// hand back the same pointer. The bytes are assumed to be UTF-8, not
-	// validated — the `read_dir` position (docs/STRINGS-SOTA.md, D9 and
-	// D10): there is no error arm to refuse into.
+	// in Go). Each call hands back an array of the caller's own. The
+	// bytes are assumed to be UTF-8, not validated — the `read_dir`
+	// position (docs/STRINGS-SOTA.md, D9 and D10): there is no error arm
+	// to refuse into.
 	c.info.FuncSigs["args"] = &ast.FuncType{
 		Params: []ast.Type{},
 		Result: ast.ArrayType{Elem: ast.StringType{}},
+	}
+	// set_args(argv): void — replaces what every later `args()` call
+	// reports, for the rest of the process. A multicall binary that
+	// dispatches on argv[1] shifts argv with it, so the utility it runs
+	// sees its own name as argv[0] (#9694).
+	c.info.FuncSigs["set_args"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.StringType{}}},
+		Result: ast.VoidType{},
 	}
 	// environ(): string[] — the whole environment in the order the
 	// process received it, each entry the raw `NAME=VALUE` bytes.
@@ -2540,6 +2547,32 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	c.info.FuncSigs["now_ns"] = &ast.FuncType{
 		Params: []ast.Type{},
 		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// clock_resolution(): i64 — the granularity of the wall clock
+	// `now_ns` reads, in nanoseconds: clock_getres(CLOCK_REALTIME) on
+	// Linux, preview-1 `clock_res_get(realtime)` on wasm, and the
+	// microsecond tick of the gettimeofday clock on Darwin, which has
+	// no clock_getres syscall. One i64 of nanoseconds like every other
+	// clock builtin. No Result: with a fixed clock id and a buffer the
+	// runtime owns, the call cannot fail.
+	c.info.FuncSigs["clock_resolution"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// clock_set(sec, nsec): Result[void, IoError] — set the system's
+	// wall clock to `sec` seconds plus `nsec` nanoseconds after the
+	// epoch: clock_settime(CLOCK_REALTIME) on Linux, settimeofday on
+	// Darwin (to the microsecond). A Result because the usual answer is
+	// a refusal: without the privilege the kernel says EPERM, which is
+	// what `date -s` reports, and a wasm host, which has no call that
+	// sets its clock, says Unsupported. An `nsec` outside 0..999999999
+	// is EINVAL.
+	c.info.FuncSigs["clock_set"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
 	}
 	// read_line(): Option[string] — read one line from stdin
 	// (including the trailing '\n' if present), returning
@@ -4456,6 +4489,20 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	c.info.FuncSigs["__alloc_u8"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+	}
+	// Its typed siblings: the same zeroed slots as an `i32[]`, an `i64[]`
+	// or a `boolean[]` of n elements.
+	c.info.FuncSigs["__alloc_i32"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}},
+	}
+	c.info.FuncSigs["__alloc_i64"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}},
+	}
+	c.info.FuncSigs["__alloc_bool"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.BoolType{}},
 	}
 	// Raw-memory escape hatches for stdlib code that
 	// builds typed-pointer arrays (`__array_append_string`)

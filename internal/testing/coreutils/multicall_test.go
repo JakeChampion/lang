@@ -177,8 +177,9 @@ func multicallBin(t *testing.T) string {
 	return multicallPath
 }
 
-// TestMulticallDispatch covers what the corpus below cannot: the dispatcher
-// answering for ITSELF, when argv[0] names no utility.
+// TestMulticallDispatch covers what the corpus below cannot: argv[0] naming
+// no utility, where the dispatcher either answers for ITSELF or runs the
+// utility its first argument names.
 func TestMulticallDispatch(t *testing.T) {
 	bin := multicallBin(t)
 	names := utilNames(t)
@@ -203,16 +204,30 @@ func TestMulticallDispatch(t *testing.T) {
 		}
 	})
 
-	// A utility named as an argument cannot work (the binary reads argv[0]),
-	// so it is refused with a line that says what to do instead rather than
-	// being run with the wrong program name in its diagnostics.
-	t.Run("utility as argument is refused", func(t *testing.T) {
-		out, err := runAs(t, bin, "fern-coreutils", "yes")
-		if err == nil {
-			t.Fatalf("`fern-coreutils yes` succeeded; it must refuse\n%s", out)
+	// A utility named as an argument runs with argv shifted by set_args
+	// (#9694), so it answers exactly as it does under its own name,
+	// diagnostics and exit status included, whatever path the binary itself
+	// was invoked by.
+	t.Run("utility as argument", func(t *testing.T) {
+		for _, argv := range [][]string{
+			{"uname", "--bogus"},
+			{"echo", "hello", "world"},
+			{"basename", "/a/b/c"},
+		} {
+			want, wantErr := runAs(t, bin, argv[0], argv[1:]...)
+			for _, self := range []string{"fern-coreutils", "/usr/local/bin/fern-coreutils"} {
+				got, gotErr := runAs(t, bin, self, argv...)
+				if string(got) != string(want) {
+					t.Errorf("`%s %s` printed %q, `%s` printed %q", self, quoteArgs(argv), got, quoteArgs(argv), want)
+				}
+				if exitStatus(gotErr) != exitStatus(wantErr) {
+					t.Errorf("`%s %s` exited %d, `%s` exited %d", self, quoteArgs(argv), exitStatus(gotErr), quoteArgs(argv), exitStatus(wantErr))
+				}
+			}
 		}
-		if !strings.Contains(string(out), "symlink") {
-			t.Errorf("the refusal does not say to use a symlink:\n%s", out)
+		out, _ := runAs(t, bin, "fern-coreutils", "uname", "--bogus")
+		if want := "uname: unrecognized option '--bogus'"; !strings.Contains(string(out), want) {
+			t.Errorf("want %q in:\n%s", want, out)
 		}
 	})
 
@@ -256,6 +271,18 @@ func runAs(t *testing.T, bin, argv0 string, args ...string) ([]byte, error) {
 	cmd := exec.Command(bin, args...)
 	cmd.Args = append([]string{argv0}, args...)
 	return cmd.CombinedOutput()
+}
+
+// exitStatus is the exit code runAs's error carries: 0 for none, -1 for a
+// failure to run at all.
+func exitStatus(err error) int {
+	if err == nil {
+		return 0
+	}
+	if ee, ok := err.(*exec.ExitError); ok {
+		return ee.ExitCode()
+	}
+	return -1
 }
 
 // TestMulticallParity runs every utility's corpus against the multicall binary

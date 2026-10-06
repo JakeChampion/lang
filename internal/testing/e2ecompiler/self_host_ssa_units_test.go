@@ -101,8 +101,9 @@ graph = ssa.SFunc { name: "held", nparams: 3, nvals: 6, entry: 7, takes_env: fal
 ] };
 `
 
-// The same read dying at the write that consumes its array: it stays a
-// borrow, retained into the slot, and the array still moves.
+// The same read dying at the write that consumes its array: held as well,
+// a unit of its own moved into the slot, and the array still moves
+// (#11680; before it the read stayed a borrow, retained into the slot).
 const unitHeldDies = `
 params = [sa, i32t]; types = [sa, i32t, st, sa]; result = sa; modes = [3, 1];
 graph = ssa.SFunc { name: "dies", nparams: 2, nvals: 4, entry: 7, takes_env: false, blocks: [
@@ -111,13 +112,26 @@ graph = ssa.SFunc { name: "dies", nparams: 2, nvals: 4, entry: 7, takes_env: fal
 `
 
 // `g(xs[i], xs)` with `xs` dead after the call: the element read is lent to
-// the call and borrows from `xs`, so `xs` is retained into the counted slot
-// and dropped after the call rather than moved in (#10832).
+// the call beside the array it borrows from, so it is held, a unit of its
+// own dropped after the call, and `xs` moves into the counted slot (#11680;
+// before it, `xs` was retained for the borrow and dropped after the call,
+// #10832).
 const unitLentOwner = `
 calls = [contract("g", [st, sa], [2, 3], sa)];
 params = [sa, i32t]; types = [sa, i32t, st, sa]; result = sa; modes = [3, 1];
 graph = ssa.SFunc { name: "lent", nparams: 2, nvals: 4, entry: 7, takes_env: false, blocks: [
     ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(ssasem.array_get(), 2, [0, 1], 0), call_inst(3, "g", [2, 0])], term: ret(3) }
+] };
+`
+
+// `g(xs[i], xs)` with `xs` read again after the call: the element read stays
+// a borrow of `xs`, which is retained into the counted slot rather than moved
+// in, and dropped at its last read (#10832).
+const unitLentOwnerKept = `
+calls = [contract("g", [st, sa], [2, 3], sa)];
+params = [sa, i32t]; types = [sa, i32t, st, sa, st]; result = sa; modes = [3, 1];
+graph = ssa.SFunc { name: "lentkept", nparams: 2, nvals: 5, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(ssasem.array_get(), 2, [0, 1], 0), call_inst(3, "g", [2, 0]), inst(ssasem.array_get(), 4, [0, 1], 0)], term: ret(3) }
 ] };
 `
 
@@ -219,10 +233,17 @@ if (!supply(second, 0, 0, 1, ssaunits.retain_unit()) || !drops(second, [])) { re
 		{"call-contract-mode", unitCall, "", `f = ssasem.Func { ...f, calls: [contract("g", [sa, sa], [1, 3], sa)] };`, "reference parameter mode"},
 		{"dropped-call-contract", unitCall, "", `f = ssasem.Func { ...f, calls: [] };`, "missing call contract"},
 		{"call-lent-operand-owner", unitLentOwner, `
+if (!p.held[2]) { return 55; }
 let c = find(p, 7, 3, 0 - 1);
-if (c.supplies.len() != 1 || !supply(c, 0, 0, 1, ssaunits.retain_unit()) || !drops(c, [0])) { return 56; }
+if (c.supplies.len() != 1 || !supply(c, 0, 0, 1, ssaunits.move_unit()) || !drops(c, [2])) { return 56; }
 `, "", ""},
-		{"call-moves-lent-owner", unitLentOwner, "", `let c = find(p, 7, 3, 0 - 1); let a = c.supplies[0]; p = replace(p, ssaunits.Step { ...c, supplies: [ssaunits.Supply { ...a, mode: 2 }], drops: [] });`, "a lent call operand borrows from a unit moved into the call"},
+		{"call-lent-operand-kept", unitLentOwnerKept, `
+if (p.held[2]) { return 57; }
+let c = find(p, 7, 3, 0 - 1);
+if (c.supplies.len() != 1 || !supply(c, 0, 0, 1, ssaunits.retain_unit()) || !drops(c, [])) { return 58; }
+if (!drops(find(p, 7, 4, 0 - 1), [0])) { return 59; }
+`, "", ""},
+		{"call-moves-lent-owner", unitLentOwnerKept, "", `let c = find(p, 7, 3, 0 - 1); let a = c.supplies[0]; p = replace(p, ssaunits.Step { ...c, supplies: [ssaunits.Supply { ...a, mode: 2 }], drops: [] });`, "a lent call operand borrows from a unit moved into the call"},
 		{"held-element", unitHeld, `
 if (!p.held[3] || p.held[4]) { return 35; }
 let w = find(p, 7, 4, 0 - 1);
@@ -231,9 +252,9 @@ let t = find(p, 7, 5, 0 - 1);
 if (!supply(t, 0, 4, 0, ssaunits.move_unit()) || !supply(t, 1, 3, 1, ssaunits.move_unit()) || !drops(t, [])) { return 37; }
 `, "", ""},
 		{"element-read-dies-first", unitHeldDies, `
-if (p.held[2]) { return 38; }
+if (!p.held[2]) { return 38; }
 let w = find(p, 7, 3, 0 - 1);
-if (!supply(w, 0, 0, 0, ssaunits.move_unit()) || !supply(w, 1, 2, 2, ssaunits.retain_unit()) || !drops(w, [])) { return 39; }
+if (!supply(w, 0, 0, 0, ssaunits.move_unit()) || !supply(w, 1, 2, 2, ssaunits.move_unit()) || !drops(w, [])) { return 39; }
 `, "", ""},
 		{"changed-hold", unitHeld, "", `p = ssaunits.Plan { ...p, held: p.held.with(3, false) };`, "element hold disagrees with the plan"},
 		{"string-units", unitString, `

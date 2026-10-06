@@ -50,7 +50,7 @@ costs a silent failure on the first target that lacks it.
 | `log` | `print`, `eprint` | somewhere to put a line of diagnostics |
 | `stdout` | `stdout`, `stderr`, `write`, `putchar` | an actual stdout stream |
 | `stdin` | `stdin`, `read_line` | a blocking input stream |
-| `now` | `now_unix_ms`, `now_ns`, `monotonic_ns`, `sleep_ms`, `sleep_ns`, `wasm_timer_pollable` | a clock, and wakeups driven by one |
+| `now` | `now_unix_ms`, `now_ns`, `monotonic_ns`, `clock_resolution`, `clock_set`, `sleep_ms`, `sleep_ns`, `wasm_timer_pollable` | a clock, and wakeups driven by one |
 | `pollfd` | `timer_fd` | file descriptors a readiness primitive can wait on |
 | `env` | `env` | envp, captured at process start |
 | `config` | `config_get` | deploy-time configuration: the environment where the target has one, wasi:config/store on the proxy world |
@@ -433,6 +433,17 @@ goes through `select(2)`, whose timeval is microseconds, so the request is
 rounded UP to the next microsecond. That is a resolution limit, not a
 divergence — the primitive promises only that the pause is NOT SHORTER than
 asked, which is also all nanosleep guarantees against an overshoot.
+
+**`clock_set` is `now`, and wasm answers it `Unsupported` at the call** (#9166).
+A wasm host has a wall clock — `now_ns` reads it, `clock_resolution` asks its
+granularity — and neither preview has a call that sets one. That is the target
+having the thing and not the operation, `syncfs`'s shape below rather than a
+capability of its own: `clock_set` returns a `Result`, so the refusal reaches
+the caller instead of a success that moved nothing, and a program that only
+sometimes sets the clock, `date`, still builds there. A freestanding target
+has no clock at all, so `now` refuses both at check time. `clock_resolution`
+on Darwin is the microsecond: XNU has no clock_getres syscall, and the wall
+clock the runtime reads is gettimeofday's.
 
 **`pollfd`, `fsmode` and `cabi` split three builtins off the capability that
 otherwise carried them** (#7947). Each is a property of the target, not a gap in a

@@ -152,6 +152,9 @@ function is_rc_helper(name: string): boolean {
     // The account database's name for a uid: getpwuid(3) through a bound
     // libSystem slot on arm64-darwin, 0 elsewhere (#9815).
     || name == "__fern_getpwuid_name"
+    // `set_args`: retains the array it is lent and releases the one it
+    // replaces, so later args() calls report it.
+    || name == "__fern_set_args"
     // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
     // superseded old box (rc-guarded shallow free) unless it is `new` or the
     // caller's snapshot; passes `new` back through. Body in emit_ir_runtime.
@@ -702,7 +705,7 @@ function with_builtin_enums(lifted: parser.Module): parser.Module {
 // silent miscompile.
 pub function all_runtime_need_roots(): string[] {
   return [
-    "alloc_u8", "args", "arr_push", "arr_push_owned", "arr_slice",
+    "alloc_u8", "args", "set_args", "arr_push", "arr_push_owned", "arr_slice",
     "arr_str_join", "arr_inc_elems", "arr_own_elems", "str_own", "str_grow", "pwname", "arrarr_free", "chr", "env", "eprint", "heap",
     "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
     // The map roots that "maps" does NOT reach. Each is marked directly by
@@ -765,6 +768,8 @@ pub function all_runtime_need_roots(): string[] {
     "process_alive", "signal_send", "set_process_group", "rlimit_nofile",
     // And how it competes for the CPU.
     "priority", "set_priority",
+    // The wall clock's resolution, and setting it.
+    "clock_resolution", "clock_set",
     // sockets + readiness (the edge-handler serve loop):
     "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_connect", "tcp_send", "tcp_send_bytes", "tcp_send_bytes_u8", "tcp_recv", "udp_send",
     "udp_send_bytes", "udp_send_bytes_u8", "udp_sendto_bytes", "udp_sendto_bytes_u8",

@@ -16,10 +16,12 @@ import (
 // commentary, which is compared line for line.
 //
 // The harness pins TZ=UTC; the zone-sensitive cases pass their own.
-// Nothing here reads the clock: a bare `date` cannot be compared
-// across two runs, and every valid `-s STRING` or `MMDDhhmm` operand
-// would SET the clock when the suite runs as root, so only invalid
-// spellings of those appear.
+// Nothing here prints the clock: a bare `date` cannot be compared
+// across two runs. Every case runs without the privilege to set the
+// clock, so a valid `-s STRING` or `MMDDhhmm` operand is refused with
+// EPERM on both sides — GNU's `cannot set date: Operation not
+// permitted`, then the date anyway, then exit 1 — and the machine's
+// clock is never moved, whoever runs the suite.
 
 func init() {
 	registerCorpus("date", dateCases)
@@ -343,6 +345,17 @@ func dateCases(t *testing.T) []invocation {
 	add(invocation{name: "-s invalid with a format", args: []string{"-s", "foo", "+%F"}})
 	add(invocation{name: "--set invalid", args: []string{"--set=2024-13-01"}})
 	add(invocation{name: "-s with a bad -I", args: []string{"-s", "foo", "-Ix"}})
+	add(invocation{name: "-s a valid date", args: []string{"-s", "2024-06-15 12:34:56"}})
+	add(invocation{name: "-s with a format", args: []string{"-s", "2024-06-15 12:34:56.5", "+%F %T.%N"}})
+	add(invocation{name: "--set the epoch", args: []string{"--set=@0"}})
+	add(invocation{name: "-s with -u", args: []string{"-u", "-s", "2024-06-15 12:34:56 +0200"}})
+	add(invocation{name: "-s in Tokyo", args: []string{"-s", "2024-06-15 12:34:56", "-Iseconds"}, env: []string{"TZ=Asia/Tokyo"}})
+	add(invocation{name: "-s with --debug", args: []string{"--debug", "-s", "2024-06-15"}})
+	add(invocation{name: "-s twice", args: []string{"-s", "2024-01-01", "--set", "2024-06-15", "+%F"}})
+	add(invocation{name: "a valid operand", args: []string{"06151234"}})
+	add(invocation{name: "a valid operand with a year and seconds", args: []string{"061512342024.30"}})
+	add(invocation{name: "a valid operand with -u", args: []string{"-u", "0615123424"}})
+	add(invocation{name: "-s with a closed stdout", args: []string{"-s", "2024-06-15"}, stdout: stdoutClosed})
 	add(invocation{name: "-r a file", args: []string{"-r", "ref", "+%s.%N %F %T"}, seedTree: dateTree})
 	add(invocation{name: "-r through a symlink", args: []string{"-r", "lref", "+%s.%N"}, seedTree: dateTree})
 	add(invocation{name: "-r a file in Tokyo", args: []string{"-r", "ref", "+%s.%N %F %T %Z"}, seedTree: dateTree, env: []string{"TZ=Asia/Tokyo"}})
@@ -437,6 +450,12 @@ func dateCases(t *testing.T) []invocation {
 	add(invocation{name: "a full stdout with --debug", args: []string{"--debug", "-d", "2024-06-15"}, stdout: stdoutFull})
 	add(invocation{name: "a full stdout with a usage error", args: []string{"-x"}, stdout: stdoutFull})
 
+	// A spelling the parser wrongly accepted would otherwise set the clock,
+	// so the privilege is withheld from every case rather than from the
+	// ones meant to reach settime.
+	for i := range cases {
+		cases[i].withoutClockPrivilege = true
+	}
 	return cases
 }
 

@@ -4870,21 +4870,28 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   // boxed model has, and outside std/jni they are used only by
   // core/map.fern, whose bodies neither engine runs: Map is a native value
   // here (VMap) and in the native interpreter.
-  if (name == "__alloc_u8") {
+  if (name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_bool") {
     if (args.len() != 1) {
-      return v_err("__alloc_u8: expected 1 arg (n)");
+      return v_err(name + ": expected 1 arg (n)");
     }
     if (!is_i32_arg(args[0])) {
-      return v_err("__alloc_u8: arg must be an integer");
+      return v_err(name + ": arg must be an integer");
     }
     let an: i32 = vint_bits(args[0]);
     if (an < 0) {
-      return v_err("__alloc_u8: negative length " + util.i32_to_string(an));
+      return v_err(name + ": negative length " + util.i32_to_string(an));
+    }
+    let zero: Value = v_int(0);
+    if (name == "__alloc_i64") {
+      zero = v_int64(0i64);
+    }
+    if (name == "__alloc_bool") {
+      zero = v_bool(false);
     }
     let zs: Value[] = [];
     let zi: i32 = 0;
     while (zi < an) {
-      zs = zs.append(v_int(0));
+      zs = zs.append(zero);
       zi = zi + 1;
     }
     return v_arr(zs);

@@ -268,6 +268,7 @@ var rcResultOwned = map[string]bool{
 	"setuid":            true,
 	"setgid":            true,
 	"setgroups":         true,
+	"clock_set":         true,
 	"window_size":       true,
 	"set_window_size":   true,
 	"termios_get":       true,
@@ -385,6 +386,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"setuid":                           true,
 	"setgid":                           true,
 	"setgroups":                        true,
+	"clock_set":                        true,
 	"remove_dir":                       true,
 	"create_link":                      true,
 	"create_symlink":                   true,
@@ -573,6 +575,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_idiv_s64":         true, "__fern_idiv_u64": true, "__fern_irem_s64": true,
 	"__fern_irem_u64": true, "__fern_monotonic_ns": true, "__fern_now_ns": true,
 	"__fern_now_unix_ms": true, "__load_i64": true, "rlimit_nofile": true,
+	"clock_resolution": true,
 
 	// i32 counts, indices, comparisons and booleans.
 	"__fern_str_len": true, "__fern_str_byte": true, "__fern_memchr": true, "__fern_count_byte_bytes": true, "__fern_sum_bytes_array": true, "__fern_bsd_sum_bytes": true, "__fern_memchr_bytes": true, "__fern_mismatch_bytes": true, "__fern_rmemchr_bytes": true,

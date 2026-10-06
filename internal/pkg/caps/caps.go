@@ -35,7 +35,8 @@ var Capabilities = []string{"env", "fs", "net", "random", "subprocess", "time"}
 //     wait itself. Same for the generic wasm_block / wasm_poll /
 //     wasm_pollable_drop readiness helpers.
 //   - `time` covers observing clocks (now_unix_ms / now_ns /
-//     monotonic_ns) and creating time-driven wakeups (sleep_ms /
+//     monotonic_ns / clock_resolution), setting the wall clock
+//     (clock_set), and creating time-driven wakeups (sleep_ms /
 //     timer_fd / wasm_timer_pollable) — the surface a "package is
 //     sim-pure" property would need to gate.
 //   - stdio (print / eprint / read_line / stdin / stdout / stderr /
@@ -193,6 +194,11 @@ var BuiltinCaps = map[string]string{
 	"sleep_ns":            "time",
 	"timer_fd":            "time",
 	"wasm_timer_pollable": "time",
+	"clock_resolution":    "time",
+	// SETTING the wall clock moves every reading anything on the machine
+	// takes after it, which is strictly more reach than observing it: the
+	// clock is the resource `time` names, so the write sits with the reads.
+	"clock_set": "time",
 
 	"random_bytes": "random",
 	"random_i32":   "random",
@@ -265,6 +271,9 @@ var Ungated = map[string]bool{
 	"target_arch":     true,
 	"args":            true,
 	"exit":            true,
+	// Rewriting the argv later args() calls report reaches nothing outside
+	// the process, the argument that leaves `args` and `exit` here.
+	"set_args": true,
 	// A signal disposition reconfigures how THIS process reacts to
 	// something delivered to it. It reaches nothing outside the
 	// process and confers no authority a dependency could escalate

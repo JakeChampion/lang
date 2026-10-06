@@ -80,6 +80,29 @@ func TestArm64Priority(t *testing.T) {
 	}
 }
 
+// priorityAloneSource reads the nice value and nothing else. The read's
+// helper is a scalar leaf, so it has to link without the filesystem bundle
+// that a Result-returning call like set_priority pulls in.
+const priorityAloneSource = `function main(): i32 {
+    let p: i32 = priority();
+    if (p < 0 - 20 || p > 20) { return 1; }
+    return 0;
+}
+`
+
+func TestX86_64PriorityAlone(t *testing.T) {
+	if code, out := compileRunX86_64WithSetup(t, priorityAloneSource, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0 (1 = the nice value is out of range)\n%s", code, out)
+	}
+}
+
+func TestArm64PriorityAlone(t *testing.T) {
+	out, code := compileAndRunArm64(t, priorityAloneSource)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (1 = the nice value is out of range)\n%s", code, out)
+	}
+}
+
 // The interpreter shares its process with the Go runtime, so the writes move
 // `fern`'s own niceness. That is the same one-process scope a compiled
 // program has, and it is why this probe puts the value back before it ends.

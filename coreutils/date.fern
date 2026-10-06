@@ -10,10 +10,9 @@
 // rendered by `lib/timefmt`'s strftime in the local zone `-u` may
 // replace with UTC.
 //
-// The clock is read, never written: `-s STRING` and the operand form
-// parse their argument as GNU does and then report `cannot set date`
-// as an unprivileged GNU date would, because no Fern builtin sets the
-// system clock (docs/COREUTILS.md).
+// `-s STRING` and the operand form set the system clock to the instant
+// they parse, and print it whether or not the kernel allowed the change;
+// a refusal is `cannot set date: <strerror>` and exit 1, as GNU's is.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -516,8 +515,9 @@ pub function main(): i32 {
       }
     }
   } else if (resolution) {
-    when_sec = 0;
-    when_nsec = 1;
+    let res: i64 = clock_resolution();
+    when_sec = res / (1000000000 as i64);
+    when_nsec = res % (1000000000 as i64);
   } else {
     if (set_date) {
       shown = set_datestr;
@@ -534,8 +534,13 @@ pub function main(): i32 {
   }
   let ok: boolean = true;
   if (set_date) {
-    o = gnu.error_out(o, "cannot set date: Operation not permitted");
-    ok = false;
+    match (clock_set(when_sec, when_nsec)) {
+      Ok(_) => {},
+      Err(e) => {
+        o = gnu.error_out(o, "cannot set date: " + gnu.io_error_text(e));
+        ok = false;
+      }
+    }
   }
   let printed: (boolean, io_buffered.BufWriter) = show_date(o, s, when_sec, when_nsec);
   if (!printed.0) {
