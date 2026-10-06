@@ -1985,7 +1985,12 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
   let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
   let field: boolean = ins.kind_tag == ssasem.record_get();
   let element: boolean = ins.kind_tag == ssasem.tuple_get();
-  if (ins.kind_tag != ssasem.variant_get() && !field && !element || ins.args.len() != 1) {
+  let slot: boolean = ins.kind_tag == ssasem.array_get();
+  let arity: i32 = 1;
+  if (slot) {
+    arity = 2;
+  }
+  if (ins.kind_tag != ssasem.variant_get() && !field && !element && !slot || ins.args.len() != arity) {
     return none;
   }
   // This runs BEFORE the graph is verified, so a malformed instruction has
@@ -2002,7 +2007,7 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
   if (element && takeable_root(defs[root].kind_tag)) {
     return none;
   }
-  if (!slot_takeable(f, defs, f.values[ins.result], root, field, element)) {
+  if (!slot_takeable(f, defs, f.values[ins.result], root, field, element, slot)) {
     return none;
   }
   if (!owned[root] || projection(defs[root].kind_tag) && !taken_read(defs[root].kind_tag)) {
@@ -2019,15 +2024,18 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
 
 // Whether the box `root` can give up the slot the read `got` names: a
 // buffer or record field of a record, a buffer or record element of a tuple,
-// or a reference payload of a union. A view, or the builtin Option layout,
-// needs a box nobody else sees.
-function slot_takeable(f: ssasem.Func, defs: ssa.SInst[], got: typeinfo.Type, root: i32, field: boolean, element: boolean): boolean {
+// a buffer or record element of an owned array, or a reference payload of a
+// union. A view, or the builtin Option layout, needs a box nobody else sees.
+function slot_takeable(f: ssasem.Func, defs: ssa.SInst[], got: typeinfo.Type, root: i32, field: boolean, element: boolean, slot: boolean): boolean {
   let box: typeinfo.Type = f.values[root];
   if (field) {
     return field_takeable(got) && is_record(box) && !semtypes.is_env(box);
   }
   if (element) {
     return field_takeable(got) && is_tuple(box);
+  }
+  if (slot) {
+    return field_takeable(got) && is_array(box) && !ssasem.is_view(box);
   }
   if (!ssasem.reference(got) || !is_union(box)) {
     return false;
@@ -2036,13 +2044,22 @@ function slot_takeable(f: ssasem.Func, defs: ssa.SInst[], got: typeinfo.Type, ro
 }
 
 // Whether the rest of block bi, after the read at pos, reads `root` other than
-// through another of its slots.
+// through another of its slots. An array's elements have no other slot a
+// read can be proven to name, so the one read let through is the `with`
+// that stores back at the element the take emptied — `xs.with(i, f(xs[i]))`
+// — and only one: a second with from the same box would carry the hole.
 function read_later_in_block(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, root: i32): boolean {
   let b: ssa.SBlock = f.graph.blocks[bi];
   let ins: ssa.SInst = b.insts[pos];
+  let stores: i32 = 0;
   let i: i32 = pos + 1;
   while (i < b.insts.len()) {
-    if (ssa.reads_value(b.insts[i], root) && !other_slot_get(b.insts[i], ins)) {
+    if (same_slot_with(b.insts[i], ins)) {
+      stores = stores + 1;
+      if (stores > 1) {
+        return true;
+      }
+    } else if (ssa.reads_value(b.insts[i], root) && !other_slot_get(b.insts[i], ins)) {
       return true;
     }
     i = i + 1;
@@ -2197,6 +2214,12 @@ function reached_past_take(a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, take:
     }
   }
   return false;
+}
+
+// The with that stores back at the array element `take` read, by the same
+// index value.
+function same_slot_with(later: ssa.SInst, take: ssa.SInst): boolean {
+  return take.kind_tag == ssasem.array_get() && later.kind_tag == ssasem.with() && later.args.len() == 3 && later.args[0] == take.args[0] && later.args[1] == take.args[1];
 }
 
 // A later read of the box `take` reads that names a DIFFERENT slot of it.

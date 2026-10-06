@@ -33,6 +33,32 @@ var ownershipCases = []struct {
 	src       string
 	maxAllocs int64
 }{
+	// An element appended and stored back at its index takes the slot only
+	// when the outer array has no other holder: `kept` still sees empty
+	// buckets after `base` was grown through it, and a sole-owned array's
+	// buckets grow in place across calls.
+	{"append-into-element-takes-only-a-sole-owned-slot", `@noinline
+function bucket(out: i32[][], n: i32, from: i32): i32[][] {
+    let i: i32 = from;
+    while (i < from + n) {
+        let b: i32 = i % 2;
+        out = out.with(b, out[b].append(i));
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 {
+    let base: i32[][] = [[], []];
+    let kept: i32[][] = base;
+    let grown: i32[][] = bucket(base, 10, 0);
+    if (kept[0].len() != 0 || kept[1].len() != 0) { return 1; }
+    if (grown[0].len() != 5 || grown[1].len() != 5 || grown[1][4] != 9) { return 2; }
+    let own: i32[][] = bucket([[], []], 10, 0);
+    let again: i32[][] = bucket(own, 4, 10);
+    if (again[0].len() != 7 || again[1].len() != 7 || again[0][6] != 12) { return 3; }
+    if (kept[0].len() != 0) { return 4; }
+    return 0;
+}`, 13},
 	// The `std/pvec` shape in miniature, and the case this inference exists
 	// for: a trie rebuilt through a parameter nothing declares `own`. Without
 	// the inference every `.with` on a payload clones the whole 1-slot buffer,
