@@ -12257,9 +12257,9 @@ pub function cabi_realloc_helper(): string {
 // region reads as all-empty. Depends on $__fern_alloc.
 pub function map_helpers(): string {
   let o: string = "";
-  // $__fern_str_hash(ptr) → 32-bit FNV-1a over a string block's bytes
+  // $__fern_map_str_hash(ptr) → 32-bit FNV-1a over a string block's bytes
   // ([len@0][bytes@4]).
-  o = o + "  (func $__fern_str_hash (param $p i32) (result i32)\n";
+  o = o + "  (func $__fern_map_str_hash (param $p i32) (result i32)\n";
   o = o + "    (local $h i32) (local $n i32) (local $i i32)\n";
   o = o + "    (local.set $h (i32.const -2128831035))\n";
   o = o + "    (local.set $n (i32.load (local.get $p)))\n";
@@ -12282,7 +12282,7 @@ pub function map_helpers(): string {
   // Struct/enum key (kis 2): the derived hash via the funcref table (#2671).
   o = o + "      (then (i32.and (call_indirect (type $fn1) (local.get $k) (local.get $hashidx)) (i32.sub (local.get $cap) (i32.const 1))))\n";
   o = o + "      (else (if (result i32) (local.get $kis)\n";
-  o = o + "        (then (i32.and (call $__fern_str_hash (local.get $k)) (i32.sub (local.get $cap) (i32.const 1))))\n";
+  o = o + "        (then (i32.and (call $__fern_map_str_hash (local.get $k)) (i32.sub (local.get $cap) (i32.const 1))))\n";
   o = o + "        (else (i32.and (i32.mul (local.get $k) (i32.const -1640531527)) (i32.sub (local.get $cap) (i32.const 1))))))))\n";
   // $__fern_map_keq(a, b, kis) → key equality. String keys (kis=1) compare
   // by content via $__fern_streq; i32 keys by value.
