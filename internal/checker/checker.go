@@ -8567,7 +8567,7 @@ func orPos(p, fallback ast.Position) ast.Position {
 // Scalars (i32/i64/f64/bool) hold no pointer at all; `string` is a heap
 // buffer of bytes that references no other Fern value, so a Cell[string]
 // can never close a cycle either, and its owning slot participates in
-// string rc arc. Owned u8[] buffers are equally cycle-free and participate
+// string rc arc. Owned scalar arrays are equally cycle-free and participate
 // in array RC. Other composite/reference types remain unsupported.
 // An unresolved generic
 // param is allowed through here (there's no v1 generic-Cell use;
@@ -8579,8 +8579,10 @@ func isCellElemType(t ast.Type) bool {
 		return true
 	}
 	if a, ok := t.(ast.ArrayType); ok {
-		n, ok := a.Elem.(ast.NumberType)
-		return ok && n.Width == 8 && !n.Signed
+		switch a.Elem.(type) {
+		case ast.NumberType, ast.FloatType, ast.BoolType:
+			return true
+		}
 	}
 	return false
 }
@@ -8673,7 +8675,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 					at = sd.P
 				}
 				c.errfCode(at, "E057",
-					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool), string or u8[]; other element types are not supported because cells must remain cycle-free",
+					"Cell[%s] is not allowed: a cell's element type must be a scalar, string or owned array of scalars; other element types are not supported because cells must remain cycle-free",
 					args[0])
 			}
 			*slot = ast.StructType{Name: t.Name, Args: args}
@@ -17487,7 +17489,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			if !isCellElemType(at) {
 				c.errfCode(n.Args[0].Pos(), "E057",
-					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool), string or u8[]; other element types are not supported because cells must remain cycle-free",
+					"Cell[%s] is not allowed: a cell's element type must be a scalar, string or owned array of scalars; other element types are not supported because cells must remain cycle-free",
 					at)
 			}
 			n.TypeArgs = []ast.Type{at}

@@ -2423,8 +2423,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"iflet-bad-variant", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; if let Bogus(v) = o { return 0; } return 0; }\n", []string{"E014"}},
 		{"iflet-bad-arity", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; if let Has(a, b) = o { return 0; } return 0; }\n", []string{"E015"}},
 		// E057: `cell_new(v)` constructs a Cell[T]; T must be cycle-free —
-		// a scalar (i32/i64/f64/bool) or string. A composite / reference
-		// argument (struct, array, tuple, another cell) is E057, reported
+		// a scalar, string or owned scalar array. Other composite / reference
+		// arguments (struct, tuple, another cell) are E057, reported
 		// at the argument. Cross-checked against the Go checker.
 		{"cellnew-i32-ok", "function main(): i32 { let c = cell_new(5); return 0; }\n", nil},
 		{"cellnew-bytes-ok", "function main(): i32 { let c = cell_new([255 as u8]); return 0; }\n", nil},
@@ -2434,7 +2434,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cellnew-string-ok", "function main(): i32 { let c = cell_new(\"x\"); return 0; }\n", nil},
 		{"cellnew-bool-ok", "function main(): i32 { let c = cell_new(1 < 2); return 0; }\n", nil},
 		{"cellnew-struct-bad", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; let c = cell_new(p); return 0; }\n", []string{"E057"}},
-		{"cellnew-array-bad", "function main(): i32 { let a: i32[] = [1]; let c = cell_new(a); return 0; }\n", []string{"E057"}},
+		{"cellnew-array-ok", "function main(): i32 { let a: i32[] = [1]; let c = cell_new(a); return 0; }\n", nil},
+		{"cellnew-reference-array-bad", "function main(): i32 { let a: string[] = [\"a\"]; let c = cell_new(a); return 0; }\n", []string{"E057"}},
 		{"cellnew-tuple-bad", "function main(): i32 { let t = (1, 2); let c = cell_new(t); return 0; }\n", []string{"E057"}},
 		{"cellnew-nested-bad", "function main(): i32 { let c = cell_new(cell_new(5)); return 0; }\n", []string{"E057"}},
 		// E057 ANNOTATION form (#4363 item 2): `Cell[<composite>]` in a
@@ -2449,7 +2450,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cell-annot-param-bad", "struct P { x: i32 }\nfunction f(c: Cell[P]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		{"cell-annot-field-bad", "struct P { x: i32 }\nstruct H { c: Cell[P] }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		{"cell-annot-var-bad", "struct P { x: i32 }\nfunction main(): i32 { let c: Cell[P] = cell_new(P { x: 1 }); return 0; }\n", []string{"E057"}},
-		{"cell-annot-array-bad", "function f(c: Cell[i32[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-array-ok", "function f(c: Cell[i32[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"cell-annot-reference-array-bad", "function f(c: Cell[string[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-scalar-arrays-ok", "function f(a: Cell[u32[]], b: Cell[i64[]], c: Cell[u64[]], d: Cell[usize[]], e: Cell[f32[]], f: Cell[f64[]], g: Cell[boolean[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-tuple-elem-bad", "struct P { x: i32 }\nfunction f(t: (i32, Cell[P])): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		{"cell-annot-generic-arg-bad", "struct P { x: i32 }\nfunction f(o: Option[Cell[P]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		{"cell-annot-cell-array-bad", "struct P { x: i32 }\nfunction f(a: Cell[P][]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},

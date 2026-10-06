@@ -1,6 +1,6 @@
 # Byte-array cells
 
-**Status:** Implemented; integrated validation in progress
+**Status:** Implemented and validated
 **Context(s):** Compiler, standard library
 **Date:** 2026-10-04
 
@@ -51,5 +51,6 @@ concurrency primitives and changes to HTTP framing or suspension semantics.
 
 ## Open Questions
 
-None in the contract. Target and ownership tests pass; integrated bootstrap
-reproduction and Darwin validation remain pending.
+None. Target, ownership, integrated bootstrap reproduction and Darwin validation
+passed with the string-layer completion. The later scalar-array specification
+extends this element rule while retaining these byte-buffer contracts.
