@@ -159,8 +159,8 @@ func TestInterpOpenWith(t *testing.T) {
 // and nofollow are the host's verdict; dsync and sync are spelled (the
 // DSYNC and SYNC fdflags, the two integrity-sync descriptor-flags) and
 // then refused by wasmtime itself, which answers ENOTSUP for either sync
-// flag on an open — the host's refusal, carried as Unsupported, so a
-// wasmtime that starts honouring them flips step 19 and says so here;
+// flag on an open — the host's refusal, carried as Other with ENOTSUP (95), so
+// a wasmtime that starts honouring them flips step 19 and says so here;
 // direct, noatime and noctty — which neither preview can spell — are
 // Unsupported before the host is asked.
 const openWithWasmSrc = `function main(): i32 {
@@ -181,7 +181,7 @@ const openWithWasmSrc = `function main(): i32 {
     match (create_symlink("w.txt", "lnk")) { Ok(_) => {}, Err(_) => { return 15; } }
     match (open_reader_with("lnk", 512)) { Ok(r) => { r.close(); return 16; }, Err(e) => { match (e) { Unsupported => { return 17; }, _ => {} } } }
     match (open_reader_with("lnk", 0)) { Ok(r) => { r.close(); }, Err(_) => { return 18; } }
-    match (open_writer_with("w.txt", 32 | 64)) { Ok(w) => { w.close(); return 19; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 26; } } } }
+    match (open_writer_with("w.txt", 32 | 64)) { Ok(w) => { w.close(); return 19; }, Err(e) => { match (e) { Other(_, _, n) => { if (n != 95) { return 27; } }, _ => { return 26; } } } }
     match (open_reader_with("w.txt", 8)) { Ok(r) => { r.close(); return 20; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 21; } } } }
     match (open_reader_with("w.txt", 128)) { Ok(r) => { r.close(); return 22; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 23; } } } }
     match (open_reader_with("w.txt", 256)) { Ok(r) => { r.close(); return 24; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 25; } } } }

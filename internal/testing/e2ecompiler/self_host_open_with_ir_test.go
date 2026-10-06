@@ -56,8 +56,8 @@ func selfHostOpenWithSource(dir string) string {
 // The wasm leg has no FIFO to open; it is the file half under the preopen.
 // The three bits neither preview can spell — direct, noatime, noctty —
 // come back Unsupported before the host is asked, and dsync | sync come
-// back Unsupported from wasmtime itself, which refuses either sync flag
-// on an open (step 19 flips when a wasmtime honours them).
+// back Other with ENOTSUP (95) from wasmtime itself, which refuses either sync
+// flag on an open (step 19 flips when a wasmtime honours them).
 const selfHostOpenWithWasmSource = `function main(): i32 {
     match (open_writer_with("w.txt", 1)) { Ok(w) => { w.write("abc"); w.close(); }, Err(_) => { return 1; } }
     match (open_writer_with("w.txt", 1)) { Ok(w) => { w.write("Z"); w.close(); }, Err(_) => { return 2; } }
@@ -76,7 +76,7 @@ const selfHostOpenWithWasmSource = `function main(): i32 {
     match (create_symlink("w.txt", "lnk")) { Ok(_) => {}, Err(_) => { return 15; } }
     match (open_reader_with("lnk", 512)) { Ok(r) => { r.close(); return 16; }, Err(e) => { match (e) { Unsupported => { return 17; }, _ => {} } } }
     match (open_reader_with("lnk", 0)) { Ok(r) => { r.close(); }, Err(_) => { return 18; } }
-    match (open_writer_with("w.txt", 32 | 64)) { Ok(w) => { w.close(); return 19; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 26; } } } }
+    match (open_writer_with("w.txt", 32 | 64)) { Ok(w) => { w.close(); return 19; }, Err(e) => { match (e) { Other(_, _, n) => { if (n != 95) { return 27; } }, _ => { return 26; } } } }
     match (open_reader_with("w.txt", 8)) { Ok(r) => { r.close(); return 20; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 21; } } } }
     match (open_reader_with("w.txt", 128)) { Ok(r) => { r.close(); return 22; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 23; } } } }
     match (open_reader_with("w.txt", 256)) { Ok(r) => { r.close(); return 24; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 25; } } } }

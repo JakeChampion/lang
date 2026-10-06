@@ -466,7 +466,9 @@ func builtinEnumDecls() []*ast.EnumDecl {
 			// text and the errno in Linux numbering. Variants that always have a path attached
 			// keep the API uniform — callers pattern-match on
 			// the kind and never have to wrap calls just to add
-			// "(while reading X)" context.
+			// "(while reading X)" context. Unsupported is the
+			// target refusing an operation it does not offer; a
+			// host's ENOTSUP is Other.
 			Name: "IoError",
 			Variants: []ast.EnumVariant{
 				{Name: "NotFound", Payloads: []ast.Type{ast.StringType{}}},

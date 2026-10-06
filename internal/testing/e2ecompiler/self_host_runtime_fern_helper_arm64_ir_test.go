@@ -552,14 +552,14 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	if !strings.Contains(asm, "    mrs x9, cntvct_el0\n    mrs x10, cntfrq_el0\n") {
 		t.Error("Darwin monotonic_ns is not reading the architectural counter")
 	}
-	// Read off the three clock helpers' bodies: the errno carrier holds 113
-	// too, as EHOSTUNREACH, on every target.
-	for _, sym := range []string{"__fn___fern_now_unix_ms", "__fn___fern_now_ns", "__fn___fern_monotonic_ns"} {
-		body := extractFuncBody(asm, sym)
-		if body == "" {
-			t.Errorf("%s is not emitted", sym)
-		} else if strings.Contains(body, "mov x8, #113") || arm64Imm(body, "113") {
-			t.Errorf("%s issued Linux's clock_gettime (113) in Mach-O output", sym)
+	// Scoped to the clocks: 113 is also EHOSTUNREACH, which __fern_io_error
+	// carries in IoError.Other.
+	if strings.Contains(asm, "mov x8, #113") {
+		t.Error("Linux's clock_gettime (113) reached the number register in Mach-O output")
+	}
+	for _, leaf := range []string{"now_unix_ms", "now_ns", "monotonic_ns"} {
+		if arm64Imm(extractFuncBody(asm, "__fn___fern_"+leaf), "113") {
+			t.Errorf("Darwin %s issued Linux's clock_gettime (113)", leaf)
 		}
 	}
 	if body := extractFuncBody(asm, "__fn___fern_arr_slice"); body != "" {
