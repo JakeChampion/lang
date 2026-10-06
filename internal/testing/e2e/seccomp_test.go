@@ -237,6 +237,29 @@ function main(): i32 { return level(Dim(42)) - 42; }`},
     if (port <= 0) { return 2; }
     return 0;
 }`},
+		// A caught signal returns through the runtime's rt_sigreturn
+		// restorer, a syscall no Fern call names.
+		{"caught signal", `function main(): i32 {
+    if (signal_catch(10) != 0) { return 1; }
+    match (set_process_group(0, 0)) {
+        Ok(_) => {},
+        Err(_) => { return 2; }
+    }
+    match (signal_send(0, 10)) {
+        Ok(_) => {},
+        Err(_) => { return 3; }
+    }
+    let n: i32 = 0;
+    while (n < 5000) {
+        if (signal_taken(10)) {
+            print("caught");
+            return 0;
+        }
+        sleep_ms(1 as i64);
+        n = n + 1;
+    }
+    return 4;
+}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -248,6 +271,9 @@ function main(): i32 { return level(Dim(42)) - 42; }`},
 			sandboxOut, err := exec.Command(sandboxBin).Output()
 			sandboxCode := exitCodeOf(err)
 
+			if plainCode != 0 {
+				t.Fatalf("the unsandboxed program exits %d; every case here exits 0 when it works", plainCode)
+			}
 			if plainCode != sandboxCode {
 				t.Errorf("exit code differs: plain %d, sandboxed %d — a sandboxed program dying where the plain one did not means the filter is missing a syscall the program legitimately makes", plainCode, sandboxCode)
 			}

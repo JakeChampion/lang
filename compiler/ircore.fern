@@ -734,7 +734,7 @@ pub function all_runtime_need_roots(): string[] {
     // edge-handler — linked its library units against undefined
     // __fern_tcp_listen / __fern_tcp_send / __fern_poll / … (#5686).
     // Filesystem + process:
-    "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
+    "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all", "read_dir_ino", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
     "write_file_bytes", "write_file_bytes_u8",
     "getxattr_bytes_u8", "lgetxattr_bytes_u8", "setxattr_bytes_u8", "lsetxattr_bytes_u8",
     "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
@@ -763,6 +763,8 @@ pub function all_runtime_need_roots(): string[] {
     // than a literal (`s.need(sig_fn)`), so a grep for `.need("` does not
     // find them either.
     "isatty", "window_size", "set_window_size", "signal_ignore", "signal_default",
+    // The flag-raising catch and its poll.
+    "signal_catch", "signal_taken",
     // The liveness of one pid, delivering a signal to one, and this
     // process's descriptor ceiling.
     "process_alive", "signal_send", "set_process_group", "rlimit_nofile",

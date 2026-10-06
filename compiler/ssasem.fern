@@ -3346,12 +3346,7 @@ pub struct ResultAnchor { escapes: boolean, pending: boolean, params: i32[], esc
 
 pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): ResultAnchor {
   let defs: ssa.SInst[] = definitions(f);
-  let seen: boolean[] = [];
-  let i: i32 = 0;
-  while (i < defs.len()) {
-    seen = seen.append(false);
-    i = i + 1;
-  }
+  let seen: boolean[] = __alloc_bool(defs.len());
   let acc: ViewSources = ViewSources { params: [], escapes: false, pending: false, seen: seen, escape_kind: 0 };
   for b in f.graph.blocks {
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
@@ -3636,12 +3631,7 @@ function gathers_views(kind: i32): boolean {
 // they read more than one, so each stays alive until the value's last read.
 function view_roots(f: Func, parents: i32[][]): i32[][] {
   let defs: ssa.SInst[] = definitions(f);
-  let none: boolean[] = [];
-  let i: i32 = 0;
-  while (i < f.graph.nvals) {
-    none = none.append(false);
-    i = i + 1;
-  }
+  let none: boolean[] = __alloc_bool(f.graph.nvals);
   let out: i32[][] = parents;
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -3705,11 +3695,10 @@ function closure(parents: i32[][]): Closure {
   let n: i32 = parents.len();
   let derived: i32[][] = [];
   // 0 unvisited, 1 on the walk, 2 done.
-  let state: i32[] = [];
+  let state: i32[] = __alloc_i32(n);
   let i: i32 = 0;
   while (i < n) {
     derived = derived.append([]);
-    state = state.append(0);
     i = i + 1;
   }
   let v: i32 = 0;
@@ -4565,10 +4554,7 @@ pub function merge_copies(f: Func): MergePlan {
   if (!has_view_phi(f)) {
     return plan;
   }
-  let none: boolean[] = [];
-  for _ in f.values {
-    none = none.append(false);
-  }
+  let none: boolean[] = __alloc_bool(f.values.len());
   let defs: ssa.SInst[] = definitions(f);
   let m: MergeScan = MergeScan { at: ssadeps.position_of(f.graph), dom: ssadeps.dominates(f.graph), home: defining_positions(f), none: none };
   let bi: i32 = 0;

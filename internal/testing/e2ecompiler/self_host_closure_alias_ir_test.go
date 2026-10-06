@@ -125,9 +125,9 @@ func TestSelfHostClosureAliasWasmIR(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
 			wat, err := cmd.Output()
@@ -151,7 +151,7 @@ func TestSelfHostClosureAliasWasmIR(t *testing.T) {
 }
 
 // TestSelfHostClosureAliasIRArm64 runs the repro and the param-alias case
-// under qemu via `asm_ir_run -ir -target arm64-linux`.
+// under qemu via `asm_ir_run -target arm64-linux`.
 func TestSelfHostClosureAliasIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -164,7 +164,7 @@ func TestSelfHostClosureAliasIRArm64(t *testing.T) {
 			continue
 		}
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-ir", "-target", "arm64-linux")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

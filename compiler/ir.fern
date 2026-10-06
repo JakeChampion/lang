@@ -2123,6 +2123,14 @@ pub function op_read_dir_all(): Op {
   return op0(310);
 }
 
+// `read_dir_ino` is `read_dir` with each name's inode number from the same
+// directory record: Result[DirEntry[], IoError], same order and filter (a VALUE
+// op — one arg consumed, the box left on the stack). Lowers to each backend's
+// __fern_read_dir_ino helper.
+pub function op_read_dir_ino(): Op {
+  return op0(391);
+}
+
 // `env` pops a name string value and looks up that environment variable,
 // pushing a fresh Option[string]: Some(value) when set, None when unset (a
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
@@ -2368,6 +2376,20 @@ pub function op_signal_ignore(): Op {
 
 pub function op_signal_default(): Op {
   return op0(244);
+}
+
+// `signal_catch` pops a signal number and installs a handler that only sets
+// that signal's flag in a static table, pushing the sigaction return as
+// signal_ignore does; `signal_taken` pops a signal number and pushes the flag
+// as a boolean, clearing it in the same exchange. No Fern code runs in the
+// handler, so nothing it touches is counted (#9243). On wasm, where nothing
+// can deliver a signal, the catch pushes 0 and no flag is ever taken.
+pub function op_signal_catch(): Op {
+  return op0(392);
+}
+
+pub function op_signal_taken(): Op {
+  return op0(393);
 }
 
 // The global string-builder primitives — the amortised-O(1) output accumulator
@@ -4386,6 +4408,9 @@ function kind_id_len12_r(name: string): i32 {
   if (name == "read_dir_all") {
     return 310;
   }
+  if (name == "read_dir_ino") {
+    return 391;
+  }
   if (name == "reader_close") {
     return 179;
   }
@@ -4398,6 +4423,12 @@ function kind_id_len12_r(name: string): i32 {
 function kind_id_len12_s(name: string): i32 {
   if (name == "set_priority") {
     return 283;
+  }
+  if (name == "signal_catch") {
+    return 392;
+  }
+  if (name == "signal_taken") {
+    return 393;
   }
   if (name == "str_to_upper") {
     return 106;
@@ -5721,6 +5752,15 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 393) {
+    return "signal_taken";
+  }
+  if (id == 392) {
+    return "signal_catch";
+  }
+  if (id == 391) {
+    return "read_dir_ino";
+  }
   if (id == 390) {
     return "str_hash";
   }
@@ -5944,12 +5984,13 @@ function pops1_io(t: i32): boolean {
     || t == 163 || t == 164 || t == 165 || t == 166  // print_str, eprint_str, putchar, exit
     || t == 169 || t == 233 || t == 171 || t == 172 || t == 173  // read_file, read_file_bytes, read_dir, remove_dir_all, remove_file
     || t == 340  // unix_connect (path)
-    || t == 310  // read_dir_all
+    || t == 310 || t == 391  // read_dir_all, read_dir_ino
     || t == 174 || t == 175 || t == 236 || t == 176 || t == 179 || t == 181  // temp_dir, stat, lstat, env, reader_close, sleep_ms
     || t == 266  // sleep_ns
     || t == 168  // read_line (fd)
     || t == 231 || t == 232  // create_dir_all, isatty
     || t == 243 || t == 244  // signal_ignore, signal_default
+    || t == 392 || t == 393  // signal_catch, signal_taken
     || t == 277 || t == 279  // chdir, signal_disposition
     || t == 241 || t == 250 || t == 307  // fd_stat, uname_field, fd_flags
     || t == 299 || t == 300 || t == 301  // fd_fsync, fd_fdatasync, fd_syncfs
@@ -8540,8 +8581,9 @@ pub function op_allocates(tag: i32): boolean {
     return true;
   }
   // read_dir / read_dir_all box a fresh string[] (the arr box + a string
-  // block per entry), so they need the heap runtime.
-  if (tag == 171 || tag == 310) {
+  // block per entry), and read_dir_ino a DirEntry[], so they need the heap
+  // runtime.
+  if (tag == 171 || tag == 310 || tag == 391) {
     return true;
   }
   // env boxes the looked-up value into a fresh string block (+ the Option

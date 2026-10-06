@@ -15,14 +15,14 @@ import (
 // platform's own struct.
 var direntNameOffset = int(unsafe.Offsetof(syscall.Dirent{}.Name))
 
-// readDirAll lists every name a directory holds — `.` and `..`
+// readDirAll lists every entry a directory holds — `.` and `..`
 // included — in the order the kernel reports them.
 //
 // `os.ReadDir` and `File.Readdirnames` both drop the dot entries, and
 // the first also sorts, so neither can answer this. The raw drain is
 // getdents, whose records `syscall.ParseDirent` would walk except that
 // it applies the same filter, so the record walk is here.
-func readDirAll(path string) ([]string, error) {
+func readDirAll(path string) ([]dirent, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -30,20 +30,20 @@ func readDirAll(path string) ([]string, error) {
 	defer f.Close()
 	fd := int(f.Fd())
 	buf := make([]byte, 64<<10)
-	names := []string{}
+	entries := []dirent{}
 	for {
 		n, err := syscall.ReadDirent(fd, buf)
 		if err != nil {
 			return nil, &os.PathError{Op: "readdirent", Path: path, Err: err}
 		}
 		if n <= 0 {
-			return names, nil
+			return entries, nil
 		}
 		for off := 0; off < n; {
 			d := (*syscall.Dirent)(unsafe.Pointer(&buf[off]))
 			reclen := int(d.Reclen)
 			if reclen <= direntNameOffset || off+reclen > n {
-				return names, nil
+				return entries, nil
 			}
 			rec := buf[off+direntNameOffset : off+reclen]
 			off += reclen
@@ -56,7 +56,7 @@ func readDirAll(path string) ([]string, error) {
 			for end < len(rec) && rec[end] != 0 {
 				end++
 			}
-			names = append(names, string(rec[:end]))
+			entries = append(entries, dirent{name: string(rec[:end]), ino: uint64(d.Ino)})
 		}
 	}
 }

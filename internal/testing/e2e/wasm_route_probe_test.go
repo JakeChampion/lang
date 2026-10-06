@@ -9,14 +9,8 @@ import (
 	"testing"
 )
 
-// TestWasmRouteProbe covers `wasm_run -decide`, the wasm routing probe.
-//
-// The wasm drivers exposed only `-ir`, which FORCES the IR path and therefore
-// bypasses the gates that decide routing (should_use_ir_core /
-// wasm_ir_deferrals_ok / the component pair). So the one question an
-// emitter-retirement reroute turns on — "what do the gates DECLINE?" — was
-// unanswerable on wasm, while the asm side has had `-ir-probe` and
-// asm_pathprobe_run all along.
+// TestWasmRouteProbe covers `wasm_run -decide`, the wasm routing probe: what
+// the routing gates (ircore.gate, then wasm_ir.ir_route_final) decline.
 //
 // Enumerating from Go test literals is not a substitute, and the attempt is
 // worth recording: a sweep over every backtick literal in the files that
@@ -28,8 +22,7 @@ import (
 // A file naming a driver does not mean its programs are fed to that driver.
 //
 // The probe reuses the emitter's own decision rather than restating it
-// (wasm_ir.ir_route_precheck / ir_route_final, extracted from
-// wasm.emit_module_mode), so it cannot drift from what it describes.
+// (wasm_ir.ir_route_ok), so it cannot drift from what it describes.
 func TestWasmRouteProbe(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 

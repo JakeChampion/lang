@@ -100,7 +100,7 @@ var closureEscapeCases = []struct {
 }
 
 // TestSelfHostClosureEscapeIRX86_64 — escaping var-bound closures through the
-// PRODUCTION x86-64 IR path (asm_ir_run `-ir`).
+// PRODUCTION x86-64 IR path (asm_ir_run).
 func TestSelfHostClosureEscapeIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -109,7 +109,7 @@ func TestSelfHostClosureEscapeIRX86_64(t *testing.T) {
 
 	for _, tc := range closureEscapeCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -129,7 +129,7 @@ func TestSelfHostClosureEscapeIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostClosureEscapeIRArm64 — CI-gated arm64 counterpart via the arm64
-// IR path (asm_ir_run `-target arm64-linux -ir`). Shares the fix in the lowering.
+// IR path (asm_ir_run `-target arm64-linux`). Shares the fix in the lowering.
 func TestSelfHostClosureEscapeIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -139,7 +139,7 @@ func TestSelfHostClosureEscapeIRArm64(t *testing.T) {
 
 	for _, tc := range closureEscapeCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

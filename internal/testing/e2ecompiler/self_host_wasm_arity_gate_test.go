@@ -20,18 +20,13 @@ func TestSelfHostWasmArityGate(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "drivers/wasm_run.fern", "drivers/wasm_ir_run.fern")
-	astDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	wasmRunDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	irDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run")
 
 	// run pipes src to a driver and returns (stdout, stderr, exit code).
-	run := func(t *testing.T, bin string, src string, args ...string) ([]byte, []byte, int) {
+	run := func(t *testing.T, bin string, src string) ([]byte, []byte, int) {
 		t.Helper()
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(bin, args...)
-		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), bin), args...)...)
-		}
+		cmd := runX86_64Bin(runner, bin)
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
@@ -65,15 +60,14 @@ func TestSelfHostWasmArityGate(t *testing.T) {
 	drivers := []struct {
 		name string
 		bin  string
-		args []string
 	}{
-		{"wasm_run", astDriver, nil},
-		{"wasm_ir_run", irDriver, []string{"-ir"}},
+		{"wasm_run", wasmRunDriver},
+		{"wasm_ir_run", irDriver},
 	}
 	for _, d := range drivers {
 		for _, tc := range rejects {
 			t.Run(d.name+"/reject-"+tc.name, func(t *testing.T) {
-				out, errOut, code := run(t, d.bin, tc.src, d.args...)
+				out, errOut, code := run(t, d.bin, tc.src)
 				if code != 1 {
 					t.Errorf("driver exited %d, want 1 (reject)", code)
 				}
@@ -87,7 +81,7 @@ func TestSelfHostWasmArityGate(t *testing.T) {
 		}
 		for _, tc := range accepts {
 			t.Run(d.name+"/accept-"+tc.name, func(t *testing.T) {
-				out, errOut, code := run(t, d.bin, tc.src, d.args...)
+				out, errOut, code := run(t, d.bin, tc.src)
 				if code != 0 {
 					t.Fatalf("driver exited %d (stderr %q), want 0 (accept)", code, errOut)
 				}

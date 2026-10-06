@@ -228,11 +228,14 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 > which offsets in the emitter.
 >
 > **`read_dir_all`** (#9279) is that same source with the `.` / `..` clause
-> suppressed — `rt_src_read_dir` and `rt_src_read_dir_all` are two calls into
-> one `rt_src_read_dir_like(t, fname, skip_dots)`, which emits the function
-> under the name it is asked for and wraps the per-entry append in the dot test
-> only when asked. A separate copy of a 40-line syscall body is the thing that
-> goes stale; one builder with a flag cannot.
+> suppressed, and **`read_dir_ino`** (#9317) is it with each entry appended as a
+> `DirEntry { name, ino }`, the `ino` read from the record's `d_ino@0` —
+> `rt_src_read_dir`, `rt_src_read_dir_all` and `rt_src_read_dir_ino` are three
+> calls into one `rt_src_read_dir_like(t, fname, skip_dots, ino)`, which emits
+> the function under the name it is asked for, wraps the per-entry append in
+> the dot test only when asked, and picks the element. A separate copy of a
+> 40-line syscall body is the thing that goes stale; one builder with flags
+> cannot.
 >
 > **`create_dir_all`** (`rt_src_create_dir_all` → `Result[void, IoError]`, #6749)
 > is the fs family's only *constructive* leaf — every other directory builtin

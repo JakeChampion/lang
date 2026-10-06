@@ -94,6 +94,7 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "access", capability: "fs" },
     BuiltinCap { builtin: "read_dir", capability: "fs" },
     BuiltinCap { builtin: "read_dir_all", capability: "fs" },
+    BuiltinCap { builtin: "read_dir_ino", capability: "fs" },
     BuiltinCap { builtin: "remove_file", capability: "fs" },
     BuiltinCap { builtin: "remove_dir_all", capability: "fs" },
     BuiltinCap { builtin: "create_dir_all", capability: "fs" },
@@ -200,6 +201,9 @@ pub function ungated(): string[] {
     "putchar", "print", "write", "eprint", "read_line",
     "stdin", "stdout", "stderr", "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "target_os", "target_arch", "args", "set_args", "exit",
     "signal_ignore", "signal_default",
+    // Catching is a disposition too: the handler only sets a flag this
+    // process later reads.
+    "signal_catch", "signal_taken",
     // Reading a disposition or the blocked mask reaches even less far
     // than setting one does; signal_mask writes to the same
     // process-wide state the two setters already reach.
@@ -523,12 +527,7 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
 // sort_rows orders rows by package name (selection sort — one row per package
 // in the program, so the list is short).
 function sort_rows(rows: Row[]): Row[] {
-  let taken: i32[] = [];
-  let i: i32 = 0;
-  while (i < rows.len()) {
-    taken = taken.append(0);
-    i = i + 1;
-  }
+  let taken: i32[] = __alloc_i32(rows.len());
   let out: Row[] = [];
   let k: i32 = 0;
   while (k < rows.len()) {

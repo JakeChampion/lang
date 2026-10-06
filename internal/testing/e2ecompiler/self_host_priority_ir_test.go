@@ -71,7 +71,7 @@ func TestSelfHostPriorityIRX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runSelfHostDriverStdin(t, runner, driverBin, prioritySelfHostSource(), "-ir")
+	asm := runSelfHostDriverStdin(t, runner, driverBin, prioritySelfHostSource())
 	for _, call := range []string{"call __fn___fern_priority", "call __fn___fern_set_priority"} {
 		if !bytes.Contains(asm, []byte(call)) {
 			t.Fatalf("emitted asm has no `%s` — the pair did not lower through the x86-64 IR path", call)
@@ -100,7 +100,7 @@ func TestSelfHostPriorityIRArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runSelfHostDriverStdin(t, x86runner, driverBin, prioritySelfHostSource(), "-target", "arm64-linux", "-ir")
+	asm := runSelfHostDriverStdin(t, x86runner, driverBin, prioritySelfHostSource(), "-target", "arm64-linux")
 	for _, call := range []string{"bl __fn___fern_priority", "bl __fn___fern_set_priority"} {
 		if !bytes.Contains(asm, []byte(call)) {
 			t.Fatalf("emitted asm has no `%s` — the pair did not lower through the arm64 IR path", call)
@@ -131,7 +131,7 @@ func TestSelfHostPriorityIRWasmRefused(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	cmd := runX86_64Bin(runner, driverBin, "-ir")
+	cmd := runX86_64Bin(runner, driverBin)
 	cmd.Stdin = strings.NewReader(prioritySelfHostSource())
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

@@ -63,7 +63,7 @@ func TestSelfHostXattrIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	cmd := exec.Command(driverBin, "-ir")
+	cmd := exec.Command(driverBin)
 	cmd.Stdin = bytes.NewReader([]byte(selfHostXattrSource(t, t.TempDir())))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {
@@ -92,7 +92,7 @@ func TestSelfHostXattrIRArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	cmd := exec.Command(driverBin, "-target", "arm64-linux", "-ir")
+	cmd := exec.Command(driverBin, "-target", "arm64-linux")
 	cmd.Stdin = bytes.NewReader([]byte(selfHostXattrSource(t, t.TempDir())))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {

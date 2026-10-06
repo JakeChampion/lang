@@ -559,7 +559,7 @@ function prod_call_argc(k: string): i32 {
   let one: string[] = [
     "str_from_bytes", "alloc", "alloc_u8", "raw_alloc", "print_str", "eprint_str",
     "read_line", "read_file", "read_file_bytes", "remove_dir_all", "remove_file", "create_dir_all",
-    "read_dir", "read_dir_all", "env", "stat", "lstat", "putchar", "temp_dir", "reader_close",
+    "read_dir", "read_dir_all", "read_dir_ino", "env", "stat", "lstat", "putchar", "temp_dir", "reader_close",
   ];
   for y in one {
     if (y == k) {
@@ -2152,7 +2152,7 @@ function loop_writes(ops: ir.Op[], at: i32, nslots: i32, tags: i32[]): i32[] {
   if (hi < lo) {
     return out;
   }
-  let seen: i32[] = filled(hi - lo + 1, 0);
+  let seen: i32[] = __alloc_i32(hi - lo + 1);
   for sv in raw {
     seen = seen.with(sv - lo, 1);
   }

@@ -15,7 +15,7 @@ import (
 // $__fern_mapiter_value_w64 reads each 8-byte element, with the loop's `v` (bound
 // from it.value()) width-tracked i64 (infer_expr_width) and u64 (expr_is_u64).
 // Before this, iterating a wide map kept the whole module on the legacy AST wasm
-// emitter. Each case pipes a single program to the `wasm_ir_run -ir` driver (maps
+// emitter. Each case pipes a single program to the `wasm_ir_run` driver (maps
 // are builtins there), asserts the WAT reached $__fern_map_iter_w64, then runs
 // under wasmtime. Values are cross-checked against the native interpreter.
 //
@@ -55,9 +55,9 @@ func TestSelfHostMapIterW64WasmIR(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			wat, err := cmd.Output()

@@ -81,7 +81,7 @@ function main(): i32 {
     "rmemchr", "count_byte", "lstat", "access", "geteuid", "getegid",
     "hostname", "fd_stat", "reader_seek", "reader_splice", "fd_flags", "writer_truncate", "mismatch",
     "getuid", "getgid", "getgroups", "environ", "uname_field",
-    "getcwd", "cpu_count", "signal_ignore", "signal_default",
+    "getcwd", "cpu_count", "signal_ignore", "signal_default", "signal_catch", "signal_taken",
     "create_dir", "remove_dir", "create_link", "create_symlink",
     "read_link", "getxattr", "getxattr_bytes", "lgetxattr", "lgetxattr_bytes", "setxattr", "setxattr_bytes", "lsetxattr", "lsetxattr_bytes", "umask", "sleep_ns", "rename", "rename_noreplace", "rename_exchange",
     "chmod", "chmod_at", "scale_f64", "outer_mul_f64", "inner_mul_add_f64", "arr_reserve", "ret_word", "call_word", "buf_clear", "tcp_send_buf", "set_file_times", "statfs",
@@ -99,7 +99,7 @@ function main(): i32 {
     "read_dir_all", "heap_alloc_count", "tcp_local_port", "tcp_listen_with", "tcp_socket_ctl",
     "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect",
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "str_data", "tcp_sendfile", "tcp_send_bytes",
-    "udp_send_bytes", "udp_sendto_bytes",
+    "udp_send_bytes", "udp_sendto_bytes", "read_dir_ino",
   ];
   let ext_max: i32 = n;
   let ext_ok: i32 = 0;
@@ -208,7 +208,7 @@ function main(): i32 {
     ir.op_fd_stat(), ir.op_reader_seek(), ir.op_reader_splice(), ir.op_raw_splice_pipe(), ir.op_raw_cover(), ir.op_line(0, 0), ir.op_raw_task_state(), ir.op_str_from_bytes_range(), ir.op_fd_flags(), ir.op_writer_truncate(), ir.op_mismatch(),
     ir.op_getuid(), ir.op_getgid(), ir.op_getgroups(), ir.op_environ(),
     ir.op_uname_field(), ir.op_getcwd(), ir.op_cpu_count(),
-    ir.op_signal_ignore(), ir.op_signal_default(),
+    ir.op_signal_ignore(), ir.op_signal_default(), ir.op_signal_catch(), ir.op_signal_taken(),
     ir.op_create_dir(), ir.op_remove_dir(), ir.op_create_link(),
     ir.op_create_symlink(), ir.op_read_link(), ir.op_getxattr(), ir.op_getxattr_bytes(), ir.op_lgetxattr(), ir.op_lgetxattr_bytes(), ir.op_setxattr(), ir.op_setxattr_bytes(), ir.op_lsetxattr(), ir.op_lsetxattr_bytes(), ir.op_umask(),
     ir.op_sleep_ns(),
@@ -232,7 +232,7 @@ function main(): i32 {
     ir.op_read_dir_all(), ir.op_heap_alloc_count(), ir.op_tcp_local_port(), ir.op_tcp_listen_with(), ir.op_tcp_socket_ctl(),
     ir.op_udp_bind(), ir.op_udp_connect(), ir.op_udp_sendto(), ir.op_udp_recvfrom(), ir.op_tcp_connect_with(), ir.op_unix_listen(), ir.op_unix_connect(),
     ir.op_reactor_new(), ir.op_reactor_ctl(), ir.op_reactor_wait(), ir.op_tcp_recv_into(), ir.op_str_data(), ir.op_tcp_sendfile(), ir.op_tcp_send_bytes(),
-    ir.op_udp_send_bytes(), ir.op_udp_sendto_bytes(),
+    ir.op_udp_send_bytes(), ir.op_udp_sendto_bytes(), ir.op_read_dir_ino(),
   ];
   let names: string[] = [
     "const_i32", "const_str", "load_local",
@@ -248,7 +248,7 @@ function main(): i32 {
     "create_dir_all", "isatty", "rmemchr", "count_byte", "lstat",
     "access", "geteuid", "getegid", "hostname", "fd_stat", "reader_seek", "reader_splice", "raw_splice_pipe", "raw_cover", "line", "raw_task_state", "str_from_bytes_range", "fd_flags",
     "writer_truncate", "mismatch", "getuid", "getgid", "getgroups", "environ",
-    "uname_field", "getcwd", "cpu_count", "signal_ignore", "signal_default",
+    "uname_field", "getcwd", "cpu_count", "signal_ignore", "signal_default", "signal_catch", "signal_taken",
     "create_dir", "remove_dir", "create_link", "create_symlink",
     "read_link", "getxattr", "getxattr_bytes", "lgetxattr", "lgetxattr_bytes", "setxattr", "setxattr_bytes", "lsetxattr", "lsetxattr_bytes", "umask", "sleep_ns", "rename", "rename_noreplace", "rename_exchange",
     "chmod", "chmod_at", "scale_f64", "outer_mul_f64", "inner_mul_add_f64", "arr_reserve", "ret_word", "call_word", "buf_clear", "tcp_send_buf", "set_file_times", "statfs",
@@ -267,7 +267,7 @@ function main(): i32 {
     "read_dir_all", "heap_alloc_count", "tcp_local_port", "tcp_listen_with", "tcp_socket_ctl",
     "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect",
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "str_data", "tcp_sendfile", "tcp_send_bytes",
-    "udp_send_bytes", "udp_sendto_bytes",
+    "udp_send_bytes", "udp_sendto_bytes", "read_dir_ino",
   ];
   let tag_ok: i32 = 0;
   let tag_bad: i32 = 0;

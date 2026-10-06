@@ -53,7 +53,7 @@ func TestSelfHostCloseIoErrorIRX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	want := interpExit(t, interpBin, closeIoErrorSrc)
-	asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(closeIoErrorSrc), "-ir")
+	asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(closeIoErrorSrc))
 	progBin := buildBin(t, gcc, dir, "close_io_error", string(asm))
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
@@ -78,7 +78,7 @@ func TestSelfHostCloseIoErrorIRArm64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	want := interpExit(t, interpBin, closeIoErrorSrc)
-	asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(closeIoErrorSrc), "-target", "arm64-linux", "-ir")
+	asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(closeIoErrorSrc), "-target", "arm64-linux")
 	progBin := buildBin(t, arm64gcc, dir, "close_io_error", string(asm))
 	cmd := runArm64Bin(qemu, progBin)
 	_ = cmd.Run()
@@ -103,9 +103,9 @@ func TestSelfHostCloseIoErrorWasmIR(t *testing.T) {
 	want := interpExit(t, interpBin, closeIoErrorSrc)
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
-		cmd = exec.Command(driverBin, "-ir")
+		cmd = exec.Command(driverBin)
 	} else {
-		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 	}
 	cmd.Stdin = bytes.NewReader([]byte(closeIoErrorSrc))
 	wat, err := cmd.Output()

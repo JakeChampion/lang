@@ -9,9 +9,8 @@ import (
 )
 
 // TestSelfHostDeferResultStrictChecker pins #4594: defer/errdefer in a
-// Result- or Option-returning function must compile through the self-host
-// STRICT-CHECKER route (asm_ir_run WITHOUT `-ir`, i.e. asm.emit_module's
-// asmcore.check_module gate ahead of the AST backend).
+// Result- or Option-returning function must pass the self-host emit's
+// asmcore.check_module gate (asmcore.entry_check_errors) and compile.
 //
 // The parse-level defer pass (parser.fern lower_defers_func) rewrites every
 // `return E` into `__defret = E; …; return __defret`, pre-declaring the shared
@@ -21,22 +20,18 @@ import (
 // (returning i32 where Result was declared). The fix binds every compiler-
 // synthesized `__`-prefixed temp as `unknown` in the check gate
 // (asmcore.check_stmt), and `assignable` treats unknown as compatible in both
-// directions — so the desugared body type-checks.
-//
-// The existing try-defer suite (self_host_try_defer_ir_test.go) routes through
-// `-ir` only, which skips this gate — this test drives the legacy AST route
-// specifically, the one the bug lived on. The interpreter is the spec: each
-// program is cross-checked against it before asserting the self-host result.
+// directions — so the desugared body type-checks. The interpreter is the
+// spec: each program must exit with the code it gives.
 func TestSelfHostDeferResultStrictChecker(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// emitAstAndRun pipes src to the driver on the NON-ir (strict-checker)
-	// route, assembles the emitted asm, runs it, and returns its exit code. An
-	// empty emit means the checker gate aborted with exit(1) — the #4594 bug.
-	emitAstAndRun := func(t *testing.T, src string) int {
+	// emitAndRun pipes src to the driver, assembles the emitted asm, runs it,
+	// and returns its exit code. An empty emit means the checker gate aborted
+	// with exit(1) — the #4594 bug.
+	emitAndRun := func(t *testing.T, src string) int {
 		t.Helper()
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
@@ -49,7 +44,7 @@ func TestSelfHostDeferResultStrictChecker(t *testing.T) {
 		cmd.Stderr = &stderr
 		emitted, err := cmd.Output()
 		if err != nil || len(emitted) == 0 {
-			t.Fatalf("strict-checker route rejected valid program (#4594 regression): %v\nstderr:\n%s\n--- src ---\n%s", err, stderr.String(), src)
+			t.Fatalf("driver rejected valid program (#4594 regression): %v\nstderr:\n%s\n--- src ---\n%s", err, stderr.String(), src)
 		}
 		innerAsm := filepath.Join(dir, "defret_inner.s")
 		innerBin := filepath.Join(dir, "defret_inner")
@@ -102,9 +97,9 @@ function main(): i32 { match (f(0 - 9)) { Ok(v) => { return v; }, Err(e) => { re
 			src := tc.src + "\n"
 			// The interpreter is the spec.
 			_, want := runInterp(t, src)
-			got := emitAstAndRun(t, src)
+			got := emitAndRun(t, src)
 			if got != want {
-				t.Errorf("%s strict-checker route: exit %d, interpreter %d", tc.name, got, want)
+				t.Errorf("%s: exit %d, interpreter %d", tc.name, got, want)
 			}
 		})
 	}

@@ -362,11 +362,33 @@ function slot_phi(ins: ssa.SInst): boolean {
   return ins.kind_tag == 8 && ins.str != "";
 }
 
+// A carried phi carries what flows into it: the value a consumer takes from
+// the phi is one of its operands, so a parameter that enters a loop's phi
+// and is consumed through it leaves the frame on that path. A slot phi's
+// later operands are arguments a call passed (`slot_carried`); its first is
+// the parameter itself. Phis chain, so this runs to a fixpoint.
 function continued(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis): boolean[] {
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (slot_phi(ins) && out[ins.result]) {
-        out = carry(out, a, ins.args[0]);
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    for b in f.graph.blocks {
+      for ins in b.insts {
+        if (ins.kind_tag != 8 || !out[ins.result]) {
+          continue;
+        }
+        let n: i32 = ins.args.len();
+        if (slot_phi(ins)) {
+          n = 1;
+        }
+        let i: i32 = 0;
+        while (i < n) {
+          let arg: i32 = ins.args[i];
+          if (arg >= 0 && arg < out.len() && !out[arg] && ssasem.reference(f.values[arg])) {
+            out = carry(out, a, arg);
+            changed = true;
+          }
+          i = i + 1;
+        }
       }
     }
   }
@@ -439,12 +461,7 @@ function lent_values(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins
 }
 
 function lent_out(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < f.graph.nvals) {
-    out = out.append(false);
-    i = i + 1;
-  }
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.call()) {
@@ -484,12 +501,7 @@ pub function lends(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Inde
 // reader such as `p.toks[p.pos]` keeps `p` lent, and a returned view reads its
 // root without taking a unit at all.
 function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < f.graph.nvals) {
-    out = out.append(false);
-    i = i + 1;
-  }
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   let me: i32 = find(rows, ix, f.graph.name);
   for b in f.graph.blocks {
     for ins in b.insts {

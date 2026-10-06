@@ -210,6 +210,14 @@ function main(): i32 {
     match (lstat("nope")) { Ok(_) => { print("lstat missing ok"); }, Err(e) => { print("lstat missing " + kind(e)); } }
     names("read_dir", read_dir("d"));
     names("read_dir_all", read_dir_all("d"));
+    match (read_dir_ino("d")) {
+        Ok(es) => {
+            let zero: i32 = 0;
+            for e in es { if (e.ino == 0 as i64) { zero = zero + 1; } }
+            print(f"read_dir_ino {es.len()} ino=0 for {zero}");
+        },
+        Err(e) => { print("read_dir_ino " + kind(e)); }
+    }
     names("read_dir file", read_dir("d/a.txt"));
     names("read_dir missing", read_dir("nope"));
     names("read_dir_all missing", read_dir_all("nope"));
@@ -225,6 +233,7 @@ stat link file=true size=5
 lstat missing NotFound
 read_dir 3 a=1 b=1 dot=0 dotdot=0
 read_dir_all 3 a=1 b=1 dot=0 dotdot=0
+read_dir_ino 3 ino=0 for 3
 read_dir file Other(Not a directory)
 read_dir missing NotFound
 read_dir_all missing NotFound
@@ -402,6 +411,7 @@ reopened [file 3
     match (lstat("f")) { Ok(_) => { print("lstat ok"); }, Err(e) => { print("lstat " + kind(e)); } }
     match (read_dir(".")) { Ok(_) => { print("read_dir ok"); }, Err(e) => { print("read_dir " + kind(e)); } }
     match (read_dir_all(".")) { Ok(_) => { print("read_dir_all ok"); }, Err(e) => { print("read_dir_all " + kind(e)); } }
+    match (read_dir_ino(".")) { Ok(_) => { print("read_dir_ino ok"); }, Err(e) => { print("read_dir_ino " + kind(e)); } }
     unit("create_dir", create_dir("d", 493));
     unit("create_dir_all", create_dir_all("d/e"));
     unit("remove_file", remove_file("f"));
@@ -423,6 +433,7 @@ stat NotFound
 lstat NotFound
 read_dir NotFound
 read_dir_all NotFound
+read_dir_ino NotFound
 create_dir NotFound
 create_dir_all NotFound
 remove_file NotFound

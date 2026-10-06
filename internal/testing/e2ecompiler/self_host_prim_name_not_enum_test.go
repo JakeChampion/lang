@@ -90,7 +90,7 @@ func TestSelfHostPrimNameNotEnumX86_64(t *testing.T) {
 	for _, tc := range primNameNotEnumCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src))
 			progBin := buildBin(t, gcc, dir, "pnne_"+tc.name, string(asm))
 			var cmd *exec.Cmd
 			if len(runner) == 0 {

@@ -27,12 +27,22 @@
 // of fewer than `obs` is a partial record out. `status=noxfer` drops
 // the third line, `status=none` drops all of them, and the third line
 // is the one no test can compare — it carries a duration and a rate.
+//
+// SIGUSR1 — SIGINFO on Darwin, which has one — writes the same report
+// mid-copy and the copy carries on, as GNU's does. GNU's handler interrupts
+// a read to print at once; here the handler raises a flag the loop reads on
+// each side of every read, and once more before the final report. A signal
+// that arrives during a read is reported when the read returns, before its
+// record is counted, so the numbers are the ones GNU prints and only the
+// moment differs.
 import "std/string";
 import "std/i32";
 import "std/i64";
 import "std/u64";
 import "std/io_buffered";
+import "std/signal";
 import "./lib/gnu";
+import "./lib/signals";
 
 // ---- the operand names -----------------------------------------------------
 // `iseek` and `oseek` are pure aliases for `skip` and `seek`, so a run
@@ -1014,7 +1024,40 @@ function cache_spent(c: Cache): Cache {
   return Cache { ...c, start: c.start + c.pending, pending: 0 as i64 };
 }
 
-function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: string, started: i64): Run {
+// The signal that asks for a report mid-copy, 0 for none: the platform's
+// SIGINFO where it has one, and SIGUSR1 otherwise — unless POSIXLY_CORRECT
+// is set, since POSIX leaves SIGUSR1 its default action.
+function info_signal(): i32 {
+  let info: i32 = signals.number("INFO");
+  if (info > 0) {
+    return info;
+  }
+  match (env("POSIXLY_CORRECT")) {
+    Some(_) => {
+      return 0;
+    },
+    None => {
+      return signals.number("USR1");
+    }
+  }
+}
+
+// info_poll writes the report the info signal asks for when it has arrived
+// since the last look — the final report's lines as they stand, on a line of
+// their own if a progress line is showing — and answers whether a progress
+// line still is.
+function info_poll(info: i32, c: Counts, truncated: i64, s: Settings, started: i64, progressed: boolean): boolean {
+  if (info <= 0 || !signal.taken(info)) {
+    return progressed;
+  }
+  if (progressed) {
+    eprint("");
+  }
+  report(Counts { ...c, truncated: truncated }, s, (monotonic_ns() - started) as f64 / 1000000000.0);
+  return false;
+}
+
+function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: string, started: i64, info: i32): Run {
   let k: Sink = k0;
   let st: Rec = rec_new(s.cbs as i32, s.conv);
   let sw: Swab = swab_new();
@@ -1037,11 +1080,13 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
         break;
       }
     }
+    progressed = info_poll(info, k.c, st.trunc, s, started, progressed);
     let want: i32 = s.ibs as i32;
     if (s.have_count && count_bytes && bytes_left < s.ibs) {
       want = bytes_left as i32;
     }
     let got: Take = read_record(r, s, want, in_name);
+    progressed = info_poll(info, k.c, st.trunc, s, started, progressed);
     if (!got.ok) {
       if ((s.conv & conv_noerror()) == 0) {
         return Run { c: k.c, status: 1, progressed: progressed };
@@ -1809,9 +1854,13 @@ pub function main(): i32 {
   if (!seek_output(w, s, s.out_name)) {
     exit(1);
   }
+  let info: i32 = info_signal();
+  if (info > 0) {
+    signal.catch(info);
+  }
   let started: i64 = monotonic_ns();
   let k: Sink = sink_new(w, s.out_name, s.obs as i32, counts_new(), (s.conv & conv_sparse()) != 0);
-  let run: Run = copy(r, k, s, scan.bs_given, s.in_name, started);
+  let run: Run = copy(r, k, s, scan.bs_given, s.in_name, started, info);
   let status: i32 = run.status;
   // `count=0` with `nocache` copies nothing and drops the whole file's
   // cache instead, the one form whose failure GNU reports.
@@ -1851,8 +1900,9 @@ pub function main(): i32 {
       None => {}
     }
   }
+  let progressed: boolean = info_poll(info, run.c, run.c.truncated, s, started, run.progressed);
   let secs: f64 = (monotonic_ns() - started) as f64 / 1000000000.0;
-  if (run.progressed) {
+  if (progressed) {
     eprint("");
   }
   report(run.c, s, secs);

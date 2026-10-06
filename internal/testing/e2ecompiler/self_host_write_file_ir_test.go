@@ -113,9 +113,9 @@ func TestSelfHostWriteFileIRWasm(t *testing.T) {
 			src := []byte("function main(): i32 { match (write_file(\"" + outPath + "\", \"" + tc.src + "\")) { Err(_) => { return 1; }, Ok(_) => { return 0; } } }\n")
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin)
 			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader(src)
 			wat, err := cmd.Output()

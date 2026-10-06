@@ -342,3 +342,41 @@ func TestSelfHostModloadIRProbeX86_64(t *testing.T) {
 		}
 	}
 }
+
+// TestSelfHostModloadArgOrderX86_64 pins that asm_modload_run reads its entry
+// path as the first argument no flag claims, wherever it sits: a flag before
+// the entry (`-target x86-64-linux main.fern`) must emit what the entry-first
+// order emits, and an unknown -target is refused in either order.
+func TestSelfHostModloadArgOrderX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostModloadProject(t)
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "driver")
+
+	entry := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(entry, []byte("function main(): i32 { return 7; }\n"), 0o644); err != nil {
+		t.Fatalf("write main.fern: %v", err)
+	}
+	run := func(args ...string) (string, string, int) {
+		cmd := runX86_64Bin(runner, driverBin, args...)
+		var stdout, stderr strings.Builder
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		_ = cmd.Run()
+		return stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()
+	}
+
+	want, stderr, code := run(entry, "-target", "x86-64-linux")
+	if code != 0 || !strings.Contains(want, ".globl") {
+		t.Fatalf("entry first: exit %d, %d bytes\n%s", code, len(want), stderr)
+	}
+	got, stderr, code := run("-target", "x86-64-linux", entry)
+	if code != 0 || got != want {
+		t.Fatalf("flag first: exit %d, same output as entry first: %v\n%s", code, got == want, stderr)
+	}
+	for _, args := range [][]string{{entry, "-target", "bogus"}, {"-target", "bogus", entry}} {
+		out, stderr, code := run(args...)
+		if code != 2 || !strings.Contains(stderr, "unknown -target: bogus") || len(out) != 0 {
+			t.Errorf("%v: exit %d, %d bytes, stderr %q; want exit 2 naming the target and no output", args, code, len(out), stderr)
+		}
+	}
+}

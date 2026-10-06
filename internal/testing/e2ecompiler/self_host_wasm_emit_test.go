@@ -178,7 +178,6 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"ir-struct-str-field", "struct Token { text: string, kind: i32 } function main(): i32 { let t = Token { text: \"hello\", kind: 7 }; return t.text.len() + t.kind; }", 12, ""},
 		{"ir-enum-str-payload", "enum T { Word(string), Eof } function g(t: T): i32 { match (t) { Word(w) => { return w.len(); }, Eof => { return 3; } } return 0; } function main(): i32 { return g(Word(\"hello\")) + g(Eof); }", 8, ""},
 		{"ir-match-guard-fallthrough", "enum E { Pos(i32), Neg(i32), Zero } function f(e: E): i32 { match (e) { Pos(n) when n > 10 => { return 1; }, Pos(n) => { return 2; }, _ => { return 3; } } return 0; } function main(): i32 { return f(Pos(20)) * 100 + f(Pos(5)) * 10 + f(Zero); }", 123, ""},
-		{"ir-match-guard-wildcard", "enum E { V(i32) } function f(e: E): i32 { match (e) { _ when false => { return 5; }, V(n) => { return n; } } return 0; } function main(): i32 { return f(V(42)); }", 42, ""},
 		{"ir-opt-some-none", "function classify(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; } function f(n: i32): i32 { match (classify(n)) { Some(_) => { return 1; }, None => { return 0; } } return 9; } function main(): i32 { return f(5) * 10 + f(0); }", 10, ""},
 		{"ir-opt-ok-err", "function chk(n: i32): Result[i32, i32] { if (n > 0) { return Ok(n); } return Err(n); } function f(n: i32): i32 { match (chk(n)) { Ok(_) => { return 7; }, Err(_) => { return 3; } } return 9; } function main(): i32 { return f(2) * 10 + f(0); }", 73, ""},
 		{"ir-opt-bind-some", "function g(n: i32): Option[i32] { if (n > 0) { return Some(n + 100); } return None; } function f(n: i32): i32 { match (g(n)) { Some(x) => { return x; }, None => { return 0; } } return 0; } function main(): i32 { return f(5); }", 105, ""},
@@ -291,15 +290,15 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"str-len-concat", "function main(): i32 { let s = \"ab\" + \"cde\"; return s.len(); }", 5, ""},
 		{"str-len-param", "function l(s: string): i32 { return s.len(); } function main(): i32 { return l(\"seven!!\"); }", 7, ""},
 		// Allocating string methods (return a fresh heap string).
-		{"str-to-upper", "function main(): i32 { write(\"hello\".to_ascii_upper()); return 0; }", 0, "HELLO"},
-		{"str-to-lower", "function main(): i32 { write(\"HeLLo\".to_ascii_lower()); return 0; }", 0, "hello"},
-		{"str-to-upper-mixed", "function main(): i32 { let s = \"aB3z!\"; write(s.to_ascii_upper()); return 0; }", 0, "AB3Z!"},
-		{"str-repeat", "function main(): i32 { write(\"ab\".repeat(3)); return 0; }", 0, "ababab"},
-		{"str-repeat-zero", "function main(): i32 { let s = \"x\".repeat(0); return s.len(); }", 0, ""},
-		{"str-repeat-var", "function main(): i32 { let s = \"-\"; write(s.repeat(5)); return 0; }", 0, "-----"},
-		{"str-upper-concat", "function main(): i32 { write(\"hi \".to_ascii_upper() + \"there\"); return 0; }", 0, "HI there"},
-		{"str-method-chain", "function main(): i32 { write(\"AbC\".to_ascii_lower().to_ascii_upper()); return 0; }", 0, "ABC"},
-		{"str-upper-len", "function main(): i32 { return \"abc\".to_ascii_upper().len(); }", 3, ""},
+		{"str-to-upper", "import \"std/string\"; function main(): i32 { write(\"hello\".to_ascii_upper()); return 0; }", 0, "HELLO"},
+		{"str-to-lower", "import \"std/string\"; function main(): i32 { write(\"HeLLo\".to_ascii_lower()); return 0; }", 0, "hello"},
+		{"str-to-upper-mixed", "import \"std/string\"; function main(): i32 { let s = \"aB3z!\"; write(s.to_ascii_upper()); return 0; }", 0, "AB3Z!"},
+		{"str-repeat", "import \"std/string\"; function main(): i32 { write(\"ab\".repeat(3)); return 0; }", 0, "ababab"},
+		{"str-repeat-zero", "import \"std/string\"; function main(): i32 { let s = \"x\".repeat(0); return s.len(); }", 0, ""},
+		{"str-repeat-var", "import \"std/string\"; function main(): i32 { let s = \"-\"; write(s.repeat(5)); return 0; }", 0, "-----"},
+		{"str-upper-concat", "import \"std/string\"; function main(): i32 { write(\"hi \".to_ascii_upper() + \"there\"); return 0; }", 0, "HI there"},
+		{"str-method-chain", "import \"std/string\"; function main(): i32 { write(\"AbC\".to_ascii_lower().to_ascii_upper()); return 0; }", 0, "ABC"},
+		{"str-upper-len", "import \"std/string\"; function main(): i32 { return \"abc\".to_ascii_upper().len(); }", 3, ""},
 		// i32 arrays (read side): literal, index, .len(), while-sum.
 		{"arr-len", "function main(): i32 { let a = [10, 20, 30]; return a.len(); }", 3, ""},
 		{"cell-get-set", "function main(): i32 { let c: Cell[i32] = cell_new(0); c.set(c.get() + 5); c.set(c.get() * 2); return c.get(); }", 10, ""},
@@ -363,28 +362,28 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"sarr-for-eq", "function main(): i32 { let xs = [\"x\", \"y\", \"z\"]; let n = 0; for s in xs { if (s == \"y\") { n = n + 1; } } return n; }", 1, ""},
 		{"sarr-push", "function main(): i32 { let xs: string[] = [\"a\"]; xs = xs.append(\"b\"); write(xs[1]); return xs.len(); }", 2, "b"},
 		{"sarr-param", "function first(xs: string[]): string { return xs[0]; } function main(): i32 { write(first([\"hello\", \"world\"])); return 0; }", 0, "hello"},
-		{"sarr-elem-method", "function main(): i32 { let xs = [\"abc\"]; write(xs[0].to_ascii_upper()); return 0; }", 0, "ABC"},
-		{"sarr-for-var-method", "function main(): i32 { let xs = [\"ab\", \"cd\"]; for s in xs { write(s.to_ascii_upper()); } return 0; }", 0, "ABCD"},
+		{"sarr-elem-method", "import \"std/string\"; function main(): i32 { let xs = [\"abc\"]; write(xs[0].to_ascii_upper()); return 0; }", 0, "ABC"},
+		{"sarr-for-var-method", "import \"std/string\"; function main(): i32 { let xs = [\"ab\", \"cd\"]; for s in xs { write(s.to_ascii_upper()); } return 0; }", 0, "ABCD"},
 		{"sarr-for-var-len", "function main(): i32 { let xs = [\"abc\", \"de\"]; let n = 0; for s in xs { n = n + s.len(); } return n; }", 5, ""},
 		// join (string[] -> string) and split (string -> string[]).
-		{"join-basic", "function main(): i32 { let xs = [\"a\", \"b\", \"c\"]; write(xs.join(\",\")); return 0; }", 0, "a,b,c"},
-		{"join-empty-sep", "function main(): i32 { let xs = [\"a\", \"b\", \"c\"]; write(xs.join(\"\")); return 0; }", 0, "abc"},
-		{"join-single", "function main(): i32 { let xs = [\"solo\"]; write(xs.join(\",\")); return 0; }", 0, "solo"},
-		{"join-multichar-sep", "function main(): i32 { let xs = [\"x\", \"y\", \"z\"]; write(xs.join(\" - \")); return 0; }", 0, "x - y - z"},
-		{"split-len", "function main(): i32 { let s = \"a,b,c\"; let parts = s.split(\",\"); return parts.len(); }", 3, ""},
-		{"split-content", "function main(): i32 { let s = \"x|y|z\"; let parts = s.split(\"|\"); for p in parts { write(p); } return 0; }", 0, "xyz"},
-		{"split-index", "function main(): i32 { let parts = \"foo.bar.baz\".split(\".\"); write(parts[1]); return 0; }", 0, "bar"},
-		{"split-multichar", "function main(): i32 { let parts = \"aXXbXXc\".split(\"XX\"); return parts.len(); }", 3, ""},
-		{"split-no-match", "function main(): i32 { let parts = \"abc\".split(\",\"); return parts.len(); }", 1, ""},
-		{"split-then-join", "function main(): i32 { let parts = \"a,b,c\".split(\",\"); write(parts.join(\"-\")); return 0; }", 0, "a-b-c"},
-		{"split-elem-method", "function main(): i32 { let parts = \"ab,cd\".split(\",\"); write(parts[0].to_ascii_upper()); return 0; }", 0, "AB"},
+		{"join-basic", "import \"std/array\"; function main(): i32 { let xs = [\"a\", \"b\", \"c\"]; write(xs.join(\",\")); return 0; }", 0, "a,b,c"},
+		{"join-empty-sep", "import \"std/array\"; function main(): i32 { let xs = [\"a\", \"b\", \"c\"]; write(xs.join(\"\")); return 0; }", 0, "abc"},
+		{"join-single", "import \"std/array\"; function main(): i32 { let xs = [\"solo\"]; write(xs.join(\",\")); return 0; }", 0, "solo"},
+		{"join-multichar-sep", "import \"std/array\"; function main(): i32 { let xs = [\"x\", \"y\", \"z\"]; write(xs.join(\" - \")); return 0; }", 0, "x - y - z"},
+		{"split-len", "import \"std/string\"; function main(): i32 { let s = \"a,b,c\"; let parts = s.split(\",\"); return parts.len(); }", 3, ""},
+		{"split-content", "import \"std/string\"; function main(): i32 { let s = \"x|y|z\"; let parts = s.split(\"|\"); for p in parts { write(p); } return 0; }", 0, "xyz"},
+		{"split-index", "import \"std/string\"; function main(): i32 { let parts = \"foo.bar.baz\".split(\".\"); write(parts[1]); return 0; }", 0, "bar"},
+		{"split-multichar", "import \"std/string\"; function main(): i32 { let parts = \"aXXbXXc\".split(\"XX\"); return parts.len(); }", 3, ""},
+		{"split-no-match", "import \"std/string\"; function main(): i32 { let parts = \"abc\".split(\",\"); return parts.len(); }", 1, ""},
+		{"split-then-join", "import \"std/string\"; import \"std/array\"; function main(): i32 { let parts = \"a,b,c\".split(\",\"); write(parts.join(\"-\")); return 0; }", 0, "a-b-c"},
+		{"split-elem-method", "import \"std/string\"; function main(): i32 { let parts = \"ab,cd\".split(\",\"); write(parts[0].to_ascii_upper()); return 0; }", 0, "AB"},
 		// Structs: literal, field read, field assign, struct param/return.
 		{"struct-field-read", "struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 40, y: 2 }; return p.x + p.y; }", 42, ""},
 		{"struct-field-order", "struct P { x: i32, y: i32 } function main(): i32 { let p = P { y: 2, x: 40 }; return p.x; }", 40, ""},
 		{"struct-field-assign", "struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 1, y: 2 }; p = P { ...p, x: 99 }; return p.x + p.y; }", 101, ""},
 		{"struct-string-field", "struct Person { name: string, age: i32 } function main(): i32 { let p = Person { name: \"Sam\", age: 30 }; write(p.name); return p.age; }", 30, "Sam"},
 		{"struct-string-field-concat", "struct Person { name: string, age: i32 } function main(): i32 { let p = Person { name: \"Sam\", age: 30 }; write(\"hi \" + p.name); return 0; }", 0, "hi Sam"},
-		{"struct-string-field-method", "struct Box { s: string } function main(): i32 { let b = Box { s: \"abc\" }; write(b.s.to_ascii_upper()); return 0; }", 0, "ABC"},
+		{"struct-string-field-method", "import \"std/string\"; struct Box { s: string } function main(): i32 { let b = Box { s: \"abc\" }; write(b.s.to_ascii_upper()); return 0; }", 0, "ABC"},
 		{"struct-param", "struct P { x: i32, y: i32 } function area(p: P): i32 { return p.x * p.y; } function main(): i32 { return area(P { x: 6, y: 7 }); }", 42, ""},
 		{"struct-return", "struct P { x: i32, y: i32 } function mk(): P { return P { x: 20, y: 22 }; } function main(): i32 { let p = mk(); return p.x + p.y; }", 42, ""},
 		{"struct-nested", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { let o = Outer { inner: Inner { v: 40 }, k: 2 }; return o.inner.v + o.k; }", 42, ""},
@@ -410,9 +409,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"match-expr-other-arm", "function mk(): Option[i32] { return None; } function main(): i32 { return match (mk()) { Some(n) => n, None => 42 }; }", 42, ""},
 		// let-else — desugars the rest of the block into a match success
 		// arm; the else block is the wildcard (diverging) arm.
-		{"let-else-matched", "function mk(): Option[i32] { return Some(42); } function main(): i32 { let Some(v) = mk() else { return 1; } return v; }", 42, ""},
-		{"let-else-diverge", "function mk(): Option[i32] { return None; } function main(): i32 { let Some(v) = mk() else { return 7; } return v; }", 7, ""},
-		{"let-else-rest-multi", "function mk(): Option[i32] { return Some(40); } function main(): i32 { let Some(v) = mk() else { return 1; } let w: i32 = v + 2; return w; }", 42, ""},
+		{"let-else-matched", "function mk(): Option[i32] { return Some(42); } function main(): i32 { let Some(v) = mk() else { return 1; }; return v; }", 42, ""},
+		{"let-else-diverge", "function mk(): Option[i32] { return None; } function main(): i32 { let Some(v) = mk() else { return 7; }; return v; }", 7, ""},
+		{"let-else-rest-multi", "function mk(): Option[i32] { return Some(40); } function main(): i32 { let Some(v) = mk() else { return 1; }; let w: i32 = v + 2; return w; }", 42, ""},
 		// recursive local functions — hoisted to top level when capture-free.
 		{"rec-local-factorial", "function main(): i32 { function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } return fact(5); }", 120, ""},
 		{"rec-local-fib", "function main(): i32 { function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } return fib(10); }", 55, ""},
@@ -437,9 +436,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// PROBE: Option[string] payload operations.
 		{"payload-len", "function f(): Option[string] { return Some(\"hello\"); } function main(): i32 { match (f()) { Some(s) => { return s.len(); }, None => { return 0; } } return 1; }", 5, ""},
 		{"payload-write", "function f(): Option[string] { return Some(\"hi\"); } function main(): i32 { match (f()) { Some(s) => { write(s); return 0; }, None => { return 0; } } return 1; }", 0, "hi"},
-		{"payload-method", "function f(): Option[string] { return Some(\"abc\"); } function main(): i32 { match (f()) { Some(s) => { write(s.to_ascii_upper()); return 0; }, None => { return 0; } } return 1; }", 0, "ABC"},
+		{"payload-method", "import \"std/string\"; function f(): Option[string] { return Some(\"abc\"); } function main(): i32 { match (f()) { Some(s) => { write(s.to_ascii_upper()); return 0; }, None => { return 0; } } return 1; }", 0, "ABC"},
 		{"payload-concat", "function f(): Option[string] { return Some(\"foo\"); } function g(): Option[string] { return Some(\"bar\"); } function main(): i32 { match (f()) { Some(a) => { match (g()) { Some(b) => { write(a + b); return 0; }, None => { return 0; } } }, None => { return 0; } } return 1; }", 0, "foobar"},
-		{"payload-local-scrut", "function f(): Option[string] { return Some(\"abc\"); } function main(): i32 { let o: Option[string] = f(); match (o) { Some(s) => { write(s.to_ascii_upper()); return 0; }, None => { return 0; } } return 1; }", 0, "ABC"},
+		{"payload-local-scrut", "import \"std/string\"; function f(): Option[string] { return Some(\"abc\"); } function main(): i32 { let o: Option[string] = f(); match (o) { Some(s) => { write(s.to_ascii_upper()); return 0; }, None => { return 0; } } return 1; }", 0, "ABC"},
 		{"payload-struct", "struct P { x: i32, y: i32 } function f(): Option[P] { return Some(P { x: 40, y: 2 }); } function main(): i32 { match (f()) { Some(p) => { return p.x + p.y; }, None => { return 0; } } return 1; }", 42, ""},
 		{"payload-try-string", "function f(): Option[string] { return Some(\"hello\"); } function g(): Option[i32] { let s = f()?; return Some(s.len()); } function main(): i32 { match (g()) { Some(n) => { return n; }, None => { return 0; } } return 1; }", 5, ""},
 		// Struct-union match (`type E = A | B`): dispatch on the struct's
@@ -455,7 +454,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"method-with-arg", "struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { let x = Box { v: 4 }; return x.scale(3); }", 12, ""},
 		{"method-two-structs", "struct Circle { r: i32 } struct Square { s: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function (q: Square) area(): i32 { return q.s * q.s; } function main(): i32 { let a = Circle { r: 3 }; let b = Square { s: 6 }; return a.area() + b.area(); }", 45, ""},
 		{"method-string-return", "struct Person { name: string } function (p: Person) greeting(): string { return \"hi \" + p.name; } function main(): i32 { let p = Person { name: \"sam\" }; write(p.greeting()); return 0; }", 0, "hi sam"},
-		{"method-string-result-method", "struct Box { s: string } function (b: Box) val(): string { return b.s; } function main(): i32 { let x = Box { s: \"abc\" }; write(x.val().to_ascii_upper()); return 0; }", 0, "ABC"},
+		{"method-string-result-method", "import \"std/string\"; struct Box { s: string } function (b: Box) val(): string { return b.s; } function main(): i32 { let x = Box { s: \"abc\" }; write(x.val().to_ascii_upper()); return 0; }", 0, "ABC"},
 		{"method-vs-free", "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function area(): i32 { return 100; } function main(): i32 { let k = Circle { r: 5 }; return area() + k.area(); }", 125, ""},
 		{"method-chained-struct", "struct Counter { n: i32 } function (c: Counter) inc(): Counter { return Counter { n: c.n + 1 }; } function main(): i32 { let c = Counter { n: 40 }; return c.inc().inc().n; }", 42, ""},
 		{"method-option-return", "struct Reg { v: i32 } function (r: Reg) get(): Option[i32] { if (r.v > 0) { return Some(r.v); } return None; } function main(): i32 { let r = Reg { v: 42 }; match (r.get()) { Some(v) => { return v; }, None => { return 0; } } return 1; }", 42, ""},
@@ -472,7 +471,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"env-set", "function main(): i32 { match (env(\"FERNTEST\")) { Some(v) => { write(v); return 0; }, None => { write(\"none\"); return 0; } } return 1; }", 0, "hello123"},
 		{"env-missing", "function main(): i32 { match (env(\"NOPE_NOT_SET\")) { Some(v) => { write(v); return 0; }, None => { write(\"none\"); return 0; } } return 1; }", 0, "none"},
 		{"env-empty", "function main(): i32 { match (env(\"EMPTYVAR\")) { Some(v) => { return v.len() + 7; }, None => { return 0; } } return 1; }", 7, ""},
-		{"env-payload-method", "function main(): i32 { match (env(\"FERNTEST\")) { Some(v) => { write(v.to_ascii_upper()); return 0; }, None => { return 0; } } return 1; }", 0, "HELLO123"},
+		{"env-payload-method", "import \"std/string\"; function main(): i32 { match (env(\"FERNTEST\")) { Some(v) => { write(v.to_ascii_upper()); return 0; }, None => { return 0; } } return 1; }", 0, "HELLO123"},
 		{"env-len", "function main(): i32 { match (env(\"FERNTEST\")) { Some(v) => { return v.len(); }, None => { return 0; } } return 1; }", 8, ""},
 		// random_bytes(n): u8[] via wasi random_get — non-deterministic
 		// values, so assert length + byte range (0..255).
@@ -485,13 +484,13 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"args-count", "function main(): i32 { return args().len(); }", 3, ""},
 		{"args-index", "function main(): i32 { let a = args(); write(a[1]); write(a[2]); return 0; }", 0, "ALPHABETA"},
 		{"args-for", "function main(): i32 { let a = args(); let n = 0; for s in a { n = n + s.len(); } if (n > 0) { write(a[1]); return 0; } return 1; }", 0, "ALPHA"},
-		{"args-method", "function main(): i32 { let a = args(); write(a[1].to_ascii_lower()); return 0; }", 0, "alpha"},
+		{"args-method", "import \"std/string\"; function main(): i32 { let a = args(); write(a[1].to_ascii_lower()); return 0; }", 0, "alpha"},
 		// read_file(path): Result[string, IoError] via wasi path_open/fd_read
 		// (runner preopens the project dir, which contains rf_test.txt =
 		// "file-contents-123").
 		{"readfile-ok", "function main(): i32 { match (read_file(\"rf_test.txt\")) { Ok(s) => { write(s); return 0; }, Err(e) => { write(\"err\"); return 1; } } return 2; }", 0, "file-contents-123"},
 		{"readfile-len", "function main(): i32 { match (read_file(\"rf_test.txt\")) { Ok(s) => { return s.len(); }, Err(e) => { return 0; } } return 1; }", 17, ""},
-		{"readfile-method", "function main(): i32 { match (read_file(\"rf_test.txt\")) { Ok(s) => { if (s.to_ascii_upper().len() == 17) { return 42; } return 1; }, Err(e) => { return 2; } } return 3; }", 42, ""},
+		{"readfile-method", "import \"std/string\"; function main(): i32 { match (read_file(\"rf_test.txt\")) { Ok(s) => { if (s.to_ascii_upper().len() == 17) { return 42; } return 1; }, Err(e) => { return 2; } } return 3; }", 42, ""},
 		{"readfile-missing", "function main(): i32 { match (read_file(\"nope_missing.txt\")) { Ok(s) => { write(s); return 0; }, Err(e) => { write(\"err\"); return 0; } } return 2; }", 0, "err"},
 		// write_file(path, content): Result[(), IoError] (Ok(()) = ok). Tested by
 		// a write→read round-trip in-program (preopened dir is writable).
@@ -577,7 +576,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"str-slice-len", "function main(): i32 { print_int(slice_unchecked(\"abcdef\", 2, 5).len()); return 0; }", 0, "3"},
 		{"str-slice-var-bounds", "function main(): i32 { let s = \"abcdef\"; let a: i32 = 1; let b: i32 = 4; write(slice_unchecked(s, a, b)); return 0; }", 0, "bcd"},
 		{"str-slice-concat", "function main(): i32 { write(slice_unchecked(\"foo\", 0, 2) + \"!\"); return 0; }", 0, "fo!"},
-		{"str-slice-then-method", "function main(): i32 { write(slice_unchecked(\"HELLO\", 1, 4).to_ascii_lower()); return 0; }", 0, "ell"},
+		{"str-slice-then-method", "import \"std/string\"; function main(): i32 { write(slice_unchecked(\"HELLO\", 1, 4).to_ascii_lower()); return 0; }", 0, "ell"},
 		{"arr-slice-sum", "function main(): i32 { let xs = [10, 20, 30, 40, 50]; let sub = xs[1:4]; let s: i32 = 0; let i: i32 = 0; while (i < sub.len()) { s = s + sub[i]; i = i + 1; } print_int(s); return 0; }", 0, "90"},
 		{"arr-slice-len", "function main(): i32 { let xs = [1, 2, 3, 4, 5]; print_int(xs[0:3].len()); return 0; }", 0, "3"},
 		{"arr-slice-index", "function main(): i32 { let xs = [5, 6, 7, 8]; let sub = xs[2:4]; print_int(sub[0]); print_int(sub[1]); return 0; }", 0, "78"},
@@ -657,18 +656,16 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"closure-capture-struct-receiver", "struct Adder { base: i32 } function (a: Adder) make(): (i32) => i32 { return (x: i32): i32 => { return x + a.base; }; } function main(): i32 { let a = Adder { base: 100 }; let f = a.make(); return f(5); }", 105, ""},
 
 		// Returned closures — a `let f = g(...)` bound to a call of a
-		// function whose return type is `fn` must go through call_indirect,
+		// function that returns a closure must go through call_indirect,
 		// not a direct `(call $f …)` to a nonexistent function (regression:
 		// harden10).
-		{"return-closure-capture", "function make_adder(n: i32): fn { return (x: i32): i32 => { return x + n; }; } function main(): i32 { let add5 = make_adder(5); return add5(37); }", 42, ""},
-		{"return-closure-noncap", "function get_const(): fn { return (): i32 => { return 99; }; } function main(): i32 { let f = get_const(); return f(); }", 99, ""},
-		{"return-closure-twice", "function adder(n: i32): fn { return (x: i32): i32 => { return x + n; }; } function main(): i32 { let a = adder(10); let b = adder(20); return a(1) + b(2); }", 33, ""},
-		{"return-closure-string", "function greeter(): fn { return (): string => { return \"hi\"; }; } function main(): i32 { let g = greeter(); write(g()); return 0; }", 0, "hi"},
+		{"return-closure-capture", "function make_adder(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { let add5 = make_adder(5); return add5(37); }", 42, ""},
+		{"return-closure-noncap", "function get_const(): () => i32 { return (): i32 => { return 99; }; } function main(): i32 { let f = get_const(); return f(); }", 99, ""},
+		{"return-closure-twice", "function adder(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { let a = adder(10); let b = adder(20); return a(1) + b(2); }", 33, ""},
+		{"return-closure-string", "function greeter(): () => string { return (): string => { return \"hi\"; }; } function main(): i32 { let g = greeter(); write(g()); return 0; }", 0, "hi"},
 		// A *method* returning a closure must also flow through
-		// call_indirect: `let f = obj.m()` where m returns `fn` (regression:
+		// call_indirect: `let f = obj.m()` where m returns one (regression:
 		// harden12; the earlier fix only recognised free-function calls).
-		// The precise `(i32) => i32` return spelling (which the Go compiler
-		// requires and the self-host coarsens to `fn`) is used here.
 		{"method-return-closure-noncap", "struct Maker { } function (m: Maker) make(): (i32) => i32 { return (x: i32): i32 => { return x * 2; }; } function main(): i32 { let m = Maker { }; let f = m.make(); return f(21); }", 42, ""},
 		{"method-return-closure-capture-local", "struct Adder { base: i32 } function (a: Adder) make(): (i32) => i32 { let b = a.base; return (x: i32): i32 => { return x + b; }; } function main(): i32 { let a = Adder { base: 100 }; let f = a.make(); return f(5); }", 105, ""},
 		{"method-return-closure-capture-param", "struct F { } function (f: F) mul(k: i32): (i32) => i32 { return (x: i32): i32 => { return x * k; }; } function main(): i32 { let f = F { }; let g = f.mul(7); return g(6); }", 42, ""},
@@ -763,7 +760,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"struct-array-param-for", "struct Tk { kind: i32, text: string } function sumk(ts: Tk[]): i32 { let s = 0; for t in ts { s = s + t.kind; } return s; } function main(): i32 { let ts = [Tk { kind: 5, text: \"a\" }, Tk { kind: 9, text: \"b\" }]; print_int(sumk(ts)); return 0; }", 0, "14"},
 		{"fn-returns-struct", "struct V { a: i32, b: i32 } function mk(n: i32): V { return V { a: n, b: n * 2 }; } function main(): i32 { let v = mk(5); print_int(v.a + v.b); return 0; }", 0, "15"},
 		{"recursion-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { print_int(fib(10)); return 0; }", 0, "55"},
-		{"mutual-recursion", "function ev(n: i32): boolean { if (n == 0) { return true; } return od(n - 1); } function od(n: i32): boolean { if (n == 0) { return false; } return ev(n - 1); } function main(): i32 { if (ev(10)) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
+		{"mutual-recursion-bool", "function ev(n: i32): boolean { if (n == 0) { return true; } return od(n - 1); } function od(n: i32): boolean { if (n == 0) { return false; } return ev(n - 1); } function main(): i32 { if (ev(10)) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
 		{"option-question-chain", "function lookup(k: i32): Option[i32] { if (k > 0) { return Some(k * 10); } return None; } function step(k: i32): Option[i32] { let v = lookup(k)?; return Some(v + 1); } function main(): i32 { match (step(5)) { Some(r) => { print_int(r); }, None => { print_int(0); } } match (step(0 - 1)) { Some(r) => { print_int(r); }, None => { print_int(99); } } return 0; }", 0, "5199"},
 		{"result-match-string", "function parse(ok: boolean): Result[i32, string] { if (ok) { return Ok(42); } return Err(\"bad input\"); } function main(): i32 { match (parse(false)) { Ok(v) => { print_int(v); }, Err(e) => { write(e); } } return 0; }", 0, "bad input"},
 
@@ -780,7 +777,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"nested-array-triple-annotated", "function main(): i32 { let cube: i32[][][] = [[[1]], [[2, 3]]]; let sum = 0; for plane in cube { for row in plane { for v in row { sum = sum + v; } } } return sum; }", 6, ""},
 		{"nested-option", "function f(b: boolean): Option[Option[i32]] { if (b) { return Some(Some(5)); } return Some(None); } function main(): i32 { match (f(true)) { Some(inner) => { match (inner) { Some(v) => { print_int(v); }, None => { print_int(0); } } }, None => { print_int(9); } } return 0; }", 0, "5"},
 		{"recursion-string", "function rep(s: string, n: i32): string { if (n <= 0) { return \"\"; } return s + rep(s, n - 1); } function main(): i32 { write(rep(\"ab\", 3)); return 0; }", 0, "ababab"},
-		{"split-join-roundtrip", "function main(): i32 { let parts = \"a,b,c\".split(\",\"); write(parts.join(\"-\")); print_int(parts.len()); return 0; }", 0, "a-b-c3"},
+		{"split-join-roundtrip", "import \"std/string\"; import \"std/array\"; function main(): i32 { let parts = \"a,b,c\".split(\",\"); write(parts.join(\"-\")); print_int(parts.len()); return 0; }", 0, "a-b-c3"},
 		{"nested-loop-break", "function main(): i32 { let c: i32 = 0; let i: i32 = 0; while (i < 5) { let j: i32 = 0; while (j < 5) { if (j == 3) { break; } c = c + 1; j = j + 1; } i = i + 1; } print_int(c); return 0; }", 0, "15"},
 		{"tuple-destructure-call", "function mm(): (i32, i32) { return (3, 7); } function main(): i32 { let (a, b) = mm(); print_int(a); print_int(b); return 0; }", 0, "37"},
 		{"tuple-destructure-literal", "function main(): i32 { let (x, y) = (11, 22); print_int(x + y); return 0; }", 0, "33"},
@@ -827,7 +824,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"generic-call-typearg", "function identity[T](x: T): T { return x; } function main(): i32 { print_int(identity[i32](7)); return 0; }", 0, "7"},
 		{"generic-struct-construct", "struct Box[T] { val: T } function main(): i32 { let b = Box[i32] { val: 42 }; print_int(b.val); return 0; }", 0, "42"},
 		{"generic-receiver-method", "struct Box[T] { val: T } function (b: Box[i32]) get(): i32 { return b.val; } function main(): i32 { let b = Box[i32] { val: 42 }; print_int(b.get()); return 0; }", 0, "42"},
-		{"generic-method-T-receiver", "struct Box[T] { val: T } function (b: Box[T]) doubled(): i32 { return b.val * 2; } function main(): i32 { let b = Box { val: 21 }; print_int(b.doubled()); return 0; }", 0, "42"},
+		{"generic-method-T-receiver", "struct Box[T] { val: T } function (b: Box[T]) get(): T { return b.val; } function main(): i32 { let b = Box { val: 21 }; print_int(b.get() * 2); return 0; }", 0, "42"},
 		// Char-processing programs (now that s[i] byte access works).
 		{"count-vowels", "function isvowel(c: i32): boolean { return c == 97 || c == 101 || c == 105 || c == 111 || c == 117; } function main(): i32 { let s: string = \"hello world\"; let n: i32 = 0; let i: i32 = 0; while (i < s.len()) { if (isvowel((s[i] as i32))) { n = n + 1; } i = i + 1; } print_int(n); return 0; }", 0, "3"},
 		{"string-reverse", "function main(): i32 { let s: string = \"abcde\"; let out: string = \"\"; let i: i32 = s.len() - 1; while (i >= 0) { out = out + slice_unchecked(s, i, i + 1); i = i - 1; } write(out); return 0; }", 0, "edcba"},

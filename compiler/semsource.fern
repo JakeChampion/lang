@@ -1075,8 +1075,8 @@ function tuple(e: ast.Expr, t: ast.ExprTuple, s: State, expected: typeinfo.Type)
 
 // A capture read out of a closure body's environment: `__env[k]` is the
 // record projection of field k, typed by the capture the lift wrote there.
-function environment_read(ix: ast.ExprIndex, container: Value, s: State): Value {
-  let caps: typeinfo.Type[] = semtypes.env_captures(s.values[container.id]);
+function environment_read(ix: ast.ExprIndex, container: i32, s: State): Value {
+  let caps: typeinfo.Type[] = semtypes.env_captures(s.values[container]);
   let slot: i32 = 0;
   if let ast.ExprNumber(n) = ix.index {
     if (decimal(n.text)) {
@@ -1086,14 +1086,14 @@ function environment_read(ix: ast.ExprIndex, container: Value, s: State): Value 
   if (slot < 1 || slot > caps.len()) {
     return refused(s, "environment projection");
   }
-  let v: Value = define(s, ssasem.record_get(), [container.id], slot, "c" + util.i32_to_string(slot), caps[slot - 1]);
+  let v: Value = define(s, ssasem.record_get(), [container], slot, "c" + util.i32_to_string(slot), caps[slot - 1]);
   return Value { s: State { ...v.s, foreign: v.s.foreign.append(v.id) }, id: v.id };
 }
 
 function index(ix: ast.ExprIndex, s: State): Value {
   let container: Value = expr(ix.array, s, typeinfo.unchecked());
   if (container.s.ok && semtypes.is_env(container.s.values[container.id])) {
-    return environment_read(ix, container, container.s);
+    return environment_read(ix, container.id, container.s);
   }
   let at: Value = expr(ix.index, container.s, t_i32());
   s = at.s;
@@ -1182,13 +1182,13 @@ function slice_bound(t: SliceTree, left: i32, op: string, right: i32, sink: i32)
 // lowering traps the same way). The elements are copied as bare words, so a
 // counted element type is retained once per copied slot — the copy aliases
 // every one of them.
-function array_slice(sl: ast.ExprSlice, src: Value, elem: typeinfo.Type, s: State): Value {
+function array_slice(sl: ast.ExprSlice, src: i32, elem: typeinfo.Type, s: State): Value {
   let lo: Value = expr(sl.start, s, t_i32());
   s = lo.s;
   if (!s.ok) {
     return lo;
   }
-  let hi: Value = define(s, ssasem.length(), [src.id], 0, "", t_i32());
+  let hi: Value = define(s, ssasem.length(), [src], 0, "", t_i32());
   if (!sl.open_end) {
     hi = expr(sl.end, s, t_i32());
   }
@@ -1199,7 +1199,7 @@ function array_slice(sl: ast.ExprSlice, src: Value, elem: typeinfo.Type, s: Stat
   if (!is_i32(s.values[lo.id]) || !is_i32(s.values[hi.id])) {
     return refused(s, "slice bound type");
   }
-  return define(s, ssasem.arr_slice(), [src.id, lo.id, hi.id], 0, "", typeinfo.TypeArray { elem: elem, view: true });
+  return define(s, ssasem.arr_slice(), [src, lo.id, hi.id], 0, "", typeinfo.TypeArray { elem: elem, view: true });
 }
 
 function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
@@ -1209,7 +1209,7 @@ function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
     return src;
   }
   if let typeinfo.TypeArray(a) = s.values[src.id] {
-    return array_slice(sl, src, a.elem, s);
+    return array_slice(sl, src.id, a.elem, s);
   }
   if (!ssasem.is_text(s.values[src.id])) {
     return refused(s, "unsupported slice source: " + typeinfo.spelling(s.values[src.id]));
@@ -1662,37 +1662,39 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     }
     let wide: typeinfo.Type = first.s.values[first.id];
     if (ssasem.is_integer(wide)) {
+      let right_id: i32 = first.id;
       let lit: Value = expr(b.left, first.s, wide);
       if (!lit.s.ok) {
         return lit;
       }
-      return arithmetic(b, lit, Value { s: lit.s, id: first.id }, lit.s);
+      return arithmetic(b, lit.id, right_id, lit.s);
     }
   }
-  let left: Value = address_widen(expr(b.left, s, want), want);
-  s = left.s;
+  let produced: Value = address_widen(expr(b.left, s, want), want);
+  s = produced.s;
   if (!s.ok) {
-    return left;
+    return produced;
   }
-  if (!operand_type(want) && parser.int_literal_tree(b.right) && ssasem.is_integer(s.values[left.id]) && !wide_literal(b.right)) {
-    want = s.values[left.id];
+  let left: i32 = produced.id;
+  if (!operand_type(want) && parser.int_literal_tree(b.right) && ssasem.is_integer(s.values[left]) && !wide_literal(b.right)) {
+    want = s.values[left];
   }
-  if (!operand_type(want) && parser.float_literal_tree(b.right) && ssasem.is_float(s.values[left.id])) {
-    want = s.values[left.id];
+  if (!operand_type(want) && parser.float_literal_tree(b.right) && ssasem.is_float(s.values[left])) {
+    want = s.values[left];
   }
   // The left operand decides whether this is a composite comparison, and the
   // decision is taken before the RIGHT one is produced: the method call
   // produces it, and producing it here too would give the call two values for
   // one expression.
-  let key: string = composite_key(b.op, s.values[left.id], s);
+  let key: string = composite_key(b.op, s.values[left], s);
   if (key != "") {
     return composite_compare(b, left, key, s);
   }
-  let arith: string = nominal_method_key(ast.operator_method(b.op), s.values[left.id], s);
+  let arith: string = nominal_method_key(ast.operator_method(b.op), s.values[left], s);
   if (arith != "") {
     return operator_method(left, [b.right], arith, s);
   }
-  if (b.op == "+" && ssasem.is_string(s.values[left.id])) {
+  if (b.op == "+" && ssasem.is_string(s.values[left])) {
     if let Some(c) = builtin_slice(b.right, s) {
       return range_append(left, c, s);
     }
@@ -1702,26 +1704,29 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
   if (!s.ok) {
     return right;
   }
-  return arithmetic(b, left, right, s);
+  return arithmetic(b, left, right.id, s);
 }
 
-function arithmetic(b: ast.ExprBinary, left: Value, right: Value, s: State): Value {
-  right = shift_count(b.op, right, s.values[left.id]);
-  s = right.s;
+function arithmetic(b: ast.ExprBinary, left: i32, right: i32, s: State): Value {
+  let counted: Value = shift_count(b.op, right, s, s.values[left]);
+  s = counted.s;
+  right = counted.id;
   // A narrower operand meets a wider one of its own signedness at the wider
   // width, as the checker settles it; every other mix is E009.
-  if (widens_to(s.values[left.id], s.values[right.id])) {
-    left = define(s, ssasem.cast(), [left.id], 0, "", s.values[right.id]);
-    s = left.s;
-  } else if (widens_to(s.values[right.id], s.values[left.id])) {
-    right = define(s, ssasem.cast(), [right.id], 0, "", s.values[left.id]);
-    s = right.s;
+  if (widens_to(s.values[left], s.values[right])) {
+    let wide: Value = define(s, ssasem.cast(), [left], 0, "", s.values[right]);
+    s = wide.s;
+    left = wide.id;
+  } else if (widens_to(s.values[right], s.values[left])) {
+    let wide: Value = define(s, ssasem.cast(), [right], 0, "", s.values[left]);
+    s = wide.s;
+    right = wide.id;
   }
-  let ty: typeinfo.Type = ssasem.binary_result(b.op, s.values[left.id], s.values[right.id]);
+  let ty: typeinfo.Type = ssasem.binary_result(b.op, s.values[left], s.values[right]);
   if (!semtypes.concrete(ty, false)) {
-    return refused(s, "operator contract: " + typeinfo.spelling(s.values[left.id]) + " " + b.op + " " + typeinfo.spelling(s.values[right.id]));
+    return refused(s, "operator contract: " + typeinfo.spelling(s.values[left]) + " " + b.op + " " + typeinfo.spelling(s.values[right]));
   }
-  return define(s, 9, [left.id, right.id], 0, b.op, ty);
+  return define(s, 9, [left, right], 0, b.op, ty);
 }
 
 // A literal past the i32 range keeps its own i64 width rather than taking a
@@ -1776,7 +1781,7 @@ function nominal_method_key(verb: string, t: typeinfo.Type, s: State): string {
   return key;
 }
 
-function operator_method(recv: Value, args: ast.Expr[], key: string, s: State): Value {
+function operator_method(recv: i32, args: ast.Expr[], key: string, s: State): Value {
   let contract: ssasem.Contract = s.contracts.list[ssasem.find_contract(s.contracts, key)];
   if (args.len() + 1 != contract.params.len()) {
     return refused(s, "call arity");
@@ -1799,7 +1804,7 @@ function comparison_verb(op: string): string {
 // The receiver is the value in hand and the right operand is still written, so
 // this is `invoke_method`'s shape exactly. `cmp` answers -1, 0 or 1, so the
 // ordering the source wrote holds against a zero this emits.
-function composite_compare(b: ast.ExprBinary, left: Value, key: string, s: State): Value {
+function composite_compare(b: ast.ExprBinary, left: i32, key: string, s: State): Value {
   let contract: ssasem.Contract = s.contracts.list[ssasem.find_contract(s.contracts, key)];
   if (contract.params.len() != 2) {
     return refused(s, "call arity");
@@ -1827,15 +1832,15 @@ function composite_compare(b: ast.ExprBinary, left: Value, key: string, s: State
 
 // A shift count is masked to the value's width, so a count of another integer
 // width reaches the operator through the conversion the source never writes.
-function shift_count(op: string, count: Value, value: typeinfo.Type): Value {
+function shift_count(op: string, count: i32, s: State, value: typeinfo.Type): Value {
   if (op != "<<" && op != ">>") {
-    return count;
+    return Value { s: s, id: count };
   }
-  let t: typeinfo.Type = count.s.values[count.id];
+  let t: typeinfo.Type = s.values[count];
   if (!ssasem.is_integer(t) || !ssasem.is_integer(value) || semtypes.equal(t, value)) {
-    return count;
+    return Value { s: s, id: count };
   }
-  return define(count.s, ssasem.cast(), [count.id], 0, "", value);
+  return define(s, ssasem.cast(), [count], 0, "", value);
 }
 
 // Negation keeps its operand's type, so a destination width reaches the
@@ -1862,7 +1867,7 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
   if (u.op == "-") {
     let neg: string = nominal_method_key("neg", s.values[operand.id], s);
     if (neg != "") {
-      return operator_method(operand, [], neg, s);
+      return operator_method(operand.id, [], neg, s);
     }
   }
   let ty: typeinfo.Type = ssasem.unary_result(u.op, s.values[operand.id]);
@@ -1958,7 +1963,7 @@ function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
       carried = widen(carried, out_shape.types[0]);
     }
     if (convert != "" && convert != "dyn") {
-      carried = operator_method(carried, [], convert, carried.s);
+      carried = operator_method(carried.id, [], convert, carried.s);
     }
     gone = carried.s;
     if (!gone.ok) {
@@ -2175,8 +2180,8 @@ function logical(b: ast.ExprBinary, s: State): Value {
 
 // `.len` reads a counted array or string and hands back a fresh i32 that owns
 // nothing.
-function builtin_length(recv: Value, s: State): Value {
-  let t: typeinfo.Type = s.values[recv.id];
+function builtin_length(recv: i32, s: State): Value {
+  let t: typeinfo.Type = s.values[recv];
   let sized: boolean = ssasem.is_text(t);
   if let typeinfo.TypeArray(_) = t {
     sized = true;
@@ -2184,15 +2189,15 @@ function builtin_length(recv: Value, s: State): Value {
   if (!sized) {
     return refused(s, "unsupported call target");
   }
-  return define(s, ssasem.length(), [recv.id], 0, "", t_i32());
+  return define(s, ssasem.length(), [recv], 0, "", t_i32());
 }
 
 // `.append` hands the receiver's own unit to the runtime and takes back one:
 // the same box when the push fits, a fresh one when it grew. The element is a
 // value the new array holds; a view element anchors the array to its source
 // (ssasem.gathers_views), as a view in an array literal does.
-function builtin_append(c: ast.ExprCall, recv: Value, s: State): Value {
-  let t: typeinfo.Type = s.values[recv.id];
+function builtin_append(c: ast.ExprCall, recv: i32, s: State): Value {
+  let t: typeinfo.Type = s.values[recv];
   let elem: typeinfo.Type = element_type(t);
   if (!semtypes.concrete(elem, false)) {
     return refused(s, "unsupported call target");
@@ -2206,14 +2211,14 @@ function builtin_append(c: ast.ExprCall, recv: Value, s: State): Value {
     return refused(s, "append element type");
   }
   v = kept_view(unaliased_view(v));
-  return define(v.s, ssasem.append(), [recv.id, v.id], 0, "", t);
+  return define(v.s, ssasem.append(), [recv, v.id], 0, "", t);
 }
 
 // `.with` hands the receiver's own unit over the way `.append` does and takes
 // back the array holding the value at the index, which anchors it as an
 // append's element does.
-function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
-  let t: typeinfo.Type = s.values[recv.id];
+function builtin_with(c: ast.ExprCall, recv: i32, s: State): Value {
+  let t: typeinfo.Type = s.values[recv];
   let elem: typeinfo.Type = element_type(t);
   if (!semtypes.concrete(elem, false)) {
     return refused(s, "unsupported call target");
@@ -2235,7 +2240,7 @@ function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
     return refused(s, "with element type");
   }
   v = kept_view(unaliased_view(v));
-  return define(v.s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
+  return define(v.s, ssasem.with(), [recv, at.id, v.id], 0, "", t);
 }
 
 // The join is declared on `string[]` alone, as the AST lowering gates it, so a
@@ -2250,7 +2255,7 @@ function is_string_array(t: typeinfo.Type): boolean {
 // `xs.join(sep)` reads the array and the separator and answers a fresh string.
 // A view is a legal separator — the joined bytes are copied out of it — so the
 // element rule an append carries does not apply here.
-function builtin_join(c: ast.ExprCall, recv: Value, s: State): Value {
+function builtin_join(c: ast.ExprCall, recv: i32, s: State): Value {
   let sep: Value = expr(c.args[0], s, t_string());
   s = sep.s;
   if (!s.ok) {
@@ -2259,15 +2264,15 @@ function builtin_join(c: ast.ExprCall, recv: Value, s: State): Value {
   if (!ssasem.is_text(s.values[sep.id])) {
     return refused(s, "join separator type");
   }
-  return define(s, ssasem.arr_join(), [recv.id, sep.id], 0, "", t_string());
+  return define(s, ssasem.arr_join(), [recv, sep.id], 0, "", t_string());
 }
 
 // A cell's methods: `get` hands out a unit of the element, and `set` takes the
 // new element's unit and returns nothing, so it stands only as a statement.
-function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
-  let elem: typeinfo.Type = semtypes.cell_elem(s.values[recv.id]);
+function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State, statement: boolean): Value {
+  let elem: typeinfo.Type = semtypes.cell_elem(s.values[recv]);
   if (fa.field == "get" && c.args.len() == 0) {
-    return define(s, ssasem.cell_get(), [recv.id], 0, "", elem);
+    return define(s, ssasem.cell_get(), [recv], 0, "", elem);
   }
   if (fa.field != "set" || c.args.len() != 1) {
     return refused(s, "unsupported call target");
@@ -2286,7 +2291,7 @@ function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: S
   if (!semtypes.equal(s.values[v.id], elem)) {
     return refused(s, "cell element type");
   }
-  return define(s, ssasem.cell_set(), [recv.id, v.id], 0, "", t_void());
+  return define(s, ssasem.cell_set(), [recv, v.id], 0, "", t_void());
 }
 
 // A map's methods: `insert` (spelled `set` too, as the AST lowering admits
@@ -2296,13 +2301,13 @@ function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: S
 // hands the map back inside a tuple with whether the key was there, and
 // `cleared` builds an empty map of the same shape. The iteration has backend
 // ops but no contract here yet.
-function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
-  let t: typeinfo.Type = s.values[recv.id];
+function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State): Value {
+  let t: typeinfo.Type = s.values[recv];
   if (!ssasem.is_supported_map(t)) {
     return refused(s, "unsupported map shape: " + typeinfo.spelling(t));
   }
   if (fa.field == "len" && c.args.len() == 0) {
-    return define(s, ssasem.map_len(), [recv.id], 0, "", t_i32());
+    return define(s, ssasem.map_len(), [recv], 0, "", t_i32());
   }
   if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
     return map_write(c, recv, s, t);
@@ -2337,37 +2342,37 @@ function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: St
 // `m.iter()` — the cursor over m. It is a block of its own, but it holds the
 // map's address and an index and nothing else, so it reads the map's storage
 // for as long as it lives and the frame neither counts it nor frees it.
-function map_cursor(s: State, recv: Value, t: typeinfo.Type): Value {
+function map_cursor(s: State, recv: i32, t: typeinfo.Type): Value {
   let cursor: typeinfo.Type = typeinfo.TypeStruct {
     name: "MapIter",
     args: [ssasem.map_key(t), ssasem.map_value(t)],
   };
-  return define(s, ssasem.map_iter(), [recv.id], 0, "", cursor);
+  return define(s, ssasem.map_iter(), [recv], 0, "", cursor);
 }
 
 // The cursor's four. `key` and `value` read the map's own columns at the
 // cursor and take no unit of what they answer, so the value is borrowed for
 // as long as the map holds it; `advance` moves the cursor in place and
 // answers nothing, so it stands only as a statement.
-function map_iter_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
-  let t: typeinfo.Type = s.values[recv.id];
+function map_iter_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State, statement: boolean): Value {
+  let t: typeinfo.Type = s.values[recv];
   if (c.args.len() != 0) {
     return refused(s, "call arity");
   }
   if (fa.field == "has_next") {
-    return define(s, ssasem.mapiter_has_next(), [recv.id], 0, "", t_bool());
+    return define(s, ssasem.mapiter_has_next(), [recv], 0, "", t_bool());
   }
   if (fa.field == "key") {
-    return define(s, ssasem.mapiter_key(), [recv.id], 0, "", semtypes.map_iter_key(t));
+    return define(s, ssasem.mapiter_key(), [recv], 0, "", semtypes.map_iter_key(t));
   }
   if (fa.field == "value") {
-    return define(s, ssasem.mapiter_value(), [recv.id], 0, "", semtypes.map_iter_value(t));
+    return define(s, ssasem.mapiter_value(), [recv], 0, "", semtypes.map_iter_value(t));
   }
   if (fa.field == "advance") {
     if (!statement) {
       return refused(s, "unsupported void call");
     }
-    return define(s, ssasem.mapiter_advance(), [recv.id], 0, "", t_void());
+    return define(s, ssasem.mapiter_advance(), [recv], 0, "", t_void());
   }
   return refused(s, "unsupported call target: " + typeinfo.spelling(t) + "." + fa.field);
 }
@@ -2377,13 +2382,13 @@ function map_iter_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, 
 // removal releases the entry's key and value through the releases the
 // physical lowering names for the columns, so a column the map owns a unit of
 // per entry gives that unit back with the entry (#9970).
-function map_delete(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): Value {
+function map_delete(c: ast.ExprCall, recv: i32, s: State, t: typeinfo.Type): Value {
   let k: Value = map_key_value(c.args[0], s, t, false);
   s = k.s;
   if (!s.ok) {
     return k;
   }
-  return define(s, ssasem.map_delete(), [recv.id, k.id], 0, "", ssasem.delete_result(t));
+  return define(s, ssasem.map_delete(), [recv, k.id], 0, "", ssasem.delete_result(t));
 }
 
 // A column snapshot answers a FRESH array whose ownership follows the column.
@@ -2393,11 +2398,11 @@ function map_delete(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): V
 // handed back as a raw alias of the map's own elements — the frame would
 // release what the map still holds, so it is refused here rather than
 // described as owned.
-function map_column(s: State, recv: Value, kind: i32, elem: typeinfo.Type): Value {
+function map_column(s: State, recv: i32, kind: i32, elem: typeinfo.Type): Value {
   if (!ssasem.retained_column(elem)) {
     return refused(s, "aliased column element: " + typeinfo.spelling(elem));
   }
-  return define(s, kind, [recv.id], 0, "", typeinfo.TypeArray { elem: elem, view: false });
+  return define(s, kind, [recv], 0, "", typeinfo.TypeArray { elem: elem, view: false });
 }
 
 // An INSERT's key joins the map's key column, and `keys` would hand out the
@@ -2434,7 +2439,7 @@ function map_key_value(e: ast.Expr, s: State, t: typeinfo.Type, stored: boolean)
   return k;
 }
 
-function map_write(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): Value {
+function map_write(c: ast.ExprCall, recv: i32, s: State, t: typeinfo.Type): Value {
   let k: Value = map_key_value(c.args[0], s, t, true);
   s = k.s;
   if (!s.ok) {
@@ -2449,18 +2454,18 @@ function map_write(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): Va
     return refused(s, "map value type");
   }
   v = kept_view(unaliased_view(v));
-  return define(v.s, ssasem.map_insert(), [recv.id, k.id, v.id], 0, "", t);
+  return define(v.s, ssasem.map_insert(), [recv, k.id, v.id], 0, "", t);
 }
 
 // A lookup borrows the map and the key and answers a scalar the map goes on
 // owning: `has` takes the key alone, `get_or` a default of the value type.
-function map_read(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type, kind: i32, result: typeinfo.Type): Value {
+function map_read(c: ast.ExprCall, recv: i32, s: State, t: typeinfo.Type, kind: i32, result: typeinfo.Type): Value {
   let k: Value = map_key_value(c.args[0], s, t, false);
   s = k.s;
   if (!s.ok) {
     return k;
   }
-  let ids: i32[] = [recv.id, k.id];
+  let ids: i32[] = [recv, k.id];
   if (c.args.len() == 2) {
     let d: Value = expr(c.args[1], s, ssasem.map_value(t));
     s = d.s;
@@ -2502,7 +2507,7 @@ function array_module_method(contracts: ssasem.Contracts, field: string): i32 {
 // to that template with the receiver at argument 0. `__mapm_` is the map
 // sibling. The instance is asked for on this call's request, the way any other
 // generic call asks, so the method body is produced once per element type.
-function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
+function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State, statement: boolean): Value {
   if (c.type_args.len() > 0) {
     return refused(s, "unsupported call target");
   }
@@ -2515,7 +2520,7 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
       prefix = "__viewm_";
     }
   }
-  if (ssasem.is_map(s.values[recv.id])) {
+  if (ssasem.is_map(s.values[recv])) {
     prefix = "__mapm_";
   }
   // register_struct_method_generics folds a THIRD shape, a method with its
@@ -2553,9 +2558,9 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
 // `string` owner above; every other scalar had no owner name at all, so the
 // key was never built and the whole of std/i32's surface read as a builtin
 // this boundary does not own.
-function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
+function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State, statement: boolean): Value {
   // Keyed as decl_key keys the declaration: `(m: Map[string, i32]) f` is `Map.f`.
-  let owner: string = parser.receiver_base(typeinfo.spelling(s.values[recv.id]));
+  let owner: string = parser.receiver_base(typeinfo.spelling(s.values[recv]));
   if (owner.len() == 0) {
     return refused(s, "unsupported call target");
   }
@@ -2575,27 +2580,27 @@ function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value,
 
 // The builtin methods with a contract here. Every other builtin, and every
 // local function value, is still outside this boundary.
-function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
+function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State, statement: boolean): Value {
   if (c.type_args.len() > 0) {
     return refused(s, "unsupported call target");
   }
-  if (semtypes.is_cell(s.values[recv.id])) {
+  if (semtypes.is_cell(s.values[recv])) {
     return cell_method(c, fa, recv, s, statement);
   }
-  if (ssasem.is_map(s.values[recv.id])) {
+  if (ssasem.is_map(s.values[recv])) {
     return map_method(c, fa, recv, s);
   }
-  if (semtypes.is_map_iter(s.values[recv.id])) {
+  if (semtypes.is_map_iter(s.values[recv])) {
     return map_iter_method(c, fa, recv, s, statement);
   }
   if (fa.field == "len" && c.args.len() == 0) {
     return builtin_length(recv, s);
   }
-  if ((fa.field == "bytes" || fa.field == "as_bytes") && c.args.len() == 0 && ssasem.is_text(s.values[recv.id])) {
+  if ((fa.field == "bytes" || fa.field == "as_bytes") && c.args.len() == 0 && ssasem.is_text(s.values[recv])) {
     if (fa.field == "as_bytes") {
-      return define(s, ssasem.str_byte_view(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: true });
+      return define(s, ssasem.str_byte_view(), [recv], 0, "", typeinfo.TypeArray { elem: t_u8(), view: true });
     }
-    return define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: false });
+    return define(s, ssasem.str_bytes(), [recv], 0, "", typeinfo.TypeArray { elem: t_u8(), view: false });
   }
   if (fa.field == "append" && c.args.len() == 1) {
     return builtin_append(c, recv, s);
@@ -2603,10 +2608,10 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
   if (fa.field == "with" && c.args.len() == 2) {
     return builtin_with(c, recv, s);
   }
-  if (fa.field == "join" && c.args.len() == 1 && is_string_array(s.values[recv.id])) {
+  if (fa.field == "join" && c.args.len() == 1 && is_string_array(s.values[recv])) {
     return builtin_join(c, recv, s);
   }
-  return refused(s, "unsupported call target: " + typeinfo.spelling(s.values[recv.id]) + "." + fa.field);
+  return refused(s, "unsupported call target: " + typeinfo.spelling(s.values[recv]) + "." + fa.field);
 }
 
 // A call is verified against the callee's declared contract: exact argument
@@ -2649,28 +2654,29 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
       want = checked(c, s);
     }
   }
-  let recv: Value = expr(fa.obj, s, want);
-  s = recv.s;
+  let produced: Value = expr(fa.obj, s, want);
+  s = produced.s;
   if (!s.ok) {
-    return recv;
+    return produced;
   }
-  if (ssasem.is_dyn(s.values[recv.id])) {
+  let recv: i32 = produced.id;
+  if (ssasem.is_dyn(s.values[recv])) {
     return dyn_method(c, fa, recv, s, statement);
   }
-  let owner: string = struct_name(s.values[recv.id]);
+  let owner: string = struct_name(s.values[recv]);
   if (owner == "") {
-    owner = union_name(s.values[recv.id]);
+    owner = union_name(s.values[recv]);
   }
   // A record FIELD of function type is not a method. The contract table keys
   // methods by `Type.name` and holds nothing for a field, so `h.f(0)` is the
   // field read and a call through what it holds. The receiver is already
   // produced, so the read takes its value rather than evaluating the object a
   // second time.
-  let fsig: checker.StructSig = record_sig(s.values[recv.id], s);
+  let fsig: checker.StructSig = record_sig(s.values[recv], s);
   if (fsig.name.len() > 0) {
     let fat: i32 = record_field_index(fsig, fa.field);
     if (fat >= 0 && ssasem.is_func(fsig.field_types[fat])) {
-      let fv: Value = define(s, ssasem.record_get(), [recv.id], fat, fa.field, fsig.field_types[fat]);
+      let fv: Value = define(s, ssasem.record_get(), [recv], fat, fa.field, fsig.field_types[fat]);
       if (!fv.s.ok) {
         return fv;
       }
@@ -2679,10 +2685,10 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   }
   // A tuple ELEMENT of function type is the same shape one container over:
   // `p.0(1)` is the element read and a call through what it holds.
-  if let typeinfo.TypeTuple(tup) = s.values[recv.id] {
+  if let typeinfo.TypeTuple(tup) = s.values[recv] {
     let tat: i32 = tuple_index(fa.field, tup.elements.len());
     if (tat >= 0 && ssasem.is_func(tup.elements[tat])) {
-      let tv: Value = define(s, ssasem.tuple_get(), [recv.id], tat, "", tup.elements[tat]);
+      let tv: Value = define(s, ssasem.tuple_get(), [recv], tat, "", tup.elements[tat]);
       if (!tv.s.ok) {
         return tv;
       }
@@ -2693,7 +2699,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   // contract for, so it is matched by shape instead. A string's methods are
   // declared in the standard library on a `string` receiver, and a view
   // reaches them as a lent box; the builtins every text has come first.
-  if (owner == "" && (fa.field == "len" || fa.field == "append" || fa.field == "bytes" || fa.field == "as_bytes" || !ssasem.is_text(s.values[recv.id]))) {
+  if (owner == "" && (fa.field == "len" || fa.field == "append" || fa.field == "bytes" || fa.field == "as_bytes" || !ssasem.is_text(s.values[recv]))) {
     let b: Value = builtin_call(c, fa, recv, s, statement);
     if (b.s.ok) {
       return b;
@@ -2730,15 +2736,17 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   }
   // The receiver is produced before its contract is found, so it widens
   // here as an argument does in `expr`: a `str` method takes a `string`.
-  recv = lend(widen(recv, contract.params[0]), contract.params[0], contract.modes[0], keeps(s, key));
-  s = recv.s;
-  if (!semtypes.equal(s.values[recv.id], contract.params[0])) {
+  let kept: boolean = keeps(s, key);
+  let lent: Value = lend(widen(Value { s: s, id: recv }, contract.params[0]), contract.params[0], contract.modes[0], kept);
+  s = lent.s;
+  recv = lent.id;
+  if (!semtypes.equal(s.values[recv], contract.params[0])) {
     return refused(s, "call receiver type");
   }
-  let ids: i32[] = [recv.id];
+  let ids: i32[] = [recv];
   let i: i32 = 0;
   while (i < c.args.len()) {
-    let v: Value = lend(expr(c.args[i], s, contract.params[i + 1]), contract.params[i + 1], contract.modes[i + 1], keeps(s, key));
+    let v: Value = lend(expr(c.args[i], s, contract.params[i + 1]), contract.params[i + 1], contract.modes[i + 1], kept);
     s = v.s;
     if (!s.ok) {
       return v;
@@ -2761,8 +2769,8 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
 // other operand and the result, and lend every operand, because the dispatch
 // hands each one the same slots. Each operand is copied into a run of
 // consecutive values, which is where `ssarc.dyn_site` reads them from.
-function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
-  let receiver: typeinfo.Type = s.values[recv.id];
+function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State, statement: boolean): Value {
+  let receiver: typeinfo.Type = s.values[recv];
   let traits: string[] = parser.dyn_trait_set(typeinfo.spelling(receiver));
   let arms: string[] = dyn_arms(s.funcs, s.impls, fa.field, traits);
   if (arms.len() == 0 && !any_implementer(s.impls, traits)) {
@@ -2808,7 +2816,7 @@ function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: St
     i = i + 1;
   }
   let contract: ssasem.Contract = ssasem.Contract { name: ssasem.dyn_call_name(fa.field, traits, arms), params: params, modes: modes, result: shape.result };
-  let ids: i32[] = [recv.id];
+  let ids: i32[] = [recv];
   i = 0;
   while (i < c.args.len()) {
     let v: Value = lend(expr(c.args[i], s, params[i + 1]), params[i + 1], modes[i + 1], true);
@@ -2959,12 +2967,12 @@ function slice_parts(c: ast.ExprCall, s: State): SliceParts {
 
 // `acc + slice_unchecked(s, lo, hi)` on a counted string appends the range
 // without building the window (ssasem.append_range).
-function range_append(left: Value, c: ast.ExprCall, s: State): Value {
+function range_append(left: i32, c: ast.ExprCall, s: State): Value {
   let p: SliceParts = slice_parts(c, s);
   if (!p.hi.s.ok) {
     return p.hi;
   }
-  return define(p.hi.s, ssasem.append_range(), [left.id, p.src, p.lo, p.hi.id], 0, "", t_string());
+  return define(p.hi.s, ssasem.append_range(), [left, p.src, p.lo, p.hi.id], 0, "", t_string());
 }
 
 // The builtin `slice_unchecked` call `e` is, unless a local of that name
@@ -3626,11 +3634,12 @@ function invoke(args: ast.Expr[], contract: ssasem.Contract, s: State, written: 
 // produced here, and producing it a second time would give the call two values
 // for one expression, so it is bound and lent from the value in hand and the
 // written arguments follow it.
-function invoke_method(recv: Value, args: ast.Expr[], contract: ssasem.Contract, s: State, written: ssasem.Binding, seed: ssasem.Binding): Value {
+function invoke_method(recv: i32, args: ast.Expr[], contract: ssasem.Contract, s: State, written: ssasem.Binding, seed: ssasem.Binding): Value {
   if (!written.ok) {
     return refused(s, written.why);
   }
-  let v: Value = lend(recv, contract.params[0], contract.modes[0], keeps(s, contract.name));
+  let kept: boolean = keeps(s, contract.name);
+  let v: Value = lend(Value { s: s, id: recv }, contract.params[0], contract.modes[0], kept);
   s = v.s;
   if (!s.ok) {
     return v;
@@ -3661,7 +3670,8 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
     if (!semtypes.concrete(want, false)) {
       want = ssasem.substitute(want, later_binding(bound, args, i + 1, base, contract, s));
     }
-    let v: Value = lend(expr(args[i], s, want), want, contract.modes[at], keeps(s, contract.name));
+    let kept: boolean = keeps(s, contract.name);
+    let v: Value = lend(expr(args[i], s, want), want, contract.modes[at], kept);
     s = v.s;
     if (!s.ok) {
       return v;
@@ -4991,13 +5001,14 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   if (fo.var_name == "") {
     return fail(s, "unsupported loop binding");
   }
-  let it: Value = expr(fo.iter, s, typeinfo.unchecked());
-  s = it.s;
+  let produced: Value = expr(fo.iter, s, typeinfo.unchecked());
+  s = produced.s;
   if (!s.ok) {
     return s;
   }
-  let text: boolean = ssasem.is_text(s.values[it.id]);
-  let elem: typeinfo.Type = element_type(s.values[it.id]);
+  let it: i32 = produced.id;
+  let text: boolean = ssasem.is_text(s.values[it]);
+  let elem: typeinfo.Type = element_type(s.values[it]);
   if (text) {
     elem = t_u8();
   }
@@ -5008,8 +5019,8 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   // back in the same order, which is what pairs them.
   let vals: i32 = 0 - 1;
   let vtype: typeinfo.Type = typeinfo.unchecked();
-  if (ssasem.is_map(s.values[it.id])) {
-    let m: typeinfo.Type = s.values[it.id];
+  if (ssasem.is_map(s.values[it])) {
+    let m: typeinfo.Type = s.values[it];
     if (!ssasem.is_supported_map(m)) {
       return fail(s, "unsupported iterable: " + typeinfo.spelling(m));
     }
@@ -5017,18 +5028,18 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     if (!keys.s.ok) {
       return keys.s;
     }
+    it = keys.id;
     let values: Value = map_column(keys.s, it, ssasem.map_values(), ssasem.map_value(m));
     if (!values.s.ok) {
       return values.s;
     }
     s = values.s;
-    it = keys;
     vals = values.id;
     vtype = ssasem.map_value(m);
     elem = ssasem.map_key(m);
   }
   if (!semtypes.concrete(elem, false)) {
-    return fail(s, "unsupported iterable: " + typeinfo.spelling(s.values[it.id]));
+    return fail(s, "unsupported iterable: " + typeinfo.spelling(s.values[it]));
   }
   let before: i32 = s.names.len();
   let outer: checker.Scope = s.scope;
@@ -5050,7 +5061,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   let one: Value = define(s, 1, [], 1, "", t_i32());
   let step: Value = define(one.s, 9, [lookup(one.s, index_name()), one.id], 0, "+", t_i32());
   s = replace(step.s, index_name(), step.id);
-  let n: Value = define(s, ssasem.length(), [it.id], 0, "", t_i32());
+  let n: Value = define(s, ssasem.length(), [it], 0, "", t_i32());
   let test: Value = define(n.s, 9, [step.id, n.id], 0, "<", t_bool());
   s = test.s;
   if (!s.ok) {
@@ -5065,10 +5076,10 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
 
   let opened: State = open(State { ...s, vals: advanced }, body_id, [cond_end]);
   // The header's `step < n` test is the bounds check, so neither read repeats it.
-  let item: Value = define(opened, ssasem.array_get(), [it.id, step.id], 1, "", elem);
+  let item: Value = define(opened, ssasem.array_get(), [it, step.id], 1, "", elem);
   // A string's element is one byte, read rather than projected.
   if (text) {
-    item = define(opened, ssasem.str_index(), [it.id, step.id], 1, "", elem);
+    item = define(opened, ssasem.str_index(), [it, step.id], 1, "", elem);
   }
   // The element is a checker binding for the body's span as well: every type
   // this boundary reads from the checker is read in s.scope. A pattern header
@@ -5323,10 +5334,7 @@ function block_positions(blocks: ssa.SBlock[]): i32[] {
 
 // Whether the entry reaches each block id.
 function reached(blocks: ssa.SBlock[], at: i32[]): boolean[] {
-  let seen: boolean[] = [];
-  for _ in at {
-    seen = seen.append(false);
-  }
+  let seen: boolean[] = __alloc_bool(at.len());
   seen = seen.with(blocks[0].id, true);
   let work: i32[] = [blocks[0].id];
   let head: i32 = 0;
@@ -6185,22 +6193,12 @@ function no_memo(): SchemaMemo {
 // entry `i` is in `records` / `enums`: presence is a bit, not a lookup.
 struct Schemas { ok: boolean, why: string, records: semrecords.Record[], enums: semrecords.Enum[], memo: SchemaMemo, seen_r: boolean[], seen_e: boolean[] }
 
-function no_flags(n: i32): boolean[] {
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(false);
-    i = i + 1;
-  }
-  return out;
-}
-
 // Every record and enum type a function's values, contracts and result name
 // gets its declaration's schema, and so does every one a schema's fields
 // name, to a fixpoint over the finite declaration table. A type this
 // boundary cannot give a schema refuses the function.
 function schemas(types: typeinfo.Type[], s: State, memo: SchemaMemo): Schemas {
-  let out: Schemas = Schemas { ok: true, why: "", records: [], enums: [], memo: memo, seen_r: no_flags(memo.records.len()), seen_e: no_flags(memo.enums.len()) };
+  let out: Schemas = Schemas { ok: true, why: "", records: [], enums: [], memo: memo, seen_r: __alloc_bool(memo.records.len()), seen_e: __alloc_bool(memo.enums.len()) };
   let pending: typeinfo.Type[] = types;
   let i: i32 = 0;
   while (i < pending.len()) {
@@ -7262,13 +7260,8 @@ function contract_names(cs: ssasem.Contract[]): string[] {
 // shared_keys marks every key that more than one declaration carries.
 function shared_keys(keys: string[]): boolean[] {
   let ix: util.NameIndex = util.name_index(keys);
-  let out: boolean[] = [];
+  let out: boolean[] = __alloc_bool(keys.len());
   let i: i32 = 0;
-  while (i < keys.len()) {
-    out = out.append(false);
-    i = i + 1;
-  }
-  i = 0;
   while (i < keys.len()) {
     let first: i32 = ix.find(keys[i]);
     if (first != i) {
@@ -7453,6 +7446,8 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "tcp_recv_into", params: [t_i32(), bytes], modes: [v, b], result: t_i32() },
     ssasem.Contract { name: "signal_ignore", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_default", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "signal_catch", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "signal_taken", params: [t_i32()], modes: [v], result: t_bool() },
     ssasem.Contract { name: "signal_disposition", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_mask", params: [t_i32(), t_i64()], modes: [v, v], result: t_i64() },
     ssasem.Contract { name: "proc_exec", params: [t_string(), strs], modes: [b, b], result: t_i32() },
@@ -7870,6 +7865,7 @@ function union_result_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "read_file_bytes", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
     ssasem.Contract { name: "read_dir", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_string(), view: false }) },
     ssasem.Contract { name: "read_dir_all", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_string(), view: false }) },
+    ssasem.Contract { name: "read_dir_ino", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeStruct { name: "DirEntry", args: [] }, view: false }) },
     ssasem.Contract { name: "stat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) },
     ssasem.Contract { name: "lstat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) },
   ];
@@ -8336,11 +8332,10 @@ function row_analysis(p: Produced): ssasem.Analysis {
 // direct calls between functions whose results hold no reference, including
 // the named parameter phis left when tail recursion became a loop.
 function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produced[], names: string[]): ownership.Escapes[] {
-  let quiet: boolean[] = [];
+  let quiet: boolean[] = __alloc_bool(rows.len());
   let succ: i32[][] = [];
   let i: i32 = 0;
   while (i < rows.len()) {
-    quiet = quiet.append(false);
     succ = succ.append([]);
     i = i + 1;
   }

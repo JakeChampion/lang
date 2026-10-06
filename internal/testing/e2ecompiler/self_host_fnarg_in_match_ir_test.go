@@ -19,7 +19,7 @@ import (
 // indirect call. This is the latent IR bug that surfaced (#3457) once std/test
 // modules routed IR — every test ends `match`-ing assertion results
 // (wider_array_contains_count's `match (assert_count_i32(arr, is_even, n))`,
-// map_eq's predicate). Forced through the IR path via the -ir driver.
+// map_eq's predicate). Compiled through the asm_ir_run driver.
 func TestSelfHostFnArgInMatchIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -30,9 +30,9 @@ func TestSelfHostFnArgInMatchIR(t *testing.T) {
 		t.Helper()
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, "-ir")
+			cmd = exec.Command(driverBin)
 		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		out, err := cmd.Output()

@@ -101,7 +101,7 @@ func TestSelfHostTermiosIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runCapture(t, gcc, runner, driverBin, []byte(selfHostTermiosSource), "-ir")
+	asm := runCapture(t, gcc, runner, driverBin, []byte(selfHostTermiosSource))
 	if len(asm) == 0 {
 		t.Fatal("driver emitted no asm")
 	}
@@ -129,7 +129,7 @@ func TestSelfHostTermiosArm64IR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(selfHostTermiosSource), "-target", "arm64-linux", "-ir")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(selfHostTermiosSource), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("driver emitted no asm")
 	}

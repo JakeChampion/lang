@@ -98,6 +98,37 @@ function churn(n: i32): i32 {
 		maxRatio: 8,
 	},
 	{
+		// A record threaded through a loop into a callee that consumes it:
+		// the shape every state-threading pass in the self-host compiler is
+		// written in (`semsource`'s `s = stmt(st, s)`). The parameter enters
+		// the loop's phi and leaves through the call, so it is counted and
+		// the caller moves its unit in; a lent parameter would be retained
+		// onto the entry edge and the first round's append would copy the
+		// whole array, once per call.
+		name: "record-threaded-through-loop-phi",
+		decls: `struct State { values: i32[], names: string[] }
+struct Value { s: State, id: i32 }
+@noinline function define(s: State, x: i32): Value {
+    let n: i32 = s.values.len();
+    return Value { s: State { ...s, values: s.values.append(x) }, id: n };
+}
+@noinline function walk(s: State, n: i32): State {
+    let i: i32 = 0;
+    while (i < n) { let v: Value = define(s, i); s = v.s; i = i + 1; }
+    return s;
+}
+function churn(n: i32): i32 {
+    let s: State = State { values: [], names: [] };
+    let i: i32 = 0;
+    while (i < n) { s = walk(s, 3); i = i + 1; }
+    return s.values.len();
+}`,
+		n:        100,
+		cliff:    false,
+		bumpKB:   0,
+		maxRatio: 8,
+	},
+	{
 		// `.with` through a borrowed param — a functional element update.
 		// This is the shape docs/TEST-GATES.md cites as having gone 4688 MB
 		// native / 0 MB self-host.

@@ -56,7 +56,7 @@ function main(): i32 {
 }
 
 // TestSelfHostStructDestructureX86_64 compiles each program through the
-// self-host x86-64 IR path (asm_ir_run `-ir`) and checks the exit code
+// self-host x86-64 IR path (asm_ir_run) and checks the exit code
 // against the native interpreter oracle.
 func TestSelfHostStructDestructureX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -69,7 +69,7 @@ func TestSelfHostStructDestructureX86_64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := []byte(tc.src + "\n")
 			want := interpExit(t, interpBin, string(prog))
-			asm := runCapture(t, gcc, runner, driverBin, prog, "-ir")
+			asm := runCapture(t, gcc, runner, driverBin, prog)
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -103,7 +103,7 @@ func TestSelfHostStructDestructureArm64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := []byte(tc.src + "\n")
 			want := interpExit(t, interpBin, string(prog))
-			asm := runCapture(t, x86gcc, x86runner, driverBin, prog, "-target", "arm64-linux", "-ir")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, prog, "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

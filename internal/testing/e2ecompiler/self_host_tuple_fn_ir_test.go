@@ -131,7 +131,7 @@ var tupleFnIRCases = []struct {
 }
 
 // TestSelfHostTupleFnIRX86_64 — fn-typed tuple elements through the PRODUCTION
-// x86-64 IR path (asm_ir_run `-ir`).
+// x86-64 IR path (asm_ir_run).
 func TestSelfHostTupleFnIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -140,7 +140,7 @@ func TestSelfHostTupleFnIRX86_64(t *testing.T) {
 
 	for _, tc := range tupleFnIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -160,7 +160,7 @@ func TestSelfHostTupleFnIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostTupleFnIRArm64 — CI-gated arm64 counterpart via the arm64 IR
-// path (asm_ir_run `-target arm64-linux -ir`). Shares the fixes in parser.fern +
+// path (asm_ir_run `-target arm64-linux`). Shares the fixes in parser.fern +
 // the lowering; tuple slots are uniform 8-byte on both register backends.
 func TestSelfHostTupleFnIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
@@ -171,7 +171,7 @@ func TestSelfHostTupleFnIRArm64(t *testing.T) {
 
 	for _, tc := range tupleFnIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

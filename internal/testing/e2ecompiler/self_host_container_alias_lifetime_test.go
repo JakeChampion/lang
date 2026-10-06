@@ -104,7 +104,7 @@ func TestSelfHostContainerAliasLifetimeWasm(t *testing.T) {
     let after = __heap_bump_bytes();
     if (first != 0) { return first; }
     if (after != before) { return 97; }`, 1)
-				wat := runCapture(t, gcc, runner, driver, []byte(src), "-ir")
+				wat := runCapture(t, gcc, runner, driver, []byte(src))
 				path := filepath.Join(t.TempDir(), "out.wat")
 				if err := os.WriteFile(path, wat, 0o644); err != nil {
 					t.Fatal(err)

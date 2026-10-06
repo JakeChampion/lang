@@ -85,7 +85,7 @@ func TestSelfHostProcessAliveIRX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runSelfHostDriverStdin(t, runner, driverBin, processAliveSelfHostSource, "-ir")
+	asm := runSelfHostDriverStdin(t, runner, driverBin, processAliveSelfHostSource)
 	if !bytes.Contains(asm, []byte("call __fn___fern_process_alive")) {
 		t.Fatalf("emitted asm has no `call __fn___fern_process_alive` — process_alive did not lower through the x86-64 IR path")
 	}
@@ -109,7 +109,7 @@ func TestSelfHostProcessAliveIRArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := runSelfHostDriverStdin(t, x86runner, driverBin, processAliveSelfHostSource, "-target", "arm64-linux", "-ir")
+	asm := runSelfHostDriverStdin(t, x86runner, driverBin, processAliveSelfHostSource, "-target", "arm64-linux")
 	if !bytes.Contains(asm, []byte("bl __fn___fern_process_alive")) {
 		t.Fatalf("emitted asm has no `bl __fn___fern_process_alive` — process_alive did not lower through the arm64 IR path")
 	}
@@ -135,7 +135,7 @@ func TestSelfHostProcessAliveIRWasmRefused(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	cmd := runX86_64Bin(runner, driverBin, "-ir")
+	cmd := runX86_64Bin(runner, driverBin)
 	cmd.Stdin = strings.NewReader(processAliveWasmProbe)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

@@ -10155,7 +10155,7 @@ pub function builtin_function_names(): string[] {
     "open_reader", "open_writer", "open_appender", "open_exclusive",
     "open_reader_with", "open_writer_with",
     // filesystem
-    "read_file", "read_file_bytes", "write_file", "write_file_bytes", "write_file_exec", "read_dir", "read_dir_all", "remove_dir_all", "remove_file",
+    "read_file", "read_file_bytes", "write_file", "write_file_bytes", "write_file_exec", "read_dir", "read_dir_all", "read_dir_ino", "remove_dir_all", "remove_file",
     "create_dir_all", "stat", "lstat", "access", "temp_dir",
     // the FILESYSTEM a path resolves on, where stat describes one entry
     "statfs",
@@ -10201,8 +10201,9 @@ pub function builtin_function_names(): string[] {
     // The kernel-enforced ceiling on this process's open descriptors,
     // which `ulimit -n` prints (#8819).
     "rlimit_nofile",
-    // signal dispositions — SIG_IGN / SIG_DFL for one signal
-    "signal_ignore", "signal_default",
+    // signal dispositions — SIG_IGN / SIG_DFL for one signal, and the
+    // flag-raising catch a program polls
+    "signal_ignore", "signal_default", "signal_catch", "signal_taken",
     // clocks + randomness + sleep + reactor readiness
     "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "sleep_ns", "random_bytes",
     "random_i32", "poll", "timer_fd", "wasm_timer_pollable",
@@ -10299,6 +10300,16 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     fsf = fsf.append(StructFieldDecl { name: "btime", type_name: "i64", fn_ret: "", fn_param_types: "" });
     fsf = fsf.append(StructFieldDecl { name: "btime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
+  }
+  // DirEntry: one element of read_dir_ino(path)'s list — the name and the
+  // inode number from the same directory record. Same injection pattern and
+  // the same reason as FileStat: __fern_read_dir_ino builds structs whose
+  // shape pointer is the interned "DirEntry" name.
+  if (!name_declared(structs, "DirEntry")) {
+    let def: StructFieldDecl[] = [];
+    def = def.append(StructFieldDecl { name: "name", type_name: "string", fn_ret: "", fn_param_types: "" });
+    def = def.append(StructFieldDecl { name: "ino", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    structs = structs.append(StructDecl { name: "DirEntry", fields: def, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // FsStat: the builtin struct returned by statfs(path) — the filesystem's
   // own geometry and length limits, where FileStat above describes one entry
@@ -14919,7 +14930,7 @@ function promote_value_named(funcs: FuncDecl[], top_stmts: ast.Stmt[]): FuncDecl
   if (names.len() == 0) {
     return funcs;
   }
-  let scan: ValScan = ValScan { names: names, refs: zero_counts(names.len()), callee_refs: zero_counts(names.len()) };
+  let scan: ValScan = ValScan { names: names, refs: __alloc_i32(names.len()), callee_refs: __alloc_i32(names.len()) };
   for fd in funcs {
     for st in fd.body {
       scan = astwalk.fold_stmt_nodes(st, scan, val_scan_stmt, val_scan_expr, astwalk.descend_all);
@@ -14961,16 +14972,6 @@ function signature_vars_complete(fd: FuncDecl): boolean {
     }
   }
   return true;
-}
-
-function zero_counts(n: i32): i32[] {
-  let out: i32[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(0);
-    i = i + 1;
-  }
-  return out;
 }
 
 // ValScan counts, per name, every reference and every reference as a call's
@@ -20481,7 +20482,7 @@ pub function reserved_enum_tparams(name: string): string[] {
 // against builtinStructDecls() so the two cannot drift.
 pub function is_reserved_struct_name(name: string): boolean {
   let reserved: string[] = [
-    "BodySource", "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Duration", "FileStat",
+    "BodySource", "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "DirEntry", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
     "MapIter", "ProcessResult",
     "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",

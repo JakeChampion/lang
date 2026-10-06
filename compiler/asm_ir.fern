@@ -1587,6 +1587,33 @@ function fc_pio2_reduce(prefix: string): string {
     + ".L" + prefix + "_red:\n";
 }
 
+// emit_rt_signal_flags appends what signal_catch / signal_taken share: one
+// byte per signal number in __fern_sig_flags, the handler that sets one, the
+// SA_RESTORER routine the kernel returns through, and the poll that reads and
+// clears one.
+//
+// The handler touches nothing but its byte, so it cannot race the program's
+// reference counts. The poll is one `xchg`: the memory form is atomic, so a
+// signal arriving while it runs is either read now or left for the next poll,
+// never cleared unread. %rdi is the signal; out of 1..64 nothing was taken.
+function emit_rt_signal_flags(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.any_need(["signal_catch", "signal_taken"])) {
+    return s;
+  }
+  s = s.write("    .section .bss\n    .align 8\n__fern_sig_flags: .skip 65\n    .text\n");
+  if (s.has_need("signal_catch")) {
+    s = s.write("    .globl __fern_sig_catcher\n    .globl __fern_sig_return\n__fern_sig_catcher:\n    movslq %edi, %rdi\n    leaq __fern_sig_flags(%rip), %rax\n    movb $1, (%rax,%rdi)\n    ret\n");
+    s = s.write("__fern_sig_return:\n    movq $15, %rax\n");
+    s = s.syscall(15);
+  }
+  if (s.has_need("signal_taken")) {
+    s = s.write("    .globl __fern_signal_taken\n    .type __fern_signal_taken, @function\n__fern_signal_taken:\n");
+    s = s.write("    xorl %eax, %eax\n    movl %edi, %ecx\n    subl $1, %ecx\n    cmpl $63, %ecx\n    ja .Lsig_taken_none\n");
+    s = s.write("    movslq %edi, %rdi\n    leaq __fern_sig_flags(%rip), %rcx\n    xchgb %al, (%rcx,%rdi)\n.Lsig_taken_none:\n    ret\n");
+  }
+  return s;
+}
+
 // __fern_sum_bytes(box) -> i32: every byte of the string added into a 32-bit
 // sum that wraps, the kernel native's emitSumBytesRuntime runs. psadbw against
 // a zero register sums each 8-byte half of a 16-byte block into a 64-bit lane
@@ -2395,7 +2422,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
-    "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
+    "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all", "read_dir_ino",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority", "clock_set",
   ]);
@@ -2410,7 +2437,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "heap", "i32_to_string", "u32_to_string", "chr",
     "str_read_line", "strbuf", "buf", "reader",
     "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
-    "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
+    "read_dir", "read_dir_all", "read_dir_ino", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
@@ -8475,7 +8502,7 @@ function ssa_host_need(op: string): string {
   }
   let fs: string[] = [
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "remove_file",
-    "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat", "subprocess", "writer_write",
+    "create_dir_all", "read_dir", "read_dir_all", "read_dir_ino", "env", "stat", "lstat", "subprocess", "writer_write",
   ];
   for x in fs {
     if (x == op) {
@@ -8765,10 +8792,7 @@ function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore
     }
     k = k + 1;
   }
-  let done: boolean[] = [];
-  for d in dsts {
-    done = done.append(false);
-  }
+  let done: boolean[] = __alloc_bool(dsts.len());
   let out: string[] = [];
   let left: i32 = dsts.len();
   while (left > 0) {
@@ -9458,10 +9482,7 @@ function ssa_imm_to(c: i64, loc: i32, s: asmcore.EmitState): asmcore.EmitState {
 // is parked in %r11 and every move reading it takes it from there, which
 // frees that location to be written.
 function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let done: boolean[] = [];
-  for src in srcs {
-    done = done.append(false);
-  }
+  let done: boolean[] = __alloc_bool(srcs.len());
   let parking: boolean = false;
   let parked: i32 = 0;
   let left: i32 = srcs.len();
@@ -10369,6 +10390,18 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     }
     s = s.write("    call __fn___fern_" + sig_fn + "\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need(sig_fn);
+  } else if (o.kind_tag == 392) {  // signal_catch
+    // [sig] -> __fern_signal_catch(sig, catcher, restorer): the runtime
+    // floor cannot name a label, so the two code addresses go in as
+    // operands, param[0] on top.
+    s = s.write("    popq %rdi\n    leaq __fern_sig_return(%rip), %rax\n    pushq %rax\n    leaq __fern_sig_catcher(%rip), %rax\n    pushq %rax\n    pushq %rdi\n");
+    s = s.write("    call __fn___fern_signal_catch\n    addq $24, %rsp\n    pushq %rax\n");
+    s = s.need("signal_catch");
+  } else if (o.kind_tag == 393) {  // signal_taken
+    // [sig] -> __fern_signal_taken(%rdi=sig): the flag, cleared by the
+    // same exchange that reads it.
+    s = s.write("    popq %rdi\n    call __fern_signal_taken\n    pushq %rax\n");
+    s = s.need("signal_taken");
   } else if (o.kind_tag == 237) {  // access
     // [pathbox][mode] (mode on top) -> Result[void, IoError]. Same
     // two-operand shuffle write_file does: the stack ABI wants
@@ -11901,6 +11934,12 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     let fvPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FsStat");
     s = fvPre.state;
   }
+  // Pre-intern "DirEntry" for __fern_read_dir_ino's shape label, same
+  // reasoning as FsStat above.
+  if (s.has_need("read_dir_ino")) {
+    let dePre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "DirEntry");
+    s = dePre.state;
+  }
   // Pre-intern "WinSize" for __fern_window_size's shape label, same
   // reasoning as FsStat above.
   if (s.has_need("window_size")) {
@@ -12353,7 +12392,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     "eprint", "udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
     "tcp_listen_with_u8", "udp_bind_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
     "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
-    "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
+    "rlimit_nofile", "signal_ignore", "signal_default", "signal_catch", "signal_mask",
     "signal_disposition", "access",
     "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
     "fd_stat", "raw_scratch",
@@ -12591,6 +12630,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("read_dir_all")) {
       fs_src = fs_src + " " + asmcore.rt_src_read_dir_all("x86_64");
     }
+    if (s.has_need("read_dir_ino")) {
+      fs_src = fs_src + " " + asmcore.rt_src_read_dir_ino("x86_64");
+    }
     if (s.has_need("remove_dir_all")) {
       fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all("x86_64");
     }
@@ -12698,6 +12740,11 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition("x86_64", "signal_default", "0"), s);
   }
+  if (s.has_need("signal_catch")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_catch("x86_64"), s);
+  }
+  s = emit_rt_signal_flags(s);
   if (s.has_need("geteuid")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "geteuid"), s);

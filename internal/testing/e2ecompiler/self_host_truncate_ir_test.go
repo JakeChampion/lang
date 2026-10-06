@@ -128,7 +128,7 @@ func TestSelfHostTruncateIR(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	work := t.TempDir()
-	cmd := exec.Command(driverBin, "-ir")
+	cmd := exec.Command(driverBin)
 	cmd.Stdin = bytes.NewReader([]byte(selfHostTruncateSource(work)))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {
@@ -160,7 +160,7 @@ func TestSelfHostTruncateIRArm64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	work := t.TempDir()
-	cmd := exec.Command(driverBin, "-target", "arm64-linux", "-ir")
+	cmd := exec.Command(driverBin, "-target", "arm64-linux")
 	cmd.Stdin = bytes.NewReader([]byte(selfHostTruncateSource(work)))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {
@@ -193,9 +193,9 @@ func TestSelfHostTruncateWasmIR(t *testing.T) {
 
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
-		cmd = exec.Command(driverBin, "-ir")
+		cmd = exec.Command(driverBin)
 	} else {
-		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 	}
 	cmd.Stdin = bytes.NewReader([]byte(selfHostTruncateSource("")))
 	wat, err := cmd.Output()

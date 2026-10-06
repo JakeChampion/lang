@@ -71,7 +71,7 @@ func TestSelfHostIdentityAndEnvironIR(t *testing.T) {
 	src := selfHostIdentitySource(os.Getuid(), os.Getgid(), os.Geteuid(), os.Getegid(),
 		groups, len(os.Environ()), "FERN_ENVIRON_PROBE=selfhost-identity")
 
-	cmd := exec.Command(driverBin, "-ir")
+	cmd := exec.Command(driverBin)
 	cmd.Stdin = bytes.NewReader([]byte(src))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {
