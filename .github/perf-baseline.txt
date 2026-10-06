@@ -78,7 +78,7 @@ x86_64/record_update.text	1437
 x86_64/sort_inplace.text	3057
 x86_64/sort_inplace.ir	44638114
 x86_64/sort_ints.text	4047
-x86_64/sort_ints.ir	35771082
+x86_64/sort_ints.ir	34769288
 x86_64/sort_strings.text	4866
 x86_64/sort_strings.ir	131233536
 x86_64/string_build.text	3432

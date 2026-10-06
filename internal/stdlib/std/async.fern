@@ -581,7 +581,7 @@ pub enum TaskStatus[T] { Done(T), Suspended(Wait), Cancelled }
 // (fd, interest) pairs of `wait_any`'s set, and the milliseconds it gave
 // (-1 for no bound). The scheduler watches each pair and resumes the task
 // with the index of the pair that became ready, or -1 at the timeout.
-pub struct Wait { set: i32[], timeout_ms: i32 }
+pub struct Wait { task: i32, set: i32[], timeout_ms: i32 }
 
 pub struct Task[T] { id: i32, entry: () => T }
 
@@ -624,7 +624,74 @@ function run_task[T](t: Task[T], mode: i32): TaskStatus[T] {
   let v: T = t.entry();
   let m: i32 = __task_leave();
   if (m == 1) {
-    return Suspended(Wait { set: __task_wait(t.id), timeout_ms: __task_timeout(t.id) });
+    return Suspended(Wait { task: t.id, set: __task_wait(t.id), timeout_ms: __task_timeout(t.id) });
+  }
+  return Done(v);
+}
+
+// A two-argument call run as a task with nothing built for it until it
+// parks: `call_start` runs `f(a, b)` under a fresh task record, so a call
+// that returns at once costs no closure, no `Task` and no `Call`. One that
+// parks is held as a `Call` (`call_of`), which `call_resume` and
+// `call_cancel` run on through the same trampoline `call_start` used, so the
+// frames the park saved are the frames the resume rewinds.
+pub struct Call[A, B, T] { id: i32, f: (A, B) => T, a: A, b: B }
+
+// `call_start(f, a, b)` — `f(a, b)` run as a task: `Done(v)` with the
+// record already freed, or `Suspended(w)` with the record kept, named by
+// `w.task`, for `call_of`.
+pub function call_start[A, B, T](f: (A, B) => T, a: A, b: B): TaskStatus[T] {
+  let id: i32 = __task_new();
+  match (run_task_call(id, f, a, b, 0)) {
+    Done(v) => {
+      __task_free(id);
+      return Done(v);
+    },
+    Suspended(w) => {
+      return Suspended(w);
+    },
+    Cancelled => {
+      __task_free(id);
+    }
+  }
+  return Cancelled;
+}
+
+// `call_of(w, f, a, b)` — the parked call `w` came from, held for its
+// resume.
+pub function call_of[A, B, T](w: Wait, f: (A, B) => T, a: A, b: B): Call[A, B, T] {
+  return Call { id: w.task, f: f, a: a, b: b };
+}
+
+// `call_resume(c, ready)` — the parked call runs on, its `suspend`
+// answering `ready`.
+pub function call_resume[A, B, T](c: Call[A, B, T], ready: i32): TaskStatus[T] {
+  __task_set_ready(c.id, ready);
+  return run_task_call(c.id, c.f, c.a, c.b, 2);
+}
+
+// `call_cancel(c)` — the parked call runs on to its end with every wait
+// answering `cancelled()`, and cannot park again.
+pub function call_cancel[A, B, T](c: Call[A, B, T]): TaskStatus[T] {
+  __task_set_cancelled(c.id);
+  let st: TaskStatus[T] = run_task_call(c.id, c.f, c.a, c.b, 2);
+  return Cancelled;
+}
+
+// `call_free(c)` — hand the call's record back once it is done.
+pub function call_free[A, B, T](c: Call[A, B, T]): void {
+  __task_free(c.id);
+}
+
+// The trampoline for a `Call`, `run_task` with the call's parts: the
+// suspension classifier knows a trampoline by the `run_task` prefix, so the
+// park unwinds to here and no further.
+function run_task_call[A, B, T](id: i32, f: (A, B) => T, a: A, b: B, mode: i32): TaskStatus[T] {
+  __task_enter(id, mode);
+  let v: T = f(a, b);
+  let m: i32 = __task_leave();
+  if (m == 1) {
+    return Suspended(Wait { task: id, set: __task_wait(id), timeout_ms: __task_timeout(id) });
   }
   return Done(v);
 }

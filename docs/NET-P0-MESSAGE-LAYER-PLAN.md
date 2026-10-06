@@ -347,7 +347,7 @@ per request there.)
 | 1 | `__serve_read`'s `(conns, eof)` tuple |
 | 1 | the read's one copy of what it took (`__bytes_range`) |
 | 3 | the parse: the `Framed` box the loop keeps whole (§5.3's slice 7), and two in `__request_head`, its head record among them. A server calls three parse entry points, so `__request_head` has three callers and stays a function, where the framing probe's one caller has it spliced and read apart |
-| 3 | `__serve_start`: the `Task`, its closure and `run_task`'s `Done`, for a handler that never parks |
+| 3 | `__serve_start`: the `Task`, its closure and `run_task`'s `Done`, for a handler that never parks (slice 5) |
 | 1 | `__serve_wire`'s `__Wire` record |
 | 3 | `__serve_send_out`'s, `__serve_produce`'s and `__serve_ready`'s `(conns, sent)` and `(conns, more)` tuples: each has several callers, so it is not spliced, and each caller takes the tuple apart at once |
 | 2 | the handler's `http.ok`: the `HttpResponse` and its header map |
@@ -380,8 +380,21 @@ is preferred where it covers a case, since every program gains.
 4. **The per-connection arrays are updated in place.** Nothing to do: the
    §6.1 trace, resolved by symbol, shows every `.with` on a `__Conns`
    field writing in place. The row came from the `-g` build.
-5. **A handler that answers at once costs no task.** Start the handler as
-   a plain call and make the task only when it parks.
+5. **A handler that answers at once costs no task.** Done: `async.call_start`
+   runs `handler(req, plat)` under a fresh task record through a trampoline
+   that takes the call's parts rather than a closure, so a handler that
+   returns at once builds no closure, no `Task` and no status box, and the
+   record is handed back freed; one that parks is held as an `async.Call`,
+   which `call_resume` and `call_cancel` run on through the same trampoline,
+   so the frames the park saved are the frames the resume rewinds. Two
+   boxes stood in the way of the status returning in two words. The
+   trampoline's `Done` was kept whole by `call_resume`'s body after that
+   body had been spliced into its one caller: a dead body is no caller, so
+   `sempair` leaves it out. `__serve_start`'s `HandlerDone` sat beside a
+   two-payload `HandlerParked(flight, wait)`, so the wait now lives in the
+   flight, and the streamed-body lambda, which returns the start whole and
+   cannot pair, takes it apart and builds it again on its own path. 13 to
+   10.
 6. **The helpers' tuples and records.** By the compiler where a pairing
    or a splice covers them, otherwise by threading state the way the
    parse does. Partly done: a tuple of two values that each fit a word,

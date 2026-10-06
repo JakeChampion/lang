@@ -186,7 +186,9 @@ with it. A caller rebuilds the variant as a branch on the position joining
 one construction per variant, and split reads a match on the call off those
 constructions, so the variant is never built. A function is paired only when
 every caller takes the value apart, by matching on it, projecting it, or
-returning it from a function that is paired too. One caller keeping the variant whole would
+returning it from a function that is paired too. A body the splicer left
+dead, spliced into every caller and named by nothing, is no caller: what it
+keeps whole is never built. One caller keeping the variant whole would
 have to build the box the callee no longer builds, and where the callee built
 it in the box of a node it was consuming, as `std/pvec`'s path rebuild does,
 that box was free. Pairing `__pv_with_in` regardless took `pvec_with` from
