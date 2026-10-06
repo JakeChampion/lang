@@ -61,7 +61,7 @@ func TestWASMMapInEnumDropBuilds(t *testing.T) {
 	}
 	for _, tc := range mapInEnumDropCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// buildComponent (inside runWasm) t.Fatal's on the "unknown callee
+			// buildWasmCore (inside runWasm) t.Fatal's on the "unknown callee
 			// __map_drop_values" wasmbin.Build error, so a returned code means the
 			// module assembled.
 			if got := runWasm(t, tc.src); got != tc.want {

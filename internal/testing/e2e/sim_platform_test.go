@@ -61,7 +61,7 @@ func TestSimPlatformArm64(t *testing.T) {
 }
 
 func TestWASMSimPlatform(t *testing.T) {
-	out, _, code := runComponent(t, buildResultComponent(t, simPlatformSource(t)), runOpts{})
+	out, _, code := runWasmArtifact(t, buildResultComponent(t, simPlatformSource(t)), runOpts{})
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\n%s", code, out)
 	}

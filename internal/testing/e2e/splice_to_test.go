@@ -181,9 +181,9 @@ func TestWASMPreview1SpliceToUnsupported(t *testing.T) {
 }
 
 func TestWASMSpliceToUnsupported(t *testing.T) {
-	p := buildComponent(t, spliceToSource("", false))
+	p := buildWasmCore(t, spliceToSource("", false))
 	dir := t.TempDir()
-	stdout, stderr, ec := runComponent(t, p, runOpts{workDir: dir})
+	stdout, stderr, ec := runWasmArtifact(t, p, runOpts{workDir: dir})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d\nstderr:\n%s", ec, stderr)
 	}

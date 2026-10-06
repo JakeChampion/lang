@@ -48,9 +48,9 @@ const openExclusiveProg = `function main(): i32 {
 const openExclusiveWant = "exists:ex.txt:new"
 
 func TestWasmOpenExclusivePreview2(t *testing.T) {
-	comp := buildComponent(t, openExclusiveProg)
+	comp := buildWasmCore(t, openExclusiveProg)
 	dir := t.TempDir()
-	stdout, stderr, ec := runComponent(t, comp, runOpts{workDir: dir})
+	stdout, stderr, ec := runWasmArtifact(t, comp, runOpts{workDir: dir})
 	if ec != 0 || !strings.Contains(stdout, openExclusiveWant) {
 		t.Errorf("exit %d, stdout %q (want it to contain %q)\nstderr:\n%s", ec, stdout, openExclusiveWant, stderr)
 	}

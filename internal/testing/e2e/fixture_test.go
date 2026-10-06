@@ -318,7 +318,7 @@ func runFixtureWasm(t *testing.T, mainPath, stdin string) (string, int) {
 	if out, err := e2eharness.SelfHostCompileCmd(t, e2eharness.TargetWasm32Wasi, mainPath, comp).CombinedOutput(); err != nil {
 		t.Fatalf("SELFHOST-COMPILE-FAIL -target wasm32-wasi %s: %v\n%s", mainPath, err, out)
 	}
-	stdout, _, ec := runComponent(t, comp, runOpts{stdin: stdin})
+	stdout, _, ec := runWasmArtifact(t, comp, runOpts{stdin: stdin})
 	return stdout, ec
 }
 

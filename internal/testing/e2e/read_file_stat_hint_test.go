@@ -211,7 +211,7 @@ func TestArm64ReadFileReadsPseudoFiles(t *testing.T) {
 // dir, so this runs the component directly with the root preopened —
 // the only way the guest can name a path under /proc at all.
 func TestWASMReadFileReadsPseudoFiles(t *testing.T) {
-	stdout, stderr, _ := runComponent(t, buildComponent(t, readFilePseudoProgram), runOpts{workDir: "/"})
+	stdout, stderr, _ := runWasmArtifact(t, buildWasmCore(t, readFilePseudoProgram), runOpts{workDir: "/"})
 	if !strings.Contains(stdout, "pseudo-read-ok") {
 		t.Fatalf("stdout %q stderr %q; want pseudo-read-ok", stdout, stderr)
 	}

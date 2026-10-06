@@ -52,7 +52,7 @@ func TestRepeatPastLengthCeilingAborts(t *testing.T) {
 		// traps. A trap carries no cause line, so the exit status is the whole
 		// assertion here.
 		comp := buildCLIComponent(t, repeatPastCeilingSrc)
-		stdout, _, code := runComponent(t, comp, runOpts{})
+		stdout, _, code := runWasmArtifact(t, comp, runOpts{})
 		if code == 0 {
 			t.Fatalf("wasm did not trap on a length past the i32 ceiling (exit 0, stdout=%q)", stdout)
 		}

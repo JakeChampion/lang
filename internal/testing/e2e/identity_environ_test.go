@@ -128,7 +128,7 @@ func TestWasmEnviron(t *testing.T) {
 	}
 }
 
-// The preview-1 leg of the same probe. `buildComponent` builds with
+// The preview-1 leg of the same probe. `buildWasmCore` builds with
 // Preview2WASI, so the wasm tests above only ever reach the
 // get-environment path; preview 1's environ_sizes_get / environ_get pair
 // is a different body and needs its own run. A preview-1 core module runs

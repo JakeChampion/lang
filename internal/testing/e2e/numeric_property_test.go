@@ -419,7 +419,7 @@ func runBackendsAgainst(t *testing.T, src, want string, skip map[string]string, 
 		}
 		comp := buildCLIComponent(t, src)
 		ran("wasm32-wasi")
-		out, stderr, ec := runComponent(t, comp, runOpts{})
+		out, stderr, ec := runWasmArtifact(t, comp, runOpts{})
 		if ec != 0 {
 			t.Fatalf("wasmtime exit=%d\nstdout:%s\nstderr:%s\nsrc:\n%s", ec, out, stderr, src)
 		}

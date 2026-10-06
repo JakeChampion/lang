@@ -72,7 +72,7 @@ func TestEilseqIsInvalidUtf8EveryTarget(t *testing.T) {
 			return []string{"wasmtime", "run", "--dir", dir, core}
 		}},
 		{"wasm-component", func(t *testing.T) []string {
-			return []string{"wasmtime", "run", "--dir=" + dir, buildComponent(t, src)}
+			return []string{"wasmtime", "run", "--dir=" + dir, buildWasmCore(t, src)}
 		}},
 	}
 	for _, tc := range targets {

@@ -46,8 +46,8 @@ func ioErrorTextDir(t *testing.T) string {
 }
 
 func TestWasmIoErrorOtherTextPreview2(t *testing.T) {
-	comp := buildComponent(t, ioErrorTextProg)
-	stdout, stderr, ec := runComponent(t, comp, runOpts{workDir: ioErrorTextDir(t)})
+	comp := buildWasmCore(t, ioErrorTextProg)
+	stdout, stderr, ec := runWasmArtifact(t, comp, runOpts{workDir: ioErrorTextDir(t)})
 	if ec != 0 || !strings.Contains(stdout, ioErrorTextWant) {
 		t.Errorf("exit %d, stdout %q (want it to contain %q)\nstderr:\n%s", ec, stdout, ioErrorTextWant, stderr)
 	}

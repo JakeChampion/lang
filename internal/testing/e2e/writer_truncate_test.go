@@ -169,9 +169,9 @@ func TestInterpWriterTruncate(t *testing.T) {
 // The wasm leg runs under the component's preopen, so its paths are relative
 // and main's return reaches us on stdout rather than as the exit status.
 func TestWASMWriterTruncate(t *testing.T) {
-	p := buildComponent(t, writerTruncateSource("", false, false))
+	p := buildWasmCore(t, writerTruncateSource("", false, false))
 	dir := t.TempDir()
-	stdout, stderr, ec := runComponent(t, p, runOpts{workDir: dir})
+	stdout, stderr, ec := runWasmArtifact(t, p, runOpts{workDir: dir})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 	}
