@@ -527,12 +527,7 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
 // sort_rows orders rows by package name (selection sort — one row per package
 // in the program, so the list is short).
 function sort_rows(rows: Row[]): Row[] {
-  let taken: i32[] = [];
-  let i: i32 = 0;
-  while (i < rows.len()) {
-    taken = taken.append(0);
-    i = i + 1;
-  }
+  let taken: i32[] = __alloc_i32(rows.len());
   let out: Row[] = [];
   let k: i32 = 0;
   while (k < rows.len()) {

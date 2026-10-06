@@ -802,13 +802,13 @@ pub function wit_import_plan(tbody: i32[], ifaces: string[], names: string[]): W
   let d: WitWorldDecls = wit_world_decls(tbody);
   let n_imp: i32 = d.imp_names.len();
   let n: WitNeeds = WitNeeds {
-    keep: wit_falses(n_imp),
-    whole: wit_falses(n_imp),
+    keep: __alloc_bool(n_imp),
+    whole: __alloc_bool(n_imp),
     want: wit_no_names(n_imp),
-    t_need: wit_falses(d.n_slots),
-    t_whole: wit_falses(d.n_slots),
+    t_need: __alloc_bool(d.n_slots),
+    t_whole: __alloc_bool(d.n_slots),
     t_names: wit_no_names(d.n_slots),
-    decl_keep: wit_falses(d.kind.len()),
+    decl_keep: __alloc_bool(d.kind.len()),
   };
   let u: i32 = 0;
   while (u < ifaces.len()) {
@@ -841,16 +841,6 @@ struct WitNeeds {
   t_whole: boolean[],
   t_names: string[][],
   decl_keep: boolean[],
-}
-
-function wit_falses(n: i32): boolean[] {
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(false);
-    i = i + 1;
-  }
-  return out;
 }
 
 function wit_no_names(n: i32): string[][] {

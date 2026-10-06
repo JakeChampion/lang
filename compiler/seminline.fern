@@ -198,10 +198,7 @@ function lends_view(f: ssasem.Func): boolean {
 
 // How many direct calls name each function, over every body.
 function call_counts(funcs: ssasem.Func[], ix: util.NameIndex): i32[] {
-  let out: i32[] = [];
-  for f in funcs {
-    out = out.append(0);
-  }
+  let out: i32[] = __alloc_i32(funcs.len());
   for f in funcs {
     for b in f.graph.blocks {
       for ins in b.insts {
@@ -1040,10 +1037,7 @@ function kept_values(g: ssa.SFunc): boolean[] {
 }
 
 function used_whole(g: ssa.SFunc): boolean[] {
-  let kept: boolean[] = [];
-  while (kept.len() < g.nvals) {
-    kept = kept.append(false);
-  }
+  let kept: boolean[] = __alloc_bool(g.nvals);
   for b in g.blocks {
     for ins in b.insts {
       if (!reads_part(ins.kind_tag) && ins.kind_tag != 7 && ins.kind_tag != 8) {
@@ -1100,19 +1094,21 @@ struct Walk { e: Edits, value: i32, ok: boolean, phis: i32[], parts: i32[] }
 // What `read` answers on `v`: a construction's part; a stand-in where `v` is
 // a stand-in itself, on a path no read reaches; or, for a phi, a phi of what
 // it answers on each operand, at the head of the phi's block.
+// A failed walk is dropped whole by `resolve`, so it is made where the walk
+// fails rather than kept beside the walk, which would hold every array of
+// the edits at a second count through the phi's split.
 function part_of(f: ssasem.Func, w: Walk, read: ssa.SInst, v: i32, depth: i32): Walk {
-  let fail: Walk = Walk { ...w, ok: false };
   if (depth > 32) {
-    return fail;
+    return Walk { ...w, ok: false };
   }
   let ty: typeinfo.Type = f.values[read.result];
   let x: i32 = through_copies(w.e.defs, v);
   if (marked(w.e.kept, x) && !scalar_field(read, ty)) {
-    return fail;
+    return Walk { ...w, ok: false };
   }
   let d: ssa.SInst = def_inst(w.e.defs, x);
   if (marked(w.e.chained, x) || index_of(f.dbg_vals, v) >= 0 || index_of(f.dbg_vals, x) >= 0) {
-    return fail;
+    return Walk { ...w, ok: false };
   }
   if (builds(d.kind_tag) || d.kind_tag == ssasem.zero()) {
     let p: Part = Part { ok: true, value: 0 - 1, flag: 0, filler: read.kind_tag != ssasem.variant_is() };
@@ -1120,13 +1116,13 @@ function part_of(f: ssasem.Func, w: Walk, read: ssa.SInst, v: i32, depth: i32): 
       p = part(d, read);
     }
     if (!p.ok) {
-      return fail;
+      return Walk { ...w, ok: false };
     }
     let placed: Placed = part_value(w.e, p, ty);
     return Walk { ...w, e: placed.e, value: placed.value };
   }
   if (d.kind_tag != 8) {
-    return fail;
+    return Walk { ...w, ok: false };
   }
   let seen: i32 = index_of(w.phis, x);
   if (seen >= 0) {
@@ -1134,13 +1130,19 @@ function part_of(f: ssasem.Func, w: Walk, read: ssa.SInst, v: i32, depth: i32): 
   }
   let nv: i32 = w.e.values.len();
   let pb: i32 = w.e.defs.blocks[x];
-  let placeholder: Defs = Defs { insts: w.e.defs.insts.append(no_inst()), blocks: w.e.defs.blocks.append(pb) };
-  let cur: Walk = Walk { e: Edits { ...w.e, defs: placeholder, values: w.e.values.append(ty) }, value: 0 - 1, ok: true, phis: w.phis.append(x), parts: w.parts.append(nv) };
+  let phis: i32[] = w.phis.append(x);
+  let parts: i32[] = w.parts.append(nv);
+  let e: Edits = w.e;
+  let values: typeinfo.Type[] = e.values.append(ty);
+  let base: Defs = e.defs;
+  let blocks: i32[] = base.blocks.append(pb);
+  let placeholder: Defs = Defs { insts: base.insts.append(no_inst()), blocks: blocks };
+  let cur: Walk = Walk { e: Edits { ...e, defs: placeholder, values: values }, value: 0 - 1, ok: true, phis: phis, parts: parts };
   let args: i32[] = [];
   for a in d.args {
     cur = part_of(f, cur, read, a, depth + 1);
     if (!cur.ok) {
-      return fail;
+      return cur;
     }
     args = args.append(cur.value);
   }
@@ -1156,10 +1158,7 @@ function part_of(f: ssasem.Func, w: Walk, read: ssa.SInst, v: i32, depth: i32): 
 // the frame's to take over, so its first rebuild allocates either way.
 function chained_rebuilds(f: ssasem.Func, defs: Defs, modes: i32[]): boolean[] {
   let rebuilt: boolean[] = rebuilt_values(f, defs);
-  let out: boolean[] = [];
-  while (out.len() < f.graph.nvals) {
-    out = out.append(false);
-  }
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (builds(ins.kind_tag) && marked(rebuilt, ins.result) && rebuilds_owned(f, defs, ins, modes)) {
@@ -1183,10 +1182,7 @@ function rebuilds_owned(f: ssasem.Func, defs: Defs, built: ssa.SInst, modes: i32
 
 // The values a construction of their own type is built from parts of.
 function rebuilt_values(f: ssasem.Func, defs: Defs): boolean[] {
-  let out: boolean[] = [];
-  while (out.len() < f.graph.nvals) {
-    out = out.append(false);
-  }
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (builds(ins.kind_tag)) {

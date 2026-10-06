@@ -506,16 +506,6 @@ pub function term_name(id: i32): string {
 }
 
 // zeros returns an n-long i32 array of 0s (scratch flag/value tables).
-function zeros(n: i32): i32[] {
-  let out: i32[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(0);
-    i = i + 1;
-  }
-  return out;
-}
-
 function rewrite_args(ins: SInst, resolved: i32[]): SInst {
   let na: i32[] = [];
   let i: i32 = 0;
@@ -592,7 +582,7 @@ pub function rc_inlined(ins: SInst): boolean {
 // ran once per value, which on a function with thousands of calls and tens
 // of thousands of values was most of the allocator's time.
 function calls_before(calls: i32[], total_pos: i32): i32[] {
-  let cum: i32[] = zeros(total_pos + 2);
+  let cum: i32[] = __alloc_i32(total_pos + 2);
   let ci: i32 = 0;
   let p: i32 = 0;
   while (p <= total_pos + 1) {
@@ -636,7 +626,7 @@ function order_by_lo(n: i32, lo: i32[]): i32[] {
     v = v + 1;
   }
   // Bucket maxp + 1 holds the values never referenced (lo left at the sentinel).
-  let starts: i32[] = zeros(maxp + 3);
+  let starts: i32[] = __alloc_i32(maxp + 3);
   v = 0;
   while (v < n) {
     let b: i32 = order_bucket(lo[v], maxp);
@@ -648,7 +638,7 @@ function order_by_lo(n: i32, lo: i32[]): i32[] {
     starts = starts.with(b2, starts[b2] + starts[b2 - 1]);
     b2 = b2 + 1;
   }
-  let out: i32[] = zeros(n);
+  let out: i32[] = __alloc_i32(n);
   v = 0;
   while (v < n) {
     let bk: i32 = order_bucket(lo[v], maxp);
@@ -931,10 +921,7 @@ function still_holds(ev: i32, hi: i32[], now: i32): boolean {
 // of block positions from a back edge's target to its source.
 function block_loop_weights(f: SFunc): i32[] {
   let at: i32[] = block_positions(f);
-  let depth: i32[] = [];
-  for blk in f.blocks {
-    depth = depth.append(0);
-  }
+  let depth: i32[] = __alloc_i32(f.blocks.len());
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     for tgt in successor_positions(f, at, bi) {
@@ -1009,16 +996,14 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   // Number instructions and record each value's def/use positions.
   let def_pos: i32[] = [];
   let def_blk: i32[] = [];
-  let call_def: i32[] = [];
-  let reads_mate: boolean[] = [];
+  let call_def: i32[] = __alloc_i32(f.nvals);
+  let reads_mate: boolean[] = __alloc_bool(f.nvals);
   let def_a: i32[] = [];
   let def_b: i32[] = [];
   i = 0;
   while (i < f.nvals) {
     def_pos = def_pos.append(0 - 1);
     def_blk = def_blk.append(0 - 1);
-    call_def = call_def.append(0);
-    reads_mate = reads_mate.append(false);
     def_a = def_a.append(0 - 1);
     def_b = def_b.append(0 - 1);
     i = i + 1;
@@ -1505,12 +1490,7 @@ function sole_readers(f: SFunc): i32[] {
 // the predecessor it arrives from. A spilled value pays a load or store at each.
 function spill_weights(f: SFunc, at: i32[]): i32[] {
   let bw: i32[] = block_loop_weights(f);
-  let w: i32[] = [];
-  let i: i32 = 0;
-  while (i < f.nvals) {
-    w = w.append(0);
-    i = i + 1;
-  }
+  let w: i32[] = __alloc_i32(f.nvals);
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     let blk: SBlock = f.blocks[bi];
@@ -1619,11 +1599,10 @@ struct Mates { hint: i32[], carried: boolean[], alt: i32[], through: boolean[] }
 
 function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: boolean[]): Mates {
   let hint: i32[] = [];
-  let carried: boolean[] = [];
+  let carried: boolean[] = __alloc_bool(f.nvals);
   let i: i32 = 0;
   while (i < f.nvals) {
     hint = hint.append(0 - 1);
-    carried = carried.append(false);
     i = i + 1;
   }
   // Both start all -1, sharing one buffer: the first write to either copies it.
@@ -1905,14 +1884,13 @@ function still_in(occ: i32[], hi: i32[], from: i32): i32[] {
 struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ: i32[][], phi_end: i32[], unseen: boolean[] }
 
 function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
-  let count: i32[] = zeros(f.nvals + 1);
+  let count: i32[] = __alloc_i32(f.nvals + 1);
   let succ: i32[][] = [];
   let phi_end: i32[] = [];
-  let unseen: boolean[] = [];
+  let unseen: boolean[] = __alloc_bool(f.blocks.len());
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     succ = succ.append(successor_positions(f, at, bi));
-    unseen = unseen.append(false);
     let end: i32 = 0;
     let k: i32 = 0;
     while (k < f.blocks[bi].insts.len()) {
@@ -1988,8 +1966,8 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
         v = v + 1;
       }
       start = count;
-      blk = zeros(count[f.nvals]);
-      pos = zeros(count[f.nvals]);
+      blk = __alloc_i32(count[f.nvals]);
+      pos = __alloc_i32(count[f.nvals]);
     }
     pass = pass + 1;
   }
@@ -2142,16 +2120,9 @@ function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32
 pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[] }
 
 pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[]): Imms {
-  let is_imm: boolean[] = [];
-  let konst: boolean[] = [];
-  let value: i64[] = [];
-  let i: i32 = 0;
-  while (i < f.nvals) {
-    is_imm = is_imm.append(false);
-    konst = konst.append(false);
-    value = value.append(0i64);
-    i = i + 1;
-  }
+  let is_imm: boolean[] = __alloc_bool(f.nvals);
+  let konst: boolean[] = __alloc_bool(f.nvals);
+  let value: i64[] = __alloc_i64(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag != 1 && ins.kind_tag != 3) {
@@ -2233,12 +2204,7 @@ pub function literal_first_bytes(f: SFunc): i32[] {
 // value; a value read once by the branch that ends its block can be
 // consumed as flags rather than materialised.
 pub function use_counts(f: SFunc): i32[] {
-  let uses: i32[] = [];
-  let i: i32 = 0;
-  while (i < f.nvals) {
-    uses = uses.append(0);
-    i = i + 1;
-  }
+  let uses: i32[] = __alloc_i32(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       for a in ins.args {
@@ -2506,12 +2472,7 @@ pub function repeated_block_id(f: SFunc): i32 {
       top = blk.id;
     }
   }
-  let seen: i32[] = [];
-  let i: i32 = 0;
-  while (i <= top) {
-    seen = seen.append(0);
-    i = i + 1;
-  }
+  let seen: i32[] = __alloc_i32(top + 1);
   for blk in f.blocks {
     if (seen[blk.id] == 1) {
       return blk.id;
@@ -2547,12 +2508,7 @@ pub function thread_forwarding(f: SFunc): SFunc {
     nblocks = nblocks.append(SBlock { id: blk.id, insts: blk.insts, term: t, preds: blk.preds });
   }
   let g: SFunc = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
-  let live: boolean[] = [];
-  let i: i32 = 0;
-  while (i < g.blocks.len()) {
-    live = live.append(false);
-    i = i + 1;
-  }
+  let live: boolean[] = __alloc_bool(g.blocks.len());
   let work: i32[] = [position_of(at, g.entry)];
   let next: i32 = 0;
   while (next < work.len()) {
@@ -2567,7 +2523,7 @@ pub function thread_forwarding(f: SFunc): SFunc {
     }
   }
   let kept: SBlock[] = [];
-  i = 0;
+  let i: i32 = 0;
   while (i < g.blocks.len()) {
     if (live[i]) {
       kept = kept.append(g.blocks[i]);
@@ -2734,10 +2690,7 @@ function thread_round(f: SFunc): Threading {
   let at: i32[] = block_positions(f);
   let uses: i32[] = use_counts(f);
   let konst: i32[] = truth_constants(f);
-  let flags: boolean[] = [];
-  while (flags.len() < f.blocks.len()) {
-    flags = flags.append(false);
-  }
+  let flags: boolean[] = __alloc_bool(f.blocks.len());
   let r: ThreadRound = ThreadRound { blocks: f.blocks, busy: flags, gone: flags, changed: false };
   let j: i32 = 0;
   while (j < f.blocks.len()) {
@@ -2956,16 +2909,14 @@ pub function drop_low_wraps(f: SFunc): Formed {
   // prop[v] is how many leading operands of v's definition have their high
   // half read once v's is (high_operands); def_b / def_k locate v's
   // definition, -1 for a value nothing defines.
-  let prop: i32[] = [];
+  let prop: i32[] = __alloc_i32(f.nvals);
   let def_b: i32[] = [];
   let def_k: i32[] = [];
-  let high: boolean[] = [];
+  let high: boolean[] = __alloc_bool(f.nvals);
   let i: i32 = 0;
   while (i < f.nvals) {
-    prop = prop.append(0);
     def_b = def_b.append(0 - 1);
     def_k = def_k.append(0 - 1);
-    high = high.append(false);
     i = i + 1;
   }
   let wraps: i32[] = [];
@@ -3163,12 +3114,7 @@ function dominates_position(f: SFunc, at: i32[], b: i32, d: i32): boolean {
   if (entry < 0 || d < 0) {
     return false;
   }
-  let seen: boolean[] = [];
-  let i: i32 = 0;
-  while (i < f.blocks.len()) {
-    seen = seen.append(false);
-    i = i + 1;
-  }
+  let seen: boolean[] = __alloc_bool(f.blocks.len());
   seen = seen.with(d, true);
   let stack: i32[] = [d];
   let si: i32 = 0;
@@ -3469,9 +3415,9 @@ function prune_roots(f: SFunc): i32[] {
 // prune_mark marks the roots and, through the pure instructions that define
 // them, everything they read.
 function prune_mark(f: SFunc, work: i32[]): i32[] {
-  let live: i32[] = zeros(f.nvals);
-  let def_b: i32[] = zeros(f.nvals);
-  let def_k: i32[] = zeros(f.nvals);
+  let live: i32[] = __alloc_i32(f.nvals);
+  let def_b: i32[] = __alloc_i32(f.nvals);
+  let def_k: i32[] = __alloc_i32(f.nvals);
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     let k: i32 = 0;

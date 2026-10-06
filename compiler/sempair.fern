@@ -139,7 +139,7 @@ function whole_values(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired:
 
 function seeded(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boolean): boolean[] {
   let g: ssa.SFunc = f.graph;
-  let whole: boolean[] = falses(g.nvals);
+  let whole: boolean[] = __alloc_bool(g.nvals);
   let defs: ssa.SInst[] = defs_of(g);
   for b in g.blocks {
     for ins in b.insts {
@@ -190,14 +190,6 @@ function joins_apart(phi: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, ok: 
     }
   }
   return true;
-}
-
-function falses(n: i32): boolean[] {
-  let out: boolean[] = [];
-  while (out.len() < n) {
-    out = out.append(false);
-  }
-  return out;
 }
 
 function marked_all(own flags: boolean[], vs: i32[]): boolean[] {
@@ -736,8 +728,10 @@ function next_block_id(g: ssa.SFunc): i32 {
   return hi;
 }
 
+// The values array is read last, so the append grows it in place.
 function with_value(f: ssasem.Func, t: typeinfo.Type): ssasem.Func {
-  return ssasem.Func { ...f, values: f.values.append(t), graph: ssa.SFunc { ...f.graph, nvals: f.values.len() + 1 } };
+  let n: i32 = f.values.len() + 1;
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, nvals: n }, values: f.values.append(t) };
 }
 
 function with_block(f: ssasem.Func, bi: i32, b: ssa.SBlock): ssasem.Func {
