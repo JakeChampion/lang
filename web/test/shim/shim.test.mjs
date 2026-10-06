@@ -169,3 +169,43 @@ describe("the streams", () => {
     assert.equal(r.stderr, "err\n");
   });
 });
+
+// The playground driver, built the way web/build.sh builds it, makes no WASI
+// call the shim lacks. Its stdlib is a sealed overlay of embedded assets, so
+// nothing it does on the way to an answer may reach for a filesystem: the
+// shim traps on `path_open`, and a probe for a vendored `std/` directory once
+// put that trap in front of every program the page ran.
+describe("the playground driver", () => {
+  let driver;
+  before(() => {
+    const outPath = join(workDir, "playground.wasm");
+    execFileSync(
+      fernBin,
+      ["-target", "wasm32-wasi", "-emit", "core-module", "-embed", join(repoRoot, "internal/stdlib"),
+        "-o", outPath, join(repoRoot, "compiler/playground_run.fern"), join(repoRoot, "internal/stdlib")],
+      { cwd: repoRoot },
+    );
+    driver = readFileSync(outPath);
+  }, { timeout: 600000 });
+
+  const program = `import "std/i32";
+function main(): i32 {
+  let n: i32 = 42;
+  print("hello, world " + n.to_string());
+  return 0;
+}
+`;
+
+  it("runs a stdlib program under -interp", async () => {
+    const r = await runCoreWasm(driver, { stdin: program, args: ["fern", "-interp"] });
+    assert.equal(r.stderr, "");
+    assert.equal(r.stdout, "hello, world 42\n");
+    assert.equal(r.exit, 0);
+  });
+
+  it("checks a stdlib program under -check", async () => {
+    const r = await runCoreWasm(driver, { stdin: program, args: ["fern", "-check"] });
+    assert.equal(r.stderr, "");
+    assert.equal(r.exit, 0);
+  });
+});
