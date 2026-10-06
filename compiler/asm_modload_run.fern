@@ -225,7 +225,7 @@ function merged_emitted(merged: parser.Module): parser.Module {
 // whole-program function and struct view, so cross-module calls and imported
 // struct layouts resolve, and only the entry unit emits `_start` and the shared
 // runtime.
-function emit_per_module_concat(dir: string, entry_path: string, entry_mod: parser.Module, loaded: flatten.LoadedModule[], target: string, cache_dir: string): string {
+function emit_per_module_concat(entry_path: string, entry_mod: parser.Module, loaded: flatten.LoadedModule[], target: string, cache_dir: string): string {
   let parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
   let v: View = per_module_view(entry_mod, loaded, parts, target);
   // The entry unit emits the ONE shared runtime; seed it with every root so a
@@ -457,7 +457,7 @@ function spawn_batch(self_exe: string, entry_path: string, tmp: string, lo: i32,
 // error is the only sound outcome. Every ordinary failure is detected before the
 // first write — hence the presence pre-pass — so 2 needs an I/O race inside our
 // own private temp directory.
-function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string, func_budget: i32, batch: i32, self_exe: string, cache_dir: string): i32 {
+function emit_per_module_spawned(entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string, func_budget: i32, batch: i32, self_exe: string, cache_dir: string): i32 {
   if (self_exe.len() == 0) {
     return 1;
   }
@@ -676,7 +676,7 @@ function emit_window_size(funcs: i32, bytes: i32, func_budget: i32): i32 {
   return window;
 }
 
-function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_extra: string[], cache_dir: string, pm_lo: i32, pm_hi: i32, target: string, out_dir: string, func_budget: i32, unit_lo: i32, unit_hi: i32): i32 {
+function run_per_module(entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_extra: string[], cache_dir: string, pm_lo: i32, pm_hi: i32, target: string, out_dir: string, func_budget: i32, unit_lo: i32, unit_hi: i32): i32 {
   let parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, target);
   if (pm_mode == "count") {
     print(util.i32_to_string(parts.len()) + "\n");
@@ -1047,7 +1047,6 @@ function main(): i32 {
     eprint("usage: asm_modload_run <entry.fern> [-verifyprovided | -provided-audit | -ir-probe | -per-module-count | -per-module-needs | -per-module-func-counts | -per-module-shape | -per-module-manifest | -per-module-emit N [-func-range LO:HI] | -per-module-emit-all -out-dir DIR [-func-budget N] [-unit-range LO:HI]] [-cache-dir DIR]");
     return 2;
   }
-  let dir: string = modloader.dirname(entry_path);
   match (read_file(entry_path)) {
     Ok(src) => {
       let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
@@ -1073,7 +1072,7 @@ function main(): i32 {
         return 1;
       }
       if (pm_mode.len() > 0) {
-        return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target, out_dir, func_budget, unit_lo, unit_hi);
+        return run_per_module(entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target, out_dir, func_budget, unit_lo, unit_hi);
       }
       let merged: parser.Module = merged_program(entry, loaded, target);
       if (vprovided) {
@@ -1102,7 +1101,7 @@ function main(): i32 {
         let anfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
         if (anfuncs > 512 || force_spawned) {
           if (anfuncs < single_process_max && !force_spawned) {
-            write(emit_per_module_concat(dir, entry_path, entry, loaded, "arm64-linux", cache_dir));
+            write(emit_per_module_concat(entry_path, entry, loaded, "arm64-linux", cache_dir));
             return 0;
           } else {
             // ABOVE the single-process ceiling — the whole-compiler
@@ -1114,7 +1113,7 @@ function main(): i32 {
             // `-per-module-emit` child is the exact path
             // TestSelfHostModloadPerModuleWholeCompilerArm64 drives, so
             // this reuses a proven leg rather than adding one.
-            let asrc: i32 = emit_per_module_spawned(dir, entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);
+            let asrc: i32 = emit_per_module_spawned(entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);
             if (asrc == 0) {
               return 0;
             }
@@ -1154,10 +1153,10 @@ function main(): i32 {
       let nfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
       if (nfuncs > 512 || force_spawned) {
         if (nfuncs < single_process_max && !force_spawned) {
-          write(emit_per_module_concat(dir, entry_path, entry, loaded, "x86-64-linux", cache_dir));
+          write(emit_per_module_concat(entry_path, entry, loaded, "x86-64-linux", cache_dir));
           return 0;
         } else {
-          let src: i32 = emit_per_module_spawned(dir, entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);
+          let src: i32 = emit_per_module_spawned(entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);
           if (src == 0) {
             return 0;
           }
