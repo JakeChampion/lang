@@ -244,6 +244,20 @@ func CheckStreamBodiesSequential(t *testing.T, addr string) {
 		t.Fatalf("the body left unread was answered as a request:\n%s", after)
 	}
 
+	// A client that half-closes mid-body is answered 400, whether its head
+	// started a handler before the end of stream arrived or arrived with it.
+	short := dialUpload(t, addr, "/sum", 3000)
+	defer short.Close()
+	if _, err := short.Write(make([]byte, 200)); err != nil {
+		t.Fatal(err)
+	}
+	if err := short.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	if resp := readWhole(t, short); !strings.Contains(resp, "HTTP/1.1 400") {
+		t.Fatalf("a body cut short by the client: want 400, got\n%s", resp)
+	}
+
 	// A client that goes away mid-body: the worker keeps serving.
 	gone := dialUpload(t, addr, "/sum", 3000)
 	if _, err := gone.Write(make([]byte, 200)); err != nil {
