@@ -49,7 +49,7 @@ func TestFormatterExampleCorpusRoundTrip(t *testing.T) {
 	for _, dir := range []string{
 		"../../examples",
 		"../../examples/cli",
-		"../../examples/proposals",
+		"../../tests/proposals",
 		"../../examples/vcl",
 		"../../examples/wasm",
 		"../../tests/stdlib",

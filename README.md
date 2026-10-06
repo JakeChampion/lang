@@ -195,7 +195,7 @@ internal/x86tbl,arm64tbl/  the compiler's assembler vocabulary tables
 internal/stdlib/std/  the standard library, written in Fern
 internal/e2e*/        end-to-end suites
 examples/             example programs
-tests/                Fern-side tests: stdlib/ (std/test suites), probes/ (leak probes)
+tests/                Fern-side tests: stdlib/ (std/test suites), probes/ (leak probes), proposals/ (defect repros)
 conformance/          the conformance corpus
 bench/                benchmark programs
 coreutils/            GNU coreutils in Fern

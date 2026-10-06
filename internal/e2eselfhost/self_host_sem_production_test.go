@@ -5569,7 +5569,7 @@ function main(): i32 {
 `},
 	// A record holding a function value reaches, through the field, the
 	// records the function takes and hands back, so a body that names only
-	// the record still carries their schemas (examples/proposals/pipeline.fern).
+	// the record still carries their schemas (tests/proposals/pipeline.fern).
 	{name: "a-function-field-names-its-signature-records", atLeast: 3, want: "0|", src: `
 struct Ctx { value: i32 }
 struct Fault { why: string }

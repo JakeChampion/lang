@@ -194,7 +194,7 @@ If along the way you conclude the app cannot be completed because of an
 incompleteness or failure in Fern, STOP and go to Phase 3 anyway. That is a
 better outcome than a finished app, not a worse one.
 
-Save the file at `examples/proposals/<name>.fern` — it ships with your PR.
+Save the file at `tests/proposals/<name>.fern` — it ships with your PR.
 
 ### Phase 3 — Pick the problem
 
@@ -361,7 +361,7 @@ merge main in and push. Do not stop at "pushed to the branch".
   `PATH` and set `FERN_WASI_ADAPTER`.
 
 - **Never commit to `main`.** One commit per PR, containing: the minimal
-  solution (simplified — this is essential) + your `examples/proposals/<name>.fern` +
+  solution (simplified — this is essential) + your `tests/proposals/<name>.fern` +
   minimal, well-designed, fast regression tests that fail if the problem comes
   back, in a general way. A regression test that only pins your exact repro is
   worth much less than one that pins the class.

@@ -26,16 +26,37 @@ else
 fi
 export PATH="$bin_dir:$PATH" MISE_YES=1
 
+# mise is fetched straight from its GitHub release and checked against the
+# release's SHASUMS256.txt, rather than through the mise.run installer, which
+# some sandboxes' egress policy blocks while allowing GitHub.
 if ! command -v mise >/dev/null 2>&1; then
+  mise_version="v$(sed -n 's/^FERN_MISE_VERSION = "\(.*\)"/\1/p' "$root/mise.toml")"
+  case "$(uname -s)" in Linux) os=linux ;; Darwin) os=macos ;; *) echo "toolchain-env: unsupported OS $(uname -s)" >&2; exit 1 ;; esac
+  case "$(uname -m)" in x86_64|amd64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; *) echo "toolchain-env: unsupported arch $(uname -m)" >&2; exit 1 ;; esac
+  asset="mise-$mise_version-$os-$arch"
+  release="https://github.com/jdx/mise/releases/download/$mise_version"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  curl -sSfL --retry 5 --retry-delay 2 -o "$tmp/$asset" "$release/$asset"
+  curl -sSfL --retry 5 --retry-delay 2 -o "$tmp/SHASUMS256.txt" "$release/SHASUMS256.txt"
+  want="$(awk -v f="./$asset" '$2 == f { print $1 }' "$tmp/SHASUMS256.txt")"
+  got="$( (sha256sum "$tmp/$asset" 2>/dev/null || shasum -a 256 "$tmp/$asset") | awk '{ print $1 }')"
+  if [ -z "$want" ] || [ "$want" != "$got" ]; then
+    echo "toolchain-env: $asset does not match $release/SHASUMS256.txt" >&2
+    exit 1
+  fi
   mkdir -p "$bin_dir"
-  MISE_VERSION="v$(sed -n 's/^FERN_MISE_VERSION = "\(.*\)"/\1/p' "$root/mise.toml")" \
-    MISE_INSTALL_PATH="$bin_dir/mise" \
-    sh -c "$(curl -sSfL --retry 5 --retry-delay 2 https://mise.run)" >&2
+  install -m 0755 "$tmp/$asset" "$bin_dir/mise"
 fi
 
 cd "$root"
 mise trust mise.toml >&2
-mise install >&2
+# A tool whose download the network refuses is reported, not fatal: the rest of
+# the toolchain still goes on PATH, and a test needing the missing tool SKIPs.
+if ! mise install >&2; then
+  echo "toolchain-env: not installed, so the tests that need them will SKIP:" >&2
+  mise ls --missing >&2
+fi
 
 echo "export PATH=\"$bin_dir:\$PATH\""
 if [ -n "${FERN_MISE_HOME:-}" ]; then
@@ -43,5 +64,11 @@ if [ -n "${FERN_MISE_HOME:-}" ]; then
 fi
 # Absolute install paths, so the tools resolve from any directory.
 mise env -s bash
+# Without mise's Go, the go command fetches the pinned release itself, through
+# the module proxy and checked against sum.golang.org.
+go_version="$(awk '/^\[\[tools.go\]\]/ { getline; gsub(/[^0-9.]/, ""); print; exit }' mise.lock)"
+if mise ls --missing go 2>/dev/null | grep -q .; then
+  echo "export GOTOOLCHAIN=go$go_version"
+fi
 # The adapter is a data file the wasm e2e tests read, not a program on PATH.
 echo "export FERN_WASI_ADAPTER=\"$(mise where http:wasi-adapter)/wasi_snapshot_preview1.command.wasm\""

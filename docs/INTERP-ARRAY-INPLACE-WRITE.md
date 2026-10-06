@@ -217,6 +217,6 @@ n `a = a.with(j, j)` writes:
 | 8 000 | 1 255 ms | 24 ms |
 | 16 000 | 5 539 ms | 39 ms |
 
-`examples/proposals/prime_gaps.fern`, the app #7287 named: **5 527 ms →
+`tests/proposals/prime_gaps.fern`, the app #7287 named: **5 527 ms →
 734 ms**. A 200 000-element append-then-read-five-times loop is 893/989 ms
 before and 941/949 ms after — no read regression outside noise.
