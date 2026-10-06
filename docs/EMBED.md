@@ -69,7 +69,7 @@ demand the type annotation an empty `[]` normally would.
 ## Why it is nearly free
 
 `__fern_asset("name")` is not a function. It is resolved during const
-folding (`internal/constfold`), which replaces the call with a
+folding (`internal/check/constfold`), which replaces the call with a
 `StringLit` holding the file's bytes. Everything after that point —
 interning, the immortal rc sentinel, all four backends — sees a string
 literal and nothing else, so no backend carries asset-specific code and no
@@ -172,15 +172,15 @@ folds to the same array a `let` would hold, on both compilers.
 
 | Layer | Tests |
 | --- | --- |
-| Loading, symlink skip, suggestions, nil set | `internal/embed/embed_test.go` |
-| Substitution, const initialisers, const folding, binary bytes, every error path | `internal/constfold/asset_test.go` |
-| Enumeration: sorted order, contents, binary bytes, empty bundle, error paths | `internal/constfold/asset_test.go` |
+| Loading, symlink skip, suggestions, nil set | `internal/pkg/embed/embed_test.go` |
+| Substitution, const initialisers, const folding, binary bytes, every error path | `internal/check/constfold/asset_test.go` |
+| Enumeration: sorted order, contents, binary bytes, empty bundle, error paths | `internal/check/constfold/asset_test.go` |
 | End-to-end through the native backend + the CLI diagnostics | `cmd/fern/embed_test.go` |
 | Enumeration end-to-end + the empty-bundle compile | `cmd/fern/embed_test.go` |
-| The self-host bundle + substitution, every error path | `compiler/drivers/embed_run.fern`, gated by `internal/e2eselfhost/self_host_embed_test.go` |
-| Native and self-host agreeing on the same source + the same directory, symlinked entries and a symlinked root included | `internal/e2eselfhost/self_host_embed_test.go` |
-| A symlinked root, followed | `internal/embed/embed_test.go` |
-| `lstat` itself, on every backend of both compilers | `internal/e2e/lstat_native_test.go`, `internal/codegen/wasmbin/wasi_fs_dir_test.go`, `internal/e2eselfhost/self_host_lstat_test.go` |
+| The self-host bundle + substitution, every error path | `compiler/drivers/embed_run.fern`, gated by `internal/testing/e2ecompiler/self_host_embed_test.go` |
+| Native and self-host agreeing on the same source + the same directory, symlinked entries and a symlinked root included | `internal/testing/e2ecompiler/self_host_embed_test.go` |
+| A symlinked root, followed | `internal/pkg/embed/embed_test.go` |
+| `lstat` itself, on every backend of both compilers | `internal/testing/e2e/lstat_native_test.go`, `internal/codegen/wasmbin/wasi_fs_dir_test.go`, `internal/testing/e2ecompiler/self_host_lstat_test.go` |
 
 The e2e test's load-bearing assertion is the **binary** asset: its blob
 carries interior NULs and bytes >= 0x80, so a correct exit code proves both

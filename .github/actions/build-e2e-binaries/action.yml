@@ -1,7 +1,7 @@
 name: Build the e2e test binaries
 description: >
   Build the `go test -c` binaries the self-host lane's jobs run through
-  `go tool test2json`, into e2eselfhost.test (always) and e2e.test (on
+  `go tool test2json`, into e2ecompiler.test (always) and e2e.test (on
   request) in the working directory, plus cmd/ci-test-workers, the runner
   that executes a selection in isolated worker processes, into
   $RUNNER_TEMP/ci-test-workers.
@@ -19,7 +19,7 @@ description: >
 inputs:
   e2e:
     description: >
-      Also compile internal/e2e into e2e.test. The shard jobs need it for the
+      Also compile internal/testing/e2e into e2e.test. The shard jobs need it for the
       ~30 residual TestSelfHost tests that still live in that package; nothing
       else does, and it is a separate ~20 s of compile, so it is opt-in.
     required: false
@@ -32,8 +32,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        go test -c -o e2eselfhost.test ./internal/e2eselfhost/
+        go test -c -o e2ecompiler.test ./internal/testing/e2ecompiler/
         if [ "${{ inputs.e2e }}" = "true" ]; then
-          go test -c -o e2e.test ./internal/e2e/
+          go test -c -o e2e.test ./internal/testing/e2e/
         fi
         go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers

@@ -1,0 +1,154 @@
+package e2ecompiler
+
+import (
+	"os/exec"
+	"testing"
+)
+
+// closureEscapeCases exercise a closure that ESCAPES its defining function
+// through a local variable binding — `let f = (…) => { … }; return f;` —
+// and is then called by the caller (`let g = factory(); g(args)`). This is
+// distinct from the already-covered shapes:
+//
+//   - `return (…) => { … }` returned DIRECTLY (higher_order), and
+//   - a closure passed DOWN as an argument (`apply(g, …)`, closure-arg).
+//
+// A var-bound lambda is always materialised as a heap closure BOX
+// (`[_, fn_ptr, caps…]`), so a caller must dispatch `g(args)` env-first (load
+// fn_ptr from the box, pass the box as the hidden env). Before the fix,
+// closure_ret_fns_of only recognised `return <lambda-literal>` as
+// closure-returning, so a factory ending in `return f` left the caller's
+// `let g = factory()` bound as a plain scalar; `g(args)` then called the raw
+// box POINTER as code → SIGSEGV. Now `return <ident bound to a closure>` (gated
+// on an `fn` return type, with a fixpoint for transitive factory chains) is
+// recognised too, so the caller dispatches env-first.
+//
+// escape-counter additionally pins the mutable-scalar-capture semantics across
+// an escape (SH-057): the counter's `x = x + 1` writes persist in the box's
+// capture slot between calls, so two calls yield 1 then 2 (sum 3), matching the
+// Go reference. Exit codes are cross-checked vs the Go backend.
+var closureEscapeCases = []struct {
+	name string
+	src  string
+	exit int
+}{
+	{"escape-noncapture", "function mk(): (i32) => i32 { let f = (b: i32): i32 => { return b + 1; }; return f; } function main(): i32 { let g = mk(); return g(5); }", 6},
+	{"escape-capture", "function adder(a: i32): (i32) => i32 { let f = (b: i32): i32 => { return a + b; }; return f; } function main(): i32 { let add10 = adder(10); return add10(6); }", 16},
+	{"escape-counter", "function make_counter(): () => i32 { let x = 0; let inc = (): i32 => { x = x + 1; return x; }; return inc; } function main(): i32 { let c = make_counter(); let a = c(); let b = c(); return a + b; }", 3},
+	{"escape-zero-arg", "function mk(): () => i32 { let f = (): i32 => { return 11; }; return f; } function main(): i32 { let g = mk(); return g(); }", 11},
+	// Transitive: a factory that FORWARDS another factory's closure box
+	// (`return makeAdder();`). Requires closure_ret_fns_of to recognise
+	// `return <closure-returning call>` (fixpoint-ordered).
+	{"transitive-factory", "function makeAdder(): (i32) => i32 { let g = (x: i32): i32 => { return x + 1; }; return g; } function outer(): (i32) => i32 { return makeAdder(); } function main(): i32 { let f = outer(); return f(41); }", 42},
+	// Nested: a factory whose body defines and calls a LOCAL closure that
+	// itself returns a closure, then forwards the result (`return inner();`).
+	{"nested-factory", "function outer(): (i32) => i32 { let inner = (): (i32) => i32 => { let g = (x: i32): i32 => { return x + 1; }; return g; }; return inner(); } function main(): i32 { let f = outer(); return f(41); }", 42},
+	// Captured-fn-value escape: a closure that CAPTURES a fn-value and
+	// ESCAPES must dispatch the captured closure env-first when it calls it
+	// inside its body (the synthesized `let base: fn = __env[i]` capture read
+	// is marked a closure local). Before the fix, `base(x)` bare-called the
+	// captured box pointer → SIGSEGV.
+	{"escape-captures-fn", "function mk(base: (i32) => i32): (i32) => i32 { let f = (x: i32): i32 => { return base(x); }; return f; } function dbl(x: i32): i32 { return x * 2; } function main(): i32 { let g = mk(dbl); return g(21); }", 42},
+	// Composition: the escaped closure captures a fn-value it applies twice.
+	{"escape-compose-twice", "function twice(f: (i32) => i32): (i32) => i32 { let g = (x: i32): i32 => { return f(f(x)); }; return g; } function inc(x: i32): i32 { return x + 1; } function main(): i32 { let d = twice(inc); return d(40); }", 42},
+	// Return an ARRAY of closures, then call an element via the caller's
+	// binding: `let arr = mk(); arr[0](x)`. The caller must mark arr's slot
+	// is_closurearr (mk returns `((i32) => i32)[]`) so `arr[0](x)` dispatches
+	// env-first; before the fix it bare-called the box pointer → SIGSEGV.
+	{"return-closure-array-via-var", "function mk(): ((i32) => i32)[] { let n = 5; let a = [(x: i32): i32 => { return x + n; }]; return a; } function main(): i32 { let arr = mk(); return arr[0](37); }", 42},
+	// Same, with the array returned directly (`return [<closure>]`).
+	{"return-closure-array-direct", "function mk(): ((i32) => i32)[] { return [(x: i32): i32 => { return x + 1; }]; } function main(): i32 { let arr = mk(); return arr[0](41); }", 42},
+	// A closure array passed as a PARAMETER: fn_param_sigs_of's call-site
+	// analysis (flag '3') proves every caller passes a closure array, so the
+	// param slot is marked is_closurearr and `fns[0](x)` inside the callee
+	// dispatches env-first; before the fix it bare-called the element box →
+	// SIGSEGV.
+	{"closure-array-param", "function mk(): ((i32) => i32)[] { let n = 5; let a = [(x: i32): i32 => { return x + n; }]; return a; } function consume(fns: ((i32) => i32)[]): i32 { return fns[0](37); } function main(): i32 { let arr = mk(); return consume(arr); }", 42},
+	// A named-function array (`[inc, dbl]`) passed to the same-shaped param:
+	// its elements are `$wrap` boxes, so the param dispatches env-first too
+	// (TestSelfHostAsmIRPath's fnarr-elem-call-loop is the same shape).
+	{"bare-fnarr-param", "function apply(fns: ((i32) => i32)[], n: i32): i32 { let s = 0; let i = 0; while (i < fns.len()) { s = s + fns[i](n); i = i + 1; } return s; } function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { return apply([inc, dbl], 10); }", 31},
+	// Indexing a closure-array factory's result DIRECTLY (`mk()[0](x)`, no
+	// binding): the ExprIndex-callee dispatch must recognise a call to a
+	// closurearr-ret fn as the array source; before the fix the shape fell to
+	// the legacy AST path, which miscompiled it (exit 0).
+	{"closure-array-direct-index-call", "function mk(): ((i32) => i32)[] { let n = 5; let a = [(x: i32): i32 => { return x + n; }]; return a; } function main(): i32 { return mk()[0](37); }", 42},
+	// A factory whose closure returns live in IF/ELSE branches (not the last
+	// statement); the caller's binding once stayed a plain scalar → SIGSEGV.
+	{"ifelse-branch-factory", "function mk(flag: boolean): (i32) => i32 { if (flag) { let f = (x: i32): i32 => { return x + 1; }; return f; } else { let g = (x: i32): i32 => { return x + 2; }; return g; } } function main(): i32 { let a = mk(true); let b = mk(false); return a(20) + b(19); }", 42},
+	// A factory FORWARDING another factory's closure array (`return mk();`);
+	// once a SIGSEGV.
+	{"transitive-closure-array-factory", "function mk(): ((i32) => i32)[] { let n = 5; let a = [(x: i32): i32 => { return x + n; }]; return a; } function outer(): ((i32) => i32)[] { return mk(); } function main(): i32 { let arr = outer(); return arr[0](37); }", 42},
+	// A directly-returned capturing lambda.
+	{"direct-return", "function adder(a: i32): (i32) => i32 { return (b: i32): i32 => { return a + b; }; } function main(): i32 { let add10 = adder(10); return add10(5); }", 15},
+	// Capture used ONLY in a match-arm `when` guard: astwalk.collect_idents_stmt
+	// (the free-variable collector for capture analysis) walked the scrutinee and
+	// arm bodies but NOT the guard, so `threshold` — read only in the guard — was
+	// left out of the closure's capture list. The guard then read garbage →
+	// SIGSEGV. Now the collector walks the guard, so `threshold` is captured.
+	{"capture-in-guard", "enum Opt { Has(i32), Empty } function apply(f: () => i32): i32 { return f(); } function main(): i32 { let threshold: i32 = 5; let o: Opt = Opt.Has(7); let f = () => match (o) { Has(v) when v > threshold => 100, _ => 0 }; return apply(f); }", 100},
+	// Nested capturing closure — the inner lambda captures the OUTER lambda's own
+	// captured variable (`a` flows main → outer → inner). A block-body arrow
+	// lambda is a `return (() => {…})()` IIFE, so once `outer` lifts to `__lam_N`
+	// its body is `[return (IIFE)()]` and `inner` stayed buried in the IIFE where
+	// closure_lift_one never descended → `inner` didn't lift → the module bailed
+	// to AST (correct on x86, but broken WAT `unknown local $a` on wasm).
+	// unwrap_sole_iife_return now beta-reduces that IIFE inline so `inner` lifts.
+	{"nested-capture-transitive", "function main(): i32 { let a: i32 = 10; let outer = () => { let b: i32 = 20; let inner = () => a + b; inner() }; return outer(); }", 30},
+	// Minimal: inner captures ONLY the transitive `a` (no outer local).
+	{"nested-capture-transitive-only", "function main(): i32 { let a: i32 = 10; let outer = () => { let inner = () => a + 1; inner() }; return outer(); }", 11},
+}
+
+// TestSelfHostClosureEscapeIRX86_64 — escaping var-bound closures through the
+// PRODUCTION x86-64 IR path (asm_ir_run `-ir`).
+func TestSelfHostClosureEscapeIRX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
+
+	for _, tc := range closureEscapeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+}
+
+// TestSelfHostClosureEscapeIRArm64 — CI-gated arm64 counterpart via the arm64
+// IR path (asm_ir_run `-target arm64-linux -ir`). Shares the fix in the lowering.
+func TestSelfHostClosureEscapeIRArm64(t *testing.T) {
+	arm64gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
+
+	for _, tc := range closureEscapeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			if len(asm) == 0 {
+				t.Fatal("self-host arm64 compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
+			cmd := runArm64Bin(qemu, progBin)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+}

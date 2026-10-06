@@ -61,7 +61,7 @@ Reproduction, with the checkout mounted at `/work` and shared Go caches:
 ```sh
 driver_growth_names=$(awk '/^[a-z_]+\.fern/ {if (n++) printf ","; printf "%s", $1}' .github/selfhost-driver-sizes.txt)
 FERN_REQUIRE_X86_64_TOOLING=1 FERN_WARM_DRIVER="$driver_growth_names" \
-  go test ./internal/e2eselfhost -run '^TestSelfHostWarmStockDriver$' \
+  go test ./internal/testing/e2ecompiler -run '^TestSelfHostWarmStockDriver$' \
   -count=1 -v -timeout=2m
 ```
 

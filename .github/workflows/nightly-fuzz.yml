@@ -95,7 +95,7 @@ jobs:
           fi
           echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "Differential window: seeds $base..$(( base + SEED_WINDOW - 1 ))" >> "$GITHUB_STEP_SUMMARY"
-          echo "Reproduce locally: DIFF_ORACLE_SEED_BASE=$base go test -run '^TestDifferential' ./internal/e2e/" >> "$GITHUB_STEP_SUMMARY"
+          echo "Reproduce locally: DIFF_ORACLE_SEED_BASE=$base go test -run '^TestDifferential' ./internal/testing/e2e/" >> "$GITHUB_STEP_SUMMARY"
 
   differential:
     needs: window
@@ -123,7 +123,7 @@ jobs:
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
         run: |
           gotestsum --format pkgname-and-test-fails -- -timeout=25m \
-            -run '^TestDifferential_PrintableStdout$' ./internal/e2e/
+            -run '^TestDifferential_PrintableStdout$' ./internal/testing/e2e/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
@@ -172,7 +172,7 @@ jobs:
           SELFHOST_DIFF_SEEDS: "${{ env.SEED_WINDOW }}"
         run: |
           gotestsum --format pkgname-and-test-fails -- -timeout=43m \
-            -run '^TestDifferential_SelfHostX86_64$' ./internal/e2e/
+            -run '^TestDifferential_SelfHostX86_64$' ./internal/testing/e2e/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
@@ -209,7 +209,7 @@ jobs:
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
         run: |
           gotestsum --format pkgname-and-test-fails -- -timeout=43m \
-            -run '^TestDifferential_SelfHostArm64$' ./internal/e2e/
+            -run '^TestDifferential_SelfHostArm64$' ./internal/testing/e2e/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
@@ -232,7 +232,7 @@ jobs:
           SELFHOST_DIFF_SEEDS: "${{ env.SEED_WINDOW }}"
         run: |
           gotestsum --format pkgname-and-test-fails -- -timeout=43m \
-            -run '^TestDifferential_SelfHostWasm$' ./internal/e2e/
+            -run '^TestDifferential_SelfHostWasm$' ./internal/testing/e2e/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
@@ -246,18 +246,18 @@ jobs:
         # free targets are not worth a second arch, and only the e2e
         # ones need wasmtime.
         include:
-          - { runner: ubuntu-latest,    host: x86_64,  slug: exec,    pkg: ./internal/e2e,        target: FuzzGenerate_ExecutionAgrees, wasmtime: "true"  }
-          - { runner: ubuntu-24.04-arm, host: aarch64, slug: exec,    pkg: ./internal/e2e,        target: FuzzGenerate_ExecutionAgrees, wasmtime: "true"  }
-          - { runner: ubuntu-latest,    host: x86_64,  slug: stdout,  pkg: ./internal/e2e,        target: FuzzGenerate_StdoutAgrees,    wasmtime: "true"  }
-          - { runner: ubuntu-24.04-arm, host: aarch64, slug: stdout,  pkg: ./internal/e2e,        target: FuzzGenerate_StdoutAgrees,    wasmtime: "true"  }
-          - { runner: ubuntu-latest,    host: x86_64,  slug: gen,     pkg: ./internal/fernsmith,  target: FuzzGenerate_ParseRoundTrips, wasmtime: "false" }
-          - { runner: ubuntu-24.04-arm, host: aarch64, slug: gen,     pkg: ./internal/fernsmith,  target: FuzzGenerate_ParseRoundTrips, wasmtime: "false" }
-          - { runner: ubuntu-latest,    host: x86_64,  slug: parse,   pkg: ./internal/parser,     target: FuzzParse,                    wasmtime: "false" }
-          - { runner: ubuntu-latest,    host: x86_64,  slug: check,   pkg: ./internal/checker,    target: FuzzCheck,                    wasmtime: "false" }
+          - { runner: ubuntu-latest,    host: x86_64,  slug: exec,    pkg: ./internal/testing/e2e,        target: FuzzGenerate_ExecutionAgrees, wasmtime: "true"  }
+          - { runner: ubuntu-24.04-arm, host: aarch64, slug: exec,    pkg: ./internal/testing/e2e,        target: FuzzGenerate_ExecutionAgrees, wasmtime: "true"  }
+          - { runner: ubuntu-latest,    host: x86_64,  slug: stdout,  pkg: ./internal/testing/e2e,        target: FuzzGenerate_StdoutAgrees,    wasmtime: "true"  }
+          - { runner: ubuntu-24.04-arm, host: aarch64, slug: stdout,  pkg: ./internal/testing/e2e,        target: FuzzGenerate_StdoutAgrees,    wasmtime: "true"  }
+          - { runner: ubuntu-latest,    host: x86_64,  slug: gen,     pkg: ./internal/testing/fernsmith,  target: FuzzGenerate_ParseRoundTrips, wasmtime: "false" }
+          - { runner: ubuntu-24.04-arm, host: aarch64, slug: gen,     pkg: ./internal/testing/fernsmith,  target: FuzzGenerate_ParseRoundTrips, wasmtime: "false" }
+          - { runner: ubuntu-latest,    host: x86_64,  slug: parse,   pkg: ./internal/syntax/parser,     target: FuzzParse,                    wasmtime: "false" }
+          - { runner: ubuntu-latest,    host: x86_64,  slug: check,   pkg: ./internal/check/checker,    target: FuzzCheck,                    wasmtime: "false" }
           # The self-host answer to parse/check above (#7967). Its own gate
           # env because the target skips without it, and x86-64 only: the
           # driver is emitted as x86-64 asm and takes host paths as argv.
-          - { runner: ubuntu-latest,    host: x86_64,  slug: selfhost, pkg: ./internal/e2e,       target: FuzzSelfHostFrontEnd,         wasmtime: "false", selfhost: "1" }
+          - { runner: ubuntu-latest,    host: x86_64,  slug: selfhost, pkg: ./internal/testing/e2e,       target: FuzzSelfHostFrontEnd,         wasmtime: "false", selfhost: "1" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -364,7 +364,7 @@ jobs:
           FERN_SELFHOST_COVER_FUZZ_CORPUS: "${{ runner.temp }}/selfhost-cover-corpus"
         run: |
           gotestsum --format testname -- -timeout=43m \
-            -run '^TestSelfHostCoverageGuidedFuzz$' ./internal/e2e/
+            -run '^TestSelfHostCoverageGuidedFuzz$' ./internal/testing/e2e/
 
       # The acceptance property from #5548: feedback must reach counters blind
       # mutation of the same budget does not, totalled over five RNG streams
@@ -378,7 +378,7 @@ jobs:
           FERN_SELFHOST_COVER_FUZZ: "1"
         run: |
           gotestsum --format testname -- -timeout=30m \
-            -run '^TestSelfHostCoverageFeedbackBeatsBlindMutation$' ./internal/e2e/
+            -run '^TestSelfHostCoverageFeedbackBeatsBlindMutation$' ./internal/testing/e2e/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
@@ -414,11 +414,11 @@ jobs:
               `Differential window: seeds \`${base}\` onward.`,
               ``,
               `Reproduce the stdout sweep:`,
-              `\`DIFF_ORACLE_SEED_BASE=${base} go test -run '^TestDifferential_PrintableStdout$' ./internal/e2e/\``,
+              `\`DIFF_ORACLE_SEED_BASE=${base} go test -run '^TestDifferential_PrintableStdout$' ./internal/testing/e2e/\``,
               ``,
               `Reproduce the self-host leg — it SKIPS without the env var,`,
               `so a run without it looks like the failure vanished:`,
-              `\`FERN_SELFHOST_DIFF=1 DIFF_ORACLE_SEED_BASE=${base} go test -run '^TestDifferential_SelfHostX86_64$' ./internal/e2e/\``,
+              `\`FERN_SELFHOST_DIFF=1 DIFF_ORACLE_SEED_BASE=${base} go test -run '^TestDifferential_SelfHostX86_64$' ./internal/testing/e2e/\``,
               ``,
               `A self-host seed outside 0..511 is not in`,
               `\`testdata/selfhost-diff-x86_64-known-divergences.txt\` — that file`,

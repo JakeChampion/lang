@@ -15,7 +15,7 @@
 # blocks); everything else must be deleted rather than allowlisted.
 #
 # Blind spot: `-test` makes tests reachability roots, so a function whose
-# only callers are its own tests is never reported. `internal/ir.Fold`
+# only callers are its own tests is never reported. `internal/oracle/ir.Fold`
 # sat exported and caller-less that way (#8477).
 set -euo pipefail
 
@@ -29,8 +29,8 @@ DEADCODE_VERSION="v0.50.0"
 
 raw="$(go run "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}" -test ./...)"
 
-# "internal/lexer/lexer.go:168:17: unreachable func: Error.setFile"
-#   -> "internal/lexer:Error.setFile"
+# "internal/syntax/lexer/lexer.go:168:17: unreachable func: Error.setFile"
+#   -> "internal/syntax/lexer:Error.setFile"
 found="$(printf '%s\n' "$raw" \
   | sed -nE 's#^(.*)/[^/]+\.go:[0-9]+:[0-9]+: unreachable func: (.*)$#\1:\2#p' \
   | sort -u)"

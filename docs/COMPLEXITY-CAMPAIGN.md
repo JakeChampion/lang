@@ -1,6 +1,6 @@
 # Reducing complexity in the first-party Fern sources
 
-`fern -lint` measures cyclomatic complexity and `internal/lint/repo_gate_test.go`
+`fern -lint` measures cyclomatic complexity and `internal/tools/lint/repo_gate_test.go`
 ratchets this repository's own Fern sources against it (`docs/LINT.md`). This
 file is the campaign that number tracks: what has been done, what is next, and
 the two things that make the work safe rather than brave.

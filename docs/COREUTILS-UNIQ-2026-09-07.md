@@ -72,6 +72,6 @@ The expanded native GNU and self-hosted oracle corpus passed (13.245 s),
 including comparisons whose last byte matches while an earlier byte differs,
 NUL/high bytes, kernel boundaries, key widths and records crossing the 64 KiB
 read boundary. `make lint-all` and the full `go test ./... -timeout=60m` suite
-passed (exit 0): coreutils 215.319 s, e2e 1621.425 s, e2eselfhost 117.354 s.
+passed (exit 0): coreutils 215.319 s, e2e 1621.425 s, e2ecompiler 117.354 s.
 This is the native ARM64 Linux suite, not a claim that every separate x86-64
 self-host CI lane on main is green.

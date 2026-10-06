@@ -5215,7 +5215,7 @@ function arm64_gas_addsub_operand_unsupported(mnem: string, ops: string[]): bool
 
 // ---- the by-name instruction families ----
 //
-// Each family has a predicate (generated from internal/arm64tbl, whose rows
+// Each family has a predicate (generated from internal/tables/arm64tbl, whose rows
 // TestSelfHostArm64TableRowsMatchGas checks against GNU as), a shape guard
 // feeding p.unknown,
 // and an emitter. An emitter may be reached after its guard has already

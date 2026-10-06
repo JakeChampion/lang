@@ -46,7 +46,7 @@ UNDER_FACTOR="${FERN_WEIGHT_UNDER_FACTOR:-2}"
 # Pessimism band applied to a measurement before suggesting it as a weight.
 SAFETY="${FERN_WEIGHT_SAFETY:-1.5}"
 # The shards' `-test.timeout`, in seconds. Pinned to the workflow by
-# TestSelfHostWeightGateBudgetMatchesShardTimeout (internal/sourcelint).
+# TestSelfHostWeightGateBudgetMatchesShardTimeout (internal/testing/sourcelint).
 BUDGET="${FERN_WEIGHT_SHARD_BUDGET_SECONDS:-1680}"
 # A single test costing this share of the budget belongs in OWN_JOB_TESTS
 # rather than in a bigger weight (#6667) — no weight can buy more wall than

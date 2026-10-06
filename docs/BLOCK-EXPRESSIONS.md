@@ -68,7 +68,7 @@ Backend support:
   their own zero-init'd slots (shadowrename gives the block its own
   frame) and are dropped by the ordinary function-exit dec sweep, so a
   heap-valued tail flows out correctly under RC. Differential coverage
-  across all three backends: `internal/e2e/block_expr_test.go`
+  across all three backends: `internal/testing/e2e/block_expr_test.go`
   (`TestBlockExprCompiled*`).
 - **Self-hosted compiler** (slice 2, `#4405`). The self-host parser
   parses each if/match value branch as a block-with-tail
@@ -77,7 +77,7 @@ Backend support:
   `s_return(tail)` that irlower's `lower_value_tail` lowers. A lone
   trailing expression with no leading statements stays `[s_return(expr)]`,
   byte-identical to the single-expr branch. Coverage:
-  `internal/e2e/self_host_block_expr_ir_test.go` (x86-64 + wasm IR).
+  `internal/testing/e2e/self_host_block_expr_ir_test.go` (x86-64 + wasm IR).
 
 ## Semantics
 
@@ -121,12 +121,12 @@ Backend support:
 
 | Layer | Where |
 | --- | --- |
-| AST node | `ast.BlockExpr{P, Stmts, Tail}` (`internal/ast/ast.go`) |
-| Walkers | `internal/ast/walk.go` (`Walk` / `rewriteExprChildren`) |
-| Parser | `parser.parseBranchBody` + `branchStmtStart`, wired into `parseIfExpr` and the `match`-expr arm body (`internal/parser/parser.go`) |
-| Checker | `checker.checkBlockExpr` (child scope → statements → tail type); no-tail → **E061** unless the statements diverge (`stmtsDiverge`) → `never`; `assignable` / `unifyIfArms` / match-arm unifiers fold `never`; numeric settle / `postSettleType` recurse into `Tail` (`internal/checker/checker.go`) |
-| Interp | `*ast.BlockExpr` arm in `evalExpr` — child env, exec statements, eval tail; a non-normal `r.flow` unwinds as a `controlFlowSignal` that `execStmt` catches (`internal/interp/interp.go`) |
-| Compiled lowering | `*ast.BlockExpr` arm in `(*builder).expr` — lower `Stmts` via `b.stmt`, then `Tail` via `b.expr` as the result; a nil (diverging) `Tail` lowers the statements only, leaving the enclosing store unreachable (`internal/ir/ir.go`) |
+| AST node | `ast.BlockExpr{P, Stmts, Tail}` (`internal/syntax/ast/ast.go`) |
+| Walkers | `internal/syntax/ast/walk.go` (`Walk` / `rewriteExprChildren`) |
+| Parser | `parser.parseBranchBody` + `branchStmtStart`, wired into `parseIfExpr` and the `match`-expr arm body (`internal/syntax/parser/parser.go`) |
+| Checker | `checker.checkBlockExpr` (child scope → statements → tail type); no-tail → **E061** unless the statements diverge (`stmtsDiverge`) → `never`; `assignable` / `unifyIfArms` / match-arm unifiers fold `never`; numeric settle / `postSettleType` recurse into `Tail` (`internal/check/checker/checker.go`) |
+| Interp | `*ast.BlockExpr` arm in `evalExpr` — child env, exec statements, eval tail; a non-normal `r.flow` unwinds as a `controlFlowSignal` that `execStmt` catches (`internal/oracle/interp/interp.go`) |
+| Compiled lowering | `*ast.BlockExpr` arm in `(*builder).expr` — lower `Stmts` via `b.stmt`, then `Tail` via `b.expr` as the result; a nil (diverging) `Tail` lowers the statements only, leaving the enclosing store unreachable (`internal/oracle/ir/ir.go`) |
 | Self-host parse | `parse_branch_body` + `branch_stmt_start`, wired into `parse_if_chain` and the match-expr arm body (`compiler/parser.fern`) |
 | Self-host lower | `lower_value_tail` — leading statements then the value-producing terminal (`compiler/irlower.fern`) |
 | Other passes | `monomorph`, `closureconv`, `boxcapture`, `modload`, `shadowrename`, `treeshake`, `printer`, `format` each recurse into `Stmts` + `Tail` |

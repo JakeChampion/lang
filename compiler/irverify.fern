@@ -1,5 +1,5 @@
 // compiler/irverify.fern — an independent well-formedness
-// checker for the self-host IR, mirroring native's internal/ir/verify.go.
+// checker for the self-host IR, mirroring native's internal/oracle/ir/verify.go.
 //
 // The point is that this is NOT the compiler. Every backend trusts the IR
 // it is handed, so a lowering bug becomes machine code that is structurally

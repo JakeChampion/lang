@@ -1,5 +1,5 @@
 // compiler/caps.fern — the PACKAGE capability boundary, mirroring
-// native's internal/caps (#6634).
+// native's internal/pkg/caps (#6634).
 //
 // This is the second, independent capability system. platforms.fern gates what
 // a TARGET provides — the OS boundary, E066. This one gates what a PACKAGE may
@@ -10,7 +10,7 @@
 // separate — a new builtin needs classifying in BOTH — and the way that goes
 // wrong is one side being updated and the other not, so each carries its own
 // completeness gate: caps_run.fern holds this table against
-// parser.builtin_function_names(), and internal/caps/selfhost_parity_test.go
+// parser.builtin_function_names(), and internal/pkg/caps/selfhost_parity_test.go
 // holds it against native's maps entry-for-entry. A rename or reformat of the
 // tables below has to keep them extractable by that test — it fails loudly
 // rather than vacuously when its patterns stop matching.

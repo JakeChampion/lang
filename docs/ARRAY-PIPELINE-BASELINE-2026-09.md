@@ -2,11 +2,11 @@
 
 What #9728 asked, measured. The programs are `examples/array_pipeline/*.fern`,
 the measurement is `scripts/array-pipeline-baseline`, and
-`internal/e2e/array_pipeline_baseline_test.go` keeps the claims below from
+`internal/testing/e2e/array_pipeline_baseline_test.go` keeps the claims below from
 rotting.
 
 **These are PRE-FUSION numbers.** #9731 has since landed
-(`internal/ir/array_fusion.go`), so the allocation figures below are now
+(`internal/oracle/ir/array_fusion.go`), so the allocation figures below are now
 reproduced only with `FERN_NO_ARRAY_FUSION=1` — which is how the gate still
 asserts them, alongside what the pass changed. Fused, `map.map.reduce` falls
 from 23 allocator calls per round to 1 and `filter.map.reduce` from 19 to 1,
@@ -157,7 +157,7 @@ compositional guarantee names "no heap allocation, **no unspecialised calls per
 element**" — and this is the measurement saying the second half is not a
 rounding error.
 
-One thing that is *not* a term: the bounds check. `internal/parser/bounds_elide.go`
+One thing that is *not* a term: the bounds check. `internal/syntax/parser/bounds_elide.go`
 recognises `while (i < xs.len())` syntactically, and a loop bounded by a
 separate local — `let n = xs.len(); while (i < n)`, the reflex optimisation —
 keeps the check. The two spellings emit visibly different code and cost the
@@ -208,7 +208,7 @@ Two things worth having measured rather than assumed:
 **Superseded by #9733's second half.** E053 now admits `xs.map(f)` on an
 `own` receiver and E068 verifies R7 wrote it through the donor, so `fip
 function via_map_own(own xs)` passes on the native compiler and allocates
-nothing (`internal/e2e/array_inplace_fip_test.go`); the self-hosted compiler
+nothing (`internal/testing/e2e/array_inplace_fip_test.go`); the self-hosted compiler
 writes the same shape in place since #11073. The example file keeps
 `via_map_own` unannotated because the gate also builds it with
 `FERN_NO_ARRAY_INPLACE=1`, under which the claim is false. What follows is

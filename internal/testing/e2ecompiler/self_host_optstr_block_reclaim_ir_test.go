@@ -1,0 +1,297 @@
+package e2ecompiler
+
+import (
+	"os/exec"
+	"testing"
+)
+
+// optStrBlockReclaimCases pin the #4353 item-2 PER-BLOCK consumed-match
+// Option/Result reclaim: the fn-level consumed_rcpayload_option_frees pass
+// scans only top-level fn-body statements, so a LOOP-LOCAL
+// `let o = Some(<fresh rc payload>)` consumed by exactly one match in the
+// same nested block leaked the payload AND the option box per iteration
+// (probe p2 in the 2026-07-20 recon on #4353). lower_block now runs the same
+// classifier + gates over each nested block's own statement list and emits
+// the payload deep-drop + box free after the consuming match. Escaping arm
+// bindings, post-match uses, and double matches keep today's sound leak.
+var optStrBlockReclaimCases = []struct {
+	name string
+	src  string
+	want int
+}{
+	// The core p2 shape: loop-local Option[string] with a fresh concat
+	// payload, consumed by a borrowing match. Flat after the fix.
+	{"optstr-loop-local-churn", `import "std/i32";
+function main(): i32 {
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let o: Option[string] = Some("v" + w.to_string()); match (o) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let o2: Option[string] = Some("v" + i.to_string()); match (o2) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// Result sibling: loop-local Err(<fresh string>) consumed by a borrowing
+	// match (the classifier admits Ok/Err the same way).
+	{"resulterr-loop-local-churn", `import "std/i32";
+function main(): i32 {
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let r: Result[i32, string] = Err("e" + w.to_string()); match (r) { Ok(v) => { acc = (acc + v) % 251; }, Err(m) => { acc = (acc + m.len()) % 251; } } w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let r2: Result[i32, string] = Err("e" + i.to_string()); match (r2) { Ok(v) => { acc = (acc + v) % 251; }, Err(m) => { acc = (acc + m.len()) % 251; } } i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// Array-payload sibling: loop-local Some([..]) consumed by a borrowing
+	// match — the non-string rc payload uses emit_opt_payload_drop.
+	{"optarr-loop-local-churn", `function main(): i32 {
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let o: Option[i32[]] = Some([w, w + 1]); match (o) { Some(xs) => { acc = (acc + xs[0]) % 251; }, None => { } } w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let o2: Option[i32[]] = Some([i, i + 1]); match (o2) { Some(xs) => { acc = (acc + xs[0]) % 251; }, None => { } } i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// IF-BODY sibling: the seam is lower_block, so a non-loop nested block
+	// takes the same reclaim (churned via an outer loop).
+	{"optstr-if-body-churn", `import "std/i32";
+function main(): i32 {
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { if (w >= 0) { let o: Option[string] = Some("v" + w.to_string()); match (o) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } } w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { if (i >= 0) { let o2: Option[string] = Some("v" + i.to_string()); match (o2) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } } i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// ESCAPE negative: the Some-arm binding is stored outside the match —
+	// opt_arm_binding_escapes rejects the credit, the extracted string stays
+	// valid (leak-safe, no UAF, detector zero).
+	{"optstr-binding-escape-safe", `import "std/i32";
+function main(): i32 {
+    let keep: string = "";
+    let w: i32 = 0;
+    while (w < 100) {
+        let o: Option[string] = Some("k" + w.to_string());
+        match (o) { Some(s) => { keep = s; }, None => { } }
+        w = w + 1;
+    }
+    if (keep.len() < 2) { return 97; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// ALIAS negative: `let al = o` aliases the option box, and al is matched
+	// AFTER o's consuming match — the escape gate must reject o's credit or
+	// al's match reads a freed box. Values exact, detector zero.
+	{"optstr-alias-after-safe", `import "std/i32";
+function main(): i32 {
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 100) {
+        let o: Option[string] = Some("k" + w.to_string());
+        let al: Option[string] = o;
+        match (o) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } }
+        match (al) { Some(s2) => { acc = (acc + s2.len()) % 251; }, None => { } }
+        w = w + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// DOUBLE-MATCH negative: two matches consume o — n_match != 1, no
+	// credit, both matches read valid data, detector zero.
+	{"optstr-double-match-safe", `import "std/i32";
+function main(): i32 {
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 100) {
+        let o: Option[string] = Some("k" + w.to_string());
+        match (o) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } }
+        match (o) { Some(s2) => { acc = (acc + s2.len()) % 251; }, None => { } }
+        w = w + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// RETURNING ARMS (#4353 p1): every arm returns, so the post-match drop
+	// site is dead code — the return-path sweep now fires the pending drop
+	// before op_return. Churned via a caller loop; flat after the fix.
+	{"optstr-return-arms-churn", `import "std/i32";
+function probe(k: i32): i32 {
+    let o: Option[string] = Some("v" + k.to_string());
+    match (o) {
+        Some(s) => { return s.len(); },
+        None => { return 0; }
+    }
+    return 0;
+}
+function main(): i32 {
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    return 0;
+}`, 0},
+	// Result sibling (#4353 p3): Err payload with returning arms.
+	{"resulterr-return-arms-churn", `import "std/i32";
+function probe(k: i32): i32 {
+    let r: Result[i32, string] = Err("e" + k.to_string());
+    match (r) {
+        Ok(v) => { return v; },
+        Err(m) => { return m.len(); }
+    }
+    return 0;
+}
+function main(): i32 {
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    return 0;
+}`, 0},
+	// MIXED arms — the dual-site soundness case: one arm returns (drop via
+	// the return-path sweep), the other falls through (drop via the
+	// post-match site). Each dynamic path frees exactly once — a double-free
+	// trips the underflow detector, a miss trips the bump guard.
+	{"optstr-mixed-arms-churn", `import "std/i32";
+function probe(k: i32): i32 {
+    let o: Option[string] = Some("v" + k.to_string());
+    let acc: i32 = 0;
+    match (o) {
+        Some(s) => { if (s.len() > 100) { return 1; } acc = s.len(); },
+        None => { return 0; }
+    }
+    return acc;
+}
+function main(): i32 {
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    return 0;
+}`, 0},
+	// Array payload with returning arms — the "#a" pending kind.
+	{"optarr-return-arms-churn", `function probe(k: i32): i32 {
+    let o: Option[i32[]] = Some([k, k + 1]);
+    match (o) {
+        Some(xs) => { return xs[0]; },
+        None => { return 0; }
+    }
+    return 0;
+}
+function main(): i32 {
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    return 0;
+}`, 0},
+	// PAYLOAD-RETURN negative: `Some(s) => { return s; }` moves the payload
+	// out — binds_esc rejects the credit entirely (no pending, no post-match
+	// drop), the returned string is valid in the caller, detector zero.
+	{"optstr-return-payload-safe", `import "std/i32";
+function pick(k: i32): string {
+    let o: Option[string] = Some("k" + k.to_string());
+    match (o) {
+        Some(s) => { return s; },
+        None => { }
+    }
+    return "";
+}
+function main(): i32 {
+    let s = pick(7);
+    if (s.len() < 2) { return 97; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// Nested-block candidate with a returning arm: the block-level pending
+	// uses the same return-path sweep (a return exits the FUNCTION).
+	{"optstr-nested-return-arm-churn", `import "std/i32";
+function probe(k: i32): i32 {
+    if (k >= 0) {
+        let o: Option[string] = Some("v" + k.to_string());
+        match (o) {
+            Some(s) => { return s.len(); },
+            None => { return 0; }
+        }
+    }
+    return 0;
+}
+function main(): i32 {
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    return 0;
+}`, 0},
+}
+
+// TestSelfHostOptStrBlockReclaimIRX86_64 drives the cases through the
+// self-hosted x86-64 compiler (asm_load_run), heap-bump + underflow guarded.
+func TestSelfHostOptStrBlockReclaimIRX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
+
+	for _, tc := range optStrBlockReclaimCases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := []byte(l.emit(t, tc.src+"\n"))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			bin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(bin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+				t.Errorf("%s = %d, want %d (98 = option leaked; 99 = over-release/underflow; 97 = value corrupted)", tc.name, code, tc.want)
+			}
+		})
+	}
+}

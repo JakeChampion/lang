@@ -101,10 +101,10 @@ pass. New semantic operations must add a direct physical refusal test before
 relying on these guards.
 
 ```sh
-scripts/devbox go test ./internal/e2eselfhost \
+scripts/devbox go test ./internal/testing/e2ecompiler \
   -run '^TestSelfHostSSAPhysicalRC($|IRArm64$|Rejects$)' -count=1 -v
 scripts/devbox make lint-all
-scripts/devbox go test ./internal/lint -count=1
+scripts/devbox go test ./internal/tools/lint -count=1
 ```
 
 ## Remaining production work

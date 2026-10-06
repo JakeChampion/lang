@@ -8,7 +8,7 @@ import "../../coreutils/lib/utmp" as utmp;
 // tests/stdlib/coreutils_pwdb_test.fern — the two databases whoami,
 // id, groups and logname read.
 //
-// internal/coreutils compares the utilities against GNU on the machine
+// internal/testing/coreutils compares the utilities against GNU on the machine
 // that runs them, which is the right oracle and cannot reach the rules
 // that depend on what is IN the databases: a malformed line, a
 // duplicate name, a gid no group entry claims. Those need a passwd file

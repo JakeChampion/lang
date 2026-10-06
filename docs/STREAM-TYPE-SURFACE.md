@@ -58,7 +58,7 @@ and consistently with the colorless model: the checker rewrites the `stream[T]`
 result to `T[]` (the eager collected array), so the ordinary parse-time array
 `for-in` desugar (`.len()` + index) iterates it after the collect-wrapper drains
 the stream to EOF — no intermediate `let b: u8[] = …` and no for-in rework
-needed. Locked by `internal/e2e` `TestWasmP3StreamForIn` (→ 42).
+needed. Locked by `internal/testing/e2e` `TestWasmP3StreamForIn` (→ 42).
 
 True *element-at-a-time* lazy iteration (process each item as it arrives off the
 wire, before EOF) is the *colored* model — each loop step an implicit await. It is
@@ -118,7 +118,7 @@ builder-threading desugar).
 
 **L2 — the lazy codegen** (the remaining vertical, must land atomically — it
 flips the eager semantics). Concretised to a near-mechanical plan (this is the
-architecture validated by attempt; codegen lowers via `internal/ir`, so DON'T
+architecture validated by attempt; codegen lowers via `internal/oracle/ir`, so DON'T
 route ForEach through IR — instead the checker desugars the stream ForEach to a
 normal Fern loop calling codegen helpers, so IR/codegen only ever see ordinary
 constructs):
@@ -173,7 +173,7 @@ together (no half-step, since it flips the working eager behavior).
 ## Implementation slices (recon-grounded; file anchors in the recon)
 
 1. **AST + parser foundation.** Add `ast.StreamType{ Elem Type }`
-   (`internal/ast/ast.go`: `isType`, `String` → `"stream[" + Elem + "]"`,
+   (`internal/syntax/ast/ast.go`: `isType`, `String` → `"stream[" + Elem + "]"`,
    `Equal`, `SubstSelf`; left out of `IsPointerType` — it's transformed to `T[]`
    before codegen, never a materialised value). Parse `stream[T]` **contextually**
    in `parser.parseType`: the existing `Ident[args]` generic-instantiation path

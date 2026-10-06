@@ -448,7 +448,7 @@ function pruned_if(f: ast.StmtIf): ast.Stmt {
 // The two halves of the compile target's name as string literals:
 // `target_os()` is the environment — "linux", "darwin", "android" or "wasi"
 // — and `target_arch()` is the ISA — "arm64", "x86-64" or "wasm32". Neither
-// is ever this compiler's host. Native folds both in internal/constfold
+// is ever this compiler's host. Native folds both in internal/check/constfold
 // ahead of the check; here they fold on the compile path, where the driver
 // knows the target, and asmcore's builtin table types the calls for a bare
 // -check.
@@ -518,7 +518,7 @@ function to_expr(e: ast.Expr, a: TargetAcc): (ast.Expr, TargetAcc, boolean) {
 
 // elide_asserts drops every `assert(...)` check from the program — the `-O`
 // release-build behaviour, and the only thing native spends that flag on
-// (internal/constfold.ElideAsserts, #4416). The parser desugars an assert to
+// (internal/check/constfold.ElideAsserts, #4416). The parser desugars an assert to
 // an `if (!cond) { eprint(…); exit(1); }` stamped with parser.ORIGIN_ASSERT,
 // so the pass filters exactly those out of every statement list.
 //

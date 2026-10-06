@@ -24,7 +24,7 @@ The self-host has **two** IR layers, mirroring the two the native
 compiler has:
 
 - **`ir.fern` / `irlower.fern`** — the stack IR, mirroring native's
-  `internal/ir`. This is "the layer where Perceus reference counting
+  `internal/oracle/ir`. This is "the layer where Perceus reference counting
   lives" (ir.fern header) and the one CLAUDE.md's goal 1 (widen the IR
   subset until the AST fallback is gone) and goal 2 (port Perceus to the
   self-host) both target. **This plan is for this path.**
@@ -151,7 +151,7 @@ There are **no** `make_env` / `make_closure` ops yet.
 
 ### Native reference
 
-`internal/closureconv/closureconv.go` is the native Go closure-conversion
+`internal/oracle/closureconv/closureconv.go` is the native Go closure-conversion
 pass — free-variable capture, `ptrW`-aware env-offset layout
 (`captureSlotSize`, closureconv.go:445), lambda→`FuncDecl` hoisting with
 a synthetic `__env` param, `CaptureRef{Offset,Type}` body rewriting,
@@ -166,7 +166,7 @@ The IR port mirrors these concepts.
 Smallest atomic end-to-end unit. Covers programs that pass a *top-level
 function by name* and call it through a function-typed param/local — e.g.
 the `zero-arg-fn-value` and `predicate` cases in
-`internal/e2e/self_host_closures_test.go`. **No env, no capture
+`internal/testing/e2e/self_host_closures_test.go`. **No env, no capture
 analysis, no hoisting.**
 
 ABI decision: a plain function value is just a **bare table
@@ -200,7 +200,7 @@ Work:
 - **asm_ir.fern** / **asm_arm64_ir.fern**: `const_func` → load the
   function label's address (`lea` / `adrp+add`); `call_indirect` →
   marshal args per the SysV / AAPCS ABI and indirect-`call`/`blr`.
-- **Tests**: a new `internal/e2e/self_host_fnval_ir_test.go` with
+- **Tests**: a new `internal/testing/e2e/self_host_fnval_ir_test.go` with
   hardcoded-oracle wasm-IR cases (function value bound + passed +
   called, predicate-over-array), plus an eligibility probe like
   `TestSelfHostIRTupleReturnEligible`. Gate: wasm e2e + x86-64 fixpoint

@@ -2,25 +2,23 @@
 
 This document is the **living record** of an ongoing audit of every
 built-in language feature and every standard-library function in Fern.
-The goal: confirm each feature works **correctly on every backend, in
-both the native and the self-hosted compiler** — and fix any bugs found
-along the way.
+The goal: confirm each feature works **correctly on every backend of the
+compiler**, and agrees with the interpreter — and fix any bugs found along
+the way.
 
-Two compilers, each with its own backends, are in scope:
+What is in scope:
 
-- **Native** (the Go implementation): four backends — the AST
-  **interp**reter, **x86-64**, **arm64**, **wasm**. Audited with the
-  data-driven fixture harness (`TestFernFixtures`), which runs a program
-  across all four and checks stdout + exit code.
-- **Self-hosted** (the Fern-in-Fern compiler under `compiler/`):
-  driven by the `self_host_*_test.go` harnesses, which build a driver
-  binary (`asm_run.fern` / `asm_ir_run.fern` (which also serves the arm64 /
-  arm64-darwin backends via `-target`) / `wasm_ir_run.fern` /
-  `interp_run.fern`), feed it Fern source, then
-  assemble + run the result and check the exit code. The self-hosted
-  compiler has a narrower **IR subset** than the native one (goal 1 in
-  CLAUDE.md is to widen it until the legacy AST fallback is never taken),
-  so it is the more likely place to surface gaps.
+- **The compiler** under `compiler/`, with its x86-64, arm64,
+  arm64-darwin and wasm backends. Driven by the `self_host_*_test.go`
+  harnesses, which build a driver binary from `compiler/drivers/`, feed it
+  Fern source, then assemble and run the result and check the output.
+- **The interpreter** (`fern -interp`), the oracle the compiled output is
+  compared against.
+
+Entries before 2026-10-05 also record a native Go compiler with its own
+x86-64, arm64 and wasm backends, audited with the `TestFernFixtures`
+harness. Those backends are retired (`docs/NATIVE-RETIREMENT.md`); their
+columns are history.
 
 It is meant to stay up to date — when a feature is audited, its row is
 updated; when a bug is found, an issue is opened and the finding is
@@ -40,7 +38,7 @@ involution, ordering, permutation, algebraic law), we prefer a
   run as ordinary fixtures across all four backends — verifying both the
   property *and* cross-backend agreement in one shot.
 - This complements the existing harnesses already in the tree:
-  `internal/e2e/numeric_property_test.go` (differential property testing
+  `internal/testing/e2e/numeric_property_test.go` (differential property testing
   of the numeric surface, interp = oracle), `diff_oracle_test.go`
   (fernsmith-generated whole programs), and the in-language `std/fuzz`
   harness. Property fixtures live under
@@ -51,7 +49,7 @@ arm64-only heap-corruption bug (see audit log, 2026-06-09).
 
 ## How features are verified
 
-The data-driven fixture harness (`internal/e2e/fixture_test.go`,
+The data-driven fixture harness (`internal/testing/e2e/fixture_test.go`,
 `TestFernFixtures`) compiles and runs a program across **all four
 backends** and checks stdout + exit code. Most audit work lands as new
 fixtures under `conformance/cases/<name>/`. A fixture exercising
@@ -87,7 +85,7 @@ Blank = not yet confirmed on that backend.
 ## A. Built-in language features
 
 Self-host (**S**) verification for §A landed via
-`internal/e2e/self_host_audit_builtins_test.go` (per-feature isolated
+`internal/testing/e2e/self_host_audit_builtins_test.go` (per-feature isolated
 programs through the self-hosted x86-64 driver + CI-gated arm64); native
 (**I/X/A/W**) via the `audit_core_builtins` fixture (all four backends).
 
@@ -159,7 +157,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `stdin()/stdout()/stderr()` | | | | | | ⬜ | Reader/Writer |
 | `read_file` / `read_file_bytes` / `write_file` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | native: BACKEND-PARITY ReadFile/WriteFile + ReadFileBytes tests; self-host: fs tests + probe; `read_file_bytes(path): Result[u8[], IoError]` is the raw sibling (#5714) |
 | `open_reader/open_writer/open_appender` | | | | | | ⬜ | |
-| `open_exclusive` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | #8776. interp: `internal/interp/open_exclusive_test.go`; x86-64 / arm64: the `open_exclusive_refuses_existing` case in each backend's e2e table; wasm: both WASI ABIs; self-host: lowered in irlower + asmcore's `wr_creat_excl`, with its own open-file IR tests. Creates 0600, pinned as `mode & 0o077 == 0` — a umask only clears bits, so that holds under any umask where `== 0600` would pin the runner's — by the `open_exclusive_is_not_world_readable` case in the x86-64 and arm64 e2e tables and by `TestOpenExclusiveIsNotReadableByGroupOrOther` on the interp path, which the compiled cases cannot see. Its three siblings are NOT audited here — this row was split off rather than ticked for all four |
+| `open_exclusive` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | #8776. interp: `internal/oracle/interp/open_exclusive_test.go`; x86-64 / arm64: the `open_exclusive_refuses_existing` case in each backend's e2e table; wasm: both WASI ABIs; self-host: lowered in irlower + asmcore's `wr_creat_excl`, with its own open-file IR tests. Creates 0600, pinned as `mode & 0o077 == 0` — a umask only clears bits, so that holds under any umask where `== 0600` would pin the runner's — by the `open_exclusive_is_not_world_readable` case in the x86-64 and arm64 e2e tables and by `TestOpenExclusiveIsNotReadableByGroupOrOther` on the interp path, which the compiled cases cannot see. Its three siblings are NOT audited here — this row was split off rather than ticked for all four |
 | Reader `.read_line()/.read_chunk(n)/.close()` | | | | | | ⬜ | |
 | Writer `.write(s)/.close()` | | | | | | ⬜ | |
 | `read_line()` (free) | | | | | | ⬜ | |
@@ -316,7 +314,7 @@ backends, and the self-host prelude was rewritten to mirror the new
 constructs — a `Cell[string]` struct field and accumulation into it, which the
 self-host lowers on the IR path unchanged.
 
-Two derived rows moved with it (`internal/platforms`): `std/mock_platform`
+Two derived rows moved with it (`internal/pkg/platforms`): `std/mock_platform`
 and `std/fetch` now reach what `std/platform` reaches, because both import it
 for the seam. Neither calls a capability — module-granular reach, and E066 is
 post-tree-shake.
@@ -325,7 +323,7 @@ post-tree-shake.
 
 Fern could not ask whether a path is a symlink. `stat` follows them, `FileStat`
 carries no link bit, and there is no `readlink`. That is a small gap until
-something needs the answer: `internal/embed` skips every entry that is not a
+something needs the answer: `internal/pkg/embed` skips every entry that is not a
 regular file, which is what keeps an asset tree from reaching outside its root
 or wedging the walk on a cycle, and the self-host port of `-embed` (#6643) had
 no way to spell that predicate. It capped directory nesting instead, which
@@ -348,11 +346,11 @@ which is also why every test below compares `lstat` AGAINST `stat` on the same
 paths. A copy that quietly still followed links would agree with `stat`
 everywhere and look correct to any test that ran it alone.
 
-Four classifications as usual (`internal/platforms`, `internal/caps`, and both
+Four classifications as usual (`internal/pkg/platforms`, `internal/pkg/caps`, and both
 self-host mirrors), all `fs`, plus `parser.builtin_function_names()`.
 
 Its first consumer is `compiler/embed.fern`, which now skips
-non-regular entries exactly as `internal/embed` does. `internal/embed` gained a
+non-regular entries exactly as `internal/pkg/embed` does. `internal/pkg/embed` gained a
 fix in the same change: `WalkDir` lstats its own root, so `-embed` naming a
 symlink to a directory passed the directory check and then embedded nothing, in
 silence. Both compilers now follow the root and skip everything below it.
@@ -383,7 +381,7 @@ literal: the three common ones have single-letter escapes, and a high byte like
 (#6643), where an asset is arbitrary bytes by definition and the first real one
 was a five-byte blob with an interior NUL.
 
-Tests: `internal/e2eselfhost/self_host_string_escape_test.go`. The x86-64 half
+Tests: `internal/testing/e2ecompiler/self_host_string_escape_test.go`. The x86-64 half
 compiles and RUNS the probe under both compilers and compares the bytes it
 prints; the arm64 half compares assembled `.rodata` against
 `internal/native/arm64` on identical GAS text, needing no qemu — the layer the
@@ -392,7 +390,7 @@ bug is in. Verified red before the fix (6 of 10 rows on arm64) and green after.
 ### 2026-09-01 — `strbuf_*` implemented in the native wasm backend (#7947)
 
 The last blank in the `strbuf_reset/append/take` row. The three builtins are
-CORE (`internal/platforms`), so E066 never refuses them and they reach codegen
+CORE (`internal/pkg/platforms`), so E066 never refuses them and they reach codegen
 on every target; `wasmbin` had no spec, no `scanRuntimeHelpers` case and no
 alias, so any wasm program touching one died with
 `unknown callee "strbuf_reset"` — including the whole self-host compiler
@@ -480,7 +478,7 @@ reading is a silently wrong regression test.
   exit code or delta, and there is no implicit narrowing, so each call site
   gained an explicit `as i32`. That preserves every existing assertion exactly:
   all of them measure well under 2 GiB.
-- **Gate.** `internal/e2e/rc_heap_bump_i64_test.go`. `HeapBumpIsI64` binds the
+- **Gate.** `internal/testing/e2e/rc_heap_bump_i64_test.go`. `HeapBumpIsI64` binds the
   probe to an i64 local and does 64-bit-only arithmetic on all three backends,
   so a re-narrowing is a compile error rather than a wrong number;
   `TestX86_64HeapBumpAbove2GiB` bumps the cursor to 2400000032 bytes and reads
@@ -1006,8 +1004,8 @@ Together with the bare-float-literal inference fix (previous entry), a float
 literal now binds `T = f64` AND satisfies the bounds — so `assert_eq` /
 `assert_lt` / `assert_gt` over floats compile and run correctly on every backend.
 Gated by the `cmp_float_traits` fixture (Eq + Display + Debug + Ord over f64, on
-interp / x86-64 / arm64 / wasm); `TestFernFixtures`, `internal/checker`,
-`internal/monomorph`, `TestSelfHostStdTestE2E`, and the Stage-2 fixpoint stay
+interp / x86-64 / arm64 / wasm); `TestFernFixtures`, `internal/check/checker`,
+`internal/oracle/monomorph`, `TestSelfHostStdTestE2E`, and the Stage-2 fixpoint stay
 green.
 
 ### 2026-06-28 — checker: a bare-float-literal generic argument infers `f64`, not `i32`
@@ -1031,7 +1029,7 @@ in `std/float`, not visible to `core/cmp`) — both documented follow-ups.
 
 Gated by the `generic_float_literal_arg` fixture (T-only-in-params at f64, plus
 i32 / string regression arms, on interp / x86-64 / arm64 / wasm); the full
-`TestFernFixtures` suite, `internal/checker`, and `internal/monomorph` stay green.
+`TestFernFixtures` suite, `internal/check/checker`, and `internal/oracle/monomorph` stay green.
 
 ### 2026-06-28 — `stat(path)` lowers on the IR path — first struct-RESULT builtin (flips `batch7`)
 
@@ -2980,7 +2978,7 @@ Row flipped to ✅.
 The `__heap_bump_bytes()` builtin — the bump allocator's high-water mark (cursor
 − region base; 0 before the first allocation) — had no self-host IR lowering and
 bailed the whole module to the legacy AST emitter. Native handles it on every
-backend (`internal/ir` → `__fern_heap_bump_bytes`), so this was a goal-1
+backend (`internal/oracle/ir` → `__fern_heap_bump_bytes`), so this was a goal-1
 IR-subset gap. New `ir.op_heap_bump_bytes`, recognised in `irlower.lower_expr`,
 emitted inline by each backend from its own heap cursor: x86-64 `__fern_heap_ptr
 − &__fern_heap` (the static heap symbol; `cmovne`-guarded so a still-zero cursor
@@ -3601,7 +3599,7 @@ i64[] / f64[] already rode the 8-byte-element path (`op_arr_make_i64` + the
   and the return-type registry — separate increments). The change only affects
   slots that are `is_arr && is_u64` (i.e. u64[]), which never reached IR before, so
   no self-host source changes classification and the Stage-2 fixpoint holds.
-- **Tests.** `internal/e2e/self_host_u64_array_ir_test.go` —
+- **Tests.** `internal/testing/e2e/self_host_u64_array_ir_test.go` —
   `TestSelfHostU64ArrayIR{X86_64,Wasm}`, 7 cases each routing-pinned `"ir"` and
   oracle-checked (len, index, iterate, alias, 8-byte wide-value, u64[] param, plus
   an i64[] regression guard).
@@ -3629,7 +3627,7 @@ the self-host IR path. Previously a self-referential struct fell to the AST emit
   types go through the `Ty` **union** (`TyOption { inner: Ty }`), handled as a
   nominal-enum field — not a struct back-edge — so no self-host source struct
   changes classification and the Stage-2 byte-identical fixpoint holds.
-- **Tests.** `internal/e2e/self_host_selfref_struct_ir_test.go` —
+- **Tests.** `internal/testing/e2e/self_host_selfref_struct_ir_test.go` —
   `TestSelfHostSelfrefStructIR{X86_64,Wasm}`, 7 cases (bind + scalar read, empty /
   filled `Node[]` length, element field read, children-sum loop, struct as
   param/return, mutual recursion), each routing-pinned `"ir"` and oracle-checked.
@@ -4361,7 +4359,7 @@ Author note: module-level free functions are called qualified
 `repeat` / `pad_start` / `split`, with result strings compared directly. ✅ on
 interp / x86-64 / arm64 / wasm.
 
-**Self-host:** already covered by `internal/e2e/self_host_string_test.go`, which
+**Self-host:** already covered by `internal/testing/e2e/self_host_string_test.go`, which
 bundles the full std/string and exercises the same core methods (index_of /
 trim / upper / lower / contains / starts_with / replace / repeat / split) — so
 no new self-host test was needed. The §D std/string row is promoted from 🔄 to
@@ -4379,7 +4377,7 @@ arm64 / wasm — a 4-backend differential check that these heavily-used pure
 functions agree everywhere.
 
 **Self-host arm (x86-64 + CI-gated arm64):** new test
-`internal/e2e/self_host_audit_stdarray_test.go` broadens the std/array bundle
+`internal/testing/e2e/self_host_audit_stdarray_test.go` broadens the std/array bundle
 coverage (sum / product / sorted_asc / max) beyond the existing single gcd_all
 case; std/math is already covered by `self_host_math_test.go`. All green.
 
@@ -4395,7 +4393,7 @@ the array-reduction `max`/`min` are receiver methods.
 (usable). ✅ on interp / x86-64 / arm64 / wasm.
 
 **Self-host arm (x86-64):** new test
-`internal/e2e/self_host_audit_platform_test.go` — the above plus `monotonic_ns`
+`internal/testing/e2e/self_host_audit_platform_test.go` — the above plus `monotonic_ns`
 and `sleep_ms`. All 6 pass.
 
 **Finding — `monotonic_ns` + `sleep_ms` unimplemented on native code-gen
@@ -4418,7 +4416,7 @@ reach stdout), and `.len()` (string + array). ✅ on interp / x86-64 / arm64 /
 wasm.
 
 **Self-host arm (x86-64):** new test
-`internal/e2eselfhost/self_host_audit_io_test.go` — checks the compiled program's
+`internal/testing/e2ecompiler/self_host_audit_io_test.go` — checks the compiled program's
 stdout + exit code for `print` / `write` / `eprint` / `exit`. All pass.
 
 **Finding — `putchar` unsupported on self-host
@@ -4443,7 +4441,7 @@ higher-order, tail-call at depth 5000). ✅ on interp / x86-64 / arm64 / wasm,
 and both clear the wasm owned-vs-borrow differential gate.
 
 **Self-host arm (x86-64 + CI-gated arm64):** new test
-`internal/e2e/self_host_audit_numgen_test.go` — 17 isolated programs covering
+`internal/testing/e2e/self_host_audit_numgen_test.go` — 17 isolated programs covering
 all of the above. All pass on the self-hosted compiler.
 
 **Notes (no bugs filed):**
@@ -4471,7 +4469,7 @@ concat / `==`/`!=` / byte index / slice `s[i:j]` (an `Option[str]` since
 string keys. ✅ on interp / x86-64 / arm64 / wasm.
 
 **Self-host arm (x86-64 + CI-gated arm64):** new test
-`internal/e2e/self_host_audit_data_test.go` — the same as 13 isolated programs.
+`internal/testing/e2e/self_host_audit_data_test.go` — the same as 13 isolated programs.
 All pass on the self-hosted compiler.
 
 **Finding — `Array.with` in-place reuse is unsound when the receiver stays live
@@ -4498,7 +4496,7 @@ payloads (incl. unit variants), `match` statement + expression, tuples + `.0`/`.
 interp / x86-64 / arm64 / wasm.
 
 **Self-host arm (x86-64 + CI-gated arm64):** new test
-`internal/e2e/self_host_audit_types_test.go` — the same as 12 isolated programs.
+`internal/testing/e2e/self_host_audit_types_test.go` — the same as 12 isolated programs.
 All pass on the self-hosted compiler.
 
 **Finding — struct-field immutability not enforced on self-host
@@ -4551,7 +4549,7 @@ half-open ranges, `match` (multiple literal arms + wildcard), `break` /
 `continue`, and nested blocks. ✅ on interp / x86-64 / arm64 / wasm.
 
 **Self-host arm (x86-64 + CI-gated arm64):** new test
-`internal/e2e/self_host_audit_builtins_test.go` — the same built-ins as isolated
+`internal/testing/e2e/self_host_audit_builtins_test.go` — the same built-ins as isolated
 per-feature programs. 17 features pass on the self-hosted compiler. **Three
 genuine self-host gaps surfaced** (native handles all three on every backend),
 each filed as an issue and held out of the executed table:
@@ -4659,7 +4657,7 @@ Each runs 300 deterministic LCG-generated inputs across the full byte range
   available in this environment (qemu-aarch64, wasmtime, wasm-tools,
   `FERN_WASI_ADAPTER`), so no backend leg SKIPs.
 - Built this inventory from `docs/STDLIB.md`, the checker's
-  `FuncSigs` registrations (`internal/checker/checker.go`), and the
+  `FuncSigs` registrations (`internal/check/checker/checker.go`), and the
   README "Language at a glance" surface.
 </content>
 </invoke>

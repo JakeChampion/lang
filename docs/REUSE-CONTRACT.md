@@ -24,7 +24,7 @@ NATIVE compiler (plan E2', 2026-07-13): annotate a function
 `fbip` (or graded `fbip(n)` / `fip(n)`) and the IR layer errors
 with **E068** unless every constructor site is reuse-paired
 (R1–R4 below) or within the allowance — `fern explain E068` for
-the exact contract, `internal/ir/fip_verify.go` for the pass.
+the exact contract, `internal/oracle/ir/fip_verify.go` for the pass.
 The self-host compiler runs the same check over its own lowering
 (`compiler/irfipverify.fern`, on every compile path). Still
 open: the drop-guided source selection default (plan E3 —
@@ -35,7 +35,7 @@ they are listed under "taints".
 
 Every reuse shape has the same skeleton:
 
-1. **Static selection** (`internal/ir/rc_analysis.go`): an
+1. **Static selection** (`internal/oracle/ir/rc_analysis.go`): an
    analysis pass proves a *pairing* — a construction site C can
    take over the box of a dead, owned donor D of compatible
    layout. This is the PLDI 2021 Perceus "reuse token" model
@@ -60,10 +60,10 @@ values built from literals/untracked sources.
 
 `p = Point { … };` where `p` already holds a uniquely-owned
 `Point`: the new literal writes into `p`'s existing box.
-Hook: `tryStructReuseOverwrite` (`internal/ir/ir.go`), wired
+Hook: `tryStructReuseOverwrite` (`internal/oracle/ir/ir.go`), wired
 into `assign`. Old field payloads are released to balance
 StructLit's field incs (`emitReuseOldFieldDrops`).
-Locked by: `internal/ir/struct_reuse_test.go`.
+Locked by: `internal/oracle/ir/struct_reuse_test.go`.
 
 ### R2 — enum self-overwrite
 
@@ -75,7 +75,7 @@ doesn't inc its payloads, so the reuse is a pure alloc-elision
 that is rc-neutral vs the baseline flat-dec. Scalar enums built
 from literal args are conservatively tainted (`rhsTainted`) and
 don't fire.
-Locked by: `internal/ir/enum_reuse_test.go`.
+Locked by: `internal/oracle/ir/enum_reuse_test.go`.
 
 ### R3 — general pairing reuse (cross-local FBIP)
 
@@ -94,13 +94,13 @@ D's OWN layout (`reuseSourceLayout`) before C stores its own.
 One dead D can feed a construction in **every arm** of an `if` /
 `match` nested in the statement it dies before: only one arm runs
 per pass, so the single token is claimed at most once
-(`mutuallyExclusive`, `internal/ir/rc_cross_branch.go`). Two
+(`mutuallyExclusive`, `internal/oracle/ir/rc_cross_branch.go`). Two
 constructions that can both run — straight-line siblings, or
 separate iterations of a loop — still share nothing: the first
 consumer zeroes D's slot.
-Locked by: `internal/ir/general_reuse_test.go`,
-`internal/ir/cross_branch_reuse_test.go`,
-`internal/e2e/rc_cross_branch_reuse_test.go`.
+Locked by: `internal/oracle/ir/general_reuse_test.go`,
+`internal/oracle/ir/cross_branch_reuse_test.go`,
+`internal/testing/e2e/rc_cross_branch_reuse_test.go`.
 
 ### R4 — consuming-match reuse (C2, zero-alloc FBIP)
 
@@ -119,8 +119,8 @@ donor's slot count off the variant the arm's payload reads name
 the construction are the same variant there. So a ragged enum such as
 `Tree { Tip(i32), Fork(Tree, Tree) }` compiles under `fbip` and runs
 allocation-free on the self-host, while native's E068 refuses it.
-Locked by: `internal/ir/c2_consuming_reuse_test.go`,
-`internal/e2eselfhost/self_host_fip_inplace_reuse_test.go` (its
+Locked by: `internal/oracle/ir/c2_consuming_reuse_test.go`,
+`internal/testing/e2ecompiler/self_host_fip_inplace_reuse_test.go` (its
 `fbip-ragged-enum-rebuilt-per-arm` case pins the self-host's answer).
 
 ### R5 — consuming owned matches (drop-specialised release)
@@ -163,7 +163,7 @@ A consumed `.with` receiver has its slot nulled at the call
 (`arraySetConsumedSites`), so every later release of the slot
 no-ops and a path that never reached the `.with` still releases
 what it holds.
-Locked by: `internal/ir/append_inplace_test.go`,
+Locked by: `internal/oracle/ir/append_inplace_test.go`,
 `push_counted_store_test.go`.
 
 ### R7 — owned same-shape elementwise map (#9733)
@@ -257,19 +257,19 @@ compiler's reuse layer. Its E068 counts a `map` it declines as
 fresh, listing the conditions rather than naming the one that
 failed.
 
-Locked by: `internal/ir/array_inplace_test.go` (the rewrite, one
+Locked by: `internal/oracle/ir/array_inplace_test.go` (the rewrite, one
 refusal per condition above, and E068 passing on the shape and
 naming the rule where it declines),
-`internal/ir/array_storage_test.go` (one report verdict per
-taint), `internal/e2e/array_inplace_test.go` (the same answers
+`internal/oracle/ir/array_storage_test.go` (one report verdict per
+taint), `internal/testing/e2e/array_inplace_test.go` (the same answers
 as a hand-written loop, four backends),
-`internal/e2e/array_inplace_fip_test.go` (the annotated function
+`internal/testing/e2e/array_inplace_fip_test.go` (the annotated function
 allocates nothing across 200 maps on every backend, and a donor
 still held by an alias is copied rather than mutated),
-`internal/e2e/array_pipeline_baseline_test.go` (pipeline 3
+`internal/testing/e2e/array_pipeline_baseline_test.go` (pipeline 3
 reaches the hand-written loop's zero, with the borrowed control
 still paying its copy),
-`internal/e2eselfhost/self_host_fip_inplace_reuse_test.go` (the
+`internal/testing/e2ecompiler/self_host_fip_inplace_reuse_test.go` (the
 annotated function allocates nothing on the self-host's three
 targets, a shared donor is copied, and a receiver read after the
 map is not written), `self_host_fip_budget_test.go` (an `i32` map
@@ -318,7 +318,7 @@ the nine `emitAliasInc` call sites is gated on `moveSites`
 - **Drop-guided selection** (ICFP 2022): **evaluated 2026-07-13**
   (plan item **E3**) — implemented behind `ast.RcReuseDropGuided`
   (default OFF; `FERN_RC_REUSE_DROP_GUIDED=1`) in
-  `internal/ir/rc_dropguided.go`. Finding: on this codebase's
+  `internal/oracle/ir/rc_dropguided.go`. Finding: on this codebase's
   shapes the token flow selects a **superset** of the PLDI
   pairing — equal on every shape above (R1–R6/M unchanged), plus
   one genuinely new shape: a donor whose LAST USE sits inside a
@@ -334,7 +334,7 @@ the nine `emitAliasInc` call sites is gated on `moveSites`
 - **Visibility** (`fip`/`fbip` verify-and-enable): **CLOSED on the
   native compiler** (plan item **E2'**, 2026-07-13). `fbip` /
   `fbip(n)` / `fip(n)` make the pairing programmer-visible: the IR
-  op-scan (`internal/ir/fip_verify.go`, run per function right
+  op-scan (`internal/oracle/ir/fip_verify.go`, run per function right
   after lowering) errors with E068 when a constructor site is NOT
   reuse-paired — a paired site lowers to `__alloc_reuse`, so every
   remaining `OpAlloc` is a fresh site; the runtime `is_unique`
@@ -342,7 +342,7 @@ the nine `emitAliasInc` call sites is gated on `moveSites`
   (fip/fbip is the SHAPE guarantee — shared inputs may copy).
   The self-host compiler verifies the same claims
   (`irfipverify.fern`). For un-annotated code, the rc dump
-  (`internal/ir/rc_dump.go`) and the allocation counters in the
+  (`internal/oracle/ir/rc_dump.go`) and the allocation counters in the
   reuse tests remain the inspection tools.
 
 ## Contract for the self-host port

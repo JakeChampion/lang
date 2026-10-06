@@ -101,20 +101,20 @@ an already-shared value and are out of scope for this migration).
 
 ### 1a. Struct field assignment — `obj.field = v`
 
-- **Checker permits it.** `*ast.Assign` (`internal/checker/checker.go:4919`)
+- **Checker permits it.** `*ast.Assign` (`internal/check/checker/checker.go:4919`)
   type-checks `n.Target` and `n.Value`, requires assignability, and
   the comment at `:4930-4939` records that `FieldAccess`, `Ident`, and
   `Index` are the three addressable target shapes. There is **no
   mutability gate** — no `mut` keyword, no `let` field
   distinction, no recursion-aware rejection.
-- **IR lowers it to a raw in-place store.** `internal/ir/ir.go:9921`
+- **IR lowers it to a raw in-place store.** `internal/oracle/ir/ir.go:9921`
   (`case *ast.FieldAccess:` inside `b.assign`): resolve the owning
   struct (`b.fieldOwner`), compute `base + rcHeader + field_offset`
   from `structFieldLayout`, evaluate the value, emit
   `payloadStoreOpFor(ft, b.ptrW)` (`ir.go:9955`). No CoW, no rc check —
   it writes the shared box directly. Compound forms (`a.v += 35`) flow
   through the same path after desugar.
-- **Tests assert it.** `internal/e2e/self_host_field_assign_test.go`
+- **Tests assert it.** `internal/testing/e2e/self_host_field_assign_test.go`
   (`fieldAssignCases`, lines 17-26) — four cases run on the self-hosted
   x86-64 (`TestSelfHostFieldAssignX86_64`) and arm64
   (`TestSelfHostFieldAssignArm64`) compilers:
@@ -129,7 +129,7 @@ an already-shared value and are out of scope for this migration).
 
 ### 1b. Mutable closure-capture write-back — `cap = v` inside a closure
 
-- **IR lowers it** at `internal/ir/ir.go:9958` (`case *ast.CaptureRef:`
+- **IR lowers it** at `internal/oracle/ir/ir.go:9958` (`case *ast.CaptureRef:`
   in `b.assign`): load `__env`, add `cr.Offset`, evaluate value, emit
   `payloadStoreOpFor(cr.Type, b.ptrW)`. The comment (`:9959-9971`)
   states the semantics directly: *"The env block is heap-allocated and
@@ -345,8 +345,8 @@ have reference semantics — the exact property immutability removes.
 ## 4. Design sketch — functional struct-update expression (step 2)
 
 **No spread/struct-update syntax exists today** (verified: no
-`spread` / `...` / `StructUpdate` in `internal/parser/*.go` or
-`internal/ast/*.go`). It must be built.
+`spread` / `...` / `StructUpdate` in `internal/syntax/parser/*.go` or
+`internal/syntax/ast/*.go`). It must be built.
 
 ### Proposed syntax
 
@@ -370,16 +370,16 @@ already evokes and is unambiguous after `{`.
 
 ### Parser
 
-In `parseStructLit` (`internal/parser/parser.go:2747`): before the
+In `parseStructLit` (`internal/syntax/parser/parser.go:2747`): before the
 field loop, if the next tokens are `...`, parse `...<expr>` as the
 base and stash it. Add a `Base ast.Expr` field to `ast.StructLit`
-(`internal/ast/ast.go:884`) — `nil` for today's plain literals, so all
+(`internal/syntax/ast/ast.go:884`) — `nil` for today's plain literals, so all
 existing code is unaffected. The field loop is unchanged; a trailing
 `}` after just `...old` (no overrides) is legal (a pure copy).
 
 ### Checker
 
-In the `*ast.StructLit` case (`internal/checker/checker.go:5116`):
+In the `*ast.StructLit` case (`internal/check/checker/checker.go:5116`):
 - If `Base != nil`, type-check it; require its type `== StructType{TypeName}`
   (error `E003`-style "struct-update base must be Foo, got …").
 - For each override `FieldInit`, type-check `Value` against the declared
@@ -393,7 +393,7 @@ In the `*ast.StructLit` case (`internal/checker/checker.go:5116`):
 
 ### IR lowering
 
-Mirror the existing `*ast.StructLit` emit (`internal/ir/ir.go:6921`),
+Mirror the existing `*ast.StructLit` emit (`internal/oracle/ir/ir.go:6921`),
 which already does: `OpAlloc(size + rcHeaderBytes)` → store `rc=1` at
 `[base+0]` → per-field `base + rcHeader + offset` store. For
 struct-update:
@@ -482,7 +482,7 @@ code); self-host / fixpoint-gated last.
 
 Once §5 lands, flip the checker to reject the two mutation targets:
 
-- In `*ast.Assign` (`internal/checker/checker.go:4919`): when
+- In `*ast.Assign` (`internal/check/checker/checker.go:4919`): when
   `n.Target` is `*ast.FieldAccess` (or, post-closureconv, a captured
   ident that becomes `*ast.CaptureRef`), emit a new error
   (e.g. `E0xx`: "fields are immutable after construction; use
@@ -496,7 +496,7 @@ Once §5 lands, flip the checker to reject the two mutation targets:
 
 ### Tests that need updating (the regression-prone surface)
 
-- **`internal/e2e/self_host_field_assign_test.go`** — this asserts the
+- **`internal/testing/e2e/self_host_field_assign_test.go`** — this asserts the
   behaviour being **removed**. All four `fieldAssignCases` (incl. the
   `bump-through-fn` mutate-through-call) must be either deleted or
   **inverted** into checker-rejection tests (assert the new error code).
@@ -527,10 +527,10 @@ Once §5 lands, flip the checker to reject the two mutation targets:
 
 | Claim | Evidence (verified) |
 |---|---|
-| Checker accepts FieldAccess assign target, no mut gate | `internal/checker/checker.go:4919-4939` |
-| Field assign lowers to raw in-place store | `internal/ir/ir.go:9921-9956` |
-| Capture write-back lowers to shared-env store | `internal/ir/ir.go:9958-9983` |
-| Field-assign behaviour asserted (incl. through-call) | `internal/e2e/self_host_field_assign_test.go:17-93` |
+| Checker accepts FieldAccess assign target, no mut gate | `internal/check/checker/checker.go:4919-4939` |
+| Field assign lowers to raw in-place store | `internal/oracle/ir/ir.go:9921-9956` |
+| Capture write-back lowers to shared-env store | `internal/oracle/ir/ir.go:9958-9983` |
+| Field-assign behaviour asserted (incl. through-call) | `internal/testing/e2e/self_host_field_assign_test.go:17-93` |
 | 59 statement-leading field-assign sites, 7 files | grep over `examples/`, `internal/stdlib/` |
 | `json.fern` cursor/error mutation (32) | `internal/stdlib/std/json.fern:138-420` |
 | `url.fern` local builder (7) | `internal/stdlib/std/url.fern:118-191` |
@@ -541,10 +541,10 @@ Once §5 lands, flip the checker to reject the two mutation targets:
 | `mock_platform.fern` receiver builder (2) | `internal/stdlib/std/mock_platform.fern:46,61` |
 | Self-host `.fern` passes do NOT mutate fields | zero statement-leading hits in `compiler/*.fern`; all `<ident>.<field>` lines are `let t: T = …` |
 | `__set_field` is the self-host *desugar/emit*, not usage | `compiler/parser.fern:1181-1195`, `asm.fern:4897-4901` |
-| No struct-update / spread syntax exists yet | no `spread`/`...`/`StructUpdate` in `internal/parser/*.go`, `internal/ast/*.go` |
-| StructLit AST node | `internal/ast/ast.go:884-896` |
-| StructLit parses (field loop) | `internal/parser/parser.go:2747-2779` |
-| StructLit type-check | `internal/checker/checker.go:5116` |
-| StructLit IR emit (alloc + rc header + per-field store) | `internal/ir/ir.go:6921-6975` |
-| Pointer-field rc-inc on field init (aliasing) | `internal/ir/ir.go:6959-6975` (`needsRcIncOnAlias`) |
+| No struct-update / spread syntax exists yet | no `spread`/`...`/`StructUpdate` in `internal/syntax/parser/*.go`, `internal/syntax/ast/*.go` |
+| StructLit AST node | `internal/syntax/ast/ast.go:884-896` |
+| StructLit parses (field loop) | `internal/syntax/parser/parser.go:2747-2779` |
+| StructLit type-check | `internal/check/checker/checker.go:5116` |
+| StructLit IR emit (alloc + rc header + per-field store) | `internal/oracle/ir/ir.go:6921-6975` |
+| Pointer-field rc-inc on field init (aliasing) | `internal/oracle/ir/ir.go:6959-6975` (`needsRcIncOnAlias`) |
 </content>

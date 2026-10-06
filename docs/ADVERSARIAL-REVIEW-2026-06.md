@@ -5,7 +5,7 @@
 > [#2851](https://github.com/JakeChampion/lang/issues/2851)), is now implemented —
 > the interpreter does rc-based COW matching every backend (see
 > `INTERP-MAP-COW-PLAN.md` and the `map_cow_*` differential cases in
-> `internal/e2e/feature_differential_test.go`). The fixed findings below are
+> `internal/testing/e2e/feature_differential_test.go`). The fixed findings below are
 > retained as bug-fix history.
 
 A whole-codebase adversarial review of the Fern compiler. The goal was
@@ -35,7 +35,7 @@ value-flow hook points and `clone()` on the shared path), so it mutates in
 place when unshared and copies when aliased — matching every backend. The
 validation gate is met: the `map_cow_alias_isolation` / `map_cow_func_arg`
 / `map_cow_returned` / `map_cow_alias_then_scope_exit` differential cases
-(`internal/e2e/feature_differential_test.go`) run the interp against every
+(`internal/testing/e2e/feature_differential_test.go`) run the interp against every
 backend and pass, with no new divergence. M3 (delete order) was fixed
 independently. The full design + value-flow hook points are in
 `docs/INTERP-MAP-COW-PLAN.md`.
@@ -87,7 +87,7 @@ above).
 ### F1 — `shadowrename` drops `StructLit.Base`; shadowed struct-update base miscompiles
 
 - **Subsystem:** frontend
-- **Location:** `internal/shadowrename/shadowrename.go:295-298` (the
+- **Location:** `internal/oracle/shadowrename/shadowrename.go:295-298` (the
   `*ast.StructLit` case in `walkExpr`)
 - **Scenario:**
   ```fern
@@ -118,7 +118,7 @@ above).
 ### M1 — Map copy-on-write divergence: interp aliases, compiled backends copy
 
 - **Subsystem:** interpreter vs compiled runtime
-- **Location:** `internal/interp/interp.go:104-116` (`Map` is a pointer,
+- **Location:** `internal/oracle/interp/interp.go:104-116` (`Map` is a pointer,
   `let m2 = m1` aliases) and `interp.go:879-894` (`builtinMapSet` mutates
   in place); vs `internal/stdlib/core/map.fern:174-188`,`:371-372`
   (`__map_cow_inplace` does real COW when rc > 1).
@@ -198,7 +198,7 @@ above).
 
 ### F3 — Decimal integer literals overflow silently in the parser
 
-- **Location:** `internal/parser/parser.go:3252-3255` —
+- **Location:** `internal/syntax/parser/parser.go:3252-3255` —
   `n = n*10 + int64(c-'0')` with no overflow detection (the hex path at
   3247 correctly uses `strconv.ParseInt(...,64)`).
 - **Scenario:** `let x: i64 = 99999999999999999999999999;` (26 digits)
@@ -211,7 +211,7 @@ above).
 
 ### F4 — No missing-return / fall-off-end analysis for value-returning functions
 
-- **Location:** `internal/checker/checker.go:3820-3833` — `checkFunction`
+- **Location:** `internal/check/checker/checker.go:3820-3833` — `checkFunction`
   never calls the existing `blockDiverges` (`checker.go:3005`) on the body.
 - **Scenario:**
   ```fern
@@ -231,7 +231,7 @@ above).
 
 ### F2 — `usize` is an implicit bidirectional type wormhole
 
-- **Location:** `internal/checker/checker.go:3553-3582` (the `assignable`
+- **Location:** `internal/check/checker/checker.go:3553-3582` (the `assignable`
   `usize`/pointer relaxations)
 - **Scenario** (both type-check with zero errors):
   ```fern
@@ -258,7 +258,7 @@ above).
 
 ### M2 — Same-basename modules collide under mangling even when aliased
 
-- **Location:** `internal/modload/modload.go:607-614` (`importLocalName`
+- **Location:** `internal/pkg/modload/modload.go:607-614` (`importLocalName`
   returns the path basename), `:638`,`:683-688` (`prefixFor(...,
   mod.name)`).
 - **Scenario:**
@@ -280,7 +280,7 @@ above).
 
 ### M3 — Map `delete` iteration order: interp vs compiled
 
-- **Location:** `internal/interp/interp.go:896-911` (`builtinMapDelete`
+- **Location:** `internal/oracle/interp/interp.go:896-911` (`builtinMapDelete`
   order-preserving shift-down) vs `internal/stdlib/core/map.fern:611-665`
   (`__map_delete_impl` swap-with-last). The code comments even state
   opposite contracts (`interp.go:823` "insertion order preserved" vs
@@ -309,10 +309,10 @@ above).
 
 ### L1 — Diagnostic remap off-by-one for escaped chunk markers (`\<<…>>`)
 
-- **Location:** `internal/literate/literate.go:351`
+- **Location:** `internal/tools/literate/literate.go:351`
   (`emit(indent+deEscapeRef(bl.text), bl.litLine, len(indent))`) +
   `deEscapeRef` (`:416`); consumed by `cmd/fern/main.go:147` (`remapFor`)
-  and `internal/lsp/literate.go:146`.
+  and `internal/tools/lsp/literate.go:146`.
 - **Scenario:** a chunk body line that (after indentation) begins with an
   escaped marker, e.g. `\<<literal>> = 5;`, pulled into `fn main()` at
   4-space indent. A checker error on `literal` at generated col 5 remaps
@@ -334,7 +334,7 @@ above).
 
 ### B2 — `float → usize` cast truncates to 32 bits on both natives
 
-- **Location:** `internal/ir/ir.go:7699-7708` (cast lowering, the
+- **Location:** `internal/oracle/ir/ir.go:7699-7708` (cast lowering, the
   `srcIsFloat && dstIsInt` branch) — shared IR, affects arm64 + x86-64.
 - **Scenario:** `let f: f64 = 5_000_000_000.0; let u = f as usize;` on a
   native target loses the high bits.
@@ -349,7 +349,7 @@ above).
 
 ### L2 — `-weave -html` emits unsanitized `href` → `javascript:` XSS
 
-- **Location:** `internal/literate/htmlrender.go:229` (`renderEmphasis`:
+- **Location:** `internal/tools/literate/htmlrender.go:229` (`renderEmphasis`:
   `reLink.ReplaceAllString(seg, ...href="$2"...)`).
 - **Scenario:** prose `[click](javascript:alert(document.cookie))` through
   `fern -weave -html` produces a working `javascript:` link in the
@@ -390,7 +390,7 @@ above).
 
 ### I3 — Monomorphisation caps struct instantiation at 8 rounds
 
-- **Location:** `internal/monomorph/monomorph.go:283-316` (the
+- **Location:** `internal/oracle/monomorph/monomorph.go:283-316` (the
   `for round := 0; round < 8` loop).
 - **Why it's noteworthy:** polymorphically-recursive generics
   (`struct Nest[T] { head: T, tail: Nest[Nest[T]] }`) expand without
@@ -405,8 +405,8 @@ above).
 ### L4 — `FormatRemapped` renders an out-of-range generated line as a document line
 
 - **Location:** `cmd/fern/main.go:143-144` (`remapFor` passes through when
-  `p.Line > len(lineMap)`) feeding `internal/diag/diag.go:228`
-  (`pickLine`); LSP mirror `internal/lsp/literate.go:138`.
+  `p.Line > len(lineMap)`) feeding `internal/syntax/diag/diag.go:228`
+  (`pickLine`); LSP mirror `internal/tools/lsp/literate.go:138`.
 - **Why it's wrong:** an out-of-range generated line passes through in
   *generated* coordinates and is then used to index the *document*
   source, printing a caret over an arbitrary prose line. Latent — no
@@ -417,7 +417,7 @@ above).
 
 ### L5 — Unclosed fern fence absorbs a trailing-newline artifact as a phantom body line
 
-- **Location:** `internal/literate/literate.go:171-174` (the collector
+- **Location:** `internal/tools/literate/literate.go:171-174` (the collector
   loop runs to EOF when no closing fence exists).
 - **Why it's wrong:** `strings.Split(src, "\n")` yields a trailing `""`;
   with no closing fence it becomes a `bodyLine{text:"", litLine:n}`,

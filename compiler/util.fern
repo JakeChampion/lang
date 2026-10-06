@@ -1107,7 +1107,7 @@ pub function str_join_chunks(parts: string[]): string {
 }
 
 // Diag is a coded diagnostic — the stable `E0XX` code (matching the Go
-// checker's `internal/checker` codes) plus a human message and an
+// checker's `internal/check/checker` codes) plus a human message and an
 // optional 1-based source position (line/col, 0 when no position is
 // available yet). Positions are being threaded through the AST node by
 // node; a diagnostic emitted from a node that already carries a position
@@ -1554,7 +1554,7 @@ pub function trim(s: string): string {
 }
 
 // levenshtein: the edit distance between `a` and `b`, in BYTES. The port of
-// internal/diag's, which is also byte-indexed, so the two agree on every
+// internal/syntax/diag's, which is also byte-indexed, so the two agree on every
 // suggestion they make from the same candidate set.
 pub function levenshtein(a: string, b: string): i32 {
   if (a == b) {
@@ -1598,7 +1598,7 @@ pub function levenshtein(a: string, b: string): i32 {
 }
 
 // suggest: the candidate closest to `name` within the same budget
-// internal/diag uses — two edits, or one for a name of three bytes or fewer —
+// internal/syntax/diag uses — two edits, or one for a name of three bytes or fewer —
 // or "" when nothing is close enough. Ties go to the FIRST candidate at the
 // best distance, which is what makes the answer depend on the caller's
 // candidate order rather than on a scan direction.

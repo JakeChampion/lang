@@ -303,7 +303,7 @@ arm64 (AAPCS64 `(x0, x1)`). Native inline cap is 15 bytes
   string-len tests assert the old pointer-with-length-prefix
   shape. Each gets a wasm-flip-aware variant.
 
-- `internal/e2e/wasm_e2e_test.go` — most string-using tests
+- `internal/testing/e2e/wasm_e2e_test.go` — most string-using tests
   exercise user-visible behaviour, unchanged. Tests that
   introspect binary layout (rare) need updates.
 
@@ -380,7 +380,7 @@ by rewriting the seams.
 ### Latent-bug fixes surfaced by the flips
 
 The producer flips uncovered a family of pre-existing latent
-bugs where `exprType` in `internal/ir/ir.go` had no dispatch
+bugs where `exprType` in `internal/oracle/ir/ir.go` had no dispatch
 for several expression types — the missing-case fallback was
 the array-shape `[ptr - 4]; load`, which traps on inline-form
 strings.

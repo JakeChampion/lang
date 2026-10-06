@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/jakechampion/lang/internal/launcher"
-	"github.com/jakechampion/lang/internal/platforms"
+	"github.com/jakechampion/lang/internal/pkg/platforms"
+	"github.com/jakechampion/lang/internal/tools/launcher"
 )
 
 // compileRequest is a `-target` compile as the command line spelled it.

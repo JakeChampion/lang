@@ -498,7 +498,7 @@ pub function flip_int_cmp_kind(id: i32): i32 {
 //
 // # Why this is an AST pass and not native's IR pass
 //
-// native/internal/ir/array_scale.go is a whole-PROGRAM IR pass, because it has
+// native/internal/oracle/ir/array_scale.go is a whole-PROGRAM IR pass, because it has
 // to read the element function's body to find the constant. Here the typed
 // lowering builds each body from the checked AST, so a rewrite of the AST is
 // one every backend's emit sees.
@@ -1281,7 +1281,7 @@ function digest_flags(x: boolean, y: boolean): i32 {
 // inline_tiny_leaves splices the body of every small call-free function into
 // its direct callers: the call sequence is most of what such a site costs, and
 // a leaf spliced in creates no new call site, so one walk is a fixpoint. It is
-// native internal/ir/inline.go's tiny-leaf mode — the one policy that pays on
+// native internal/oracle/ir/inline.go's tiny-leaf mode — the one policy that pays on
 // a unit the compiler's size (`inlineTinyLeafOps`, measured there at -12.3% Ir
 // on `sort -k2,2n` for +0.09% of the self-host's text) — with the same budget
 // bounding the sum of a large unit's growth. It runs on the lowering the register backends emit, the

@@ -1,6 +1,6 @@
 name: Drop the self-host sources
 description: >
-  Delete compiler and internal/e2eselfhost from the checkout. Used
+  Delete compiler and internal/testing/e2ecompiler from the checkout. Used
   right after checkout by every job of the lanes that ci.yml's lane table does
   not run on a change touching only those two trees, and by any other job
   whose tests must not read them. A test in such a job that starts to read
@@ -10,6 +10,6 @@ description: >
 runs:
   using: composite
   steps:
-    - name: delete compiler and internal/e2eselfhost
+    - name: delete compiler and internal/testing/e2ecompiler
       shell: bash
-      run: rm -rf compiler internal/e2eselfhost
+      run: rm -rf compiler internal/testing/e2ecompiler

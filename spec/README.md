@@ -4,17 +4,17 @@ Status: normative, and partial.
 
 | File | What it defines |
 | --- | --- |
-| `grammar.ebnf` | The syntactic grammar. Gated by `internal/grammar`. |
+| `grammar.ebnf` | The syntactic grammar. Gated by `internal/syntax/grammar`. |
 | `diagnostics.md` | The index of every rejection the front-end can report, and which conformance case pins it. Gated by `TestDiagnosticsIndexIsAccurate`. |
 | `semantics.md` | The index of the behavioural rules the policy docs below state, and which conformance case pins each. Gated by `TestSemanticsIndexIsAccurate`. |
-| `core.md` | Fern Core's instruction set: every `internal/ir` op, its operand-stack effect and its immediates. Gated by `TestCoreOpsIndexIsAccurate` and `TestCoreOpEffectsMatchTheModel`. |
+| `core.md` | Fern Core's instruction set: every `internal/oracle/ir` op, its operand-stack effect and its immediates. Gated by `TestCoreOpsIndexIsAccurate` and `TestCoreOpEffectsMatchTheModel`. |
 
 See `docs/SPECIFICATION-RESEARCH.md` for the staged shape these are
 layers of, and §"What is not specified" below for what a reader must
 not mistake this directory for.
 
 Before this file existed, the only description of Fern's syntax was
-`internal/parser/parser.go` — 5.9k lines of hand-written recursive
+`internal/syntax/parser/parser.go` — 5.9k lines of hand-written recursive
 descent. That is a description of *a* parser, not of the language, and
 it cannot be read, cited in a bug report, or implemented against.
 
@@ -23,7 +23,7 @@ it cannot be read, cited in a bug report, or implemented against.
 Following Go and ECMA-262, the lexical and syntactic grammars are
 separate. `grammar.ebnf` is the **syntactic** grammar and its terminals
 are tokens, not characters. The **lexical** grammar is
-`internal/lexer`, which produces exactly ten token kinds:
+`internal/syntax/lexer`, which produces exactly ten token kinds:
 
 | Kind | Written in `grammar.ebnf` as |
 | --- | --- |
@@ -141,7 +141,7 @@ and almost nothing about what an accepted one does.
 ## How this is kept true
 
 A grammar nobody checks is fiction within a month, so this one is not
-prose. `internal/grammar` reads `grammar.ebnf` and gates it three ways;
+prose. `internal/syntax/grammar` reads `grammar.ebnf` and gates it three ways;
 the whole suite runs in ~5 seconds.
 
 1. **Well-formedness** — no rule is left-recursive (such a rule silently
@@ -149,7 +149,7 @@ the whole suite runs in ~5 seconds.
    unreachable rule reads as normative and describes nothing).
 
 2. **Derivation** — every `.fern` source in the repository that
-   `internal/parser` accepts, the grammar must derive: the conformance
+   `internal/syntax/parser` accepts, the grammar must derive: the conformance
    corpus, the examples, the stdlib, and the self-host compiler's own
    sources, which at 7000+ lines a file are the most adversarial input
    available. Currently **736 of 736**. There is deliberately no
@@ -186,12 +186,12 @@ before this, and now have a case each.
 
 ## Changing the grammar
 
-Edit `grammar.ebnf` and run `go test ./internal/grammar/`. If a
+Edit `grammar.ebnf` and run `go test ./internal/syntax/grammar/`. If a
 construct fails to derive, the failure names the file and prints the
 tokens around the point the grammar could not get past, which is
 normally where the missing production goes.
 
 Add a case to `TestGrammarDerivesConstruct` for anything subtle — every
 entry there is a construct the first draft got wrong, reduced to one
-line. Its cases assert that `internal/parser` accepts the snippet first,
+line. Its cases assert that `internal/syntax/parser` accepts the snippet first,
 so a snippet cannot pin the grammar to something outside the language.

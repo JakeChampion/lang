@@ -42,12 +42,12 @@ across `docs/` and `internal/`, and no (c).
 | --- | --- | --- |
 | Conformance suite | `conformance/cases/` — 364 `.fern` fixtures, declarative sidecars (`expected.stdout`, `expected.exit`, `stdin`, `match`, `backends`, `expected.error`), run across interp / x86-64 / arm64 / wasm | Lives inside `internal/`, i.e. inside one implementation. Incidental, not normative: nothing says which behaviours are *required* vs which merely happen to be what the interp does. |
 | Conformance report | `selfhost-{wasm,x86_64,arm64}-known-divergences.txt` — per-target expectation files, where a new divergence fails *and* a listed fixture that starts passing fails | Already the right mechanism. Framed as a bug list rather than a conformance delta. |
-| Multiple implementations to keep honest | Five: `internal/interp`, three native backends, and the self-host compiler (its own parser + checker + three emitters) | The self-host is measured *against native*, not against a spec. |
-| Static-semantics catalogue | 71+ stable diagnostic codes with a `fern explain E0NN` catalogue (`internal/diag/explanations`) and `catalogue_completeness_test.go` forbidding an unexplained code | The codes are stable and explained; the *rules* they enforce are written down only as checker code. |
+| Multiple implementations to keep honest | Five: `internal/oracle/interp`, three native backends, and the self-host compiler (its own parser + checker + three emitters) | The self-host is measured *against native*, not against a spec. |
+| Static-semantics catalogue | 71+ stable diagnostic codes with a `fern explain E0NN` catalogue (`internal/syntax/diag/explanations`) and `catalogue_completeness_test.go` forbidding an unexplained code | The codes are stable and explained; the *rules* they enforce are written down only as checker code. |
 | Normative prose, per topic | `INTEGER-SEMANTICS.md` (portable, never-trapping, wrapping at width), `FLOAT-SEMANTICS.md` (IEEE core, explicitly under-specified edges), `ARRAY-BOUNDS.md`, `CLOSURE-CAPTURE.md`, `MODE-LATTICE.md`, `REUSE-CONTRACT.md`, `MUST-CONSUME.md`, `ITERATOR-FUSION-CONTRACT.md` | These are spec chapters in all but name — `INTEGER-SEMANTICS.md` even does the hard part, enumerating the *deliberate freedoms*. They are unindexed as such, not cross-referenced from tests, and their status tag is "policy doc". |
-| Reference implementation | `internal/interp` (4.4k lines), the oracle for every differential suite | Being frozen (see below). |
-| Grammar | None. `internal/parser/parser.go` is 5.9k lines of hand-written recursive descent; `site/…/reference/syntax.md` is 146 lines of examples | The largest single hole. There is no artefact anywhere that says what Fern's syntax *is*. |
-| Dynamic semantics | None written. `internal/ir` + the backends | The rc/ownership half — when things are freed, when reuse fires, what `own` promises — is unspecified, and it is precisely where the live bugs are — pinned in `internal/e2e/testdata/conformance-leak-census.txt` (80 non-zero rows) and `internal/e2e/rc_leak_gate_test.go`, not in an issue. |
+| Reference implementation | `internal/oracle/interp` (4.4k lines), the oracle for every differential suite | Being frozen (see below). |
+| Grammar | None. `internal/syntax/parser/parser.go` is 5.9k lines of hand-written recursive descent; `site/…/reference/syntax.md` is 146 lines of examples | The largest single hole. There is no artefact anywhere that says what Fern's syntax *is*. |
+| Dynamic semantics | None written. `internal/oracle/ir` + the backends | The rc/ownership half — when things are freed, when reuse fires, what `own` promises — is unspecified, and it is precisely where the live bugs are — pinned in `internal/testing/e2e/testdata/conformance-leak-census.txt` (80 non-zero rows) and `internal/testing/e2e/rc_leak_gate_test.go`, not in an issue. |
 
 Rough call: **Fern has perhaps 60% of a specification already, in pieces
 that were built for other reasons.** That changes the economics a lot.
@@ -115,7 +115,7 @@ freedom on purpose, so that a backend cannot accidentally become
 normative.
 
 Everywhere the table doesn't reach, the opposite is happening by
-default. Every incidental behaviour of `internal/interp` — map iteration
+default. Every incidental behaviour of `internal/oracle/interp` — map iteration
 order, drop order within a scope, the exact point a temporary dies,
 stdout buffering across a trap — is a de-facto requirement the moment a
 fixture pins it, whether or not anyone decided it should be. With five
@@ -257,7 +257,7 @@ already doing much of it.
   other suite (TH3) is proprietary; the free one is the influential one.
 - **Alive2** — SMT-based translation validation for LLVM peephole
   optimisations: prove the rewrite is semantics-preserving rather than
-  test it. The obvious Fern target is `internal/ir`'s passes (constfold,
+  test it. The obvious Fern target is `internal/oracle/ir`'s passes (constfold,
   TRMC, tail-call optimisation, the rc passes), which are shared by every
   backend and therefore the highest-value place to be sure.
 - **Property-based testing** generally — the round-trip properties Fern
@@ -322,7 +322,7 @@ kind with no instances at all.
 
 Write the EBNF. Then make it *false-if-wrong*: generate a parser (or a
 recogniser) from the grammar and differentially test it against
-`internal/parser` over every `.fern` in the repo — the 364 fixtures, the
+`internal/syntax/parser` over every `.fern` in the repo — the 364 fixtures, the
 279 examples, and the self-host compiler sources, which together are a
 large and adversarial corpus. A grammar nobody checks is a lie within a
 month; a grammar with a differential gate is a permanent artefact.
@@ -334,8 +334,8 @@ tree-sitter grammar, another implementation).
 
 **Correction, from building it.** The plan above said "generate a parser
 (or a recogniser) from the grammar and differentially test it against
-`internal/parser`". That is what shipped (`spec/grammar.ebnf` +
-`internal/grammar`, 736/736), and the derivation gate was the easy part —
+`internal/syntax/parser`". That is what shipped (`spec/grammar.ebnf` +
+`internal/syntax/grammar`, 736/736), and the derivation gate was the easy part —
 the first draft reached 731/731 in four iterations. What the plan MISSED
 is that derivation alone does not keep a grammar honest.
 
@@ -374,7 +374,7 @@ diagnostics. Publishing the catalogue is not the work; asking what
 *checks* it is. Two things fell out that the plan did not anticipate:
 
 - **The Go tests do not survive the freeze.** 71 of the 75 codes were
-  exercised by a test under `internal/checker` or `internal/parser`, so
+  exercised by a test under `internal/check/checker` or `internal/syntax/parser`, so
   by the usual measure the catalogue was well covered. But a Go test
   measures `internal/`, and after the freeze the self-host compiler is
   the definition — a conformance case can be run against any
@@ -435,7 +435,7 @@ Do not specify the surface language. Specify the core, and let the
 surface be defined by desugaring into it.
 
 Fern is unusually lucky here: **the core already exists.**
-`internal/ir` is a target-agnostic IR that all five implementations
+`internal/oracle/ir` is a target-agnostic IR that all five implementations
 consume, and every entry in the divergence files is a lowering bug, i.e.
 a disagreement *about the core*, not about syntax. So:
 
@@ -491,7 +491,7 @@ they are where this layer's cost and its whole payoff sit.
 
 ### Layer 4 — an independent IR verifier (1 week; worth doing regardless)
 
-A well-formedness and type checker for `internal/ir` that is *not* the
+A well-formedness and type checker for `internal/oracle/ir` that is *not* the
 compiler — LLVM's verifier, or Lean's external kernel checkers. Run it
 between lowering and emit on every backend.
 
@@ -518,7 +518,7 @@ Two things the plan did not anticipate:
   version accepted a defined function, an extern, or a `__`-prefixed
   runtime symbol, and reported 166 problems — all of them builtins
   (`print`, `map_new`, `now_ns`) that are none of those three.
-  `internal/caps` already holds the authoritative inventory, gated by
+  `internal/pkg/caps` already holds the authoritative inventory, gated by
   its own completeness tests, so the verifier consults it. A new builtin
   therefore cannot quietly become an unverifiable callee.
 - **The type half is the real work.** Stack discipline and operand
@@ -528,7 +528,7 @@ Two things the plan did not anticipate:
   section cites.
 
 **Correction, from building the stack half.** It is now in
-(`internal/ir/verifystack.go`) and, like the structural half, it found
+(`internal/oracle/ir/verifystack.go`) and, like the structural half, it found
 nothing: 0 problems across the same 478 lowered programs, 8,100
 functions at both pointer widths, 97.8% of them fully modelled. Four
 things the plan had wrong.
@@ -552,7 +552,7 @@ things the plan had wrong.
 - **The hard part was the callees, again.** A call's effect needs the
   callee's signature, and for a builtin or a runtime helper that
   signature lives in the backends. The structural half could defer to
-  `internal/caps` because it only asked "does this name exist"; the
+  `internal/pkg/caps` because it only asked "does this name exist"; the
   stack half asks "how many slots", which caps does not know. So the
   verifier keeps its own table (`verifyprovided.go`), cross-checked
   against the wasm backend's helper registry by a test in that package —
@@ -585,7 +585,7 @@ themselves, as opposed to the stack shape they run on.
 ### Layer 5 — mechanisation and translation validation (not recommended yet)
 
 Coq/Lean/K mechanisation of the core, or Alive2-style SMT validation of
-the `internal/ir` passes. Both are real and both would be excellent; both
+the `internal/oracle/ir` passes. Both are real and both would be excellent; both
 are large, and neither addresses a problem Fern is currently losing time
 to. Revisit after Layer 3 exists, since Layer 3's rules are the input
 either would need.
@@ -621,7 +621,7 @@ against a diff with native.
 - Does the spec cover the stdlib, or only the language? (test262 covers
   the JS library; Go's spec does not cover its stdlib.) Suggest: language
   only, with the `std/test` TAP contract specified separately.
-- Is `internal/ir` stable enough to be the normative core, or does
+- Is `internal/oracle/ir` stable enough to be the normative core, or does
   specifying it freeze it prematurely? It has churned (`OpExt`, the
   `WidthPtr` sentinel, the typed-IR rewrite) — but always structurally
   rather than semantically, which is the right kind of churn for this.

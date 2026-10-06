@@ -162,7 +162,7 @@ bytes (-3.9%). The rest of the track, in order:
    first six and pushes the rest where the stack ABI puts them.
 4. Once nothing refers to a stack entry, the shims go.
 
-## A variant returned in two words
+## A variant or a pair returned in two words
 
 A function whose result is an enum, an Option or a Result with at most one
 payload per variant, where the payload fits a word (a pointer, or an integer
@@ -172,6 +172,12 @@ payload beside it: in `%rdx` on x86-64, x1 on arm64 and the global
 register is in either pool, and neither an epilogue nor a call's result store
 touches it, so the callee sets the word as the last thing before it returns
 and the caller reads it as the first thing after it stores the call's result.
+A function whose result is a tuple of two values that each fit a word
+returns the same way: the first element is its result and the
+second the word. A caller rebuilds the pair from the two, and split reads
+its projections off the construction, so the pair is never built; a return
+that is not a construction (a join of two, a parameter) is projected in the
+callee. A triple, or a pair with an element wider than a word, stays boxed. `TestSelfHostPairReturn` covers both shapes on the three targets.
 
 `sempair`, which `seminline` runs once nothing more is spliced, chooses the
 functions: nothing outside the bodies names one, every body that names it
@@ -179,8 +185,8 @@ calls it directly, and it never suspends, so every call to it is rewritten
 with it. A caller rebuilds the variant as a branch on the position joining
 one construction per variant, and split reads a match on the call off those
 constructions, so the variant is never built. A function is paired only when
-every caller takes the variant apart, by matching on it or by returning it
-from a function that is paired too. One caller keeping the variant whole would
+every caller takes the value apart, by matching on it, projecting it, or
+returning it from a function that is paired too. One caller keeping the variant whole would
 have to build the box the callee no longer builds, and where the callee built
 it in the box of a node it was consuming, as `std/pvec`'s path rebuild does,
 that box was free. Pairing `__pv_with_in` regardless took `pvec_with` from
@@ -348,19 +354,19 @@ not register pressure. The order to take that in:
 
 ## Gates
 
-- `internal/e2eselfhost/self_host_ssa_lift_admits_test.go` runs
+- `internal/testing/e2ecompiler/self_host_ssa_lift_admits_test.go` runs
   `ssa_lift_admits_run.fern`, the lift's admission census over every
   registered IR op kind, and pins the kinds it declines: the three kinds no
   lowering produces. A new op kind reaches the register path through the
   flat-op arm unless `ir.op_pops` does not model it, and then it is a new
   line here rather than a refusal on every program that uses it.
-- `internal/e2eselfhost/self_host_ssa_backend_test.go` builds the CLI for
+- `internal/testing/e2ecompiler/self_host_ssa_backend_test.go` builds the CLI for
   the host, compiles each of its programs with it and with the native
   compiler for every target the host can run output for (its own ISA
   natively, the other through its qemu user emulator when present), runs
   both and compares stdout and exit status. It also pins the `-backend`
   refusals and that a second `-o` to one path replaces the executable.
-- `internal/e2eselfhost/self_host_ssa_loop_tail_label_test.go` reaches the
+- `internal/testing/e2ecompiler/self_host_ssa_loop_tail_label_test.go` reaches the
   same invariant from the SOURCE end: a self-tail-recursive function whose
   body ends in a `return`, compiled through the register path for both ISAs
   and then assembled and run. `assertNoDuplicateLocalLabels` reads the
@@ -368,7 +374,7 @@ not register pressure. The order to take that in:
   distinct blocks or functions whose `asmcore.sanitize_label` spellings
   collide, which `repeated_block_id` cannot see. It carries over the
   read_file and frontend-bundle listings too.
-- The fixture legs (`internal/e2e/fixture_selfhost_test.go`) are the corpus:
+- The fixture legs (`internal/testing/e2e/fixture_selfhost_test.go`) are the corpus:
   every program through the register path on both ISAs, against the
   expected output. A function the lift cannot take fails the compile there,
   naming the op.
@@ -382,7 +388,7 @@ not register pressure. The order to take that in:
   function onto the stack machine. Every state the lift leaves a dead block
   in must therefore carry a FRESH id — the shape `br` establishes, and what
   a loop nothing leaves alive failed to (#9688).
-  `internal/e2eselfhost/self_host_ssa_lift_blocks_test.go` lifts those op
+  `internal/testing/e2ecompiler/self_host_ssa_lift_blocks_test.go` lifts those op
   streams directly.
 
 ## What this retires, and in what order
@@ -428,7 +434,7 @@ path needs `build_func` any more. In order:
    (`docs/ssa-log/2026-09-20-every-op-through-the-stack-machines-arm.md`);
    `dyn_dispatch` followed the same day, and the sweep declines nothing.
 6. Done: the corpus lane. The fixture legs
-   (`internal/e2e/fixture_selfhost_test.go`, x86-64 and arm64) compiled every
+   (`internal/testing/e2e/fixture_selfhost_test.go`, x86-64 and arm64) compiled every
    program under `FERN_SSA_REPORT=1` and required each module's tally to
    read `0 declined`, holding the number the hand sweep measured: 866
    modules on each ISA, every one `0 declined`.

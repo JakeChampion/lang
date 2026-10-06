@@ -20,8 +20,8 @@ never updated. Per-item current state:
 
 - ✅ **Done**: #1 (`refineCallTypeArgsFromDest` lives in checker.go),
   #2 (`postSettleType` is wired through Var/Init/match paths), #3
-  (`internal/interp/coverage_test.go` exists and passes for every AST
-  variant), #4 (`internal/monomorph/monomorph_test.go` has tests),
+  (`internal/oracle/interp/coverage_test.go` exists and passes for every AST
+  variant), #4 (`internal/oracle/monomorph/monomorph_test.go` has tests),
   #6 (fernsmith fuzzer runs via `.github/workflows/test-fernsmith.yml`
   + `fuzz-diff.yml` + `fuzz-parse.yml`), #7 (`IsReservedName` is a
   public helper in checker.go), #8 (`evalChecked` was removed; the
@@ -74,7 +74,7 @@ mangles to `pick__Result` and the cloned param/return types lack
 the inner args, so the re-check fails with
 "`Result has 2 type parameter(s), 0 supplied`".
 
-**Fix**: In `internal/checker/checker.go`, after a call's
+**Fix**: In `internal/check/checker/checker.go`, after a call's
 `TypeArgs` is computed but before it's returned, refine using the
 destination type when present:
 
@@ -113,7 +113,7 @@ Found three times in this thread: `*ast.FString` (PR #597),
 `*ast.Lambda` (PR #618). Each was a `"unsupported expression %T"`
 panic the fernsmith generator hit at random.
 
-**Fix**: `internal/interp/coverage_test.go` that walks every
+**Fix**: `internal/oracle/interp/coverage_test.go` that walks every
 AST node type and asserts the interpreter accepts a minimal
 example. Pattern:
 
@@ -131,7 +131,7 @@ explicit "not yet" skip with a TODO).
 
 ## 4. 🔥 Monomorph walker auto-generator (or comprehensive test)
 
-The walker in `internal/monomorph/monomorph.go` walks the AST
+The walker in `internal/oracle/monomorph/monomorph.go` walks the AST
 looking for generic Calls + generic StructLits. Throughout this
 thread it was missing seven AST shapes:
 
@@ -158,11 +158,11 @@ without code-gen tooling. Lower ceiling, lower floor.
 ## 5. 🧪 Tests for the `[no test files]` packages
 
 `go test ./...` output lists these packages with no tests:
-`internal/closureconv`, `internal/shadowrename`, `internal/treeshake`,
-`internal/monomorph` (the last one now has tests since PR #614).
+`internal/oracle/closureconv`, `internal/oracle/shadowrename`, `internal/oracle/treeshake`,
+`internal/oracle/monomorph` (the last one now has tests since PR #614).
 
 Each is a real pass with real behaviour. End-to-end tests in
-`internal/e2e` exercise them indirectly, but unit-level tests
+`internal/testing/e2e` exercise them indirectly, but unit-level tests
 would catch regressions faster and document the expected shape.
 
 **Fix**: Per-package `_test.go` for at least the public surface.
@@ -189,7 +189,7 @@ init code and in the test. Langsmith has to know these too (to
 avoid generating clashing names).
 
 **Fix**: Single exported `func IsReservedName(s string) bool` in
-`internal/checker` (or `internal/ast`), with all callers
+`internal/check/checker` (or `internal/syntax/ast`), with all callers
 consulting it. Test asserts the list matches what the checker
 rejects.
 

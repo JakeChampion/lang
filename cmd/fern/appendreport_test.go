@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// End-to-end for `fern -append-report` (#6992). internal/ir gates the
+// End-to-end for `fern -append-report` (#6992). internal/oracle/ir gates the
 // decisions; this gates that the CLI mode reaches them at all — a report
 // flag that silently stopped reporting would leave every one of those
 // tests passing.

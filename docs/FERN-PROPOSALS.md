@@ -10,7 +10,7 @@ real user, and to remove that hurt at its root.
 No acronym, deliberately. The obvious one — "Fern Improvement Proposal" — is
 already taken: `fip` is a **contextual keyword** in the language (`fip function
 f(own a: i32[])`, with `fbip` beside it), Koka's functional-in-place modifier,
-enforced by E053 and E068 and tested in `internal/parser/fip_test.go`. A
+enforced by E053 and E068 and tested in `internal/syntax/parser/fip_test.go`. A
 program document sharing that name is a collision in the one repo where both
 meanings are live. Say "a proposal" and "a proposal turn"; the branch prefix is
 `proposal/`.
@@ -41,11 +41,11 @@ lowered cleanly and then segfaulted. Widen a known-divergences file by
 counted (Perceus-style: inc/dec insertion, borrow inference, drop
 specialisation, constructor reuse). A leak here is unbounded — it scales with
 the round count and eventually walks into the 16 GiB arena wall (exit 125).
-The pins are `internal/e2e/testdata/conformance-leak-census.txt` and the
-per-case byte baselines in `internal/e2e/rc_leak_gate_test.go`, both measured on
+The pins are `internal/testing/e2e/testdata/conformance-leak-census.txt` and the
+per-case byte baselines in `internal/testing/e2e/rc_leak_gate_test.go`, both measured on
 the self-host: the census has one non-zero row, a block live when a bounds check
 aborts, and the gate pins no case on x86-64 or arm64. The self-host-versus-native
-grid (`internal/e2eselfhost/testdata/selfhost-leak-matrix.txt`) is clean too. Related and less
+grid (`internal/testing/e2ecompiler/testdata/selfhost-leak-matrix.txt`) is clean too. Related and less
 watched: over-*retains*, which are silent — an extra
 `inc` never crashes, it just makes an `rc == 1` in-place append into a copy,
 and turns a linear accumulator quadratic. Find a shape that allocates in the
@@ -57,7 +57,7 @@ arm64 Darwin (which shares `EmitWithOptions` with arm64), x86-64 Linux, and
 wasm/WASI-p2 — and `docs/BACKEND-PARITY.md` is the table of what each one can
 do. A construct that works on three rows and not the fourth is a defect, not a
 documented limitation, unless the table says so with a reason. The IR layer is
-target-agnostic: a fix in `internal/ir` is worth three fixes in the emitters,
+target-agnostic: a fix in `internal/oracle/ir` is worth three fixes in the emitters,
 and is the only kind that cannot drift back apart.
 
 **4. Bug fixing.** Audit, find a defect, reproduce it minimally, fix it. A
@@ -101,7 +101,7 @@ Then check what is already known:
 - open issues — `list_issues` / `search_issues` (there is no `gh` CLI in this
   environment; use the GitHub MCP tools);
 - `docs/proposals/wontfix.md` — settled rulings. NEVER re-report these;
-- `internal/e2e/testdata/selfhost-*-known-divergences.txt` — defects that are
+- `internal/testing/e2e/testdata/selfhost-*-known-divergences.txt` — defects that are
   already measured, listed and accepted. Do not file them again. *Closing* a
   row is a first-rate proposal;
 - `docs/` — a `*-PLAN.md` or `*-RESEARCH.md` for your area usually means the
@@ -232,7 +232,7 @@ repository, including the implementation.
 
 Fix it at the deepest layer that owns the problem:
 
-- a lowering bug that shows up on one backend usually lives in `internal/ir`,
+- a lowering bug that shows up on one backend usually lives in `internal/oracle/ir`,
   where the fix serves every backend;
 - a self-host bug in inference, the checker, `Ty` or `EmitState` lives in
   `compiler/asmcore.fern`, which all three self-host backends share.
@@ -329,12 +329,12 @@ merge main in and push. Do not stop at "pushed to the branch".
   `docs/TEST-GATES.md` says which those are, and which look authoritative and
   are not. The fixpoint is self-referential: it proves the compiler reproduces
   itself and is structurally blind to a *stable* miscompile. For self-host
-  lowering, `internal/e2eselfhost` is primary and the fixpoint secondary. #6018
+  lowering, `internal/testing/e2ecompiler` is primary and the fixpoint secondary. #6018
   passed the per-module fixpoint AND all 335 fixtures AND the native suite
   while segfaulting the driver.
 
-- **Do not hold the PR behind a whole-package sweep.** `internal/e2eselfhost`
-  unsharded exceeds 90 minutes; `internal/e2e` no longer fits in 45. CI shards
+- **Do not hold the PR behind a whole-package sweep.** `internal/testing/e2ecompiler`
+  unsharded exceeds 90 minutes; `internal/testing/e2e` no longer fits in 45. CI shards
   both and answers sooner than this box. Run the targeted `-run` legs for what
   you touched, push, open the PR, and let the sweep run alongside it. Say in
   the PR body which suites you ran and which are still in flight.

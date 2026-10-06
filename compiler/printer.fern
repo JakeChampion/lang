@@ -5444,7 +5444,7 @@ function func_index(funcs: parser.FuncDecl[], name: string): i32 {
 
 // Unified-diff half of `-fmt -d`. The two drivers' `-d` output is compared
 // byte-for-byte, so the alignment, the tie-breaks and the three-line context
-// window here are internal/printer/diff.go's rather than a re-derivation.
+// window here are internal/syntax/printer/diff.go's rather than a re-derivation.
 
 // diff_split_lines breaks s on '\n' with the newline kept on each line, so the
 // hunk emitter reproduces a "no newline at end of file" tail verbatim. The

@@ -68,7 +68,7 @@ jobs:
         run: |
           GOOS=js GOARCH=wasm go test \
             -exec "$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
-            ./internal/interp -run '^TestSetProcessGroupUnavailable$' -count=1
+            ./internal/oracle/interp -run '^TestSetProcessGroupUnavailable$' -count=1
 
       - name: Run the shim suite
         run: node --test web/test/shim/*.test.mjs

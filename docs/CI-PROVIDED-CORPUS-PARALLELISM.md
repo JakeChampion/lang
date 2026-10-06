@@ -94,7 +94,7 @@ controlled speed comparison; full current-head CI remains required.
 Run the focused case selection first:
 
 ```sh
-go test ./internal/e2eselfhost \
+go test ./internal/testing/e2ecompiler \
   -run '^TestSelfHostIRVerifyProvidedCorpusClean$/cases/^(multi_file|pub_use_reexport|diag_p004)$' \
   -race -parallel 4 -count=1 -v
 ```
@@ -102,7 +102,7 @@ go test ./internal/e2eselfhost \
 Then remove the case filter to validate the complete corpus:
 
 ```sh
-go test ./internal/e2eselfhost \
+go test ./internal/testing/e2ecompiler \
   -run '^TestSelfHostIRVerifyProvidedCorpusClean$' \
   -race -parallel 4 -count=1 -v -timeout 10m
 ```

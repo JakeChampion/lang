@@ -16,7 +16,7 @@ name: Check sources
 #
 # The census is here for the same reason and by the same route: it reads the
 # self-host sources as text, so it is 2 s and needs no toolchain, but it is
-# filed in internal/e2eselfhost — a package the unit lane excludes for costing
+# filed in internal/testing/e2ecompiler — a package the unit lane excludes for costing
 # 90 minutes unsharded — and so ran only on pull requests, each against its own
 # base. Its wildcard-arm ratchet drifted 244 arms and stood red on main with
 # nothing to report it (#7570).

@@ -206,26 +206,26 @@ Concrete IR / codegen changes:
     `info.StateVars`. Existing `__state_init` flows the init
     expression's `(data, len)` operand-stack pair through both
     `global.set`s automatically.
-  - **`exprType` for state idents** (`internal/ir/ir.go`):
+  - **`exprType` for state idents** (`internal/oracle/ir/ir.go`):
     `b.exprType` consults `b.info.StateVars` after locals and
     params. Without this `len(state_string)` fell through to
     the array-shape `[ptr - 4]; load` fallback and produced
     bogus output.
-  - **ArrayLit element-store routing** (`internal/ir/ir.go`,
+  - **ArrayLit element-store routing** (`internal/oracle/ir/ir.go`,
     `ArrayLit` case): the bespoke `(storeOp, storeWidth)`
     decision now defers to `arrayElemStoreOpFor(elemType, ptrW)`,
     which knows about `WidthString` for strings on wasm32, the
     sub-i32 byte / halfword stores, the i64 / f32 / f64 lanes,
     and `WidthPtr` for non-string pointer types on arm64.
     `string[]` literals now fan-store both halves per element.
-  - **Tuple destructure** (`internal/ir/ir.go`, `Destructure`
+  - **Tuple destructure** (`internal/oracle/ir/ir.go`, `Destructure`
     case): the read side used naive `i * 4` offsets and a
     fixed `OpLoad` per element. Now routes through
     `tupleElemLayout` + `payloadLoadOpFor`, picking
     `WidthString` for string elements on wasm32 (fans to two
     i32.loads at +0/+4 of the element address).
   - **Pair-form string payload rejection**
-    (`internal/ir/ir.go`, `isPairFormPayloadShape`): strings on
+    (`internal/oracle/ir/ir.go`, `isPairFormPayloadShape`): strings on
     wasm32 (`ptrW == 4`) are no longer pair-form eligible. The
     pair-form ABI carries only ONE i32 payload slot per variant,
     but a two-word string needs two. Functions returning
@@ -238,7 +238,7 @@ Concrete IR / codegen changes:
     `TestLowerOptionPointerPayloadIsPairFormOnWasm`) flipped
     to assert the new shape.
   - **Implicit-return padding for string-returning fns**
-    (`internal/ir/ir.go`): the default-case implicit return at
+    (`internal/oracle/ir/ir.go`): the default-case implicit return at
     function-body-fall-off now emits two `OpConstI32 0` followed
     by `OpReturn` when the return type is `StringType` on
     wasm32 — matches the `(result i32 i32)` function-header
@@ -293,7 +293,7 @@ up an automatic cell-deref via the cast-lowering change below.
 
 Concrete IR changes:
 
-  - **Cast lowering** (`internal/ir/ir.go`, CastExpr handler):
+  - **Cast lowering** (`internal/oracle/ir/ir.go`, CastExpr handler):
     `(i32 | usize) as string` on wasm32 (`b.ptrW == 4`) now
     emits `OpLoad{Width: WidthString}`, fanning the single i32
     cell pointer into a `(data, len)` pair via two `i32.load`s
@@ -348,7 +348,7 @@ capture today the env reserves `ptrW` bytes; loading via
 needs the env cell to reserve 2 ptrW slots per string capture,
 and `OpCaptureLoad` to emit two `i32.load`s.
 
-Touches `internal/ir/closureconv` + the wasm
+Touches `internal/oracle/ir/closureconv` + the wasm
 `OpCaptureLoad` / `OpCaptureStore` handlers (it's a small set
 of edits, but the layout decision needs to be made carefully so
 arm64 stays one-slot per pointer).
@@ -378,7 +378,7 @@ settled.
 ## What's left, in execution order
 
 1. **Closure captures + state globals string layout** — single
-   PR; touches `internal/closureconv` + IR `OpCaptureLoad` /
+   PR; touches `internal/oracle/closureconv` + IR `OpCaptureLoad` /
    `OpCaptureStore` handlers + the wasm side. Likely clears
    `TestWASMClosureCapturesString` / `TestWASMClosureCapturesMixedPointers`
    / `TestWASMStateStringConcat` / `TestWASMStateMixedInit` and

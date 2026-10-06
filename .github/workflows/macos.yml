@@ -104,21 +104,21 @@ jobs:
 
       - name: go vet
         if: matrix.shard == 1
-        run: go vet ./internal/e2e/... ./internal/interp/...
+        run: go vet ./internal/testing/e2e/... ./internal/oracle/interp/...
 
       - name: go test (Darwin interpreter timestamps, renames and xattrs)
         if: matrix.shard == 1 && steps.gate.outputs.signed != 'true'
         run: |
-          gotestsum --format standard-verbose -- -run '^(TestSetFileTimesDarwin.*|TestInterpFsMetaPrimitives|TestInterpRenameFlagsPrimitives|TestInterpXattrPrimitives)$' ./internal/interp/ ./internal/e2e/
+          gotestsum --format standard-verbose -- -run '^(TestSetFileTimesDarwin.*|TestInterpFsMetaPrimitives|TestInterpRenameFlagsPrimitives|TestInterpXattrPrimitives)$' ./internal/oracle/interp/ ./internal/testing/e2e/
 
-      # internal/strerror checks its table against the HOST libc, so the
+      # internal/tables/strerror checks its table against the HOST libc, so the
       # Darwin half of that check only means anything on this runner. Every
       # other lane is Linux, where the sixteen Darwin overrides are unread
       # data — exactly the shape that goes stale without anyone noticing.
       - name: go test (Darwin errno table)
         if: matrix.shard == 1 && steps.gate.outputs.signed != 'true'
         run: |
-          gotestsum --format standard-verbose -- ./internal/strerror/
+          gotestsum --format standard-verbose -- ./internal/tables/strerror/
 
       # THE COREUTILS CORPUS HAD NO DARWIN ORACLE UNTIL THIS STEP (#9645).
       # Every utility in `coreutils/` is held to byte-for-byte GNU parity, and
@@ -296,7 +296,7 @@ jobs:
         run: |
           set -euo pipefail
           tops=$(
-            go test -list '^Test' ./internal/coreutils/ |
+            go test -list '^Test' ./internal/testing/coreutils/ |
               grep -E '^Test' | grep -v '^TestSelfHost' | sort |
               scripts/shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}" .github/darwin-corpus-test-weights.txt
           )
@@ -308,7 +308,7 @@ jobs:
           echo "shard ${{ matrix.shard }}/${{ matrix.nshard }}: $n top-level tests"
           PAT="^($(printf '%s\n' "$tops" | paste -s -d '|' -))\$"
           set +e
-          gotestsum --format standard-verbose -- -timeout 45m -run "$PAT" ./internal/coreutils/ > corpus-darwin.log 2>&1
+          gotestsum --format standard-verbose -- -timeout 45m -run "$PAT" ./internal/testing/coreutils/ > corpus-darwin.log 2>&1
           echo "EXIT=$?"
           # Deliberately not the step's exit status. The catalogue does not
           # pass on Darwin yet, so a non-zero here is the expected state; what
@@ -372,13 +372,13 @@ jobs:
         # the case on macOS). `standard-verbose` keeps the streamed
         # RUN/PASS/FAIL of the old `-v` run.
         run: |
-          gotestsum --format standard-verbose -- -run TestArm64Darwin ./internal/e2e/
+          gotestsum --format standard-verbose -- -run TestArm64Darwin ./internal/testing/e2e/
 
       - name: go test (SELF-HOST arm64-darwin native execution)
         if: "!cancelled() && matrix.shard == 0 && steps.gate.outputs.signed != 'true'"
         # The sibling of the step above for the SELF-HOST arm64-darwin path,
-        # which lives in a different package (internal/e2eselfhost) and so was
-        # not selected by the `-run TestArm64Darwin ./internal/e2e/` filter —
+        # which lives in a different package (internal/testing/e2ecompiler) and so was
+        # not selected by the `-run TestArm64Darwin ./internal/testing/e2e/` filter —
         # nothing in CI ran it on hardware that can execute its output. That
         # gap is why #6042 (the arena mmap emitted with Linux MAP_ flags),
         # the static LC_UNIXTHREAD container, the entry-point offset and the
@@ -390,7 +390,7 @@ jobs:
         # this runner's twofold speed swing.
         timeout-minutes: 30
         run: |
-          gotestsum --format standard-verbose -- -timeout 25m -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/e2eselfhost/
+          gotestsum --format standard-verbose -- -timeout 25m -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/testing/e2ecompiler/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
@@ -428,7 +428,7 @@ jobs:
   # line to be deleted.
   #
   # That second direction is a warning rather than an error, which is where
-  # this parts from the complexity ratchet in internal/lint: TestPtxParity
+  # this parts from the complexity ratchet in internal/tools/lint: TestPtxParity
   # failed on one round of the catalogue and passed on the next two, and an
   # error there would make one flaky utility hold the lane red whichever
   # way it landed. A name going quiet is good news either way, and the

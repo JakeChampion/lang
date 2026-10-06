@@ -82,11 +82,11 @@ successive hand-measurements of this table disagreed with each other, in both
 directions, for exactly that reason.
 
 So the rows are no longer re-grepped. `TestSelfHostFeatureCensus`
-(`internal/e2eselfhost/self_host_feature_census_test.go`) does the strip and the
+(`internal/testing/e2ecompiler/self_host_feature_census_test.go`) does the strip and the
 count in under a second, and
 
 ```
-go test ./internal/e2eselfhost/ -run TestSelfHostFeatureCensus -v
+go test ./internal/testing/e2ecompiler/ -run TestSelfHostFeatureCensus -v
 ```
 
 prints the whole table. `pinned` rows fail on any move in either direction —
@@ -139,9 +139,9 @@ carry". This is honest, careful work — and it is the shape work takes when the
 type system declines to carry the information.
 
 **The escape hatch the language already has, it throws away.** `str` (the
-borrowed-string view, `internal/ast/ast.go:91`) and `char` exist as types,
+borrowed-string view, `internal/syntax/ast/ast.go:91`) and `char` exist as types,
 carry a checker-enforced discipline — and are then **erased to `string` and
-`i32` at the `LowerWith` choke point** (`internal/ir/erase_surface.go`),
+`i32` at the `LowerWith` choke point** (`internal/oracle/ir/erase_surface.go`),
 immediately before the IR builder, which is exactly where Perceus lives. The
 one borrow annotation the surface has is deleted just upstream of the pass that
 spends thousands of lines re-inferring it. Today that erasure costs little
@@ -190,7 +190,7 @@ decomposition the language permits and it did not reduce the file.
 
 The second cost is the test-staging tax: because there is no package, every Go
 test that compiles a self-host module lists its transitive module set by hand.
-**397 files in `internal/e2eselfhost/` name `util.fern` in a staging list.**
+**397 files in `internal/testing/e2ecompiler/` name `util.fern` in a staging list.**
 `util.fern`'s own header documents the resulting workflow — "the module grows one
 helper at a time as files are converted off their local copies; keeping each
 conversion small bounds the blast radius on the Go-side test staging lists".
@@ -226,7 +226,7 @@ protocol and a generic collector to the self-host IR path on x86-64 and wasm),
 but because nobody has ever had a safe first step to using them *here*.
 
 Breaking it needs a deliberate act: pick one module, adopt one feature, and back
-it with `internal/e2eselfhost` coverage (which runs programs the compiler does
+it with `internal/testing/e2ecompiler` coverage (which runs programs the compiler does
 *not* contain, and is the gate that actually carries signal here) rather than
 with the fixpoint.
 
@@ -344,7 +344,7 @@ binder walks elsewhere (`flatten.collect_locals_stmt`,
 three modules.
 
 The visitor has to be a PAIR rather than native's single `fn(Node) bool`
-(`internal/ast/walk.go:23`) because `Expr` and `Stmt` are separate unions here
+(`internal/syntax/ast/walk.go:23`) because `Expr` and `Stmt` are separate unions here
 with no common supertype, and boxing them into one would cost an allocation per
 node. Native folds descent control into the visitor's return; the self-host
 keeps the separate predicate slice two chose, for the same reason.
@@ -370,7 +370,7 @@ What it cost, and none of it was visible from outside:
   gating it on the function actually declaring the type variables is the fix.
   **`FERN_STRICT_IR=1` compiled it with exit 0 and `FERN_IR_VERIFY=1` was
   clean.** Only running the module caught it, which is `docs/TEST-GATES.md`'s
-  rule about `internal/e2eselfhost` being primary, demonstrated.
+  rule about `internal/testing/e2ecompiler` being primary, demonstrated.
 - **Three live binder bugs, all of the form "two answers to what does this
   bind".** `PatVariant.at_binding` — the `n` of `n @ Tag(x)` — was known only to
   `irlower.sa_pat_binds`; every capture analysis missed it, so a lambda reading
@@ -717,7 +717,7 @@ marked open reproduce today. §7 lists the probes.
 Every AST node inside every f-string carried a position measured from the
 interpolant's own text, so `print(f"{zzz}\n")` put the caret on line 1 column 1
 — the file's first token — while the same expression outside an f-string
-reported correctly. `parseExprFromText` (`internal/parser/parser.go`) re-lexes
+reported correctly. `parseExprFromText` (`internal/syntax/parser/parser.go`) re-lexes
 the interpolant with a fresh parser numbering from 1:1; it now rebases every
 token onto the enclosing file before parsing, so both the AST nodes and any
 parse error inside the interpolant land where the reader wrote them.
@@ -871,7 +871,7 @@ Ordered by (unblocking value) ÷ (cost), not by size.
    tainted-symbols set — is the same size again and still open.
 4. **Break the fixpoint ratchet deliberately** (§2.4). Pick one self-host module
    and one feature — closures are the highest-value, per §3.1 — adopt it there,
-   and gate it on `internal/e2eselfhost` rather than the fixpoint. This is a
+   and gate it on `internal/testing/e2ecompiler` rather than the fixpoint. This is a
    process decision more than a code change, and nothing else on this list
    compounds without it.
 5. **Land the owned-by-default flip** (§2.1). Large, already planned in

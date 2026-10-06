@@ -189,7 +189,7 @@ Guaranteed:
   candidates against the symmetric interval everywhere, so `2^-1019`
   formatted as `1.780059086805761e-307`, one ULP below the value it was
   formatting. Pinned by `TestFloatShortestPowersOfTwoF64` / `...F32`
-  (`internal/e2e/float_dragonbox_test.go`).
+  (`internal/testing/e2e/float_dragonbox_test.go`).
 
 Still deliberately unspecified:
 
@@ -287,7 +287,7 @@ self-host checker's long-standing resolution. The old discrepancy
 remains fully supported via explicit annotation (`let x: f32`), suffix
 (`1.5f32`), or cast (`x as f32`); it is opt-in precision-narrowing,
 never a default. Pinned by `TestFloatDefaultWidthF64`
-(`internal/e2e/float_semantics_test.go`), `TestFloatAliasAndDefaultWidth`
+(`internal/testing/e2e/float_semantics_test.go`), `TestFloatAliasAndDefaultWidth`
 (checker), and the `float-alias-ok` / `float-alias-mismatch`
 self-host checker-codes fixtures.
 
@@ -303,8 +303,8 @@ error at either width: `1e-400` is accepted and reads as `0.0`, matching
 Both engines apply that rule. The self-host front end checks it where the token
 becomes a value (`parse_primary`, native's `parsePrimary` site) and reports
 the same code from the checker and from the asm front end (#6842). Gated by
-`TestSelfHostFrontEndNumericLiteralCodes` (`internal/e2eselfhost`) and
-`TestNumericLiteralErrorsCarryCode` (`internal/parser`).
+`TestSelfHostFrontEndNumericLiteralCodes` (`internal/testing/e2ecompiler`) and
+`TestNumericLiteralErrorsCarryCode` (`internal/syntax/parser`).
 
 The self-host's text-preserving modes are the exception, deliberately: `-fmt`
 and `ferndoc` parse with `Par.verbatim`, where the check is skipped so a
@@ -313,7 +313,7 @@ no verbatim parse, so `fern -fmt` there fails on the file instead.
 
 ## Generator + oracle implications
 
-`internal/fernsmith` has three generation profiles (see
+`internal/testing/fernsmith` has three generation profiles (see
 `Profile` in `fernsmith.go`):
 
 - `ProfileFree` — free-form generation; every float type is in the

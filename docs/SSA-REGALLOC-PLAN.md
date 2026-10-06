@@ -12,7 +12,7 @@ instructions on real self-host drivers), but the *non-adjacent* spills — a val
 held live across an intervening sub-expression — still round-trip through memory.
 Eliminating those needs a register allocator.
 
-Per `CLAUDE.md` ("new optimisations should live in `internal/ir` so all backends
+Per `CLAUDE.md` ("new optimisations should live in `internal/oracle/ir` so all backends
 benefit"), the allocator belongs at the **SSA layer** (`internal/ssa`), not bolted
 into each backend. `internal/ssa` is already a full target-independent SSA with
 dominators, RPO, loops, def-use chains, and ~100 ops — but at the time this was
@@ -1354,7 +1354,7 @@ scanned 200 times (236 MB of bytes, best of nine):
 | x86_64ssa before | 849 ms | 899 ms |
 | x86_64ssa after | **489 ms** | 627 ms |
 
-Gated by the 60 SSA-named tests in `internal/e2e` (829 s, no skips) — the two run
+Gated by the 60 SSA-named tests in `internal/testing/e2e` (829 s, no skips) — the two run
 differentials, `TestSSASlowdownGate`, and 44 `TestArm64SSA*` cases that run real
 binaries under qemu — plus every `internal/codegen` package and
 `internal/{ssa,ir,semir}`.

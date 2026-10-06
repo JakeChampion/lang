@@ -5,7 +5,7 @@
 // well-typed under a tiny static type system.
 //
 // This is the *minimal* checker — the Go checker in
-// internal/checker/checker.go is ~6700 LOC and handles unions,
+// internal/check/checker/checker.go is ~6700 LOC and handles unions,
 // generics, monomorphisation entry points, exhaustiveness, struct
 // methods, receiver visibility, and a host of other rules. This
 // port handles only:
@@ -7301,7 +7301,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
 // entirely. Two gates hold them together: bind_stmt_parity_run.fern walks both
 // over the same statements and reports every disagreement (driven by
 // TestSelfHostBindStmtScopeParity), and
-// TestCheckStmtAndBindStmtBindTheSameStatementForms (internal/sourcelint) pins
+// TestCheckStmtAndBindStmtBindTheSameStatementForms (internal/testing/sourcelint) pins
 // the set of arms that may rebind at all in each, so a NEW binding form cannot
 // be added to one alone.
 pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
@@ -9329,7 +9329,7 @@ function slice_escape_diags(fn: parser.FuncDecl, s: Scope, sums: ViewSum[], vix:
 
 // ---------------------------------------------------------------------------
 // E067 — `@must_consume` obligation checking (docs/MUST-CONSUME.md).
-// Port of the native walk in internal/checker/mustconsume.go: a value whose
+// Port of the native walk in internal/check/checker/mustconsume.go: a value whose
 // struct/enum type carries `@must_consume` must be CONSUMED at least once on
 // every control-flow path before its binding leaves scope. Consuming uses:
 // call-argument position, `return x`, `match (x)`, `let y = x` / `y = x`
@@ -12011,7 +12011,7 @@ function is_map_new_name(name: string): boolean {
 // unsettled_int_literal: is `e` an integer literal that has not been pinned to a
 // width — a bare `1`, not `1i64` and not `1.0` — or an arithmetic combination of
 // only those? This is the expression set native's settleFloat descends
-// (`internal/checker/checker.go`): a NumberLit, unary minus, and the four
+// (`internal/check/checker/checker.go`): a NumberLit, unary minus, and the four
 // arithmetic binaries. Everything else is already typed and settles nothing,
 // which is why an IDENTIFIER is absent: native rejects `let a: i32 = 1; let x:
 // f64 = a;` exactly as the self-host does, so the rule is literal-only rather
@@ -15796,7 +15796,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
 }
 
 // const_expr_ok reports whether `e` is inside native's constant grammar
-// (internal/constfold evalConst): a literal, a reference to an EARLIER const,
+// (internal/check/constfold evalConst): a literal, a reference to an EARLIER const,
 // a unary / binary operation over those, or an array or tuple literal of them
 // (#7987). Everything else — a struct literal, a call, a field access, an
 // index — is not a constant.
@@ -16640,7 +16640,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
 // ===================== last-use transfer (E051, #9541) ====================
 // A local handed to an `own` parameter at its LAST use is a move: nothing reads
 // the binding again. lu_last_use_args names those argument occurrences, as
-// "line:col" keys, by native's CallArgDeaths (internal/checker/
+// "line:col" keys, by native's CallArgDeaths (internal/check/checker/
 // call_arg_deaths.go), which is also what the IR moves by. Only the question
 // E051 asks is ported: a `let` local, at an `own` position of a direct call,
 // outside any lambda, read by no defer or lambda.
@@ -18256,7 +18256,7 @@ function ow_type_is_pointer(tn: string, ofuncs: OwnFuncs): boolean {
 
 // The ownership of a call's RESULT, which decides whether passing it into an
 // `own` parameter transfers or borrows. Native's half is computeResultBorrows
-// in internal/checker/result_borrow.go; these functions mirror it.
+// in internal/check/checker/result_borrow.go; these functions mirror it.
 //
 // Generic functions are skipped throughout: an erased type parameter's spelling
 // reads as a nominal here, and native types it as a ParamType, which is not
@@ -18685,7 +18685,7 @@ function e049_append_nt(a: NameTy[], b: NameTy[]): NameTy[] {
 
 // e049_is_ref classifies a capture's TYPE NAME as reference-shaped (E049
 // applies) vs scalar (exempt). The scalar set must match native's
-// ast.IsPointerType exactly (internal/ast) — everything IsPointerType calls
+// ast.IsPointerType exactly (internal/syntax/ast) — everything IsPointerType calls
 // false is exempt here: every numeric width (i32/i64 and the unsigned
 // u8/u32/u64/usize) plus boolean. IsPointerType-true names (string, arrays,
 // structs, enums, tuples, maps, dyn) fall through to `true`. An empty name
@@ -25630,7 +25630,7 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
 // variable of a range loop over untyped bounds — takes ONE integer type: the
 // first use that fixes a width decides it, and it is i32 when no use does.
 // Native settles such a local while it types the body
-// (internal/checker/literal_local.go). This checker types from an immutable
+// (internal/check/checker/literal_local.go). This checker types from an immutable
 // AST, so settle_literal_locals infers each local's width first and writes it
 // into the source: an annotation on the `let`, a suffix on the literals of the
 // range bounds. The checker and the lowering then read one declared type. An

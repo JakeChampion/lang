@@ -1,6 +1,6 @@
 name: Test fernsmith
 
-# `internal/fernsmith` carries the wasm-smith-style generator + its
+# `internal/testing/fernsmith` carries the wasm-smith-style generator + its
 # scratch tests. Locally it's a ~56s run, plus ~6 minutes for the
 # full shrink-monotonicity sweep this lane opts into — long enough
 # that folding it into test-units would dominate that workflow's
@@ -69,7 +69,7 @@ jobs:
           if [ "${{ matrix.shard }}" != 0 ]; then
             sel=(-run '^TestGenBytesShrinkIsMonotonicAndValid$')
           fi
-          gotestsum --format pkgname-and-test-fails -- -timeout=20m "${sel[@]}" ./internal/fernsmith/...
+          gotestsum --format pkgname-and-test-fails -- -timeout=20m "${sel[@]}" ./internal/testing/fernsmith/...
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jakechampion/lang/internal/manifest"
-	"github.com/jakechampion/lang/internal/platforms"
+	"github.com/jakechampion/lang/internal/pkg/manifest"
+	"github.com/jakechampion/lang/internal/pkg/platforms"
 )
 
 // runCheckTarget dispatches `fern -check ARG`:

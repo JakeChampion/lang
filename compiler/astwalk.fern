@@ -75,7 +75,7 @@ pub function fold_stmt_pruned[T](st: ast.Stmt, own acc: T, visit: (ast.Expr, own
 // fold_expr_nodes / fold_stmt_nodes are the walk itself, and the only copy of
 // it. They visit BOTH node kinds: `visit_stmt` on each statement in pre-order,
 // `visit_expr` on each expression. Two visitors rather than native's single
-// `fn(Node) bool` (internal/ast/walk.go) because `Expr` and `Stmt` are separate
+// `fn(Node) bool` (internal/syntax/ast/walk.go) because `Expr` and `Stmt` are separate
 // unions here with no common supertype — wrapping them in one would cost an
 // allocation per node visited.
 //
@@ -398,7 +398,7 @@ pub function fold_stmt_own_pruned[T](st: ast.Stmt, own acc: T, visit: (ast.Expr,
 // fold threads an accumulator out, these thread a NEW TREE out. They are the
 // shared spine for the hand-written `Expr -> Expr` recursions the same way the
 // fold is for the collectors, and they converge on native's
-// ast.RewriteProgramExprs (internal/ast/walk.go).
+// ast.RewriteProgramExprs (internal/syntax/ast/walk.go).
 //
 // POST-ORDER, like native's: a node's children are rewritten first, and `visit`
 // then sees the REBUILT node. A consumer that must inspect a child before it is

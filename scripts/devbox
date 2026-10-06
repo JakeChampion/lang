@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # devbox — run a command against this repo inside the Linux toolchain image.
 #
-#   scripts/devbox go test ./internal/e2e/ -run TestSelfHostX86_64
+#   scripts/devbox go test ./internal/testing/e2e/ -run TestSelfHostX86_64
 #   scripts/devbox                      # interactive shell
 #   scripts/devbox --build              # force an image rebuild, then exit
 #

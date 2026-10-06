@@ -1,5 +1,5 @@
 // compiler/irverifyrc.fern — the self-host IR verifier's ownership
-// half, mirroring native's internal/ir/verifyrc.go (#7791, the follow-up to
+// half, mirroring native's internal/oracle/ir/verifyrc.go (#7791, the follow-up to
 // #7783).
 //
 // irverify.fern checks structure and irverifystack.fern checks operand-stack
@@ -114,7 +114,7 @@ function is_is_unique(op: ir.Op): boolean {
 // ownership unit on the pointer they are passed.
 //
 // The mirror of `rcRuntimeSigs`' release and move rows in
-// `internal/ir/rcsigs.go`, pinned against them by
+// `internal/oracle/ir/rcsigs.go`, pinned against them by
 // TestSelfHostIRVerifyRcReleaseSetMatchesNative. Only the release half is
 // here: the rest of that table — the retains, the inspection, the helpers
 // whose count movement one operand effect cannot express, and the

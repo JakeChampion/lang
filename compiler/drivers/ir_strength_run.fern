@@ -1,9 +1,9 @@
 // compiler/ir_strength_run.fern — driver for the stack IR's
 // strength-reduction peephole (ir.fern's reduce_strength / optimize_ops, the
-// op-list twin of native's internal/ir/strength.go, issue #6638).
+// op-list twin of native's internal/oracle/ir/strength.go, issue #6638).
 //
 // Each case builds a small op list, runs the pass, and prints the rendered
-// result. The companion Go test (internal/e2eselfhost/self_host_ir_strength_test.go)
+// result. The companion Go test (internal/testing/e2ecompiler/self_host_ir_strength_test.go)
 // asserts the exact stdout, so a rewrite that changes shape — or one that
 // starts firing where it must NOT (signed div/rem by a power of two, a
 // 64-bit-width binary, a non-decimal literal) — fails the golden rather than
@@ -625,7 +625,7 @@ function main(): i32 {
   let wc_opaque: ir.Op[] = [ir.op_load_local(0), ir.op_int_cast("i32")];
   out = out + "wc_opaque_refused: " + render(ir.fold_const_binaries(wc_opaque)) + "\n";
 
-  // 18. Zero-slot uniqueness guards (native internal/ir/zeroslot.go). Lowering
+  // 18. Zero-slot uniqueness guards (native internal/oracle/ir/zeroslot.go). Lowering
   //     emits an `__fern_rc_is_unique`-gated drop for every droppable local at a
   //     scope exit, on the paths that assigned it and the paths that did not; on
   //     the latter the slot still holds the entry zero the backend prologue wrote,
@@ -742,7 +742,7 @@ function main(): i32 {
   out = out + "f64_wrap_u32: " + render(ir.fold_const_binaries(f64_wrapu_lo)) + "\n";
 
   // 19. Magic-number reciprocals (ir.derive_magic_s / derive_magic_u,
-  //     native internal/ir/magic.go). The Go test renders the same divisors
+  //     native internal/oracle/ir/magic.go). The Go test renders the same divisors
   //     through native's derivation, so this is a parity check, not a golden.
   let mds: i32[] = [3, 7, -7, 97, 4093, -4093, 641, 1000000, 715827883, -1234567, 10, 100, 2147483647, -2147483647, 5, -5];
   let mi: i32 = 0;

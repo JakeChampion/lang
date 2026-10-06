@@ -266,14 +266,14 @@ world-driven composer (P2) wires it.
    wit-name) with a signature derived from the Fern declaration, and a call
    resolves to that import's funcidx. Composed via the world-driven path
    (`ComposeFromWorldAuto`). Gated by `TestExternImportScalarRunsUnderWasmtime`
-   (`internal/e2e/wit_extern_import_test.go`): `@import` of
+   (`internal/testing/e2e/wit_extern_import_test.go`): `@import` of
    `wasi:random/random@0.2.0` `get-random-u64` → core import present →
    validates and runs under wasmtime. **Self-host port done:** `wasm.fern`
    `extern_imports` emits each referenced `@import` as a core wasm function
    import (`wat_extern_valtype` maps the Fern signature; 64-bit ints → i64),
    skipping its body in the func loop so a call resolves to the import's
    `$name`. Gated by `TestSelfHostExternImportRunsUnderWasmtime`
-   (`internal/e2e/self_host_extern_import_test.go`): the self-host backend
+   (`internal/testing/e2e/self_host_extern_import_test.go`): the self-host backend
    emits the core, the Go composer wires it, and the component runs.
    Until P4c lands, a composite-typed extern signature is **rejected** by the
    Go backend (`externScalarType` in `scanExternImports`) with a "composite
@@ -960,7 +960,7 @@ world-driven composer (P2) wires it.
      checker (register resources, `resolveType` reclassification,
      `validateResourceHandles`, `assignable` own→borrow coercion — a plain i32
      is *not* a handle), and erasure to i32 at the single `ir.LowerWith` choke
-     point (`internal/ir/erase_handles.go`) so no backend/interp/self-host
+     point (`internal/oracle/ir/erase_handles.go`) so no backend/interp/self-host
      sees a HandleType. Self-host: `parser.fern` erases `own`/`borrow` to i32
      in `parse_type_name` and consumes `resource` decls. Gated by parser +
      checker + printer-round-trip tests and the e2e
@@ -987,7 +987,7 @@ world-driven composer (P2) wires it.
      `@import`.
    - **Slice 3 — automatic drop. ✅ Done (Go); self-host port follows.** The
      compiler releases an owned `own R` handle when it goes out of scope, so
-     user code never writes a manual drop. `internal/ir/insert_resource_drops.go`
+     user code never writes a manual drop. `internal/oracle/ir/insert_resource_drops.go`
      runs in `LowerWith` (before handle erasure): for each kept owned-handle
      local it inserts `defer <drop>(h);` — reusing Fern's defer machinery, which
      runs the drop on every function-exit path — and synthesizes one body-less
@@ -997,7 +997,7 @@ world-driven composer (P2) wires it.
      call argument) is treated as moved and left for its consumer — leaking is
      safe, a double drop is not; `borrow R` is never dropped. The pass is
      idempotent (the diff oracle / multi-backend compiles re-run `LowerWith`).
-     Gated by `internal/ir/resource_drop_test.go` (synthesis, move-skip,
+     Gated by `internal/oracle/ir/resource_drop_test.go` (synthesis, move-skip,
      idempotency) and the e2e `TestExternResourceHandleAutoDrop` (a program that
      declares NO drop, yet the emitted core carries `[resource-drop]pollable`
      and the component releases the pollable under real WASI).

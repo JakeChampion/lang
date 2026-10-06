@@ -28,7 +28,7 @@ cashed by the exit sweep. Measured on main today:
   precision**, so every unenumerated cell is a future rc-log entry.
 
 Native answers the same questions with **one analysis battery**
-(`internal/ir/rc_analysis.go`): one taint fixpoint (`computeFreeEligible`),
+(`internal/oracle/ir/rc_analysis.go`): one taint fixpoint (`computeFreeEligible`),
 one interprocedural borrow inference (`inferParamEscapes`), one type-driven
 inc trigger (`needsRcIncOnAlias`), one last-use order (`identOrder`). Origins
 are not cases there; a for-in binder and an alias of a parameter are both
@@ -38,7 +38,7 @@ The cost, measured:
 
 - 331 logged one-off rc fixes (291 in `RC-PERCEUS-SELF-HOST-PORT.md` §9 + 40
   in `docs/rc-log/`), 36 of them in the last four days; ~⅓ of the recent
-  commit stream; 172 of ~1151 files in `internal/e2eselfhost` are
+  commit stream; 172 of ~1151 files in `internal/testing/e2ecompiler` are
   one-fix-one-test.
 - `irlower.fern` is 62k lines (+51% in a month); the credit machinery is
   roughly a third of it.
@@ -109,7 +109,7 @@ Same discipline as the typed-IR carriers and the site-key migration:
 - **Step 2..N** — per release family: route its decision through the plan,
   behind an env switch (`FERN_SELFHOST_RC_PLAN=0` reverts, mirroring
   `FERN_SELFHOST_NO_REUSE`); delete the family's collector, escape gates, and
-  sweep arm when nothing consults them. Gates per step: `internal/e2eselfhost`
+  sweep arm when nothing consults them. Gates per step: `internal/testing/e2ecompiler`
   primary (leak matrix — exits must match native, underflow guard on every
   cell — plus rcCorpus), fixpoint secondary (`docs/TEST-GATES.md`).
 - The **reuse layer stays** (its 8 site pre-passes + `is_unique` guard are

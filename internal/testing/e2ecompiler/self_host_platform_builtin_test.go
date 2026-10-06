@@ -1,0 +1,85 @@
+package e2ecompiler
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// TestSelfHostPlatformBuiltinLowers pins the std/serve half of #5686.
+//
+// Every std/serve entry point names the host platform
+// (`(HttpRequest, platform.Host) => HttpResponse`); when the self-host could
+// not resolve that type, `__serve_loop` reported `BAIL lower`. One bailing
+// function drops the whole module (and the AST emitter it fell to could not
+// emit `tcp_listen` or `poll` at all) — so the failure surfaced far from its
+// cause, as `undefined reference to __fn_tcp_listen` at link.
+//
+// The probe is the assertion: every function of the std/serve closure must lower,
+// with the serve loop named explicitly so a regression says which one broke.
+func TestSelfHostPlatformBuiltinLowers(t *testing.T) {
+	_, runner, driverBin := buildModloadDriverX86(t)
+
+	progDir := t.TempDir()
+	for _, dir := range []string{"../../stdlib/std", "../../stdlib/core"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("read %s: %v", dir, err)
+		}
+		for _, e := range entries {
+			if !strings.HasSuffix(e.Name(), ".fern") {
+				continue
+			}
+			src, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				t.Fatalf("read %s: %v", e.Name(), err)
+			}
+			// core/ and std/ share no basenames today; a collision would make
+			// the flat vendoring silently drop a module, so fail loudly.
+			dst := filepath.Join(progDir, e.Name())
+			if _, err := os.Stat(dst); err == nil {
+				continue
+			}
+			if err := os.WriteFile(dst, src, 0o644); err != nil {
+				t.Fatalf("write %s: %v", e.Name(), err)
+			}
+		}
+	}
+	bsrc, err := os.ReadFile("../../../compiler/builtins.fern")
+	if err != nil {
+		t.Fatalf("read builtins.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(progDir, "builtins.fern"), bsrc, 0o644); err != nil {
+		t.Fatalf("write builtins.fern: %v", err)
+	}
+	main := "import \"std/serve\";\nfunction main(): i32 { return 0; }\n"
+	if err := os.WriteFile(filepath.Join(progDir, "main.fern"), []byte(main), 0o644); err != nil {
+		t.Fatalf("write main.fern: %v", err)
+	}
+
+	report := string(runDriverFile(t, runner, driverBin, filepath.Join(progDir, "main.fern"), "-ir-probe"))
+	if !strings.Contains(report, "serve____serve_loop: ir") {
+		t.Errorf("std/serve's __serve_loop did not lower; probe line: %q", probeLineFor(report, "serve____serve_loop"))
+	}
+	var bails []string
+	for _, line := range strings.Split(report, "\n") {
+		if strings.Contains(line, "BAIL") {
+			bails = append(bails, line)
+		}
+	}
+	if len(bails) > 0 {
+		t.Errorf("%d function(s) of the std/serve closure bail the IR path:\n%s", len(bails), strings.Join(bails, "\n"))
+	}
+}
+
+// probeLineFor returns the eligibility-report line for `fn`, or a not-found
+// marker — the report lists one `name: verdict` line per function.
+func probeLineFor(report, fn string) string {
+	for _, line := range strings.Split(report, "\n") {
+		if strings.HasPrefix(line, fn+":") {
+			return line
+		}
+	}
+	return "(no line for " + fn + ")"
+}

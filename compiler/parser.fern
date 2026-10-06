@@ -1828,7 +1828,7 @@ function (p: Par) with_map_kind(v: i32): Par {
 // "nest:too-deep" sentinel instead of running the stack out — a native build
 // gets no fatal-error diagnostic for that, just SIGSEGV, so the depth has to
 // be refused before the hardware notices. Chosen to match what native's
-// internal/parser accepts (its own budget is 5000 units at ~2 units per
+// internal/syntax/parser accepts (its own budget is 5000 units at ~2 units per
 // nesting level), so the two front ends agree on which programs are legal.
 // Both count ~2 units per parenthesised level, so the same number here and in
 // native's maxNestDepth puts the two acceptance thresholds on top of each
@@ -1937,7 +1937,7 @@ function (p: Par) peek_keyword(): string {
 // answers false both when there is no comma and when the comma is a
 // TRAILING one sitting directly before `close` — so every list routed
 // through it accepts a trailing comma. The mirror of the native
-// parser's `moreElems` (internal/parser/parser.go); the two must agree
+// parser's `moreElems` (internal/syntax/parser/parser.go); the two must agree
 // or a program's legality depends on which compiler reads it.
 function (p: Par) more_elems(close: string): (boolean, Par) {
   if (p.peek_punct() != ",") {
@@ -10389,7 +10389,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   // the Go checker, not `struct`-declared in std/time), so the self-host's
   // shape-pointer dispatch + field-offset resolution need their layouts here
   // — the same pattern as FileStat / HeaderMap above. Field lists mirror
-  // internal/checker/checker.go's registration exactly. All are leaf-safe
+  // internal/check/checker/checker.go's registration exactly. All are leaf-safe
   // (scalar / string / nested leaf-safe struct fields), so their constructors
   // (date_make / span_days / …) and field reads lower on the IR path.
   structs = add_builtin_struct2(structs, "Instant", "sec", "i64", "nsec", "i32");
@@ -10446,7 +10446,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   // std/url's Url is a compiler built-in (registered in the Go checker, not
   // `struct`-declared in std/url), so the IR path needs its layout to lower
   // `Url { … }` construction / field reads — the same pattern as Stream /
-  // BytesWriter / the time types. Fields mirror internal/checker/checker.go
+  // BytesWriter / the time types. Fields mirror internal/check/checker/checker.go
   // exactly; all scalar/string, so leaf-safe (url_parse's Url-spread builder
   // and `Option[Url]` return lower).
   if (!name_declared(structs, "Url")) {
@@ -15367,7 +15367,7 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
     // Register the instantiation only when the annotation supplies exactly
     // as many arguments as the struct declares. A mismatch skips
     // registration so clone/subst never see a short key — mirrors native's
-    // `len(sl.TypeArgs) != len(gen.TypeParams)` gate in internal/monomorph.
+    // `len(sl.TypeArgs) != len(gen.TypeParams)` gate in internal/oracle/monomorph.
     // Without it the short key reaches subst_ty, whose `cts[k]` indexes past
     // the supplied arguments and aborts the compiler.
     let gsi: i32 = gstruct_index(gstructs, base);
@@ -16535,7 +16535,7 @@ function genum_key_from_anno(ty: string, base: string, enums: EnumDecl[]): strin
   // so a spelling that supplies a different number of arguments would index
   // past the key's pieces and abort. Refusing here means no instantiation is
   // recorded, so clone/subst never see a short key — the enum half of native's
-  // `len(args) != len(gen.TypeParams)` gate in internal/monomorph.
+  // `len(args) != len(gen.TypeParams)` gate in internal/oracle/monomorph.
   let gei: i32 = genum_index(enums, base);
   if (gei >= 0 && parts.len() != enums[gei].type_params.len()) {
     return "";
@@ -16600,7 +16600,7 @@ function ge_inst_of(ty: string, enums: EnumDecl[]): GEInst {
 
 // fn_key_sanitize maps a fn type spelling into a token safe to embed in a `__`
 // symbol name — every char outside [A-Za-z0-9_] becomes '_'. Mirrors native's
-// `sanitize` (internal/monomorph/monomorph.go) so a fn type argument
+// `sanitize` (internal/oracle/monomorph/monomorph.go) so a fn type argument
 // (`(i32) => i32`) keys to `_i32_____i32` instead of dragging its parens /
 // spaces / `=>` into an unassemblable symbol. (The sibling `sanitize_key`
 // above handles only bracket/comma keys and is shared with fn/struct mangling,
@@ -20346,7 +20346,7 @@ pub function lower_defers_module(mod: Module): Module {
 }
 
 // ---- automatic resource-handle drop (P5 slice 3) --------------------
-// Mirrors the Go internal/ir/insert_resource_drops.go. For each owned local
+// Mirrors the Go internal/oracle/ir/insert_resource_drops.go. For each owned local
 // (`own R`, or a bare R) of a WIT-bound resource that is not moved, insert `defer __resource_drop_R(slot);` right after
 // the declaration — the fused defer expansion then runs it on every exit path
 // (see drop_slot_name for the slot) — and synthesize one body-less
@@ -20386,7 +20386,7 @@ pub function is_reserved_enum_name(name: string): boolean {
 }
 
 // reserved_enum_tparams is the type parameters of the built-in enum `name`,
-// pinned against builtinEnumDecls by the parity test in internal/checker.
+// pinned against builtinEnumDecls by the parity test in internal/check/checker.
 pub function reserved_enum_tparams(name: string): string[] {
   if (name == "Option") {
     return ["T"];
@@ -20404,7 +20404,7 @@ pub function reserved_enum_tparams(name: string): string[] {
 // rule is_reserved_enum_name above carries for enums.
 //
 // A LIST rather than an `||` chain: at 27 names the chain stops reading,
-// and it gives the parity test in internal/checker one thing to compare
+// and it gives the parity test in internal/check/checker one thing to compare
 // against builtinStructDecls() so the two cannot drift.
 pub function is_reserved_struct_name(name: string): boolean {
   let reserved: string[] = [
@@ -21536,7 +21536,7 @@ pub function desugar_prepass_module(raw: Module): Module {
 // that omits the trailing argument — `f(5)` — is rewritten to the complete
 // positional call `f(5, 128)` here, so the checker, the IR lowering, the SSA
 // backend, and the interpreter all see a full argument list and need no
-// knowledge of defaults. Mirrors the native compiler's internal/defaultargs.
+// knowledge of defaults. Mirrors the native compiler's internal/check/defaultargs.
 //
 // The rewriter follows rw_call_stmts exactly — only the
 // ExprCall arm differs: instead of appending captured names, it appends the
@@ -21575,7 +21575,7 @@ function fda_lookup_params(name: string, funcs: FuncDecl[]): ast.ParamDecl[] {
   return none;
 }
 
-// ---- named-argument resolution (mirrors internal/defaultargs) ----
+// ---- named-argument resolution (mirrors internal/check/defaultargs) ----
 // A named argument `name = value` is parsed into a synthetic
 // `ExprBinary("__named_arg", <name ident>, value)` marker. These helpers
 // recognise, inspect, and resolve those markers against a callee's
@@ -21795,7 +21795,7 @@ function fda_stmts(stmts: ast.Stmt[], funcs: FuncDecl[]): ast.Stmt[] {
   return astwalk.map_stmts(stmts, rw);
 }
 
-// ---- default-argument diagnostics (mirrors internal/defaultargs) ----
+// ---- default-argument diagnostics (mirrors internal/check/defaultargs) ----
 
 // default_nonconst_reason reports the first sub-expression that stops a
 // parameter default from being a constant expression, as the reason text E076
@@ -22983,7 +22983,7 @@ pub function infer_ret_types_module(mod: Module): Module {
 // A purely syntactic pass that marks array-index READS `arr[i]` inside a loop
 // guarded by `i < arr.len()` as Unchecked, so the lowering drops the
 // per-iteration bounds check + the per-access `len` reload (op_arr_get_nc).
-// internal/parser/bounds_elide.go is the native pass it grew from; the
+// internal/syntax/parser/bounds_elide.go is the native pass it grew from; the
 // self-host one also takes a field path, a length bound to a local, and a
 // guard that is one conjunct of the condition. No type info is
 // consulted: the IR honours the flag ONLY on the true array path, so marking a

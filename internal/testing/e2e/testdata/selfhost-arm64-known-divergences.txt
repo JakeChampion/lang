@@ -1,0 +1,133 @@
+# Fixtures where the SELF-HOST arm64 path disagrees with the native compiler.
+#
+# Format: <fixture-name> <#issue> <reason>
+#
+# Same contract as selfhost-wasm-known-divergences.txt: TestFernFixturesSelfHostArm64
+# lists these rather than skipping them, so the lane is green with them listed, a
+# NEW divergence fails, and a listed fixture that starts PASSING also fails — an
+# allowlist nobody prunes is where bugs go to be forgotten.
+#
+# Two rules for adding a row, both learned from the wasm leg's first run (which
+# reported 26 mismatches, 14 of them harness artifacts):
+#
+#   1. Reproduce it by hand with a native self-host CLI (`make selfhost-cli`,
+#      ~1.3s per program) before writing it down, and record the measured
+#      self-host and native values in the reason.
+#   2. Rule out the harness's `import "core/int"` injection first. The native
+#      legs inject that import into the entry file (LoadCheckMono, for wasmbin's
+#      PrintMainResult); the self-host CLI injects nothing. A compile failure
+#      naming a missing method is that asymmetry, not a compiler divergence.
+#
+# This leg's failures come from TWO layers, and the reason should say which:
+# `-target arm64` emits AND assembles AND links in-process (asm_arm64_ir +
+# arm64_native + elf.fern), so a compile failure is either an emitter bail
+# ("module is not IR-eligible") or the in-process assembler refusing an
+# instruction it does not implement (the message names the mnemonic).
+#
+# Measured 2026-08-04 on the run that closed #6045: 317 fixtures run, 302 pass,
+# 15 listed. Two of those 15 — `tuple_match_expr` (#6010) and `multiline_stdin`
+# (#6052) — were fixed within hours of this leg landing and were pruned in
+# #6099, `pure_collection_aliases` + `map_struct_value_field` with the #6007
+# slices, `derive_json` with #6009, the six regex fixtures with #6049, and
+# `map_struct_enum_keys` with #6081, `url_codec` with #6082,
+# `audit_io_builtins` with #6083 and `generic_method_typeparams` with #6007,
+# leaving NONE. Every row was reproduced by hand
+# with bin/fern-selfhost and checked against BOTH `bin/fern -interp` and the
+# self-host x86-64 path, which is what split the list into its two halves:
+#
+#   * Rows the x86-64 leg lists too, with the SAME measured value. Those are
+#     shared frontend/irlower bugs that arm64 merely re-observes; fixing one
+#     flips two legs. Keep the issue numbers in sync with
+#     selfhost-x86_64-known-divergences.txt — this happened TWICE during review:
+#     #6080 fixed eq_struct_enum + ord_struct_enum, and #6085 fixed int_wrap
+#     (#6050) + u64_max_to_f64_is_huge (#6051), on both legs. Each time the leg
+#     reported "listed but PASSES now" before anyone thought to re-check, which
+#     is the contract earning its keep — four rows that would otherwise have
+#     sat here as permanent expected failures.
+#
+#     It has now happened FOUR times, and the last two were not caught by
+#     review at all: #6088 (tuple_match_expr / #6010) and #6094 (multiline_stdin
+#     / #6052) both branched BEFORE this leg existed, so their authors pruned
+#     the wasm and x86-64 files — the only two that existed when they started —
+#     and never saw this one. The stale rows only surface on the NEXT pull
+#     request, since the workflow is `pull_request`-only and nothing runs the
+#     leg on a push to main. So: when a shared-frontend fix prunes a row, prune
+#     it from ALL THREE files, and re-read this file rather than the one your
+#     branch was cut against.
+#   * NO rows left that pass on x86-64 AND interp and fail only here. The
+#     arm64-specific frontier (#6081 / #6082 / #6083) is closed.
+#
+# The list is now EMPTY: no assembler-refusal row survives (every "hit an
+# instruction it does not yet support" failure is gone), and the last compile
+# row — the shared #6007 IR-eligibility bail — went with the generic-struct
+# method-type-param fold. Keep the contract in force rather than deleting the
+# file: an empty allowlist is what makes the NEXT divergence fail the leg.
+#
+# #6081 (`map_struct_enum_keys`) was one of those arm64-only rows and is now
+# fixed: the arm64 map runtime had no keyed-compare path at all, so a struct /
+# enum key fell through to the STRING loop and `__fern_str_eq` read the key box
+# ({shape-ptr, field0, …}) as a `{data, len}` string box — comparing field 0 as
+# a LENGTH and then walking the shared shape pointer. Two keys therefore matched
+# iff their first field was bit-identical. A `Name { first: string, … }` key
+# missed (two distinct string-box pointers), which is what the fixture saw; a
+# scalar-only struct key would instead have OVER-matched on any key with the
+# same field 0. That second half is pinned by TestSelfHostMapKeyedArm64IR, since
+# no fixture probed it.
+#
+# #6082 (`url_codec`) was the other, and its filed diagnosis was wrong in an
+# instructive way: it read as a `Url` struct / Option payload laid out at the
+# wrong offset. It was neither. The in-process GAS parser stripped `//` line
+# comments with a plain `indexof(line, "//")`, blind to string quoting, and the
+# emitter escapes `"` / `\` / control bytes but not `/` — so `.ascii
+# "http://h.com"` was truncated to `.ascii "http:`, shortening that literal and
+# shifting every constant after it in .rodata. Any arm64 program with `//`
+# INSIDE a string literal was affected; url_codec was simply the first fixture
+# to contain one. Pinned by TestSelfHostArm64GasStringComment.
+#
+# #6083 (`audit_io_builtins`) was the last, and like #6082 it was an assembler
+# hole rather than a codegen one. `__fern_eprint_str` claimed its newline
+# scratch with `strb w1, [sp, #-16]!`, a pre-index WRITEBACK the assembler has
+# no byte-store encoder for: it dropped the `!`, left sp unchanged, and the
+# paired `add sp, sp, #16` then RAISED sp by 16. eprint's own output was
+# correct, so the frame corruption only surfaced at the next call — which is
+# why the fixture printed "Hi!"/"to-stderr" and died afterwards. The helper now
+# uses __fern_putchar's explicit `sub sp` shape, and the assembler REFUSES a
+# writeback form it cannot encode (`<mnem>:writeback`) instead of silently
+# dropping it. Pinned by TestSelfHostArm64GasWriteback.
+
+# --- shared with the x86-64 leg (same bug, same measured value) ---
+
+# --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
+
+# `alloc_flat_fresh_array_arg` was here and is now FIXED (#6522), the last of the
+# three AL-01 arg-temp rows. It took four slices: the counted-retain arg-temp
+# release (#7121), the string[] field BUFFER release gated on the store half of
+# the strarrfld verdict (#7124), and finally the READ half — `x.f[i].len()` is a
+# TRANSIENT element borrow, not a lasting alias, so it no longer costs the type
+# its admission and the deep element walk runs. 538 -> 424 -> flat, measured
+# identically on both register backends. docs/RC-PERCEUS-SELF-HOST-PORT.md §9.
+
+# --- ACTIVE -----------------------------------------------------------------
+# EMPTY. The last row, `alloc_flat_bytes_roundtrip` (#8412), left when the
+# semantic lowering learned to anchor a reference cast to an address: that one
+# refusal had been sending the whole of `std/string` to the AST lowering, so
+# `bytes()` and `string_from_bytes_unchecked` never reached the reclaim the
+# typed path gives them. All three legs measure flat now. Its neighbours went
+# the same way — `alloc_flat_read_chunk` (#8402) when the owned-payload
+# builtins' match bindings became counted owners, and
+# `alloc_flat_method_identity_return` with the guarded chain-receiver release
+# (#6544).
+#
+# Keep the section and the file. An empty allowlist is what makes the NEXT
+# divergence fail the leg, and a listed case that comes back matching native
+# fails it too, so an entry cannot outlive its bug.
+#
+# A new row belongs here when a shape is fixed in `internal/oracle/ir` — the NATIVE
+# compiler — and the self-host compiler's own RC implementation has not caught
+# up: those measure `flat` under native and `grows` here, on all three
+# self-host targets identically, because the gap is in the shared self-host
+# reclaim path rather than in any one emitter. Shape only: every ANSWER must
+# still match native, and a row that carries a VALUE divergence as well has to
+# say so — the answer being wrong is a different order of bug from the memory
+# being wrong. That is the RECLAIM half of goal 2
+# (docs/RC-PERCEUS-SELF-HOST-PORT.md §9).

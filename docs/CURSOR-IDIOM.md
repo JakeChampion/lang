@@ -86,7 +86,7 @@ avoids changing every helper's result type to `Result`.
 
 ## Gating (both files are validated paths)
 
-- `json.fern` is **self-compiled** (`internal/e2e/self_host_json_test.go`)
+- `json.fern` is **self-compiled** (`internal/testing/e2e/self_host_json_test.go`)
   → the byte-identical self-host fixpoint gate must stay green.
 - json + stream have wasm e2e + interp + rc-correctness coverage →
   run under wasmtime locally (`/tmp/wt`, `FERN_WASI_ADAPTER`), not just

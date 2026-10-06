@@ -83,6 +83,6 @@ The reduced runtime test failed before the fix and passed after it (0.042 s).
 Debug/release SSA sort GNU parity passed (3.878 s), as did the existing ARM64
 SSA CLI roundtrip cases (7.713 s). `make lint-all` and the full native ARM64
 Linux `go test ./... -timeout=60m` suite passed, exit 0: coreutils 238.960 s,
-e2e 1639.527 s, e2eselfhost 130.113 s. Existing main x86-64 self-host CI failures and
+e2e 1639.527 s, e2ecompiler 130.113 s. Existing main x86-64 self-host CI failures and
 driver-size baseline drift are tracked separately by #8894; this change does
 not update those size baselines.

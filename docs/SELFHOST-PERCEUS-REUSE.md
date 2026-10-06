@@ -33,8 +33,8 @@ validated by byte-for-byte differential + fixpoint tests before it is enabled.
 
 ## 1. What the native compiler does
 
-Native reuse lives in `internal/ir/ir.go` (the builder), gated on two
-independent flags in `internal/ast/ast.go`:
+Native reuse lives in `internal/oracle/ir/ir.go` (the builder), gated on two
+independent flags in `internal/syntax/ast/ast.go`:
 
 - `RcFreeEnabled` (default true) — the Phase-3 freelist allocator (recycling
   freed boxes). Reuse only makes sense when freeing.
@@ -159,7 +159,7 @@ self-compile already exercises it) and tested:
   the matched variant, and its array cow-guard splits per guard arm: dec the
   replaced old array only when reusing, retain (`rc_inc`) a same-slot MOVE
   alias when degrading to a fresh box).
-- Tests: `internal/e2e/rc_heap_bump_general_reuse_test.go`,
+- Tests: `internal/testing/e2e/rc_heap_bump_general_reuse_test.go`,
   `rc_heap_bump_enum_reuse_test.go`, `rc_c2_consuming_reuse_test.go`.
 
 **The genuine remaining deltas vs the native reuse** are narrow, not a large
@@ -220,11 +220,11 @@ these fail a gate instead.
 
 | pin file | what it lists | measured |
 |---|---|---|
-| `internal/e2eselfhost/testdata/selfhost-leak-matrix.txt` | the goal-2 RECLAIM gap list for the generated kind × scope × consumption × origin grid | 150 rows, **all `clean clean`** — no self-host leak row left |
-| `internal/e2eselfhost/testdata/selfhost-leak-matrix-arm64.txt` | the same grid on arm64 | every row agrees with the x86 file; the last native-arm64 `leak clean` rows closed with #7446 |
-| `internal/e2e/testdata/conformance-leak-census.txt` | every runnable conformance fixture's unpaired allocations under the self-host | 559 fixtures, **558 clean**; the one row is `oob_index_write`'s copy, live when its bounds check aborts |
+| `internal/testing/e2ecompiler/testdata/selfhost-leak-matrix.txt` | the goal-2 RECLAIM gap list for the generated kind × scope × consumption × origin grid | 150 rows, **all `clean clean`** — no self-host leak row left |
+| `internal/testing/e2ecompiler/testdata/selfhost-leak-matrix-arm64.txt` | the same grid on arm64 | every row agrees with the x86 file; the last native-arm64 `leak clean` rows closed with #7446 |
+| `internal/testing/e2e/testdata/conformance-leak-census.txt` | every runnable conformance fixture's unpaired allocations under the self-host | 559 fixtures, **558 clean**; the one row is `oob_index_write`'s copy, live when its bounds check aborts |
 
-`internal/e2e/rc_leak_gate_test.go` carries the fourth: under the self-host
+`internal/testing/e2e/rc_leak_gate_test.go` carries the fourth: under the self-host
 no rc-corpus case leaks on x86-64 or arm64, so both of its tables are empty.
 
 Regenerate rather than hand-edit: `FERN_LEAK_MATRIX_DUMP=1` for the matrices,
@@ -443,7 +443,7 @@ staying green (the self-compile must remain byte-identical).
 
 ## 6. Implementation notes (verified from source)
 
-Decoded from `internal/ir/ir.go` + the Go x86-64 emitter (deleted in #11557) +
+Decoded from `internal/oracle/ir/ir.go` + the Go x86-64 emitter (deleted in #11557) +
 `compiler/asm_ir.fern`, resolving the §5 open questions so Slice 0/1
 codegen is turn-key:
 
@@ -526,10 +526,10 @@ upgrade back to `emit_enum_reclaim_store`'s free+alloc — mirroring native's
 lowering's pairing, and the differential contract ("reuse-on vs reuse-off
 must be observationally identical") is enforced on it by
 `TestSelfHostReuseDifferentialX86_64`
-(`internal/e2eselfhost/self_host_reuse_differential_test.go`), which runs
+(`internal/testing/e2ecompiler/self_host_reuse_differential_test.go`), which runs
 each family's shapes both ways against the interpreter's answer, and by
 `TestSelfHostSemanticReuseDifferentialX86_64`
-(`internal/e2eselfhost/self_host_semantic_reuse_differential_test.go`), which
+(`internal/testing/e2ecompiler/self_host_semantic_reuse_differential_test.go`), which
 also proves the switch live on the typed lowering's firing shapes.
 
 ---
@@ -547,7 +547,7 @@ Constructor reuse now covers, on **both** the cross-statement
 All gated by the single `struct_fields_reusable` predicate; an overwritten
 nested-struct field's old inner box is released with a full freeing drop
 (`__struct_drop_<FT>` when it owns rc fields, then a box dec) before the fresh
-inner is written. Coverage: `internal/e2e/self_host_loop_reuse_ir_test.go`
+inner is written. Coverage: `internal/testing/e2e/self_host_loop_reuse_ir_test.go`
 `loop-nested-struct-field-*` (cross) and `loop-funcupdate-nested-struct-*`
 (self-overwrite) — reuse fires (box 3 not 4) and 5M-iter churn stays balanced.
 

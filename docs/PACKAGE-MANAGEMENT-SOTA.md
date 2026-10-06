@@ -40,8 +40,8 @@ The first survey's "where we are" section is stale in four ways —
 all in the direction of *more* of the substrate existing:
 
 1. **Import aliasing landed.** `import "std/test" as t;` is
-   implemented (`internal/parser/parser.go:605-612`,
-   `internal/modload/modload.go:29-33`) — the survey's Rec §10 is
+   implemented (`internal/syntax/parser/parser.go:605-612`,
+   `internal/pkg/modload/modload.go:29-33`) — the survey's Rec §10 is
    done. Duplicate-alias rejection is tested
    (`modload_test.go:145,167`).
 2. **`pub(package)` visibility landed** (#3095,
@@ -69,9 +69,9 @@ have shipped (see `PACKAGES.md`) — the `fern.toml` manifest, hash-
 addressed url deps + content-addressed store (`fern -fetch`), vendoring
 (`fern -vendor`), workspaces, `fern -add`, and **MVS version resolution
 over a version index with a `fern.lock`** (`fern -resolve`;
-`internal/manifest` + `internal/pkgcache` + `internal/mvs` +
-`resolveImport` in `internal/modload`). The MVS design below is no
-longer hypothetical — it is the shipped `internal/mvs`. That is the
+`internal/pkg/manifest` + `internal/pkg/pkgcache` + `internal/pkg/mvs` +
+`resolveImport` in `internal/pkg/modload`). The MVS design below is no
+longer hypothetical — it is the shipped `internal/pkg/mvs`. That is the
 **native** compiler; the **self-hosted** compiler resolves every
 disk-resolvable dependency form and, since #6640, runs MVS itself
 (`compiler/mvs.fern` + `fern -resolve`) — see

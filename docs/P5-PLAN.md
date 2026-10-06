@@ -44,17 +44,17 @@ already an opaque `i32` at the canonical ABI). Two user-visible goals:
 
 ## Grounding (from the codebase map)
 
-- **Front end:** parser `parseAttribute` (`internal/parser/parser.go:729`)
+- **Front end:** parser `parseAttribute` (`internal/syntax/parser/parser.go:729`)
   parses `@import`; body-less functions stamped `ImportIface`/`ImportWITName`.
   Types parse in `parseType`. `ast.Type` family: `NumberType`, `ArrayType`,
   `SliceType`, `EnumType{Name,Args}`, `StructType{Name,Args}`, `ParamType`,
-  `TupleType` (`internal/ast/ast.go:34+`).
+  `TupleType` (`internal/syntax/ast/ast.go:34+`).
 - **Checker:** single recursion point `resolveType`
-  (`internal/checker/checker.go:3136`); externs skip body checking; signatures
+  (`internal/check/checker/checker.go:3136`); externs skip body checking; signatures
   registered in `FuncSigs`. Ownership gates: `Param.Own`, `OwnedByDefault`,
-  `BorrowInferEnabled`, `RcFreeEnabled` (`internal/ast/ast.go:494+`).
+  `BorrowInferEnabled`, `RcFreeEnabled` (`internal/syntax/ast/ast.go:494+`).
 - **IR drop:** `dropStructField`, `emitRcDecLocalsAtExit{,Except}`,
-  `computePreciseDrops`/`emitPreciseDrop` (`internal/ir/ir.go`). Three
+  `computePreciseDrops`/`emitPreciseDrop` (`internal/oracle/ir/ir.go`). Three
   drop-timing hooks (exit sweep, precise last-use, defer). `ir.ExternFunc`
   carries `Iface`/`WITName`; an extern call is `OpCallDirect` by name.
 - **Composer blockers:** `hasResourceDropPrefix` rejects drop imports in

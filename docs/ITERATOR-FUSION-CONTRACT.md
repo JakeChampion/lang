@@ -52,7 +52,7 @@ Adopting lazy iterator chains requires ALL of:
 
 ## Where it lives
 
-An `internal/ir` pass over the existing cursor-iterator protocol
+An `internal/oracle/ir` pass over the existing cursor-iterator protocol
 (`core/iter`'s `has_next`/`value`/`advance` shape and the
 `Iterator` trait), NOT a source-level rewrite: the IR is the
 target-agnostic layer, so all three backends inherit fusion, and
@@ -74,7 +74,7 @@ nothing yields a loop that allocates nothing. It is written for the
 EAGER `std/array` combinators of #9731, and the argument does not depend
 on which of the two surfaces the operators came from.
 
-That eager pass is **built** — `internal/ir/array_fusion.go`, covering
+That eager pass is **built** — `internal/oracle/ir/array_fusion.go`, covering
 `map` and `filter` as stages and `fold` and `reduce` as sinks. It
 discharges clause 1 for those operators on the eager surface: the
 intermediates are gone and, because fusion runs before

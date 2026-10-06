@@ -183,7 +183,7 @@ as an opt-in debug output behind `-emit-wat`.
 
 ### Exit criteria
 
-- Every existing `internal/e2e/wasm_*_test.go` passes with the new
+- Every existing `internal/testing/e2e/wasm_*_test.go` passes with the new
   encoder in place of `wasm-tools parse`.
 - Byte-for-byte equivalence is **not** required; semantic equivalence
   under `wasmtime run` is.
@@ -203,7 +203,7 @@ as an opt-in debug output behind `-emit-wat`.
   `uleb_size_u32` / `uleb_size_u64`. Vector-tested against the
   Wikipedia LEB128 reference examples and the wasm-spec edge cases
   (bit-6 transitions, multi-byte negatives, u32/u64/i64 widths) under
-  `internal/e2e/wasm_e2e_test.go` (TestWASMLeb128*). Pure Fern —
+  `internal/testing/e2e/wasm_e2e_test.go` (TestWASMLeb128*). Pure Fern —
   takes a `u8[]` and appends; no I/O. Not wired into the driver
   yet, per the "Fern code only, defer running it" decision.
 - **Binary-container primitives shipped** in
@@ -310,7 +310,7 @@ as an opt-in debug output behind `-emit-wat`.
   every byte against a hand-computed reference, exercising every
   section composer and several opcode encoders in one pass.
 - **End-to-end validation against wasm-tools shipped** in
-  `internal/e2e/wasm_e2e_test.go::TestWASMModuleValidatesUnderWasmTools`.
+  `internal/testing/e2e/wasm_e2e_test.go::TestWASMModuleValidatesUnderWasmTools`.
   A Fern program builds the minimal "function returning 42"
   module via `module.build`, prints the 37 bytes as space-
   separated decimals; the Go test parses them back, writes them
@@ -1094,7 +1094,7 @@ In `cmd/fern/main.go`, branch on target before calling `link`:
 
 ### Exit criteria
 
-- Every `internal/e2e/arm64_*_test.go` passes on the binary path
+- Every `internal/testing/e2e/arm64_*_test.go` passes on the binary path
   with no `aarch64-linux-gnu-gcc` on `$PATH`.
 - `readelf -a` on a produced binary shows: ELF64, EXEC (or DYN),
   EM_AARCH64, one PT_LOAD per segment, correct entry point.

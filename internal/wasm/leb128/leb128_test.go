@@ -13,7 +13,7 @@ import (
 // https://en.wikipedia.org/wiki/LEB128.
 //
 // The same input set is mirrored on the Lang side by the
-// cross-validation test in internal/e2e (TestWASMLebCrossValidates) —
+// cross-validation test in internal/testing/e2e (TestWASMLebCrossValidates) —
 // if either implementation drifts off-spec, the e2e test fires.
 
 func TestUlebU32SpecVectors(t *testing.T) {

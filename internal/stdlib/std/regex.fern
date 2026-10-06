@@ -82,7 +82,7 @@
 // native compiler's interp / x86-64 / arm64 / wasm backends, and on the
 // self-host IR path (the array-payload-enum parser bug #3720 that once
 // blocked grouped patterns there is fixed — see
-// internal/e2eselfhost/self_host_regex_ir_test.go).
+// internal/testing/e2ecompiler/self_host_regex_ir_test.go).
 import "std/utf8" as utf8;
 
 // RNode is the parsed pattern tree. Leaf atoms (`RChar` / `RAny` /

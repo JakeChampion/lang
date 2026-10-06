@@ -41,7 +41,7 @@ stdlib closure on every edit, so caching parsed imports between checks is the
 first step `IDE-COMPILATION-RESEARCH.md` describes. Peak RSS stays at 30–31 MB over 100 changes, so each check's memory
 is reclaimed.
 
-`internal/e2eselfhost/self_host_lsp_test.go` gates it (`TEST-GATES.md` has the
+`internal/testing/e2ecompiler/self_host_lsp_test.go` gates it (`TEST-GATES.md` has the
 row). It holds the server to two references:
 
 - **`-check`, across the whole conformance corpus.** Every finding in the
@@ -81,7 +81,7 @@ The compiler already exposes most of what an LSP needs as ordinary Go API:
 - `checker.Check(prog) (*Info, error)` does the same for type errors, and
   populates an `Info` side table with `VarTypes`, `FuncSigs`, `Methods`,
   `Locals`, `Structs`, `Enums`. That's a ready-made symbol table.
-- `internal/diag` defines structured error interfaces (`Positioned`,
+- `internal/syntax/diag` defines structured error interfaces (`Positioned`,
   `Spanned`, `Hinted`) that map 1:1 onto LSP `Diagnostic` fields.
 - `cmd/fern-wasm` already builds the compiler to `GOOS=js GOARCH=wasm` and
   exposes a JS-callable entry point. Adding a second entry point for LSP
@@ -108,7 +108,7 @@ A thin Go binary that:
 1. Reads JSON-RPC over stdin/stdout per the LSP spec.
 2. Maintains `map[uri]string` of open documents.
 3. On `didOpen` / `didChange`: loads the program and runs `fern -check`'s
-   front end on it (`internal/gates.Check`), translates its errors and
+   front end on it (`internal/tools/gates.Check`), translates its errors and
    warnings into `PublishDiagnosticsParams`, and sends the notification. The
    cursor features below read a second load, type-checked but not folded:
    the const fold strips the consts that symbols and references look up.
@@ -138,7 +138,7 @@ button and `fernInterpret` flow untouched.
 
 Each step landed as a separate commit on the same branch.
 
-1. **AST `Walk` visitor.** ✓ `internal/ast/walk.go` —
+1. **AST `Walk` visitor.** ✓ `internal/syntax/ast/walk.go` —
    depth-first, source-order traversal with stop-descent
    semantics. Top-level decls without a `Pos()` got one. End-
    position threading on AST nodes was deferred: hover / def
@@ -146,7 +146,7 @@ Each step landed as a separate commit on the same branch.
    errors, and only two niche features (type-annotation hover,
    field-access hover) need real end positions. Future PR.
 
-2. **`cmd/fern-lsp` MVP.** ✓ `internal/lsp` +
+2. **`cmd/fern-lsp` MVP.** ✓ `internal/tools/lsp` +
    `cmd/fern-lsp` — hand-rolled JSON-RPC wire format (no
    third-party deps so the wasm build stays slim). Handles
    `initialize` / `shutdown` / `exit`, full-sync `didOpen` /
@@ -163,7 +163,7 @@ Each step landed as a separate commit on the same branch.
 
 4. **Playground hookup.** ✓ `cmd/fern-wasm` exposes
    `fernLsp(json)` + `fernLspOnNotify(cb)`; the same
-   `internal/lsp.Server` runs in-process. `web/index.html`
+   `internal/tools/lsp.Server` runs in-process. `web/index.html`
    keeps the textarea (no CodeMirror swap — out of scope for
    this PR) and gains a Problems panel + click-for-type
    cursor strip. CodeMirror migration is now an independent

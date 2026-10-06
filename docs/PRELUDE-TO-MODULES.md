@@ -8,7 +8,7 @@
 ## Problem
 
 `internal/prelude/prelude.fern` was auto-injected into every program at
-checker time (`injectPrelude` in `internal/checker/checker.go`). It was
+checker time (`injectPrelude` in `internal/check/checker/checker.go`). It was
 a ~6000-line grab-bag covering string / array / i32 methods, HTTP
 parsers, JSON, sort, format, URL, log, TCP, allocators, and more.
 
@@ -83,7 +83,7 @@ Tasks:
    - Exported `Resolve(importPath string) ([]byte, ok bool)` —
      returns the source for `std/foo` / `core/bar` paths, or
      `(nil, false)` for paths that don't match the embedded set.
-2. Wire into `internal/modload/modload.go`:
+2. Wire into `internal/pkg/modload/modload.go`:
    - In `resolveImportPath`, detect a `std/` or `core/` prefix
      and route through `stdlib.Resolve` instead of `filepath.Join`.
    - Loader needs to accept embedded source bytes (not just file
@@ -128,7 +128,7 @@ Tasks:
 3. Run the full e2e suite. Any failures mean cross-module
    method resolution is broken — fix in this PR before
    moving on.
-4. Add `internal/e2e/std_i32_test.go` covering a program that
+4. Add `internal/testing/e2e/std_i32_test.go` covering a program that
    `import "std/i32";` directly and calls `.abs()` etc. (Skips
    the auto-prelude path; proves the module works standalone.)
 
@@ -218,7 +218,7 @@ Tasks:
 - [x] Phase 3 — `std/i32` proof-of-shape (single method, then bulk).
       Receiver-method dispatch became module-scoped; the checker
       now consults each call site's import closure (see
-      `MethodSources` in `internal/checker/checker.go`).
+      `MethodSources` in `internal/check/checker/checker.go`).
 - [x] Phase 4 — remaining modules carved out. Final layout, per
       `docs/STDLIB.md`:
       - `std/` (20): `i32`, `i64`, `u32`, `u64`, `string`, `array`,
@@ -261,7 +261,7 @@ Tasks:
       suites (#514 / #515). Every `examples/*.fern` and
       `examples/wasm/*.fern` program migrated to declare
       explicit imports (#517 / #518 / #519 / #520 / #521 /
-      #522). The internal/e2e test programs were then migrated
+      #522). The internal/testing/e2e test programs were then migrated
       the same way (add `import "core/no_prelude";` + one
       `import "std/X";` per module touched; free-function calls
       qualified to `module.fn`, bare receiver methods unchanged)
@@ -325,7 +325,7 @@ function dynArea(a: dyn facade.Area): i32 { return a.area(); }   // → shapes__
 let p: facade.Point = facade.Point { x: 6, y: 7 };               // → shapes__Point
 ```
 
-Implementation (`internal/modload/modload.go`): `pub use` targets are
+Implementation (`internal/pkg/modload/modload.go`): `pub use` targets are
 loaded like imports; after mangle prefixes are assigned,
 `resolveReexports` builds two per-module tables — `reexports` (values:
 function / const) and `reexportTypes` (types: struct / enum / trait), each
@@ -349,7 +349,7 @@ and qualified type refs in `rewrite_type_name` (chained re-exports are
 followed to the end). Covered end-to-end by the self-host IR e2e gates
 `TestSelfHostPubUseModloadX86_64` (x86-64) and
 `TestWasmSelfHostPubUseReexport` (wasm), mirroring the native
-`internal/e2e/pub_use_test.go`.
+`internal/testing/e2e/pub_use_test.go`.
 
 ## How loading works now (post-Phase 5 summary)
 
@@ -370,7 +370,7 @@ language has no generic method on a generic struct) and every backend routes
 `ir.CodegenAliases`, which can only name a function one way. The self-host
 mangled them to `map____map_*` until #9608, which is why it could not reach
 `core/map` at all. The two predicates are pinned against each other by
-`internal/modload`'s parity test; native exempts `__method_*` as well and the
+`internal/pkg/modload`'s parity test; native exempts `__method_*` as well and the
 self-host deliberately does not, which that test states.
 
 A qualified reference to one (`map.__map_pow2_ceil`) resolves under NEITHER
@@ -383,7 +383,7 @@ scopes them instead. `enum Kind { Text }` keeps a bare `Text` in the merged
 program, so the checker resolves a bare variant reference only among the enums
 the referring module can name — `ModuleImports` (the import closure, `pub use`
 targets included) is the test, applied by `visibleVariants` in
-`internal/checker/checker.go`. Two such enums make the reference ambiguous
+`internal/check/checker/checker.go`. Two such enums make the reference ambiguous
 (E036) and it must be qualified; an enum in a module outside that closure is
 not a candidate at all. Built-in enums carry no `SourceModule` and count
 everywhere. Without this a `Kind { Text }` anywhere in the program made every
@@ -424,7 +424,7 @@ bare-name method dispatch (`(n).to_string()`) through the mangled
 `int__int_to_string` name and crashed the interpreter with "cast from
 interp.Array to i32 not supported". It is fixed and guarded by
 `TestInterpScriptInteropIntToStringViaMangling`
-(`internal/e2e/interp_script_test.go`), which exercises the explicit-import,
+(`internal/testing/e2e/interp_script_test.go`), which exercises the explicit-import,
 transitive-import, and qualified-call shapes. Extend it if you touch the
 mangling / alias path.
 
