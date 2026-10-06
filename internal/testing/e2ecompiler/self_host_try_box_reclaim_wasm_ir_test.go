@@ -1,0 +1,113 @@
+package e2ecompiler
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+// TestSelfHostTryBoxReclaimWasmIR is the wasm port of the #4355 `?`-consumed
+// source-box reclaim (x86 sibling: TestSelfHostTryBoxReclaimIRX86_64). The
+// self-host IR path has no pair-form ABI — op_opt_make boxes everywhere — so
+// the same lowering-level frees apply unchanged; the box dec routes through
+// wasm's __fern_rc_dec and the string payload through the string sweep. The
+// per-round residual is pinned at zero: the caller's own match frees the
+// outer `let r = ...` box as well.
+func TestSelfHostTryBoxReclaimWasmIR(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host try-box reclaim wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
+
+	cases := []struct {
+		name     string
+		src      string
+		expected int
+	}{
+		// SCALAR Result payload.
+		{"try-box-scalar-pin-wasm", `function mk(pre: string): Result[i32, i32] { return Ok(pre.len()); }
+function innerT(pre: string): Result[i32, i32] { let v: i32 = mk(pre)?; return Ok(v + 1); }
+function innerB(pre: string): Result[i32, i32] { let t: i32 = 0; match (mk(pre)) { Ok(v) => { t = v + 1; }, Err(e) => { t = e; }, } return Ok(t); }
+function churnT(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { let r = innerT(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
+function churnB(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { let r = innerB(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
+function main(): i32 {
+    let w: i32 = churnB(2000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churnT(2000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (w != x) { return 97; }
+    let gt: i32 = b2 - b1;
+    if (gt > 256) { return 98; }
+    return 0;
+}`, 0},
+		// STRING payload — box and moved payload both recycle.
+		{"try-box-string-pin-wasm", `function mk(pre: string): Result[string, i32] { return Ok(pre + "abc"); }
+function innerT(pre: string): Result[i32, i32] { let s: string = mk(pre)?; return Ok(s.len()); }
+function innerB(pre: string): Result[i32, i32] { let t: i32 = 0; match (mk(pre)) { Ok(s) => { t = s.len(); }, Err(e) => { t = e; }, } return Ok(t); }
+function churnT(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { let r = innerT(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
+function churnB(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { let r = innerB(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
+function main(): i32 {
+    let w: i32 = churnB(2000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churnT(2000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (w != x) { return 97; }
+    let gt: i32 = b2 - b1;
+    if (gt > 256) { return 98; }
+    return 0;
+}`, 0},
+		// ALIASED payload excluded — keep stays readable, detector 0.
+		{"try-aliased-payload-excluded-wasm", `function mk(pre: string): Result[string, i32] { return Ok(pre); }
+function inner(pre: string): Result[i32, i32] { let s: string = mk(pre)?; return Ok(s.len()); }
+function go(pre: string): i32 { let r: i32 = 0; match (inner(pre)) { Ok(k) => { r = k; }, Err(e) => { r = e; }, } return r; }
+function main(): i32 { let keep: string = "abc" + "def"; let bad: i32 = 0; let i: i32 = 0; while (i < 500) { if (go(keep) != 6) { bad = 1; } i = i + 1; } if (keep.len() != 6) { return 88; } if (__rc_underflow_count() != 0) { return 99; } return bad; }`, 0},
+		// NON-CTOR return excluded — the forwarded live box is never freed.
+		{"try-nonfresh-callee-excluded-wasm", `function pass(r: Result[string, i32]): Result[string, i32] { return r; }
+function inner(b: Result[string, i32]): Result[i32, i32] { let s: string = pass(b)?; return Ok(s.len()); }
+function main(): i32 {
+    let b: Result[string, i32] = Ok("hi" + "!");
+    let bad: i32 = 0;
+    let i: i32 = 0;
+    while (i < 500) {
+        match (inner(b)) { Ok(k) => { if (k != 3) { bad = 1; } }, Err(e) => { bad = e; }, }
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return bad;
+}`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin, "-ir")
+			} else {
+				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			wat, err := cmd.Output()
+			if err != nil || len(wat) == 0 {
+				t.Fatalf("driver failed for %q: %v", tc.src, err)
+			}
+			watFile := filepath.Join(dir, tc.name+".wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			rcmd := exec.Command("wasmtime", "run", watFile)
+			_ = rcmd.Run()
+			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
+				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.src, wat)
+			}
+			if got := rcmd.ProcessState.ExitCode(); got != tc.expected {
+				t.Errorf("try-box wasm IR %q = %d, want %d (98 = heap grew → box not reclaimed; 99 = double-free; 97 = value corrupted; 88 = aliased payload freed)", tc.name, got, tc.expected)
+			}
+		})
+	}
+}

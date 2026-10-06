@@ -711,7 +711,7 @@ returned `[s]` instead. So `"abc".split("")` was `["a","b","c"]` natively and
 `["abc"]` self-host-compiled. The comment recorded it as deliberate: it matched
 the hand-written asm emitter, and no differential test covered empty separators.
 Both halves of that rationale had expired — the hand-asm emitters were deleted,
-and `internal/e2eselfhost/self_host_str_runtime_stdstring_parity_test.go` now
+and `internal/testing/e2ecompiler/self_host_str_runtime_stdstring_parity_test.go` now
 compares the helpers against the interpreter running `std/string` itself. That
 test has NO wasm leg: `wasm_ir.fern`'s WAT copies of `split` / `lines` / `trim`
 are still byte-based and still disagree with `std/string` (#8509).

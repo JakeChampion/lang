@@ -87,7 +87,7 @@ From each revision, run the existing stock harness with all baseline names:
 ```sh
 driver_names=$(awk '/^[a-z_]+\.fern/ {if (n++) printf ","; printf "%s", $1}' .github/selfhost-driver-sizes.txt)
 FERN_REQUIRE_X86_64_TOOLING=1 FERN_WARM_DRIVER="$driver_names" \
-  go test ./internal/e2eselfhost -run '^TestSelfHostWarmStockDriver$' -count=1 -v
+  go test ./internal/testing/e2ecompiler -run '^TestSelfHostWarmStockDriver$' -count=1 -v
 ```
 
 For the same-source attribution, copy `compiler/*.fern` into a

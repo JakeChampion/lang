@@ -164,7 +164,7 @@ cosmetic and are not:
   ambiguity list names `---presume-input-pipe`.
 - strerror text: `No such file or directory`, `Is a directory`, `Bad file
   descriptor`, `No space left on device` — `IoError.Other` carries glibc's
-  text for the errno on every backend (`internal/strerror`), so a write or
+  text for the errno on every backend (`internal/tables/strerror`), so a write or
   open failure prints what C prints.
 - The `Try '<argv0> --help' for more information.` line and the fact that a
   usage error never prints the full help.
@@ -192,7 +192,7 @@ the [glibc integer parsing documentation](https://sourceware.org/glibc/manual/2.
 describes that grammar. No output normalization or alternate arguments are
 used for these cases.
 
-`internal/coreutils/` is the gate. It is oracle-based: no expected output is
+`internal/testing/coreutils/` is the gate. It is oracle-based: no expected output is
 ever written down. Each case is an invocation (argv, stdin, extra env, where
 stdout goes — captured, closed, or `/dev/full` — for a utility that never
 stops, a byte limit, and a pseudo-terminal on any of fds 0, 1, 2 or 3); the
@@ -378,7 +378,7 @@ floor only when the catalogue shrinks on purpose; raising it to clear a failure
 is the same mistake in a new place.
 
 A name on the list that PASSED is a `::warning::`, not an error. That is a
-deliberate deviation from the two-way ratchet in `internal/lint`, where a
+deliberate deviation from the two-way ratchet in `internal/tools/lint`, where a
 number moving in either direction fails: `ptx` failed on one round and passed
 on two, so erroring in that direction would make the lane flaky on a utility
 nobody had changed. The warning is still the prompt to delete the line.
@@ -432,7 +432,7 @@ which needs `fsmode` — a mode word no wasm host has — so E066 refuses it
 post-tree-shake. That is the same answer `sort --batch-size` gets, and for
 the same reason: the alternative is a `-f` that silently does not force.
 Writer.seek, the primitive shred is built on, is covered on both previews
-by `internal/e2e/handle_stat_seek_test.go` instead. `dd`, built on the same
+by `internal/testing/e2e/handle_stat_seek_test.go` instead. `dd`, built on the same
 seek and reaching no mode word, does build and is in the leg — the one
 utility there that WRITES a file, so the leg covers a preopened
 directory's `path_open` and the write loop behind it.
@@ -453,7 +453,7 @@ Neither does any COMMAND RUNNER: `env`, `nice` and `timeout` all reach
 own account as well. There is nothing to weaken here — a component has no
 process model at all — so the refusal is the whole answer rather than a
 missing feature, and the primitives are covered on the wasm side by their own
-refusal tests in `internal/e2e` instead.
+refusal tests in `internal/testing/e2e` instead.
 
 ## Layout
 
@@ -619,7 +619,7 @@ coreutils/
                     directory because `coreutils/*.fern` means "a
                     utility" to the corpus, the bench and the macOS
                     lane, and this is not one
-internal/coreutils/
+internal/testing/coreutils/
   harness_test.go   the oracle harness (this file's "How parity is enforced"),
                     including the per-case working directory and resulting-tree
                     comparison a filesystem-MUTATING utility needs
@@ -669,7 +669,7 @@ one module rather than one per utility: a second copy is a second place
 for the same bug, and numfmt shipped exactly that — its own 64-bit
 significand, 29 of its 662 cases diverging on aarch64 with nothing on an
 x86-64 host to show it. Two gates cover what the corpus cannot see:
-`internal/coreutils/longdouble_test.go` checks every target's selection
+`internal/testing/coreutils/longdouble_test.go` checks every target's selection
 and FAILS rather than guess when a target it does not know appears, and
 `tests/stdlib/coreutils_ld_test.fern` drives all three formats
 explicitly on whatever host runs it. A utility that converts in one also
@@ -688,7 +688,7 @@ apt-get download coreutils:arm64 && dpkg-deb -x coreutils_*_arm64.deb /tmp/gnu-a
 FERN_COREUTILS_TARGET=arm64-linux \
 FERN_COREUTILS_QEMU="qemu-aarch64 -L /usr/aarch64-linux-gnu" \
 FERN_GNU_COREUTILS=/tmp/gnu-arm64/usr/bin \
-  go test ./internal/coreutils/ -run TestSeq -p 1
+  go test ./internal/testing/coreutils/ -run TestSeq -p 1
 ```
 
 The sysroot is for the dynamically linked GNU binaries; the Fern ones are
@@ -717,7 +717,7 @@ Darwin.
 1. Read its sub-issue for the recorded quirks and its usage-error exit code.
 2. **Probe the reference before writing a line.** Run the GNU binary on every
    edge you can think of and record what it does; the cases in
-   `internal/coreutils/<util>_test.go` are that probe made permanent. The
+   `internal/testing/coreutils/<util>_test.go` are that probe made permanent. The
    `echo` octal rule (`\NNN` as well as `\0NNN`, both wrapping at a byte)
    and `yes`'s permuting option scan were both found this way after the
    first implementation had them wrong.
@@ -2152,7 +2152,7 @@ index saved the base on the operand stack while the index was loaded,
 copied to `rcx` and zero-extended, then restored it — six instructions
 where two loads do.
 
-The condition is now lowered in `internal/ir`, so every backend gets it:
+The condition is now lowered in `internal/oracle/ir`, so every backend gets it:
 `if`, `while` and `for` conditions go through `condBr`, which turns `&&`,
 `||` and `!` into a chain of `br_if`s (a block where the operator's own
 value is what is branched on), and each backend already fuses a comparison
@@ -2410,7 +2410,7 @@ were `a = a.with(i, v)` asking on every iteration whether `a` is its own
 that answer cannot change after the first write: the copy arm leaves the
 local holding a fresh buffer, and a body that only reads the array's
 elements, takes its length and writes back through the same sites never
-gives it a second owner. `HoistUniquenessGuards` (`internal/ir`) now
+gives it a second owner. `HoistUniquenessGuards` (`internal/oracle/ir`) now
 moves the whole guard to just before the `loop` when every iteration
 reaches the write, and where a write sits under a condition or past the
 loop's exit test (a rotated `while`), keeps the guard at the site behind
@@ -3025,7 +3025,7 @@ without a count: x's next write would free the box v still reads.
 | uniq -f1 over 4M lines | 2.28 G | 2.25 G |
 
 These moves are native-only (#4451), and the self-host compiler needs
-none. For every shape in `internal/ir/overwrite_move_test.go` it emits
+none. For every shape in `internal/oracle/ir/overwrite_move_test.go` it emits
 no retain wherever native now moves the source. Its string copies
 retain only a source credited `STRALIASSRC:`, and its IR optimizer
 cancels the array retain against the next release.
@@ -4588,9 +4588,9 @@ groups are the order of work. Each sub-issue names its group.
   primitive gets its own issue when the first utility needs it.
 
   **What a primitive costs, and the half that has no gate.** A builtin is
-  four classifications — `internal/checker`, `internal/interp`,
-  `internal/caps` (`docs/PACKAGE-CAPABILITIES-BRIEF.md`) and
-  `internal/platforms` (`docs/FREESTANDING-CORE.md`) — plus the two
+  four classifications — `internal/check/checker`, `internal/oracle/interp`,
+  `internal/pkg/caps` (`docs/PACKAGE-CAPABILITIES-BRIEF.md`) and
+  `internal/pkg/platforms` (`docs/FREESTANDING-CORE.md`) — plus the two
   self-host MIRRORS, `compiler/caps.fern` and `platforms.fern`.
   Each of those has a completeness test that fails when one is missed.
 
@@ -4604,7 +4604,7 @@ groups are the order of work. Each sub-issue names its group.
   suite covers its self-host leg. #9085 tracks the missing completeness
   test. **All of #9085's five are lowered now**, and the completeness test
   landed with no exemption list: `TestSelfHostKnowsEveryNativeBuiltin` in
-  `internal/checker` pins every bare builtin the checker registers against
+  `internal/check/checker` pins every bare builtin the checker registers against
   `builtin_function_names()` in the self-hosted parser, and fails naming
   each one that is missing. Lowered: `sleep_ns` (266), `rename` (267),
   `chmod` (268), `set_file_times` (269), `statfs` (270), `process_alive`
@@ -4650,7 +4650,7 @@ groups are the order of work. Each sub-issue names its group.
 
   The third primitive #9089 asked for, `sync`, is NOT landed and its
   shape is disputed. `syncfs` has no XNU equivalent, and
-  `internal/platforms` grants capabilities per PROFILE with linux,
+  `internal/pkg/platforms` grants capabilities per PROFILE with linux,
   darwin and android all naming `hosted-native` — so the first
   Linux-only capability needs a per-environment split, which is a
   platform-layer decision rather than something a primitive should
@@ -4676,7 +4676,7 @@ groups are the order of work. Each sub-issue names its group.
   `wasm_ir_run` / `wasm_run` / `playground_run` reach `emit_ir_module`
   directly and would otherwise present a deliberate absence as a
   missing lowering — and `statfs` is refused there too, for the reason
-  `internal/interp/fsstat_other.go` gives: neither preview has a volume to
+  `internal/oracle/interp/fsstat_other.go` gives: neither preview has a volume to
   measure, since a preopen is a capability handle rather than a mount, so
   it reports neither a size nor a name-length limit. On arm64-darwin
   `set_file_times` issues

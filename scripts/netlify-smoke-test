@@ -112,7 +112,7 @@ logfile() { echo "$logdir/$1.log"; }
 # ---------------------------------------------------------------------------
 # Cache. Netlify preserves one directory between builds of a site; everything
 # else in the container is discarded. Pointing GOCACHE at it turns the cold
-# multi-minute `internal/e2e` compile into a warm one, which is the difference
+# multi-minute `internal/testing/e2e` compile into a warm one, which is the difference
 # between reaching the later stages and running out of budget on the first two.
 #
 # A dev box already has a warm GOCACHE of its own and would not thank us for
@@ -259,7 +259,7 @@ run_stage() {
   #
   # Read PIPESTATUS[0], never the pipeline's own status: tee, grep and awk all
   # report their own, so `$?` here would call every failing stage a pass.
-  # docs/TEST-GATES.md records that mistake costing a lost internal/e2e failure
+  # docs/TEST-GATES.md records that mistake costing a lost internal/testing/e2e failure
   # that never reproduced.
   timeout --foreground "$limit" bash -c "$func" 2>&1 |
     tee "$log" |
@@ -302,7 +302,7 @@ stage_build() { # ~30s warm
   go build ./... && go vet ./...
 }
 
-stage_units() { # ~80s warm, half of it internal/ir's corpus determinism sweep
+stage_units() { # ~80s warm, half of it internal/oracle/ir's corpus determinism sweep
   local pkgs
   pkgs=$("$repo/scripts/unit-test-packages") || return 1
   # shellcheck disable=SC2086 # the package list is deliberately word-split
@@ -314,7 +314,7 @@ stage_units() { # ~80s warm, half of it internal/ir's corpus determinism sweep
 # to come from a run that actually happened. The other stages make no such
 # claim and keep the cache.
 stage_conformance() {
-  go test -count=1 -run '^TestFernFixtures$' -v ./internal/e2e/
+  go test -count=1 -run '^TestFernFixtures$' -v ./internal/testing/e2e/
 }
 
 # The self-hosted compiler's x86-64 IR path, end to end: the driver build
@@ -341,7 +341,7 @@ stage_conformance() {
 # form hides every alternative from it, and `make testnames` would keep passing
 # while this stage quietly selected one fewer test.
 stage_selfhost() {
-  go test -v ./internal/e2eselfhost/ -run '^(TestSelfHostClosureEscapeIRX86_64|TestSelfHostClosureX86IR|TestSelfHostFnValueX86IR|TestSelfHostCaptureLambdaX86IR|TestSelfHostBlockScopedReclaimX86_64|TestSelfHostArrArrAppendReclaimX86_64|TestSelfHostOwnReceiverIRX86_64)$'
+  go test -v ./internal/testing/e2ecompiler/ -run '^(TestSelfHostClosureEscapeIRX86_64|TestSelfHostClosureX86IR|TestSelfHostFnValueX86IR|TestSelfHostCaptureLambdaX86IR|TestSelfHostBlockScopedReclaimX86_64|TestSelfHostArrArrAppendReclaimX86_64|TestSelfHostOwnReceiverIRX86_64)$'
 }
 
 # ---------------------------------------------------------------------------

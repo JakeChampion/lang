@@ -4,7 +4,7 @@ import "std/headers";
 
 // tests/stdlib/header_map_migrated_test.fern —
 // Fern port of `TestInterpScriptHeaderMap` from
-// `internal/e2e/interp_script_test.go`.
+// `internal/testing/e2e/interp_script_test.go`.
 //
 // The Go original was a 5-case table-driven test where
 // each subcase spawned a `fern -interp` subprocess, ran

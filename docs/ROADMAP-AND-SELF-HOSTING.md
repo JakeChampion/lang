@@ -53,7 +53,7 @@ the audit history is preserved.
 ### 3. ~~Wide-scalar Map K/V (i64 / u64 / f64) silently
    diverges across backends~~ — RESOLVED
 
-- **Where**: `internal/ir/ir.go` `mapKeyKindTag` /
+- **Where**: `internal/oracle/ir/ir.go` `mapKeyKindTag` /
   `mapValKindTag`. The doc previously claimed both only
   knew "0=i32-scalar / 1=string / pointer" — that's stale.
 - **Resolution**: the runtime-tag scheme was extended.
@@ -85,7 +85,7 @@ the audit history is preserved.
   hash bodies even when only one is used (the tree-shaker
   can't eliminate dead branches inside a function).
 - **Fix**: 5-step monomorphization via existing
-  `internal/monomorph` (the machinery, mangling, and
+  `internal/oracle/monomorph` (the machinery, mangling, and
   re-check pass already work for user-defined generic
   functions). Plan documented in `MAP-SPECIALIZATION.md`.
 
@@ -118,7 +118,7 @@ the audit history is preserved.
   before any asm is written. The codegen panic stays as a
   defence-in-depth assertion for future helpers that grow
   Linux-only syscalls without a corresponding pre-scan entry.
-- ~~**`internal/ir/ir.go`'s three "not yet lowered" cast / assignment
+- ~~**`internal/oracle/ir/ir.go`'s three "not yet lowered" cast / assignment
   paths**~~ — settled: none was an unfinished lowering, so all three now
   read as the assertions they are, naming what guarantees them (#7741).
   The cast pair is unreachable because the checker accepts exactly the
@@ -161,7 +161,7 @@ The `compiler/` Fern port — lexer + recursive-descent
 parser + x86-64 emitter (`asm.fern`) + module-flattening
 (`flatten.fern`) + a stdin driver — now **compiles its own source
 to a byte-identical compiler**. The bootstrap chain
-(`internal/e2e/self_host_fixpoint_test.go`):
+(`internal/testing/e2e/self_host_fixpoint_test.go`):
 
 ```
 stage 0  Go compiler builds bundle_run (the multi-module driver)
@@ -194,7 +194,7 @@ boxes `[tag@0, payload@8]`, tag-discriminated `match` with payload
 binding).
 
 The walls cleared to get here (all in `compiler/`, gated by
-`internal/e2e/self_host_*_test.go`): O(N²) output build → `strbuf`;
+`internal/testing/e2e/self_host_*_test.go`): O(N²) output build → `strbuf`;
 parser non-advance runaways on qualified names
 (`parse_type_name` / `parse_pattern`) and qualified struct literals;
 `strbuf` + `read_all_stdin` builtins + a 256 MiB heap in the emitter;
@@ -210,7 +210,7 @@ the real `std/io`). The original "minimal fix … ~1-2 weeks" /
 ### ✅ UPDATE: real CLI toolchain + import-driven file loading
 
 The self-host emitters have since grown the surface a real compiler
-driver needs, all gated by `internal/e2e/self_host_*_test.go` and
+driver needs, all gated by `internal/testing/e2e/self_host_*_test.go` and
 cross-checked against the Go backend (both x86-64 and arm64):
 
 - **argv + file I/O**: `args(): string[]`,
@@ -247,14 +247,14 @@ now one self-hosted binary that parses argv flags and dispatches —
 loader.
 It hosts both native emitters (`asm.fern` + `asm_arm64.fern`) plus the
 checker, interpreter, printer, and the wasm emitter, selected at runtime.
-Gated by `internal/e2e/self_host_cli_test.go`.
+Gated by `internal/testing/e2e/self_host_cli_test.go`.
 
 **A third self-host backend: wasm** (`compiler/wasm.fern`,
 driven by `wasm_run.fern` and `fern -target wasm32-wasi`). It emits a WASI core
 module in the text format (WAT) — `_start` calls `proc_exit(main())`, so
 `wasmtime run prog.wat` exits with the program's result. Built up across
 ~20 incremental, differential-tested slices (each its own PR, gated by
-`internal/e2e/self_host_wasm_emit_test.go`, run end-to-end under
+`internal/testing/e2e/self_host_wasm_emit_test.go`, run end-to-end under
 `wasmtime`), it now compiles the **full non-generic-monomorphised core
 language**:
 
@@ -1096,7 +1096,7 @@ directory-enumeration builtins (`read_dir` / `remove_dir_all` use
 family. These are emitted
 but only misbehave if a program actually calls them on Darwin.
 
-Gated by `internal/e2e/self_host_macho_test.go` — cross-links each
+Gated by `internal/testing/e2e/self_host_macho_test.go` — cross-links each
 program with clang + lld and asserts a valid arm64 Mach-O executable off
 Apple Silicon, and on the macOS arm64 CI runner builds the self-host CLI
 natively, runs it, and **executes** the emitted Mach-O (incl. the

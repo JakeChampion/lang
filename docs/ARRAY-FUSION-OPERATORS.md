@@ -1,6 +1,6 @@
 # The per-operator fusion proof
 
-Status: `internal/ir/array_fusion.go` (#9731) and the primary compiler's
+Status: `internal/oracle/ir/array_fusion.go` (#9731) and the primary compiler's
 `compiler/semfuse.fern` (#11072) implement the `map`/`filter` stages
 and `fold`/`reduce` sinks below. The primary compiler also implements `scan`
 as a materializing sink. This document states what each operator contributes to a
@@ -23,7 +23,7 @@ benchmarks passing.
 Upstream: `docs/ITERATOR-FUSION-CONTRACT.md` (the contract),
 `docs/ARRAY-ALGEBRA.md` (what fusion may and may not do),
 `docs/ARRAY-PIPELINE-BASELINE-2026-09.md` (what it is worth). Recognition
-of the pipelines this operates on is `internal/ir/array_pipeline.go`
+of the pipelines this operates on is `internal/oracle/ir/array_pipeline.go`
 (#9730).
 
 ## The shape of a fused pipeline
@@ -266,7 +266,7 @@ preconditions of the argument:
    the call is indirect and the "no unspecialised call" half fails.
 2. **Every element function reaches no observable effect** (§1). Without
    it merging traversals can reorder effects. The pass tests this more
-   strictly than §1 words it: `internal/caps` answers a security
+   strictly than §1 words it: `internal/pkg/caps` answers a security
    question, and `print` is deliberately ungated there while being
    exactly the effect an interleave exposes. So the allowed set is
    inverted — a program function, walked through, or a codegen runtime
@@ -280,13 +280,13 @@ preconditions of the argument:
    vectorizer, not on this pass.
 
 A pipeline failing any of these does not fuse, and says so with the
-closed refusal set of `internal/ir/array_pipeline.go` (#9732) rather
+closed refusal set of `internal/oracle/ir/array_pipeline.go` (#9732) rather
 than silently allocating per stage — clause 4.
 
 ## What the first slice reaches
 
 `map` and `filter` as stages, `fold` and `reduce` as sinks, over 8-byte
-elements. The pass is `internal/ir/array_fusion.go`; `FERN_NO_ARRAY_FUSION=1`
+elements. The pass is `internal/oracle/ir/array_fusion.go`; `FERN_NO_ARRAY_FUSION=1`
 turns it off, which is how a miscompilation suspected here is ruled out in
 one run rather than by rebuilding the compiler.
 
@@ -311,7 +311,7 @@ the others report `operator-outside-algebra`. This report does not inventory
 every std/array helper. Calls outside this recognized set produce no site
 line, so silence is not evidence that such a call fused or avoided allocation.
 `TestSelfHostArrayFusion*` and `TestSelfHostArrayReport*` in
-`internal/e2eselfhost` gate the primary path on x86-64, arm64 and wasm32-wasi.
+`internal/testing/e2ecompiler` gate the primary path on x86-64, arm64 and wasm32-wasi.
 
 The primary compiler now preserves a locally constructed closure's target
 through physical lowering. Captured callbacks still receive their environment;
@@ -515,7 +515,7 @@ An earlier version of this section said the element functions were "inlined
 outright". That was read off a count of `OpCallIndirect` and `OpCallDirect`
 which never looked at `OpCallClosureDirect`, the kind they are dispatched
 through when they are not inlined. Both shapes are now pinned in
-`internal/ir/array_fusion_test.go`.
+`internal/oracle/ir/array_fusion_test.go`.
 
 Running fusion after `Inline` instead would have left the chain
 unrecognisable, since `Inline` rewrites std/array's one-line method

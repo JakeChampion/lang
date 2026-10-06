@@ -94,4 +94,4 @@ unique, stable/key and zero-terminated sorting. They are used by both native
 and self-hosted sort tests. Targeted GNU and self-host sort parity, all six
 native/self-host mismatch sweeps (x86-64 under QEMU, native ARM64 and WASM),
 and `make lint-all` passed. The full Linux `go test ./... -timeout=60m` passed,
-including coreutils (277.341 s), e2e (1700.390 s) and e2eselfhost (158.665 s).
+including coreutils (277.341 s), e2e (1700.390 s) and e2ecompiler (158.665 s).

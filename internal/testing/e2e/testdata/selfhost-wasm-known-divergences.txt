@@ -1,0 +1,126 @@
+# Fixtures where the SELF-HOST wasm path disagrees with the native compiler.
+#
+# Format: <fixture-name> <#issue> <reason>
+#
+# TestFernFixturesSelfHostWasm lists these rather than skipping them, following
+# scripts/deadcode-allowlist.txt: the lane is green with them listed, a NEW
+# divergence fails, and a listed fixture that starts PASSING also fails — an
+# allowlist nobody prunes is where bugs go to be forgotten.
+#
+# `eq_struct_enum` and `ord_struct_enum` were here and are now FIXED (#6009):
+# the self-host had no composite-comparison desugar at all, so `a == b` and
+# `a < b` on a struct or enum lowered the two BOX POINTERS into a plain i32
+# compare — structural equality answered "are these the same allocation" and
+# ordering answered "which was allocated first". irlower now rewrites both to
+# the type's derived `eq` / `cmp` the way the native checker does. The operator
+# forms in self_host_derive_{eq,ord}_ir_test.go pin the shape directly.
+#
+# `audit_numeric_types` was here and is now FIXED (#6010): the self-host IR path
+# applied its zero-cost-ascription rewrite (`let x: T = E as T` -> `let x: T = E`)
+# to a real width conversion, so a narrowing `as u8` lost its mask in BINDING
+# position only — 260 as u8 stayed 260 and the fixture's u8-wrap check returned 13.
+# `cast_narrow_binding` now pins that shape directly.
+#
+# `tuple_match_expr` was here and is now FIXED (#6010): a tuple- or
+# struct-pattern match in EXPRESSION position desugars into a done-flag if-chain
+# whose arm bodies still ended in `return`, and a capturing IIFE lowers INLINE —
+# so the arm returned from the ENCLOSING function and everything after the match
+# was dead code. The arms now assign to a value local instead.
+#
+# `pure_collection_aliases` was here and is now FIXED (the #6007 slice): the
+# self-host had no `Map.cleared` lowering at all — the name was known to the
+# checker but nothing lowered it, so the module bailed on an unknown
+# `Map.cleared` symbol. It is now construction: this runtime's map box is
+# [keys, values] with no capacity field, so a fresh empty box of the same key
+# kind IS a cleared map.
+#
+# `map_struct_value_field` was here and is now FIXED (the #6007 slice): its own
+# header blames `get_or(..).field` on a Map[K, Struct], but that half always
+# lowered — the bail was `it.value().field`, where expr_struct_type had a struct
+# recovery for the get_or receiver and none for the iterator's. Both read the
+# same V.
+#
+# `derive_json` was here and is now FIXED, in two halves. (1) Every @derive over
+# an enum VARIANT bound a single `__p0`, so `Rect(2, 3)` serialised, compared,
+# ordered and hashed as `Rect(2)` — derived `eq` answered TRUE for
+# `Rect(2, 3) == Rect(2, 9)`; pinned by `derive_multi_payload`. (2) With that
+# gone, `.to_json()` on an `i32[]` FIELD receiver was seen to render the array
+# POINTER: the guard listing the array predicates relies on expr_is_arr_src for
+# scalar arrays, and that means array SOURCE (fresh/owned, an rc concept), not
+# "is an array", so a field READ fell through to the primitive path. Pinned by
+# `json_array_field`.
+#
+# `regex_captures`, `regex_captures_all`, `regex_named_groups` and
+# `regex_replace_groups` were here and are now FIXED (#6008). All four trapped
+# on `?` over a CAPTURING group, and the fault was neither in the capture
+# machinery nor in the wasm backend: irlower bound `let pg = prog.append(v)` —
+# std/regex's __rx_emit — straight to the buffer arr_push had appended into IN
+# PLACE, so a frame and its caller each held one buffer under two names and each
+# released it. The freed cell was recycled by the next `caps.with(slot, ti)`, so
+# the Pike VM read an ISplit's targets out of a capture-slot array and branched
+# to prog[-1]. The same double free was latent on x86-64 and arm64 — visible
+# under a poison-on-free arr_dec, invisible without one, because nothing
+# recycled the cell there in time. irlower now brackets such a receiver so
+# arr_push takes its copy path.
+#
+# NONE of the original twelve remains — #6008 took the last four and #6007
+# the row below it, so this leg's list is empty too, like its x86-64 and
+# arm64 siblings. Keep the contract in force rather than deleting the file:
+# an empty allowlist is what makes the NEXT divergence fail the leg.
+#
+# All twelve were found by the leg's first run
+# over the existing corpus, on fixtures that had been green for months because
+# all four of TestFernFixtures' backends are the native compiler. Each has been reproduced by hand with a
+# native self-host CLI (`make selfhost-cli`) before being written down; none is
+# a harness artifact. The first pass reported 26 mismatches and 14 of those WERE
+# artifacts — WASI caps exit status at 125, so nine regex fixtures whose expected
+# 255 is a feature bitmask looked like a broken regex engine — which is why every
+# entry here names a measured before/after rather than a symptom.
+
+# `generic_method_typeparams` was here and is now FIXED (#6007): a method on a
+# generic struct that declares type params of its OWN (`(b: Box[T]) map[U]`)
+# was cloned per RECEIVER instantiation with its own params dropped, so `U`
+# survived free into the clone and the return `Box[U]` mangled to a `Box__U`
+# no pass ever generated. Such a method now folds into a free generic
+# `__smm_<Base>_<name>[<receiver vars>, <own vars>]` and rides the same
+# worklist the array (`__arrm_`) and map (`__mapm_`) folds do — so its clone
+# carries a CONCRETE `Box[i32]` / `Box[boolean]` return for the struct pass.
+# The last IR-ineligible row on this leg went with it.
+
+# --- UNMEASURABLE by this oracle ------------------------------------------
+# Not listed as divergences because the leg cannot prove them either way: an
+# expected exit >= 126 is refused by WASI, so wasmtime reports 1 and the real
+# answer is invisible. `regex_captures_assert` (expected 255) and `regex_groups`
+# (expected 127) read 47 and 111 under #6008 and now read 255 and 127 — measured
+# on the self-host x86-64 leg, which has no exit cap, since this one still
+# cannot see them.
+
+# `alloc_flat_fresh_array_arg` was here and is now FIXED (#6522) — and so are the
+# x86-64 and arm64 rows, which caught up over three further slices: the string[]
+# field BUFFER release gated on the store half of the strarrfld verdict (#7124),
+# and then the READ half, where `x.f[i].len()` is recognised as a TRANSIENT
+# element borrow rather than a lasting alias, so the deep element walk runs.
+# All three legs measure flat. docs/RC-PERCEUS-SELF-HOST-PORT.md §9.
+
+# --- ACTIVE -----------------------------------------------------------------
+# EMPTY. The last row, `alloc_flat_bytes_roundtrip` (#8412), left when the
+# semantic lowering learned to anchor a reference cast to an address: that one
+# refusal had been sending the whole of `std/string` to the AST lowering, so
+# `bytes()` and `string_from_bytes_unchecked` never reached the reclaim the
+# typed path gives them. All three legs measure flat now. Before it,
+# `alloc_flat_method_identity_return` went with the guarded chain-receiver
+# release (#6544).
+#
+# Keep the section and the file. An empty allowlist is what makes the NEXT
+# divergence fail the leg, and a listed case that comes back matching native
+# fails it too, so an entry cannot outlive its bug.
+#
+# A new row belongs here when a shape is fixed in `internal/oracle/ir` — the NATIVE
+# compiler — and the self-host compiler's own RC implementation has not caught
+# up: those measure `flat` under native and `grows` here, on all three
+# self-host targets identically, because the gap is in the shared self-host
+# reclaim path rather than in any one emitter. Shape only: every ANSWER must
+# still match native, and a row that carries a VALUE divergence as well has to
+# say so — the answer being wrong is a different order of bug from the memory
+# being wrong. That is the RECLAIM half of goal 2
+# (docs/RC-PERCEUS-SELF-HOST-PORT.md §9).

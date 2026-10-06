@@ -1,5 +1,5 @@
 // compiler/platforms.fern — the target-capability boundary,
-// mirroring native's internal/platforms (#6633).
+// mirroring native's internal/pkg/platforms (#6633).
 //
 // A target is what the artifact runs ON, so it decides what the artifact may
 // reach: `subprocess` has no meaning on a wasm world, `__heap_mark` rewinds a
@@ -11,7 +11,7 @@
 //
 // The table is the same shape as native's — a target names an ENVIRONMENT, an
 // environment names a capability PROFILE — so the two can be diffed rather
-// than compared by reading. internal/platforms/selfhost_parity_test.go reads
+// than compared by reading. internal/pkg/platforms/selfhost_parity_test.go reads
 // this file as data and pins the builtin classification and the profiles
 // against native's maps entry-for-entry, so a builtin classified on one side
 // and not the other fails a test instead of diverging silently. A rename or

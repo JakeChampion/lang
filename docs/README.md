@@ -3,7 +3,7 @@
 Everything under `docs/` in one place. Docs fall into a few kinds, tagged
 per entry below:
 
-- **[policy]** — a decided rule both compilers must honour. Living; edit in place.
+- **[policy]** — a decided rule the compiler and the Go oracle must honour. Living; edit in place.
 - **[reference]** — living description of a shipped feature or process.
 - **[tracker]** — living progress log for an active arc; append as slices land.
 - **[plan]** — accepted design whose implementation is not finished.
@@ -14,11 +14,9 @@ per entry below:
 Statuses reflect a 2026-07 audit. Where a doc contradicts this index, trust
 the doc's own status banner (and fix whichever is stale).
 
-The standing project roadmap itself lives in `CLAUDE.md` (goal 1: full IR in
-the self-hosted compiler; goal 2: port native Perceus to it). Umbrella issue
+The standing project roadmap itself lives in `CLAUDE.md`. Umbrella issue
 [#4368](https://github.com/JakeChampion/lang/issues/4368) tracks
-roadmap-shaped items that live only in these docs; the native-convergence
-freeze tracker is [#4451](https://github.com/JakeChampion/lang/issues/4451).
+roadmap-shaped items that live only in these docs.
 
 ## Language design & semantics
 
@@ -36,7 +34,7 @@ freeze tracker is [#4451](https://github.com/JakeChampion/lang/issues/4451).
 | `DYN-TRAITS.md` | [reference] | `dyn Trait` objects; slices 1–4 shipped. |
 | `PUB-PACKAGE.md` | [reference] | `pub(package)` visibility. |
 | `CURSOR-IDIOM.md` | [policy] | Immutable read-and-advance cursor idiom (decided 2026-06). |
-| `EFFECT-ROWS-BRIEF.md` | [research] | Effect-rows prototype + findings (#5320). The `uses [...]` clause was built, measured and dropped; what shipped is `internal/effects` + `fern -effects`. Records why, and what per-function effect sets measure on the self-host and handler corpora. |
+| `EFFECT-ROWS-BRIEF.md` | [research] | Effect-rows prototype + findings (#5320). The `uses [...]` clause was built, measured and dropped; what shipped is `internal/check/effects` + `fern -effects`. Records why, and what per-function effect sets measure on the self-host and handler corpora. |
 | `EFFECT-SYSTEMS-PRIOR-ART.md` | [research] | Effect-system survey behind the above — Koka, Unison, Effekt, Scala CC, OCaml 5, Roc, Flix, Haskell, Rust, WASI worlds, and the frontier; the four families, the reported ergonomic failure modes, and the RC/AOT cost of handlers. |
 | `SPECIFICATION-RESEARCH.md` | [research] | Would a language spec pay for itself? Prior art (Wasm/SpecTec, test262, ruby/spec, K, Redex, Miri) + a staged executable-spec shape. |
 | `FEATURE-AUDIT.md` | [tracker] | Living per-feature × per-backend audit matrix. |

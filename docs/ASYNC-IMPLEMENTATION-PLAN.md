@@ -37,7 +37,7 @@ The single most important implementation choice. There are two
 compilers and the Go one is being retired:
 
 - **Go compiler** (`internal/`): a target-agnostic IR
-  (`internal/ir`) with **structured control flow, not SSA** — a flat
+  (`internal/oracle/ir`) with **structured control flow, not SSA** — a flat
   op list with `OpBlock`/`OpLoop`/`OpIf`. A true IR-level CPS
   transform here would mean flattening structured control flow into
   a state machine: hard, and **thrown away when the Go compiler
@@ -139,7 +139,7 @@ a PR").
   *overlap* (both tasks suspend before either resumes).
 - `tests/stdlib/async_runtime_test.fern` — reactor unit tests +
   single-task resume + two-task fan-out + immediate-done, wired into
-  the `internal/e2e` test-runner gate
+  the `internal/testing/e2e` test-runner gate
   (`TestRunnerAsyncRuntimeExamplePasses`).
 - Validated end-to-end on interp / x86-64 / arm64(qemu); compiles on
   wasm. **Zero codegen, IR, or backend changes.**
@@ -187,7 +187,7 @@ compiler) to `__fern_poll` — marshals the length-prefixed `i32[]` into
 a `struct pollfd[]` (POLLIN per fd), calls `poll(2)` (#7), and returns
 the index of the first readable fd (or -1). Checker sig + call-site
 flag + target map + the runtime helper (`emitPollRuntime`). Verified
-with deterministic file-fd tests (`internal/e2e/poll_x86_test.go`:
+with deterministic file-fd tests (`internal/testing/e2e/poll_x86_test.go`:
 single-ready → 0, two-ready → 0, empty → -1). Parity-neutral: nothing
 wires the free `poll` builtin yet, so existing programs are unaffected.
 
@@ -196,7 +196,7 @@ lowers on arm64 (Go compiler) to `__fern_poll` via `ppoll(2)` (#73 —
 arm64 has no bare `poll`; `timeout_ms` < 0 → NULL timespec = block,
 >= 0 → a built timespec). arm64-darwin returns a -1 stub pending its
 kqueue path. Same deterministic file-fd tests now run on both native
-backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
+backends (`internal/testing/e2e/poll_test.go`, x86-64 + arm64/qemu).
 
 **Phase 1c — IN PROGRESS:**
 - **DONE — `poll` builtin is now universal (the option-1 enabler):** real on the
@@ -205,7 +205,7 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   This lets a module reference `poll` on *every* target — the prerequisite for the
   future real-fd `std/task` reactor to call `poll` behind its existing API while
   staying compilable on wasm/interp (real wasm readiness is the separate
-  wasi:io/poll path below). Pinned by `internal/e2e/poll_stub_test.go` (`TestPollEmptySetInterpWasm`).
+  wasi:io/poll path below). Pinned by `internal/testing/e2e/poll_stub_test.go` (`TestPollEmptySetInterpWasm`).
 - **DONE — `std/reactor` (native real-fd scheduler):** `run_io(states)`
   drives fd-tagged stackless tasks (`IoStep = IoDone | IoWait(fd,
   resume)`) to completion using the real `poll` builtin — the real-I/O
@@ -213,7 +213,7 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   native-only module so `std/task` (imported by the `concurrent`
   desugar) never depends on a native-only builtin and stays compilable
   on wasm/interp. Verified on x86-64 + arm64/qemu with deterministic
-  file-fd tasks (`internal/e2e/reactor_test.go`).
+  file-fd tasks (`internal/testing/e2e/reactor_test.go`).
 - **DONE — reactor unification (option 1): `std/task` itself now does
   real overlapping I/O.** Rather than keep two reactor types, the
   portable `std/task` reactor (the one the `concurrent` / `race` /
@@ -231,7 +231,7 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   real sockets on one thread on the native backends, through the very
   API `concurrent { … }` / `race { … }` compile to — no second,
   native-only reactor type needed for user code. Proven by
-  `internal/e2e/task_real_fd_test.go` (two parallel `tcp_connect`
+  `internal/testing/e2e/task_real_fd_test.go` (two parallel `tcp_connect`
   fetches driven through `task.run` and `task.select` over real
   sockets, x86-64 + arm64/qemu → exit 42) plus a portable
   `register_fd`/`pending` bookkeeping case in
@@ -247,7 +247,7 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   timerfd readable after `ms` (`timerfd_create`/`timerfd_settime`;
   x86-64 #283/#286, arm64 #85/#86; Darwin -1 stub). Gives the reactor
   a real wait→ready transition for a deterministic readiness test
-  (`internal/e2e/reactor_test.go ▸ TestReactorTimers`: two timers via
+  (`internal/testing/e2e/reactor_test.go ▸ TestReactorTimers`: two timers via
   `run_io`, the shorter serviced first — proving `poll` actually
   blocks on real readiness, not just always-ready files) and is the
   primitive for async **timeouts** (Phase 5).
@@ -257,11 +257,11 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   like a cancelled `select` loser. Pure Fern, no new builtin. This is
   the Phase-5 timeout / bounded-happy-eyeballs primitive. Tested both
   paths (completes / times out) on x86-64 + arm64 with deterministic
-  timerfds (`internal/e2e/reactor_test.go ▸ TestReactorDeadline`).
+  timerfds (`internal/testing/e2e/reactor_test.go ▸ TestReactorDeadline`).
 - **DONE — `poll` validated on real TCP sockets:** a poll-driven
   one-shot server (poll the listener → accept → poll the connection →
   recv → respond) round-trips a real localhost request end-to-end
-  (`internal/e2e/reactor_socket_test.go`). No new builtins — a blocking
+  (`internal/testing/e2e/reactor_socket_test.go`). No new builtins — a blocking
   accept/recv doesn't block once `poll` reports the fd ready, so the
   reactor needs no non-blocking variants for this shape. This is the
   edge-handler serving path over the reactor.
@@ -273,7 +273,7 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   await both* — now runs end-to-end over the native reactor: a program
   opens two outbound connections and multiplexes their responses
   through `std/reactor.run_io`
-  (`internal/e2e/reactor_socket_test.go ▸ TestReactorOutboundFanoutX86_64`,
+  (`internal/testing/e2e/reactor_socket_test.go ▸ TestReactorOutboundFanoutX86_64`,
   Go upstream answering both). This is the edge-handler fan-out
   (fetch cache + primary, take both) working for real.
 - **DONE — arm64 `tcp_connect`:** mirrors the x86 helper (socket +
@@ -286,13 +286,13 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   blocking HTTP/1.1 GET over `tcp_connect`/`send`/`recv` returning the
   real response string. The upstream-fetch capability a handler needs.
   Verified on x86-64 + arm64 against a Go upstream
-  (`internal/e2e/fetch_test.go`).
+  (`internal/testing/e2e/fetch_test.go`).
 - **DONE — `plat.fetch` capability method:** `(plat: Platform)
   fetch(host, port, path)` (+ `parse_ipv4`), so a handler reaches
   upstreams *only* through the `Platform` bag it was handed
   (docs/PLATFORM-RESEARCH.md Rec §1's capability model) — a literal
   IPv4 GET returning the response. Verified on x86-64 + arm64 against a
-  Go upstream (`internal/e2e/fetch_test.go ▸ TestPlatformFetch`).
+  Go upstream (`internal/testing/e2e/fetch_test.go ▸ TestPlatformFetch`).
 - **DONE — reactor-overlapped fan-out returning bodies:** the complete
   "two parallel fetches, return both response bodies" payoff. Now over
   a single **generic** `IoStep[T]` reactor (`run_io[T]` /
@@ -335,9 +335,9 @@ The user-facing slice. Parser-time desugar, **emitting the Phase-2
 `Step`/scheduler shape**, so no codegen changes.
 
 - Lexer: add `concurrent`, `spawn`, `await` keywords — in
-  `internal/lexer/lexer.go` **and** `compiler/lexer.fern`.
+  `internal/syntax/lexer/lexer.go` **and** `compiler/lexer.fern`.
 - Parser: `parseConcurrent` (block), `spawn EXPR`, `await EXPR` — in
-  `internal/parser/parser.go` **and** `compiler/parser.fern`.
+  `internal/syntax/parser/parser.go` **and** `compiler/parser.fern`.
   Model on the existing `for..in` and `use <-` desugars, which
   already build synthetic AST (nested functions, rewritten calls) at
   parse time.
@@ -346,7 +346,7 @@ The user-facing slice. Parser-time desugar, **emitting the Phase-2
 - Checker: `await e` requires `e : Task[T]`, yields `T`; `spawn` in a
   `concurrent` scope yields a `Task[T]`; scope-bounded — a `Task`
   may not escape its `concurrent` block (structured concurrency).
-  One rule, in `internal/checker` + (if needed) `asmcore.fern`.
+  One rule, in `internal/check/checker` + (if needed) `asmcore.fern`.
 - The desugar lowers `concurrent`/`spawn`/`await` into the state
   machine: split each task body at its await points into
   continuations (nested functions capturing live locals), seed the
@@ -365,7 +365,7 @@ own test.
 **Phase 3a — DONE (the fan-out surface, with inline `await`):**
 `concurrent { let a = spawn f(args); … return combine(await a,
 await b); }` is implemented as a parser-time desugar in the Go
-frontend (`internal/lexer` keywords `concurrent`/`spawn`/`await`;
+frontend (`internal/syntax/lexer` keywords `concurrent`/`spawn`/`await`;
 `parser.parseConcurrent`, dispatched inline from `parseBlock`). The
 whole block desugars to **one scoped `Block`** (the synthetic
 reactor/task/result locals and the join-bound result names stay
@@ -381,7 +381,7 @@ documents the join point and reserves the word for the eventual
 suspending form. Spawn targets follow the runtime protocol
 `(task.Reactor, args…) -> (task.Step, task.Reactor)`. Verified on
 interp / x86-64 / arm64(qemu); compiles on wasm. Tests:
-`internal/parser` (`TestParseConcurrentDesugar` + error cases incl.
+`internal/syntax/parser` (`TestParseConcurrentDesugar` + error cases incl.
 `await` outside a block) and `tests/stdlib/async_concurrent_test.fern`
 (e2e gate `TestRunnerAsyncConcurrentExamplePasses`). Requires `import
 "std/task"`.
@@ -402,7 +402,7 @@ protocol leak) and `await` can sit in arbitrary control flow.
   hand-written CPS form (so it lowers on every backend). Shapes outside slice 1
   (multiple/nested awaits, awaits in control flow, an early `return` before the
   await, awaits in methods/local/generic functions) are REJECTED with a clear
-  error, never miscompiled. Tests: `internal/parser` (`TestParseTaskFunctionDesugar`),
+  error, never miscompiled. Tests: `internal/syntax/parser` (`TestParseTaskFunctionDesugar`),
   `tests/stdlib/async_task_fn_test.fern` (e2e gate `TestRunnerAsyncTaskFnExamplePasses`,
   → 3 passes via interp; fan-out + pre/post-await).
 - **Slice 2 — DONE (multiple sequential awaits):** the split is now recursive

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/lexer"
+	"github.com/jakechampion/lang/internal/syntax/lexer"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 

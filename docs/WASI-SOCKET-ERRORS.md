@@ -5,7 +5,7 @@ errors from `wasi:sockets/network@0.2.0`. The host returns an `error-code`
 discriminant, which must be converted before negation: `unknown` is zero.
 Negating it directly previously reported success.
 
-`internal/strerror.WasiSocketErrorCodes` defines the mapping, in the order of
+`internal/tables/strerror.WasiSocketErrorCodes` defines the mapping, in the order of
 the [upstream WIT enum](https://github.com/WebAssembly/wasi-sockets/blob/v0.2.0/wit/network.wit).
 The bootstrap uses a Fern runtime function; the self-host emits the same
 mapping from its pinned table. Invalid host literals return `-EINVAL` on both

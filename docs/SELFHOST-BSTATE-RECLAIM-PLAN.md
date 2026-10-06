@@ -272,7 +272,7 @@ no new analysis, and the leak is a drop-insertion fix, not a reuse feature.
 
 **2026-07-03 — the NATIVE half landed (#4357).** The exclusion was pinned
 exactly where predicted: `rhsTainted`'s `*ast.Call` case
-(`internal/ir/rc_analysis.go`) propagated receiver/arg taint into the call
+(`internal/oracle/ir/rc_analysis.go`) propagated receiver/arg taint into the call
 RESULT, so `let t = f(x)` over any param-derived `x` was permanently
 free-INeligible. The fix consults `findReturnsNoParamEscape` — the existing
 interprocedural, transitively slot-sensitive "every return is built from
@@ -280,7 +280,7 @@ scalars and fresh constructions" oracle (exactly the return-field-freshness
 fixpoint the RC-PERCEUS-SELF-HOST-PORT Increment-A history specifies, already
 trusted by the nested-call temp reclaim) — and untaints the result of a
 qualifying free-function call. Regression:
-`internal/e2e/rc_heap_bump_intermediate_local_test.go` (bounded high-water on
+`internal/testing/e2e/rc_heap_bump_intermediate_local_test.go` (bounded high-water on
 the `let t = f(x); let u = g(t)` shape + the `id(s)`-returns-param soundness
 negative, x86-64 / arm64 / wasm). Residuals: METHOD callees keep the taint
 (the oracle map is keyed by free-fn name), and the SELF-HOST mirror still

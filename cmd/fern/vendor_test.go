@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
 func writeVendorTree(t *testing.T, files map[string]string) string {

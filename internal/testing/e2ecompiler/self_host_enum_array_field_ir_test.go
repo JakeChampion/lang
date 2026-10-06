@@ -1,0 +1,135 @@
+package e2ecompiler
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// enumArrayFieldIRCases exercise ENUM-ARRAY (`E[]`) struct-literal field VALUES
+// through the self-host IR path: the three construction shapes the lowering's
+// struct-lit gate now admits for an array-of-enum field, alongside the
+// array-of-struct forms it already accepted —
+//   - a bare-ident enum-array local       (`S { items: one }`)
+//   - a `.append` on a borrowed param      (`S { items: items.append(B(v)) }`)
+//   - a field-access copy                   (`S { items: a.items }`)
+//
+// Enum-array struct fields take the IDENTICAL is_unique-gated deep-drop as
+// struct-array fields (emit_struct_field_drops' k_box walk), so the same alias-
+// inc / no-inc decisions are sound; this is the construction-side widening that
+// matches the already-shipped drop side. It is the prerequisite for routing
+// parser.dl_collect_stmts (a `DeferAcc { stmts, actions, flags }` builder over
+// `Stmt[]`) through the IR — the goal-1 frontier toward retiring the AST
+// emitters.
+//
+// Each program builds an enum array into a struct field and sums it back, so a
+// botched alias-inc (over-release → wrong/garbage element) is caught by the exit
+// code, and a module the IR declines is an error from the driver.
+var enumArrayFieldIRCases = []struct {
+	name string
+	src  string
+	want int
+}{
+	// Array-literal field value (already broadly supported; the baseline).
+	{"literal", `enum N { A(i32), B(i32) }
+struct S { items: N[], k: i32 }
+function sum_n(xs: N[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
+function main(): i32 { let s: S = S { items: [A(3), B(4)], k: 2 }; return sum_n(s.items) + s.k; }`, 9},
+
+	// Bare-ident enum-array local as the field value (`S { items: one }`).
+	{"bare-ident", `enum N { A(i32), B(i32) }
+struct S { items: N[], k: i32 }
+function sum_n(xs: N[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
+function main(): i32 { let one: N[] = [A(5), B(1)]; let s: S = S { items: one, k: 1 }; return sum_n(s.items) + s.k; }`, 7},
+
+	// `.append` on a borrowed param as the field value (`S { items: items.append(B(v)) }`).
+	{"append-param", `enum N { A(i32), B(i32) }
+struct S { items: N[], k: i32 }
+function sum_n(xs: N[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
+function build(items: N[], v: i32): S { return S { items: items.append(B(v)), k: items.len() }; }
+function main(): i32 { let st: N[] = [A(2)]; let s: S = build(st, 5); return sum_n(s.items) + s.k; }`, 8},
+
+	// Field-access copy as the field value (`S { items: a.items }`) — the er.actions shape.
+	{"field-copy", `enum N { A(i32), B(i32) }
+struct S { items: N[], k: i32 }
+function sum_n(xs: N[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
+function cp(a: S): S { return S { items: a.items, k: a.k }; }
+function main(): i32 { let s0: S = S { items: [A(6), B(0)], k: 3 }; let s1: S = cp(s0); return sum_n(s1.items) + s1.k; }`, 9},
+}
+
+// TestSelfHostEnumArrayFieldIRX86_64 routes each case through the x86-64 IR
+// driver (asm_run → asm.emit_module → emit_module_ir when all_eligible).
+func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../../compiler/drivers/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
+	for _, tc := range enumArrayFieldIRCases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatalf("%s: driver produced no asm", tc.name)
+			}
+			progBin := buildBin(t, gcc, dir, "eaf_"+tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+				t.Errorf("%s: exit %d, want %d", tc.name, code, tc.want)
+			}
+		})
+	}
+}
+
+// TestSelfHostEnumArrayFieldIRArm64 runs the same cases through the arm64 IR
+// backend (asm_ir_run -target arm64-linux → asm_arm64_ir.emit_module_or_error_sub →
+// asm_arm64_ir.emit_body, sharing the enum-array-field lowering). This is
+// the essential arm64 check: an enum-array struct field's deep-drop goes through
+// arm64's heap-element reclamation, so an over-release here surfaces as a wrong
+// exit code / crash under qemu. IR routing is
+// pinned by the arm64 IR emitter's `.Lssa_` label marker.
+func TestSelfHostEnumArrayFieldIRArm64(t *testing.T) {
+	arm64gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
+	for _, tc := range enumArrayFieldIRCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := runX86_64Bin(x86runner, driverBin, "-target", "arm64-linux")
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			asm, err := cmd.Output()
+			if err != nil || len(asm) == 0 {
+				t.Fatalf("%s: driver failed (%d bytes, err %v)", tc.name, len(asm), err)
+			}
+			// `.Lssa_` is the arm64 IR emitter's per-function label prefix
+			// (asm_arm64_ir); its presence proves the module routed through the
+			// IR path.
+			if !strings.Contains(string(asm), ".Lssa_") {
+				t.Fatalf("%s: arm64 asm has no .Lssa_ marker — module did not lower through the IR", tc.name)
+			}
+			bin := buildBinArm64(t, arm64gcc, dir, "eaf_"+tc.name, string(asm))
+			run := runArm64Bin(qemu, bin)
+			_ = run.Run()
+			if run.ProcessState == nil || !run.ProcessState.Exited() {
+				t.Fatalf("%s: inner did not exit normally", tc.name)
+			}
+			if code := run.ProcessState.ExitCode(); code != tc.want {
+				t.Errorf("%s: exit %d, want %d", tc.name, code, tc.want)
+			}
+		})
+	}
+}

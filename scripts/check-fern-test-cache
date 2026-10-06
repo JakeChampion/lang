@@ -26,7 +26,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-pkg="./internal/coreutils/"
+pkg="./internal/testing/coreutils/"
 log="$(mktemp)"
 backup="$(mktemp)"
 probe=""

@@ -1,0 +1,317 @@
+package e2ecompiler
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// TestSelfHostPlatformsCapabilityRules exercises the self-host's target
+// capability boundary (compiler/platforms.fern, #6633) — the port of
+// native's internal/pkg/platforms.
+//
+// The driver asserts each rule in BOTH directions: a program the target may
+// not compile, and one it may. The permissive half carries the weight. A
+// capability gate that fires on a valid program refuses code every backend
+// would have built, and unlike a missing gate it cannot be worked around.
+//
+// Exit 0 means every assertion held. A non-zero code identifies the case, so a
+// regression names itself without a stdout diff.
+func TestSelfHostPlatformsCapabilityRules(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("platforms_run driver runs natively; skipping under an exec runner")
+	}
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/platforms_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/platforms_run.fern", "platforms_run")
+
+	cmd := exec.Command(bin)
+	out, _ := cmd.Output()
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatalf("platforms_run did not exit normally")
+	}
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("platforms_run exit code = %d, want 0 — that code is the failing assertion's id in platforms_run.fern", code)
+	}
+	if want := "platforms: every capability rule agrees"; !strings.Contains(string(out), want) {
+		t.Errorf("platforms_run stdout = %q, want it to contain %q", out, want)
+	}
+}
+
+// TestSelfHostCapabilityCorpusAgreesWithNative runs both compilers over every
+// conformance fixture and requires the same E066 diagnostics from each.
+//
+// This is the false-positive gate, and it is the one that decides whether the
+// boundary is usable. The corpus is known-good code compiled for a target with
+// a real host, so an E066 here is the self-host refusing a program every
+// backend would have built — a failure the user cannot work around, unlike a
+// missing gate. It is also the only place a shake difference would show:
+// enforcement runs on the tree-shaken module, and the two compilers shake with
+// different root sets.
+//
+// A fixture the self-host cannot load at all contributes no E066 on either
+// side and passes vacuously; that is the same coverage the other corpus
+// sweeps have, and the sweep still runs the whole frontend on every case.
+func TestSelfHostCapabilityCorpusAgreesWithNative(t *testing.T) {
+	if testing.Short() {
+		t.Skip("corpus sweep is slow; skipped under -short")
+	}
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("capability corpus sweep runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	nativeBin := buildFernCLIBin(t)
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	cases, err := filepath.Glob(filepath.Join("..", "..", "..", "conformance", "cases", "*", "main.fern"))
+	if err != nil {
+		t.Fatalf("globbing conformance cases: %v", err)
+	}
+	if len(cases) < 400 {
+		t.Fatalf("found %d conformance cases, expected the full corpus — a silently shrunken sweep proves nothing", len(cases))
+	}
+
+	var diffs []string
+	for _, c := range cases {
+		nativeOut, _ := exec.Command(nativeBin, "-check", "-target", "wasm32-wasi", c).CombinedOutput()
+		shOut, _ := exec.Command(driverBin, "-check", "-target", "wasm32-wasi", c, stdlib).CombinedOutput()
+		want := strings.Join(e066Sites(string(nativeOut)), " ")
+		got := strings.Join(e066Sites(string(shOut)), " ")
+		if want != got {
+			diffs = append(diffs, filepath.Base(filepath.Dir(c))+": native ["+want+"], self-host ["+got+"]")
+		}
+	}
+	if len(diffs) > 0 {
+		max := 15
+		if len(diffs) < max {
+			max = len(diffs)
+		}
+		t.Errorf("E066 disagreements on %d of %d conformance fixtures:\n  %s",
+			len(diffs), len(cases), strings.Join(diffs[:max], "\n  "))
+	}
+}
+
+// e066Sites reduces a compiler's output to the E066 diagnostics it emitted, as
+// `line:col` (or a bare marker when the diagnostic carries no position, which
+// is how both compilers report a violation inside an imported module).
+//
+// The MESSAGE is not compared, only the code and the position — the same rule
+// firing at the same place. The two render a violation differently (native
+// carries a source excerpt and a caret), which is a diagnostic-format
+// difference rather than a capability one.
+func e066Sites(out string) []string {
+	var sites []string
+	re := regexp.MustCompile(`(?:^|[: ])(\d+):(\d+): error\[E066\]`)
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "error[E066]") {
+			continue
+		}
+		if m := re.FindStringSubmatch(line); m != nil {
+			sites = append(sites, m[1]+":"+m[2])
+			continue
+		}
+		sites = append(sites, "<no position>")
+	}
+	sort.Strings(sites)
+	return sites
+}
+
+// TestSelfHostTargetCapabilityDifferentialX86_64 is the parity gate: for a
+// program reaching for a host capability, native and the self-host must agree
+// on whether the target provides it.
+//
+// This is the divergence shape that actually blocks "the self-host is the only
+// compiler" — not a message the self-host words differently, but a source file
+// that builds under one compiler and not the other. Before #6633 the self-host
+// had no capability layer at all, so every case below built clean there and
+// was refused by native.
+func TestSelfHostTargetCapabilityDifferentialX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("capability differential runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	nativeBin := buildFernCLIBin(t)
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	for _, c := range []struct {
+		name string
+		// One target name for both compilers: #6635 gave the self-host driver
+		// cmd/fern's `<isa>-<environment>` spellings, so the command that
+		// reaches one reaches the other unchanged.
+		target string
+		src    string
+	}{
+		// The wasi CLI world has no process model, so fork/waitpid/exec are
+		// refused there and granted on the hosted natives.
+		{"proc-fork-wasm", "wasm32-wasi", "function main(): i32 {\n    let pid: i32 = proc_fork();\n    return pid;\n}\n"},
+		{"proc-fork-native-ok", "x86-64-linux", "function main(): i32 {\n    let pid: i32 = proc_fork();\n    return pid;\n}\n"},
+		// The bump-arena checkpoint rewinds a heap pointer only the natives
+		// keep. Reading the cursor (`__heap_bump_bytes`) is ungated, which is
+		// what keeps this from being "anything heap-shaped is native-only".
+		{"heap-mark-wasm", "wasm32-wasi", "function main(): i32 {\n    let m: i64 = __heap_mark();\n    __heap_release_to(m);\n    return 0;\n}\n"},
+		{"heap-bump-bytes-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    return __heap_bump_bytes();\n}\n"},
+		// The wasm worlds have no process model, so spawning is refused there
+		// by both. On the NATIVE targets the two tables disagree on purpose —
+		// native gates `subprocess` everywhere because no Go backend lowers
+		// it, while the self-host's emitters do — so that pairing is asserted
+		// in internal/pkg/platforms (profileExceptions) rather than here, where a
+		// row would read as an unexplained divergence.
+		{"subprocess-wasm", "wasm32-wasi", "function main(): i32 {\n    let argv: string[] = [];\n    let r: i32 = run_it(argv);\n    return r;\n}\nfunction run_it(argv: string[]): i32 {\n    subprocess(\"ls\", argv, \"\");\n    return 0;\n}\n"},
+		// The capabilities a wasm program legitimately has: a filesystem, a
+		// clock, entropy, stdout. If the gate fired on these it would refuse
+		// most real programs.
+		{"fs-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    match (read_file(\"x\")) {\n        Ok(s) => { return s.len(); },\n        Err(e) => { return 1; },\n    }\n    return 0;\n}\n"},
+		{"print-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    print(\"hi\");\n    return 0;\n}\n"},
+		{"clock-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    return (now_unix_ms() as i32);\n}\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			src := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(src, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			nativeOut, _ := exec.Command(nativeBin, "-check", "-target", c.target, src).CombinedOutput()
+			shOut, _ := exec.Command(driverBin, "-check", "-target", c.target, src, stdlib).CombinedOutput()
+
+			want := e066Sites(string(nativeOut))
+			got := e066Sites(string(shOut))
+			if strings.Join(want, " ") != strings.Join(got, " ") {
+				t.Errorf("E066 sites differ: native %v, self-host %v\n--- native ---\n%s\n--- self-host ---\n%s",
+					want, got, nativeOut, shOut)
+			}
+		})
+	}
+}
+
+// TestSelfHostFreestandingTargets is the end-to-end form of #6633 item 4: the
+// two freestanding targets are reachable from the self-host driver, and behave
+// as native's do — a core-safe program type-checks against an empty capability
+// set, a program touching a host draws E066, and codegen is refused because no
+// backend emits for them.
+//
+// That third case is the one worth a test rather than a reading of the table.
+// A target with no backend is the only kind whose correct behaviour is to
+// REFUSE, so a driver that silently fell through to a backend would produce an
+// artifact for a machine the user did not ask for — and the freestanding pair
+// is the shape every later bare-metal target takes
+// (docs/BARE-METAL-PLAN.md, #6510).
+func TestSelfHostFreestandingTargets(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("freestanding target checks run only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	nativeBin := buildFernCLIBin(t)
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	// `-targets` must list both, or nothing tells a user they exist.
+	listing, _ := exec.Command(driverBin, "-targets").CombinedOutput()
+	for _, want := range []string{"arm64-freestanding", "x86-64-freestanding"} {
+		if !strings.Contains(string(listing), want) {
+			t.Errorf("self-host -targets does not list %s:\n%s", want, listing)
+		}
+	}
+
+	for _, c := range []struct {
+		name   string
+		target string
+		src    string
+	}{
+		// Arithmetic needs no host, so it type-checks with nothing granted.
+		{"core-ok-arm64", "arm64-freestanding", "function main(): i32 { return 7; }\n"},
+		{"core-ok-x86", "x86-64-freestanding", "function main(): i32 { return 7; }\n"},
+		// `print` needs `log`, which no freestanding host provides.
+		{"log-refused-arm64", "arm64-freestanding", "function main(): i32 {\n    print(\"x\");\n    return 0;\n}\n"},
+		{"log-refused-x86", "x86-64-freestanding", "function main(): i32 {\n    print(\"x\");\n    return 0;\n}\n"},
+		// `exit` is core with a target-specific lowering, not a capability, so
+		// a freestanding program may still stop.
+		{"exit-ok", "arm64-freestanding", "function main(): i32 {\n    exit(0);\n    return 0;\n}\n"},
+		// `print` in a function nothing calls is NOT a violation: the verdict is
+		// the tree-shaken module's, and the flat pre-pass that fires first only
+		// decides whether shaking is worth paying for. capability_violations
+		// returned true unconditionally once that pre-pass fired, so this exited
+		// 1 with no diagnostic printed — which the E066-site comparison alone
+		// cannot see, since both compilers report no site. That is what the exit
+		// code below is here for.
+		{"unreachable-log-ok", "x86-64-freestanding", "function never_called(): void {\n    print(\"x\");\n}\nfunction main(): i32 { return 7; }\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			src := filepath.Join(dir, "fs_"+c.name+".fern")
+			if err := os.WriteFile(src, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			nativeCmd := exec.Command(nativeBin, "-check", "-target", c.target, src)
+			nativeOut, _ := nativeCmd.CombinedOutput()
+			shCmd := exec.Command(driverBin, "-check", "-target", c.target, src, stdlib)
+			shOut, _ := shCmd.CombinedOutput()
+			want := strings.Join(e066Sites(string(nativeOut)), " ")
+			got := strings.Join(e066Sites(string(shOut)), " ")
+			if want != got {
+				t.Errorf("E066 sites differ: native [%s], self-host [%s]\n--- native ---\n%s\n--- self-host ---\n%s",
+					want, got, nativeOut, shOut)
+			}
+			// Whether the program is ACCEPTED, which the site lists agree on
+			// even when one compiler rejects with nothing to show for it.
+			//
+			// Not asserted where the self-host checker reports a construct it
+			// cannot represent: that gap makes the two compilers disagree on
+			// the exit code for reasons that have nothing to do with
+			// capabilities, and `exit-ok` lands on it today. Match the
+			// diagnostic tag so wording and tracker links can evolve.
+			if strings.Contains(string(shOut), "error[type]:") {
+				return
+			}
+			if wantCode, gotCode := nativeCmd.ProcessState.ExitCode(), shCmd.ProcessState.ExitCode(); wantCode != gotCode {
+				t.Errorf("-check exit differs: native %d, self-host %d\n--- native ---\n%s\n--- self-host ---\n%s",
+					wantCode, gotCode, nativeOut, shOut)
+			}
+		})
+	}
+
+	// Codegen: both compilers must refuse, and say why rather than failing
+	// somewhere further down with a missing-backend symptom.
+	src := filepath.Join(dir, "fs_codegen.fern")
+	if err := os.WriteFile(src, []byte("function main(): i32 { return 7; }\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, target := range []string{"arm64-freestanding", "x86-64-freestanding"} {
+		t.Run("codegen-refused-"+target, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "out")
+			nativeCmd := exec.Command(nativeBin, "-target", target, "-o", out, src)
+			nativeOut, _ := nativeCmd.CombinedOutput()
+			shCmd := exec.Command(driverBin, "-target", target, "-o", out, src, stdlib)
+			shOut, _ := shCmd.CombinedOutput()
+
+			if nativeCmd.ProcessState.ExitCode() == 0 {
+				t.Fatalf("native emitted for %s, which has no backend:\n%s", target, nativeOut)
+			}
+			if shCmd.ProcessState.ExitCode() == 0 {
+				t.Errorf("self-host emitted for %s, which has no backend:\n%s", target, shOut)
+			}
+			if !strings.Contains(string(shOut), "no backend emits for this target") {
+				t.Errorf("self-host refusal for %s does not say why:\n%s", target, shOut)
+			}
+		})
+	}
+}

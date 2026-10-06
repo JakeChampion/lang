@@ -3,7 +3,7 @@ import "std/http";
 
 // tests/stdlib/http_response_headers_migrated_test.fern
 // — Fern port of `TestInterpScriptHttpResponseHeaders`
-// from `internal/e2e/interp_script_test.go`. Pins the
+// from `internal/testing/e2e/interp_script_test.go`. Pins the
 // HeaderMap → HttpResponse wiring +
 // `http_serialize_response` emission behaviour
 // (docs/STDLIB-DESIGN-RESEARCH.md Rec §2):

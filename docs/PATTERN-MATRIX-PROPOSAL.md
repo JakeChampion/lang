@@ -32,7 +32,7 @@ another.
 ## 2. The limit, exactly
 
 Three `P001`s, all from `nestedPos` / `desugarNestedStmtArms` in
-`internal/parser/parser.go`. Verified messages:
+`internal/syntax/parser/parser.go`. Verified messages:
 
 **(a) One nested sub-pattern per arm.**
 

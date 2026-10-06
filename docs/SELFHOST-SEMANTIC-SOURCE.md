@@ -926,7 +926,7 @@ graphs.
 
 ## Validation
 
-`internal/e2eselfhost/self_host_semsource_test.go`:
+`internal/testing/e2ecompiler/self_host_semsource_test.go`:
 
 Both drivers run `lift.lift_lambdas_typed` over the module first, the way the typed
 lowering does. That is what puts a closure in
@@ -1021,8 +1021,8 @@ parameter, which is where a lost slot class is a wasm validation error rather
 than a wrong number.
 
 ```sh
-go test ./internal/e2eselfhost -run 'TestSelfHostSemanticSource' -count=1
-go test ./internal/e2eselfhost -run 'TestSelfHostSSAPhysicalRC|TestSelfHostSSAUnits|TestSelfHostSSASemantic|TestSelfHostSSADependencyVerification|TestSelfHostSSALifetime' -count=1
+go test ./internal/testing/e2ecompiler -run 'TestSelfHostSemanticSource' -count=1
+go test ./internal/testing/e2ecompiler -run 'TestSelfHostSSAPhysicalRC|TestSelfHostSSAUnits|TestSelfHostSSASemantic|TestSelfHostSSADependencyVerification|TestSelfHostSSALifetime' -count=1
 ```
 
 ## The caller contract at the AST boundary
@@ -1366,7 +1366,7 @@ therefore hand every cell-bearing holder straight to an `own` parameter, so
 each one is released by produced code.
 
 The cell fixture also found a lowering bug of its own, since fixed
-(`internal/e2eselfhost/self_host_variant_name_shadow_test.go`): a variant
+(`internal/testing/e2ecompiler/self_host_variant_name_shadow_test.go`): a variant
 whose name a plain struct also declares had its match arm read the payload
 through the STRUCT. An arm resolves its owner from the pattern's `Enum.`
 qualifier and falls through to the scrutinee only when no decl of that name
@@ -1456,7 +1456,7 @@ stopped at a variable under a CONTAINER: `util.append_all[T]`'s `T[]` and
 `astwalk.map_expr_acc`'s `(ast.Expr, T, boolean)` were refused as unresolved,
 because releasing an array or a tuple walks its slots and an erased slot names
 no drop, and 514 functions stood behind those two. Producing an instance per
-binding instead — what `internal/monomorph` does for native — dissolved the
+binding instead — what `internal/oracle/monomorph` does for native — dissolved the
 question rather than answering it: inside `append_all$arr$FuncDecl` the
 element is a record with a drop, and the erased rule, its proof and its two
 runtime alternatives (boxing every erased value, or a drop word beside it)
@@ -2252,7 +2252,7 @@ What the typed path produced whole, 2026-09-24:
 | the compiler compiling itself | every declaration |
 | `examples/` outside the compiler | every program, once `word_freq` copies what it stores (`rc-log/2026-09-24-g-…`) |
 | `coreutils/` | all 106 programs |
-| e2eselfhost with refusals fatal, 2026-09-25 | 2737 tests, the one failure #10291 (since fixed); a later sweep ran into the local 3 h timeout with no refusal |
+| e2ecompiler with refusals fatal, 2026-09-25 | 2737 tests, the one failure #10291 (since fixed); a later sweep ran into the local 3 h timeout with no refusal |
 
 `TestSelfHostOverReleaseReportArm64`'s `__rc_dec` produces now
 (`rc-log/2026-09-24-i-…`), and so does `TestSelfHostStrEqSymbolTypeChecks`

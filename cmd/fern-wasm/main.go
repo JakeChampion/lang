@@ -17,7 +17,7 @@
 //
 //	fernLsp(jsonRpcRequestString) -> jsonRpcResponseString
 //	  Routes a single LSP message into the in-process server in
-//	  internal/lsp and returns the JSON-encoded response. Empty
+//	  internal/tools/lsp and returns the JSON-encoded response. Empty
 //	  string for notifications (which have no response). The
 //	  same Server instance persists across calls so document
 //	  state carries between requests.
@@ -35,7 +35,7 @@ import (
 	"encoding/json"
 	"syscall/js"
 
-	"github.com/jakechampion/lang/internal/lsp"
+	"github.com/jakechampion/lang/internal/tools/lsp"
 )
 
 // lspServer is the persistent LSP server backing fernLsp /

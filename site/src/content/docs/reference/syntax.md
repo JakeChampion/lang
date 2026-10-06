@@ -6,7 +6,7 @@ sidebar:
 ---
 
 An informal reference, not a normative grammar. When in doubt, the
-parser is the source of truth ([`internal/parser`][1]).
+parser is the source of truth ([`internal/syntax/parser`][1]).
 
 ## Keywords
 
@@ -196,4 +196,4 @@ print(f"hello, {name}");
 
 `{{` and `}}` escape literal braces inside an f-string.
 
-[1]: https://github.com/JakeChampion/lang/tree/main/internal/parser
+[1]: https://github.com/JakeChampion/lang/tree/main/internal/syntax/parser

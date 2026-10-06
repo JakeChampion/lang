@@ -1,5 +1,5 @@
 // Command x86tblgen writes the self-host x86-64 assembler's encoding tables
-// from internal/x86tbl, the table the Go assembler reads directly.
+// from internal/tables/x86tbl, the table the Go assembler reads directly.
 //
 // The two assemblers must agree byte for byte, and every drift found so far
 // has been vocabulary rather than encoding logic — one side reaching a
@@ -18,8 +18,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jakechampion/lang/internal/fmtsource"
-	"github.com/jakechampion/lang/internal/x86tbl"
+	"github.com/jakechampion/lang/internal/syntax/fmtsource"
+	"github.com/jakechampion/lang/internal/tables/x86tbl"
 )
 
 // block is one marker-delimited region this command owns.

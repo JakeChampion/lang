@@ -581,7 +581,7 @@ function emit_per_module_spawned(entry_path: string, entry: parser.Module, loade
 // return-type change is caught even when the source left the type implicit.
 // emit_window_size returns the [lo,hi) function-window size for a module of
 // `funcs` functions and `bytes` source bytes — the in-driver twin of the harness
-// emitWindowSize (internal/e2eselfhost/self_host_modload_permodule_test.go), kept
+// emitWindowSize (internal/testing/e2ecompiler/self_host_modload_permodule_test.go), kept
 // byte-identical so `-per-module-emit-all` shards each module into the SAME
 // windows the per-process fixpoint does. A 100-func budget and a 300 KB
 // source-byte budget each set a minimum window count (the byte budget shards

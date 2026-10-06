@@ -25,7 +25,7 @@
 // so the supported path is the only one needed meanwhile.
 //
 // The imports below are the catalogue, and
-// `internal/coreutils/multicall_test.go` fails when a `coreutils/*.fern`
+// `internal/testing/coreutils/multicall_test.go` fails when a `coreutils/*.fern`
 // is missing from it — the list is checked in rather than generated so
 // that it is reviewable, and gated so that it cannot drift.
 //

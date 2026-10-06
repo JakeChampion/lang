@@ -6,7 +6,7 @@ the original design doc; the rc-based COW it scopes now ships).
 
 ## Implementation status (done)
 
-The mechanism below is implemented in `internal/interp/interp.go`:
+The mechanism below is implemented in `internal/oracle/interp/interp.go`:
 
 - `Map` carries an `rc int` (the COW reference count); `(*Map).clone()`
   makes an independent copy.
@@ -26,7 +26,7 @@ The mechanism below is implemented in `internal/interp/interp.go`:
 The validation gate is met: the differential cases
 `map_cow_alias_isolation`, `map_cow_func_arg`, `map_cow_returned`, and
 `map_cow_alias_then_scope_exit` in
-`internal/e2e/feature_differential_test.go` run the interp against every
+`internal/testing/e2e/feature_differential_test.go` run the interp against every
 backend and pass, and the full differential + interp suites stay green
 (no new divergence). The original M1 repro — `fern -interp` agreeing with
 the compiled backends on alias isolation — now holds.
@@ -62,7 +62,7 @@ run a program through `interp` *and* every backend and assert they agree
 independent implementation.
 
 For `Map[K, V]` it is not. The interp's `Map` is a `*Map` shared on
-assignment and mutated in place (`internal/interp/interp.go`:
+assignment and mutated in place (`internal/oracle/interp/interp.go`:
 `builtinMapSet` / `builtinMapDelete` / `builtinMapClear`), while every
 compiled backend does **copy-on-write** (`core/map.fern`
 `__map_cow_inplace`). So:
@@ -150,7 +150,7 @@ wrong in either direction is observable:
 ## Value-flow hook points
 
 Every place a `*Map` reference is created or destroyed (file refs in
-`internal/interp/interp.go`):
+`internal/oracle/interp/interp.go`):
 
 | Event | Location | Action |
 | --- | --- | --- |

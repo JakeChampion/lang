@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/gates"
+	"github.com/jakechampion/lang/internal/check/checker"
+	"github.com/jakechampion/lang/internal/check/constfold"
+	"github.com/jakechampion/lang/internal/tools/gates"
 )
 
 func writeCapsTree(t *testing.T, files map[string]string) string {
@@ -244,7 +244,7 @@ pub function fetch(s: string): void {
 // granting its own dep a capability it doesn't hold — fails the LOAD,
 // so every user-facing path (-check here) reports it before any
 // reachability analysis runs. The load-level semantics live in
-// internal/modload's TestLoadAttenuation* suite.
+// internal/pkg/modload's TestLoadAttenuation* suite.
 func TestEnforceCapabilitiesAttenuationSurfacesInCheck(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\na = { path = \"../a\", capabilities = [\"fs\"] }\n",

@@ -3436,8 +3436,8 @@ function run(): i32 {
   }
 
   // Constant-fold the program before codegen, on EVERY build. Native gates
-  // no constant folding behind `-O` either — `internal/constfold` runs on
-  // all four of its compile paths and the expression fold in `internal/ir`
+  // no constant folding behind `-O` either — `internal/check/constfold` runs on
+  // all four of its compile paths and the expression fold in `internal/oracle/ir`
   // likewise — and `-O` there means assert elision, below. Gating this
   // behind `-O` meant a default self-host build emitted a runtime call for
   // `"ab" + "cd"` where native emitted one literal.

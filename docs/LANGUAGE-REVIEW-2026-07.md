@@ -287,7 +287,7 @@ literal (`Box[i32] { val: 42 }`, #6812), plus `as`-ascription to type an
 expression inline (`None as Option[i32]`) and an annotation on the binding.
 E040 names the applicable ones when inference fails.
 
-**Generics.** Bracket syntax, fully monomorphised (`internal/monomorph`,
+**Generics.** Bracket syntax, fully monomorphised (`internal/oracle/monomorph`,
 clone-then-recheck), Rust/Crystal-style: zero runtime cost, concrete code
 for downstream passes. Polymorphic recursion is not supported and fails
 badly — an 8-round instantiation cap yields a "compiler bug" message rather
@@ -349,12 +349,12 @@ pointer arithmetic in the surface, none is currently needed.
 ## Memory Model
 
 **Approach: Perceus-style reference counting** (Koka/Lean/Roc lineage),
-default-on (`RcFreeEnabled`, `RcReuseEnabled` in `internal/ast/ast.go`).
+default-on (`RcFreeEnabled`, `RcReuseEnabled` in `internal/syntax/ast/ast.go`).
 Every heap value carries an `rc` header; the compiler inserts inc/dec at
 alias/drop/overwrite sites and then optimizes most of them away: borrowed
 parameters (no caller-inc/callee-dec), move-on-return pair cancellation,
 FBIP reuse tokens (a dropped constructor's memory is reused in place for a
-new one), tail-recursion-modulo-cons (`internal/ir/trmc.go`), and per-type
+new one), tail-recursion-modulo-cons (`internal/oracle/ir/trmc.go`), and per-type
 generated drop glue (`__drop_struct_<N>`, `__drop_enum_<Name>`) for deep
 reclamation. Allocation is a segregated freelist (16-byte size classes up
 to 2048, two-tier large-block classes above) over a bump heap. Strings have
@@ -503,7 +503,7 @@ One genuinely distinctive mechanism sits outside the language proper:
 first-class **literate programming**. `.fern.md` documents with Knuth-style
 named chunks tangle to one or many modules, are importable as libraries,
 and — critically — diagnostics remap back to the document's lines
-(`docs/LITERATE.md`, `internal/literate`). Almost no modern language ships
+(`docs/LITERATE.md`, `internal/tools/literate`). Almost no modern language ships
 this in the core toolchain.
 
 ## Safety
@@ -836,7 +836,7 @@ assembler, ELF writer). Status, honestly stated:
 ## Reliability and testing
 
 This is the implementation's strongest axis: 1,218 Go test files, 5,112
-test functions; e2e suites (`internal/e2e` + `internal/e2eselfhost`,
+test functions; e2e suites (`internal/testing/e2e` + `internal/testing/e2ecompiler`,
 ~195 KLOC combined) running every fixture across interp/x86-64/arm64(qemu)/
 wasm; pervasive differential testing; `fernsmith`, a seeded,
 **type-correct-by-construction** program generator (wasm-smith-style) whose

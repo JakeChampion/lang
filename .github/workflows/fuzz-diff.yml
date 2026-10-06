@@ -72,11 +72,11 @@ jobs:
       # about 200 at ten minimisation runs per input (#9977).
       - name: fuzz differential execution (both arches)
         if: ${{ !cancelled() }}
-        run: gotestsum --format testname -- -fuzz=FuzzGenerate_ExecutionAgrees -fuzztime=60s -fuzzminimizetime=10x -run=^$ ./internal/e2e
+        run: gotestsum --format testname -- -fuzz=FuzzGenerate_ExecutionAgrees -fuzztime=60s -fuzzminimizetime=10x -run=^$ ./internal/testing/e2e
 
       - name: fuzz parse round-trip (arch-independent, x86 only)
         if: ${{ !cancelled() && matrix.host == 'x86_64' }}
-        run: gotestsum --format testname -- -fuzz=FuzzGenerate_ParseRoundTrips -fuzztime=60s -run=^$ ./internal/fernsmith
+        run: gotestsum --format testname -- -fuzz=FuzzGenerate_ParseRoundTrips -fuzztime=60s -run=^$ ./internal/testing/fernsmith
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

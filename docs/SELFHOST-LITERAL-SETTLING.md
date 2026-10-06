@@ -35,9 +35,9 @@ Native does not type literals by magnitude either. It does something better and
 larger: an unsuffixed integer literal is **polymorphic**, and its width is
 settled from context.
 
-- `internal/parser/parser.go` — the suffix switch leaves `NumberLit.Width == 0`
+- `internal/syntax/parser/parser.go` — the suffix switch leaves `NumberLit.Width == 0`
   for an unsuffixed literal. Only `42i64` / `7u8` / … pin a width at parse time.
-- `internal/checker/checker.go`:
+- `internal/check/checker/checker.go`:
   - `settleNumeric(e, hint)` — the entry point, driven from **66 call sites**,
     each one a place where context supplies an expected type (a declared let
     type, a parameter, a return position, a struct-field initialiser, both arms
@@ -83,7 +83,7 @@ compiler whose primary correctness gate is a byte-identical self-compile.
 
 Gates any attempt must clear, from `docs/TEST-GATES.md`:
 
-- `internal/e2eselfhost` is **primary** — a literal-typing change is exactly the
+- `internal/testing/e2ecompiler` is **primary** — a literal-typing change is exactly the
   kind of thing the fixpoint is structurally blind to (a stable miscompile
   reproduces itself).
 - Both 335-fixture self-host legs (`FERN_SELFHOST_FIXTURES=1`, wasm + x86-64),

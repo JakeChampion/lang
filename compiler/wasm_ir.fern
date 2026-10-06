@@ -207,7 +207,7 @@ pub function ip_box2_addr(): i32 {
   return ip_box_addr() + 16;
 }
 
-// log_tab_addr is internal/fdlibm.LogTable's rows, which $__fern_log_f64
+// log_tab_addr is internal/tables/fdlibm.LogTable's rows, which $__fern_log_f64
 // indexes; the data segment that fills them is emitted beside it. Reserved
 // whether or not the module uses log, so no address below depends on it.
 pub function log_tab_addr(): i32 {
@@ -7567,7 +7567,7 @@ pub function build_io_error_func(sv: string[]): string {
 // segment at log_tab_addr()).
 //
 // The self-host cannot import Go, so the coefficients below are literals
-// rather than a shared table. internal/fdlibm's selfhost_parity_test
+// rather than a shared table. internal/tables/fdlibm's selfhost_parity_test
 // pins every one of them, the 2/pi limbs in trig_limbs_func, and log's
 // generated data, to the tables the native backends emit — edit one side
 // alone and that test fails.
@@ -7614,7 +7614,7 @@ pub function exp_func(): string {
 }
 
 // log_func emits $__fern_log_f64(x) -> ln x, the table-driven kernel
-// internal/fdlibm/logtab.go documents, operation for operation. The
+// internal/tables/fdlibm/logtab.go documents, operation for operation. The
 // coefficients are f64.const immediates; the rows are the data segment at
 // log_tab_addr(), addressed by row*24.
 pub function log_func(): string {

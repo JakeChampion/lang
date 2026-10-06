@@ -15,7 +15,7 @@
 // is_commutative_kind), and ends with every registered tag's id so the golden
 // pins the numbering itself.
 //
-// The companion Go test (internal/e2eselfhost/self_host_ir_kind_test.go)
+// The companion Go test (internal/testing/e2ecompiler/self_host_ir_kind_test.go)
 // asserts the exact stdout (the id table against testdata/ir-kind-ids.txt)
 // and an exit code of 0 (zero bijection failures), pinning the registry
 // end-to-end through the self-host -> native pipeline (proving the registry

@@ -262,7 +262,7 @@ function main(): i32 {
     s = round(s, r as i64 * (7 as i64) + 1 as i64, queue_cap());
     // `.with` on a uniquely-owned array writes in place, so recording a
     // sample costs the measured region no allocation. The harness pins
-    // that property (internal/e2e/bench_module_test.go).
+    // that property (internal/testing/e2e/bench_module_test.go).
     samples = samples.with(r, monotonic_ns() - t0);
     r = r + 1;
   }

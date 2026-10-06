@@ -2,7 +2,7 @@
 
 What #9585 asked, measured. The programs are `examples/fip/kv_*.fern` — three
 implementations of one bounded key/value service, differing in how the table
-is held — and `internal/e2e/fip_kv_test.go` keeps their claims from rotting.
+is held — and `internal/testing/e2e/fip_kv_test.go` keeps their claims from rotting.
 
 Read `docs/ALLOCATION-OBSERVABLE.md` first for what the allocation numbers
 mean, and `docs/FIP-EVENT-LOOP.md` and `docs/FIP-PACKET-PROTOCOL.md` for the

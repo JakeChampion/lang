@@ -28,9 +28,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/stdlib"
+	"github.com/jakechampion/lang/internal/syntax/ast"
+	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
 func main() {

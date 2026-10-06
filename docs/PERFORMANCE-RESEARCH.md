@@ -9,7 +9,7 @@ section that covers surface-syntax + type-system inspirations.
 
 Treat this document as input to the IR / codegen roadmap.
 Recommendations at the end map each idea to a concrete file under
-`internal/ir/` or `internal/codegen/*` and rank them by leverage
+`internal/oracle/ir/` or `internal/codegen/*` and rank them by leverage
 × implementation cost.
 
 ## Framing — what "fast" means here
@@ -44,24 +44,24 @@ wholesale.
 Cataloguing what's right so future work doesn't accidentally
 regress it.
 
-- **IR layer is target-agnostic.** `internal/ir/` produces a
+- **IR layer is target-agnostic.** `internal/oracle/ir/` produces a
   single op stream that arm64 / arm64-darwin / wasm / x86_64
   all consume. New optimisations land once and ripple to every
   backend. This is the same architecture LLVM and Cranelift
   use, and it's the right shape.
-- **Monomorphisation pass exists** (`internal/monomorph/`).
+- **Monomorphisation pass exists** (`internal/oracle/monomorph/`).
   Generic functions are specialised per call-site type
   signature; downstream passes see fully concrete code. Same
   pattern as Rust / Crystal / Julia.
 - **Self tail-call optimisation across all backends**
-  (`internal/ir/tco.go`). Self-recursive `return f(args)`
+  (`internal/oracle/ir/tco.go`). Self-recursive `return f(args)`
   rewrites to a parameter rebind + backward branch.
 - **Defunctionalisation and zero-capture closure inlining**
   (`defunctionalise.go`, `inline_zero_capture.go`). Partial
   implementation of Roc's lambda-set idea — closures with no
   captures lower as direct calls.
 - **Tree-shake + dead-function elimination** at link time
-  (`internal/treeshake/`, `internal/ir/dead_funcs.go`).
+  (`internal/oracle/treeshake/`, `internal/oracle/ir/dead_funcs.go`).
   Important for WASM binary size and for cold-start because
   every unused export still pays for relocation processing.
 - **Constant folding / propagation / copy propagation /
@@ -182,7 +182,7 @@ interpreter, not codegen):**
 
 **What translates:**
 
-- **Computed-goto interpreter dispatch in `internal/interp/`.**
+- **Computed-goto interpreter dispatch in `internal/oracle/interp/`.**
   Today the interpreter is a tree-walker; the IR is interpreted
   by walking `[]Op` with a `switch op.Kind`. Adding a fast
   switch-based or token-threaded dispatch loop for dev-mode IR
@@ -304,7 +304,7 @@ emitters in production use:**
   `(header, fields[N])` layout: every heap object has the
   same shape modulo header tag + size. One allocator path,
   one walker, one comparator.
-- **Cost-model-driven inliner.** `internal/ir/inline.go` uses
+- **Cost-model-driven inliner.** `internal/oracle/ir/inline.go` uses
   a size threshold. A cost model that scores `inlining-saved-
   ops − inlining-added-ops × call-site-frequency-estimate`
   (Flambda's approach) would inline more aggressively in
@@ -342,7 +342,7 @@ cold-start. But several supporting techniques are transferable.**
   one block per opcode, threaded with `jmp [dispatch+R*8]`.
   Outperforms gcc-compiled C interpreters. *Not* relevant to
   the production AOT backend, but again relevant for
-  `internal/interp/`.
+  `internal/oracle/interp/`.
 - **DynASM as a x86_64 assembler.** Macro-based, generates
   C arrays of bytes. If the x86_64 backend
   (`internal/codegen/x86_64/`) ever needs to grow, DynASM is
@@ -382,7 +382,7 @@ Sources:
   declarations as *assumptions*, not checks — declaring the
   wrong type is UB-equivalent.
 - **DECLAIM INLINE.** Per-function, in source: "always inline
-  this." Stronger than `internal/ir/inline.go`'s size-threshold
+  this." Stronger than `internal/oracle/ir/inline.go`'s size-threshold
   heuristic.
 - **Compiler macros.** A function can have a *companion
   rewrite rule* that the compiler tries first. `(length
@@ -568,7 +568,7 @@ are exactly WUFFS's target. The codebase already has
 
 **What translates:**
 
-- **Range analysis pass** in `internal/ir/`. Tracks each i32
+- **Range analysis pass** in `internal/oracle/ir/`. Tracks each i32
   local's known min/max as a lattice. Drives bounds-check
   elimination, integer-overflow elimination, and (later)
   width-narrowing (`i32` that's provably `<256` could be
@@ -907,12 +907,12 @@ Loop depth comes from the SSA CFG (Rec §1). Source-level
 `@inline` / `@noinline` (Rec from SBCL section) overrides
 the cost model.
 
-### 8. Computed-goto interpreter dispatch in `internal/interp/`.
+### 8. Computed-goto interpreter dispatch in `internal/oracle/interp/`.
 
 **Cost: 2 days.** **Impact: dev-tooling only (~2-3× interp
 speed).**
 
-Today `internal/interp/` walks IR ops via `switch op.Kind`.
+Today `internal/oracle/interp/` walks IR ops via `switch op.Kind`.
 The Go compiler turns this into a single indirect branch
 per op + a long sequence of `cmp; je` instructions for the
 table.
@@ -997,7 +997,7 @@ shapes that flow there; the closure parameter lowers to a
 tagged union of capture-structs; the call inside the callee
 becomes a `match` over the tag with direct calls in each arm.
 
-`internal/ir/inline_zero_capture.go` is the partial start.
+`internal/oracle/ir/inline_zero_capture.go` is the partial start.
 The full version handles non-zero captures too, requires
 whole-program lambda-set inference.
 
@@ -1028,7 +1028,7 @@ when called with statically-knowable arguments. Examples:
 - `map_get_or(m, k, default)` with `m` empty (e.g. fresh
   literal) → `default`.
 
-Lives at `internal/ir/rewrites.go`, runs between
+Lives at `internal/oracle/ir/rewrites.go`, runs between
 `monomorph` and `inline`.
 
 ### 16. Mutual tail-call optimisation via shared loop frame.

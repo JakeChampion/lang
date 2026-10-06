@@ -34,5 +34,5 @@
 # CHANGES, which is a property of its history. Adding a path above is therefore
 # a judgement — "is a colliding row here two appends, or one disagreement?" —
 # and the duplicate-key test is what catches getting it wrong.
-internal/e2e/testdata/conformance-leak-census.txt merge=union
-internal/e2eselfhost/testdata/selfhost-rejection-gaps.txt merge=union
+internal/testing/e2e/testdata/conformance-leak-census.txt merge=union
+internal/testing/e2ecompiler/testdata/selfhost-rejection-gaps.txt merge=union

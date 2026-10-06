@@ -16,7 +16,7 @@
 //     (negated or not) onto it, using the Linux, Darwin or WASI numbering
 //     `target_os()` names; `errno()` is the inverse on the same target.
 //     `internal/stdlib/net_errno_test.go` pins the three tables to
-//     `internal/strerror`'s row for row, so a number cannot drift.
+//     `internal/tables/strerror`'s row for row, so a number cannot drift.
 //
 // The socket controls (`listen_with`, `listen_at`, the options,
 // `shutdown`), the stream verbs on a connection (`read` into the caller's
@@ -917,7 +917,7 @@ pub function socket_addr_parse(s: string): Option[SocketAddr] {
 
 // The errno each variant stands for, in declaration order (`Other` has
 // none), and its number on each target. `net_errno_test.go` pins every
-// row to `internal/strerror`; edit the four lists together.
+// row to `internal/tables/strerror`; edit the four lists together.
 function __net_errno_names(): string[] {
   return ["EADDRINUSE", "EADDRNOTAVAIL", "ECONNREFUSED", "ECONNRESET", "ECONNABORTED", "ETIMEDOUT", "EAGAIN", "EINPROGRESS", "ENETUNREACH", "EHOSTUNREACH", "EINTR"];
 }

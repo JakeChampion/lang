@@ -95,7 +95,7 @@ performed during lowering*, not with AST-node storage.
 > Direct measurement shows that is wrong for structs and enums: the
 > codebase already generates per-type recursive drops
 > (`__drop_struct_<N>` / `__drop_enum_<N>` via `dropFnNameFor` →
-> `genStructDropFn`, dispatched in `internal/ir/ir.go:emitDec`) that
+> `genStructDropFn`, dispatched in `internal/oracle/ir/ir.go:emitDec`) that
 > free the box, and `ast.RcFreeEnabled` is `true` by default. The
 > generic no-free `__fern_rc_dec` is only the **declined-type fallback**.
 > Effect B is **strings**, which are genuinely unreclaimed.

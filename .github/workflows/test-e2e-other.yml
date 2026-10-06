@@ -1,6 +1,6 @@
 name: Test e2e other
 
-# Catch-all for internal/e2e tests not claimed by a more specific
+# Catch-all for internal/testing/e2e tests not claimed by a more specific
 # test-e2e-* workflow. Implemented as `go test -skip <other
 # prefixes>` rather than an enumerated `-run`, so any future test
 # whose name doesn't match the dedicated prefixes is picked up
@@ -53,7 +53,7 @@ on:
   workflow_dispatch:
 
 # The lanes that have a workflow of their own. Everything else in
-# internal/e2e belongs to this one. Written once: the shard step uses it both
+# internal/testing/e2e belongs to this one. Written once: the shard step uses it both
 # to build the list it partitions and, by construction, to decide what runs.
 env:
   CATCH_ALL_SKIP: '^Test(Arm64|X86_64|WASM|Wasm|SelfHost|Differential)'
@@ -89,7 +89,7 @@ jobs:
       - uses: ./.github/actions/selfhost-driver-cache
       - name: build the e2e test binary
         run: |
-          go test -c -o "$RUNNER_TEMP/e2e-other.test" ./internal/e2e/
+          go test -c -o "$RUNNER_TEMP/e2e-other.test" ./internal/testing/e2e/
           go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
       - name: go test (e2e — non-backend-specific, shard ${{ matrix.shard }}/${{ matrix.nshard }}, two workers)
         # SHARDED, RATHER THAN GIVEN A THIRD TIMEOUT. The ceiling here was
@@ -125,7 +125,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t MINE < <(
-            go test -list '.' ./internal/e2e/ |
+            go test -list '.' ./internal/testing/e2e/ |
               grep -E '^Test' |
               grep -vE "$CATCH_ALL_SKIP" |
               sort |
@@ -139,7 +139,7 @@ jobs:
           PAT="^($(IFS='|'; echo "${MINE[*]}"))\$"
           # The tests read ../../examples and ../../internal/stdlib, so the
           # binary runs from the package directory.
-          cd internal/e2e
+          cd internal/testing/e2e
           "$RUNNER_TEMP/ci-test-workers" \
             -binary "$RUNNER_TEMP/e2e-other.test" \
             -output "$RUNNER_TEMP/other-test-results" \

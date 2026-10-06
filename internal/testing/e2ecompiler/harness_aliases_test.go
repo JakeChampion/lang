@@ -1,0 +1,69 @@
+// Code generated for the #4398 part-3 e2e package split; edit freely.
+//
+// Aliases binding this package's historical helper names to the shared
+// harness (internal/testing/e2eharness), so the ~900 test files keep their bare
+// identifiers. internal/testing/e2ecompiler carries the same alias file.
+package e2ecompiler
+
+import (
+	"testing"
+
+	e2eharness "github.com/jakechampion/lang/internal/testing/e2eharness"
+)
+
+var arm64Tooling = e2eharness.Arm64Tooling
+var arm64Runner = e2eharness.Arm64Runner
+var buildBin = e2eharness.BuildBin
+var buildLangBinForInterp = e2eharness.BuildLangBinForInterp
+var buildModloadArm64DriverX86 = e2eharness.BuildModloadArm64DriverX86
+var buildModloadDriverX86 = e2eharness.BuildModloadDriverX86
+var buildSelfHostBin = e2eharness.BuildSelfHostBin
+var buildSelfHostBinFor = e2eharness.BuildSelfHostBinFor
+var boxedProbes = e2eharness.BoxedProbes
+var probeEnv = e2eharness.ProbeEnv
+var childEnv = e2eharness.SelfHostChildEnv
+var cachedDriverBin = e2eharness.CachedDriverBin
+var cachedLink = e2eharness.CachedLink
+var compileFilesModload = e2eharness.CompileFilesModload
+var compileSourceModload = e2eharness.CompileSourceModload
+var copyStdlibTree = e2eharness.CopyStdlibTree
+var writeSourceModloadProject = e2eharness.WriteSourceModloadProject
+var componentCoreSection = e2eharness.ComponentCoreSection
+var contains = e2eharness.Contains
+var copySelfHostFiles = e2eharness.CopySelfHostFiles
+var copySelfHostDriver = e2eharness.CopySelfHostDriver
+var eligBits = e2eharness.EligBits
+var extractComponentType = e2eharness.ExtractComponentType
+var hashSelfHostSources = e2eharness.HashSelfHostSources
+var interpExit = e2eharness.InterpExit
+var langSrcAbs = e2eharness.LangSrcAbs
+var loadCheckMono = e2eharness.LoadCheckMono
+var mustWrite = e2eharness.MustWrite
+var runArm64Bin = e2eharness.RunArm64Bin
+var runBin = e2eharness.RunBin
+var runCapture = e2eharness.RunCapture
+var runCaptureStrictIR = e2eharness.RunCaptureStrictIR
+var runDriverFile = e2eharness.RunDriverFile
+var runDriverStdinExits = e2eharness.RunDriverStdinExits
+var runFixtureInterp = e2eharness.RunFixtureInterp
+var runInterpExit = e2eharness.RunInterpExit
+var runInterp = e2eharness.RunInterp
+var runX86_64Bin = e2eharness.RunX86_64Bin
+var selfHostImportClosure = e2eharness.SelfHostImportClosure
+
+const uuidV4Program = e2eharness.UuidV4Program
+
+var withBuildMemoryMB = e2eharness.WithBuildMemoryMB
+var withPrintInt = e2eharness.WithPrintInt
+var writeSelfHostAsmProject = e2eharness.WriteSelfHostAsmProject
+var writeSelfHostModloadProject = e2eharness.WriteSelfHostModloadProject
+var writeSelfHostModloadProjectTyped = e2eharness.WriteSelfHostModloadProjectTyped
+var x86_64Tooling = e2eharness.X86_64Tooling
+var x86_64Runner = e2eharness.X86_64Runner
+
+// selfHostImportClosureFiles is the self-host import closure of one driver,
+// as absolute-ish paths under compiler.
+func selfHostImportClosureFiles(t *testing.T, fernName string) []string {
+	t.Helper()
+	return e2eharness.SelfHostImportClosure(t, "../../../compiler", fernName)
+}

@@ -95,7 +95,7 @@ self-contained.
 
 ## 6. Hygiene
 
-- **REPL through modload.** `internal/interp/repl.go` still uses bare
+- **REPL through modload.** `internal/oracle/interp/repl.go` still uses bare
   `parser.Parse`, so REPL input can't `import` stdlib. Route it through
   `modload.LoadSource` like the other in-memory entry points.
 - **Remove the dead `IsPrelude` field.** Nothing sets

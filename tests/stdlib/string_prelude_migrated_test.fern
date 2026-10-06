@@ -2,7 +2,7 @@ import "std/test";
 
 // tests/stdlib/string_prelude_migrated_test.fern —
 // Proof-of-concept Fern port of `TestInterpScriptStringPrelude`
-// from `internal/e2e/interp_script_test.go`.
+// from `internal/testing/e2e/interp_script_test.go`.
 //
 // The original Go test pinned the same surface by piping
 // an inline Fern program through `fern -interp` and

@@ -20,10 +20,10 @@
 //   - **No target.** A capability is either reached or not; which targets
 //     grant it is the enforcement half's question.
 //
-// The Go-side gate (internal/e2eselfhost/self_host_std_partition_test.go)
+// The Go-side gate (internal/testing/e2ecompiler/self_host_std_partition_test.go)
 // runs this over every `std/` module and requires the same answer as native's
 // platforms.Reach over the same module — the partition in
-// internal/platforms/std_partition_test.go, derived twice.
+// internal/pkg/platforms/std_partition_test.go, derived twice.
 
 import "../lexer";
 import "../parser";

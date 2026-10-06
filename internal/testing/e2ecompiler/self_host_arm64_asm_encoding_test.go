@@ -1,0 +1,753 @@
+package e2ecompiler
+
+import (
+	"bytes"
+	"fmt"
+	"os/exec"
+	"strings"
+	"testing"
+)
+
+// TestSelfHostArm64AsmEncodingMatchesGas pins the SELF-HOST in-process arm64
+// assembler's instruction encodings to GNU as's, on identical GAS text.
+//
+// # Why an encoding test, when execution tests exist
+//
+// #6047: `arm64_gas_mem` read the index REGISTER of `ldrb w0, [x0, x1]` as an
+// immediate — the digit lifted out of the register name — so the instruction
+// assembled as `ldrb w0, [x0, #1]`. The binary was well-formed and ran; every
+// string-copy loop just reloaded the source's second byte forever, so
+// `print("Hello, Fern!")` emitted "eeeeeeeeeeeeF": the right LENGTH, the wrong
+// bytes. Nothing caught it for as long as it existed, because:
+//
+//   - the fixture corpus never ran through the self-host arm64 path at all (the
+//     arm64 leg of #6005 is what found it), and
+//   - TestSelfHostArm64LinuxBuilds, the one test that executes this path, has a
+//     `print` case that compared only the EXIT CODE, and skips entirely unless
+//     qemu-aarch64 is installed — which the CI job running it does not do.
+//
+// This test needs no qemu and executes no arm64 code. It compares encodings,
+// which is the layer the bug was in, and it fails on any divergence rather than
+// only on the ones that happen to change an exit code.
+//
+// # Why the snippet avoids labels, adrp and literal pools
+//
+// The self-host lays out a whole image and GNU as an unlinked object, so any
+// address-bearing instruction legitimately differs. The snippet below is
+// deliberately position-independent: registers and immediates only. Add a row
+// whenever the emitter learns a new instruction form.
+func TestSelfHostArm64AsmEncodingMatchesGas(t *testing.T) {
+	gas := gnuArm64Oracle(t)
+	gcc, runner := x86_64Tooling(t)
+
+	// Every form here is one the arm64 emitter actually produces. The
+	// register-offset byte loads/stores in the middle block are #6047's shape:
+	// they are how a string-copy loop indexes its source and destination.
+	const snippet = `.text
+.globl _start
+_start:
+    ldrb w0, [x0, x1]
+    ldrb w5, [x6, x7]
+    strb w2, [x3, x4]
+    strb w0, [x1, x2]
+    ldrb w0, [x0, #1]
+    ldrb w9, [x10, #255]
+    strb w2, [x0]
+    strb w7, [x8, #16]
+    ldr x0, [x0, x1]
+    ldr x3, [x4, #8]
+    str x2, [x0, #16]
+    ldur x1, [x0, #-8]
+    stur x1, [x0, #-16]
+    add x0, x0, x1
+    add x0, x0, #16
+    sub x2, x3, #1
+    mul x1, x2, x3
+    cmp x1, #0
+    cmp x1, x2
+    mov x0, x1
+    lsl x0, x1, #3
+    lsr x0, x1, #2
+    asr x0, x1, #4
+    and x0, x1, x2
+    orr x0, x1, x2
+    eor x0, x1, x2
+    sxtw x0, w0
+    and x10, x9, #255
+    eor x0, x1, #1
+    // 32-bit (W) forms. AArch64 encodes operand width in the instruction, and
+    // arm64_gas_reg maps w0 and x0 to the same number, so every one of these was
+    // assembled as its 64-bit sibling until #6054: str w wrote 8 bytes where 4
+    // were meant, and ldr w / cmp w pulled the neighbouring 4 bytes into the
+    // value. Note ldr/str differ from the ALU forms in TWO ways: the size field,
+    // and an immediate scaled by 4 rather than 8 -- so ldr w3, [x4, #4] is a
+    // legal scaled encoding where the 64-bit form needs the unscaled ldur.
+    ldr w0, [sp, #8]
+    ldr w3, [x4, #4]
+    ldr w5, [x6]
+    str w0, [x1]
+    str w2, [x0, #8]
+    str w7, [sp, #12]
+    ldur w1, [x0, #-8]
+    stur w1, [x0, #-16]
+    cmp w1, #0
+    cmp w9, #255
+    cmp w1, w2
+    add w0, w0, #16
+    sub w2, w3, #1
+    and w0, w1, w2
+    mov w0, w1
+    mov w2, #1
+    mov w5, #4095
+    rev16 w3, w4
+    lsr w0, w1, #2
+    lsl w0, w1, #3
+    asr w0, w1, #4
+    and w10, w9, #255
+    and w9, w9, #1
+    and w0, w1, #31
+    eor w9, w9, #1
+    cbz w0, Lend
+    cbnz w1, Lend
+    tbnz w2, #31, Lend
+    // cset carries its destination width in the sf bit like every other ALU
+    // form, and was hardcoded to the X form -- so cset w0, mi assembled as
+    // cset x0, mi, 73 times in one fixture. Behaviourally invisible (cset
+    // writes 0 or 1, so the top half is zero either way), which is why no
+    // execution test ever caught it; found by the whole-program alignment in
+    // #6062, which is the thing this snippet is a hand-written stand-in for.
+    cset w0, mi
+    cset w0, ge
+    cset w3, eq
+    cset x0, ge
+    // #6060: four forms that encoded a DIFFERENT instruction than the source
+    // says, plus movn, which had no dispatch branch at all and emitted nothing
+    // while arm64_gas_known claimed it was handled.
+    movz x5, #0x400, lsl #16
+    movz x2, #1, lsl #16
+    movk x2, #0xffff, lsl #32
+    // movn, explicitly. #6060 gave the self-host assembler a dispatch for it
+    // and #6075 taught the oracle movn, so the direct rows work.
+    movn x0, #99
+    movn x3, #1, lsl #16
+    movn w5, #7
+    mov x0, #-100
+    mov w0, #-100
+    mov x1, #-1
+    str d8, [sp, #-16]!
+    ldr d8, [sp], #16
+    ldr d0, [x12, #8]
+    // Negative FP offsets, which lower to the unscaled STUR/LDUR form. Without
+    // them the offset wrapped to +8184 and the writeback was dropped (#6060).
+    // The oracle rejected any negative FP displacement until #6075, so these
+    // rows were commented out here; both assemblers now agree with GNU as.
+    str d0, [x12, #-8]
+    ldr d0, [x12, #-8]
+    stur d1, [x2, #-16]
+    ldur d3, [x4, #-32]
+    add x0, sp, x0
+    add x3, sp, x4
+    sub x0, sp, x1
+    // #6044: the FP conversion/rounding family. fcvt had no encoder at all (605
+    // uses in six fixtures), so -target arm64-linux refused 60 corpus fixtures --
+    // most of them, like fizzbuzz and map_keys, with no float in their source,
+    // because the runtime helpers carry one. fneg/fabs/fsqrt/frint* had
+    // encoders AND a dispatch branch but were missing from arm64_gas_known, so
+    // the program loop refused what the assembler could already encode. The
+    // fmov S/W pair fell through to the 64-bit fp->gpr arm: the wrong register
+    // file at the wrong width, 121 times in one fixture.
+    fcvt s0, d0
+    fcvt s3, d4
+    fcvt d0, s0
+    fcvt d5, s6
+    fcvtzs x0, d0
+    fcvtzs w5, d6
+    frinta d0, d0
+    frintm d0, d1
+    frintp d2, d3
+    frintz d4, d5
+    fsqrt d0, d1
+    fneg d2, d3
+    fabs d4, d5
+    fmov s0, w0
+    fmov w0, s0
+    fmov s3, w4
+    fmov d0, x0
+    fmov x0, d0
+    fmov d1, d2
+    fadd d0, d1, d2
+    fsub d0, d1, d2
+    fmul d0, d1, d2
+    fdiv d0, d1, d2
+    fcmp d1, d0
+    scvtf d0, x0
+    // #6051: ucvtf had no encoder or dispatch at all, so "u64 as f64" — which
+    // needs it, a signed convert reading a value >= 2^63 as negative — was
+    // refused outright by -target arm64-linux. The w-source rows pin the sf bit:
+    // scvtf was hardcoded to the X form, the same width class as fcvtzs above.
+    // fcvtzu — the INVERSE conversion, which "f64 as u32" lowers to — was
+    // missing for the same reason and is fixed in the same pass.
+    scvtf d0, w0
+    ucvtf d0, x0
+    ucvtf d1, w2
+    fcvtzu x0, d1
+    fcvtzu w5, d6
+    // The #7886 surface (#7887's port): every family gets at least one row
+    // here so the two assemblers cannot drift on it. The full per-family
+    // ground truth (low+high registers, refusals) lives in
+    // self_host_arm64_extops_gas_test.go.
+    adc x23, x9, x28
+    adcs w28, w9, w23
+    sbc w28, w9, w23
+    sbcs x23, x9, x28
+    ngc x23, x9
+    ngcs w28, w9
+    umulh x23, x9, x28
+    smulh x23, x9, x28
+    madd x23, x9, x28, x11
+    madd w23, w9, w28, w11
+    smull x23, w9, w28
+    umull x23, w9, w28
+    smaddl x23, w9, w28, x11
+    umaddl x23, w9, w28, x11
+    smsubl x23, w9, w28, x11
+    umsubl x23, w9, w28, x11
+    tst x23, x9
+    tst w1, w2, lsr #7
+    tst x0, #0xff
+    ands x23, x9, x28
+    ands w9, w10, #0x7
+    ands x1, x2, x3, lsl #4
+    bic x23, x9, x28
+    bic w1, w2, w3, ror #3
+    bics x1, x2, x3, lsr #2
+    orn x1, x2, x3, asr #5
+    eon x23, x9, x28
+    mvn x23, x9
+    mvn w1, w2, asr #3
+    negs x23, x9
+    orr x0, x1, x2, lsl #8
+    and x1, x2, x3, lsr #4
+    eor w1, w2, w3, ror #7
+    cmn x0, x1
+    cmn w1, w2
+    adds x1, x1, x6
+    adds w1, w1, w6
+    adds x1, x1, x21
+    orr x4, x4, #16
+    orr w4, w4, #1
+    extr x23, x9, x28, #63
+    extr w28, w9, w23, #17
+    ror x23, x9, #63
+    ror w28, w9, w23
+    bfi x23, x9, #40, #16
+    bfi w28, w9, #3, #5
+    bfxil x0, x1, #4, #8
+    ubfiz w28, w9, #3, #5
+    sbfiz x23, x9, #40, #16
+    ccmp x23, x9, #15, lt
+    ccmp w28, #31, #8, hi
+    ccmn x23, #9, #15, lt
+    csinc x23, x9, x28, lt
+    csinv w28, w9, w23, hi
+    csneg x23, x9, x28, lt
+    cinc x23, x9, lt
+    cinv w28, w9, hi
+    cneg x23, x9, lt
+    csetm x23, lt
+    csetm w28, hi
+    csel w1, w2, w3, lt
+    rev x23, x9
+    rev w28, w9
+    rev32 x23, x9
+    cls x23, x9
+    cls w28, w9
+    ldr x23, [x9, w28, uxtw #3]
+    ldr x23, [x9, x28, sxtx]
+    ldr x23, [x9, x28, lsl #3]
+    ldr w23, [x9, w28, sxtw]
+    ldr w0, [x1, x2]
+    str x23, [x9, w28, uxtw #3]
+    str w5, [x6, x7, lsl #2]
+    ldrb w23, [x9, w28, uxtw]
+    ldrb w0, [x1, w2, uxtw #0]
+    strb w23, [x9, x28, sxtx]
+    ldrh w23, [x9, w28, uxtw #1]
+    strh w23, [x9, x28, lsl #1]
+    ldp w23, w9, [x28, #8]
+    stp w23, w9, [x28, #-16]!
+    ldp w23, w9, [x28], #16
+    ldp d23, d9, [x28, #16]
+    stp d8, d9, [sp, #-16]!
+    ldp d23, d9, [x28], #32
+    ldr s23, [x9, #4]
+    str s23, [x9], #-4
+    ldr s23, [x9, #4]!
+    ldr s23, [x9, #-4]
+    stur s23, [x9, #-4]
+    ldr d1, [x2, #8]!
+    str d2, [x3], #-8
+    ldurh w23, [x9, #-2]
+    sturh w0, [x1, #255]
+    ldurb w0, [x1, #1]
+    sturb w2, [x3, #-1]
+    ldursb x23, [x9, #-1]
+    ldursb w23, [x9, #-1]
+    ldursh x23, [x9, #-2]
+    ldursw x23, [x9, #-4]
+    ldxr x23, [x9]
+    ldaxr w23, [x9]
+    stxr w11, x23, [x9]
+    stlxr w11, w23, [x9]
+    ldar x23, [x9]
+    stlr w23, [x9]
+    ldxrb w23, [x9]
+    ldaxrh w23, [x9]
+    stxrh w11, w23, [x9]
+    ldarb w23, [x9]
+    stlrb w23, [x9]
+    dmb sy
+    dmb ishld
+    dsb ish
+    isb
+    fmadd d23, d9, d28, d11
+    fmadd s23, s9, s28, s11
+    fmsub d23, d9, d28, d11
+    fnmadd s23, s9, s28, s11
+    fnmsub d23, d9, d28, d11
+    fnmul d23, d9, d28
+    fmin s23, s9, s28
+    fmax d23, d9, d28
+    fminnm s23, s9, s28
+    fmaxnm d23, d9, d28
+    fcsel d23, d9, d28, lt
+    fcsel s23, s9, s28, hi
+    fccmp d23, d9, #15, lt
+    fccmp s23, s9, #8, hi
+    fcmpe d23, d9
+    fcmpe s23, #0.0
+    fcmp d0, #0.0
+    fadd s1, s2, s3
+    fabs s23, s9
+    fsqrt s23, s9
+    frintm s23, s9
+    frintn s23, s9
+    fneg s2, s3
+    mrs x23, tpidr_el0
+    msr tpidr_el0, x23
+    mrs x23, nzcv
+    msr fpcr, x23
+    mrs x23, dczid_el0
+    mov x0, fp
+    add fp, sp, #32
+    str x0, [fp, #-8]
+    adr x0, Lend
+    adr x23, Lend
+    // #8000 wave 1: mnemonics the native assembler encoded and the self-host
+    // one did not. The W rows on sbfx and the extends carry the weight — the
+    // 32-bit bitfield encoding is not the 64-bit one with sf cleared, it also
+    // drops N, which is the shape ubfx got wrong.
+    nop
+    br x5
+    sbfx x1, x2, #3, #8
+    sbfx w1, w2, #3, #8
+    ubfx x1, x2, #3, #8
+    ubfx w1, w2, #3, #8
+    sxtb x0, w1
+    sxtb w0, w1
+    sxth x23, w9
+    sxth w23, w9
+    uxtb w0, w1
+    uxth w23, w9
+    ldrsb x0, [x1, #4]
+    ldrsb w0, [x1, #4]
+    ldrsb x23, [x9]
+    ldrsh x0, [x1, #4]
+    ldrsh w3, [x2, #62]
+    // #8000 wave 2a: the general Advanced SIMD classes. Both assemblers now
+    // read the arrangement as a field, so these rows are what keeps the two
+    // agreeing about size and Q rather than only about the byte forms the
+    // kernels happen to emit.
+    add v23.4s, v9.4s, v28.4s
+    sub v23.8h, v9.8h, v28.8h
+    mul v23.4s, v9.4s, v28.4s
+    cmeq v23.2d, v9.2d, v28.2d
+    cmtst v23.8b, v9.8b, v28.8b
+    cmgt v23.4h, v9.4h, v28.4h
+    cmhi v23.4s, v9.4s, v28.4s
+    smax v23.8h, v9.8h, v28.8h
+    umin v23.4h, v9.4h, v28.4h
+    sshl v23.2d, v9.2d, v28.2d
+    ushl v23.8b, v9.8b, v28.8b
+    and v23.8b, v9.8b, v28.8b
+    bic v23.16b, v9.16b, v28.16b
+    orr v23.8b, v9.8b, v28.8b
+    orn v23.16b, v9.16b, v28.16b
+    eor v23.16b, v9.16b, v28.16b
+    cmeq v23.4s, v9.4s, #0
+    cmge v23.16b, v9.16b, #0
+    cmle v23.2d, v9.2d, #0
+    cmlt v23.4h, v9.4h, #0
+    neg v23.4s, v9.4s
+    abs v23.2d, v9.2d
+    not v23.8b, v9.8b
+    mvn v23.16b, v9.16b
+    rev16 v23.16b, v9.16b
+    rev32 v23.8h, v9.8h
+    rev64 v23.4s, v9.4s
+    // The byte-only forms the §3 kernels emit, which the general path
+    // replaced: same words, now from a table rather than three hand-written
+    // encoders.
+    cnt v0.8b, v0.8b
+    cnt v3.16b, v9.16b
+    cmeq v0.16b, v1.16b, v2.16b
+    cmlt v0.16b, v1.16b, #0
+    // #8000 wave 2b. The FP rows read size as szHi<<1 | (D lanes) rather than
+    // as a width, so fadd and fsub share an opcode and differ in bits 23:22 —
+    // exactly the sort of thing two independent implementations drift on.
+    fadd v23.4s, v9.4s, v28.4s
+    fadd v23.2d, v9.2d, v28.2d
+    fsub v23.2s, v9.2s, v28.2s
+    fmul v23.4s, v9.4s, v28.4s
+    fdiv v23.2d, v9.2d, v28.2d
+    fmax v23.4s, v9.4s, v28.4s
+    fmin v23.2d, v9.2d, v28.2d
+    fcmeq v23.4s, v9.4s, v28.4s
+    fcmge v23.2d, v9.2d, v28.2d
+    fcmgt v23.4s, v9.4s, v28.4s
+    fcmeq v23.4s, v9.4s, #0.0
+    fcmle v23.4s, v9.4s, #0.0
+    fcmlt v23.2d, v9.2d, #0.0
+    fneg v23.4s, v9.4s
+    fabs v23.2d, v9.2d
+    fsqrt v23.2s, v9.2s
+    scvtf v23.4s, v9.4s
+    ucvtf v23.2d, v9.2d
+    fcvtzs v23.4s, v9.4s
+    fcvtzu v23.2d, v9.2d
+    shl v23.4s, v9.4s, #7
+    shl v23.16b, v9.16b, #3
+    sli v23.2d, v9.2d, #40
+    sshr v23.8h, v9.8h, #5
+    ushr v23.4s, v9.4s, #17
+    sri v23.16b, v9.16b, #6
+    zip1 v23.4s, v9.4s, v28.4s
+    zip2 v23.8h, v9.8h, v28.8h
+    uzp1 v23.16b, v9.16b, v28.16b
+    uzp2 v23.2d, v9.2d, v28.2d
+    trn1 v23.4h, v9.4h, v28.4h
+    trn2 v23.2s, v9.2s, v28.2s
+    // #8000 wave 2c. The narrowing/widening pairs are what two independent
+    // implementations most easily disagree about: xtn and xtn2 share an
+    // opcode and differ only in the Q bit that picks which half is written.
+    xtn v23.8b, v9.8h
+    xtn2 v23.16b, v9.8h
+    xtn v23.2s, v9.2d
+    shrn v23.8b, v9.8h, #3
+    shrn2 v23.16b, v9.8h, #3
+    sshll v23.8h, v9.8b, #3
+    sshll2 v23.8h, v9.16b, #3
+    ushll v23.4s, v9.4h, #7
+    sxtl v23.8h, v9.8b
+    uxtl2 v23.8h, v9.16b
+    ext v23.16b, v9.16b, v28.16b, #5
+    ext v23.8b, v9.8b, v28.8b, #3
+    tbl v23.16b, {v9.16b}, v28.16b
+    addv b23, v9.16b
+    smaxv b23, v9.16b
+    sminv h23, v9.8h
+    umaxv s23, v9.4s
+    saddlv h23, v9.16b
+    uaddlv s23, v9.8h
+    // #8000 wave 2d: the lane moves, the modified immediate, and the
+    // single-register load/store-structure forms. imm5 packs the element size
+    // and the lane index into one field, so a size disagreement moves the
+    // index rather than widening anything — which is what these rows pin.
+    umov w23, v9.b[5]
+    umov x23, v9.d[1]
+    smov w23, v9.h[3]
+    smov x23, v9.s[1]
+    ins v23.b[5], w9
+    ins v23.d[1], x9
+    ins v23.b[5], v9.b[2]
+    dup v23.16b, w9
+    dup v23.2d, x9
+    dup v23.8h, v9.h[3]
+    movi v23.16b, #7
+    movi v23.4s, #7, lsl #8
+    movi v23.2d, #0
+    ld1r {v23.16b}, [x9]
+    ld1 {v23.4s}, [x9]
+    st1 {v23.2d}, [x9]
+Lend:
+    ret
+`
+
+	got := assembleSelfHost(t, buildAsmBenchDriver(t, gcc), runner, snippet)
+
+	want := arm64Words(gas.text(t, snippet))
+
+	lines := snippetInsns(snippet)
+	if len(got) != len(want) {
+		// A dropped instruction shifts every word after it, so the first
+		// disagreement names the line that went missing.
+		for i := range want {
+			if i >= len(got) || got[i] != want[i] {
+				src := "?"
+				if i < len(lines) {
+					src = lines[i]
+				}
+				t.Fatalf("word count differs: self-host %d, GNU as %d (snippet has %d instructions); first divergence at word %d (%s)",
+					len(got), len(want), len(lines), i, src)
+			}
+		}
+		t.Fatalf("word count differs: self-host %d, GNU as %d (snippet has %d instructions)", len(got), len(want), len(lines))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			src := "?"
+			if i < len(lines) {
+				src = lines[i]
+			}
+			t.Errorf("word %d (%s): self-host %08x, GNU as %08x", i, src, got[i], want[i])
+		}
+	}
+}
+
+// buildAsmBenchDriver builds the in-process-assembler harness. buildSelfHostBin
+// caches on the sources, so the second and later callers in a package run pay
+// nothing.
+func buildAsmBenchDriver(t *testing.T, gcc string) string {
+	t.Helper()
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/arm64_asm_bench_run.fern")
+	return buildSelfHostBin(t, gcc, dir, "drivers/arm64_asm_bench_run.fern", "arm64_asm_bench")
+}
+
+// assembleSelfHost feeds GAS text to the driver and returns the assembled
+// words. A refused line (p.unknown) is a finding, not a pass: the driver would
+// otherwise report a short word list and every comparison against it would
+// misalign. Refusals now cover unresolved LABELS and SYMBOLS as well as unknown
+// mnemonics — before that, an unfound branch target was patched as though the
+// "not placed" sentinel were an offset, which is the whole reason #6045's
+// numeric-local-label bug produced runnable binaries instead of an error.
+func assembleSelfHost(t *testing.T, bin string, runner []string, snippet string) []uint32 {
+	t.Helper()
+	args := []string{"-words"}
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(bin, args...)
+	} else {
+		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), bin), args...)...)
+	}
+	cmd.Stdin = strings.NewReader(snippet)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("self-host assembler driver failed: %v\nstderr: %s", err, errb.String())
+	}
+	if refused := asmRefusals(out.String()); len(refused) > 0 {
+		t.Fatalf("the self-host assembler REFUSED %d line(s) of the snippet: %v", len(refused), refused)
+	}
+	return parseAsmWords(t, out.String())
+}
+
+// asmRefusals extracts the driver's `unknown=` lines — the assembler's refusal
+// list, covering unknown mnemonics, unresolved labels and unresolved symbols.
+func asmRefusals(out string) []string {
+	var refused []string
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.HasPrefix(ln, "unknown=") {
+			refused = append(refused, strings.TrimPrefix(ln, "unknown="))
+		}
+	}
+	return refused
+}
+
+// refusalsFor assembles a snippet the assembler is EXPECTED to reject and
+// returns what it refused.
+func refusalsFor(t *testing.T, bin string, runner []string, snippet string) []string {
+	t.Helper()
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(bin, "-words")
+	} else {
+		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), bin), "-words")...)
+	}
+	cmd.Stdin = strings.NewReader(snippet)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("self-host assembler driver failed: %v\nstderr: %s", err, errb.String())
+	}
+	return asmRefusals(out.String())
+}
+
+// TestSelfHostArm64AsmUnresolvedBranchRefused pins the behaviour that made the
+// three #6045 bugs survivable in the first place: patching a branch whose
+// target does not resolve as though the -1 "not placed" sentinel were an offset
+// emits a well-formed binary that branches into the ELF header instead of
+// reporting anything. It must refuse.
+//
+// Both shapes here are ones the emitter cannot produce, which is the point — the
+// guard has to hold for input nobody is currently generating, or it is not a
+// guard. `1b` with no preceding `1:` is the subtler of the two: resolving it to
+// definition 0 would aim the branch at a label defined LATER in the file, a
+// silently wrong target rather than an error.
+func TestSelfHostArm64AsmUnresolvedBranchRefused(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+
+	t.Run("undefined named label", func(t *testing.T) {
+		got := refusalsFor(t, bin, runner, ".text\n_start:\n    b Lnowhere\n    ret\n")
+		if len(got) != 1 || got[0] != "label:Lnowhere" {
+			t.Errorf("refusals = %v, want exactly [label:Lnowhere]", got)
+		}
+	})
+
+	t.Run("backward numeric ref with no definition before it", func(t *testing.T) {
+		got := refusalsFor(t, bin, runner, ".text\n_start:\n    b 1b\n1:\n    ret\n")
+		if len(got) != 1 || got[0] != "label:1#none" {
+			t.Errorf("refusals = %v, want exactly [label:1#none] — a `1b` before any `1:` must not silently resolve to the `1:` that follows", got)
+		}
+	})
+}
+
+// TestSelfHostArm64AsmNumericLocalLabels pins GAS numeric local labels — `1:`
+// defined repeatedly, with `1f` / `1b` naming the next / previous definition.
+//
+// The arm64 emitter writes every bounds check that way:
+//
+//	cmp x1, x2 / b.lo 1f / b __fern_oob_abort / 1: …
+//
+// and the in-process assembler did not implement them. `1:` became a label
+// literally named "1", so the lookup returned the FIRST definition in the
+// program for all of them, and `1f` matched nothing at all and came back as the
+// -1 "not placed" sentinel, which the fixup pass then patched as if it were an
+// offset. Every array index and string slice therefore branched to `-1 - here`,
+// a word inside the ELF header, which is zero, which is UDF #0. 129 of 317
+// corpus fixtures died on SIGILL before printing a byte (#6045).
+//
+// The numeric spelling is checked against GNU as. Address-bearing
+// instructions are safe to compare here, unlike in the snippet above, because
+// every branch target is inside the same fragment.
+func TestSelfHostArm64AsmNumericLocalLabels(t *testing.T) {
+	gas := gnuArm64Oracle(t)
+	gcc, runner := x86_64Tooling(t)
+
+	// Two definitions of `1` and one of `2`, exercising: a forward reference
+	// resolving past an intervening definition-free stretch, a SECOND forward
+	// reference that must pick the second `1:` rather than the first, a
+	// backward `2b` in a loop, and a backward `1b` that must select the most
+	// recent `1:` and not the earliest.
+	const numeric = `.text
+.globl _start
+_start:
+    cmp x1, x2
+    b.lo 1f
+    b Labort
+1:
+    add x1, x1, #1
+    cmp x1, x2
+    b.lo 1f
+    b Labort
+1:
+    add x1, x1, #2
+2:
+    sub x1, x1, #1
+    cbnz x1, 2b
+    b 1b
+Labort:
+    ret
+`
+
+	got := assembleSelfHost(t, buildAsmBenchDriver(t, gcc), runner, numeric)
+
+	want := arm64Words(gas.text(t, numeric))
+	lines := snippetInsns(numeric)
+	if len(got) != len(want) {
+		t.Fatalf("word count differs: self-host %d, GNU as %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			src := "?"
+			if i < len(lines) {
+				src = lines[i]
+			}
+			t.Errorf("word %d (%s): self-host %08x, GNU as %08x", i, src, got[i], want[i])
+		}
+	}
+}
+
+// TestSelfHostArm64AsmLiteralPool64Bit pins the literal pool's width. `ldr Xt,
+// =N` is how the emitter materialises any constant too wide for a mov-wide
+// immediate, and the pool parsed its value with a 32-bit accumulator: `ldr x0,
+// =1234567890123` laid down 1912767691. That is why the arm64 leg failed
+// i64_max_to_string, to_string_round_trip, divmod_inline and the u64 half of
+// int_byte_swap while the u32/i32 checks inside those same fixtures passed —
+// the truncation tracked the CONSTANT's width, not the operation's.
+//
+// No oracle here: the assertion is arithmetic (the pool must contain the
+// constant's 64 bits, little-endian), not an encoding choice.
+func TestSelfHostArm64AsmLiteralPool64Bit(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+
+	const want uint64 = 1234567890123 // 0x0000011F71FB04CB — needs 41 bits
+	const snippet = `.text
+.globl _start
+_start:
+    ldr x0, =1234567890123
+    ret
+`
+	got := assembleSelfHost(t, buildAsmBenchDriver(t, gcc), runner, snippet)
+
+	var found bool
+	for i := 0; i+1 < len(got); i++ {
+		if uint64(got[i])|uint64(got[i+1])<<32 == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("the literal pool does not contain %d (%#016x); assembled words: %08x", want, want, got)
+	}
+}
+
+// parseAsmWords reads the `word <n> <decimal>` lines the driver prints under
+// -words.
+func parseAsmWords(t *testing.T, out string) []uint32 {
+	t.Helper()
+	var ws []uint32
+	for _, ln := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(ln, "word ") {
+			continue
+		}
+		var idx int
+		var val int64
+		if _, err := fmt.Sscanf(ln, "word %d %d", &idx, &val); err != nil {
+			t.Fatalf("unparsable word line %q: %v", ln, err)
+		}
+		if idx != len(ws) {
+			t.Fatalf("word lines out of order: got index %d at position %d", idx, len(ws))
+		}
+		ws = append(ws, uint32(uint64(val)))
+	}
+	if len(ws) == 0 {
+		t.Fatalf("driver printed no word lines; output was:\n%s", out)
+	}
+	return ws
+}
+
+// snippetInsns lists the snippet's instruction lines (skipping directives and
+// labels) so a divergence can name the source line rather than only an index.
+func snippetInsns(src string) []string {
+	var out []string
+	for _, ln := range strings.Split(src, "\n") {
+		s := strings.TrimSpace(ln)
+		if s == "" || strings.HasPrefix(s, ".") || strings.HasSuffix(s, ":") || strings.HasPrefix(s, "//") {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}

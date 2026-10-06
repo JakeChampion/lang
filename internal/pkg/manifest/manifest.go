@@ -1,0 +1,578 @@
+// Package manifest reads `fern.toml`, the per-package manifest that
+// names a Fern package and declares its dependencies. This is the
+// first implemented slice of the package-management design in
+// docs/PACKAGE-MANAGEMENT-SOTA.md + docs/MODULE-PACKAGES-RESEARCH.md
+// (Rec §1): local `path` dependencies only — no registry, no network,
+// no lockfile yet. A manifest-less program keeps today's behaviour;
+// once a `fern.toml` governs a file, bare (non-`./`, non-std) import
+// prefixes may name a declared dependency and resolve into that
+// package's directory, and modload enforces that a dependency import
+// is declared (resolver-side isolation — the phantom-dependency
+// defence layout alone cannot give, per the refuted pnpm claim the
+// SOTA doc records).
+//
+// The parser accepts the small TOML subset the manifest needs —
+// `[section]` headers, `key = "string"` pairs, and inline tables
+// `key = { k = "v", ... }` — and rejects everything else with a
+// pointed error. Zero third-party dependencies, mirroring the
+// repo's Go module (and the "manifests must be parseable cheaply"
+// stance the research doc takes against manifests-as-code).
+package manifest
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/jakechampion/lang/internal/pkg/caps"
+	"github.com/jakechampion/lang/internal/pkg/pkgcache"
+)
+
+// FileName is the manifest file modload looks for next to (or above)
+// a loaded module.
+const FileName = "fern.toml"
+
+// DefaultLib is the module a bare `import "<dep>"` resolves to inside
+// the dependency's directory when its manifest doesn't set `lib`.
+const DefaultLib = "lib.fern"
+
+// Dep is one declared dependency, from exactly one source:
+//   - Path: a directory containing the dependency package, relative to
+//     the manifest's own directory (or absolute).
+//   - URL + Hash: a hash-addressed remote archive (.tar.gz). THE HASH
+//     IS THE IDENTITY — `sha256:<hex>` of the archive bytes; the URL is
+//     just a mirror hint (the Zig/Roc model the research settled on,
+//     closing trust-on-first-use with zero infrastructure). Fetching is
+//     an explicit `fern fetch` step into the content-addressed cache;
+//     the compiler never touches the network.
+type Dep struct {
+	Path string
+	URL  string
+	Hash string // "sha256:<64 lowercase hex>" — of the archive bytes
+	// Workspace is true for a `{ workspace = true }` dependency: the
+	// dependency is another member of the enclosing workspace, located by
+	// its package name rather than a path/url. Keeps cross-member deps
+	// explicit (isolation) while removing brittle `../../member` paths.
+	Workspace bool
+	// Version is the Minimum-Version-Selection constraint of a versioned
+	// dependency (`dep = "1.2.0"` or `{ version = "1.2.0" }`): the LOWEST
+	// acceptable version. The concrete version is chosen by MVS over the
+	// [package] index and pinned in fern.lock — never a range, so
+	// resolution stays deterministic and lockfile-driven (internal/pkg/mvs).
+	Version string
+	// Capabilities is the dependency's capability grant
+	// (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 2): the v1 capabilities
+	// (internal/pkg/caps.Capabilities) this package allows the dependency's
+	// code to reach, sorted + deduped. nil means the key is ABSENT
+	// (warn-and-allow); an empty non-nil slice means `capabilities = []`
+	// (nothing granted). Valid on every dependency form.
+	Capabilities []string
+}
+
+// Manifest is a parsed fern.toml.
+type Manifest struct {
+	Dir     string // absolute directory containing the manifest
+	Name    string // [package] name (empty for a workspace-only manifest)
+	Version string // [package] version (informational; a package's own version)
+	Lib     string // [package] lib — entry module for `import "<name>"`; DefaultLib when unset
+	Index   string // [package] index — path to the version index for MVS deps (empty = none)
+	Deps    map[string]Dep
+	// Members is the [workspace] members list (relative directories),
+	// non-nil only when a [workspace] table is present. A manifest may be
+	// workspace-only (no [package]) or both a package and a workspace root.
+	Members []string
+	// Excludes is the [exclude] table: package name → versions banned from
+	// MVS ("1.9 is broken"). Go's answer to MVS's inexpressible upper
+	// bounds, copied per the SOTA research: a demand for an excluded
+	// version rounds up to the next higher non-excluded indexed version.
+	// Only the TOP-LEVEL manifest's excludes apply during `fern -resolve`
+	// (a dependency's [exclude] is ignored), preserving determinism.
+	Excludes map[string][]string
+	// Lint is the [lint] / [lint.options] tables as raw `key = value`
+	// pairs — a severity per rule name, and a `<rule>.<key>` entry per
+	// tuned option. The names are NOT validated here: which rules exist
+	// is internal/tools/lint's to know, and a manifest parser that had to
+	// import the linter would drag it into every build that reads a
+	// dependency's fern.toml. `fern -lint` feeds these to
+	// lint.Config.SetPair, which rejects an unknown rule or option.
+	Lint map[string]string
+}
+
+// VersionDeps returns the names→min-version of this manifest's versioned
+// (MVS) dependencies.
+func (m *Manifest) VersionDeps() map[string]string {
+	out := map[string]string{}
+	for name, d := range m.Deps {
+		if d.Version != "" {
+			out[name] = d.Version
+		}
+	}
+	return out
+}
+
+// IsWorkspace reports whether this manifest declares a [workspace] table.
+func (m *Manifest) IsWorkspace() bool { return m.Members != nil }
+
+// DepDir resolves a declared dependency's directory to an absolute
+// path (Path entries are relative to the manifest directory).
+func (m *Manifest) DepDir(name string) (string, bool) {
+	d, ok := m.Deps[name]
+	if !ok {
+		return "", false
+	}
+	if filepath.IsAbs(d.Path) {
+		return filepath.Clean(d.Path), true
+	}
+	return filepath.Join(m.Dir, d.Path), true
+}
+
+// MemberDir resolves a [workspace] member entry to an absolute
+// directory (members are relative to the workspace manifest's dir).
+func (m *Manifest) MemberDir(rel string) string {
+	if filepath.IsAbs(rel) {
+		return filepath.Clean(rel)
+	}
+	return filepath.Join(m.Dir, rel)
+}
+
+// FindWorkspace walks from dir toward the filesystem root and returns
+// the nearest manifest declaring a [workspace] table, or (nil, nil) if
+// none governs dir.
+func FindWorkspace(dir string) (*Manifest, error) {
+	d, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		m, err := Load(d)
+		if err != nil {
+			return nil, err
+		}
+		if m != nil && m.IsWorkspace() {
+			return m, nil
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return nil, nil
+		}
+		d = parent
+	}
+}
+
+// Load reads and parses `<dir>/fern.toml`. Returns (nil, nil) when the
+// file does not exist.
+func Load(dir string) (*Manifest, error) {
+	p := filepath.Join(dir, FileName)
+	b, err := os.ReadFile(p)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	m, err := Parse(string(b))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", p, err)
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		abs = dir
+	}
+	m.Dir = abs
+	return m, nil
+}
+
+// FindForDir walks from dir toward the filesystem root and loads the
+// nearest fern.toml. Returns (nil, nil) when no manifest governs dir.
+func FindForDir(dir string) (*Manifest, error) {
+	d, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		m, err := Load(d)
+		if err != nil {
+			return nil, err
+		}
+		if m != nil {
+			return m, nil
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return nil, nil
+		}
+		d = parent
+	}
+}
+
+// Parse parses manifest source. Exposed for tests and future tooling
+// (`fern add` will rewrite manifests; keeping parse round-trippable
+// and strict now is cheaper than loosening later).
+func Parse(src string) (*Manifest, error) {
+	m := &Manifest{Lib: DefaultLib, Deps: map[string]Dep{}}
+	section := ""
+	for ln, raw := range strings.Split(src, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			if !strings.HasSuffix(line, "]") {
+				return nil, fmt.Errorf("line %d: malformed section header %q", ln+1, line)
+			}
+			section = strings.TrimSpace(line[1 : len(line)-1])
+			switch section {
+			case "package", "dependencies", "exclude", "lint", "lint.options":
+			case "workspace":
+				if m.Members == nil {
+					m.Members = []string{}
+				}
+			default:
+				return nil, fmt.Errorf("line %d: unknown section [%s] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options])", ln+1, section)
+			}
+			continue
+		}
+		key, val, ok := splitKeyValue(line)
+		if !ok {
+			return nil, fmt.Errorf("line %d: expected `key = value`, got %q", ln+1, line)
+		}
+		switch section {
+		case "package":
+			s, err := parseString(val)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: %s: %w", ln+1, key, err)
+			}
+			switch key {
+			case "name":
+				m.Name = s
+			case "version":
+				m.Version = s
+			case "lib":
+				m.Lib = s
+			case "index":
+				m.Index = filepath.FromSlash(s)
+			default:
+				return nil, fmt.Errorf("line %d: unknown [package] key %q (supported: name, version, lib, index)", ln+1, key)
+			}
+		case "dependencies":
+			dep, err := parseDep(val)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: dependency %q: %w", ln+1, key, err)
+			}
+			if !validDepName(key) {
+				return nil, fmt.Errorf("line %d: invalid dependency name %q (letters, digits, `_`, `-`; must not start with a digit)", ln+1, key)
+			}
+			m.Deps[key] = dep
+		case "workspace":
+			if key != "members" {
+				return nil, fmt.Errorf("line %d: unknown [workspace] key %q (supported: members)", ln+1, key)
+			}
+			ms, err := parseStringArray(val)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: members: %w", ln+1, err)
+			}
+			m.Members = ms
+		case "lint", "lint.options":
+			// A severity is a quoted string; an option value may be a
+			// bare number, so accept either scalar spelling. Under
+			// [lint.options] the key is `<rule>.<key>`; under [lint] a
+			// dotted key is the same thing written inline, so both
+			// tables merge into one map and the dot decides.
+			v, err := parseScalar(val)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: [%s] %s: %w", ln+1, section, key, err)
+			}
+			if section == "lint.options" && !strings.Contains(key, ".") {
+				return nil, fmt.Errorf("line %d: [lint.options] key %q must be spelled <rule>.<option>", ln+1, key)
+			}
+			if m.Lint == nil {
+				m.Lint = map[string]string{}
+			}
+			m.Lint[key] = v
+		case "exclude":
+			if !validDepName(key) {
+				return nil, fmt.Errorf("line %d: invalid [exclude] package name %q (letters, digits, `_`, `-`; must not start with a digit)", ln+1, key)
+			}
+			vs, err := parseStringArray(val)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: exclude %s: %w", ln+1, key, err)
+			}
+			for _, v := range vs {
+				if !isVersion(v) {
+					return nil, fmt.Errorf("line %d: exclude %s: version must be MAJOR.MINOR.PATCH digits, got %q", ln+1, key, v)
+				}
+			}
+			if m.Excludes == nil {
+				m.Excludes = map[string][]string{}
+			}
+			m.Excludes[key] = vs
+		default:
+			return nil, fmt.Errorf("line %d: %q outside a section (start with [package], [dependencies], or [workspace])", ln+1, key)
+		}
+	}
+	// A workspace-only manifest (a virtual root that just lists members)
+	// needs no [package] name; a package manifest still does.
+	if m.Name == "" && !m.IsWorkspace() {
+		return nil, fmt.Errorf("missing [package] name")
+	}
+	return m, nil
+}
+
+// parseStringArray parses an inline TOML array of double-quoted strings
+// on a single line: `["a", "b/c"]`. Empty (`[]`) is allowed.
+func parseStringArray(val string) ([]string, error) {
+	if !strings.HasPrefix(val, "[") || !strings.HasSuffix(val, "]") {
+		return nil, fmt.Errorf("expected an array like [\"a\", \"b\"], got %q", val)
+	}
+	body := strings.TrimSpace(val[1 : len(val)-1])
+	out := []string{}
+	if body == "" {
+		return out, nil
+	}
+	for _, part := range strings.Split(body, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		s, err := parseString(part)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, filepath.FromSlash(s))
+	}
+	return out, nil
+}
+
+func splitKeyValue(line string) (key, val string, ok bool) {
+	i := strings.Index(line, "=")
+	if i < 0 {
+		return "", "", false
+	}
+	return strings.TrimSpace(line[:i]), strings.TrimSpace(line[i+1:]), true
+}
+
+// parseString accepts a double-quoted basic string with no escapes —
+// paths and names don't need them, and rejecting `\` early avoids
+// silently mangling Windows-style separators (write `/`; they work on
+// every platform via filepath.Join).
+func parseString(val string) (string, error) {
+	if len(val) < 2 || val[0] != '"' || val[len(val)-1] != '"' {
+		return "", fmt.Errorf("expected a double-quoted string, got %q", val)
+	}
+	s := val[1 : len(val)-1]
+	if strings.ContainsAny(s, "\"\\") {
+		return "", fmt.Errorf("escapes are not supported in %q (use forward slashes in paths)", val)
+	}
+	return s, nil
+}
+
+// parseScalar accepts either a quoted string or a bare integer, for the
+// tables whose values are not all one type. Anything else errors, so a
+// mistyped value is reported rather than passed on as a literal.
+func parseScalar(val string) (string, error) {
+	if strings.HasPrefix(val, "\"") {
+		return parseString(val)
+	}
+	if val == "" {
+		return "", fmt.Errorf("expected a quoted string or a number, got an empty value")
+	}
+	for i := 0; i < len(val); i++ {
+		if val[i] == '-' && i == 0 && len(val) > 1 {
+			continue
+		}
+		if val[i] < '0' || val[i] > '9' {
+			return "", fmt.Errorf("expected a quoted string or a number, got %q", val)
+		}
+	}
+	return val, nil
+}
+
+// parseDep accepts the declared-dependency forms this slice supports:
+// `{ path = "…" }`, `{ url = "…", hash = "sha256:…" }`, and
+// `{ workspace = true }` — version-only deps (`dep = "1.2"`) belong to
+// the registry/MVS slice and error with a pointer at what IS supported.
+func parseDep(val string) (Dep, error) {
+	// Bare-string form: `dep = "1.2.0"` is a versioned (MVS) dependency,
+	// its value the minimum acceptable version. The concrete version comes
+	// from the index via MVS and is pinned in fern.lock.
+	if !strings.HasPrefix(val, "{") {
+		s, err := parseString(val)
+		if err != nil {
+			return Dep{}, fmt.Errorf("a bare dependency value must be a version string like \"1.2.0\" (or use an inline table): %w", err)
+		}
+		if !isVersion(s) {
+			return Dep{}, fmt.Errorf("version must be MAJOR.MINOR.PATCH digits, got %q", s)
+		}
+		return Dep{Version: s}, nil
+	}
+	if !strings.HasSuffix(val, "}") {
+		return Dep{}, fmt.Errorf("malformed inline table %q", val)
+	}
+	body := strings.TrimSpace(val[1 : len(val)-1])
+	dep := Dep{}
+	for _, part := range splitTopLevel(body) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, ok := splitKeyValue(part)
+		if !ok {
+			return Dep{}, fmt.Errorf("expected `key = value` in inline table, got %q", part)
+		}
+		if k == "workspace" {
+			if v != "true" {
+				return Dep{}, fmt.Errorf("workspace must be `true` (the only supported value), got %q", v)
+			}
+			dep.Workspace = true
+			continue
+		}
+		if k == "capabilities" {
+			cs, err := parseCapabilities(v)
+			if err != nil {
+				return Dep{}, fmt.Errorf("capabilities: %w", err)
+			}
+			dep.Capabilities = cs
+			continue
+		}
+		s, err := parseString(v)
+		if err != nil {
+			return Dep{}, fmt.Errorf("%s: %w", k, err)
+		}
+		switch k {
+		case "path":
+			if s == "" {
+				return Dep{}, fmt.Errorf("path must not be empty")
+			}
+			dep.Path = filepath.FromSlash(s)
+		case "url":
+			if !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "http://") {
+				return Dep{}, fmt.Errorf("url must be http(s), got %q", s)
+			}
+			dep.URL = s
+		case "hash":
+			if err := pkgcache.ValidateHash(s); err != nil {
+				return Dep{}, err
+			}
+			dep.Hash = s
+		case "version":
+			if !isVersion(s) {
+				return Dep{}, fmt.Errorf("version must be MAJOR.MINOR.PATCH digits, got %q", s)
+			}
+			dep.Version = s
+		default:
+			return Dep{}, fmt.Errorf("unknown dependency key %q (supported: path, url, hash, workspace, version, capabilities)", k)
+		}
+	}
+	switch {
+	case dep.Workspace && (dep.Path != "" || dep.URL != "" || dep.Hash != "" || dep.Version != ""):
+		return Dep{}, fmt.Errorf("a `workspace` dependency takes no path/url/hash/version")
+	case dep.Workspace:
+		return dep, nil
+	case dep.Version != "" && (dep.Path != "" || dep.URL != "" || dep.Hash != ""):
+		return Dep{}, fmt.Errorf("a `version` dependency takes no path/url/hash (the version resolves through the index)")
+	case dep.Version != "":
+		return dep, nil
+	case dep.Path != "" && (dep.URL != "" || dep.Hash != ""):
+		return Dep{}, fmt.Errorf("a dependency is either `path` or `url`+`hash`, not both")
+	case dep.Path != "":
+		return dep, nil
+	case dep.URL != "" && dep.Hash != "":
+		return dep, nil
+	case dep.URL != "" || dep.Hash != "":
+		return Dep{}, fmt.Errorf("url dependencies need BOTH `url` and `hash` — the hash is the identity, the url just a mirror hint")
+	default:
+		return Dep{}, fmt.Errorf("missing `path` (or `url` + `hash`, `workspace = true`, or a version)")
+	}
+}
+
+// splitTopLevel splits an inline-table body on commas that sit outside
+// any `[...]` — so an array-valued entry (`capabilities = ["net", "fs"]`)
+// stays one item. The manifest grammar has no nested tables or strings
+// containing brackets, so counting depth is sufficient.
+func splitTopLevel(body string) []string {
+	var out []string
+	depth, start := 0, 0
+	for i, r := range body {
+		switch r {
+		case '[':
+			depth++
+		case ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				out = append(out, body[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(out, body[start:])
+}
+
+// parseCapabilities parses a dependency's `capabilities = ["net", …]`
+// grant list and validates every name against the v1 vocabulary
+// (internal/pkg/caps.Capabilities), failing fast at manifest load so a
+// typo'd grant can't silently deny (or a stale name silently allow).
+// The result is sorted + deduped, and non-nil even when empty —
+// `capabilities = []` grants nothing, which is different from the key
+// being absent (Dep.Capabilities == nil, warn-and-allow).
+func parseCapabilities(val string) ([]string, error) {
+	names, err := parseStringArray(val)
+	if err != nil {
+		return nil, err
+	}
+	valid := map[string]bool{}
+	for _, c := range caps.Capabilities {
+		valid[c] = true
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, n := range names {
+		if !valid[n] {
+			return nil, fmt.Errorf("unknown capability %q (valid capabilities: %s)", n, strings.Join(caps.Capabilities, ", "))
+		}
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// isVersion reports whether s is a bare MAJOR.MINOR.PATCH version (the
+// only form MVS constraints and the index use — no ranges, no
+// pre-release, keeping resolution deterministic).
+func isVersion(s string) bool {
+	parts := strings.Split(s, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+		for _, r := range p {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validDepName(s string) bool {
+	if s == "" || (s[0] >= '0' && s[0] <= '9') {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}

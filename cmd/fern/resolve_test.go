@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/mvs"
+	"github.com/jakechampion/lang/internal/pkg/modload"
+	"github.com/jakechampion/lang/internal/pkg/mvs"
 )
 
 func writeResolveTree(t *testing.T, files map[string]string) string {

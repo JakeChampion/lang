@@ -35,7 +35,7 @@ Status: design analysis. No compiler code changed by this doc.
 >   assignment, completing the immutable-data enforcement.
 > - **E057** — `Cell[T]`, the sanctioned mutable box, restricts `T`
 >   to scalars and `string` *explicitly* so "a cell can never
->   reconstruct a reference cycle" (`internal/checker/checker.go:635`).
+>   reconstruct a reference cycle" (`internal/check/checker/checker.go:635`).
 >   `Cell[Node]` and `Cell[fn]` are both rejected.
 >
 > Re-verified 2026-08-06 by running the proof program below: it now
@@ -63,7 +63,7 @@ the interpreter and the x86-64 native backend, and the back-edges
 resolve at runtime.
 
 Pure reference counting cannot reclaim a cycle. Free-on-zero is
-**on by default today** (`internal/ast/ast.go:414`,
+**on by default today** (`internal/syntax/ast/ast.go:414`,
 `RcFreeEnabled = true`), and `__fern_rc_dec` has no cycle/trace
 collector — when a value's last *external* reference drops, the
 internal back-edge keeps every node's rc ≥ 1, so the whole cycle's
@@ -110,7 +110,7 @@ recursion goes through a heap-boxed indirection (which breaks the
 
 - **Recursive enums** are explicitly supported and shipped. The
   builtin `JsonValue` is the canonical example
-  (`internal/checker/checker.go:183-213`): `JArray(JsonValue[])`
+  (`internal/check/checker/checker.go:183-213`): `JArray(JsonValue[])`
   and `JObject(Map[string, JsonValue])` are self-referential
   variants. The comment at `checker.go:187-190` states the
   mechanism outright: *"Self-referential variants … work because
@@ -143,11 +143,11 @@ are wired end-to-end:
 
 - **Field assignment `p.field = v`.** The checker accepts a
   `*ast.FieldAccess` as an assignment target
-  (`internal/checker/checker.go:4919-4940`: `case *ast.Assign`
+  (`internal/check/checker/checker.go:4919-4940`: `case *ast.Assign`
   type-checks `n.Target`, and line 4932 lists `FieldAccess`
   alongside `Ident` and `Index` as an addressable target). The IR
   lowers it to a raw in-place store —
-  `internal/ir/ir.go:9921-9956`: compute `base + field_offset`,
+  `internal/oracle/ir/ir.go:9921-9956`: compute `base + field_offset`,
   evaluate the value, `payloadStoreOpFor(ft, ptrW)`. There is **no
   mutability gate** (no `mut` keyword, no `let` vs `let`
   distinction on fields), **no rc check, and no copy-on-write** on
@@ -174,7 +174,7 @@ are wired end-to-end:
 
 - **Mutable closure captures.** A closure can capture a
   heap value and mutate it; the env block is heap-allocated and
-  shared across re-invocations. `internal/ir/ir.go:9958-9983`
+  shared across re-invocations. `internal/oracle/ir/ir.go:9958-9983`
   (the `*ast.CaptureRef` assignment case) states it directly:
   *"The env block is heap-allocated and shared by all calls to
   this closure — mutation persists across re-invocations."* So a
@@ -258,7 +258,7 @@ state"), confirmed against the runtime:
   → **on the last reference (rc==1) free the box via the freelist**
   (`__fern_box_free` / `__fern_arr_dec`, now wired —
   `RC-PERCEUS-PLAN.md:1046-1218`, `RcFreeEnabled = true` at
-  `internal/ast/ast.go:414`).
+  `internal/syntax/ast/ast.go:414`).
 - Drop handlers (`__fern_drop_arr_ptr`, `__drop_struct_<N>`,
   `__drop_enum_<Name>`, the closure thunk) recurse **down** the
   ownership tree, dec'ing pointer-shaped fields/elements. They
@@ -561,14 +561,14 @@ when "cycles eventually become a thing."
 
 | Claim | Evidence |
 |---|---|
-| Recursive enums supported | `internal/checker/checker.go:183-213` (JsonValue), comment at `:187-190` |
+| Recursive enums supported | `internal/check/checker/checker.go:183-213` (JsonValue), comment at `:187-190` |
 | Recursive struct type-checks | `fern -check` on §2 program (empirical) |
-| `p.field = v` is a valid assign target | `internal/checker/checker.go:4919-4940` (line 4932) |
-| Field assign is a raw in-place store (no CoW/rc gate) | `internal/ir/ir.go:9921-9956` |
-| Mutable closure captures persist in shared heap env | `internal/ir/ir.go:9958-9983` |
+| `p.field = v` is a valid assign target | `internal/check/checker/checker.go:4919-4940` (line 4932) |
+| Field assign is a raw in-place store (no CoW/rc gate) | `internal/oracle/ir/ir.go:9921-9956` |
+| Mutable closure captures persist in shared heap env | `internal/oracle/ir/ir.go:9958-9983` |
 | Structs have reference semantics (alias sees mutation) | §1b `Box` program → 99 (interp + x86-64) |
 | Cycle constructible + traversable | §2 `Node` program → exit 2; self-cycle → exit 7 (interp + x86-64) |
-| Free-on-zero on by default | `internal/ast/ast.go:414` (`RcFreeEnabled = true`) |
+| Free-on-zero on by default | `internal/syntax/ast/ast.go:414` (`RcFreeEnabled = true`) |
 | `rc_dec`/drop has no cycle collector | `docs/RC-PERCEUS-PLAN.md:743-756`, `:71-77`, `:2074-2076` |
 | RC plan's "no cycles" assumption (now stale) | `docs/RC-PERCEUS-PLAN.md:71-77`, `:2003-2004` |
 | ~~Arena reset reclaims regardless of rc~~ | removed (see `docs/ARENA-DECISION.md`) |
@@ -609,7 +609,7 @@ assumption) treated field mutation as a narrow, unused hole. That is
 wrong and the sequencing below depends on the correction: in-place
 field mutation is **shipped, intended, and load-bearing today**.
 
-- `internal/e2e/self_host_field_assign_test.go` documents the intended
+- `internal/testing/e2e/self_host_field_assign_test.go` documents the intended
   semantics: `obj.field = value` "mutation persists through the heap
   pointer, so a struct passed to a function is mutated in place" — and
   asserts it (`bump(b)` through a function call → exit 12). The

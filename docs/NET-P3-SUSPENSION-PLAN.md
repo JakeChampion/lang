@@ -44,7 +44,7 @@ it.
   loop; `Host.reactor` is stored and never read, and `Host.http` blocks in
   `tcp_recv_deadline` through `fetch.send_public_on`.
 - Both IRs are structured stack machines (`OpBlock` / `OpLoop` / `OpIf` /
-  `OpBr`), not CFGs: `internal/ir` natively, `compiler/ir.fern`
+  `OpBr`), not CFGs: `internal/oracle/ir` natively, `compiler/ir.fern`
   below the typed pipeline (`semsource` → `ssasem` → `ssarc` → stack IR).
   Perceus is emitted during lowering, so a pass over the stack IR sees
   `OpRcInc` / `OpRcDec` already in the stream.
@@ -245,7 +245,7 @@ cancellation gates are self-host-built binaries, the way the sim wasm legs
 are today (#9854). "Native" and "wasm" in #9857's exit criteria are met by
 the self-host compiler's x86-64, arm64 and wasm output.
 
-If the owner wants the transform in `internal/ir` as well, it is one more
+If the owner wants the transform in `internal/oracle/ir` as well, it is one more
 slice argued on #4451, and §3.3 is written so the port is mechanical. The
 plan does not depend on it.
 
@@ -539,7 +539,7 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
 - **The owner's call on native.** Still open. §3.6 keeps the Go compiler on
   the blocking fallback, and `conformance/cases/tasks_agree_without_a_scheduler`
   holds the two to one answer wherever a program does not multiplex. If the
-  multiplexing gates are wanted on Go-built binaries too, the `internal/ir`
+  multiplexing gates are wanted on Go-built binaries too, the `internal/oracle/ir`
   port is argued on #4451 as its own slice.
 - **Interleaving per connection.** One task per connection at a time is the
   rule that landed and matches HTTP/1.1 ordering; HTTP/2 (P6) will want

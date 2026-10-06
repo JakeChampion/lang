@@ -7,7 +7,7 @@
 // and exceeds the allowance of 0.
 //
 // This is the first case in the corpus that pins a rule the FRONT END
-// does not enforce. E068 is reported by internal/ir/fip_verify.go
+// does not enforce. E068 is reported by internal/oracle/ir/fip_verify.go
 // during lowering, after the checker has already accepted the program,
 // so the ordinary `expected.error` path — which stops at the type
 // check — could never reach it. `expected.lowering-error` exists for

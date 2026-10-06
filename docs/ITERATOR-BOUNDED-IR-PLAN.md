@@ -213,7 +213,7 @@ just 1+2.
   post-parse pass (or thread the struct names in), not at parse time where the
   names alone are available.
 
-- **Gate on the full self-host suite** (`internal/e2e` self-host x86_64 + arm64
+- **Gate on the full self-host suite** (`internal/testing/e2e` self-host x86_64 + arm64
   + wasm), not just the iter cases — these changes touch the monomorphiser that
   every generic program flows through.
 

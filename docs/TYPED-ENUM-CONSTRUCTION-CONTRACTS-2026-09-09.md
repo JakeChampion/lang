@@ -108,9 +108,9 @@ No performance or binary-size baseline is changed.
 Reproduction:
 
 ```sh
-go test ./internal/checker ./internal/monomorph ./internal/ir ./internal/semir ./internal/sourcelint -count=1
-go test -race ./internal/checker ./internal/monomorph ./internal/ir -run TestEnumConstruction -count=1
-go test ./internal/checker -run '^$' -bench BenchmarkEnumConstructionFrontend -benchtime=100ms -count=5
+go test ./internal/check/checker ./internal/oracle/monomorph ./internal/oracle/ir ./internal/semir ./internal/testing/sourcelint -count=1
+go test -race ./internal/check/checker ./internal/oracle/monomorph ./internal/oracle/ir -run TestEnumConstruction -count=1
+go test ./internal/check/checker -run '^$' -bench BenchmarkEnumConstructionFrontend -benchtime=100ms -count=5
 make lint-all
 go build -trimpath -buildvcs=false -o /tmp/fern-enum-contracts ./cmd/fern
 ```

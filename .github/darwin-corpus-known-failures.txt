@@ -63,7 +63,7 @@
 # APFS. #9714 owns all of it.
 #
 # The errno WORDING was a third such cause and is now fixed: both copies of
-# the strerror text — internal/strerror for the runtime's IoError.Other, and
+# the strerror text — internal/tables/strerror for the runtime's IoError.Other, and
 # coreutils/lib/gnu.fern for the errnos a utility names itself — carry the
 # Darwin libc's words on a Darwin build. Whichever of the names below were
 # failing on that alone now pass, and the lane reports a listed utility that

@@ -787,7 +787,7 @@ at_offset: 42 })` on type mismatch.
 
 Lives at `internal/stdlib/std/json.fern` with the
 generator as a small IR pass (similar to
-`internal/monomorph/`).
+`internal/oracle/monomorph/`).
 
 ### 4. Six-type date/time module
 

@@ -13,7 +13,7 @@
 # to report it (#7570), and the Fern fixtures living as Go string literals
 # outside the tree (#9805). The third was #9969 deleting `semsource.modes_differ`
 # while `semsource_census_run.fern` still called it — `-check fern.fern` passed,
-# and four `internal/e2eselfhost` tests went red forty minutes into a CI round
+# and four `internal/testing/e2ecompiler` tests went red forty minutes into a CI round
 # because they are what builds that driver.
 #
 # Each driver is a whole-program check, so this is the cheapest place to catch

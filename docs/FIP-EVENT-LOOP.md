@@ -2,7 +2,7 @@
 
 What #9583 asked, measured. The programs are `examples/fip/event_loop_*.fern`
 — three implementations of one bounded key/value event loop, differing only in
-how state is held — and `internal/e2e/fip_event_loop_test.go` keeps their
+how state is held — and `internal/testing/e2e/fip_event_loop_test.go` keeps their
 claims from rotting.
 
 Read `docs/ALLOCATION-OBSERVABLE.md` first for what the two allocation numbers

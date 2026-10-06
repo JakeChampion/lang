@@ -30,7 +30,7 @@ registers, or padded `rsp` for a call.
 > with which side of that work it was measured on. What remains open is listed
 > in §6; the largest item by a wide margin is spill quality on the SSA path.
 > Loop rotation has since landed, and the magic-number reciprocal with it for
-> x86-64's i32 — see §6.2 for what remains of it and for why `internal/ir` is
+> x86-64's i32 — see §6.2 for what remains of it and for why `internal/oracle/ir` is
 > the wrong layer.
 
 The thing that prompted this audit — the last day's batch of assembler work —
@@ -229,7 +229,7 @@ fixed and the third is still open:
 3. **It rotates the loop.** `gcc` places the condition at the bottom so the
    back edge *is* the conditional branch. Fern tests at the top and pays an
    unconditional `jmp` every iteration — plus it leaves a dead `.LloopEnd_3`
-   label behind it. **Still open**; it is a change to the shape `internal/ir`
+   label behind it. **Still open**; it is a change to the shape `internal/oracle/ir`
    builds for a `while`, not to either backend, which is why it is tier C.
 
 Item 1 is fixed: P4 folds the constant into the compare. Item 2 is only half
@@ -442,7 +442,7 @@ already complete and already fuzzed.
 > arm64-linux only, so on an Apple Silicon host there is no way to run its
 > output — no `-target arm64-darwin` (the SSA runtime issues Linux `svc #0`
 > with the number in x8 at 117 sites, so this is a syscall-ABI port, not a CLI
-> gate), and the `internal/e2e` arm64-SSA tests all SKIP without qemu-aarch64.
+> gate), and the `internal/testing/e2e` arm64-SSA tests all SKIP without qemu-aarch64.
 > Every figure above is a static instruction count.
 >
 > **What the allocator does and does not reach, 2026-09-12.** Two kernels whose
@@ -619,7 +619,7 @@ assembly. The original plan, for the record:
 | A3 | x86-64 call-alignment elimination (finding 3) | **−11.4% instructions** | spill operands to fixed frame slots instead of `push`/`pop`, so `rsp` never moves in the body and the prologue aligns once. Push→`mov [rbp-N]` is instruction-neutral; the whole `pad` column goes to zero. |
 | A4 | arm64 ALU/compare immediates (finding 4) | **−6.7% instructions** | `binPopImm` variant at `arm64.go:11939`; `imm12` + `lsl #12`, plus `cbz`/`cbnz` when K==0 and a branch follows (8 217 sites) |
 | A5 | arm64 RC guard: fold the mask, then the guard (finding 5) | −1.5%, then **−3.1%** | `arm64.go:13321`; `mov x1,#0x10000000` for the pair, then `lsr x1,x0,#28 / cbz` for the whole guard |
-| A6 | Constant division: power-of-two → shift, otherwise magic-number reciprocal; and drop the zero/`INT_MIN` guards when the divisor is a literal (finding 6) | 67.3% on the operation | `internal/ir` fold + backend selection. The dead guard is pure constant folding. |
+| A6 | Constant division: power-of-two → shift, otherwise magic-number reciprocal; and drop the zero/`INT_MIN` guards when the divisor is a literal (finding 6) | 67.3% on the operation | `internal/oracle/ir` fold + backend selection. The dead guard is pure constant folding. |
 | A7 | `madd`/`msub`, shifted-register operands, `ubfx`/`bfi`, `movn`, bitmask immediates (findings 7–9, 11) | closes the §4 table | one match each, against an encoder that already has them |
 | A8 | x86-64 `movabs` → `mov r32, imm32` / `xor` (13), `imm8` shifts (12), `lea` folding (14–15), `cmov` (16) | size, mostly | independent one-liners |
 
@@ -628,7 +628,7 @@ instructions and ~25% of arm64's**, at the cost of a handful of pattern matches.
 That is a better return than any other work in this document, and it is
 available before the SSA cutover, not after.
 
-Per `CLAUDE.md`, an optimisation that can live in `internal/ir` should — A6's
+Per `CLAUDE.md`, an optimisation that can live in `internal/oracle/ir` should — A6's
 folding half belongs there. A1–A5, A7 and A8 are genuinely target-specific
 instruction selection and belong in the backends.
 
@@ -679,14 +679,14 @@ Loop rotation and block layout; loop-invariant code motion; strength reduction
 on induction variables; global value numbering; tail calls (`call` immediately
 followed by a return is 75 sites on `checker_run` — small, but free); any form
 of auto-vectorisation. These want the SSA path to be the default first, because
-each is a pass over a CFG and `internal/ir`'s flat op stream is exactly the
+each is a pass over a CFG and `internal/oracle/ir`'s flat op stream is exactly the
 representation `docs/SSA-CUTOVER-PLAN.md`'s fourth tripwire says not to add more
 cross-block analysis to.
 
 ### 6.2 What tier A did NOT close
 
 - **A6's reciprocal, beyond x86-64.** The magic-number reciprocal
-  (`internal/ir/magic.go`, Granlund–Montgomery via Hacker's Delight 10-1 and
+  (`internal/oracle/ir/magic.go`, Granlund–Montgomery via Hacker's Delight 10-1 and
   10-3, one derivation for both widths) lands for i32 and i64 in x86-64's
   `emitConstDivRemMagic`, and in the self-host x86-64 emitter (`asm_ir.fern`'s
   `ir_div_const`, with the derivation mirrored as `ir.fern`'s
@@ -716,8 +716,8 @@ cross-block analysis to.
   all** — `sort_ints` scaled 25× is 248 ms either way. The win is real and it
   is simply not a workload this corpus has; hashing, base conversion and date
   arithmetic are where it shows up.
-- **The `internal/ir` route is closed, and it was measured, not assumed.**
-  `CLAUDE.md` says an optimisation that can live in `internal/ir` should, so
+- **The `internal/oracle/ir` route is closed, and it was measured, not assumed.**
+  `CLAUDE.md` says an optimisation that can live in `internal/oracle/ir` should, so
   the reciprocal was built there first, as an op-stream expansion using a
   scratch slot for the dividend. Every benchmark got **worse**: `enum_match.ir`
   **+11.6%**, `sort_inplace.ir` +2.0%, `sort_ints.ir` +1.1%, the corpus
@@ -772,7 +772,7 @@ fixtures check answers; the fixpoint checks reproducibility; the driver-size
 lane checks bytes, which move for unrelated reasons. `scripts/codegen-census`
 (added with this document) prints the classification above for any program, and
 is the natural thing to pin in CI once tier A starts landing — a ratchet on the
-overhead percentage, per backend, in the shape `internal/lint/repo_gate_test.go`
+overhead percentage, per backend, in the shape `internal/tools/lint/repo_gate_test.go`
 already uses for complexity.
 
 ### 6.4 Spill selection is not the lever — measured, and the fix rejected

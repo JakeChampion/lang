@@ -142,7 +142,7 @@ exports only the handler.
 
 A program with an async export always composes against the `fern` world, never
 a fixed framing. Tests: `TestSelfHostWasmAsyncExport{,Refusals}`
-(`internal/e2eselfhost`), with `TestParseAsyncModifier` for the keyword.
+(`internal/testing/e2ecompiler`), with `TestParseAsyncModifier` for the keyword.
 
 **Status — async imports, DONE in the self-host** (`stream[T]` too, see `docs/STREAM-TYPE-SURFACE.md`). On
 `-target wasm32-wasi`, an `@import(iface, name) async function` of an
@@ -758,7 +758,7 @@ composition + three small builtins). It would touch:
    rather than to the `Step[T]` reactor.
 4. **Tooling/CI**: bump wasmtime to ≥37 with `-W
    component-model-async`, and either a newer wasm-tools that validates
-   async lifts or a validation shim. The whole `internal/e2e` wasm path
+   async lifts or a validation shim. The whole `internal/testing/e2e` wasm path
    asserts against the pinned 34 today.
 
 ## Recommendation (staging)

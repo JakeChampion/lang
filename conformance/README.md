@@ -7,12 +7,12 @@ language, and should be reviewed as one.
 `cases/` holds one self-contained program per directory, each with the
 program plus a few declarative sidecar files describing what running it
 must produce. Every Fern implementation is measured against it:
-`internal/interp`, the three native backends (x86-64, arm64, wasm), and
+`internal/oracle/interp`, the three native backends (x86-64, arm64, wasm), and
 the self-hosted compiler's own three emitters.
 
 ## Why this lives outside `internal/`
 
-It used to be `internal/e2e/testdata/cases` — inside one implementation,
+It used to be `internal/testing/e2e/testdata/cases` — inside one implementation,
 which made it look like that implementation's test suite rather than the
 language's definition. That framing is about to stop being harmless.
 
@@ -31,7 +31,7 @@ staged shape this is the first slice of.
 
 **Per-implementation expectation files stay with their implementation.**
 The `selfhost-*-known-divergences.txt` files remain in
-`internal/e2e/testdata/` deliberately: a divergence list records where
+`internal/testing/e2e/testdata/` deliberately: a divergence list records where
 one implementation currently falls short of the corpus, which is a fact
 about that implementation, not about the language. This follows test262,
 where the suite is shared and each engine keeps its own expectations.
@@ -99,7 +99,7 @@ asserts no output at all.
 
 Not every rejection is a front-end rejection. `E068` — a `fbip`
 function that allocates without a donor to reuse — is reported by
-`internal/ir/fip_verify.go` during lowering, after the checker has
+`internal/oracle/ir/fip_verify.go` during lowering, after the checker has
 already accepted the program, so an `expected.error` case can never
 reach it: that path stops at the type check.
 
@@ -207,10 +207,10 @@ of unspecified behaviour this corpus exists to pin down.
 
 | Runner | What it does |
 | --- | --- |
-| `TestFernFixtures` (`internal/e2e`) | Every case across every backend it opts into. The primary gate. |
-| `TestFernFixturesSelfHost{Wasm,X86_64,Arm64}` (`internal/e2e`) | The same cases through the self-host compiler, against per-target divergence lists. Env-gated by `FERN_SELFHOST_FIXTURES=1`. |
-| `TestConformanceCorpusFormat` (`internal/e2e`) | Validates this document's format rules. Fast; no compilation. |
-| `forEachRunnableFixture` (`internal/e2e/rc_freelist_test.go`) | Re-runs the corpus with the rc freelist flag off and on. |
+| `TestFernFixtures` (`internal/testing/e2e`) | Every case across every backend it opts into. The primary gate. |
+| `TestFernFixturesSelfHost{Wasm,X86_64,Arm64}` (`internal/testing/e2e`) | The same cases through the self-host compiler, against per-target divergence lists. Env-gated by `FERN_SELFHOST_FIXTURES=1`. |
+| `TestConformanceCorpusFormat` (`internal/testing/e2e`) | Validates this document's format rules. Fast; no compilation. |
+| `forEachRunnableFixture` (`internal/testing/e2e/rc_freelist_test.go`) | Re-runs the corpus with the rc freelist flag off and on. |
 | `scripts/selfhost-emit-hashes` | Hashes self-host emit output per case, for byte-identity comparison. |
 
 The corpus root is a single constant, `e2eharness.ConformanceCases`.

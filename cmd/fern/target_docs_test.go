@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/corpus"
-	"github.com/jakechampion/lang/internal/platforms"
+	"github.com/jakechampion/lang/internal/pkg/platforms"
+	"github.com/jakechampion/lang/internal/testing/corpus"
 )
 
 // Every `-target NAME` a user-facing file tells someone to type must be a
@@ -80,7 +80,7 @@ func userFacingFiles(t *testing.T, root string) []string {
 	for _, r := range corpus.Programs {
 		dirs = append(dirs, filepath.Join(root, r))
 	}
-	for _, dir := range append(dirs, filepath.Join(root, "internal", "diag", "explanations")) {
+	for _, dir := range append(dirs, filepath.Join(root, "internal", "syntax", "diag", "explanations")) {
 		if err := filepath.WalkDir(dir, add); err != nil {
 			t.Fatalf("walk %s: %v", dir, err)
 		}

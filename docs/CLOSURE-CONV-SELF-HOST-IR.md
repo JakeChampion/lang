@@ -120,7 +120,7 @@ fixpoint green)
 
 ## 7. Tests
 
-`internal/e2e/self_host_closure_arg_ir_test.go` (new), plus the existing
+`internal/testing/e2e/self_host_closure_arg_ir_test.go` (new), plus the existing
 `arrow_lambda_test.go` and the self-host arrow-lambda IR test as regression
 guards. The Stage-2 fixpoint (`TestSelfHostFixpoint` /
 `TestSelfHostStage2FixedPoint`) must stay byte-identical at every phase (expected,
@@ -188,7 +188,7 @@ inlining, a different pass from defunctionalisation, and one whose case would
 have to be made on its own numbers.
 
 So the row is closed as measured-not-worth-building rather than deferred. The
-census driver mode and `internal/e2eselfhost/self_host_closure_census_test.go`
+census driver mode and `internal/testing/e2ecompiler/self_host_closure_census_test.go`
 stay, which is what keeps the decision honest: the bucket test fails if
 `try_lift_binding` stops direct-calling called-only lambdas, and the population
 sweep fails if Fern code starts dispatching through closures at a rate this

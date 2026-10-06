@@ -73,7 +73,7 @@ owned by the callee, so `p = p.append(x)` mutates **in place** *and* the
 overwrite frees grow intermediates — **no entry-inc, no forced copy, no
 O(N²)**. The blocker is purely at the **checker**:
 
-> `E051` (`internal/checker/checker.go:4476`, predicate `isOwnedExpr` at
+> `E051` (`internal/check/checker/checker.go:4476`, predicate `isOwnedExpr` at
 > `:4425`) rejects passing a **local var** to an `own` param — only a fresh
 > construction or another `own` param qualifies. So `x = f(.., x, ..)` (move
 > `x` in, get it back) can't be written.
@@ -171,7 +171,7 @@ first's freelist population, so its bump delta is ~0 while the first pays
 warm-up — the two deltas differ even when memory is bounded. The *known-bounded*
 in-place sort exhibits the identical false "leak" under that probe, which is
 what exposed the flaw. Measured correctly (two **separate** processes, each
-paying its own warm-up — the methodology `internal/e2e`'s bounded tests already
+paying its own warm-up — the methodology `internal/testing/e2e`'s bounded tests already
 use), plain `own`-param transfer is **bounded**. No leak to fix.
 
 ### What already works (verified end-to-end, x86-64)

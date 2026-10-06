@@ -52,7 +52,7 @@ jobs:
       # job ceiling that queue wait ran 5-10 minutes for ~30 s of compile.
       - name: compile test binary (go test -c)
         run: |
-          go test -c -o e2e.test ./internal/e2e/
+          go test -c -o e2e.test ./internal/testing/e2e/
           go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
       # Two isolated worker processes (cmd/ci-test-workers), as the other e2e
       # lanes run: the tests cannot t.Parallel (several flip compiler-wide
@@ -65,7 +65,7 @@ jobs:
           set -euo pipefail
           chmod +x e2e.test
           BIN="$PWD/e2e.test"
-          cd internal/e2e
+          cd internal/testing/e2e
           "$RUNNER_TEMP/ci-test-workers" -binary "$BIN" -output "$RUNNER_TEMP/wasm-test-results" \
             -format standard-verbose -workers 2 -timeout 18m -run '^Test(WASM|Wasm)'
       - name: name the failed tests as annotations

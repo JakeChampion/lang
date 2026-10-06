@@ -31,7 +31,7 @@
 // arrays, never an element. `reshape` is metadata when the handle is row-major and a copy
 // otherwise; `packed` and `to_flat` copy exactly when the handle is not
 // packed. That is the whole materialization rule, and
-// internal/e2e/ndarray_test.go holds each operation to it with the
+// internal/testing/e2e/ndarray_test.go holds each operation to it with the
 // allocation counters.
 //
 // # Elementwise, and along an axis

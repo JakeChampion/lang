@@ -3,7 +3,7 @@
 // ssa_lift.admits declines, with the stack effect ir.op_pops / ir.op_pushes
 // give the kind, then the registered and declined counts.
 //
-// The companion Go test (internal/e2eselfhost/self_host_ssa_lift_admits_test.go)
+// The companion Go test (internal/testing/e2ecompiler/self_host_ssa_lift_admits_test.go)
 // pins the report: a kind added to the registry reaches the register path
 // through the stack machine's arm for it unless its stack effect is unknown,
 // so a new line here is a kind whose pop count op_pops does not model. The

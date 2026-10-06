@@ -1,0 +1,291 @@
+package e2ecompiler
+
+import (
+	"bytes"
+	"os/exec"
+	"strings"
+	"testing"
+)
+
+// TestSelfHostCheckerCodeSequenceX86_64 pins the ORDER of the self-host
+// checker's diagnostics and HOW MANY TIMES it reports each one.
+//
+// Nothing else does. Every other gate over checker output reduces to a set
+// before comparing: the codes differential takes "the sorted, de-duplicated set
+// of diagnostic codes", the hint-text differential groups into "code -> sorted
+// unique messages", and the driver test asserts only that a wantDiag substring
+// APPEARS on stderr. A change that reorders diagnostics, or reports one twice,
+// is green in all three and plainly visible to a user.
+//
+// The gap matters for the SH-022 walker migration (docs/SELF-HOST-AUDIT.md).
+// Folding a diagnostic collector onto astwalk swaps its traversal for the shared
+// one, and the two need not visit siblings in the same order. Worse, getting the
+// DESCENT wrong duplicates a report rather than dropping one:
+// e049_expr_lambdas hands each lambda body to e049_check_assigns and must
+// therefore PRUNE at ExprLambda, because astwalk descends into lambda bodies by
+// default — with the plain fold it would report every nested lambda once per
+// enclosing one. The nested-lambda rows below are that case.
+//
+// What this pins is CURRENT BEHAVIOUR, not a claim that the order is the right
+// one. A row that moves means a change altered emission order or multiplicity:
+// decide whether the new sequence is correct, then move the row. It is a
+// regression detector, not an oracle — the codes differential remains the gate
+// for WHICH codes are right.
+//
+// It earned its place on the first run: the nested-lambda rows exposed a real
+// gap. e049_check_assigns descends into if/while/for/match/defer bodies but a
+// nested lambda arrives as a StmtVar INITIALISER and hit its `_ => {}` arm,
+// while e049_expr_lambdas prunes at the enclosing lambda — so `s = "y"` inside
+// a lambda inside a lambda was accepted outright. The self-host printed nothing
+// where the Go checker reports E049, and for the both-assign shape printed ONE
+// where the Go checker reports two. The second of those is invisible to the
+// codes differential by construction: same set, different count.
+func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
+	checkerBin, runner, _ := buildCheckerCodesBin(t)
+
+	cases := []struct {
+		name string
+		src  string
+		// want is the codes in emission order, duplicates kept, comma
+		// separated. "" means the program is clean.
+		//
+		// With withMsg, each entry is `CODE(message)` instead of the bare code.
+		// That is the only way to gate ORDER in a pass that emits ONE code:
+		// swap two E053s and the code sequence is byte-identical, so this gate
+		// sees their count and never their order. The message is what
+		// distinguishes them, and no other gate compares message order either —
+		// the hint-text differential groups into a sorted unique set.
+		want    string
+		withMsg bool
+	}{
+		// A loop over a struct: the `.len()` miss, then the index, once each.
+		{"for-over-struct", "struct Box { k: i32 }\nfunction main(): i32 { let b: Box = Box { k: 1 }; for it in b { let k: i32 = it.k; } return 0; }\n", "E043(struct Box has no field \"len\"),E034(indexing non-array value of type Box)", true},
+		// Two independent leaks in one function: multiplicity, no ordering
+		// question. A collector that starts reporting a leak twice fails here
+		// while every set-based gate stays green.
+		{"two-leaks", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(): void { let a: Ticket = Ticket { id: 1 }; let b: Ticket = Ticket { id: 2 }; }\nfunction main(): i32 { return 0; }\n", "E067,E067", false},
+		// Two leaks in two different functions: pins the order the checker
+		// walks top-level declarations in.
+		{"leak-in-each-of-two-fns", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(): void { let a: Ticket = Ticket { id: 1 }; }\nfunction g(): void { let b: Ticket = Ticket { id: 2 }; }\nfunction main(): i32 { return 0; }\n", "E067,E067", false},
+		// A lambda nested in a lambda, the INNER one assigning a captured
+		// string. This is the row that catches a lost prune in
+		// e049_expr_lambdas: descending into the lambda body as well as
+		// handing it to e049_check_assigns reports the inner E049 twice.
+		{"nested-lambda-capture-assign", "function main(): i32 { let s: string = \"x\"; let f = (): i32 => { let g = (): i32 => { s = \"y\"; return 0; }; return g(); }; return f(); }\n", "E049", false},
+		// Both lambdas assigning: two E049s, and the count is what a lost
+		// prune inflates.
+		{"nested-lambda-both-assign", "function main(): i32 { let s: string = \"x\"; let f = (): i32 => { s = \"a\"; let g = (): i32 => { s = \"y\"; return 0; }; return g(); }; return f(); }\n", "E049,E049", false},
+		// Two sibling lambdas, each assigning a captured string: two E049s
+		// with no nesting, so a prune change moves the nested rows above but
+		// not this one — which is what separates "order changed" from
+		// "descent changed".
+		{"sibling-lambdas-capture-assign", "function main(): i32 { let s: string = \"x\"; let f = (): i32 => { s = \"a\"; return 0; }; let g = (): i32 => { s = \"b\"; return 0; }; return f() + g(); }\n", "E049,E049", false},
+		// E036 (a variant declared in two enums, referenced unqualified). These
+		// three guard vref_expr, whose ExprLambda arm calls the SCOPE-THREADED
+		// vref_stmts rather than itself — precisely so a variant name shadowed
+		// by a local `let` is not flagged. Converting it to a plain fold_expr
+		// would walk the lambda body with the OUTER scope and report the
+		// shadowed case: the middle row goes from clean to E036, and nothing
+		// else here would notice.
+		{"two-ambiguous-variant-refs", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { let x = Red; let y = Red; return 0; }\n", "E036,E036", false},
+		{"lambda-shadows-variant-name", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { let f = (): i32 => { let Red: i32 = 1; return Red; }; return 0; }\n", "", false},
+		{"lambda-does-not-shadow", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { let f = (): i32 => { let z = Red; return 0; }; return 0; }\n", "E036", false},
+		// E043 / E005 from slit_diags, which is POST-order: it recurses into a
+		// literal's field_values BEFORE emitting its own diagnostics, where
+		// astwalk's fold is pre-order. These rows pin the relative order, which
+		// a straight fold conversion would reverse.
+		//
+		// The nested row also records a live DIVERGENCE that no other gate can
+		// see. For `Out { bad2: In { bad1: 1 } }` the self-host reports all four
+		// diagnostics — the inner literal's unknown and missing fields as well
+		// as the outer's — while the Go checker reports only the outer two,
+		// having stopped descending once the outer field name was unknown. Both
+		// sides yield the code SET {E043, E005}, so the codes differential and
+		// the hint-text differential are blind to it by construction.
+		//
+		// Which side is right is genuinely unclear and is NOT settled here: the
+		// inner literal does have an unknown field and does miss one, and
+		// slit_diags reaches both from the literal's own type_name without
+		// needing an expected type, so the extra reports may be the better
+		// answer. This pins today's behaviour so the difference is visible and
+		// cannot drift further while someone decides.
+		{"struct-lit-unknown-and-missing", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p: P = P { x: 1, zz: 2 }; return 0; }\n", "E043,E005", false},
+		{"struct-lit-nested-bad-fields", "struct In { a: i32 }\nstruct Out { x: In }\nfunction main(): i32 { let o: Out = Out { bad2: In { bad1: 1 } }; return 0; }\n", "E043,E005,E043,E005", false},
+		{"struct-lit-two-siblings-missing", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let a: P = P { x: 1 }; let b: P = P { x: 2 }; return 0; }\n", "E005,E005", false},
+		// E044 (a lambda capturing a variable of unsupported type). e044_expr
+		// prunes at ExprLambda for the same reason e049_expr_lambdas does — its
+		// own comment says "stmts_mention already recursed into any nested
+		// lambda, so descending again would double-report". The nested row is
+		// that guard: the outer lambda captures x transitively through the
+		// inner one, so BOTH are reported and the count is exactly two. Lose
+		// the prune and the inner one is counted again.
+		{"two-sibling-lambdas-bad-capture", "function v(): void { return; }\nfunction main(): i32 {\n  let x = v();\n  let g = () => x;\n  let h = () => x;\n  return 0;\n}\n", "E044,E044", false},
+		// UNDER-REPORT, pinned so it cannot drift: the Go checker reports E044
+		// twice here — the inner lambda captures x directly, the outer captures
+		// it transitively — and the self-host reports once. Same code SET
+		// {E044} either way, so the codes and hint-text differentials cannot
+		// see it, and nothing currently fails.
+		//
+		// Root cause is the same family as the nested-lambda E049 gap (#7363):
+		// e044_stmts walks only the enclosing function's statements, and
+		// e044_expr prunes at the outer lambda, so the inner one is never
+		// reached. The outer IS reported, because e044_lambda_check asks
+		// stmts_mention whether the body mentions the suspect and a nested
+		// lambda's mention counts. The prune's own comment worries about
+		// double-reporting, but that is about the SAME lambda twice; reaching
+		// the inner one yields two DIFFERENT lambdas, which is what Go does.
+		//
+		// Not fixed here because it is the E049 shape exactly, and the fix
+		// wants to land once for both — the descent is shared, and making it
+		// reach a nested lambda needs a decision about whether it reuses
+		// those suspects minus accumulated param shadowing, or recomputes them
+		// for the inner scope. That choice changes which diagnostics appear.
+		{"nested-lambda-bad-capture", "function v(): void { return; }\nfunction main(): i32 {\n  let x = v();\n  let g = (): i32 => { let h = () => x; return 0; };\n  return 0;\n}\n", "E044", false},
+		// E032 from e032_expr, which prunes at ExprLambda and hands the body to
+		// e032_stmts — the same prune-and-delegate shape as vref_expr. The
+		// lambda row exercises that path. These also pin how two SEPARATE
+		// passes interleave: the Go checker emits both E032s before either
+		// E038, so the sequence records pass grouping, not just per-pass order.
+		// PASS-ORDER divergence, pinned: the self-host runs the E038 pass before
+		// the E032 pass and the Go checker runs them the other way round. Same
+		// multiset both ways, so every set-based gate is blind to it, and it is
+		// user-visible — it decides which error you are shown first.
+		//
+		// This is NOT an SH-022 concern: it is the order check_module sequences
+		// its passes in, not the order any one walk visits nodes, so folding a
+		// collector cannot change it. Recorded here because this gate is where
+		// it became visible, and pinned so it cannot drift while someone
+		// decides whether the self-host should match the oracle's order.
+		{"two-bad-use-bindings", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    use m <- add(2);\n    return n + m;\n}\n", "E038,E038,E032,E032", false},
+		{"use-inside-lambda", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    let f = (): i32 => { use n <- add(1); return n; };\n    return f();\n}\n", "E038,E032", false},
+		// E060 / E062 from e060_e062_stmts. Captured against the UNCONVERTED hand
+		// walk first, which is how the three divergences below were found rather
+		// than inferred: it listed nine expression kinds and dropped the rest on a
+		// `_ => {}` arm, so a downcast it never reached was simply accepted.
+		//
+		// Folding it onto astwalk fixed all three. The first two rows already
+		// matched the Go checker and still do — they are the control that separates
+		// "coverage widened" from "behaviour changed".
+		{"two-bad-downcasts", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nstruct Tri { t: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    let d: dyn Shape = Circle { r: 3 };\n    match (d as? Square) { Some(sq) => { return sq.s; }, None => {} }\n    match (d as? Tri) { Some(tr) => { return tr.t; }, None => {} }\n    return 0;\n}\n", "E060,E060", false},
+		// Was "" — the walk stopped at ExprLambda, so a bad downcast inside a
+		// lambda body was accepted outright. Go reports E060 here.
+		{"downcast-inside-lambda", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    let d: dyn Shape = Circle { r: 3 };\n    let f = (): i32 => {\n        match (d as? Square) { Some(sq) => { return sq.s; }, None => { return 0; } }\n    };\n    return f();\n}\n", "E060", false},
+		// Was "" for the other half of the same gap: e060_collect_dyn_locals never
+		// entered a lambda either, so a `dyn` local DECLARED inside one was not in
+		// the name set and nothing downstream could flag its downcast.
+		{"dyn-local-inside-lambda", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    let f = (): i32 => {\n        let d: dyn Shape = Circle { r: 3 };\n        match (d as? Square) { Some(sq) => { return sq.s; }, None => { return 0; } }\n    };\n    return f();\n}\n", "E060", false},
+		// Was "E060,E062" — the hand walk visited a struct literal's field_values
+		// before its `...base`, where source order and astwalk both put the base
+		// first. Two DIFFERENT codes, one in each slot, is what makes the order
+		// visible to this gate at all: with the same code in both, the sequence is
+		// unchanged and only the messages move, which every gate here is blind to.
+		{"structlit-base-before-fields", "trait Shape { function area(self: Self): i32; }\ntrait A { function m(self: Self): i32; }\ntrait B { function m(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nstruct S { v: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function m(self: Self): i32 { return self.v; } }\nstruct Box { a: i32, b: i32 }\nfunction cs(o: Option[Square]): i32 { return 0; }\nfunction boxify(n: i32): Box { return Box { a: n, b: n }; }\nfunction main(): i32 {\n    let d: dyn Shape = Circle { r: 3 };\n    let e: dyn A + B = S { v: 1 };\n    let q: Box = Box { ...boxify(e.m()), a: cs(d as? Square) };\n    return q.a;\n}\n", "E062,E060", false},
+		{"ambiguous-dyn-method", "trait A { function m(self: Self): i32; }\ntrait B { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function m(self: Self): i32 { return self.v; } }\nfunction main(): i32 {\n    let d: dyn A + B = S { v: 1 };\n    return d.m();\n}\n", "E062", false},
+		// E053 (`fip` / `fbip` allocation freedom) from e053_at_node. A
+		// single-code pass, so these rows carry messages: without them the gate
+		// would see two E053s swap places as no change at all.
+		//
+		// The control row. Two array literals, both reported, in source order —
+		// identical before and after the fold, which is what separates "coverage
+		// widened" from "behaviour changed".
+		{"e053-two-arrays", "fip function f(n: i32): i32 {\n    let a: i32[] = [1];\n    let b: i32[] = [2];\n    return n;\n}\nfunction main(): i32 { return f(1); }\n", "E053(`fip` function \"f\" may not allocate (array literal)),E053(`fip` function \"f\" may not allocate (array literal))", true},
+		// Was "" — e053_expr pruned at ExprLambda, so an allocation anywhere in a
+		// closure body was excused outright. Go reports it. And since the
+		// self-host has no FuncDecl statement — a nested named function parses as
+		// a StmtVar holding an ExprLambda — the same hole covered both spellings,
+		// which the second row pins.
+		{"e053-lambda-body-array", "fip function f(n: i32): i32 {\n    let g = (): i32 => { let a: i32[] = [1]; return a.len(); };\n    return n;\n}\nfunction main(): i32 { return f(1); }\n", "E053(`fip` function \"f\" may not allocate (array literal))", true},
+		{"e053-nested-named-fn-array", "fip function f(n: i32): i32 {\n    function inner(): i32 { let a: i32[] = [1]; return a.len(); }\n    return n + inner();\n}\nfunction main(): i32 { return f(1); }\n", "E053(`fip` function \"f\" may not allocate (array literal)),E053(`fip` function \"f\" may only call other `fip` functions, not \"inner\")", true},
+		// match_diags reaching into lambda bodies. It walks STATEMENTS and never
+		// entered an expression, so every `match` inside a lambda escaped E015 /
+		// E026 / E028 — and a nested named function parses as a StmtVar holding an
+		// ExprLambda, so that covered both spellings. Both rows were "" before;
+		// the Go checker reports each. The two top-level twins are the controls
+		// that separate "reached a new node" from "changed what it reports".
+		{"match-wildcard-not-last", "enum Opt { A, B }\nfunction main(): i32 {\n    let x = A;\n    match (x) {\n        _ => { return 1; },\n        Opt.B => { return 2; }\n    }\n}\n", "E026", false},
+		{"match-wildcard-not-last-in-lambda", "enum Opt { A, B }\nfunction main(): i32 {\n    let f = (): i32 => {\n        let x = A;\n        match (x) {\n            _ => { return 1; },\n            Opt.B => { return 2; }\n        }\n    };\n    return f();\n}\n", "E026", false},
+		{"match-duplicate-variant", "enum Opt { A, B }\nfunction main(): i32 {\n    let x = A;\n    match (x) {\n        Opt.A => { return 1; },\n        Opt.A => { return 2; },\n        _ => { return 3; }\n    }\n}\n", "E028", false},
+		{"match-duplicate-variant-in-lambda", "enum Opt { A, B }\nfunction main(): i32 {\n    let f = (): i32 => {\n        let x = A;\n        match (x) {\n            Opt.A => { return 1; },\n            Opt.A => { return 2; },\n            _ => { return 3; }\n        }\n    };\n    return f();\n}\n", "E028", false},
+		// The row that decided match_diags does NOT fold onto astwalk. An outer
+		// arm's body holds a nested match, and a LATER outer arm has its own
+		// diagnostic. Both compilers interleave per arm today, so the inner
+		// variant is reported before the later outer one. A pre-order
+		// fold_stmt_nodes visits the whole match node before any arm BODY, which
+		// would emit every outer arm's diagnostics first and put Outer.Q ahead of
+		// Inner.X — a divergence from the oracle introduced by the conversion.
+		//
+		// withMsg because the codes alone cannot see it: the sequence is
+		// E026,E028,E028 either way. Only the variant names in the messages
+		// distinguish the inner E028 from the outer one.
+		{"nested-match-arm-order", "enum Outer { P, Q }\nenum Inner { X, Y }\nfunction main(): i32 {\n    let o = P;\n    let i = X;\n    match (o) {\n        _ => {\n            match (i) {\n                Inner.X => { return 1; },\n                Inner.X => { return 2; },\n                _ => { return 3; }\n            }\n        },\n        Outer.Q => { return 4; },\n        Outer.Q => { return 5; }\n    }\n}\n", "E026(wildcard `_` arm must be last in the match),E028(variant \"Inner.X\" already covered earlier in this match),E028(variant \"Outer.Q\" already covered earlier in this match)", true},
+		// dupvar_diags reaching into lambda bodies — the last instance of the
+		// same class match_diags had, found by sweeping eight diagnostic triggers
+		// in a top-level and an in-lambda variant and diffing against the Go
+		// checker. Seven of the eight already matched; this one did not. Both
+		// codes the pass emits were affected, and both were measured silent
+		// against a compiler built from the pre-fix commit.
+		{"dup-var-in-block", "function main(): i32 {\n    let x: i32 = 1;\n    let x: i32 = 2;\n    return x;\n}\n", "E013", false},
+		{"dup-var-in-lambda", "function main(): i32 {\n    let f = (): i32 => {\n        let x: i32 = 1;\n        let x: i32 = 2;\n        return x;\n    };\n    return f();\n}\n", "E013", false},
+		{"i32-literal-overflow", "function main(): i32 {\n    let big: i32 = 99999999999;\n    return big;\n}\n", "E047", false},
+		{"i32-literal-overflow-in-lambda", "function main(): i32 {\n    let f = (): i32 => {\n        let big: i32 = 99999999999;\n        return big;\n    };\n    return f();\n}\n", "E047", false},
+		// Mixed codes in one program: pins the relative order of two DIFFERENT
+		// diagnostics, which is what a reordered traversal disturbs.
+		{"mixed-capture-and-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction main(): i32 { let s: string = \"x\"; let f = (): i32 => { s = \"y\"; return 0; }; let tk: Ticket = Ticket { id: 1 }; return f(); }\n", "E067,E049", false},
+		// The twelve scope-threaded walkers take their scope from bind_stmt
+		// rather than from check_stmt (#8181), so what an earlier `let` bound
+		// is now decided by a second function. These rows are the diagnostics
+		// that DEPEND on that binding: each was measured against a checker
+		// whose bind_stmt had one of its three binding rules broken, and each
+		// row moves under at least one of them. A row that reports the same
+		// thing however the name was bound would gate nothing here.
+		//
+		// An annotated `let` binds what the ANNOTATION resolves to, never the
+		// init type — the mismatch goes in the `ty` these walkers discard.
+		// ret_diags reads it (bind the init type instead and this gains an
+		// E002), stmts_assign_diags reads it (which loses its E003), and
+		// stmts_call_diags reads it (which gains an E038).
+		{"bind-annotated-var-then-return", "function f(): string { let x: string = 5; return x; }\nfunction main(): i32 { return 0; }\n", "E003", false},
+		{"bind-annotated-var-then-assign", "function main(): i32 { let x: string = 5; x = 7; return 0; }\n", "E003,E003", false},
+		{"bind-annotated-var-then-call", "function g(a: string): i32 { return a.len(); }\nfunction main(): i32 { let x: string = 5; return g(x); }\n", "E003", false},
+		// A destructuring `let` binds through bind_destructure_names, one name
+		// per pattern element. Miss it and `a` is unresolved, so the E002 that
+		// says it is an i32 becomes an E001 that says it is nothing.
+		{"bind-destructured-name-then-return", "function f(): string { let (a, b) = (1, \"x\"); return a; }\nfunction main(): i32 { return 0; }\n", "E002", false},
+		// An unannotated `let` is the one shape that still needs its
+		// initialiser inferred. vref_stmts is clean here only because the local
+		// `Red` shadows both enums' variant; drop the binding and E036 returns.
+		{"bind-inferred-var-shadows-variant", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { let Red = 1; let y = Red; return 0; }\n", "", false},
+		// slc_walk's own scope: the E063 is reported against `s`, and without
+		// the binding the return also draws an E001 for an unresolved name.
+		{"bind-inferred-slice-var-then-return", "function f(): [i32] { let xs: i32[] = [1, 2, 3]; let s = xs[0:2]; return s; }\nfunction main(): i32 { return 0; }\n", "E063", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(checkerBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			out := runCheckerDriver(t, cmd, tc.name)
+
+			var codes []string
+			for _, d := range driverDiags(out) {
+				if tc.withMsg {
+					codes = append(codes, d.code+"("+d.msg+")")
+					continue
+				}
+				codes = append(codes, d.code)
+			}
+			got := strings.Join(codes, ",")
+			if got != tc.want {
+				t.Errorf("%s: diagnostic sequence = %q, want %q\n"+
+					"    A change here means emission ORDER or MULTIPLICITY moved, which no\n"+
+					"    other checker gate can see. Decide whether the new sequence is right,\n"+
+					"    then move this row.", tc.name, got, tc.want)
+			}
+		})
+	}
+}

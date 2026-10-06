@@ -138,12 +138,12 @@ This is what made it practical to run all 335 fixtures through the self-host
 compiler:
 
 ```
-FERN_SELFHOST_FIXTURES=1 go test ./internal/e2e/ \
+FERN_SELFHOST_FIXTURES=1 go test ./internal/testing/e2e/ \
   -run 'TestFernFixturesSelfHost(Wasm|X86_64|Arm64)'
 ```
 
 One leg per target, each with its own
-`internal/e2e/testdata/selfhost-<target>-known-divergences.txt`. It found twelve
+`internal/testing/e2e/testdata/selfhost-<target>-known-divergences.txt`. It found twelve
 divergences on fixtures green for months, and sixteen more on x86-64.
 
 The **arm64 leg** exercises `arm64_native.fern` through emit, assembly and
@@ -257,14 +257,14 @@ from real work.
 
 ## Suite timings and sharding
 
-The e2e suite is split (#4398 part 3) into `internal/e2eselfhost` (the
-`TestSelfHost*` suite, ~575 files) and `internal/e2e` (everything else + ~30
+The e2e suite is split (#4398 part 3) into `internal/testing/e2ecompiler` (the
+`TestSelfHost*` suite, ~575 files) and `internal/testing/e2e` (everything else + ~30
 residual `TestSelfHost*` legs in mixed fixture files), with the shared harness
-in `internal/e2eharness` (each package re-binds the harness names via its
+in `internal/testing/e2eharness` (each package re-binds the harness names via its
 `harness_aliases_test.go`, so test code keeps bare identifiers like
 `buildSelfHostBin`).
 
-**`internal/e2eselfhost` unsharded exceeds 90 MINUTES** (measured 2026-07-28):
+**`internal/testing/e2ecompiler` unsharded exceeds 90 MINUTES** (measured 2026-07-28):
 `-timeout 90m` still panicked with tests queued (`TestSelfHostStdTestE2EArm64`
 16 s in). Shard it with `scripts/shard-tests SHARD NSHARD < test-list`,
 the same duration-weighted LPT partition CI uses.
@@ -279,7 +279,7 @@ waiting on the compiler subprocess, with no test body having run at all. The
 `running tests:` header naming a single test seconds in is the tell.
 
 **The drivers are built by the pinned stage0 compiler** (since 2026-09-29;
-`internal/e2eharness/self_host_compiler.go`): the first test in a process that
+`internal/testing/e2eharness/self_host_compiler.go`): the first test in a process that
 needs one resolves it through `bootstrap/bootstrap.sh stage0` (downloaded once
 into `build/bootstrap/`, sha256-checked), and it compiles each driver for
 x86-64-linux. Measured on the 4-core container: `asm_ir_run.fern` 104 s at
@@ -302,7 +302,7 @@ replaces. Run them in parallel only if RAM allows: each heavy driver build
 reserves ~4.3 GB through `buildMemLimiter`, so a 16 GB host fits about two
 concurrently, not four.
 
-**`internal/e2e` no longer fits in one invocation at `-timeout 45m`** (measured
+**`internal/testing/e2e` no longer fits in one invocation at `-timeout 45m`** (measured
 2026-07-29, 4-core / 15 GB host): two runs, one with the host entirely to
 itself, both hit the 2700 s wall with **zero `--- FAIL` lines**. A timed-out run
 panics with a goroutine dump and prints `FAIL`, but the dump shows the suite
@@ -325,7 +325,7 @@ peaks at 4.0 GB (`asm_ir_run.fern`) to 5.7 GB (`fern.fern`). The harness
 self-limits, so **swap is generally not needed** and the peak sits comfortably
 under a 16 GB host:
 
-- `internal/e2eharness`'s `buildMemLimiter` is a RAM-budget weighted semaphore
+- `internal/testing/e2eharness`'s `buildMemLimiter` is a RAM-budget weighted semaphore
   around each cold driver build: it reserves the build's estimated peak
   (`DriverBuildWeightMB`: 4300 MB, 6000 MB for `fern.fern`) against a budget
   (`FERN_BUILD_MEM_BUDGET_MB`, default ~85% of `MemTotal`), so heavy builds
@@ -360,7 +360,7 @@ restore one file to its pre-fix state:
 
 ```sh
 git checkout <parent-sha> -- compiler/ssarc.fern
-go test ./internal/e2eselfhost/ -run TestYourNewCase > run.log 2>&1; echo "EXIT=$?"
+go test ./internal/testing/e2ecompiler/ -run TestYourNewCase > run.log 2>&1; echo "EXIT=$?"
 git checkout HEAD -- compiler/ssarc.fern
 ```
 
@@ -381,7 +381,7 @@ Every one of these produced a wrong answer that looked right, on the same day.
 
 **Go's test cache does not know about a `.fern` file, so pass `-count=1`
 whenever the change under test is Fern source.** The suites that compile this
-tree's own Fern — `internal/coreutils` above all — take their inputs from
+tree's own Fern — `internal/testing/coreutils` above all — take their inputs from
 outside the package, so a rerun after editing one replays the previous
 result as `ok ... (cached)`. It reads as a pass, and it reads as a pass just
 as convincingly when the file has been reverted underneath it, which is how a
@@ -389,18 +389,18 @@ non-vacuity check above reports that a new test would pass without its
 fix.
 
 **`-run` is an unanchored substring match, and nearly every test in
-`internal/e2eselfhost` is named `...X86_64`.** So `-run 'X86|Gas'` does not
+`internal/testing/e2ecompiler` is named `...X86_64`.** So `-run 'X86|Gas'` does not
 select the fifty assembler tests, it selects most of the package: 40 minutes
 instead of 2. Anchor on what follows the prefix — `-run 'TestSelfHostX86[A-Z]'`
 picks `TestSelfHostX86Gas` and friends while `X86_` fails the `[A-Z]`.
 
-**The 335-fixture corpus lives in `internal/e2e`, not `internal/e2eselfhost`,
+**The 335-fixture corpus lives in `internal/testing/e2e`, not `internal/testing/e2ecompiler`,
 and is gated behind `FERN_SELFHOST_FIXTURES=1`.** Skipped, it reports
-`ok  github.com/jakechampion/lang/internal/e2e  0.006s` — a bare `ok` that
+`ok  github.com/jakechampion/lang/internal/testing/e2e  0.006s` — a bare `ok` that
 passes every grep for `FAIL`. The real run is ~97 s.
 
 **`/tmp/selfhost-bincache-*` belongs to a running test process** — one per
-process, from `os.MkdirTemp` in `internal/e2eharness/self_host_buildcache.go`,
+process, from `os.MkdirTemp` in `internal/testing/e2eharness/self_host_buildcache.go`,
 held open for the whole run. Deleting one to reclaim disk while a suite is
 running turns *every* test in it into `open cached bin ...: no such file or
 directory`: 401 failures, none of them real. When several agents or sessions
@@ -436,7 +436,7 @@ treating genuine compiler regressions as infra.
   fixed bump arena is full. A REAL failure, reproducible locally, and almost
   always a leak. 125 is clear of the 128+signal range so nothing can forge it,
   and under WASI's 126 ceiling so it survives wasmtime. Pinned across the
-  self-host emitters by `internal/e2e/arena_exit_code_test.go`
+  self-host emitters by `internal/testing/e2e/arena_exit_code_test.go`
   (`e2eharness.ExitArenaExhausted`).
 - **137** (128+9, SIGKILL) — the host ran out of RAM. Also reads as `signal:
   killed` from the self-host compiler building a driver, or `as`/gcc dying on
@@ -574,7 +574,7 @@ also provide `asmcore.fern`.
 written with `termios_set` does not read back through `termios_get` — while
 `TestX86_64Termios` runs the same program on the same pty and passes, and CI's
 arm64 lane, which runs natively, is green. It is qemu-user's ioctl emulation,
-not a Fern defect, and it is not worth chasing: a full local `internal/e2e`
+not a Fern defect, and it is not worth chasing: a full local `internal/testing/e2e`
 therefore reports two failures CI never shows.
 
 ## WASM toolchain
@@ -600,14 +600,14 @@ emulation. So on a Mac those legs SKIP, and a SKIP reports `ok`.
 
 Runs natively on Apple Silicon: the wasm suite (once the pinned toolchain is on
 `PATH`), the `arm64-darwin` target, `-interp`, and every host-independent Go
-package. Measured: `go test ./internal/e2e/ -run TestWasm` goes from 12 skips to
+package. Measured: `go test ./internal/testing/e2e/ -run TestWasm` goes from 12 skips to
 0 once the pinned pair is installed.
 
 Everything else goes through **`scripts/devbox`**, a linux/arm64 container
 carrying qemu-user, both cross compilers and the `mise.toml` toolchain:
 
 ```
-scripts/devbox go test ./internal/e2e/ -run TestSelfHostX86_64
+scripts/devbox go test ./internal/testing/e2e/ -run TestSelfHostX86_64
 scripts/devbox                 # interactive shell
 ```
 
@@ -658,7 +658,7 @@ it. The former Go `arm64codegen.Options.HighHeapProbe` is retired. Measured
 emitted with that hint compiles `fern.fern` for `arm64-linux` under qemu in
 537 s at 5.4 GB peak RSS, exit 0, and its output is byte-identical to the
 default-hint compiler's (517 s, 5.4 GB). The gate for the shapes is
-`TestSelfHostArm64HighHeap*` (`internal/e2eselfhost`). The recipe, from a
+`TestSelfHostArm64HighHeap*` (`internal/testing/e2ecompiler`). The recipe, from a
 `bin/fern-selfhost` built by `make selfhost-cli`:
 
 ```

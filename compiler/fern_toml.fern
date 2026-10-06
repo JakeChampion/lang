@@ -1,6 +1,6 @@
 // compiler/fern_toml.fern — a fern.toml / fern.lock reader for
 // the self-hosted compiler's module loader, mirroring the native
-// internal/manifest + internal/mvs for the DISK-resolvable dependency
+// internal/pkg/manifest + internal/pkg/mvs for the DISK-resolvable dependency
 // forms.
 //
 // Covered: [package] name/lib; [dependencies] `path`, `workspace = true`,

@@ -66,7 +66,7 @@ For target correctness, run:
 
 ```sh
 scripts/devbox env FERN_SELFHOST_BUILD_CACHE=/work/build/ci-stdtest-cache \
-  go test ./internal/e2eselfhost \
+  go test ./internal/testing/e2ecompiler \
   -run '^TestSelfHostStdTestE2E(Arm64)?$/^cases$/^(arithmetic|filesystem_ops|synthetic_fail)$' \
   -race -parallel 4 -count=1 -v
 ```
@@ -75,7 +75,7 @@ Then scale only the case selector to all cases, retaining both targets:
 
 ```sh
 scripts/devbox env FERN_SELFHOST_BUILD_CACHE=/work/build/ci-stdtest-cache \
-  go test ./internal/e2eselfhost \
+  go test ./internal/testing/e2ecompiler \
   -run '^TestSelfHostStdTestE2E(Arm64)?$' \
   -race -parallel 4 -count=1 -v -timeout 30m
 ```

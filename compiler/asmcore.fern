@@ -2411,7 +2411,7 @@ pub function rt_src_open_with(t: string): string {
 // .LStr_ioerr_empty.
 //
 // The data pointer is read ONCE into a local: __raw_addr's address argument has
-// to be a bare pointer name (internal/sourcelint's #6386 gate rejects a nested
+// to be a bare pointer name (internal/testing/sourcelint's #6386 gate rejects a nested
 // call there, since it cannot see whether the inner expression narrowed the
 // address to 32 bits), and hoisting the load out of the loop is what the other
 // write loops do anyway.
@@ -3640,12 +3640,12 @@ pub function rt_src_read_line(t: string): string {
 
 // The strerror table (#8265): glibc's text per errno and the errno's number on
 // each OS (0 = the OS has no separate number), one row per index in
-// internal/strerror's order; wasi_error_code_errnos is wasi:filesystem's
+// internal/tables/strerror's order; wasi_error_code_errnos is wasi:filesystem's
 // error-code enum in discriminant order, each as the preview-1 errno it stands
 // for. Every runtime the self-host emits reports IoError.Other's message from
-// these, and internal/strerror's selfhost_parity_test pins all six lists to
+// these, and internal/tables/strerror's selfhost_parity_test pins all six lists to
 // the Go table entry for entry. Regenerate with
-// `go run ./internal/strerror/gen_selfhost_lists`.
+// `go run ./internal/tables/strerror/gen_selfhost_lists`.
 pub function strerror_texts(): string[] {
   return ["Operation not permitted", "No such file or directory", "No such process", "Interrupted system call", "Input/output error", "No such device or address", "Argument list too long", "Exec format error", "Bad file descriptor", "No child processes", "Resource temporarily unavailable", "Cannot allocate memory", "Permission denied", "Bad address", "Device or resource busy", "File exists", "Invalid cross-device link", "No such device", "Not a directory", "Is a directory", "Invalid argument", "Too many open files in system", "Too many open files", "Inappropriate ioctl for device", "Text file busy", "File too large", "No space left on device", "Illegal seek", "Read-only file system", "Too many links", "Broken pipe", "Numerical result out of range", "Resource deadlock avoided", "File name too long", "No locks available", "Function not implemented", "Directory not empty", "Too many levels of symbolic links", "No data available", "Attribute not found", "Value too large for defined data type", "Invalid or incomplete multibyte or wide character", "Socket operation on non-socket", "Message too long", "Protocol wrong type for socket", "Protocol not available", "Protocol not supported", "Operation not supported", "Address family not supported by protocol", "Address already in use", "Cannot assign requested address", "Network is down", "Network is unreachable", "Network dropped connection on reset", "Software caused connection abort", "Connection reset by peer", "No buffer space available", "Transport endpoint is already connected", "Transport endpoint is not connected", "Connection timed out", "Connection refused", "No route to host", "Operation already in progress", "Operation now in progress", "Stale file handle", "Disk quota exceeded", "Operation canceled", "Owner died", "State not recoverable", "Operation not supported"];
 }
@@ -3744,7 +3744,7 @@ function path_copy_src(): string {
 
 // wasi:sockets/network@0.2.0 error-code to Preview 1 errno. In particular,
 // unknown (discriminant zero) must not become a successful zero return.
-// Pinned against internal/strerror.WasiSocketErrorCodes and the vendored WIT.
+// Pinned against internal/tables/strerror.WasiSocketErrorCodes and the vendored WIT.
 pub function wasi_socket_error_errnos(): i32[] {
   return [29, 2, 58, 28, 48, 73, 7, 28, 6, 28, 33, 4, 3, 23, 14, 15, 13, 35, 44, 6, 29];
 }

@@ -226,7 +226,7 @@ at `d2d44bdb9caf2c40872581a1044c001a9b259239` and
 at `566f5b4f71b47c277749bbba7195a2860af26b0d` completed successfully.
 Their suites overlapped. The actual downloaded test binaries were identical:
 
-- `e2eselfhost.test`: `edf12d2eb98b0a3d6bd3bf8ab59b77fbd12a32787c6050c3d8da3d03d5e3dd07`
+- `e2ecompiler.test`: `edf12d2eb98b0a3d6bd3bf8ab59b77fbd12a32787c6050c3d8da3d03d5e3dd07`
 - `e2e.test`: `57e80166e00d0c4bef525d2ef39720f333c1d98cf23c88f1679b2079fa4bdae3`
 
 Independent verification recovered the selected inventory from those binaries,

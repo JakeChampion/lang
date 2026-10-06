@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/e2eharness"
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // buildFernForStdoutTest builds this package, with the current self-host

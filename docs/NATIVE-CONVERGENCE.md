@@ -9,8 +9,8 @@
 
 A single language feature lands in a lot of places today:
 
-- native `internal/ir` (+ the three native backends `codegen/{arm64,x86_64,wasmbin}`)
-- native `internal/interp`
+- native `internal/oracle/ir` (+ the three native backends `codegen/{arm64,x86_64,wasmbin}`)
+- native `internal/oracle/interp`
 - the self-host typed lowering, `compiler/semsource.fern` and
   `ssarc.fern` (+ the three self-host backends
   `asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern`)
@@ -57,7 +57,7 @@ property, not a spot-check. Three suites carry that contract; each has a
 concrete completion criterion:
 
 - **Checker-codes differential** — `checker_codes_run.fern` +
-  `internal/e2e/self_host_checker_codes_test.go`. Today it filters the Go
+  `internal/testing/e2e/self_host_checker_codes_test.go`. Today it filters the Go
   checker's output through `selfHostImplementedCodes`
   (`self_host_checker_codes_test.go:27-85`) and asserts parity **only** on
   that set (`filterImplemented`, `:124-133`, applied at `:856`, `:979`,
@@ -81,7 +81,7 @@ concrete completion criterion:
   see `docs/SELFHOST-CHECKER-PORT.md`.
 
 - **Fuzz-diff execution oracle** — `FuzzGenerate_ExecutionAgrees`
-  (`internal/e2e/diff_oracle_test.go`), run by `.github/workflows/fuzz-diff.yml`,
+  (`internal/testing/e2e/diff_oracle_test.go`), run by `.github/workflows/fuzz-diff.yml`,
   alongside the `TestDifferential*` corpus. This becomes the **standing
   regression net**: post-freeze it is the mechanism that catches a self-host
   behavioural divergence from native semantics, so it must stay in CI on every
@@ -100,9 +100,9 @@ concrete completion criterion:
   Add a row when a new class is found; strike it when a differential test
   pins the fix.
 
-### 3. `internal/interp` is the long-term keeper — even post-freeze
+### 3. `internal/oracle/interp` is the long-term keeper — even post-freeze
 
-Native `internal/interp` is **not** frozen out of existence. It is the
+Native `internal/oracle/interp` is **not** frozen out of existence. It is the
 semantics reference every differential test anchors on, it is cheap to carry
 (~3.9k lines), and it is the oracle that makes goal-2 correctness checkable at
 all. Post-freeze it keeps receiving the same bugfix / oracle-need updates as
@@ -149,7 +149,7 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    *two-implementations-forever* precisely so the fuzz-diff oracle keeps two
    witnesses; that directly contradicts deleting the native backends.~~
    **Decided 2026-09-28: the native backends are not witnesses, and they go
-   with the next step after the freeze.** The oracle is `internal/interp`
+   with the next step after the freeze.** The oracle is `internal/oracle/interp`
    (§3), which the differential suites anchor on and which stays. `BOOTSTRAP-RESEARCH.md §1`'s
    recommendation is superseded for the backends and holds for the
    interpreter. A gate that compares self-host codegen output against native
@@ -158,7 +158,7 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    re-anchored on the interpreter; that is scope for the deletion PRs, not a
    reason to keep a backend. The self-host suites themselves no longer need
    one: since 2026-09-29 their drivers are built by the pinned stage0
-   self-host compiler (`internal/e2eharness/self_host_compiler.go`), so
+   self-host compiler (`internal/testing/e2eharness/self_host_compiler.go`), so
    deleting the x86-64 backend leaves the harness standing, and the suite's
    own direct calls into the Go emitters went the same day: the hand-built
    drivers, the module self-tests (both Linux targets), the wasm consumer
@@ -168,8 +168,8 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    of (the bump allocator, the rc==1 cliff counter, process exec, the
    `__store_i64` pair) carry their expected values, and the allocation-volume
    gate holds the self-host to its own recorded figures, so
-   `internal/e2eselfhost` calls no Go emitter at all. The `CompileAndRun*`
-   helpers stay in `internal/e2eharness` for `internal/e2e`, which is where
+   `internal/testing/e2ecompiler` calls no Go emitter at all. The `CompileAndRun*`
+   helpers stay in `internal/testing/e2eharness` for `internal/testing/e2e`, which is where
    the backends' remaining test callers are.
 4. **The non-compiler consumers.** ~~`internal/wasm/playground` and
    `cmd/fern-wasm` are built on native codegen; the browser playground would
@@ -205,7 +205,7 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    `fsmode`, and E066 declines it because the component-model filesystem has no
    permission bits (#6133). That is a target property rather than a gap, so this
    witness is not one to wait for.
-5. **`internal/e2e` passing through the self-host compiler.** **Closed
+5. **`internal/testing/e2e` passing through the self-host compiler.** **Closed
    (2026-10-05).** The suite is the language's spec on three targets, and it
    keeps that job with every test compiling through the self-host. The tests
    that pinned native-only behaviour went when they were re-pointed, and the
@@ -277,7 +277,7 @@ is in force (`NATIVE-FREEZE.md`).
 
 - The differential suites keep running forever — they are the regression net,
   not a one-time gate.
-- `internal/interp` keeps getting bugfixes (§3).
+- `internal/oracle/interp` keeps getting bugfixes (§3).
 - The compiler's own sources stay within what the current bootstrap pin
   compiles (`BOOTSTRAP.md`, "Refreshing the pin"); since the backends went,
   the pin holds the place in the Go 1.4 rule that native held.

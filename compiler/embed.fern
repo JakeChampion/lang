@@ -1,8 +1,8 @@
 // compiler/embed.fern — the `-embed DIR` asset bundle, and the pass
 // that resolves `__fern_asset("name")` / `__fern_assets()` against it.
 //
-// The self-host port of `internal/embed` plus the asset half of
-// `internal/constfold`: a directory is walked at compile time, each file
+// The self-host port of `internal/pkg/embed` plus the asset half of
+// `internal/check/constfold`: a directory is walked at compile time, each file
 // becomes an ordinary string literal, and nothing downstream — checker, IR,
 // any backend — learns that assets exist. `docs/EMBED.md` is the contract;
 // this file mirrors it name for name and message for message.
@@ -51,7 +51,7 @@ pub struct LoadResult { assets: Assets, err: string }
 // ENTRY_OTHER / ENTRY_DIR / ENTRY_FILE are what `classify` answers, and the
 // three-way split is the whole reason `lstat` exists (#7982): a directory is
 // recursed into, a regular file is read, and anything else — a symlink, a
-// socket, a FIFO, a device — is skipped. That is exactly `internal/embed`'s
+// socket, a FIFO, a device — is skipped. That is exactly `internal/pkg/embed`'s
 // `d.IsDir() || !d.Type().IsRegular()`, and skipping links is what keeps an
 // asset tree from reaching outside its root or wedging the walk on a cycle.
 const ENTRY_OTHER: i32 = 0;

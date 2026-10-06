@@ -12,7 +12,7 @@ the Go x86-64 emitter, deleted in #11557): it never sets `ast.TwoWordOverride`, 
 the flip there is still the future work sketched under "Then: x86_64".
 
 Knock-on: the arm64 flip is what RC-Perceus item 5g (native heap-string
-rc) was blocked on, but 5g itself did NOT land with it. `internal/ir/ir.go`
+rc) was blocked on, but 5g itself did NOT land with it. `internal/oracle/ir/ir.go`
 still deliberately excludes arm64 from the overwrite `__fern_str_dec`
 (the branch is gated on `b.ptrW == 4`), because enabling it over-releases
 on real hardware where qemu user-mode masks the fault; the cost of that
@@ -97,8 +97,8 @@ Per the previous session's decisions:
     - `OpConstStr` / `OpStrConcat` / `OpStrLen` / `OpStrEq` /
       `OpLoad` / `OpStore` / `OpLoadLocal` / `OpStoreLocal` /
       `OpTeeLocal` / `OpReturn` — the IR op handlers (10 ops).
-  - 12 `ptrW == 4` gates in `internal/ir/ir.go` +
-    1 in `internal/ast/ast.go` shape the two-word ABI on
+  - 12 `ptrW == 4` gates in `internal/oracle/ir/ir.go` +
+    1 in `internal/syntax/ast/ast.go` shape the two-word ABI on
     wasm only today. arm64 will flip these to a target-aware
     helper.
 
@@ -106,7 +106,7 @@ Per the previous session's decisions:
 
 `(b *builder) twoWordStrings() bool` added; returns
 `b.ptrW == 4` today. The six ad-hoc `b.ptrW == 4` checks
-in `internal/ir/ir.go` for string-ABI gates (OpReturn
+in `internal/oracle/ir/ir.go` for string-ABI gates (OpReturn
 padding, ExprStmt drop fan-out, cast-to-string load,
 *ast.IfExpr block-type, array elem load/store width) all
 route through this method now. NO-OP refactor; full test
@@ -146,7 +146,7 @@ Companion to `(b *builder) twoWordStrings()`. Lives in the
 
   - `ast.ElemSizeBytesFor(StringType, ptrW)` routes its
     `ptrW == 4` check through `ast.UseTwoWordStrings`.
-  - `internal/ir/ir.go`'s `useTwoWordStrings(ptrW int)`
+  - `internal/oracle/ir/ir.go`'s `useTwoWordStrings(ptrW int)`
     wraps `ast.UseTwoWordStrings` and is consumed by
     `stringSlotSize`, `payloadStoreOpFor`,
     `payloadLoadOpFor`, `arrayElemStoreOpFor`,

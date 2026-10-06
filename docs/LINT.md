@@ -5,7 +5,7 @@ than it should. It is not the checker: the checker rejects programs that
 cannot run, a lint names a program that runs badly. That split decides
 everything else about the design.
 
-Engine: `internal/lint`. CLI: `cmd/fern/lint.go`.
+Engine: `internal/tools/lint`. CLI: `cmd/fern/lint.go`.
 
 ## Why it runs on the parse tree
 
@@ -134,5 +134,5 @@ so the gate compares numbers instead of parsing them back out of prose.
   generated-line → document-line remap, which `docs/LITERATE.md` names as
   the most regression-prone surface in that engine — worth its own change.
 - **The self-host mirror.** The linter is native-only tooling, like
-  `internal/printer`; nothing in the bootstrap path needs it. See
+  `internal/syntax/printer`; nothing in the bootstrap path needs it. See
   `docs/NATIVE-CONVERGENCE.md` for when that stops being free.

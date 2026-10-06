@@ -18,7 +18,7 @@
 Make the self-hosted Fern compiler (`compiler/`) compile
 **through the SSA IR by default**, with **every backend consuming that
 IR** — so the IR (`ssa.fern`) becomes the single lowering path the way
-`internal/ir` is for the Go compiler. The AST emitters (`asm.fern`,
+`internal/oracle/ir` is for the Go compiler. The AST emitters (`asm.fern`,
 `asm_arm64.fern`, `wasm.fern`) are retired once SSA reaches parity.
 
 This is the self-hosted mirror of the project's "the IR layer is
@@ -655,7 +655,7 @@ Once SSA is at full parity and the fixpoint is SSA-clean, remove the AST
 lowering in `asm.fern` / `asm_arm64.fern` / `wasm.fern` (or reduce them
 to thin SSA-backend shells), drop the fallback and `-no-ssa`. The IR is
 then the single lowering path for every backend — the self-hosted mirror
-of `internal/ir`.
+of `internal/oracle/ir`.
 
 ## Engineering bar
 
