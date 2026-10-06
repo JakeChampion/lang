@@ -248,7 +248,7 @@ function try_manifest(from: string, name: string): Resolved {
 
 // manifest_dir is the nearest directory at or above `dir` holding a fern.toml,
 // as native's manifest.FindForDir walks, or `dir` itself when none does.
-function manifest_dir(dir: string): string {
+pub function manifest_dir(dir: string): string {
   let d: string = dir;
   let steps: i32 = 0;
   while (steps < 64) {
