@@ -3841,11 +3841,19 @@ and only the moment differs. GNU also prints one report per signal where
 arrivals between two looks read as one here. `TestDDInfoSignal` signals both
 over a FIFO and compares stderr with the durations masked.
 
-**SIGINT does not print the statistics.** GNU catches it, reports, and dies
-of it; `dd.fern` leaves it at its default and dies without the report. The
-flag `signal_catch` raises cannot stand in: a catch is SA_RESTART, so a dd
-blocked on a read would not notice ^C until the read returned. That needs a
-signal that interrupts a blocking call, which no builtin provides.
+**SIGINT prints the statistics and then kills dd**, as GNU's does (#11698).
+dd catches it with `signal_catch_interrupting`, which leaves SA_RESTART out,
+so ^C ends a read blocked on an idle terminal or pipe — or a write blocked on
+a full one — with EINTR. dd looks for SIGINT before every read and write, as
+GNU's `iread` / `iwrite` do, writes the report as the counts stand, and dies
+of the signal through `signal_raise`: the record the read was waiting for and
+the block the write was writing are not counted, and a block still being
+assembled is not written. The catch goes in where GNU installs its handlers,
+after the files are open and before `skip=` reads anything, so ^C during a
+skip over a pipe reports `0+0`. A SIGINT ignored when dd starts stays
+ignored, as GNU leaves it; SIGUSR1 is caught either way, as GNU catches it.
+`TestDDInterrupt` signals both over a FIFO and a full pipe and compares stderr
+and the death.
 
 **`expr`'s capture registers follow glibc's own construction, not a branch
 order.** glibc prefers the non-empty branch of an alternation everywhere,
@@ -4574,7 +4582,8 @@ groups are the order of work. Each sub-issue names its group.
   (done, on `w.seek(offset, whence)` — lseek on a Writer, which is what
   writing at an offset without rewriting the file needs; the operand
   families it does NOT have are in the divergences above, each with its
-  own issue; the SIGUSR1 report is `signal_catch`, #9243)
+  own issue; the SIGUSR1 report is `signal_catch`, #9243, and the SIGINT
+  report `signal_catch_interrupting` and `signal_raise`, #11698)
   `shred` (done, on that same seek — see the divergences above) `stty` (done, on
   the kernel's own termios words plus `set_window_size` and the four handle
   forms — #9356, #9360, #9363; the two places its `--help` text disagrees with
