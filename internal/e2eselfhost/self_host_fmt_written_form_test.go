@@ -13,7 +13,7 @@ import (
 )
 
 // TestSelfHostFmtWrittenFormViaInterp gates the self-host formatter on every
-// host, by driving examples/self_host/fern.fern through the native `-interp`
+// host, by driving compiler/fern.fern through the native `-interp`
 // instead of building an x86-64 driver.
 //
 // Every other self-host `-fmt` gate is suffixed X86_64 and needs a cross gcc
@@ -34,7 +34,7 @@ import (
 // agree on something broken still fails.
 func TestSelfHostFmtWrittenFormViaInterp(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../examples/self_host/fern.fern")
+	driver, err := filepath.Abs("../../compiler/fern.fern")
 	if err != nil {
 		t.Fatalf("abs driver path: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestSelfHostFmtWrittenFormViaInterp(t *testing.T) {
 // print differently is not usable in a pre-commit hook that may call either.
 func TestSelfHostFmtWriteAndDiffViaInterp(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../examples/self_host/fern.fern")
+	driver, err := filepath.Abs("../../compiler/fern.fern")
 	if err != nil {
 		t.Fatalf("abs driver path: %v", err)
 	}

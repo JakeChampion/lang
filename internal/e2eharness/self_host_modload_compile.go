@@ -55,7 +55,7 @@ func BuildModloadArm64DriverX86(t *testing.T) (x86gcc string, x86runner []string
 // Returns the emitted asm and the program dir.
 //
 // A local import that `files` does not carry is filled in from
-// examples/self_host, transitively — so a caller names the modules its
+// compiler, transitively — so a caller names the modules its
 // program is ABOUT and cannot go stale when one of them gains an import.
 // That staleness is what broke every hand-listed bundle here at once when
 // parser.fern gained `import "./ast"` (#6993), in four different spellings.
@@ -64,7 +64,7 @@ func BuildModloadArm64DriverX86(t *testing.T) (x86gcc string, x86runner []string
 func CompileFilesModload(t *testing.T, runner []string, driverBin string, files map[string]string, extraArgs ...string) (asm string, progDir string) {
 	t.Helper()
 	progDir = t.TempDir()
-	bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+	bsrc, err := os.ReadFile("../../compiler/builtins.fern")
 	if err != nil {
 		t.Fatalf("read builtins.fern: %v", err)
 	}
@@ -145,7 +145,7 @@ func WriteSourceModloadProject(t *testing.T, entrySrc string) (progDir string) {
 		t.Fatalf("modload.LoadSource: %v", err)
 	}
 	progDir = t.TempDir()
-	bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+	bsrc, err := os.ReadFile("../../compiler/builtins.fern")
 	if err != nil {
 		t.Fatalf("read builtins.fern: %v", err)
 	}

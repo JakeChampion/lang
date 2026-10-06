@@ -11,7 +11,7 @@ A single language feature lands in a lot of places today:
 
 - native `internal/ir` (+ the three native backends `codegen/{arm64,x86_64,wasmbin}`)
 - native `internal/interp`
-- the self-host typed lowering, `examples/self_host/semsource.fern` and
+- the self-host typed lowering, `compiler/semsource.fern` and
   `ssarc.fern` (+ the three self-host backends
   `asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern`)
 - self-host interp
@@ -191,12 +191,12 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    nested-arithmetic miscompile was a use-after-free in the compiler's own gate
    passes (#7948), and `internal/codegen/wasmbin` has the `strbuf_*` lowerings it
    was missing (#7951). The third — the driver — compiles now:
-   `examples/self_host/playground_run.fern` reads a program on stdin, resolves
+   `compiler/playground_run.fern` reads a program on stdin, resolves
    its `std/…` imports out of an embedded bundle through a sealed
    `modloader.Overlay`, and emits a wasm module. Hosted in wasm with **no
    preopens at all** it produces output byte-identical to the natively-hosted
    build. What remains is not compilation: the playground also interprets, and
-   `examples/self_host/interp.fern` implements no I/O builtins at all, so its
+   `compiler/interp.fern` implements no I/O builtins at all, so its
    output pane has no self-host counterpart — a second missing consumer beside
    the LSP. The native toolchain still cannot compile `fern.fern` for wasm,
    so this artifact still has only one witness — but the blocker is no longer a
@@ -214,7 +214,7 @@ what it actually needs, because "goal 2 is nearly done" does not imply
 ## Freeze preconditions (all must be green before native is frozen)
 
 **Read the live state from `make freeze`, not from this list.** The rows below
-are the *definitions*; `tools/freeze_gate.sh` derives every mechanically-checkable
+are the *definitions*; `scripts/freeze_gate.sh` derives every mechanically-checkable
 one from the tree and runs in CI on every push. An audit on 2026-08-02 found
 this list, the tracker (#4451) and `SELFHOST-PERCEUS-REUSE.md` all carrying
 stale claims, and all three stale in the same direction — more pessimistic than
@@ -290,7 +290,7 @@ is in force (`NATIVE-FREEZE.md`).
   surface left to add, and the tracker that recorded such exceptions (#4451)
   is closed. New language surface lands self-host-first.
 - Keep the three differential suites green in CI (they already run).
-- `tools/freeze_gate.sh` keeps running in CI so a precondition that regresses
+- `scripts/freeze_gate.sh` keeps running in CI so a precondition that regresses
   fails a PR rather than a future audit. When one does, amend its row here
   and the check together.
 - New checker rules land self-host-side; `selfHostImplementedCodes` stays

@@ -28,7 +28,7 @@ import (
 //
 // NO WASM LEG: the wasm backend does not use these helpers at all. It carries
 // its own hand-written str_split_helper / str_lines_helper / str_trim_helper in
-// examples/self_host/wasm_ir.fern. TestSelfHostStringConstructors now covers
+// compiler/wasm_ir.fern. TestSelfHostStringConstructors now covers
 // its scalar split behavior; lines and trim parity still need a wasm leg.
 var strRuntimeStdStringParityCases = []struct {
 	name string

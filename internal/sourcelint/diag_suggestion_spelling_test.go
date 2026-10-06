@@ -111,7 +111,7 @@ func TestDiagnosticSuggestionsNameAQualifiedTrait(t *testing.T) {
 	// The self-hosted compiler. Its diagnostics are plain string literals
 	// spliced with `+`, so a hand scanner that knows comments from strings
 	// is the whole parser this needs.
-	fernFiles, err := filepath.Glob(filepath.Join(root, "examples", "self_host", "*.fern"))
+	fernFiles, err := filepath.Glob(filepath.Join(root, "compiler", "*.fern"))
 	if err != nil {
 		t.Fatalf("glob self_host: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestDiagnosticSuggestionsNameAQualifiedTrait(t *testing.T) {
 	for _, want := range []string{
 		filepath.Join("internal", "checker", "checker.go"),
 		filepath.Join("internal", "parser", "parser.go"),
-		filepath.Join("examples", "self_host", "checker.fern"),
+		filepath.Join("compiler", "checker.fern"),
 	} {
 		if !slices.Contains(append(goProducers, fernProducers...), want) {
 			t.Errorf("%s was not scanned — emitsDiagnostics no longer recognises it, so this lint is looking at less than it claims", want)
@@ -185,7 +185,7 @@ var diagCodeRe = regexp.MustCompile(`"[^"\n]*\b[EP][0-9]{3}\b`)
 
 // emitsDiagnostics reports whether src can print a diagnostic, and so
 // whether its string literals are user-facing copy. It is what keeps a
-// program FIXTURE out of the scan: examples/self_host/printer.fern's
+// program FIXTURE out of the scan: compiler/printer.fern's
 // round-trip corpus is full of `@derive(Eq)` written as input to the
 // formatter, which never reaches a checker and is not advice to anyone.
 func emitsDiagnostics(src string) bool {

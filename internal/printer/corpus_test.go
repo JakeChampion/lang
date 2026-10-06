@@ -14,7 +14,7 @@ import (
 )
 
 // The two properties in this file are CORPUS-driven: they walk every `.fern`
-// file under examples/ + internal/stdlib rather than a fixture list.
+// file under corpusRoots rather than a fixture list.
 //
 // That is the point. #6832 added the type-check property over
 // `fmtParityCases`, a hand-maintained list, and #6812 then landed
@@ -51,12 +51,15 @@ func corpusRoot(t *testing.T) string {
 	}
 }
 
-// corpusFiles lists every `.fern` file under examples/ and internal/stdlib,
-// relative to the repository root, in sorted order.
+// corpusRoots are the repo-relative directories the printer corpus covers.
+var corpusRoots = []string{"examples", "tests", "bench", filepath.Join("internal", "stdlib")}
+
+// corpusFiles lists every `.fern` file under corpusRoots, relative to the
+// repository root, in sorted order.
 func corpusFiles(t *testing.T, root string) []string {
 	t.Helper()
 	var out []string
-	for _, sub := range []string{"examples", filepath.Join("internal", "stdlib")} {
+	for _, sub := range corpusRoots {
 		err := filepath.WalkDir(filepath.Join(root, sub), func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -252,13 +255,13 @@ func TestFormatCorpusPreservesCommentBlanks(t *testing.T) {
 	}
 }
 
-// mirrorCorpus copies examples/ + internal/stdlib into a temporary directory so
+// mirrorCorpus copies corpusRoots into a temporary directory so
 // a formatted file can be type-checked with its imports intact without writing
 // into the working tree.
 func mirrorCorpus(t *testing.T, root string) string {
 	t.Helper()
 	dst := t.TempDir()
-	for _, sub := range []string{"examples", filepath.Join("internal", "stdlib")} {
+	for _, sub := range corpusRoots {
 		err := filepath.WalkDir(filepath.Join(root, sub), func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err

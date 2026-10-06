@@ -771,7 +771,7 @@ mirror of the mask-EXTRACTION one §3.4 records for the forward kernel, and it
 lands on a different pair of targets: there wasm and x86-64 were the cheap ones,
 here only x86-64 is.
 
-Measured (`examples/bench/string_rfind_byte`, 6,000 backward scans of a 32 KiB
+Measured (`bench/string_rfind_byte`, 6,000 backward scans of a 32 KiB
 haystack answering at index 3): **984M → 112M retired, 8.8x**. Self-host x86-64
 followed at **85.6 ms → 5.7 ms (15x)** on the same shape; its assembler needed
 only `bsr` added (`0F BD`, one opcode along from the `bsf` the forward kernel
@@ -851,11 +851,11 @@ vector bitwise OR finds it in two of the six:
 | assembler | vector OR | where the vector surface lives |
 |---|---|---|
 | `internal/native/x86_64` | **`por`** (`66 0F EB`) | `sse.go`'s `sseOps` table |
-| `examples/self_host/x86_native.fern` | missing | `mnem ==` chain |
+| `compiler/x86_native.fern` | missing | `mnem ==` chain |
 | `internal/native/arm64` | missing — `orr` is GPR-only, no arrangement form | `gas.go`'s `case` chain |
-| `examples/self_host/arm64_native.fern` | missing — `orr` is GPR-only | `mnem ==` chain |
+| `compiler/arm64_native.fern` | missing — `orr` is GPR-only | `mnem ==` chain |
 | `internal/wasm/simd` | **`v128.or`** (sub-opcode 80) | `simd.go` |
-| `examples/self_host/watbin.fern` | missing — it knows four v128 ops | `simd_opcode` |
+| `compiler/watbin.fern` | missing — it knows four v128 ops | `simd_opcode` |
 
 So a fifth kernel of that shape costs four encodings across four assemblers
 before a line of it is written. Survey first, as §3.3a's rule says; a zero from
@@ -899,7 +899,7 @@ you. For a count it costs nothing, because `cnt` of an all-ones lane is 8 and
 The kernel that hurts most on arm64 and the one that hurts least are the same
 instruction sequence up to the compare.
 
-Measured on the three native tiers (`examples/bench/string_count_byte`, 6,000
+Measured on the three native tiers (`bench/string_count_byte`, 6,000
 rounds x 32 KiB x 2 calls, matches one byte in four so the accumulator is
 exercised rather than the scan):
 
@@ -951,11 +951,11 @@ carried all four kernels since each was made total, and three of them were
 vectorised as their ratio gates named them — `__memchr` at the 20x flat-vs-ssa
 divergence #8069 exists to report, `__count_byte` at 12.6x, `__rmemchr` with
 them. `__ascii_run` was the one left byte-at-a-time, and nothing pointed at it:
-its only corpus caller, `examples/bench/ascii_scan`, sits under the gate's 8x
+its only corpus caller, `bench/ascii_scan`, sits under the gate's 8x
 ratio because the flat backend runs the same 64 KB body in 7 ms and the absolute
 floor is 250 ms. It is now SSE2 like the rest — `movdqu` / `pmovmskb` / `bsf`,
 no splat and no compare, the same three-instruction block the native x86-64
-kernel runs — measured on `examples/bench/ascii_scan` at **700.8M → 74.6M
+kernel runs — measured on `bench/ascii_scan` at **700.8M → 74.6M
 retired (9.4x)**, 58 ms → 7 ms wall, which puts the leg level with the flat
 backend on that program. No assembler work: every encoding was already there
 from the forward kernel, §3.3a's per-instruction-set debt behaving as predicted
@@ -1058,7 +1058,7 @@ encoding step 3 will want.
 Step 2 is `std/array`'s `scale_f64`, and like `count_byte`'s it is TOTAL: the
 wrapper simply *is* the intrinsic, since with no cursor and no early exit
 there is no shape where a loop and the kernel differ. Measured on
-`examples/bench/array_scale_f64` (4,000 rounds over a 4,096-element f64[],
+`bench/array_scale_f64` (4,000 rounds over a 4,096-element f64[],
 32 KiB, the string kernels' haystack footprint), the append loop it replaced
 against the scalar kernel:
 
@@ -1081,7 +1081,7 @@ numbers of the second.
 **Step 3 begins on native x86-64**, and it is where this kernel stops being
 free. The AVX2 body is `vbroadcastsd` for the factor, then a loop of
 `vmulpd` / `vmovupd` over four lanes, `vzeroupper`, and the scalar loop as
-the tail for the remainder. Measured on `examples/bench/array_scale_f64`:
+the tail for the remainder. Measured on `bench/array_scale_f64`:
 
 | native x86-64 | scalar | AVX2 | |
 |---|---|---|---|
@@ -1154,7 +1154,7 @@ both. Both bodies read the element first and the factor second, so unlike
 x86-64 — where folding the load forced the operands to swap — nothing had
 to be done to keep them agreeing about NaN.
 
-Measured on `examples/bench/array_scale_f64`:
+Measured on `bench/array_scale_f64`:
 
 | native arm64 | scalar | NEON | |
 |---|---|---|---|
@@ -1177,7 +1177,7 @@ splat is recomputed per iteration rather than hoisted, which is
 local and the locals vector here holds a single i32 group — against a JIT
 that will sink a loop-invariant splat anyway.
 
-Measured on `examples/bench/array_scale_f64` under wasmtime, five runs each:
+Measured on `bench/array_scale_f64` under wasmtime, five runs each:
 
 | native wasm | scalar | v128 | |
 |---|---|---|---|
@@ -1251,7 +1251,7 @@ vector body and the scalar tail both, the same economy `dup` gives on arm64.
 Both bodies multiply the element by the factor in that operand order, so
 neither has to be rewritten to keep them agreeing about NaN.
 
-Measured on `examples/bench/array_scale_f64`, compiled by the self-hosted
+Measured on `bench/array_scale_f64`, compiled by the self-hosted
 compiler and counted with callgrind:
 
 | self-host x86-64 | scalar | SSE2 | |
@@ -1509,7 +1509,7 @@ deeper frame therefore gains more, and no frame at all (`k == rank`, one
 cell) gains nothing.
 
 Both arms owe §7's increasing reading order, and `add` cannot tell them
-apart. `examples/tests/ndarray_test.fern` therefore folds
+apart. `tests/stdlib/ndarray_test.fern` therefore folds
 order-sensitively over a packed handle as well as a strided one; reversing
 the packed walk turns that assertion from 1234 into 4321.
 
@@ -1525,8 +1525,8 @@ Per rule 5, each kernel ships with:
   on wasm and x86-64;
 - a `__heap_bump_bytes()` assertion that the kernel allocates nothing;
 - a throughput gate. This was conditional on item 1 of §2 and is now
-  unconditional, because that lane exists: `examples/bench/string_find_byte`
-  and `examples/bench/ascii_scan` put each kernel's VECTOR path under
+  unconditional, because that lane exists: `bench/string_find_byte`
+  and `bench/ascii_scan` put each kernel's VECTOR path under
   `scripts/perf-bench`, whose retired-instruction counts repeat to the digit.
   A kernel that returned to a byte-at-a-time loop — on any of the eight
   backends, or through an assembler that stopped encoding the vector body —
@@ -1558,7 +1558,7 @@ Per rule 5, each kernel ships with:
 6. **SwissTable SWAR group probe** for `core/map` — the one Tier-3 item with a
    credible non-vector variant, so it can proceed in parallel.
    *Landed, as pure Fern with no kernel: ctrl bytes + SWAR group scan over
-   the unchanged linear-probe order, gated by `examples/bench/map_probe_chain`.
+   the unchanged linear-probe order, gated by `bench/map_probe_chain`.
    1.45x miss-heavy / 1.15x hit-heavy near the load ceiling; the input-vs-
    corpus lesson applied here too — the group scan is gated behind a scalar
    home-bucket check, or it loses 12% on the short chains that dominate at

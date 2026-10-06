@@ -11,7 +11,7 @@ import (
 
 // TestSelfHostX86WholeProgramMatchesGNUAs closes what docs/TEST-GATES.md
 // listed under "what nothing gates": every other e2eselfhost program test
-// hands `-emit asm` text to gcc, so examples/self_host/x86_native.fern never
+// hands `-emit asm` text to gcc, so compiler/x86_native.fern never
 // saw a real program. The testl/testq sign-flag bug (#6544) is the worked
 // example — invisible on the hand-written snippets that did exist, wrong on
 // a program. This is the x86 twin of

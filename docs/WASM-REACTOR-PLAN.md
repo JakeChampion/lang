@@ -301,7 +301,7 @@ wraps the core module with `internal/wasm/component` (the Go composer,
 so the native path handles poll/tcp end to end (verified above).
 
 The **self-host** wasm backend is a *different composition path* and does
-NOT reach this. `examples/self_host/wasm_ir_run.fern` emits a bare
+NOT reach this. `compiler/wasm_ir_run.fern` emits a bare
 **Preview-1 core module** (WAT text) and the driver/e2e composes it with
 `wasm-tools component new --adapt wasi_snapshot_preview1=<adapter>`. The
 scalar Preview-2 pollable ops compose on this path (verified — #4317):
@@ -345,7 +345,7 @@ Until then, `wasm_poll` / `tcp_*` DO lower as portable shims on every
 OTHER backend — native x86-64/arm64 + interp + the self-host register IR
 paths (`asm_ir` / `asm_arm64_ir`), returning the native no-pollable
 values (`wasm_poll` → -1). They are excluded from `wasm_eligible`
-(`examples/self_host/wasm_ir.fern`) so a self-host wasm module using them
+(`compiler/wasm_ir.fern`) so a self-host wasm module using them
 stays off the IR path rather than emitting output that can't compose.
 (`wasm_poll` landed this way in #4316/#4421; `wasm_block` +
 `wasm_timer_pollable` + `wasm_pollable_drop` DO compose on self-host wasm

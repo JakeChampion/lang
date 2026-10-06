@@ -46,7 +46,7 @@ descending scan, or the length minus a constant, because it matches syntax.
 | bounds-check sites in that `checker.fern` | 2,006 | 1,798 |
 | the pass itself | | 37 M |
 
-The thirty `examples/bench` programs: −0.11% in total, every exit status
+The thirty `bench` programs: −0.11% in total, every exit status
 unchanged. `tokenize` is −8.45%; the other rows that move are the
 seed-dependent `map_string` and `utf8_ingest` ones.
 

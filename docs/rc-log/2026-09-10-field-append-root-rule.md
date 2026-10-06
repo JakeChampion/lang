@@ -38,7 +38,7 @@ or a pass-through call.
 
 ## Measured
 
-`fern -append-report examples/self_host/fern.fern`, x86-64:
+`fern -append-report compiler/fern.fern`, x86-64:
 
 | | sites | copying |
 | --- | --- | --- |

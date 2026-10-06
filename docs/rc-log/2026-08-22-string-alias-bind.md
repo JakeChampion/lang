@@ -68,7 +68,7 @@ class rather than convenience:
 
 ## Why the parameter row is the one that matters
 
-38 of the 72 `let x: string = <ident>;` sites in `examples/self_host` and
+38 of the 72 `let x: string = <ident>;` sites in `compiler` and
 `internal/stdlib` are **parameter**-origin — the majority. A parameter owns
 nothing, so a retain on one is an inc nothing gives back, and an unbalanced
 retain allocates nothing and frees nothing: it is invisible to the census on its
@@ -108,7 +108,7 @@ reassigned. **Emit-hash therefore reaches zero creditable sites** and is a pure
 scope instrument here — it proves nothing else moved and carries no correctness
 signal about the class.
 
-That leaves the 24 local-origin sites in `examples/self_host` to the self-compile
+That leaves the 24 local-origin sites in `compiler` to the self-compile
 fixpoint, which is self-referential and blind to a stable miscompile, and a leak
 changes no emitted bytes in any case. `internal/e2eselfhost` is not merely
 primary for this change; for the credited case it is close to the only coverage,

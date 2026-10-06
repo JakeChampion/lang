@@ -9,7 +9,7 @@ import (
 )
 
 // TestSelfHostX86Gas exercises the self-hosted GAS (AT&T) assembly
-// front-end (examples/self_host/x86_native.fern PART 2) — the parser that
+// front-end (compiler/x86_native.fern PART 2) — the parser that
 // turns asm.fern's text into x86_native.fern encoder calls. It concatenates
 // x86_native.fern + a self-test main() that checks the
 // operand parsers and a small assembled program, run through the self-host
@@ -38,7 +38,7 @@ func runX86GasWasmSelfTest(t *testing.T, name, mainSrc string) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	nat, err := os.ReadFile("../../examples/self_host/x86_native.fern")
+	nat, err := os.ReadFile("../../compiler/x86_native.fern")
 	if err != nil {
 		t.Fatalf("read x86_native.fern: %v", err)
 	}
@@ -192,11 +192,11 @@ func runX86GasNativeDriver(t *testing.T, name, driverMain string, wantExit int) 
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	nat, err := os.ReadFile("../../examples/self_host/x86_native.fern")
+	nat, err := os.ReadFile("../../compiler/x86_native.fern")
 	if err != nil {
 		t.Fatalf("read x86_native.fern: %v", err)
 	}
-	elf, err := os.ReadFile("../../examples/self_host/elf.fern")
+	elf, err := os.ReadFile("../../compiler/elf.fern")
 	if err != nil {
 		t.Fatalf("read elf.fern: %v", err)
 	}

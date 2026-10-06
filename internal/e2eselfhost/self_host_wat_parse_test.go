@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestSelfHostWatParse exercises the WAT S-expr parser (examples/self_host/
+// TestSelfHostWatParse exercises the WAT S-expr parser (compiler/
 // wat_parse.fern) — slice 3 of the self-hosted binary wasm backend, which
 // turns the wat_lex token stream into a tree the encoder will walk.
 //
@@ -27,7 +27,7 @@ func TestSelfHostWatParse(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	watbin, err := os.ReadFile("../../examples/self_host/watbin.fern")
+	watbin, err := os.ReadFile("../../compiler/watbin.fern")
 	if err != nil {
 		t.Fatalf("read watbin.fern: %v", err)
 	}

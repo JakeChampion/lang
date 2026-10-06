@@ -3,7 +3,7 @@
 `ssaunits.grow_table`, `ssaunits.plan_callers`, and the runtime's
 `__fern_write_file`. Refs #8171. The grow-table change emits no different
 byte: the stage0-built compiler before and after emits the fixed older tree
-(`examples/self_host/fern.fern` at 1ae9cad, its bindings spelled `let`)
+(`compiler/fern.fern` at 1ae9cad, its bindings spelled `let`)
 and that tree's `checker.fern` byte for byte. The runtime change alters the
 text of `__fern_write_file` and its mode variants in every program that
 writes a file.

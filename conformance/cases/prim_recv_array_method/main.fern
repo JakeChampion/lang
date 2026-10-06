@@ -9,7 +9,7 @@
 // expr_struct_type was non-empty — true for a struct receiver, never for a
 // string / i64 / f64 one.
 //
-// It was found through `for c in s.chars()` (examples/tests/utf8_validity_
+// It was found through `for c in s.chars()` (tests/stdlib/utf8_validity_
 // property_test.fern), which made it look like a missing `char` element kind.
 // It is not about char: a string-receiver method returning i32[] fails
 // identically, and a char[]-returning FREE function was always fine.

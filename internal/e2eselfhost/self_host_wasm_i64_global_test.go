@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The self-host's WAT → binary assembler (examples/self_host/watbin.fern)
+// The self-host's WAT → binary assembler (compiler/watbin.fern)
 // wrote every global's type as i32, whatever the text said. An i64 global then
 // produced a module whose declared global type disagreed with its own
 // `i64.const` initialiser, and the loader rejected the whole module — "type

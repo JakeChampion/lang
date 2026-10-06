@@ -17,7 +17,7 @@ callee's exit sweep spends that count. `paramVerdict` is one ladder precisely so
 the two halves cannot disagree.
 
 This compiler has no caller-side retain — `calleeParamOwned` / `arg_retain` and
-friends find nothing in `examples/self_host/` — and asserts the opposite
+friends find nothing in `compiler/` — and asserts the opposite
 invariant in the emitter:
 
 > Array params (slots < n_params) are BORROWED — the caller retains ownership,

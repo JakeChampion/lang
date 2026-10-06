@@ -188,7 +188,7 @@ pub function user_by_name(name: string): Option[User] {
 
 // The lookups over a passwd / group file's TEXT rather than its path.
 // The database is a file the tests cannot write, so the parse is
-// reachable on its own: `examples/tests/coreutils_pwdb_test.fern` drives
+// reachable on its own: `tests/stdlib/coreutils_pwdb_test.fern` drives
 // these with fixtures for the rules the machine happens not to show —
 // a malformed line, a duplicate name, a gid no group entry claims.
 pub function user_by_name_in(text: string, name: string): Option[User] {

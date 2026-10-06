@@ -6,7 +6,7 @@
 
 After the width worklist, bitset liveness, and the allocator and emitter size
 work, a CPU profile of `fern -target x86-64-linux -backend ssa` on
-`examples/self_host/asm_ir_run.fern` (41 s wall) put two emitter items near the
+`compiler/asm_ir_run.fern` (41 s wall) put two emitter items near the
 top:
 
 | Item | Cumulative |

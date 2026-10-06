@@ -35,7 +35,7 @@ func recordDriverSize(t *testing.T, driver, bin string) {
 	}
 }
 
-// fullSelfHostProject copies EVERY examples/self_host/*.fern into a fresh dir.
+// fullSelfHostProject copies EVERY compiler/*.fern into a fresh dir.
 // Because hashSelfHostSources keys on a driver's import closure (not the whole
 // dir), a driver built here hashes identically to the same driver built by a
 // real test from its smaller project dir — so warming from the full set
@@ -43,7 +43,7 @@ func recordDriverSize(t *testing.T, driver, bin string) {
 func fullSelfHostProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	ents, err := os.ReadDir("../../examples/self_host")
+	ents, err := os.ReadDir("../../compiler")
 	if err != nil {
 		t.Fatalf("read self_host dir: %v", err)
 	}
@@ -51,7 +51,7 @@ func fullSelfHostProject(t *testing.T) string {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".fern" {
 			continue
 		}
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", e.Name()))
+		src, err := os.ReadFile(filepath.Join("../../compiler", e.Name()))
 		if err != nil {
 			t.Fatalf("read %s: %v", e.Name(), err)
 		}

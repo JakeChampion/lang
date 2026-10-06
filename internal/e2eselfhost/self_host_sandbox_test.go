@@ -216,7 +216,7 @@ func TestSelfHostSandboxRefusesPerModuleEmit(t *testing.T) {
 // write a `syscall` only through EmitState's syscall and raw_syscall, which
 // record it. A `syscall` written any other way is one the filter would kill.
 func TestSelfHostSandboxNoBareSyscallEmit(t *testing.T) {
-	files, err := filepath.Glob("../../examples/self_host/*.fern")
+	files, err := filepath.Glob("../../compiler/*.fern")
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no self-host sources: %v", err)
 	}

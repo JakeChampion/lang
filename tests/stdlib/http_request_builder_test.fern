@@ -1,0 +1,128 @@
+import "std/test";
+import "std/http";
+import "std/mock_platform";
+import "std/platform";
+
+// tests/stdlib/http_request_builder_test.fern — testing a handler without
+// a socket (#9854): `http.request(method, path)` builds the request, a
+// `mock_platform.MockPlatform`'s bag stands in for the host, and `std/test`'s HTTP
+// assertions read the response back.
+
+// The handler under test: echoes a JSON body back as created, names the
+// caller from a header, and turns anything else away.
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+  if (req.method == "POST" && req.path == "/items") {
+    match (req.headers.get("content-type")) {
+      Some(ct) => {
+        if (ct != "application/json") {
+          return http.text(415, "");
+        }
+      },
+      None => {
+        return http.text(415, "");
+      }
+    }
+    match (req.body_string()) {
+      Ok(text) => {
+        plat.log("created " + text);
+        return http.json(text).with_header("Location", "/items/1").with_header("X-Status", "created");
+      },
+      Err(e) => {
+        return e.to_response();
+      }
+    }
+  }
+  if (req.method == "GET" && req.path == "/whoami") {
+    match (req.headers.get("x-caller")) {
+      Some(who) => {
+        return http.ok("you are " + who);
+      },
+      None => {
+        return http.text(401, "");
+      }
+    }
+  }
+  return http.not_found();
+}
+
+function test_json_body_is_created(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let req: HttpRequest = http.request("POST", "/items").with_json("{\"n\": 1}");
+  if (req.body_len() != 8) {
+    return test.fail("body length: " + req.body_len().to_string());
+  }
+  let resp: HttpResponse = handle(req, m);
+  match (test.assert_status(resp, 200)) {
+    Fail(msg) => {
+      return test.fail(msg);
+    },
+    Pass => {}
+  }
+  match (test.assert_header(resp, "location", "/items/1")) {
+    Fail(msg) => {
+      return test.fail(msg);
+    },
+    Pass => {}
+  }
+  match (test.assert_header(resp, "Content-Type", "application/json")) {
+    Fail(msg) => {
+      return test.fail(msg);
+    },
+    Pass => {}
+  }
+  match (test.assert_body(resp, "{\"n\": 1}")) {
+    Fail(msg) => {
+      return test.fail(msg);
+    },
+    Pass => {}
+  }
+  if (!m.has_call("log")) {
+    return test.fail("the handler's log did not reach the mock");
+  }
+  return test.pass();
+}
+
+function test_body_without_its_type_is_refused(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("POST", "/items").with_body("{}"), m);
+  match (test.assert_status(resp, 415)) {
+    Fail(msg) => {
+      return test.fail(msg);
+    },
+    Pass => {}
+  }
+  return test.assert_no_header(resp, "Location");
+}
+
+function test_header_names_the_caller(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("GET", "/whoami").with_header("X-Caller", "ada"), m);
+  match (test.assert_status(resp, 200)) {
+    Fail(msg) => {
+      return test.fail(msg);
+    },
+    Pass => {}
+  }
+  if (m.call_count() != 0) {
+    return test.fail("a lookup reached the platform");
+  }
+  return test.assert_body(resp, "you are ada");
+}
+
+function test_bare_request_has_nothing(): test.TestOutcome {
+  let req: HttpRequest = http.request("GET", "/whoami");
+  if (req.headers.len() != 0 || req.body_len() != 0 || req.trailers.len() != 0) {
+    return test.fail("a bare request carries something");
+  }
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  return test.assert_status(handle(req, m), 401);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("HTTP request builder");
+  r = r.it("a JSON body is created", test_json_body_is_created);
+  r = r.it("a body without its type is refused", test_body_without_its_type_is_refused);
+  r = r.it("a header names the caller", test_header_names_the_caller);
+  r = r.it("a bare request has nothing", test_bare_request_has_nothing);
+  return r.finish();
+}

@@ -87,7 +87,7 @@ const inlineLoopSizeLimit = 160
 // unit that size, so the general policy stops here; inlineTinyLeaves is
 // the narrower thing such a unit gets instead.
 //
-// Below the ceiling it pays and the pass is unchanged: on examples/bench
+// Below the ceiling it pays and the pass is unchanged: on bench
 // (31-2,202 ops) retired instructions fall 4.95% on average, up to 23.9%
 // on call_overhead. Real programs sit far from the line — the bench
 // corpus tops out at 2.2k ops and the compiler's smallest module is 15k,
@@ -97,7 +97,7 @@ const inlineMaxUnitOps = 20000
 // inlineTinyLeafOps is the callee size that stays eligible above the
 // ceiling — see inlineTinyLeaves. Swept on the two over-ceiling programs
 // the repo has, coreutils/sort.fern (44,205 ops) and
-// examples/self_host/fern.fern (2,672,218 ops), against the same sources
+// compiler/fern.fern (2,672,218 ops), against the same sources
 // with the pass declining as it did before:
 //
 //	cap    sort -n Ir   sort -k2,2n Ir   sort .text   self-host .text

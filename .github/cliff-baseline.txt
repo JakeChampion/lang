@@ -3,7 +3,7 @@
 # gate uses — one tool, two baselines).
 #
 # FORMAT: metric  value  [tolerance%]. The key is <arch>/checker.cliff_<bytes|count>,
-# produced by scripts/cliff-bench compiling examples/self_host/checker.fern with
+# produced by scripts/cliff-bench compiling compiler/checker.fern with
 # the self-hosted compiler under FERN_CLIFF_REPORT=1.
 #
 # WHY THIS FILE EXISTS. docs/LOCAL-DEV-LOOP.md recorded this exact workload at

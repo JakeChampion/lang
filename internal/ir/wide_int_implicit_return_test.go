@@ -17,7 +17,7 @@ import (
 // "expected i64, found i32" and takes the whole module with it.
 //
 // It was not hypothetical. Every i64-returning function ending in a `match` hit
-// it, `vint_as_i64` in examples/self_host/interp.fern among them, which is why
+// it, `vint_as_i64` in compiler/interp.fern among them, which is why
 // that interpreter had never produced a valid wasm module at all — the defect
 // predated the driver work that found it and was invisible to every native
 // backend.

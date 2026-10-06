@@ -1,6 +1,6 @@
 # Releasing an Option / Result box is not a payload question (#8806, #8811)
 
-*2026-09-07* — `examples/self_host/irlower.fern`, all backends. The self-host's
+*2026-09-07* — `compiler/irlower.fern`, all backends. The self-host's
 box half of native's #8405, and the payload-kind gap #8410 left open.
 
 ## The measurement

@@ -2,7 +2,7 @@
 
 `asmcore.callgate_expr`, `ssarc.caller_sigs`, `semsource.schema_of`. Refs
 #8171. No emitted byte changes: the stage0-built compiler before and after
-emits the fixed older tree (`examples/self_host/fern.fern` at 1ae9cad,
+emits the fixed older tree (`compiler/fern.fern` at 1ae9cad,
 118,760,465 bytes of x86-64 asm) byte for byte, on main at c987221a and
 again at 0d7a8d32; the `selfhost-emit-hashes` sweep is 1,965 rows per
 compiler with 0 differing on both bases.

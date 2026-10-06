@@ -5,7 +5,7 @@
 > no-binary-on-`$PATH` property in 2026-05. The self-hosted compiler had
 > only reached it for `-target arm64-linux` / `-target arm64-darwin`;
 > `-target x86-64-linux` still emitted `.s` for an external assembler. It now
-> assembles and links in-process too, via `examples/self_host/x86_native.fern`
+> assembles and links in-process too, via `compiler/x86_native.fern`
 > (the merged encoder + GAS front-end, the x86 sibling of
 > `arm64_native.fern`) and `elf.fern`. `-target x86-64-linux -emit asm` is the escape
 > hatch that still emits GAS text — the shape a harness assembling with its

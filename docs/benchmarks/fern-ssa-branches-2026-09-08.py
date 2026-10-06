@@ -22,7 +22,7 @@ root = Path('/bench/ssa-branches-general')
 root.mkdir(exist_ok=True)
 compilers = {'before': '/bench/fern-ssa-index', 'after': '/bench/fern-ssa-branches'}
 env = dict(os.environ, LC_ALL='C', LANG='C', TZ='UTC')
-sources = [f'examples/bench/{name}.fern' for name in
+sources = [f'bench/{name}.fern' for name in
            ['string_scan', 'sort_strings', 'int_loop', 'call_overhead', 'array_index', 'pmap_insert',
             'ascii_scan', 'tokenize']]
 sources.append('coreutils/sort.fern')

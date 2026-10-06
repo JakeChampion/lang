@@ -63,13 +63,13 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	// failures); that bug is fixed and pinned by
 	// TestArm64ArgvStringsRcSafe, so they are back on the gate.
 	cases := []string{
-		"examples/tests/arithmetic_test.fern",
-		"examples/tests/json_field_eq_test.fern",
-		"examples/tests/http_response_headers_migrated_test.fern",
-		"examples/tests/sort_wider_test.fern",
-		"examples/tests/strings_test.fern",
-		"examples/tests/string_prelude_migrated_test.fern",
-		"examples/tests/process_assertions_test.fern",
+		"tests/stdlib/arithmetic_test.fern",
+		"tests/stdlib/json_field_eq_test.fern",
+		"tests/stdlib/http_response_headers_migrated_test.fern",
+		"tests/stdlib/sort_wider_test.fern",
+		"tests/stdlib/strings_test.fern",
+		"tests/stdlib/string_prelude_migrated_test.fern",
+		"tests/stdlib/process_assertions_test.fern",
 	}
 	for _, rel := range cases {
 		t.Run(filepath.Base(rel), func(t *testing.T) {

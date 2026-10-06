@@ -2,11 +2,11 @@
 
 ## Why
 
-The self-hosted wasm backend (`examples/self_host/wasm.fern`) emits a
+The self-hosted wasm backend (`compiler/wasm.fern`) emits a
 preview2-native **core module** for whatever WASI builtins a program uses
 (stdout, `read_file`/`write_file`, `random_bytes`/`random_i32`, `env`,
 `args`, the wall/monotonic clocks, `eprint`, `exit`). To turn that core into
-a runnable `wasi:cli/run@0.2.0` **component**, `examples/self_host/wat_component.fern`
+a runnable `wasi:cli/run@0.2.0` **component**, `compiler/wat_component.fern`
 wraps it in the Component-Model envelope.
 
 For the no-I/O shape that envelope is already **generative**

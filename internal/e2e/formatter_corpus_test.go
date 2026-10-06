@@ -37,7 +37,7 @@ import (
 
 func TestFormatterExampleCorpusRoundTrip(t *testing.T) {
 	var files []string
-	// Every .fern directory under examples/ ships as a program the CLI
+	// Every .fern program under examples/, tests/ and bench/ is one the CLI
 	// -fmt flag promises to round-trip cleanly, so the sweep takes all of
 	// them rather than the three it used to name — proposals/ alone is 59
 	// files of deliberately unusual syntax, which is the corpus most likely
@@ -48,12 +48,12 @@ func TestFormatterExampleCorpusRoundTrip(t *testing.T) {
 	// dropped-lambda + UTF-8 lexer corruption already caught on examples.
 	for _, dir := range []string{
 		"../../examples",
-		"../../examples/bench",
 		"../../examples/cli",
 		"../../examples/proposals",
-		"../../examples/tests",
 		"../../examples/vcl",
 		"../../examples/wasm",
+		"../../tests/stdlib",
+		"../../bench",
 		"../../internal/stdlib/std",
 		"../../internal/stdlib/core",
 	} {

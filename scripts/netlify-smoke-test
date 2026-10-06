@@ -337,7 +337,7 @@ stage_conformance() {
 # The driver is content-addressed in FERN_SELFHOST_BUILD_CACHE, so a deploy that
 # did not touch the compiler sources it depends on restores it instead.
 # Names are spelled out in full rather than factored into `^TestSelfHost(A|B)$`:
-# tools/testname_gate.sh matches whole `Test...` identifiers, so the factored
+# scripts/testname_gate.sh matches whole `Test...` identifiers, so the factored
 # form hides every alternative from it, and `make testnames` would keep passing
 # while this stage quietly selected one fewer test.
 stage_selfhost() {

@@ -103,7 +103,7 @@ turns those rebuilds into in-place writes exactly when it can prove them safe.
 fresh bytes over the whole loop: `std/ordmap` 48 B, `std/pmap` 0 B,
 `std/pvec` 0 B over 5,000 `.with` (#8056 — before it, 224 B and 1.2 KB of
 forced path-array copies recycled by the freelist, and one allocation per
-level for the copies themselves: `examples/bench/pvec_with` went from
+level for the copies themselves: `bench/pvec_with` went from
 1,118,676 allocations to 642,593, `pmap_insert` from 693,584 to 438,649,
 retired instructions −47% and −57%). With a snapshot held first, the same
 loops allocate exactly the copied nodes and nothing else, and `-sanitize`
@@ -202,7 +202,7 @@ method reaches with the struct's own type variables (`__om_insert__K__V`),
 so every chain below `insert` dangled. Its rc lowering also returned a
 match-bound array payload without a transfer retain (a use-after-free in the
 vector's leaf descent under FERN_SANITIZE=1). Those live in
-`examples/self_host/parser.fern` / `irlower.fern`, with rows in
+`compiler/parser.fern` / `irlower.fern`, with rows in
 `internal/e2eselfhost/self_host_generic_ctor_ir_test.go` (x86-64 and wasm
 legs), `self_host_stdlib_modules_ir_test.go` (all five modules through the
 self-host loader), and `self_host_arr_return_transfer_ir_test.go`. The
@@ -217,7 +217,7 @@ gate for closing them.
 
 - **A string-valued or string-keyed ordered-map node found by
   `match (__om_find(m.root, k))` in `get` / `get_or` is never released** — 5
-  of the 7 blocks `examples/tests/ordmap_test.fern` still shows. `__om_find`
+  of the 7 blocks `tests/stdlib/ordmap_test.fern` still shows. `__om_find`
   returns it with the transfer inc, and `reclaimableMatchScrutinee` refuses a
   scrutinee whose arms let a pointer out of the arm UNCOUNTED — a counted
   alias into a local is admitted since #8003, a `return` of the binding is
@@ -231,7 +231,7 @@ gate for closing them.
   narrower than they read.
 - **A fresh temp passed to a POINTER-returning method whose parameter reaches
   a self-recursive callee is not reclaimed** — `s.concat(v.slice(0, 2))`, 2
-  of the 4 blocks in `examples/tests/pvec_test.fern`. The per-position admission asks
+  of the 4 blocks in `tests/stdlib/pvec_test.fern`. The per-position admission asks
   `inferParamCountedRetain` whether `concat` retains `other` counted; its
   least fixpoint starts every parameter uncredited and can never ground one a
   function passes to itself (`__pv_into_elems(xs, i + 1, acc)` behind
@@ -296,10 +296,10 @@ the alternative allocating or leaking.
 The measurement programs are nine ~20-line files (`b_coremap`, `b_pmap`,
 `b_pmap_shared`, `b_ordmap`, `b_ordmap_shared`, `b_array_with`,
 `b_array_with_shared`, `b_pvec_with`, `b_pvec_with_shared`, plus the five
-`*_dense` variants) following the pattern in `examples/bench/README.md`: build
+`*_dense` variants) following the pattern in `bench/README.md`: build
 200,000 entries, then either update in place, update with a snapshot every
 1,000th version retained, or update with every version retained, printing
 `len`, a checksum, and `__heap_bump_bytes()`. They are not in
-`examples/bench` because the perf lane compares retired-instruction counts
+`bench` because the perf lane compares retired-instruction counts
 against a checked-in baseline and these runs are sized by wall clock, not by
 instruction budget; re-create them from the tables above when re-measuring.

@@ -8,7 +8,7 @@ import (
 )
 
 // TestPegModule exercises std/peg end-to-end on the compiled backends
-// (the TAP suite in examples/tests/peg_test.fern covers the full API
+// (the TAP suite in tests/stdlib/peg_test.fern covers the full API
 // via the interp gate TestRunnerPegExamplePasses; this test proves the
 // module's core machinery — recursive named rules, ordered choice,
 // captures, lookahead, the functional match-state threading — lowers
@@ -120,7 +120,7 @@ function main(): i32 {
 }
 
 // TestX86_64PegTapRunsNatively is the full-file gate for #5402: the
-// unmodified examples/tests/peg_test.fern TAP suite — formerly the one
+// unmodified tests/stdlib/peg_test.fern TAP suite — formerly the one
 // genuine crash left in the natively-compiled examples corpus — must
 // compile through the full CLI pipeline on x86-64 and run all 18 cases
 // green. TestPegLeftRecursion pins the minimized trigger on every
@@ -132,7 +132,7 @@ func TestX86_64PegTapRunsNatively(t *testing.T) {
 	fern := buildFernCLI(t)
 	out := filepath.Join(t.TempDir(), "peg_tap")
 	if o, err := exec.Command(fern, "-target", "x86-64-linux", "-o", out,
-		"../../examples/tests/peg_test.fern").CombinedOutput(); err != nil {
+		"../../tests/stdlib/peg_test.fern").CombinedOutput(); err != nil {
 		t.Fatalf("native compile of peg_test.fern failed: %v\n%s", err, o)
 	}
 	var cmd *exec.Cmd

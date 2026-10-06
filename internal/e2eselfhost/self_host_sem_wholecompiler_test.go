@@ -51,7 +51,7 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := filepath.Abs("../../examples/self_host")
+	tree, err := filepath.Abs("../../compiler")
 	if err != nil {
 		t.Fatal(err)
 	}

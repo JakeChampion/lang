@@ -145,7 +145,7 @@ an arr-of-arr local newly carries: break-even is ~2.4 sites. The compiler's own
 compile has 20 of them, worth ~400 instructions; it shrinks 5,867 in total,
 because most of that difference is the emitter source itself losing ~110
 `s.write` lines. `checker.fern` alone shrinks 76 lines, and the
-`examples/bench` corpus is byte-identical on all three targets, because nothing
+`bench` corpus is byte-identical on all three targets, because nothing
 in it has such a field. What the slice buys is one implementation instead of
 four, and it makes the eventual Fern migration of this body a one-site edit per
 backend rather than a five-way port.
@@ -453,7 +453,7 @@ The principled end-state: **write the helpers as ordinary Fern functions in a
 
 - **dependencies are the call graph** — `map_set` calling `str_eq` is an
   ordinary edge, no `mark_*`, no `runtime_need_deps`;
-- **gating is `treeshake`** (`examples/self_host/treeshake.fern`), the
+- **gating is `treeshake`** (`compiler/treeshake.fern`), the
   reachability DCE that already prunes `mod.funcs` to what `main` reaches —
   an unused helper is dropped for free, per program, per backend;
 - **a missing dependency is a compile error, not a link error**;
@@ -570,7 +570,7 @@ prerequisite sub-task.
 ## Gating: `treeshake` replaces the dependency machinery
 
 Once helpers are reachable Fern functions, `treeshake` (already a CI-gated
-pass, `examples/self_host/treeshake.fern`) prunes `mod.funcs` to those
+pass, `compiler/treeshake.fern`) prunes `mod.funcs` to those
 reachable from `main`. A helper calling another helper is an ordinary
 identifier reference the collector already follows — so the transitive
 closure that `close_needs` computes by hand becomes the reachability walk for

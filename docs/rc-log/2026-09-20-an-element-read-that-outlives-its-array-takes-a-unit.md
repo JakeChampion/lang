@@ -1,6 +1,6 @@
 # 2026-09-20 — an element read that outlives its array takes a unit
 
-`examples/bench/sort_strings` ran 214x the native register backend on the
+`bench/sort_strings` ran 214x the native register backend on the
 self-host, and only through the typed lowering: the AST lowering and native
 are level. The shape is `__cmp_insertion`'s in `core/cmp`:
 
@@ -67,7 +67,7 @@ pins can see a copy.
 The seven programs and the declarations between the two rows are #9837's
 `map unit is not shared` root going from 13 sites to 0; the hold refuses
 nothing and admits nothing, and no program's compile status changed. The
-compiler's own sources produce whole (8678 of 8678). Across `examples/bench`
+compiler's own sources produce whole (8678 of 8678). Across `bench`
 the hold changes no count but `sort_strings`'s and adds 42,000 instructions
 to each of the two `utf8_ingest` benches, a retain on a read that outlives a
 consuming use of its array there.

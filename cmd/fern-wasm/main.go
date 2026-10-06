@@ -8,7 +8,7 @@
 //
 // Compiling, checking, interpreting, the assembly pane and both worlds'
 // components all run on the self-host compiler, web/playground.wasm
-// (examples/self_host/playground_run.fern through web/wasi-shim.js). What
+// (compiler/playground_run.fern through web/wasi-shim.js). What
 // is left here is the language server, which that compiler does not have
 // (docs/PLAYGROUND-SELFHOST-WASM.md).
 //

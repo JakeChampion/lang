@@ -16,14 +16,14 @@ import (
 // logic is testable against scripted upstreams with EXACT virtual-time
 // assertions, on every backend including the interpreter.
 
-// `examples/tests/sim_net_test.fern` is the TAP suite: input-order
+// `tests/stdlib/sim_net_test.fern` is the TAP suite: input-order
 // gather over three latencies, race picking the fast endpoint,
 // with_deadline dropping only the slow one, chunk accumulation +
 // per-chunk re-suspension, the dead-upstream "" contract, and the
 // per-endpoint hits counter / wildcard path. Passing → exit 0.
 func TestRunnerSimNetExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/sim_net_test.fern")
+	src := langSrcAbs(t, "tests/stdlib/sim_net_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)

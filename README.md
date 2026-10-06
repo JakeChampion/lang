@@ -131,7 +131,7 @@ ISAs. Per-backend support and known gaps: `docs/BACKEND-PARITY.md`.
   error. `fern -capabilities` reports what each package uses and
   `fern -effects` does the same per function. `docs/PACKAGE-CAPABILITIES-BRIEF.md`.
 - **Testing.** `std/test` is a TAP-13 runner written in Fern; see
-  `examples/tests/`. `fern -cover` instruments a build for line and branch
+  `tests/stdlib/`. `fern -cover` instruments a build for line and branch
   coverage and `fern -cover-report -lcov` writes an lcov tracefile.
 - **Debugging.** `fern -sanitize` catches double frees and use-after-free and
   prints a leak census at exit; `-g` emits a symbol table; fatal aborts print
@@ -150,7 +150,7 @@ ISAs. Per-backend support and known gaps: `docs/BACKEND-PARITY.md`.
 
 ## The self-hosted compiler
 
-Fern has two compilers. The Fern one under `examples/self_host/` is where
+Fern has two compilers. The Fern one under `compiler/` is where
 the language now lands: it compiles itself to a byte-identical fixpoint
 (`make distcheck`) and builds every program in `coreutils/`. `make bootstrap`
 builds it from a checkout with no Go installed, using a pinned earlier
@@ -186,16 +186,23 @@ skip them, and an allocation whose last reference is dropped can be reused
 in place for a fresh one of the same shape.
 
 ```
+compiler/             the compiler, written in Fern (fern.fern is its entry; *_run.fern are test drivers)
 cmd/fern/             CLI driver           cmd/fern-lsp/       language server
 cmd/ferndoc/          stdlib doc generator cmd/fern-wasm/      playground bundle
-internal/lexer,parser,checker,monomorph,closureconv,ir   front end and IR
-internal/x86tbl,arm64tbl/  the self-host assemblers' vocabulary tables
-internal/stdlib/std/  the standard library, written in Fern
+internal/lexer,parser,checker,monomorph,closureconv,ir   Go front end and IR
 internal/interp/      tree-walking interpreter and REPL
-internal/e2e*/        end-to-end suites for every backend and the self-host
-examples/self_host/   the compiler written in Fern
+internal/x86tbl,arm64tbl/  the compiler's assembler vocabulary tables
+internal/stdlib/std/  the standard library, written in Fern
+internal/e2e*/        end-to-end suites
+examples/             example programs
+tests/                Fern-side tests: stdlib/ (std/test suites), probes/ (leak probes)
+conformance/          the conformance corpus
+bench/                benchmark programs
 coreutils/            GNU coreutils in Fern
-site/                 the documentation site
+bootstrap/            the pinned stage0 and `make bootstrap`
+scripts/              repo tooling: CI gates, generators, benchmarks
+spec/ docs/           the language spec and design notes
+site/ web/ editors/   documentation site, playground, editor support
 ```
 
 ## Developing

@@ -34,7 +34,7 @@ name: Lint
 #                else (#7317). Also runs on every push to main
 #                (check-sources.yml) to catch merge races.
 #   deadcode   — `make deadcode`: fails on any unreachable function not in
-#                tools/deadcode-allowlist.txt. A whole-program SSA reachability
+#                scripts/deadcode-allowlist.txt. A whole-program SSA reachability
 #                analysis, so it is the slowest of these by some way.
 #   actionlint — `make actionlint`: lints .github/workflows/*.yml and the
 #                composite actions, plus shellcheck over `run:` blocks. These
@@ -47,7 +47,7 @@ name: Lint
 #                the 17 tests it listed — including the one its 55-minute budget
 #                was sized for — and reported green the whole time (#6310).
 #   ci-selftest — `make ci-selftest`: runs ci.yml's `changes` script against
-#                stubbed API responses (tools/ci-changes-selftest.mjs), so the
+#                stubbed API responses (scripts/ci-changes-selftest.mjs), so the
 #                path-filter grammar it implements is pinned before it gates a
 #                pull request.
 #   fern-test-cache — `make fern-test-cache`: a `.fern` edit reaches the compiler

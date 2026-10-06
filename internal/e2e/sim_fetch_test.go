@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// `examples/tests/sim_fetch_test.fern` runs std/fetch's client over the
+// `tests/stdlib/sim_fetch_test.fern` runs std/fetch's client over the
 // scripted network in std/sim_fetch: every behaviour of the dialled route
 // (bounds at their exact virtual time, redirects, the reset retry, the
 // block list, decoding, the body caps) against a transport the test
@@ -14,7 +14,7 @@ import (
 // backend, and on the self-host compiler in internal/e2eselfhost's
 // std/test e2e.
 
-const simFetchSuite = "examples/tests/sim_fetch_test.fern"
+const simFetchSuite = "tests/stdlib/sim_fetch_test.fern"
 
 var simFetchWant = []string{"# Suite: std/sim_fetch", "# pass 44", "# fail 0", "1..44"}
 

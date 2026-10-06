@@ -21,7 +21,7 @@ see §6 for what was actually verified).
 `PLT-LANDSCAPE-2026.md` §2.2 ("the goal-2 Perceus port must
 re-derive all four rule sets in the self-host checker anyway")
 is already stale in one happy direction: all four *checker*
-surfaces are ALREADY ported to `examples/self_host/checker.fern`
+surfaces are ALREADY ported to `compiler/checker.fern`
 (§2 records each one's anchors). What remains un-ported is the
 IR-side half of `fip` (`fbip`, graded `fip(n)`, the E068 reuse
 verification). The unification opportunity has therefore
@@ -138,7 +138,7 @@ consuming-match slices rely on
 (docs/OWNERSHIP-INFERENCE-PLAN.md).
 
 Self-host status: **ported.** `own_diags`
-(`examples/self_host/checker.fern:6392`) with the `ow_*` family
+(`compiler/checker.fern:6392`) with the `ow_*` family
 (checker.fern:6005-6390): E051 at checker.fern:6130, E050 at
 6164/6173, self-reassign admission `ow_self_move_admits`
 (used at checker.fern:6296).
@@ -183,7 +183,7 @@ Self-host status: **ported, and enforced on the compile path.** All
 three bits are stamped by the parser (`fip`, `fbip`, and the graded
 allowance), the E053 walk applies native's constructor rule and its
 asymmetric call rule, and the IR-side budget check
-(`examples/self_host/irfipverify.fern`, #6639 slice 3) runs on every
+(`compiler/irfipverify.fern`, #6639 slice 3) runs on every
 emit — the whole-program CLI path and the per-unit and per-module
 builds alike.
 
@@ -464,7 +464,7 @@ surfaces are already ported (§2), the actionable order is:
    (rc_analysis.go:344) / self-host
    `borrowable_params_interproc` and
    `consume_safe_params_interproc`
-   (`examples/self_host/irlower.fern:32676` / `:32769`) are the
+   (`compiler/irlower.fern:32676` / `:32769`) are the
    inference that assigns axis-1 modes to unannotated params;
    they should be documented (and eventually named) as mode
    inference, not as unrelated escape analyses.

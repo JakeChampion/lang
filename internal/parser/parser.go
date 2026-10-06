@@ -318,7 +318,7 @@ func (p *parser) acceptIf(when bool, kind lexer.Kind, text string) (lexer.Token,
 // only a binding here; the two compilers had also drifted apart over which
 // half was which, so `let (a, _) = t(); var (b, _) = t();` compiled
 // self-hosted and was rejected natively. The self-host mirror is
-// `discard_name` in examples/self_host/parser.fern.
+// `discard_name` in compiler/parser.fern.
 func discardName(name string, pos ast.Position, nth int) string {
 	if name != "_" {
 		return name

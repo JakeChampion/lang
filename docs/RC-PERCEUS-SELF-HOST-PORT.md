@@ -11,7 +11,7 @@
 Status: **design + implementation tracker** (started 2026-06-07).
 Goal: bring the native compiler's Perceus reference-counting +
 compile-time memory optimisation to the self-hosted Fern compiler
-(`examples/self_host/`), at feature parity. This document is the
+(`compiler/`), at feature parity. This document is the
 roadmap; it mirrors `docs/RC-PERCEUS-PLAN.md` (the native rollout,
 Phases 0–6 + Perceus, all shipped) and `docs/OWNERSHIP-INFERENCE-PLAN.md`,
 mapping each native piece onto the self-host architecture.
@@ -54,7 +54,7 @@ source → lexer.tokenize → parser.parse_module
        → asm.emit_module / asm_arm64.emit_module / wasm.emit_module
 ```
 
-- Shared frontend: `examples/self_host/asmcore.fern` — the `Ty` type
+- Shared frontend: `compiler/asmcore.fern` — the `Ty` type
   system, `infer_expr_type`, `EmitState` + its state methods, the
   free-variable walker, and the pre-codegen `check_module`. CLAUDE.md:
   edit it **once**; it is not mirrored in the backends.
@@ -107,7 +107,7 @@ landed in green, bounded slices.
 > 1. **A self-host IR path was built and is now the DEFAULT.** The
 >    pipeline `irlower.fern → asm_ir.fern (x86-64) / asm_arm64_ir.fern
 >    (arm64) / wasm_ir.fern (wasm)` lowers every non-async
->    `examples/tests/*_test.fern` module (goal 1 of CLAUDE.md, completed
+>    `tests/stdlib/*_test.fern` module (goal 1 of CLAUDE.md, completed
 >    by the `map_verbs` flip, #4026). The legacy AST→asm emitters
 >    (`asm.fern` / `asm_arm64.fern` / `wasm.fern`) are now reached **only**
 >    by the parallel-owned async modules.
@@ -6974,7 +6974,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   deep-stack case; `TestSelfHostTrmcIR*` green. Refs #5333 #4352 #4578 #6703 #4451.
 
 - 2026-08-12: **`__heap_mark` / `__heap_release_to` reach the self-host backends
-  (#6728).** The arena checkpoint had no lowering anywhere in `examples/self_host`,
+  (#6728).** The arena checkpoint had no lowering anywhere in `compiler`,
   so `bin/fern-selfhost` refused a program `bin/fern` builds and runs — and the
   pair exists FOR the self-host, whose per-module emit is the workload it was
   built to keep inside the arena. Both register backends now lower it INLINE, for

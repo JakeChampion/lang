@@ -75,7 +75,7 @@ on:
   workflow_dispatch:
 
 # ISOLATED WHOLE-COMPILER DRIVER TESTS — the `^TestSelfHost*` tests that build
-# examples/self_host/fern.fern, the ENTIRE self-hosted compiler. They run in
+# compiler/fern.fern, the ENTIRE self-hosted compiler. They run in
 # the `cli` job, which builds fern.fern once for all of them; the shards
 # exclude them. ALL OF THEM t.Skip on aarch64
 # (they need a native x86 run), so this is x86-only and excluding them from the

@@ -32,22 +32,22 @@ test:
 # Check the generated region without changing the source, and verify the gate
 # rejects drift and malformed markers. Requires uv; missing tooling fails.
 digest-check:
-	uv run --no-project tools/gen_digests.py --check
-	uv run --no-project python -B -m unittest discover -s tools -p test_gen_digests.py
+	uv run --no-project scripts/gen_digests.py --check
+	uv run --no-project python -B -m unittest discover -s scripts -p test_gen_digests.py
 
 # The same for the table-driven log's generated data: internal/fdlibm/logtab.go
 # and the regions the three self-host emitters carry.
 log-table-check:
-	uv run --no-project tools/gen_log_table.py --check
-	uv run --no-project python -B -m unittest discover -s tools -p test_gen_log_table.py
+	uv run --no-project scripts/gen_log_table.py --check
+	uv run --no-project python -B -m unittest discover -s scripts -p test_gen_log_table.py
 
 vet:
 	go vet ./...
 
 # Fail on unreachable functions not listed in the allowlist. See
-# tools/deadcode_gate.sh and tools/deadcode-allowlist.txt.
+# scripts/deadcode_gate.sh and scripts/deadcode-allowlist.txt.
 deadcode:
-	./tools/deadcode_gate.sh
+	./scripts/deadcode_gate.sh
 
 # Lint every .github/workflows/*.yml + composite action. Nothing checked
 # these files before, so a typo'd `runs-on`, an expression referencing a
@@ -80,9 +80,9 @@ hooks:
 # Fail when a workflow selects a Go test by a name nothing answers to.
 # `go test -run` reports exit 0 for a name that matches nothing, so a lane
 # keeps looking authoritative while covering less than it names. See
-# tools/testname_gate.sh.
+# scripts/testname_gate.sh.
 testnames:
-	./tools/testname_gate.sh
+	./scripts/testname_gate.sh
 
 # A `.fern` edit reaches the compiler through a child process, where the go
 # command's test cache cannot see it. Without e2eharness.TrackFernSources the
@@ -93,19 +93,19 @@ fern-test-cache:
 
 # Run ci.yml's `changes` script against stubbed API responses: the JS copy of
 # GitHub's filter grammar and the job's fail-open rules, pinned the way
-# internal/sourcelint pins the Go copy. See tools/ci-changes-selftest.mjs.
+# internal/sourcelint pins the Go copy. See scripts/ci-changes-selftest.mjs.
 ci-selftest:
 	@command -v node >/dev/null 2>&1 || { \
 		echo "node is not on PATH: the lint lane runs this on the runner image" >&2; exit 1; }
-	node tools/ci-changes-selftest.mjs
-	node tools/main-red-selftest.mjs
-	node tools/perf-gate-selftest.mjs
+	node scripts/ci-changes-selftest.mjs
+	node scripts/main-red-selftest.mjs
+	node scripts/perf-gate-selftest.mjs
 
 # Report the live state of the native-convergence freeze preconditions,
 # derived from the tree. Fails only on a
-# REGRESSION (ground lost). See tools/freeze_gate.sh.
+# REGRESSION (ground lost). See scripts/freeze_gate.sh.
 freeze:
-	./tools/freeze_gate.sh
+	./scripts/freeze_gate.sh
 
 # Type-check the self-host sources and every stdlib module with the native
 # `fern -check` — the direct form of the question every self-host lane
@@ -125,21 +125,21 @@ freeze:
 # either workflow is what keeps them from diverging.
 #
 # The fixture gate rides along for the same reason and answers the half the
-# first line cannot: `-check examples/self_host/fern.fern` reads the tree, and
+# first line cannot: `-check compiler/fern.fern` reads the tree, and
 # the Fern fixtures that only exist as Go string literals are not in it, so a
 # field added to a struct they name is clean here and red on every self-host
 # shard (#9805). It type-checks them in 9 s.
 #
 # The driver gate answers the other half the first line cannot, and it is the
-# same shape a third time: the 47 examples/self_host/*_run.fern drivers import
+# same shape a third time: the 47 compiler/*_run.fern drivers import
 # the compiler's modules but are not in fern.fern's tree, so a deleted function
 # one of them still calls is clean here and red wherever its test builds it
 # (#9969 deleted semsource.modes_differ with semsource_census_run still calling
 # it, and four internal/e2eselfhost tests went red for it in CI).
 check-sources: bin/fern
-	./bin/fern -check examples/self_host/fern.fern
-	./tools/stdlib_check.sh
-	./tools/selfhost_driver_check.sh
+	./bin/fern -check compiler/fern.fern
+	./scripts/stdlib_check.sh
+	./scripts/selfhost_driver_check.sh
 	go test ./internal/e2eselfhost/ -run 'TestSelfHostFeatureCensus$$|TestSelfHostFixtureSourcesCheck$$' -count=1
 
 # Build the SELF-HOST compiler to a native binary for THIS host, so self-host
@@ -169,7 +169,7 @@ check-sources: bin/fern
 SELFHOST_TARGET ?= $(shell uname -sm | sed -e 's/^Darwin.*/arm64-darwin/' -e 's/^Linux aarch64/arm64-linux/' -e 's/^Linux x86_64/x86-64-linux/')
 selfhost-cli: bin/fern
 	@mkdir -p bin
-	./bin/fern -target $(SELFHOST_TARGET) -o bin/fern-selfhost examples/self_host/fern.fern
+	./bin/fern -target $(SELFHOST_TARGET) -o bin/fern-selfhost compiler/fern.fern
 	@chmod +x bin/fern-selfhost
 	@echo "built bin/fern-selfhost ($(SELFHOST_TARGET)) — see the Makefile comment for the loop"
 
@@ -224,10 +224,10 @@ fmt-check: bin/fern
 # nothing gated it: gofmt's trailing-comment and map-literal alignment goes
 # stale as soon as a longer entry lands beside an existing one.
 gofmt:
-	./tools/gofmt_gate.sh --fix
+	./scripts/gofmt_gate.sh --fix
 
 gofmt-check:
-	./tools/gofmt_gate.sh
+	./scripts/gofmt_gate.sh
 
 # Every cheap whole-repo gate, in the order the Lint workflow runs them.
 # One target so a local run and CI cannot drift into checking different things,

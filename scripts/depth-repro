@@ -29,7 +29,7 @@ peak() { # peak() CMD... -> peak RSS in KB, or "OOM"
 }
 
 [ -x bin/fern ] || go build -o bin/fern ./cmd/fern
-[ -x bin/fern-selfhost ] || { ./bin/fern -target x86-64-linux -o bin/fern-selfhost examples/self_host/fern.fern; chmod +x bin/fern-selfhost; }
+[ -x bin/fern-selfhost ] || { ./bin/fern -target x86-64-linux -o bin/fern-selfhost compiler/fern.fern; chmod +x bin/fern-selfhost; }
 
 printf '%-8s %14s %14s\n' arms native self-host
 for n in "${@:-100 200 400 800}"; do

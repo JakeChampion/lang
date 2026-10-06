@@ -26,7 +26,7 @@ with **E068** unless every constructor site is reuse-paired
 (R1–R4 below) or within the allowance — `fern explain E068` for
 the exact contract, `internal/ir/fip_verify.go` for the pass.
 The self-host compiler runs the same check over its own lowering
-(`examples/self_host/irfipverify.fern`, on every compile path). Still
+(`compiler/irfipverify.fern`, on every compile path). Still
 open: the drop-guided source selection default (plan E3 —
 evaluated, kept off). Where a shape has known non-firing edges,
 they are listed under "taints".

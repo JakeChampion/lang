@@ -10,7 +10,7 @@ import (
 )
 
 // The self-host compiler carries its own copy of this package
-// (examples/self_host/platforms.fern, #6633) because it cannot import Go. Two
+// (compiler/platforms.fern, #6633) because it cannot import Go. Two
 // copies of a classification is exactly the shape CLAUDE.md warns about: a new
 // builtin needs classifying in both capability systems, and the way that goes
 // wrong is one side being updated and the other not — silently, because
@@ -26,7 +26,7 @@ import (
 // package's `<isa>-<environment>` spellings; capability sets are compared per
 // PROFILE, which is where the meaning lives.
 
-const selfHostPlatformsSrc = "../../examples/self_host/platforms.fern"
+const selfHostPlatformsSrc = "../../compiler/platforms.fern"
 
 func readSelfHostPlatforms(t *testing.T) string {
 	t.Helper()

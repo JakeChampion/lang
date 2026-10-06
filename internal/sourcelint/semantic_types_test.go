@@ -12,7 +12,7 @@ import (
 // The semantic type model must be usable by both checked syntax and pre-RC IR.
 // Importing the checker here would create a cycle as soon as AST carries Type.
 func TestSelfHostSemanticTypeBoundary(t *testing.T) {
-	src, err := os.ReadFile("../../examples/self_host/typeinfo.fern")
+	src, err := os.ReadFile("../../compiler/typeinfo.fern")
 	if err != nil {
 		t.Fatal(err)
 	}

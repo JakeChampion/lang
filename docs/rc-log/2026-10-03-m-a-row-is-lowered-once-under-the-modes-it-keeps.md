@@ -2,7 +2,7 @@
 
 `semlower`'s ownership-inference pass, and `asm_ir`'s scan for the heap
 helpers. Refs #8171. No emitted byte changes: the stage0-built compiler
-before and after emits the fixed older tree (`examples/self_host/fern.fern`
+before and after emits the fixed older tree (`compiler/fern.fern`
 at 1ae9cad, its bindings spelled `let`) and that tree's `checker.fern` byte
 for byte.
 

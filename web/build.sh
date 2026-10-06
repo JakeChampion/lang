@@ -6,7 +6,7 @@
 # web/playground.wasm is the self-host compiler, compiled BY the self-host
 # compiler to a WASI command module: source on stdin, the mode in argv
 # (-check, -interp, -target, -emit), the artifact on stdout
-# (examples/self_host/playground_run.fern). The page runs it through
+# (compiler/playground_run.fern). The page runs it through
 # web/wasi-shim.js. The compiler that builds it is bin/fern-selfhost —
 # `make bootstrap` (no Go) or `make selfhost-cli` (via bin/fern) both produce
 # it — or the one FERN_SELFHOST names.
@@ -33,7 +33,7 @@ if [ ! -x "$selfhost" ]; then
   make selfhost-cli >&2
 fi
 "$selfhost" -target wasm32-wasi -emit core-module -embed internal/stdlib \
-  -o "$here/playground.wasm" "$PWD/examples/self_host/playground_run.fern" "$PWD/internal/stdlib"
+  -o "$here/playground.wasm" "$PWD/compiler/playground_run.fern" "$PWD/internal/stdlib"
 
 GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o "$here/fern.wasm" ./cmd/fern-wasm
 

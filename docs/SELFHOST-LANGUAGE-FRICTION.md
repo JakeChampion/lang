@@ -1,6 +1,6 @@
 # What the language does to the self-hosted compiler
 
-An analysis of `examples/self_host/` (94 files, 175,194 lines) asking one
+An analysis of `compiler/` (94 files, 175,194 lines) asking one
 question: **which parts of Fern make writing the self-hosted compiler harder
 than it needs to be?** Not "which parts of the self-host are badly written" —
 that is `docs/SELF-HOST-AUDIT.md`, and its findings are largely structural
@@ -40,7 +40,7 @@ except a deliberate conversion.
 ## 1. The census
 
 What a 182k-line compiler written in a modern language uses, counted across
-`examples/self_host/*.fern` with comments and literals stripped. The `Gate`
+`compiler/*.fern` with comments and literals stripped. The `Gate`
 column says what `TestSelfHostFeatureCensus` holds the row to.
 
 | Construct | The language has it | Self-host uses it | Gate |

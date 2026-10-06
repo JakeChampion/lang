@@ -8,7 +8,7 @@ import (
 	"github.com/jakechampion/lang/internal/arm64tbl"
 )
 
-const arm64NativeFern = "../../examples/self_host/arm64_native.fern"
+const arm64NativeFern = "../../compiler/arm64_native.fern"
 
 // TestGeneratedFernIsUpToDate is the gate that makes the shared table real:
 // a hand edit to either the table or a generated block fails here rather

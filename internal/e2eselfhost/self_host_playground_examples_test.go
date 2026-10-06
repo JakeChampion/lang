@@ -13,7 +13,7 @@ import (
 // web/index.html's built-in examples, and the <FernPlayground> snippets the
 // docs site embeds, are real Fern programs put in front of users: the page
 // checks, interprets and compiles them through web/playground.wasm, which
-// is examples/self_host/playground_run.fern. Each is driven here through the
+// is compiler/playground_run.fern. Each is driven here through the
 // same driver, hosted natively, in every mode the page uses on its world: a
 // handler program's Run is locked out on the page, so it is built for the
 // http world's two forms instead.

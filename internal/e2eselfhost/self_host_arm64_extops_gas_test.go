@@ -6,7 +6,7 @@ import (
 )
 
 // These tests byte-check the #7887 port of the #7886 instruction surface
-// to the self-host arm64 assembler (examples/self_host/arm64_native.fern)
+// to the self-host arm64 assembler (compiler/arm64_native.fern)
 // against aarch64-linux-gnu-as, through the in-process bench driver — the
 // same no-qemu, encodings-only pattern as
 // TestSelfHostArm64AsmEncodingMatchesGas. Every `want` below is what

@@ -10,7 +10,7 @@ import (
 )
 
 // TestSelfHostIRStrengthPeephole pins the self-hosted stack IR's
-// strength-reduction peephole (examples/self_host/ir.fern's reduce_strength /
+// strength-reduction peephole (compiler/ir.fern's reduce_strength /
 // optimize_ops — the op-list twin of native's internal/ir/strength.go, #6638).
 //
 // The ir_strength_run driver runs the pass over one op list per rewrite and

@@ -180,7 +180,7 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 		},
 		{
 			// THE ROW THAT CARRIES THE MOST WEIGHT. 161 of the 173 struct alias
-			// binds in examples/self_host are PARAMETER-origin — 93% — so the
+			// binds in compiler are PARAMETER-origin — 93% — so the
 			// CALLEE-side refusal is what this row pins: a parameter is borrowed
 			// and owns nothing, and slot_is_reclaimable_struct refuses one at its
 			// first line, so `let v: P = p` inside take neither retains nor

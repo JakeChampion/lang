@@ -172,7 +172,7 @@ reads after the call. It is pure waste, so the "views are safe because their
 targets leak" trade does not apply to it and nothing is lost by removing it.
 
 The corpus makes the fix cheap. `[u8]` matches 34 times as literal text across
-`internal/stdlib` and `examples/self_host`, but 24 of those are outside
+`internal/stdlib` and `compiler`, but 24 of those are outside
 comments, and the self-host's single non-comment match is `[u8]` inside an E033
 diagnostic *string*, so the self-host carries no `[u8]` annotation at all. The
 real corpus is 22 occurrences across 15 distinct stdlib functions, every one of

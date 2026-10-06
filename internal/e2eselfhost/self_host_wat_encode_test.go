@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostWatEncode exercises the binary-wasm byte-emission primitives
-// (examples/self_host/wat_encode.fern) — slice 4a of the self-hosted
+// (compiler/wat_encode.fern) — slice 4a of the self-hosted
 // binary backend (section framing, vecs, names, valtypes, magic/version)
 // the module-walker builds on.
 //
@@ -28,7 +28,7 @@ func TestSelfHostWatEncode(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	watbin, err := os.ReadFile("../../examples/self_host/watbin.fern")
+	watbin, err := os.ReadFile("../../compiler/watbin.fern")
 	if err != nil {
 		t.Fatalf("read watbin.fern: %v", err)
 	}

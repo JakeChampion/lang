@@ -72,7 +72,7 @@ receiver, which the first version of this slice found out the hard way — with
 the rebinds admitted, `let apf = s.emit(op); apf = lower_expr(x, apf); return
 emit_arr_store(apf, …)` credited `apf`, the sweep deep-dropped its `locals`
 under the box the return had just copied them into, and the self-built
-compiler crashed compiling `examples/tests` (the arm64 stage-2 fixpoint saw it
+compiler crashed compiling `tests/stdlib` (the arm64 stage-2 fixpoint saw it
 first, as a gen2 segfault). `derived_anywhere` closes that for the sweep too.
 
 ## The cycle the consume-safe registry could not admit
@@ -139,7 +139,7 @@ The sanitized self-built stage1 assembling natively:
 
 401 snapshot rows in the compiler, 480 `__field_reclaim_LowerState` sites
 against 57. No sanitizer finding on the three modules, on the six fixtures,
-or on the `examples/tests` inputs that crashed the arm64 stage 2.
+or on the `tests/stdlib` inputs that crashed the arm64 stage 2.
 
 ## Found on the way: a variant over an array field took no count
 

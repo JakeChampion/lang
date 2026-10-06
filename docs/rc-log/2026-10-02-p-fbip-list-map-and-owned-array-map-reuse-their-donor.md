@@ -87,7 +87,7 @@ The pinned stage0 (c891ebc) refuses a local reassigned inside a nested loop as
 the argument to an `own` parameter (E051, "not a borrowed one") where the
 current checker accepts it. A driver that compiles under `make selfhost-cli`
 then fails every `internal/e2eselfhost` test that builds one.
-`stage0 -check examples/self_host/fern.fern internal/stdlib` takes 7 s and
+`stage0 -check compiler/fern.fern internal/stdlib` takes 7 s and
 catches it before a suite does.
 
 ## Gates

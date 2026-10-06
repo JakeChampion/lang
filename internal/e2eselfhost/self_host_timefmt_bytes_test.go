@@ -11,7 +11,7 @@ import (
 
 func TestSelfHostTimefmtBytes(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	src, err := filepath.Abs("../../examples/tests/timefmt_bytes_test.fern")
+	src, err := filepath.Abs("../../tests/stdlib/timefmt_bytes_test.fern")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestSelfHostArm64DarwinTimefmtBytes(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	cli := buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
-	src, err := filepath.Abs("../../examples/tests/timefmt_bytes_test.fern")
+	src, err := filepath.Abs("../../tests/stdlib/timefmt_bytes_test.fern")
 	if err != nil {
 		t.Fatal(err)
 	}

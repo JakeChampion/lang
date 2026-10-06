@@ -11,7 +11,7 @@ had not regressed.
 ## Measured
 
 `__heap_bump_bytes()` deltas, N=1500, identical on x86-64 and arm64. One fixed
-native compiler; only the `examples/self_host` sources varied between the two
+native compiler; only the `compiler` sources varied between the two
 driver builds.
 
 | leg | tree | gb | gt |

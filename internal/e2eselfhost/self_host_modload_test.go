@@ -28,7 +28,7 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 	// Build the driver as an x86 host binary via the native toolchain.
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "driver")
 
-	builtinsSrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+	builtinsSrc, err := os.ReadFile("../../compiler/builtins.fern")
 	if err != nil {
 		t.Fatalf("read builtins.fern: %v", err)
 	}

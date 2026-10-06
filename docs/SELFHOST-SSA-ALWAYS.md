@@ -15,7 +15,7 @@
 
 ## Goal
 
-Make the self-hosted Fern compiler (`examples/self_host/`) compile
+Make the self-hosted Fern compiler (`compiler/`) compile
 **through the SSA IR by default**, with **every backend consuming that
 IR** — so the IR (`ssa.fern`) becomes the single lowering path the way
 `internal/ir` is for the Go compiler. The AST emitters (`asm.fern`,

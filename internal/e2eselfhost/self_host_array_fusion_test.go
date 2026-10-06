@@ -10,7 +10,7 @@ import (
 )
 
 // Producer-consumer fusion of std/array pipelines in the self-host compiler
-// (#11072, examples/self_host/semfuse.fern), on every self-host target.
+// (#11072, compiler/semfuse.fern), on every self-host target.
 //
 // The pass runs on the typed semantic graphs all three backends lower from, so
 // each target is run rather than one: what is shared is the graph, and what

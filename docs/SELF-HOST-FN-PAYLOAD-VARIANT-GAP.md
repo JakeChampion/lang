@@ -79,7 +79,7 @@ of building the variant box. The Go compiler handles this correctly
 Build the driver, then feed each program on stdin:
 
 ```
-go run ./cmd/fern -target x86-64-linux -o /tmp/shc examples/self_host/asm_run.fern
+go run ./cmd/fern -target x86-64-linux -o /tmp/shc compiler/asm_run.fern
 /tmp/shc < prog.fern > prog.s && cc -nostdlib -static -o prog prog.s && ./prog
 ```
 
@@ -123,7 +123,7 @@ on the function-typed payload and fell back. So the proximate
    bail falls back to the AST emitter.
 
 2. **The AST emitter only constructs *single*-payload variants.**
-   `examples/self_host/asm.fern:848`:
+   `compiler/asm.fern:848`:
 
    ```fern
    if (asmcore.is_enum_variant(name, s) && c.args.len() == 1) {

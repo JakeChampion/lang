@@ -28,7 +28,7 @@ the native one, and that memory is reclaimed.
 These are inspirations, not a menu. Any of them is a valid target.
 
 **1. Self-host / native agreement.** Fern's self-hosted compiler
-(`examples/self_host/`) and its native Go compiler (`internal/`) are supposed
+(`compiler/`) and its native Go compiler (`internal/`) are supposed
 to compile the same language. Every place they disagree is a bug in one of
 them, and the disagreements that matter most are the ones no gate currently
 sees. The `-interp` oracle is cheap and total: run your program interpreted,
@@ -124,7 +124,7 @@ The ONLY files you may read are:
 - `site/src/content/docs/**` — the published documentation site
 - `internal/stdlib/**` — the standard library, written in Fern; a user can read
   their library's source
-- `examples/**` **except** `examples/self_host/**`
+- `examples/**` **except** `compiler/**`
 
 You are a USER of the language, and a user only has the docs. `CLAUDE.md` is
 injected into your context and you cannot unsee it — do not use it to route
@@ -159,7 +159,7 @@ Write it as a SINGLE Fern file containing:
    your program — not `assert_eq(2+2, 4)`, but the invariants that would
    actually break if you got it wrong;
 5. a `test.TestRunner` wired to run them, so the file is its own test suite
-   (`import "std/test";` — see `examples/tests/arithmetic_test.fern`).
+   (`import "std/test";` — see `tests/stdlib/arithmetic_test.fern`).
 
 Have `main` return 0 on success, so "exit 0, TAP all-pass" is the criterion on
 every leg. By the end, the file must pass ALL FIVE of these:
@@ -234,7 +234,7 @@ Fix it at the deepest layer that owns the problem:
 - a lowering bug that shows up on one backend usually lives in `internal/ir`,
   where the fix serves every backend;
 - a self-host bug in inference, the checker, `Ty` or `EmitState` lives in
-  `examples/self_host/asmcore.fern`, which all three self-host backends share.
+  `compiler/asmcore.fern`, which all three self-host backends share.
   Editing the same thing three times in the `emit_*` layers is the wrong fix
   even when it works;
 - a diagnostic that points at the wrong place is a span bug, not a message bug.

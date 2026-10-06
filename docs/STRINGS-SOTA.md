@@ -48,7 +48,7 @@ The rule the table follows: where the API has an error channel the
 bytes are refused through it; where it has none they decode as U+FFFD,
 one per maximal subpart (`utf8.from_bytes_lossy`, the rule the string
 methods walk by); and the bytes themselves are always one sibling away.
-The property test (`examples/tests/utf8_validity_property_test.fern`)
+The property test (`tests/stdlib/utf8_validity_property_test.fern`)
 covers the string methods. The byte-level methods (`reverse_bytes`,
 `shift_byte`, `replace_byte`, `without_byte`) return `u8[]`.
 
@@ -1349,7 +1349,7 @@ Costs, stated honestly:
   inference.** The paragraph above blamed `__ascii_run`'s entry cost and
   said that was the next optimisation. Profiling says otherwise, and the
   guess was wrong by an order of magnitude in priority. Callgrind over
-  the two `examples/bench/utf8_ingest_*` programs, x86-64, `-O -g` so
+  the two `bench/utf8_ingest_*` programs, x86-64, `-O -g` so
   symbols resolve:
 
   | | Ir | share of the validation delta |
@@ -1494,4 +1494,4 @@ grapheme clusters — landed against #5552 directly.
   `docs/LANGUAGE-DIRECTION.md`, `docs/STDLIB-ROADMAP.md` §17,
   `internal/stdlib/std/{string,utf8,unicode}.fern`,
   `cmd/unicodegen/main.go`, `internal/lexer/lexer.go`,
-  `examples/self_host/{irlower,asmcore}.fern`
+  `compiler/{irlower,asmcore}.fern`

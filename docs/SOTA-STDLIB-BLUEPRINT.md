@@ -110,8 +110,8 @@ imports `std/string`, method dispatch resolves to the stdlib function (verified
 by inspecting emitted wat: the Two-Way core is present, the builtin helper is
 not) — but `split` still lowers to its helper. Any change to a stdlib string
 primitive should check whether a sibling helper exists in
-`examples/self_host/asmcore.fern` (`rt_src_str_*`, used by the native backends)
-or `examples/self_host/wasm_ir.fern` (`*_helper`, hand-written WAT), or the two
+`compiler/asmcore.fern` (`rt_src_str_*`, used by the native backends)
+or `compiler/wasm_ir.fern` (`*_helper`, hand-written WAT), or the two
 paths will silently diverge. They did, for `split("")`; see below.
 
 ## Status table
@@ -388,7 +388,7 @@ blocked on a language-level vector type**; it is sequenced behind a
 performance-regression gate, with `__memchr` as the first kernel.
 
 **Both of those have since happened too.** `__memchr` shipped as the first
-kernel and the performance-regression gate exists — `examples/bench/`
+kernel and the performance-regression gate exists — `bench/`
 `string_find_byte`, `string_rfind_byte` and `ascii_scan` put each kernel's
 vector path under `scripts/perf-bench`, whose retired-instruction counts repeat
 to the digit, so a kernel silently returning to a byte loop moves them by most

@@ -31,7 +31,7 @@
 //	dd if=/tmp/proxy.wasm of=internal/wasm/componenttype/proxy.bin bs=1 skip=26
 //
 //	# 4. The self-host compiler embeds the fern and proxy payloads as Fern
-//	#    source (examples/self_host/wit_fern_world.fern and
+//	#    source (compiler/wit_fern_world.fern and
 //	#    wit_proxy_world.fern); rewrite each file's string literals from its
 //	#    .bin, one \xNN escape per byte, and run `fern -fmt -w` on it.
 //	#    TestWorldFernPayloads pins each pair equal.

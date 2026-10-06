@@ -10,7 +10,7 @@ import (
 
 func TestTimefmtBytes(t *testing.T) {
 	fern := buildLangBinForInterp(t)
-	src, err := filepath.Abs("../../examples/tests/timefmt_bytes_test.fern")
+	src, err := filepath.Abs("../../tests/stdlib/timefmt_bytes_test.fern")
 	if err != nil {
 		t.Fatal(err)
 	}

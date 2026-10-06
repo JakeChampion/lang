@@ -62,8 +62,8 @@ var x86_64Tooling = e2eharness.X86_64Tooling
 var x86_64Runner = e2eharness.X86_64Runner
 
 // selfHostImportClosureFiles is the self-host import closure of one driver,
-// as absolute-ish paths under examples/self_host.
+// as absolute-ish paths under compiler.
 func selfHostImportClosureFiles(t *testing.T, fernName string) []string {
 	t.Helper()
-	return e2eharness.SelfHostImportClosure(t, "../../examples/self_host", fernName)
+	return e2eharness.SelfHostImportClosure(t, "../../compiler", fernName)
 }

@@ -10,7 +10,7 @@ import (
 )
 
 // TestSelfHostWitSectionRoundTrip gates the self-host port of the
-// bring-your-own-WIT decoder (examples/self_host/wit_decode.fern, P1 slice
+// bring-your-own-WIT decoder (compiler/wit_decode.fern, P1 slice
 // 1). It compiles, through the self-host, a driver that walks the real
 // fern.bin component-type payload into sections and re-emits them, and
 // asserts under wasmtime that the result reproduces the input byte-for-byte

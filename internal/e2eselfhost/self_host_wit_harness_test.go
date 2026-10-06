@@ -26,7 +26,7 @@ var (
 	witCLISkip   string
 )
 
-// witSelfHostCLI builds examples/self_host/fern.fern once per test binary as a
+// witSelfHostCLI builds compiler/fern.fern once per test binary as a
 // binary this host runs directly, and returns it with the stdlib root.
 func witSelfHostCLI(t *testing.T) (string, string) {
 	t.Helper()
@@ -37,7 +37,7 @@ func witSelfHostCLI(t *testing.T) (string, string) {
 			return
 		}
 		fern := buildLangBinForInterp(t)
-		src, err := filepath.Abs("../../examples/self_host/fern.fern")
+		src, err := filepath.Abs("../../compiler/fern.fern")
 		if err != nil {
 			witCLIErr = err.Error()
 			return
@@ -75,7 +75,7 @@ var witModules = []string{"watbin", "wit_decode", "wit_compose", "wit_proxy_worl
 // witPubNames returns the pub function and struct names of a self-host module.
 func witPubNames(t *testing.T, module string) []string {
 	t.Helper()
-	src, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", module+".fern"))
+	src, err := os.ReadFile(filepath.Join("..", "..", "compiler", module+".fern"))
 	if err != nil {
 		t.Fatal(err)
 	}

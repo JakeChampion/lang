@@ -1,4 +1,4 @@
-# Emitted-size baseline for the SELF-HOSTED compiler over examples/bench,
+# Emitted-size baseline for the SELF-HOSTED compiler over bench,
 # checked against every run by scripts/ci-check-perf.
 #
 # FORMAT: metric  value  [tolerance%]. The metric key is

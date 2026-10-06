@@ -5,7 +5,7 @@ import (
 )
 
 // strengthIRCases exercise the strength-reduction peephole
-// (examples/self_host/ir.fern's reduce_strength, #6638) end to end: each
+// (compiler/ir.fern's reduce_strength, #6638) end to end: each
 // program's arithmetic hits a rewrite, and the interpreter is the oracle for
 // what the rewritten op stream must still compute.
 //

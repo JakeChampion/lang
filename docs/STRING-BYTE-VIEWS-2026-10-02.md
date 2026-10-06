@@ -77,10 +77,10 @@ These timings use the integrated candidate `ef60e137`. Both program images
 occupy 49,713 bytes. Reproduce with:
 
 ```sh
-uv run --no-project python tools/bench_byte_views.py \
+uv run --no-project python scripts/bench_byte_views.py \
   --before /path/to/baseline-compiler --after build/bootstrap/stage2 \
   --stdlib internal/stdlib --output /tmp/byte-view-pilot --scale 1 --samples 5
-uv run --no-project python tools/bench_byte_views.py \
+uv run --no-project python scripts/bench_byte_views.py \
   --before /path/to/baseline-compiler --after build/bootstrap/stage2 \
   --stdlib internal/stdlib --output /tmp/byte-view-full --scale 256 --samples 5
 ```

@@ -5,7 +5,7 @@
 // per mnemonic a U bit, an opcode, and one class-specific extra (the element
 // sizes the encoding has, an szHi bit, a shift direction, a widening flag).
 // cmd/arm64tblgen writes the self-host lookups in
-// examples/self_host/arm64_native.fern from them.
+// compiler/arm64_native.fern from them.
 //
 // Every row is pinned against GNU as: the size sets, and every size
 // deliberately absent (mul/min/max have no .2d, the bitwise ops and cnt are

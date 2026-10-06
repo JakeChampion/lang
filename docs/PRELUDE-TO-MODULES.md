@@ -336,11 +336,11 @@ name: the value path through `rewriteExpr`, the type path through
 `dyn facade.Trait`). Parsed by `parsePubUse` into `ast.PubUse`.
 
 **Self-host parity** (#3136 part 2): the self-hosted compiler resolves
-`pub use` too. `examples/self_host/parser.fern` parses `pub use
+`pub use` too. `compiler/parser.fern` parses `pub use
 "path".{names…};` into a re-export `Import` (`is_reexport` + the
 `reexport_names`), so the on-disk module loaders (`modloader.fern`,
 `fern.fern`) pull the target module into the graph like any import.
-`examples/self_host/flatten.fern`'s `build_reexports` then walks every
+`compiler/flatten.fern`'s `build_reexports` then walks every
 imported module's `pub use` directives into a parallel-array re-export
 table (`facade__name` → `origin__name`), threaded through `RewriteCtx`;
 `lookup_reexport` redirects a consumer's `facade.name` at the same two
@@ -405,7 +405,7 @@ spellings through its mangled variant names (`net.Other` mangles to
 `net__Other`, which is the variant's bundled name), so both compilers accept
 them (#10430).
 
-The self-host bundler (`examples/self_host/flatten.fern`) does mangle an
+The self-host bundler (`compiler/flatten.fern`) does mangle an
 imported module's variants (`Full` → `g3__Full`) and rewrites bare references to
 them, so only the ENTRY's variants stay bare. It rewrites a bare reference only
 to a variant of a module in the referring module's import closure

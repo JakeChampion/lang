@@ -39,7 +39,7 @@ and most of the ones this entry counts decline at run time.** The numbers below
 stand as measured; what they measure is not what this entry took them for.
 
 Firings of `__fern_alloc_reuse` compiling the compiler
-(`bin/fern-selfhost -target x86-64-linux -emit asm examples/self_host/fern.fern`):
+(`bin/fern-selfhost -target x86-64-linux -emit asm compiler/fern.fern`):
 
 | path | firings |
 |---|---|

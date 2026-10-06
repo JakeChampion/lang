@@ -15,7 +15,7 @@ import (
 // iter.fold(..)` to "A" then keyed a spurious clone of any trait-bounded generic
 // `s` flowed into (`assert_eq[T: Eq + Display](s, 6)` -> `assert_eq__A`), whose
 // `A.eq` / `A.to_string` can't resolve — dragging the whole module to the AST
-// emitter (e.g. examples/tests/iter_test.fern). mono_infer now reports a bare
+// emitter (e.g. tests/stdlib/iter_test.fern). mono_infer now reports a bare
 // type variable as "unknown" instead, so the other concrete-literal argument
 // binds the call at `i32` and the module routes IR.
 //

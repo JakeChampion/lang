@@ -1,6 +1,6 @@
 # Every fs leaf owns the block it NUL-terminates, on the success path too (#8813)
 
-*2026-09-07* — `examples/self_host/asmcore.fern`, the fs-helper bundle both
+*2026-09-07* — `compiler/asmcore.fern`, the fs-helper bundle both
 register backends emit. The open side of what #8402 fixed for `read_chunk`,
 and a whole family of leaves rather than one.
 
