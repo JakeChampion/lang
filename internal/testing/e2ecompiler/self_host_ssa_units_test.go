@@ -287,6 +287,10 @@ func unitSource(indices []int) (string, string) {
 let f = ssasem.Func { envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
 let p = ssaunits.plan(f, modes, ssaunits.no_view());
 if (!p.ok) { print(p.why); return 1; }
+// A taken payload is a unit of its own at the read; a hold on the same
+// read would retain it a second time (the with_through_copy leak).
+let hp: i32 = 0;
+while (hp < p.held.len()) { if (p.held[hp] && p.payloads[hp]) { return 90; } hp = hp + 1; }
 `)
 		if i == 0 {
 			source.WriteString(`
