@@ -39,8 +39,8 @@ func TestSelfHostWasmIncrementalCache(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_modload_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_modload_run.fern", "wasm_modload_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_modload_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_modload_run.fern", "wasm_modload_run")
 
 	// A two-module program: entry calls into leaf.
 	proj := t.TempDir()
@@ -250,8 +250,8 @@ func TestSelfHostWasmLinkFromCache(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_modload_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_modload_run.fern", "wasm_modload_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_modload_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_modload_run.fern", "wasm_modload_run")
 
 	proj := t.TempDir()
 	cacheDir := filepath.Join(proj, "cache")
@@ -377,8 +377,8 @@ func TestSelfHostWasmLinkHitOnly(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_modload_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_modload_run.fern", "wasm_modload_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_modload_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_modload_run.fern", "wasm_modload_run")
 
 	proj := t.TempDir()
 	cacheDir := filepath.Join(proj, "cache")

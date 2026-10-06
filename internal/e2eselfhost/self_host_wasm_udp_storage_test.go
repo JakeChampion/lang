@@ -23,8 +23,8 @@ func TestSelfHostWasmUDPLifecycleCensus(t *testing.T) {
 func TestSelfHostWasmUDPGuestStorage(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	for _, host := range []string{"0.0.0.0", "127.0.0.1", "", "bad", "127.0.0.256"} {
 		for _, data := range []string{"", "x", "abcdefgh"} {
 			t.Run(host+"/"+data, func(t *testing.T) {

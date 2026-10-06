@@ -104,8 +104,8 @@ func TestSelfHostStatfsIR(t *testing.T) {
 		t.Skip("statfs test runs only natively (measures host paths)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	work := t.TempDir()
 	cmd := exec.Command(driverBin, "-ir")
@@ -137,8 +137,8 @@ func TestSelfHostStatfsArm64IR(t *testing.T) {
 		t.Skip("statfs test runs only natively (measures host paths)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	work := t.TempDir()
 	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(statfsProbeSource(t, work)), "-target", "arm64-linux", "-ir")
@@ -166,8 +166,8 @@ func TestSelfHostStatfsArm64IR(t *testing.T) {
 func TestSelfHostStatfsWasmIRRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	src := `function main(): i32 {
     match (statfs(".")) { Ok(fs) => { return fs.name_max as i32; }, Err(_) => { return 1; } }

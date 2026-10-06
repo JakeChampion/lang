@@ -60,8 +60,8 @@ func TestSelfHostIdentityAndEnvironIR(t *testing.T) {
 		t.Skip("identity test runs only natively (reads the host's own credentials)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	t.Setenv("FERN_ENVIRON_PROBE", "selfhost-identity")
 	groups, err := os.Getgroups()

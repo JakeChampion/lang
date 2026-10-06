@@ -17,9 +17,9 @@ import (
 func runBuilderTextInterpreter(t *testing.T, compiler string, runner []string, target, stdlib string) {
 	t.Helper()
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "interp_run.fern")
+	copySelfHostDriver(t, dir, "drivers/interp_run.fern")
 	bin := filepath.Join(dir, "interp")
-	cmd := runX86_64Bin(runner, compiler, "-target", target, "-o", bin, filepath.Join(dir, "interp_run.fern"), stdlib)
+	cmd := runX86_64Bin(runner, compiler, "-target", target, "-o", bin, filepath.Join(dir, "drivers/interp_run.fern"), stdlib)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile current interpreter: %v\n%s", err, out)
 	}

@@ -119,8 +119,8 @@ func TestSelfHostGenericArityNoCrashX86_64(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern",
 		"parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern",
-		"irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driver := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "genarity")
+		"irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "genarity")
 
 	for _, tc := range genericArityCrashCases {
 		tc := tc
@@ -164,8 +164,8 @@ func TestSelfHostGenericArityStillCompilesX86_64(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern",
 		"parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern",
-		"irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driver := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "genarityok")
+		"irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "genarityok")
 
 	for _, tc := range genericArityOKCases {
 		tc := tc

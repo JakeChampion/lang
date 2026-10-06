@@ -56,8 +56,8 @@ func TestSelfHostSysinfoIR(t *testing.T) {
 	}
 	src := selfHostSysinfoSource(t, selfHostUtsname(t)[4])
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	cmd := exec.Command(driverBin, "-ir")
 	cmd.Stdin = bytes.NewReader([]byte(src))
@@ -89,8 +89,8 @@ func TestSelfHostSysinfoIRArm64(t *testing.T) {
 	}
 	src := selfHostSysinfoSource(t, "aarch64")
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	cmd := exec.Command(driverBin, "-target", "arm64-linux", "-ir")
 	cmd.Stdin = bytes.NewReader([]byte(src))
@@ -139,8 +139,8 @@ func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
 		t.Skip("the driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	const src = `function main(): i32 {
     print(uname_field(4));

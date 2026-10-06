@@ -24,7 +24,7 @@ func TestSelfHostDeriveStdlibIRArm64(t *testing.T) {
 		t.Skip("arm64 derive-stdlib gate needs a native x86 host to run the driver")
 	}
 	dir := copySelfHostTree(t)
-	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc_arm64")
+	mmc := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_load_run.fern", "mmc_arm64")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)

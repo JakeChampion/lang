@@ -693,7 +693,7 @@ the wrong slot; `asmPair` rejects it now.
 
 ### The self-host compiler links, and the sizes match
 
-With the pairing in, `compiler/checker_modload_run.fern` compiles,
+With the pairing in, `compiler/drivers/checker_modload_run.fern` compiles,
 links and runs under `-backend ssa` — the first time any self-host module has.
 It was the last thing the epic was for.
 

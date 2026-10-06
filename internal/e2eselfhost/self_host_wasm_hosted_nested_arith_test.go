@@ -55,9 +55,9 @@ func TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "fern.fern", "wasm_ir_run.fern")
+	copySelfHostDriver(t, dir, "fern.fern", "drivers/wasm_ir_run.fern")
 	cli := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	entry := filepath.Join(dir, "wasm_ir_run.fern")
+	entry := filepath.Join(dir, "drivers/wasm_ir_run.fern")
 
 	// Both drivers come out of the same CLI binary, so the only variable is
 	// -target. Each emit peaks in the low gigabytes, so it takes a slot in the

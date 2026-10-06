@@ -35,8 +35,8 @@ func TestSelfHostStatIR(t *testing.T) {
 		t.Skip("stat IR test runs only natively (stats host paths)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	// A known regular file (13 bytes) + a directory, both under the temp dir.
 	filePath := filepath.Join(dir, "stat_target.txt")
@@ -107,7 +107,7 @@ func TestSelfHostStatIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	const fileBytes = "hello, stat!\n" // 13 bytes
 	if err := os.WriteFile(filepath.Join(dir, "stat_target.txt"), []byte(fileBytes), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
@@ -115,7 +115,7 @@ func TestSelfHostStatIRWasm(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "stat_subdir"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	// Relative paths — resolved against the preopen (the temp dir, mapped to guest /).
 	src := fmt.Sprintf(`function main(): i32 {

@@ -112,6 +112,8 @@ func TestDiagnosticSuggestionsNameAQualifiedTrait(t *testing.T) {
 	// spliced with `+`, so a hand scanner that knows comments from strings
 	// is the whole parser this needs.
 	fernFiles, err := filepath.Glob(filepath.Join(root, "compiler", "*.fern"))
+	inDrivers, _ := filepath.Glob(filepath.Join(root, "compiler", "drivers", "*.fern"))
+	fernFiles = append(fernFiles, inDrivers...)
 	if err != nil {
 		t.Fatalf("glob compiler: %v", err)
 	}

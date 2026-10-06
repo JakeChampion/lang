@@ -27,8 +27,8 @@ func TestSelfHostBigI64LiteralWasmIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	// 9000000000000000007 is 19 digits — far beyond i32 range but inside i64/u64.
 	// 9000000000000000000 is divisible by 256, so the modulus is 7 → exit 7.

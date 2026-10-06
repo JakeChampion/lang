@@ -35,31 +35,14 @@ func recordDriverSize(t *testing.T, driver, bin string) {
 	}
 }
 
-// fullSelfHostProject copies EVERY compiler/*.fern into a fresh dir.
+// fullSelfHostProject copies the whole compiler tree into a fresh dir.
 // Because hashSelfHostSources keys on a driver's import closure (not the whole
 // dir), a driver built here hashes identically to the same driver built by a
 // real test from its smaller project dir — so warming from the full set
 // produces cache entries the sharded tests reproduce exactly.
 func fullSelfHostProject(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	ents, err := os.ReadDir("../../compiler")
-	if err != nil {
-		t.Fatalf("read compiler dir: %v", err)
-	}
-	for _, e := range ents {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".fern" {
-			continue
-		}
-		src, err := os.ReadFile(filepath.Join("../../compiler", e.Name()))
-		if err != nil {
-			t.Fatalf("read %s: %v", e.Name(), err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, e.Name()), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", e.Name(), err)
-		}
-	}
-	return dir
+	return copySelfHostTree(t)
 }
 
 // The size report is the input to the CI size gate, so the appended line has to
@@ -74,13 +57,13 @@ func TestSelfHostDriverSizeReport(t *testing.T) {
 	t.Setenv("FERN_DRIVER_SIZE_REPORT", report)
 
 	recordDriverSize(t, "fern.fern", bin)
-	recordDriverSize(t, "wasm_ir_run.fern", bin)
+	recordDriverSize(t, "drivers/wasm_ir_run.fern", bin)
 
 	got, err := os.ReadFile(report)
 	if err != nil {
 		t.Fatalf("read report: %v", err)
 	}
-	want := "fern.fern\t4242\nwasm_ir_run.fern\t4242\n"
+	want := "fern.fern\t4242\ndrivers/wasm_ir_run.fern\t4242\n"
 	if string(got) != want {
 		t.Errorf("report:\n%q\nwant:\n%q", got, want)
 	}

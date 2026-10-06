@@ -44,8 +44,8 @@ func TestSelfHostHostnameIR(t *testing.T) {
 	}
 	want := selfHostHostHostname(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	cmd := exec.Command(driverBin, "-ir")
 	cmd.Stdin = bytes.NewReader([]byte(selfHostHostnameSource(want)))
@@ -74,8 +74,8 @@ func TestSelfHostHostnameIRArm64(t *testing.T) {
 	}
 	want := selfHostHostHostname(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	cmd := exec.Command(driverBin, "-target", "arm64-linux", "-ir")
 	cmd.Stdin = bytes.NewReader([]byte(selfHostHostnameSource(want)))
@@ -107,8 +107,8 @@ func TestSelfHostHostnameIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	const src = `function main(): i32 {
     let h: string = hostname();

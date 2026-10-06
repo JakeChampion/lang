@@ -74,14 +74,14 @@ function main(): i32 { let t = mk(20); let u = t; let a: i32 = t.0 + u.1; if (__
 func TestSelfHostTupleRetIntermediateIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../compiler/asm_run.fern")
+	src, err := os.ReadFile("../../compiler/drivers/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	for _, tc := range tupleRetIntermediateCases {
 		t.Run(tc.name, func(t *testing.T) {

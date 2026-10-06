@@ -363,7 +363,7 @@ function main(): i32 {
 func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern")
 	core := filepath.Join(dir, "asmcore.fern")
 	src, err := os.ReadFile(core)
 	if err != nil {
@@ -377,7 +377,7 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	if err := os.WriteFile(core, []byte(broken), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	const prog = "function main(): i32 { let s: string = chr(65); return s.len(); }\n"
 	emit := func() (string, int) {

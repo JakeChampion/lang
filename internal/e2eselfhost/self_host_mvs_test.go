@@ -22,8 +22,8 @@ func TestSelfHostMvsRules(t *testing.T) {
 		t.Skip("mvs_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "mvs_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "mvs_run.fern", "mvs_run")
+	copySelfHostDriver(t, dir, "drivers/mvs_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/mvs_run.fern", "mvs_run")
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

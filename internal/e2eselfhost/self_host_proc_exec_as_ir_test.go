@@ -62,9 +62,9 @@ var procExecAsPrograms = []struct {
 func TestSelfHostProcExecAsIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern", "drivers/asm_pathprobe_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
+	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_pathprobe_run.fern", "pathprobe")
 
 	for _, tc := range procExecAsPrograms {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,8 +98,8 @@ func TestSelfHostProcExecAsIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	for _, tc := range procExecAsPrograms {
 		t.Run(tc.name, func(t *testing.T) {
@@ -130,14 +130,14 @@ func TestSelfHostProcExecAsIRArm64(t *testing.T) {
 func TestSelfHostProcExecAsWasmRejected(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern", "wasm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "drivers/wasm_run.fern", "drivers/wasm_ir_run.fern")
 	drivers := []struct {
 		name string
 		bin  string
 		args []string
 	}{
-		{"wasm_run", buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run"), nil},
-		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasm_ir_run"), []string{"-ir"}},
+		{"wasm_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run"), nil},
+		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run"), []string{"-ir"}},
 	}
 	const src = `function main(): i32 { return proc_exec_as("/bin/true", ["true"], []); }`
 	for _, d := range drivers {

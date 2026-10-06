@@ -29,8 +29,8 @@ import (
 func TestSelfHostLargeTierFreelistX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	// 4000 iterations of a fresh 70000-element i64 array (560 KiB > 512 KiB): the
 	// >=512 KiB doubling-growth buffers are freed each iteration and must recycle,

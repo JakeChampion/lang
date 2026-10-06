@@ -23,8 +23,8 @@ const loadU8Src = `function main(): i32 {
 func TestSelfHostLoadU8X86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	asm := hevCompile(t, runner, driverBin, loadU8Src, nil)
 	if stderr, exit := hevRun(t, runner, buildBin(t, gcc, dir, "load_u8", asm)); exit != 42 {
 		t.Fatalf("exit = %d, want 42 (1-4 = the byte at that offset + 1 was wrong)\n%s", exit, stderr)
@@ -37,8 +37,8 @@ func TestSelfHostLoadU8Wasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasmdriver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasmdriver")
 	wat := wasmLcCompile(t, runner, driverBin, loadU8Src, nil)
 	if stderr, exit := wasmLcRun(t, dir, "load_u8", wat); exit != 42 {
 		t.Fatalf("exit = %d, want 42 (1-4 = the byte at that offset + 1 was wrong)\n%s", exit, stderr)

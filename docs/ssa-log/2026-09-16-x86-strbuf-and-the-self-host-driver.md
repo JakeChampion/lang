@@ -2,7 +2,7 @@
 
 `docs/ssa-log/2026-09-16-full-sweep.md` named the self-hosted compiler
 built through SSA as the input the default flip still lacked. Building it
-(`fern -target x86-64-linux -backend ssa compiler/asm_ir_run.fern`)
+(`fern -target x86-64-linux -backend ssa compiler/drivers/asm_ir_run.fern`)
 found two things before it produced a binary.
 
 **Three helpers had no emitter.** The build was refused with `strbuf_append`,

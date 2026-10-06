@@ -35,7 +35,7 @@ func TestSelfHostIRPerModuleLinkArm64(t *testing.T) {
 	// project (which already holds util/lexer/parser/flatten/asm_ir/builtins/…).
 
 	// Build the arm64 driver as an x86 host binary (mirrors the fixpoint harness).
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "arm64driver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "arm64driver")
 
 	// Two-module program: col constructs Blue(7); the entry matches it.
 	colSrc := "pub enum Color { Red(i32), Green, Blue(i32) }\n" +

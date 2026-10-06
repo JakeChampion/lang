@@ -75,14 +75,14 @@ func TestSelfHostNestedFnProduction(t *testing.T) {
 		t.Skip("census driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "semsource_census_run.fern")
+	copySelfHostDriver(t, dir, "drivers/semsource_census_run.fern")
 	stdlib, err := filepath.Abs(filepath.Join("..", "stdlib"))
 	if err != nil {
 		t.Fatalf("stdlib path: %v", err)
 	}
 	census := filepath.Join(dir, "census")
 	build := exec.Command(buildFernCLIBin(t), "-target", "x86-64-linux",
-		"-embed", stdlib, "-o", census, filepath.Join(dir, "semsource_census_run.fern"))
+		"-embed", stdlib, "-o", census, filepath.Join(dir, "drivers/semsource_census_run.fern"))
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the census failed: %v\n%s", err, out)
 	}

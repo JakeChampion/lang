@@ -16,7 +16,7 @@ import (
 func TestSelfHostByteBuilderMapsPerModule(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
-	driver := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "builder-modules")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "builder-modules")
 	project := t.TempDir()
 	entry := filepath.Join(project, "main.fern")
 	for name, source := range map[string]string{

@@ -27,8 +27,8 @@ func TestSelfHostWasmOptionPayload(t *testing.T) {
 		t.Skip("wasm_option_payload_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_option_payload_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "wasm_option_payload_run.fern", "wasm_option_payload_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_option_payload_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_option_payload_run.fern", "wasm_option_payload_run")
 
 	const want = "Option[i32] opt=i32 err=<empty>\n" +
 		"Option[u32] opt=u32 err=<empty>\n" +

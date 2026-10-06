@@ -28,8 +28,8 @@ func x86ShapeHarness(t *testing.T) (func(t *testing.T, src string) string, func(
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	emit := func(t *testing.T, src string) string {
 		t.Helper()

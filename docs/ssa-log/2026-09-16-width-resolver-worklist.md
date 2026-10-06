@@ -6,7 +6,7 @@ compiling the self-hosted driver in 91.7 s against the flat backend's
 profile, and the first thing it found.
 
 **Where the 91.7 s went.** `go test -cpuprofile` on a test that calls the
-driver's own `run` for `compiler/asm_ir_run.fern` with
+driver's own `run` for `compiler/drivers/asm_ir_run.fern` with
 `-target x86-64-linux -backend ssa`, on the 4-core container:
 
 | function | flat | cumulative |

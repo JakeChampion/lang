@@ -44,7 +44,7 @@ func writeWasmSelfHostSources(t *testing.T, dir, driver string) string {
 func TestSelfHostWasmExternBridgeIRLayout(t *testing.T) {
 	runner := x86_64Runner(t)
 	dir := t.TempDir()
-	driver := writeWasmSelfHostSources(t, dir, "wasm_runio_run.fern")
+	driver := writeWasmSelfHostSources(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, "", dir, driver, "wasm_runio_run")
 
 	cases := []struct {
@@ -173,7 +173,7 @@ func TestSelfHostWasmVariantF32ArmMatchIR(t *testing.T) {
 	}
 	runner := x86_64Runner(t)
 	dir := t.TempDir()
-	driver := writeWasmSelfHostSources(t, dir, "wasm_run.fern")
+	driver := writeWasmSelfHostSources(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, "", dir, driver, "wasm_run")
 
 	// F(2.5) round-trips through the box: exit 0 only if the bound f32 compares

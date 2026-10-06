@@ -1171,7 +1171,7 @@ its generic declarations. There is no leaf left, and no refusal of any kind:
 the producer admits every function the compiler has, and neither the unit
 planner nor physical RC refuses anything it admits.
 
-`compiler/semsource_census_run.fern` is the instrument: it loads a
+`compiler/drivers/semsource_census_run.fern` is the instrument: it loads a
 module tree the way the production compiler does and counts the stage each
 function reaches, tallying refusals by LEAF — the first refusal in a chain
 that is not a `call target was refused` cascade. That distinction is the whole

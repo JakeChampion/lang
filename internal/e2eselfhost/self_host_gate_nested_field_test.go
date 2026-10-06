@@ -93,8 +93,8 @@ function main(): i32 {
 func TestSelfHostGateFieldThroughVariantPayload(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	if code := compileAndRunSelfHostIR(t, gcc, runner, dir, driverBin, "variant_payload_field", gateVariantPayloadFieldSrc); code != 2 {
 		t.Errorf("ix.names.find(\"c\") through a Holder.Named payload exited %d, want 2 (the index of \"c\" in Keys.items)", code)
 	}
@@ -103,8 +103,8 @@ func TestSelfHostGateFieldThroughVariantPayload(t *testing.T) {
 func TestSelfHostGateFieldThroughStructField(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	if code := compileAndRunSelfHostIR(t, gcc, runner, dir, driverBin, "nested_field", gateNestedFieldSrc); code != 2 {
 		t.Errorf("t.memo.names.find(\"c\") exited %d, want 2 (the index of \"c\" in Index.keys)", code)
 	}

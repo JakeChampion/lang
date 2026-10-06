@@ -11,7 +11,7 @@ import (
 func TestSelfHostStringRangeAllocationMarker(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ir_kind_run.fern")
+	copySelfHostDriver(t, dir, "drivers/ir_kind_run.fern")
 	src := `import "./ir";
 function main(): i32 {
   if (!ir.op_allocates(ir.op_str_from_bytes_range().kind_tag)) { return 1; }

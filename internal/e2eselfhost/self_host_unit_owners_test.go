@@ -15,10 +15,10 @@ import (
 func TestSelfHostPerModuleUnitOwners(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_modload_run.fern")
-	copySelfHostDriver(t, dir, "wasm_modload_run.fern")
-	asmBin := cachedDriverBin(t, gcc, dir, "asm_modload_run.fern")
-	wasmBin := cachedDriverBin(t, gcc, dir, "wasm_modload_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_modload_run.fern")
+	copySelfHostDriver(t, dir, "drivers/wasm_modload_run.fern")
+	asmBin := cachedDriverBin(t, gcc, dir, "drivers/asm_modload_run.fern")
+	wasmBin := cachedDriverBin(t, gcc, dir, "drivers/wasm_modload_run.fern")
 
 	proj := t.TempDir()
 	for name, src := range map[string]string{

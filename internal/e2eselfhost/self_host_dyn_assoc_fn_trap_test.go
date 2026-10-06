@@ -54,8 +54,8 @@ func TestSelfHostDynAssocFnDispatchX86_64(t *testing.T) {
 	t.Run("assoc-fn-traps-unchecked", func(t *testing.T) {
 		gcc, runner := x86_64Tooling(t)
 		dir := t.TempDir()
-		copySelfHostDriver(t, dir, "asm_ir_run.fern")
-		driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+		copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+		driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 		cmd := runX86_64Bin(runner, driverBin)
 		cmd.Stdin = strings.NewReader(dynAssocFnSrc)
 		cmd.Env = childEnv()

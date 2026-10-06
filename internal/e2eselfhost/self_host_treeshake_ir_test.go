@@ -20,26 +20,33 @@ import (
 // native interpreter), and (c) treeshake never changes behaviour (the AST and
 // IR builds agree).
 
-// copySelfHostTree copies every compiler/*.fern into a fresh temp dir
-// so the driver (and the asm buildBin writes) stay out of the repo tree.
+// copySelfHostTree copies every compiler source, drivers/ included and in the
+// same layout, into a fresh temp dir so the driver (and the asm buildBin
+// writes) stay out of the repo tree.
 func copySelfHostTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	entries, err := os.ReadDir("../../compiler")
-	if err != nil {
-		t.Fatalf("readdir compiler: %v", err)
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".fern") {
-			continue
+	const src = "../../compiler"
+	err := filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".fern") {
+			return err
 		}
-		src, err := os.ReadFile(filepath.Join("../../compiler", e.Name()))
+		rel, err := filepath.Rel(src, path)
 		if err != nil {
-			t.Fatalf("read %s: %v", e.Name(), err)
+			return err
 		}
-		if err := os.WriteFile(filepath.Join(dir, e.Name()), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", e.Name(), err)
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
 		}
+		target := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, b, 0o644)
+	})
+	if err != nil {
+		t.Fatalf("copy compiler tree: %v", err)
 	}
 	return dir
 }
@@ -86,7 +93,7 @@ function main(): i32 { let a = P { x: 1, y: 2 }; let b = P { x: 1, y: 2 }; let c
 func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
-	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "alr")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)

@@ -89,8 +89,8 @@ func TestSelfHostStatFieldsIR(t *testing.T) {
 		t.Skip("stat fields test runs only natively (stats host paths)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	file, link := selfHostStatProbeTree(t, dir)
 	src := selfHostStatFieldsSource(file, link, os.Geteuid(), os.Getegid())
@@ -125,8 +125,8 @@ func TestSelfHostAccessAndIdsIR(t *testing.T) {
 		t.Skip("access test runs only natively (reads host paths)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	readable := filepath.Join(dir, "readable.txt")
 	if err := os.WriteFile(readable, []byte("hello"), 0o644); err != nil {
@@ -193,7 +193,7 @@ func TestSelfHostStatFieldsWasmIR(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	if err := os.WriteFile(filepath.Join(dir, "fields_target.txt"), []byte("hello"), 0o640); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestSelfHostStatFieldsWasmIR(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(dir, "fields_target.txt"), when, when); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	src := fmt.Sprintf(`function main(): i32 {
     match (stat("fields_target.txt")) {

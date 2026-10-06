@@ -17,7 +17,7 @@ import (
 func TestSelfHostPerModuleMapFreeLinks(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "mapfreelinkdriver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "mapfreelinkdriver")
 
 	proj := t.TempDir()
 	mustWrite(t, proj, "leaf.fern", `import "core/map";

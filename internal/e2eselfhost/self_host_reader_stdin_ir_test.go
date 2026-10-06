@@ -72,9 +72,9 @@ func TestSelfHostReaderStdinIRX86_64(t *testing.T) {
 	}
 	interpBin := buildLangBinForInterp(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern", "drivers/asm_pathprobe_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
+	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_pathprobe_run.fern", "pathprobe")
 
 	for _, tc := range readerStdinIRCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -113,8 +113,8 @@ func TestSelfHostReadAllStdinModloadIRX86_64(t *testing.T) {
 	}
 	interpBin := buildLangBinForInterp(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	mmc := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "mmc")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	mmc := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "mmc")
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)
