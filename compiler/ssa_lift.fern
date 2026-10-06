@@ -1151,6 +1151,9 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   // dl_* row at an if's end, an lp_* row at a loop's). A merge clears the
   // range it set before it finishes, so the next one starts from -1.
   let slot_pos: i32[] = filled(nslots, 0 - 1);
+  // matb is a block merge's scratch: one row per written slot, one column
+  // per edge, kept across merges and grown to the largest.
+  let matb: i32[] = [];
   let dl_slot: i32[] = [];
   let dl_old: i32[] = [];
   let dl_prev: i32[] = [];
@@ -1732,9 +1735,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         while (jq < dl_n) {
           let sq: i32 = dl_slot[jq];
           if (t2 > 0 && dl_prev[jq] < t2 - 1) {
-            dl_slot = dl_slot.with(wq, sq);
-            dl_old = dl_old.with(wq, dl_old[jq]);
-            dl_prev = dl_prev.with(wq, dl_prev[jq]);
+            if (wq != jq) {
+              dl_slot = dl_slot.with(wq, sq);
+              dl_old = dl_old.with(wq, dl_old[jq]);
+              dl_prev = dl_prev.with(wq, dl_prev[jq]);
+            }
             wq = wq + 1;
           }
           slot_mark = slot_mark.with(sq, t2 - 1);
@@ -1886,9 +1891,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         while (jl < dl_n) {
           let sl: i32 = dl_slot[jl];
           if (t2 > 0 && dl_prev[jl] < t2 - 1) {
-            dl_slot = dl_slot.with(wl2, sl);
-            dl_old = dl_old.with(wl2, dl_old[jl]);
-            dl_prev = dl_prev.with(wl2, dl_prev[jl]);
+            if (wl2 != jl) {
+              dl_slot = dl_slot.with(wl2, sl);
+              dl_old = dl_old.with(wl2, dl_old[jl]);
+              dl_prev = dl_prev.with(wl2, dl_prev[jl]);
+            }
             wl2 = wl2 + 1;
           }
           slot_mark = slot_mark.with(sl, t2 - 1);
@@ -1942,13 +1949,13 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         if (bidx.len() > 0) {
           let nb: i32 = dl_n - dfrom_b;
           let ne: i32 = bidx.len();
-          let matb: i32[] = [];
           let rb: i32 = 0;
           while (rb < nb) {
             slot_pos = slot_pos.with(dl_slot[dfrom_b + rb], rb);
+            let ob: i32 = dl_old[dfrom_b + rb];
             let qb0: i32 = 0;
             while (qb0 < ne) {
-              matb = matb.append(dl_old[dfrom_b + rb]);
+              matb = put_at(matb, rb * ne + qb0, ob);
               qb0 = qb0 + 1;
             }
             rb = rb + 1;
@@ -2031,9 +2038,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         while (jf < dl_n) {
           let sf: i32 = dl_slot[jf];
           if (t2 > 0 && dl_prev[jf] < t2 - 1) {
-            dl_slot = dl_slot.with(wb, sf);
-            dl_old = dl_old.with(wb, dl_old[jf]);
-            dl_prev = dl_prev.with(wb, dl_prev[jf]);
+            if (wb != jf) {
+              dl_slot = dl_slot.with(wb, sf);
+              dl_old = dl_old.with(wb, dl_old[jf]);
+              dl_prev = dl_prev.with(wb, dl_prev[jf]);
+            }
             wb = wb + 1;
           }
           slot_mark = slot_mark.with(sf, t2 - 1);

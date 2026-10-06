@@ -255,14 +255,21 @@ func statCases(t *testing.T) []invocation {
 	}
 	add("birth-link", "-c", "%w|%W", "sl")
 	add("birth-link-deref", "-L", "-c", "%w|%W", "sl")
-	for _, name := range []string{"f", "empty", "d", "sl", "dangle", "fifo", "hard", "setuid-setgid-sticky", "/dev/null"} {
+	for _, name := range []string{"f", "empty", "d", "sl", "dangle", "fifo", "hard", "setuid-setgid-sticky"} {
 		add("default-"+name, name)
 		add("terse-"+name, "-t", name)
 	}
+	// A character device is outside the tree, and on Darwin a write to
+	// /dev/null moves its times, so the two sides of a comparison can see
+	// different ones. Its default and terse layouts are read without the
+	// three time fields.
+	add("default-chardev", "-c", "%n|%s|%b|%o|%F|%Hd,%Ld|%i|%h|%Hr,%Lr|%a|%A|%u|%U|%g|%G", "/dev/null")
+	add("terse-chardev", "-c", "%n %s %b %f %u %g %D %i %h %t %T %W %o", "/dev/null")
 	add("default-deref", "-L", "sl")
 	add("terse-deref", "-t", "-L", "sl")
 	add("default-two", "f", "d")
-	add("terse-two", "-t", "f", "/dev/null")
+	add("terse-two", "-t", "f", "d")
+	add("terse-two-chardev", "-c", "%n %s %b %f %u %g %D %i %h %t %T %W %o", "f", "/dev/null")
 	add("default-missing-between", "f", "nosuch", "d")
 	add("terse-missing", "-t", "nosuch")
 	add("kind-chardev-zero", "-c", "%F|%t|%T|%Hr|%Lr", "/dev/zero")
