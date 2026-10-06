@@ -8792,10 +8792,7 @@ function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore
     }
     k = k + 1;
   }
-  let done: boolean[] = [];
-  for d in dsts {
-    done = done.append(false);
-  }
+  let done: boolean[] = __alloc_bool(dsts.len());
   let out: string[] = [];
   let left: i32 = dsts.len();
   while (left > 0) {
@@ -9485,10 +9482,7 @@ function ssa_imm_to(c: i64, loc: i32, s: asmcore.EmitState): asmcore.EmitState {
 // is parked in %r11 and every move reading it takes it from there, which
 // frees that location to be written.
 function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let done: boolean[] = [];
-  for src in srcs {
-    done = done.append(false);
-  }
+  let done: boolean[] = __alloc_bool(srcs.len());
   let parking: boolean = false;
   let parked: i32 = 0;
   let left: i32 = srcs.len();

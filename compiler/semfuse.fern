@@ -496,12 +496,7 @@ function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
 // ---- graph helpers --------------------------------------------------------
 
 function use_counts(g: ssa.SFunc): i32[] {
-  let out: i32[] = [];
-  let v: i32 = 0;
-  while (v < g.nvals) {
-    out = out.append(0);
-    v = v + 1;
-  }
+  let out: i32[] = __alloc_i32(g.nvals);
   for b in g.blocks {
     for ins in b.insts {
       for a in ins.args {

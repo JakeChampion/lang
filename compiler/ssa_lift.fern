@@ -2152,7 +2152,7 @@ function loop_writes(ops: ir.Op[], at: i32, nslots: i32, tags: i32[]): i32[] {
   if (hi < lo) {
     return out;
   }
-  let seen: i32[] = filled(hi - lo + 1, 0);
+  let seen: i32[] = __alloc_i32(hi - lo + 1);
   for sv in raw {
     seen = seen.with(sv - lo, 1);
   }

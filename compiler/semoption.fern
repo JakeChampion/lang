@@ -60,11 +60,10 @@ function local_read(ins: ssa.SInst, active: boolean[]): boolean {
 function candidates(f: ssasem.Func): boolean[] {
   let active: boolean[] = [];
   let peers: i32[][] = [];
-  let bad: boolean[] = [];
+  let bad: boolean[] = __alloc_bool(f.values.len());
   for t in f.values {
     active = active.append(option_schema(f, t) >= 0);
     peers = peers.append([]);
-    bad = bad.append(false);
   }
   for b in f.graph.blocks {
     for ins in b.insts {
