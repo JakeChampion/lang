@@ -15,8 +15,8 @@ import (
 // then freed it under the scope that stored it. The checker's own
 // `for (k, v) in m` binding is this shape, and every self-host-built checker
 // died in Scope.bind once __fern_arr_inc_elems walked the freed element
-// (#9023). The handoff now retains the element
-// (retain_caller_elem_handoff), the store's second owner.
+// (#9023). The parameter is lent now (#11705): the caller hands the element
+// over as it is, and bind retains it before the append stores it.
 //
 // The exit is pinned against the interpreter under the sanitizer, which stays
 // silent: a use-after-free is a `fern-sanitizer:` line and exit 124. A leak
@@ -83,7 +83,7 @@ function main(): i32 {
 }
 `
 
-// The x86-64 leg pins the retain in the handing function and runs the result
+// The x86-64 leg pins where the store's retain is taken and runs the result
 // under the sanitizer against the interpreter's exit.
 func TestSelfHostStrElemHandoffX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -98,8 +98,17 @@ func TestSelfHostStrElemHandoffX86_64(t *testing.T) {
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}
-	if n := rcIncSites(emittedFn(t, string(asm), "bind_names")); n != 1 {
-		t.Errorf("bind_names carries %d retain(s), want exactly one: the element handed to bind", n)
+	if n := rcIncSites(emittedFn(t, string(asm), "bind_names")); n != 0 {
+		t.Errorf("bind_names carries %d retain(s), want none: bind's name parameter is lent", n)
+	}
+	// The append is inline (`_apush`) or a call, depending on the build.
+	bind := emittedFn(t, string(asm), "Sc__bind")
+	store := strings.Index(bind, "arr_push")
+	if inline := strings.Index(bind, "_apush"); inline >= 0 && (store < 0 || inline < store) {
+		store = inline
+	}
+	if store < 0 || !rcIncInlineRe.MatchString(bind[:store]) {
+		t.Error("Sc.bind does not retain the name it stores before its first append")
 	}
 	bin := buildBin(t, gcc, dir, "str_elem_handoff", string(asm))
 	stderr, code := runCaptureStderrExit(t, runner, bin)
