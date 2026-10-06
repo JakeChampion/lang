@@ -62,6 +62,13 @@ struct Box2 { n: i32, s: string }
   return res(n + 1, b);
 }
 
+// Called once and not @noinline, so it is spliced into main and its body is
+// left dead: the return that hands res's variant on whole must not keep res
+// boxed.
+function fwd_once(n: i32, b: Box2): Result[Box2, i32] {
+  return res(n + 2, b);
+}
+
 function depth(n: i32): Option[i32] {
   if (n == 0) {
     return Some(0);
@@ -138,6 +145,14 @@ function main(): i32 {
         total = total + e * 10000;
       }
     }
+    match (fwd_once(i, b)) {
+      Ok(x) => {
+        total = total + x.n;
+      },
+      Err(e) => {
+        total = total + e * 100;
+      }
+    }
     match (depth(i)) {
       Some(d) => {
         total = total + d;
@@ -176,7 +191,7 @@ function main(): i32 {
     total = total + score(t);
   }
   print(total.to_string());
-  if (total != 366745) {
+  if (total != 371587) {
     return 1;
   }
   if (a1 != a0) {
