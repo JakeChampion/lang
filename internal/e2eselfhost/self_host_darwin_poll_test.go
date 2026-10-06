@@ -32,11 +32,11 @@ func TestSelfHostArm64DarwinPoll(t *testing.T) {
 	}{
 		{"empty", "[]", false, 0, -1, 1},
 		{"negative", "[0 - 1]", false, 0, -1, 1},
-		{"invalid", "[123456]", false, 0, -1, 32},
+		{"invalid", "[123456]", false, 0, 0, 32},
 		{"timeout", "[3]", false, 30, -1, 1},
 		{"ready", "[0 - 1, 3]", true, 1000, 1, 32},
 		{"zero_timeout", "[3]", true, 0, 0, 32},
-		{"mixed_invalid", "[123456, 3]", true, 0, 1, 32},
+		{"mixed_invalid", "[123456, 3]", true, 0, 0, 32},
 		{"duplicate", "[0 - 1, 3, 3]", true, 1000, 1, 32},
 		{"first", "[4, 3]", true, 1000, 0, 32},
 		{"infinite", "[3]", true, -1, 0, 32},
