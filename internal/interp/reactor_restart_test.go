@@ -39,7 +39,7 @@ func TestWaitRestartingKeepsTheDeadline(t *testing.T) {
 		if n != 0 || err != nil {
 			t.Fatalf("got (%d, %v), want a timeout (0, nil)", n, err)
 		}
-		if d := time.Since(start); d > time.Second {
+		if d := time.Since(start); d < 40*time.Millisecond || d > time.Second {
 			t.Fatalf("a 50 ms wait interrupted %d times took %v", calls, d)
 		}
 	})
