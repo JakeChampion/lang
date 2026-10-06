@@ -889,23 +889,18 @@ function retagged_string(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
   return d.kind_tag == ssasem.str_as() && d.args.len() == 1 && !ssasem.is_view(f.values[d.args[0]]);
 }
 
-function live_out_row(flow: ssalive.Flow, bi: i32): boolean[] {
-  let out: boolean[] = flow.none;
-  for v in ssalive.live_out_ids(flow, bi) {
-    out = out.with(v, true);
-  }
-  return out;
-}
-
-function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
+// value and the values it depends on, each once; none for no value.
+function use_ids(value: i32, deps: i32[][]): i32[] {
   if (value < 0) {
-    return live;
+    return [];
   }
-  live = live.with(value, true);
+  let ids: i32[] = [value];
   for dep in deps[value] {
-    live = live.with(dep, true);
+    if (!has_id(ids, dep)) {
+      ids = ids.append(dep);
+    }
   }
-  return live;
+  return ids;
 }
 
 // A construction takes one unit per reference operand, function values
@@ -2132,7 +2127,7 @@ function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: 
   if (!ssalive.live_out_has(a.flow, bi, root)) {
     return false;
   }
-  return named_after(f, a.flow, bi, root, take) || reached_past_take(f, a, defs, bi, take, root);
+  return named_after(f, a.flow, bi, root, take) || reached_past_take(a, defs, bi, take, root);
 }
 
 // A block after bi reads v. The walk stops at the block defining v — a loop's
@@ -2202,17 +2197,14 @@ function block_reads(blk: ssa.SBlock, v: i32, take: ssa.SInst): boolean {
 
 // A value live out of bi reaches root other than through `take` or a read of
 // another of root's slots.
-function reached_past_take(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, take: ssa.SInst, root: i32): boolean {
-  let out: boolean[] = live_out_row(a.flow, bi);
-  let w: i32 = 0;
-  while (w < f.graph.nvals) {
-    if (out[w] && w != root && reads(a, w, root)) {
+function reached_past_take(a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, take: ssa.SInst, root: i32): boolean {
+  for w in ssalive.live_out_ids(a.flow, bi) {
+    if (w != root && reads(a, w, root)) {
       let hop: i32 = first_hop(a, w, root);
       if (hop != take.result && (hop < 0 || !other_slot_get(defs[hop], take))) {
         return true;
       }
     }
-    w = w + 1;
   }
   return false;
 }
@@ -2471,22 +2463,9 @@ function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.S
   return Step { ...s, hand_roots: roots, hand_fields: fields };
 }
 
-// Last occurrence may move one dead unit; every other occurrence retains.
-function choose(s: Step, supplies: Supply[], dead: boolean[], owned: boolean[]): Step {
-  let ids: i32[] = [];
-  let i: i32 = 0;
-  while (i < dead.len()) {
-    if (dead[i]) {
-      ids = ids.append(i);
-    }
-    i = i + 1;
-  }
-  return choose_ids(s, supplies, ids, owned, []);
-}
-
-// choose_ids is choose over the dead values listed by id, in any order: a
-// dead owned supply moves its unit (the last one to name it), and the other
-// dead owned values drop, in ascending id order. A `pinned` value retains and
+// choose_ids takes the dead values listed by id, each once, in any order: a
+// dead owned supply moves its unit (the last one to name it), every other
+// supply retains, and the other dead owned values drop, in ascending id order. A `pinned` value retains and
 // drops after the operation instead of moving.
 function choose_ids(s: Step, supplies: Supply[], dead: i32[], owned: boolean[], pinned: i32[]): Step {
   let moved: i32[] = [];
@@ -2569,16 +2548,26 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
     vi0 = vi0 + 1;
   }
   let steps: Step[] = [];
+  // One row for every block: each block sets the values it marks live in
+  // `touched`, and clears them again once its steps are chosen.
+  let live: boolean[] = analysis.flow.none;
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     let b: ssa.SBlock = f.graph.blocks[bi];
     if (reachable[bi]) {
-      let live: boolean[] = live_out_row(analysis.flow, bi);
+      let term_uses: i32[] = [];
       if (b.term.kind_tag == 1) {
-        live = add_use(live, b.term.value, analysis.dependencies);
+        term_uses = use_ids(b.term.value, analysis.dependencies);
       }
       if (b.term.kind_tag == 3) {
-        live = add_use(live, b.term.cond, analysis.dependencies);
+        term_uses = use_ids(b.term.cond, analysis.dependencies);
+      }
+      let touched: i32[] = ssalive.live_out_ids(analysis.flow, bi);
+      for v in term_uses {
+        touched = touched.append(v);
+      }
+      for v in touched {
+        live = live.with(v, true);
       }
       let pos: i32 = b.insts.len() - 1;
       while (pos >= 0) {
@@ -2597,11 +2586,13 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
               if (!live[arg]) {
                 dead = dead.append(arg);
                 live = live.with(arg, true);
+                touched = touched.append(arg);
               }
               for dep in analysis.dependencies[arg] {
                 if (!live[dep]) {
                   dead = dead.append(dep);
                   live = live.with(dep, true);
+                  touched = touched.append(dep);
                 }
               }
             }
@@ -2615,19 +2606,18 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
         }
         pos = pos - 1;
       }
-      let entry_dead: boolean[] = analysis.flow.none;
+      let entry_dead: i32[] = [];
       for ins in b.insts {
         if ((ins.kind_tag == 6 || ins.kind_tag == 8) && owned[ins.result] && !live[ins.result]) {
-          entry_dead = entry_dead.with(ins.result, true);
+          entry_dead = entry_dead.append(ins.result);
         }
       }
-      steps = steps.append(choose(step(b.id, entry_point(), 0 - 1), [], entry_dead, owned));
+      for v in touched {
+        live = live.with(v, false);
+      }
+      steps = steps.append(choose_ids(step(b.id, entry_point(), 0 - 1), [], entry_dead, owned, []));
       if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
-        let dead: boolean[] = analysis.flow.none;
-        if (b.term.kind_tag == 1) {
-          dead = add_use(dead, b.term.value, analysis.dependencies);
-        }
-        steps = steps.append(choose(step(b.id, return_point(), 0 - 1), return_supplies(f, b), dead, owned));
+        steps = steps.append(choose_ids(step(b.id, return_point(), 0 - 1), return_supplies(f, b), term_uses, owned, []));
       }
       for target in successors(b) {
         let si: i32 = ssalive.position(analysis.flow, target);
