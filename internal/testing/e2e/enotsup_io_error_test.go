@@ -43,6 +43,8 @@ const enotsupWant = "remove_file Other victim.txt Operation not supported 95 95\
 // Unsupported is the target refusing an operation it does not offer (#11712).
 // unlinkat and mkdirat answer ENOTSUP under the seccomp launcher; the wasm
 // host hands it on as preview 1's ENOTSUP or preview 2's `unsupported`.
+// wasmtime runs with its cache off, which it would otherwise mkdirat into
+// being under the same filter.
 func TestEnotsupIsOtherEveryTarget(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "victim.txt"), []byte("x"), 0o644); err != nil {
@@ -74,7 +76,7 @@ func TestEnotsupIsOtherEveryTarget(t *testing.T) {
 		}},
 		{"wasm-preview1", true, func(t *testing.T) []string {
 			core := e2eharness.CompileSelfHostFile(t, e2eharness.TargetWasm32Wasi, srcPath, leakcheck)
-			return []string{e2eharness.Wasmtime(t), "run", "--dir=.", core}
+			return []string{e2eharness.Wasmtime(t), "run", "-C", "cache=n", "--dir=.", core}
 		}},
 		{"wasm-component", true, func(t *testing.T) []string {
 			component := filepath.Join(t.TempDir(), "main.wasm")
@@ -83,7 +85,7 @@ func TestEnotsupIsOtherEveryTarget(t *testing.T) {
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("compile component: %v\n%s", err, out)
 			}
-			return []string{e2eharness.Wasmtime(t), "run", "--dir=.", component}
+			return []string{e2eharness.Wasmtime(t), "run", "-C", "cache=n", "--dir=.", component}
 		}},
 	}
 	for _, tc := range targets {
