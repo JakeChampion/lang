@@ -164,6 +164,16 @@ was given), and the entry closure. Its API is three functions:
   returning), which runs its `defer`s and its ordinary exit path, where its
   `OpRcDec`s are, and each caller does the same up to the entry.
 
+A two-argument call runs as a task with nothing built for it until it
+parks: `call_start(f, a, b)` runs `f(a, b)` under a fresh record through a
+trampoline that holds the call's parts, and hands the record back freed when
+the call returns, so the serve loop's handler costs no closure and no `Task`
+unless it parks; a parked one is held as a `Call` (`call_of`), which
+`call_resume` and `call_cancel` run on through the same trampoline. `Wait`
+names the task it came from (`task`), so the holder of a parked call knows
+the record. The closure form, `Task` and `task_start`, stays for the
+combinators and the simulator.
+
 `Status` is `Done(result)`, `Suspended(wait)` or `Cancelled`. Because a
 cancelled task leaves through its normal exit paths, cancellation needs no
 separate drop routine per suspend point, and the Perceus accounting of a

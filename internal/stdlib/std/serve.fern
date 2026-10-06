@@ -1834,8 +1834,8 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
       let answered: (__Conns, boolean) = __serve_respond(drv, c, at, __serve_wire(c.out, h.request.method, h.version, resp, c.keep[at], clk), opts, count + 1, tail, clk);
       return (answered.0, fls, answered.1, tail);
     },
-    HandlerParked(fl, w) => {
-      let parked: (__Conns, __Flight[]) = __serve_park(drv, c, fls, at, __flight_watch(drv, __Flight { ...fl, body: Some(body) }, w, monotonic_ns()), opts);
+    HandlerParked(fl) => {
+      let parked: (__Conns, __Flight[]) = __serve_park(drv, c, fls, at, __flight_watch(drv, __Flight { ...fl, body: Some(body) }, monotonic_ns()), opts);
       return (parked.0, parked.1, false, http.Incomplete);
     }
   }
@@ -1854,11 +1854,25 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
 // the response, as it does today — except while the flight's own pull is
 // reading a streamed body (`body`), when the connection is the pull's to
 // read.
-struct __Flight { task: async.Task[HttpResponse], fd: i32, set: i32[], due: i64, method: string, version: string, kept: boolean, tail: http.HttpFraming, body: Option[__Body] }
+struct __Flight { task: async.Call[HttpRequest, platform.Host, HttpResponse], wait: async.Wait, fd: i32, set: i32[], due: i64, method: string, version: string, kept: boolean, tail: http.HttpFraming, body: Option[__Body] }
 
 // __Started — how a handler's first run ended: with its response, or parked
 // on a wait, the flight not yet watching it.
-enum __Started { HandlerDone(HttpResponse), HandlerParked(__Flight, async.Wait) }
+enum __Started { HandlerDone(HttpResponse), HandlerParked(__Flight) }
+
+// __started_again(s) — `s` built again from its parts, for a caller that
+// cannot take a start apart in place (a lambda returning it).
+function __started_again(s: __Started): __Started {
+  match (s) {
+    HandlerDone(resp) => {
+      return HandlerDone(resp);
+    },
+    HandlerParked(fl) => {
+      return HandlerParked(fl);
+    }
+  }
+  return s;
+}
 
 // __serve_start(handler, plat, f, kept, tail, opts, stop) — the handler run
 // for the request as a task: its response when it returns, the flight and
@@ -1869,19 +1883,15 @@ function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, pl
     return HandlerDone(http.text(503, ""));
   }
   let req: HttpRequest = f.request;
-  let t: async.Task[HttpResponse] = async.task_new(() => handler(req, plat));
-  match (async.task_start(t)) {
+  match (async.call_start(handler, req, plat)) {
     Done(resp) => {
-      async.task_free(t);
       return HandlerDone(resp);
     },
     Suspended(w) => {
       let none: i32[] = [];
-      return HandlerParked(__Flight { task: t, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: f.version, kept: kept, tail: tail, body: None }, w);
+      return HandlerParked(__Flight { task: async.call_of(w, handler, req, plat), wait: w, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: f.version, kept: kept, tail: tail, body: None });
     },
-    Cancelled => {
-      async.task_free(t);
-    }
+    Cancelled => {}
   }
   return HandlerDone(http.text(503, ""));
 }
@@ -1971,16 +1981,16 @@ function __flight_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fi:
   let fl: __Flight = fls[fi];
   __flight_unwatch(drv, fl);
   fls = __flights_remove(fls, fi);
-  match (async.task_resume(fl.task, ready)) {
+  match (async.call_resume(fl.task, ready)) {
     Done(resp) => {
-      async.task_free(fl.task);
+      async.call_free(fl.task);
       return (__serve_answer(drv, c, fl, resp, opts, clk), fls);
     },
     Suspended(w) => {
-      return (c, fls.append(__flight_watch(drv, fl, w, monotonic_ns())));
+      return (c, fls.append(__flight_watch(drv, __Flight { ...fl, wait: w }, monotonic_ns())));
     },
     Cancelled => {
-      async.task_free(fl.task);
+      async.call_free(fl.task);
       return (__serve_abandon(drv, c, fl.fd), fls);
     }
   }
@@ -2019,9 +2029,10 @@ function __serve_abandon[D: async.Driver](drv: D, c: __Conns, fd: i32): __Conns 
   return __serve_close(drv, c, at);
 }
 
-// __flight_watch(drv, fl, w, now) — the flight waiting on `w`: each pair
+// __flight_watch(drv, fl, now) — the flight waiting on `fl.wait`: each pair
 // watched with its interest, the bound kept as the flight's due time.
-function __flight_watch[D: async.Driver](drv: D, fl: __Flight, w: async.Wait, now: i64): __Flight {
+function __flight_watch[D: async.Driver](drv: D, fl: __Flight, now: i64): __Flight {
+  let w: async.Wait = fl.wait;
   let i: i32 = 0;
   while (i + 1 < w.set.len()) {
     let watched: i32 = drv.watch(w.set[i], w.set[i + 1]);
@@ -2048,8 +2059,8 @@ function __flight_unwatch[D: async.Driver](drv: D, fl: __Flight): void {
 // answering `async.cancelled()`, and its record freed.
 function __flight_cancel[D: async.Driver](drv: D, fl: __Flight): void {
   __flight_unwatch(drv, fl);
-  let st: async.TaskStatus[HttpResponse] = async.task_cancel(fl.task);
-  async.task_free(fl.task);
+  let st: async.TaskStatus[HttpResponse] = async.call_cancel(fl.task);
+  async.call_free(fl.task);
 }
 
 // __flights_cancel(drv, fls) — every flight cancelled, as the loop ends.
@@ -2206,8 +2217,11 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let events: i32[] = async.event_room(64);
   // The streamed-body start, with the handler and platform bound once:
   // what `__serve_stream` runs a handler through, holding no platform of
-  // its own (E080 reads a platform parameter as a handler's).
-  let start: (http.HttpFramed, boolean, __Stop) => __Started = (f: http.HttpFramed, kept: boolean, st: __Stop): __Started => __serve_start(handler, plat, f, kept, http.Incomplete, opts, st);
+  // its own (E080 reads a platform parameter as a handler's). It takes
+  // the start apart and builds it again so the loop's own call, which
+  // takes it apart, gets it in two words; the box is paid here, on the
+  // streamed path, where the handler parks anyway.
+  let start: (http.HttpFramed, boolean, __Stop) => __Started = (f: http.HttpFramed, kept: boolean, st: __Stop): __Started => __started_again(__serve_start(handler, plat, f, kept, http.Incomplete, opts, st));
   while (true) {
     let now: i64 = monotonic_ns();
     events = __with_backlog(conns, drv.wait_into(events, __stop_timeout(stop, opts, now, __least_timeout(__conns_timeout(conns, now), __flights_timeout(flights, now)))));
@@ -2264,8 +2278,8 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
                 more = answered.1;
                 next = took.2;
               },
-              HandlerParked(fl, w) => {
-                let parked: (__Conns, __Flight[]) = __serve_park(drv, conns, flights, at, __flight_watch(drv, fl, w, monotonic_ns()), opts);
+              HandlerParked(fl) => {
+                let parked: (__Conns, __Flight[]) = __serve_park(drv, conns, flights, at, __flight_watch(drv, fl, monotonic_ns()), opts);
                 conns = parked.0;
                 flights = parked.1;
                 more = false;
