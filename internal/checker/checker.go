@@ -17750,8 +17750,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// type is still INCOMPLETE. Completing it would answer
 					// `Result[i32, i32]` and take the widening away.
 					//
-					// Only a numeric disagreement is left alone. Any other one
-					// is a type error, and it is REPORTED by completing: the
+					// Only lossless same-signed Result widening is left open.
+					// Other disagreements are REPORTED by completing: the
 					// payload's own binding is kept, so `Box[i32, string]` meets
 					// the `Box[string, string]` the call wants and the mismatch
 					// is named.
@@ -17762,7 +17762,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						if !ok || destArgs == nil {
 							continue
 						}
-						if numericType(pinned) && numericType(destArgs[i]) && !ast.Equal(pinned, destArgs[i]) {
+						if resultPayloadWidens(vr.enumName, pinned, destArgs[i]) {
 							numericConflict = true
 							destArgs = nil
 						}
@@ -19794,16 +19794,6 @@ func takeWrittenTypeArgs(n *ast.Call, prior []ast.Type) []ast.Type {
 		return prior
 	}
 	return append([]ast.Type(nil), n.TypeArgs...)
-}
-
-// numericType reports whether `t` is an integer or float type — the pair a
-// widening can settle between.
-func numericType(t ast.Type) bool {
-	switch t.(type) {
-	case ast.NumberType, ast.FloatType:
-		return true
-	}
-	return false
 }
 
 // destEnumArgs returns the type arguments a destination supplies for enum
