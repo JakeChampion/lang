@@ -12,7 +12,10 @@ enum Box[T] { Packed(T) }
 enum A { Value(i32) }
 enum B { Value(string) }
 enum State { Idle, Busy }
+enum GenericState[T] { Missing, Present(T) }
 struct Factory {}
+struct ValueFactory { Packed: Box[string] }
+enum Holder { Held(ValueFactory) }
 impl Factory { function Packed(self: Self, n: i32): i32 { return n + 3; } }
 function Idle(): i32 { return 11; }
 function Ok(n: i32): Result[u8, string] { assert(n == 300); return Result.Ok(1u8); }
@@ -27,6 +30,18 @@ function local_type_head(n: i32): i32 {
   let Box = Factory {};
   return Box.Packed(n);
 }
+function seed(): Box[string] { return Box.Packed("seed"); }
+function local_type_value(): Box[string] {
+  let Box = ValueFactory { Packed: seed() };
+  return Box.Packed;
+}
+function parameter_type_value(Box: ValueFactory): Box[string] {
+  return Box.Packed;
+}
+function missing(): GenericState[string] { return GenericState.Missing; }
+function pattern_type_value(holder: Holder): Box[string] {
+  match (holder) { Held(Box) => { return Box.Packed; } }
+}
 function main(): i32 {
   let argv: string[] = args();
   let count = argv.len();
@@ -39,6 +54,14 @@ function main(): i32 {
   assert(Packed(count) == count + 1);
   assert(local_closure(count) == count + 2);
   assert(local_type_head(count) == count + 3);
+  match (local_type_value()) { Packed(s) => { assert(s == "seed"); } }
+  match (parameter_type_value(ValueFactory { Packed: seed() })) { Packed(s) => { assert(s == "seed"); } }
+  let read_value = (Box: ValueFactory): Box[string] => { return Box.Packed; };
+  match (read_value(ValueFactory { Packed: seed() })) { Packed(s) => { assert(s == "seed"); } }
+  let call_value = (Box: Factory): i32 => { return Box.Packed(count); };
+  assert(call_value(Factory {}) == count + 3);
+  match (missing()) { Missing => {}, Present(_) => { assert(false); } }
+  match (pattern_type_value(Held(ValueFactory { Packed: seed() }))) { Packed(s) => { assert(s == "seed"); } }
   match (wrap(argv[0])) { Packed(s) => { assert(s == argv[0]); } }
   let b: B = Value(3);
   match (b) { Value(s) => { assert(s == "function"); } }
