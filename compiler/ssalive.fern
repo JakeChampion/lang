@@ -265,19 +265,28 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
   let at: i32[] = position_of(f);
   let uses: i64[] = __alloc_i64(nb * words);
   let defs: i64[] = __alloc_i64(nb * words);
+  // phi_at lists each block's phis by position, from phi_from[block] to
+  // phi_from[block + 1], so a predecessor's recompute reads only them.
+  let phi_at: i32[] = [];
+  let phi_from: i32[] = [];
   let bi: i32 = 0;
   while (bi < nb) {
     let b: ssa.SBlock = f.blocks[bi];
     let base: i32 = bi * words;
+    phi_from = phi_from.append(phi_at.len());
+    let k: i32 = 0;
     for ins in b.insts {
       if (ins.kind_tag != 8) {
         for arg in ins.args {
           uses = add_local_use(uses, defs, base, arg, dependencies);
         }
+      } else {
+        phi_at = phi_at.append(k);
       }
       if (ins.result >= 0) {
         defs = bit_set(defs, base, ins.result);
       }
+      k = k + 1;
     }
     if (b.term.kind_tag == 1) {
       uses = add_local_use(uses, defs, base, b.term.value, dependencies);
@@ -287,6 +296,7 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
     }
     bi = bi + 1;
   }
+  phi_from = phi_from.append(phi_at.len());
   let live_in: i64[] = __alloc_i64(nb * words);
   let live_out: i64[] = __alloc_i64(nb * words);
   // row holds the block being recomputed, so a pass updates live_out in
@@ -312,32 +322,46 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
       pending = pending - 1;
       let b: ssa.SBlock = f.blocks[bi];
       let base: i32 = bi * words;
+      // row is rebuilt from the successors' live-in sets, which only grow,
+      // so it holds everything the block's last live-out held.
       let w: i32 = 0;
-      while (w < words) {
-        row = row.with(w, live_out[base + w]);
-        w = w + 1;
-      }
+      let seeded: boolean = false;
       let si: i32 = 0;
       while (si < 2) {
         let target: i32 = successor(b.term, si);
         if (target >= 0) {
           let sb: i32 = at[target];
           w = 0;
-          while (w < words) {
-            row = row.with(w, row[w] | live_in[sb * words + w]);
-            w = w + 1;
+          if (seeded) {
+            while (w < words) {
+              row = row.with(w, row[w] | live_in[sb * words + w]);
+              w = w + 1;
+            }
+          } else {
+            while (w < words) {
+              row = row.with(w, live_in[sb * words + w]);
+              w = w + 1;
+            }
           }
+          seeded = true;
           // Phi arguments belong to this exact predecessor edge.
           // The phi result is a definition in the successor, so its
           // normal live-in set already excludes that result.
           let pi: i32 = pred_index(f.blocks[sb], b.id);
-          for ins in f.blocks[sb].insts {
-            if (ins.kind_tag == 8) {
-              row = add_use(row, 0, ins.args[pi], dependencies);
-            }
+          let pj: i32 = phi_from[sb];
+          while (pj < phi_from[sb + 1]) {
+            row = add_use(row, 0, f.blocks[sb].insts[phi_at[pj]].args[pi], dependencies);
+            pj = pj + 1;
           }
         }
         si = si + 1;
+      }
+      if (!seeded) {
+        w = 0;
+        while (w < words) {
+          row = row.with(w, 0i64);
+          w = w + 1;
+        }
       }
       let grew: boolean = false;
       w = 0;
