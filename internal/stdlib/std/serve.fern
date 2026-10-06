@@ -386,11 +386,17 @@ struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlin
 // close-delimited (an empty ending) for an HTTP/1.0 client.
 enum __Tail { NoTail, FileTail(Reader, i64), ChunkTail(ChunkProducer, i32, string) }
 
-// __Wire — what of a response is left once its head, with whatever body
-// is held whole, is in the loop's builder: the tail still to be produced,
-// and whether the connection may persist after it (a close-delimited body
-// ends it).
-struct __Wire { tail: __Tail, keep: boolean }
+// __tail_keeps(t) — whether the connection may persist once `t` has
+// gone: a close-delimited tail is what ends it.
+function __tail_keeps(t: __Tail): boolean {
+  match (t) {
+    ChunkTail(_, _, end) => {
+      return end.len() > 0;
+    },
+    _ => {}
+  }
+  return true;
+}
 
 // __Clock — the `Date` every response carries (RFC 9110 §6.6.1),
 // formatted once per second: the wall-clock second it was formatted for,
@@ -412,11 +418,14 @@ function __clock_tick(clk: __Clock): __Clock {
 // response pushed into the builder `out` as the loop writes it: the
 // handler's `Date` when it set one, the clock's otherwise, and no body
 // where the request's method or the status says none. A body held whole
-// goes behind the head byte for byte, under its byte length.
+// goes behind the head byte for byte, under its byte length. What is
+// left of the response, the tail still to be produced, is the result;
+// whether the connection may persist after it follows from the tail
+// (`__tail_keeps`), so nothing is built to carry the two together.
 // A response with a header or trailer that cannot be written as one field
 // line is answered 500 in its place, so no handler-supplied byte can end a
 // line or start another response.
-function __serve_wire(out: usize, method: string, version: string, answer: HttpResponse, keep_alive: boolean, clk: __Clock): __Wire {
+function __serve_wire(out: usize, method: string, version: string, answer: HttpResponse, keep_alive: boolean, clk: __Clock): __Tail {
   if (!http.http_fields_ok(answer.headers) || !http.http_fields_ok(answer.trailers)) {
     return __serve_wire(out, method, version, http.internal_error(""), keep_alive, clk);
   }
@@ -434,16 +443,16 @@ function __serve_wire(out: usize, method: string, version: string, answer: HttpR
     },
     _ => {
       http.http_serialize_response_into(out, method, answer, keep_alive, date);
-      return __Wire { tail: NoTail, keep: keep_alive };
+      return NoTail;
     }
   }
-  return __Wire { tail: NoTail, keep: false };
+  return NoTail;
 }
 
 // __wire_file(out, method, version, resp, path, headless, keep_alive, clk,
 // date) — a file body opened here and streamed as the tail under its
 // size, or answered 404 when it cannot be opened.
-function __wire_file(out: usize, method: string, version: string, resp: HttpResponse, path: string, headless: boolean, keep_alive: boolean, clk: __Clock, date: string): __Wire {
+function __wire_file(out: usize, method: string, version: string, resp: HttpResponse, path: string, headless: boolean, keep_alive: boolean, clk: __Clock, date: string): __Tail {
   match (open_reader(path)) {
     Ok(r) => {
       let size: i64 = 0 - 1 as i64;
@@ -460,36 +469,36 @@ function __wire_file(out: usize, method: string, version: string, resp: HttpResp
       http.http_serialize_response_head_into(out, resp, keep_alive, date + "Content-Length: " + size.to_string() + "\r\n");
       if (headless || size == 0 as i64) {
         r.close();
-        return __Wire { tail: NoTail, keep: keep_alive };
+        return NoTail;
       }
-      return __Wire { tail: FileTail(r, size), keep: keep_alive };
+      return FileTail(r, size);
     },
     Err(e) => {
       return __serve_wire(out, method, version, http.not_found(), keep_alive, clk);
     }
   }
-  return __Wire { tail: NoTail, keep: false };
+  return NoTail;
 }
 
 // __wire_chunks(out, version, resp, producer, headless, keep_alive, date) —
 // a chunk producer as the tail: under chunked transfer coding for an
 // HTTP/1.1 client, close-delimited for an HTTP/1.0 one, the connection
 // ending with it.
-function __wire_chunks(out: usize, version: string, resp: HttpResponse, producer: ChunkProducer, headless: boolean, keep_alive: boolean, date: string): __Wire {
+function __wire_chunks(out: usize, version: string, resp: HttpResponse, producer: ChunkProducer, headless: boolean, keep_alive: boolean, date: string): __Tail {
   if (headless) {
     http.http_serialize_response_head_into(out, resp, keep_alive, date);
-    return __Wire { tail: NoTail, keep: keep_alive };
+    return NoTail;
   }
   if (version == "HTTP/1.0") {
     http.http_serialize_response_head_into(out, resp, false, date);
-    return __Wire { tail: ChunkTail(producer, 0, ""), keep: false };
+    return ChunkTail(producer, 0, "");
   }
   let framing: string = date + "Transfer-Encoding: chunked\r\n";
   if (resp.trailers.names.len() > 0) {
     framing = framing + "Trailer: " + resp.trailers.names.join(", ") + "\r\n";
   }
   http.http_serialize_response_head_into(out, resp, keep_alive, framing);
-  return __Wire { tail: ChunkTail(producer, 0, "0\r\n" + http.http_serialize_fields(resp.trailers) + "\r\n"), keep: keep_alive };
+  return ChunkTail(producer, 0, "0\r\n" + http.http_serialize_fields(resp.trailers) + "\r\n");
 }
 
 // __in_flight(c, at) — whether a response is still going out on the
@@ -946,7 +955,7 @@ function __serve_continue[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Co
 // finished by a later wait, which closes the connection once it has gone
 // out; a refused write closes it now.
 function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i32, opts: Config, clk: __Clock): __Conns {
-  let wire: __Wire = __serve_wire(c.out, "GET", "HTTP/1.1", http.text(status, ""), false, clk);
+  __serve_wire(c.out, "GET", "HTTP/1.1", http.text(status, ""), false, clk);
   let sent: (__Conns, __Sent) = __serve_send_out(drv, __Conns { ...c, keep: c.keep.with(at, false) }, at, opts);
   match (sent.1) {
     Partial => {
@@ -962,9 +971,10 @@ function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i3
   return sent.0;
 }
 
-// __serve_respond(drv, c, at, wire, opts, answered, tail, clk) — the
-// response, which `wire` left in the loop's builder, sent and the
-// connection's next state, given the framing of the bytes behind the
+// __serve_respond(drv, c, at, method, version, resp, keep_alive, opts,
+// answered, tail, clk) — the response `resp` to a `method` request under
+// `version`, written into the loop's builder (`__serve_wire`), sent, and
+// the connection's next state, given the framing of the bytes behind the
 // answered request: `(conns, more)`, where `more` says the connection
 // persists with its next request already buffered, so the loop answers it
 // now. A short write leaves the rest pending, to be
@@ -975,9 +985,10 @@ function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i3
 // backlog. The responses of one burst are corked: the builder keeps what
 // the burst has answered and not yet written, in front of this response,
 // so one readable event's answers leave in one write (`__corks`).
-function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: __Wire, opts: Config, answered: i32, tail: http.HttpFraming, clk: __Clock): (__Conns, boolean) {
-  c = __Conns { ...c, tails: c.tails.with(at, wire.tail), keep: c.keep.with(at, c.keep[at] && wire.keep) };
-  if (__corks(wire, c.keep[at], answered, tail)) {
+function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, method: string, version: string, resp: HttpResponse, keep_alive: boolean, opts: Config, answered: i32, tail: http.HttpFraming, clk: __Clock): (__Conns, boolean) {
+  let rest: __Tail = __serve_wire(c.out, method, version, resp, keep_alive, clk);
+  c = __Conns { ...c, tails: c.tails.with(at, rest), keep: c.keep.with(at, c.keep[at] && keep_alive && __tail_keeps(rest)) };
+  if (__corks(rest, c.keep[at], answered, tail)) {
     return (c, true);
   }
   let sent: (__Conns, __Sent) = __serve_send_out(drv, c, at, opts);
@@ -1016,17 +1027,17 @@ function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: __W
   return (c, true);
 }
 
-// __corks(wire, persists, answered, tail) — whether a response waits to
+// __corks(rest, persists, answered, tail) — whether a response waits to
 // go out with the next one: a whole response (no tail to produce) on a
 // persisting connection whose next request is already framed and inside
 // the burst. That request's response is then written by this burst, so
 // nothing corked outlives the event, and no other write (an interim
 // `100 Continue`, a refusal) can come between.
-function __corks(wire: __Wire, persists: boolean, answered: i32, tail: http.HttpFraming): boolean {
+function __corks(rest: __Tail, persists: boolean, answered: i32, tail: http.HttpFraming): boolean {
   if (!persists || answered >= __pipeline_burst()) {
     return false;
   }
-  match (wire.tail) {
+  match (rest) {
     NoTail => {},
     _ => {
       return false;
@@ -1831,7 +1842,7 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
     HandlerDone(resp) => {
       c = __body_settled(drv, c, at, body);
       let tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last);
-      let answered: (__Conns, boolean) = __serve_respond(drv, c, at, __serve_wire(c.out, h.request.method, h.version, resp, c.keep[at], clk), opts, count + 1, tail, clk);
+      let answered: (__Conns, boolean) = __serve_respond(drv, c, at, h.request.method, h.version, resp, c.keep[at], opts, count + 1, tail, clk);
       return (answered.0, fls, answered.1, tail);
     },
     HandlerParked(fl) => {
@@ -2015,7 +2026,7 @@ function __serve_answer[D: async.Driver](drv: D, c: __Conns, fl: __Flight, resp:
     },
     None => {}
   }
-  let answered: (__Conns, boolean) = __serve_respond(drv, c, at, __serve_wire(c.out, fl.method, fl.version, resp, fl.kept && c.keep[at], clk), opts, __pipeline_burst(), tail, clk);
+  let answered: (__Conns, boolean) = __serve_respond(drv, c, at, fl.method, fl.version, resp, fl.kept && c.keep[at], opts, __pipeline_burst(), tail, clk);
   return __serve_finish(drv, answered.0, fl.fd, false, opts, clk);
 }
 
@@ -2273,7 +2284,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
             count = count + 1;
             match (__serve_start(handler, plat, f, took.1, took.2, opts, stop)) {
               HandlerDone(resp) => {
-                let answered: (__Conns, boolean) = __serve_respond(drv, conns, at, __serve_wire(conns.out, f.request.method, f.version, resp, took.1, clk), opts, count, took.2, clk);
+                let answered: (__Conns, boolean) = __serve_respond(drv, conns, at, f.request.method, f.version, resp, took.1, opts, count, took.2, clk);
                 conns = answered.0;
                 more = answered.1;
                 next = took.2;
@@ -2396,7 +2407,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
               stepped = handler(st, f.request, plat);
             }
             st = stepped.0;
-            let answered: (__Conns, boolean) = __serve_respond(drv, conns, at, __serve_wire(conns.out, f.request.method, f.version, stepped.1, took.1, clk), opts, count, took.2, clk);
+            let answered: (__Conns, boolean) = __serve_respond(drv, conns, at, f.request.method, f.version, stepped.1, took.1, opts, count, took.2, clk);
             conns = answered.0;
             more = answered.1;
             next = took.2;
