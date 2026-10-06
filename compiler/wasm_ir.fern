@@ -3248,7 +3248,8 @@ function desc_shim(name: string, extra: string, files: boolean, method: string, 
 // (SEEK_CUR from the recorded offset, or the file's end for an appending
 // Writer that has written since its last seek; SEEK_END from
 // descriptor.stat's size), and an appending Writer keeps its stream, since
-// its writes land at the end whatever the offset says. A handle with no
+// its writes land at the end whatever the offset says, as does a directory
+// Reader, which has none (every read of it is EISDIR). A handle with no
 // descriptor is ESPIPE and a negative target EINVAL, lseek's two refusals.
 function fd_seek_shim(files: boolean): string {
   let o: string = "  (func $__fern_fd_seek (param $fd i32) (param $off i64) (param $whence i32) (param $rb i32) (result i32)\n";
@@ -3277,14 +3278,14 @@ function fd_seek_shim(files: boolean): string {
   o = o + "      (call $__fern_raw_free (local.get $ra) (i32.const 104))\n";
   o = o + "      (return (i32.const 28))))\n";
   o = o + "    (i32.store8 (local.get $ra) (i32.const 0))\n";
-  o = o + "    (if (i32.and (local.get $bits) (i32.const 1))\n";
+  o = o + "    (if (i32.eq (i32.and (local.get $bits) (i32.const 9)) (i32.const 1))\n";
   o = o + "      (then (call $__fern_read_via_stream (local.get $d) (local.get $target) (local.get $ra)))\n";
-  o = o + "      (else (if (i32.eqz (i32.and (local.get $bits) (i32.const 4)))\n";
+  o = o + "      (else (if (i32.eqz (i32.and (local.get $bits) (i32.const 13)))\n";
   o = o + "        (then (call $__fern_write_via_stream (local.get $d) (local.get $target) (local.get $ra))))))\n";
   o = o + p2_fail_ret("4", "104");
-  o = o + "    (if (i32.and (local.get $bits) (i32.const 1))\n";
+  o = o + "    (if (i32.eq (i32.and (local.get $bits) (i32.const 9)) (i32.const 1))\n";
   o = o + "      (then (call $__fern_in_strm_drop (i32.load offset=4 (local.get $slot))) (i32.store offset=4 (local.get $slot) (i32.load offset=4 (local.get $ra))))\n";
-  o = o + "      (else (if (i32.eqz (i32.and (local.get $bits) (i32.const 4)))\n";
+  o = o + "      (else (if (i32.eqz (i32.and (local.get $bits) (i32.const 13)))\n";
   o = o + "        (then (call $__fern_out_strm_drop (i32.load offset=4 (local.get $slot))) (i32.store offset=4 (local.get $slot) (i32.load offset=4 (local.get $ra)))))))\n";
   o = o + "    (i64.store offset=16 (local.get $slot) (local.get $target))\n";
   o = o + "    (i32.store offset=24 (local.get $slot) (i32.const 0))\n";
@@ -8272,14 +8273,55 @@ pub function sleep_ms_import(): string {
 }
 
 // fd_stat_import / fd_seek_import emit the preview1 imports behind
-// $__fern_fd_stat and $__fern_reader_seek. Neither is shared with any other
-// bundle, so each is emitted exactly once, by its own op's need.
+// $__fern_fd_stat and $__fern_reader_seek; $__fern_fd_seek reads a
+// directory's size through fd_stat_import's too.
 pub function fd_stat_import(): string {
   return "  (import \"wasi_snapshot_preview1\" \"fd_filestat_get\" (func $__fern_fd_filestat_get (param i32 i32) (result i32)))\n";
 }
 
 pub function fd_seek_import(): string {
-  return "  (import \"wasi_snapshot_preview1\" \"fd_seek\" (func $__fern_fd_seek (param i32 i64 i32 i32) (result i32)))\n";
+  return "  (import \"wasi_snapshot_preview1\" \"fd_seek\" (func $__fern_fd_seek_host (param i32 i64 i32 i32) (result i32)))\n";
+}
+
+// fd_seek_func emits $__fern_fd_seek over the imported fd_seek. The host
+// answers a seek of a directory with EBADF, where native's lseek moves an
+// offset no read uses (every read of one is EISDIR), so this keeps the offset
+// of a directory descriptor itself: one i64 per fd in $__fern_dir_off, zeroed
+// when the Reader closes. SEEK_END counts from the size fd_filestat_get
+// reports, where a native's answer is the filesystem's own.
+pub function fd_seek_func(): string {
+  let o: string = "  (global $__fern_dir_off (mut i32) (i32.const 0))\n";
+  o = o + "  (global $__fern_dir_off_cap (mut i32) (i32.const 0))\n";
+  o = o + "  (func $__fern_fd_seek (param $fd i32) (param $off i64) (param $whence i32) (param $rb i32) (result i32)\n";
+  o = o + "    (local $err i32) (local $st i32) (local $base i64) (local $target i64) (local $old i32) (local $n i32)\n";
+  o = o + "    (local.set $err (call $__fern_fd_seek_host (local.get $fd) (local.get $off) (local.get $whence) (local.get $rb)))\n";
+  o = o + "    (if (i32.ne (local.get $err) (i32.const 8)) (then (return (local.get $err))))\n";
+  o = o + "    (local.set $st (call $__fern_alloc (i32.const 64)))\n";
+  o = o + "    (if (i32.or (call $__fern_fd_filestat_get (local.get $fd) (local.get $st)) (i32.ne (i32.load8_u offset=16 (local.get $st)) (i32.const 3))) (then\n";
+  o = o + "      (call $__fern_raw_free (local.get $st) (i32.const 64))\n";
+  o = o + "      (return (i32.const 8))))\n";
+  o = o + "    (if (i32.eq (local.get $whence) (i32.const 2)) (then (local.set $base (i64.load offset=32 (local.get $st)))))\n";
+  o = o + "    (call $__fern_raw_free (local.get $st) (i32.const 64))\n";
+  o = o + "    (if (i32.and (i32.eq (local.get $whence) (i32.const 1)) (i32.lt_u (local.get $fd) (global.get $__fern_dir_off_cap)))\n";
+  o = o + "      (then (local.set $base (i64.load (i32.add (global.get $__fern_dir_off) (i32.shl (local.get $fd) (i32.const 3)))))))\n";
+  o = o + "    (local.set $target (i64.add (local.get $off) (local.get $base)))\n";
+  o = o + "    (if (i64.lt_s (local.get $target) (i64.const 0)) (then (return (i32.const 28))))\n";
+  o = o + "    (if (i32.ge_u (local.get $fd) (global.get $__fern_dir_off_cap)) (then\n";
+  o = o + "      (local.set $old (global.get $__fern_dir_off))\n";
+  o = o + "      (local.set $n (i32.add (local.get $fd) (i32.const 8)))\n";
+  o = o + "      (global.set $__fern_dir_off (call $__fern_alloc (i32.shl (local.get $n) (i32.const 3))))\n";
+  o = o + "      (memory.fill (global.get $__fern_dir_off) (i32.const 0) (i32.shl (local.get $n) (i32.const 3)))\n";
+  o = o + "      (if (local.get $old) (then\n";
+  o = o + "        (memory.copy (global.get $__fern_dir_off) (local.get $old) (i32.shl (global.get $__fern_dir_off_cap) (i32.const 3)))\n";
+  o = o + "        (call $__fern_raw_free (local.get $old) (i32.shl (global.get $__fern_dir_off_cap) (i32.const 3)))))\n";
+  o = o + "      (global.set $__fern_dir_off_cap (local.get $n))))\n";
+  o = o + "    (i64.store (i32.add (global.get $__fern_dir_off) (i32.shl (local.get $fd) (i32.const 3))) (local.get $target))\n";
+  o = o + "    (i64.store (local.get $rb) (local.get $target))\n";
+  o = o + "    (i32.const 0))\n";
+  o = o + "  (func $__fern_dir_off_forget (param $fd i32)\n";
+  o = o + "    (if (i32.lt_u (local.get $fd) (global.get $__fern_dir_off_cap))\n";
+  o = o + "      (then (i64.store (i32.add (global.get $__fern_dir_off) (i32.shl (local.get $fd) (i32.const 3))) (i64.const 0)))))\n";
+  return o;
 }
 
 // fd_fdstat_get_import serves $__fern_fd_flags and $__fern_fd_read, emitted
@@ -12141,10 +12183,13 @@ pub function reader_read_chunk_func(): string {
 // $__fern_alloc block has no rc word at [p-8]. Allocates, so it uses the heap
 // runtime; needs_io_error folds "reader_close" in so the classifier and the
 // strerror texts are emitted for a module that only closes (#8569).
-pub function reader_close_func(): string {
+pub function reader_close_func(dir_off: boolean): string {
   let o: string = "";
   o = o + "  (func $__fern_reader_close (param $fd i32) (result i32)\n";
   o = o + "    (local $opt i32) (local $err i32) (local $path i32)\n";
+  if (dir_off) {
+    o = o + "    (call $__fern_dir_off_forget (local.get $fd))\n";
+  }
   o = o + "    (local.set $err (call $__fern_fd_close (local.get $fd)))\n";
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
@@ -12850,11 +12895,30 @@ function lc_label(text: string): string {
 // shim instead. The line is built in fixed scratch below the data pool (the
 // process is exiting); labels are packed-word stores (lc_label); digits are
 // written backwards by $__fern_lc_wrnum.
-pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean, set_args: boolean): string {
+pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean, set_args: boolean, dir_off: boolean): string {
   if (!lc) {
     return "";
   }
-  return lc_report_funcs(sanitize, set_args, false) + "  (func $__fern_proc_exit (param $c i32)\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
+  let tables: string = "";
+  if (dir_off) {
+    tables = dir_off_release();
+  }
+  return lc_report_funcs(sanitize, set_args, tables) + "  (func $__fern_proc_exit (param $c i32)\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
+}
+
+// fdt_release frees a component's handle table (fd_table_funcs). Writing the
+// census line may build a fresh one, after the counts are read.
+function fdt_release(): string {
+  let o: string = "    (if (global.get $__fern_fdt) (then\n";
+  o = o + "      (call $__fern_raw_free (global.get $__fern_fdt) (i32.shl (global.get $__fern_fdt_cap) (i32.const 5)))\n";
+  return o + "      (global.set $__fern_fdt (i32.const 0))))\n";
+}
+
+// dir_off_release frees preview 1's directory offsets (fd_seek_func).
+function dir_off_release(): string {
+  let o: string = "    (if (global.get $__fern_dir_off) (then\n";
+  o = o + "      (call $__fern_raw_free (global.get $__fern_dir_off) (i32.shl (global.get $__fern_dir_off_cap) (i32.const 3)))\n";
+  return o + "      (global.set $__fern_dir_off (i32.const 0))))\n";
 }
 
 // lc_exit_report is the census report a component's exit shim makes before
@@ -12873,14 +12937,18 @@ function component_run_entry(report: boolean, sanitize: boolean, set_args: boole
   if (!report) {
     return "  (func $__fern_lang_run (result i32) (i32.eqz (i32.eqz (call $main))))\n";
   }
-  return lc_report_funcs(sanitize, set_args, fdt) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
+  let tables: string = "";
+  if (fdt) {
+    tables = fdt_release();
+  }
+  return lc_report_funcs(sanitize, set_args, tables) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
 }
 
 // lc_report_funcs is `$__fern_lc_report` and the two writers it calls, for
 // either framing: mode 0 reports from its $__fern_proc_exit, a component from its
-// run entry and its exit shim. `fdt` says the module keeps a component's
-// handle table (fd_table_funcs).
-function lc_report_funcs(sanitize: boolean, set_args: boolean, fdt: boolean): string {
+// run entry and its exit shim. `tables` frees the runtime's own tables, which
+// are not the program's leaks.
+function lc_report_funcs(sanitize: boolean, set_args: boolean, tables: string): string {
   let o: string = "";
   // $__fern_lc_wr(p, len): one fd_write(2) of [p, p+len).
   o = o + "  (func $__fern_lc_wr (param $p i32) (param $len i32)\n";
@@ -12917,13 +12985,7 @@ function lc_report_funcs(sanitize: boolean, set_args: boolean, fdt: boolean): st
     o = o + "      (drop (call $__fern_arr_dec_ptr (global.get $__fern_args_set)))\n";
     o = o + "      (global.set $__fern_args_set (i32.const 0))))\n";
   }
-  // So is the handle table. Writing the line below may build a fresh one,
-  // after the counts are read.
-  if (fdt) {
-    o = o + "    (if (global.get $__fern_fdt) (then\n";
-    o = o + "      (call $__fern_raw_free (global.get $__fern_fdt) (i32.shl (global.get $__fern_fdt_cap) (i32.const 5)))\n";
-    o = o + "      (global.set $__fern_fdt (i32.const 0))))\n";
-  }
+  o = o + tables;
   // The counts are read before anything is written: a component's $__fern_fd_write
   // shim allocates, and would count its own writes into the line.
   o = o + "    (local.set $na (global.get $__fern_lc_alloc_count))\n";
@@ -14034,7 +14096,7 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (need(needs, "stat") || need(needs, "lstat")) {
     parts = parts.append(stat_import());
   }
-  if (need(needs, "fd_stat")) {
+  if (need(needs, "fd_stat") || need(needs, "reader_seek")) {
     parts = parts.append(fd_stat_import());
   }
   if (need(needs, "fd_fsync")) {
@@ -14965,12 +15027,15 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(reader_read_chunk_bytes_func());
   }
   if (need(needs, "reader_close")) {
-    parts = parts.append(reader_close_func());
+    parts = parts.append(reader_close_func(mode == 0 && need(needs, "reader_seek")));
   }
   if (need(needs, "fd_stat")) {
     parts = parts.append(fd_stat_func());
   }
   parts = parts.append(fd_sync_funcs(needs));
+  if (mode == 0 && need(needs, "reader_seek")) {
+    parts = parts.append(fd_seek_func());
+  }
   if (need(needs, "reader_seek")) {
     parts = parts.append(reader_seek_func());
   }
@@ -15170,7 +15235,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // Census report + the reporting $__fern_proc_exit (#5362). Mode 0 only: the
     // component modes have no preview1 proc_exit to wrap. Empty when the
     // flag is off.
-    parts = parts.append(lc_report_and_exit_wrapper(lc, sw.sanitize, need(needs, "@calls_set_args")));
+    parts = parts.append(lc_report_and_exit_wrapper(lc, sw.sanitize, need(needs, "@calls_set_args"), need(needs, "reader_seek")));
     parts = parts.append("  (func $__fern_start (call $__fern_proc_exit (call $main)))\n");
     parts = parts.append(xps);
     // `main` is exported beside `_start` so a host can read its result
