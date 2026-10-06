@@ -3983,34 +3983,45 @@ block never read it, `%%N` does. The ten gnulib styles live in `lib/gnu.fern`
 as `quote_style`, with `quoting_style_from_env` doing the ARGMATCH lookup and
 the `ignoring invalid value` warning, so `ls` can pick them up as is.
 
-**`timeout` cannot forward a signal that arrives at IT.** GNU handles SIGINT,
-SIGQUIT, SIGHUP, SIGTERM and SIGXCPU by passing them on to the command and
-then dying of them, so `kill -INT` on a `timeout` reaches the command it is
-supervising. That needs a signal that WAKES a blocked wait: `signal_catch`
-(#9243) only raises a flag, installed SA_RESTART, and timeout spends the run
-inside one `proc_waitpid`, which the kernel restarts and which therefore
-never returns to look at it. dd can poll at its record boundary; timeout has
-no such point. Everything else about the utility is here, and nothing in the
-corpus reaches this: it needs a third party signalling the timeout process
-mid-run.
+**`timeout` forwards a signal that arrives at IT** (#11698). GNU 9.12 catches
+every signal in its `term-sig.h` — SIGALRM, SIGINT, SIGQUIT, SIGHUP, SIGTERM,
+SIGPIPE, SIGUSR1, SIGUSR2, the fault signals, SIGXCPU and the rest — the
+realtime range and the `-s` signal, skipping any that was ignored when it
+started except SIGALRM and the `-s` one, and passes each on to the command the
+way it sends the timeout signal: `-v`'s line, the pid and then the group, the
+SIGCONT after. The first signal sent, forwarded or timed, starts `-k`'s grace
+period. SIGALRM from outside is the deadline passing. When the command then
+dies of a forwarded signal, timeout dies of it too. `timeout.fern` catches the
+same set with `signal_catch_interrupting` before it forks, so an arrival ends
+its one blocking `proc_waitpid` with EINTR and is passed on at once, and dies
+through `signal_raise`. `TestTimeoutForwardsSignals` signals both mid-run.
 
-One smaller residue comes from `proc_waitpid` collapsing a signal death into
-the shell's one number. A command KILLED reports 137 after a timeout where a
-command that merely timed out reports 124, and GNU tells the two apart with
-WTERMSIG; here the SIGNAL THIS PROCESS SENT stands in for the half the status
-cannot carry, so every case timeout itself can produce is right — `-s 0` over
-a command that exits 137 is 124, as GNU's is — and a SIGKILL arriving from
-somewhere ELSE during the timeout reads as 124 here and 137 there.
+Two residues come from `proc_waitpid` collapsing a signal death into the
+shell's one number, and GNU telling the two apart with WTERMSIG; here the
+SIGNAL THIS PROCESS SENT stands in for the half the status cannot carry. A
+command KILLED reports 137 after a timeout where a command that merely timed
+out reports 124, so `-s 0` over a command that exits 137 is 124, as GNU's is,
+and a SIGKILL arriving from somewhere ELSE during the timeout reads as 124
+here and 137 there. And when a command that was not timed out dies of a
+signal, GNU's timeout dies of it too; here it does when timeout sent that
+signal, and otherwise — a command that segfaults, or is killed from
+elsewhere — exits 128 plus the signal, which a shell reports as the same
+number.
 
 **`timeout`'s deadline is a forked child, and that is visible to nothing but
-`ps`.** GNU arms `alarm(2)` and lets the handler interrupt its `wait`; with no
-signal that wakes a wait (above) the clock is a process instead, and ONE blocking
-`proc_waitpid(-1)` wakes on whichever finishes first — the command or the
-timer. `proc_waitpid_nohang` then says which, because a child already reaped
-answers ECHILD where a live one answers -1. The timer holds no descriptor the
-command can see and is reaped before timeout exits; while the command runs
-there is one extra process in the group, which no comparison of stdout,
-stderr, status or the tree can reach. It costs one fork and one reap per
+`ps`.** GNU arms a timer whose SIGALRM ends its wait. Nothing here arms one —
+there is no `alarm` or `timer_create` builtin — and the forwarding catches do
+not change that: waiting out the deadline in a sleep that a caught SIGCHLD
+interrupts instead would race a command that exits between the look and the
+sleep, where GNU's `sigsuspend` unblocks and waits in one step. So the clock is
+a process, and ONE blocking `proc_waitpid(-1)` wakes on whichever finishes
+first — the command or the timer. `proc_waitpid_nohang` then says which,
+because a child already reaped answers ECHILD where a live one answers -1.
+The timer ignores the signals timeout forwards, so passing one to the group
+leaves the deadline running, holds no descriptor the command can see and is
+reaped before timeout exits; while the command runs there is one extra
+process in the group, which no comparison of stdout, stderr, status or the
+tree can reach. It costs one fork and one reap per
 invocation — measured at two tenths of a millisecond in the table above,
 against a startup lead that more than covers it.
 
