@@ -1846,10 +1846,7 @@ function retainable_element(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean 
 struct Anchored { start: i32[], at: i32[] }
 
 function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
-  let count: i32[] = [];
-  while (count.len() <= nvals) {
-    count = count.append(0);
-  }
+  let count: i32[] = __alloc_i32(nvals + 1);
   // The chains run to the values the analysis saw; a refused analysis has
   // none.
   let known: i32 = a.dependencies.len();
@@ -1875,10 +1872,7 @@ function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
     }
     v = v + 1;
   }
-  let at: i32[] = [];
-  while (at.len() < total) {
-    at = at.append(0);
-  }
+  let at: i32[] = __alloc_i32(total);
   let fill: i32[] = start;
   w = 0;
   while (w < known) {
@@ -2693,12 +2687,7 @@ function moved_receiver(st: Step, v: i32): boolean {
 // Per value, its uses other than reading an element or the length: the ones
 // that could hand its box to another holder.
 function holding_uses(f: ssasem.Func): i32[] {
-  let n: i32[] = [];
-  let v: i32 = 0;
-  while (v < f.graph.nvals) {
-    n = n.append(0);
-    v = v + 1;
-  }
+  let n: i32[] = __alloc_i32(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       let i: i32 = 0;

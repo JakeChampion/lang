@@ -3371,10 +3371,7 @@ function ssa_imm_to(c: i64, loc: i32, s: asmcore.EmitState): asmcore.EmitState {
 // parked in x4 and every move reading it takes it from there, which frees
 // that location to be written.
 function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let done: boolean[] = [];
-  for src in srcs {
-    done = done.append(false);
-  }
+  let done: boolean[] = __alloc_bool(srcs.len());
   let parking: boolean = false;
   let parked: i32 = 0;
   let left: i32 = srcs.len();
@@ -4711,10 +4708,7 @@ function ssa_pop_order(ins: ssa.SInst, reg_of: i32[], pops: string[]): i32[] {
     srcs = srcs.append(src);
     k = k + 1;
   }
-  let done: boolean[] = [];
-  for p in pops {
-    done = done.append(false);
-  }
+  let done: boolean[] = __alloc_bool(pops.len());
   let order: i32[] = [];
   let progressed: boolean = true;
   while (progressed && order.len() < pops.len()) {

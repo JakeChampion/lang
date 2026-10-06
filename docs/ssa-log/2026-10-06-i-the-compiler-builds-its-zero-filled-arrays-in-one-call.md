@@ -13,12 +13,14 @@ byte for byte.
 
 ## What changed
 
-Every loop that appended n zeros, n `false`s or n `0i64`s to an empty array
-is one call of `__alloc_i32`, `__alloc_bool` or `__alloc_i64`. The eleven
-helpers that were only that loop are deleted and their callers call the
-builtin; the two `flags(n, bit)` helpers were never called with `true`.
-`ssa_lift.filled(n, 0)` is `__alloc_i32(n)` too; `filled(n, 0 - 1)` and
-the other `-1` fills stay loops.
+Every loop over `compiler/` whose only work on an array was appending n
+zeros, n `false`s or n `0i64`s to it empty is one call of `__alloc_i32`,
+`__alloc_bool` or `__alloc_i64`: the eleven helpers that were only that
+loop are deleted and their callers call the builtin (the two
+`flags(n, bit)` helpers were never called with `true`), the fill loops that
+open twenty-odd analyses are one call each, and a loop that filled several
+arrays at once keeps only the arrays it fills with something else.
+`ssa_lift.filled(n, 0)` is `__alloc_i32(n)` too.
 
 ## Measured
 
@@ -46,6 +48,10 @@ largest because `Loops.members` is an n×n matrix filled a cell at a time.
 
 ## What is left
 
-The `-1` fills (`ssadeps.indices` and the sixteen like it) are the same
-loop with a different constant, 78 M of self cost together before the
-pushes behind them; a fill builtin that takes the value would take them.
+The `-1` fills (`ssadeps.indices` and the sixteen like it, and the `-1`
+arrays left in the mixed loops above) are the same loop with a different
+constant, 78 M of self cost together before the pushes behind them, and the
+few `true` fills (`seed_bits`, the `dirty` work lists) are the same again; a
+fill builtin that takes the value would take them all. The byte buffers the
+object writers pad with zeros append to a buffer already holding bytes, so
+they are not this shape.

@@ -153,12 +153,7 @@ function outermost(l: Loops, region: boolean[], root: i32, h: i32): boolean {
 }
 
 function pending_edges(l: Loops, region: boolean[], root: i32, reps: i32[]): i32[] {
-  let pending: i32[] = [];
-  let i: i32 = 0;
-  while (i < l.n) {
-    pending = pending.append(0);
-    i = i + 1;
-  }
+  let pending: i32[] = __alloc_i32(l.n);
   let x: i32 = 0;
   while (x < l.n) {
     if (region[x]) {

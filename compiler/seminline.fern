@@ -907,10 +907,7 @@ function kept_values(g: ssa.SFunc): boolean[] {
 }
 
 function used_whole(g: ssa.SFunc): boolean[] {
-  let kept: boolean[] = [];
-  while (kept.len() < g.nvals) {
-    kept = kept.append(false);
-  }
+  let kept: boolean[] = __alloc_bool(g.nvals);
   for b in g.blocks {
     for ins in b.insts {
       if (!reads_part(ins.kind_tag) && ins.kind_tag != 7 && ins.kind_tag != 8) {

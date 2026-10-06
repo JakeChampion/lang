@@ -6904,12 +6904,7 @@ function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
   // check its value against THAT field's type. The count matched
   // above, so "every declared field written exactly once" follows
   // from no name repeating and none being undeclared.
-  let swritten: boolean[] = [];
-  let sdi: i32 = 0;
-  while (sdi < ssig.field_names.len()) {
-    swritten = swritten.append(false);
-    sdi = sdi + 1;
-  }
+  let swritten: boolean[] = __alloc_bool(ssig.field_names.len());
   let sli: i32 = 0;
   while (sli < sl.field_names.len()) {
     let sfi: i32 = field_index(ssig, sl.field_names[sli]);
@@ -22266,11 +22261,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   for cfn in mod.funcs {
     slc_fns = slc_fns.append(cfn);
     slc_scopes = slc_scopes.append(build_func_scope(cfn, st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs));
-    let slc_initial: boolean[] = [];
-    for slc_pos in view_positions(cfn) {
-      slc_initial = slc_initial.append(false);
-    }
-    slc_sums = slc_sums.append(ViewSum { key: view_sum_key(cfn), flags: slc_initial, fresh: false });
+    slc_sums = slc_sums.append(ViewSum { key: view_sum_key(cfn), flags: __alloc_bool(view_positions(cfn).len()), fresh: false });
   }
   let slc_ix: ViewIndex = view_index(slc_sums);
   // A summary reads its callees' summaries (view_callee) and only ever
@@ -22599,11 +22590,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     if (sfn.ret_type == "str" || sfn.ret_type == "string") {
       e065_fns = e065_fns.append(sfn);
       e065_scopes = e065_scopes.append(build_func_scope(sfn, st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs));
-      let initial: boolean[] = [];
-      for pos in view_positions(sfn) {
-        initial = initial.append(false);
-      }
-      e065_sums = e065_sums.append(ViewSum { key: view_sum_key(sfn), flags: initial, fresh: false });
+      e065_sums = e065_sums.append(ViewSum { key: view_sum_key(sfn), flags: __alloc_bool(view_positions(sfn).len()), fresh: false });
     }
   }
   let e065_ix: ViewIndex = view_index(e065_sums);
