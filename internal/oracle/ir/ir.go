@@ -15767,6 +15767,13 @@ func (b *builder) callBody(n *ast.Call) error {
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
 		}
 	}
+	// __str_hash(s, seed) — __bsd_sum's operand shape.
+	if id.Name == "__str_hash" && len(n.Args) == 2 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_hash", Width: ResNarrow, I32: 2,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
+		}
+	}
 	// __count_runs(s, inside, set) — __scan_set's operand shape.
 	if (id.Name == "__count_runs" || id.Name == "__count_runs_bytes") && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {

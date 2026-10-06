@@ -745,6 +745,54 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.mark_heap();
     return s;
   }
+  if (o.kind_tag == 390) {  // str_hash
+    // operand stack [box, seed] (seed on top) -> ir.op_str_hash's hash of
+    // the string: a xor and a multiply per 8-byte word, the last word
+    // anchored at the end of the string, a string under 8 bytes assembled
+    // into one zero-padded word a byte at a time.
+    //
+    // x0 the data, x3 the length, x2 the hash, x4 the prime, x5 the cursor,
+    // x6 the last word's offset, x1 the seed and then the short word, x7 a
+    // loaded word.
+    let hlo: asmcore.LabelOut = asmcore.fresh_label(s);
+    let h_loop: string = hlo.name;
+    let hlo2: asmcore.LabelOut = asmcore.fresh_label(hlo.state);
+    let h_tail: string = hlo2.name;
+    let hlo3: asmcore.LabelOut = asmcore.fresh_label(hlo2.state);
+    let h_short: string = hlo3.name;
+    let hlo4: asmcore.LabelOut = asmcore.fresh_label(hlo3.state);
+    let h_byte: string = hlo4.name;
+    let hlo5: asmcore.LabelOut = asmcore.fresh_label(hlo4.state);
+    let h_fin: string = hlo5.name;
+    s = hlo5.state;
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    s = s.write("    sxtw x1, w1\n");
+    s = s.write("    movz x2, #0x2325\n    movk x2, #0x8422, lsl #16\n    movk x2, #0x9ce4, lsl #32\n    movk x2, #0xcbf2, lsl #48\n");
+    s = s.write("    eor x2, x2, x1\n    eor x2, x2, x3\n");
+    s = s.write("    movz x4, #0x01b3\n    movk x4, #0x100, lsl #32\n");
+    s = s.write("    mov x5, #0\n");
+    s = s.write("    cmp x3, #8\n    b.lo " + h_short + "\n");
+    s = s.write("    sub x6, x3, #8\n");
+    s = s.write(h_loop + ":\n");
+    s = s.write("    cmp x5, x6\n    b.hi " + h_tail + "\n");
+    s = s.write("    ldr x7, [x0, x5]\n    eor x2, x2, x7\n    mul x2, x2, x4\n");
+    s = s.write("    add x5, x5, #8\n    b " + h_loop + "\n");
+    s = s.write(h_tail + ":\n");
+    s = s.write("    cmp x5, x3\n    b.eq " + h_fin + "\n");
+    s = s.write("    ldr x7, [x0, x6]\n    eor x2, x2, x7\n    mul x2, x2, x4\n    b " + h_fin + "\n");
+    s = s.write(h_short + ":\n");
+    s = s.write("    cbz x3, " + h_fin + "\n");
+    s = s.write("    mov x1, #0\n    mov x5, x3\n");
+    s = s.write(h_byte + ":\n");
+    s = s.write("    sub x5, x5, #1\n    lsl x1, x1, #8\n    ldrb w7, [x0, x5]\n    orr x1, x1, x7\n");
+    s = s.write("    cbnz x5, " + h_byte + "\n");
+    s = s.write("    eor x2, x2, x1\n    mul x2, x2, x4\n");
+    s = s.write(h_fin + ":\n");
+    s = s.write("    lsr x7, x2, #32\n    eor x2, x2, x7\n");
+    s = s.write("    sxtw x2, w2\n    str x2, [sp, #-16]!\n");
+    return s;
+  }
   if (o.kind_tag == 329 || o.kind_tag == 369) {  // bsd_sum / bsd_sum_bytes
     // operand stack [box, sum] (sum on top) -> the BSD checksum continued
     // over the string: per byte a 16-bit rotate right by one and an add.
