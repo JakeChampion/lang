@@ -61,8 +61,8 @@ func checkReaderTextComponent(t *testing.T, compiler string, runner []string, st
 func checkReaderTextInterpreter(t *testing.T, compiler string, runner []string, target, stdlib string, f e2eharness.ReaderTextFixture) {
 	t.Helper()
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "drivers/interp_run.fern")
-	entry := filepath.Join(dir, "drivers/interp_run.fern")
+	copySelfHostDriver(t, dir, "lexer.fern", "parser.fern", "interp.fern")
+	entry := filepath.Join(dir, "interp_run.fern")
 	source := fmt.Sprintf(`import "./lexer";
 import "./parser";
 import "./interp";
