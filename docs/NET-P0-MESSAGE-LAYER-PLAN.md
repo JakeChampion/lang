@@ -122,8 +122,13 @@ up.
 
 ## 4. Exit
 
-Criterion A's count half, 0 allocations per request through the whole
-serve loop, is §6.
+Criterion A's count half, `__heap_alloc_count()` deltas of 0 per request,
+is §6. Its gate counts the whole serve loop over 2,000 requests on
+x86-64. A steady loop allocates the same number of times on every
+request, so 2,000 rounds settle the figure, and a later leg can take the
+gate to 100k requests and the other targets once it reads 0. The bump
+half, held over 100k requests by `TestBumpPerRequest` and
+`TestSelfHostBumpPerRequest`, is unchanged.
 
 Criterion B of #9853 is met when the gate reads 0 for the framing path on
 both compilers with the hello handler, which needs slice 8. It reads 0
@@ -325,15 +330,16 @@ keep-alive connection, with `/count` answering `__heap_alloc_count()`.
 Between two counts, 2,000 hello requests cost 30 allocations each on
 x86-64 at `origin/main` ac29eede9. The gate pins 30 as a ratchet.
 
-`FERN_RC_TRACE` attributes them, grouped by where they fall. Read the
-trace from a build without `-g`. Under `-g` the semantic passes keep
-every value a source variable names whole so a debugger can show it
-(`seminline`, `semoption`, `sempair` all skip `dbg_vals`). The same server
-then allocates 43 times per request, and the framing probe's parse
-allocates 5 instead of 0. The rows below are read from a `-g` trace less
-what `-g` adds: the parse's internal boxes and the helpers' named tuples.
-The helper row is therefore approximate, and each slice's gate reading
-settles it.
+The rows below are attributed from a `FERN_RC_TRACE` trace of a `-g`
+build, the one build whose return addresses resolve to functions, and
+then corrected by hand. Under `-g` the semantic passes keep every value
+a source variable names whole so a debugger can show it (`seminline`,
+`semoption`, `sempair` all skip `dbg_vals`). The same server then
+allocates 43 times per request, and the framing probe's parse allocates 5
+instead of 0. The 13 the `-g` build adds were struck as about 6 of the
+parse's internal boxes (every parse row but the kept `Framed`) and about 7
+of the helpers' named tuples. Only the gate's 30 is measured; the split
+between rows is provisional, and each slice's gate reading settles it.
 
 | Allocations | Where |
 | ---: | --- |

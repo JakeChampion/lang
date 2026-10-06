@@ -82,8 +82,7 @@ self-host compiler, x86-64) send 100k requests on one keep-alive connection
 to a handler that answers `__heap_bump_bytes()`, and the figure a tenth of
 the way in must be the figure at the last request (under qemu the arm64 leg
 sends 10k). They hold the bump high-water mark still; they do not count
-allocations, which every request still makes (the framing path's, criterion
-B). `TestSelfHostFramingAllocs` counts those: what parsing a hello request from two call sites, as `std/serve` does from six, with the one parsed before it
+the allocations every request still makes, which the two gates below do. `TestSelfHostFramingAllocs` counts those: what parsing a hello request from two call sites, as `std/serve` does from six, with the one parsed before it
 as the parse's `prev`, and serializing its reply into one builder kept across requests, as `std/serve` does, allocate per request on x86-64, arm64 and wasm, pinned per target as a ratchet. Both read 0 on every target. `TestSelfHostServeAllocsPerRequest` counts the rest of the loop: a hello handler served on one keep-alive connection, `__heap_alloc_count()` read through the server's own `/count` path around 2,000 requests, on x86-64, pinned as a ratchet the same way (`docs/NET-P0-MESSAGE-LAYER-PLAN.md` §6).
 A count above its pin fails as a regression and one below it fails until the
 pin is lowered, so `docs/NET-P0-MESSAGE-LAYER-PLAN.md`'s slices each move
