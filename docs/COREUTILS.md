@@ -615,7 +615,8 @@ coreutils/
                     all of them in ONE binary, which picks the utility
                     from the basename of argv[0] — used through
                     symlinks named after the utilities, which is what
-                    the release archive ships. It lives in its own
+                    the release archive ships — or from argv[1]
+                    (`fern-coreutils yes`). It lives in its own
                     directory because `coreutils/*.fern` means "a
                     utility" to the corpus, the bench and the macOS
                     lane, and this is not one
@@ -755,23 +756,22 @@ y
 y
 ```
 
+or with the utility named as its first argument, `fern-coreutils yes`.
+That form calls `set_args` with argv shifted by one before dispatching
+(#9694), so the utility sees its own name as argv[0] there too.
+
 Nothing in `lib/gnu.fern` or the utilities changes to support this, and
-that is the point: `gnu.prog()` returns argv[0] verbatim, which under a
-symlink is already the utility's own name, path included, so a diagnostic
-out of the multicall binary is byte-for-byte the one the standalone build
-prints. `TestMulticallParity` runs the whole corpus through it and
-requires exactly that.
+that is the point: `gnu.prog()` returns argv[0] verbatim, which by either
+route is already the utility's own name, so a diagnostic out of the
+multicall binary is byte-for-byte the one the standalone build prints.
+`TestMulticallParity` runs the whole corpus through it and requires
+exactly that; `TestMulticallDispatch` checks that the argument form
+matches the symlink form. The release archive ships the symlinks, so
+untarring it is the whole install.
 
-A utility named as an ARGUMENT — `fern-coreutils yes` — is refused rather
-than run. It would see this binary's name in its diagnostics, and Fern has
-no module-level mutable state, so there is no `set_program_name` to
-correct it with. Supporting that form needs a `set_args` primitive in the
-runtime (#9694 — the backends already cache `args()` in a slot a store
-could replace); until then the symlink is the only invocation, and the
-release archive ships the symlinks so untarring it is the whole install.
-
-Under its own name the binary answers for itself: `--list` prints the
-catalogue, `--help` and `--version` do the usual.
+Under its own name with no utility after it, the binary answers for
+itself: `--list` prints the catalogue, `--help` and `--version` do the
+usual.
 
 Size, Linux x86-64, all 106 utilities, 2026-09-18:
 
