@@ -1885,9 +1885,8 @@ function io_error_value(e: IoError): Value {
     Unsupported => {
       return v_variant("Unsupported", none);
     },
-    _ => {
-      // Other: the commit after the stage0 pin refresh destructures it (#11296).
-      return v_variant("Other", [v_string(""), v_string(""), v_int(0)]);
+    Other(p, m, n) => {
+      return v_variant("Other", [v_string(p), v_string(m), v_int(n)]);
     }
   }
 }

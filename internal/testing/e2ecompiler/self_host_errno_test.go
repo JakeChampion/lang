@@ -60,7 +60,44 @@ enotempty 39 Directory not empty
 unknown 0
 `
 
+// errnoXattrSource is errnoSource for the self-host interpreter, whose only
+// host calls that fail with an IoError are the xattr family: it reads an
+// attribute through a missing file, through a file used as a directory, and
+// one the file does not carry. The test makes f.txt.
+const errnoXattrSource = `import "std/errno";
+import "std/i32";
+
+function report(label: string, r: Result[string, IoError]): void {
+    match (r) {
+        Ok(_) => { print(label + " succeeded"); },
+        Err(e) => {
+            match (e) {
+                Other(_, m, _) => { print(label + " " + errno.of(e).to_string() + " " + m); },
+                _ => { print(label + " " + errno.of(e).to_string()); },
+            }
+        },
+    }
+}
+
+function main(): i32 {
+    report("enoent", getxattr("missing.txt", "user.absent"));
+    report("enotdir", getxattr("f.txt/x", "user.absent"));
+    report("enodata", getxattr("f.txt", "user.absent"));
+    return 0;
+}
+`
+
+const errnoXattrWant = `enoent 2
+enotdir 20 Not a directory
+enodata 61 No data available
+`
+
 func runErrnoProgram(t *testing.T, cmd *exec.Cmd) (string, string) {
+	t.Helper()
+	return runErrnoProgramWant(t, cmd, errnoWant)
+}
+
+func runErrnoProgramWant(t *testing.T, cmd *exec.Cmd, want string) (string, string) {
 	t.Helper()
 	if cmd.Dir == "" {
 		cmd.Dir = t.TempDir()
@@ -74,8 +111,8 @@ func runErrnoProgram(t *testing.T, cmd *exec.Cmd) (string, string) {
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Fatalf("exit = %d, want 0 (see errnoSource)\nstdout:\n%s\nstderr:\n%s", code, ob.String(), eb.String())
 	}
-	if got := ob.String(); got != errnoWant {
-		t.Errorf("stdout:\n%s\nwant:\n%s", got, errnoWant)
+	if got := ob.String(); got != want {
+		t.Errorf("stdout:\n%s\nwant:\n%s", got, want)
 	}
 	return ob.String(), eb.String()
 }
@@ -84,7 +121,9 @@ func runErrnoProgram(t *testing.T, cmd *exec.Cmd) (string, string) {
 // self-host compiler on x86-64, arm64 and wasm (a core module over preview 1
 // and a component over preview 2, whose error-code path translates twice),
 // each compiled leg with the leak census on: Other's box grew a field, and
-// every one the runtime built must still be given back.
+// every one the runtime built must still be given back. errnoXattrSource runs
+// under both interpreters: the self-host one hands the program the errno of
+// the IoError its own host call failed with.
 func TestSelfHostErrnoOf(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(src, []byte(errnoSource), 0o644); err != nil {
@@ -93,7 +132,24 @@ func TestSelfHostErrnoOf(t *testing.T) {
 	t.Run("interp", func(t *testing.T) {
 		runErrnoProgram(t, exec.Command(buildLangBinForInterp(t), "-interp", src))
 	})
+	xsrc := filepath.Join(t.TempDir(), "xattr.fern")
+	if err := os.WriteFile(xsrc, []byte(errnoXattrSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inFileDir := func(cmd *exec.Cmd) *exec.Cmd {
+		cmd.Dir = t.TempDir()
+		if err := os.WriteFile(filepath.Join(cmd.Dir, "f.txt"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return cmd
+	}
+	t.Run("interp-xattr", func(t *testing.T) {
+		runErrnoProgramWant(t, inFileDir(exec.Command(buildLangBinForInterp(t), "-interp", xsrc)), errnoXattrWant)
+	})
 	cli := buildSelfHostCLI(t)
+	t.Run("selfhost-interp-xattr", func(t *testing.T) {
+		runErrnoProgramWant(t, inFileDir(runX86_64Bin(cli.runner, cli.bin, "-interp", xsrc, cli.stdlib)), errnoXattrWant)
+	})
 	t.Run("x86-64-linux", func(t *testing.T) {
 		_, stderr := runErrnoProgram(t, runX86_64Bin(cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1")))
 		assertBalancedCensus(t, stderr)
