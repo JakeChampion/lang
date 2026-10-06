@@ -1949,14 +1949,18 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         if (bidx.len() > 0) {
           let nb: i32 = dl_n - dfrom_b;
           let ne: i32 = bidx.len();
+          while (matb.len() < nb * ne) {
+            matb = matb.append(0);
+          }
           let rb: i32 = 0;
           while (rb < nb) {
             slot_pos = slot_pos.with(dl_slot[dfrom_b + rb], rb);
             let ob: i32 = dl_old[dfrom_b + rb];
-            let qb0: i32 = 0;
-            while (qb0 < ne) {
-              matb = put_at(matb, rb * ne + qb0, ob);
-              qb0 = qb0 + 1;
+            let cell: i32 = rb * ne;
+            let stop: i32 = cell + ne;
+            while (cell < stop) {
+              matb = matb.with(cell, ob);
+              cell = cell + 1;
             }
             rb = rb + 1;
           }
