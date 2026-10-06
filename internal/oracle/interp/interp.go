@@ -4270,6 +4270,7 @@ func builtinStatfs(_ *Interp, args []Value) (Value, error) {
 			"fs_type":      Number(raw.fsType),
 			"fsid":         Number(raw.fsid),
 			"frag_size":    Number(raw.fragSize),
+			"fs_type_name": String(raw.fsTypeName),
 		},
 	}), nil
 }

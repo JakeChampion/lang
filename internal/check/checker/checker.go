@@ -877,6 +877,7 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "fs_type", Type: ast.NumberType{Width: 64, Signed: true}},
 				{Name: "fsid", Type: ast.NumberType{Width: 64, Signed: true}},
 				{Name: "frag_size", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "fs_type_name", Type: ast.StringType{}},
 			},
 		},
 		// WinSize — `window_size(fd)` shape: how large the terminal

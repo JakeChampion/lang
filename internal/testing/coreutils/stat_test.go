@@ -195,9 +195,7 @@ func statTree(t *testing.T) string {
 // unknown conversion UNDER `H` or `L`, which prints `?` and gives the byte
 // back, against `%%` carrying a modifier, which is fatal.
 //
-// -f's %T on Darwin is absent, and so is -f's default block there, which
-// carries it: a refusal in this build, as the header of coreutils/stat.fern
-// says. %C has its own test (stat_context_test.go), because the reference
+// %C has its own test (stat_context_test.go), because the reference
 // the corpus runs is built without libselinux.
 // appendRawStatNames adds the two fixture names that are not valid UTF-8, on a
 // filesystem that holds them. Where it does not, the names were never created
@@ -665,17 +663,20 @@ func statCases(t *testing.T) []invocation {
 	add("fs-type-hex", "-f", "-c", "%t", ".")
 	add("fs-new-set-root", "-f", "-c", "%i|%S|%t", "/")
 	add("fs-hex-grid", "-f", "-c", "[%#t][%10t][%-10i][%#i][%.12i][%08S]", ".")
+	add("fs-type-name", "-f", "-c", "%T", ".")
+	add("fs-type-name-widths", "-f", "-c", "[%12T][%-12T][%.3T]", ".")
+	add("fs-type-name-dev", "-f", "-c", "%t|%T", "/dev")
+	// Use a filesystem with stable counts for the built-in layouts.
+	stableFS := "/dev"
 	if runtime.GOOS == "linux" {
-		add("fs-type-name", "-f", "-c", "%T", ".")
-		add("fs-type-name-widths", "-f", "-c", "[%12T][%-12T][%.3T]", ".")
+		stableFS = "/proc"
+	}
+	add("fs-default", "-f", stableFS)
+	add("fs-terse", "-t", "-f", stableFS)
+	add("fs-terse-two", "-t", "-f", stableFS, stableFS)
+	add("fs-default-missing", "-f", "nosuch")
+	if runtime.GOOS == "linux" {
 		add("fs-type-name-proc", "-f", "-c", "%t|%T", "/proc")
-		add("fs-type-name-dev", "-f", "-c", "%t|%T", "/dev")
-		// The built-in layouts carry the free counts, which move under a
-		// busy disk between the two runs; /proc reports every count as 0.
-		add("fs-default", "-f", "/proc")
-		add("fs-terse", "-t", "-f", "/proc")
-		add("fs-terse-two", "-t", "-f", "/proc", "/proc")
-		add("fs-default-missing", "-f", "nosuch")
 		add("birth-none", "-c", "%w|%W|%.3W", "/proc")
 		add("default-none", "/proc/version")
 		add("terse-none", "-t", "/proc/version")

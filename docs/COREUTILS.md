@@ -3937,13 +3937,10 @@ Darwin answers all three from `getfsstat(2)`, whose `struct statfs` carries
 `f_fstypename`. #9104 is that primitive, shaped as a list rather than a lookup
 because df deduplicates by device across the whole table.
 
-**`stat` cannot report — on Darwin — a file system's type name.** Darwin's
-`%T` is `f_fstypename`, a string `FsStat` does not carry (#11255), and the
-default `-f` block carries it, so `-f %T` and that block are refused with a
-diagnostic naming the field and exit 1. On Linux `%T` is GNU's name for the
-`f_type` magic, from `coreutils/lib/fstype.fern`, and `-f` and `-t -f` are
-answered. The refusal comes only after the operand has been read, so `stat
-nosuch` still reports `cannot statx` exactly as GNU does. The birth time is
+**`stat` reports filesystem names on Darwin and Linux.** Darwin's `%T` reads
+the kernel's `f_fstypename` through `FsStat.fs_type_name`, including in the
+default `-f` report. On Linux that field is empty, and `%T` uses GNU's name
+for the `f_type` magic from `coreutils/lib/fstype.fern`. The birth time is
 FileStat's own (#9096): statx(2) on Linux, `st_birthtimespec` on Darwin, and
 zero where the filesystem records none, which is when GNU prints `-` / `0`.
 
@@ -3954,12 +3951,9 @@ answers ENOTSUP for every file whatever it carries, so `%C` is pinned by
 `TestStatFileContext` against the host's own `lgetxattr(2)` rather than by the
 corpus.
 
-Printing GNU's own "unknown" rendering instead — a zeroed magic number — was
-the tempting shape for Darwin's `%T` and is the one thing that must not happen:
-those bytes would be an invention and the corpus would be measuring it. The
-corpus covers the format engine, the two file layouts and the two file-system
-layouts, which it measures on `/proc` because every count there is a fixed
-zero.
+The corpus covers the format engine, the two file layouts and the two
+filesystem layouts. Filesystem reports use `/proc` on Linux and `/dev` on
+Darwin so changing disk free counts do not affect comparisons.
 
 `QUOTING_STYLE` reaches `%N` and nothing else, and only when the format as
 written holds the two bytes `%N`: `%-N`, an octal-escaped `%` and the default

@@ -348,7 +348,7 @@ per request there.)
 | 1 | the read's one copy of what it took (`__bytes_range`) |
 | 3 | the parse: the `Framed` box the loop keeps whole (§5.3's slice 7), and two in `__request_head`, its head record among them. A server calls three parse entry points, so `__request_head` has three callers and stays a function, where the framing probe's one caller has it spliced and read apart |
 | 3 | `__serve_start`: the `Task`, its closure and `run_task`'s `Done`, for a handler that never parks (slice 5) |
-| 1 | `__serve_wire`'s `__Wire` record |
+| 1 | `__serve_wire`'s `__Wire` record: the tail and whether the connection persists, which follows from the tail (slice 6) |
 | 3 | `__serve_send_out`'s, `__serve_produce`'s and `__serve_ready`'s `(conns, sent)` and `(conns, more)` tuples: each has several callers, so it is not spliced, and each caller takes the tuple apart at once |
 | 2 | the handler's `http.ok`: the `HttpResponse` and its header map |
 
@@ -402,7 +402,12 @@ is preferred where it covers a case, since every program gains.
    is turned into its pair where it lies (from the last down for epoll,
    whose events are smaller than a pair; upwards for kqueue, whose are
    larger, so Darwin takes half the room per wait). 10 to 9. The wasm
-   wait still builds its pollable list and slot table per wait. Partly
+   wait still builds its pollable list and slot table per wait. `__Wire`
+   is gone: `__serve_wire` returns the tail alone, and whether the
+   connection persists follows from it, a close-delimited tail being what
+   ends it (`__tail_keeps`); the pair it returned first was refused by the
+   pairing, since the file-body path reaches the reader's trait methods and
+   a function that may suspend is never paired. 9 to 8. Partly
    done: a tuple of two values that each fit a word,
    returned by a function whose every caller takes it apart,
    returns in two words as a variant does (`sempair`,
@@ -411,8 +416,8 @@ is preferred where it covers a case, since every program gains.
    `__serve_ready` keep theirs: each reaches an indirect call (a chunk
    producer, the stop callback), which the suspension classifier counts as
    able to park once a program has a park in it, and a function that may
-   suspend is never paired. The three-word tuples and `__Wire` are left
-   for a splice or for threading.
+   suspend is never paired. The three-word tuples are left for a splice
+   or for threading.
 7. **The handler's response.** What is left is the response, once the
    loop's own allocations are gone. A constant response is a static
    record, and the donor of §5.3's slice 6 is the model for one built per
