@@ -13,8 +13,8 @@ import (
 // readiness multiplexer (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1).
 // It marshals a length-prefixed i32[] of fds into a struct pollfd[],
 // requests POLLIN on each, calls the OS poll (x86-64 poll(2) #7;
-// arm64 ppoll(2) #73), and returns the index of the first readable fd
-// (or -1). A regular file is always poll-readable, so a poll over file
+// arm64 ppoll(2) #73), and returns the index of the first fd a read
+// would not block on, a hung-up one included (or -1). A regular file is always poll-readable, so a poll over file
 // fds is deterministic — no socket timing in the test.
 //
 // (wasm (wasi:io/poll) follows.)
