@@ -347,9 +347,10 @@ The reactor floor is `__fern_reactor_new` (epoll_create1, or kqueue on
 Darwin), `__fern_reactor_ctl` (epoll_ctl with ADD, then MOD on EEXIST, and
 DEL for no interest; on Darwin one kevent change per filter, EV_ADD with
 EV_ENABLE or EV_DELETE, ENOENT on a delete ignored) and
-`__fern_reactor_wait` (epoll_pwait into a block of events, 12 bytes each on
-x86-64, where the struct is packed, and 16 on arm64; kevent with a timespec
-on Darwin), which writes (fd, readiness) pairs into the caller's `i32[]`.
+`__fern_reactor_wait` (epoll_pwait, or kevent with a timespec on Darwin,
+into the caller's `i32[]` itself, behind its length word), which turns each
+event, 12 bytes on x86-64, where the struct is packed, 16 on arm64 and 32 on
+Darwin, into its (fd, readiness) pair in place, so a wait allocates nothing.
 The wasm twins are in `wasm_ir.fern`, where `__fern_ip_flat` writes the
 ip-socket-address flattening once for each bind, connect and stream, and
 the reactor keeps a guest table of pollables.
