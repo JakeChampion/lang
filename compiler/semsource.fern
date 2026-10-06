@@ -5028,12 +5028,12 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     if (!keys.s.ok) {
       return keys.s;
     }
-    it = keys.id;
     let values: Value = map_column(keys.s, it, ssasem.map_values(), ssasem.map_value(m));
     if (!values.s.ok) {
       return values.s;
     }
     s = values.s;
+    it = keys.id;
     vals = values.id;
     vtype = ssasem.map_value(m);
     elem = ssasem.map_key(m);
