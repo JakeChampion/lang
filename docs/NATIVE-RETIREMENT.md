@@ -147,7 +147,7 @@ Every step is DONE.
    `wasmtime run --invoke main`, and unblocks the wasm differential's
    uncomparable seeds.
 2. **DONE: the gap issues, largest first**, each its own PR with its fix in
-   `examples/self_host` and its test: the `internal/e2e` test that found it
+   `compiler` and its test: the `internal/e2e` test that found it
    is the gate once step 3 lands, and a row in `internal/e2eselfhost` holds
    it until then. Nothing in this list is a tracking entry: the re-point
    cannot land with a red test in it, and `CLAUDE.md` forbids an allowlist

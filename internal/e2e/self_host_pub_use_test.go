@@ -30,7 +30,7 @@ import (
 // decisive property: `facade.add5` etc. must resolve to the original
 // `helpers__add5` (the symbol the bundled program defines), NOT
 // `facade__add5` (which has no decl) — the self-host `pub use` redirect
-// built in flatten.bundle. See examples/self_host/flatten.fern and
+// built in flatten.bundle. See compiler/flatten.fern and
 // docs/PRELUDE-TO-MODULES.md.
 var pubUseSelfHostProgram = map[string]string{
 	"helpers.fern": "" +

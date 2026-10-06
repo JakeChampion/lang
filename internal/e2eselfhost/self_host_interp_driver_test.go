@@ -483,7 +483,7 @@ func interpDriverFiles(t *testing.T) map[string]string {
 		files[base] = string(src)
 	}
 	for _, root := range []string{"lexer.fern", "parser.fern", "interp.fern"} {
-		for _, p := range selfHostImportClosure(t, "../../examples/self_host", root) {
+		for _, p := range selfHostImportClosure(t, "../../compiler", root) {
 			base := filepath.Base(p)
 			if _, ok := files[base]; ok {
 				continue

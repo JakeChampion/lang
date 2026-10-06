@@ -3,7 +3,7 @@
 // The shim is the page's half of running a Fern program, and it was missing
 // the two things a compiler driver needs: it implemented no `fd_read` and
 // reported `argc = 0`, so a guest could receive neither its input nor its
-// mode. `examples/self_host/playground_run.fern` wants exactly those — source
+// mode. `compiler/playground_run.fern` wants exactly those — source
 // on stdin, `-check` / `-interp` in argv — so the self-hosted compiler could
 // not be hosted in a page no matter how it was built.
 //

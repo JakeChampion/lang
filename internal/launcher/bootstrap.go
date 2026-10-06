@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/jakechampion/lang/bootstrap"
-	selfhost "github.com/jakechampion/lang/examples/self_host"
+	"github.com/jakechampion/lang/compiler"
 )
 
 // hostTarget is the -target the self-host compiler runs as on this machine,
@@ -81,7 +81,7 @@ func built() (string, error) {
 		return "", err
 	}
 	defer os.RemoveAll(src)
-	if err := writeFS(selfhost.Sources, src); err != nil {
+	if err := writeFS(compiler.Sources, src); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
@@ -109,7 +109,7 @@ func built() (string, error) {
 func sourcesKey(host string) (string, error) {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s\x00", host, bootstrap.Lock)
-	if err := hashFS(h, selfhost.Sources); err != nil {
+	if err := hashFS(h, compiler.Sources); err != nil {
 		return "", err
 	}
 	_, sum, err := stdlibFiles(stdlibFS())

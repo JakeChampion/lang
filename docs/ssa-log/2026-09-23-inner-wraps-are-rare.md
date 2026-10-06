@@ -17,7 +17,7 @@ the same tree without it:
 |---|---|---|
 | `checker.fern`, x86-64 | 1,536 → 1,525 | 479,522 → 479,509 |
 | `checker.fern`, arm64 | 1,541 → 1,530 | 459,556 → 459,523 |
-| `examples/bench`, x86-64 | | 84,055 → 84,036 |
+| `bench`, x86-64 | | 84,055 → 84,036 |
 
 Almost every wrap in real code follows a single operation whose result
 feeds a phi, a compare, a store or a call — a reader for which the

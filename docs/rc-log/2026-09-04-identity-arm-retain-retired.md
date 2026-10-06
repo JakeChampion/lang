@@ -137,7 +137,7 @@ threading.
 
 ## Measured
 
-Whole-compiler emit in ONE process — `-emit asm examples/self_host/fern.fern` —
+Whole-compiler emit in ONE process — `-emit asm compiler/fern.fern` —
 which is the workload this costs and the one the batched `-per-module-emit-all`
 shape does not show. Same 4-core x86-64 container, same input tree, stage-2
 binaries differing only in the lowering that built them:

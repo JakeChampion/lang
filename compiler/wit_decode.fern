@@ -1,0 +1,2049 @@
+// compiler/wit_decode.fern — self-host port of
+// internal/wasm/componenttype's bring-your-own-WIT decoder
+// (docs/WIT-BRING-YOUR-OWN.md, P1). The destination is the self-hosted
+// compiler; the Go decoder is the byte-identical oracle.
+//
+// Slice 1: the byte-reader LEB primitives + the component-type payload
+// section walker. A `component-type` payload is itself a component binary
+// (\0asm 0d 00 01 00 + sections); this validates the header and walks the
+// top-level sections, then re-emits them (id + uleb size + body) so a
+// round-trip reproduces the input — exercising the uleb reader against the
+// real fern.bin through the self-host. Slices 2/3 add the value-type grammar
+// and the world model. The LEB writers come from watbin.
+
+import "./watbin";
+
+// UlebRead is the result of reading a uleb128: the decoded value and the
+// position just past it.
+pub struct UlebRead { value: i32, next: i32 }
+
+// wit_read_uleb reads an unsigned LEB128 from buf starting at pos.
+pub function wit_read_uleb(buf: i32[], pos: i32): UlebRead {
+  let v: i32 = 0;
+  let shift: i32 = 0;
+  let p: i32 = pos;
+  let done: boolean = false;
+  while (!done) {
+    let c: i32 = buf[p];
+    p = p + 1;
+    v = v | (c & 127) << shift;
+    if ((c & 128) == 0) {
+      done = true;
+    } else {
+      shift = shift + 7;
+    }
+  }
+  return UlebRead { value: v, next: p };
+}
+
+// wit_component_header returns the 8-byte component preamble
+// (\0asm + version 13, layer 1) every component-type payload starts with.
+pub function wit_component_header(): i32[] {
+  return [0, 97, 115, 109, 13, 0, 1, 0];
+}
+
+// wit_reencode_sections validates the component header of a component-type
+// payload, walks its top-level sections (each: id byte + uleb size + body),
+// and re-emits them (id + uleb size + body). The result equals the input
+// when the walker and the uleb reader/writer agree — the slice-1 round-trip
+// gate. Returns an empty buffer if the header is wrong.
+pub function wit_reencode_sections(payload: i32[]): i32[] {
+  let hdr: i32[] = wit_component_header();
+  let i: i32 = 0;
+  while (i < hdr.len()) {
+    if (payload[i] != hdr[i]) {
+      return [];
+    }
+    i = i + 1;
+  }
+  let o: i32[] = [];
+  i = 0;
+  while (i < 8) {
+    o = o.append(payload[i]);
+    i = i + 1;
+  }
+  let pos: i32 = 8;
+  while (pos < payload.len()) {
+    let id: i32 = payload[pos];
+    pos = pos + 1;
+    let r: UlebRead = wit_read_uleb(payload, pos);
+    let size: i32 = r.value;
+    pos = r.next;
+    o = o.append(id);
+    o = watbin.leb_u32(o, size);
+    let j: i32 = 0;
+    while (j < size) {
+      o = o.append(payload[pos + j]);
+      j = j + 1;
+    }
+    pos = pos + size;
+  }
+  return o;
+}
+
+// ---- slice 2: value-type grammar -----------------------------------------
+//
+// A component-model value type is a signed LEB128 (s33): a small negative
+// value is a primitive (the canonical single byte is the 0x73..0x7f code), a
+// non-negative value is a type index. So a valtype round-trips as one signed
+// i32 — decode with wit_read_sleb, re-encode with leb_i32 (verified
+// canonical). The defined value types (record / variant / enum / flags /
+// list / option / result / tuple / own / borrow) and function types decode
+// into flat models (parallel arrays) and re-encode from them, so a
+// structural mis-parse changes the bytes and is caught by the round-trip.
+
+pub struct SlebR { value: i32, next: i32 }
+
+pub struct NameR { s: string, next: i32 }
+
+// wit_read_sleb reads a signed LEB128 from buf at pos.
+pub function wit_read_sleb(buf: i32[], pos: i32): SlebR {
+  let result: i32 = 0;
+  let shift: i32 = 0;
+  let p: i32 = pos;
+  let done: boolean = false;
+  while (!done) {
+    let c: i32 = buf[p];
+    p = p + 1;
+    result = result | (c & 127) << shift;
+    shift = shift + 7;
+    if ((c & 128) == 0) {
+      if (shift < 32 && (c & 64) != 0) {
+        result = result | 0 - (1 << shift);
+      }
+      done = true;
+    }
+  }
+  return SlebR { value: result, next: p };
+}
+
+// wit_read_name reads a uleb-length-prefixed UTF-8 name.
+pub function wit_read_name(buf: i32[], pos: i32): NameR {
+  let r: UlebRead = wit_read_uleb(buf, pos);
+  let n: i32 = r.value;
+  let p: i32 = r.next;
+  let bytes: u8[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    bytes = bytes.append(buf[p + i] as u8);
+    i = i + 1;
+  }
+  return NameR { s: string_from_bytes_unchecked(bytes), next: p + n };
+}
+
+// wit_append_name appends a uleb-length-prefixed name.
+pub function wit_append_name(out: i32[], s: string): i32[] {
+  out = watbin.leb_u32(out, s.len());
+  let i: i32 = 0;
+  while (i < s.len()) {
+    out = out.append(s[i] as i32);
+    i = i + 1;
+  }
+  return out;
+}
+
+// WitDef is a decoded defined value type (tag + the fields meaningful for it).
+pub struct WitDef {
+  tag: i32,
+  rec_names: string[],
+  rec_vals: i32[],
+  var_names: string[],
+  var_has_ty: i32[],
+  var_ty: i32[],
+  var_has_ref: i32[],
+  var_ref: i32[],
+  ef_names: string[],
+  elem: i32,
+  tup_elems: i32[],
+  has_ok: i32,
+  ok: i32,
+  has_err: i32,
+  err: i32,
+  resource: i32,
+}
+
+pub struct WitDefR { def: WitDef, next: i32 }
+
+pub function wit_decode_def(buf: i32[], pos: i32): WitDefR {
+  let tag: i32 = buf[pos];
+  let p: i32 = pos + 1;
+  let rec_names: string[] = [];
+  let rec_vals: i32[] = [];
+  let var_names: string[] = [];
+  let var_has_ty: i32[] = [];
+  let var_ty: i32[] = [];
+  let var_has_ref: i32[] = [];
+  let var_ref: i32[] = [];
+  let ef_names: string[] = [];
+  let elem: i32 = 0;
+  let tup_elems: i32[] = [];
+  let has_ok: i32 = 0;
+  let ok: i32 = 0;
+  let has_err: i32 = 0;
+  let err: i32 = 0;
+  let resource: i32 = 0;
+  if (tag == 114) {
+    let rc: UlebRead = wit_read_uleb(buf, p);
+    let n: i32 = rc.value;
+    p = rc.next;
+    let i: i32 = 0;
+    while (i < n) {
+      let nr: NameR = wit_read_name(buf, p);
+      p = nr.next;
+      let vr: SlebR = wit_read_sleb(buf, p);
+      p = vr.next;
+      rec_names = rec_names.append(nr.s);
+      rec_vals = rec_vals.append(vr.value);
+      i = i + 1;
+    }
+  } else if (tag == 113) {
+    let rc2: UlebRead = wit_read_uleb(buf, p);
+    let n2: i32 = rc2.value;
+    p = rc2.next;
+    let i2: i32 = 0;
+    while (i2 < n2) {
+      let nr2: NameR = wit_read_name(buf, p);
+      p = nr2.next;
+      let ht: i32 = 0;
+      let ty: i32 = 0;
+      if (buf[p] == 1) {
+        p = p + 1;
+        let vr2: SlebR = wit_read_sleb(buf, p);
+        p = vr2.next;
+        ht = 1;
+        ty = vr2.value;
+      } else {
+        p = p + 1;
+      }
+      let hr: i32 = 0;
+      let rf: i32 = 0;
+      if (buf[p] == 1) {
+        p = p + 1;
+        let rr: UlebRead = wit_read_uleb(buf, p);
+        p = rr.next;
+        hr = 1;
+        rf = rr.value;
+      } else {
+        p = p + 1;
+      }
+      var_names = var_names.append(nr2.s);
+      var_has_ty = var_has_ty.append(ht);
+      var_ty = var_ty.append(ty);
+      var_has_ref = var_has_ref.append(hr);
+      var_ref = var_ref.append(rf);
+      i2 = i2 + 1;
+    }
+  } else if (tag == 109 || tag == 110) {
+    let rc3: UlebRead = wit_read_uleb(buf, p);
+    let n3: i32 = rc3.value;
+    p = rc3.next;
+    let i3: i32 = 0;
+    while (i3 < n3) {
+      let nr3: NameR = wit_read_name(buf, p);
+      p = nr3.next;
+      ef_names = ef_names.append(nr3.s);
+      i3 = i3 + 1;
+    }
+  } else if (tag == 112 || tag == 107) {
+    let er: SlebR = wit_read_sleb(buf, p);
+    p = er.next;
+    elem = er.value;
+  } else if (tag == 111) {
+    let rc4: UlebRead = wit_read_uleb(buf, p);
+    let n4: i32 = rc4.value;
+    p = rc4.next;
+    let i4: i32 = 0;
+    while (i4 < n4) {
+      let tr: SlebR = wit_read_sleb(buf, p);
+      p = tr.next;
+      tup_elems = tup_elems.append(tr.value);
+      i4 = i4 + 1;
+    }
+  } else if (tag == 106) {
+    if (buf[p] == 1) {
+      p = p + 1;
+      let okr: SlebR = wit_read_sleb(buf, p);
+      p = okr.next;
+      has_ok = 1;
+      ok = okr.value;
+    } else {
+      p = p + 1;
+    }
+    if (buf[p] == 1) {
+      p = p + 1;
+      let erq: SlebR = wit_read_sleb(buf, p);
+      p = erq.next;
+      has_err = 1;
+      err = erq.value;
+    } else {
+      p = p + 1;
+    }
+  } else if (tag == 105 || tag == 104) {
+    let rr2: UlebRead = wit_read_uleb(buf, p);
+    p = rr2.next;
+    resource = rr2.value;
+  }
+  return WitDefR {
+    def: WitDef {
+      tag: tag,
+      rec_names: rec_names, rec_vals: rec_vals,
+      var_names: var_names, var_has_ty: var_has_ty, var_ty: var_ty, var_has_ref: var_has_ref, var_ref: var_ref,
+      ef_names: ef_names,
+      elem: elem,
+      tup_elems: tup_elems,
+      has_ok: has_ok, ok: ok, has_err: has_err, err: err,
+      resource: resource,
+    },
+    next: p,
+  };
+}
+
+pub function wit_encode_def(out: i32[], d: WitDef): i32[] {
+  out = out.append(d.tag);
+  if (d.tag == 114) {
+    out = watbin.leb_u32(out, d.rec_names.len());
+    let i: i32 = 0;
+    while (i < d.rec_names.len()) {
+      out = wit_append_name(out, d.rec_names[i]);
+      out = watbin.leb_i32(out, d.rec_vals[i]);
+      i = i + 1;
+    }
+  } else if (d.tag == 113) {
+    out = watbin.leb_u32(out, d.var_names.len());
+    let i2: i32 = 0;
+    while (i2 < d.var_names.len()) {
+      out = wit_append_name(out, d.var_names[i2]);
+      if (d.var_has_ty[i2] == 1) {
+        out = out.append(1);
+        out = watbin.leb_i32(out, d.var_ty[i2]);
+      } else {
+        out = out.append(0);
+      }
+      if (d.var_has_ref[i2] == 1) {
+        out = out.append(1);
+        out = watbin.leb_u32(out, d.var_ref[i2]);
+      } else {
+        out = out.append(0);
+      }
+      i2 = i2 + 1;
+    }
+  } else if (d.tag == 109 || d.tag == 110) {
+    out = watbin.leb_u32(out, d.ef_names.len());
+    let i3: i32 = 0;
+    while (i3 < d.ef_names.len()) {
+      out = wit_append_name(out, d.ef_names[i3]);
+      i3 = i3 + 1;
+    }
+  } else if (d.tag == 112 || d.tag == 107) {
+    out = watbin.leb_i32(out, d.elem);
+  } else if (d.tag == 111) {
+    out = watbin.leb_u32(out, d.tup_elems.len());
+    let i4: i32 = 0;
+    while (i4 < d.tup_elems.len()) {
+      out = watbin.leb_i32(out, d.tup_elems[i4]);
+      i4 = i4 + 1;
+    }
+  } else if (d.tag == 106) {
+    if (d.has_ok == 1) {
+      out = out.append(1);
+      out = watbin.leb_i32(out, d.ok);
+    } else {
+      out = out.append(0);
+    }
+    if (d.has_err == 1) {
+      out = out.append(1);
+      out = watbin.leb_i32(out, d.err);
+    } else {
+      out = out.append(0);
+    }
+  } else if (d.tag == 105 || d.tag == 104) {
+    out = watbin.leb_u32(out, d.resource);
+  }
+  return out;
+}
+
+// WitFunc is a decoded function type.
+pub struct WitFunc {
+  p_names: string[],
+  p_vals: i32[],
+  named: i32,
+  result: i32,
+  r_names: string[],
+  r_vals: i32[],
+}
+
+pub struct WitFuncR { fn: WitFunc, next: i32 }
+
+pub function wit_decode_func(buf: i32[], pos: i32): WitFuncR {
+  let p: i32 = pos + 1;
+  let p_names: string[] = [];
+  let p_vals: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(buf, p);
+  let n: i32 = rc.value;
+  p = rc.next;
+  let i: i32 = 0;
+  while (i < n) {
+    let nr: NameR = wit_read_name(buf, p);
+    p = nr.next;
+    let vr: SlebR = wit_read_sleb(buf, p);
+    p = vr.next;
+    p_names = p_names.append(nr.s);
+    p_vals = p_vals.append(vr.value);
+    i = i + 1;
+  }
+  let named: i32 = 0;
+  let result: i32 = 0;
+  let r_names: string[] = [];
+  let r_vals: i32[] = [];
+  if (buf[p] == 0) {
+    p = p + 1;
+    let rr: SlebR = wit_read_sleb(buf, p);
+    p = rr.next;
+    result = rr.value;
+  } else {
+    p = p + 1;
+    named = 1;
+    let rc2: UlebRead = wit_read_uleb(buf, p);
+    let n2: i32 = rc2.value;
+    p = rc2.next;
+    let j: i32 = 0;
+    while (j < n2) {
+      let nr2: NameR = wit_read_name(buf, p);
+      p = nr2.next;
+      let vr2: SlebR = wit_read_sleb(buf, p);
+      p = vr2.next;
+      r_names = r_names.append(nr2.s);
+      r_vals = r_vals.append(vr2.value);
+      j = j + 1;
+    }
+  }
+  return WitFuncR {
+    fn: WitFunc { p_names: p_names, p_vals: p_vals, named: named, result: result, r_names: r_names, r_vals: r_vals },
+    next: p,
+  };
+}
+
+pub function wit_encode_func(out: i32[], f: WitFunc): i32[] {
+  out = out.append(64);
+  out = watbin.leb_u32(out, f.p_names.len());
+  let i: i32 = 0;
+  while (i < f.p_names.len()) {
+    out = wit_append_name(out, f.p_names[i]);
+    out = watbin.leb_i32(out, f.p_vals[i]);
+    i = i + 1;
+  }
+  if (f.named == 1) {
+    out = out.append(1);
+    out = watbin.leb_u32(out, f.r_names.len());
+    let j: i32 = 0;
+    while (j < f.r_names.len()) {
+      out = wit_append_name(out, f.r_names[j]);
+      out = watbin.leb_i32(out, f.r_vals[j]);
+      j = j + 1;
+    }
+  } else {
+    out = out.append(0);
+    out = watbin.leb_i32(out, f.result);
+  }
+  return out;
+}
+
+// ---- slice 3: component/instance types + decls + the full round-trip ------
+//
+// The outer structure (component 0x41 / instance 0x42 types, their decls —
+// type / alias / import / export — externdescs and aliases) is transcoded:
+// every byte is parsed and re-emitted through the same encoders, with the
+// value-type leaves going through slice 2's decode/encode. A structural
+// mis-parse desyncs the cursor and changes the output, so round-tripping the
+// whole fern.bin / http.bin type + export sections is a strong oracle —
+// matching the Go decoder's World round-trip, but in the self-host.
+
+pub struct TxR { next: i32, out: i32[] }
+
+// wit_tx_typedef transcodes one type definition at pos.
+pub function wit_tx_typedef(buf: i32[], pos: i32, out: i32[]): TxR {
+  let tag: i32 = buf[pos];
+  if (tag == 65 || tag == 66) {
+    out = out.append(tag);
+    let p: i32 = pos + 1;
+    let rc: UlebRead = wit_read_uleb(buf, p);
+    let count: i32 = rc.value;
+    p = rc.next;
+    out = watbin.leb_u32(out, count);
+    let i: i32 = 0;
+    while (i < count) {
+      let t: TxR = wit_tx_decl(buf, p, out);
+      p = t.next;
+      out = t.out;
+      i = i + 1;
+    }
+    return TxR { next: p, out: out };
+  } else if (tag == 64) {
+    let fr: WitFuncR = wit_decode_func(buf, pos);
+    out = wit_encode_func(out, fr.fn);
+    return TxR { next: fr.next, out: out };
+  } else if (tag >= 104 && tag <= 114) {
+    let dr: WitDefR = wit_decode_def(buf, pos);
+    out = wit_encode_def(out, dr.def);
+    return TxR { next: dr.next, out: out };
+  } else {
+    out = out.append(tag);
+    return TxR { next: pos + 1, out: out };
+  }
+}
+
+// wit_tx_decl transcodes one declaration inside a component/instance type.
+pub function wit_tx_decl(buf: i32[], pos: i32, out: i32[]): TxR {
+  let kind: i32 = buf[pos];
+  out = out.append(kind);
+  let p: i32 = pos + 1;
+  if (kind == 1) {
+    return wit_tx_typedef(buf, p, out);
+  } else if (kind == 2) {
+    return wit_tx_alias(buf, p, out);
+  } else if (kind == 3 || kind == 4) {
+    let ne: TxR = wit_tx_externname(buf, p, out);
+    p = ne.next;
+    out = ne.out;
+    return wit_tx_externdesc(buf, p, out);
+  }
+  return TxR { next: p, out: out };
+}
+
+// wit_tx_externname transcodes a label-kind name (0x00 + uleb-len + bytes).
+pub function wit_tx_externname(buf: i32[], pos: i32, out: i32[]): TxR {
+  out = out.append(buf[pos]);
+  let nr: NameR = wit_read_name(buf, pos + 1);
+  out = wit_append_name(out, nr.s);
+  return TxR { next: nr.next, out: out };
+}
+
+// wit_tx_externdesc transcodes an import/export externdesc.
+pub function wit_tx_externdesc(buf: i32[], pos: i32, out: i32[]): TxR {
+  let kind: i32 = buf[pos];
+  out = out.append(kind);
+  let p: i32 = pos + 1;
+  if (kind == 1 || kind == 4 || kind == 5) {
+    let r: UlebRead = wit_read_uleb(buf, p);
+    out = watbin.leb_u32(out, r.value);
+    p = r.next;
+  } else if (kind == 2) {
+    let sr: SlebR = wit_read_sleb(buf, p);
+    out = watbin.leb_i32(out, sr.value);
+    p = sr.next;
+  } else if (kind == 3) {
+    let bound: i32 = buf[p];
+    out = out.append(bound);
+    p = p + 1;
+    if (bound == 0) {
+      let r2: UlebRead = wit_read_uleb(buf, p);
+      out = watbin.leb_u32(out, r2.value);
+      p = r2.next;
+    }
+  } else if (kind == 0) {
+    out = out.append(buf[p]);
+    p = p + 1;
+    let r3: UlebRead = wit_read_uleb(buf, p);
+    out = watbin.leb_u32(out, r3.value);
+    p = r3.next;
+  }
+  return TxR { next: p, out: out };
+}
+
+// wit_tx_alias transcodes an alias declaration.
+pub function wit_tx_alias(buf: i32[], pos: i32, out: i32[]): TxR {
+  let sort: i32 = buf[pos];
+  out = out.append(sort);
+  let p: i32 = pos + 1;
+  if (sort == 0) {
+    out = out.append(buf[p]);
+    p = p + 1;
+  }
+  let target: i32 = buf[p];
+  out = out.append(target);
+  p = p + 1;
+  if (target == 0 || target == 1) {
+    let r: UlebRead = wit_read_uleb(buf, p);
+    out = watbin.leb_u32(out, r.value);
+    p = r.next;
+    let nr: NameR = wit_read_name(buf, p);
+    out = wit_append_name(out, nr.s);
+    p = nr.next;
+  } else if (target == 2) {
+    let r2: UlebRead = wit_read_uleb(buf, p);
+    out = watbin.leb_u32(out, r2.value);
+    p = r2.next;
+    let r3: UlebRead = wit_read_uleb(buf, p);
+    out = watbin.leb_u32(out, r3.value);
+    p = r3.next;
+  }
+  return TxR { next: p, out: out };
+}
+
+// wit_transcode_type_section round-trips a component type section body.
+pub function wit_transcode_type_section(buf: i32[]): i32[] {
+  let out: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(buf, 0);
+  out = watbin.leb_u32(out, rc.value);
+  let p: i32 = rc.next;
+  let i: i32 = 0;
+  while (i < rc.value) {
+    let t: TxR = wit_tx_typedef(buf, p, out);
+    p = t.next;
+    out = t.out;
+    i = i + 1;
+  }
+  return out;
+}
+
+// wit_transcode_export_section round-trips a component export section body.
+pub function wit_transcode_export_section(buf: i32[]): i32[] {
+  let out: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(buf, 0);
+  out = watbin.leb_u32(out, rc.value);
+  let p: i32 = rc.next;
+  let i: i32 = 0;
+  while (i < rc.value) {
+    let ne: TxR = wit_tx_externname(buf, p, out);
+    p = ne.next;
+    out = ne.out;
+    out = out.append(buf[p]);
+    p = p + 1;
+    let r: UlebRead = wit_read_uleb(buf, p);
+    out = watbin.leb_u32(out, r.value);
+    p = r.next;
+    let has: i32 = buf[p];
+    out = out.append(has);
+    p = p + 1;
+    if (has == 1) {
+      let de: TxR = wit_tx_externdesc(buf, p, out);
+      p = de.next;
+      out = de.out;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// wit_section_body returns the body of the first section with id want_id.
+pub function wit_section_body(payload: i32[], want_id: i32): i32[] {
+  let pos: i32 = 8;
+  let found: i32[] = [];
+  let done: boolean = false;
+  while (pos < payload.len() && !done) {
+    let id: i32 = payload[pos];
+    pos = pos + 1;
+    let r: UlebRead = wit_read_uleb(payload, pos);
+    let size: i32 = r.value;
+    pos = r.next;
+    if (id == want_id) {
+      let j: i32 = 0;
+      while (j < size) {
+        found = found.append(payload[pos + j]);
+        j = j + 1;
+      }
+      done = true;
+    }
+    pos = pos + size;
+  }
+  return found;
+}
+
+// ---- P2 slice: world lift (import interface names) -----------------------
+//
+// Navigate the decoded world to its imported interface names -- the self-host
+// mirror of componenttype's World.Interfaces (names). The type section's
+// type 0 is the outer wrapper component; its first decl is the world
+// component (Type(component)); the world component's import decls (kind 0x03)
+// name the interfaces. Non-import decls are skipped with the slice-3
+// transcoder (wit_tx_decl, throwing away its output).
+
+pub function wit_world_import_names(tbody: i32[]): string[] {
+  let names: string[] = [];
+  let none: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(tbody, 0);
+  let p: i32 = rc.next;
+  // type 0: outer component (0x41) + decl vec.
+  p = p + 1;
+  let oc: UlebRead = wit_read_uleb(tbody, p);
+  p = oc.next;
+  // outer decl 0: type decl (0x01) whose typedef is the world component (0x41).
+  p = p + 1;
+  p = p + 1;
+  let wc: UlebRead = wit_read_uleb(tbody, p);
+  let wcount: i32 = wc.value;
+  p = wc.next;
+  let i: i32 = 0;
+  while (i < wcount) {
+    let kind: i32 = tbody[p];
+    if (kind == 3) {
+      // import: externname is 0x00 + uleb-len + bytes.
+      let nr: NameR = wit_read_name(tbody, p + 2);
+      names = names.append(nr.s);
+    }
+    let skip: TxR = wit_tx_decl(tbody, p, none);
+    p = skip.next;
+    i = i + 1;
+  }
+  return names;
+}
+
+// ---- P2 slice: the import plan --------------------------------------------
+//
+// A component declares a world import only when the core calls into it or a
+// kept declaration reads a type of its, and a pruned import's instance type
+// declares only the exports asked for plus the types they reach. Declaring
+// more makes the component demand capabilities the core never uses: a
+// stat-only program would import every descriptor method and the wall clock.
+// A value type a pruned interface `use`s from another, and that names no
+// other type (wall-clock's `datetime`), is declared inline: value types match
+// structurally. Resources are nominal, so they stay aliased from the
+// interface that owns them.
+
+// WitWorldDecls is the world component's decls in order: each one's kind and
+// offset, the world type slot it defines (-1 for none), its import ordinal
+// (-1 for none), and for an `alias export i "name"` the ordinal and name it
+// reads. Per import: its interface name and its instance type's slot.
+struct WitWorldDecls {
+  kind: i32[],
+  pos: i32[],
+  slot: i32[],
+  imp: i32[],
+  alias_inst: i32[],
+  alias_name: string[],
+  imp_names: string[],
+  imp_slot: i32[],
+  n_slots: i32,
+}
+
+// wit_world_start reads the world component's decl count, with the offset of
+// its first decl: type 0 is the outer wrapper component, whose first decl is
+// the world component.
+function wit_world_start(tbody: i32[]): UlebRead {
+  let rc: UlebRead = wit_read_uleb(tbody, 0);
+  let oc: UlebRead = wit_read_uleb(tbody, rc.next + 1);
+  return wit_read_uleb(tbody, oc.next + 2);
+}
+
+function wit_world_decls(tbody: i32[]): WitWorldDecls {
+  let none: i32[] = [];
+  let wc: UlebRead = wit_world_start(tbody);
+  let kinds: i32[] = [];
+  let poss: i32[] = [];
+  let slots: i32[] = [];
+  let imps: i32[] = [];
+  let ainsts: i32[] = [];
+  let anames: string[] = [];
+  let imp_names: string[] = [];
+  let imp_slot: i32[] = [];
+  let n_slots: i32 = 0;
+  let p: i32 = wc.next;
+  let i: i32 = 0;
+  while (i < wc.value) {
+    let kind: i32 = tbody[p];
+    let slot: i32 = 0 - 1;
+    let imp: i32 = 0 - 1;
+    let ainst: i32 = 0 - 1;
+    let aname: string = "";
+    if (wit_decl_defines_type(tbody, p)) {
+      slot = n_slots;
+      n_slots = n_slots + 1;
+    }
+    if (kind == 2) {
+      let tp: i32 = wit_alias_target_pos(tbody, p + 1);
+      if (tbody[tp] == 0) {
+        let r: UlebRead = wit_read_uleb(tbody, tp + 1);
+        ainst = r.value;
+        aname = wit_read_name(tbody, r.next).s;
+      }
+    } else if (kind == 3) {
+      let nr: NameR = wit_read_name(tbody, p + 2);
+      imp = imp_names.len();
+      imp_names = imp_names.append(nr.s);
+      let ts: i32 = 0 - 1;
+      if (tbody[nr.next] == 5) {
+        ts = wit_read_uleb(tbody, nr.next + 1).value;
+      }
+      imp_slot = imp_slot.append(ts);
+    }
+    kinds = kinds.append(kind);
+    poss = poss.append(p);
+    slots = slots.append(slot);
+    imps = imps.append(imp);
+    ainsts = ainsts.append(ainst);
+    anames = anames.append(aname);
+    p = wit_tx_decl(tbody, p, none).next;
+    i = i + 1;
+  }
+  return WitWorldDecls { kind: kinds, pos: poss, slot: slots, imp: imps, alias_inst: ainsts, alias_name: anames, imp_names: imp_names, imp_slot: imp_slot, n_slots: n_slots };
+}
+
+// WitImportPlan is what a component declares of a world, in the world's
+// order. Per import: `index`, its instance index in the prefix (-1 when
+// dropped); `n_inst` and `n_type` count the instances and types the prefix
+// declares. Per world decl: `decl_keep`. Per world type slot: `type_map`, its
+// index in the prefix (-1 when dropped), and for an instance type, `whole`
+// (declared as the world has it) or else `names`, the exports it keeps.
+pub struct WitImportPlan {
+  index: i32[],
+  n_inst: i32,
+  n_type: i32,
+  decl_keep: boolean[],
+  type_map: i32[],
+  whole: boolean[],
+  names: string[][],
+}
+
+// wit_import_plan plans the prefix for the (interface, export) pairs a
+// component reaches: `names[i]` is a function or type export of `ifaces[i]`,
+// or "" for the whole interface. An interface the world does not import is
+// left out; the caller refuses it by its -1 instance index.
+pub function wit_import_plan(tbody: i32[], ifaces: string[], names: string[]): WitImportPlan {
+  let d: WitWorldDecls = wit_world_decls(tbody);
+  let n_imp: i32 = d.imp_names.len();
+  let n: WitNeeds = WitNeeds {
+    keep: wit_falses(n_imp),
+    whole: wit_falses(n_imp),
+    want: wit_no_names(n_imp),
+    t_need: wit_falses(d.n_slots),
+    t_whole: wit_falses(d.n_slots),
+    t_names: wit_no_names(d.n_slots),
+    decl_keep: wit_falses(d.kind.len()),
+  };
+  let u: i32 = 0;
+  while (u < ifaces.len()) {
+    let j: i32 = wit_names_index(d.imp_names, ifaces[u]);
+    if (j >= 0) {
+      n = wit_needs_ask(n, j, names[u]);
+    }
+    u = u + 1;
+  }
+  // Every decl reads only decls before it, so one backward walk settles what
+  // each needs before reaching it.
+  let i: i32 = d.kind.len() - 1;
+  while (i >= 0) {
+    n = wit_needs_decl(tbody, d, n, i);
+    i = i - 1;
+  }
+  let (type_map, n_type) = wit_numbering(n.t_need);
+  let (index, n_inst) = wit_numbering(n.keep);
+  return WitImportPlan { index: index, n_inst: n_inst, n_type: n_type, decl_keep: n.decl_keep, type_map: type_map, whole: n.t_whole, names: n.t_names };
+}
+
+// WitNeeds is the plan's backward walk so far: per import, whether it is
+// kept, wanted whole, or else which exports are wanted; per world type slot,
+// the same for the instance type it holds; per world decl, whether it is kept.
+struct WitNeeds {
+  keep: boolean[],
+  whole: boolean[],
+  want: string[][],
+  t_need: boolean[],
+  t_whole: boolean[],
+  t_names: string[][],
+  decl_keep: boolean[],
+}
+
+function wit_falses(n: i32): boolean[] {
+  let out: boolean[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(false);
+    i = i + 1;
+  }
+  return out;
+}
+
+function wit_no_names(n: i32): string[][] {
+  let none: string[] = [];
+  let out: string[][] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(none);
+    i = i + 1;
+  }
+  return out;
+}
+
+// wit_needs_ask keeps import `j` for its export `name`, or all of it for "".
+function wit_needs_ask(n: WitNeeds, j: i32, name: string): WitNeeds {
+  let kept: WitNeeds = WitNeeds { ...n, keep: n.keep.with(j, true) };
+  if (name.len() == 0) {
+    return WitNeeds { ...kept, whole: kept.whole.with(j, true) };
+  }
+  if (wit_names_has(kept.want[j], name)) {
+    return kept;
+  }
+  return WitNeeds { ...kept, want: kept.want.with(j, kept.want[j].append(name)) };
+}
+
+// wit_needs_decl settles world decl `i` once every decl after it is settled:
+// it is kept when one of those reads it, and then what it reads is needed.
+function wit_needs_decl(tbody: i32[], d: WitWorldDecls, n: WitNeeds, i: i32): WitNeeds {
+  if (d.kind[i] == 3) {
+    return wit_needs_import(d, n, i);
+  }
+  let s: i32 = d.slot[i];
+  if (s < 0 || !n.t_need[s]) {
+    return n;
+  }
+  let kept: WitNeeds = WitNeeds { ...n, decl_keep: n.decl_keep.with(i, true) };
+  let j: i32 = d.alias_inst[i];
+  if (d.kind[i] == 2 && j >= 0 && j < kept.keep.len()) {
+    return wit_needs_ask(kept, j, d.alias_name[i]);
+  }
+  if (d.kind[i] != 1) {
+    return kept;
+  }
+  return wit_needs_slots(kept, wit_world_def_refs(tbody, d.pos[i] + 1, kept.t_whole[s], kept.t_names[s]));
+}
+
+// wit_needs_import keeps import decl `i` when its import is kept, and with it
+// the instance type it imports, as whole or as pruned as the import is.
+function wit_needs_import(d: WitWorldDecls, n: WitNeeds, i: i32): WitNeeds {
+  let j: i32 = d.imp[i];
+  if (!n.keep[j]) {
+    return n;
+  }
+  let kept: WitNeeds = WitNeeds { ...n, decl_keep: n.decl_keep.with(i, true) };
+  let ts: i32 = d.imp_slot[j];
+  if (ts < 0 || ts >= kept.t_need.len()) {
+    return kept;
+  }
+  return WitNeeds { ...kept, t_need: kept.t_need.with(ts, true), t_whole: kept.t_whole.with(ts, kept.whole[j]), t_names: kept.t_names.with(ts, kept.want[j]) };
+}
+
+// wit_needs_slots marks the world type slots `refs` needed.
+function wit_needs_slots(n: WitNeeds, refs: i32[]): WitNeeds {
+  let need: boolean[] = n.t_need;
+  for r in refs {
+    if (r >= 0 && r < need.len()) {
+      need = need.with(r, true);
+    }
+  }
+  return WitNeeds { ...n, t_need: need };
+}
+
+// wit_numbering numbers the true entries of `kept` in order: each one's index
+// among them, -1 for the rest, and how many there are.
+function wit_numbering(kept: boolean[]): (i32[], i32) {
+  let map: i32[] = [];
+  let count: i32 = 0;
+  for k in kept {
+    if (k) {
+      map = map.append(count);
+      count = count + 1;
+    } else {
+      map = map.append(0 - 1);
+    }
+  }
+  return (map, count);
+}
+
+function wit_names_index(names: string[], s: string): i32 {
+  let i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == s) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function wit_names_has(names: string[], s: string): boolean {
+  return wit_names_index(names, s) >= 0;
+}
+
+// wit_world_def_refs is the world type slots the world-level type definition
+// at `q` reads: for an instance type, those its kept `use` aliases read.
+function wit_world_def_refs(tbody: i32[], q: i32, whole: boolean, names: string[]): i32[] {
+  if (tbody[q] == 66) {
+    return wit_inst_prune(tbody, q, whole, names).outer;
+  }
+  return wit_def_refs(tbody, q);
+}
+
+// wit_decl_defines_type reports whether the decl at `p` takes a type index:
+// a type definition, a type alias, or a type import or export. A function
+// export names a type without defining one.
+function wit_decl_defines_type(tbody: i32[], p: i32): boolean {
+  let kind: i32 = tbody[p];
+  if (kind == 1) {
+    return true;
+  }
+  if (kind == 2) {
+    return tbody[p + 1] == 3;
+  }
+  if (kind == 3 || kind == 4) {
+    return tbody[wit_read_name(tbody, p + 2).next] == 3;
+  }
+  return false;
+}
+
+// wit_def_refs is the type indices the type definition at `q` reads.
+function wit_def_refs(tbody: i32[], q: i32): i32[] {
+  let none: i32[] = [];
+  let tag: i32 = tbody[q];
+  if (tag == 64) {
+    return wit_type_indices(wit_func_vals(wit_decode_func(tbody, q).fn));
+  }
+  if (tag < 104 || tag > 114) {
+    return none;
+  }
+  return wit_type_indices(wit_def_vals(wit_decode_def(tbody, q).def));
+}
+
+// wit_func_vals is every value type a function signature names.
+function wit_func_vals(f: WitFunc): i32[] {
+  if (f.named == 1) {
+    return wit_cat_vals(f.p_vals, f.r_vals);
+  }
+  return f.p_vals.append(f.result);
+}
+
+// wit_def_vals is every type a defined type names: its fields, elements and
+// cases, and a handle's resource.
+function wit_def_vals(d: WitDef): i32[] {
+  let vals: i32[] = wit_cat_vals(wit_cat_vals(d.rec_vals, d.tup_elems), wit_variant_vals(d));
+  if (d.tag == 112 || d.tag == 107) {
+    vals = vals.append(d.elem);
+  }
+  if (d.tag == 105 || d.tag == 104) {
+    vals = vals.append(d.resource);
+  }
+  if (d.has_ok == 1) {
+    vals = vals.append(d.ok);
+  }
+  if (d.has_err == 1) {
+    vals = vals.append(d.err);
+  }
+  return vals;
+}
+
+// wit_type_indices keeps the type indices of `vals`, dropping primitives.
+function wit_type_indices(vals: i32[]): i32[] {
+  let refs: i32[] = [];
+  for v in vals {
+    if (v >= 0) {
+      refs = refs.append(v);
+    }
+  }
+  return refs;
+}
+
+function wit_variant_vals(d: WitDef): i32[] {
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < d.var_ty.len()) {
+    if (d.var_has_ty[i] == 1) {
+      out = out.append(d.var_ty[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function wit_cat_vals(a: i32[], b: i32[]): i32[] {
+  let i: i32 = 0;
+  while (i < b.len()) {
+    a = a.append(b[i]);
+    i = i + 1;
+  }
+  return a;
+}
+
+// wit_decl_refs is the type indices the decl at `p` reads in its own scope.
+function wit_decl_refs(tbody: i32[], p: i32): i32[] {
+  let none: i32[] = [];
+  let kind: i32 = tbody[p];
+  if (kind == 1) {
+    return wit_def_refs(tbody, p + 1);
+  }
+  if (kind == 3 || kind == 4) {
+    return wit_type_indices(none.append(wit_externdesc_ref(tbody, wit_read_name(tbody, p + 2).next)));
+  }
+  return none;
+}
+
+// wit_externdesc_ref is the type the externdesc at `e` names, as a value type
+// (negative for a primitive or for none).
+function wit_externdesc_ref(tbody: i32[], e: i32): i32 {
+  let k: i32 = tbody[e];
+  if (k == 3 && tbody[e + 1] == 0) {
+    return wit_read_uleb(tbody, e + 2).value;
+  }
+  if (k == 1 || k == 4 || k == 5) {
+    return wit_read_uleb(tbody, e + 1).value;
+  }
+  if (k == 2) {
+    return wit_read_sleb(tbody, e + 1).value;
+  }
+  return 0 - 1;
+}
+
+// wit_alias_target_pos is the byte offset of an alias's target kind, given
+// the offset of its sort byte (a core sort carries one more byte).
+function wit_alias_target_pos(buf: i32[], sort_pos: i32): i32 {
+  if (buf[sort_pos] == 0) {
+    return sort_pos + 2;
+  }
+  return sort_pos + 1;
+}
+
+// wit_outer_slot is the world type slot an `alias outer 1 n` (sort byte at
+// `sort_pos`) reads, else -1.
+function wit_outer_slot(tbody: i32[], sort_pos: i32): i32 {
+  if (tbody[sort_pos] != 3 || tbody[sort_pos + 1] != 2) {
+    return 0 - 1;
+  }
+  let cr: UlebRead = wit_read_uleb(tbody, sort_pos + 2);
+  if (cr.value != 1) {
+    return 0 - 1;
+  }
+  return wit_read_uleb(tbody, cr.next).value;
+}
+
+// wit_inline_def is the offset of the definition world type slot `ws` holds
+// when it is a value type that names no other type, so a copy of it is the
+// same type anywhere; else -1.
+function wit_inline_def(tbody: i32[], ws: i32): i32 {
+  let (def, _) = wit_world_type_slot(tbody, ws);
+  if (def < 0) {
+    return 0 - 1;
+  }
+  let tag: i32 = tbody[def];
+  if (tag >= 115 && tag <= 127) {
+    return def;
+  }
+  if (tag >= 106 && tag <= 114 && tag != 108 && wit_def_refs(tbody, def).len() == 0) {
+    return def;
+  }
+  return 0 - 1;
+}
+
+// WitInstPrune is what a plan keeps of the instance type at an offset: per
+// decl, whether it is kept and, for a kept `use` alias declared inline, the
+// offset of the definition that replaces it (-1 otherwise); `outer` is the
+// world type slots the remaining kept aliases read.
+struct WitInstPrune { keep: boolean[], inline: i32[], outer: i32[] }
+
+// wit_inst_prune keeps the exports of the instance type at `q` named in
+// `names` (every decl when `whole`) and each decl a kept one reads.
+function wit_inst_prune(tbody: i32[], q: i32, whole: boolean, names: string[]): WitInstPrune {
+  let decls: i32[] = wit_inst_decls(tbody, q);
+  let keep: boolean[] = wit_inst_closure(tbody, decls, wit_inst_asked(tbody, decls, whole, names));
+  let inline: i32[] = [];
+  let outer: i32[] = [];
+  let j: i32 = 0;
+  while (j < decls.len()) {
+    let ws: i32 = 0 - 1;
+    if (keep[j] && tbody[decls[j]] == 2) {
+      ws = wit_outer_slot(tbody, decls[j] + 1);
+    }
+    let off: i32 = 0 - 1;
+    if (ws >= 0 && !whole) {
+      off = wit_inline_def(tbody, ws);
+    }
+    if (ws >= 0 && off < 0) {
+      outer = outer.append(ws);
+    }
+    inline = inline.append(off);
+    j = j + 1;
+  }
+  return WitInstPrune { keep: keep, inline: inline, outer: outer };
+}
+
+// wit_inst_decls is the offset of each decl of the instance type at `q`.
+function wit_inst_decls(tbody: i32[], q: i32): i32[] {
+  let none: i32[] = [];
+  let dc: UlebRead = wit_read_uleb(tbody, q + 1);
+  let decls: i32[] = [];
+  let p: i32 = dc.next;
+  let i: i32 = 0;
+  while (i < dc.value) {
+    decls = decls.append(p);
+    p = wit_tx_decl(tbody, p, none).next;
+    i = i + 1;
+  }
+  return decls;
+}
+
+// wit_inst_asked is, per decl, whether it is asked for: an export named in
+// `names`, or any decl when `whole`.
+function wit_inst_asked(tbody: i32[], decls: i32[], whole: boolean, names: string[]): boolean[] {
+  let asked: boolean[] = [];
+  for p in decls {
+    let kept: boolean = whole;
+    if (tbody[p] == 4) {
+      kept = kept || wit_names_has(names, wit_read_name(tbody, p + 2).s);
+    }
+    asked = asked.append(kept);
+  }
+  return asked;
+}
+
+// wit_inst_closure adds to `keep` every decl a kept one reads, walking back
+// since a decl reads only the decls before it.
+function wit_inst_closure(tbody: i32[], decls: i32[], keep: boolean[]): boolean[] {
+  let slot_decl: i32[] = [];
+  let i: i32 = 0;
+  while (i < decls.len()) {
+    if (wit_decl_defines_type(tbody, decls[i])) {
+      slot_decl = slot_decl.append(i);
+    }
+    i = i + 1;
+  }
+  let j: i32 = decls.len() - 1;
+  while (j >= 0) {
+    if (keep[j]) {
+      for r in wit_decl_refs(tbody, decls[j]) {
+        if (r < slot_decl.len()) {
+          keep = keep.with(slot_decl[r], true);
+        }
+      }
+    }
+    j = j - 1;
+  }
+  return keep;
+}
+
+// ---- P2 slice: emit the world import prefix ------------------------------
+//
+// Self-host mirror of componenttype's EmitWorldImports: replay the world
+// component's decls the plan keeps as top-level component sections (type decl
+// -> type section id 7, alias -> alias section id 6, import -> import section
+// id 10). Each decl's payload (the bytes after its kind byte) is the section
+// body content, prefixed with vec(1), with every type and instance index
+// renumbered to the pruned prefix — so with every import kept whole the output
+// is byte-identical to the Go EmitWorldImports.
+
+pub function wit_emit_section(out: i32[], id: i32, body: i32[]): i32[] {
+  out = out.append(id);
+  out = watbin.leb_u32(out, body.len());
+  let k: i32 = 0;
+  while (k < body.len()) {
+    out = out.append(body[k]);
+    k = k + 1;
+  }
+  return out;
+}
+
+pub function wit_emit_world_imports(tbody: i32[], plan: WitImportPlan): i32[] {
+  let d: WitWorldDecls = wit_world_decls(tbody);
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < d.kind.len()) {
+    let p: i32 = d.pos[i];
+    if (plan.decl_keep[i] && d.kind[i] == 1) {
+      let body: i32[] = [];
+      if (tbody[p + 1] == 66) {
+        let s: i32 = d.slot[i];
+        body = wit_inst_emit(tbody, p + 1, wit_inst_prune(tbody, p + 1, plan.whole[s], plan.names[s]), plan.type_map);
+      } else {
+        body = wit_def_mapped(tbody, p + 1, plan.type_map);
+      }
+      out = wit_emit_section(out, 7, watbin.wcat([1], body));
+    } else if (plan.decl_keep[i] && d.kind[i] == 2) {
+      out = wit_emit_section(out, 6, watbin.wcat([1], wit_world_alias_mapped(tbody, p + 1, plan.index)));
+    } else if (plan.decl_keep[i] && d.kind[i] == 3) {
+      let nm: TxR = wit_tx_externname(tbody, p + 1, [1]);
+      out = wit_emit_section(out, 10, watbin.wcat(nm.out, wit_externdesc_mapped(tbody, nm.next, plan.type_map)));
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// wit_inst_emit encodes the instance type at `q` as `pr` prunes it, its own
+// type indices renumbered past the dropped decls and its `use` aliases to the
+// world slots' indices in `type_map`.
+function wit_inst_emit(tbody: i32[], q: i32, pr: WitInstPrune, type_map: i32[]): i32[] {
+  let ds: i32[] = wit_inst_decls(tbody, q);
+  let local: i32[] = [];
+  let n_local: i32 = 0;
+  let count: i32 = 0;
+  let decls: i32[] = [];
+  let i: i32 = 0;
+  while (i < ds.len()) {
+    let defines: boolean = wit_decl_defines_type(tbody, ds[i]);
+    if (pr.keep[i]) {
+      decls = watbin.wcat(decls, wit_decl_mapped(tbody, ds[i], local, pr.inline[i], type_map));
+      count = count + 1;
+      if (defines) {
+        local = local.append(n_local);
+        n_local = n_local + 1;
+      }
+    } else if (defines) {
+      local = local.append(0 - 1);
+    }
+    i = i + 1;
+  }
+  return watbin.wcat(watbin.leb_u32([66], count), decls);
+}
+
+// wit_decl_mapped re-encodes the instance-type decl at `p` with its type
+// indices through `local`, or as a type definition copied from `inline`.
+function wit_decl_mapped(tbody: i32[], p: i32, local: i32[], inline: i32, type_map: i32[]): i32[] {
+  let none: i32[] = [];
+  let kind: i32 = tbody[p];
+  if (kind == 1) {
+    return watbin.wcat([1], wit_def_mapped(tbody, p + 1, local));
+  }
+  if (kind == 2 && inline >= 0) {
+    return wit_tx_typedef(tbody, inline, [1]).out;
+  }
+  if (kind == 2) {
+    return watbin.wcat([2], wit_use_alias_mapped(tbody, p + 1, type_map));
+  }
+  if (kind == 3 || kind == 4) {
+    let nm: TxR = wit_tx_externname(tbody, p + 1, [kind]);
+    return watbin.wcat(nm.out, wit_externdesc_mapped(tbody, nm.next, local));
+  }
+  return wit_tx_decl(tbody, p, none).out;
+}
+
+function wit_val_mapped(map: i32[], v: i32): i32 {
+  if (v < 0) {
+    return v;
+  }
+  return map[v];
+}
+
+function wit_vals_mapped(map: i32[], vs: i32[]): i32[] {
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < vs.len()) {
+    out = out.append(wit_val_mapped(map, vs[i]));
+    i = i + 1;
+  }
+  return out;
+}
+
+// wit_def_mapped re-encodes the type definition at `q` with each type index
+// it reads through `map`.
+function wit_def_mapped(tbody: i32[], q: i32, map: i32[]): i32[] {
+  let none: i32[] = [];
+  let tag: i32 = tbody[q];
+  if (tag == 64) {
+    return wit_encode_func(none, wit_func_mapped(wit_decode_func(tbody, q).fn, map));
+  }
+  if (tag < 104 || tag > 114) {
+    return wit_tx_typedef(tbody, q, none).out;
+  }
+  return wit_encode_def(none, wit_defn_mapped(wit_decode_def(tbody, q).def, map));
+}
+
+function wit_func_mapped(f: WitFunc, map: i32[]): WitFunc {
+  let mf: WitFunc = WitFunc { ...f, p_vals: wit_vals_mapped(map, f.p_vals), r_vals: wit_vals_mapped(map, f.r_vals) };
+  if (f.named == 0) {
+    return WitFunc { ...mf, result: wit_val_mapped(map, f.result) };
+  }
+  return mf;
+}
+
+// wit_defn_mapped maps the type indices `d` reads: the fields its tag gives a
+// meaning, leaving the unused ones as decoded.
+function wit_defn_mapped(d: WitDef, map: i32[]): WitDef {
+  let md: WitDef = WitDef { ...d, rec_vals: wit_vals_mapped(map, d.rec_vals), tup_elems: wit_vals_mapped(map, d.tup_elems), var_ty: wit_variant_mapped(d, map) };
+  if (d.tag == 112 || d.tag == 107) {
+    md = WitDef { ...md, elem: wit_val_mapped(map, d.elem) };
+  }
+  if (d.tag == 105 || d.tag == 104) {
+    md = WitDef { ...md, resource: wit_val_mapped(map, d.resource) };
+  }
+  if (d.has_ok == 1) {
+    md = WitDef { ...md, ok: wit_val_mapped(map, d.ok) };
+  }
+  if (d.has_err == 1) {
+    md = WitDef { ...md, err: wit_val_mapped(map, d.err) };
+  }
+  return md;
+}
+
+function wit_variant_mapped(d: WitDef, map: i32[]): i32[] {
+  let tys: i32[] = [];
+  let i: i32 = 0;
+  while (i < d.var_ty.len()) {
+    if (d.var_has_ty[i] == 1) {
+      tys = tys.append(wit_val_mapped(map, d.var_ty[i]));
+    } else {
+      tys = tys.append(d.var_ty[i]);
+    }
+    i = i + 1;
+  }
+  return tys;
+}
+
+// wit_world_alias_mapped re-encodes the world-level alias payload at
+// `sort_pos`, an instance-export target through `inst_map`.
+function wit_world_alias_mapped(tbody: i32[], sort_pos: i32, inst_map: i32[]): i32[] {
+  let none: i32[] = [];
+  let tp: i32 = wit_alias_target_pos(tbody, sort_pos);
+  if (tbody[tp] != 0) {
+    return wit_tx_alias(tbody, sort_pos, none).out;
+  }
+  let out: i32[] = [];
+  let q: i32 = sort_pos;
+  while (q <= tp) {
+    out = out.append(tbody[q]);
+    q = q + 1;
+  }
+  let r: UlebRead = wit_read_uleb(tbody, tp + 1);
+  out = watbin.leb_u32(out, inst_map[r.value]);
+  return wit_append_name(out, wit_read_name(tbody, r.next).s);
+}
+
+// wit_use_alias_mapped re-encodes an instance type's alias payload at
+// `sort_pos`, an `alias outer 1 n` through `type_map`.
+function wit_use_alias_mapped(tbody: i32[], sort_pos: i32, type_map: i32[]): i32[] {
+  let none: i32[] = [];
+  let ws: i32 = wit_outer_slot(tbody, sort_pos);
+  if (ws < 0) {
+    return wit_tx_alias(tbody, sort_pos, none).out;
+  }
+  return watbin.leb_u32([3, 2, 1], type_map[ws]);
+}
+
+// wit_externdesc_mapped re-encodes the externdesc at `e` with the type index
+// it reads through `map`.
+function wit_externdesc_mapped(tbody: i32[], e: i32, map: i32[]): i32[] {
+  let none: i32[] = [];
+  let k: i32 = tbody[e];
+  if (k == 3 && tbody[e + 1] == 0) {
+    return watbin.leb_u32([3, 0], map[wit_read_uleb(tbody, e + 2).value]);
+  }
+  if (k == 1 || k == 4 || k == 5) {
+    return watbin.leb_u32([k], map[wit_read_uleb(tbody, e + 1).value]);
+  }
+  if (k == 2) {
+    return watbin.leb_i32([2], wit_val_mapped(map, wit_read_sleb(tbody, e + 1).value));
+  }
+  return wit_tx_externdesc(tbody, e, none).out;
+}
+
+// ---- P2 slice: classify imports from the world --------------------------
+//
+// Self-host mirror of componenttype's Classify: derive each imported
+// function's lowering kind (0 no-opt, 1 mem, 2 mem+realloc) from its resolved
+// signature via the canonical-ABI flattening rules. Value-type indices are
+// resolved against a per-scope offset table (the byte offset of each type's
+// encoding, wit_iface_scope), reusing wit_decode_def. A type export bound
+// `eq` resolves to the type it names, a `use` of another interface's type to
+// that interface's definition; sentinel -1 entries (surfaced resources) resolve
+// as scalar handles, matching the Go ResolveDef==nil case.
+
+// wit_iface_instance_offset returns the byte offset (in the type-section body)
+// of the instance type the world imports under `iface`, or -1.
+pub function wit_iface_instance_offset(tbody: i32[], iface: string): i32 {
+  let none: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(tbody, 0);
+  let p: i32 = rc.next;
+  p = p + 1;
+  let oc: UlebRead = wit_read_uleb(tbody, p);
+  p = oc.next;
+  p = p + 1;
+  p = p + 1;
+  let wc: UlebRead = wit_read_uleb(tbody, p);
+  let wcount: i32 = wc.value;
+  p = wc.next;
+  let typeOffsets: i32[] = [];
+  let result: i32 = 0 - 1;
+  let found: boolean = false;
+  let i: i32 = 0;
+  while (i < wcount && !found) {
+    let kind: i32 = tbody[p];
+    if (kind == 1) {
+      typeOffsets = typeOffsets.append(p + 1);
+    } else if (kind == 2) {
+      if (tbody[p + 1] == 3) {
+        typeOffsets = typeOffsets.append(0 - 1);
+      }
+    } else if (kind == 3) {
+      let nr: NameR = wit_read_name(tbody, p + 2);
+      if (nr.s == iface) {
+        let tr: UlebRead = wit_read_uleb(tbody, nr.next + 1);
+        result = typeOffsets[tr.value];
+        found = true;
+      }
+    }
+    let skip: TxR = wit_tx_decl(tbody, p, none);
+    p = skip.next;
+    i = i + 1;
+  }
+  return result;
+}
+
+// WitScope is an interface's type-index space: each slot's definition as a
+// byte offset in the world's type body (-1 for an opaque slot: a resource
+// handle, or an alias nothing resolves), and `owners[i]`, the byte offset of
+// the instance type whose own space the definition's inner indices read when
+// a WIT `use` brought the type in from another interface, else -1 for this
+// one. Mirror of componenttype's LocalTypes / LocalTypeOwners.
+pub struct WitScope { offs: i32[], owners: i32[] }
+
+// wit_inner_scope is the scope a slot's definition reads its inner indices
+// in: the owning interface's for a `use`d type, else `scope` itself.
+function wit_inner_scope(tbody: i32[], scope: WitScope, v: i32): WitScope {
+  if (scope.owners[v] >= 0) {
+    return wit_iface_scope(tbody, scope.owners[v]);
+  }
+  return scope;
+}
+
+pub function wit_contains_heap(tbody: i32[], scope: WitScope, v: i32): boolean {
+  if (v < 0) {
+    return v == 0 - 13;
+  }
+  if (v >= scope.offs.len()) {
+    return false;
+  }
+  let off: i32 = scope.offs[v];
+  if (off < 0) {
+    return false;
+  }
+  let inner: WitScope = wit_inner_scope(tbody, scope, v);
+  let d: WitDef = wit_decode_def(tbody, off).def;
+  if (d.tag == 112) {
+    return true;
+  }
+  if (d.tag == 107) {
+    return wit_contains_heap(tbody, inner, d.elem);
+  }
+  if (d.tag == 111) {
+    let i: i32 = 0;
+    while (i < d.tup_elems.len()) {
+      if (wit_contains_heap(tbody, inner, d.tup_elems[i])) {
+        return true;
+      }
+      i = i + 1;
+    }
+  }
+  if (d.tag == 114) {
+    let j: i32 = 0;
+    while (j < d.rec_vals.len()) {
+      if (wit_contains_heap(tbody, inner, d.rec_vals[j])) {
+        return true;
+      }
+      j = j + 1;
+    }
+  }
+  if (d.tag == 113) {
+    let k: i32 = 0;
+    while (k < d.var_ty.len()) {
+      if (d.var_has_ty[k] == 1 && wit_contains_heap(tbody, inner, d.var_ty[k])) {
+        return true;
+      }
+      k = k + 1;
+    }
+  }
+  if (d.tag == 106) {
+    if (d.has_ok == 1 && wit_contains_heap(tbody, inner, d.ok)) {
+      return true;
+    }
+    if (d.has_err == 1 && wit_contains_heap(tbody, inner, d.err)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+pub function wit_flatten(tbody: i32[], scope: WitScope, v: i32): i32 {
+  if (v < 0) {
+    if (v == 0 - 13) {
+      return 2;
+    }
+    return 1;
+  }
+  if (v >= scope.offs.len()) {
+    return 1;
+  }
+  let off: i32 = scope.offs[v];
+  if (off < 0) {
+    return 1;
+  }
+  let inner: WitScope = wit_inner_scope(tbody, scope, v);
+  let d: WitDef = wit_decode_def(tbody, off).def;
+  if (d.tag == 112) {
+    return 2;
+  }
+  if (d.tag == 105 || d.tag == 104 || d.tag == 109 || d.tag == 110) {
+    return 1;
+  }
+  if (d.tag == 107) {
+    return 1 + wit_flatten(tbody, inner, d.elem);
+  }
+  if (d.tag == 111) {
+    let n: i32 = 0;
+    let i: i32 = 0;
+    while (i < d.tup_elems.len()) {
+      n = n + wit_flatten(tbody, inner, d.tup_elems[i]);
+      i = i + 1;
+    }
+    return n;
+  }
+  if (d.tag == 114) {
+    let n2: i32 = 0;
+    let j: i32 = 0;
+    while (j < d.rec_vals.len()) {
+      n2 = n2 + wit_flatten(tbody, inner, d.rec_vals[j]);
+      j = j + 1;
+    }
+    return n2;
+  }
+  if (d.tag == 113) {
+    let mx: i32 = 0;
+    let k: i32 = 0;
+    while (k < d.var_ty.len()) {
+      let c: i32 = 0;
+      if (d.var_has_ty[k] == 1) {
+        c = wit_flatten(tbody, inner, d.var_ty[k]);
+      }
+      if (c > mx) {
+        mx = c;
+      }
+      k = k + 1;
+    }
+    return 1 + mx;
+  }
+  if (d.tag == 106) {
+    let ok: i32 = 0;
+    let er: i32 = 0;
+    if (d.has_ok == 1) {
+      ok = wit_flatten(tbody, inner, d.ok);
+    }
+    if (d.has_err == 1) {
+      er = wit_flatten(tbody, inner, d.err);
+    }
+    if (ok > er) {
+      return 1 + ok;
+    }
+    return 1 + er;
+  }
+  return 1;
+}
+
+// wit_iface_scope builds the type-index space of the instance type at
+// `instOff`. A `type` decl is its own definition; a type export bound `eq i`
+// is slot i's; `sub resource` is opaque; an `alias outer 1 n` (a WIT `use`)
+// is the world's type slot n, resolved by wit_world_type_slot into the
+// interface that declares it, so a signature is read whole wherever its
+// types were declared.
+pub function wit_iface_scope(tbody: i32[], instOff: i32): WitScope {
+  let none: i32[] = [];
+  let p: i32 = instOff + 1;
+  let dc: UlebRead = wit_read_uleb(tbody, p);
+  let dcount: i32 = dc.value;
+  p = dc.next;
+  let offs: i32[] = [];
+  let owners: i32[] = [];
+  let i: i32 = 0;
+  while (i < dcount) {
+    let kind: i32 = tbody[p];
+    if (kind == 1) {
+      offs = offs.append(p + 1);
+      owners = owners.append(0 - 1);
+    } else if (kind == 2) {
+      if (tbody[p + 1] == 3) {
+        let (off, owner) = wit_alias_slot(tbody, p + 1);
+        offs = offs.append(off);
+        owners = owners.append(owner);
+      }
+    } else if (kind == 4) {
+      let nr: NameR = wit_read_name(tbody, p + 2);
+      if (tbody[nr.next] == 3) {
+        if (tbody[nr.next + 1] == 0) {
+          let er: UlebRead = wit_read_uleb(tbody, nr.next + 2);
+          offs = offs.append(offs[er.value]);
+          owners = owners.append(owners[er.value]);
+        } else {
+          offs = offs.append(0 - 1);
+          owners = owners.append(0 - 1);
+        }
+      }
+    }
+    let skip: TxR = wit_tx_decl(tbody, p, none);
+    p = skip.next;
+    i = i + 1;
+  }
+  return WitScope { offs: offs, owners: owners };
+}
+
+// wit_alias_slot resolves a type alias decl whose sort byte is at `sort_pos`:
+// an `alias outer 1 n` through the world's type slots, anything else opaque.
+function wit_alias_slot(tbody: i32[], sort_pos: i32): (i32, i32) {
+  let tp: i32 = wit_alias_target_pos(tbody, sort_pos);
+  if (tbody[tp] != 2) {
+    return (0 - 1, 0 - 1);
+  }
+  let cr: UlebRead = wit_read_uleb(tbody, tp + 1);
+  let ir: UlebRead = wit_read_uleb(tbody, cr.next);
+  if (cr.value != 1) {
+    return (0 - 1, 0 - 1);
+  }
+  return wit_world_type_slot(tbody, ir.value);
+}
+
+// wit_world_type_slot resolves the world's type slot `n` to a definition and
+// its owner: the slot a WIT `use` leaves is an `alias export i "name"` of the
+// i-th imported instance, so the answer is that interface's export `name` in
+// its own scope. Any other slot is opaque.
+function wit_world_type_slot(tbody: i32[], n: i32): (i32, i32) {
+  let none: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(tbody, 0);
+  let p: i32 = rc.next;
+  p = p + 1;
+  let oc: UlebRead = wit_read_uleb(tbody, p);
+  p = oc.next;
+  p = p + 1;
+  p = p + 1;
+  let wc: UlebRead = wit_read_uleb(tbody, p);
+  let wcount: i32 = wc.value;
+  p = wc.next;
+  let slot: i32 = 0;
+  let instances: string[] = [];
+  let i: i32 = 0;
+  while (i < wcount) {
+    let kind: i32 = tbody[p];
+    if (kind == 1) {
+      slot = slot + 1;
+    } else if (kind == 2) {
+      if (tbody[p + 1] == 3) {
+        if (slot == n) {
+          return wit_alias_export_slot(tbody, p + 1, instances);
+        }
+        slot = slot + 1;
+      }
+    } else if (kind == 3) {
+      let nr: NameR = wit_read_name(tbody, p + 2);
+      if (tbody[nr.next] == 5) {
+        instances = instances.append(nr.s);
+      }
+    }
+    let skip: TxR = wit_tx_decl(tbody, p, none);
+    p = skip.next;
+    i = i + 1;
+  }
+  return (0 - 1, 0 - 1);
+}
+
+// wit_alias_export_slot resolves a world-level `alias export i "name"` (sort
+// byte at `sort_pos`) to the named type export of the i-th imported
+// instance, in that instance's scope.
+function wit_alias_export_slot(tbody: i32[], sort_pos: i32, instances: string[]): (i32, i32) {
+  let tp: i32 = wit_alias_target_pos(tbody, sort_pos);
+  if (tbody[tp] != 0) {
+    return (0 - 1, 0 - 1);
+  }
+  let ir: UlebRead = wit_read_uleb(tbody, tp + 1);
+  let nr: NameR = wit_read_name(tbody, ir.next);
+  if (ir.value >= instances.len()) {
+    return (0 - 1, 0 - 1);
+  }
+  let instOff: i32 = wit_iface_instance_offset(tbody, instances[ir.value]);
+  if (instOff < 0) {
+    return (0 - 1, 0 - 1);
+  }
+  let slot: i32 = wit_iface_export_type_slot(tbody, instOff, nr.s);
+  if (slot < 0) {
+    return (0 - 1, 0 - 1);
+  }
+  let scope: WitScope = wit_iface_scope(tbody, instOff);
+  let owner: i32 = scope.owners[slot];
+  if (owner < 0) {
+    owner = instOff;
+  }
+  return (scope.offs[slot], owner);
+}
+
+// wit_iface_export_type_slot is the type-index slot the instance type at
+// `instOff` exports under `name`, or -1.
+function wit_iface_export_type_slot(tbody: i32[], instOff: i32, name: string): i32 {
+  let none: i32[] = [];
+  let p: i32 = instOff + 1;
+  let dc: UlebRead = wit_read_uleb(tbody, p);
+  let dcount: i32 = dc.value;
+  p = dc.next;
+  let slot: i32 = 0;
+  let i: i32 = 0;
+  while (i < dcount) {
+    let kind: i32 = tbody[p];
+    if (kind == 1) {
+      slot = slot + 1;
+    } else if (kind == 2) {
+      if (tbody[p + 1] == 3) {
+        slot = slot + 1;
+      }
+    } else if (kind == 4) {
+      let nr: NameR = wit_read_name(tbody, p + 2);
+      if (tbody[nr.next] == 3) {
+        if (nr.s == name) {
+          return slot;
+        }
+        slot = slot + 1;
+      }
+    }
+    let skip: TxR = wit_tx_decl(tbody, p, none);
+    p = skip.next;
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// wit_classify returns the lowering kind (0/1/2) for (iface, fname) in the world.
+// WitFuncLookup is a function looked up in a world interface: whether it is
+// declared, the byte offset of its func type, and the interface's value-type
+// offset table the signature's type indices resolve against.
+pub struct WitFuncLookup { found: boolean, off: i32, scope: WitScope }
+
+// wit_iface_func_lookup walks the instance type the world imports under
+// `iface`, collecting its value-type offsets and finding the func export named
+// `fname`. Not found (or no such interface) is reported, not an error: the
+// composer refuses a core whose import the world does not declare.
+pub function wit_iface_func_lookup(tbody: i32[], iface: string, fname: string): WitFuncLookup {
+  let none: i32[] = [];
+  let instOff: i32 = wit_iface_instance_offset(tbody, iface);
+  if (instOff < 0) {
+    return WitFuncLookup { found: false, off: 0 - 1, scope: WitScope { offs: none, owners: none } };
+  }
+  let scope: WitScope = wit_iface_scope(tbody, instOff);
+  let p: i32 = instOff + 1;
+  let dc: UlebRead = wit_read_uleb(tbody, p);
+  let dcount: i32 = dc.value;
+  p = dc.next;
+  let funcOff: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < dcount) {
+    if (tbody[p] == 4) {
+      let nr: NameR = wit_read_name(tbody, p + 2);
+      if (tbody[nr.next] == 1 && nr.s == fname) {
+        let tr: UlebRead = wit_read_uleb(tbody, nr.next + 1);
+        funcOff = scope.offs[tr.value];
+      }
+    }
+    let skip: TxR = wit_tx_decl(tbody, p, none);
+    p = skip.next;
+    i = i + 1;
+  }
+  return WitFuncLookup { found: funcOff >= 0, off: funcOff, scope: scope };
+}
+
+// wit_iface_has_resource reports whether the interface the world imports under
+// `iface` exports a resource type named `res` — the set a `[resource-drop]<res>`
+// core import may target (mirror of component.ifaceHasResource). A resource
+// export is a type export (externdesc kind 3) whose bound is `sub resource`
+// (bound kind 1); a type export bound `eq` (kind 0) to an index is an alias,
+// not a resource.
+pub function wit_iface_has_resource(tbody: i32[], iface: string, res: string): boolean {
+  let none: i32[] = [];
+  let instOff: i32 = wit_iface_instance_offset(tbody, iface);
+  if (instOff < 0) {
+    return false;
+  }
+  let p: i32 = instOff + 1;
+  let dc: UlebRead = wit_read_uleb(tbody, p);
+  let dcount: i32 = dc.value;
+  p = dc.next;
+  let i: i32 = 0;
+  while (i < dcount) {
+    if (tbody[p] == 4) {
+      let nr: NameR = wit_read_name(tbody, p + 2);
+      if (tbody[nr.next] == 3 && tbody[nr.next + 1] == 1 && nr.s == res) {
+        return true;
+      }
+    }
+    let skip: TxR = wit_tx_decl(tbody, p, none);
+    p = skip.next;
+    i = i + 1;
+  }
+  return false;
+}
+
+pub function wit_classify(tbody: i32[], iface: string, fname: string): i32 {
+  let lk: WitFuncLookup = wit_iface_func_lookup(tbody, iface, fname);
+  if (!lk.found) {
+    return 0;
+  }
+  let offs: WitScope = lk.scope;
+  let f: WitFunc = wit_decode_func(tbody, lk.off).fn;
+  let needR: boolean = false;
+  if (f.named == 0) {
+    if (wit_contains_heap(tbody, offs, f.result)) {
+      needR = true;
+    }
+  } else {
+    let r: i32 = 0;
+    while (r < f.r_vals.len()) {
+      if (wit_contains_heap(tbody, offs, f.r_vals[r])) {
+        needR = true;
+      }
+      r = r + 1;
+    }
+  }
+  if (needR) {
+    return 2;
+  }
+  let pj: i32 = 0;
+  while (pj < f.p_vals.len()) {
+    if (wit_contains_heap(tbody, offs, f.p_vals[pj])) {
+      return 1;
+    }
+    pj = pj + 1;
+  }
+  let flat: i32 = 0;
+  if (f.named == 0) {
+    flat = wit_flatten(tbody, offs, f.result);
+  } else {
+    let rk: i32 = 0;
+    while (rk < f.r_vals.len()) {
+      flat = flat + wit_flatten(tbody, offs, f.r_vals[rk]);
+      rk = rk + 1;
+    }
+  }
+  if (flat > 1) {
+    return 1;
+  }
+  return 0;
+}
+
+// ---- P2 slice: instance index of an interface ----------------------------
+
+// wit_import_instance_index returns the instance index `iface` lands at in
+// the prefix the plan emits — the instance the suffix aliases its functions
+// from — or -1 when the world does not import it or the plan drops it.
+// wit_world_declares reports whether the world imports interface `iface`.
+pub function wit_world_declares(tbody: i32[], iface: string): boolean {
+  return wit_names_index(wit_world_decls(tbody).imp_names, iface) >= 0;
+}
+
+pub function wit_import_instance_index(tbody: i32[], plan: WitImportPlan, iface: string): i32 {
+  let j: i32 = wit_names_index(wit_world_decls(tbody).imp_names, iface);
+  if (j < 0) {
+    return 0 - 1;
+  }
+  return plan.index[j];
+}
+
+// ---- P2 slice: parse a core module's function imports --------------------
+//
+// Self-host mirror of component.coreFuncImports: walk a core wasm module's
+// type + import sections and return each function import with its param
+// and result valtypes (the trampoline signature a memory lowering mirrors:
+// the result is empty for every WASI import, whose results go through a
+// return area, and the flat scalar of an extern such as
+// `set-method: func(...) -> result`). Parallel arrays: ifaces[i] /
+// names[i] / params[i] / results[i].
+
+pub struct WitCoreImports { ifaces: string[], names: string[], params: i32[][], results: i32[][] }
+
+pub function wit_core_func_imports(bin: i32[]): WitCoreImports {
+  // pass 1: functype params and results from the type section (id 1).
+  let typeParams: i32[][] = [];
+  let typeResults: i32[][] = [];
+  let off: i32 = 8;
+  let doneTypes: boolean = false;
+  while (off < bin.len() && !doneTypes) {
+    let id: i32 = bin[off];
+    off = off + 1;
+    let sr: UlebRead = wit_read_uleb(bin, off);
+    let size: i32 = sr.value;
+    off = sr.next;
+    let body: i32 = off;
+    off = off + size;
+    if (id == 1) {
+      let cr: UlebRead = wit_read_uleb(bin, body);
+      let count: i32 = cr.value;
+      let p: i32 = cr.next;
+      let i: i32 = 0;
+      while (i < count) {
+        p = p + 1;
+        let pr: UlebRead = wit_read_uleb(bin, p);
+        let pc: i32 = pr.value;
+        p = pr.next;
+        let params: i32[] = [];
+        let j: i32 = 0;
+        while (j < pc) {
+          params = params.append(bin[p]);
+          p = p + 1;
+          j = j + 1;
+        }
+        let rr: UlebRead = wit_read_uleb(bin, p);
+        let rcount: i32 = rr.value;
+        p = rr.next;
+        let results: i32[] = [];
+        let k: i32 = 0;
+        while (k < rcount) {
+          results = results.append(bin[p]);
+          p = p + 1;
+          k = k + 1;
+        }
+        typeParams = typeParams.append(params);
+        typeResults = typeResults.append(results);
+        i = i + 1;
+      }
+      doneTypes = true;
+    }
+  }
+  // pass 2: import section (id 2) -> func imports with their type's params.
+  let ifaces: string[] = [];
+  let names: string[] = [];
+  let params2: i32[][] = [];
+  let results2: i32[][] = [];
+  off = 8;
+  let doneImports: boolean = false;
+  while (off < bin.len() && !doneImports) {
+    let id2: i32 = bin[off];
+    off = off + 1;
+    let sr2: UlebRead = wit_read_uleb(bin, off);
+    let size2: i32 = sr2.value;
+    off = sr2.next;
+    let body2: i32 = off;
+    off = off + size2;
+    if (id2 == 2) {
+      let cr2: UlebRead = wit_read_uleb(bin, body2);
+      let count2: i32 = cr2.value;
+      let p: i32 = cr2.next;
+      let i2: i32 = 0;
+      while (i2 < count2) {
+        let mr: NameR = wit_read_name(bin, p);
+        p = mr.next;
+        let fr: NameR = wit_read_name(bin, p);
+        p = fr.next;
+        let kind: i32 = bin[p];
+        p = p + 1;
+        if (kind == 0) {
+          let tr: UlebRead = wit_read_uleb(bin, p);
+          p = tr.next;
+          let none: i32[] = [];
+          let pp: i32[] = none;
+          let rp: i32[] = none;
+          if (tr.value < typeParams.len()) {
+            pp = typeParams[tr.value];
+            rp = typeResults[tr.value];
+          }
+          ifaces = ifaces.append(mr.s);
+          names = names.append(fr.s);
+          params2 = params2.append(pp);
+          results2 = results2.append(rp);
+        } else if (kind == 1) {
+          p = p + 2;
+          let lr: UlebRead = wit_read_uleb(bin, p);
+          p = lr.next;
+        } else if (kind == 2) {
+          let flag: i32 = bin[p];
+          p = p + 1;
+          let l1: UlebRead = wit_read_uleb(bin, p);
+          p = l1.next;
+          if (flag == 1) {
+            let l2: UlebRead = wit_read_uleb(bin, p);
+            p = l2.next;
+          }
+        } else {
+          p = p + 2;
+        }
+        i2 = i2 + 1;
+      }
+      doneImports = true;
+    }
+  }
+  return WitCoreImports { ifaces: ifaces, names: names, params: params2, results: results2 };
+}

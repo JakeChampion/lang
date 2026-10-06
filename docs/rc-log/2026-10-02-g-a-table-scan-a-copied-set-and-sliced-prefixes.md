@@ -4,7 +4,7 @@
 every `slice_unchecked(s, 0, p.len()) == p` in the self-host sources, the
 borrowable registry's bucket count and `fnsigs.strarr_own_call`'s store
 lookup. Refs #8171. No emitted byte changes: the stage0-built compiler before and after
-emits the fixed older tree (`examples/self_host/fern.fern` at 1ae9cad) byte for
+emits the fixed older tree (`compiler/fern.fern` at 1ae9cad) byte for
 byte, and `checker.fern` likewise, on main at 0d7a8d32 with the previous
 entry's change.
 

@@ -116,7 +116,7 @@ func stageParseProbeTree(t *testing.T) string {
 	t.Helper()
 	stage := t.TempDir()
 	for _, root := range []string{"lexer.fern", "parser.fern", "asmcore.fern", "util.fern"} {
-		for _, p := range selfHostImportClosure(t, "../../examples/self_host", root) {
+		for _, p := range selfHostImportClosure(t, "../../compiler", root) {
 			base := filepath.Base(p)
 			if _, err := os.Stat(filepath.Join(stage, base)); err == nil {
 				continue

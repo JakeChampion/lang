@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// TestSelfHostCLIX86_64 exercises examples/self_host/fern.fern — the
+// TestSelfHostCLIX86_64 exercises compiler/fern.fern — the
 // unified self-hosted `fern` CLI driver. Unlike the single-mode
 // `*_run.fern` shims (asm_load_run = emit, checker_run = check), this is
 // ONE binary that parses argv flags and dispatches mode + output. The

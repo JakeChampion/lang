@@ -5,7 +5,7 @@ names — turned up two things, and only one of them was the cost.
 
 ## The cost, staged
 
-Over `examples/self_host/fern.fern`, 6480 functions:
+Over `compiler/fern.fern`, 6480 functions:
 
 | stage | time |
 | --- | --- |

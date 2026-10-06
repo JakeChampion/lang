@@ -11,7 +11,7 @@ type GroupOp struct {
 // row and differ only in a 3-bit field — the shape the SDM's "group"
 // tables describe and the self-host dispatches by. The vocabulary of the
 // family lives here; the encoding logic that consumes the extension stays
-// hand-written in examples/self_host/x86_native.fern.
+// hand-written in compiler/x86_native.fern.
 type Group struct {
 	Name string
 	// ATTProbe is one representative instruction of the family, %s standing

@@ -142,13 +142,13 @@ func checkout(t *testing.T) string {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	for _, d := range []string{"bootstrap", "examples/self_host", "internal/stdlib", "coreutils"} {
+	for _, d := range []string{"bootstrap", "compiler", "internal/stdlib", "coreutils"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	write(t, filepath.Join(root, "bootstrap", "bootstrap.sh"), script, 0o755)
-	write(t, filepath.Join(root, "examples", "self_host", "fern.fern"), []byte("function main(): i32 { return 0; }\n"), 0o644)
+	write(t, filepath.Join(root, "compiler", "fern.fern"), []byte("function main(): i32 { return 0; }\n"), 0o644)
 	write(t, filepath.Join(root, "coreutils", "tr.fern"), []byte("// Multi-module smoke source for the stand-in compiler.\n"), 0o644)
 	return root
 }
@@ -290,7 +290,7 @@ func TestDistcheckReachesFixedPoint(t *testing.T) {
 // stage2 and stage3 the current source's. The fixed point is stage2 == stage3.
 func TestDistcheckPassesWhenThePinPredatesACodegenChange(t *testing.T) {
 	root := checkout(t)
-	write(t, filepath.Join(root, "examples", "self_host", "fern.fern"), []byte(sourceCompiler), 0o644)
+	write(t, filepath.Join(root, "compiler", "fern.fern"), []byte(sourceCompiler), 0o644)
 	stage0 := filepath.Join(root, "candidate")
 	write(t, stage0, []byte(olderPinCompiler), 0o755)
 

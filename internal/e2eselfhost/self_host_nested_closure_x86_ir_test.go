@@ -43,7 +43,7 @@ func TestSelfHostNestedClosureX86IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 
-	probeSrc, err := os.ReadFile("../../examples/self_host/asm_pathprobe_run.fern")
+	probeSrc, err := os.ReadFile("../../compiler/asm_pathprobe_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_pathprobe_run.fern: %v", err)
 	}

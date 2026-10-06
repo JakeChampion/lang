@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// First step of the self-host port: `examples/self_host/lexer.fern`
+// First step of the self-host port: `compiler/lexer.fern`
 // is the Go lexer (`internal/lexer/lexer.go`) re-written in lang.
 // Validates the language can express the lexer's logic end-to-end:
 // union types for Token kinds, generic-shaped helpers, struct

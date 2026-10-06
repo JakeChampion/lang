@@ -71,7 +71,7 @@ func TestSelfHostInferredReuseIsIdentical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selfHostRoot, err := filepath.Abs("../../examples/self_host")
+	selfHostRoot, err := filepath.Abs("../../compiler")
 	if err != nil {
 		t.Fatal(err)
 	}

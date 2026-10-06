@@ -92,7 +92,7 @@ inside a block:
 |---|---|---|
 | `conformance/cases` | 43 | **0** |
 | `internal/stdlib` | 8 | **0** |
-| `examples/self_host` | 11 | **0** |
+| `compiler` | 11 | **0** |
 
 Nothing in the tree declares a map inside an `if`, a loop, or a match arm. So the
 emitted asm is byte-identical between compilers built either side of the change

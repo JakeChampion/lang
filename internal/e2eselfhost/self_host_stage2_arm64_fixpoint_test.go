@@ -72,7 +72,7 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 
 	// stage 1: the driver emits aarch64 for its own source, and that asm
 	// becomes a real aarch64 compiler. Reading the STAGED copy rather than
-	// examples/self_host keeps the two generations on identical bytes. The
+	// compiler keeps the two generations on identical bytes. The
 	// compiler imports core/map, which only the stdlib root resolves.
 	stage1Asm, err := exec.Command(mmc, driverSrc, stdlibRoot, "-target", "arm64-linux").Output()
 	if err != nil {
@@ -94,15 +94,15 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 		stdlib  bool
 		selfEnv bool
 	}{
-		{name: "lexer", src: "examples/self_host/lexer.fern"},
-		{name: "sort_wider", src: "examples/tests/sort_wider_test.fern", stdlib: true},
-		{name: "float_math", src: "examples/tests/float_math_test.fern", stdlib: true},
-		{name: "process_assertions", src: "examples/tests/process_assertions_test.fern", stdlib: true},
+		{name: "lexer", src: "compiler/lexer.fern"},
+		{name: "sort_wider", src: "tests/stdlib/sort_wider_test.fern", stdlib: true},
+		{name: "float_math", src: "tests/stdlib/float_math_test.fern", stdlib: true},
+		{name: "process_assertions", src: "tests/stdlib/process_assertions_test.fern", stdlib: true},
 		// The heavyweight: gen2 compiling the whole compiler under qemu. This
 		// is the case the deleted test measured at ~709 s on the AST path, and
 		// it is the strongest form of the property — but it is not worth its
 		// wall-clock on every run, so it is gated by an env var.
-		{name: "self", src: "examples/self_host/asm_load_run.fern", stdlib: true, selfEnv: true},
+		{name: "self", src: "compiler/asm_load_run.fern", stdlib: true, selfEnv: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

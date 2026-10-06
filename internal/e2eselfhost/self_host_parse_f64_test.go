@@ -154,7 +154,7 @@ function main(): i32 {
 func TestSelfHostParseF64Watbin(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	src, err := os.ReadFile("../../examples/self_host/watbin.fern")
+	src, err := os.ReadFile("../../compiler/watbin.fern")
 	if err != nil {
 		t.Fatalf("read watbin: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestSelfHostParseF64Watbin(t *testing.T) {
 func TestSelfHostParseF64X86Gas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	nat := mustRead(t, "../../examples/self_host/x86_native.fern")
+	nat := mustRead(t, "../../compiler/x86_native.fern")
 	prog := "import \"std/io\";\n" + string(nat) + "\n" +
 		strings.ReplaceAll(parseF64DriverBody, "PARSE", "x86_gas_parse_f64")
 	runParseF64Driver(t, gcc, runner, dir, "pf64_x86gas", prog)
@@ -182,7 +182,7 @@ func TestSelfHostParseF64X86Gas(t *testing.T) {
 func TestSelfHostParseF64Arm64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	a64 := mustRead(t, "../../examples/self_host/arm64_native.fern")
+	a64 := mustRead(t, "../../compiler/arm64_native.fern")
 	prog := "import \"std/io\";\n" + string(a64) + "\n" +
 		strings.ReplaceAll(parseF64DriverBody, "PARSE", "arm64_parse_f64")
 	runParseF64Driver(t, gcc, runner, dir, "pf64_arm64", prog)
@@ -220,7 +220,7 @@ function main(): i32 {
 func TestSelfHostF64LitOutOfRangeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	util := mustRead(t, "../../examples/self_host/util.fern")
+	util := mustRead(t, "../../compiler/util.fern")
 	prog := "import \"std/io\";\n" + string(util) + "\n" + f64RangeDriverBody
 	path := filepath.Join(dir, "f64range.fern")
 	if err := os.WriteFile(path, []byte(prog), 0o644); err != nil {
@@ -285,7 +285,7 @@ var pf64MirrorFuncs = []string{"parse_f64_bits", "pf64_div2", "pf64_mul2", "pf64
 // alone — each carries its own commentary, and util's copy is `pub`.
 func pf64FuncBody(t *testing.T, module, name string) string {
 	t.Helper()
-	src := string(mustRead(t, "../../examples/self_host/"+module+".fern"))
+	src := string(mustRead(t, "../../compiler/"+module+".fern"))
 	open := regexp.MustCompile(`^(pub )?function ` + name + `\(`)
 	var kept []string
 	started := false

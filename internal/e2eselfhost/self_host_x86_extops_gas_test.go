@@ -9,7 +9,7 @@ import (
 )
 
 // These tests byte-check the #7893 port of the #7886 instruction surface
-// to the self-host x86-64 assembler (examples/self_host/x86_native.fern,
+// to the self-host x86-64 assembler (compiler/x86_native.fern,
 // AT&T dialect) against GNU as, through the in-process bench driver — the
 // same encodings-only pattern as the arm64 twin
 // (self_host_arm64_extops_gas_test.go). Every `want` below is what

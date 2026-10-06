@@ -54,7 +54,7 @@ The moving parts:
 | `consumingReuseCtor` | The **consuming-match FBIP** traversal: `match (x) { V(p) => W(f(p)) }` reuses x's variant box for W. |
 
 Runtime support (emitted on demand by the backends, e.g.
-`examples/self_host/asm_ir.fern`):
+`compiler/asm_ir.fern`):
 
 - `__fern_alloc_reuse` (gated on `usesAllocReuse`) — given a candidate dead box
   pointer and a size, return that box if it is live + uniquely owned (rc == 1)
@@ -444,7 +444,7 @@ staying green (the self-compile must remain byte-identical).
 ## 6. Implementation notes (verified from source)
 
 Decoded from `internal/ir/ir.go` + the Go x86-64 emitter (deleted in #11557) +
-`examples/self_host/asm_ir.fern`, resolving the §5 open questions so Slice 0/1
+`compiler/asm_ir.fern`, resolving the §5 open questions so Slice 0/1
 codegen is turn-key:
 
 ### 6.1 Native `__fern_alloc_reuse(token, tokenSize, size)` (`emitAllocReuseRuntime`)

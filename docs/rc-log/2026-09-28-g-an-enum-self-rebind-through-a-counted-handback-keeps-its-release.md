@@ -26,7 +26,7 @@ Each rebound local lost its credit altogether.
 
 ## Change
 
-All in `examples/self_host/irlower.fern`.
+All in `compiler/irlower.fern`.
 
 - `enum_handback_rows` adds `ENUMHB:<fn>|<positions>` to `opt_fresh_ret_fns`
   for each free `ENUM:` member. The positions are the parameters it returns

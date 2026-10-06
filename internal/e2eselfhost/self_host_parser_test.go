@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// Second step of the self-host port: `examples/self_host/parser.fern`
+// Second step of the self-host port: `compiler/parser.fern`
 // is a recursive-descent parser written in lang, layered on top of
-// `examples/self_host/lexer.fern` via `import "./lexer"` — the
+// `compiler/lexer.fern` via `import "./lexer"` — the
 // cross-module qualified variant patterns from #615 are what let the
 // parser pattern-match `lexer.TokIdent(x) => …` against the lexer's
 // Token union. Together they exercise: union types over Token *and*

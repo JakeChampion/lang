@@ -2,7 +2,7 @@
 
 `semsource.named_by_schemas`, `semsource.names_schema`. Refs #8171. No
 emitted byte changes: the stage0-built compiler before and after emits the
-fixed older tree (`examples/self_host/fern.fern` at 1ae9cad, against that
+fixed older tree (`compiler/fern.fern` at 1ae9cad, against that
 tree's stdlib) and that tree's `checker.fern` byte for byte, and the
 `selfhost-emit-hashes` sweep is 1,965 rows per compiler with 0 differing,
 against the previous entry's tree.

@@ -124,7 +124,7 @@ results.
   fault firing on `draw < p`). `sim.sweep_seeds(n, prop)` is the
   seed-replay workflow in miniature (first failing seed, 0 if all
   pass) and `Sim.rng_state()` supports lockstep assertions. Suite:
-  `examples/tests/sim_fault_test.fern` (incl. a pinned cross-backend
+  `tests/stdlib/sim_fault_test.fern` (incl. a pinned cross-backend
   flaky(50) golden) with interp/native/wasm gates in
   `internal/e2e/sim_fault_test.go`.
 - **fernsmith integration**: random combinator programs × random

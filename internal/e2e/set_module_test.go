@@ -30,7 +30,7 @@ function main(): i32 {
 
 // setOpsProg walks the full combinator surface (dedup, remove,
 // union/intersect/difference, subset/equals, string elems) and returns
-// 42 iff every check holds. Mirrors examples/tests/set_test.fern in a
+// 42 iff every check holds. Mirrors tests/stdlib/set_test.fern in a
 // single exit-coded program so the compiled backends assert it too.
 const setOpsProg = `
 import "std/set" as set;

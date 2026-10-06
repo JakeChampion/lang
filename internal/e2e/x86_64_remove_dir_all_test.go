@@ -102,7 +102,7 @@ func TestX86_64RemoveDirAllFile(t *testing.T) {
 	}
 }
 
-// The issue's main regression pin: an unmodified examples/tests TAP file
+// The issue's main regression pin: an unmodified tests/stdlib TAP file
 // compiles to an x86-64 binary and runs. std/test's TestRunner.finish()
 // references the builtin unconditionally via its temp-dir cleanup loop, so a
 // missing lowering fails the link. Asserts both that it runs and that the TAP
@@ -110,7 +110,7 @@ func TestX86_64RemoveDirAllFile(t *testing.T) {
 func TestX86_64ArithmeticTapLinks(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	out := filepath.Join(t.TempDir(), "arith_tap")
-	if o, err := e2eharness.SelfHostCompileCmd(t, e2eharness.TargetX86_64Linux, "../../examples/tests/arithmetic_test.fern", out).CombinedOutput(); err != nil {
+	if o, err := e2eharness.SelfHostCompileCmd(t, e2eharness.TargetX86_64Linux, "../../tests/stdlib/arithmetic_test.fern", out).CombinedOutput(); err != nil {
 		t.Fatalf("compile of arithmetic_test.fern failed: %v\n%s", err, o)
 	}
 	cmd := e2eharness.RunX86_64Bin(runner, out)

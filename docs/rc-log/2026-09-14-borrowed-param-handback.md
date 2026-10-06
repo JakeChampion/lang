@@ -115,7 +115,7 @@ way.
 ## Native-only, and a debt entry (#4451)
 
 `paramNoUncountedAlias` and the `creditBareReturn` relaxation live entirely
-in `internal/ir`. Nothing in `examples/self_host` mirrors them: the
+in `internal/ir`. Nothing in `compiler` mirrors them: the
 self-host's `counted_handback_*` machinery in `irlower.fern` gates the
 SINKSHARE / deep-drop side, which is a different axis. So a program
 compiled by the SELF-HOST still keeps the `out = f(out)` handback leak

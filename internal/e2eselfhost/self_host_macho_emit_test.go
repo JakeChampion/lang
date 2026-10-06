@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostMachO exercises the self-hosted static, ad-hoc-signed arm64
-// Mach-O executable writer (examples/self_host/macho.fern) — the Darwin
+// Mach-O executable writer (compiler/macho.fern) — the Darwin
 // counterpart of TestSelfHostELF and the container half of the native
 // binary backend (the part that aims to remove the external clang/ld64
 // link step).

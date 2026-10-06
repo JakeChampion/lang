@@ -83,7 +83,7 @@ For each source revision and verified published pin, run:
 
 ```sh
 "$compiler" -target x86-64-linux -o "$output" \
-  "$source/examples/self_host/$driver" "$source/internal/stdlib"
+  "$source/compiler/$driver" "$source/internal/stdlib"
 wc -c < "$output"
 ```
 

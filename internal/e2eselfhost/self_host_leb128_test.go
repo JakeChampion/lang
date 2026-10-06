@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostLEB128 exercises the self-hosted binary-wasm LEB128 byte
-// encoders, which live in examples/self_host/watbin.fern (the WAT-text
+// encoders, which live in compiler/watbin.fern (the WAT-text
 // emitter is wasm_ir.fern).
 //
 // watbin.fern is a single import-free module, so this test reads it from
@@ -28,7 +28,7 @@ func TestSelfHostLEB128(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
+	leb, err := os.ReadFile("../../compiler/watbin.fern")
 	if err != nil {
 		t.Fatalf("read watbin.fern: %v", err)
 	}

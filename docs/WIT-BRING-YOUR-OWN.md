@@ -103,7 +103,7 @@ WIT-driven path must reproduce today's `fern` / `http` worlds byte-for-byte
 before it's trusted, exactly like the suffix generator reproduced each blob.
 
 **Self-host parity is part of every phase's definition of done — not a
-deferred afterthought.** The self-hosted compiler (`examples/self_host/`) is
+deferred afterthought.** The self-hosted compiler (`compiler/`) is
 the destination; the Go compiler is the reference that eventually retires
 (see `CLAUDE.md`). So each phase below ships in *both*: the Go side may lead
 (its round-trip oracle against `fern.bin` / `http.bin` is the easiest place
@@ -647,7 +647,7 @@ world-driven composer (P2) wires it.
      -> num` over `variant num { i(s32), f(f32) }`, the f32 arm's bits surviving
      the i32 join slot bit-exactly).
    - **Self-host port — numeric array params — ✅ started.** The self-hosted
-     compiler (`examples/self_host/wasm.fern`) gained the first BYOW data-type
+     compiler (`compiler/wasm.fern`) gained the first BYOW data-type
      beyond strings: a numeric array (`i32[]`/`i64[]`/`f32[]`/`f64[]`/…) `@import`
      parameter. The self-host array layout differs from the Go backend's (value
      is the block base — len@0, elements@+8 in native-stride slots — not
@@ -928,7 +928,7 @@ world-driven composer (P2) wires it.
      `ComposeFromWorldAuto` instead of the registry `component.Compose`. But the
      Go CLI's component output is the **oracle for self-hosting**:
      `TestSelfHostWasmComponentFull*` assert the self-hosted Fern compiler
-     (`examples/self_host/wasm.fern`) emits byte-identical components to
+     (`compiler/wasm.fern`) emits byte-identical components to
      `fern -target wasm32-wasi`. The self-hosted compiler implements the registry
      composition, so flipping the Go CLI to the world composer desyncs them.
      Retiring the registry for cli/run therefore requires re-implementing
@@ -1393,7 +1393,7 @@ gated by a running component.
   the early phases cheaply).
 - **Self-host parity is required, per phase** (see the phased-plan note
   above), not deferred. The Go side leads only to pin the encoding against
-  the `fern.bin` / `http.bin` oracle; the `examples/self_host/` port follows
+  the `fern.bin` / `http.bin` oracle; the `compiler/` port follows
   immediately and is gated byte-identical against the Go reference.
   Resources/exports (P5/P6) will be sizeable on the self-host side too —
   budget for it rather than letting Go race ahead.

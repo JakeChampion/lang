@@ -48,7 +48,7 @@ func TestSelfHostWasmComponentAdapter(t *testing.T) {
 	// — shared with TestSelfHostWasmBinary (asmReadFileDriver).
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}

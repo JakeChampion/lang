@@ -13,7 +13,7 @@
 > Verify against the issues, not the inline ⬜ markers below.
 
 Tracks the modules / features the self-hosted compiler
-(`examples/self_host/`) cannot yet compile, with a concrete plan per
+(`compiler/`) cannot yet compile, with a concrete plan per
 item. Ordered roughly easiest → hardest. Each item ships as its own PR
 with x86-64 + CI-gated arm64 tests, cross-checked against the Go backend,
 and must keep the self-hosting fixpoint byte-identical.
@@ -31,10 +31,10 @@ self-hosted type checker; and real `std/io`, `std/hex`, `std/base64`,
 tracked below, two larger pieces have since landed — see the matching
 section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
 
-- a **unified self-hosted `fern` CLI** (`examples/self_host/fern.fern`)
+- a **unified self-hosted `fern` CLI** (`compiler/fern.fern`)
   with `-target` / `-check` / `-interp` / `-fmt` / `-o`, replacing the
   one-mode `*_run.fern` shims (gated by `self_host_cli_test.go`); and
-- a **self-hosted wasm backend** (`examples/self_host/wasm.fern`,
+- a **self-hosted wasm backend** (`compiler/wasm.fern`,
   `fern -target wasm32-wasi`) that emits a runnable WASI core module (WAT) and
   compiles the full non-generic core language — integers (non-trapping
   div/rem), control flow, recursion, the string library, i32/string
@@ -773,7 +773,7 @@ planned order:
     / `.first()` / `.last()` / `arr[a:b]` slice and `for v in arr` —
     now accepts every `is_int_array_tag`, not only the literal
     `"array_i32"` string, so `for v in i64_arr { … }` iterates
-    correctly. Nineteen previously-broken `examples/tests/*_test.fern`
+    correctly. Nineteen previously-broken `tests/stdlib/*_test.fern`
     suites (`sort_wider`, `array_reductions`, `wide_numerics`,
     `wider_array_contains_count`, `sorted_unique_range`,
     `all_substring_array`, `array_prefix_suffix_subseq`, `batch7`,
@@ -921,7 +921,7 @@ wasm self-test harness (concatenate the import-free module + a self-test
 `main()`, run under `wasmtime`, assert via exit code). Ordered
 smallest → largest:
 
-- ✅ **ELF-64 writer** — `examples/self_host/elf.fern`, mirroring
+- ✅ **ELF-64 writer** — `compiler/elf.fern`, mirroring
   `internal/native/elf/elf.go`. Static, non-PIE, single `PT_LOAD`
   images for x86-64 + arm64 Linux: `elf_static_executable` /
   `_x86` (R+X) and `elf_static_executable_data` / `_x86` (R+W+X, .text
@@ -932,7 +932,7 @@ smallest → largest:
   `e_type`/`e_machine`, `e_entry` = 0x400078, the single PT_LOAD,
   `p_flags`, sizes, body placement + data alignment) for both the arm64
   R+X and x86-64 R+W+X shapes.
-- ✅ **Mach-O writer + ad-hoc signature** — `examples/self_host/macho.fern`,
+- ✅ **Mach-O writer + ad-hoc signature** — `compiler/macho.fern`,
   mirroring `internal/native/macho/` (`macho.go` + `image.go` + `sign.go`).
   PIE, dyld-loaded arm64-darwin executable: `__PAGEZERO`, an r-x `__TEXT`
   (header + load commands + `__text`), an optional r/w `__DATA` whose vmsize
@@ -964,7 +964,7 @@ smallest → largest:
   bytes, mirroring `internal/native/arm64/arm64.go`. The arm64 counterpart
   of the x86-64 assembler below; built up in slices.
   - ✅ **slice 3a — encoding primitives + `exit(N)` subset**:
-    `examples/self_host/arm64_encode.fern` (`i32[]` byte-buffer convention;
+    `compiler/arm64_encode.fern` (`i32[]` byte-buffer convention;
     fixed-width 32-bit little-endian words). Encoders: the move-wide family
     (`movz`/`movk`/`movn`), `add`/`sub` immediate + register, `mov` reg
     (`orr Xd, XZR, Xm`), `svc`, `ret` — each byte-checked against the Go
@@ -1036,7 +1036,7 @@ smallest → largest:
     Fern program lays a `.quad 42` in `__DATA`, loads it via `adrp`+`ldr`,
     and the signed Mach-O exits 42 — no external tool. The encoder now has
     the addressing the full backend needs.
-  - ✅ **slice 3g — GAS-text assembler**: `examples/self_host/arm64_gas.fern`,
+  - ✅ **slice 3g — GAS-text assembler**: `compiler/arm64_gas.fern`,
     the arm64 counterpart of `x86_gas.fern` — it parses an AArch64
     assembly-text subset (the canonical GAS spellings: `mov`/`movz`/`movk`,
     `add`/`sub` imm+reg, `cmp`, `ldr`/`str [Xn,#off]`, `b`/`bl`/`b.<cond>`/
@@ -1135,7 +1135,7 @@ smallest → largest:
     other by bare name — which the module loader can't resolve across files
     (it needs `pub` exports + qualified refs). To let the unified `fern`
     CLI `import` the assembler+writer, the three are merged into a single
-    `examples/self_host/arm64_native.fern` (same-module bare refs keep
+    `compiler/arm64_native.fern` (same-module bare refs keep
     working; `pub` on the CLI-facing entry points — `arm64_gas_program` /
     `arm64_gas_link` / `macho_executable` / `macho_text_vaddr` /
     `macho_data_vaddr` + the `Arm64Asm` / `Arm64GasProg` structs). The
@@ -1344,7 +1344,7 @@ smallest → largest:
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `rodata.go`). The largest piece; built up in slices.
   - ✅ **slice 2a — encoding primitives + integer/syscall subset**:
-    `examples/self_host/x86_encode.fern` (`i32[]` byte-buffer convention;
+    `compiler/x86_encode.fern` (`i32[]` byte-buffer convention;
     REX.W prefix, ModR/M direct form, imm32/disp32 LE) with the
     instruction encoders `mov r32, imm32` / `mov r64, r64` /
     `add`/`sub r64, r64` / `push`/`pop r64` / `syscall` / `ret`, each
@@ -1406,7 +1406,7 @@ smallest → largest:
   - ✅ **slice 2 COMPLETE — `-target x86-64-linux` links in-process.** The
     slices below were built but never wired to the CLI: `-target x86-64-linux`
     kept emitting `.s` for gcc. It no longer does. `x86_encode.fern` +
-    `x86_gas.fern` were merged into `examples/self_host/x86_native.fern`
+    `x86_gas.fern` were merged into `compiler/x86_native.fern`
     (one module, so the CLI can `import` it without cross-module bare
     references — the same reason `arm64_native.fern` is one module), the
     remaining mnemonics were added, and `fern.fern`'s `x86_elf_binary`
@@ -1433,7 +1433,7 @@ smallest → largest:
     are unknown directives and rip / no-base operands on paths that cannot
     encode them.
 
-  - ✅ **slice 2g — GAS-text front-end**: `examples/self_host/x86_gas.fern`
+  - ✅ **slice 2g — GAS-text front-end**: `compiler/x86_gas.fern`
     parses the AT&T assembly `asm.fern` emits and drives the encoders +
     label/`.rodata` API. Covers the core integer/pointer subset — directives
     `.text` / `.section .rodata` / `.globl` / `.quad`, labels, and `movq`
@@ -1685,7 +1685,7 @@ smallest → largest:
 
 Wiring (final slice): the self-host driver routes `asm.fern` → x86-64
 assembler → `elf.fern` → write `0o755` (and the arm64 / Darwin
-equivalents), dropping the external link step. (`examples/self_host/
+equivalents), dropping the external link step. (`compiler/
 disasm.fern`, which used to double as a cross-check for the
 emitted-bytes assemblers, was retired in #4392 along with the
 bytecode VM it disassembled.)

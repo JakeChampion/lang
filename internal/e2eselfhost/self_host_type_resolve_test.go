@@ -5,7 +5,7 @@ import (
 )
 
 // TestSelfHostTypeResolve pins the self-hosted checker's structured type-name
-// resolver (examples/self_host/checker.fern's type_from_name_with_structs_unions
+// resolver (compiler/checker.fern's type_from_name_with_structs_unions
 // / type_from_ref_su — SH-021 slice 4, docs/SELF-HOST-AUDIT.md T2). The resolver
 // maps a type STRING to the checker's Type against a struct/union context; it now
 // decodes via the structured TypeRef (parser.parse_type_ref + pattern-match)

@@ -51,7 +51,7 @@ import (
 // receiver methods on the way in.
 //
 // Corpus-wide, `fern -fmt` and `fern-selfhost -fmt` agree byte for byte on 210
-// of the 244 files under examples/ + internal/stdlib, against 0 before #6762.
+// of the 244 files under the corpus, against 0 before #6762.
 // That count is unchanged by #6783 even though every impl block now prints
 // correctly: the files carrying one also carry the LAST structural divergence,
 // `else { if … }` collapsing to `else if` (#6779) — `core/cmp.fern` differs by
@@ -245,7 +245,7 @@ return plain(P { x: 1, y: 2 }) + lit(P { x: 0, y: 3 }) + rename(Q { a: 1, b: 2, 
 	// pattern becomes a holder param plus a leading `let` in the body prelude
 	// — so both formatters have only the desugar to reprint, and they have to
 	// reprint the same one. The struct spelling reached the self-host parser
-	// only in #7306; the corpus under examples/ + internal/stdlib spells no
+	// only in #7306; the corpus spells no
 	// destructuring parameter at all, so this fixture is its only cover. The
 	// ARROW form is deliberately absent: native fills in a return type the
 	// self-host printer cannot know, which is the known divergence named above.
@@ -2147,13 +2147,13 @@ func repoRootFromTest(t *testing.T) string {
 	}
 }
 
-// corpusFernFiles lists every `.fern` file under examples/ + internal/stdlib,
-// repo-relative and sorted, with slash separators so the allowlist keys read the
-// same on every platform.
+// corpusFernFiles lists every `.fern` file under compiler/, examples/, tests/,
+// bench/ and internal/stdlib, repo-relative and sorted, with slash separators so
+// the allowlist keys read the same on every platform.
 func corpusFernFiles(t *testing.T, root string) []string {
 	t.Helper()
 	var out []string
-	for _, sub := range []string{"examples", "internal/stdlib"} {
+	for _, sub := range []string{"compiler", "examples", "tests", "bench", "internal/stdlib"} {
 		err := filepath.WalkDir(filepath.Join(root, sub), func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err

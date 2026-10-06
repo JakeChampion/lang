@@ -14,7 +14,7 @@ import (
 // well as the reference interpreter's TestRunnerUtf8ValidityProperty.
 func TestSelfHostUtf8ValidityProperty(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	src := langSrcAbs(t, "examples/tests/utf8_validity_property_test.fern")
+	src := langSrcAbs(t, "tests/stdlib/utf8_validity_property_test.fern")
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			var cmd *exec.Cmd
@@ -44,7 +44,7 @@ func TestSelfHostArm64DarwinUtf8ValidityProperty(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	cli := buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
 	bin := filepath.Join(t.TempDir(), "utf8-validity")
-	src := langSrcAbs(t, "examples/tests/utf8_validity_property_test.fern")
+	src := langSrcAbs(t, "tests/stdlib/utf8_validity_property_test.fern")
 	if out, err := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, e2eharness.SelfHostStdlibRoot(t)).CombinedOutput(); err != nil {
 		t.Fatalf("compile property: %v\n%s", err, out)
 	}

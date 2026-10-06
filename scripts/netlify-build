@@ -6,7 +6,7 @@
 # canonical recipe for a publishable bundle:
 #
 #   1. Compile the playground's two wasm bundles: the self-host compiler
-#      (examples/self_host/playground_run.fern, built by bin/fern-selfhost)
+#      (compiler/playground_run.fern, built by bin/fern-selfhost)
 #      and the Go toolchain's language server + wasi:http half
 #      (./cmd/fern-wasm).
 #   2. Stage web/ under site/public/playground/ so Astro serves it at
@@ -49,7 +49,7 @@ mkdir -p "$stage"
 # at all, but the deploy image has Go and no network policy for the pin.
 make selfhost-cli
 bin/fern-selfhost -target wasm32-wasi -emit core-module -embed internal/stdlib \
-  -o "$stage/playground.wasm" "$PWD/examples/self_host/playground_run.fern" "$PWD/internal/stdlib"
+  -o "$stage/playground.wasm" "$PWD/compiler/playground_run.fern" "$PWD/internal/stdlib"
 GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" \
   -o "$stage/fern.wasm" ./cmd/fern-wasm
 

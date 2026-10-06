@@ -68,7 +68,7 @@ func TestArenaExhaustedExitCodeSelfHostLockstep(t *testing.T) {
 	// the same text in each file.
 	marker := fmt.Sprintf("asmcore.msg_oom(), %d)", want)
 	for _, file := range []string{"asm_ir.fern", "asm_arm64_ir.fern"} {
-		path := filepath.Join("..", "..", "examples", "self_host", file)
+		path := filepath.Join("..", "..", "compiler", file)
 		src, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", file, err)

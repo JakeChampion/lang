@@ -3,7 +3,7 @@
 # scripts/ci-check-driver-sizes (#6826).
 #
 # WHICH BINARY IS "THE SELF-HOST BINARY": fern.fern/stage2, named below as the
-# tracked artifact. It is examples/self_host/fern.fern, the whole self-hosted
+# tracked artifact. It is compiler/fern.fern, the whole self-hosted
 # compiler CLI, COMPILED BY ITSELF (the fern.fern driver, built by the pin,
 # compiling its own source — the bootstrap chain's stage2), so it is the one
 # row that moves with the current compiler's code generation, and it is the
@@ -364,7 +364,7 @@
 # merge of main at c2160d3ce, which changed the driver sources and the
 # stdlib they compile in (+0.004% to +0.025% per row over the previous
 # merge, fern.fern 12346904 -> 12346536 across both). Equal to fern.fern in
-# size on that tree: six commits to examples/self_host landed after the
+# size on that tree: six commits to compiler landed after the
 # pin's source commit 32d575e60 (740b49209 ssarc.fern, 319a4a50e
 # ssasem.fern, d5792c908 read_all_stdin, aee0e4136 parser.fern, 067f7462a
 # checker.fern, 02196de0a irlower.fern) and none moved the stage2 byte

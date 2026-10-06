@@ -16,8 +16,8 @@ The same source, the same target, two compilers:
 
 | input | `bin/fern` (Go) | `bin/fern-selfhost` (Fern) | ratio |
 |---|---|---|---|
-| `examples/self_host/fern.fern` → x86-64 asm | **58 s** | **6 m 05 s** | 6.3× |
-| `examples/self_host/checker_run.fern` → x86-64 asm | 3.9 s | 23.3 s | 6.0× |
+| `compiler/fern.fern` → x86-64 asm | **58 s** | **6 m 05 s** | 6.3× |
+| `compiler/checker_run.fern` → x86-64 asm | 3.9 s | 23.3 s | 6.0× |
 
 **Those are the numbers this audit started from and they are history — the gap
 is 3.1x as of §4g** (23.9 s against 74.6 s, measured at 6fec3ed). The rest of
@@ -25,9 +25,9 @@ this section describes the compiler as it was at 64213fe; every later section
 re-measures against the tree it was written on.
 
 ```
-time ./bin/fern -target x86-64-linux examples/self_host/fern.fern > /tmp/n.s
+time ./bin/fern -target x86-64-linux compiler/fern.fern > /tmp/n.s
 time ./bin/fern-selfhost -target x86-64-linux -emit asm -o /tmp/s.s \
-     $PWD/examples/self_host/fern.fern $PWD/internal/stdlib
+     $PWD/compiler/fern.fern $PWD/internal/stdlib
 ```
 
 Both outputs contain the same program: 4,693 functions from the Go emitter,
@@ -86,7 +86,7 @@ Measured over the whole-compiler emit (22,420,063 emitted instructions):
   `checker_run` emit alone. **Fixed**: the streaming peephole's P3 rule
   (`x86_64.go:peepholeTail` and its arm64 twin) now drops it, worth −13.0% of
   emitted instructions on that driver and −2.8% to −17.7% of retired
-  instructions across `examples/bench`.
+  instructions across `bench`.
 
 Both native backends now run `ir.Inline` and IR dead-function elimination,
 matching wasm. `ir.Inline` is capped by `ir.inlineMaxUnitOps` — item 6 below
@@ -128,7 +128,7 @@ freed — so it needed its own generator rather than a flag on the existing one.
 | self-host binary (`fern.fern`) | 155,973,500 B | 89,738,492 B (−42.5%) |
 
 **The trade:** outlining costs a call per drop — measured at +0.78% retired
-instructions for −80% static code on `examples/bench/struct_drop.fern`. Code
+instructions for −80% static code on `bench/struct_drop.fern`. Code
 size dominates this workload, so it is the right trade, but it is a real cost
 on drop-heavy inner loops.
 
@@ -139,7 +139,7 @@ operand stack IS the machine stack, and `verifystack` is wasm-polymorphic and
 would not catch the misalignment. A shared epilogue must be reached with an
 empty operand stack.
 
-And the self-host mirror — `examples/self_host/irlower.fern`'s
+And the self-host mirror — `compiler/irlower.fern`'s
 `emit_dec_sweep_except` — still inlines. Nothing compares the two emitters'
 bytes or shape, so it was a safe follow-up, but the self-host stays ~4× slower
 than the Go compiler until it lands, and the fixpoint is structurally blind to
@@ -241,7 +241,7 @@ Direct callers of `__fern_memcpy` (run 2): `__fern_arr_cow_inplace` 6,
 
 Two of those contradict §6. `__fern_arr_cow_inplace` firing at all means arrays
 are being copied *because they are shared* — the rc==1 cliff §6 reports as not
-firing, which is true of `examples/bench/array_append.fern` and evidently false
+firing, which is true of `bench/array_append.fern` and evidently false
 of the compiler. And `__str_slice` reaching `memcpy` sits badly with "string
 slicing does not allocate". Both were measured on benchmarks; neither
 generalised to a 46k-line module.
@@ -380,11 +380,11 @@ contradict comments in the tree:
 |---|---|---|---|
 | 1 | ~~Share drop code between exits~~ — **done as outlining**, #6894 | `internal/ir/rc_insert.go` | §3 — −71.3% whole-compiler emit, self-host binary −42.5% |
 | 2 | ~~Peephole the push-then-discard triple~~ — **done**, P3 | `x86_64.go:peepholeTail`, arm64 twin | §2 — was 12.1% of emitted instructions; measured −13.0% on the checker driver |
-| 3 | ~~Hash the self-host `Scope` tables~~ — **sigs, array-method suffix and structs all indexed**; what is left is `names`, which is per-scope and mutable | `examples/self_host/checker.fern` | §4e — `lookup_struct` was 3.7%, indexed for −5.6% on the self-compile; `lookup` is 2.0% |
+| 3 | ~~Hash the self-host `Scope` tables~~ — **sigs, array-method suffix and structs all indexed**; what is left is `names`, which is per-scope and mutable | `compiler/checker.fern` | §4e — `lookup_struct` was 3.7%, indexed for −5.6% on the self-compile; `lookup` is 2.0% |
 | 4 | Register allocation (#4112) | `internal/ssa` → new native emit | §2 — 36.5% of emitted instructions |
 | 5 | ~~Symbol interning (#4394 lever 1)~~ — **do not scope**: §4d.3 | `lexer.fern`, `flatten.fern` | §4d.3 — `strcmp` is still 21.3%, but 18.5% of the run is one linear scan an INDEX removes |
 | 9 | ~~Index `mfuncs` for the closure-lift predicates~~ — **done**, #7008 | `irlower.fern` `lift_callee_*` | §4d.3 — 74/400 samples became 0/400; −6.2% user |
-| 6 | ~~`ir.Inline` on the natives~~ — **done** under a unit-size ceiling; the dead-funcs half landed earlier | `internal/codegen/{x86_64,arm64}` | **−5.0% retired on `examples/bench`, compiler emit byte-identical** — below |
+| 6 | ~~`ir.Inline` on the natives~~ — **done** under a unit-size ceiling; the dead-funcs half landed earlier | `internal/codegen/{x86_64,arm64}` | **−5.0% retired on `bench`, compiler emit byte-identical** — below |
 | 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
 | 8 | **Cut the copying** — `arr_push_grow*`, `str_slice`, `strcat`; `arr_cow_inplace` done for x86 in #6911 | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
 | 10 | ~~The reclaim / sig registries: allocation-free decode, stop copying module-wide rows per function, then INDEX the sig registries~~ — **done**, #7020 + #7026 + #7036 + #7046 + #7048, and the index in #6888 | `irlower.fern` | §4d.4 — the self-compile roughly halved across the first five and the index took another 7%. The index cost **+2.42 MB (+17.6%) of `irlower_run` binary size** (#7519's bisect) — a space-for-time trade this row now prices |
@@ -440,7 +440,7 @@ single-reference moves happen and the output changes by half a percent — the
 pass's own six walks over 2.7M ops cost 37% of the emit. So the ceiling is the
 policy, not a percentage: units below it inline exactly as wasm always has, and
 units above it get only the tiny-leaf carve-out below. The measured gap is wide
-— `examples/bench` tops out at 2,202 ops and the compiler's smallest module is
+— `bench` tops out at 2,202 ops and the compiler's smallest module is
 14,933, with nothing measured between 15k and 691k — so 20,000 sits in empty
 space rather than near a cliff any real program rides.
 
@@ -470,17 +470,17 @@ there is no loop-depth tier: at the same 24-op cap sort's text GREW 0.62% and
 `sort -n` kept a quarter of its win.
 
 The cull alone is byte-identical to baseline over `examples/` and
-`examples/bench` except on Map programs, where the four `_impl` helpers no
+`bench` except on Map programs, where the four `_impl` helpers no
 `_keyed` call site reaches go: `map_int.text` −4.67%, `map_string.text` −3.46%,
 on both native targets. On the self-host driver it takes 4 of 5,261 functions —
 the AST tree-shaker had already done the work — so it is not itself the win item
 6 promised; it is the pass a whole-function-adding one needs underneath it.
 
-The −9% is real — but it is the `examples/bench` corpus, not the compiler:
+The −9% is real — but it is the `bench` corpus, not the compiler:
 `call_overhead` −27%, `map_int` −19%, `map_string` and `tokenize` −11%,
 `string_build` −10%, `enum_match` −8%, nothing regressed, average −6.5%. That is
 the shape inlining pays on, and it is the half the natives now get. Re-measured
-at 8961e93 under the ceiling, retired instructions on `examples/bench`:
+at 8961e93 under the ceiling, retired instructions on `bench`:
 
 | | x86-64 | aarch64 |
 |---|---|---|
@@ -1117,7 +1117,7 @@ depth — over `emit`'s 49,831 ref-forced copies compiling `checker.fern`: 26,44
 at rc 2, 12,319 at 3, 6,516 at 4, 3,122 at 5, 914 at 6, 334 at 7, and a tail out
 to 43.
 
-**What it costs.** Compiling `examples/self_host/checker.fern` with the
+**What it costs.** Compiling `compiler/checker.fern` with the
 self-hosted compiler, counted at the copy path itself:
 
 | | copies | elements copied |
@@ -1246,8 +1246,8 @@ operand, deliberately overlapping what the loop already read, and 4-byte /
 
 | | before | after |
 |---|---|---|
-| `examples/bench/string_scan` (the symbol-scan shape) | 14 ms | **10–11 ms** |
-| `examples/bench/tokenize` | 14 ms | 13–14 ms |
+| `bench/string_scan` (the symbol-scan shape) | 14 ms | **10–11 ms** |
+| `bench/tokenize` | 14 ms | 13–14 ms |
 | whole self-compile, user time, 4 interleaved pairs | 26.83 s | **25.72 s** (-4.1%) |
 
 The self-compile figure is the mean of four A/B pairs in which B won every
@@ -1350,7 +1350,7 @@ reason the ranked list is no longer the right instrument for picking work.
 
 | input | `bin/fern` (Go) | `bin/fern-selfhost` | ratio |
 |---|---|---|---|
-| `examples/self_host/fern.fern` to x86-64 asm | **20.6 s** | **66.9 s** | **3.25x** |
+| `compiler/fern.fern` to x86-64 asm | **20.6 s** | **66.9 s** | **3.25x** |
 
 §1's 6.3x is history: the Go side got faster (#6894's emit reduction) and the
 self-host side roughly halved across #7020/#7026/#7036/#7046/#7048, #7097,
@@ -1387,11 +1387,11 @@ Every section above measures the self-host compiler on `fern.fern` or
 `checker.fern` — compiler sources, which import no stdlib module. On anything
 that DOES import one, the compiler was emitting the whole transitive closure.
 
-`treeshake.treeshake` was called in exactly one place in `examples/self_host/fern.fern`,
+`treeshake.treeshake` was called in exactly one place in `compiler/fern.fern`,
 on the diagnostics side of `capability_violations`, and its result was thrown
 away. The module handed to codegen was `flatten.bundle`'s merged output. One
 `import "std/string"` reaches core/int, core/bigint, std/array and std/unicode
-transitively, so `examples/bench/string_count_byte` emitted **958 functions and
+transitively, so `bench/string_count_byte` emitted **958 functions and
 81,463 instructions against the native compiler's 27 and 640**. The machinery
 was not missing — `asm_load_run.fern` has applied the same prune since the
 IR-budget work, and `treeshake.fern` is sound. The production CLI just never
@@ -1545,7 +1545,7 @@ so no concrete tag can name it.
 |---|---|
 | the probe (one `std/string` method) | 69 → **49** functions, against the 45 that removing the roots entirely gives |
 | `core/bigint` in it | 15 → **3** |
-| `examples/bench`, x86-64 emitted | 93,275 → **82,642 (−11.4%)**, nothing regressed |
+| `bench`, x86-64 emitted | 93,275 → **82,642 (−11.4%)**, nothing regressed |
 | worst case in the corpus | `sort_inplace` −47.7%, `string_count_byte` −45.2%, `ascii_scan` −37.1% |
 
 49 against a 45 floor is the qualification working rather than falling short:
@@ -1595,7 +1595,7 @@ asm. Measured on one commit, one box, one hour:
 
 | input | `bin/fern` (Go) | `bin/fern-selfhost` | ratio |
 |---|---|---|---|
-| `examples/self_host/fern.fern` to x86-64 asm | **26.6 s** | **104.7 s** | **3.9x** |
+| `compiler/fern.fern` to x86-64 asm | **26.6 s** | **104.7 s** | **3.9x** |
 
 The self-host side had drifted back up from §4e's 66.9 s. The box is slower
 today than it was then (native 26.6 s against 20.6 s) but not by that much, and
@@ -1659,7 +1659,7 @@ of the clock by §4d.3's rule) it is the last item of its kind worth the trip.
 
 | input | `bin/fern` (Go) | `bin/fern-selfhost` | ratio |
 |---|---|---|---|
-| `examples/self_host/fern.fern` to x86-64 asm | **23.4 s / 24.3 s** | **71.3 s / 77.9 s** | **3.1x** |
+| `compiler/fern.fern` to x86-64 asm | **23.4 s / 24.3 s** | **71.3 s / 77.9 s** | **3.1x** |
 
 Two interleaved rounds. The self-host side's two rounds are 9% apart on an
 idle box, which is the drift §8 warns about, and why the rounds are shown
@@ -1727,7 +1727,7 @@ one commit agreed on **29 of the 30 x86_64 metrics to the digit**, and the
 single exception was `map_string.ir` — the one metric the baseline flags as
 seed-dependent — 0.43% apart, inside its declared 2% tolerance.
 
-`examples/bench/README.md` covers what belongs in the corpus. For the
+`bench/README.md` covers what belongs in the corpus. For the
 compiler itself, `make selfhost-cli` then the commands in §1; for a profile,
 build with `-g` (which emits `.symtab`) and sample with gdb — there is no
 profiler yet (#5547).

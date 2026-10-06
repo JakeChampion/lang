@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// `bound_traits` runs PARALLEL to `type_params` — examples/self_host/parser.fern
+// `bound_traits` runs PARALLEL to `type_params` — compiler/parser.fern
 // states it on the field: "bound_traits[i] holds the bound for type_params[i]".
 // A rebuild that carries one and clears the other leaves a decl still declaring
 // `T` while claiming it is unbounded.
@@ -47,10 +47,10 @@ import (
 // local is declared from one in the same function. One level only — that is the
 // shape the code actually uses, and chasing further would need real dataflow.
 var selfHostSources = []string{
-	"../../examples/self_host/parser.fern",
-	"../../examples/self_host/irtables.fern",
-	"../../examples/self_host/lift.fern",
-	"../../examples/self_host/constfold.fern",
+	"../../compiler/parser.fern",
+	"../../compiler/irtables.fern",
+	"../../compiler/lift.fern",
+	"../../compiler/constfold.fern",
 }
 
 // carriesTypeParams matches `type_params: <ident>.type_params`, i.e. a rebuild

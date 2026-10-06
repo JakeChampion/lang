@@ -2,7 +2,7 @@ name: Perf
 
 # Four gates, one comparator (scripts/ci-check-perf):
 #
-#   bench   instruction counts over examples/bench, vs .github/perf-baseline.txt
+#   bench   instruction counts over bench, vs .github/perf-baseline.txt
 #   cliff   how much the self-host compiler copies crossing the rc==1 append
 #           cliff, vs .github/cliff-baseline.txt
 #   selfhost-size  what the self-host compiler EMITS, all three targets from

@@ -40,7 +40,7 @@ extension was standing in for, so the extension is gone.
 
 ## Measured
 
-Every `examples/bench` program, x86-64, retired instructions under
+Every `bench` program, x86-64, retired instructions under
 callgrind, before (the AVX2 kernel entry's "after") and with this change,
 the native register backend for scale; the three map benchmarks left out
 as before (#9608), `sort_strings` reported in #9850.

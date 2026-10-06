@@ -3715,7 +3715,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// supported on this target" error from codegen.
 	//
 	// Named `subprocess` rather than the obvious `exec` to
-	// stay clear of `examples/self_host/vm.fern`'s long-
+	// stay clear of `compiler/vm.fern`'s long-
 	// standing `pub function exec(ops: Op[]): Value` and any
 	// user code that wraps an interpreter.
 	procResult := ast.StructType{Name: "ProcessResult"}

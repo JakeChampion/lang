@@ -17,7 +17,7 @@ Whatever the payload was, the chain leaked.
 
 ## What changed
 
-All in `examples/self_host/irlower.fern`.
+All in `compiler/irlower.fern`.
 
 - **The callee side.** Every body the lift hoists for a function value
   (`closure_body_name`: `$wrap` and `$clo`, reached through the value, and the hoisted no-capture lambda `__lam_` — a call argument, an IIFE callee, or a local that is only ever called — which is called by name and is named so the verdicts never leave one out) returns a declared enum `E`. Each

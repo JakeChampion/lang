@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestSelfHostWatLex exercises the WAT tokenizer (examples/self_host/
+// TestSelfHostWatLex exercises the WAT tokenizer (compiler/
 // wat_lex.fern) — slice 2 of the self-hosted binary wasm backend, which
 // assembles the folded-S-expr WAT that the wasm emitter emits rather than
 // re-deriving lowering from the AST.
@@ -28,7 +28,7 @@ func TestSelfHostWatLex(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	lex, err := os.ReadFile("../../examples/self_host/watbin.fern")
+	lex, err := os.ReadFile("../../compiler/watbin.fern")
 	if err != nil {
 		t.Fatalf("read watbin.fern: %v", err)
 	}

@@ -138,14 +138,14 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 		if base == driverFile {
 			continue // staged below as main.fern
 		}
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", base))
+		src, err := os.ReadFile(filepath.Join("../../compiler", base))
 		if err != nil {
 			t.Fatalf("read %s: %v", base, err)
 		}
 		files[base] = string(src)
 	}
 	if withFlatten {
-		src, err := os.ReadFile("../../examples/self_host/flatten.fern")
+		src, err := os.ReadFile("../../compiler/flatten.fern")
 		if err != nil {
 			t.Fatalf("read flatten.fern: %v", err)
 		}
@@ -156,7 +156,7 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 		t.Fatalf("read std/io.fern: %v", err)
 	}
 	files["io.fern"] = string(ioSrc)
-	runSrc, err := os.ReadFile(filepath.Join("../../examples/self_host", driverFile))
+	runSrc, err := os.ReadFile(filepath.Join("../../compiler", driverFile))
 	if err != nil {
 		t.Fatalf("read %s: %v", driverFile, err)
 	}

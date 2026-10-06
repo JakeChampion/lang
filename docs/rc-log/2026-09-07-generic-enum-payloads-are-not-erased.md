@@ -91,7 +91,7 @@ field stays in the struct, where it must now change nothing.
 
 ## Two null results worth keeping
 
-**The self-host compiler does not move.** `examples/self_host/fern.fern` built
+**The self-host compiler does not move.** `compiler/fern.fern` built
 by the fixed compiler is BYTE-IDENTICAL to the same file built before it, so
 the 15.34M/12.15M pair in `.github/alloc-baseline.txt` is untouched by this and
 whatever gap a fresh run shows against it is older drift. Checking the binary

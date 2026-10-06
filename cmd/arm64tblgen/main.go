@@ -2,13 +2,13 @@
 // internal/arm64tbl — the arm64 twin of cmd/x86tblgen.
 //
 // Two kinds of block are rewritten in place in
-// examples/self_host/arm64_native.fern: one per Advanced SIMD class, and the
+// compiler/arm64_native.fern: one per Advanced SIMD class, and the
 // scalar vocabulary — the family lookup and the index constants the
 // dispatch compares it against, the base-word lookups the encoders read, and arm64_gas_known, the allow-list the
 // program loop consults. The staleness test fails if the committed output
 // stops matching the table.
 //
-//	go run ./cmd/arm64tblgen examples/self_host/arm64_native.fern
+//	go run ./cmd/arm64tblgen compiler/arm64_native.fern
 package main
 
 import (

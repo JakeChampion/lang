@@ -30,7 +30,7 @@ import (
 // Names must exceed the SSO inline-string threshold: a short name has no heap
 // block and so no refcount to over-release.
 func TestAliasGrowNoOverRelease(t *testing.T) {
-	srcBytes, err := os.ReadFile(langSrcAbs(t, "examples/probes/alias_grow_uaf.fern"))
+	srcBytes, err := os.ReadFile(langSrcAbs(t, "tests/probes/alias_grow_uaf.fern"))
 	if err != nil {
 		t.Fatalf("read probe: %v", err)
 	}

@@ -7,7 +7,7 @@ import (
 )
 
 // The native half of the comment-capture differential. The self-host half is
-// `test_comments` in examples/self_host/lexer.fern (exit codes 2100-2106),
+// `test_comments` in compiler/lexer.fern (exit codes 2100-2106),
 // which TestSelfHostLexerX86_64 / TestSelfHostLexerArm64 already run on both
 // backends. Both halves assert the SAME fixture and the SAME expectations, so
 // either side drifting turns one of them red.

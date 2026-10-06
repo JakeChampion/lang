@@ -15,7 +15,7 @@ import (
 	"testing"
 )
 
-// The inverse of tools/testname_gate.sh, and the gap that gate could not see.
+// The inverse of scripts/testname_gate.sh, and the gap that gate could not see.
 //
 // testname_gate asks "does every selector a lane names resolve to a test?".
 // This file asks the other half: "is every test selected by some lane?". The
@@ -134,7 +134,7 @@ type lane struct {
 	exclude *regexp.Regexp
 	// name lanes run the tests their selectors match. Two kinds, because
 	// lanes select two ways: a resolved `-run` regex, and a bare test name
-	// classified the way tools/testname_gate.sh classifies one (terminated by
+	// classified the way scripts/testname_gate.sh classifies one (terminated by
 	// $, | or ) means exact; anything else is a prefix filter).
 	patterns []*regexp.Regexp
 	exact    map[string]bool
@@ -393,7 +393,7 @@ func TestCoreutilsShardCountMatchesTheMatrix(t *testing.T) {
 // computed at run time does not, and is skipped rather than guessed — under-
 // reading a selector can only make this gate stricter.
 //
-// The bare NAME reading, classified the way tools/testname_gate.sh classifies
+// The bare NAME reading, classified the way scripts/testname_gate.sh classifies
 // one, is what covers those: a matrix that expands into `-run` spells its
 // names out as literals elsewhere in the same file. Whole-line comments are
 // prose and select nothing.
@@ -434,7 +434,7 @@ func nameSelectorLane(t *testing.T, root, file, pkg string) lane {
 }
 
 // testNameRe matches a test name plus, when present, the character that
-// terminates it — the same two shapes tools/testname_gate.sh reads.
+// terminates it — the same two shapes scripts/testname_gate.sh reads.
 var testNameRe = regexp.MustCompile(`\bTest[A-Za-z0-9_]+[$|)]?`)
 
 // selectorFlagRe captures the argument of a test-selection flag.
@@ -586,7 +586,7 @@ func globMatches(pattern, path string) bool {
 // The grammar has two copies — globMatches here and `compile` in ci.yml's
 // `changes` job — and the lane filters in use exercise only `*`, `**` and
 // literals, so the other arms would drift from GitHub's documented meaning,
-// and from each other, with nothing failing. tools/ci-changes-selftest.mjs
+// and from each other, with nothing failing. scripts/ci-changes-selftest.mjs
 // runs the same cases against the JS copy, from the lint lane.
 func TestGlobMatchesFollowsGitHubGrammar(t *testing.T) {
 	for _, c := range []struct {

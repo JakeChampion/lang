@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Self-host port of internal/literate: `examples/self_host/literate.fern`
+// Self-host port of internal/literate: `compiler/literate.fern`
 // is the Knuth-style tangle engine re-written in Fern. Tangling is a
 // pure `string -> string` transform that slots in ahead of
 // `lexer.tokenize` (pipeline.fern), so literate support reaches the

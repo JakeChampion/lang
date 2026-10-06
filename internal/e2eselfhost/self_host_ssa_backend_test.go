@@ -826,7 +826,7 @@ func hostTargets() (cliTarget string, targets []ssaBackendTarget, skip string) {
 	return
 }
 
-// selfHostCLIForHost builds examples/self_host/fern.fern once per test binary
+// selfHostCLIForHost builds compiler/fern.fern once per test binary
 // as a binary this host executes directly.
 func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 	t.Helper()
@@ -837,7 +837,7 @@ func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 			return
 		}
 		fern := buildLangBinForInterp(t)
-		src, err := filepath.Abs("../../examples/self_host/fern.fern")
+		src, err := filepath.Abs("../../compiler/fern.fern")
 		if err != nil {
 			ssaHostSkip = err.Error()
 			return
@@ -1222,7 +1222,7 @@ func TestSelfHostOutputKeepsANonRegularPath(t *testing.T) {
 // but every other gate here takes its target from the host (hostTargets), which
 // means each machine tests one of the two and neither machine tests both. That
 // is how #9525 reached main: the arm64 default flip left four runtime helpers
-// with no emitter, and `fern -target arm64-linux examples/self_host/fern.fern`
+// with no emitter, and `fern -target arm64-linux compiler/fern.fern`
 // failed to link on every push while the x86-64 lanes stayed green.
 //
 // The whole compiler is the point: it is the largest program in the tree and
@@ -1231,7 +1231,7 @@ func TestSelfHostOutputKeepsANonRegularPath(t *testing.T) {
 // link runs too; emit alone would miss a symbol the assembler resolves.
 func TestSelfHostCLIBuildsForEveryNativeTarget(t *testing.T) {
 	fern := buildLangBinForInterp(t)
-	src, err := filepath.Abs("../../examples/self_host/fern.fern")
+	src, err := filepath.Abs("../../compiler/fern.fern")
 	if err != nil {
 		t.Fatal(err)
 	}

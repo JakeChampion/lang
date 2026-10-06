@@ -50,7 +50,7 @@ The last mutation *statement* still standing is `arr[i] = v`
 (`docs/PURE-COLLECTION-API-PLAN.md` §3a). Removing it to make subscripts
 read-only ran into a load-bearing idiom: a **1-element array used as a
 mutable cell**. The self-host compiler itself relies on it —
-`internal`/`examples/self_host/wasm.fern`'s `Ctx` has
+`internal`/`compiler/wasm.fern`'s `Ctx` has
 
 ```fern
 lam_ctr: i32[],     // lam_ctr[0] is the next lambda's table index

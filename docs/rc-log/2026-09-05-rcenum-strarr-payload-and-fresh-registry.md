@@ -1,6 +1,6 @@
 # The user rc-enum producer earns its consuming release (#7910 (d))
 
-*2026-09-05* — `examples/self_host/irlower.fern`. The last `leak` row in the
+*2026-09-05* — `compiler/irlower.fern`. The last `leak` row in the
 self-host leak matrix, on both ISAs.
 
 ## The shape

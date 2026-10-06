@@ -2,7 +2,7 @@
 
 `nth[T, I: Iterator[T]](it: I, n: i32): Option[T]` refused with `unbound type
 variable`, and that single refusal was the root of the whole cascade in
-`examples/tests/iter_test` (175 declarations) and `iter_combinators_test` (151).
+`tests/stdlib/iter_test` (175 declarations) and `iter_combinators_test` (151).
 Neither file produced a single declaration; every other refusal in both was a
 consequence — `is reached by a direct call from test__assert_eq__i32, which the
 AST lowering calls through a box`, and so on down through `to_string`,
@@ -82,8 +82,8 @@ x86-64, `FERN_SANITIZE=1` + `FERN_LEAKCHECK=1`.
 
 | program | before | after |
 |---|---|---|
-| `examples/tests/iter_test` | 0 of 175 | 175 of 175 |
-| `examples/tests/iter_combinators_test` | 0 of 151 | 151 of 151 |
+| `tests/stdlib/iter_test` | 0 of 175 | 175 of 175 |
+| `tests/stdlib/iter_combinators_test` | 0 of 151 | 151 of 151 |
 
 Both suites pass (15 of 15 and 8 of 8) and both legs answer identically.
 

@@ -144,7 +144,7 @@ generic-fn-over-`T[]` machinery (push already exercises it).
 generic functions over `T[]` (the exact surface above; the
 function-type syntax is `(T) => U`, not `fn(T) U`). Eager as
 planned. Called qualified: `array.map(xs, f)` etc. Coverage:
-`examples/tests/array_combinators_test.fern` (20 cases through
+`tests/stdlib/array_combinators_test.fern` (20 cases through
 the std/test runner — happy path, empty-array semantics,
 type-changing map, accumulator-type-differing fold, a
 captured-variable closure, both Option arms of find) gated by
@@ -251,7 +251,7 @@ group_by) currently takes 4 lines.
 `entries` / `merge` / `extend` / `from` / `get_or_insert` landed
 first; `update` (one-pass insert-or-modify) and `contains_value`
 complete the set. Covered by `internal/e2e/map_verbs_test.go`
-(interp + wasm) and `examples/tests/map_verbs_test.fern` (the
+(interp + wasm) and `tests/stdlib/map_verbs_test.fern` (the
 pure-Fern runner). `from_entries` is spelled `map.from(pairs)`.
 
 ### 8. Path manipulation (string-level) · small · ☑
@@ -412,7 +412,7 @@ appending onto the receiver's field in place — that in-place
 form passes the interpreter but silently mutates a shared
 receiver once compiled (the copy-on-write aliasing hazard), so
 the copy is load-bearing, not incidental. Covered by
-`examples/tests/set_test.fern` (pure-Fern runner, `add is pure`
+`tests/stdlib/set_test.fern` (pure-Fern runner, `add is pure`
 being the value-semantics guard) and
 `internal/e2e/set_module_test.go` (differential across interp /
 x86-64 / wasm / arm64). **Complexity**: linear-scan store, so
@@ -448,7 +448,7 @@ predicates for every code point in 0..MaxRune. **Caveats**: the
 whole-string `to_upper` / `to_lower` do **full (1→N)** mapping (`ß` →
 `SS`, #5630); the per-scalar `char` methods stay simple, since a 1→N
 expansion has no single code point to return. Not locale-aware, by
-design. Covered by `examples/tests/unicode_test.fern`,
+design. Covered by `tests/stdlib/unicode_test.fern`,
 `internal/e2e/unicode_case_test.go`,
 `internal/e2e/string_graphemes_test.go` and
 `internal/e2e/string_words_test.go` (each differential across interp /
@@ -480,7 +480,7 @@ think they're free additions to make.
   through the compiler's reuse pass on the unique path — the
   combination Fern's immutable values + Perceus make possible and
   no GC'd or ownership-typed library can offer. Covered by
-  `examples/tests/{ordmap,ordset,pmap,pset,pvec}_test.fern` and
+  `tests/stdlib/{ordmap,ordset,pmap,pset,pvec}_test.fern` and
   `internal/e2e/persistent_collections_test.go` (interp / x86-64 /
   wasm / arm64). Design and measurements:
   `docs/PERSISTENT-COLLECTIONS.md`.

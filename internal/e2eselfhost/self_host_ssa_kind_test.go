@@ -6,7 +6,7 @@ import (
 )
 
 // TestSelfHostSSAKindRegistry exercises the self-hosted SSA layer's integer
-// kind registry (examples/self_host/ssa.fern's kind_id / kind_name /
+// kind registry (compiler/ssa.fern's kind_id / kind_name /
 // kind_count for SInst and term_id / term_name / term_count for STerm,
 // issue #4394 lever 2 / #5351 — the string->int kind conversion foundation,
 // mirroring ir.fern's landed op-kind registry).

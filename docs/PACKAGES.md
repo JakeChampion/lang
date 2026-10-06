@@ -267,7 +267,7 @@ lockfile read/write).
 The two compilers are **not** at parity. The **native** compiler
 (`internal/*`, the `fern` CLI) implements the whole surface below; the
 **self-hosted** compiler's module loader
-(`examples/self_host/modloader.fern` + `fern_toml.fern`) implements a
+(`compiler/modloader.fern` + `fern_toml.fern`) implements a
 subset.
 
 | Capability | Native | Self-hosted |
@@ -283,7 +283,7 @@ subset.
 | `-add NAME SPEC` | ✅ | ✅ `path:` / `workspace`; `url:` is native-only |
 | CLI commands `-fetch` / `-vendor` | ✅ | ❌ (#6640) |
 
-The self-hosted loader (`examples/self_host/modloader.fern` +
+The self-hosted loader (`compiler/modloader.fern` +
 `fern_toml.fern`) resolves every **disk-resolvable** form: `path` deps,
 `workspace = true` member deps (walking up to the `[workspace]` root and
 matching by package name), vendored mode (`<vendor-root>/vendor/<name>/`
@@ -315,7 +315,7 @@ rather than stopping at the first failure.
 the summary against native's. Only the verdicts: the *explanations* are not
 comparable while the self-host checker is partial (#4346).
 
-Version RESOLUTION is the self-host's since #6640: `examples/self_host/mvs.fern`
+Version RESOLUTION is the self-host's since #6640: `compiler/mvs.fern`
 ports native's `internal/mvs` — version precedence, the index format, the
 max-of-the-minimums fixpoint, top-level `[exclude]` round-up, and the
 `fern.lock` text — and `fern -resolve <ABS-DIR>` drives it. The two

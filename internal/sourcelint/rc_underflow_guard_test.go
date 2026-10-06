@@ -39,7 +39,7 @@ func TestSelfHostDriversRunTheRcUnderflowGuard(t *testing.T) {
 		t.Fatalf("locate repo root: %v", err)
 	}
 	for _, name := range guardedDrivers {
-		path := filepath.Join(root, "examples", "self_host", name)
+		path := filepath.Join(root, "compiler", name)
 		src, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -54,7 +54,7 @@ func TestSelfHostDriversRunTheRcUnderflowGuard(t *testing.T) {
 	// the native backend, whose checker registers `__rc_underflow_count`, so a
 	// wrong spelling would not compile — but a guard that reads nothing would
 	// compile and always pass.
-	utilSrc, err := os.ReadFile(filepath.Join(root, "examples", "self_host", "util.fern"))
+	utilSrc, err := os.ReadFile(filepath.Join(root, "compiler", "util.fern"))
 	if err != nil {
 		t.Fatalf("read util.fern: %v", err)
 	}

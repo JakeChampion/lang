@@ -28,7 +28,7 @@ for the life of the program.
 
 ## The measurement
 
-`examples/bench/pvec_with.fern`, callgrind, run-time call counts per callee,
+`bench/pvec_with.fern`, callgrind, run-time call counts per callee,
 self-host against native on the same source:
 
 | callee | self-host | native |

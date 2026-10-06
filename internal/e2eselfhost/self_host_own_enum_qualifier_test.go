@@ -129,7 +129,7 @@ func TestSelfHostOwnEnumQualifierCheckX86_64(t *testing.T) {
 	check := func(t *testing.T, lib string) (string, int) {
 		t.Helper()
 		progDir := t.TempDir()
-		bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+		bsrc, err := os.ReadFile("../../compiler/builtins.fern")
 		if err != nil {
 			t.Fatalf("read builtins.fern: %v", err)
 		}

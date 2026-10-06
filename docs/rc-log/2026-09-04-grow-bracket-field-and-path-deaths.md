@@ -76,7 +76,7 @@ which is what lets the propagation name one field instead of all of them.
 
 ## Measured
 
-`scripts/cliff-bench`, `examples/self_host/checker.fern`, x86-64, at the
+`scripts/cliff-bench`, `compiler/checker.fern`, x86-64, at the
 branch's own parent and with the change:
 
 | | bytes | crossings |
@@ -102,7 +102,7 @@ where a forced copy would have handed back a fresh rc 1 buffer. The trade is
 one whole-buffer copy for a later small one, which is why `Scope.bind`'s mean
 copy fell from 92 to 77 bytes while it crossed 14% more often.
 
-`examples/bench` static instruction counts move three rows on x86-64: the
+`bench` static instruction counts move three rows on x86-64: the
 persistent-collection benchmarks lose bracket pairs (−3.6% / −1.3% / −1.2%).
 Every `.ir` row moves less than its tolerance. On aarch64 the same corpus moves
 three rows and all downward (ordmap_insert −166, pmap_insert −104,

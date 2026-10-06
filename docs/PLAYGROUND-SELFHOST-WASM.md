@@ -7,7 +7,7 @@ the self-host compiler instead.
 
 ## Status, 2026-09-28: the playground runs on the self-host compiler
 
-`web/playground.wasm` is `examples/self_host/playground_run.fern`, compiled to
+`web/playground.wasm` is `compiler/playground_run.fern`, compiled to
 a WASI command module by `bin/fern-selfhost` (`web/build.sh`). The page
 compiles it once at boot and instantiates it afresh per call through
 `web/wasi-shim.js`, the program on stdin and the mode in argv: Run is
@@ -222,13 +222,13 @@ the shipped artifact needs sharding.
 ```
 make build && make selfhost-cli
 ./bin/fern-selfhost -target wasm32-wasi -emit core-module \
-    -o wasm_ir_run.wasm examples/self_host/wasm_ir_run.fern internal/stdlib
+    -o wasm_ir_run.wasm compiler/wasm_ir_run.fern internal/stdlib
 echo 'function main(): i32 { return 6 * 7; }' | wasmtime run wasm_ir_run.wasm
 
 # The page's artifact. -embed names the stdlib it CARRIES; the trailing
 # positional is the one resolving this driver's own imports at build time.
 ./bin/fern-selfhost -target wasm32-wasi -emit core-module -embed internal/stdlib \
-    -o playground_run.wasm examples/self_host/playground_run.fern internal/stdlib
+    -o playground_run.wasm compiler/playground_run.fern internal/stdlib
 echo 'function main(): i32 { print("hi"); return 42; }' \
     | wasmtime run playground_run.wasm -interp    # prints hi, exits 42
 ```
@@ -270,7 +270,7 @@ only interesting if it agrees with the native one, and until then nothing asked.
 ### 1. The native toolchain cannot compile `fern.fern` for wasm (#7947)
 
 ```
-$ ./bin/fern -target wasm32-wasi -emit core-module -o out.wasm examples/self_host/fern.fern
+$ ./bin/fern -target wasm32-wasi -emit core-module -o out.wasm compiler/fern.fern
 error[E066]: target "wasm32-wasi" does not provide `fsmode`, required by
 `write_file_exec` (reached via "write_output" from module ".../fern.fern");
 targets providing it: [arm64-android arm64-darwin arm64-linux x86-64-linux]
@@ -307,7 +307,7 @@ miscompile against — which is why #7948 had to be diagnosed by diffing the two
 TARGETS of one compiler instead — and it is no longer a witness to wait for.
 
 The IR driver is the exception, and it is a usable partial witness: the native
-toolchain compiles `examples/self_host/wasm_ir_run.fern` to a core module that
+toolchain compiles `compiler/wasm_ir_run.fern` to a core module that
 now instantiates and compiles a program handed to it on stdin. It could always
 be *built*; it could not be *started* until the emitted memory was sized from
 the static data (the literals of a whole compiler run well past 64 KiB, and data
@@ -333,7 +333,7 @@ Both compilers refuse `fern.fern` for wasm on `write_file_exec` — the
 self-host through its own `capability_violations` gate, native through
 `internal/platforms`, and now with the same E066 text on both sides.
 
-`examples/self_host/fern.fern` is a *CLI*: it takes argv paths, reads files,
+`compiler/fern.fern` is a *CLI*: it takes argv paths, reads files,
 and writes executables. None of that is what the playground wants, and
 `write_file_exec` has no WASI preview-1 form (`path_open` has no mode —
 `wasm_ir.fern:1526`, #6133).
@@ -382,7 +382,7 @@ shipped too. A wasm-hosted compiler has no host filesystem to read
 serves it from `go:embed` (`internal/stdlib/stdlib.go:37`). Native's mechanism —
 `-embed DIR` plus `__fern_asset("name")` / `__fern_assets()`, folded into
 ordinary string literals (`docs/EMBED.md`) — is now on both compilers:
-`examples/self_host/embed.fern`, gated against native case for case by
+`compiler/embed.fern`, gated against native case for case by
 `internal/e2eselfhost/self_host_embed_test.go`. The self-host compiler embeds
 its own stdlib and finds `std/io.fern` in the resulting binary by name.
 
@@ -392,7 +392,7 @@ wasmtime. The pass costs nothing measurable: compiling `checker_run.fern` takes
 11.0 s with it and 11.1 s without, over three runs each.
 
 **A compiling, checking and interpreting playground driver** was the third, and it runs.
-`examples/self_host/playground_run.fern` reads a program on stdin, resolves its
+`compiler/playground_run.fern` reads a program on stdin, resolves its
 `std/…` imports out of an embedded bundle handed to the module loader as a
 sealed overlay (`modloader.Overlay`), and writes a wasm module. Compiled to
 wasm itself and run under `wasmtime` with **no `--dir` at all** — so no preopen

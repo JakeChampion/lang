@@ -199,7 +199,7 @@ func HashSelfHostSources(t testing.TB, dir, fernName string) string {
 }
 
 // CopySelfHostDriver copies each named driver AND its entire transitive
-// local-import closure from examples/self_host into dir — the staging step
+// local-import closure from compiler into dir — the staging step
 // before BuildSelfHostBin.
 //
 // It replaces the hand-written module list that used to sit in front of nearly
@@ -235,9 +235,9 @@ func CopySelfHostDriver(t testing.TB, dir string, entries ...string) {
 // selfHostSrcDir is the one place the path from a test package to the self-host
 // sources is written down. Both test packages sit two levels under the repo
 // root, which is what makes the single relative path correct for both.
-const selfHostSrcDir = "../../examples/self_host"
+const selfHostSrcDir = "../../compiler"
 
-// CopySelfHostFiles copies the named examples/self_host sources into dir —
+// CopySelfHostFiles copies the named compiler sources into dir —
 // the staging step before BuildSelfHostBin for tests that hand-pick a driver's
 // import closure instead of copySelfHostTree'ing the whole directory.
 //

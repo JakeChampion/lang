@@ -11,7 +11,7 @@ import (
 )
 
 // TestSelfHostIRLICM pins the self-hosted stack IR's loop-invariant code motion
-// (examples/self_host/ir.fern's hoist_loop_invariants — the op-list port of
+// (compiler/ir.fern's hoist_loop_invariants — the op-list port of
 // native's internal/ir/licm.go, #8245) and the slot growth it depends on (#8247).
 //
 // The ir_licm_run driver builds the op list the lowering emits for each `while`

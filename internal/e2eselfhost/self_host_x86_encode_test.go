@@ -9,7 +9,7 @@ import (
 )
 
 // TestSelfHostX86Encode exercises the self-hosted x86-64 machine-code
-// encoding primitives (examples/self_host/x86_native.fern) — slice 2a of
+// encoding primitives (compiler/x86_native.fern) — slice 2a of
 // the native binary backend (the assembler half; the container half is
 // elf.fern).
 //
@@ -29,7 +29,7 @@ func TestSelfHostX86Encode(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	nat, err := os.ReadFile("../../examples/self_host/x86_native.fern")
+	nat, err := os.ReadFile("../../compiler/x86_native.fern")
 	if err != nil {
 		t.Fatalf("read x86_native.fern: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestSelfHostX86Labels(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	nat, err := os.ReadFile("../../examples/self_host/x86_native.fern")
+	nat, err := os.ReadFile("../../compiler/x86_native.fern")
 	if err != nil {
 		t.Fatalf("read x86_native.fern: %v", err)
 	}
@@ -168,11 +168,11 @@ func runX86NativeDriver(t *testing.T, name, driverMain string, wantExit int) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	nat, err := os.ReadFile("../../examples/self_host/x86_native.fern")
+	nat, err := os.ReadFile("../../compiler/x86_native.fern")
 	if err != nil {
 		t.Fatalf("read x86_native.fern: %v", err)
 	}
-	elf, err := os.ReadFile("../../examples/self_host/elf.fern")
+	elf, err := os.ReadFile("../../compiler/elf.fern")
 	if err != nil {
 		t.Fatalf("read elf.fern: %v", err)
 	}

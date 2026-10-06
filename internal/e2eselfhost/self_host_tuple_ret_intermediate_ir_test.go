@@ -74,7 +74,7 @@ function main(): i32 { let t = mk(20); let u = t; let a: i32 = t.0 + u.1; if (__
 func TestSelfHostTupleRetIntermediateIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	src, err := os.ReadFile("../../compiler/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}

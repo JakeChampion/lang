@@ -37,8 +37,8 @@ func TestSelfHostX86ScaleProbe(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_run.fern", "wasm_run.fern")
 	asmRun := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "asm_run")
 	wasmRun := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
-	nat := mustRead(t, "../../examples/self_host/x86_native.fern")
-	elf := mustRead(t, "../../examples/self_host/elf.fern")
+	nat := mustRead(t, "../../compiler/x86_native.fern")
+	elf := mustRead(t, "../../compiler/elf.fern")
 	prelude := string(nat) + "\n" + string(elf) + toU8Src
 
 	driverWat := runCapture(t, gcc, runner, wasmRun, []byte(prelude+x86CapstoneDriver))

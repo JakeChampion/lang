@@ -1,0 +1,123 @@
+// compiler/arm64_asm_bench_run.fern — harness for the in-process
+// arm64 assembler. Reads GAS text on stdin, runs the whole assemble path
+// (parse/emit + .ltorg flush + fixup resolve + @PAGE link) and prints the
+// section sizes. Exists so the assembler's memory profile (#6011) can be
+// measured against a real `.s` without a selfhost-cli rebuild per experiment.
+//
+// With `-words` it also dumps each assembled instruction word as hex, one per
+// line, after the summary; with `-data`, each .rodata byte the same way. That makes the assembler's ENCODINGS comparable
+// against GNU as on identical input, with no qemu and no execution — see
+// TestSelfHostArm64AsmEncodingMatchesGas. #6047 was an
+// encoding bug (`[x0, x1]` assembled as `[x0, #1]`, because the index register
+// was read as an immediate) that produced a perfectly runnable binary printing
+// the right number of wrong bytes; only comparing encodings catches that class
+// cheaply.
+import "std/i64";
+import "std/io";
+import "./arm64_native";
+
+function main(): i32 {
+  let av: string[] = args();
+  let dump: boolean = false;
+  let dump_data: boolean = false;
+  let dump_eh: boolean = false;
+  let dump_eh_darwin: boolean = false;
+  let i: i32 = 0;
+  while (i < av.len()) {
+    if (av[i] == "-words") {
+      dump = true;
+    }
+    if (av[i] == "-data") {
+      dump_data = true;
+    }
+    if (av[i] == "-ehframe") {
+      dump_eh = true;
+    }
+    if (av[i] == "-ehframe-darwin") {
+      dump_eh_darwin = true;
+    }
+    i = i + 1;
+  }
+  let src: string = "";
+  match (io.read_all_stdin()) {
+    Ok(text) => {
+      src = text;
+    },
+    Err(_) => {
+      eprint("arm64 assembler: cannot read UTF-8 stdin");
+      return 1;
+    }
+  }
+  let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(src);
+  let pa: arm64_native.Arm64Asm = p.asm;
+  let tv: i64 = arm64_native.macho_text_vaddr(pa.text.len(), 0, p.data.len(), p.bss_size);
+  let dv: i64 = arm64_native.macho_data_vaddr(pa.text.len(), 0, p.data.len(), p.bss_size);
+  p = arm64_native.arm64_gas_link(p, tv, dv);
+  let pa2: arm64_native.Arm64Asm = p.asm;
+  print("text=" + pa2.text.len().to_string() + " data=" + p.data.len().to_string()
+    + " bump=" + __heap_bump_bytes().to_string() + "\n");
+  if (p.unknown.len() > 0) {
+    let u: i32 = 0;
+    while (u < p.unknown.len()) {
+      print("unknown=" + p.unknown[u]);
+      u = u + 1;
+    }
+  }
+  if (dump) {
+    // Little-endian bytes back into 32-bit words, so the output is directly
+    // comparable with the native assembler's instruction stream.
+    let b: i32 = 0;
+    while (b + 3 < pa2.text.len()) {
+      let w: i64 = pa2.text[b] as i64 | pa2.text[b + 1] as i64 << 8
+        | pa2.text[b + 2] as i64 << 16 | pa2.text[b + 3] as i64 << 24;
+      print("word " + (b / 4).to_string() + " " + w.to_string());
+      b = b + 4;
+    }
+  }
+  // With `-data`, the .rodata bytes, one per line. The escape DECODER lives
+  // here and nowhere the `-words` dump can see: an instruction stream is
+  // identical whether `.ascii "\001"` assembled to one byte or to three.
+  if (dump_data) {
+    let d: i32 = 0;
+    while (d < p.data.len()) {
+      print("data " + d.to_string() + " " + p.data[d].to_string());
+      d = d + 1;
+    }
+  }
+  // With `-ehframe`, the .eh_frame, .eh_frame_hdr and .debug_frame the
+  // program's `.cfi_*` directives render, at the fixed addresses the differential renders the
+  // native ones at: .text 0x400000, .eh_frame_hdr 0x400080, .eh_frame
+  // 0x400100.
+  if (dump_eh) {
+    let eh: i32[] = arm64_native.arm64_eh_frame(p, 4194304 as i64, 4194560 as i64);
+    let e: i32 = 0;
+    while (e < eh.len()) {
+      print("eh " + e.to_string() + " " + eh[e].to_string());
+      e = e + 1;
+    }
+    let hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, 4194304 as i64, 4194560 as i64, 4194432 as i64);
+    e = 0;
+    while (e < hdr.len()) {
+      print("hdr " + e.to_string() + " " + hdr[e].to_string());
+      e = e + 1;
+    }
+    let dbg: i32[] = arm64_native.arm64_debug_frame(p, 4194304 as i64);
+    e = 0;
+    while (e < dbg.len()) {
+      print("dbg " + e.to_string() + " " + dbg[e].to_string());
+      e = e + 1;
+    }
+  }
+  // With `-ehframe-darwin`, the same recording under the Mach-O profile.
+  // There is no .eh_frame_hdr on Darwin: dyld hands the section to
+  // libunwind directly, so nothing looks a function up through a table.
+  if (dump_eh_darwin) {
+    let deh: i32[] = arm64_native.arm64_eh_frame_darwin(p, 4194304 as i64, 4194560 as i64);
+    let de: i32 = 0;
+    while (de < deh.len()) {
+      print("eh " + de.to_string() + " " + deh[de].to_string());
+      de = de + 1;
+    }
+  }
+  return 0;
+}

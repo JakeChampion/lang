@@ -2,7 +2,7 @@
 
 `Map[K, V].iter` was the largest remaining typed-path refusal after the format
 family: `unsupported call target: Map[string, JsonValue].iter`, 27 refusals in
-`examples/tests/json_roundtrip_test` alone, and it held that file (244
+`tests/stdlib/json_roundtrip_test` alone, and it held that file (244
 declarations) and `conformance/cases/audit_std_json` (82) entirely to the AST
 lowering.
 
@@ -51,7 +51,7 @@ x86-64, `FERN_SANITIZE=1` + `FERN_LEAKCHECK=1`, native x86-64 as the oracle.
 
 | program | before | after | AST leg holds | typed holds |
 |---|---|---|---|---|
-| `examples/tests/json_roundtrip_test` | 0 of 244 | 244 of 244 | 182,512 B in 2921 blocks | 192 B in 12 |
+| `tests/stdlib/json_roundtrip_test` | 0 of 244 | 244 of 244 | 182,512 B in 2921 blocks | 192 B in 12 |
 | `conformance/cases/audit_std_json` | 0 of 82 | 82 of 82 | 7,200 B in 133 | 16 B in 1 |
 
 Both answer identically on the typed path, the AST leg and native, and the

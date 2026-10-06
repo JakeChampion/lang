@@ -4,7 +4,7 @@ name: Bootstrap
 #
 # `make bootstrap` (bootstrap/bootstrap.sh) takes a pinned earlier self-host
 # compiler — stage0, named by bootstrap/stage0.lock — and compiles the current
-# examples/self_host/fern.fern with it. The result must compile and run a
+# compiler/fern.fern with it. The result must compile and run a
 # program before it is installed as bin/fern-selfhost. Nothing here builds or
 # runs bin/fern: this is the demonstration that a checkout reaches a Fern
 # binary without the Go toolchain or the native backends
@@ -14,7 +14,7 @@ name: Bootstrap
 # the result doing it once more, byte-identical (stage2 == stage3) — runs on
 # all three hosts. It is the whole-compiler fixpoint, the configuration no
 # per-module fixpoint reaches, and docs/NATIVE-CONVERGENCE.md's criterion
-# for the native freeze: tools/freeze_gate.sh reads this file to see it wired.
+# for the native freeze: scripts/freeze_gate.sh reads this file to see it wired.
 #
 # Two jobs, two triggers:
 #

@@ -386,7 +386,7 @@ function main(): i32 { return build(3, "ab").len(); }`
 // chain has a concat there. So every iteration allocated a buffer and copied
 // the entire accumulator into it: the quadratic cost the single-`+` form was
 // fixed for in #5637, still charged to the form that writes its separator in
-// the same statement. On examples/bench/string_build that was 20% of the
+// the same statement. On bench/string_build that was 20% of the
 // program's retired instructions.
 //
 // Asserting OpStrConcat == 0 is the half that would catch a regression to

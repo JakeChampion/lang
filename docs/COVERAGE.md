@@ -114,7 +114,7 @@ which lowers nothing.
 
 ## How it is built
 
-On the self-host it is a source pass, `examples/self_host/cover.fern`, which
+On the self-host it is a source pass, `compiler/cover.fern`, which
 runs after every gate and before the tree shake:
 
 - Each statement that opens a new source line in its list is preceded by

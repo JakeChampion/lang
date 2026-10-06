@@ -351,7 +351,7 @@ func TestNdarrayComputedAxisIsNotReadFromTheInit(t *testing.T) {
 // the window holds only the arguments and the simulated stack is one operand
 // short. That one is necessarily the receiver — everything the window pushed
 // sits above it — so a literal axis still reads. `a.transpose().reduce_axis`
-// is the repo's own idiom (`examples/tests/ndarray_test.fern`), and blanking
+// is the repo's own idiom (`tests/stdlib/ndarray_test.fern`), and blanking
 // it would lose exactly the contiguous-versus-strided fact the axis is
 // reported for.
 const chainedSrc = `import "std/ndarray";

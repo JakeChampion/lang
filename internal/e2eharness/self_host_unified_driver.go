@@ -37,7 +37,7 @@ func runStdinVerdict(t *testing.T, runner []string, bin, src string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// EligBits runs the path probe (examples/self_host/asm_pathprobe_run.fern,
+// EligBits runs the path probe (compiler/asm_pathprobe_run.fern,
 // semlower.verdict) over each program and sums weight[i] for every program the
 // typed lowering produces whole ("ir"). It is the shared core of the six
 // verdict-bitmask tests. The compile + link are content-addressed
@@ -47,7 +47,7 @@ func runStdinVerdict(t *testing.T, runner []string, bin, src string) string {
 func EligBits(t *testing.T, progs []string, weights []int) int {
 	t.Helper()
 	gcc, runner := X86_64Tooling(t)
-	bin := CachedDriverBin(t, gcc, "../../examples/self_host", "asm_pathprobe_run.fern")
+	bin := CachedDriverBin(t, gcc, "../../compiler", "asm_pathprobe_run.fern")
 	got := 0
 	for i, p := range progs {
 		if runStdinVerdict(t, runner, bin, p) == "ir" {

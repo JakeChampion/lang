@@ -102,7 +102,7 @@ func TestSelfHostNoMainModuleIRX86_64(t *testing.T) {
 	// the first file TestSelfHostBootstrapsItself pipes through this driver, and
 	// the one that failed when the driver was rerouted IR-or-error.
 	t.Run("util-fern-routes-ir", func(t *testing.T) {
-		src, err := os.ReadFile("../../examples/self_host/util.fern")
+		src, err := os.ReadFile("../../compiler/util.fern")
 		if err != nil {
 			t.Fatalf("read util.fern: %v", err)
 		}

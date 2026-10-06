@@ -21,7 +21,7 @@
 // The walk follows named calls, methods and function values named in a body,
 // the same over-approximation the tree-shaker uses; a call through a value
 // whose target the walk cannot name is not charged. That is the shape the
-// self-host mirror (examples/self_host/ambient.fern) computes too, so both
+// self-host mirror (compiler/ambient.fern) computes too, so both
 // compilers refuse the same programs.
 package ambient
 

@@ -34,7 +34,7 @@ func TestSelfHostTcpServerIRX86_64(t *testing.T) {
 		t.Skip("self-host TCP server test runs host-native only (avoids qemu socket nuances)")
 	}
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))
+	src, err := os.ReadFile(filepath.Join("../../compiler", "asm_run.fern"))
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}

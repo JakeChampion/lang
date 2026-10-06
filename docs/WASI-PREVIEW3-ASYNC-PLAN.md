@@ -129,7 +129,7 @@ Anything else, an async method or generic, or a name with no kebab-case form
 is refused, as is any async export on `wasm32-wasi-http`, whose proxy world
 exports only the handler.
 
-- **Core module** (`examples/self_host/wasm_ir.fern`, `async_lift_imports`
+- **Core module** (`compiler/wasm_ir.fern`, `async_lift_imports`
   / `async_lift_wrappers`). Each export imports its task.return as
   `("[export]$root", "[task-return]NAME")`, the names wit-bindgen uses. It
   also exports `[async-lift]NAME`, a wrapper that calls the function, hands

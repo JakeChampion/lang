@@ -18,14 +18,14 @@ import (
 // workflow in miniature: run a property over n seeds, report the first
 // failing one.
 
-// `examples/tests/sim_fault_test.fern` is the TAP suite: the four
+// `tests/stdlib/sim_fault_test.fern` is the TAP suite: the four
 // fault modes through gather / with_deadline / a hand drain, the
 // seed-1 flaky(50) golden pattern, same-seed reproducibility +
 // different-seed divergence, and sweep_seeds on both its all-green and
 // first-failing-seed paths. Passing → exit 0.
 func TestRunnerSimFaultExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/sim_fault_test.fern")
+	src := langSrcAbs(t, "tests/stdlib/sim_fault_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)

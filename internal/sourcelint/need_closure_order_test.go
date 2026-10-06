@@ -51,7 +51,7 @@ func TestCloseNeedsPrecedesEveryRuntimeGate(t *testing.T) {
 
 	routes := 0
 	for _, name := range []string{"asm_ir.fern", "asm_arm64_ir.fern"} {
-		src, err := os.ReadFile(filepath.Join(root, "examples", "self_host", name))
+		src, err := os.ReadFile(filepath.Join(root, "compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -89,7 +89,7 @@ func TestCloseNeedsPrecedesEveryRuntimeGate(t *testing.T) {
 // new edge widens this check instead of silently escaping it.
 func volatileNeeds(t *testing.T, root string) []string {
 	t.Helper()
-	src, err := os.ReadFile(filepath.Join(root, "examples", "self_host", "asmcore.fern"))
+	src, err := os.ReadFile(filepath.Join(root, "compiler", "asmcore.fern"))
 	if err != nil {
 		t.Fatalf("read asmcore.fern: %v", err)
 	}

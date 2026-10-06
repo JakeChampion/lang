@@ -68,7 +68,7 @@ The sanitized self-built stage1 assembling natively:
 | parser.fern | 1.05 GB | 973 MB |
 | checker.fern | 2.82 GB | 2.69 GB |
 
-No sanitizer finding on the three, nor on the `examples/tests` inputs.
+No sanitizer finding on the three, nor on the `tests/stdlib` inputs.
 Smaller than the site count promised: the consumed generation's box goes,
 but the buffers the callee's `emit` appended in place are carried on into
 q2 and stay live until q2's own release — and q2 is most often returned,

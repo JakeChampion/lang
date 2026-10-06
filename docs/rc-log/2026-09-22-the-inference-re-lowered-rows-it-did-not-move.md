@@ -22,7 +22,7 @@ of them.
 Not by reading the code. #9963 found the alloc lane 82% behind its baseline and
 the notes in `refs/notes/perf` put the largest single step at +8.92% on
 `6a217f9fa` (#9931). The step reproduces **larger** on a smaller subject, which
-is what made it traceable at all — `FERN_ALLOC_SUBJECT=examples/self_host/lexer.fern`
+is what made it traceable at all — `FERN_ALLOC_SUBJECT=compiler/lexer.fern`
 gives +19.26%, over a workload of 3.1 M events rather than 88 M.
 
 `FERN_RC_TRACE=1` at compile time on a `-g` build either side of the step,
@@ -47,7 +47,7 @@ allocator and names nothing.
 
 ## The measurement
 
-`scripts/selfhost-alloc-bench`, `FERN_ALLOC_SUBJECT=examples/self_host/lexer.fern`,
+`scripts/selfhost-alloc-bench`, `FERN_ALLOC_SUBJECT=compiler/lexer.fern`,
 x86-64:
 
 | | allocs | frees |

@@ -12,10 +12,10 @@ allocation, taking every callee to borrow without retaining):
 
 | subject | constructions | read-only | read or lent |
 |---|---|---|---|
-| `examples/self_host/checker.fern` | 1,205 | 1 | 17 |
-| `examples/bench/record_update.fern` | 2 | 0 | 0 |
-| `examples/bench/struct_drop.fern` | 4 | 0 | 0 |
-| `examples/bench/pvec_with.fern` | 11 | 3 | 3 |
+| `compiler/checker.fern` | 1,205 | 1 | 17 |
+| `bench/record_update.fern` | 2 | 0 | 0 |
+| `bench/struct_drop.fern` | 4 | 0 | 0 |
+| `bench/pvec_with.fern` | 11 | 3 | 3 |
 
 A record in this compiler is built to be returned or stored into another
 (`LowerState { ...s, ops: … }` threaded through every call), so it escapes

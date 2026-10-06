@@ -73,7 +73,7 @@ declarations of 78,504 before and after, over the same 864 seeds against
 frozen binaries. No file regresses either.
 
 That is worth stating plainly rather than dressing up. The corpus has exactly
-one program of this shape — `examples/tests/ndarray_test`, whose
+one program of this shape — `tests/stdlib/ndarray_test`, whose
 `map_rank[T, U](k: i32, f: (NdArray[T]) => NdArray[U])` is `through` with more
 arguments — and it produces 0 of its 254 declarations both before and after,
 because a SECOND root holds it: the `calls a function value of N arguments, a

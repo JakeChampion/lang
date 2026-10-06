@@ -7,30 +7,30 @@ import (
 	"testing"
 )
 
-// Every example checks clean. The Examples lane compiles only the top-level
-// `examples/*.fern`, and the printer corpus only parses, so a program under a
-// subdirectory could stop type-checking with nothing noticing — two probes
-// did. The self-host compiler's sources have gates of their own.
+// Every example, Fern-side test and benchmark checks clean. The Examples lane
+// compiles only the top-level `examples/*.fern`, and the printer corpus only
+// parses, so a program under a subdirectory could stop type-checking with
+// nothing noticing — two probes did. The compiler's sources have gates of
+// their own.
 func TestEveryExampleChecks(t *testing.T) {
-	root := filepath.Join("..", "..", "examples")
+	roots := []string{"examples", "tests", "bench"}
 	var files []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	for _, sub := range roots {
+		err := filepath.WalkDir(filepath.Join("..", "..", sub), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !d.IsDir() && strings.HasSuffix(path, ".fern") {
+				files = append(files, path)
+			}
+			return nil
+		})
 		if err != nil {
-			return err
+			t.Fatal(err)
 		}
-		if d.IsDir() && d.Name() == "self_host" {
-			return filepath.SkipDir
-		}
-		if !d.IsDir() && strings.HasSuffix(path, ".fern") {
-			files = append(files, path)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	if len(files) < 300 {
-		t.Fatalf("found %d examples under %s; the walk is not reading the tree", len(files), root)
+		t.Fatalf("found %d programs under %v; the walk is not reading the tree", len(files), roots)
 	}
 	for _, f := range files {
 		t.Run(strings.TrimPrefix(filepath.ToSlash(f), "../../"), func(t *testing.T) {

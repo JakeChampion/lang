@@ -281,7 +281,7 @@ go build -o bin/fern ./cmd/fern
 # so `bin/fern -nt bin/fern-selfhost` is true on every run after the build
 # above and would rebuild the self-host CLI every time.
 if [ -n "$want_selfhost" ]; then
-  if [ ! -x bin/fern-selfhost ] || [ -n "$(find examples/self_host cmd internal \
+  if [ ! -x bin/fern-selfhost ] || [ -n "$(find compiler cmd internal \
        \( -name '*.fern' -o -name '*.go' \) -newer bin/fern-selfhost -print -quit 2>/dev/null)" ]; then
     echo "coreutils-bench: building bin/fern-selfhost (missing or stale)" >&2
     make selfhost-cli >&2

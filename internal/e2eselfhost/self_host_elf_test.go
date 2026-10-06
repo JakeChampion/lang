@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostELF exercises the self-hosted static ELF-64 executable
-// writer (examples/self_host/elf.fern) — the first slice of the native
+// writer (compiler/elf.fern) — the first slice of the native
 // binary backend (the container half that aims to remove the external
 // gcc/ld link step).
 //
@@ -31,7 +31,7 @@ func TestSelfHostELF(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	elf, err := os.ReadFile("../../examples/self_host/elf.fern")
+	elf, err := os.ReadFile("../../compiler/elf.fern")
 	if err != nil {
 		t.Fatalf("read elf.fern: %v", err)
 	}

@@ -10,7 +10,7 @@ sound; the conclusion drawn from its first run was not.
 allocator as Fern code -> `__fern_arr_push_owned` -> `__fern_arr_push` ->
 `__fern_arr_box`, so `caller` is the wrapper for every owned append in the
 program. `FERN_RC_TRACE_DEEP` walks one link further, and a deep-traced
-compiler lowering `examples/self_host/checker.fern` gave 23,971,095
+compiler lowering `compiler/checker.fern` gave 23,971,095
 allocations, 3.26 GB requested, 7,343,098 frees. Aggregating *net* bytes by
 `(caller, caller2)` put `LowerState.emit` from `emit_dec_sweep_except_list` on
 top at ~620 MB / 19%.
@@ -98,7 +98,7 @@ the allocating pair. That is the measurement the first run was meant to be.
 
 The other one is done, and it is the number goal 2 has been missing.
 
-`examples/self_host/asm_ir_run.fern` — the whole compiler front-end plus both
+`compiler/asm_ir_run.fern` — the whole compiler front-end plus both
 x86-64 backends — emitted **twice from one source**, once by native and once by
 the self-host emitter, both under `FERN_LEAKCHECK`, then run on the same input.
 The subjects are real compiler modules that happen to have **no imports**, so
@@ -142,14 +142,14 @@ pointer tracking, and it is real compiler code rather than a shape guessed at.
 ### Recipe
 
 ```
-go run ./cmd/fern -target x86-64-linux -o fern_sh examples/self_host/fern.fern
+go run ./cmd/fern -target x86-64-linux -o fern_sh compiler/fern.fern
 FERN_LEAKCHECK=1 go run ./cmd/fern -target x86-64-linux -o drv_native \
-    examples/self_host/asm_ir_run.fern
-cd examples/self_host && FERN_LEAKCHECK=1 ../../fern_sh -target x86-64-linux \
-    -emit asm -o drv_sh.s asm_ir_run.fern ../../internal/stdlib
+    compiler/asm_ir_run.fern
+cd compiler && FERN_LEAKCHECK=1 ../fern_sh -target x86-64-linux \
+    -emit asm -o drv_sh.s asm_ir_run.fern ../internal/stdlib
 gcc -nostdlib -no-pie -o drv_selfhost drv_sh.s
-./drv_native   < examples/self_host/x86_native.fern > /dev/null
-./drv_selfhost < examples/self_host/x86_native.fern > /dev/null
+./drv_native   < compiler/x86_native.fern > /dev/null
+./drv_selfhost < compiler/x86_native.fern > /dev/null
 ```
 
 The self-host CLI takes its stdlib root as a **positional** argument after the

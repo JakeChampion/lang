@@ -296,7 +296,7 @@ differential, but it is not what makes `sort` faster.
 
 ### Measured 2026-09-16: the rc primitives inlined on x86-64
 
-callgrind on `examples/bench/ordmap_insert.fern` under x86-64 SSA, once the
+callgrind on `bench/ordmap_insert.fern` under x86-64 SSA, once the
 freelist and string reclaim were in, put 24% of the run's instructions inside
 `__fern_rc_is_unique`, `__fern_rc_dec` and `__fern_rc_inc` — six-instruction
 guard chains reached by a call each, with the caller-saves the allocator

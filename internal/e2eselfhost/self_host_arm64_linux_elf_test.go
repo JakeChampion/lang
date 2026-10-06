@@ -44,8 +44,8 @@ func TestSelfHostArm64NativeLinuxElfRuns(t *testing.T) {
 	// Driver: arm64_native + elf.fern + main(), concatenated (no imports).
 	// Reads the asm from "in.s" in its CWD, assembles + ELF-wraps it, writes
 	// the binary to stdout. Compiled by the Go x86 backend.
-	native := string(mustRead(t, "../../examples/self_host/arm64_native.fern"))
-	elfsrc := string(mustRead(t, "../../examples/self_host/elf.fern"))
+	native := string(mustRead(t, "../../compiler/arm64_native.fern"))
+	elfsrc := string(mustRead(t, "../../compiler/elf.fern"))
 	const driverMain = `
 function main(): i32 {
     let asm: string = ""; let ok: boolean = false;
