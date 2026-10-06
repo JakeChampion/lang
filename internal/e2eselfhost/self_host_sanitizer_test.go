@@ -78,8 +78,8 @@ func sanSelfHostBuild(t *testing.T, name, src string, env []string) (string, []s
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	asm := hevCompile(t, runner, driverBin, src, env)
 	return buildBin(t, gcc, dir, name, asm), runner
 }
@@ -181,8 +181,8 @@ func TestSelfHostDoubleFreeSilentWithoutSanitizeX86_64(t *testing.T) {
 func TestSelfHostSanitizeOffEmitsNoSymbolsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	off := hevCompile(t, runner, driverBin, sanSelfHostCleanSrc, nil)
 	for _, marker := range []string{"fern-sanitizer", "__fern_san_abort", ".Lsan_"} {

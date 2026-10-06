@@ -21,7 +21,7 @@ import (
 func TestSelfHostPerModuleRoutesAgree(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "routesagreedriver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "routesagreedriver")
 
 	proj := t.TempDir()
 	mustWrite(t, proj, "shapes.fern", `pub struct Point { x: i32, y: i32, tag: string }

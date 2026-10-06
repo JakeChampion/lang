@@ -221,12 +221,12 @@ func CopySelfHostDriver(t testing.TB, dir string, entries ...string) {
 	seen := map[string]bool{}
 	for _, entry := range entries {
 		for _, p := range SelfHostImportClosure(t, selfHostSrcDir, entry) {
-			base := filepath.Base(p)
-			if seen[base] {
+			rel := selfHostRel(t, p)
+			if seen[rel] {
 				continue
 			}
-			seen[base] = true
-			names = append(names, base)
+			seen[rel] = true
+			names = append(names, rel)
 		}
 	}
 	CopySelfHostFiles(t, dir, names...)
@@ -256,19 +256,35 @@ func CopySelfHostFiles(t testing.TB, dir string, names ...string) {
 	}
 	seen := map[string]bool{}
 	for _, p := range files {
-		base := filepath.Base(p)
-		if seen[base] {
+		rel := selfHostRel(t, p)
+		if seen[rel] {
 			continue
 		}
-		seen[base] = true
-		src, err := os.ReadFile(filepath.Join(selfHostSrcDir, base))
+		seen[rel] = true
+		src, err := os.ReadFile(filepath.Join(selfHostSrcDir, rel))
 		if err != nil {
-			t.Fatalf("read %s: %v", base, err)
+			t.Fatalf("read %s: %v", rel, err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, base), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", base, err)
+		target := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("mkdir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(target, src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
+}
+
+// selfHostRel is a compiler source's path relative to the compiler directory:
+// `parser.fern`, or `drivers/asm_run.fern` for a test driver. Staging keeps
+// that layout, so a driver's `../parser` import resolves the same way staged.
+func selfHostRel(t testing.TB, p string) string {
+	t.Helper()
+	rel, err := filepath.Rel(selfHostSrcDir, p)
+	if err != nil {
+		t.Fatalf("%s is not under %s: %v", p, selfHostSrcDir, err)
+	}
+	return filepath.ToSlash(rel)
 }
 
 // BuildSelfHostBin compiles the self-host driver dir/fernName with the pinned
@@ -481,4 +497,13 @@ func TrackFernSources(t testing.TB, dir, fernName string) {
 	// The closure walk reads every file it visits, which is the whole point
 	// here; the list it returns is not needed.
 	SelfHostImportClosure(t, dir, fernName)
+}
+
+// parentImportRe matches a driver's `import "../module"` line.
+var parentImportRe = regexp.MustCompile(`(?m)^(\s*import\s+")\.\./`)
+
+// FlatDriverSource rewrites a driver's `../` imports to `./`, for staging the
+// driver flat beside the compiler modules it imports.
+func FlatDriverSource(src string) string {
+	return parentImportRe.ReplaceAllString(src, "${1}./")
 }

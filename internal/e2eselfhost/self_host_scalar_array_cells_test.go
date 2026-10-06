@@ -138,9 +138,9 @@ func TestSelfHostPerModuleScalarArrayCells(t *testing.T) {
 func TestSelfHostInterpreterScalarArrayCells(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "interp_run.fern")
+	copySelfHostDriver(t, dir, "drivers/interp_run.fern")
 	bin := filepath.Join(dir, "interp")
-	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-o", bin, filepath.Join(dir, "interp_run.fern"), cli.stdlib)
+	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-o", bin, filepath.Join(dir, "drivers/interp_run.fern"), cli.stdlib)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile interpreter: %v\n%s", err, out)
 	}

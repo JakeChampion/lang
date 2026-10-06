@@ -131,7 +131,7 @@ freeze:
 # shard (#9805). It type-checks them in 9 s.
 #
 # The driver gate answers the other half the first line cannot, and it is the
-# same shape a third time: the 47 compiler/*_run.fern drivers import
+# same shape a third time: the 46 test drivers (compiler/playground_run.fern and compiler/drivers/*_run.fern) import
 # the compiler's modules but are not in fern.fern's tree, so a deleted function
 # one of them still calls is clean here and red wherever its test builds it
 # (#9969 deleted semsource.modes_differ with semsource_census_run still calling

@@ -37,8 +37,8 @@ type pinnedX86 struct {
 func buildX86AsmBenchDriver(t *testing.T, gcc string) string {
 	t.Helper()
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "x86_asm_bench_run.fern")
-	return buildSelfHostBin(t, gcc, dir, "x86_asm_bench_run.fern", "x86_asm_bench")
+	copySelfHostDriver(t, dir, "drivers/x86_asm_bench_run.fern")
+	return buildSelfHostBin(t, gcc, dir, "drivers/x86_asm_bench_run.fern", "x86_asm_bench")
 }
 
 // assembleSelfHostX86 feeds GAS text to the driver and returns the

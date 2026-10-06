@@ -30,7 +30,7 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 	dir := writeSelfHostModloadProject(t)
 
 	// Build the arm64 driver as an x86 host binary (mirrors the fixpoint harness).
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "arm64cachedriver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "arm64cachedriver")
 
 	proj := t.TempDir()
 	cacheDir := filepath.Join(proj, "cache")

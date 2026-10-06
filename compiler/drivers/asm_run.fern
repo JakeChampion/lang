@@ -1,0 +1,44 @@
+// compiler/asm_run.fern — bootstrap-demo driver. Reads
+// Fern source from stdin, wires it through lexer + parser + the typed
+// lowering (semlower.driven) + asm_ir.emit_module_or_error_sub, and prints
+// the resulting AT&T x86_64 assembly to stdout. The companion Go-side test
+// (self_host_asm_run_test.go) pipes a source program in, captures
+// the asm, assembles it with gcc -nostdlib, and runs the
+// resulting binary — asserting the exit code matches the
+// expected value for that source. Multiple sources flow through
+// the same driver via a table-driven test.
+//
+// That's the real bootstrap-style demo: Fern program → native
+// binary → correct exit code.
+//
+// IR-or-error (#3457 slice 5): this driver no longer imports `asm.fern`, so a
+// module the IR gate declines is a hard error here instead of a silent fall
+// back to the legacy AST emitter. That is what made the AST emitter
+// deletable — and this is the driver with the widest reach, built by ~390 test
+// files across internal/e2eselfhost and internal/e2e, so it is also the reroute
+// that proves the per-function IR subset covers the corpus rather than the
+// curated part of it. A decline names its bail site under FERN_STRICT_IR=1.
+//
+// Despite the "demo" framing above this is HEAVILY USED: the *_ir_test.go
+// suites build it to exercise the IR path end-to-end. It is not deletable.
+
+import "../lexer";
+import "../parser";
+import "./rundriver";
+import "../asm_ir";
+import "../asmcore";
+import "../semlower";
+
+function main(): i32 {
+  let mod: parser.Module = rundriver.parse_stdin("asm_run");
+  if (asmcore.refuse_parse_unknowns([mod])) {
+    return 1;
+  }
+  if (asmcore.refuse_decl_names([mod])) {
+    return 1;
+  }
+  let d: semlower.Driven = semlower.driven(mod, "x86-64-linux");
+  let emitted: string = asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize);
+  print(emitted);
+  return 0;
+}

@@ -41,9 +41,9 @@ func TestSelfHostWasmUnitsN2(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern", "wasm_units_probe.fern")
-	probeBin := buildSelfHostBin(t, gcc, dir, "wasm_units_probe.fern", "wasm_units_probe")
-	wholeBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "drivers/wasm_run.fern", "drivers/wasm_units_probe.fern")
+	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_units_probe.fern", "wasm_units_probe")
+	wholeBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	// Each case must survive an arbitrary bisection of its function list, so the
 	// interesting content is spread across several functions: cross-unit calls

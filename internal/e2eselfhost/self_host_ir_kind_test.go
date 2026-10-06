@@ -26,8 +26,8 @@ import (
 func TestSelfHostIRKindRegistry(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ir_kind_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "ir_kind_run.fern", "ir_kind_run")
+	copySelfHostDriver(t, dir, "drivers/ir_kind_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/ir_kind_run.fern", "ir_kind_run")
 
 	// Golden report — locks kind_count, the full-table bijection (every dense
 	// id round-trips), the extension-tag sweep (the registered ids beyond

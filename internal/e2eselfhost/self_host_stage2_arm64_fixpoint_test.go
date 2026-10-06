@@ -62,9 +62,9 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	driverSrc := filepath.Join(dir, "asm_load_run.fern")
-	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	driverSrc := filepath.Join(dir, "drivers/asm_load_run.fern")
+	mmc := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_load_run.fern", "mmc")
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)
@@ -102,7 +102,7 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 		// is the case the deleted test measured at ~709 s on the AST path, and
 		// it is the strongest form of the property — but it is not worth its
 		// wall-clock on every run, so it is gated by an env var.
-		{name: "self", src: "compiler/asm_load_run.fern", stdlib: true, selfEnv: true},
+		{name: "self", src: "compiler/drivers/asm_load_run.fern", stdlib: true, selfEnv: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -20,8 +20,8 @@ func buildWasiSocketCensusComponent(t *testing.T, src string) string {
 	e2eharness.Wasmtime(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	cmd := runX86_64Bin(runner, bin)
 	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1")
 	cmd.Stdin = strings.NewReader(src)
@@ -39,8 +39,8 @@ func buildWasiSocketCensusComponent(t *testing.T, src string) string {
 func TestSelfHostWasmSocketSetupReclaimsOnError(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	for _, tc := range []struct{ name, expr string }{
 		{"listen", "tcp_listen(0)"},
 		{"connect", "tcp_connect(0, 1)"},
@@ -65,8 +65,8 @@ func TestSelfHostWasmSocketSetupReclaimsOnError(t *testing.T) {
 func TestSelfHostWasmSocketCloseZeroHandles(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	for _, tc := range []struct{ name, expr string }{
 		{"listen", "tcp_listen(0)"},
 		{"connect", "tcp_connect(0, 1)"},
@@ -91,8 +91,8 @@ func TestSelfHostWasmSocketCloseZeroHandles(t *testing.T) {
 func TestSelfHostWasmSocketGuestStorage(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	t.Run("close-only-heap-dependency", func(t *testing.T) {
 		cmd := runX86_64Bin(runner, bin)
 		cmd.Stdin = strings.NewReader("function main(): i32 { return tcp_close(0); }")

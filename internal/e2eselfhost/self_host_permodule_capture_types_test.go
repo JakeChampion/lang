@@ -15,8 +15,8 @@ import (
 func TestSelfHostPerModuleCaptureTypes(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_modload_run.fern")
-	copySelfHostDriver(t, dir, "wasm_modload_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_modload_run.fern")
+	copySelfHostDriver(t, dir, "drivers/wasm_modload_run.fern")
 	const types = `pub struct Node { value: i32 }
 pub function make(): Node { return Node { value: 7 }; }
 `
@@ -40,9 +40,9 @@ pub function run(): i32 { let node = types.make(); return apply((): i32 => node.
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
-			driverName := "asm_modload_run.fern"
+			driverName := "drivers/asm_modload_run.fern"
 			if target == "wasm32-wasi" {
-				driverName = "wasm_modload_run.fern"
+				driverName = "drivers/wasm_modload_run.fern"
 			}
 			driver := buildSelfHostBin(t, gcc, dir, driverName, strings.TrimSuffix(driverName, ".fern"))
 			for _, tc := range cases {

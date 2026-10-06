@@ -31,8 +31,8 @@ import (
 func TestSelfHostIRPerModuleDriver(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "alr")
 
 	greetSrc := "function greeting_len(): i32 { let s = \"hello\"; return s.len(); }\n"
 	mainSrc := "import \"./greet\";\nfunction main(): i32 { return greet.greeting_len() + 1; }\n"
@@ -134,8 +134,8 @@ func TestSelfHostIRPerModuleDriver(t *testing.T) {
 func TestSelfHostIRPerModuleCrossStruct(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "alr")
 
 	pointSrc := "pub struct Point { x: i32, y: i32 }\n" +
 		"pub function mk(a: i32, b: i32): Point { return Point { x: a, y: b }; }\n"
@@ -223,8 +223,8 @@ func TestSelfHostIRPerModuleCrossStruct(t *testing.T) {
 func TestSelfHostIRPerModuleCrossEnum(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "alr")
 
 	colSrc := "pub enum Color { Red(i32), Green, Blue(i32) }\n" +
 		"pub function mk(): Color { return Blue(7); }\n"

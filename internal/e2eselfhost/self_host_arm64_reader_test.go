@@ -26,10 +26,10 @@ func TestSelfHostReaderArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 
 	// Build the asm_ir_run (-target arm64-linux) driver as an x86 host binary.
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	echoSrc := "function main(): i32 {\n" +
 		"    let r: Reader = stdin();\n" +
@@ -96,8 +96,8 @@ func TestSelfHostReadFileArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	catSrc := "function main(): i32 {\n" +
 		"    let path: string = args()[1];\n" +
@@ -146,8 +146,8 @@ func TestSelfHostArgsArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	argcSrc := "function main(): i32 { return args().len(); }\n"
 	progAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(argcSrc), "-target", "arm64-linux")

@@ -24,8 +24,8 @@ func TestSelfHostStdlibImportX86_64(t *testing.T) {
 		t.Skip("file-loading driver test runs only natively (argv paths)")
 	}
 	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	mmc := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "mmc")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	mmc := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "mmc")
 
 	// The real repo stdlib (absolute path; the import "std/foo" resolves
 	// to <root>/std/foo.fern).

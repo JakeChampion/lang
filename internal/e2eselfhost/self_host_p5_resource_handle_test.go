@@ -71,8 +71,8 @@ func newPollableFixture(t *testing.T) *pollableFixture {
 	}
 	f.world = w
 
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	f.driverBin = buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	f.driverBin = buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 	return f
 }
 

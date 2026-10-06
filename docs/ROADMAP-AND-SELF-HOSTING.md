@@ -223,7 +223,7 @@ cross-checked against the Go backend (both x86-64 and arm64):
   element assignment `arr[idx] = val`. Together these compile the real
   `std/hex` and `std/base64` (`TestSelfHostBytesX86_64`).
 
-On top of those, `compiler/asm_load_run.fern` is an
+On top of those, `compiler/drivers/asm_load_run.fern` is an
 **import-driven, file-loading driver**: given an entry `.fern` path it
 follows `import "./x"` declarations to sibling files on disk
 (`read_file` + the parser's `Import` list), loads them transitively,

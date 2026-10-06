@@ -34,14 +34,14 @@ func TestSelfHostTcpServerIRX86_64(t *testing.T) {
 		t.Skip("self-host TCP server test runs host-native only (avoids qemu socket nuances)")
 	}
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile(filepath.Join("../../compiler", "asm_run.fern"))
+	src, err := os.ReadFile(filepath.Join("../../compiler", "drivers/asm_run.fern"))
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	// No port is named anywhere: the server binds 0, asks the socket which
 	// port it got, and prints it. That replaces probing the host for a free

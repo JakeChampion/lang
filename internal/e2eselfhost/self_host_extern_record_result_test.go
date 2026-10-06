@@ -101,8 +101,8 @@ func TestSelfHostExternRecordResultCustomProvider(t *testing.T) {
 	}
 
 	// --- Self-host backend: emit the core from the record-result program. ---
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	const want = "mk-ok"
 	prog := `struct Point { x: i32, y: i32 }

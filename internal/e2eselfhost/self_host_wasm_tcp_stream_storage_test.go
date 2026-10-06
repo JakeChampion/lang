@@ -23,8 +23,8 @@ func TestSelfHostWasmTCPRecvLifecycleCensus(t *testing.T) {
 func TestSelfHostWasmTCPRecvGuestStorage(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	for _, tc := range []struct {
 		name string
 		max  int
@@ -60,8 +60,8 @@ func TestSelfHostWasmTCPSendLifecycleCensus(t *testing.T) {
 func TestSelfHostWasmTCPSendGuestStorage(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	for _, tc := range []struct{ name, data string }{{"empty", ""}, {"inline", "x"}, {"heap", "xxxxxxxx"}, {"chunked", strings.Repeat("x", 4097)}} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := e2eharness.WasiStreamSendStorageProbe(tc.data)

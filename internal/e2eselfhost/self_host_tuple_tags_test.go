@@ -27,8 +27,8 @@ func TestSelfHostTupleTags(t *testing.T) {
 		t.Skip("tuple_tags_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "tuple_tags_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "tuple_tags_run.fern", "tuple_tags_run")
+	copySelfHostDriver(t, dir, "drivers/tuple_tags_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/tuple_tags_run.fern", "tuple_tags_run")
 
 	// Golden — the exact split_tuple_ret / tuple_ret_tag_at tag mapping the former
 	// byte scan produced, captured before the TypeRef migration. Byte-identical.

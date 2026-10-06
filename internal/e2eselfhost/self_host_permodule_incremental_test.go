@@ -40,7 +40,7 @@ import (
 func TestSelfHostPerModuleIncrementalCodegenX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, shDir, "drivers/asm_modload_run.fern", "driver")
 
 	// The program tree lives in its own dir (the driver resolves imports
 	// relative to the entry). leaf_val's return type flows — via an inferred
@@ -372,7 +372,7 @@ func TestSelfHostPerModuleIncrementalCodegenX86_64(t *testing.T) {
 func TestSelfHostPerModuleObjectCacheX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, shDir, "drivers/asm_modload_run.fern", "driver")
 
 	proj := t.TempDir()
 	cacheDir := filepath.Join(proj, "cache")

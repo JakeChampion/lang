@@ -28,7 +28,7 @@ func TestSelfHostModloadFoldsTargetOS(t *testing.T) {
 		t.Skip("modload driver runs natively; skipping under an exec runner")
 	}
 	dir := writeSelfHostModloadProject(t)
-	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "target_os_modload")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "target_os_modload")
 
 	stage := t.TempDir()
 	// `seven` keeps a real direct call in the program: once target_os() folds

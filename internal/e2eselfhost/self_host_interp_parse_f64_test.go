@@ -75,16 +75,16 @@ func TestSelfHostInterpFloatLiteralBits(t *testing.T) {
 	native := runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "interp_run.fern")
+	copySelfHostDriver(t, dir, "drivers/interp_run.fern")
 
 	var driverBin string
 	var runner []string
 	if native {
-		driverBin = buildSelfHostBinArm64Darwin(t, dir, "interp_run.fern", "interp_run")
+		driverBin = buildSelfHostBinArm64Darwin(t, dir, "drivers/interp_run.fern", "interp_run")
 	} else {
 		gcc, r := x86_64Tooling(t)
 		runner = r
-		driverBin = buildSelfHostBin(t, gcc, dir, "interp_run.fern", "interp_run")
+		driverBin = buildSelfHostBin(t, gcc, dir, "drivers/interp_run.fern", "interp_run")
 	}
 	interpBin := buildLangBinForInterp(t)
 

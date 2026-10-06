@@ -31,8 +31,8 @@ func buildCheckerModloadDriverX86(t *testing.T) (gcc string, runner []string, dr
 	// The driver's own import closure, derived rather than listed: a
 	// hand-written list goes stale the moment a module gains an import, and
 	// the missing source is silently omitted from the build-cache key.
-	copySelfHostDriver(t, dir, "checker_modload_run.fern")
-	return gcc, runner, buildSelfHostBin(t, gcc, dir, "checker_modload_run.fern", "ckdriver")
+	copySelfHostDriver(t, dir, "drivers/checker_modload_run.fern")
+	return gcc, runner, buildSelfHostBin(t, gcc, dir, "drivers/checker_modload_run.fern", "ckdriver")
 }
 
 // checkSourceModload resolves `entrySrc`'s full stdlib closure (real Go

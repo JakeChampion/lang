@@ -228,8 +228,8 @@ const (
 func TestSelfHostHeapBumpFlatIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "driver")
 	compile := func(t *testing.T, src string) string {
 		t.Helper()
 		asm, stderr, err := loadCompile(t, runner, driverBin, src, nil)

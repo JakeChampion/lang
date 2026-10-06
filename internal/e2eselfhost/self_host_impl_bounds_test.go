@@ -47,8 +47,8 @@ func TestSelfHostImplBounds(t *testing.T) {
 		t.Skip("impl_bounds_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "impl_bounds_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "impl_bounds_run.fern", "impl_bounds_run")
+	copySelfHostDriver(t, dir, "drivers/impl_bounds_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/impl_bounds_run.fern", "impl_bounds_run")
 
 	const src = `trait Ord { function cmp(self: Self, other: Self): i32; }
 trait Show { function show(self: Self): string; }

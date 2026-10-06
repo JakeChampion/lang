@@ -38,8 +38,8 @@ func TestSelfHostExportListParamRunsViaConsumer(t *testing.T) {
 	}
 
 	// self-host emits the exporter core (command with main + list-param @export).
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/nums@0.1.0", "sum")
 function sum(xs: i32[]): i32 {

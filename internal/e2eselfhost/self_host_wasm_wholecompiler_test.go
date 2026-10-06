@@ -40,9 +40,9 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "flatten.fern", "modloader.fern", "fern_toml.fern", "builtins.fern", "wasm_objfile.fern", "wasm_modload_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_modload_run.fern", "wasm_modload_run")
-	entryPath := filepath.Join(dir, "wasm_modload_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "flatten.fern", "modloader.fern", "fern_toml.fern", "builtins.fern", "drivers/wasm_objfile.fern", "drivers/wasm_modload_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_modload_run.fern", "wasm_modload_run")
+	entryPath := filepath.Join(dir, "drivers/wasm_modload_run.fern")
 	// The compiler imports core/map, which resolves beside the entry.
 	copyStdlibTree(t, dir)
 
