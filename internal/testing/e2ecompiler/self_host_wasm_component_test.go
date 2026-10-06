@@ -284,13 +284,13 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
 	// A preview1 driver (to compile the component assembler) and a preview2
 	// driver (to emit the run-core WAT for a program).
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_p2.fern"), []byte(p2Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_p2.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	p2Bin := buildSelfHostBin(t, gcc, dir, "wasm_run_p2.fern", "wasm_run_p2")
 
 	// Component assembler: read a core WAT, emit_binary, component_full.
@@ -554,13 +554,13 @@ func TestSelfHostWasmComponentStdout(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
 	var asmSrc strings.Builder
@@ -798,13 +798,13 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
 	var asmSrc strings.Builder
@@ -1133,13 +1133,13 @@ func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
 	var asmSrc strings.Builder
@@ -1394,13 +1394,13 @@ func TestSelfHostWasmComponentReadWriteFile(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
 	var asmSrc strings.Builder
@@ -1628,13 +1628,13 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
 	var asmSrc strings.Builder
@@ -1856,13 +1856,13 @@ func TestSelfHostWasmComponentEnv(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
 	var asmSrc strings.Builder
@@ -2084,13 +2084,13 @@ func TestSelfHostWasmComponentArgs(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
 	var asmSrc strings.Builder
@@ -2302,13 +2302,13 @@ func TestSelfHostWasmComponentClock(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
 	var asmSrc strings.Builder
@@ -2522,13 +2522,13 @@ func TestSelfHostWasmComponentClockMono(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
 	var asmSrc strings.Builder
@@ -2738,13 +2738,13 @@ func TestSelfHostWasmComponentReadEnv(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
 	var asmSrc strings.Builder
@@ -2966,13 +2966,13 @@ func TestSelfHostWasmComponentReadWriteEnv(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
 	var asmSrc strings.Builder
@@ -3191,13 +3191,13 @@ func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
 	var asmSrc strings.Builder
@@ -3413,13 +3413,13 @@ func TestSelfHostWasmComponentEprint(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
 	var asmSrc strings.Builder
@@ -3646,13 +3646,13 @@ func TestSelfHostWasmComponentExit(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
 	var asmSrc strings.Builder
@@ -3873,13 +3873,13 @@ func TestSelfHostWasmComponentArgsRead(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
 	var asmSrc strings.Builder
@@ -4106,13 +4106,13 @@ func TestSelfHostWasmComponentArgsReadWrite(t *testing.T) {
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	if err := os.WriteFile(filepath.Join(dir, "drivers/wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
 	var asmSrc strings.Builder
