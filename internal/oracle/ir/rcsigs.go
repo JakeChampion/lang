@@ -222,6 +222,9 @@ var rcBuiltinSigs = map[string]RcSig{
 	// Reads the rc word. Lowered inline rather than as a call, but
 	// classified so a shadowed spelling that survives is not opaque.
 	"__rc_get": one(0, RcInspect, false),
+	// (argv). The runtime keeps a unit of the array for later args()
+	// calls: the caller keeps its own, and the array gains one.
+	"set_args": one(0, RcRetain, false),
 }
 
 // rcInertBuiltins are the builtins that move no reference count on any

@@ -6361,6 +6361,9 @@ function value_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowere
   if (ins.str == "args") {
     return Lowered { found: true, r: emit(r, ir.op_args()) };
   }
+  if (ins.str == "set_args") {
+    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_set_args", 1)) };
+  }
   if (ins.str == "putchar") {
     return Lowered { found: true, r: emit(r, ir.op_putchar()) };
   }

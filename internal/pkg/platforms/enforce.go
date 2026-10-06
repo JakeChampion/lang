@@ -127,6 +127,8 @@ var gatedBuiltins = map[string]string{
 	"env":     "env",
 	"environ": "env",
 	"args":    "args",
+	// Replaces what args() reports, so it needs the argv args() reads.
+	"set_args": "args",
 	// Deploy-time configuration: the environment where there is one (the
 	// checker renames the call to env there), wasi:config/store on the
 	// proxy world.

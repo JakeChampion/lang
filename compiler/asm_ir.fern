@@ -1140,6 +1140,18 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // lowered in ANY module, this block only in the entry.
     s = s.write("    .globl __fern_lc_report\n");
     s = s.write("__fern_lc_report:\n");
+    if (s.has_need("set_args")) {
+      // The array set_args stored is the runtime's own unit, not a leak:
+      // give it back before counting.
+      s = s.write("    movq __fern_args_set(%rip), %rax\n");
+      s = s.write("    testq %rax, %rax\n");
+      s = s.write("    je .Llc_args_done\n");
+      s = s.write("    movq $0, __fern_args_set(%rip)\n");
+      s = s.write("    pushq %rax\n");
+      s = s.write("    call __fn___fern_str_arr_free\n");
+      s = s.write("    addq $8, %rsp\n");
+      s = s.write(".Llc_args_done:\n");
+    }
     s = s.write("    leaq .Llc_a(%rip), %rsi\n");
     s = s.write("    movq $18, %rdx\n");
     s = s.write("    call .Lhev_w\n");
@@ -3751,6 +3763,31 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    xorl %eax, %eax\n");
     s = s.write("    ret\n");
   }
+  // __fern_set_args(arr@8(%rsp)) -> 0: the array later args() calls report.
+  // __fern_args_set holds one unit of it — retained here, since the caller
+  // only lends it — and the array it replaces gives its unit back through
+  // the string[] release. __fern_args hands out a retain of it, so no
+  // caller's drop can be the last.
+  if (s.has_need("set_args")) {
+    s = s.write("    .section .bss\n");
+    s = s.write("    .align 8\n");
+    s = s.write("__fern_args_set: .quad 0\n");
+    s = s.write("    .section .text\n");
+    s = s.write("__fn___fern_set_args:\n");
+    s = s.write("    pushq 8(%rsp)\n");
+    s = s.write("    call __fn___fern_rc_inc\n");
+    s = s.write("    popq %rax\n");
+    s = s.write("    movq __fern_args_set(%rip), %rcx\n");
+    s = s.write("    movq %rax, __fern_args_set(%rip)\n");
+    s = s.write("    testq %rcx, %rcx\n");
+    s = s.write("    je .Lsetargs_ret\n");
+    s = s.write("    pushq %rcx\n");
+    s = s.write("    call __fn___fern_str_arr_free\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write(".Lsetargs_ret:\n");
+    s = s.write("    xorl %eax, %eax\n");
+    s = s.write("    ret\n");
+  }
   // __fern_str_grow(a@16(%rsp), b@8(%rsp)) -> 1 once b is appended to a in
   // place, else 0 with nothing written. In place needs a FUSED box at rc 1,
   // whose block __fern_str_free will return to the class it came from: the
@@ -4135,6 +4172,17 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    leave\n");
     s = s.write("    ret\n");
     s = s.write("__fern_args:\n");
+    if (s.has_need("set_args")) {
+      // Once set_args has stored an array, every call answers a retain of it.
+      s = s.write("    movq __fern_args_set(%rip), %rax\n");
+      s = s.write("    testq %rax, %rax\n");
+      s = s.write("    je .Largs_argv\n");
+      s = s.write("    pushq %rax\n");
+      s = s.write("    call __fn___fern_rc_inc\n");
+      s = s.write("    addq $8, %rsp\n");
+      s = s.write("    ret\n");
+      s = s.write(".Largs_argv:\n");
+    }
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %r12\n");
@@ -11208,6 +11256,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   }
   if (name == "__fern_getpwuid_name") {
     s = s.need("pwname");
+  }
+  if (name == "__fern_set_args") {
+    s = s.need("set_args");
   }
   // The VIEW-aware string[] element walk (#6544) is gated the same way
   // and for the same reason: its body's inner

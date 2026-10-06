@@ -295,6 +295,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "env", capability: "env" },
     Gate { builtin: "environ", capability: "env" },
     Gate { builtin: "args", capability: "args" },
+    Gate { builtin: "set_args", capability: "args" },
     // Deploy-time configuration: the environment where there is one,
     // wasi:config/store on the proxy world.
     Gate { builtin: "config_get", capability: "config" },

@@ -1437,14 +1437,21 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// args(): string[] — returns the program's command-line argv as a
 	// length-prefixed string array. The first element is conventionally
 	// the program / module path (matching argv[0] in C and os.Args[0]
-	// in Go). Building the array is one-shot and cached: the first
-	// `args()` call materialises it from libc / WASI; subsequent calls
-	// hand back the same pointer. The bytes are assumed to be UTF-8, not
-	// validated — the `read_dir` position (docs/STRINGS-SOTA.md, D9 and
-	// D10): there is no error arm to refuse into.
+	// in Go). Each call hands back an array of the caller's own. The
+	// bytes are assumed to be UTF-8, not validated — the `read_dir`
+	// position (docs/STRINGS-SOTA.md, D9 and D10): there is no error arm
+	// to refuse into.
 	c.info.FuncSigs["args"] = &ast.FuncType{
 		Params: []ast.Type{},
 		Result: ast.ArrayType{Elem: ast.StringType{}},
+	}
+	// set_args(argv): void — replaces what every later `args()` call
+	// reports, for the rest of the process. A multicall binary that
+	// dispatches on argv[1] shifts argv with it, so the utility it runs
+	// sees its own name as argv[0] (#9694).
+	c.info.FuncSigs["set_args"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.StringType{}}},
+		Result: ast.VoidType{},
 	}
 	// environ(): string[] — the whole environment in the order the
 	// process received it, each entry the raw `NAME=VALUE` bytes.

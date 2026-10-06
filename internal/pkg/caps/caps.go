@@ -265,6 +265,9 @@ var Ungated = map[string]bool{
 	"target_arch":     true,
 	"args":            true,
 	"exit":            true,
+	// Rewriting the argv later args() calls report reaches nothing outside
+	// the process, the argument that leaves `args` and `exit` here.
+	"set_args": true,
 	// A signal disposition reconfigures how THIS process reacts to
 	// something delivered to it. It reaches nothing outside the
 	// process and confers no authority a dependency could escalate

@@ -2266,11 +2266,11 @@ pub function op_reader_close(): Op {
 }
 
 // `args` reads the process command-line arguments, pushing a fresh string[]
-// (argv[0] first) — a VALUE op with no args, leaving the array box on the stack.
+// (argv[0] first), or a retain of the array `set_args` stored once a program
+// has called it — a VALUE op with no args, leaving the array box on the stack.
 // Lowers to each backend's __fern_args helper (which reads the __fern_argc /
-// __fern_argv globals the entry's _start saves from the initial stack). No wasm
-// argv in this runtime, so an args module is wasm-ineligible (wasm_ir.ir_route_ok) and
-// is refused there.
+// __fern_argv globals the entry's _start saves from the initial stack, or
+// WASI's argv on wasm).
 pub function op_args(): Op {
   return op0(180);
 }
@@ -8367,7 +8367,7 @@ pub function call_needs_heap(name: string): boolean {
   if (name == "__fern_rc_underflow_count" || name == "__fern_rc_underflow_get") {
     return true;
   }
-  if (name == "__fern_snapshot_dec" || name == "__fern_struct_copy") {
+  if (name == "__fern_snapshot_dec" || name == "__fern_struct_copy" || name == "__fern_set_args") {
     return true;
   }
   if (name == "__fern_str_free" || name == "__fern_str_view_free" || name == "__fern_str_arr_free") {

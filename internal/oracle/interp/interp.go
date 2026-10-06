@@ -692,6 +692,7 @@ func New() *Interp {
 	i.Builtins["__method_Array_len"] = &Builtin{Fn: builtinLen}
 	i.Builtins["__method_slice_len"] = &Builtin{Fn: builtinLen}
 	i.Builtins["args"] = &Builtin{Fn: builtinArgs}
+	i.Builtins["set_args"] = &Builtin{Fn: builtinSetArgs}
 	i.Builtins["env"] = &Builtin{Fn: builtinEnv}
 	i.Builtins["environ"] = &Builtin{Fn: builtinEnviron}
 	i.Builtins["read_file"] = &Builtin{Fn: builtinReadFile}
@@ -5727,6 +5728,27 @@ func builtinArgs(i *Interp, args []Value) (Value, error) {
 		out.E[k] = String(a)
 	}
 	return out, nil
+}
+
+// builtinSetArgs replaces the argv every later args() call reports.
+func builtinSetArgs(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("set_args: expected 1 arg, got %d", len(args))
+	}
+	arr, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("set_args: expected string[] arg, got %T", args[0])
+	}
+	argv := make([]string, len(arr.E))
+	for k, e := range arr.E {
+		s, ok := e.(String)
+		if !ok {
+			return nil, fmt.Errorf("set_args: element %d is %T, not a string", k, e)
+		}
+		argv[k] = string(s)
+	}
+	i.Args = argv
+	return Void{}, nil
 }
 
 func builtinLen(_ *Interp, args []Value) (Value, error) {

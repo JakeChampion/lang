@@ -8097,9 +8097,10 @@ pub function runtime_need_deps(name: string): string[] {
     || name == "str_case" || name == "str_repeat"
     || name == "str_replace"
     || name == "arrarr_free" || name == "strarrarr_free" || name == "optarrarr_free"
-    || name == "poll" || name == "task") {
+    || name == "poll" || name == "task" || name == "set_args") {
     // poll's __fern_poll allocates the transient pollfd[] via __fern_alloc;
-    // the task runtime its records, table and save areas.
+    // the task runtime its records, table and save areas. set_args retains
+    // and releases through the rc helpers the heap bundle carries.
     return heap;
   }
   if (name == "str_trim") {
@@ -10163,6 +10164,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_map_snapshot_col", "__fern_map_snapshot_col_str",
     "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique", "__fn___fern_arr_inc_elems", "__fn___fern_arr_own_elems",
     "__fn___fern_str_own", "__fn___fern_str_grow", "__fn___fern_str_grow_range", "__fn___fern_getpwuid_name",
+    "__fn___fern_set_args",
     "__fn___fern_alloc_reuse",
     "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
     "__fn___fern_i64_to_string", "__fn___fern_u64_to_string",

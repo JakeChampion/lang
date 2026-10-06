@@ -349,6 +349,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_emits_op_cached(cache, "open_reader_with") || module_emits_op_cached(cache, "open_writer_with")) {
     out = out.append("open_with");
   }
+  if (module_calls_direct(cache, "__fern_set_args")) {
+    out = out.append("@calls_set_args");
+  }
   // The allocation count (#9596) puts a global and a tick into the
   // allocator, so the module has to declare it the way it declares any
   // other runtime piece it reads.
@@ -2611,11 +2614,12 @@ pub function args_imports_p2(): string {
 // list entry into a fresh [len][bytes] string block and store its pointer in
 // the same string[] array block ([len][cap][elem-ptrs]) the preview1 helper
 // builds, so every args() call site is unchanged.
-pub function args_func_p2(): string {
+pub function args_func_p2(set_args: boolean): string {
   let o: string = "";
   o = o + "  (func $__fern_args (result i32)\n";
   o = o + "    (local $base i32) (local $ra i32) (local $ptr i32) (local $count i32) (local $arr i32)\n";
   o = o + "    (local $i i32) (local $sp i32) (local $sl i32) (local $blk i32) (local $j i32)\n";
+  o = o + args_set_answer(set_args);
   o = o + p2_return_area("16");
   o = o + "    (call $__fern_get_arguments (local.get $ra))\n";
   o = o + "    (local.set $ptr (i32.load (local.get $ra)))\n";
@@ -3946,7 +3950,7 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
     o = o + environ_func_p2();
   }
   if (need(needs, "args")) {
-    o = o + args_func_p2();
+    o = o + args_func_p2(need(needs, "@calls_set_args"));
   }
   if (need_read_file(needs) || need_write_file(needs) || need_any(needs, component_fs_needs())) {
     o = o + errno_p2_func();
@@ -11189,11 +11193,12 @@ pub function args_helpers(): string {
   return o;
 }
 
-pub function args_func(): string {
+pub function args_func(set_args: boolean): string {
   let o: string = "";
   o = o + "  (func $__fern_args (result i32)\n";
   o = o + "    (local $argc i32) (local $bufsz i32) (local $ptrs i32) (local $buf i32)\n";
   o = o + "    (local $arr i32) (local $i i32) (local $e i32) (local $len i32) (local $j i32) (local $blk i32)\n";
+  o = o + args_set_answer(set_args);
   o = o + "    (drop (call $__fern_args_sizes_get (i32.const 0) (i32.const 4)))\n";
   o = o + "    (local.set $argc (i32.load (i32.const 0)))\n";
   o = o + "    (local.set $bufsz (i32.load (i32.const 4)))\n";
@@ -11226,6 +11231,31 @@ pub function args_func(): string {
   o = o + "    (call $__fern_raw_free (local.get $ptrs) (i32.mul (local.get $argc) (i32.const 4)))\n";
   o = o + "    (call $__fern_raw_free (local.get $buf) (local.get $bufsz))\n";
   o = o + "    (local.get $arr))\n";
+  return o;
+}
+
+// args_set_answer is the head of either preview's $__fern_args in a module
+// that calls set_args: once an array is stored, every call answers a retain
+// of it.
+function args_set_answer(set_args: boolean): string {
+  if (!set_args) {
+    return "";
+  }
+  return "    (if (global.get $__fern_args_set) (then (return (call $__fern_rc_inc (global.get $__fern_args_set)))))\n";
+}
+
+// set_args_func is $__fern_set_args(arr) -> 0, the wasm sibling of the
+// register backends' helper: $__fern_args_set holds one retained unit of the
+// array, and the one it replaces is released through the string[] walk.
+pub function set_args_func(): string {
+  let o: string = "";
+  o = o + "  (global $__fern_args_set (mut i32) (i32.const 0))\n";
+  o = o + "  (func $__fern_set_args (param $a i32) (result i32)\n";
+  o = o + "    (local $old i32)\n";
+  o = o + "    (local.set $old (global.get $__fern_args_set))\n";
+  o = o + "    (global.set $__fern_args_set (call $__fern_rc_inc (local.get $a)))\n";
+  o = o + "    (if (local.get $old) (then (drop (call $__fern_arr_dec_ptr (local.get $old)))))\n";
+  o = o + "    (i32.const 0))\n";
   return o;
 }
 
@@ -12629,11 +12659,11 @@ function lc_label(text: string): string {
 // shim instead. The line is built in fixed scratch below the data pool (the
 // process is exiting); labels are packed-word stores (lc_label); digits are
 // written backwards by $__fern_lc_wrnum.
-pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean): string {
+pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean, set_args: boolean): string {
   if (!lc) {
     return "";
   }
-  return lc_report_funcs(sanitize) + "  (func $__fern_proc_exit (param $c i32)\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
+  return lc_report_funcs(sanitize, set_args) + "  (func $__fern_proc_exit (param $c i32)\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
 }
 
 // lc_exit_report is the census report a component's exit shim makes before
@@ -12648,17 +12678,17 @@ function lc_exit_report(lc: boolean): string {
 // component_run_entry is `$__fern_lang_run`: main's result mapped to the 0 = ok /
 // 1 = err the canon lift expects, reporting the census on the way out when
 // `report` is set.
-function component_run_entry(report: boolean, sanitize: boolean): string {
+function component_run_entry(report: boolean, sanitize: boolean, set_args: boolean): string {
   if (!report) {
     return "  (func $__fern_lang_run (result i32) (i32.eqz (i32.eqz (call $main))))\n";
   }
-  return lc_report_funcs(sanitize) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
+  return lc_report_funcs(sanitize, set_args) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
 }
 
 // lc_report_funcs is `$__fern_lc_report` and the two writers it calls, for
 // either framing: mode 0 reports from its $__fern_proc_exit, a component from its
 // run entry and its exit shim.
-function lc_report_funcs(sanitize: boolean): string {
+function lc_report_funcs(sanitize: boolean, set_args: boolean): string {
   let o: string = "";
   // $__fern_lc_wr(p, len): one fd_write(2) of [p, p+len).
   o = o + "  (func $__fern_lc_wr (param $p i32) (param $len i32)\n";
@@ -12688,6 +12718,13 @@ function lc_report_funcs(sanitize: boolean): string {
   // The report.
   o = o + "  (func $__fern_lc_report\n";
   o = o + "    (local $b i32) (local $na i64) (local $nf i64) (local $live i64)\n";
+  // The array set_args stored is the runtime's own unit, not a leak: give it
+  // back before counting.
+  if (set_args) {
+    o = o + "    (if (global.get $__fern_args_set) (then\n";
+    o = o + "      (drop (call $__fern_arr_dec_ptr (global.get $__fern_args_set)))\n";
+    o = o + "      (global.set $__fern_args_set (i32.const 0))))\n";
+  }
   // The counts are read before anything is written: a component's $__fern_fd_write
   // shim allocates, and would count its own writes into the line.
   o = o + "    (local.set $na (global.get $__fern_lc_alloc_count))\n";
@@ -14205,6 +14242,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count"), lc));
     parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
   }
+  if (need(needs, "@calls_set_args")) {
+    parts = parts.append(set_args_func());
+  }
   // The preview2 shims stand in for the preview1 imports mode 0 supplies, so
   // every $__fern_fd_write / $__fern_proc_exit call site the IR emits links unchanged.
   // Placed after the heap runtime they call into (as the AST path does).
@@ -14334,7 +14374,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // the heap runtime (module_allocates pulls the heap in for an args
   // module — op_allocates admits "args"). Emitted when the module reads argv.
   if (mode != 2 && need(needs, "args")) {
-    parts = parts.append(args_func());
+    parts = parts.append(args_func(need(needs, "@calls_set_args")));
   }
   // $__fern_env(name): scan the environ vector for `NAME=`, box an
   // Option[string] (Some(value)/None). Heap-backed (allocates the value +
@@ -14891,7 +14931,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // Census report + the reporting $__fern_proc_exit (#5362). Mode 0 only: the
     // component modes have no preview1 proc_exit to wrap. Empty when the
     // flag is off.
-    parts = parts.append(lc_report_and_exit_wrapper(lc, sw.sanitize));
+    parts = parts.append(lc_report_and_exit_wrapper(lc, sw.sanitize, need(needs, "@calls_set_args")));
     parts = parts.append("  (func $__fern_start (call $__fern_proc_exit (call $main)))\n");
     parts = parts.append(xps);
     // `main` is exported beside `_start` so a host can read its result
@@ -14916,7 +14956,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (lifts_async(mod, mode)) {
     parts = parts.append(async_lift_wrappers(mod));
   }
-  parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize));
+  parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize, need(needs, "@calls_set_args")));
   parts = parts.append("  (export \"_lang_run\" (func $__fern_lang_run)))\n");
   return util.str_join_chunks(parts);
 }

@@ -4806,6 +4806,7 @@ function builtin_sigs(): string[] {
     "remove_file(string): Result[void, IoError]",
     "rename(string, string): Result[void, IoError]",
     "rlimit_nofile(): i64",
+    "set_args(string[]): void",
     "set_file_times(string, i64, i64, i64, i64, i32): Result[void, IoError]",
     "set_priority(i32): Result[void, IoError]",
     "set_process_group(i32, i32): Result[void, IoError]",

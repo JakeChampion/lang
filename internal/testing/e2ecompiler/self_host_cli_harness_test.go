@@ -122,32 +122,34 @@ func (c *selfHostCLI) exitOfStdin(t *testing.T, source, target string, stdin []b
 // exitOfFile also supports fixtures with relative imports beside the entry.
 func (c *selfHostCLI) exitOfFile(t *testing.T, src, target string, stdin []byte, env ...string) (string, int) {
 	t.Helper()
+	return c.exitOfFileArgs(t, src, target, stdin, nil, env...)
+}
+
+// exitOfFileArgs is exitOfFile with args passed to the program after its name.
+func (c *selfHostCLI) exitOfFileArgs(t *testing.T, src, target string, stdin []byte, args []string, env ...string) (string, int) {
+	t.Helper()
+	var cmd *exec.Cmd
 	switch target {
 	case "x86-64-linux":
-		return runWithStdin(t, c.runner, c.x86Binary(t, src, env...), stdin)
+		cmd = runX86_64Bin(c.runner, c.x86Binary(t, src, env...), args...)
 	case "arm64-linux":
 		armgcc, qemu := arm64Tooling(t)
 		asm, err := os.ReadFile(c.emit(t, src, target, env...))
 		if err != nil {
 			t.Fatal(err)
 		}
-		cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, filepath.Dir(src), "prog", string(asm)))
-		cmd.Stdin = bytes.NewReader(stdin)
-		var eb bytes.Buffer
-		cmd.Stderr = &eb
-		_ = cmd.Run()
-		return eb.String(), cmd.ProcessState.ExitCode()
+		cmd = runArm64Bin(qemu, buildBinArm64(t, armgcc, filepath.Dir(src), "prog", string(asm)), args...)
 	case "wasm32-wasi":
-		cmd := exec.Command(e2eharness.Wasmtime(t), "run", c.emit(t, src, target, env...))
-		cmd.Stdin = bytes.NewReader(stdin)
-		var eb bytes.Buffer
-		cmd.Stderr = &eb
-		_ = cmd.Run()
-		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			t.Fatalf("wasmtime did not exit normally\n%s", eb.String())
-		}
-		return eb.String(), cmd.ProcessState.ExitCode()
+		cmd = exec.Command(e2eharness.Wasmtime(t), append([]string{"run", c.emit(t, src, target, env...)}, args...)...)
+	default:
+		t.Fatalf("exitOf: unsupported target %s", target)
 	}
-	t.Fatalf("exitOf: unsupported target %s", target)
-	return "", 0
+	cmd.Stdin = bytes.NewReader(stdin)
+	var eb bytes.Buffer
+	cmd.Stderr = &eb
+	_ = cmd.Run()
+	if target == "wasm32-wasi" && (cmd.ProcessState == nil || !cmd.ProcessState.Exited()) {
+		t.Fatalf("wasmtime did not exit normally\n%s", eb.String())
+	}
+	return eb.String(), cmd.ProcessState.ExitCode()
 }

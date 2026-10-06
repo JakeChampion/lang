@@ -369,6 +369,7 @@ var providedSigs = map[string]providedSig{
 	"f64_from_bits":                    {-1, rFloat},
 	"isatty":                           {1, rWord},
 	"window_size":                      {1, rWord},
+	"set_args":                         {1, rVoid},
 	"set_window_size":                  {3, rWord},
 	"termios_get":                      {1, rWord},
 	"termios_set":                      {3, rWord},
