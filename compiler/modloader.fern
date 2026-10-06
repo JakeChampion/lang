@@ -662,6 +662,7 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
 // the program's references to JsonValue / IoError / FileStat / … resolve.
 // When the file is absent the program is returned unchanged and
 // module_with_builtins' idempotent synthetic injection fills the types in.
+// fern.fern never calls this: the compiler's IoError layout is the injection's.
 //
 // Deliberately NOT overlay-aware, unlike its neighbours: builtins.fern lives
 // beside the compiler sources, not under a package root, so it is not a module

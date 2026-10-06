@@ -248,7 +248,7 @@ function test_buf_writer_close_refused(): test.TestOutcome {
       }
       b = b.write_string("x");
       match (b.close()) {
-        Some(Other(_, msg)) => {
+        Some(Other(_, msg, _)) => {
           return test.assert_eq(sticky && msg == "No space left on device", true);
         },
         Some(_) => {

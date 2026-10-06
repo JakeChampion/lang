@@ -2424,7 +2424,7 @@ pub function rt_src_open_with(t: string): string {
 // A write has no PATH to report, and __fern_io_error CONSUMES the one it is
 // given, so the argument has to be a string the callee may keep or drop. A
 // literal serves: a string literal is an IMMORTAL static box (rc = -1 at box-8
-// on both register backends), so being moved into `Other(path, "")` or dropped
+// on both register backends), so being moved into Other's path slot or dropped
 // on the Interrupted branch is a no-op — no allocation for an error path that
 // carries no path anyway. This mirrors native, whose error arm passes
 // .LStr_ioerr_empty.
@@ -2789,7 +2789,7 @@ pub function rt_src_window_size(t: string): string {
 // terminal". Same line `poll` is on for that target.
 pub function rt_src_termios_get(t: string): string {
   if (t == "arm64-darwin") {
-    return "function __fern_termios_get(fd: i32): Result[i64[], IoError] { return Err(__fern_io_error(38, \"\")); }";
+    return "function __fern_termios_get(fd: i32): Result[i64[], IoError] { return Err(__fern_io_error(" + errno_on(t, 38) + ", \"\")); }";
   }
   return "function __fern_termios_get(fd: i32): Result[i64[], IoError] { let buf: usize = __raw_alloc(36); let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, 21505, buf as i64) as i32; if (rc < 0) { let buf_own0: string = __raw_string(buf, 36); return Err(__fern_io_error(0 - rc, \"\")); } let out: i64[] = []; let i: i32 = 0; while (i < 4) { let b0: i64 = (__raw_load8(buf, i * 4) as i64); let b1: i64 = (__raw_load8(buf, i * 4 + 1) as i64); let b2: i64 = (__raw_load8(buf, i * 4 + 2) as i64); let b3: i64 = (__raw_load8(buf, i * 4 + 3) as i64); out = out.append(b0 + b1 * 256 + b2 * 65536 + b3 * 16777216); i = i + 1; } out = out.append(__raw_load8(buf, 16) as i64); let j: i32 = 0; while (j < 19) { out = out.append(__raw_load8(buf, 17 + j) as i64); j = j + 1; } let buf_own: string = __raw_string(buf, 36); return Ok(out); }";
 }
@@ -2810,7 +2810,7 @@ pub function rt_src_termios_get(t: string): string {
 // parser thinks it is looking at.
 pub function rt_src_termios_set(t: string): string {
   if (t == "arm64-darwin") {
-    return "function __fern_termios_set(fd: i32, act: i32, words: i64[]): Result[void, IoError] { return Err(__fern_io_error(38, \"\")); }";
+    return "function __fern_termios_set(fd: i32, act: i32, words: i64[]): Result[void, IoError] { return Err(__fern_io_error(" + errno_on(t, 38) + ", \"\")); }";
   }
   return "function __fern_termios_set(fd: i32, act: i32, words: i64[]): Result[void, IoError] { if (words.len() != 24 || act < 0 || act > 2) { return Err(__fern_io_error(22, \"\")); } let buf: usize = __raw_alloc(36); let i: i32 = 0; while (i < 4) { let v: i64 = words[i]; __raw_store8(buf, i * 4, (v % 256) as i32); __raw_store8(buf, i * 4 + 1, ((v / 256) % 256) as i32); __raw_store8(buf, i * 4 + 2, ((v / 65536) % 256) as i32); __raw_store8(buf, i * 4 + 3, ((v / 16777216) % 256) as i32); i = i + 1; } __raw_store8(buf, 16, (words[4] % 256) as i32); let j: i32 = 0; while (j < 19) { __raw_store8(buf, 17 + j, (words[5 + j] % 256) as i32); j = j + 1; } let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, (21506 + act) as i64, buf as i64) as i32; let buf_own: string = __raw_string(buf, 36); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
@@ -2829,7 +2829,7 @@ pub function rt_src_termios_set(t: string): string {
 // terminal"; the macos runner is where they can be pinned.
 pub function rt_src_set_window_size(t: string): string {
   if (t == "arm64-darwin") {
-    return "function __fern_set_window_size(fd: i32, rows: i32, cols: i32): Result[void, IoError] { return Err(__fern_io_error(38, \"\")); }";
+    return "function __fern_set_window_size(fd: i32, rows: i32, cols: i32): Result[void, IoError] { return Err(__fern_io_error(" + errno_on(t, 38) + ", \"\")); }";
   }
   return "function __fern_set_window_size(fd: i32, rows: i32, cols: i32): Result[void, IoError] { let buf: usize = __raw_scratch(16); let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, 21523, buf as i64) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } let r: i32 = rows & 65535; let c: i32 = cols & 65535; __raw_store8(buf, 0, r % 256); __raw_store8(buf, 1, r / 256); __raw_store8(buf, 2, c % 256); __raw_store8(buf, 3, c / 256); rc = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, 21524, buf as i64) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
@@ -2863,7 +2863,7 @@ pub function rt_src_process_alive(t: string): string {
 // asked.
 //
 // ESRCH, EPERM and EINVAL are none of the errnos __fern_io_error names a
-// variant for, so each becomes Other("", strerror). The path is empty because
+// variant for, so each becomes Other("", strerror, errno). The path is empty because
 // the helper never saw the text its caller parsed the pid out of; a decimal
 // spelling of `pid` would not be the operand either.
 pub function rt_src_signal_send(t: string): string {
@@ -2879,7 +2879,7 @@ pub function rt_src_signal_send(t: string): string {
 // fresh group.
 //
 // EACCES, EINVAL, EPERM and ESRCH are none of the errnos __fern_io_error
-// names a variant for, so each becomes Other("", strerror) - the path is
+// names a variant for, so each becomes Other("", strerror, errno) - the path is
 // empty because the helper took two integers and never saw a file.
 pub function rt_src_set_process_group(t: string): string {
   return "function __fern_set_process_group(pid: i32, pgid: i32): Result[void, IoError] { let rc: i32 = __syscall3(" + sysno(t, "setpgid") + ", pid as i64, pgid as i64, 0) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
@@ -3656,7 +3656,7 @@ pub function rt_src_reader_read_chunk_bytes(t: string, packed: boolean): string 
 // It therefore calls __fern_io_error and belongs INSIDE the fs bundle, sharing
 // its call graph — the same reason open_res and writer_write are there. Left
 // outside, discarding the result, it made `w.close()` answer None on a closed
-// fd where every native backend answers `Some(Other("Bad file descriptor"))`,
+// fd where every native backend answers `Some(Other("", "Bad file descriptor", 9))`,
 // which is the whole of gnulib's close_stream contract and so of every
 // coreutils utility's exit status on `prog >&-` (#8569).
 pub function rt_src_reader_close(t: string): string {
@@ -3686,10 +3686,12 @@ pub function rt_src_read_line(t: string): string {
 
 // The strerror table (#8265): glibc's text per errno and the errno's number on
 // each OS (0 = the OS has no separate number), one row per index in
-// internal/tables/strerror's order; wasi_error_code_errnos is wasi:filesystem's
+// internal/tables/strerror's order; strerror_carried is the Linux number
+// IoError.Other carries for the row on every target, an alias resolved to the
+// errno glibc defines it as; wasi_error_code_errnos is wasi:filesystem's
 // error-code enum in discriminant order, each as the preview-1 errno it stands
-// for. Every runtime the self-host emits reports IoError.Other's message from
-// these, and internal/tables/strerror's selfhost_parity_test pins all six lists to
+// for. Every runtime the self-host emits reports IoError.Other's message and
+// errno from these, and internal/tables/strerror's selfhost_parity_test pins all seven lists to
 // the Go table entry for entry. Regenerate with
 // `go run ./internal/tables/strerror/gen_selfhost_lists`.
 pub function strerror_texts(): string[] {
@@ -3712,6 +3714,10 @@ pub function strerror_wasi(): i32[] {
   return [63, 44, 71, 27, 29, 60, 1, 45, 8, 12, 6, 48, 2, 21, 10, 20, 75, 43, 54, 31, 28, 41, 33, 59, 74, 22, 51, 70, 69, 34, 64, 68, 16, 37, 46, 52, 55, 32, 0, 0, 61, 25, 57, 35, 67, 50, 66, 58, 5, 3, 4, 38, 40, 39, 13, 15, 42, 30, 53, 73, 14, 23, 7, 26, 72, 19, 11, 62, 56, 0];
 }
 
+pub function strerror_carried(): i32[] {
+  return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34, 35, 36, 37, 38, 39, 40, 61, 61, 75, 84, 88, 90, 91, 92, 93, 95, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 110, 111, 113, 114, 115, 116, 122, 125, 130, 131, 95];
+}
+
 pub function wasi_error_code_errnos(): i32[] {
   return [2, 6, 7, 8, 10, 16, 19, 20, 22, 25, 26, 27, 28, 29, 31, 32, 34, 35, 37, 43, 44, 46, 48, 51, 54, 55, 56, 58, 59, 60, 61, 63, 64, 69, 70, 74, 75];
 }
@@ -3722,6 +3728,20 @@ pub function strerror_errno(t: string, i: i32): i32 {
     return strerror_darwin()[i];
   }
   return strerror_linux()[i];
+}
+
+// errno_on is the errno Linux numbers `linux`, in register target t's
+// numbering, as a literal for the runtime source __fern_io_error reads.
+function errno_on(t: string, linux: i32): string {
+  let nums: i32[] = strerror_linux();
+  let i: i32 = 0;
+  while (i < nums.len()) {
+    if (nums[i] == linux) {
+      return util.i32_to_string(strerror_errno(t, i));
+    }
+    i = i + 1;
+  }
+  return util.i32_to_string(linux);
 }
 
 // strerror_text is row i's message on register target t. Sixteen errnos
@@ -3746,7 +3766,7 @@ pub function strerror_unknown_prefix(t: string): string {
 }
 
 // strerror_unknown_src is the runtime-sub-language tail that returns
-// `Other(path, "Unknown error N")` for an errno past the table: count the
+// `Other(path, "Unknown error N", 0)` for an errno past the table: count the
 // digits, then write them in from the end.
 function strerror_unknown_src(t: string): string {
   let pfx: string = strerror_unknown_prefix(t);
@@ -3757,7 +3777,7 @@ function strerror_unknown_src(t: string): string {
     src = src + " __raw_store8(buf, " + util.i32_to_string(k) + ", " + util.i32_to_string(pfx[k] as i32) + ");";
     k = k + 1;
   }
-  return src + " let pos: i32 = total - 1; let v: i32 = e; while (pos >= " + plen + ") { __raw_store8(buf, pos, 48 + (v % 10)); v = v / 10; pos = pos - 1; } return Other(path, __raw_string(buf, total));";
+  return src + " let pos: i32 = total - 1; let v: i32 = e; while (pos >= " + plen + ") { __raw_store8(buf, pos, 48 + (v % 10)); v = v / 10; pos = pos - 1; } return Other(path, __raw_string(buf, total), 0);";
 }
 
 // How the fs leaves give a __raw_alloc block back (#8813, the shape #8402
@@ -3806,16 +3826,18 @@ pub function wasi_socket_error_errnos(): i32[] {
 // edge — this IS the #2649 "dependencies are the call graph" end-state, in
 // miniature. Bundled on BOTH register backends. The Other variant's message is
 // strerror's text for the errno in target t's numbering — a ladder over
-// strerror_texts — or "Unknown error N" for an errno past the table.
+// strerror_texts — or "Unknown error N" for an errno past the table, and its
+// errno is the row's strerror_carried number, 0 past the table.
 pub function rt_src_io_error(t: string): string {
   let texts: string[] = strerror_texts();
   let eilseq: i32 = strerror_errno(t, util.index_of_str(texts, "Invalid or incomplete multibyte or wide character"));
   let src: string = path_copy_src() + " function __fern_io_error(e: i32, path: string): IoError { if (e == 2) { return NotFound(path); } if (e == 13) { return PermissionDenied(path); } if (e == 17) { return AlreadyExists(path); } if (e == 4) { return Interrupted; } if (e == " + util.i32_to_string(eilseq) + ") { return InvalidUtf8(path); }";
+  let carried: i32[] = strerror_carried();
   let i: i32 = 0;
   while (i < texts.len()) {
     let n: i32 = strerror_errno(t, i);
     if (n != 0 && n != 2 && n != 13 && n != 17 && n != 4 && n != eilseq) {
-      src = src + " if (e == " + util.i32_to_string(n) + ") { return Other(path, \"" + strerror_text(t, i) + "\"); }";
+      src = src + " if (e == " + util.i32_to_string(n) + ") { return Other(path, \"" + strerror_text(t, i) + "\", " + util.i32_to_string(carried[i]) + "); }";
     }
     i = i + 1;
   }
@@ -4121,9 +4143,9 @@ function rt_src_rename_flagged(t: string, fname: string, flags: string): string 
 // readlinkat TRUNCATES silently into a buffer that is too small and reports no
 // error, so the answer is only trustworthy when it is SHORTER than the buffer.
 // PATH_MAX is the kernel's own bound on a stored target, so a full buffer
-// means ENAMETOOLONG (36) rather than a target missing its tail.
+// means ENAMETOOLONG rather than a target missing its tail.
 pub function rt_src_read_link(t: string): string {
-  return "function __fern_read_link(path: string): Result[string, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let buf: usize = __raw_alloc(4096); let n: i32 = __syscall4(" + sysno(t, "readlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, buf as i64, 4096) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); let buf_own: string = __raw_string(buf, 4096); if (n < 0) { return Err(__fern_io_error(0 - n, __fern_path_copy(pathz_own, plen))); } if (n >= 4096) { return Err(__fern_io_error(36, __fern_path_copy(pathz_own, plen))); } return Ok(__fern_path_copy(buf_own, n)); }";
+  return "function __fern_read_link(path: string): Result[string, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let buf: usize = __raw_alloc(4096); let n: i32 = __syscall4(" + sysno(t, "readlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, buf as i64, 4096) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); let buf_own: string = __raw_string(buf, 4096); if (n < 0) { return Err(__fern_io_error(0 - n, __fern_path_copy(pathz_own, plen))); } if (n >= 4096) { return Err(__fern_io_error(" + errno_on(t, 36) + ", __fern_path_copy(pathz_own, plen))); } return Ok(__fern_path_copy(buf_own, n)); }";
 }
 
 // rt_src_getxattr backs `getxattr(path, name)` and `lgetxattr(path, name)`
@@ -4386,7 +4408,7 @@ pub function rt_src_priority(t: string): string {
 //
 // EACCES and EPERM are what an unprivileged caller gets for asking to go
 // below its current value, and neither is an errno __fern_io_error names a
-// variant for, so each arrives as Other("", strerror) — the empty path being
+// variant for, so each arrives as Other("", strerror, errno) — the empty path being
 // honest, since the op never saw the text its caller parsed the value from.
 pub function rt_src_set_priority(t: string): string {
   return "function __fern_set_priority(nice: i32): Result[void, IoError] { let rc: i32 = __syscall3(" + sysno(t, "setpriority") + ", 0, 0, nice as i64) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";

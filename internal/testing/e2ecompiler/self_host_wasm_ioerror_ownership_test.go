@@ -45,7 +45,7 @@ func TestSelfHostWasmIoErrorOwnsPath(t *testing.T) {
 			matchBody := `Ok(_) => { return 1; },
       Err(e) => {
         match (e) {
-          Other(path, _) => { if (path != p) { return 2; } },
+          Other(path, _, _) => { if (path != p) { return 2; } },
           NotFound(path) => { if (path != p) { return 3; } },
           _ => { return 4; }
         }

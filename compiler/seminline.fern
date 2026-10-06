@@ -744,21 +744,25 @@ function with_tables(f: ssasem.Func, callee: ssasem.Func, vmap: i32[]): ssasem.F
       calls = calls.append(c);
     }
   }
-  let records: semrecords.Record[] = f.records.list;
-  let grew: boolean = false;
+  // A table holds each schema once, so the callee's records absent from `f`
+  // need no check against each other.
+  let fresh: semrecords.Record[] = [];
   for r in callee.records.list {
-    if (!has_record(records, r.ty)) {
-      records = records.append(r);
-      grew = true;
+    if (semrecords.find(f.records, r.ty) < 0) {
+      fresh = fresh.append(r);
     }
   }
   let table: semrecords.Records = f.records;
-  if (grew) {
+  if (fresh.len() > 0) {
+    let records: semrecords.Record[] = f.records.list;
+    for r in fresh {
+      records = records.append(r);
+    }
     table = semrecords.records_of(records);
   }
   let enums: semrecords.Enum[] = f.enums;
   for e in callee.enums {
-    if (!has_enum(enums, e.ty)) {
+    if (semrecords.find_enum(enums, e.ty) < 0) {
       enums = enums.append(e);
     }
   }
@@ -777,24 +781,6 @@ function with_tables(f: ssasem.Func, callee: ssasem.Func, vmap: i32[]): ssasem.F
     i = i + 1;
   }
   return ssasem.Func { ...f, calls: calls, records: table, enums: enums, envs: with_rows(f.envs, callee.envs), anchors: anchors, dyns: with_rows(f.dyns, callee.dyns), dbg_vals: dbg_vals, dbg_names: dbg_names };
-}
-
-function has_record(list: semrecords.Record[], t: typeinfo.Type): boolean {
-  for r in list {
-    if (semtypes.equal(r.ty, t)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function has_enum(list: semrecords.Enum[], t: typeinfo.Type): boolean {
-  for e in list {
-    if (semtypes.equal(e.ty, t)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function with_rows(rows: ssasem.EnvRow[], more: ssasem.EnvRow[]): ssasem.EnvRow[] {

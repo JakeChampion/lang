@@ -63,7 +63,7 @@ func chmodAtSource(dir string, linkHasMode bool) string {
 		}
 		return fmt.Sprintf(`Ok(_) => { return %d; },
         Err(e) => { match (e) {
-            Other(_, msg) => { if (msg != "Operation not supported" && msg != "Function not implemented") { return %d; } },
+            Other(_, msg, _) => { if (msg != "Operation not supported" && msg != "Function not implemented") { return %d; } },
             _ => { return %d; }
         } }`, okCode, wrongCode, wrongCode+1)
 	}
@@ -84,7 +84,7 @@ func chmodAtSource(dir string, linkHasMode bool) string {
             match (stat(%[1]q)) { Ok(f) => { if ((f.mode & (4095 as u32)) != (%[4]d as u32)) { return 8; } }, Err(_) => { return 9; } }
         },
         Err(e) => { match (e) {
-            Other(_, msg) => {
+            Other(_, msg, _) => {
                 if (msg != "Function not implemented") { return 7; }
                 match (stat(%[1]q)) { Ok(f) => { if ((f.mode & (4095 as u32)) != (%[3]d as u32)) { return 8; } }, Err(_) => { return 9; } }
                 match (write_file(%[13]q, "")) { Ok(_) => {}, Err(_) => { return 7; } }

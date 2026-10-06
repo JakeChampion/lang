@@ -49,6 +49,7 @@
 // writable descriptor to and a fresh truncate(2) is refused.
 import "std/string";
 import "std/i64";
+import "std/errno";
 import "./lib/gnu";
 
 function opt_no_create(): i32 {
@@ -491,11 +492,10 @@ function missing_is_skipped(name: string): (boolean, boolean) {
       return (false, true);
     },
     Err(e) => {
-      let text: string = gnu.io_error_text(e);
-      if (text == "No such file or directory") {
+      if (errno.of(e) == errno.ENOENT) {
         return (true, true);
       }
-      gnu.error("cannot open " + gnu.quotea(name) + " for writing: " + text);
+      gnu.error("cannot open " + gnu.quotea(name) + " for writing: " + gnu.io_error_text(e));
       return (true, false);
     }
   }

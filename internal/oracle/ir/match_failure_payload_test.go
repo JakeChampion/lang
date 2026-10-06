@@ -36,7 +36,7 @@ const matchFailurePayloadSrc = `function etext(e: IoError): string {
 }
 function keeps(e: IoError): string {
     match (e) {
-        Other(_, msg) => { return msg; },
+        Other(_, msg, _) => { return msg; },
         _ => { return "other"; }
     }
 }

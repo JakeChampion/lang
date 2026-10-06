@@ -66,7 +66,7 @@ func MakeXattrBytesFixture(t *testing.T) XattrBytesFixture {
 		check(fmt.Sprintf("match (%s(%q, \"user.empty\")) { Ok(v) => { if (v.len() != 0) { return FAIL; } }, Err(_) => { return FAIL; } }", getter, path))
 		check(fmt.Sprintf("match (%s_bytes(%q, \"user.empty\")) { Ok(v) => { if (v.len() != 0) { return FAIL; } }, Err(_) => { return FAIL; } }", getter, path))
 		check(fmt.Sprintf("match (%s_bytes(%q, \"user.all\")) { Err(NotFound(p)) => { if (p != %q) { return FAIL; } }, _ => { return FAIL; } }", getter, missing, missing))
-		check(fmt.Sprintf("match (%s_bytes(%q, \"user.absent\")) { Err(Other(p, _)) => { if (p != %q) { return FAIL; } }, _ => { return FAIL; } }", getter, path, path))
+		check(fmt.Sprintf("match (%s_bytes(%q, \"user.absent\")) { Err(Other(p, _, _)) => { if (p != %q) { return FAIL; } }, _ => { return FAIL; } }", getter, path, path))
 	}
 	check(fmt.Sprintf("match (lgetxattr_bytes(%q, \"user.all\")) { Err(_) => {}, Ok(_) => { return FAIL; } }", link))
 	source.WriteString("  let retained: u8[] = [];\n")

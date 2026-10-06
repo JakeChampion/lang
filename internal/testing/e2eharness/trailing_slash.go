@@ -13,7 +13,7 @@ import (
 // does for GNU: ENOTDIR for a read, EISDIR for a write or create, before
 // anything is truncated (#11430).
 const TrailingSlashSource = `function why(e: IoError): string {
-    match (e) { Other(_, m) => { return m; }, NotFound(_) => { return "NotFound"; }, _ => { return "other"; } }
+    match (e) { Other(_, m, _) => { return m; }, NotFound(_) => { return "NotFound"; }, _ => { return "other"; } }
 }
 function main(): i32 {
     match (open_reader("lf/")) { Ok(_) => { print("open_reader ok"); }, Err(e) => { print("open_reader " + why(e)); } }

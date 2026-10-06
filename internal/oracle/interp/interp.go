@@ -5095,7 +5095,7 @@ func classifyIoError(path string, err error) *Enum {
 	// Not a syscall failure at all, so there is no errno to name: Go's
 	// own text is the only description there is.
 	return &Enum{EnumName: "IoError", VariantName: "Other", Index: 6,
-		Payloads: []Value{String(path), String(err.Error())}}
+		Payloads: []Value{String(path), String(err.Error()), Number(0)}}
 }
 
 // ioErrorOfErrno classifies a real syscall failure the way every
@@ -5104,7 +5104,7 @@ func classifyIoError(path string, err error) *Enum {
 // Go's os.Is* predicates cannot stand in for this. os.IsPermission
 // answers true for EPERM as well as EACCES, so an EPERM reached the
 // interpreter as PermissionDenied while the natives gave it
-// Other(path, "Operation not permitted") — and EINTR and EILSEQ, which
+// Other(path, "Operation not permitted", 1) — and EINTR and EILSEQ, which
 // the natives name Interrupted and InvalidUtf8, had no predicate at all
 // and fell through to Other. The predicates still serve the errors Go
 // synthesises without a syscall behind them, which is all classifyIoError
@@ -5129,12 +5129,13 @@ func ioErrorOfErrno(path string, errno syscall.Errno) *Enum {
 	return ioErrorOther(path, errno)
 }
 
-// ioErrorOther builds `IoError::Other(path, strerror(errno))` — where
-// every errno without a variant of its own lands, with the same glibc
-// text the natives report (#8265).
+// ioErrorOther builds `IoError::Other(path, strerror(errno), errno)` —
+// where every errno without a variant of its own lands, with the same
+// glibc text the natives report (#8265) and the errno in Linux numbering.
 func ioErrorOther(path string, errno syscall.Errno) *Enum {
 	return &Enum{EnumName: "IoError", VariantName: "Other", Index: 6,
-		Payloads: []Value{String(path), String(strerror.Text(runtime.GOOS, int(errno)))}}
+		Payloads: []Value{String(path), String(strerror.Text(runtime.GOOS, int(errno))),
+			Number(strerror.Carried(runtime.GOOS, int(errno)))}}
 }
 
 // resultOk / resultErr wrap a value into the canonical

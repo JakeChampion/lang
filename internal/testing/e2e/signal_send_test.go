@@ -41,13 +41,13 @@ const signalSendSource = `function main(): i32 {
 
     // Above the kernel's own pid ceiling: ESRCH. None of the three errnos
     // kill(2) returns has a named IoError variant, so each arrives as
-    // Other(path, strerror) — and the path is empty, because the primitive
+    // Other(path, strerror, errno) — and the path is empty, because the primitive
     // never saw the text a caller parsed the pid out of.
     match (signal_send(4194304, 0)) {
         Ok(_) => { return 2; },
         Err(e) => {
             match (e) {
-                Other(p, msg) => {
+                Other(p, msg, _) => {
                     if (p.len() != 0) { return 3; }
                     if (msg != "No such process") { return 4; }
                 },
@@ -64,7 +64,7 @@ const signalSendSource = `function main(): i32 {
         Ok(_) => { return 6; },
         Err(e) => {
             match (e) {
-                Other(p, msg) => {
+                Other(p, msg, _) => {
                     if (p.len() != 0) { return 7; }
                     if (msg != "Invalid argument") { return 8; }
                 },

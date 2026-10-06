@@ -15,7 +15,7 @@ func TestCloseReportsBadFdOnTheSecondClose(t *testing.T) {
     match (o) {
         Some(e) => {
             match (e) {
-                Other(c, msg) => { if (msg == "Bad file descriptor") { return 7; } return 5; },
+                Other(c, msg, _) => { if (msg == "Bad file descriptor") { return 7; } return 5; },
                 _ => { return 4; }
             }
         },
@@ -44,7 +44,7 @@ func TestCloseFileTwiceReportsBadFd(t *testing.T) {
     match (o) {
         Some(e) => {
             match (e) {
-                Other(c, msg) => { if (msg == "Bad file descriptor") { return 7; } return 5; },
+                Other(c, msg, _) => { if (msg == "Bad file descriptor") { return 7; } return 5; },
                 _ => { return 4; }
             }
         },

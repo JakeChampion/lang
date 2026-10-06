@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	e2eharness "github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // `__str_hash(s, seed)` on the self-host IR path: the seeded word-at-a-time
@@ -160,5 +162,30 @@ func TestSelfHostStrHashIRWasm(t *testing.T) {
 	}
 	if got := run.ProcessState.ExitCode(); got != 42 {
 		t.Errorf("__str_hash self-host wasm = %d, want 42 (see strHashIRProg for what each code means)", got)
+	}
+}
+
+// A string-keyed Map hashes its keys with a helper of its own; a module that
+// also calls __str_hash needs both, under different names.
+const strHashBesideMapProg = `import "core/map";
+function main(): i32 {
+    let m: Map[string, i32] = map_new(8);
+    m = m.insert("alpha", 1);
+    m = m.insert("beta", 2);
+    if (m.get_or("beta", 0) != 2) { return 1; }
+    if (__str_hash("abcdefgh", 0) != 939000468) { return 2; }
+    return 42;
+}
+`
+
+func TestSelfHostStrHashBesideStringMapWasm(t *testing.T) {
+	core := e2eharness.CompileSelfHostSource(t, e2eharness.TargetWasm32Wasi, strHashBesideMapProg, nil)
+	cmd := e2eharness.RunWasmCore(t, core)
+	out, _ := cmd.CombinedOutput()
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatalf("wasmtime did not exit normally:\n%s", out)
+	}
+	if got := cmd.ProcessState.ExitCode(); got != 42 {
+		t.Errorf("exit %d, want 42\n%s", got, out)
 	}
 }

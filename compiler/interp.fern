@@ -1885,8 +1885,8 @@ function io_error_value(e: IoError): Value {
     Unsupported => {
       return v_variant("Unsupported", none);
     },
-    Other(p, m) => {
-      return v_variant("Other", [v_string(p), v_string(m)]);
+    Other(p, m, n) => {
+      return v_variant("Other", [v_string(p), v_string(m), v_int(n)]);
     }
   }
 }

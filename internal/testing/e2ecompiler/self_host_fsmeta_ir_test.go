@@ -154,7 +154,7 @@ func selfHostFsMetaSource(prefix string, withChmod bool) string {
     match (chmod_at(%[5]q, 256, false)) {
         Ok(_) => { return 53; },
         Err(e) => { match (e) {
-            Other(_, msg) => { if (msg != "Operation not supported" && msg != "Function not implemented") { return 54; } },
+            Other(_, msg, _) => { if (msg != "Operation not supported" && msg != "Function not implemented") { return 54; } },
             _ => { return 55; }
         } }
     }
@@ -168,7 +168,7 @@ func selfHostFsMetaSource(prefix string, withChmod bool) string {
             match (stat(%[1]q)) { Ok(f) => { if ((f.mode & (4095 as u32)) != (448 as u32)) { return 58; } }, Err(_) => { return 59; } }
         },
         Err(e) => { match (e) {
-            Other(_, msg) => {
+            Other(_, msg, _) => {
                 if (msg != "Function not implemented") { return 60; }
                 match (stat(%[1]q)) { Ok(f) => { if ((f.mode & (4095 as u32)) != (292 as u32)) { return 61; } }, Err(_) => { return 62; } }
             },
