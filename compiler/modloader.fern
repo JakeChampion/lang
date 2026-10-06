@@ -541,16 +541,35 @@ function stamp_imports(ov: Overlay, mod: parser.Module, dir: string, root: strin
   return parser.Module { ...mod, imports: out };
 }
 
+// vendored_stdlib_dir is the nearest directory at or above `dir` holding a
+// `std/` or `core/` tree, or `dir` itself when none does: a driver's project
+// vendors the stdlib at its root, and the driver may sit in a sub-directory.
+function vendored_stdlib_dir(dir: string): string {
+  let d: string = dir;
+  let steps: i32 = 0;
+  while (steps < 64) {
+    if (util.is_dir(d + "std") || util.is_dir(d + "core")) {
+      return d;
+    }
+    if (d.len() == 0 || d == "/") {
+      return dir;
+    }
+    d = parent_dir(d);
+    steps = steps + 1;
+  }
+  return dir;
+}
+
 // load_graph walks the entry module's import graph breadth-first, reading and
 // parsing each module once. `root` is the stdlib root `std/` and `core/`
-// resolve under; empty means the entry's own directory, where a driver's
-// vendored stdlib sits. A module found through a manifest is read from its
+// resolve under; empty means the driver's vendored stdlib
+// (vendored_stdlib_dir). A module found through a manifest is read from its
 // package, and its own imports still resolve beside it.
 pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, root: string): Graph {
   let edir: string = dirname(entry_path);
   let sroot: string = root;
   if (sroot.len() == 0) {
-    sroot = edir;
+    sroot = vendored_stdlib_dir(edir);
   } else if (sroot[sroot.len() - 1] != b'/') {
     sroot = sroot + "/";
   }
