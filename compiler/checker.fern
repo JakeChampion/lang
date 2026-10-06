@@ -649,8 +649,9 @@ function is_bit_count(name: string): boolean {
 
 // The runtime intrinsics: the float primitives, the bit counts, the raw-memory
 // escape hatches, the byte scans over a borrowed string, and the C-ABI
-// trampolines. `__alloc_u8` is the one whose result the caller OWNS — a fresh
-// zeroed `u8[]` — where every other answer here is a scalar.
+// trampolines. `__alloc_u8` and its typed siblings are the ones whose result
+// the caller OWNS — a fresh zeroed array — where every other answer here is a
+// scalar.
 function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   let raw: RawFloorSig[] = raw_floor_find(name);
   if (raw.len() == 1 && raw[0].params.len() == argc) {
@@ -670,6 +671,15 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   }
   if (argc == 1 && name == "__alloc_u8") {
     return typeinfo.TypeArray { elem: t_u8(), view: false };
+  }
+  if (argc == 1 && name == "__alloc_i32") {
+    return typeinfo.TypeArray { elem: t_i32(), view: false };
+  }
+  if (argc == 1 && name == "__alloc_i64") {
+    return typeinfo.TypeArray { elem: t_i64(), view: false };
+  }
+  if (argc == 1 && name == "__alloc_bool") {
+    return typeinfo.TypeArray { elem: t_bool(), view: false };
   }
   if (argc == 2 && name == "__free") {
     return t_void();
@@ -900,7 +910,7 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   if (name == "__alloc") {
     return ([t_i32()], true);
   }
-  if (name == "__alloc_u8") {
+  if (name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_bool") {
     return ([t_i32()], true);
   }
   if (name == "__free") {
@@ -16088,7 +16098,7 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
 function registered_intrinsics(): string[] {
   return [
     "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_wait",
-    "__abs_f64", "__alloc", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
+    "__abs_f64", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
     "__c_call4", "__c_call4_f32", "__c_call4_f64", "__ceil_f64", "__clz32", "__clz64", "__cos_f64", "__count_byte",
@@ -18439,7 +18449,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 // from native's table and fails when the two drift.
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
-    "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "environ", "getcwd", "getgroups",
+    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "random_bytes", "read_line", "set_priority",
     "setgid", "setuid",
     "signal_send", "set_process_group", "set_window_size",

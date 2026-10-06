@@ -776,7 +776,10 @@ func New() *Interp {
 	// `__ptr_width`) are NOT included here — they pretend to
 	// be a flat byte address space the interpreter doesn't
 	// model, so Map operations stay codegen-only for now.
-	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocU8}
+	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocFilled("__alloc_u8", Number(0))}
+	i.Builtins["__alloc_i32"] = &Builtin{Fn: builtinAllocFilled("__alloc_i32", Number(0))}
+	i.Builtins["__alloc_i64"] = &Builtin{Fn: builtinAllocFilled("__alloc_i64", Number(0))}
+	i.Builtins["__alloc_bool"] = &Builtin{Fn: builtinAllocFilled("__alloc_bool", Bool(false))}
 	i.Builtins["string_from_bytes_unchecked"] = &Builtin{Fn: builtinStringFromBytes}
 	i.Builtins["string_from_bytes_range_unchecked"] = &Builtin{Fn: builtinStringFromBytesRange}
 	i.Builtins["slice_unchecked"] = &Builtin{Fn: builtinSliceUnchecked}
@@ -3053,28 +3056,31 @@ func builtinMapIterAdvance(_ *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// `__alloc_u8(n: i32): u8[]` — codegen lowers to `__fern_alloc(n)
-// + length-prefix poke`; the interp returns a fresh Array of n
-// Number(0) values. The stdlib uses this as the staging buffer
-// for `__string_case_fold`, `string_from_bytes_unchecked`'s round-trip
-// counterpart, and any user code that wants a zero-initialised
-// byte slab.
-func builtinAllocU8(_ *Interp, args []Value) (Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("__alloc_u8: expected 1 arg (n), got %d", len(args))
+// `__alloc_u8(n: i32): u8[]` and its typed siblings `__alloc_i32`,
+// `__alloc_i64` and `__alloc_bool` — codegen lowers each to
+// `__fern_alloc_u8(n)`, n zeroed 8-byte slots; the interp returns a fresh
+// Array of n copies of the element type's zero. The stdlib uses the byte
+// form as the staging buffer for `__string_case_fold`,
+// `string_from_bytes_unchecked`'s round-trip counterpart, and any user code
+// that wants a zero-initialised slab.
+func builtinAllocFilled(name string, zero Value) func(*Interp, []Value) (Value, error) {
+	return func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("%s: expected 1 arg (n), got %d", name, len(args))
+		}
+		n, ok := args[0].(Number)
+		if !ok {
+			return nil, fmt.Errorf("%s: arg must be number, got %T", name, args[0])
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("%s: negative length %d", name, int64(n))
+		}
+		out := newArray(int(n))
+		for i := range out.E {
+			out.E[i] = zero
+		}
+		return out, nil
 	}
-	n, ok := args[0].(Number)
-	if !ok {
-		return nil, fmt.Errorf("__alloc_u8: arg must be number, got %T", args[0])
-	}
-	if n < 0 {
-		return nil, fmt.Errorf("__alloc_u8: negative length %d", int64(n))
-	}
-	out := newArray(int(n))
-	for i := range out.E {
-		out.E[i] = Number(0)
-	}
-	return out, nil
 }
 
 // `string_from_bytes_unchecked(bs: u8[]): string` — joins the byte
