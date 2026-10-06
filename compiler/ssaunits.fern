@@ -889,7 +889,8 @@ function retagged_string(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
   return d.kind_tag == ssasem.str_as() && d.args.len() == 1 && !ssasem.is_view(f.values[d.args[0]]);
 }
 
-// value and the values it depends on, each once; none for no value.
+// use_ids lists `value` and the values it depends on, each once; none for
+// no value.
 function use_ids(value: i32, deps: i32[][]): i32[] {
   if (value < 0) {
     return [];
