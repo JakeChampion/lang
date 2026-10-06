@@ -4,16 +4,6 @@ import "./ssa";
 import "./ssalive";
 import "./util";
 
-function flags(n: i32, bit: boolean): boolean[] {
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(bit);
-    i = i + 1;
-  }
-  return out;
-}
-
 function indices(n: i32): i32[] {
   let out: i32[] = [];
   let i: i32 = 0;
@@ -66,7 +56,7 @@ function successor_positions(f: ssa.SFunc, at: i32[], bi: i32): i32[] {
 // Requires a structurally verified graph with an existing entry block.
 pub function reachable_blocks(f: ssa.SFunc): boolean[] {
   let at: i32[] = position_of(f);
-  let reachable: boolean[] = flags(f.blocks.len(), false);
+  let reachable: boolean[] = __alloc_bool(f.blocks.len());
   let entry: i32 = at[f.entry];
   reachable = reachable.with(entry, true);
   let work: i32[] = [entry];
@@ -112,7 +102,7 @@ pub function dominates(f: ssa.SFunc): Dom {
   // successors are.
   let po: i32[] = indices(n);
   let order: i32[] = [];
-  let seen: boolean[] = flags(n, false);
+  let seen: boolean[] = __alloc_bool(n);
   let stack: i32[] = [entry];
   let sp: i32 = 1;
   let next_succ: i32[] = indices(n);

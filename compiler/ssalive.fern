@@ -109,26 +109,6 @@ function bit_set(own rows: i64[], base: i32, v: i32): i64[] {
   return rows.with(w, rows[w] | 1i64 << (v % 64) as i64);
 }
 
-function words_of(n: i32): i64[] {
-  let out: i64[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(0i64);
-    i = i + 1;
-  }
-  return out;
-}
-
-function zeroes(n: i32): boolean[] {
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(false);
-    i = i + 1;
-  }
-  return out;
-}
-
 function block_index(at: i32[], id: i32): i32 {
   if (id < 0 || id >= at.len()) {
     return 0 - 1;
@@ -283,8 +263,8 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
   let words: i32 = (f.nvals + 63) / 64;
   let nb: i32 = f.blocks.len();
   let at: i32[] = position_of(f);
-  let uses: i64[] = words_of(nb * words);
-  let defs: i64[] = words_of(nb * words);
+  let uses: i64[] = __alloc_i64(nb * words);
+  let defs: i64[] = __alloc_i64(nb * words);
   let bi: i32 = 0;
   while (bi < nb) {
     let b: ssa.SBlock = f.blocks[bi];
@@ -307,13 +287,13 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
     }
     bi = bi + 1;
   }
-  let live_in: i64[] = words_of(nb * words);
-  let live_out: i64[] = words_of(nb * words);
+  let live_in: i64[] = __alloc_i64(nb * words);
+  let live_out: i64[] = __alloc_i64(nb * words);
   // row holds the block being recomputed, so a pass updates live_out in
   // place instead of copying the whole table for each block. A block is
   // recomputed only while `dirty`: at first, and again after a successor's
   // live_in grows.
-  let row: i64[] = words_of(words);
+  let row: i64[] = __alloc_i64(words);
   let dirty: boolean[] = [];
   bi = 0;
   while (bi < nb) {
@@ -384,7 +364,7 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
       bi = bi - 1;
     }
   }
-  return Flow { ok: true, why: "", words: words, live_in: live_in, live_out: live_out, at: at, none: zeroes(f.nvals) };
+  return Flow { ok: true, why: "", words: words, live_in: live_in, live_out: live_out, at: at, none: __alloc_bool(f.nvals) };
 }
 
 // position_of maps a block id to its position in f.blocks, -1 for an id no

@@ -14919,7 +14919,7 @@ function promote_value_named(funcs: FuncDecl[], top_stmts: ast.Stmt[]): FuncDecl
   if (names.len() == 0) {
     return funcs;
   }
-  let scan: ValScan = ValScan { names: names, refs: zero_counts(names.len()), callee_refs: zero_counts(names.len()) };
+  let scan: ValScan = ValScan { names: names, refs: __alloc_i32(names.len()), callee_refs: __alloc_i32(names.len()) };
   for fd in funcs {
     for st in fd.body {
       scan = astwalk.fold_stmt_nodes(st, scan, val_scan_stmt, val_scan_expr, astwalk.descend_all);
@@ -14961,16 +14961,6 @@ function signature_vars_complete(fd: FuncDecl): boolean {
     }
   }
   return true;
-}
-
-function zero_counts(n: i32): i32[] {
-  let out: i32[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(0);
-    i = i + 1;
-  }
-  return out;
 }
 
 // ValScan counts, per name, every reference and every reference as a call's

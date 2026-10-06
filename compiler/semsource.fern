@@ -6185,22 +6185,12 @@ function no_memo(): SchemaMemo {
 // entry `i` is in `records` / `enums`: presence is a bit, not a lookup.
 struct Schemas { ok: boolean, why: string, records: semrecords.Record[], enums: semrecords.Enum[], memo: SchemaMemo, seen_r: boolean[], seen_e: boolean[] }
 
-function no_flags(n: i32): boolean[] {
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(false);
-    i = i + 1;
-  }
-  return out;
-}
-
 // Every record and enum type a function's values, contracts and result name
 // gets its declaration's schema, and so does every one a schema's fields
 // name, to a fixpoint over the finite declaration table. A type this
 // boundary cannot give a schema refuses the function.
 function schemas(types: typeinfo.Type[], s: State, memo: SchemaMemo): Schemas {
-  let out: Schemas = Schemas { ok: true, why: "", records: [], enums: [], memo: memo, seen_r: no_flags(memo.records.len()), seen_e: no_flags(memo.enums.len()) };
+  let out: Schemas = Schemas { ok: true, why: "", records: [], enums: [], memo: memo, seen_r: __alloc_bool(memo.records.len()), seen_e: __alloc_bool(memo.enums.len()) };
   let pending: typeinfo.Type[] = types;
   let i: i32 = 0;
   while (i < pending.len()) {
@@ -7262,13 +7252,8 @@ function contract_names(cs: ssasem.Contract[]): string[] {
 // shared_keys marks every key that more than one declaration carries.
 function shared_keys(keys: string[]): boolean[] {
   let ix: util.NameIndex = util.name_index(keys);
-  let out: boolean[] = [];
+  let out: boolean[] = __alloc_bool(keys.len());
   let i: i32 = 0;
-  while (i < keys.len()) {
-    out = out.append(false);
-    i = i + 1;
-  }
-  i = 0;
   while (i < keys.len()) {
     let first: i32 = ix.find(keys[i]);
     if (first != i) {

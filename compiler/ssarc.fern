@@ -2008,10 +2008,7 @@ function held_read(p: ssaunits.Plan, ins: ssa.SInst): boolean {
 // How many operands name each value, over every instruction and terminator
 // of the function.
 function use_counts(f: ssasem.Func): i32[] {
-  let out: i32[] = [];
-  while (out.len() < f.graph.nvals) {
-    out = out.append(0);
-  }
+  let out: i32[] = __alloc_i32(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       for a in ins.args {
@@ -5500,10 +5497,7 @@ function with_set_op(p: ssaunits.Plan, ins: ssa.SInst, elem: typeinfo.Type): ir.
 // The reuse layer's off switch (`no_reuse`) turns it off with the pairings.
 // The same table also marks scale kernels admitted by scale_reason below.
 function in_place_maps(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, idx: i32[][], links: i32[], pure: util.NameIndex, no_reuse: boolean): boolean[] {
-  let out: boolean[] = [];
-  while (out.len() < f.graph.nvals) {
-    out = out.append(false);
-  }
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   if (no_reuse) {
     return out;
   }

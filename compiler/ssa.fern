@@ -506,16 +506,6 @@ pub function term_name(id: i32): string {
 }
 
 // zeros returns an n-long i32 array of 0s (scratch flag/value tables).
-function zeros(n: i32): i32[] {
-  let out: i32[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(0);
-    i = i + 1;
-  }
-  return out;
-}
-
 function rewrite_args(ins: SInst, resolved: i32[]): SInst {
   let na: i32[] = [];
   let i: i32 = 0;
@@ -592,7 +582,7 @@ pub function rc_inlined(ins: SInst): boolean {
 // ran once per value, which on a function with thousands of calls and tens
 // of thousands of values was most of the allocator's time.
 function calls_before(calls: i32[], total_pos: i32): i32[] {
-  let cum: i32[] = zeros(total_pos + 2);
+  let cum: i32[] = __alloc_i32(total_pos + 2);
   let ci: i32 = 0;
   let p: i32 = 0;
   while (p <= total_pos + 1) {
@@ -636,7 +626,7 @@ function order_by_lo(n: i32, lo: i32[]): i32[] {
     v = v + 1;
   }
   // Bucket maxp + 1 holds the values never referenced (lo left at the sentinel).
-  let starts: i32[] = zeros(maxp + 3);
+  let starts: i32[] = __alloc_i32(maxp + 3);
   v = 0;
   while (v < n) {
     let b: i32 = order_bucket(lo[v], maxp);
@@ -648,7 +638,7 @@ function order_by_lo(n: i32, lo: i32[]): i32[] {
     starts = starts.with(b2, starts[b2] + starts[b2 - 1]);
     b2 = b2 + 1;
   }
-  let out: i32[] = zeros(n);
+  let out: i32[] = __alloc_i32(n);
   v = 0;
   while (v < n) {
     let bk: i32 = order_bucket(lo[v], maxp);
@@ -1905,7 +1895,7 @@ function still_in(occ: i32[], hi: i32[], from: i32): i32[] {
 struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ: i32[][], phi_end: i32[], unseen: boolean[] }
 
 function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
-  let count: i32[] = zeros(f.nvals + 1);
+  let count: i32[] = __alloc_i32(f.nvals + 1);
   let succ: i32[][] = [];
   let phi_end: i32[] = [];
   let unseen: boolean[] = [];
@@ -1988,8 +1978,8 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
         v = v + 1;
       }
       start = count;
-      blk = zeros(count[f.nvals]);
-      pos = zeros(count[f.nvals]);
+      blk = __alloc_i32(count[f.nvals]);
+      pos = __alloc_i32(count[f.nvals]);
     }
     pass = pass + 1;
   }
@@ -3469,9 +3459,9 @@ function prune_roots(f: SFunc): i32[] {
 // prune_mark marks the roots and, through the pure instructions that define
 // them, everything they read.
 function prune_mark(f: SFunc, work: i32[]): i32[] {
-  let live: i32[] = zeros(f.nvals);
-  let def_b: i32[] = zeros(f.nvals);
-  let def_k: i32[] = zeros(f.nvals);
+  let live: i32[] = __alloc_i32(f.nvals);
+  let def_b: i32[] = __alloc_i32(f.nvals);
+  let def_k: i32[] = __alloc_i32(f.nvals);
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     let k: i32 = 0;
