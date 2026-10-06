@@ -3984,7 +3984,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 					return false
 				}
 				return b.rhsTainted(x.Args[0], tainted)
-			case "__alloc_u8":
+			case "__alloc_u8", "__alloc_i32", "__alloc_i64", "__alloc_bool":
 				// A fresh zero-filled rc=1 buffer straight from the runtime
 				// allocator (or the static empty sentinel for n==0, which
 				// every dec no-ops on). Its only argument is a SCALAR byte

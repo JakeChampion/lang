@@ -4456,6 +4456,20 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 	}
+	// Its typed siblings: the same zeroed slots as an `i32[]`, an `i64[]`
+	// or a `boolean[]` of n elements.
+	c.info.FuncSigs["__alloc_i32"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}},
+	}
+	c.info.FuncSigs["__alloc_i64"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}},
+	}
+	c.info.FuncSigs["__alloc_bool"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.BoolType{}},
+	}
 	// Raw-memory escape hatches for stdlib code that
 	// builds typed-pointer arrays (`__array_append_string`)
 	// or runtime structures (the Map runtime migration).
