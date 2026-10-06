@@ -24,8 +24,17 @@ import "std/http";
 // builds everything a server keeps however much of it this probe reads.
 @noinline function keep(f: http.HttpFramed): i32 { return f.len; }
 
+// The parse is called from two places, as std/serve calls it from six, so
+// what it returns crosses a call rather than being spliced into its caller.
 function parse_once(buf: u8[], limits: http.HttpLimits, prev: http.HttpFramed): http.HttpFramed {
   match (http.http_parse_request_framed_from(buf, 0, limits, prev)) {
+    http.Framed(f) => { return f; },
+    _ => { return http.http_framed_none(); }
+  }
+}
+
+function parse_first(buf: u8[], limits: http.HttpLimits): http.HttpFramed {
+  match (http.http_parse_request_framed_from(buf, 0, limits, http.http_framed_none())) {
     http.Framed(f) => { return f; },
     _ => { return http.http_framed_none(); }
   }
@@ -39,7 +48,7 @@ function main(): i32 {
   let buf: u8[] = "GET / HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.5.0\r\nAccept: */*\r\n\r\n".bytes();
   let limits: http.HttpLimits = http.http_limits();
   let resp: HttpResponse = http.ok("hello");
-  let f: http.HttpFramed = parse_once(buf, limits, http.http_framed_none());
+  let f: http.HttpFramed = parse_first(buf, limits);
   let parsed: i32 = keep(f);
   let wire: i32 = serialize_once(resp);
   let a0: i64 = bench.alloc_count();

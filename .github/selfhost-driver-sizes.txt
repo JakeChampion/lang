@@ -472,6 +472,10 @@
 # 2026-10-05: #11586 deletes fnsigs.fern and the whole-program analyses every
 # driver linked. The self-host binary (fern.fern/stage2) shrinks 5.3%, six
 # driver rows 5.5-5.8%. Measured by run 37318577263, driver-sizes-x86_64.
+# 2026-10-05: asm_pathprobe_run 4433136 -> 4684224 (+5.7%): #11621 adds
+# the pair-return pass (sempair.fern) to every driver that links semlower,
+# on top of main's growth since the last refresh; the other rows grow 1-3%
+# and stay inside 5%. Number from driver-sizes' report on run 37382764685.
 fern.fern/stage2 11131728
 fern.fern 11772104
 asm_load_run.fern 9474160
@@ -481,5 +485,5 @@ asm_run.fern 6850928
 wasm_ir_run.fern 6979080
 wasm_run.fern 6979712
 wasm_runio_run.fern 6981520
-asm_pathprobe_run.fern 4433136
+asm_pathprobe_run.fern 4684224
 checker_modload_run.fern 2649656

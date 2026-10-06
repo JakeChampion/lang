@@ -279,14 +279,19 @@ on #4451, as slice 2 was.
    bench, which parses that way, 2% more instructions on x86-64, and the
    same rounds parsed with the donor cost 10% fewer than before.
 
-   Left: the `Ok` box, slice 7, and the serialize's 3, slice 8. The gate's
-   probe parses from one call site, where the inliner splits the `Framed`
-   case; `std/serve` parses from six, so its parse also builds the `Framed`
-   box, which slice 7 removes too.
+   Left after it: the `Ok` box, slice 7, and the serialize's 3, slice 8.
 7. **A small variant returns without a box.** `Ok(h)` of a function with
    several callers, and `Framed(f)` of the parse itself, are built only for
-   each caller to take apart at once. Returned in registers, as a pair of the
-   tag and the payload, they are never built, in every program.
+   each caller to take apart at once. Done on the self-host: a variant whose
+   payloads fit a word, from a function whose every caller takes it apart,
+   is returned as its position with the payload in a second register
+   (`docs/SELFHOST-SSA-BACKEND.md`, "A variant returned in two words"), and
+   is never built. Parse 1 to 0 on all three targets; the gate's probe now
+   parses from two call sites, so the `Framed` of a parse that is not
+   spliced into its caller is counted too, and it was 2 before. `std/serve`
+   gets the `Ok` but not the `Framed`: it keeps the framing whole, holding
+   the tail it parsed past a request in its tuples and in-flight records, so
+   its parse stays unpaired and builds the box it hands on.
 8. **The response is serialized into a buffer the connection keeps.** A
    builder cleared instead of freed, with the reply sent from it, removes
    its two blocks and the copy.

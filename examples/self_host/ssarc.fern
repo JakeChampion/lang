@@ -14,6 +14,7 @@ import "./semtypes";
 import "./typeinfo";
 import "./util";
 import "./semarrayreport";
+import "./sempair";
 
 function empty(why: string): irtables.LowerResult {
   return irtables.LowerResult {
@@ -4747,6 +4748,11 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   }
   // A verified copy already has its single operand on the stack.
   r = emit(r, ir.op_store_local(ins.result));
+  if (ins.kind_tag == ssasem.call() && ins.imm > 0) {
+    // A paired call (sempair): its word is read before anything can call again.
+    r = emit(r, ir.op_call_word());
+    r = emit(r, ir.op_store_local(ins.imm - 1));
+  }
   r = took(r, p, ins);
   if (kept && payload_taken(f, p, ins)) {
     r = unless_unique(r, token_slot(f), ins.result, "__fern_rc_inc");
@@ -6023,6 +6029,9 @@ function dyn_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerRe
 }
 
 function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  if (paired_op(ins.str)) {
+    return pair_site(r, ins);
+  }
   if (util.index_of_str(f.shadows, ins.str) >= 0) {
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
   }
@@ -6082,6 +6091,42 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
     return emit(r, ir.op_f64_from_bits());
   }
   return builtin_site(r, ins);
+}
+
+// The calls sempair writes around a paired return. The word a paired call
+// returned was stored as the call returned, so `__pair_word` reloads it; a
+// payload read off the word is the word; and a payload handed to
+// `__pair_set` waits in its own slot until the return sets it (terminator).
+function paired_op(name: string): boolean {
+  return name == sempair.pair_word_name() || util.str_has_prefix(name, sempair.word_as_prefix()) || util.str_has_prefix(name, sempair.pair_set_prefix());
+}
+
+function pair_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
+  if (ins.str == sempair.pair_word_name()) {
+    r = emit(r, ir.op_drop());
+    return emit(r, ir.op_load_local(ins.result));
+  }
+  if (util.str_has_prefix(ins.str, sempair.word_as_prefix())) {
+    return r;
+  }
+  r = emit(r, ir.op_drop());
+  return emit(r, ir.op_const_i32(0));
+}
+
+// The payload a paired return sets beside its result: the operand of the
+// block's one `__pair_set`, -1 for none, or -2 where there are several, which
+// the terminator refuses rather than hand the caller either.
+function pair_payload(b: ssa.SBlock): i32 {
+  let found: i32 = 0 - 1;
+  for ins in b.insts {
+    if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, sempair.pair_set_prefix())) {
+      if (found >= 0) {
+        return 0 - 2;
+      }
+      found = ins.args[0];
+    }
+  }
+  return found;
 }
 
 // One half of the builtin dispatch below: the result with that builtin's op
@@ -7192,6 +7237,15 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
     if (b.term.kind_tag == 4) {
       e = Emit { ...e, r: emit(e.r, ir.op_const_i32(134)) };
       e = Emit { ...e, r: emit(e.r, ir.op_exit()) };
+    }
+    let payload: i32 = pair_payload(b);
+    if (payload == 0 - 2) {
+      return Emit { ...e, why: "a paired return sets its word twice" };
+    }
+    if (b.term.kind_tag == 1 && payload >= 0) {
+      e = Emit { ...e, r: emit(e.r, ir.op_load_local(payload)) };
+      e = Emit { ...e, r: emit(e.r, ir.op_ret_word()) };
+      e = Emit { ...e, r: emit(e.r, ir.op_drop()) };
     }
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
       e = Emit { ...e, r: emit(e.r, ir.op_load_local(b.term.value)) };

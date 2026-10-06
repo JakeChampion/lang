@@ -10,7 +10,8 @@ import "testing"
 //
 // The program drives the Err path (c == 0) so the leak would be on the path
 // taken; the Ok path is clean either way. aliased(0) is Err(7), so 50 rounds
-// leave main returning 350 - 350 = 0.
+// leave main returning 350 - 350 = 0. `c + 1` keeps `x` off the static data a
+// constant array is, so the sweep has a block to release.
 const moveAfterTryOpSrc = `
 @noinline
 function g(c: i32): Result[i32, i32] {
@@ -20,7 +21,7 @@ function g(c: i32): Result[i32, i32] {
 
 @noinline
 function aliased(c: i32): Result[i32, i32] {
-    let x: i32[] = [1, 2, 3];
+    let x: i32[] = [c + 1, 2, 3];
     let r: i32 = g(c)?;
     let y: i32[] = x;
     return Ok(y[0] + r);
