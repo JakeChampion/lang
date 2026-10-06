@@ -122,6 +122,14 @@ up.
 
 ## 4. Exit
 
+Criterion A's count half, `__heap_alloc_count()` deltas of 0 per request,
+is §6. Its gate counts the whole serve loop over 2,000 requests on
+x86-64. A steady loop allocates the same number of times on every
+request, so 2,000 rounds settle the figure, and a later leg can take the
+gate to 100k requests and the other targets once it reads 0. The bump
+half, held over 100k requests by `TestBumpPerRequest` and
+`TestSelfHostBumpPerRequest`, is unchanged.
+
 Criterion B of #9853 is met when the gate reads 0 for the framing path on
 both compilers with the hello handler, which needs slice 8. It reads 0
 for the parse and the serialize on every target since §5.3's slice 8. The
@@ -310,3 +318,64 @@ on #4451, as slice 2 was.
    fields, where it had been added to the response with `with_header`
    after a `get_all` lookup, both of which allocated per request.
    Serialize 3 to 0 on all three targets.
+
+## 6. The serve loop's own allocations
+
+### 6.1 Measured
+
+The framing gate counts the parse and the serialize, called as the loop
+calls them. What the loop does around them is counted by
+`TestSelfHostServeAllocsPerRequest`. It serves a hello handler on one
+keep-alive connection, with `/count` answering `__heap_alloc_count()`.
+Between two counts, 2,000 hello requests cost 30 allocations each on
+x86-64 at `origin/main` ac29eede9. The gate pins 30 as a ratchet.
+
+The rows below are attributed from a `FERN_RC_TRACE` trace of a `-g`
+build, the one build whose return addresses resolve to functions, and
+then corrected by hand. Under `-g` the semantic passes keep every value
+a source variable names whole so a debugger can show it (`seminline`,
+`semoption`, `sempair` all skip `dbg_vals`). The same server then
+allocates 43 times per request, and the framing probe's parse allocates 5
+instead of 0. The 13 the `-g` build adds were struck from the parse's
+rows and the helpers' named tuples by judgement, not by a matched diff:
+a trace row is an allocation site that can fire more than once per
+request, and `-g` also changes what the passes rewrite, so the two
+builds' traces do not pair line for line. Only the gate's 30 is
+measured; the split between rows is provisional, and each slice's gate
+reading settles it.
+
+| Allocations | Where |
+| ---: | --- |
+| 7 | `RealDriver.wait` builds its events array by appending, then takes the first `n` pairs of it |
+| 6 | `__serve_read` appends what each read took: `scratch.take(n)` and `buf.concat(...)`, each built by pushes |
+| 3 | `__serve_compact` copies the unanswered bytes into a fresh array through a builder (`__bytes_from`), every request, even when there are none |
+| 4 | `.with(at, …)` on `__Conns`' per-connection arrays copies an array its holder does not own uniquely (`__serve_respond`, `__serve_next`) |
+| 3 | `run_task` for a handler that never parks: the `Task`, its closure and the `Done` |
+| about 4 | tuples and records returned between the loop's helpers: `(conns, sent)`, `(conns, boolean)`, `__Wire`, `__serve_took`'s triple, the event triple |
+| 1 | the parse's `Framed`, which the loop keeps whole (§5.3's slice 7) |
+| 2 | the handler's `http.ok`: the `HttpResponse` and a header map |
+
+### 6.2 Slices
+
+In this order, one PR each, each lowering the pin. A fix in the compiler
+is preferred where it covers a case, since every program gains.
+
+1. **The gate and this plan.** Done.
+2. **The read appends into the connection's buffer.** A read takes bytes
+   straight into the buffer the connection holds, and compaction moves
+   unanswered bytes to the front only when there are some.
+3. **The reactor fills an events array the loop keeps.** A wait writes
+   its readiness pairs into the loop's array instead of building one.
+4. **The per-connection arrays are updated in place.** The loop holds
+   `__Conns` uniquely, so `.with` should reuse each array. Find why it
+   copies and fix that in the compiler.
+5. **A handler that answers at once costs no task.** Start the handler as
+   a plain call and make the task only when it parks.
+6. **The helpers' tuples and records.** By the compiler where a pairing
+   or a splice covers them, otherwise by threading state the way the
+   parse does.
+7. **The handler's response.** What is left is the response, once the
+   loop's own allocations are gone. A constant response is a static
+   record, and the donor of §5.3's slice 6 is the model for one built per
+   request.
+
