@@ -109,10 +109,11 @@ func semInlineWants(want string) map[string]string {
 
 func TestSelfHostSemanticInline(t *testing.T) {
 	runSemanticProgram(t, "seminline", semInlineProgram, semInlineProduced,
-		semInlineWants("1950000\n1225000\n1845000\n1950000\n5950000\n5950000\n900000\n"))
+		semInlineWants("1950000\n1225000\n1845000\n1950000\n5950000\n5950000\n900000\n"), "kept", "kept_span")
 }
 
-// FERN_SEM_INLINE= turns the pass off, and every tuple is a box again.
+// FERN_SEM_INLINE= turns off both splicing and pair returns, so every tuple
+// is a box again.
 func TestSelfHostSemanticInlineOff(t *testing.T) {
 	t.Setenv("FERN_SEM_INLINE", "")
 	runSemanticProgram(t, "seminline-off", semInlineProgram, semInlineProduced,
