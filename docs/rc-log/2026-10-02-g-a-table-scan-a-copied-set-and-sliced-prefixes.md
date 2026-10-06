@@ -11,7 +11,7 @@ entry's change.
 ## What the profile named
 
 The whole-compiler emit after the previous entry
-(`docs/LOCAL-DEV-LOOP.md`, "Where a whole self-host emit spends its time"):
+([Historical self-host emit profile (2026-10-02)](../LOCAL-DEV-LOOP.md#historical-self-host-emit-profile-2026-10-02)):
 
 - `asmcore.infer_call_named_type` 3.28 G of 214.05 G, 23.9 k calls at 137 k
   Ir each. The if-chain over the builtin names is 183 string compares per
