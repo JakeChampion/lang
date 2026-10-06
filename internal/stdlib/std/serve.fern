@@ -34,7 +34,7 @@
 //   2. when it is readable, tcp_recv_into one 4 KiB buffer until -EAGAIN,
 //      appending to the connection's request bytes (at most the parser's
 //      header and body caps unread).
-//   3. http_parse_request_framed — Incomplete ⇒ keep reading (on EOF, close);
+//   3. http_parse_request_framed — Incomplete ⇒ keep reading (on EOF, 400 and close);
 //      Continue ⇒ send `100 Continue` once (RFC 9110 §10.1.1) and keep
 //      reading; Malformed(status) ⇒ answer with that status (400, 413,
 //      414, 417, 431 or 501), an empty body and `Connection: close`, then close; a
@@ -1931,9 +1931,30 @@ function __serve_held_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[]
   let read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
   c = read.0;
   if (read.1) {
-    c = __Conns { ...c, keep: c.keep.with(at, false) };
+    c = __serve_parked_eof(c, fd);
   }
   return (__Conns { ...c, deadlines: c.deadlines.with(at, __held_deadline()) }, fls);
+}
+
+// __serve_settle(drv, c, fls, fd, eof, opts, clk) — `__serve_finish` after
+// an event, except that a peer that finished sending while a handler is
+// parked on `fd` waits for that handler's response (`__serve_parked_eof`).
+function __serve_settle[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fd: i32, eof: boolean, opts: Config, clk: __Clock): __Conns {
+  if (eof && __flight_at(fls, fd) >= 0) {
+    return __serve_parked_eof(__serve_finish(drv, c, fd, false, opts, clk), fd);
+  }
+  return __serve_finish(drv, c, fd, eof, opts, clk);
+}
+
+// __serve_parked_eof(c, fd) — the peer finished sending while a handler is
+// parked on `fd`: that handler's response still goes out, and the
+// connection closes after it.
+function __serve_parked_eof(c: __Conns, fd: i32): __Conns {
+  let at: i32 = __conns_index(c, fd);
+  if (at < 0) {
+    return c;
+  }
+  return __Conns { ...c, keep: c.keep.with(at, false) };
 }
 
 // __flight_wake(drv, c, fls, fi, ready, opts, clk) — flight `fi` run on
@@ -2270,7 +2291,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         }
         framing = next;
       }
-      conns = __serve_finish(drv, conns, fd, ev.2, opts, clk);
+      conns = __serve_settle(drv, conns, flights, fd, ev.2, opts, clk);
     }
     let due: (__Conns, __Flight[]) = __flights_expire(drv, conns, flights, opts, clk);
     conns = due.0;
