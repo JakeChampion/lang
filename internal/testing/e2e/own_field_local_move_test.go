@@ -77,7 +77,7 @@ func TestOwnFieldLocalMove(t *testing.T) {
 	}{
 		{"x86_64", runLeakCheckX86_64, true},
 		{"arm64", runLeakCheckArm64, true},
-		// The component's heap does not count allocations the same way, so
+		// The wasm heap does not count allocations the same way, so
 		// only the values and the census are checked there.
 		{"wasm", func(t *testing.T, src string) (string, string, int) {
 			return runLeakCheckWasm(t, src, false)
