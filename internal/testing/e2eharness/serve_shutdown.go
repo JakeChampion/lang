@@ -24,14 +24,13 @@ import (
 // signal to its workers and waits for them; and a listener handed in
 // through LISTEN_FDS is served instead of a fresh one.
 
-// ServeShutdownSource is a server on `port` whose /slow burns pure work
+// ServeShutdownSource is a server whose /slow burns pure work
 // until 1.5 s of the bag's monotonic clock has passed, so the checks' 100 ms
 // head start lands mid-request on any runner, whose readiness path is
 // /healthz and which answers
 // everything else at once, with a 300 ms grace and `drainMs` to drain.
-// `entry` is the serve call, a format with one %d for the port that reads
-// `opts`.
-func ServeShutdownSource(port, drainMs int, entry string) string {
+// `entry` is the serve call, which reads `opts`.
+func ServeShutdownSource(drainMs int, entry string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/time";
@@ -59,14 +58,16 @@ function main(): i32 {
     let opts: serve.Config = serve.Config { ...serve.config(), shutdown_grace: time.duration_millis(300 as i64), readiness_path: "/healthz", drain_deadline: time.duration_millis(%d as i64) };
     return %s;
 }
-`, drainMs, fmt.Sprintf(entry, port))
+`, drainMs, entry)
 }
 
 // StartServerProcess starts cmd in its own process group, with its stderr
 // in a file the caller can read, and kills the whole group at cleanup: a
 // supervisor forks workers, and killing only the parent would orphan a
 // worker still holding the listener. extraFiles are handed to the child
-// from descriptor 3 up, the way LISTEN_FDS announces a listener.
+// from descriptor 3 up, the way LISTEN_FDS announces a listener. When the
+// test has failed, cleanup logs whether the server had exited on its own
+// and what it wrote to stderr.
 func StartServerProcess(t *testing.T, cmd *exec.Cmd, extraFiles ...*os.File) (stderrPath string) {
 	t.Helper()
 	cmd.ExtraFiles = append(cmd.ExtraFiles, extraFiles...)
@@ -82,11 +83,52 @@ func StartServerProcess(t *testing.T, cmd *exec.Cmd, extraFiles ...*os.File) (st
 		t.Fatalf("start server: %v", err)
 	}
 	t.Cleanup(func() {
+		ended := serverEnded(cmd)
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		_, _ = cmd.Process.Wait()
 		errFile.Close()
+		if t.Failed() {
+			t.Logf("server %s; its stderr:\n%s", ended, fileTail(stderrPath, 16<<10))
+		}
 	})
 	return stderrPath
+}
+
+// serverEnded says whether the server had already exited, and how, before
+// cleanup kills it. A server that has not been waited for is reaped here
+// when it has exited, which leaves the cleanup's own wait nothing to do.
+func serverEnded(cmd *exec.Cmd) string {
+	if cmd.ProcessState != nil {
+		return "had exited: " + cmd.ProcessState.String()
+	}
+	var ws syscall.WaitStatus
+	pid, err := syscall.Wait4(cmd.Process.Pid, &ws, syscall.WNOHANG, nil)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("state unknown (wait4: %v)", err)
+	case pid == 0:
+		return "was still running at cleanup"
+	case ws.Signaled():
+		return fmt.Sprintf("had exited: killed by %v", ws.Signal())
+	default:
+		return fmt.Sprintf("had exited: exit status %d", ws.ExitStatus())
+	}
+}
+
+// fileTail is the last max bytes of the file at path, or why it could not
+// be read.
+func fileTail(path string, max int) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err.Error()
+	}
+	if len(b) == 0 {
+		return "(empty)"
+	}
+	if len(b) > max {
+		return fmt.Sprintf("... (%d bytes before)\n%s", len(b)-max, b[len(b)-max:])
+	}
+	return string(b)
 }
 
 // WaitServerReady dials until the listener accepts. The probe connection
@@ -95,15 +137,17 @@ func StartServerProcess(t *testing.T, cmd *exec.Cmd, extraFiles ...*os.File) (st
 func WaitServerReady(t *testing.T, addr string, within time.Duration) {
 	t.Helper()
 	limit := time.Now().Add(within)
+	var last error
 	for time.Now().Before(limit) {
 		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
 		if err == nil {
 			c.Close()
 			return
 		}
+		last = err
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("server never bound on %s within %v", addr, within)
+	t.Fatalf("server never bound on %s within %v; last dial: %v", addr, within, last)
 }
 
 // rawRequest writes one request on a fresh connection and returns the
@@ -288,21 +332,99 @@ func CheckSupervisedShutdown(t *testing.T, cmd *exec.Cmd, addr, stderrPath strin
 	}
 }
 
-// InheritedListener is a listening socket and its file, for
-// StartServerProcess to hand to a server as descriptor 3.
-func InheritedListener(t *testing.T) (addr string, file *os.File) {
+// StartInheritedServer starts cmd as StartServerProcess does, serving a
+// listener it inherits as descriptor 3 (LISTEN_FDS=1), and answers the
+// listener's loopback address. The listener exists before the server does,
+// so there is no port for another test to take between choosing it and the
+// server binding it. The test's own copy is closed once the server holds
+// one, so a server that closes its listener stops accepting connections.
+// The harness's server sources pass port 0 to their serve entry, which the
+// inherited listener supersedes.
+func StartInheritedServer(t *testing.T, cmd *exec.Cmd) (addr, stderrPath string) {
 	t.Helper()
-	ln, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	fd, port := boundSocket(t, false)
+	if err := syscall.Listen(fd, 128); err != nil {
+		syscall.Close(fd)
+		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
-	file, err = ln.(*net.TCPListener).File()
-	if err != nil {
-		t.Fatal(err)
+	file := os.NewFile(uintptr(fd), "listener")
+	defer file.Close()
+	cmd.Env = append(cmd.Environ(), "LISTEN_FDS=1")
+	stderrPath = StartServerProcess(t, cmd, file)
+	return fmt.Sprintf("127.0.0.1:%d", port), stderrPath
+}
+
+// ReservedPort is a port for a server that binds it itself with
+// SO_REUSEPORT. It is held until the test ends by a socket that is bound
+// with SO_REUSEPORT but never listens: every other binder is refused the
+// port, the server's own binds share it, and no connection is queued on the
+// reservation.
+func ReservedPort(t *testing.T) int {
+	t.Helper()
+	fd, port := boundSocket(t, true)
+	t.Cleanup(func() { syscall.Close(fd) })
+	return port
+}
+
+// boundSocket is a TCP socket bound to an ephemeral port on the address
+// std/serve's own listener takes: `::` for both families, or `0.0.0.0`
+// where the host has no IPv6.
+func boundSocket(t *testing.T, reusePort bool) (fd, port int) {
+	t.Helper()
+	fd, err := tcpSocket(syscall.AF_INET6)
+	if err == nil {
+		err = syscall.SetsockoptInt(fd, syscall.IPPROTO_IPV6, syscall.IPV6_V6ONLY, 0)
+		if err == nil {
+			err = bindEphemeral(fd, &syscall.SockaddrInet6{}, reusePort)
+		}
+		if err != nil {
+			syscall.Close(fd)
+		}
 	}
-	t.Cleanup(func() { file.Close() })
-	return ln.Addr().String(), file
+	if err != nil {
+		fd, err = tcpSocket(syscall.AF_INET)
+		if err != nil {
+			t.Fatalf("socket: %v", err)
+		}
+		if err := bindEphemeral(fd, &syscall.SockaddrInet4{}, reusePort); err != nil {
+			syscall.Close(fd)
+			t.Fatalf("bind: %v", err)
+		}
+	}
+	sa, err := syscall.Getsockname(fd)
+	if err != nil {
+		syscall.Close(fd)
+		t.Fatalf("getsockname: %v", err)
+	}
+	switch a := sa.(type) {
+	case *syscall.SockaddrInet6:
+		return fd, a.Port
+	case *syscall.SockaddrInet4:
+		return fd, a.Port
+	}
+	syscall.Close(fd)
+	t.Fatalf("getsockname: unexpected %T", sa)
+	return -1, 0
+}
+
+// tcpSocket is a TCP socket that no other test's child inherits.
+func tcpSocket(family int) (int, error) {
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
+	fd, err := syscall.Socket(family, syscall.SOCK_STREAM, 0)
+	if err == nil {
+		syscall.CloseOnExec(fd)
+	}
+	return fd, err
+}
+
+func bindEphemeral(fd int, sa syscall.Sockaddr, reusePort bool) error {
+	if reusePort {
+		if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, soReusePort, 1); err != nil {
+			return err
+		}
+	}
+	return syscall.Bind(fd, sa)
 }
 
 // CheckInheritedListener drives a server started with an inherited

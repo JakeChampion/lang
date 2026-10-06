@@ -31,9 +31,9 @@ const serveAllocsWarm = 2000
 // each time, and the rounds can straddle a second or two.
 const serveAllocsSlack = 64
 
-// ServeAllocsServerSource is a server on `port` answering "hello" to every
+// ServeAllocsServerSource is a server answering "hello" to every
 // path but /count, which answers the allocator's call count.
-func ServeAllocsServerSource(port int) string {
+func ServeAllocsServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -44,9 +44,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("hello");
 }
 function main(): i32 {
-    return serve.run(%d, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle);
+    return serve.run(0, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle);
 }
-`, port, serveAllocsWarm+ServeAllocsRounds+8)
+`, serveAllocsWarm+ServeAllocsRounds+8)
 }
 
 // CheckServeAllocs drives ServeAllocsServerSource at addr and holds the

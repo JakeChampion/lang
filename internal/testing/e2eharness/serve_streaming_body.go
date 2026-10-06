@@ -11,12 +11,12 @@ import (
 	"time"
 )
 
-// StreamingBodyServerSource is a server on `port` whose handler answers
+// StreamingBodyServerSource is a server whose handler answers
 // the file at `path` on /big, five chunks from a producer on /chunks, and
 // a producer whose first chunk is empty on /sparse: the bodies the serve
 // loop produces as the socket takes them, a file under its length and
 // chunks under chunked transfer coding.
-func StreamingBodyServerSource(port int, path string) string {
+func StreamingBodyServerSource(path string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "core/int";
@@ -41,9 +41,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.run(%d, serve.config(), handle);
+    return serve.run(0, serve.config(), handle);
 }
-`, path, port)
+`, path)
 }
 
 // StreamingBodyContent is what the file StreamingBodyServerSource serves

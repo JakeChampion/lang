@@ -3,18 +3,16 @@
 package e2ecompiler
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestSelfHostServeNoDelay(t *testing.T) {
-	port := selfHostFreePort(t)
-	bin, runner := selfHostServer(t, e2eharness.NoDelayServerSource(port))
+	bin, runner := selfHostServer(t, e2eharness.NoDelayServerSource())
 	cmd := binCmd(runner, bin)
-	e2eharness.StartServerProcess(t, cmd)
-	e2eharness.CheckServeNoDelay(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.CheckServeNoDelay(t, cmd, addr)
 }
 
 func TestSelfHostNetNoDelay(t *testing.T) {
@@ -29,9 +27,8 @@ func TestSelfHostNetNoDelay(t *testing.T) {
 }
 
 func TestSelfHostServeCorksBurst(t *testing.T) {
-	port := selfHostFreePort(t)
-	bin, runner := selfHostServer(t, e2eharness.NoDelayServerSource(port))
+	bin, runner := selfHostServer(t, e2eharness.NoDelayServerSource())
 	cmd := binCmd(runner, bin)
-	e2eharness.StartServerProcess(t, cmd)
-	e2eharness.CheckServeCorksBurst(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.CheckServeCorksBurst(t, cmd, addr)
 }

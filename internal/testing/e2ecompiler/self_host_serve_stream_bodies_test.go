@@ -1,7 +1,6 @@
 package e2ecompiler
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,10 +18,9 @@ import (
 // a client gone mid-body. The Go compiler's blocking fallback runs the
 // sequential checks alone (internal/testing/e2e TestServeStreamBodiesSequential).
 func TestSelfHostServeStreamBodies(t *testing.T) {
-	port := selfHostFreePort(t)
-	bin, runner := selfHostServer(t, e2eharness.StreamBodiesServerSource(port))
-	e2eharness.StartServerProcess(t, binCmd(runner, bin))
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	bin, runner := selfHostServer(t, e2eharness.StreamBodiesServerSource())
+	cmd := binCmd(runner, bin)
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
 	e2eharness.CheckStreamBodiesOverlap(t, addr)
 	e2eharness.CheckStreamBodiesSequential(t, addr)
 }
@@ -30,13 +28,11 @@ func TestSelfHostServeStreamBodies(t *testing.T) {
 func TestSelfHostServeStreamBodiesArm64(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
-	port := freeTCPPort(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
-	if err := os.WriteFile(src, []byte(e2eharness.StreamBodiesServerSource(port)), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(e2eharness.StreamBodiesServerSource()), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	e2eharness.StartServerProcess(t, runArm64Bin(qemu, cli.arm64Binary(t, src)))
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	addr, _ := e2eharness.StartInheritedServer(t, runArm64Bin(qemu, cli.arm64Binary(t, src)))
 	e2eharness.CheckStreamBodiesOverlap(t, addr)
 	e2eharness.CheckStreamBodiesSequential(t, addr)
 }

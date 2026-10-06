@@ -25,10 +25,9 @@ func TestBumpPerRequest(t *testing.T) {
 				// of the count still warms the free lists ten times over.
 				rounds /= 10
 			}
-			port := freeLoopbackPort(t)
-			bin := buildNativeServer(t, compiler, target, e2eharness.BumpPerRequestServerSource(port))
-			e2eharness.StartServerProcess(t, nativeServerRunner(t, target)(bin))
-			e2eharness.CheckBumpPerRequest(t, fmt.Sprintf("127.0.0.1:%d", port), rounds)
+			bin := buildNativeServer(t, compiler, target, e2eharness.BumpPerRequestServerSource())
+			addr, _ := e2eharness.StartInheritedServer(t, nativeServerRunner(t, target)(bin))
+			e2eharness.CheckBumpPerRequest(t, addr, rounds)
 		})
 	}
 }
