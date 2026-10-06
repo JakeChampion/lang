@@ -2547,6 +2547,32 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{},
 		Result: ast.NumberType{Width: 64, Signed: true},
 	}
+	// clock_resolution(): i64 — the granularity of the wall clock
+	// `now_ns` reads, in nanoseconds: clock_getres(CLOCK_REALTIME) on
+	// Linux, preview-1 `clock_res_get(realtime)` on wasm, and the
+	// microsecond tick of the gettimeofday clock on Darwin, which has
+	// no clock_getres syscall. One i64 of nanoseconds like every other
+	// clock builtin. No Result: with a fixed clock id and a buffer the
+	// runtime owns, the call cannot fail.
+	c.info.FuncSigs["clock_resolution"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// clock_set(sec, nsec): Result[void, IoError] — set the system's
+	// wall clock to `sec` seconds plus `nsec` nanoseconds after the
+	// epoch: clock_settime(CLOCK_REALTIME) on Linux, settimeofday on
+	// Darwin (to the microsecond). A Result because the usual answer is
+	// a refusal: without the privilege the kernel says EPERM, which is
+	// what `date -s` reports, and a wasm host, which has no call that
+	// sets its clock, says Unsupported. An `nsec` outside 0..999999999
+	// is EINVAL.
+	c.info.FuncSigs["clock_set"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// read_line(): Option[string] — read one line from stdin
 	// (including the trailing '\n' if present), returning
 	// Some(line) or None at end-of-file before any byte. The

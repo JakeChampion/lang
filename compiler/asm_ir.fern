@@ -2397,7 +2397,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
-    "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority",
+    "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority", "clock_set",
   ]);
 }
 
@@ -2416,7 +2416,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs",
     "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "subprocess",
-    "signal_send", "set_process_group", "set_priority",
+    "signal_send", "set_process_group", "set_priority", "clock_set",
   ]);
 }
 
@@ -10296,6 +10296,18 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    call __fn___fern_set_priority\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("set_priority");
+  } else if (o.kind_tag == 388) {  // clock_set
+    // [sec][nsec] (nsec on top) -> Result[void, IoError], re-pushed with
+    // param[0] (sec) on top the way signal_send's pair is.
+    s = s.write("    popq %rsi\n    popq %rdi\n");
+    s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_clock_set\n    addq $16, %rsp\n    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need("clock_set");
+  } else if (o.kind_tag == 389) {  // clock_resolution
+    // no args -> the clock's tick in nanoseconds in %rax. Nothing is
+    // boxed, so no heap need.
+    s = s.write("    call __fn___fern_clock_resolution\n    pushq %rax\n");
+    s = s.need("clock_resolution");
   } else if (o.kind_tag == 272) {  // rlimit_nofile
     // no args -> __fern_rlimit_nofile() -> the soft RLIMIT_NOFILE as a
     // full-width i64 in %rax.
@@ -12299,6 +12311,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     "signal_disposition", "access",
     "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
     "fd_stat", "raw_scratch",
+    "clock_resolution", "clock_set",
   ])) {
     s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size("x86_64", s.has_need("statfs")) + "\n    .text\n");
   }
@@ -12489,6 +12502,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("set_priority")) {
       fs_src = fs_src + " " + asmcore.rt_src_set_priority("x86_64");
     }
+    if (s.has_need("clock_set")) {
+      fs_src = fs_src + " " + asmcore.rt_src_clock_set("x86_64");
+    }
     if (s.has_need("truncate")) {
       fs_src = fs_src + " " + asmcore.rt_src_truncate("x86_64");
     }
@@ -12611,6 +12627,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("rlimit_nofile")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile("x86_64"), s);
+  }
+  if (s.has_need("clock_resolution")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock_resolution("x86_64"), s);
   }
   if (s.has_need("priority")) {
     s = s.write("    .text\n");

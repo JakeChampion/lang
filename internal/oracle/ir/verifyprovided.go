@@ -451,6 +451,8 @@ var providedSigs = map[string]providedSig{
 	"umask":                            {1, rWord},
 	"priority":                         {0, rWord},
 	"set_priority":                     {1, rWord},
+	"clock_resolution":                 {0, rWord},
+	"clock_set":                        {2, rWord},
 	"sleep_ms":                         {-1, rVoid},
 	"sleep_ns":                         {-1, rVoid},
 	"stat":                             {-1, rWord},

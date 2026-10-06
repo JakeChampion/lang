@@ -1561,6 +1561,8 @@ func New() *Interp {
 	i.Builtins["now_unix_ms"] = &Builtin{Fn: builtinNowUnixMS}
 	i.Builtins["now_ns"] = &Builtin{Fn: builtinNowNS}
 	i.Builtins["monotonic_ns"] = &Builtin{Fn: builtinMonotonicNS}
+	i.Builtins["clock_resolution"] = &Builtin{Fn: builtinClockResolution}
+	i.Builtins["clock_set"] = &Builtin{Fn: builtinClockSet}
 	i.Builtins["sleep_ms"] = &Builtin{Fn: builtinSleepMS}
 	i.Builtins["sleep_ns"] = &Builtin{Fn: builtinSleepNS}
 	i.Builtins["proc_fork"] = &Builtin{Fn: builtinProcFork}
@@ -3405,6 +3407,34 @@ func builtinMonotonicNS(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("monotonic_ns: expected 0 args, got %d", len(args))
 	}
 	return Number(time.Now().UnixNano()), nil
+}
+
+// builtinClockResolution is the granularity of the clock now_ns reads, in
+// nanoseconds — what the compiled backends ask the kernel for.
+func builtinClockResolution(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("clock_resolution: expected 0 args, got %d", len(args))
+	}
+	return Number(hostClockResolution()), nil
+}
+
+// builtinClockSet sets the system's wall clock. Unlike setuid, which the
+// interpreter refuses, this changes nothing about the compiler's own
+// process: it is the same system-wide change a compiled program makes, at
+// the privilege `fern` runs with.
+func builtinClockSet(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("clock_set: expected 2 args, got %d", len(args))
+	}
+	sec, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("clock_set: expected number seconds, got %T", args[0])
+	}
+	nsec, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("clock_set: expected number nanoseconds, got %T", args[1])
+	}
+	return ioResult("", hostClockSet(int64(sec), int64(nsec))), nil
 }
 
 // builtinSleepMS pauses for the given duration (milliseconds).

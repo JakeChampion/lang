@@ -3898,15 +3898,6 @@ ordinary user — but the name asked about is two bytes longer, so a path within
 two bytes of PATH_MAX could answer ENAMETOOLONG where GNU's would not. Fern has
 no chdir builtin, and one was judged too narrow a reason to add it.
 
-**`date -s` cannot set the clock.** GNU parses the string and calls
-settime; Fern has no builtin that writes the system clock, so `date -s
-STRING` and the `date MMDDhhmm[[CC]YY][.ss]` operand form parse their
-argument exactly as GNU does — an invalid one is refused with the same
-message — and then print the date after `cannot set date: Operation not
-permitted`, which is what GNU prints without the privilege. The corpus
-holds only invalid spellings of both, since a valid one run by the
-root the suite runs as would move the machine's clock.
-
 **`df --sync` does not sync.** GNU calls `sync(2)` before it measures, so its
 numbers are post-writeback. Fern has no such builtin — no `sync`, `fsync` or
 `syncfs` in FuncSigs, and no flush-to-device on `Writer` — so `df.fern` accepts
@@ -4542,7 +4533,7 @@ groups are the order of work. Each sub-issue names its group.
   `chown` `chgrp` `runcon`, `chcon` (done, on `getxattr` / `setxattr` —
   #9098, #9154), `stat` `ls` `dir` `vdir` `du` `df`
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
-  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `std/tz`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `nice` (done, on the
+  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `std/tz`; `-s` and the `MMDDhhmm` operand set the clock through `clock_set` and `--resolution` asks `clock_resolution`, #9166; the corpus runs its valid `-s` cases without the privilege to move the clock, so what it compares is GNU's `cannot set date: Operation not permitted`), `nice` (done, on the
   new `priority()` / `set_priority(n)` pair under the `sched` target
   capability — and on `gnu.exec_command`, which `env` moved its own
   execvp emulation into so the PATH search and the `/bin/sh` retry for a

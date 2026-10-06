@@ -280,9 +280,14 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "now_unix_ms", capability: "now" },
     Gate { builtin: "now_ns", capability: "now" },
     Gate { builtin: "monotonic_ns", capability: "now" },
+    Gate { builtin: "clock_resolution", capability: "now" },
     Gate { builtin: "sleep_ms", capability: "now" },
     Gate { builtin: "sleep_ns", capability: "now" },
     Gate { builtin: "wasm_timer_pollable", capability: "now" },
+    // Setting the wall clock needs a host with one. The wasm worlds have
+    // a clock and no call that sets it, so their clock_set answers
+    // Unsupported at the call rather than being refused here.
+    Gate { builtin: "clock_set", capability: "now" },
     // `timer_fd` is a clock wakeup too, but gated on the FD half rather
     // than on `now`: it hands back a file descriptor to poll, and that
     // is what wasm cannot answer. `wasm_timer_pollable` above is the

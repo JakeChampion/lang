@@ -162,6 +162,10 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "now_unix_ms", capability: "time" },
     BuiltinCap { builtin: "now_ns", capability: "time" },
     BuiltinCap { builtin: "monotonic_ns", capability: "time" },
+    BuiltinCap { builtin: "clock_resolution", capability: "time" },
+    // Setting the wall clock moves every reading taken after it: the
+    // same resource as the reads, with more reach.
+    BuiltinCap { builtin: "clock_set", capability: "time" },
     BuiltinCap { builtin: "sleep_ms", capability: "time" },
     BuiltinCap { builtin: "sleep_ns", capability: "time" },
     BuiltinCap { builtin: "timer_fd", capability: "time" },

@@ -10206,6 +10206,8 @@ pub function builtin_function_names(): string[] {
     // clocks + randomness + sleep + reactor readiness
     "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "sleep_ns", "random_bytes",
     "random_i32", "poll", "timer_fd", "wasm_timer_pollable",
+    // the wall clock's resolution, and setting it
+    "clock_resolution", "clock_set",
     "wasm_pollable_drop", "wasm_block", "wasm_poll",
     // maps + string builder + bytes.
     "map_new", "__map_new_i32", "strbuf_append", "strbuf_reset",

@@ -7469,6 +7469,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "setuid", params: [t_i64()], modes: [v], result: done },
     ssasem.Contract { name: "setgid", params: [t_i64()], modes: [v], result: done },
     ssasem.Contract { name: "set_priority", params: [t_i32()], modes: [v], result: done },
+    ssasem.Contract { name: "clock_set", params: [t_i64(), t_i64()], modes: [v, v], result: done },
   ];
 }
 
@@ -7909,6 +7910,7 @@ function value_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "now_unix_ms", params: [], modes: [], result: t_i64() },
     ssasem.Contract { name: "now_ns", params: [], modes: [], result: t_i64() },
     ssasem.Contract { name: "monotonic_ns", params: [], modes: [], result: t_i64() },
+    ssasem.Contract { name: "clock_resolution", params: [], modes: [], result: t_i64() },
     ssasem.Contract { name: "sleep_ms", params: [t_i64()], modes: value, result: t_void() },
     ssasem.Contract { name: "sleep_ns", params: [t_i64()], modes: value, result: t_void() },
     ssasem.Contract { name: "putchar", params: [t_i32()], modes: value, result: t_void() },

@@ -440,6 +440,9 @@ var rcInertBuiltins = map[string]bool{
 	// worlds, which have no scheduler knob, so they are classified
 	// here under the builtin names.
 	"priority": true, "set_priority": true,
+	// () → the wall clock's resolution, and (sec, nsec) → a Result[void]
+	// saying whether the clock was set. Scalars only, so nothing to move.
+	"clock_resolution": true, "clock_set": true,
 	"geteuid": true, "getegid": true, "hostname": true,
 	"getuid": true, "getgid": true, "__getpwuid_name": true,
 	// `getgroups` has no arguments either, and it is classified here
