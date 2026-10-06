@@ -18,7 +18,7 @@ import (
 // capability reach TWICE — once with native's platforms.Reach over
 // modload.LoadStdlibFlat, once with the self-host's platforms.reach over its
 // own modloader + flatten.bundle — and requires the same answer
-// (compiler/platforms_reach_run.fern, #6633 item 3).
+// (compiler/drivers/platforms_reach_run.fern, #6633 item 3).
 //
 // internal/platforms/std_partition_test.go already derives the partition on
 // the native side and checks a checked-in table against it. This is the same
@@ -44,8 +44,8 @@ func TestSelfHostStdPartitionAgreesWithNative(t *testing.T) {
 		t.Skip("platforms_reach_run reads its entry off argv; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "platforms_reach_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "platforms_reach_run.fern", "platforms_reach_run")
+	copySelfHostDriver(t, dir, "drivers/platforms_reach_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/platforms_reach_run.fern", "platforms_reach_run")
 
 	// The driver resolves `import "std/x"` as `<entry dir>/std/x.fern`, the
 	// same path shape native's loader uses, so the embedded stdlib is written

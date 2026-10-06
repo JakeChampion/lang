@@ -255,8 +255,8 @@ func TestSelfHostAllocCountMatrixX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	cells := allocMatrixCells()
 	seen := map[string]bool{}

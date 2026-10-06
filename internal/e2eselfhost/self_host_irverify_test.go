@@ -35,8 +35,8 @@ func TestSelfHostIRVerifyStructure(t *testing.T) {
 		t.Skip("irverify_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "irverify_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
+	copySelfHostDriver(t, dir, "drivers/irverify_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/irverify_run.fern", "irverify_run")
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
@@ -71,8 +71,8 @@ func TestSelfHostIRVerifyStack(t *testing.T) {
 		t.Skip("irverify_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "irverify_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
+	copySelfHostDriver(t, dir, "drivers/irverify_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/irverify_run.fern", "irverify_run")
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
@@ -105,8 +105,8 @@ func TestSelfHostIRVerifyFip(t *testing.T) {
 		t.Skip("irverify_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "irverify_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
+	copySelfHostDriver(t, dir, "drivers/irverify_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/irverify_run.fern", "irverify_run")
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
@@ -122,7 +122,7 @@ func TestSelfHostIRVerifyFip(t *testing.T) {
 }
 
 // TestSelfHostIRVerifyProvided exercises the callee-resolution verifier
-// (compiler/irverifyprovided.fern, #6639 slice 4) — the port of
+// (compiler/drivers/irverifyprovided.fern, #6639 slice 4) — the port of
 // native's internal/ir/verifyprovided.go.
 //
 // Same driver and the same both-directions discipline as the passes above.
@@ -141,8 +141,8 @@ func TestSelfHostIRVerifyProvided(t *testing.T) {
 		t.Skip("irverify_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "irverify_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
+	copySelfHostDriver(t, dir, "drivers/irverify_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/irverify_run.fern", "irverify_run")
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
@@ -178,7 +178,7 @@ func TestSelfHostIRVerifyProvidedAudit(t *testing.T) {
 		t.Skip("modload driver runs natively; skipping under an exec runner")
 	}
 	dir := writeSelfHostModloadProject(t)
-	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "provided_audit")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "provided_audit")
 
 	cmd := exec.Command(bin, "-provided-audit")
 	out, _ := cmd.Output()
@@ -210,9 +210,9 @@ func TestSelfHostIRVerifyProvidedCompilerClean(t *testing.T) {
 		t.Skip("modload driver runs natively; skipping under an exec runner")
 	}
 	dir := writeSelfHostModloadProjectTyped(t)
-	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "provided_compiler")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "provided_compiler")
 
-	cmd := exec.Command(bin, filepath.Join(dir, "asm_modload_run.fern"), "-verifyprovided")
+	cmd := exec.Command(bin, filepath.Join(dir, "drivers/asm_modload_run.fern"), "-verifyprovided")
 	out, _ := cmd.Output()
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 		t.Fatalf("driver did not exit normally")
@@ -262,7 +262,7 @@ func TestSelfHostIRVerifyProvidedCorpusClean(t *testing.T) {
 		t.Skip("modload driver runs natively; skipping under an exec runner")
 	}
 	dir := writeSelfHostModloadProject(t)
-	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "provided_corpus")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "provided_corpus")
 	testProvidedCorpus(t, bin)
 }
 
@@ -440,8 +440,8 @@ func TestSelfHostIRVerifyRc(t *testing.T) {
 		t.Skip("irverify_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "irverify_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
+	copySelfHostDriver(t, dir, "drivers/irverify_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/irverify_run.fern", "irverify_run")
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

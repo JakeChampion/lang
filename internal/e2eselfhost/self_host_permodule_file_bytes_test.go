@@ -54,7 +54,7 @@ func checkSelfHostPerModuleByteSink(t *testing.T, leaf string, check func(*testi
 	t.Helper()
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
-	driver := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "bytesinkdriver")
+	driver := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "bytesinkdriver")
 	proj := t.TempDir()
 	mustWrite(t, proj, "leaf.fern", leaf)
 	mustWrite(t, proj, "main.fern", `import "./leaf";

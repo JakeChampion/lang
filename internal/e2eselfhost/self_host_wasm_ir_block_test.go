@@ -44,8 +44,8 @@ func TestSelfHostWasmIRBlock(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasm_ir_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run")
 
 	// Subscribe a short monotonic-clock timer, block on the pollable until it
 	// fires, then drop it. The duration is a typed i64 local (a direct i64 literal

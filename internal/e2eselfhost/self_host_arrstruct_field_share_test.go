@@ -166,8 +166,8 @@ function round(i: i32): i32 { let p: P = hold(i); return (p.f.len() + p.f[0].k +
 func TestSelfHostArrStructFieldShareX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	for _, tc := range arrstructShareCases() {
 		t.Run(tc.name, func(t *testing.T) {

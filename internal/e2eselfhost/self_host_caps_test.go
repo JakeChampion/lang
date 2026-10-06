@@ -28,8 +28,8 @@ func TestSelfHostCapsRules(t *testing.T) {
 		t.Skip("caps_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "caps_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "caps_run.fern", "caps_run")
+	copySelfHostDriver(t, dir, "drivers/caps_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/caps_run.fern", "caps_run")
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

@@ -26,8 +26,8 @@ func TestSelfHostWasmModloadTypedLowering(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_modload_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_modload_run.fern", "wasm_modload_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_modload_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_modload_run.fern", "wasm_modload_run")
 
 	drive := func(t *testing.T, entry string, env []string, args ...string) (string, string, int) {
 		t.Helper()

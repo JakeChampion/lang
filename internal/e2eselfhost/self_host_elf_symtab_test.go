@@ -38,8 +38,8 @@ func TestSelfHostELFSymtab(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "elf_syms_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "elf_syms_run.fern", "elf_syms_run")
+	copySelfHostDriver(t, dir, "drivers/elf_syms_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/elf_syms_run.fern", "elf_syms_run")
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

@@ -135,7 +135,7 @@ var numericSettleRejects = []struct {
 // TestSelfHostNumericSettleChecker pins the accept side: every case checks clean
 // on the self-host, with the native interpreter as the oracle for the value.
 func TestSelfHostNumericSettleChecker(t *testing.T) {
-	checkerBin, runner, _ := buildCheckerDriverBin(t, "checker_run.fern", false)
+	checkerBin, runner, _ := buildCheckerDriverBin(t, "drivers/checker_run.fern", false)
 	for _, tc := range numericSettleCases {
 		t.Run(tc.name, func(t *testing.T) {
 			code, stderr := runSelfHostChecker(t, checkerBin, runner, tc.src)
@@ -155,7 +155,7 @@ func TestSelfHostNumericSettleChecker(t *testing.T) {
 // TestSelfHostNumericSettleRejects pins the reject side, so the settle stays
 // literal-shaped rather than becoming a blanket i32→f64 assignability rule.
 func TestSelfHostNumericSettleRejects(t *testing.T) {
-	checkerBin, runner, _ := buildCheckerDriverBin(t, "checker_run.fern", false)
+	checkerBin, runner, _ := buildCheckerDriverBin(t, "drivers/checker_run.fern", false)
 	for _, tc := range numericSettleRejects {
 		t.Run(tc.name, func(t *testing.T) {
 			code, stderr := runSelfHostChecker(t, checkerBin, runner, tc.src)
@@ -174,9 +174,9 @@ func TestSelfHostNumericSettleRejects(t *testing.T) {
 func TestSelfHostNumericSettleIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern", "drivers/asm_pathprobe_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
+	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_pathprobe_run.fern", "pathprobe")
 
 	for _, tc := range numericSettleCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -211,8 +211,8 @@ func TestSelfHostNumericSettleIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	for _, tc := range numericSettleCases {
 		t.Run(tc.name, func(t *testing.T) {

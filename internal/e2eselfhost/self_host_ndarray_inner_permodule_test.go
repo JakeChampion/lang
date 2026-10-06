@@ -14,7 +14,7 @@ import (
 func TestSelfHostNdarrayInnerPerModule(t *testing.T) {
 	x86gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
-	driver := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "inner-module")
+	driver := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "inner-module")
 	proj := t.TempDir()
 	mustWrite(t, proj, "leaf.fern", `import "std/ndarray";
 @noinline pub function score(xs: f64[]): f64 {

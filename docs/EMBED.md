@@ -177,7 +177,7 @@ folds to the same array a `let` would hold, on both compilers.
 | Enumeration: sorted order, contents, binary bytes, empty bundle, error paths | `internal/constfold/asset_test.go` |
 | End-to-end through the native backend + the CLI diagnostics | `cmd/fern/embed_test.go` |
 | Enumeration end-to-end + the empty-bundle compile | `cmd/fern/embed_test.go` |
-| The self-host bundle + substitution, every error path | `compiler/embed_run.fern`, gated by `internal/e2eselfhost/self_host_embed_test.go` |
+| The self-host bundle + substitution, every error path | `compiler/drivers/embed_run.fern`, gated by `internal/e2eselfhost/self_host_embed_test.go` |
 | Native and self-host agreeing on the same source + the same directory, symlinked entries and a symlinked root included | `internal/e2eselfhost/self_host_embed_test.go` |
 | A symlinked root, followed | `internal/embed/embed_test.go` |
 | `lstat` itself, on every backend of both compilers | `internal/e2e/lstat_native_test.go`, `internal/codegen/wasmbin/wasi_fs_dir_test.go`, `internal/e2eselfhost/self_host_lstat_test.go` |

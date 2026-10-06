@@ -78,7 +78,7 @@ func pmWantSets(t *testing.T, phase string, gotHits, gotMisses, wantHits, wantMi
 func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, shDir, "drivers/asm_modload_run.fern", "driver")
 
 	proj, entry := pmCacheTree(t, "@noinline pub function leaf_val(): i32 { return 40; }\n")
 	cacheDir := filepath.Join(proj, "cache")
@@ -244,7 +244,7 @@ func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 func TestSelfHostPerModuleCacheFollowsInlinedBodyX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, shDir, "drivers/asm_modload_run.fern", "driver")
 
 	proj, entry := pmCacheTree(t, "pub function leaf_val(): i32 { return 40; }\n")
 	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte("import \"./leaf\";\n@noinline pub function mid_val(): i32 { return leaf.leaf_val() + 2; }\n"), 0o644); err != nil {
@@ -313,7 +313,7 @@ func TestSelfHostPerModuleSpawnedCacheX86_64(t *testing.T) {
 		t.Skip("spawned route execs the driver directly; not runnable under an emulator wrapper")
 	}
 	shDir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, shDir, "drivers/asm_modload_run.fern", "driver")
 
 	proj, entry := pmCacheTree(t, "@noinline pub function leaf_val(): i32 { return 40; }\n")
 	cacheDir := filepath.Join(proj, "cache")
@@ -381,7 +381,7 @@ func TestSelfHostPerModuleSpawnedCacheX86_64(t *testing.T) {
 func TestSelfHostPerModuleTransitiveInvalidationX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
-	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, shDir, "drivers/asm_modload_run.fern", "driver")
 
 	proj := t.TempDir()
 	cacheDir := filepath.Join(proj, "cache")

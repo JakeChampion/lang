@@ -32,8 +32,8 @@ function main(): i32 {
 func TestSelfHostArrayClaimLiveParentX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driver := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	interp := buildLangBinForInterp(t)
 	if got := interpExit(t, interp, arrayClaimLiveParentSource); got != 0 {
 		t.Fatalf("interpreter = %d, want 0", got)
@@ -124,9 +124,9 @@ function main(): i32 {
 func TestSelfHostArrayClaimContracts(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern", "wasm_ir_run.fern")
-	driver := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-	wasm := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasmdriver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern", "drivers/wasm_ir_run.fern")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
+	wasm := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasmdriver")
 	interp := buildLangBinForInterp(t)
 	for _, tc := range arrayClaimCases() {
 		if got := interpExit(t, interp, tc.source); got != 0 {

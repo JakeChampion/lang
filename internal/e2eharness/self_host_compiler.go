@@ -422,8 +422,8 @@ func selfHostComponentCore(t testing.TB, srcPath string, args ...string) []byte 
 	}
 	componentCoreOnce.Do(func() {
 		dir := WriteSelfHostAsmProject(t)
-		CopySelfHostDriver(t, dir, "wasm_runio_run.fern")
-		componentCorePath = CachedDriverBinFor(t, dir, "wasm_runio_run.fern", host)
+		CopySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+		componentCorePath = CachedDriverBinFor(t, dir, "drivers/wasm_runio_run.fern", host)
 	})
 	if componentCorePath == "" {
 		t.Fatal("the self-host component-core driver failed to build; the first test to need it has the error")

@@ -39,8 +39,8 @@ func TestSelfHostStrIndexBoundsWasm(t *testing.T) {
 	}
 	gcc, _ := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := cachedDriverBin(t, gcc, dir, "wasm_ir_run.fern")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := cachedDriverBin(t, gcc, dir, "drivers/wasm_ir_run.fern")
 
 	cases := []struct {
 		name    string

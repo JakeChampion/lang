@@ -95,8 +95,8 @@ func TestSelfHostUafSilentWithoutFlagX86_64(t *testing.T) {
 func TestSelfHostUafQuarantineAsmContractX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	// String + string[] + array churn, so the str_free / str_arr_free /
 	// arr_dec bodies are all emitted alongside the always-present helpers.

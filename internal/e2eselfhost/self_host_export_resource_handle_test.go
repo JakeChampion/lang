@@ -34,8 +34,8 @@ func TestSelfHostExportResourceHandleComposes(t *testing.T) {
 		}
 	}
 
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	// A void handler taking a borrowed handle, which also constructs + drops a
 	// local owned handle (exercising handle params + owned-handle auto-drop in a

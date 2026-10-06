@@ -100,7 +100,7 @@ func parityCases(t *testing.T) []parityCase {
 func TestSelfHostParityCorpusX86_64IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
-	driver := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "parity_driver")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "parity_driver")
 	for _, tc := range parityCases(t) {
 		t.Run(tc.name, func(t *testing.T) {
 			probe := runParityDriver(t, runner, driver, tc.src, "-ir-probe")
@@ -134,7 +134,7 @@ func TestSelfHostParityCorpusArm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
-	driver := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "parity_driver_arm64")
+	driver := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "parity_driver_arm64")
 	for _, tc := range parityCases(t) {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runParityDriver(t, x86runner, driver, tc.src, "-target", "arm64-linux", "-ir")
@@ -159,7 +159,7 @@ func TestSelfHostParityCorpusWasmIR(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
-	driver := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "parity_driver_wasm")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "parity_driver_wasm")
 	for _, tc := range parityCases(t) {
 		t.Run(tc.name, func(t *testing.T) {
 			wat := runParityDriver(t, runner, driver, tc.src, "-ir")

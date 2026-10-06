@@ -20,8 +20,8 @@ func TestSelfHostArrPushOwnedReclaimArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	// 100 sole-owner self-appends grow the buffer several times; each grow's old
 	// buffer is reclaimed. A UAF of the live buffer would corrupt the read-back.
@@ -68,8 +68,8 @@ func TestSelfHostArrPushOwnedReclaimWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	prog := `function build(): i32 {
     let a: i32[] = [];
@@ -133,8 +133,8 @@ func TestSelfHostArrPushOwnedWideReclaimArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(wideOwnedPushProg), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes")
@@ -156,8 +156,8 @@ func TestSelfHostArrPushOwnedWideReclaimWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	wat := runCapture(t, gcc, runner, driverBin, []byte(wideOwnedPushProg))
 	if len(wat) == 0 {
 		t.Fatal("wasm emitter produced 0 bytes")
@@ -203,8 +203,8 @@ func TestSelfHostReturnedRebindReclaimArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(returnedRebindProg), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes")
@@ -226,8 +226,8 @@ func TestSelfHostReturnedRebindReclaimWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	wat := runCapture(t, gcc, runner, driverBin, []byte(returnedRebindProg))
 	if len(wat) == 0 {
 		t.Fatal("wasm emitter produced 0 bytes")

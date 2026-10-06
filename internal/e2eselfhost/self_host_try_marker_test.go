@@ -170,8 +170,8 @@ function main(): i32 { return ga() + gb() + kc() + kd(); }`, 119},
 func TestSelfHostTryMarkerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	for _, tc := range tryMarkerCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -193,8 +193,8 @@ func TestSelfHostTryMarkerArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	for _, tc := range tryMarkerCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -236,8 +236,8 @@ function main(): i32 {
 func TestSelfHostTryMarkerDeferX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tryMarkerDeferSrc))
 	if len(asm) == 0 {
@@ -270,8 +270,8 @@ func TestSelfHostTryMarkerWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	for _, tc := range tryMarkerCases() {
 		t.Run(tc.name, func(t *testing.T) {

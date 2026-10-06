@@ -19,8 +19,8 @@ import (
 func TestSelfHostTempDirIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	// Create a temp dir under /tmp, verify the path looks right (non-empty,
 	// "/tmp/" prefix, contains the requested prefix), then remove it. Exit 0

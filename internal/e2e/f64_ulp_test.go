@@ -805,8 +805,8 @@ func TestF64TranscendentalUlpSelfHostX86_64(t *testing.T) {
 	dir := t.TempDir()
 	// asm_load_run, not asm_ir_run: the program imports std/i64 for the i64
 	// printing, and only the loading driver resolves imports.
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "alr")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)

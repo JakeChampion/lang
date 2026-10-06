@@ -684,8 +684,8 @@ func TestF64InverseTrigUlpWasm(t *testing.T) {
 func TestF64InverseTrigUlpSelfHostX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "alr")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)

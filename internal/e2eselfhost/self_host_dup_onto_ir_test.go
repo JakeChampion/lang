@@ -69,8 +69,8 @@ func TestSelfHostDupOntoIR(t *testing.T) {
 		t.Skip("dup_onto test runs only natively (opens host paths)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	out := filepath.Join(dir, "out.txt")
 	src := selfHostDupOntoSource(filepath.Join(dir, "data.txt"), out)
@@ -98,8 +98,8 @@ func TestSelfHostDupOntoArm64IR(t *testing.T) {
 		t.Skip("dup_onto test runs only natively (opens host paths)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	out := filepath.Join(dir, "out.txt")
 	src := selfHostDupOntoSource(filepath.Join(dir, "data.txt"), out)
@@ -130,8 +130,8 @@ func TestSelfHostDupOntoWasmIRUnsupported(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	src := `function main(): i32 {
     match (write_file("data.txt", "hello\n")) { Ok(_) => {}, Err(_) => { return 10; } }

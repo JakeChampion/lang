@@ -32,7 +32,7 @@ func TestSelfHostPerModuleArm64LeafOnlyLinkRun(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "arm64linkdriver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "arm64linkdriver")
 
 	proj := t.TempDir()
 	if err := os.WriteFile(filepath.Join(proj, "leaf.fern"),

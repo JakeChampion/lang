@@ -68,8 +68,8 @@ func TestSelfHostMapStructColumnWasmIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "driver")
 
 	for _, tc := range []struct{ name, src string }{
 		{"strfield_insert_match", mapStructColumnInsertMatchSrc},

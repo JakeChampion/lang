@@ -648,14 +648,14 @@ func strictIRDriver(t *testing.T) (string, []string, string) {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../compiler/asm_run.fern")
+	src, err := os.ReadFile("../../compiler/drivers/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	return gcc, runner, buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	return gcc, runner, buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 }
 
 // strictExit is the CLI's exit code from a tryEmit error, or 0 without one.
@@ -824,8 +824,8 @@ func TestSelfHostStrictIRWasm(t *testing.T) {
 func TestSelfHostStrictIRNamesUnresolvedFunctionValue(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun")
+	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "airun")
 
 	const apply = "function apply(f: (i32) => i32, x: i32): i32 { return f(x); }\n" +
 		"function main(): i32 { return apply(bfoo, 6); }\n"

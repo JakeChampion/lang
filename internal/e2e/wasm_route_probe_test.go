@@ -34,8 +34,8 @@ func TestWasmRouteProbe(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	// A generic whose body only PASSES the type variable through stays on the IR
 	// path (the widened-erased shape); one whose body USES it at the erased width

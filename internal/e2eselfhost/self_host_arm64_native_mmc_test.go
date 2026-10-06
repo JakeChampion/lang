@@ -40,12 +40,12 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	x86runner := x86_64Runner(t)
 
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
 
 	// The same driver built by the pin for both hosts: an aarch64 binary
 	// running under qemu, and an x86-64 binary running on the host.
-	mmcNative := buildSelfHostBinFor(t, dir, "asm_load_run.fern", "mmc_arm64_native", e2eharness.TargetArm64Linux)
-	mmcCross := buildSelfHostBinFor(t, dir, "asm_load_run.fern", "mmc_x86_cross", e2eharness.TargetX86_64Linux)
+	mmcNative := buildSelfHostBinFor(t, dir, "drivers/asm_load_run.fern", "mmc_arm64_native", e2eharness.TargetArm64Linux)
+	mmcCross := buildSelfHostBinFor(t, dir, "drivers/asm_load_run.fern", "mmc_x86_cross", e2eharness.TargetX86_64Linux)
 
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {

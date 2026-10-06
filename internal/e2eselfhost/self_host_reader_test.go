@@ -30,14 +30,14 @@ func TestSelfHostReaderX86_64(t *testing.T) {
 
 	// Build the asm_run driver (lexer + parser + asm) as an x86 host
 	// binary: it reads Fern source from stdin and prints x86-64 asm.
-	src, err := os.ReadFile("../../compiler/asm_run.fern")
+	src, err := os.ReadFile("../../compiler/drivers/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	// A read-all-of-stdin echo program — the same shape as
 	// std/io.read_all_stdin, with a print to make the result
@@ -152,14 +152,14 @@ func TestSelfHostReadFileX86_64(t *testing.T) {
 		t.Skip("read_file test runs only natively (argv path)")
 	}
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../compiler/asm_run.fern")
+	src, err := os.ReadFile("../../compiler/drivers/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	// A "cat" program: read argv[1] and print it, or exit 7 on error.
 	catSrc := "function main(): i32 {\n" +

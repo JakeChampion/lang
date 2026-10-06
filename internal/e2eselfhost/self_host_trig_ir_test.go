@@ -33,8 +33,8 @@ func TestSelfHostTrigIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	// csin/ccos return true when |fn(x) - expected| is within tolerance.
 	// 1e-5 absolute tolerance: the degree-6 cos / degree-7 sin Taylor polynomials

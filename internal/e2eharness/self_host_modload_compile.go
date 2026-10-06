@@ -28,7 +28,7 @@ func BuildModloadDriverX86(t *testing.T) (gcc string, runner []string, driverBin
 	// reclaims). cachedSelfHostAsm runs the identical modload.Load → constfold →
 	// checker.Check → x86_64.Emit pipeline, keyed by source-set hash, so this is
 	// behaviour-identical and only deduplicates the repeated compile.
-	driverBin = BuildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "driver")
+	driverBin = BuildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "driver")
 	return gcc, runner, driverBin
 }
 
@@ -44,7 +44,7 @@ func BuildModloadArm64DriverX86(t *testing.T) (x86gcc string, x86runner []string
 	t.Helper()
 	x86gcc, x86runner = X86_64Tooling(t)
 	dir := WriteSelfHostModloadProject(t)
-	return x86gcc, x86runner, BuildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "arm64driver")
+	return x86gcc, x86runner, BuildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "arm64driver")
 }
 
 // CompileFilesModload compiles a program from an explicit set of module

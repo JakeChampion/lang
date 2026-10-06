@@ -23,8 +23,8 @@ import (
 func TestSelfHostTypeResolveSimple(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "type_resolve_simple_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "type_resolve_simple_run.fern", "type_resolve_simple_run")
+	copySelfHostDriver(t, dir, "drivers/type_resolve_simple_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/type_resolve_simple_run.fern", "type_resolve_simple_run")
 
 	const want = "i32 => structs=i32 names=i32 names+unions=i32\n" +
 		"i64 => structs=i64 names=i64 names+unions=i64\n" +

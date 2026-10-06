@@ -520,8 +520,8 @@ Lend:
 func buildAsmBenchDriver(t *testing.T, gcc string) string {
 	t.Helper()
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "arm64_asm_bench_run.fern")
-	return buildSelfHostBin(t, gcc, dir, "arm64_asm_bench_run.fern", "arm64_asm_bench")
+	copySelfHostDriver(t, dir, "drivers/arm64_asm_bench_run.fern")
+	return buildSelfHostBin(t, gcc, dir, "drivers/arm64_asm_bench_run.fern", "arm64_asm_bench")
 }
 
 // assembleSelfHost feeds GAS text to the driver and returns the assembled

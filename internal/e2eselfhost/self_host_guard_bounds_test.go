@@ -113,8 +113,8 @@ func TestSelfHostGuardBoundsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	emit := func(t *testing.T, src string) string {
 		asm := string(runCapture(t, gcc, runner, driverBin, []byte(src+"\n"), "-ir"))
 		if !strings.Contains(asm, ".Lssa_") {
@@ -170,8 +170,8 @@ func TestSelfHostGuardBoundsArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	runExit := func(t *testing.T, name, src string) int {
 		asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(src+"\n"), "-target", "arm64-linux")
 		if len(asm) == 0 {
@@ -205,8 +205,8 @@ func TestSelfHostGuardBoundsWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 	run := func(t *testing.T, name, src string) int {
 		var cmd *exec.Cmd
 		if len(runner) == 0 {

@@ -174,8 +174,8 @@ func fusedFnBody(t *testing.T, asm, name string) string {
 func TestSelfHostCmpBranchFusion(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	emit := func(t *testing.T, target, src string) string {
 		t.Helper()

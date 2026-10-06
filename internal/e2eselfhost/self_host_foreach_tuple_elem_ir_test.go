@@ -66,7 +66,7 @@ function main(): i32 {
 func TestSelfHostForeachTupleElemIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
-	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "fte")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "fte")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)

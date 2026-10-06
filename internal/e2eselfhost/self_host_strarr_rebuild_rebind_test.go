@@ -250,8 +250,8 @@ function round(i: i32): i32 {
 func TestSelfHostStrArrRebuildRebindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	for _, tc := range strarrRebuildCases() {
 		t.Run(tc.name, func(t *testing.T) {

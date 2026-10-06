@@ -50,8 +50,8 @@ func TestSelfHostInterpDynProvider(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "interp_run.fern")
-	interpDriver := buildSelfHostBin(t, gcc, dir, "interp_run.fern", "interp_run")
+	copySelfHostDriver(t, dir, "drivers/interp_run.fern")
+	interpDriver := buildSelfHostBin(t, gcc, dir, "drivers/interp_run.fern", "interp_run")
 
 	// Both traits provide `m` for S: A claims the bare name, B is interposed.
 	const twoProviders = `trait A { function m(self: Self): i32; }

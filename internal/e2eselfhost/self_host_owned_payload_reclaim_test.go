@@ -130,8 +130,8 @@ func leakSummaryOf(t *testing.T, label, stderr string) (allocs, frees, live int6
 func TestSelfHostOwnedPayloadReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	const rounds = 24
 	// One line per round for the read_line probe; a wide input must not
@@ -229,8 +229,8 @@ func TestSelfHostOwnedPayloadReclaimX86_64(t *testing.T) {
 func TestSelfHostOwnedPayloadShortReadReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	// 24 rounds of 1024 bytes requested; the input holds 24 x 16, so EVERY
 	// read is short by 1008 bytes and the answers still match the full-read
@@ -278,8 +278,8 @@ func TestSelfHostOwnedPayloadShortReadReclaimX86_64(t *testing.T) {
 func TestSelfHostOwnedPayloadHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	for _, tc := range []struct {
 		name  string

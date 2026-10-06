@@ -39,8 +39,8 @@ func strbufTakeAsm(t *testing.T, target string) string {
 }`
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	args := []string{}
 	if target != "" {
 		args = append(args, "-target", target)
@@ -104,8 +104,8 @@ func strbufTakeBody(t *testing.T, asm string) string {
 func TestSelfHostStrbufNeedGatedArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	// Allocates (a heap string array) but never uses the string-builder.
 	const noStrbuf = `function main(): i32 {
@@ -150,8 +150,8 @@ func TestSelfHostStrbufNeedGatedArm64(t *testing.T) {
 func TestSelfHostStrbufTakeReclaimLoop(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	const src = `function main(): i32 {
     let i: i32 = 0;
@@ -190,8 +190,8 @@ func TestSelfHostStrbufTakeReclaimLoop(t *testing.T) {
 func TestSelfHostMapRuntimeNeedGatedArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	// Appends to an array AND compares two strings — the exact proxy condition
 	// the old gate keyed on — with no map anywhere.

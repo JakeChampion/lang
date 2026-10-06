@@ -120,7 +120,7 @@ function main(): i32 {
 func TestSelfHostMonoIndexArgIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
-	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "monoidx")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "monoidx")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)

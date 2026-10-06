@@ -28,8 +28,8 @@ func TestSelfHostRcRuntimeWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	for _, tc := range rcRuntimeCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -60,8 +60,8 @@ func TestSelfHostRcFreeWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	cases := []struct {
 		name string
@@ -107,8 +107,8 @@ func TestSelfHostRcCallResultWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	const genFn = "function gen(n: i32): i32[] { let xs: i32[] = []; let i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs; } "
 	cases := []struct {
@@ -163,8 +163,8 @@ func TestSelfHostRcConstructWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	cases := []struct {
 		name string
@@ -210,8 +210,8 @@ func TestSelfHostRcCountingWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	cases := []struct {
 		name string
@@ -265,8 +265,8 @@ func TestSelfHostRcArrayLayoutWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	cases := []struct {
 		name string

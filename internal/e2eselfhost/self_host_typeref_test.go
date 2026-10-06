@@ -29,8 +29,8 @@ import "testing"
 func TestSelfHostTypeRef(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "typeref_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "typeref_run.fern", "typeref_run")
+	copySelfHostDriver(t, dir, "drivers/typeref_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/typeref_run.fern", "typeref_run")
 
 	// Golden report — locks the round-trip of every corpus spelling and the
 	// decoded structure of the representative nested/tuple/array cases.

@@ -230,8 +230,8 @@ func parseHev(t *testing.T, stderr string) ([]hevEvent, string) {
 func TestSelfHostRcTracePairsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := hevCompile(t, runner, driverBin, hevBalancedSrc, []string{"FERN_RC_TRACE=1"})
 	progBin := buildBin(t, gcc, dir, "hev_pairs", asm)
@@ -294,8 +294,8 @@ func TestSelfHostRcTracePairsX86_64(t *testing.T) {
 func TestSelfHostLeakCheckAgreesX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	for _, tc := range []struct {
 		name string
@@ -352,8 +352,8 @@ func TestSelfHostLeakCheckAgreesX86_64(t *testing.T) {
 func TestSelfHostRcTraceLocatesLeakX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := hevCompile(t, runner, driverBin, hevExitLeakSrc, []string{"FERN_RC_TRACE=1", "FERN_LEAKCHECK=1"})
 	progBin := buildBin(t, gcc, dir, "hev_leak", asm)
@@ -405,8 +405,8 @@ func TestSelfHostRcTraceLocatesLeakX86_64(t *testing.T) {
 func TestSelfHostHeapEventFlagOffX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	off := hevCompile(t, runner, driverBin, hevBalancedSrc, nil)
 	for _, marker := range []string{
@@ -523,8 +523,8 @@ function main(): i32 {
 func TestSelfHostRcTraceCallerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := hevCompile(t, runner, driverBin, hevTwoAppendSrc, []string{"FERN_RC_TRACE=1"})
 	progBin := buildBin(t, gcc, dir, "hev_caller", asm)
@@ -586,8 +586,8 @@ func TestSelfHostRcTraceCallerX86_64(t *testing.T) {
 func TestSelfHostRcTraceDeepX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	// Default: five numbers, unchanged.
 	plain := hevCompile(t, runner, driverBin, hevTwoAppendSrc, []string{"FERN_RC_TRACE=1"})

@@ -30,12 +30,12 @@ func TestSelfHostIoErrorIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	// A known-good file for the success controls ("hello\n" = 6 bytes).
 	if err := os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatalf("write ok file: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	// "missing-fern-probe" is 18 chars — the length a NotFound(path) payload must
 	// report, proving the path box is well-formed (not a raw errno / NULL).

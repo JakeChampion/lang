@@ -38,9 +38,9 @@ func TestSelfHostValueBlockResultTypesIR(t *testing.T) {
 				}
 			}
 			dir := t.TempDir()
-			driverFile := "asm_ir_run.fern"
+			driverFile := "drivers/asm_ir_run.fern"
 			if target == "wasm" {
-				driverFile = "wasm_ir_run.fern"
+				driverFile = "drivers/wasm_ir_run.fern"
 			}
 			copySelfHostDriver(t, dir, driverFile)
 			driver := buildSelfHostBin(t, gcc, dir, driverFile, "driver")

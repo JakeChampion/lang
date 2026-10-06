@@ -34,8 +34,8 @@ func TestSelfHostLambdaReachesIR(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	// A no-capture lambda passed as a callback — the uniform env-box shape.
 	// `@noinline` keeps apply's call through f, which the inliner otherwise

@@ -478,12 +478,12 @@
 # and stay inside 5%. Number from driver-sizes' report on run 37382764685.
 fern.fern/stage2 11131728
 fern.fern 11772104
-asm_load_run.fern 9474160
-asm_modload_run.fern 7746352
-asm_ir_run.fern 7483136
-asm_run.fern 6850928
-wasm_ir_run.fern 6979080
-wasm_run.fern 6979712
-wasm_runio_run.fern 6981520
-asm_pathprobe_run.fern 4684224
-checker_modload_run.fern 2649656
+drivers/asm_load_run.fern 9474160
+drivers/asm_modload_run.fern 7746352
+drivers/asm_ir_run.fern 7483136
+drivers/asm_run.fern 6850928
+drivers/wasm_ir_run.fern 6979080
+drivers/wasm_run.fern 6979712
+drivers/wasm_runio_run.fern 6981520
+drivers/asm_pathprobe_run.fern 4684224
+drivers/checker_modload_run.fern 2649656

@@ -26,8 +26,8 @@ func TestSelfHostEnvIR(t *testing.T) {
 		t.Skip("env IR test runs only natively (sets process env for the child)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	const src = `function main(): i32 {
     match (env("FERN_ENV_IR_TEST")) {
@@ -82,8 +82,8 @@ func TestSelfHostEnvIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	const src = `function main(): i32 {
     match (env("FERN_ENV_IR_TEST")) {

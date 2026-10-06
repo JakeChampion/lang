@@ -44,14 +44,14 @@ function main(): i32 {
 func TestSelfHostEscapingAppendReuseIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile(filepath.Join("../../compiler", "asm_run.fern"))
+	src, err := os.ReadFile(filepath.Join("../../compiler", "drivers/asm_run.fern"))
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	asm := runCapture(t, gcc, runner, driverBin, []byte(escapingAppendChunksProg+"\n"))
 	if len(asm) == 0 {
@@ -78,8 +78,8 @@ func TestSelfHostEscapingAppendReuseWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(escapingAppendChunksProg+"\n"))
 	if len(wat) == 0 {

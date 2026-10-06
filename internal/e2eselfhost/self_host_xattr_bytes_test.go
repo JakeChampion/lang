@@ -55,8 +55,8 @@ func TestSelfHostWasmInterpXattrUnsupported(t *testing.T) {
 	}
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "interp_run.fern")
-	driver := cli.emit(t, filepath.Join(dir, "interp_run.fern"), "wasm32-wasi", "FERN_STRICT_IR=1")
+	copySelfHostDriver(t, dir, "drivers/interp_run.fern")
+	driver := cli.emit(t, filepath.Join(dir, "drivers/interp_run.fern"), "wasm32-wasi", "FERN_STRICT_IR=1")
 	for _, call := range []string{
 		`getxattr("a", "user.x")`, `lgetxattr("a", "user.x")`,
 		`getxattr_bytes("a", "user.x")`, `lgetxattr_bytes("a", "user.x")`,

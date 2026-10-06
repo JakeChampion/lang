@@ -57,7 +57,7 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 	copySelfHostFiles(t, dir,
 		"asmcore.fern", "lexer.fern", "parser.fern", "util.fern",
 		"interp.fern", "astwalk.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern",
-		"interp_run.fern", "asm_run.fern")
+		"drivers/interp_run.fern", "drivers/asm_run.fern")
 
 	// Build both drivers through the shared cached path
 	// (buildSelfHostBin), NOT a hand-rolled modload+emit+gcc: the
@@ -69,8 +69,8 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 	// asm_run's .s — over the 16 GB CI runners' RAM, so the kernel
 	// OOM-killed the runner agent ("The runner has received a
 	// shutdown signal", twice in a row on the same shard).
-	interpBin := buildSelfHostBin(t, gcc, dir, "interp_run.fern", "interp_run.bin")
-	asmBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "asm_run.bin")
+	interpBin := buildSelfHostBin(t, gcc, dir, "drivers/interp_run.fern", "interp_run.bin")
+	asmBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "asm_run.bin")
 
 	runDriver := func(t *testing.T, bin string, source string, captureStdout bool) (int, string) {
 		t.Helper()

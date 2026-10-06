@@ -178,8 +178,8 @@ func TestSelfHostContainerSinkMatrixX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "driver")
 
 	cells := containerSinkCells()
 	seen := map[string]bool{}

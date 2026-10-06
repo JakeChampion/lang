@@ -20,8 +20,8 @@ func TestSelfHostArm64DarwinPoll(t *testing.T) {
 		t.Skip("requires the Apple Silicon execution lane")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driver := buildSelfHostBinArm64Darwin(t, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driver := buildSelfHostBinArm64Darwin(t, dir, "drivers/asm_ir_run.fern", "driver")
 	for _, tc := range []struct {
 		name    string
 		fds     string

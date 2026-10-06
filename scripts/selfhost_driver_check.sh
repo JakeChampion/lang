@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# selfhost_driver_check.sh — type-check every compiler/*_run.fern
+# selfhost_driver_check.sh — type-check compiler/playground_run.fern and every compiler/drivers/*_run.fern
 # driver, not just the compiler they share modules with.
 #
 # WHY THIS EXISTS. `make check-sources` runs `bin/fern -check
@@ -35,7 +35,7 @@ fern=./bin/fern
 # embed directory, exactly as their tests do.
 needs_embed() {
   case "$1" in
-  compiler/playground_run.fern | compiler/semsource_census_run.fern) return 0 ;;
+  compiler/playground_run.fern | compiler/drivers/semsource_census_run.fern) return 0 ;;
   *) return 1 ;;
   esac
 }
@@ -61,7 +61,7 @@ check_driver() {
 export -f check_driver needs_embed
 export fern
 
-drivers=(compiler/*_run.fern)
+drivers=(compiler/playground_run.fern compiler/drivers/*_run.fern)
 checked=${#drivers[@]}
 failed=0
 printf '%s\n' "${drivers[@]}" |
@@ -71,7 +71,7 @@ printf '%s\n' "${drivers[@]}" |
 # the count is asserted rather than printed: this gate has no other way to tell
 # "every driver is clean" from "no driver was looked at".
 if [ "$checked" -lt 40 ]; then
-  echo "selfhost_driver_check: only $checked driver(s) found under compiler/*_run.fern — the glob matched nothing like the expected set, so this gate checked nothing" >&2
+  echo "selfhost_driver_check: only $checked driver(s) found under compiler/drivers/*_run.fern — the glob matched nothing like the expected set, so this gate checked nothing" >&2
   exit 1
 fi
 

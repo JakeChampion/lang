@@ -100,8 +100,8 @@ func TestSelfHostExternVariantResultMixedCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	const want = "opt-ok"
 	prog := `enum OptNum { Found(i32), Missing }
