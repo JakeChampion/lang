@@ -3,9 +3,10 @@ package e2eharness
 // ReactorProbe exercises the reactor floor (#9853): a readiness set from
 // reactor_new, a listener and a connection watched through reactor_ctl,
 // waits that report the accept, the bytes, the writable side and the
-// peer's close, the owned-buffer read of tcp_recv_into with its -EAGAIN
-// when nothing is queued, the quiet timeout, and the -EINVAL of an op or
-// an event buffer the floor refuses. A host may report readiness
+// peer's close, two descriptors ready at once reported by one wait, the
+// owned-buffer read of tcp_recv_into with its -EAGAIN when nothing is
+// queued, the quiet timeout, and the -EINVAL of an op or an event buffer
+// the floor refuses. A host may report readiness
 // spuriously, so a wait is checked for the pair it must contain rather
 // than for exactly one. Exit 42 and "ok" on stdout iff every check holds,
 // else the number of the first failing check.
@@ -59,6 +60,27 @@ function expect_ready(r: i32, want: i32, ready: i32, timeout_ms: i32, check: i32
         if (events[i * 2] == want && (events[i * 2 + 1] & ready) == ready) { return 0; }
         i = i + 1;
     }
+    return fail(check);
+}
+
+// One wait that must report both pairs: want_a with the bits in ready_a
+// and want_b with the bits in ready_b. Two descriptors ready before the
+// wait come back in one batch, which is what shows each of the kernel's
+// events turned into its pair in the caller's array without treading on
+// the next.
+function expect_both(r: i32, want_a: i32, ready_a: i32, want_b: i32, ready_b: i32, timeout_ms: i32, check: i32): i32 {
+    let events: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
+    let n: i32 = wait_until(r, events, timeout_ms);
+    if (n < 2 || n > 4) { return fail(check); }
+    let seen_a: boolean = false;
+    let seen_b: boolean = false;
+    let i: i32 = 0;
+    while (i < n) {
+        if (events[i * 2] == want_a && (events[i * 2 + 1] & ready_a) == ready_a) { seen_a = true; }
+        if (events[i * 2] == want_b && (events[i * 2 + 1] & ready_b) == ready_b) { seen_b = true; }
+        i = i + 1;
+    }
+    if (seen_a && seen_b) { return 0; }
     return fail(check);
 }
 
@@ -118,6 +140,15 @@ function main(): i32 {
     tcp_close(c);
     if (expect_ready(r, a, 1, 2000, 27) != 0) { return 27; }
     if (tcp_recv_into(a, buf) != 0) { return fail(28); }
+    // a at its end and a second connection pending at the listener,
+    // watched again: two descriptors ready before one wait, reported as
+    // two pairs. Both stay ready, so no host timing is in the way.
+    if (reactor_ctl(r, 1, ln, 1) != 0) { return fail(32); }
+    let c2: i32 = tcp_connect(16777343, port);
+    if (c2 < 0) { return fail(33); }
+    if (expect_both(r, ln, 1, a, 1, 2000, 34) != 0) { return 34; }
+    tcp_close(c2);
+    if (reactor_ctl(r, 2, ln, 0) != 0) { return fail(35); }
     if (reactor_ctl(r, 2, a, 0) != 0) { return fail(29); }
     tcp_close(a);
     tcp_close(ln);
