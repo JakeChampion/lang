@@ -6898,13 +6898,13 @@ function raw_memory_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_alloc_u8())) };
   }
   if (ins.str == "__alloc_i32") {
-    return Lowered { found: true, r: emit(r, ir.op_alloc_slots(32)) };
+    return Lowered { found: true, r: emit(r, ir.alloc_slots(32)) };
   }
   if (ins.str == "__alloc_i64") {
-    return Lowered { found: true, r: emit(r, ir.op_alloc_slots(64)) };
+    return Lowered { found: true, r: emit(r, ir.alloc_slots(64)) };
   }
   if (ins.str == "__alloc_bool") {
-    return Lowered { found: true, r: emit(r, ir.op_alloc_slots(1)) };
+    return Lowered { found: true, r: emit(r, ir.alloc_slots(1)) };
   }
   if (ins.str == "__free") {
     return Lowered { found: true, r: emit(r, ir.op_free()) };

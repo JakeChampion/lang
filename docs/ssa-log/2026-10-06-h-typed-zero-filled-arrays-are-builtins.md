@@ -36,7 +36,7 @@ The three builtins take `n: i32` and return a fresh `i32[]`, `i64[]` or
   `FuncSigs`) type them and count the result as fresh;
 - the typed lowering (`semsource.memory_contracts`,
   `ssarc.raw_memory_site`) lowers each to `alloc_u8` with the element width
-  on the op (`ir.op_alloc_slots`): the register backends already allocate
+  on the op (`ir.alloc_slots`): the register backends already allocate
   that op as n zeroed 8-byte slots through `__fern_alloc_u8`, so nothing
   changes there; the wasm backend now reads the width for its stride, a
   byte for the packed `u8[]` as before, 8 for an `i64[]` and 4 otherwise;

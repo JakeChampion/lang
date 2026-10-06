@@ -444,8 +444,8 @@ pub function op_alloc_u8(): Op {
 // alloc_slots is alloc_u8 for the typed builtins (`__alloc_i32`, `__alloc_i64`,
 // `__alloc_bool`): width is the element width, which on wasm picks the
 // stride, 8 bytes for an i64 element and 4 otherwise.
-pub function op_alloc_slots(width: i32): Op {
-  return Op { ...op0(77), width: width };
+pub function alloc_slots(width: i32): Op {
+  return Op { ...op_alloc_u8(), width: width };
 }
 
 // packed marks a byte-array op as reading or producing a u8[] laid out a byte
