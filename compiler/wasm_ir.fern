@@ -12892,7 +12892,7 @@ pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean, set_args
   if (!lc) {
     return "";
   }
-  return lc_report_funcs(sanitize, set_args) + "  (func $__fern_proc_exit (param $c i32)\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
+  return lc_report_funcs(sanitize, set_args, false) + "  (func $__fern_proc_exit (param $c i32)\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
 }
 
 // lc_exit_report is the census report a component's exit shim makes before
@@ -12907,17 +12907,18 @@ function lc_exit_report(lc: boolean): string {
 // component_run_entry is `$__fern_lang_run`: main's result mapped to the 0 = ok /
 // 1 = err the canon lift expects, reporting the census on the way out when
 // `report` is set.
-function component_run_entry(report: boolean, sanitize: boolean, set_args: boolean): string {
+function component_run_entry(report: boolean, sanitize: boolean, set_args: boolean, fdt: boolean): string {
   if (!report) {
     return "  (func $__fern_lang_run (result i32) (i32.eqz (i32.eqz (call $main))))\n";
   }
-  return lc_report_funcs(sanitize, set_args) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
+  return lc_report_funcs(sanitize, set_args, fdt) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
 }
 
 // lc_report_funcs is `$__fern_lc_report` and the two writers it calls, for
 // either framing: mode 0 reports from its $__fern_proc_exit, a component from its
-// run entry and its exit shim.
-function lc_report_funcs(sanitize: boolean, set_args: boolean): string {
+// run entry and its exit shim. `fdt` says the module keeps a component's
+// handle table (fd_table_funcs).
+function lc_report_funcs(sanitize: boolean, set_args: boolean, fdt: boolean): string {
   let o: string = "";
   // $__fern_lc_wr(p, len): one fd_write(2) of [p, p+len).
   o = o + "  (func $__fern_lc_wr (param $p i32) (param $len i32)\n";
@@ -12953,6 +12954,13 @@ function lc_report_funcs(sanitize: boolean, set_args: boolean): string {
     o = o + "    (if (global.get $__fern_args_set) (then\n";
     o = o + "      (drop (call $__fern_arr_dec_ptr (global.get $__fern_args_set)))\n";
     o = o + "      (global.set $__fern_args_set (i32.const 0))))\n";
+  }
+  // So is the handle table. Writing the line below may build a fresh one,
+  // after the counts are read.
+  if (fdt) {
+    o = o + "    (if (global.get $__fern_fdt) (then\n";
+    o = o + "      (call $__fern_raw_free (global.get $__fern_fdt) (i32.shl (global.get $__fern_fdt_cap) (i32.const 5)))\n";
+    o = o + "      (global.set $__fern_fdt (i32.const 0))))\n";
   }
   // The counts are read before anything is written: a component's $__fern_fd_write
   // shim allocates, and would count its own writes into the line.
@@ -15229,7 +15237,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (lifts_async(mod, mode)) {
     parts = parts.append(async_lift_wrappers(mod));
   }
-  parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize, need(needs, "@calls_set_args")));
+  parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize, need(needs, "@calls_set_args"), mode == 2 && need_fd_table(needs)));
   parts = parts.append("  (export \"_lang_run\" (func $__fern_lang_run)))\n");
   return util.str_join_chunks(parts);
 }

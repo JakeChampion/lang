@@ -46,6 +46,10 @@ func TestSelfHostWasmHostResultsBalanceTheCensus(t *testing.T) {
 		{"env", "function main(): i32 {\n" + loop(`    match (env("FERN_CENSUS_VALUE")) { Some(v) => { if (v != "a value longer than a word") { return 1; } }, None => { return 2; } }
     match (env("FERN_CENSUS_ABSENT")) { Some(_) => { return 3; }, None => {} }
     if (now_ns() <= 0 as i64 || now_unix_ms() <= 0 as i64) { return 4; }`), true},
+		// A component keeps its Readers in a handle table that lives as long
+		// as the program does: it is the runtime's own, and is given back
+		// before the census counts.
+		{"reader", "function main(): i32 {\n" + loop(`    match (open_reader("d/fff")) { Ok(r) => { match (r.read_chunk(8)) { Ok(_) => {}, Err(_) => { return 1; } } match (r.close()) { None => {}, Some(_) => { return 2; } } }, Err(_) => { return 3; } }`), true},
 		{"args", "function main(): i32 {\n" + loop(`    if (args().len() < 1) { return 1; }`), true},
 		{"environ", "function main(): i32 {\n" + loop(`    if (environ().len() < 1) { return 1; }`), true},
 		{"import_list", "@import(\"wasi:random/random@0.2.0\", \"get-random-bytes\")\nfunction random_text(n: u64): string;\n@import(\"wasi:random/random@0.2.0\", \"get-random-bytes\")\nfunction random_list(n: u64): u8[];\nfunction main(): i32 {\n" + loop(`    if (random_text(16 as u64).len() != 16 || random_list(16 as u64).len() != 16) { return 1; }`), false},
