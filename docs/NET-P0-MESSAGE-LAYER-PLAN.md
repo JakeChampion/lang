@@ -336,15 +336,13 @@ then corrected by hand. Under `-g` the semantic passes keep every value
 a source variable names whole so a debugger can show it (`seminline`,
 `semoption`, `sempair` all skip `dbg_vals`). The same server then
 allocates 43 times per request, and the framing probe's parse allocates 5
-instead of 0. The 13 the `-g` build adds were struck as 6 of the parse's
-internal boxes and about 7 of the helpers' named tuples. The parse shows
-seven rows under `-g`: the kept `Framed` (`http.fern` 1694), which a build
-without `-g` makes too, and six it does not, two at 1789 and one each at
-2301, 947, 1630 and 1319. That is one more than the probe's 5, because a
-server also reaches `__request_head` through
-`http_parse_request_head_from`, so there it has two callers and is not
-spliced into the framed parse. Only the gate's 30 is measured; the split
-between rows is provisional, and each slice's gate reading settles it.
+instead of 0. The 13 the `-g` build adds were struck from the parse's
+rows and the helpers' named tuples by judgement, not by a matched diff:
+a trace row is an allocation site that can fire more than once per
+request, and `-g` also changes what the passes rewrite, so the two
+builds' traces do not pair line for line. Only the gate's 30 is
+measured; the split between rows is provisional, and each slice's gate
+reading settles it.
 
 | Allocations | Where |
 | ---: | --- |
