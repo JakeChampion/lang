@@ -3547,6 +3547,11 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
 // and leaves the rest unknown for the destination to settle.
 function variant_ctor_type(s: Scope, union_name: string, name: string, c: ast.ExprCall): typeinfo.Type {
   let us: UnionSig = s.lookup_union(union_name);
+  // Builtin enums have no declaration schema in this scope. Qualified calls
+  // must preserve their payload facts just as bare Ok/Err/Some calls do.
+  if (us.name.len() == 0 && (union_name == "Result" || union_name == "Option")) {
+    return builtin_ctor_type(union_name, name, c, s);
+  }
   if (us.type_params.len() == 0) {
     return t_union(union_name);
   }
@@ -4162,7 +4167,7 @@ function ctor_payload_diags(e: ast.Expr, to: typeinfo.Type, s: Scope): util.Diag
     return out;
   }
   if let ast.ExprCall(c) = e {
-    if (ctor_name_taken(c, s)) {
+    if (!constructor_destination(c, to, s)) {
       return out;
     }
     let vname: string = ctor_variant_name(c);
@@ -4171,6 +4176,8 @@ function ctor_payload_diags(e: ast.Expr, to: typeinfo.Type, s: Scope): util.Diag
       let slot: i32 = ctor_payload_slot(s, owner, vname, k);
       if (slot >= 0 && slot < args.len()) {
         let pt: typeinfo.Type = args[slot];
+        out = util.append_diags(out, int_dest_range_diags(c.args[k], pt));
+        out = util.append_diags(out, ctor_payload_diags(c.args[k], pt, s));
         if let typeinfo.TypeDyn(_) = pt {
           let at: typeinfo.Type = check_expr(c.args[k], s);
           if (!is_unknown(at) && !dyn_conforms(at, pt, s)) {
@@ -12412,7 +12419,7 @@ function vb_settles(body: ast.Stmt[], want: typeinfo.Type, s: Scope): boolean {
 // literal payload read at the destination's payload type as a bare literal is.
 function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   if let ast.ExprCall(c) = e {
-    if (c.args.len() != 1 || !builtin_ctor_destination(c, want, s)) {
+    if (c.args.len() != 1 || !constructor_destination(c, want, s)) {
       return false;
     }
     let wa: typeinfo.Type[] = nominal_args(want);
@@ -12444,7 +12451,7 @@ function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boole
 // Only a constructor can convert its payload at an enum destination. A
 // same-named method or qualified function returns an already constructed
 // value, and a different enum keeps its own nominal identity.
-function builtin_ctor_destination(c: ast.ExprCall, want: typeinfo.Type, s: Scope): boolean {
+function constructor_destination(c: ast.ExprCall, want: typeinfo.Type, s: Scope): boolean {
   if (ctor_name_taken(c, s) || !same_nominal(check_expr(c, s), want)) {
     return false;
   }
