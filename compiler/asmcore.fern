@@ -2496,10 +2496,10 @@ pub function rt_src_sleep_ns(t: string): string {
 }
 
 // rt_src_poll backs `poll(fds, timeout_ms)` (#2649, syscall-leaf) → the index of
-// the first fd a read would not block on, or -1. A hangup or an error counts
-// (POLLIN | POLLERR | POLLHUP), as an epoll event does for the interpreter, so
-// the read reports the end of stream or the error rather than a timeout
-// (#11646).
+// the first fd a read would not block on, or -1. A hangup, an error or a closed
+// fd counts (POLLIN | POLLERR | POLLHUP | POLLNVAL), as it does for the
+// interpreter, so the read reports the end of stream or the error rather than
+// a timeout (#11646).
 //
 // It builds a `struct pollfd[]` — {i32 fd; i16 events; i16 revents}, eight bytes
 // each — with __raw_store_ptr for the fd slot and __raw_store8 for the two
@@ -2522,7 +2522,7 @@ pub function rt_src_poll(t: string): string {
   } else {
     call = "let tmo: usize = 0 as usize; if (timeout_ms >= 0) { let ts: usize = __raw_scratch(16); __raw_store_ptr(ts, 0, (timeout_ms / 1000) as usize); __raw_store_ptr(ts, 1, ((timeout_ms % 1000) * 1000000) as usize); tmo = ts; } __syscall5(" + sysno(t, "ppoll") + ", buf as i64, n as i64, tmo as i64, 0, 0);";
   }
-  return "function __fern_poll(fds: i32[], timeout_ms: i32): i32 { let n: i32 = fds.len(); if (n <= 0) { return 0 - 1; } let buf: usize = __raw_alloc(n * 8); let i: i32 = 0; while (i < n) { __raw_store_ptr(buf, i, fds[i] as usize); __raw_store8(buf, i * 8 + 4, 1); __raw_store8(buf, i * 8 + 5, 0); __raw_store8(buf, i * 8 + 6, 0); __raw_store8(buf, i * 8 + 7, 0); i = i + 1; } " + call + " let hit: i32 = 0 - 1; let j: i32 = 0; while (j < n) { if (hit < 0) { if ((__raw_load8(buf, j * 8 + 6) & 25) != 0) { hit = j; } } j = j + 1; } let buf_own: string = __raw_string(buf, n * 8); return hit; }";
+  return "function __fern_poll(fds: i32[], timeout_ms: i32): i32 { let n: i32 = fds.len(); if (n <= 0) { return 0 - 1; } let buf: usize = __raw_alloc(n * 8); let i: i32 = 0; while (i < n) { __raw_store_ptr(buf, i, fds[i] as usize); __raw_store8(buf, i * 8 + 4, 1); __raw_store8(buf, i * 8 + 5, 0); __raw_store8(buf, i * 8 + 6, 0); __raw_store8(buf, i * 8 + 7, 0); i = i + 1; } " + call + " let hit: i32 = 0 - 1; let j: i32 = 0; while (j < n) { if (hit < 0) { if ((__raw_load8(buf, j * 8 + 6) & 57) != 0) { hit = j; } } j = j + 1; } let buf_own: string = __raw_string(buf, n * 8); return hit; }";
 }
 
 // Darwin kevent records are 32 bytes: ident at 0, filter/flags at 8/10,
@@ -2530,8 +2530,8 @@ pub function rt_src_poll(t: string): string {
 // lists. Stamp its string owner after the final raw read so every exit frees
 // it, and close the kqueue even when registration or waiting fails.
 // The packed word 4325375 is filter=-1 (EVFILT_READ), flags=65
-// (EV_ADD | EV_RECEIPT), fflags=0. Receipts separate registration errors from
-// readiness; otherwise an invalid fd can hide another fd that is ready.
+// (EV_ADD | EV_RECEIPT), fflags=0. A receipt with an error names an fd the
+// kqueue refused, a closed one, which counts as ready as POLLNVAL does.
 // EV_ERROR is bit 14 of flags, hence bit 6 at byte offset 11.
 // Register backwards: kqueue coalesces duplicate descriptors, keeping the
 // last udata. Reversing makes that the lowest caller index, as poll requires.
@@ -2546,12 +2546,13 @@ function rt_src_poll_kqueue(t: string): string {
     + "__raw_store_ptr(buf, c * 4 + 2, 0); __raw_store_ptr(buf, c * 4 + 3, i as usize); c = c + 1; } i = i - 1; } "
     + "let ts: usize = __raw_scratch(16); __raw_store_ptr(ts, 0, 0); __raw_store_ptr(ts, 1, 0); "
     + "let receipts: i32 = __syscall6(" + sysno(t, "kevent") + ", kq as i64, buf as i64, count as i64, events as i64, count as i64, ts as i64) as i32; "
-    + "let valid: i32 = 0; let r: i32 = 0; let wait_ms: i32 = timeout_ms; while (r < receipts) { "
-    + "if (__raw_load_ptr(events, r * 4 + 2) == 0) { valid = valid + 1; } else { wait_ms = 0; } r = r + 1; } "
+    + "let valid: i32 = 0; let bad: i32 = 0 - 1; let r: i32 = 0; let wait_ms: i32 = timeout_ms; while (r < receipts) { "
+    + "if (__raw_load_ptr(events, r * 4 + 2) == 0) { valid = valid + 1; } else { wait_ms = 0; "
+    + "let at: i32 = __raw_load_ptr(events, r * 4 + 3) as i32; if (bad < 0 || at < bad) { bad = at; } } r = r + 1; } "
     + "let got: i32 = 0; if (valid > 0) { let tmo: usize = 0 as usize; if (wait_ms >= 0) { "
     + "__raw_store_ptr(ts, 0, (wait_ms / 1000) as usize); __raw_store_ptr(ts, 1, ((wait_ms % 1000) * 1000000) as usize); tmo = ts; } "
     + "got = __syscall6(" + sysno(t, "kevent") + ", kq as i64, 0, 0, events as i64, count as i64, tmo as i64) as i32; } "
-    + "__syscall3(" + sysno(t, "close") + ", kq as i64, 0, 0); let hit: i32 = 0 - 1; let j: i32 = 0; "
+    + "__syscall3(" + sysno(t, "close") + ", kq as i64, 0, 0); let hit: i32 = bad; let j: i32 = 0; "
     + "while (j < got) { if ((__raw_load8(events, j * 32 + 11) & 64) == 0) { "
     + "let idx: i32 = __raw_load_ptr(events, j * 4 + 3) as i32; if (hit < 0 || idx < hit) { hit = idx; } } j = j + 1; } "
     + "let buf_own: string = __raw_string(buf, count * 64); return hit; }";

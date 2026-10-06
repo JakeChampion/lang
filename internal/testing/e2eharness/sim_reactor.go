@@ -3,8 +3,9 @@ package e2eharness
 // SimReactorProbe pins the reactor leg of std/sim's Driver: watched
 // descriptors, the readiness a test scripts with ready_at, a wait that
 // advances the virtual clock to the earliest selected readiness or to the
-// timeout, the interest bits that select it, and an unwatch that drops a
-// descriptor's readiness. Exit 42 and "ok" on stdout iff every check
+// timeout, the interest bits that select it, an unwatch that drops a
+// descriptor's readiness, and wait_into filling an events array the caller
+// keeps. Exit 42 and "ok" on stdout iff every check
 // holds, else the number of the first failing check.
 func SimReactorProbe() string {
 	return `import "core/int";
@@ -40,7 +41,20 @@ function main(): i32 {
     if (drv.wait(2, 30).len() != 0) { return fail(15); }
     if (drv.wait(0, 0).len() != 0) { return fail(16); }
     if (drv.wait(2, -1).len() != 0) { return fail(17); }
-    if (drv.close() != 0) { return fail(18); }
+    let events: i32[] = async.event_room(2);
+    if (async.ready_pairs(events) != 0) { return fail(18); }
+    if (drv.watch(8, 1) != 0) { return fail(19); }
+    drv.ready_at(7, 120, 1);
+    drv.ready_at(8, 120, 1);
+    drv.ready_at(7, 140, 1);
+    events = drv.wait_into(events, -1);
+    if (async.ready_pairs(events) != 2 || events[0] != 7 || events[2] != 8) { return fail(20); }
+    events = drv.wait_into(events, -1);
+    if (events.len() != 4 || async.ready_pairs(events) != 1 || events[0] != 7) { return fail(21); }
+    events = drv.wait_into(events, 10);
+    if (events.len() != 4 || async.ready_pairs(events) != 0) { return fail(22); }
+    if (async.ready_pairs(async.end_pairs([5, 1, 6, 1], 1)) != 1) { return fail(23); }
+    if (drv.close() != 0) { return fail(24); }
     print("ok");
     return 42;
 }

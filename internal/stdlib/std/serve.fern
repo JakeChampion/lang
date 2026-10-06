@@ -34,7 +34,7 @@
 //   2. when it is readable, tcp_recv_into one 4 KiB buffer until -EAGAIN,
 //      appending to the connection's request bytes (at most the parser's
 //      header and body caps unread).
-//   3. http_parse_request_framed — Incomplete ⇒ keep reading (on EOF, close);
+//   3. http_parse_request_framed — Incomplete ⇒ keep reading (on EOF, 400 and close);
 //      Continue ⇒ send `100 Continue` once (RFC 9110 §10.1.1) and keep
 //      reading; Malformed(status) ⇒ answer with that status (400, 413,
 //      414, 417, 431 or 501), an empty body and `Connection: close`, then close; a
@@ -1088,14 +1088,29 @@ function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Confi
   return (ready.0, at, false);
 }
 
-// __serve_eof(drv, c, at) — the peer has finished sending: a response
-// still draining goes out and then closes the connection; anything else
-// closes it now.
-function __serve_eof[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
+// __serve_eof(drv, c, at, opts, clk) — the peer has finished sending: a
+// response still draining goes out and then closes the connection; a
+// request the peer left incomplete is answered 400 and closed; anything
+// else closes it now.
+function __serve_eof[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Config, clk: __Clock): __Conns {
   if (__in_flight(c, at)) {
     return __Conns { ...c, keep: c.keep.with(at, false) };
   }
+  if (__holds_request(__bytes_from(c.bufs[at], c.offs[at]))) {
+    return __serve_refuse(drv, c, at, 400, opts, clk);
+  }
   return __serve_close(drv, c, at);
+}
+
+// __holds_request(buf) — whether `buf` holds the start of a request: any
+// byte but the blank lines a client may send between requests.
+function __holds_request(buf: u8[]): boolean {
+  for b in buf {
+    if (b != 13 as u8 && b != 10 as u8) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // __serve_event(drv, c, fd, scratch, opts) — one readiness event on the
@@ -1116,12 +1131,12 @@ function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8
   return (read.0, at, read.1);
 }
 
-// __serve_finish(drv, c, fd, eof) — after an event's requests are answered:
-// the answered bytes dropped, and a peer that has finished sending
-// closed, once anything still draining has gone out. A connection whose
+// __serve_finish(drv, c, fd, eof, opts, clk) — after an event's requests are
+// answered: the answered bytes dropped, and a peer that has finished sending
+// closed, once anything still draining has gone out (`__serve_eof`). A connection whose
 // burst left a request buffered is not closed yet: the backlog answers
 // it on the next wait, whose read sees the end of stream again.
-function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boolean): __Conns {
+function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boolean, opts: Config, clk: __Clock): __Conns {
   let at: i32 = __conns_index(c, fd);
   if (at < 0) {
     return c;
@@ -1130,23 +1145,29 @@ function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boole
   if (!eof || c.backlog[at]) {
     return c;
   }
-  return __serve_eof(drv, c, at);
+  return __serve_eof(drv, c, at, opts, clk);
 }
 
 // __with_backlog(c, events) — the wait's events with one more for every
 // connection whose burst left a request buffered and that the wait did
 // not report itself, so the loop answers the backlog on this pass
 // without the peer having to send anything, and once per pass.
-function __with_backlog(c: __Conns, events: i32[]): i32[] {
-  let reported: i32 = events.len();
+function __with_backlog(c: __Conns, own events: i32[]): i32[] {
+  let n: i32 = async.ready_pairs(events);
+  let reported: i32 = n * 2;
   let i: i32 = 0;
   while (i < c.fds.len()) {
     if (c.backlog[i] && !__reported(events, reported, c.fds[i])) {
-      events = events.append(c.fds[i]).append(0);
+      if (n * 2 + 1 < events.len()) {
+        events = events.with(n * 2, c.fds[i]).with(n * 2 + 1, 0);
+      } else {
+        events = events.append(c.fds[i]).append(0);
+      }
+      n = n + 1;
     }
     i = i + 1;
   }
-  return events;
+  return async.end_pairs(events, n);
 }
 
 // __reported(events, n, fd) — whether `fd` is among the first `n` entries
@@ -1916,9 +1937,30 @@ function __serve_held_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[]
   let read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
   c = read.0;
   if (read.1) {
-    c = __Conns { ...c, keep: c.keep.with(at, false) };
+    c = __serve_parked_eof(c, fd);
   }
   return (__Conns { ...c, deadlines: c.deadlines.with(at, __held_deadline()) }, fls);
+}
+
+// __serve_settle(drv, c, fls, fd, eof, opts, clk) — `__serve_finish` after
+// an event, except that a peer that finished sending while a handler is
+// parked on `fd` waits for that handler's response (`__serve_parked_eof`).
+function __serve_settle[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fd: i32, eof: boolean, opts: Config, clk: __Clock): __Conns {
+  if (eof && __flight_at(fls, fd) >= 0) {
+    return __serve_parked_eof(__serve_finish(drv, c, fd, false, opts, clk), fd);
+  }
+  return __serve_finish(drv, c, fd, eof, opts, clk);
+}
+
+// __serve_parked_eof(c, fd) — the peer finished sending while a handler is
+// parked on `fd`: that handler's response still goes out, and the
+// connection closes after it.
+function __serve_parked_eof(c: __Conns, fd: i32): __Conns {
+  let at: i32 = __conns_index(c, fd);
+  if (at < 0) {
+    return c;
+  }
+  return __Conns { ...c, keep: c.keep.with(at, false) };
 }
 
 // __flight_wake(drv, c, fls, fi, ready, opts, clk) — flight `fi` run on
@@ -1964,7 +2006,7 @@ function __serve_answer[D: async.Driver](drv: D, c: __Conns, fl: __Flight, resp:
     None => {}
   }
   let answered: (__Conns, boolean) = __serve_respond(drv, c, at, __serve_wire(c.out, fl.method, fl.version, resp, fl.kept && c.keep[at], clk), opts, __pipeline_burst(), tail, clk);
-  return __serve_finish(drv, answered.0, fl.fd, false);
+  return __serve_finish(drv, answered.0, fl.fd, false, opts, clk);
 }
 
 // __serve_abandon(drv, c, fd) — the connection `fd` closed, when it is
@@ -2161,16 +2203,18 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
+  let events: i32[] = async.event_room(64);
   // The streamed-body start, with the handler and platform bound once:
   // what `__serve_stream` runs a handler through, holding no platform of
   // its own (E080 reads a platform parameter as a handler's).
   let start: (http.HttpFramed, boolean, __Stop) => __Started = (f: http.HttpFramed, kept: boolean, st: __Stop): __Started => __serve_start(handler, plat, f, kept, http.Incomplete, opts, st);
   while (true) {
     let now: i64 = monotonic_ns();
-    let events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, now, __least_timeout(__conns_timeout(conns, now), __flights_timeout(flights, now)))));
+    events = __with_backlog(conns, drv.wait_into(events, __stop_timeout(stop, opts, now, __least_timeout(__conns_timeout(conns, now), __flights_timeout(flights, now)))));
+    let ends: i32 = async.ready_pairs(events) * 2;
     clk = __clock_tick(clk);
     let k: i32 = 0;
-    while (k + 1 < events.len()) {
+    while (k < ends) {
       let fd: i32 = events[k];
       let readiness: i32 = events[k + 1];
       k = k + 2;
@@ -2255,7 +2299,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         }
         framing = next;
       }
-      conns = __serve_finish(drv, conns, fd, ev.2);
+      conns = __serve_settle(drv, conns, flights, fd, ev.2, opts, clk);
     }
     let due: (__Conns, __Flight[]) = __flights_expire(drv, conns, flights, opts, clk);
     conns = due.0;
@@ -2299,11 +2343,13 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], last: http.http_framed_none(), out: buf_new(4096) };
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
+  let events: i32[] = async.event_room(64);
   while (true) {
-    let events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, monotonic_ns(), __conns_timeout(conns, monotonic_ns()))));
+    events = __with_backlog(conns, drv.wait_into(events, __stop_timeout(stop, opts, monotonic_ns(), __conns_timeout(conns, monotonic_ns()))));
+    let ends: i32 = async.ready_pairs(events) * 2;
     clk = __clock_tick(clk);
     let k: i32 = 0;
-    while (k + 1 < events.len()) {
+    while (k < ends) {
       let fd: i32 = events[k];
       k = k + 2;
       let sig: i32 = __stop_signal(fd);
@@ -2355,7 +2401,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         }
         framing = next;
       }
-      conns = __serve_finish(drv, conns, fd, ev.2);
+      conns = __serve_finish(drv, conns, fd, ev.2, opts, clk);
     }
     let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting, 0);
     conns = ended.0;

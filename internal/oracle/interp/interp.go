@@ -5790,6 +5790,9 @@ func builtinPoll(i *Interp, args []Value) (Value, error) {
 	defer syscall.Close(set)
 	r := &reactor{fd: set, handles: map[int]int64{}}
 	index := map[int]int{}
+	// An fd the set cannot watch (a closed handle, or a regular file, which
+	// epoll refuses) is ready at once, as poll(2) reports it.
+	hit := -1
 	for k, v := range fds.E {
 		handle, ok := v.(Number)
 		if !ok || handle < 0 {
@@ -5797,27 +5800,36 @@ func builtinPoll(i *Interp, args []Value) (Value, error) {
 		}
 		raw, ok := i.rawFd(int64(handle))
 		if !ok {
+			if hit < 0 {
+				hit = k
+			}
 			continue
 		}
 		if _, seen := index[raw]; seen {
 			continue
 		}
 		if err := r.watch(raw, 1); err != nil {
+			if hit < 0 {
+				hit = k
+			}
 			continue
 		}
 		index[raw] = k
 	}
+	wait := int(timeout)
+	if hit >= 0 {
+		wait = 0
+	}
 	if len(index) == 0 {
-		if timeout > 0 {
+		if hit < 0 && timeout > 0 {
 			time.Sleep(time.Duration(timeout) * time.Millisecond)
 		}
-		return Number(-1), nil
+		return Number(hit), nil
 	}
-	got, err := r.wait(len(index), int(timeout))
+	got, err := r.wait(len(index), wait)
 	if err != nil {
-		return Number(-1), nil
+		return Number(hit), nil
 	}
-	hit := -1
 	for _, e := range got {
 		if k, ok := index[e.raw]; ok && (hit < 0 || k < hit) {
 			hit = k

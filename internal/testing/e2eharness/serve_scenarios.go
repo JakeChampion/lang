@@ -222,6 +222,49 @@ func CheckRecvDeadline(t *testing.T, addr string) {
 	}
 }
 
+// CheckIncompleteRequestAtEOF half-closes a connection with a request
+// left incomplete: a head cut short, a body cut short, and a head that
+// expects a body, which is answered `100 Continue` first. Each is answered
+// 400 before the close, whatever the read that saw the end of stream held
+// (#11649). The blank line a client may send between requests is no
+// request, so that close gets no response; and the loop still answers a
+// whole request after. Pair it with RecvDeadlineServerSource.
+func CheckIncompleteRequestAtEOF(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	for _, tc := range []struct {
+		name, sent, want string
+	}{
+		{"head cut short", "GET / HTTP/1.1\r\nHost:", "HTTP/1.1 400"},
+		{"body cut short", "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 10\r\n\r\nabc", "HTTP/1.1 400"},
+		{"body expected", "POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n", "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 400"},
+		{"blank line", "\r\n", ""},
+	} {
+		conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+		if err != nil {
+			t.Fatalf("%s: dial: %v", tc.name, err)
+		}
+		if _, err := conn.Write([]byte(tc.sent)); err != nil {
+			t.Fatalf("%s: write: %v", tc.name, err)
+		}
+		if err := conn.(*net.TCPConn).CloseWrite(); err != nil {
+			t.Fatalf("%s: half-close: %v", tc.name, err)
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		got, _ := io.ReadAll(conn)
+		conn.Close()
+		if tc.want == "" && len(got) != 0 {
+			t.Fatalf("%s: want no response, got %q", tc.name, got)
+		}
+		if tc.want != "" && !strings.HasPrefix(string(got), tc.want) {
+			t.Fatalf("%s: want %s, got %q", tc.name, tc.want, got)
+		}
+	}
+	if resp := HTTPRoundTrip(t, addr, "/ok", 3*time.Second); !ContainsStatus200(resp) {
+		t.Fatalf("the request after the half-closed connections did not answer 200:\n%s", resp)
+	}
+}
+
 // TrappingServerSource is a supervised server with one worker whose
 // handler answers 200 on /ok and traps (an array index out of range) on
 // /boom.
@@ -611,6 +654,27 @@ func CheckHandlersOverlap(t *testing.T, addr string) {
 	at := strings.Index(string(all), "slow 200")
 	if at < 0 || !strings.Contains(string(all[at:]), "\r\n\r\nok") {
 		t.Fatalf("pipelined /slow then /ok: want the slow answer first, got\n%s", all)
+	}
+	// A request cut short behind a parked one, with the end of stream in the
+	// same write: the parked request is still answered, and nothing is
+	// refused ahead of it.
+	cut, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cut.Close()
+	if _, err := io.WriteString(cut, "GET /slow HTTP/1.1\r\nHost: localhost\r\n\r\nGET /ok HTTP/1.1\r\nHo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cut.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	cutAll, err := io.ReadAll(cut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(cutAll), "HTTP/1.1 200") || !strings.Contains(string(cutAll), "slow 200") || strings.Contains(string(cutAll), " 400 ") {
+		t.Fatalf("parked /slow then a cut-short request and the end of stream: want only the slow answer, got\n%s", cutAll)
 	}
 	// A client that goes away mid-wait: the worker keeps serving while the
 	// handler is parked and after its upstream answers to a closed connection.
