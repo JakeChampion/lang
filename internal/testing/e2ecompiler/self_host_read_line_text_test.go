@@ -25,8 +25,8 @@ func readLineTextSource(t *testing.T) string {
 func checkReadLineTextInterpreter(t *testing.T, compiler string, runner []string, target, stdlib string) {
 	t.Helper()
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "drivers/interp_run.fern")
-	entry := filepath.Join(dir, "drivers/interp_run.fern")
+	copySelfHostDriver(t, dir, "lexer.fern", "parser.fern", "interp.fern")
+	entry := filepath.Join(dir, "interp_run.fern")
 	source := fmt.Sprintf(`import "./lexer";
 import "./parser";
 import "./interp";
