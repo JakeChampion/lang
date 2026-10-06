@@ -26,8 +26,8 @@ type reactor struct {
 }
 
 // waitRestarting calls wait with timeoutMs, and again after each EINTR with
-// what is left of the original deadline, as the kernel restarts a compiled
-// program's wait. Go's runtime handles every signal, its preemption signal
+// what is left of the original deadline, as the kernel does for a compiled
+// program's poll. Go's runtime handles every signal, its preemption signal
 // among them, and an epoll or kqueue wait a handler interrupts is not
 // restarted. A negative timeoutMs waits without a bound; an interruption once
 // the deadline has passed is a timeout, with no events.
