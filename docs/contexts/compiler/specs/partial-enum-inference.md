@@ -64,6 +64,10 @@ payload type whether the constructor is bound to a local or matched directly.
   qualified constructors preserve the same payload facts. Contextual literal
   range checks descend through constructor payloads, including nested enums;
   ordinary functions and methods with constructor-like names are excluded.
+- A qualified constructor keeps its enum identity when its variant name is
+  also bound to a function or local. Bare names keep lexical bindings through
+  checking, generic instantiation and interpretation. A local used as the head
+  of a field access selects its value's method rather than a same-named enum.
 
 ## Testing Strategy
 

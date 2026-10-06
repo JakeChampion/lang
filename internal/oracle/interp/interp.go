@@ -8391,17 +8391,19 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		// disambiguated bare-name calls) and build an Enum value
 		// with the evaluated payloads.
 		if ed, idx, ok := i.findVariantOn(id.Name, id.EnumName); ok {
-			if _, shadowed := env.get(id.Name); !shadowed {
-				if _, isFn := i.Funcs[id.Name]; !isFn {
-					if got, want := len(args), len(ed.Variants[idx].Payloads); got != want {
-						return nil, fmt.Errorf("interp: variant %s expects %d argument(s), got %d",
-							id.Name, want, got)
-					}
-					for _, p := range args {
-						storeArray(p)
-					}
-					return &Enum{EnumName: ed.Name, VariantName: id.Name, Index: idx, Payloads: args}, nil
+			_, shadowed := env.get(id.Name)
+			_, isFn := i.Funcs[id.Name]
+			// Checked constructor identity survives qualification and
+			// lexical shadowing. Keep name lookup for unchecked REPL calls.
+			if c.IsVariantCall || (!shadowed && !isFn) {
+				if got, want := len(args), len(ed.Variants[idx].Payloads); got != want {
+					return nil, fmt.Errorf("interp: variant %s expects %d argument(s), got %d",
+						id.Name, want, got)
 				}
+				for _, p := range args {
+					storeArray(p)
+				}
+				return &Enum{EnumName: ed.Name, VariantName: id.Name, Index: idx, Payloads: args}, nil
 			}
 		}
 		if b, ok := i.Builtins[id.Name]; ok {

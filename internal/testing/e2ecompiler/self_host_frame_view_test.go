@@ -100,8 +100,9 @@ func TestSelfHostFrameViews(t *testing.T) {
 // runSemanticProgram lowers every function of `program` but main through the
 // semantic path, runs it on each target in `wants` (x86-64-sanitize is the
 // x86-64 emit under FERN_SANITIZE), and checks its output starts with that
-// target's want and its allocations balance.
-func runSemanticProgram(t *testing.T, name, program string, produced []string, wants map[string]string) {
+// target's want and its allocations balance. notSpliced lists functions whose
+// bodies must remain rather than being spliced into their callers.
+func runSemanticProgram(t *testing.T, name, program string, produced []string, wants map[string]string, notSpliced ...string) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
 	if err := os.WriteFile(filepath.Join(dir, "semsource_rc.fern"), []byte(semsourceRCDriver), 0o644); err != nil {
@@ -131,6 +132,11 @@ func runSemanticProgram(t *testing.T, name, program string, produced []string, w
 			for _, fn := range produced {
 				if !strings.Contains(diagnostics.String(), "produced "+fn+"\n") && !strings.Contains(diagnostics.String(), "spliced "+fn+"\n") {
 					t.Fatalf("%s was not produced:\n%s", fn, diagnostics.String())
+				}
+			}
+			for _, fn := range notSpliced {
+				if !strings.Contains(diagnostics.String(), "produced "+fn+"\n") || strings.Contains(diagnostics.String(), "spliced "+fn+"\n") {
+					t.Fatalf("%s must retain its body:\n%s", fn, diagnostics.String())
 				}
 			}
 			got, err := physicalRCRun(t, gcc, runner, dir, name, target, output).CombinedOutput()

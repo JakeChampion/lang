@@ -2865,17 +2865,17 @@ function resolve_ident_value(name: string, env: Env): Value {
     }
     // `None` / `Red` / `JNull` — a payload-less enum variant appears as a
     // bare identifier rather than a call. The const lookup above runs
-    // first, so a user `const None = …` still wins. A variant that DOES
+    // first, so a user `const None = …` still wins. Ordinary functions also
+    // shadow variants. A variant that DOES
     // carry payloads falls through to the undefined-identifier error, as
     // naming it without calling it is a checker error upstream.
-    if (variant_arity(name, env.type_decls) == 0) {
+    if (variant_arity(name, env.type_decls) == 0 && !user_func_exists(name, env.funcs)) {
       let none_args: Value[] = [];
       return v_variant(name, none_args);
     }
     // A top-level function named as a VALUE rather than called —
     // `[inc, dbl]`, or passing `inc` to a higher-order function
-    // (#6611). Last of the three: a const is claimed by the scan
-    // above, and a variant by the one before this.
+    // (#6611). Consts were evaluated above; same-named variants were skipped.
     let vfi: i32 = 0;
     while (vfi < env.funcs.len()) {
       let vfd: parser.FuncDecl = env.funcs[vfi];

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // #6642: the self-hosted doc generator — doc-comment association (the join
@@ -150,8 +152,8 @@ func TestSelfHostFerndocMatchesNative(t *testing.T) {
 
 	// Generate the native pages once, from the same sources.
 	docDir := t.TempDir()
-	gen := exec.Command("go", "run", "./../../../cmd/ferndoc", "-out", docDir)
-	gen.Dir = "."
+	gen := exec.Command("go", "run", "./cmd/ferndoc", "-out", docDir)
+	gen.Dir = e2eharness.RepoPath()
 	var genErr bytes.Buffer
 	gen.Stderr = &genErr
 	if err := gen.Run(); err != nil {
@@ -274,8 +276,8 @@ func TestSelfHostFerndocPagesMatchNative(t *testing.T) {
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/ferndoc_run.fern", "ferndoc_run")
 
 	docDir := t.TempDir()
-	gen := exec.Command("go", "run", "./../../../cmd/ferndoc", "-out", docDir)
-	gen.Dir = "."
+	gen := exec.Command("go", "run", "./cmd/ferndoc", "-out", docDir)
+	gen.Dir = e2eharness.RepoPath()
 	var genErr bytes.Buffer
 	gen.Stderr = &genErr
 	if err := gen.Run(); err != nil {
@@ -366,8 +368,8 @@ func TestSelfHostFernDocModeMatchesFerndoc(t *testing.T) {
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
 	nativeDir := t.TempDir()
-	gen := exec.Command("go", "run", "./../../../cmd/ferndoc", "-out", nativeDir)
-	gen.Dir = "."
+	gen := exec.Command("go", "run", "./cmd/ferndoc", "-out", nativeDir)
+	gen.Dir = e2eharness.RepoPath()
 	var genErr bytes.Buffer
 	gen.Stderr = &genErr
 	if err := gen.Run(); err != nil {
