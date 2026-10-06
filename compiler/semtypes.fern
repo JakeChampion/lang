@@ -34,7 +34,7 @@ pub function lends_array(from: typeinfo.Type, to: typeinfo.Type): boolean {
 function numeric_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
   if let typeinfo.TypeI32(x) = a {
     if let typeinfo.TypeI32(y) = b {
-      return x.width == y.width && x.unsigned == y.unsigned && x.is_char == y.is_char;
+      return x.width == y.width && x.unsigned == y.unsigned && x.is_char == y.is_char && x.polymorphic == y.polymorphic;
     }
   }
   if let typeinfo.TypeFloat(x) = a {
@@ -46,6 +46,9 @@ function numeric_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
 }
 
 function atomic_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  if (is_never(a)) {
+    return is_never(b);
+  }
   if let typeinfo.TypeBool(_) = a {
     if let typeinfo.TypeBool(_) = b {
       return true;
@@ -60,6 +63,13 @@ function atomic_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
     if let typeinfo.TypeVoid(_) = b {
       return true;
     }
+  }
+  return false;
+}
+
+pub function is_never(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeNever(_) = t {
+    return true;
   }
   return false;
 }
@@ -206,6 +216,9 @@ pub function concrete(t: typeinfo.Type, allow_void: boolean): boolean {
 }
 
 function concrete_integer(i: typeinfo.TypeI32): boolean {
+  if (i.polymorphic) {
+    return false;
+  }
   if (i.is_char) {
     return i.width == 32 && !i.unsigned;
   }
@@ -430,7 +443,7 @@ function concrete_list(ts: typeinfo.Type[]): boolean {
 
 function concrete_payloads(ts: typeinfo.Type[]): boolean {
   for t in ts {
-    if (!concrete(t, true)) {
+    if (!is_never(t) && !concrete(t, true)) {
       return false;
     }
   }

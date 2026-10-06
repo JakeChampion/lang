@@ -15,7 +15,7 @@ import "./semrecords";
 import "./semoption";
 import "./typeinfo";
 function fixture(row: i32): ssasem.Func {
-  let word: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+  let word: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
   let flag: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
   let payload = word;
   if (row == 6) { payload = typeinfo.TypeString { tag: 0 }; }

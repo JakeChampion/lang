@@ -4,6 +4,60 @@
 import "./ast";
 import "./parser";
 import "./typeinfo";
+import "./util";
+
+// Lifted declarations still carry type spellings. Preserve a proven absent
+// enum argument across that boundary with a token the source lexer cannot
+// admit as a type name. The checker decodes it only in an enum argument;
+// arbitrary unknowns still refuse rather than becoming absent payloads.
+pub function capture_spelling(t: typeinfo.Type): string {
+  return typeinfo.spelling(retained_type(t));
+}
+
+function retained_types(ts: typeinfo.Type[]): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  for t in ts {
+    out = out.append(retained_type(t));
+  }
+  return out;
+}
+
+function retained_type(t: typeinfo.Type): typeinfo.Type {
+  match (t) {
+    typeinfo.TypeUnion(u) => {
+      let args: typeinfo.Type[] = [];
+      for arg in u.args {
+        let kept: typeinfo.Type = retained_type(arg);
+        if let typeinfo.TypeUnknown(missing) = arg {
+          if (util.str_has_prefix(missing.reason, "unbound ")) {
+            kept = typeinfo.TypeStruct { name: "$unbound", args: [] };
+          }
+        }
+        args = args.append(kept);
+      }
+      return typeinfo.TypeUnion { ...u, args: args };
+    },
+    typeinfo.TypeStruct(s) => {
+      return typeinfo.TypeStruct { ...s, args: retained_types(s.args) };
+    },
+    typeinfo.TypeArray(a) => {
+      return typeinfo.TypeArray { ...a, elem: retained_type(a.elem) };
+    },
+    typeinfo.TypeTuple(p) => {
+      return typeinfo.TypeTuple { elements: retained_types(p.elements) };
+    },
+    typeinfo.TypeMap(m) => {
+      return typeinfo.TypeMap { key: retained_type(m.key), value: retained_type(m.value) };
+    },
+    typeinfo.TypeFunc(f) => {
+      return typeinfo.TypeFunc { ...f, param_types: retained_types(f.param_types), ret_type: retained_type(f.ret_type) };
+    },
+    _ => {
+      return t;
+    }
+  }
+  return t;
+}
 
 function declined(name: string): ast.ParamDecl {
   return ast.ParamDecl { name: name, type_name: "", own: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "" };
@@ -13,7 +67,7 @@ pub function param_from_type(name: string, t: typeinfo.Type): ast.ParamDecl {
   if let typeinfo.TypeFunc(f) = t {
     return fn_param_from_type(name, t);
   }
-  return ast.ParamDecl { ...declined(name), type_name: parser.erase_view_spelling(typeinfo.spelling(t)) };
+  return ast.ParamDecl { ...declined(name), type_name: parser.erase_view_spelling(capture_spelling(t)) };
 }
 
 pub function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamDecl {
@@ -57,9 +111,9 @@ pub function fn_param_from_type(name: string, t: typeinfo.Type): ast.ParamDecl {
     }
     let params: string[] = [];
     for param in f.param_types {
-      params = params.append(typeinfo.spelling(param));
+      params = params.append(capture_spelling(param));
     }
-    return fn_param_decl(name, params, typeinfo.spelling(f.ret_type));
+    return fn_param_decl(name, params, capture_spelling(f.ret_type));
   }
   return declined(name);
 }

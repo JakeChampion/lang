@@ -67,7 +67,7 @@ function caller(template: irtables.LowerResult, mode: i32): irtables.LowerResult
         n_params: 0, arr_slots: [0, 1], str_slots: [], i64_slots: [], f64_slots: [] };
 }
 function fixture(): ssasem.Func {
-    let i: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+    let i: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
     let row: typeinfo.Type = typeinfo.TypeArray { elem: i, view: false };
     let rows: typeinfo.Type = typeinfo.TypeArray { elem: row, view: false };
     let pair: typeinfo.Type = typeinfo.TypeTuple { elements: [rows, rows] };
@@ -272,7 +272,7 @@ function main(): i32 {
     if (!refused(ssarc.lower(cfg, [], cp, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none()), "physical RC needs reducible graph")) { return 4; }
     // An array of a 64-bit element: its ops carry the eight-byte stride, so it
     // is a value here like any other array.
-    let wide: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false }, view: false };
+    let wide: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false, polymorphic: false }, view: false };
     let g = ssa.SFunc { name: "unsupported", nparams: 1, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
     let typed = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: g, values: [wide], params: [wide], result: wide, records: semrecords.no_records(), enums: [], calls: [] };
@@ -294,13 +294,13 @@ function main(): i32 {
     // A map cursor holds a unit of its map, so the planner admits it exactly
     // when it admits the map: a key or a value record with no schema in the
     // table refuses the cursor as it refuses the map.
-    let cursorType: typeinfo.Type = typeinfo.TypeStruct { name: "MapIter", args: [typeinfo.TypeStruct { name: "Missing", args: [] }, typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }] };
+    let cursorType: typeinfo.Type = typeinfo.TypeStruct { name: "MapIter", args: [typeinfo.TypeStruct { name: "Missing", args: [] }, typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false }] };
     let cursorFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: g, values: [cursorType], params: [cursorType], result: cursorType, records: semrecords.no_records(), enums: [], calls: [] };
-    let cursorMap: typeinfo.Type = typeinfo.TypeMap { key: typeinfo.TypeStruct { name: "Missing", args: [] }, value: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false } };
+    let cursorMap: typeinfo.Type = typeinfo.TypeMap { key: typeinfo.TypeStruct { name: "Missing", args: [] }, value: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false } };
     let cursorMapPlan = ssaunits.plan(ssasem.Func { ...cursorFunc, values: [cursorMap], params: [cursorMap], result: cursorMap }, [2], ssaunits.no_view());
     let cursorPlan = ssaunits.plan(cursorFunc, [2], ssaunits.no_view());
     if (cursorMapPlan.ok || cursorPlan.ok || cursorPlan.why != cursorMapPlan.why) { eprint(cursorPlan.why); return 211; }
-    let valueCursorType: typeinfo.Type = typeinfo.TypeStruct { name: "MapIter", args: [typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }, typeinfo.TypeStruct { name: "Missing", args: [] }] };
+    let valueCursorType: typeinfo.Type = typeinfo.TypeStruct { name: "MapIter", args: [typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false }, typeinfo.TypeStruct { name: "Missing", args: [] }] };
     let valueCursorFunc = ssasem.Func { ...cursorFunc, values: [valueCursorType], params: [valueCursorType], result: valueCursorType };
     if (ssaunits.plan(valueCursorFunc, [2], ssaunits.no_view()).ok) { return 213; }
     // So does a wide array field. The walk visits only the REFERENCE
@@ -369,7 +369,7 @@ function main(): i32 {
     // A schema with no reference field needs no helper, so none is emitted:
     // a body exists exactly when a call to it does.
     let flatType: typeinfo.Type = typeinfo.TypeStruct { name: "Flat", args: [] };
-    let flatSchema = semrecords.Record { views: false, ty: flatType, fields: [semrecords.Field { name: "n", ty: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false } }] };
+    let flatSchema = semrecords.Record { views: false, ty: flatType, fields: [semrecords.Field { name: "n", ty: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false } }] };
     let flatFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: selfGraph, values: [flatType], params: [flatType], result: flatType, records: semrecords.records_of([flatSchema]), enums: [], calls: [] };
     if (ssarc.drop_helpers(flatFunc).len() != 0) { return 24; }
     // Two functions that both name one type produce its helpers once: the
@@ -387,7 +387,7 @@ function main(): i32 {
     // type's release helper; the uniqueness test and the child walk live there.
     let sinkGraph = ssa.SFunc { name: "sink", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { kind_tag: 1, result: 1, args: [], imm: 0, str: "" }], term: ret(1) }] };
-    let sinkResult: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+    let sinkResult: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
     let sinkFunc = ssasem.Func { ...selfFunc, graph: sinkGraph, values: [selfType, sinkResult], result: sinkResult };
     let sinkPlan = ssaunits.plan(sinkFunc, [3], ssaunits.no_view());
     if (!sinkPlan.ok) { eprint(sinkPlan.why); return 196; }
@@ -399,7 +399,7 @@ function main(): i32 {
         if (ir.render_op(o) == "call_direct __fern_rc_is_unique/1") { return 198; }
     }
     if (releases != 1) { return 199; }
-    let i32ty: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+    let i32ty: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
     let boxOnly: typeinfo.Type = typeinfo.TypeStruct { name: "BoxOnly", args: [] };
     let boxOnlySchema = semrecords.Record { views: false, ty: boxOnly, fields: [semrecords.Field { name: "n", ty: i32ty }] };
     // A length reads its receiver and hands back an i32 that owns nothing: an
@@ -806,7 +806,7 @@ function main(): i32 {
     let idxGraph = ssa.SFunc { name: "idx", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.str_index(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
-    let u8ty: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false };
+    let u8ty: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false };
     let idxFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: idxGraph, values: [strTy, i32ty, u8ty],
         params: [strTy, i32ty], result: u8ty, records: semrecords.no_records(), enums: [], calls: [] };
     let idxPlan = ssaunits.plan(idxFunc, [3, 1], ssaunits.no_view());
@@ -876,7 +876,7 @@ function main(): i32 {
     // A 64-bit value gets a slot of its own. Its operators run at width 64 and
     // are already full-width, so nothing masks after them; crossing into and
     // out of that domain is an explicit extend and wrap.
-    let i64ty: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false };
+    let i64ty: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false, polymorphic: false };
     if (binary_masks("+", i64ty, i64ty) != "") { eprint(binary_masks("+", i64ty, i64ty)); return 85; }
     if (binary_masks("<<", i64ty, i64ty) != "") { return 86; }
     if (binary_masks("<", i64ty, bt) != "") { return 87; }
@@ -982,7 +982,7 @@ function main(): i32 {
     if (ssaunits.plan(narrowText, [], ssaunits.no_view()).why != "narrow constant carries text") { return 100; }
     // A u32 occupies the i32's slot but reaches past the immediate's sign bit, so
     // it takes the text form at every value rather than at some of them.
-    let u32ty: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false };
+    let u32ty: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false, polymorphic: false };
     let u32Text = ssasem.Func { ...wideKFunc, values: [u32ty], result: u32ty };
     if (!ssaunits.plan(u32Text, [], ssaunits.no_view()).ok) { eprint(ssaunits.plan(u32Text, [], ssaunits.no_view()).why); return 101; }
     let u32Imm = ssasem.Func { ...u32Text, graph: ssa.SFunc { ...wideK,

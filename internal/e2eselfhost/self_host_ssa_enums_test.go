@@ -20,9 +20,26 @@ graph = ssa.SFunc { name: "measure", nparams: 1, nvals: 7, entry: 7, takes_env: 
 ] };
 `
 
+// Only Full can inhabit this type. Unlike a void field, a never field
+// makes Line impossible without removing its ordinal from the schema.
+const semanticSingleVariant = `
+let absent = semrecords.Variant { ...line, fields: [semrecords.Field { name: "__ev", ty: typeinfo.TypeNever { tag: 0 } }] };
+enums = [semrecords.Enum { ...shapeEnum, variants: [full, absent] }];
+if (semrecords.find_variant(enums[0], "Line") != 1) { return 80; }
+types = [shape, ia, i32t, i32t];
+graph = ssa.SFunc { ...graph, nvals: 4, blocks: [ssa.SBlock { id: 7, preds: [], insts: [
+  inst(6, 0, [], 0), variant_field(1, 0, 0, "Full"), inst(1, 2, [], 0), inst(ssasem.array_get(), 3, [1, 2], 0)
+], term: ret(3) }] };
+`
+
 func semanticEnumCases() []struct{ name, change, want string } {
 	cases := []struct{ name, change, want string }{
 		{"enum-guarded-projection", "", ""},
+		{"enum-never-proves-projection", semanticSingleVariant, ""},
+		{"enum-inhabited-needs-guard", semanticSingleVariant + `enums = [semrecords.Enum { ...shapeEnum, variants: [full, dot] }];`, "unguarded variant projection"},
+		{"enum-never-field-schema", `enums = [semrecords.Enum { ...shapeEnum, variants: [dot, full, semrecords.Variant { ...line, fields: [semrecords.Field { name: "__ev", ty: typeinfo.TypeNever { tag: 0 } }] }] }];`, ""},
+		{"enum-unknown-field-schema", `enums = [semrecords.Enum { ...shapeEnum, variants: [dot, full, semrecords.Variant { ...line, fields: [semrecords.Field { name: "__ev", ty: typeinfo.unchecked() }] }] }];`, "unresolved record field type"},
+		{"enum-never-construction", `enums = [semrecords.Enum { ...shapeEnum, variants: [dot, full, semrecords.Variant { ...line, fields: [semrecords.Field { name: "__ev", ty: typeinfo.TypeNever { tag: 0 } }] }] }]; let b = graph.blocks[2]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(2, ssa.SBlock { ...b, insts: b.insts.with(1, variant_make(6, "Line", [5])) }) };`, "variant field type"},
 		{"enum-unguarded-projection", `let b = graph.blocks[0]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(0, ssa.SBlock { ...b, term: ssa.STerm { ...b.term, t: 27, f: 17 } }) };`, "unguarded variant projection"},
 		{"enum-projection-other-test", `graph = change(graph, 1, variant_test(1, 0, "Line"));`, "unguarded variant projection"},
 		{"enum-missing-schema", "enums = [];", "missing variant schema"},

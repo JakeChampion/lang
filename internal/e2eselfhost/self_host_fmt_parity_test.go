@@ -123,6 +123,31 @@ function main(): i32 {
   return 99;
 }
 `},
+	{"else-if-let-variant", `enum Box { Full(i32), Empty }
+function pick(flag: boolean, box: Box): i32 {
+  if (flag) { return 1; } else if let Full(value) = box { return value; } else { return 0; }
+}
+function main(): i32 { return pick(false, Full(7)); }
+`},
+	{"else-if-let-patterns", `struct Pair { a: i32, b: i32 }
+function tuple(flag: boolean, pair: (i32, i32)): i32 {
+  if (flag) { return 1; } else if let (2, value) = pair { return value; } else { return 0; }
+}
+function record(flag: boolean, pair: Pair): i32 {
+  if (flag) { return 1; } else if let Pair { a: 2, b } = pair { return b; } else { return 0; }
+}
+function literal(flag: boolean, value: i32): i32 {
+  if (flag) { return 1; } else if let 2 | 3 = value { return value; } else { return 0; }
+}
+function main(): i32 { return tuple(false, (2, 7)) + record(false, Pair { a: 2, b: 7 }) + literal(false, 3); }
+`},
+	{"else-block-if-let-stays-braced", `enum Box { Full(i32), Empty }
+function pick(flag: boolean, box: Box): i32 {
+  if (flag) { return 1; } else { if let Full(value) = box { return value; } }
+  return 0;
+}
+function main(): i32 { return pick(false, Full(7)); }
+`},
 	// `pub(package)` — the third visibility level (docs/PUB-PACKAGE.md). The
 	// self-host consumed the `pub` and left `(package)` on the cursor, so the
 	// declaration lost its visibility and the leftover became a stray

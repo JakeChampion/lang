@@ -754,7 +754,7 @@ function scan_buffer(f: ssasem.Func, c: Chain, o: Opened, capacity: i32): Opened
 // proves the increment cannot overflow, which the physical SSA pass uses to
 // remove the redundant signed32 wrap without changing integer semantics.
 function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i32): Opened {
-  let i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+  let i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
   let bool_t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
   let n: Emitted = emit(s, ssasem.length(), i32t, [c.base], 0, "");
   let first: i32 = 0;
@@ -802,7 +802,7 @@ function peel_seed(f: ssasem.Func, c: Chain, s: Build): Peeled {
   if (c.verb != "reduce" || util.has_str(c.verbs, "filter")) {
     return out;
   }
-  let i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+  let i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
   let n: Emitted = emit(s, ssasem.length(), i32t, [c.base], 0, "");
   let zero: Emitted = emit(n.s, 1, i32t, [], 0, "");
   let nonempty: Emitted = emit(zero.s, 9, typeinfo.TypeBool { tag: 0 }, [n.v, zero.v], 0, ">");
