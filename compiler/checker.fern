@@ -4824,6 +4824,7 @@ function builtin_sigs(): string[] {
     "setgroups(i64[]): Result[void, IoError]",
     "setuid(i64): Result[void, IoError]",
     "signal_catch(i32): i32",
+    "signal_catch_interrupting(i32): i32",
     "signal_default(i32): i32",
     "signal_disposition(i32): i32",
     "signal_ignore(i32): i32",

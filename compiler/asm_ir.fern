@@ -10387,12 +10387,16 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     }
     s = s.write("    call __fn___fern_" + sig_fn + "\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need(sig_fn);
-  } else if (o.kind_tag == 392) {  // signal_catch
-    // [sig] -> __fern_signal_catch(sig, catcher, restorer): the runtime
-    // floor cannot name a label, so the two code addresses go in as
-    // operands, param[0] on top.
-    s = s.write("    popq %rdi\n    leaq __fern_sig_return(%rip), %rax\n    pushq %rax\n    leaq __fern_sig_catcher(%rip), %rax\n    pushq %rax\n    pushq %rdi\n");
-    s = s.write("    call __fn___fern_signal_catch\n    addq $24, %rsp\n    pushq %rax\n");
+  } else if (o.kind_tag == 392 || o.kind_tag == 394) {  // signal_catch / signal_catch_interrupting
+    // [sig] -> __fern_signal_catch(sig, catcher, restorer, restart): the
+    // runtime floor cannot name a label, so the two code addresses go in
+    // as operands, param[0] on top. Only signal_catch restarts.
+    let restart: string = "1";
+    if (o.kind_tag == 394) {
+      restart = "0";
+    }
+    s = s.write("    popq %rdi\n    pushq $" + restart + "\n    leaq __fern_sig_return(%rip), %rax\n    pushq %rax\n    leaq __fern_sig_catcher(%rip), %rax\n    pushq %rax\n    pushq %rdi\n");
+    s = s.write("    call __fn___fern_signal_catch\n    addq $32, %rsp\n    pushq %rax\n");
     s = s.need("signal_catch");
   } else if (o.kind_tag == 393) {  // signal_taken
     // [sig] -> __fern_signal_taken(%rdi=sig): the flag, cleared by the

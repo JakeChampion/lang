@@ -460,7 +460,7 @@ var rcInertBuiltins = map[string]bool{
 	"signal_mask": true, "signal_disposition": true,
 	// signal_catch / signal_taken: one i32 in, a word out — the flag lives
 	// in the runtime's own static table, not in anything counted.
-	"signal_catch": true, "signal_taken": true,
+	"signal_catch": true, "signal_taken": true, "signal_catch_interrupting": true,
 
 	"string_from_bytes_range_unchecked": true,
 }
@@ -513,7 +513,7 @@ var rcInert = map[string]bool{
 	"__fern_writer_write_some_bytes": true,
 	"signal_default":                 true, "signal_ignore": true,
 	"signal_mask": true, "signal_disposition": true,
-	"signal_catch": true, "signal_taken": true,
+	"signal_catch": true, "signal_taken": true, "signal_catch_interrupting": true,
 	"__wasi_errno_of_code": true,
 
 	"__alloc": true, "__alloc_u8": true, "__alloc_i32": true, "__alloc_i64": true, "__alloc_bool": true, "__fern_string_bytes_copy": true, "__arr_idx": true,

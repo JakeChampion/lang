@@ -7,8 +7,9 @@ import (
 )
 
 // signalCatchCheckerCases are the signatures of signal_catch / signal_taken
-// (#9243) from the caller's side: the catch answers the i32 sigaction return
-// signal_ignore does, the poll a boolean a caller branches on. `ok` rows must
+// (#9243) and signal_catch_interrupting (#11698) from the caller's side: a
+// catch answers the i32 sigaction return signal_ignore does, the poll a
+// boolean a caller branches on. `ok` rows must
 // type-check; the rest must be refused.
 var signalCatchCheckerCases = []struct {
 	name string
@@ -21,10 +22,13 @@ var signalCatchCheckerCases = []struct {
 	{"taken answers a boolean", `function main(): i32 { if (signal_taken(10)) { return 1; } return 0; }`, true},
 	{"taken is not an i32", `function main(): i32 { let n: i32 = signal_taken(10); return n; }`, false},
 	{"taken takes a number", `function main(): i32 { if (signal_taken(true)) { return 1; } return 0; }`, false},
+	{"interrupting catch answers an i32", `function main(): i32 { let r: i32 = signal_catch_interrupting(2); return r; }`, true},
+	{"interrupting catch is not a boolean", `function main(): i32 { if (signal_catch_interrupting(2)) { return 1; } return 0; }`, false},
+	{"interrupting catch takes a number", `function main(): i32 { return signal_catch_interrupting("INT"); }`, false},
 }
 
 // TestSelfHostCheckerSignalCatch holds the self-host checker's signatures for
-// the two builtins to the Go checker's, diagnostic for diagnostic.
+// the three builtins to the Go checker's, diagnostic for diagnostic.
 func TestSelfHostCheckerSignalCatch(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 	for _, tc := range signalCatchCheckerCases {

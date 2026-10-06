@@ -5,7 +5,8 @@
 // against non-atomic reference counts — the same problem
 // docs/BARE-METAL-PLAN.md records for interrupt handlers — so `catch` installs
 // one that only sets a flag, and the program reads it with `taken` at a point
-// of its own choosing. The dispositions cover the rest: `tee -i` is SIG_IGN on
+// of its own choosing, or when `catch_interrupting`'s signal ends a blocking
+// call. The dispositions cover the rest: `tee -i` is SIG_IGN on
 // SIGINT, and its whole `--output-error` family is SIG_IGN on SIGPIPE so a
 // write to a vanished reader returns an error the program can report instead
 // of killing it.
@@ -70,6 +71,26 @@ pub function default(sig: i32): i32 {
 // program notices at its next poll, not mid-call.
 pub function catch(sig: i32): i32 {
   return signal_catch(sig);
+}
+
+// `catch_interrupting(sig)` — `catch`, except that a read, write or wait the
+// signal arrives during fails instead of resuming: `Interrupted` from a
+// Reader or Writer, -4 (EINTR) from `proc_waitpid`. For a program blocked on
+// a call that may never return by itself — a read from an idle terminal, a
+// wait on a child — that has to act on the signal now. Same return as
+// `ignore`.
+//
+//     signal.catch_interrupting(signal.SIGINT);
+//     match (r.read_chunk_bytes(4096)) {
+//         Err(e) => { if (signal.taken(signal.SIGINT)) { stop(); } },
+//         Ok(bytes) => { ... }
+//     }
+//
+// Every blocking call in the program can then fail that way, not only the
+// one it was meant for, so each needs a retry when the signal it saw is not
+// one to act on.
+pub function catch_interrupting(sig: i32): i32 {
+  return signal_catch_interrupting(sig);
 }
 
 // `taken(sig)` — whether `sig` has arrived since the last call, clearing it.

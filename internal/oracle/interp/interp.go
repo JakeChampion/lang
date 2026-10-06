@@ -1617,6 +1617,7 @@ func New() *Interp {
 	i.Builtins["signal_default"] = &Builtin{Fn: builtinSignalDefault}
 	i.Builtins["signal_catch"] = &Builtin{Fn: builtinSignalCatch}
 	i.Builtins["signal_taken"] = &Builtin{Fn: builtinSignalTaken}
+	i.Builtins["signal_catch_interrupting"] = &Builtin{Fn: builtinSignalCatchInterrupting}
 	i.Builtins["signal_mask"] = &Builtin{Fn: builtinSignalMask}
 	i.Builtins["signal_disposition"] = &Builtin{Fn: builtinSignalDisposition}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
@@ -5272,13 +5273,13 @@ func readerStream(i *Interp, v Value) (io.Reader, error) {
 	}
 	switch fd {
 	case 0:
-		return i.Stdin, nil
+		return interruptibleReader(i.Stdin), nil
 	}
 	f, ok := i.openFiles[fd]
 	if !ok {
 		return nil, errClosedHandle
 	}
-	return f, nil
+	return interruptibleReader(f), nil
 }
 
 func writerStream(i *Interp, v Value) (io.Writer, error) {
@@ -5358,8 +5359,9 @@ func builtinReadLine(i *Interp, args []Value) (Value, error) {
 	}
 	var buf []byte
 	one := make([]byte, 1)
+	stdin := interruptibleReader(i.Stdin)
 	for {
-		n, err := i.Stdin.Read(one)
+		n, err := stdin.Read(one)
 		if n > 0 {
 			buf = append(buf, one[0])
 			if one[0] == '\n' {

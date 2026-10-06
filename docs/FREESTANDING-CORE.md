@@ -65,7 +65,7 @@ costs a silent failure on the first target that lacks it.
 | `tty` | `window_size`, `set_window_size`, `termios_get`, `termios_set` | a terminal with a size and line settings, where `isatty` only asks whether there is one |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
-| `signal` | `signal_ignore`, `signal_default`, `signal_catch`, `signal_taken` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
+| `signal` | `signal_ignore`, `signal_default`, `signal_catch`, `signal_catch_interrupting`, `signal_taken` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_*` | a network stack |
 | `unix` | `unix_listen`, `unix_connect` | Unix-domain sockets: a filesystem namespace for socket endpoints, which no WASI world has |
@@ -356,20 +356,23 @@ docs/BARE-METAL-PLAN.md records for interrupt handlers, so installing one is a
 memory-model question rather than a capability one. `signal_catch` installs a
 handler that sets one byte in a static table and returns, and `signal_taken`
 reads and clears that byte in one atomic exchange, at a point the program
-chooses — dd's record boundary, for its SIGUSR1 report (#9243). The
+chooses — dd's record boundary, for its SIGUSR1 report (#9243).
+`signal_catch_interrupting` installs the same handler without SA_RESTART, so
+the point can also be a blocking call the signal ends with EINTR (#11698). The
 dispositions are the rest of what a utility needs: `tee -i` is SIG_IGN on
 SIGINT, and its `--output-error` family is SIG_IGN on SIGPIPE so a write to a
 vanished reader returns EPIPE instead of killing the process.
 
 **The catch is a runtime answer on wasi-cli, not a refusal.** A catch installs
 a disposition, and like `signal_ignore` it has an honest answer in a world
-that delivers nothing: `signal_catch` returns 0 and `signal_taken` is always
-false. That is not a stand-in for a missing import — a native program whose
-caught signal never arrives sees exactly the same — and it is the whole truth
-about a component, which no signal can reach. Refusing it would cost the cases
-that only sometimes want one: `dd` catches SIGUSR1 on every run and still
-builds for wasm32-wasi, where the report simply never comes. `wasi-http`
-withholds `signal` altogether, so the pair is refused there with the rest.
+that delivers nothing: `signal_catch` and `signal_catch_interrupting` return
+0 and `signal_taken` is always false. That is not a stand-in for a missing
+import — a native program whose caught signal never arrives sees exactly the
+same — and it is the whole truth about a component, which no signal can reach.
+Refusing it would cost the cases that only sometimes want one: `dd` catches
+SIGUSR1 on every run and still builds for wasm32-wasi, where the report simply
+never comes. `wasi-http` withholds `signal` altogether, so the catches are
+refused there with the rest.
 
 **`fsinfo` is a third split off `fs`, and the split is the same one
 `fsmode` made.** `fs` is the files: open one, read it, link it, remove

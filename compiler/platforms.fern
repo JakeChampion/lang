@@ -453,6 +453,7 @@ pub function gated_builtins(): Gate[] {
     // does.
     Gate { builtin: "signal_catch", capability: "signal" },
     Gate { builtin: "signal_taken", capability: "signal" },
+    Gate { builtin: "signal_catch_interrupting", capability: "signal" },
     // The C-ABI FFI shims. Enumerated rather than matched with
     // ircore.is_c_call so this table stays the one place the
     // classification lives; the checker registers exactly these fifteen.
