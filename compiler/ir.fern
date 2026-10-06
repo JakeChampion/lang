@@ -1275,7 +1275,7 @@ pub function op_priority(): Op {
 // `set_priority` takes one operand [nice] and pushes Result[void, IoError]:
 // setpriority(PRIO_PROCESS, 0, nice), the write of what `priority` reads.
 // LOWERING the value needs privilege, so an unprivileged caller asking for -5
-// gets EACCES as Other("", strerror) — which is the whole point of the Result
+// gets EACCES as Other("", strerror, errno) — which is the whole point of the Result
 // rather than an edge of it. The kernel clamps what it stores to its own
 // range rather than refusing a value outside it. Native only, as above.
 pub function op_set_priority(): Op {
@@ -1406,7 +1406,7 @@ pub function op_process_alive(): Op {
 // kill(2), of which `process_alive` is the signal-0 corner. The pid reaches the
 // kernel as written - negatives and zero name process GROUPS, which is what a
 // sender means by them - so unlike the liveness query nothing is filtered out
-// first. ESRCH, EPERM and EINVAL each arrive as Other("", strerror), the empty
+// first. ESRCH, EPERM and EINVAL each arrive as Other("", strerror, errno), the empty
 // path being accurate: the op never saw the text its caller parsed the pid from.
 // Native only: neither WASI preview has a process table to name a target in.
 pub function op_signal_send(): Op {
@@ -1418,7 +1418,7 @@ pub function op_signal_send(): Op {
 // written, so the syscall's zero conventions survive - pid 0 names the caller
 // and pgid 0 names the pid's own value, which makes
 // `set_process_group(0, 0)` a process putting itself in a fresh group.
-// EACCES, EINVAL, EPERM and ESRCH each arrive as Other("", strerror), the
+// EACCES, EINVAL, EPERM and ESRCH each arrive as Other("", strerror, errno), the
 // empty path being accurate: the op took two integers and never saw a file.
 // Native only: neither WASI preview has process groups.
 pub function op_set_process_group(): Op {

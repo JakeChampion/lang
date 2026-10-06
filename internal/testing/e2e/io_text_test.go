@@ -25,7 +25,7 @@ func TestIOTextPartialReadError(t *testing.T) {
 function main(): i32 {
     match (io.read_all_stdin()) {
         Ok(_) => { return 1; },
-        Err(e) => { match (e) { Other(_, _) => { return 0; }, _ => { return 2; } } },
+        Err(e) => { match (e) { Other(_, _, _) => { return 0; }, _ => { return 2; } } },
     }
 }`)
 	if err != nil {

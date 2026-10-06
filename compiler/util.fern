@@ -1673,8 +1673,9 @@ pub function io_error_reason(e: IoError): string {
     Unsupported => {
       return "unsupported";
     },
-    Other(_, msg) => {
-      return msg;
+    _ => {
+      // Other: the commit after the stage0 pin refresh returns its message (#11296).
+      return "I/O error";
     }
   }
 }

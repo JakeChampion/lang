@@ -46,7 +46,7 @@ function code_of(e: IoError): i32 {
         InvalidUtf8(_) => { return 4; },
         Interrupted => { return 5; },
         Unsupported => { return 6; },
-        Other(c, m) => { return 7; }
+        Other(c, m, _) => { return 7; }
     }
 }
 

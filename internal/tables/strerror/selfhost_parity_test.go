@@ -72,6 +72,10 @@ func TestSelfHostTableMatches(t *testing.T) {
 		Darwin: fernInts(t, src, "strerror_darwin"),
 		Wasi:   fernInts(t, src, "strerror_wasi"),
 	}
+	carried := fernInts(t, src, "strerror_carried")
+	if len(carried) != len(Table) {
+		t.Fatalf("strerror_carried() has %d rows, Table has %d — regenerate with `go run ./internal/tables/strerror/gen_selfhost_lists`", len(carried), len(Table))
+	}
 	if len(texts) != len(Table) {
 		t.Fatalf("strerror_texts() has %d rows, Table has %d — regenerate with `go run ./internal/tables/strerror/gen_selfhost_lists`", len(texts), len(Table))
 	}
@@ -95,6 +99,54 @@ func TestSelfHostTableMatches(t *testing.T) {
 				t.Errorf("row %d (%s) on %s: the self-host says %d, Table says %d", i, e.Name, os, nums[i], e.Number(os))
 			}
 		}
+		if carried[i] != e.Carried() {
+			t.Errorf("row %d (%s): the self-host carries %d, Table carries %d", i, e.Name, carried[i], e.Carried())
+		}
+	}
+}
+
+// TestStdErrnoMatches pins std/errno's constants to Table: one per row, named
+// as the row is, holding the number IoError.Other carries for it. A constant
+// the table lacks, or a row without one, fails — either would let a program
+// compare against a number no runtime reports.
+func TestStdErrnoMatches(t *testing.T) {
+	const stdErrnoSrc = "../../stdlib/std/errno.fern"
+	b, err := os.ReadFile(stdErrnoSrc)
+	if err != nil {
+		t.Fatalf("reading %s: %v", stdErrnoSrc, err)
+	}
+	got := map[string]int{}
+	var order []string
+	for _, m := range regexp.MustCompile(`(?m)^pub const (\w+): i32 = (\d+);`).FindAllStringSubmatch(string(b), -1) {
+		n, err := strconv.Atoi(m[2])
+		if err != nil {
+			t.Fatalf("%s: %q is not an integer", m[1], m[2])
+		}
+		if _, dup := got[m[1]]; dup {
+			t.Errorf("std/errno declares %s twice", m[1])
+		}
+		got[m[1]] = n
+		order = append(order, m[1])
+	}
+	if len(got) == 0 {
+		t.Fatalf("no `pub const` found in %s — the extraction pattern has gone stale, which would make this test vacuous", stdErrnoSrc)
+	}
+	for i, e := range Table {
+		n, ok := got[e.Name]
+		if !ok {
+			t.Errorf("std/errno has no %s — regenerate with `go run ./internal/tables/strerror/gen_selfhost_lists`", e.Name)
+			continue
+		}
+		if n != e.Carried() {
+			t.Errorf("std/errno says %s = %d, Table carries %d", e.Name, n, e.Carried())
+		}
+		if i < len(order) && order[i] != e.Name {
+			t.Errorf("std/errno's constant %d is %s, Table's row %d is %s — keep the table's order", i, order[i], i, e.Name)
+		}
+		delete(got, e.Name)
+	}
+	for name := range got {
+		t.Errorf("std/errno declares %s, which Table does not carry", name)
 	}
 }
 

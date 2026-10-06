@@ -45,13 +45,13 @@ const setProcessGroupSource = `function main(): i32 {
 
     // Above the kernel's own pid ceiling: ESRCH. None of setpgid(2)'s four
     // errnos has a named IoError variant, so each arrives as
-    // Other(path, strerror) — and the path is empty, because the primitive
+    // Other(path, strerror, errno) — and the path is empty, because the primitive
     // took two integers and never saw a file.
     match (set_process_group(4194304, 0)) {
         Ok(_) => { return 2; },
         Err(e) => {
             match (e) {
-                Other(p, msg) => {
+                Other(p, msg, _) => {
                     if (p.len() != 0) { return 3; }
                     if (msg != "No such process") { return 4; }
                 },
@@ -65,7 +65,7 @@ const setProcessGroupSource = `function main(): i32 {
         Ok(_) => { return 6; },
         Err(e) => {
             match (e) {
-                Other(p, msg) => {
+                Other(p, msg, _) => {
                     if (p.len() != 0) { return 7; }
                     if (msg != "Invalid argument") { return 8; }
                 },
@@ -81,7 +81,7 @@ const setProcessGroupSource = `function main(): i32 {
         Ok(_) => { return 10; },
         Err(e) => {
             match (e) {
-                Other(p, msg) => {
+                Other(p, msg, _) => {
                     if (msg != "Operation not permitted") { return 11; }
                 },
                 _ => { return 12; }

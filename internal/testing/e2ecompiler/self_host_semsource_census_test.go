@@ -178,7 +178,7 @@ function main(): i32 { return used([1, 2]); }
         InvalidUtf8(p) => { return 4; },
         Interrupted => { return 5; },
         Unsupported => { return 6; },
-        Other(p, m) => { return 7; }
+        Other(p, m, _) => { return 7; }
     }
     return 0;
 }

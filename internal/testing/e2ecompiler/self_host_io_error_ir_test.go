@@ -55,12 +55,12 @@ func ioErrorCases(t *testing.T) []ioErrorCase {
 		// stat ENOTDIR (non-ENOENT errno) → Other, NOT NotFound. Guards the full
 		// errno→IoError mapping in the Fern __fern_stat (x86-64 IR); matches native
 		// interp + the arm64 hand-asm.
-		{"stat-notdir-is-other", `function main(): i32 { match (stat("` + notDir + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } } } return 0; }`, 5},
+		{"stat-notdir-is-other", `function main(): i32 { match (stat("` + notDir + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } } } return 0; }`, 5},
 		// read_file / remove_file ENOTDIR → Other (Err / Some resp.), NOT NotFound —
 		// the same full-errno-mapping guard for those two Fern helpers, whose initial
 		// migration also flattened every failure to NotFound. Matches native interp.
-		{"readfile-notdir-is-other", `function main(): i32 { match (read_file("` + notDir + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } } } return 0; }`, 5},
-		{"removefile-notdir-is-other", `function main(): i32 { match (remove_file("` + notDir + `")) { Err(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } }, Ok(_) => { return 1; } } return 0; }`, 5},
+		{"readfile-notdir-is-other", `function main(): i32 { match (read_file("` + notDir + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } } } return 0; }`, 5},
+		{"removefile-notdir-is-other", `function main(): i32 { match (remove_file("` + notDir + `")) { Err(e) => { match (e) { Other(_, _, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } }, Ok(_) => { return 1; } } return 0; }`, 5},
 		{"removefile-notfound", `function main(): i32 { match (remove_file("/nonexistent-fern-probe")) { Err(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, Ok(_) => { return 1; } } return 0; }`, 2},
 		// chroot (#9678) carries the same Err payload shape as the fs helpers
 		// above, through the same __fern_io_error. Both cases are
@@ -70,18 +70,18 @@ func ioErrorCases(t *testing.T) []ioErrorCase {
 		// errno rather than EPERM, and this suite runs as root in the dev
 		// container and as uid 1001 on the runners.
 		{"chroot-notfound-payload-len", `function main(): i32 { match (chroot("/nonexistent-fern-probe")) { Ok(_) => { return 1; }, Err(e) => { match (e) { NotFound(p) => { return p.len(); }, _ => { return 4; } } } } return 0; }`, 23},
-		{"chroot-notdir-is-other", `function main(): i32 { match (chroot("` + notDir + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } } } return 0; }`, 5},
+		{"chroot-notdir-is-other", `function main(): i32 { match (chroot("` + notDir + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } } } return 0; }`, 5},
 		// The three credential setters' range refusals (#9678). These never
 		// reach the kernel — an id outside 32 unsigned bits is EINVAL in the
 		// helper, because the kernel reads the low 32 bits of the register for
 		// a uid_t argument and setuid(2^32 + 1) would otherwise set uid 1 —
 		// so they too answer the same at any privilege. EINVAL has no named
 		// variant, so each is Other.
-		{"setuid-unset-id-is-einval", `function main(): i32 { match (setuid(0i64 - 1i64)) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, _ => { return 7; } } } } return 0; }`, 5},
-		{"setgid-over-32-bits-is-einval", `function main(): i32 { match (setgid(4294967296i64)) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, _ => { return 7; } } } } return 0; }`, 5},
+		{"setuid-unset-id-is-einval", `function main(): i32 { match (setuid(0i64 - 1i64)) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _, _) => { return 5; }, _ => { return 7; } } } } return 0; }`, 5},
+		{"setgid-over-32-bits-is-einval", `function main(): i32 { match (setgid(4294967296i64)) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _, _) => { return 5; }, _ => { return 7; } } } } return 0; }`, 5},
 		// One bad element refuses the WHOLE list rather than its good prefix:
 		// a partial supplementary set would be a credential nobody asked for.
-		{"setgroups-bad-element-is-einval", `function main(): i32 { match (setgroups([4294967296i64, 0i64])) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, _ => { return 7; } } } } return 0; }`, 5},
+		{"setgroups-bad-element-is-einval", `function main(): i32 { match (setgroups([4294967296i64, 0i64])) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _, _) => { return 5; }, _ => { return 7; } } } } return 0; }`, 5},
 	}
 }
 

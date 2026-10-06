@@ -61,7 +61,7 @@ const STDLIB_GROUPS = [
   ["Traits", ["cmp", "convert", "mem", "num"]],
   ["Numbers", ["bigint", "float", "i32", "i64", "int", "math", "rand", "u32",
     "u64"]],
-  ["Files, I/O & time", ["async", "cli", "dotenv", "io", "io_buffered",
+  ["Files, I/O & time", ["async", "cli", "dotenv", "errno", "io", "io_buffered",
     "log", "path", "signal", "stream", "time", "tz"]],
   ["Networking", ["dns", "fetch", "headers", "http", "net", "platform", "serve", "tcp",
     "wasi_http"]],

@@ -40,6 +40,7 @@
 // count would be wrong.
 import "std/string";
 import "std/array";
+import "std/errno";
 import "./gnu";
 
 // The three modes, in the order they are strict.
@@ -144,7 +145,7 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
           if (mode == missing()) {
             continue;
           }
-          return Err(Other(rname, eloop_text()));
+          return Err(Other(rname, eloop_text(), errno.ELOOP));
         }
         seen = seen.append(Seen { key: key, dev: here.dev, ino: here.ino });
       }
@@ -201,8 +202,8 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
   return Ok(rname);
 }
 
-// The strerror text for ELOOP. The walk decides a cycle for itself, so
-// there is no errno from the kernel to carry.
+// The strerror text for ELOOP, which the walk decides for itself rather
+// than hearing from the kernel.
 function eloop_text(): string {
   return "Too many levels of symbolic links";
 }
