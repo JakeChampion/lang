@@ -113,7 +113,7 @@ func TestDiagnosticSuggestionsNameAQualifiedTrait(t *testing.T) {
 	// is the whole parser this needs.
 	fernFiles, err := filepath.Glob(filepath.Join(root, "compiler", "*.fern"))
 	if err != nil {
-		t.Fatalf("glob self_host: %v", err)
+		t.Fatalf("glob compiler: %v", err)
 	}
 	for _, path := range fernFiles {
 		b, err := os.ReadFile(path)

@@ -27,7 +27,7 @@ func copySelfHostTree(t *testing.T) string {
 	dir := t.TempDir()
 	entries, err := os.ReadDir("../../compiler")
 	if err != nil {
-		t.Fatalf("readdir self_host: %v", err)
+		t.Fatalf("readdir compiler: %v", err)
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".fern") {

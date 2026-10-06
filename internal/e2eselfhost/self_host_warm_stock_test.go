@@ -45,7 +45,7 @@ func fullSelfHostProject(t *testing.T) string {
 	dir := t.TempDir()
 	ents, err := os.ReadDir("../../compiler")
 	if err != nil {
-		t.Fatalf("read self_host dir: %v", err)
+		t.Fatalf("read compiler dir: %v", err)
 	}
 	for _, e := range ents {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".fern" {

@@ -2147,13 +2147,13 @@ func repoRootFromTest(t *testing.T) string {
 	}
 }
 
-// corpusFernFiles lists every `.fern` file under examples/, tests/, bench/ and internal/stdlib,
-// repo-relative and sorted, with slash separators so the allowlist keys read the
-// same on every platform.
+// corpusFernFiles lists every `.fern` file under compiler/, examples/, tests/,
+// bench/ and internal/stdlib, repo-relative and sorted, with slash separators so
+// the allowlist keys read the same on every platform.
 func corpusFernFiles(t *testing.T, root string) []string {
 	t.Helper()
 	var out []string
-	for _, sub := range []string{"examples", "tests", "bench", "internal/stdlib"} {
+	for _, sub := range []string{"compiler", "examples", "tests", "bench", "internal/stdlib"} {
 		err := filepath.WalkDir(filepath.Join(root, sub), func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err

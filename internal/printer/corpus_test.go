@@ -52,7 +52,7 @@ func corpusRoot(t *testing.T) string {
 }
 
 // corpusRoots are the repo-relative directories the printer corpus covers.
-var corpusRoots = []string{"examples", "tests", "bench", filepath.Join("internal", "stdlib")}
+var corpusRoots = []string{"compiler", "examples", "tests", "bench", filepath.Join("internal", "stdlib")}
 
 // corpusFiles lists every `.fern` file under corpusRoots, relative to the
 // repository root, in sorted order.

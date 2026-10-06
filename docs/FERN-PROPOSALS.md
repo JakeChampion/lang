@@ -124,7 +124,8 @@ The ONLY files you may read are:
 - `site/src/content/docs/**` — the published documentation site
 - `internal/stdlib/**` — the standard library, written in Fern; a user can read
   their library's source
-- `examples/**` **except** `compiler/**`
+- `examples/**`, `tests/**` and `bench/**` — example programs, the Fern-side
+  tests, and the benchmarks
 
 You are a USER of the language, and a user only has the docs. `CLAUDE.md` is
 injected into your context and you cannot unsee it — do not use it to route
