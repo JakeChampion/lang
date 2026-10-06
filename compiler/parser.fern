@@ -10302,8 +10302,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   // own geometry and length limits, where FileStat above describes one entry
   // on it. Same injection pattern and the same reason: __fern_statfs builds a
   // struct whose shape pointer is the interned "FsStat" name, and the emitter
-  // resolves `fs.blocks_avail` to a slot offset from this decl. Every field is
-  // an i64, so the layout is the same on every target.
+  // resolves field access and reference ownership from this declaration.
   if (!name_declared(structs, "FsStat")) {
     let fvf: StructFieldDecl[] = [];
     fvf = fvf.append(StructFieldDecl { name: "block_size", type_name: "i64", fn_ret: "", fn_param_types: "" });
@@ -10317,6 +10316,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     fvf = fvf.append(StructFieldDecl { name: "fs_type", type_name: "i64", fn_ret: "", fn_param_types: "" });
     fvf = fvf.append(StructFieldDecl { name: "fsid", type_name: "i64", fn_ret: "", fn_param_types: "" });
     fvf = fvf.append(StructFieldDecl { name: "frag_size", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "fs_type_name", type_name: "string", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "FsStat", fields: fvf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // WinSize: the builtin struct returned by window_size(fd) — how many rows

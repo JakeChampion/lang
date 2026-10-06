@@ -10,6 +10,7 @@ type rawFsStat struct {
 	files, filesFree                           int64
 	nameMax, pathMax                           int64
 	fsType, fsid, fragSize                     int64
+	fsTypeName                                 string
 }
 
 // fsidWord joins `f_fsid`'s two 32-bit words, first word high, as GNU
