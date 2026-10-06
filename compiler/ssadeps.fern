@@ -41,18 +41,6 @@ pub function position_of(f: ssa.SFunc): i32[] {
   return out;
 }
 
-// successor_positions is block bi's successors by position, in branch order.
-function successor_positions(f: ssa.SFunc, at: i32[], bi: i32): i32[] {
-  let term: ssa.STerm = f.blocks[bi].term;
-  if (term.kind_tag == 2) {
-    return [at[term.target]];
-  }
-  if (term.kind_tag == 3) {
-    return [at[term.t], at[term.f]];
-  }
-  return [];
-}
-
 // Requires a structurally verified graph with an existing entry block.
 pub function reachable_blocks(f: ssa.SFunc): boolean[] {
   let at: i32[] = position_of(f);
@@ -64,12 +52,15 @@ pub function reachable_blocks(f: ssa.SFunc): boolean[] {
   while (depth > 0) {
     depth = depth - 1;
     let bi: i32 = work[depth];
-    for sb in successor_positions(f, at, bi) {
-      if (!reachable[sb]) {
-        reachable = reachable.with(sb, true);
-        work = push_at(work, depth, sb);
+    let which: i32 = 0;
+    while (which < 2) {
+      let id: i32 = ssa.successor_id(f.blocks[bi].term, which);
+      if (id >= 0 && !reachable[at[id]]) {
+        reachable = reachable.with(at[id], true);
+        work = push_at(work, depth, at[id]);
         depth = depth + 1;
       }
+      which = which + 1;
     }
   }
   return reachable;
@@ -109,15 +100,18 @@ pub function dominates(f: ssa.SFunc): Dom {
   seen = seen.with(entry, true);
   while (sp > 0) {
     let bi: i32 = stack[sp - 1];
-    let succ: i32[] = successor_positions(f, at, bi);
+    let term: ssa.STerm = f.blocks[bi].term;
     let k: i32 = next_succ[bi] + 1;
-    while (k < succ.len() && seen[succ[k]]) {
+    let id: i32 = ssa.successor_id(term, k);
+    while (id >= 0 && seen[at[id]]) {
       k = k + 1;
+      id = ssa.successor_id(term, k);
     }
     next_succ = next_succ.with(bi, k);
-    if (k < succ.len()) {
-      seen = seen.with(succ[k], true);
-      stack = push_at(stack, sp, succ[k]);
+    if (id >= 0) {
+      let sk: i32 = at[id];
+      seen = seen.with(sk, true);
+      stack = push_at(stack, sp, sk);
       sp = sp + 1;
     } else {
       po = po.with(bi, order.len());
