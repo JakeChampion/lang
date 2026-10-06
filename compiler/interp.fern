@@ -4772,6 +4772,27 @@ function call_buf_builtin(name: string, args: Value[]): Value {
   return call_buf_read(name, h, args);
 }
 
+// str_hash_word is the little-endian word of s[at..at + n], n at most 8,
+// the bytes above n zero.
+function str_hash_word(s: string, at: i32, n: i32): i64 {
+  let w: i64 = 0i64;
+  let k: i32 = n - 1;
+  while (k >= 0) {
+    w = w << 8i64 | s[at + k] as i64;
+    k = k - 1;
+  }
+  return w;
+}
+
+// str_hash_low32 is h's low 32 bits as an i32, sign per bit 31.
+function str_hash_low32(h: i64): i32 {
+  let lo: i64 = h & 4294967295i64;
+  if (lo >= 2147483648i64) {
+    return (lo - 4294967296i64) as i32;
+  }
+  return lo as i32;
+}
+
 function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
   // The Display-taking I/O trio, matching internal/oracle/interp's builtinPrint /
   // builtinWrite / builtinEprint: print and eprint append a newline, write
@@ -5103,6 +5124,33 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
       bi = bi + 1;
     }
     return v_int(sum);
+  }
+  // `__str_hash(s, seed)` — ir.op_str_hash's hash, computed a byte at a
+  // time: each word is assembled little-endian from its bytes.
+  if (name == "__str_hash") {
+    if (args.len() != 2) {
+      return v_err("__str_hash: expected 2 args (s, seed)");
+    }
+    if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) {
+      return v_err("__str_hash: s must be a string and seed an integer");
+    }
+    let hs: string = vstr_of(args[0]);
+    let hn: i32 = hs.len();
+    let h: i64 = -3750763034362895579i64 ^ vint_bits(args[1]) as i64 ^ hn as i64;
+    let hi: i32 = 0;
+    while (hi + 8 <= hn) {
+      h = (h ^ str_hash_word(hs, hi, 8)) * 1099511628211i64;
+      hi = hi + 8;
+    }
+    if (hi < hn) {
+      if (hn >= 8) {
+        h = (h ^ str_hash_word(hs, hn - 8, 8)) * 1099511628211i64;
+      } else {
+        h = (h ^ str_hash_word(hs, 0, hn)) * 1099511628211i64;
+      }
+    }
+    h = h ^ (h as u64 >> 32u64) as i64;
+    return v_int(str_hash_low32(h));
   }
   // `__count_runs(s, inside, set)` — how many runs of `set` members begin in
   // s; `inside` nonzero means the byte before s was a member.
