@@ -29,6 +29,13 @@ func fsStatFields(path string) (rawFsStat, error) {
 	if err != nil {
 		return rawFsStat{}, err
 	}
+	var typeName []byte
+	for _, value := range st.Fstypename {
+		if value == 0 {
+			break
+		}
+		typeName = append(typeName, byte(value))
+	}
 	return rawFsStat{
 		blockSize:   int64(st.Bsize),
 		blocks:      int64(st.Blocks),
@@ -41,5 +48,6 @@ func fsStatFields(path string) (rawFsStat, error) {
 		fsType:      int64(st.Type),
 		fsid:        fsidWord(st.Fsid.Val),
 		fragSize:    int64(st.Bsize),
+		fsTypeName:  string(typeName),
 	}, nil
 }

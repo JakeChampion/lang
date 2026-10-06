@@ -5010,7 +5010,8 @@ pub function scratch_size(t: string, needs_statfs: boolean): string {
 //
 // Darwin — the 64-bit-inode record, 2168 bytes: f_bsize is a u32 at 0 with
 // f_iosize sharing its word at 4, then five u64 counts, f_fsid at 48 and the
-// u32 f_type at 60. There is NO name-length member, which is why `name_max`
+// u32 f_type at 60, f_flags at 64, f_fssubtype at 68 and f_fstypename at 72
+// (MFSTYPENAMELEN, 16 bytes). There is NO name-length member, so `name_max`
 // has no row here and the Darwin body asks pathconf instead, and no
 // fundamental block size, so `frag_size` reads f_bsize.
 //
@@ -5086,6 +5087,9 @@ function statfsoff_darwin(name: string): string {
   if (name == "fs_type") {
     return "60";
   }
+  if (name == "fs_type_name") {
+    return "72";
+  }
   // block_size, and frag_size, which this record does not have.
   return "0";
 }
@@ -5153,9 +5157,10 @@ pub function rt_src_statfs(t: string): string {
     // well under 2^31, so they are carried as i32 and widened into the
     // i64 slots — which also lets the negative errno share the variable.
     let pc: string = sysno(t, "pathconf");
-    return head + "let nmax: i32 = 0; let pmax: i32 = 0; if (rc >= 0) { nmax = __syscall3(" + pc + ", pathz as i64, 4, 0) as i32; rc = nmax; } if (rc >= 0) { pmax = __syscall3(" + pc + ", pathz as i64, 5, 0) as i32; rc = pmax; } let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(FsStat { " + statfs_counts_src(t) + ", name_max: (nmax as i64), path_max: (pmax as i64) }); }";
+    let name: string = "let n: i32 = 0; while (n < 16 && __raw_load8(buf, " + statfsoff(t, "fs_type_name") + " + n) != 0) { n = n + 1; } let p: usize = __raw_alloc(n); __memcpy(p, __raw_addr(buf, " + statfsoff(t, "fs_type_name") + "), n); let type_name: string = __raw_string(p, n); ";
+    return head + "let nmax: i32 = 0; let pmax: i32 = 0; if (rc >= 0) { nmax = __syscall3(" + pc + ", pathz as i64, 4, 0) as i32; rc = nmax; } if (rc >= 0) { pmax = __syscall3(" + pc + ", pathz as i64, 5, 0) as i32; rc = pmax; } let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } " + name + "return Ok(FsStat { " + statfs_counts_src(t) + ", name_max: (nmax as i64), path_max: (pmax as i64), fs_type_name: type_name }); }";
   }
-  return head + "let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(FsStat { " + statfs_counts_src(t) + ", name_max: " + statfs_field_i64(t, "name_max") + ", path_max: (" + statfs_linux_path_max() + " as i64) }); }";
+  return head + "let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(FsStat { " + statfs_counts_src(t) + ", name_max: " + statfs_field_i64(t, "name_max") + ", path_max: (" + statfs_linux_path_max() + " as i64), fs_type_name: \"\" }); }";
 }
 
 // rt_src_access backs `access(path, mode)` (syscall-leaf) →
