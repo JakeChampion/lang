@@ -1907,6 +1907,20 @@ function arm64_excl_store(buf: i32[], size: i32, release: boolean, rs: i32, rt: 
   return arm64_le32(buf, base | (rs & 31) as i64 << 16 | (rn & 31) as i64 << 5 | (rt & 31) as i64);
 }
 
+// The LSE swap (ARMv8.1, on the ARMv8.2-A baseline): (size<<30)|0x38208000,
+// acquire at bit 23 and release at bit 22, the value stored in Rs at 16 and
+// the old value loaded into Rt.
+function arm64_swap(buf: i32[], size: i32, acquire: boolean, release: boolean, rs: i32, rt: i32, rn: i32): i32[] {
+  let base: i64 = (size & 3) as i64 << 30 | 0x38208000;
+  if (acquire) {
+    base = base | 0x800000;
+  }
+  if (release) {
+    base = base | 0x400000;
+  }
+  return arm64_le32(buf, base | (rs & 31) as i64 << 16 | (rn & 31) as i64 << 5 | (rt & 31) as i64);
+}
+
 function arm64_acqrel(buf: i32[], size: i32, load: boolean, rt: i32, rn: i32): i32[] {
   let base: i64 = (size & 3) as i64 << 30 | 0x089ffc00;
   if (load) {
@@ -5411,6 +5425,10 @@ function arm64_fam_shll(): i32 {
   return 46;
 }
 
+function arm64_fam_swap(): i32 {
+  return 47;
+}
+
 // arm64_gas_family is the index in the table of the family a mnemonic
 // belongs to, or -1: length first, then the leading bytes, then the
 // spellings left. The dispatch and arm64_gas_known read it.
@@ -5718,6 +5736,9 @@ function arm64_gas_family_len3_s(mnem: string): i32 {
   if (c == b'v' && mnem == "svc") {
     return arm64_fam_sys();
   }
+  if (c == b'w' && mnem == "swp") {
+    return arm64_fam_swap();
+  }
   return 0 - 1;
 }
 
@@ -6014,6 +6035,9 @@ function arm64_gas_family_len4_s(mnem: string): i32 {
   if (c == b'u' && mnem == "subs") {
     return arm64_fam_addsub();
   }
+  if (c == b'w') {
+    return arm64_gas_family_len4_s_sw(mnem);
+  }
   if (c == b'x') {
     return arm64_gas_family_len4_s_sx(mnem);
   }
@@ -6053,6 +6077,19 @@ function arm64_gas_family_len4_s_st_str(mnem: string): i32 {
   }
   if (mnem == "strh") {
     return arm64_fam_ldst_narrow();
+  }
+  return 0 - 1;
+}
+
+function arm64_gas_family_len4_s_sw(mnem: string): i32 {
+  if (mnem == "swpa") {
+    return arm64_fam_swap();
+  }
+  if (mnem == "swpl") {
+    return arm64_fam_swap();
+  }
+  if (mnem == "swpb") {
+    return arm64_fam_swap();
   }
   return 0 - 1;
 }
@@ -6286,6 +6323,9 @@ function arm64_gas_family_len5_s(mnem: string): i32 {
   if (c == b't') {
     return arm64_gas_family_len5_s_st(mnem);
   }
+  if (c == b'w') {
+    return arm64_gas_family_len5_s_sw(mnem);
+  }
   if (c == b'x' && mnem == "sxtl2") {
     return arm64_fam_shll();
   }
@@ -6345,6 +6385,19 @@ function arm64_gas_family_len5_s_st_stx(mnem: string): i32 {
   }
   if (mnem == "stxrh") {
     return arm64_fam_excl_st();
+  }
+  return 0 - 1;
+}
+
+function arm64_gas_family_len5_s_sw(mnem: string): i32 {
+  if (mnem == "swpal") {
+    return arm64_fam_swap();
+  }
+  if (mnem == "swpab") {
+    return arm64_fam_swap();
+  }
+  if (mnem == "swplb") {
+    return arm64_fam_swap();
   }
   return 0 - 1;
 }
@@ -6539,6 +6592,9 @@ function arm64_gas_family_len6_s(mnem: string): i32 {
   }
   if (c == b't') {
     return arm64_gas_family_len6_s_st(mnem);
+  }
+  if (c == b'w' && mnem == "swpalb") {
+    return arm64_fam_swap();
   }
   return 0 - 1;
 }
@@ -6919,6 +6975,9 @@ function arm64_gas_bad_ext_mem(fam: i32, mnem: string, ops: string[], lm: Arm64M
   if (arm64_fam_is_excl(fam)) {
     return arm64_gas_bad_excl(mnem, ops, lm);
   }
+  if (fam == arm64_fam_swap()) {
+    return arm64_gas_bad_swap(mnem, ops, lm);
+  }
   if (fam == arm64_fam_barrier()) {
     return arm64_gas_bad_barrier(mnem, ops);
   }
@@ -7262,6 +7321,36 @@ function arm64_gas_excl_size(mnem: string, rt: string): i32 {
     return 2;
   }
   return 3;
+}
+
+// The swap takes the stored and the loaded register at one width — W for the
+// byte form — and a plain [Xn].
+function arm64_gas_bad_swap(mnem: string, ops: string[], lm: Arm64Mem): string {
+  if (ops.len() != 3) {
+    return "arity";
+  }
+  if (arm64_gas_excl_size(mnem, ops[1]) < 0 || arm64_gas_is_w(ops[0]) != arm64_gas_is_w(ops[1])) {
+    return "w";
+  }
+  let m: Arm64Mem = arm64_gas_mem_at(ops, 2, lm);
+  if (m.off != 0 || m.off_reg >= 0 || arm64_gas_has_bang(ops[2])) {
+    return "mem";
+  }
+  return "";
+}
+
+// arm64_gas_emit_swap reads the ordering from the letters after `swp`: an
+// `a` acquires and an `l` releases.
+function arm64_gas_emit_swap(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
+  if (ops.len() < 3) {
+    return a;
+  }
+  let rest: string = slice_unchecked(mnem, 3, mnem.len()) + "";
+  arm64_push_arr(a.code, arm64_swap(
+    [], arm64_gas_excl_size(mnem, ops[1]), arm64_str_starts_with(rest, "a"), arm64_str_indexof(rest, "l") >= 0,
+    arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_mem_at(ops, 2, lm).base,
+  ));
+  return a;
 }
 
 function arm64_gas_bad_barrier(mnem: string, ops: string[]): string {
@@ -7909,6 +7998,9 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
   }
   if (arm64_fam_is_excl(fam)) {
     return arm64_gas_emit_excl(a, mnem, ops, lm);
+  }
+  if (fam == arm64_fam_swap()) {
+    return arm64_gas_emit_swap(a, mnem, ops, lm);
   }
   if (fam == arm64_fam_barrier()) {
     return arm64_gas_emit_barrier(a, mnem, ops);

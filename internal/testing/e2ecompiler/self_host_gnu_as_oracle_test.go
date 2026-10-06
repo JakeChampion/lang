@@ -32,7 +32,9 @@ func gnuX86Oracle(t *testing.T) gnuAsOracle {
 }
 
 // gnuArm64Oracle is GNU as for aarch64: the cross assembler, or the host's on
-// an arm64 host. Skips the test when neither is present.
+// an arm64 host, at the target's baseline (ARMv8.2-A with the crypto
+// extensions) rather than GNU as's default ARMv8.0, which refuses the LSE
+// atomics. Skips the test when neither is present.
 func gnuArm64Oracle(t *testing.T) gnuAsOracle {
 	t.Helper()
 	names := []string{"aarch64-linux-gnu-as"}
@@ -40,7 +42,7 @@ func gnuArm64Oracle(t *testing.T) gnuAsOracle {
 	if runtime.GOARCH == "arm64" {
 		names = append(names, "as")
 	}
-	o := gnuOracle(t, names, prefix, nil, "\tret\n")
+	o := gnuOracle(t, names, prefix, []string{"-march=armv8.2-a+crypto"}, "\tret\n")
 	return o
 }
 
