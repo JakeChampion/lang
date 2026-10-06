@@ -19,6 +19,7 @@
 // answers it.
 import "std/string";
 import "std/array";
+import "std/errno";
 import "./lib/gnu";
 import "std/tz";
 import "./lib/datetime";
@@ -148,7 +149,7 @@ function touch_one(file: string, t: Times, change: i32, no_create: boolean, no_d
       Err(e) => {
         open_failed = true;
         open_err = gnu.io_error_text(e);
-        eisdir = open_err == "Is a directory";
+        eisdir = errno.of(e) == errno.EISDIR;
       }
     }
   }
@@ -165,18 +166,20 @@ function touch_one(file: string, t: Times, change: i32, no_create: boolean, no_d
     flags = flags | 4;
   }
   let utime_err: string = "";
+  let utime_enoent: boolean = false;
   match (set_file_times(path, t.asec, t.ansec, t.msec, t.mnsec, flags)) {
     Ok(_) => {
       return true;
     },
     Err(e) => {
       utime_err = gnu.io_error_text(e);
+      utime_enoent = errno.of(e) == errno.ENOENT;
     }
   }
   if (file == "-") {
     // fd 1 has no /proc entry when it is closed, which a descriptor
     // would report as EBADF.
-    if (utime_err == "No such file or directory") {
+    if (utime_enoent) {
       if (no_create) {
         return true;
       }
@@ -187,7 +190,7 @@ function touch_one(file: string, t: Times, change: i32, no_create: boolean, no_d
     gnu.error("cannot touch " + gnu.quotea(file) + ": " + open_err);
     return false;
   }
-  if (no_create && utime_err == "No such file or directory") {
+  if (no_create && utime_enoent) {
     return true;
   }
   gnu.error("setting times of " + gnu.quotea(file) + ": " + utime_err);

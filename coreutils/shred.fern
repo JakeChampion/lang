@@ -48,6 +48,7 @@ import "std/string";
 import "std/i32";
 import "std/i64";
 import "std/rand" as rand;
+import "std/errno";
 import "./lib/gnu";
 
 function opt_force(): i32 {
@@ -438,9 +439,6 @@ function write_pass(w: Writer, path: string, len: i64, code: i32, rnd: Rand): Op
 // carries on when that is refused the same way. It re-asks every pass
 // rather than remembering, so a handle that starts answering does get
 // synced.
-//
-// An IoError carries the strerror text rather than the number, which is
-// what `gnu.is_broken_pipe` reads too.
 function sync_pass(w: Writer, path: string): Option[PassFail] {
   match (w.fdatasync()) {
     None => {
@@ -450,7 +448,7 @@ function sync_pass(w: Writer, path: string): Option[PassFail] {
   }
   match (w.fsync()) {
     Some(e) => {
-      if (gnu.io_error_text(e) == "Invalid argument") {
+      if (errno.of(e) == errno.EINVAL) {
         return None;
       }
       return Some(PassFail { msg: path + ": " + gnu.io_error_text(e), fatal: false });

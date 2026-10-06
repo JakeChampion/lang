@@ -44,6 +44,7 @@
 // the walk below concatenates paths and meets ENAMETOOLONG partway
 // down such a tree where GNU does not (#9074). Nothing shallower is
 // affected.
+import "std/errno";
 import "./lib/filetype";
 import "./lib/fts";
 import "./lib/gnu";
@@ -235,8 +236,8 @@ function parent_name(p: string): string {
 // there": `rm -f x/` on a regular file `x` is silent, and so is
 // `rm -rf dangling/`, while ELOOP and ENAMETOOLONG are still reported.
 function nonexistent_errno(e: IoError): boolean {
-  let text: string = gnu.io_error_text(e);
-  return text == "No such file or directory" || text == "Not a directory";
+  let n: i32 = errno.of(e);
+  return n == errno.ENOENT || n == errno.ENOTDIR;
 }
 
 function fail(st: St, msg: string): St {
@@ -261,7 +262,7 @@ function write_protected(path: string, mode: u32): boolean {
       return false;
     },
     Err(e) => {
-      return gnu.io_error_text(e) == "Permission denied";
+      return errno.of(e) == errno.EACCES;
     }
   }
 }
