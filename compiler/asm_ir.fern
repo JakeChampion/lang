@@ -6927,35 +6927,45 @@ function ssa_xreg(name: string): i32 {
     }
     return n;
   }
-  match (name) {
-    "%rax" => {
+  if (name.len() != 4 || name[0] != b'%' || name[1] != b'r') {
+    return 0 - 1;
+  }
+  // The eight named registers, told apart by their last two bytes.
+  let c: i32 = name[2] as i32;
+  let d: i32 = name[3] as i32;
+  if (d == 120) {
+    if (c == 97) {
       return 0;
-    },
-    "%rcx" => {
+    }
+    if (c == 99) {
       return 1;
-    },
-    "%rdx" => {
+    }
+    if (c == 100) {
       return 2;
-    },
-    "%rbx" => {
+    }
+    if (c == 98) {
       return 3;
-    },
-    "%rsp" => {
+    }
+    return 0 - 1;
+  }
+  if (d == 112) {
+    if (c == 115) {
       return 4;
-    },
-    "%rbp" => {
+    }
+    if (c == 98) {
       return 5;
-    },
-    "%rsi" => {
+    }
+    return 0 - 1;
+  }
+  if (d == 105) {
+    if (c == 115) {
       return 6;
-    },
-    "%rdi" => {
+    }
+    if (c == 100) {
       return 7;
-    },
-    _ => {
-      return 0 - 1;
     }
   }
+  return 0 - 1;
 }
 
 // ssa_alu_text is the mnemonic of group-1 op `ext` at `size` bits.
