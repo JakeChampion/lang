@@ -57,30 +57,10 @@ pub function sig_bucket_count(n: i32): i32 {
   return 16381;
 }
 
-// sig_key_bucket hashes the KEY of `a` followed by `b` — their concatenation
-// truncated at the first '|', which is the registries' key/value separator.
-// The two pieces fold in order so a probe for "<pfx><name>" never builds the
-// joined string. Folded by the modulus at every step, so the accumulator stays
-// small and the hash needs no wrapping arithmetic.
-function sig_key_bucket(a: string, b: string, nb: i32): i32 {
-  let h: i32 = 0;
-  let i: i32 = 0;
-  while (i < a.len()) {
-    if (a[i] == b'|') {
-      return h;
-    }
-    h = (h * 131 + a[i] as i32) % nb;
-    i = i + 1;
-  }
-  let j: i32 = 0;
-  while (j < b.len()) {
-    if (b[j] == b'|') {
-      return h;
-    }
-    h = (h * 131 + b[j] as i32) % nb;
-    j = j + 1;
-  }
-  return h;
+// sig_key_bucket maps a row or a probe to a bucket in [0, nb) with the
+// `__str_hash` kernel, masked so the `%` cannot return a negative index.
+function sig_key_bucket(key: string, nb: i32): i32 {
+  return (__str_hash(key, 0) & 1073741823) % nb;
 }
 
 // sig_reg_of indexes `rows`. The chain is built by walking BACKWARD and pushing
@@ -102,7 +82,7 @@ pub function sig_reg_of(rows: string[]): SigReg {
   }
   let k: i32 = rows.len() - 1;
   while (k >= 0) {
-    let bk: i32 = sig_key_bucket(rows[k], "", nb);
+    let bk: i32 = sig_key_bucket(rows[k], nb);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
     k = k - 1;
@@ -110,11 +90,9 @@ pub function sig_reg_of(rows: string[]): SigReg {
   return SigReg { rows: rows, head: head, next: next };
 }
 
-// sig_reg_has_exact: the registry holds `name` as a whole row. The bucket key
-// stops at the first '|' on both sides, so a "<name>|<value>" row shares the
-// bucket of the bare name and the exact compare here still rejects it.
+// sig_reg_has_exact: the registry holds `name` as a whole row.
 pub function sig_reg_has_exact(r: SigReg, name: string): boolean {
-  let i: i32 = r.head[sig_key_bucket(name, "", r.head.len())];
+  let i: i32 = r.head[sig_key_bucket(name, r.head.len())];
   while (i >= 0) {
     if (r.rows[i] == name) {
       return true;
