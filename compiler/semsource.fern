@@ -5793,7 +5793,9 @@ function parameters(fd: parser.FuncDecl, s: State): State {
     }
     let m: i32 = decl_param_mode(fd, at, ty);
     let p: Value = define(s, 6, [], at, "", ty);
-    s = bind(State { ...p.s, modes: p.s.modes.append(m) }, names[at], p.id);
+    let id: i32 = p.id;
+    s = p.s;
+    s = bind(State { ...s, modes: s.modes.append(m) }, names[at], id);
     at = at + 1;
   }
   return s;
