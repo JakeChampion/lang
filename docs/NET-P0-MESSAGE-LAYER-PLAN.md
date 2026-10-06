@@ -361,14 +361,14 @@ In this order, one PR each, each lowering the pin. A fix in the compiler
 is preferred where it covers a case, since every program gains.
 
 1. **The gate and this plan.** Done.
-2. **The read appends into the connection's buffer.** A read takes bytes
-   straight into the buffer the connection holds, and compaction moves
-   unanswered bytes to the front only when there are some. Done: a read
-   into an empty buffer is one copy of the bytes it took, made by one
+2. **A read copies once, and compaction copies only what is left.**
+   Done: a read into an empty buffer is one copy of the bytes it took, made by one
    `__alloc_u8` and written in place, where `scratch.take(n)` and
    `concat` each grew an array by appending. Compaction copies the same
    way, and a buffer whose requests were all answered becomes the shared
-   empty array. 30 to 22. The read's one copy is left.
+   empty array. 30 to 22. The read's one copy is left, now a per-byte
+   loop over at most one 4 KiB read where the builder pushed in bulk; a
+   read straight into the connection's buffer would remove it.
 3. **The reactor fills an events array the loop keeps.** A wait writes
    its readiness pairs into the loop's array instead of building one.
 4. **The per-connection arrays are updated in place.** The loop holds
