@@ -463,8 +463,8 @@ function main(): i32 {
 	// by e_lambda_origin, which writes the #5986 sidecar pair empty, and
 	// lift.hoist_value_iife declares the hoisted function with the coarse "fn"
 	// tag on purpose (it IS a higher-order factory). Tag without contract is an
-	// unresolved result type, so the module went to the AST lowering. The arms
-	// carry the contract, so the hoist reads it off the returned lambda.
+	// unresolved result type, which refuses the module. The arms carry the
+	// contract, so the hoist reads it off the returned lambda.
 	//
 	// The arms are ANNOTATED here: the contract is read straight off them, with
 	// no result to infer. The unannotated case below covers the other half, which
@@ -531,13 +531,11 @@ function main(): i32 {
     return f(20) + apply((if (c) { dbl } else { (x: i32): i32 => x - 1 }), 2);
 }
 `},
-	// An immediately called capturing lambda (#10685). The lift hoisted a
-	// capture-free one to a direct call and left a capturing one inline, which
-	// semsource has no expression for; it now hoists with its captures as
-	// trailing arguments. The issue's program, the return-value form, and a
-	// loop whose lambda builds a string from a capture and returns early:
-	// the AST lowering used to inline that `return` as the enclosing
-	// function's.
+	// An immediately called capturing lambda (#10685) hoists with its captures
+	// as trailing arguments; semsource has no expression for one left inline.
+	// The issue's program, the return-value form, and a loop whose lambda
+	// builds a string from a capture and returns early: that `return` is the
+	// lambda's, not the enclosing function's.
 	{name: "immediately-called-capturing-lambda", atLeast: 4, want: "13|", src: `
 function g(n: i32): i32 { return n * 2; }
 function main(): i32 {
@@ -586,8 +584,7 @@ function main(): i32 {
 `},
 	// i64 and f64 captures of hand-written IIFEs, one with a parameter and a
 	// defer. An immediately called lambda builds no env box, so the
-	// wide-capture pass leaves its captures alone whatever its parameters;
-	// snapshotting them into cells here left the AST lowering 64 bytes short.
+	// wide-capture pass leaves its captures alone whatever its parameters.
 	{name: "immediately-called-lambda-with-wide-captures", atLeast: 3, want: "15|", src: `
 function main(): i32 {
     let big: i64 = 5000000000i64;
@@ -796,18 +793,15 @@ function i32_keys(n: i32): i32 {
 function main(): i32 { return str_keys(0) + str_values(0) + i32_keys(0); }
 `},
 	// `without` hands the map back inside a fresh tuple and `cleared` builds an
-	// empty one without reading the receiver at all. The AST lowering never
-	// releases the delete's tuple, and through it loses the map it holds, so
-	// the leak legs read the produced bodies freeing strictly more.
+	// empty one without reading the receiver at all; the leak pin covers the
+	// delete's tuple and the map it holds.
 	// A record holding a capturing closure, built in one function and dropped
-	// in another that never names the function type itself. The drop helper
-	// for the record is emitted by every function that mentions it, and the
-	// environment chain it walks came from each frame's OWN type list, taken
-	// before the schema walk reached the field: the dropping frame emitted an
-	// empty chain, the building frame a full one, and merge_helpers refused
-	// the two under one symbol -- at emit time, after the module had produced
-	// whole, so the compile FAILED rather than falling back (#9804). The rows
-	// now close over the schema table, so the chain is a property of the type.
+	// in another that never names the function type itself. Every function
+	// that mentions the record emits its drop helper, and merge_helpers refuses
+	// two different bodies under one symbol at emit time (#9804), so the
+	// environment chain the helper walks must come out the same in each frame:
+	// the rows close over the schema table, making the chain a property of the
+	// type.
 	{name: "closure-field-built-and-dropped-apart", atLeast: 4, want: "4|", src: `
 struct Holder { f: (i32) => i32 }
 
@@ -1113,8 +1107,7 @@ function main(): i32 {
 }`},
 	// A view local rebound in a loop, starting from a view that stays live.
 	// Retaining a view is refused (#9802), so `let v: str = s` makes v a fresh
-	// view of s's bytes, and the loop's phi takes it by move. The AST lowering
-	// leaks the boxes.
+	// view of s's bytes, and the loop's phi takes it by move.
 	{name: "view-loop-rebinds-a-live-view", atLeast: 1, want: "14|", src: `
 function main(): i32 {
     let t: string = "abcde" + "fghij";
@@ -1216,9 +1209,8 @@ function main(): i32 {
     }
     return total % 256;
 }`},
-	// A chained append on an array FIELD read. The AST lowering took the outer
-	// receiver for an i32 and refused the module ("call to unknown symbol
-	// i32.append"); the compiler's own copy_returned_views is this shape.
+	// A chained append on an array FIELD read: the outer receiver is the array,
+	// not an i32. The compiler's own copy_returned_views is this shape.
 	{name: "a-chained-append-on-an-array-field", atLeast: 1, want: "0|", src: `
 struct TA { w: i32, s: string }
 struct Blk { id: i32, xs: TA[] }
@@ -1241,8 +1233,7 @@ function main(): i32 {
 	// a `string` and retagged by `widen`, the literal is a borrow, and the
 	// phi could only be supplied on that edge by retaining a view; a literal
 	// carries the same immortal rc a view's box does, so producing it at the
-	// destination's own type makes the edge a move. 0 of 4 before, and the AST
-	// lowering strands every view box it makes (3240 bytes in 135 blocks).
+	// destination's own type makes the edge a move.
 	{name: "a-string-literal-is-already-a-view", atLeast: 4, want: "68|", wasm: "out-of-range|", src: `
 function span(fmt: string, take: boolean): i32 {
     let spec: str = "";
@@ -1280,8 +1271,8 @@ function main(): i32 {
 	// A method declared on a `str` receiver is keyed as the lowering names it,
 	// `string.shout`, at its declaration and at every call: directly, through
 	// a generic bound, on a `str[]` element, and on a `string` receiver, which
-	// widens to the view. The contract kept the unerased `str.shout`, so every
-	// call was refused and the module fell back to the AST lowering (#10883).
+	// widens to the view. Keyed as the unerased `str.shout`, every call is
+	// refused (#10883).
 	{name: "a-trait-method-implemented-for-str", atLeast: 48, want: "3|bc! bc!bc! yz! a!bc!\n\n", src: `
 import "std/i32";
 trait Shout { function shout(self: Self): string; }
@@ -1310,10 +1301,9 @@ function main(): i32 {
 	// The map cursor: `m.iter()` and its four methods. `map_iter` is the only
 	// allocation of the five and its block carries no rc header, so the frame
 	// counts nothing and frees nothing; `key` and `value` read the map's own
-	// columns at the cursor and take no unit of what they answer. Refused
-	// whole before (`unsupported call target: Map[string, i32].iter`), which
-	// held `tests/stdlib/json_roundtrip_test` and
-	// `conformance/cases/audit_std_json` entirely to the AST lowering.
+	// columns at the cursor and take no unit of what they answer.
+	// `tests/stdlib/json_roundtrip_test` and `conformance/cases/audit_std_json`
+	// iterate maps this way.
 	//
 	// Both key-column layouts are covered: `mapiter_key` loads a string key
 	// through the counted column and a narrow-integer key through the raw one,
@@ -1527,10 +1517,7 @@ function main(): i32 {
 	// through unchanged. A numeric target stays a conversion, which is what
 	// `widen` pins: 260 as u8 is still 4, not 260.
 	//
-	// One such line held `tests/stdlib/ndarray_test` at 0 of 254: the
-	// refusal left an AST-built function value behind, and
-	// `semlower.ast_value_call` then refused the runner's `it` for calling a
-	// value of matching arity, taking every test in the file with it (#9940).
+	// One such line refused the whole of `tests/stdlib/ndarray_test` (#9940).
 	{name: "an-ascription-names-a-destination", atLeast: 3, want: "27|", src: `
 function total(xs: i32[]): i32 {
     let s: i32 = 0;
@@ -1582,10 +1569,10 @@ function main(): i32 {
 	// arm right beside them kept theirs: `type_from_ref_names` answered
 	// `t_union(r.base)` for `Box[i32]`, so the checker typed it as the bare
 	// `Box`. Anything reading that spelling back names the GENERIC, which the
-	// enum monomorphiser has dropped by then — here the return `inferred_
-	// lambda_ret` stamps on a hoisted closure, which reached semsource as
-	// `unresolved result type: declared Box` and took the whole module with
-	// it through `call target has no semantic contract: <fn>$clo0`.
+	// enum monomorphiser has dropped by then — here the return
+	// `inferred_lambda_result` stamps on a hoisted closure, which reached
+	// semsource as `unresolved result type: declared Box` and took the whole
+	// module with it through `call target has no semantic contract: <fn>$clo0`.
 	//
 	// The struct arm's own comment already gives the reason to carry them,
 	// and the reserved-enum arm above carries them too; the user enum was the
@@ -1680,13 +1667,10 @@ function main(): i32 {
     let r: u8 = apply(((x: i32): u8 => 5), 1);
     return (r as i32) + 2;
 }`},
-	// A capturing closure held in a TUPLE and called through the element.
-	// `ssasem.nests_func` refused a function value as a tuple element and
-	// `semsource.method_call` had no arm for `p.0(1)`, so the whole function
-	// went to the AST lowering — which leaks the closure's box and its
-	// captures every round (16000 bytes at 200 rounds under the sanitizer).
-	// The release walk already reached a tuple's elements through
-	// `drop_tuple_fields`; produced, the shape is reclaimed whole.
+	// A capturing closure held in a TUPLE and called through the element
+	// (`p.0(1)`). The release walk reaches a tuple's elements through
+	// `drop_tuple_fields`, so the closure's box and its captures are
+	// reclaimed every round.
 	{name: "closure-in-a-tuple", atLeast: 2, want: "6|", src: `
 function main(): i32 {
     let t: i32 = 0;
@@ -1703,9 +1687,7 @@ function main(): i32 {
 	// snapshotted into a fresh array the frame owns, and the value read
 	// beside each key is the value column's element at the same index. The
 	// deleted key must not come back, and a string key column is walked
-	// through the string dec. The AST lowering leaks its snapshots (168 bytes
-	// here); produced, the loop is reclaimed whole. Refused as
-	// `unsupported iterable: Map[i32, i32]` before.
+	// through the string dec. The loop, snapshots included, is reclaimed whole.
 	{name: "map-iteration-both-columns", atLeast: 3, want: "65|", src: `
 import "core/map";
 import "std/string";
@@ -1739,8 +1721,8 @@ function main(): i32 {
 	// The binding's annotation types the value block bound to it. A `None`
 	// arm or a struct literal is as unguessable as a call, and the body
 	// inference has nothing either (a bare `None` is an Option of no known
-	// payload), so the block kept its i32 label and the module was refused.
-	// The stamp used to apply to a 64-bit annotation alone.
+	// payload), so without the annotation the block keeps its i32 label and
+	// the module is refused.
 	{name: "value-block-takes-its-bindings-type", atLeast: 1, want: "15|", src: `
 struct Pt { x: i32, y: i32 }
 function main(): i32 {
@@ -1905,8 +1887,7 @@ function main(): i32 {
 }`},
 	// A struct- or enum-KEYED map (#9962): a column of boxes the map owns one
 	// unit of per entry, probed through the key's derived hash and eq. The
-	// AST lowering cannot read a field off a key it iterates straight out of
-	// `keys()`, which the last row does.
+	// last row reads a field off a key iterated straight out of `keys()`.
 	{name: "keyed-map-probes", atLeast: 3, want: "96|", src: `
 import "core/map";
 import "core/cmp";
@@ -1987,8 +1968,7 @@ function main(): i32 { return boxes() % 100; }
 `},
 	// An i64 value column: insert, overwrite, get, get_or, values, iteration,
 	// without, and an insert into a shared map, whose copy pairs the two column
-	// snapshots by index. wasm keeps each value in a cell of its own. The AST
-	// lowering refuses the program.
+	// snapshots by index. wasm keeps each value in a cell of its own.
 	{name: "a-map-of-i64-values-takes-the-typed-path", atLeast: 2, want: "0|", src: `
 import "core/map";
 function total(m: Map[i32, i64]): i64 {
@@ -2039,9 +2019,7 @@ function main(): i32 {
 	// The unit value in every position it takes: a parameter, a binding with
 	// and without an annotation, a tuple element read back and destructured,
 	// a variant payload, a function value with a unit parameter, and a
-	// closure's capture. It is the constant 0 in an i32-shaped slot, as the
-	// AST lowering has it, so a unit argument crosses a call the same way on
-	// both.
+	// closure's capture. It is the constant 0 in an i32-shaped slot.
 	{name: "the-unit-value-in-every-position", atLeast: 5, want: "0|", src: `
 function sink(u: ()): i32 { return 7; }
 function fallible(): Result[(), i32] { return Ok(()); }
@@ -2150,10 +2128,8 @@ function relayed(n: i32): i32 {
 function main(): i32 { return (chained(6) + relayed(1)) & 255; }
 `},
 	// The CLOSED range form. `for i in LOW..=HIGH` parses to a synthetic
-	// `__range_incl` for-iter, and the desugar that rewrites a range-for into a
-	// counting while-loop matched only the half-open `__range` — so every
-	// module using `..=` reached this boundary with a call it has no contract
-	// for and fell to the AST lowering whole. The loop bodies here are the
+	// `__range_incl` for-iter, which the range-for desugar rewrites into a
+	// counting while-loop like the half-open `__range`. The loop bodies here are the
 	// shapes the loop exit decides: HIGH included, a single-element range that
 	// runs ONCE where the half-open form runs not at all, and a reversed one
 	// that still runs zero times.
@@ -2203,10 +2179,8 @@ function shared(n: i32): i32 {
 }
 function main(): i32 { return shared(7) & 255; }
 `},
-	// The AST lowering reads the receiver's SLOT to find a clear's key kind,
-	// so it declines a receiver that is not a plain local. The contract reads the key kind from the result type instead and
-	// never evaluates the receiver for anything else, so a call result works
-	// the way a local does.
+	// A clear's key kind comes from the result type, and the receiver is never
+	// evaluated for anything else, so a call result works the way a local does.
 	{name: "map-clear-call-receiver", atLeast: 2, want: "1|", src: `
 import "core/map";
 function built(n: i32): Map[i32, i32] {
@@ -2736,10 +2710,8 @@ function main(): i32 {
 	// monomorphiser rewrites every `let` annotation in every body; when that
 	// lost the binding's view-ness, the checker typed it `string` against a
 	// `str` value and every function holding one refused, producing 0 of 2.
-	// Beyond the AST lowering: a match on a bare `Some(x)` scrutinee with an
-	// array arm and an empty array literal as an arm's value are both
-	// refused by the AST lowering ("immediately-invoked value block"), and
-	// produced here, so the module compiles only through the semantic path.
+	// Also here: a match on a bare `Some(x)` scrutinee with an array arm, and
+	// an empty array literal as an arm's value.
 	{name: "beyond-ast", atLeast: 3, want: "23|", src: `
 function picked(k: i32): i32 {
     let rows: i32[] = [k, k];
@@ -2776,9 +2748,9 @@ function vb_rows(k: i32): i32 {
 }
 function main(): i32 { return (vb_words(3) + vb_rows(2) + vb_rows(0)) & 255; }
 `},
-	// The saturating and checked operators at every width the AST lowering
-	// clamps at, matched on the exit code: each function is one shape the
-	// shared op-list builders emit over the semantic lowering's own slots.
+	// The saturating and checked operators at every width, matched on the exit
+	// code: each function is one shape the shared op-list builders emit over
+	// the semantic lowering's own slots.
 	{name: "overflow-operators", atLeast: 7, want: "5|", src: `
 function s32(a: i32, b: i32): i32 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
 function u32s(a: u32, b: u32): u32 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
@@ -2888,16 +2860,12 @@ function main(): i32 {
     return conditional(true) + per_iteration() + from_value_block();
 }
 `},
-	// The same expansion routes every `return` through one shared temp. It was
-	// declared unannotated at a literal `0`, so a function returning an array
-	// or a string assigned its result into an i32 slot — which the AST
-	// lowering's untyped frame slots never noticed, and which the semantic
-	// lowering refused as "replacement type does not match its binding".
-	// The binding lift needs a value to start the declaration it moves, and
-	// until ExprZero the only ones it could write were the ones source spells,
-	// so a struct, a tuple, an enum or a cell kept its module on the AST
-	// lowering. A zero now names its type and lowers to the zero word, which at
-	// a reference type is the null the assignment left at the declaration site
+	// The same expansion routes every `return` through one shared temp.
+	// Declared at an untyped literal `0`, it would be an i32 slot that an array
+	// or string result is refused into ("replacement type does not match its
+	// binding"). The binding lift starts the declaration it moves with an
+	// ExprZero, which names its type and lowers to the zero word — at a
+	// reference type, a null the assignment left at the declaration site
 	// overwrites before anything reads it.
 	{name: "defer-binding-at-a-type-with-no-literal-zero", atLeast: 4, want: "21|", src: `
 struct P { a: i32 }
@@ -2946,12 +2914,10 @@ function main(): i32 {
     return snapshot()[0] * 10 + labelled().len();
 }
 `},
-	// The temp kept to the types with a literal zero, and a function with a
-	// defer returning a record, a tuple, a variant or a Result stayed on the
-	// AST lowering: declared at an untyped 0, the temp was an i32 slot, so
-	// "replacement type does not match its binding", and a returned Err had
-	// no expected type to name its variant through. The temp now starts at
-	// the zero of the return type, like a lifted binding. The value a return
+	// A function with a defer returning a record, a tuple, a variant or a
+	// Result: the return temp starts at the zero of the return type, like a
+	// lifted binding, so a returned Err has an expected type to name its
+	// variant through. The value a return
 	// hands back is bound beside the local it came from until the cleanup
 	// runs (two_defers replaces both), and the sanitizer leg holds the boxes
 	// to zero over 200 rounds.
@@ -3045,8 +3011,7 @@ function main(): i32 {
 	// environments it could carry with the type and lets the release walk the
 	// captures. Churned in a loop so a missed capture shows
 	// up as a leak rather than a constant. Each loop binds ONE returned
-	// closure: two distinct ones in a single loop body is #9657, where the AST
-	// lowering this case compares against answers wrongly.
+	// closure; two distinct ones in a single loop body is #9657.
 	{name: "a-function-value-returned-from-a-declaration", atLeast: 9, want: "8|", src: `
 function scalar_capture(n: i32): (i32) => i32 {
     return (x: i32): i32 => { return x + n; };
@@ -3229,13 +3194,11 @@ function main(): i32 {
 `},
 
 	// A driver that reads stdin. `io.read_all_stdin` binds `let r: Reader =
-	// stdin()` and loops `r.read_chunk`, and the whole of std/io went to the
-	// AST lowering because the checker resolved no type called `Reader` and
-	// the producer held no contract for the handle builtins (#9781). Every
+	// stdin()` and loops `r.read_chunk`, which needs the checker's `Reader`
+	// type and the producer's contracts for the handle builtins (#9781). Every
 	// driver that reads stdin comes through here, so this is the production
-	// shape rather than one entry's: 0 of 55 before, 55 of 55 after. The
-	// stdin methods and the two standard Writers are all one family, so the
-	// second half drives those too.
+	// shape rather than one entry's. The stdin methods and the two standard
+	// Writers are all one family, so the second half drives those too.
 	{name: "stdin-and-the-stream-handles", atLeast: 44, want: "11|alpha\nbeta\n", stdin: "alpha\nbeta\n", src: `
 import "std/io";
 
@@ -3250,14 +3213,9 @@ function main(): i32 {
 }
 `},
 
-	// A closure that captures a closure. A construction used to BORROW a
-	// function-value operand, and the producer secured that borrow by
-	// refusing any capture that was not a borrowed parameter — a rule that
-	// cannot describe an escape. Here `inner` is a LOCAL of `wrap` and the
-	// box holding it is RETURNED: `wrap` cannot free it, because the escaping
-	// box still points at it, and the box never took it, so nobody did.
-	// Native leaks three blocks an iteration on this program and the
-	// self-host refused to produce `wrap` at all (#9637).
+	// A closure that captures a closure. Here `inner` is a LOCAL of `wrap` and
+	// the box holding it is RETURNED: `wrap` cannot free it, because the
+	// escaping box still points at it, so the box must take it (#9637).
 	//
 	// The program is correct while leaking, so the leak pin is the whole
 	// subject.
@@ -3283,15 +3241,12 @@ function main(): i32 {
     return t % 7;
 }
 `},
-	// Self-tail recursion. Tail-call optimisation reached a declaration
-	// through `irlower.lower_func`, which a produced body never enters, so a
-	// produced self-tail call grew the stack once per round and a deep enough
-	// recursion took the program out — SIGSEGV on the default path (#9692).
-	// The depth is what makes this a gate rather than a decoration: a million
-	// rounds is several times any stack here, and before the rewrite the same
-	// program died at two hundred thousand on every target. It costs about a
-	// sixth of a second natively. The interpreter has no TCO and overflows its
-	// stack on this program. The reference-typed shapes are in
+	// Self-tail recursion. A produced self-tail call that grows the stack once
+	// per round takes a deep enough recursion out — SIGSEGV on the default
+	// path (#9692). The depth is what makes this a gate rather than a
+	// decoration: a million rounds is several times any stack here. It costs
+	// about a sixth of a second natively. The interpreter has no TCO and
+	// overflows its stack on this program. The reference-typed shapes are in
 	// TestSelfHostSemanticTailRecursion.
 	{name: "self-tail-recursion", atLeast: 2, want: "1|", src: `
 function count(n: i32, acc: i32): i32 {
@@ -3301,13 +3256,8 @@ function count(n: i32, acc: i32): i32 {
 
 function main(): i32 { return count(1000000, 0) % 7; }
 `},
-	// An array of function values. `ssasem.nests_func` refused one as an
-	// element, so a program holding closures in an array put its whole
-	// function on the AST lowering -- 52 of the 550 refusals across 512
-	// fernsmith programs, and the last layer of a wall three checks deep.
-	//
-	// Both elements CAPTURE, because the release is what the refusal was
-	// guarding: the array's drop walks each element through
+	// An array of function values. Both elements CAPTURE, because the release
+	// is the point: the array's drop walks each element through
 	// `ssarc.drop_value`, which dispatches a function type to
 	// `drop_captures`. `caps` and `other` are freed by that walk or not at
 	// all, so the leak pin is the assertion that carries this case.
@@ -3358,9 +3308,7 @@ function main(): i32 {
 	// a sibling calling it, and the sibling's own slot, were left untyped.
 	// The binding now spells the full signature, and the checker reads a
 	// lambda's function-valued result through the same sidecars a
-	// declaration's carries. The AST lowering refuses the shape: whether the
-	// array a function value hands back holds boxes or bare addresses is the
-	// callee's choice, and it dispatched by the declared tag alone.
+	// declaration's carries.
 	{name: "nested-function-returning-an-array-of-functions", atLeast: 3, want: "65|", src: `
 function main(): i32 {
     function make(k: i32): ((i32) => i32)[] { return [((a: i32) => a + k), ((b: i32) => b * k)]; }
@@ -3495,10 +3443,8 @@ function main(): i32 {
 	// `m` as it was, a callee's insert through a lent parameter leaves the
 	// caller's map as it was, and `without` leaves its receiver whole for the
 	// bindings that still read it. The receiver's retain is what makes the
-	// copy-on-write gate see a second holder. The AST lowering borrows the
-	// receiver and writes the sole-held box in place, so `m`, `n`, `g` and
-	// `rest` all name one box (#9834); only the delete `snapshot` still reads
-	// through copies (#9835).
+	// copy-on-write gate see a second holder; written in place, `m`, `n`, `g`
+	// and `rest` would all name one box (#9834).
 	{name: "a-map-the-frame-still-reads-is-not-written", atLeast: 2, want: "85|", src: `
 import "core/map";
 function grown(m: Map[i32, i32], k: i32): Map[i32, i32] { return m.insert(k, k * 3); }
@@ -3886,19 +3832,15 @@ function main(): i32 {
 }
 `},
 	// The OS-floor builtins that answer a fresh string, string array or
-	// record: their runtime helpers used to keep the scratch block each call
-	// filled (the 4 KiB path buffer, the 64 KiB drain buffers), so nothing
-	// could pin these at zero (#9832). The helpers own their scratch now, so
-	// the typed lowering, which releases the results, frees everything.
-	// A mutable capture is a Cell[T] on both lowerings (#9320): the scalars the
-	// closure writes (every scalar kind, not only i32 and boolean, which was
-	// all the box scan admitted and cost an i64 or f64 its writes), a string
-	// the creator rebinds under a closure that reads it, and a Cell[i64]
-	// parameter read in i64 arithmetic, which the AST lowering used to bail
-	// on, and a string the creator rebinds under a closure that ESCAPES, which
-	// the typed lowering used to read at its creation-time value. Both
-	// lowerings are pinned to the native answer, since before the change they
-	// agreed with each other on the wrong one.
+	// record: the runtime helpers own their scratch blocks (the 4 KiB path
+	// buffer, the 64 KiB drain buffers) and the results are released, so these
+	// pin at zero (#9832).
+	// A mutable capture is a Cell[T] (#9320): the scalars the closure writes
+	// (every scalar kind, i64 and f64 included), a string the creator rebinds
+	// under a closure that reads it, a Cell[i64] parameter read in i64
+	// arithmetic, and a string the creator rebinds under a closure that
+	// ESCAPES, which must read its current value rather than its
+	// creation-time one. Pinned to the interpreter's answer.
 	{name: "a-capture-the-closure-writes-is-a-cell", atLeast: 7, want: "42|", src: `
 function tally(): i32 {
     let n: i32 = 0;
@@ -4087,9 +4029,7 @@ function main(): i32 {
 	// An unannotated binding of a CALL takes its type from the call, not from
 	// the checker: `let m = s.map(f)` on a generic receiver is a shape the
 	// checker leaves `not yet checked`, and the instance the call resolves is
-	// what settles it. Every declaration here refused before, through the
-	// binding, so `std/result`'s whole combinator surface stood on the AST
-	// lowering.
+	// what settles it. `std/result`'s combinators are this shape.
 	{name: "an-unannotated-binding-takes-its-call-s-type", atLeast: 53, want: "21|", src: `
 import "std/option";
 import "std/result";
@@ -4275,11 +4215,8 @@ function main(): i32 {
 	// keys() and values() over narrow scalar columns. The runtime snapshot
 	// bit-copies a column of i32-shaped cells into a fresh array, which is as
 	// true of a `u8`, `u32` or `boolean` column as of the `i32` one
-	// ssasem.retained_column admitted alone; the rest were refused as an
-	// alias of the map's own elements, which is the refusal that kept
-	// conformance/cases/map_narrow_int_keys on the AST lowering (#9550). The
-	// answer is the interpreter's: native codegen materialises a `u8` column
-	// at the wrong stride (#10000).
+	// (conformance/cases/map_narrow_int_keys, #9550). The answer is the
+	// interpreter's.
 	{name: "narrow-scalar-columns-snapshot", atLeast: 1, want: "38|", src: `
 import "core/map";
 
@@ -4304,11 +4241,9 @@ function main(): i32 {
 	// Explicit type arguments at a call. The parser keeps them apart from the
 	// argument list (`type_args`, which the checker binds and E040 counts
 	// against the declaration), and the instantiation is inferred from the
-	// arguments and the destination exactly as it is without them; the three
-	// call paths refused any count above zero as a `call arity`, which is what
-	// kept conformance/cases/trailing_commas on the AST lowering (#9550). A
-	// variable the arguments and destination leave unbound is still refused,
-	// as `unbound type variable`.
+	// arguments and the destination exactly as it is without them
+	// (conformance/cases/trailing_commas, #9550). A variable the arguments and
+	// destination leave unbound is still refused, as `unbound type variable`.
 	{name: "explicit-type-arguments-at-a-call", atLeast: 2, want: "42|", src: `
 function pick[T](xs: T[], i: i32): T { return xs[i]; }
 
@@ -4371,12 +4306,9 @@ function main(): i32 {
 }
 `},
 	// Operator overloading on a struct: `a + b` is `a.add(b)` and `-a` is
-	// `a.neg()`, the desugar the native checker applies and the AST lowering
-	// mirrors (#2706). The semantic source dispatched only the comparisons
-	// that way and refused every arithmetic operator on a nominal operand
-	// with `operator contract: V + V` (conformance/cases/op_overload_nested,
-	// #9550). The nested form leaves two intermediate records live across the
-	// outer call, which the leak pin covers.
+	// `a.neg()` (#2706; conformance/cases/op_overload_nested, #9550). The
+	// nested form leaves two intermediate records live across the outer call,
+	// which the leak pin covers.
 	{name: "arithmetic-operators-on-a-struct", atLeast: 5, want: "42|", src: `
 struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
@@ -4706,8 +4638,7 @@ function main(): i32 {
 	// A shared view map copied by an insert, a without or a lent receiver's
 	// insert gives the copy a fresh box for each view, and a counted string or
 	// a literal held as a view reads back as itself. A view column stays off
-	// core/map, whose retains would share the boxes. The AST lowering refuses
-	// the program.
+	// core/map, whose retains would share the boxes.
 	{name: "a-copied-view-map-owns-its-boxes", atLeast: 3, want: "28|gh\nabcdefgh!\nlit\nq\ngone\nbc\nabcdefgh!\nbc\nbc\nd\n", src: `
 import "core/map";
 function fill(s: string): Map[string, str] {
@@ -5522,7 +5453,7 @@ function main(): i32 {
 `},
 	// An array of views of one parameter is anchored to it as a single view
 	// result is, whether it is built by append, in a loop, or by a literal and
-	// .with. The AST lowering leaked the view boxes (#10215).
+	// .with (#10215).
 	{name: "an-array-of-a-parameters-views-is-anchored-to-it", atLeast: 4, want: "0|", src: `
 import "std/string";
 import "std/i32";
@@ -5638,9 +5569,8 @@ function main(): i32 {
 `},
 	// The raw floor the runtime helpers are written on, through the checker's
 	// types: an address is a usize, a syscall's words are i64. The produced
-	// bodies release the three strings and both arrays, which the AST lowering
-	// leaves live. Syscall 4000 is unassigned on both Linux ISAs, so it answers
-	// -ENOSYS (-38) on each.
+	// bodies release the three strings and both arrays. Syscall 4000 is
+	// unassigned on both Linux ISAs, so it answers -ENOSYS (-38) on each.
 	{name: "raw-floor-intrinsics", atLeast: 3, want: "3|Abc\n", nativeOnly: true, src: `
 function chr_of(b: i32): string { let p: usize = __raw_alloc(1); __raw_store8(p, 0, b); return __raw_string(p, 1); }
 function cat2(a: string, b: string): string {
@@ -5669,7 +5599,7 @@ function main(): i32 {
 }
 `},
 	// The runtime helpers behind `chr` and string `+`, lowered by the typed
-	// path from their Fern source rather than by the AST lowering.
+	// path from their Fern source.
 	{name: "runtime-helpers-take-the-typed-path", atLeast: 1, want: "5|abcde!\n", reports: []string{"runtime __fern_chr: produced", "runtime __fern_str_concat: produced"}, src: `
 function main(): i32 {
     let s: string = "";
@@ -5816,8 +5746,8 @@ function main(): i32 {
 }
 `},
 	// The filesystem bundle's readers and writers. read_dir's typed body
-	// appends to a string[], which calls __fern_arr_inc_elems: a need the
-	// AST lowering never marks, so the runtime is emitted again with it.
+	// appends to a string[], which calls __fern_arr_inc_elems, so the runtime
+	// has to carry it.
 	{name: "fs-bundle-reads-and-writes", atLeast: 1, want: "13|", nativeOnly: true, reports: []string{
 		"runtime __fern_create_dir_all: produced", "runtime __fern_write_file: produced",
 		"runtime __fern_read_file: produced", "runtime __fern_utf8_valid: produced",
@@ -5970,9 +5900,8 @@ function main(): i32 {
 }
 `},
 	// A dyn value holding a record that owns a string, built on every trip
-	// round a loop. The AST lowering leaks the record each trip (199 blocks
-	// over 100 trips); the typed path owns the record, lends the dyn value to
-	// the call, and releases the record when the trip ends.
+	// round a loop. The typed path owns the record, lends the dyn value to the
+	// call, and releases the record when the trip ends.
 	{name: "dyn-over-a-counted-record", atLeast: 3, want: "29|", src: `
 import "std/i32";
 
@@ -6309,8 +6238,7 @@ function main(): i32 {
 `},
 	// A 64-bit integer and a float are boxed at their own width, which wasm's
 	// box stores and unboxes by the primitive's name (#10098): an i64 above
-	// 2^32 keeps its high half, and an f64 its fraction. The AST lowering
-	// refuses the module.
+	// 2^32 keeps its high half, and an f64 its fraction.
 	{name: "a-wide-scalar-dyn-value-is-boxed-at-its-width", atLeast: 5, want: "0|", src: `
 trait Show { function show(self: Self): i32; }
 impl Show for i64 { function show(self: Self): i32 { return (self / 1000000000) as i32; } }
@@ -6471,17 +6399,14 @@ function main(): i32 {
     return through_local(3) + use_through_local() + apply2(runner, 5) + through_result() - 1;
 }
 `},
-	// A call of a call, where the inner callee is a function VALUE: the AST
-	// lowering dispatched the returned function as a bare
-	// code pointer unless it could name the inner callee as a closure factory,
-	// so every shape here but the last segfaulted there (#10057). Every function
-	// value is an env box, so the outer call always dispatches env-first.
+	// A call of a call, where the inner callee is a function VALUE (#10057).
+	// Every function value is an env box, so the outer call always dispatches
+	// env-first.
 	// Covered: a capturing and a capture-free result through a local, a
 	// parameter, a generic passthrough of a lambda and of a named function,
 	// three levels through a local, and a method's result. The f64 and i64
-	// arguments pin the outer call's funcref signature: with only the arity
-	// known, the AST lowering called an all-i32 funcref and wasm refused the
-	// module.
+	// arguments pin the outer call's funcref signature: wasm refuses an all-i32
+	// funcref built from the arity alone.
 	{name: "a-call-of-a-call-through-a-function-value", atLeast: 9, want: "58|", src: `
 struct M { k: i32 }
 function (m: M) make(): (i32) => i32 { let k = m.k; return (b: i32): i32 => b + k; }
@@ -6514,12 +6439,10 @@ function main(): i32 {
         + id(inc)(5) + three(1)(2)(3) - 100 + m.make()(5) - 33 + floats();
 }
 `},
-	// A function array holds env boxes whatever built it (#10076). An array of
-	// named functions held bare code pointers on the AST lowering, the control
-	// leg, while every other function value was a box, so an element that left
-	// the array (returned, reassigned, passed) reached a caller that dispatched
-	// it env-first and segfaulted. A zero-parameter function names a function
-	// value unless it is a `const`, so it boxes too.
+	// A function array holds env boxes whatever built it (#10076), so an
+	// element that leaves the array (returned, reassigned, passed) reaches a
+	// caller that dispatches it env-first. A zero-parameter function names a
+	// function value unless it is a `const`, so it boxes too.
 	{name: "a-function-array-holds-boxes", atLeast: 15, want: "64|", src: `
 struct M { k: i32 }
 enum E { Wrap(() => i32), No }
@@ -6542,13 +6465,9 @@ function main(): i32 {
     return r;
 }
 `},
-	// A CAPTURING lambda returned from a lambda. The lifted body's tail
-	// `return <lambda>` kept an escaping-closure hoist that left the lambda at
-	// the return site, which the typed path refused ("unsupported expression"),
-	// because the AST lowering had once segfaulted given the `$lamret$N` slot
-	// instead (#5281). That no longer reproduces, so every tail takes the slot
-	// and the hoist is gone (#10025). Two levels, three levels, and a lambda
-	// bound to a local that returns an expression-bodied lambda.
+	// A CAPTURING lambda returned from a lambda: every tail `return <lambda>`
+	// takes the `$lamret$N` slot (#10025). Two levels, three levels, and a
+	// lambda bound to a local that returns an expression-bodied lambda.
 	{name: "a-lambda-returning-a-capturing-lambda", atLeast: 5, want: "42|", src: `
 function main(): i32 {
     let curry = (a: i32) => { return (b: i32): i32 => a + b; };
@@ -6559,17 +6478,14 @@ function main(): i32 {
 }
 `},
 	// A function declared to return a function returns an env box, whatever its
-	// return statements spell (#9763). The AST lowering registered a box-returning function by the shape of its returns, so a
-	// lambda handed back through a generic call, a local bound from one, or a
-	// match-arm payload was dispatched as a bare code pointer by a caller that
-	// bound the result to a local, and segfaulted.
+	// return statements spell (#9763): a lambda handed back through a generic
+	// call, a local bound from one, or a match-arm payload, called by a caller
+	// that bound the result to a local.
 	// A field read stored into a container is a second owner of a box its
 	// struct's __struct_drop_<T> releases: a scalar array, an array of structs,
-	// a nested struct, an enum. The AST lowering retained only
-	// an enum field read, so `xs.append(a.env)` in a callee left the element
-	// uncounted, the caller's drop of the argument freed it, and the next
-	// allocation reused the block under the container. That was the
-	// out-of-bounds abort of a compiler built through the AST lowering (#9763).
+	// a nested struct, an enum. Left uncounted, `xs.append(a.env)` in a callee
+	// leaves the element to the caller's drop of the argument, and the next
+	// allocation reuses the block under the container (#9763).
 	{name: "a-stored-field-read-is-retained", atLeast: 11, want: "24|", src: `
 struct In { x: i32 }
 enum Tag { A(i32), B }
@@ -6667,8 +6583,7 @@ function main(): i32 {
 	// A module the program imports does not see the program's enums (#10139):
 	// std/json's bare `Ok` is Result's though the program declares one, while
 	// a helper the compiler synthesises for the program's own map key still
-	// sees Tag. Before, the first was refused by the checker and a first cut at
-	// the fix sent the second, and std/json's JNull, to the AST lowering.
+	// sees Tag.
 	{name: "an-imported-module-does-not-see-the-programs-enums", atLeast: 89, want: "28|", src: `
 import "core/map";
 import "core/cmp";
@@ -6885,8 +6800,7 @@ function main(): i32 {
 `},
 	// A lambda a generic function's nested function returns is hoisted to
 	// `__lam_0$wrap0`, and the instance `__lam_0$wrap0$i32` is built by the
-	// instance `__lam_0$i32`: produced like its creator, not left to an AST
-	// body no instance has.
+	// instance `__lam_0$i32`: produced like its creator.
 	{name: "a-lambda-from-a-nested-function-in-a-generic", atLeast: 2, want: "7|", src: `
 pub function make[T](seed: T): T {
     function idmaker(base: T): (T) => T {

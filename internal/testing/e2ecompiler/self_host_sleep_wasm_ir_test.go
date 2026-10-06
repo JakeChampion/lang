@@ -16,11 +16,11 @@ import (
 // subclockflags field is written with, and $__fern_sleep_ms declared an i32
 // parameter where sleep_ms's is i64, so the module failed validation once the
 // assembler could encode it at all. Either one alone made every wasm program
-// containing a sleep unbuildable, on both lowerings.
+// containing a sleep unbuildable.
 //
-// Each program is emitted both ways and run under wasmtime: the exit codes must
-// match each other and the expected value, so a sleep that stops building, or
-// builds to a module that traps, fails here rather than in whatever imports it.
+// Each program is emitted and run under wasmtime, and must exit with the
+// expected value, so a sleep that stops building, or builds to a module that
+// traps, fails here rather than in whatever imports it.
 func TestSelfHostSleepWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm sleep e2e")
@@ -30,37 +30,29 @@ func TestSelfHostSleepWasm(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	emitAndRun := func(t *testing.T, name, src string, ir bool) int {
+	emitAndRun := func(t *testing.T, name, src string) int {
 		t.Helper()
-		args := []string{}
-		if ir {
-			args = append(args, "-ir")
-		}
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, args...)
+			cmd = exec.Command(driverBin)
 		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), args...)...)
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		var diagnostics bytes.Buffer
 		cmd.Stderr = &diagnostics
 		wat, err := cmd.Output()
 		if err != nil || len(wat) == 0 {
-			t.Fatalf("driver failed (ir=%v) for %s: %v\n%s", ir, name, err, diagnostics.String())
+			t.Fatalf("driver failed for %s: %v\n%s", name, err, diagnostics.String())
 		}
-		tag := "ast"
-		if ir {
-			tag = "ir"
-		}
-		watFile := filepath.Join(dir, name+"_"+tag+".wat")
+		watFile := filepath.Join(dir, name+".wat")
 		if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-			t.Fatalf("write %s wat: %v", tag, err)
+			t.Fatalf("write wat: %v", err)
 		}
 		for _, body := range wasmFuncBodies(string(wat), "$__fern_sleep_") {
 			if strings.Contains(body, "$__fern_alloc") {
-				t.Errorf("a sleep helper allocates (ir=%v, %s) — the bump heap has no free, "+
-					"so that is a leak per call (#9480):\n%s", ir, name, body)
+				t.Errorf("a sleep helper allocates (%s) — the bump heap has no free, "+
+					"so that is a leak per call (#9480):\n%s", name, body)
 			}
 		}
 		run := exec.Command("wasmtime", "run", watFile)
@@ -68,13 +60,13 @@ func TestSelfHostSleepWasm(t *testing.T) {
 		run.Stderr = &runErr
 		_ = run.Run()
 		if run.ProcessState == nil || !run.ProcessState.Exited() {
-			t.Fatalf("wasmtime did not exit normally (ir=%v) for %s:\n%s", ir, name, runErr.String())
+			t.Fatalf("wasmtime did not exit normally for %s:\n%s", name, runErr.String())
 		}
 		// A module the assembler or the validator rejects surfaces here as a
 		// load failure rather than a program exit, which reads identically to a
 		// wrong answer unless it is named.
 		if strings.Contains(runErr.String(), "failed to compile") || strings.Contains(runErr.String(), "failed to open") {
-			t.Fatalf("wasmtime could not load the module (ir=%v) for %s:\n%s", ir, name, runErr.String())
+			t.Fatalf("wasmtime could not load the module for %s:\n%s", name, runErr.String())
 		}
 		return run.ProcessState.ExitCode()
 	}
@@ -120,13 +112,8 @@ func TestSelfHostSleepWasm(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			routed := emitAndRun(t, tc.name, tc.src, false)
-			forced := emitAndRun(t, tc.name, tc.src, true)
-			if routed != tc.want {
-				t.Errorf("routed emit exited %d, want %d", routed, tc.want)
-			}
-			if forced != routed {
-				t.Errorf("forced IR emit exited %d, routed %d: the two lowerings disagree", forced, routed)
+			if got := emitAndRun(t, tc.name, tc.src); got != tc.want {
+				t.Errorf("exited %d, want %d", got, tc.want)
 			}
 		})
 	}
