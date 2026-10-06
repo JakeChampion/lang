@@ -14182,6 +14182,85 @@ pub function unit_fn_counts(units: WasmUnit[]): i32[] {
   return out;
 }
 
+// kernel_helpers appends the byte-scan, f64 and checksum kernel bodies
+// the module needs, each gated by its `@uses_*` need, in the order they
+// appear in the module.
+function kernel_helpers(needs: string[], parts: string[]): string[] {
+  if (need(needs, "@uses_memchr")) {
+    parts = parts.append(memchr_helper());
+  }
+  if (need(needs, "@uses_count_byte_bytes")) {
+    parts = parts.append(count_byte_bytes_helper());
+  }
+  if (need(needs, "@uses_sum_bytes_array")) {
+    parts = parts.append(byte_reduction_helper(false));
+  }
+  if (need(needs, "@uses_bsd_sum_bytes")) {
+    parts = parts.append(byte_reduction_helper(true));
+  }
+  if (need(needs, "@uses_memchr_bytes")) {
+    parts = parts.append(memchr_bytes_helper());
+  }
+  if (need(needs, "@uses_rmemchr_bytes")) {
+    parts = parts.append(rmemchr_bytes_helper());
+  }
+  if (need(needs, "@uses_count_runs_bytes")) {
+    parts = parts.append(count_runs_bytes_helper());
+  }
+  if (need(needs, "@uses_scan_set_bytes")) {
+    parts = parts.append(scan_set_bytes_helper());
+  }
+  if (need(needs, "@uses_mismatch_bytes")) {
+    parts = parts.append(mismatch_bytes_helper());
+  }
+  if (need(needs, "@uses_rmemchr")) {
+    parts = parts.append(rmemchr_helper());
+  }
+  if (need(needs, "@uses_mismatch")) {
+    parts = parts.append(mismatch_helper());
+  }
+  if (need(needs, "@uses_count_byte")) {
+    parts = parts.append(count_byte_helper());
+  }
+  if (need(needs, "@uses_sum_bytes")) {
+    parts = parts.append(sum_bytes_helper());
+  }
+  if (need(needs, "@uses_scan_set")) {
+    parts = parts.append(scan_set_helper());
+  }
+  if (need(needs, "@uses_count_runs")) {
+    parts = parts.append(count_runs_helper());
+  }
+  if (need(needs, "@uses_bsd_sum")) {
+    parts = parts.append(bsd_sum_helper());
+  }
+  if (need(needs, "@uses_str_hash")) {
+    parts = parts.append(str_hash_helper());
+  }
+  if (need(needs, "@uses_scale_f64")) {
+    parts = parts.append(scale_f64_helper());
+  }
+  if (need(needs, "@uses_outer_mul_f64")) {
+    parts = parts.append(outer_mul_f64_helper());
+  }
+  if (need(needs, "@uses_inner_mul_add_f64")) {
+    parts = parts.append(inner_mul_add_f64_helper());
+  }
+  if (need(needs, "arr_reserve")) {
+    parts = parts.append(array_reserve_helper());
+  }
+  if (need(needs, "@uses_crc32_cksum")) {
+    parts = parts.append(crc32_cksum_helper());
+  }
+  if (need(needs, "@uses_crc32_cksum_array")) {
+    parts = parts.append(crc32_cksum_helper_for(true));
+  }
+  if (need(needs, "@uses_ascii_run")) {
+    parts = parts.append(ascii_run_helper());
+  }
+  return parts;
+}
+
 // emit_ir_module_units links N per-module units into one core module (#5331
 // step 4b). It owns everything a unit does NOT: the imports, the memory, the
 // base/type-id globals, the data section, the runtime helper bodies, the funcref
@@ -14809,78 +14888,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "@uses_str_slice") || need(needs, "str_split") || need(needs, "@uses_str_lines")) {
     parts = parts.append(substr_helper());
   }
-  if (need(needs, "@uses_memchr")) {
-    parts = parts.append(memchr_helper());
-  }
-  if (need(needs, "@uses_count_byte_bytes")) {
-    parts = parts.append(count_byte_bytes_helper());
-  }
-  if (need(needs, "@uses_sum_bytes_array")) {
-    parts = parts.append(byte_reduction_helper(false));
-  }
-  if (need(needs, "@uses_bsd_sum_bytes")) {
-    parts = parts.append(byte_reduction_helper(true));
-  }
-  if (need(needs, "@uses_memchr_bytes")) {
-    parts = parts.append(memchr_bytes_helper());
-  }
-  if (need(needs, "@uses_rmemchr_bytes")) {
-    parts = parts.append(rmemchr_bytes_helper());
-  }
-  if (need(needs, "@uses_count_runs_bytes")) {
-    parts = parts.append(count_runs_bytes_helper());
-  }
-  if (need(needs, "@uses_scan_set_bytes")) {
-    parts = parts.append(scan_set_bytes_helper());
-  }
-  if (need(needs, "@uses_mismatch_bytes")) {
-    parts = parts.append(mismatch_bytes_helper());
-  }
-  if (need(needs, "@uses_rmemchr")) {
-    parts = parts.append(rmemchr_helper());
-  }
-  if (need(needs, "@uses_mismatch")) {
-    parts = parts.append(mismatch_helper());
-  }
-  if (need(needs, "@uses_count_byte")) {
-    parts = parts.append(count_byte_helper());
-  }
-  if (need(needs, "@uses_sum_bytes")) {
-    parts = parts.append(sum_bytes_helper());
-  }
-  if (need(needs, "@uses_scan_set")) {
-    parts = parts.append(scan_set_helper());
-  }
-  if (need(needs, "@uses_count_runs")) {
-    parts = parts.append(count_runs_helper());
-  }
-  if (need(needs, "@uses_bsd_sum")) {
-    parts = parts.append(bsd_sum_helper());
-  }
-  if (need(needs, "@uses_str_hash")) {
-    parts = parts.append(str_hash_helper());
-  }
-  if (need(needs, "@uses_scale_f64")) {
-    parts = parts.append(scale_f64_helper());
-  }
-  if (need(needs, "@uses_outer_mul_f64")) {
-    parts = parts.append(outer_mul_f64_helper());
-  }
-  if (need(needs, "@uses_inner_mul_add_f64")) {
-    parts = parts.append(inner_mul_add_f64_helper());
-  }
-  if (need(needs, "arr_reserve")) {
-    parts = parts.append(array_reserve_helper());
-  }
-  if (need(needs, "@uses_crc32_cksum")) {
-    parts = parts.append(crc32_cksum_helper());
-  }
-  if (need(needs, "@uses_crc32_cksum_array")) {
-    parts = parts.append(crc32_cksum_helper_for(true));
-  }
-  if (need(needs, "@uses_ascii_run")) {
-    parts = parts.append(ascii_run_helper());
-  }
+  parts = kernel_helpers(needs, parts);
   // $__fern_str_split (+ its private $__fern_arr_push) for the IR path.
   if (need(needs, "str_split") || need(needs, "@uses_str_lines")) {
     parts = parts.append(str_split_helper());
