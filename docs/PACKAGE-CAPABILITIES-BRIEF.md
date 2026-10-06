@@ -177,14 +177,13 @@ side:
   native counterpart: names the self-host front end registers as
   builtins that native's checker does not (`chr`, `__map_new_i32`),
   each held to being absent from native's registry.
-- **Package identity comes from the ENTRY manifest.** Native resolves a
-  module's package from the nearest governing `fern.toml`; the
-  self-host driver's loader resolves every import from the entry
-  directory, so a dependency's own dependencies are not reachable and
-  there is no deeper package to attribute. Deps are resolved through
-  the manifest (path / workspace / lock / vendor / store) by
-  `modloader.resolve_module_src` — before #6634 the driver could not
-  load a manifest dependency at all.
+- **Package identity comes from the importer's own directory.** Native
+  resolves a module's package from the nearest governing `fern.toml`;
+  the self-host attributes from the manifest in the importing module's
+  own directory only, so a module below its package root has no package
+  to attribute. Deps resolve through the nearest governing manifest
+  (path / workspace / lock / vendor / store) in `modloader.try_manifest`
+  — before #6634 the driver could not load a manifest dependency at all.
 - **The example chain is spelled differently.** Both compilers mangle
   an imported function as `<module>__<name>`, but native's module is
   the dependency's lib FILE (`lib__save`) and the self-host's is the

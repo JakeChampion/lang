@@ -112,6 +112,38 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 			wantExit: 42,
 		},
 		{
+			// A dependency whose lib sits below its root: helper's own
+			// manifest is one level above src/lib.fern, and it still governs
+			// that module's `textkit` import, while `./util` resolves beside
+			// the file. textkit.ten() + util.two() = 12.
+			name: "manifest-dep-lib-in-subdir",
+			files: map[string]string{
+				"app/fern.toml":        "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\n",
+				"app/main.fern":        "import \"helper\";\nfunction main(): i32 { return helper.twelve(); }\n",
+				"helper/fern.toml":     "[package]\nname = \"helper\"\nlib = \"src/lib.fern\"\n[dependencies]\ntextkit = { path = \"../textkit\" }\n",
+				"helper/src/lib.fern":  "import \"textkit\";\nimport \"./util\";\npub function twelve(): i32 { return textkit.ten() + util.two(); }\n",
+				"helper/src/util.fern": "pub function two(): i32 { return 2; }\n",
+				"textkit/fern.toml":    "[package]\nname = \"textkit\"\n",
+				"textkit/lib.fern":     "pub function ten(): i32 { return 10; }\n",
+			},
+			entryRel: "app/main.fern",
+			wantExit: 12,
+		},
+		{
+			// A module below its package root reaches a dependency the root's
+			// manifest declares: the nearest fern.toml above it governs it.
+			name: "manifest-governs-subdirectory-module",
+			files: map[string]string{
+				"app/fern.toml":  "[package]\nname = \"app\"\n[dependencies]\ndbl = { path = \"../dbl\" }\n",
+				"app/main.fern":  "import \"./lib/x\";\nfunction main(): i32 { return x.f(); }\n",
+				"app/lib/x.fern": "import \"dbl\";\npub function f(): i32 { return dbl.dbl(21); }\n",
+				"dbl/fern.toml":  "[package]\nname = \"dbl\"\n",
+				"dbl/lib.fern":   "pub function dbl(x: i32): i32 { return x * 2; }\n",
+			},
+			entryRel: "app/main.fern",
+			wantExit: 42,
+		},
+		{
 			// Workspace member dep: app declares `lexer = { workspace = true }`
 			// and imports it by name; the loader walks up to the [workspace]
 			// root (ws/fern.toml) and resolves the member whose package name

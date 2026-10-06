@@ -1520,23 +1520,20 @@ pub function is_dir(path: string): boolean {
   return false;
 }
 
-// resolve_path maps an import path to a file on disk. Local imports
-// resolve beside the importer, directory segments kept — `./lib/gnu`
-// from `<dir>` is `<dir>/lib/gnu.fern`, as native joins them; std/core
-// imports resolve to `<root>/<import_path>.fern` (e.g. `std/math` →
-// `<root>/std/math.fern`).
+// resolve_path maps an import path to a file on disk, cleaned so two
+// spellings of one file compare equal. std/core imports resolve to
+// `<root>/<import_path>.fern` (e.g. `std/math` → `<root>/std/math.fern`);
+// every other import resolves beside the importer, directory segments kept —
+// `./lib/gnu` from `<dir>` is `<dir>/lib/gnu.fern`, as native joins them.
 pub function resolve_path(import_path: string, entry_dir: string, root: string): string {
-  if (is_local(import_path)) {
-    let rel: string = import_path;
-    if (rel.len() >= 2 && slice_unchecked(rel, 0, 2) == "./") {
-      rel = slice_unchecked(rel, 2, rel.len()) + "";
-    }
-    return module_path_join(entry_dir, rel);
+  if (is_stdlib_path(import_path) && root.len() > 0) {
+    return clean_path(root + "/" + import_path + ".fern");
   }
-  if (root.len() == 0) {
-    return module_path_join(entry_dir, import_path);
+  let rel: string = import_path;
+  if (rel.len() >= 2 && slice_unchecked(rel, 0, 2) == "./") {
+    rel = slice_unchecked(rel, 2, rel.len()) + "";
   }
-  return root + "/" + import_path + ".fern";
+  return clean_path(module_path_join(entry_dir, rel));
 }
 
 // trim strips leading and trailing ASCII spaces, tabs and carriage

@@ -83,7 +83,10 @@ function main(): i32 {
     let src: string = "";
     match (read_file(av[2])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
     let entry = parser.parse_module(lexer.tokenize(src));
-    let (loaded, missing) = modloader.load_imports(modloader.no_overlay(), av[2], entry);
+    let g: modloader.Graph = modloader.load_graph(modloader.no_overlay(), av[2], entry, "");
+    entry = g.entry;
+    let loaded = g.loaded;
+    let missing = g.missing;
     if (modloader.report_unresolved(missing, "words")) {
         return 2;
     }

@@ -55,8 +55,9 @@ pub enum Future[T] {
 // including the interpreter.
 //
 // The first four are the one-shot waits: `poll_ready(toks, timeout_ms)`
-// returns the index of the first ready token, or -1 on timeout / error /
-// no readiness, the contract of the `poll` builtin.
+// returns the index of the first ready token, a hung-up or failed one
+// included, or -1 when none became ready, the contract of the `poll`
+// builtin.
 //
 // The rest are the reactor (#9853): a readiness set that outlives one
 // wait. `watch(fd, interest)` registers a descriptor for the interest bits
@@ -103,6 +104,14 @@ pub trait Driver {
 // descriptor being what the floor answered for the watch and wants back
 // for the unwatch.
 pub struct RealDriver { reactor: Cell[i32], signals: Cell[string] }
+
+// __eintr() — the errno a wait a signal interrupted fails with.
+function __eintr(): i32 {
+  if (target_os() == "wasi") {
+    return 27;
+  }
+  return 4;
+}
 
 // real_driver() — the Driver the public combinators run on.
 pub function real_driver(): RealDriver {
@@ -190,7 +199,22 @@ impl Driver for RealDriver {
       events = events.append(0);
       i = i + 1;
     }
+    // A wait a signal interrupted is waited again for what is left of the
+    // timeout: epoll_wait fails with EINTR after a stop and continue even
+    // with no handler installed.
+    let deadline: i64 = monotonic_ns() + timeout_ms as i64 * (1000000 as i64);
     let n: i32 = reactor_wait(r, events, timeout_ms);
+    while (n == 0 - __eintr()) {
+      let wait_ms: i32 = timeout_ms;
+      if (timeout_ms >= 0) {
+        let ns: i64 = deadline - monotonic_ns();
+        if (ns <= 0 as i64) {
+          return none;
+        }
+        wait_ms = ((ns + 999999 as i64) / (1000000 as i64)) as i32;
+      }
+      n = reactor_wait(r, events, wait_ms);
+    }
     if (n <= 0) {
       return none;
     }

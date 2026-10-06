@@ -6,14 +6,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // The `poll(fds, timeout_ms)` builtin is the std/task reactor's
 // readiness multiplexer (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1).
 // It marshals a length-prefixed i32[] of fds into a struct pollfd[],
 // requests POLLIN on each, calls the OS poll (x86-64 poll(2) #7;
-// arm64 ppoll(2) #73), and returns the index of the first readable fd
-// (or -1). A regular file is always poll-readable, so a poll over file
+// arm64 ppoll(2) #73), and returns the index of the first fd a read
+// would not block on, a hung-up one included (or -1). A regular file is always poll-readable, so a poll over file
 // fds is deterministic — no socket timing in the test.
 //
 // (wasm (wasi:io/poll) follows.)
@@ -96,6 +97,46 @@ func TestPollBuiltin(t *testing.T) {
 						t.Errorf("%s/%s: exit = %d, want %d", be.target, tc.name, code, tc.want)
 					}
 				})
+			}
+		})
+	}
+}
+
+// A pipe whose write end is closed polls as POLLHUP without POLLIN. A read
+// on it does not block (it reports the end of the stream), so poll counts
+// the fd as ready rather than returning -1, which callers read as a timeout
+// (#11646). The read end reaches the program as fd 3.
+func TestPollHangupIsReady(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "hangup.fern")
+	prog := "function main(): i32 {\n  let fds: i32[] = [3];\n  return poll(fds, 5000);\n}\n"
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	for _, be := range nativeBackends() {
+		be := be
+		t.Run(be.target, func(t *testing.T) {
+			qemu := be.qemu(t)
+			out := filepath.Join(dir, be.target+"_hangup.bin")
+			if o, err := exec.Command(bin, "-target", be.target, "-o", out, src).CombinedOutput(); err != nil {
+				t.Fatalf("build failed: %v\n%s", err, o)
+			}
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.Close()
+			defer r.Close()
+			cmd := be.run(qemu, out)
+			cmd.ExtraFiles = []*os.File{r}
+			start := time.Now()
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Errorf("exit = %d, want 0 (the hung-up fd ready)", code)
+			}
+			if d := time.Since(start); d > 4*time.Second {
+				t.Errorf("poll waited %v on a hung-up fd", d)
 			}
 		})
 	}

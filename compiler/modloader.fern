@@ -4,15 +4,16 @@
 // it does with the merged module (emit asm / run the checker / probe IR),
 // not in how it resolves and bundles modules from disk.
 //
-// Given an entry file path, it follows the entry's `import` graph to
-// sibling `.fern` files (transitively), parses each, and returns them as
-// flatten.LoadedModule[] for flatten.bundle. Resolution mirrors the native
-// modload closely enough for the compiler's own needs:
+// Given an entry file path, load_graph follows the entry's `import` graph
+// (transitively), parses each module, and returns them as
+// flatten.LoadedModule[] for flatten.bundle. Resolution is native modload's:
 //
-//   * an import resolves relative to the entry's directory, keeping its
-//     sub-path: `import "std/io"` → `<dir>/std/io.fern`, falling back to
-//     the flat basename `<dir>/io.fern`;
-//   * the module's NAMESPACE is the basename (`std/io` → `io`);
+//   * `std/` and `core/` imports resolve under the stdlib root
+//     (`import "std/io"` → `<root>/std/io.fern`), falling back to the flat
+//     basename `<root>/io.fern`; every other import resolves beside the file
+//     that wrote it, keeping its sub-path;
+//   * a module's IDENTITY is the file it resolves to, so two modules sharing
+//     a basename both load and flatten gives each its own prefix;
 //   * a `std/` or `core/` import is skipped when no stdlib was given (see
 //     stdlib_not_given); any other import that resolves to no readable file
 //     is returned as a diagnostic for the driver to report.
@@ -64,36 +65,6 @@ function rel_path(path: string): string {
   return path;
 }
 
-// enqueue_imports appends each not-yet-known import PATH of `mod` to
-// `queue`. The full path is kept (so a `std/`-prefixed import resolves to
-// its sub-directory file) and de-duplicated by basename — the namespace
-// the bundler keys on — against names already queued/loaded (`seen`).
-function enqueue_imports(queue: string[], seen: string[], mod: parser.Module): string[] {
-  let out: string[] = queue;
-  let i: i32 = 0;
-  while (i < mod.imports.len()) {
-    let path: string = mod.imports[i].path;
-    let name: string = base_name(path);
-    if (!util.has_str(seen, name)) {
-      out = out.append(path);
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
-// fill_n appends `n` copies of `v`, keeping a list the same length as the
-// import queue it parallels.
-function fill_n(xs: string[], v: string, n: i32): string[] {
-  let out: string[] = xs;
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(v + "");
-    i = i + 1;
-  }
-  return out;
-}
-
 // read_error_reason says why a file that is there could not be read, or "" when
 // it is not there at all, which is the one error a search goes on past.
 pub function read_error_reason(e: IoError): string {
@@ -107,11 +78,10 @@ pub function read_error_reason(e: IoError): string {
   }
 }
 
-// Resolved is a module's source together with the DIRECTORY it was read
-// from. The directory is what the module's own imports resolve against —
-// a dependency's `import "./util"` names a file beside the dependency, and
-// its declared dependencies live in the dependency's manifest, not the
-// entry package's.
+// Resolved is a module's source together with the package directory it was
+// found under: the directory it was looked up in, or the dependency's own
+// root when a manifest resolved it. load_bundle resolves the module's imports
+// against that directory; load_graph resolves them beside the file instead.
 // `err` is set when a candidate was present but unreadable, and `err_path` names
 // it; it ends the search rather than letting a later candidate shadow the file
 // (#10142). `shown` names the module for a diagnostic: the file it was read
@@ -122,13 +92,9 @@ function res_none(): Resolved {
   return Resolved { src: "", dir: "", ok: false, err: "", err_path: "", shown: "" };
 }
 
-// res_read reads `<dir><rel>.fern` and reports the ROOT its own imports
-// resolve against, which is `dir` — not the sub-directory the file happens to
-// sit in. An import path is relative to the package root, so `std/float`
-// reaching `<dir>std/float.fern` still writes `import "std/string"` for its
-// sibling, and resolving that against `<dir>std/` would look for
-// `<dir>std/std/string.fern`. The root changes only when resolution crosses
-// into another PACKAGE, which is what the manifest arms return.
+// res_read reads `<dir><rel>.fern` and reports `dir` as its package directory,
+// not the sub-directory the file sits in: `std/float` reaching
+// `<dir>std/float.fern` still resolves its own `std/string` under `<dir>`.
 function res_read(dir: string, rel: string): Resolved {
   match (read_file(dir + rel + ".fern")) {
     Ok(s) => {
@@ -139,16 +105,6 @@ function res_read(dir: string, rel: string): Resolved {
     }
   }
   return res_none();
-}
-
-// resolve_module_src finds the source for import `path`, discarding the
-// directory it was found in. `resolve_module` is the full answer.
-pub function resolve_module_src(ov: Overlay, dir: string, path: string, name: string): Option[string] {
-  let r: Resolved = resolve_module(ov, dir, path, name);
-  if (!r.ok) {
-    return None;
-  }
-  return Some(r.src);
 }
 
 // Overlay is an in-memory source table consulted BEFORE disk, keyed by the
@@ -229,10 +185,11 @@ pub function resolve_module(ov: Overlay, dir: string, path: string, name: string
   return direct;
 }
 
-// try_manifest resolves a DECLARED dependency `name` from `<dir>fern.toml`
-// across the disk-resolvable forms. Not-ok when there is no manifest, `name`
-// is not a declared dep, or the form is not disk-resolvable.
-function try_manifest(dir: string, name: string): Resolved {
+// try_manifest resolves a DECLARED dependency `name` from the manifest governing
+// `from` (manifest_dir) across the disk-resolvable forms. Not-ok when there is
+// no manifest, `name` is not a declared dep, or the form is not disk-resolvable.
+function try_manifest(from: string, name: string): Resolved {
+  let dir: string = manifest_dir(from);
   match (read_file(dir + "fern.toml")) {
     Ok(src) => {
       let m: fern_toml.Manifest = fern_toml.parse(src);
@@ -287,6 +244,27 @@ function try_manifest(dir: string, name: string): Resolved {
     }
   }
   return res_none();
+}
+
+// manifest_dir is the nearest directory at or above `dir` holding a fern.toml,
+// as native's manifest.FindForDir walks, or `dir` itself when none does.
+function manifest_dir(dir: string): string {
+  let d: string = dir;
+  let steps: i32 = 0;
+  while (steps < 64) {
+    match (read_file(d + "fern.toml")) {
+      Ok(src) => {
+        return d;
+      },
+      Err(e) => {}
+    }
+    if (d.len() == 0 || d == "/") {
+      return dir;
+    }
+    d = parent_dir(d);
+    steps = steps + 1;
+  }
+  return dir;
 }
 
 // load_lib reads a dependency directory's own fern.toml for its `lib`
@@ -508,72 +486,145 @@ function stdlib_not_given(ov: Overlay, dir: string, path: string): boolean {
   return !util.is_dir(dir + tree);
 }
 
-// load_imports walks the entry module's import graph breadth-first,
-// reading each resolvable `.fern` file and parsing it into a
-// flatten.LoadedModule keyed by basename (what `mod.X` references resolve
-// to). It also returns an unresolved_import line for each import that
-// resolved to no file, except those stdlib_not_given expects to be absent;
-// the driver reports them with report_unresolved and fails. Imports are
-// deduped by basename, so of two sharing one (`std/convert` and
-// `std/wasm/convert`) only the first loads and the second is not reported.
-//
-// `entry_path` names the entry in those lines, and its directory is the root
-// the entry's imports resolve against.
-//
-// Each queued import carries the directory it was written IN, and a module
-// is resolved against that rather than against the entry's directory: a
-// dependency's `import "./util"` names a file beside the dependency, and its
-// declared dependencies live in its own manifest (#6756).
-//
-// Each module's lines are numbered from its util.line_base, for every caller:
-// a position read off the result decodes through util.pos_line.
-pub function load_imports(ov: Overlay, entry_path: string, entry: parser.Module): (flatten.LoadedModule[], string[]) {
-  let (loaded, files, missing) = load_imports_with_files(ov, entry_path, entry);
-  return (loaded, missing);
+// Graph is a program's import closure as load_graph reads it. `entry` is the
+// entry module with each import's resolved identity recorded, as every loaded
+// module's are, so flatten prefixes a reference the same wherever it is
+// written. `files` is each loaded module's display path in load order — the
+// table util.pos_str reads a diagnostic's file from, since each module is
+// tokenized from its own util.line_base. `missing` holds an unresolved_import
+// line for each import that resolved to no file, except those
+// stdlib_not_given expects to be absent; the driver reports them with
+// report_unresolved and fails.
+pub struct Graph { entry: parser.Module, loaded: flatten.LoadedModule[], files: string[], missing: string[] }
+
+// import_base is the directory an import written in a file under `dir`
+// resolves against: the stdlib root for `std/` and `core/`, else `dir`.
+// Both end in '/' or are empty.
+function import_base(path: string, dir: string, root: string): string {
+  if (util.is_stdlib_path(path)) {
+    return root;
+  }
+  return dir;
 }
 
-// load_imports_with_files is load_imports plus each loaded module's display
-// path, in load order. Each module is tokenized from its own util.line_base,
-// so `files` is the table util.pos_str reads a diagnostic's file from.
-pub function load_imports_with_files(ov: Overlay, entry_path: string, entry: parser.Module): (flatten.LoadedModule[], string[], string[]) {
+// import_key names the module an import written in a file under `dir` refers
+// to, before it is read: the overlay key for an overlay hit, else the cleaned
+// path it resolves to, without `.fern`. Two spellings of one file share a key.
+function import_key(ov: Overlay, path: string, dir: string, root: string): string {
+  if (util.index_of_str(ov.paths, rel_path(path)) >= 0) {
+    return "stdlib://" + rel_path(path);
+  }
+  return util.clean_path(import_base(path, dir, root) + rel_path(path));
+}
+
+// resolved_ident is the identity of the module `r` read: the file, cleaned and
+// without `.fern`, or the overlay key.
+function resolved_ident(r: Resolved): string {
+  if (util.str_has_prefix(r.shown, "stdlib://")) {
+    return flatten.module_ident(r.shown);
+  }
+  return flatten.module_ident(util.clean_path(r.shown));
+}
+
+// stamp_imports records on each of `mod`'s imports the identity load_graph
+// resolved it to, "" for one that resolved to nothing.
+function stamp_imports(ov: Overlay, mod: parser.Module, dir: string, root: string, keys: string[], idents: string[]): parser.Module {
+  let out: parser.Import[] = [];
+  for imp in mod.imports {
+    let k: i32 = util.index_of_str(keys, import_key(ov, imp.path, dir, root));
+    let r: string = "";
+    if (k >= 0) {
+      r = idents[k];
+    }
+    out = out.append(parser.Import { ...imp, resolved: r });
+  }
+  return parser.Module { ...mod, imports: out };
+}
+
+// load_graph walks the entry module's import graph breadth-first, reading and
+// parsing each module once. `root` is the stdlib root `std/` and `core/`
+// resolve under; empty means the entry's own directory, where a driver's
+// vendored stdlib sits. A module found through a manifest is read from its
+// package, and its own imports still resolve beside it.
+pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, root: string): Graph {
+  let edir: string = dirname(entry_path);
+  let sroot: string = root;
+  if (sroot.len() == 0) {
+    sroot = edir;
+  } else if (sroot[sroot.len() - 1] != b'/') {
+    sroot = sroot + "/";
+  }
   let loaded: flatten.LoadedModule[] = [];
+  let loaded_ids: string[] = [];
+  let mod_dirs: string[] = [];
   let files: string[] = [];
   let missing: string[] = [];
-  let seen: string[] = [];
-  let queue: string[] = enqueue_imports([], seen, entry);
-  let queue_dirs: string[] = fill_n([], dirname(entry_path), queue.len());
-  let importers: string[] = fill_n([], entry_path, queue.len());
+  // keys[i] is an import key already looked up, idents[i] what it resolved to.
+  let keys: string[] = [];
+  let idents: string[] = [];
+  let paths: string[] = [];
+  let dirs: string[] = [];
+  let importers: string[] = [];
+  for imp in entry.imports {
+    paths = paths.append(imp.path);
+    dirs = dirs.append(edir);
+    importers = importers.append(entry_path);
+  }
   let qi: i32 = 0;
-  while (qi < queue.len()) {
-    let path: string = queue[qi];
-    let from: string = queue_dirs[qi];
+  while (qi < paths.len()) {
+    let path: string = paths[qi];
+    let dir: string = dirs[qi];
     let importer: string = importers[qi];
     qi = qi + 1;
-    let name: string = base_name(path);
-    if (util.has_str(seen, name)) {
+    let key: string = import_key(ov, path, dir, sroot);
+    if (util.has_str(keys, key)) {
       continue;
     }
-    seen = seen.append(name);
-    let r: Resolved = resolve_module(ov, from, path, name);
-    if (r.ok) {
-      // The flat-name and manifest fallbacks are not the standard library.
-      let origin: string = "";
-      if (r.shown == "stdlib://" + rel_path(path) + ".fern" || r.shown == from + rel_path(path) + ".fern") {
-        origin = path;
+    keys = keys.append(key);
+    let base: string = import_base(path, dir, sroot);
+    let r: Resolved = resolve_module(ov, base, path, base_name(path));
+    if (!r.ok) {
+      idents = idents.append("");
+      if (r.err.len() > 0 || !stdlib_not_given(ov, base, path)) {
+        missing = missing.append(unresolved_import(path, importer, r.err_path, r.err));
       }
-      let m: parser.Module = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize_from(r.src, util.line_base(files.len()) + 1)), origin);
-      files = files.append(r.shown);
-      loaded = loaded.append(flatten.LoadedModule { name: name, ident: "", mod: m });
-      let before: i32 = queue.len();
-      queue = enqueue_imports(queue, seen, m);
-      // The module's own imports resolve against ITS directory.
-      queue_dirs = fill_n(queue_dirs, r.dir, queue.len() - before);
-      importers = fill_n(importers, r.shown, queue.len() - before);
-    } else if (r.err.len() > 0 || !stdlib_not_given(ov, from, path)) {
-      missing = missing.append(unresolved_import(path, importer, r.err_path, r.err));
+      continue;
+    }
+    let ident: string = resolved_ident(r);
+    idents = idents.append(ident);
+    // A fallback can reach a file another spelling already loaded.
+    if (util.has_str(loaded_ids, ident)) {
+      continue;
+    }
+    // The flat-name and manifest fallbacks are not the standard library.
+    let origin: string = "";
+    if (r.shown == "stdlib://" + rel_path(path) + ".fern" || r.shown == base + rel_path(path) + ".fern") {
+      origin = path;
+    }
+    let m: parser.Module = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize_from(r.src, util.line_base(files.len()) + 1)), origin);
+    // An overlay module has no directory of its own; its imports are all
+    // stdlib paths, which resolve under the root wherever they are written.
+    let mdir: string = dir;
+    if (!util.str_has_prefix(r.shown, "stdlib://")) {
+      mdir = dirname(util.clean_path(r.shown));
+    }
+    files = files.append(r.shown);
+    loaded = loaded.append(flatten.LoadedModule { name: base_name(path), ident: ident, mod: m });
+    loaded_ids = loaded_ids.append(ident);
+    mod_dirs = mod_dirs.append(mdir);
+    for imp in m.imports {
+      paths = paths.append(imp.path);
+      dirs = dirs.append(mdir);
+      importers = importers.append(r.shown);
     }
   }
-  return (loaded, files, missing);
+  let stamped: flatten.LoadedModule[] = [];
+  let i: i32 = 0;
+  while (i < loaded.len()) {
+    stamped = stamped.append(flatten.LoadedModule { ...loaded[i], mod: stamp_imports(ov, loaded[i].mod, mod_dirs[i], sroot, keys, idents) });
+    i = i + 1;
+  }
+  return Graph { entry: stamp_imports(ov, entry, edir, sroot, keys, idents), loaded: stamped, files: files, missing: missing };
 }
 
 // merge_builtins reads `<dir>builtins.fern` (the real built-in-type
@@ -695,71 +746,69 @@ pub function module_dep_ns(parts: flatten.PerModule[], infmods: parser.Module[],
   return out;
 }
 
-// module_import_path finds the ORIGINAL import path (e.g. "./sub/leaf",
-// "std/io") whose basename is `ns`, by scanning every loaded module's imports.
-// The bundler keys modules by basename, but resolving a module's source needs
-// its full sub-path — so we recover it from whichever module imported it.
-// Returns "" if no import edge names `ns` (i.e. the entry, or a not-found case).
-pub function module_import_path(parts: flatten.PerModule[], ns: string): string {
-  let j: i32 = 0;
-  while (j < parts.len()) {
-    let imps: parser.Import[] = parts[j].mod.imports;
-    let ii: i32 = 0;
-    while (ii < imps.len()) {
-      if (base_name(imps[ii].path) == ns) {
-        return imps[ii].path;
+// module_src reads module `idx`'s own source: the entry from entry_path, an
+// overlay module from the overlay, any other from the file its identity names.
+pub function module_src(ov: Overlay, entry_path: string, parts: flatten.PerModule[], idx: i32): Option[string] {
+  let path: string = entry_path;
+  if (!parts[idx].is_entry) {
+    let id: string = parts[idx].ident;
+    if (util.str_has_prefix(id, "stdlib://")) {
+      let k: i32 = util.index_of_str(ov.paths, slice_unchecked(id, 9, id.len()) + "");
+      if (k < 0) {
+        return None;
       }
-      ii = ii + 1;
+      return Some(ov.srcs[k]);
     }
-    j = j + 1;
+    path = id + ".fern";
   }
-  return "";
-}
-
-// module_src_hash fingerprints a module's own source. It resolves the module's
-// source THROUGH THE LOADER (modloader.resolve_module_src, keyed by the original
-// import path recovered via module_import_path) so a sub-directory module
-// (`import "std/io"` → <dir>/std/io.fern) is hashed at its real path, not just
-// the flat <dir><ns>.fern. The entry reads entry_path. Only a genuinely
-// unresolvable source yields "?", which callers MUST treat as always-rebuild:
-// sound (never reuses stale codegen), just not incremental for that module.
-pub function module_src_hash(ov: Overlay, dir: string, entry_path: string, parts: flatten.PerModule[], idx: i32): string {
-  if (parts[idx].is_entry) {
-    match (read_file(entry_path)) {
-      Ok(esrc) => {
-        return util.hash_key(esrc);
-      },
-      Err(e) => {
-        return "?";
-      }
-    }
-  }
-  let ip: string = module_import_path(parts, parts[idx].ns);
-  if (ip.len() > 0) {
-    match (resolve_module_src(ov, dir, ip, parts[idx].ns)) {
-      Some(src) => {
-        return util.hash_key(src);
-      },
-      None => {}
-    }
-  }
-  // Fallback: flat sibling layout (no import edge found, e.g. a degenerate view).
-  match (read_file(dir + parts[idx].ns + ".fern")) {
-    Ok(msrc) => {
-      return util.hash_key(msrc);
+  match (read_file(path)) {
+    Ok(src) => {
+      return Some(src);
     },
     Err(e) => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// module_src_hash fingerprints a module's own source, or is "?" when it cannot
+// be read, which callers MUST treat as always-rebuild: sound (never reuses
+// stale codegen), just not incremental for that module.
+pub function module_src_hash(ov: Overlay, entry_path: string, parts: flatten.PerModule[], idx: i32): string {
+  match (module_src(ov, entry_path, parts, idx)) {
+    Some(src) => {
+      return util.hash_key(src);
+    },
+    None => {
       return "?";
     }
   }
   return "?";
 }
 
+// import_part_ns is the ns of the part `imp` resolved to, or "" when it names
+// no loaded part. An import with no recorded identity is matched by the prefix
+// its basename would get.
+function import_part_ns(parts: flatten.PerModule[], imp: parser.Import): string {
+  let k: i32 = 0;
+  while (k < parts.len()) {
+    if (imp.resolved.len() > 0) {
+      if (parts[k].ident == imp.resolved) {
+        return parts[k].ns;
+      }
+    } else if (!parts[k].is_entry && parts[k].ns == util.mangle_prefix(base_name(imp.path))) {
+      return parts[k].ns;
+    }
+    k = k + 1;
+  }
+  return "";
+}
+
 // import_closure_ns returns the namespaces module `idx` depends on transitively
 // — the dependency set the cache key folds signatures over (see the section
-// header for why direct edges are not enough). Names that resolve to no loaded
-// part are harmless: the fold walks `parts` and asks membership, so an unresolved
-// import contributes nothing.
+// header for why direct edges are not enough). An import that resolved to no
+// loaded part contributes nothing.
 //
 // A fixed point over `parts` rather than a worklist: the module count is small
 // (tens), and re-scanning is what makes an import CYCLE terminate instead of
@@ -772,15 +821,12 @@ pub function import_closure_ns(parts: flatten.PerModule[], infmods: parser.Modul
     let j: i32 = 0;
     while (j < parts.len()) {
       if (j == idx || util.has_str(seen, parts[j].ns)) {
-        let imps: parser.Import[] = infmods[j].imports;
-        let ii: i32 = 0;
-        while (ii < imps.len()) {
-          let nm: string = base_name(imps[ii].path);
-          if (!util.has_str(seen, nm)) {
+        for imp in infmods[j].imports {
+          let nm: string = import_part_ns(parts, imp);
+          if (nm.len() > 0 && !util.has_str(seen, nm)) {
             seen = seen.append(nm);
             grew = true;
           }
-          ii = ii + 1;
         }
       }
       j = j + 1;

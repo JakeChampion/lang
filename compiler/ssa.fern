@@ -3471,17 +3471,6 @@ pub function count_insts(f: SFunc): i32 {
   return n;
 }
 
-pub function block_index(f: SFunc, id: i32): i32 {
-  let i: i32 = 0;
-  while (i < f.blocks.len()) {
-    if (f.blocks[i].id == id) {
-      return i;
-    }
-    i = i + 1;
-  }
-  return 0 - 1;
-}
-
 pub function pred_slot(blk: SBlock, prev: i32): i32 {
   let i: i32 = 0;
   while (i < blk.preds.len()) {
