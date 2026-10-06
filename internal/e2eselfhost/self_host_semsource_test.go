@@ -818,7 +818,10 @@ function main(): i32 {
     let src: string = "";
     match (read_file(args()[1])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
     let entry = parser.parse_module(lexer.tokenize(src));
-    let (loaded, missing) = modloader.load_imports(modloader.no_overlay(), args()[1], entry);
+    let g: modloader.Graph = modloader.load_graph(modloader.no_overlay(), args()[1], entry, "");
+    entry = g.entry;
+    let loaded = g.loaded;
+    let missing = g.missing;
     if (modloader.report_unresolved(missing, "semsource_print")) {
         return 2;
     }
@@ -4014,7 +4017,10 @@ function main(): i32 {
     // The program's imports resolve against the stdlib staged beside it, merge
     // in and are tree-shaken as the CLI does them: a routed map calls
     // core/map's functions, which the program has to carry.
-    let (loaded, missing) = modloader.load_imports(modloader.no_overlay(), av[2], entry);
+    let g: modloader.Graph = modloader.load_graph(modloader.no_overlay(), av[2], entry, "");
+    entry = g.entry;
+    let loaded = g.loaded;
+    let missing = g.missing;
     if (modloader.report_unresolved(missing, "semsource_rc")) {
         return 2;
     }

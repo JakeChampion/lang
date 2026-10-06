@@ -78,11 +78,10 @@ pub function read_error_reason(e: IoError): string {
   }
 }
 
-// Resolved is a module's source together with the DIRECTORY it was read
-// from. The directory is what the module's own imports resolve against —
-// a dependency's `import "./util"` names a file beside the dependency, and
-// its declared dependencies live in the dependency's manifest, not the
-// entry package's.
+// Resolved is a module's source together with the package directory it was
+// found under: the directory it was looked up in, or the dependency's own
+// root when a manifest resolved it. load_bundle resolves the module's imports
+// against that directory; load_graph resolves them beside the file instead.
 // `err` is set when a candidate was present but unreadable, and `err_path` names
 // it; it ends the search rather than letting a later candidate shadow the file
 // (#10142). `shown` names the module for a diagnostic: the file it was read
@@ -93,13 +92,9 @@ function res_none(): Resolved {
   return Resolved { src: "", dir: "", ok: false, err: "", err_path: "", shown: "" };
 }
 
-// res_read reads `<dir><rel>.fern` and reports the ROOT its own imports
-// resolve against, which is `dir` — not the sub-directory the file happens to
-// sit in. An import path is relative to the package root, so `std/float`
-// reaching `<dir>std/float.fern` still writes `import "std/string"` for its
-// sibling, and resolving that against `<dir>std/` would look for
-// `<dir>std/std/string.fern`. The root changes only when resolution crosses
-// into another PACKAGE, which is what the manifest arms return.
+// res_read reads `<dir><rel>.fern` and reports `dir` as its package directory,
+// not the sub-directory the file sits in: `std/float` reaching
+// `<dir>std/float.fern` still resolves its own `std/string` under `<dir>`.
 function res_read(dir: string, rel: string): Resolved {
   match (read_file(dir + rel + ".fern")) {
     Ok(s) => {
@@ -190,10 +185,11 @@ pub function resolve_module(ov: Overlay, dir: string, path: string, name: string
   return direct;
 }
 
-// try_manifest resolves a DECLARED dependency `name` from `<dir>fern.toml`
-// across the disk-resolvable forms. Not-ok when there is no manifest, `name`
-// is not a declared dep, or the form is not disk-resolvable.
-function try_manifest(dir: string, name: string): Resolved {
+// try_manifest resolves a DECLARED dependency `name` from the manifest governing
+// `from` (manifest_dir) across the disk-resolvable forms. Not-ok when there is
+// no manifest, `name` is not a declared dep, or the form is not disk-resolvable.
+function try_manifest(from: string, name: string): Resolved {
+  let dir: string = manifest_dir(from);
   match (read_file(dir + "fern.toml")) {
     Ok(src) => {
       let m: fern_toml.Manifest = fern_toml.parse(src);
@@ -248,6 +244,27 @@ function try_manifest(dir: string, name: string): Resolved {
     }
   }
   return res_none();
+}
+
+// manifest_dir is the nearest directory at or above `dir` holding a fern.toml,
+// as native's manifest.FindForDir walks, or `dir` itself when none does.
+function manifest_dir(dir: string): string {
+  let d: string = dir;
+  let steps: i32 = 0;
+  while (steps < 64) {
+    match (read_file(d + "fern.toml")) {
+      Ok(src) => {
+        return d;
+      },
+      Err(e) => {}
+    }
+    if (d.len() == 0 || d == "/") {
+      return dir;
+    }
+    d = parent_dir(d);
+    steps = steps + 1;
+  }
+  return dir;
 }
 
 // load_lib reads a dependency directory's own fern.toml for its `lib`
