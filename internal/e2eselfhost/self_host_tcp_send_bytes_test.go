@@ -75,7 +75,7 @@ func TestSelfHostTCPSendBytes(t *testing.T) {
 					}
 					return runX86_64Bin(target.runner, bin)
 				}
-				checkTCPSendBytes(t, compile, compiler.name == "primary" && target.target != "wasm32-wasi")
+				checkTCPSendBytes(t, compile, tcpSendBytesProgram, tcpSendBytesWant(), compiler.name == "primary" && target.target != "wasm32-wasi")
 				if target.target != "wasm32-wasi" {
 					for _, shut := range []bool{false, true} {
 						program := e2eharness.NativeSocketSendProbe("abc", shut)
@@ -95,11 +95,23 @@ func TestSelfHostTCPSendBytes(t *testing.T) {
 	t.Run("bootstrap/interpreter", func(t *testing.T) {
 		checkTCPSendBytes(t, func(src, _ string) *exec.Cmd {
 			return exec.Command(bootstrap, "-interp", src)
-		}, false)
+		}, tcpSendBytesProgram, tcpSendBytesWant(), false)
 	})
 }
 
-func checkTCPSendBytes(t *testing.T, compile func(src, bin string) *exec.Cmd, census bool) {
+// tcpSendBytesWant is what tcpSendBytesProgram sends: 0..8192 as bytes
+// twice, then 255, 0, 128.
+func tcpSendBytesWant() []byte {
+	want := make([]byte, 8193)
+	for i := range want {
+		want[i] = byte(i)
+	}
+	return append(append(want, want...), 255, 0, 128)
+}
+
+// checkTCPSendBytes runs program, its TCP_PORT a loopback listener here,
+// and holds what the listener reads to want.
+func checkTCPSendBytes(t *testing.T, compile func(src, bin string) *exec.Cmd, program string, want []byte, census bool) {
 	t.Helper()
 	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -108,7 +120,7 @@ func checkTCPSendBytes(t *testing.T, compile func(src, bin string) *exec.Cmd, ce
 	defer listener.Close()
 	dir := t.TempDir()
 	src, bin := filepath.Join(dir, "send.fern"), filepath.Join(dir, "send")
-	program := strings.ReplaceAll(tcpSendBytesProgram, "TCP_PORT", strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
+	program = strings.ReplaceAll(program, "TCP_PORT", strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -147,11 +159,6 @@ func checkTCPSendBytes(t *testing.T, compile func(src, bin string) *exec.Cmd, ce
 	if got.err != nil {
 		t.Fatal(got.err)
 	}
-	want := make([]byte, 8193)
-	for i := range want {
-		want[i] = byte(i)
-	}
-	want = append(append(want, want...), 255, 0, 128)
 	if !bytes.Equal(got.data, want) {
 		t.Fatalf("socket received %d bytes, want %d exact binary bytes", len(got.data), len(want))
 	}

@@ -1568,6 +1568,12 @@ pub function op_tcp_sendfile(): Op {
   return op0(346);
 }
 
+// `tcp_send_buf` [fd, handle, from] -> i32: one send of the builder's bytes
+// from `from` to its end, the count the kernel took or -errno.
+pub function op_tcp_send_buf(): Op {
+  return op0(387);
+}
+
 // `writer_write` [fd, str box] -> a fresh `Option[IoError]` box: write(2) of the
 // box's bytes to the fd, looping until they are all out — None once they are,
 // Some(io_error(errno, "")) on a failing write. The write-half streaming
@@ -2433,6 +2439,12 @@ pub function op_buf_push_bytes_range(): Op {
 
 pub function op_buf_free(): Op {
   return op0(297);
+}
+
+// `buf_clear` pops [handle]: the builder empty again, its storage kept for the
+// next round of pushes.
+pub function op_buf_clear(): Op {
+  return op0(386);
 }
 
 // `sleep_ms` pops an i32 (milliseconds) and pauses via nanosleep (ms <= 0 is a
@@ -3873,6 +3885,9 @@ function kind_id_len9(name: string): i32 {
   if (c == b'a' && name == "ascii_run") {
     return 227;
   }
+  if (c == b'b' && name == "buf_clear") {
+    return 386;
+  }
   if (c == b'c') {
     return kind_id_len9_c(name);
   }
@@ -4312,6 +4327,9 @@ function kind_id_len12(name: string): i32 {
   }
   if (c == b't' && name == "tcp_sendfile") {
     return 346;
+  }
+  if (c == b't' && name == "tcp_send_buf") {
+    return 387;
   }
   return 0;
 }
@@ -5658,6 +5676,12 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 387) {
+    return "tcp_send_buf";
+  }
+  if (id == 386) {
+    return "buf_clear";
+  }
   if (id == 385) {
     return "call_word";
   }
@@ -5940,6 +5964,7 @@ function pops3(t: i32): boolean {
     || t == 177 || t == 208 || t == 225 || t == 234  // subprocess, udp_send, memchr, rmemchr
     || t == 333 || t == 335 || t == 337 || t == 338  // tcp_socket_ctl, udp_connect, udp_recvfrom, tcp_connect_with
     || t == 346  // tcp_sendfile (fd, file, max)
+    || t == 387  // tcp_send_buf (fd, handle, from)
     || t == 354  // udp_send_bytes (host, port, data)
     || t == 343  // reactor_wait (r, events, timeout_ms)
     || t == 242  // reader_seek (fd, offset, whence)
@@ -5962,7 +5987,7 @@ function pops_buf(t: i32): i32 {
   if (t == 351) {
     return 4;
   }
-  if (t == 347) {
+  if (t == 347 || t == 386) {  // buf_take_bytes, buf_clear
     return 1;
   }
   // buf_push_u64 arrived after the block had closed over 291-297, so it

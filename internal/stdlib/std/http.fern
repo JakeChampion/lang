@@ -2359,7 +2359,10 @@ pub function http_serialize_response_to(method: string, resp: HttpResponse, keep
     body = resp.body_string();
     framing = "Content-Length: " + int.int_to_string(body.len()) + "\r\n";
   }
-  let head: string = http_serialize_response_head(resp, keep_alive, framing);
+  let b: usize = buf_new(256);
+  http_serialize_response_head_into(b, resp, keep_alive, framing);
+  let head: string = buf_take(b);
+  buf_free(b);
   if (bodiless || method == "HEAD") {
     return head;
   }
@@ -2378,18 +2381,42 @@ pub function http_serialize_response_conn_bytes(resp: HttpResponse, keep_alive: 
 }
 
 pub function http_serialize_response_to_bytes(method: string, resp: HttpResponse, keep_alive: boolean): u8[] {
+  let cap: i32 = 256;
+  match (resp.body) {
+    BodyText(t) => {
+      cap = t.len();
+    },
+    BodyBytes(bs) => {
+      cap = bs.len();
+    },
+    _ => {}
+  }
+  if (cap <= 2147483647 - 256) {
+    cap = cap + 256;
+  }
+  let b: usize = buf_new(cap);
+  http_serialize_response_into(b, method, resp, keep_alive, "");
+  return __take_wire(b);
+}
+
+// `http_serialize_response_into(b, method, resp, keep_alive, fields)` —
+// `http_serialize_response_to_bytes`'s bytes pushed into the builder `b`
+// behind whatever it holds, with `fields` (field lines, each ending in
+// CRLF) after the handler's: a server keeps one builder, empties it with
+// `buf_clear` once the reply has gone, and sends from it with
+// `tcp_send_buf`, so a reply costs no allocation once the builder has
+// grown to hold one.
+pub function http_serialize_response_into(b: usize, method: string, resp: HttpResponse, keep_alive: boolean, fields: string): void {
+  __push_head(b, resp);
+  buf_push(b, fields);
   if (http_bodiless(resp.status)) {
-    let bare: usize = buf_new(256);
-    __push_head(bare, resp);
-    __push_close(bare, keep_alive);
-    return __take_wire(bare);
+    __push_close(b, keep_alive);
+    return;
   }
   if (method == "HEAD") {
-    let head: usize = buf_new(256);
-    __push_head(head, resp);
-    __push_length(head, resp.body_len());
-    __push_close(head, keep_alive);
-    return __take_wire(head);
+    __push_length(b, resp.body_len());
+    __push_close(b, keep_alive);
+    return;
   }
   let text: string = "";
   let body: u8[] = [];
@@ -2402,18 +2429,11 @@ pub function http_serialize_response_to_bytes(method: string, resp: HttpResponse
     }
   }
   let len: i32 = text.len() + body.len();
-  let cap: i32 = len;
-  if (len <= 2147483647 - 256) {
-    cap = len + 256;
-  }
-  let builder: usize = buf_new(cap);
-  __push_head(builder, resp);
-  __push_length(builder, len);
-  __push_close(builder, keep_alive);
-  assert(len <= 2147483647 - buf_len(builder));
-  buf_push(builder, text);
-  buf_push_bytes_range(builder, body, 0, body.len());
-  return __take_wire(builder);
+  __push_length(b, len);
+  __push_close(b, keep_alive);
+  assert(len <= 2147483647 - buf_len(b));
+  buf_push(b, text);
+  buf_push_bytes_range(b, body, 0, body.len());
 }
 
 // `http_bodiless(status)` — whether a response with `status` carries no
@@ -2422,13 +2442,6 @@ pub function http_bodiless(status: i32): boolean {
   return status < 200 || status == 204 || status == 304;
 }
 
-// `http_serialize_response_head(resp, keep_alive, framing)` — the
-// status line and header block of `resp`, ending in the blank line:
-// the handler's headers but `Content-Length`, `Transfer-Encoding` and
-// `Connection`, which the caller's `framing` (a `Content-Length` or
-// `Transfer-Encoding` line, or none for a close-delimited or bodiless
-// response) and `keep_alive` decide. The serve loop writes a streamed
-// body behind this head.
 // `http_serialize_fields(fields)` — the map as field lines, `name: value`
 // and CRLF each, in the map's order: a trailer section's body.
 pub function http_serialize_fields(fields: HeaderMap): string {
@@ -2441,14 +2454,17 @@ pub function http_serialize_fields(fields: HeaderMap): string {
   return out;
 }
 
-pub function http_serialize_response_head(resp: HttpResponse, keep_alive: boolean, framing: string): string {
-  let b: usize = buf_new(256);
+// `http_serialize_response_head_into(b, resp, keep_alive, fields)` — the
+// status line and header block of `resp`, ending in the blank line,
+// pushed into the builder `b`: the handler's headers but
+// `Content-Length`, `Transfer-Encoding` and `Connection`, which the
+// caller's `fields` (its own field lines, the framing line among them, or
+// none for a close-delimited or bodiless response) and `keep_alive`
+// decide. The serve loop writes a streamed body behind this head.
+pub function http_serialize_response_head_into(b: usize, resp: HttpResponse, keep_alive: boolean, fields: string): void {
   __push_head(b, resp);
-  buf_push(b, framing);
+  buf_push(b, fields);
   __push_close(b, keep_alive);
-  let head: string = buf_take(b);
-  buf_free(b);
-  return head;
 }
 
 // `__push_head(b, resp)` — the status line and the handler's fields into

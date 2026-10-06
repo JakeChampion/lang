@@ -123,7 +123,11 @@ up.
 ## 4. Exit
 
 Criterion B of #9853 is met when the gate reads 0 for the framing path on
-both compilers with the hello handler, which needs slice 8. Slices 3 to 7
+both compilers with the hello handler, which needs slice 8. It reads 0
+for the parse and the serialize on every target since §5.3's slice 8. The
+Go compiler's backends were retired on 2026-10-05
+(`docs/NATIVE-FREEZE.md`), so the self-host is the only compiler the
+criterion still names. Slices 3 to 7
 are each worth landing alone, because every server pays them per request
 whatever its handler does.
 
@@ -294,4 +298,15 @@ on #4451, as slice 2 was.
    its parse stays unpaired and builds the box it hands on.
 8. **The response is serialized into a buffer the connection keeps.** A
    builder cleared instead of freed, with the reply sent from it, removes
-   its two blocks and the copy.
+   its two blocks and the copy. Done: the serve loop keeps one builder,
+   per loop rather than per connection for the reason the donor is, and
+   `http_serialize_response_into` writes each reply into it. Two builtins
+   carry it: `tcp_send_buf(fd, b, from)` sends the builder's bytes in
+   place, and `buf_clear(b)` empties it and keeps its storage. A short
+   write still copies what the kernel did not take into the connection's
+   pending bytes. The burst's corked replies are what the builder holds,
+   so corking no longer concatenates arrays. The loop's `Date` is a field
+   line formatted once per second and written beside the handler's
+   fields, where it had been added to the response with `with_header`
+   after a `get_all` lookup, both of which allocated per request.
+   Serialize 3 to 0 on all three targets.

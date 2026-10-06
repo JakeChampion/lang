@@ -13,7 +13,8 @@ const FramingAllocsRounds = 1000
 // FramingAllocsSource is #9853's framing-path allocation probe: a hello
 // request with three headers parsed the way std/serve parses one, with the
 // request parsed before it as the parse's `prev`, and a hello
-// reply, built once, serialized the way std/serve serializes one, each
+// reply, built once, serialized the way std/serve serializes one (into
+// one builder the loop keeps, emptied once the reply is read), each
 // counted separately with __heap_alloc_count over FramingAllocsRounds
 // rounds after one warm round. The report goes to stderr.
 func FramingAllocsSource() string {
@@ -40,17 +41,21 @@ function parse_first(buf: u8[], limits: http.HttpLimits): http.HttpFramed {
   }
 }
 
-function serialize_once(resp: HttpResponse): i32 {
-  return http.http_serialize_response_to_bytes("GET", resp, true).len();
+function serialize_once(out: usize, resp: HttpResponse): i32 {
+  http.http_serialize_response_into(out, "GET", resp, true, "");
+  let n: i32 = buf_len(out);
+  buf_clear(out);
+  return n;
 }
 
 function main(): i32 {
   let buf: u8[] = "GET / HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.5.0\r\nAccept: */*\r\n\r\n".bytes();
   let limits: http.HttpLimits = http.http_limits();
   let resp: HttpResponse = http.ok("hello");
+  let out: usize = buf_new(16);
   let f: http.HttpFramed = parse_first(buf, limits);
   let parsed: i32 = keep(f);
-  let wire: i32 = serialize_once(resp);
+  let wire: i32 = serialize_once(out, resp);
   let a0: i64 = bench.alloc_count();
   let i: i32 = 0;
   while (i < %[1]d) {
@@ -61,10 +66,11 @@ function main(): i32 {
   let a1: i64 = bench.alloc_count();
   i = 0;
   while (i < %[1]d) {
-    wire = wire + serialize_once(resp);
+    wire = wire + serialize_once(out, resp);
     i = i + 1;
   }
   let a2: i64 = bench.alloc_count();
+  buf_free(out);
   eprint("parsed=" + parsed.to_string() + " wire=" + wire.to_string() + " parse=" + (a1 - a0).to_string() + " serialize=" + (a2 - a1).to_string());
   return 0;
 }

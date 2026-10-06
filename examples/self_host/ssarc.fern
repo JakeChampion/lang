@@ -6604,6 +6604,9 @@ function os_floor_process_site(own r: irtables.LowerResult, ins: ssa.SInst): Low
   if (ins.str == "tcp_sendfile") {
     return Lowered { found: true, r: emit(r, ir.op_tcp_sendfile()) };
   }
+  if (ins.str == "tcp_send_buf") {
+    return Lowered { found: true, r: emit(r, ir.op_tcp_send_buf()) };
+  }
   if (ins.str == "udp_bind") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_bind())) };
   }
@@ -6732,6 +6735,9 @@ function builder_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowe
   }
   if (ins.str == "buf_free") {
     return Lowered { found: true, r: emit(r, ir.op_buf_free()) };
+  }
+  if (ins.str == "buf_clear") {
+    return Lowered { found: true, r: emit(r, ir.op_buf_clear()) };
   }
   return Lowered { found: false, r: r };
 }

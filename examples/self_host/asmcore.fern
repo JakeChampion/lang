@@ -670,6 +670,9 @@ pub function buf_helper(kind: i32): string {
   if (kind == 297) {
     return "__fern_buf_free";
   }
+  if (kind == 386) {
+    return "__fern_buf_clear";
+  }
   if (kind == 306) {
     return "__fern_buf_push_u64";
   }
@@ -3482,6 +3485,16 @@ pub function rt_src_tcp_send_bytes(t: string, packed: boolean): string {
     prep = "let raw: usize = __raw_arr_box(n / 8 + 1); let scratch: i32[] = __raw_array(raw); let p: usize = __raw_addr(__raw_arr_ptr(scratch), 8); let j: i32 = 0; while (j < n) { __raw_store8(p, j, bytes[j]); j = j + 1; }";
   }
   return "function __fern_tcp_send_bytes" + packed_suffix(packed) + "(fd: i32, bytes: i32[]): i32 { let n: i32 = bytes.len(); " + prep + " return __syscall6(" + sysno(t, "sendto") + ", fd as i64, p as i64, n as i64, " + flags + ", 0, 0) as i32; }";
+}
+
+// rt_src_tcp_send_buf backs `tcp_send_buf(fd, b, from)`: one send of the
+// builder's bytes [from, len), read off its control block (data, len, ...).
+pub function rt_src_tcp_send_buf(t: string): string {
+  let flags: string = "16384";
+  if (t == "arm64-darwin") {
+    flags = "524288";
+  }
+  return "function __fern_tcp_send_buf(fd: i32, b: usize, from: i32): i32 { let n: i32 = __raw_load_ptr(b, 1) as i32; if (from < 0 || from >= n) { return 0; } let p: usize = __raw_addr(__raw_load_ptr(b, 0), from); return __syscall6(" + sysno(t, "sendto") + ", fd as i64, p as i64, (n - from) as i64, " + flags + ", 0, 0) as i32; }";
 }
 
 // rt_src_tcp_recv backs `tcp_recv(fd, max)` (#5714, syscall-leaf) → a fresh
@@ -7037,6 +7050,7 @@ function builtin_i32_names(): string[] {
     "tcp_recv_into",
     "tcp_send",
     "tcp_send_bytes",
+    "tcp_send_buf",
     "udp_send_bytes",
     "udp_sendto_bytes",
     "tcp_close",
@@ -10095,7 +10109,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // The capacity-carrying string builder (#8773). __fern_buf_reserve is
     // internal to the bundle — no call crosses a unit boundary to it.
     "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_bytes_mapped", "__fern_buf_push_bytes_filtered", "__fern_buf_push_filtered", "__fern_buf_push_expanded", "__fern_buf_push_bytes_expanded",
-    "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_len", "__fern_buf_take",
+    "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_len", "__fern_buf_clear", "__fern_buf_take",
     "__fern_buf_free",
     "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8",
     "__fern_buf_push_bytes_range", "__fern_buf_push_bytes_range_u8",
@@ -10128,7 +10142,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_udp_send_bytes", "__fn___fern_udp_send_bytes_u8", "__fn___fern_udp_sendto_bytes", "__fn___fern_udp_sendto_bytes_u8",
     "__fn___fern_udp_bind", "__fn___fern_udp_connect", "__fn___fern_udp_sendto", "__fn___fern_udp_recvfrom",
     "__fn___fern_tcp_connect_with", "__fn___fern_unix_listen", "__fn___fern_unix_connect",
-    "__fn___fern_reactor_new", "__fn___fern_reactor_ctl", "__fn___fern_reactor_wait", "__fn___fern_tcp_recv_into", "__fn___fern_tcp_sendfile",
+    "__fn___fern_reactor_new", "__fn___fern_reactor_ctl", "__fn___fern_reactor_wait", "__fn___fern_tcp_recv_into", "__fn___fern_tcp_sendfile", "__fn___fern_tcp_send_buf",
     "__fn___fern_open_res", "__fn___fern_writer_write",
     "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fn___fern_sleep_ns", "__fern_map_new",
     "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fn___fern_map_delete",
