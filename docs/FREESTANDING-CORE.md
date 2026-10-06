@@ -283,8 +283,10 @@ rather than discovering:
     and `file-integrity-sync` descriptor-flags; nofollow clears preview 1's
     `symlink-follow` lookupflag and preview 2's path-flag of the same name.
     wasmtime (46) refuses either sync flag on an open with ENOTSUP, so on
-    that host dsync and sync come back `Unsupported` — the host's own
-    refusal, not a dropped bit. The non-blocking bit is preview 1's NONBLOCK fdflag. Preview 2 has no
+    that host dsync and sync come back `Other(path, "Operation not
+    supported", errno.ENOTSUP)` — the host's own refusal, not a dropped
+    bit, and not `Unsupported`, which is the target refusing an operation
+    it does not offer. The non-blocking bit is preview 1's NONBLOCK fdflag. Preview 2 has no
     spelling for it and the bit is not read there: its streams do not block
     the way a preview-1 descriptor can, and the FIFO the bit exists for
     cannot be created on either preview (`mknod` is refused, above). The
