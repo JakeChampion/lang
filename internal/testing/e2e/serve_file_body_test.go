@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,54 +16,30 @@ func TestServeFileBodyInterp(t *testing.T) {
 	if err := os.WriteFile(path, []byte(e2eharness.FileBodyContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	port := freeLoopbackPort(t)
 	srcPath := filepath.Join(dir, "srv.fern")
-	if err := os.WriteFile(srcPath, []byte(e2eharness.FileBodyServerSource(port, path)), 0o644); err != nil {
+	if err := os.WriteFile(srcPath, []byte(e2eharness.FileBodyServerSource(path)), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	cmd := exec.Command(bin, "-interp", srcPath)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start interp server: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
-	e2eharness.CheckFileBody(t, fmt.Sprintf("127.0.0.1:%d", port))
+	addr, _ := e2eharness.StartInheritedServer(t, exec.Command(bin, "-interp", srcPath))
+	e2eharness.CheckFileBody(t, addr)
 }
 
 func TestServeBinaryBodyInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	port := freeLoopbackPort(t)
 	srcPath := filepath.Join(t.TempDir(), "srv.fern")
-	if err := os.WriteFile(srcPath, []byte(e2eharness.BinaryBodyServerSource(port)), 0o644); err != nil {
+	if err := os.WriteFile(srcPath, []byte(e2eharness.BinaryBodyServerSource()), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	cmd := exec.Command(bin, "-interp", srcPath)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start interp server: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
-	e2eharness.CheckBinaryBody(t, fmt.Sprintf("127.0.0.1:%d", port))
+	addr, _ := e2eharness.StartInheritedServer(t, exec.Command(bin, "-interp", srcPath))
+	e2eharness.CheckBinaryBody(t, addr)
 }
 
 func TestServeResponseFieldsInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	port := freeLoopbackPort(t)
 	srcPath := filepath.Join(t.TempDir(), "srv.fern")
-	if err := os.WriteFile(srcPath, []byte(e2eharness.ResponseFieldsServerSource(port)), 0o644); err != nil {
+	if err := os.WriteFile(srcPath, []byte(e2eharness.ResponseFieldsServerSource()), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	cmd := exec.Command(bin, "-interp", srcPath)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start interp server: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
-	e2eharness.CheckResponseFields(t, fmt.Sprintf("127.0.0.1:%d", port))
+	addr, _ := e2eharness.StartInheritedServer(t, exec.Command(bin, "-interp", srcPath))
+	e2eharness.CheckResponseFields(t, addr)
 }

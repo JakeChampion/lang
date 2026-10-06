@@ -114,7 +114,7 @@ func ConnectedTCPSegmentsOut(t *testing.T, pid int) uint64 {
 }
 
 // NoDelayServerSource is a single-loop server answering "ok".
-func NoDelayServerSource(port int) string {
+func NoDelayServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -122,9 +122,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.run(%d, serve.config(), handle);
+    return serve.run(0, serve.config(), handle);
 }
-`, port)
+`)
 }
 
 // CheckServeNoDelay drives NoDelayServerSource: a keep-alive connection

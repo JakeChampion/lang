@@ -11,10 +11,10 @@ import (
 	"time"
 )
 
-// ResponseFieldsServerSource is a server on `port` whose handler writes the
+// ResponseFieldsServerSource is a server whose handler writes the
 // request's decoded path into a response header on /echo..., sets a header
 // whose name is not a token on /badname, and answers "ok" otherwise.
-func ResponseFieldsServerSource(port int) string {
+func ResponseFieldsServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/string";
 import "std/serve";
@@ -25,9 +25,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.run(%d, serve.config(), handle);
+    return serve.run(0, serve.config(), handle);
 }
-`, port)
+`)
 }
 
 // CheckResponseFields drives ResponseFieldsServerSource: a path whose decoded

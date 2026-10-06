@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-// BinaryBodyServerSource is a server on `port` whose handler answers
+// BinaryBodyServerSource is a server whose handler answers
 // BinaryBodyContent, which is not UTF-8, as a byte body on /bytes, as a
 // stream body on /stream, and in two chunks from a producer on /chunks.
-func BinaryBodyServerSource(port int) string {
+func BinaryBodyServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/stream";
 import "std/serve";
@@ -33,9 +33,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.run(%d, serve.config(), handle);
+    return serve.run(0, serve.config(), handle);
 }
-`, port)
+`)
 }
 
 // BinaryBodyContent is the body BinaryBodyServerSource answers.
