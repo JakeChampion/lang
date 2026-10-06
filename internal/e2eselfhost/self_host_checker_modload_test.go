@@ -49,7 +49,7 @@ func checkSourceModload(t *testing.T, runner []string, driverBin, entrySrc strin
 		t.Fatalf("modload.LoadSource: %v", err)
 	}
 	progDir := t.TempDir()
-	bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+	bsrc, err := os.ReadFile("../../compiler/builtins.fern")
 	if err != nil {
 		t.Fatalf("read builtins.fern: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestSelfHostCheckerModloadX86_64(t *testing.T) {
 
 	// A 2-module program with a deliberate E008 (non-boolean if condition).
 	progDir := t.TempDir()
-	bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+	bsrc, err := os.ReadFile("../../compiler/builtins.fern")
 	if err != nil {
 		t.Fatalf("read builtins.fern: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestSelfHostCheckerModloadEmptyImplMangledX86_64(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 
 	progDir := t.TempDir()
-	bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+	bsrc, err := os.ReadFile("../../compiler/builtins.fern")
 	if err != nil {
 		t.Fatalf("read builtins.fern: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestSelfHostCheckerModloadEmptyImplMangledX86_64(t *testing.T) {
 // reports.
 func TestSelfHostCheckerModloadTraitSigMangledX86_64(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
-	bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+	bsrc, err := os.ReadFile("../../compiler/builtins.fern")
 	if err != nil {
 		t.Fatalf("read builtins.fern: %v", err)
 	}

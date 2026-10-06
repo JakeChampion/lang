@@ -16,7 +16,7 @@ ranked by value × feasibility, with a phased plan.*
 - **The stdlib only `impl`s these traits for primitives.** Its own
   collection/aggregate types and `Iterator` for arrays/maps are largely
   missing — that's the safe, ships-today opportunity.
-- **The self-host compiler (`examples/self_host/*.fern`) uses essentially no
+- **The self-host compiler (`compiler/*.fern`) uses essentially no
   traits, and *cannot* yet** — its own frontend can't compile `trait`/`impl`
   (`checker.fern:244` "the self-host compiler has no trait / impl";
   `checker.fern:3703` "no traits yet"). So any trait adoption *in self-host
@@ -67,7 +67,7 @@ traits), so in principle its source could use traits now. **But** the standing
 goal is for the self-host compiler to compile itself, and it can't compile
 traits. Therefore:
 
-> Putting traits into `examples/self_host/*.fern` **before** the self-host
+> Putting traits into `compiler/*.fern` **before** the self-host
 > frontend supports traits trades a small readability win for a regression in
 > the bootstrap goal. Trait adoption in self-host source must follow
 > self-host trait support, not precede it.

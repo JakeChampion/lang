@@ -41,7 +41,7 @@ tuple donor's elements are released where a record's fields are.
 counts as what they are: calls, of which 610 of 839 decline at run time.**
 
 Firings of `__fern_alloc_reuse` compiling the compiler
-(`bin/fern-selfhost -target x86-64-linux -emit asm examples/self_host/fern.fern`):
+(`bin/fern-selfhost -target x86-64-linux -emit asm compiler/fern.fern`):
 
 | path | firings |
 |---|---|

@@ -14,7 +14,7 @@
 // pieces before finishing it.
 //
 // The compiler appends the export that binds this to the program's `handle`
-// (examples/self_host/emitforms.fern, HTTP_ENTRY_STUB); a program does not
+// (compiler/emitforms.fern, HTTP_ENTRY_STUB); a program does not
 // import this module itself. The externs take the resource handles as
 // plain `i32`s and drop them explicitly, in the order the canonical ABI
 // requires — a child (the request's fields, the body's stream) before its

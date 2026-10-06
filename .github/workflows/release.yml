@@ -137,7 +137,7 @@ jobs:
       # The self-host compiler is itself a Fern program compiled for this
       # host's target, so it runs here like the utilities it goes on to build.
       - name: Build the self-host compiler
-        run: ./bin/fern -target "${{ matrix.target }}" -o bin/fern-selfhost examples/self_host/fern.fern
+        run: ./bin/fern -target "${{ matrix.target }}" -o bin/fern-selfhost compiler/fern.fern
 
       - name: Build the multicall binary with both compilers
         run: |

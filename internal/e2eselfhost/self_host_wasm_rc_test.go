@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostRcRuntimeWasm — the Perceus RC runtime helpers via the
-// self-hosted wasm backend (examples/self_host/wasm_ir.fern). The wasm32
+// self-hosted wasm backend (compiler/wasm_ir.fern). The wasm32
 // mirror of TestSelfHostRcRuntimeX86_64 / ...Arm64: the rc word is an i32
 // at [data-8], the helpers (__fern_rc_inc / __fern_rc_dec /
 // __fern_rc_is_unique / __fern_rc_underflow_count) plus the raw-memory

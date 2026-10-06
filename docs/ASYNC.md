@@ -24,7 +24,7 @@ and `docs/WASI-PREVIEW3-ASYNC-PLAN.md`.
 > milestone is promoting `Future[T]` to a first-class IR type so wasm futures use
 > the component-model-async host scheduler (`docs/ASYNC-REDESIGN.md` PR5).
 
-The patterns shown here are exercised by `examples/tests/async_combinators_test.fern`
+The patterns shown here are exercised by `tests/stdlib/async_combinators_test.fern`
 and the Go e2e suite (`async_combinators_test.go`, `async_fetch_future_test.go`).
 
 ---
@@ -197,7 +197,7 @@ let got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), 
 `sim.future_at(d, at_ns, v)` resolves to `v` at virtual time `at_ns`;
 `sim.future_chain(d, at_ns, step_ns, n, v)` re-suspends `n` times (the
 `__fetch_drain` shape) before resolving. See
-`examples/tests/sim_driver_test.fern`.
+`tests/stdlib/sim_driver_test.fern`.
 
 ### SimNet — scripted upstreams
 
@@ -231,7 +231,7 @@ let got: string[] = async.gather_on(d, fs, "");
 // n.hits(1, 80, "/k") == 1
 ```
 
-See `examples/tests/sim_net_test.fern`.
+See `tests/stdlib/sim_net_test.fern`.
 
 ### Fault injection — seed-driven flaky upstreams
 
@@ -262,7 +262,7 @@ and the call order — a failure is a seed you replay, not a flake.
 `sim.sweep_seeds(n, prop)` is that workflow in miniature: run
 `prop(seed)` over seeds `1..n` and return the first failing seed (0 if
 all pass), with `Sim.rng_state()` available for lockstep assertions.
-See `examples/tests/sim_fault_test.fern`.
+See `tests/stdlib/sim_fault_test.fern`.
 
 That purity claim is itself property-tested: the harness in
 `internal/e2e/sim_property_test.go` generates random sim programs —
@@ -307,7 +307,7 @@ compiler lowers every function that reaches the park to a resumable form, so
 the whole call chain above the wait saves its live locals and returns to the
 scheduler, and runs on from the wait when the scheduler resumes it. Nothing
 is written at the call site: a function that calls `wait_any`, or calls one
-that does, is lowered that way by reachability (`examples/self_host/suspend.fern`).
+that does, is lowered that way by reachability (`compiler/suspend.fern`).
 The fetch client's waits are such calls: `tcp.tcp_recv_deadline`, the DNS
 exchange's receive waits and `dns.connect_race`'s connect wait all go
 through `wait_any`, so a `fetch.send` inside a task parks at each of them.

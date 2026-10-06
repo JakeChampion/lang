@@ -87,7 +87,7 @@ exit 99, with `allocs == frees` at `live_bytes 0`, the census silent as always.
 | corpus | total | parameter | local | receiver | destructure |
 | --- | --- | --- | --- | --- | --- |
 | conformance/cases | **0** | 0 | 0 | 0 | 0 |
-| examples/self_host | 173 | **161** | 9 | 2 | 1 |
+| compiler | 173 | **161** | 9 | 2 | 1 |
 | internal/stdlib | 12 | 11 | 0 | 0 | 0 |
 
 Against string's 53%, so on this class the refusal is nearly the whole change.

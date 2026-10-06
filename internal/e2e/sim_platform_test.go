@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-// `examples/tests/sim_platform_test.fern` runs a handler's platform over
+// `tests/stdlib/sim_platform_test.fern` runs a handler's platform over
 // the simulation (std/sim_platform): the clock, randomness, configuration
 // and the public-only HTTP route answered from a `Sim`, a scripted network
 // and what the test set, with the shapes the host and the mock answer. It
 // is the platform's sim parity suite (#9855), so it runs on every backend,
 // and on the self-host compiler in internal/e2eselfhost's std/test e2e.
 
-const simPlatformSuite = "examples/tests/sim_platform_test.fern"
+const simPlatformSuite = "tests/stdlib/sim_platform_test.fern"
 
 var simPlatformWant = []string{"# Suite: std/sim_platform", "# pass 8", "# fail 0", "1..8"}
 

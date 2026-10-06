@@ -1,6 +1,6 @@
 // An INLINE `as char` cast used as a method receiver. The self-host classified it
 // as i32 and keyed the absent `i32.to_upper`, refusing the whole module, while
-// native compiled and ran it — `examples/tests/unicode_test.fern`'s test_char_level
+// native compiled and ran it — `tests/stdlib/unicode_test.fern`'s test_char_level
 // writes exactly `(97 as char).to_upper()`.
 //
 // The receiver-type cascade (expr_scalar_type) tests string, f32, f64, u64, the

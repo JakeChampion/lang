@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Third step of the self-host port: `examples/self_host/checker.fern`
+// Third step of the self-host port: `compiler/checker.fern`
 // is a minimal type-checker written in lang. It imports both
 // `./lexer` and `./parser` and walks the Stmt[] / Expr tree
 // produced by `parser.parse_program(toks)`, assigning a Type

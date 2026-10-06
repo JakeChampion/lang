@@ -47,7 +47,7 @@ jumps through (1). On arm64 the bound 3,000,000 stays in the literal pool
 
 ## Measured
 
-Every `examples/bench` program, x86-64, retired instructions under
+Every `bench` program, x86-64, retired instructions under
 callgrind, before (the previous entry's "after") and with this change, the
 native register backend for scale. The three map benchmarks are left out
 as before (#9608); `sort_strings` and `string_find_byte` moved by orders

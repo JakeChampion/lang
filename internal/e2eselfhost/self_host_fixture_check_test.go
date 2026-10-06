@@ -9,7 +9,7 @@ import (
 )
 
 // The Fern fixtures this package embeds in Go string literals are invisible to
-// `make check-sources`, which reads examples/self_host/fern.fern and the stdlib
+// `make check-sources`, which reads compiler/fern.fern and the stdlib
 // and nothing else. So a field added to a struct the fixtures name -- ssasem.Func,
 // ssa.SFunc, ssa.SBlock, ssa.SInst, semrecords.Record -- type-checks clean
 // locally and then fails every self-host shard with E005, at a CI round per

@@ -96,8 +96,8 @@ releases, both before and after this change: #9832's first half, the AST
 lowering's release of what it no longer holds. The wasm leg answers the
 same on both lowerings.
 
-Corpus census (the conformance cases, coreutils, `examples/bench`,
-`examples/cli`, `examples/tests` and the compiler; 863 that compile), root
+Corpus census (the conformance cases, coreutils, `bench`,
+`examples/cli`, `tests/stdlib` and the compiler; 863 that compile), root
 refusals after following the prune cascades to the refusal they stand on:
 
 | | before | after |

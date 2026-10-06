@@ -1,7 +1,7 @@
 # 2026-09-20 — the OS floor has contracts
 
 A census of the typed lowering over the whole local corpus — the conformance
-cases, the coreutils, `examples/bench`, `examples/cli`, `examples/tests` and
+cases, the coreutils, `bench`, `examples/cli`, `tests/stdlib` and
 the compiler, 864 programs that compile, compiled with `FERN_SEM_IR_REPORT=1` —
 reduced to root refusals (a refusal that names another function's is a
 cascade, and the typed path takes a caller's whole call tree with one root):

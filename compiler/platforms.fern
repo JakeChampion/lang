@@ -1,0 +1,715 @@
+// compiler/platforms.fern — the target-capability boundary,
+// mirroring native's internal/platforms (#6633).
+//
+// A target is what the artifact runs ON, so it decides what the artifact may
+// reach: `subprocess` has no meaning on a wasm world, `__heap_mark` rewinds a
+// bump arena only the native backends keep, and a freestanding artifact has no
+// host at all. Every capability-gated builtin surviving the tree-shake must be
+// granted by the target's descriptor; one that is not is E066 at compile time,
+// which is where the failure is a sentence rather than an "undefined label"
+// from the assembler or a host-side instantiation error.
+//
+// The table is the same shape as native's — a target names an ENVIRONMENT, an
+// environment names a capability PROFILE — so the two can be diffed rather
+// than compared by reading. internal/platforms/selfhost_parity_test.go reads
+// this file as data and pins the builtin classification and the profiles
+// against native's maps entry-for-entry, so a builtin classified on one side
+// and not the other fails a test instead of diverging silently. A rename or
+// reformat of the tables below has to keep them extractable by that test —
+// it fails loudly rather than vacuously when its patterns stop matching.
+//
+// Target NAMES are native's `<isa>-<environment>` pairs (#6635): the ISA half
+// picks the backend, the environment half says what the host provides, and
+// neither is implied. Output FORM is not in the name — `-emit asm` /
+// `-emit core-module` select it — because what a program may reach does not
+// depend on whether the driver stops at the emitter's text or links it.
+
+import "./parser";
+import "./astwalk";
+import "./util";
+
+// ---- descriptors -------------------------------------------------------
+
+// Descriptor is one target's runtime surface: which ISA selects the backend,
+// which environment says what the host provides, and what that environment
+// grants. `known` is false for a target with no entry in the table — native
+// returns a nil *Descriptor there and callers skip enforcement, since the
+// -target flag validation owns that error.
+//
+// Native's descriptor also carries handler kinds, bindings and an entry shape.
+// They are absent here rather than mirrored-and-unread: nothing on the
+// self-host path consumes them yet, and the day one does is the day it can
+// say what it needs.
+pub struct Descriptor {
+  name: string,
+  isa: string,
+  environment: string,
+  capabilities: string[],
+  known: boolean,
+}
+
+// capability_profile lists what a host underneath grants. Profiles exist
+// because the list belongs to the host and not the ISA: linux / darwin /
+// android are genuinely different environments — different object formats,
+// different syscall vectors — and grant exactly the same set.
+//
+// `subprocess` is the ONE entry that differs from native's table, and
+// deliberately. Native grants it nowhere, because no Go backend lowers it —
+// its table records a codegen limitation as a target property. The self-host's
+// x86-64 and arm64 emitters DO lower it (`__fern_subprocess`: pipe / fork /
+// execve / wait4, exercised end-to-end by TestSelfHostArm64DarwinBuilds), so
+// refusing it here would delete working, tested functionality to match a
+// limitation this compiler does not have. The wasm side is unchanged: the
+// wasi profiles grant it nowhere, which turns wasm_ir's late "unsupportable on
+// wasm" bail (#4320) into an up-front diagnostic — the same improvement
+// native's own note claims for it.
+function capability_profile(profile: string): string[] {
+  if (profile == "hosted-native") {
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "xattr", "syscall", "subprocess", "unix", "reactor"];
+  }
+  if (profile == "wasi-cli") {
+    // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
+    // process model, so no `proc`, and no bump-arena rewind, so no
+    // `arena`. The three the wasm worlds lack for reasons of their own:
+    // `pollfd` (readiness is a wasi:io/poll pollable, not a number in a
+    // per-process fd table), `fsmode` (neither preview1's path_open nor
+    // the component-model filesystem has permission bits), `cabi`
+    // (an unknown callee is reached through a typed table, not System V
+    // or AAPCS64) and `userid` (no notion of a user at all). `host` IS
+    // granted: a component's node name is the empty string, truthfully,
+    // and so is `signal`: nothing can deliver a signal to a component,
+    // so ignoring one is a no-op rather than a missing import.
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor"];
+  }
+  if (profile == "wasi-proxy") {
+    // The proxy world: an HTTP handler and nothing else. No stdout
+    // stream, no filesystem, and no process — so neither argv nor
+    // envp: `wasi:cli/environment` is not in the world, and a
+    // component importing it fails to instantiate.
+    return ["log", "now", "config", "random", "fetch"];
+  }
+  // "none" — no host at all. Everything still reachable is core_builtin.
+  let empty: string[] = [];
+  return empty;
+}
+
+// environment_profile names the capability profile an environment draws on,
+// or "" when the environment is not one this compiler knows.
+function environment_profile(environment: string): string {
+  if (environment == "linux" || environment == "darwin" || environment == "android") {
+    return "hosted-native";
+  }
+  if (environment == "wasi") {
+    return "wasi-cli";
+  }
+  if (environment == "wasi-http") {
+    return "wasi-proxy";
+  }
+  if (environment == "freestanding") {
+    return "none";
+  }
+  return "";
+}
+
+// target_environment maps a target name to its environment, or "" when the
+// name is not a target.
+function target_environment(name: string): string {
+  if (name == "x86-64-linux" || name == "arm64-linux") {
+    return "linux";
+  }
+  if (name == "arm64-android") {
+    return "android";
+  }
+  if (name == "arm64-darwin") {
+    return "darwin";
+  }
+  if (name == "wasm32-wasi") {
+    return "wasi";
+  }
+  if (name == "wasm32-wasi-http") {
+    return "wasi-http";
+  }
+  if (name == "arm64-freestanding" || name == "x86-64-freestanding") {
+    return "freestanding";
+  }
+  return "";
+}
+
+function target_isa(name: string): string {
+  if (name == "x86-64-linux" || name == "x86-64-freestanding") {
+    return "x86-64";
+  }
+  if (name == "wasm32-wasi" || name == "wasm32-wasi-http") {
+    return "wasm32";
+  }
+  return "arm64";
+}
+
+// targets lists every target name the descriptor table answers for, sorted —
+// the order `fern -targets` prints them in, and native's own order.
+pub function targets(): string[] {
+  return [
+    "arm64-android", "arm64-darwin", "arm64-freestanding", "arm64-linux",
+    "wasm32-wasi", "wasm32-wasi-http", "x86-64-freestanding", "x86-64-linux",
+  ];
+}
+
+// emits_code is false for a target no backend lowers yet: the freestanding
+// pair type-checks against an empty capability set (docs/FREESTANDING-CORE.md)
+// and has nothing to emit with. The driver refuses codegen for one rather than
+// producing an artifact for the wrong machine.
+pub function emits_code(name: string): boolean {
+  return name != "arm64-freestanding" && name != "x86-64-freestanding";
+}
+
+// for_target resolves a target name to its descriptor. An unknown name comes
+// back with `known: false`; enforcement skips it rather than reporting, since
+// the driver's own -target validation owns that error.
+pub function for_target(name: string): Descriptor {
+  let env_name: string = target_environment(name);
+  let empty: string[] = [];
+  if (env_name.len() == 0) {
+    return Descriptor { name: name, isa: "", environment: "", capabilities: empty, known: false };
+  }
+  return Descriptor {
+    name: name,
+    isa: target_isa(name),
+    environment: env_name,
+    capabilities: capability_profile(environment_profile(env_name)),
+    known: true,
+  };
+}
+
+// has_capability reports whether the target grants the named capability.
+// False for an unknown target — call for_target first to tell the two apart.
+pub function has_capability(target: string, capability: string): boolean {
+  let d: Descriptor = for_target(target);
+  if (!d.known) {
+    return false;
+  }
+  return util.has_str(d.capabilities, capability);
+}
+
+// targets_providing lists the targets granting a capability, for E066's
+// "targets providing it" hint.
+pub function targets_providing(capability: string): string[] {
+  let out: string[] = [];
+  let all: string[] = targets();
+  let i: i32 = 0;
+  while (i < all.len()) {
+    if (has_capability(all[i], capability)) {
+      out = out.append(all[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// ---- builtin classification --------------------------------------------
+
+// Gate pairs a capability-gated builtin with the capability a target must
+// grant for it to be callable.
+pub struct Gate { builtin: string, capability: string }
+
+// gated_builtins is the gated half of the user-callable builtin registry.
+// A builtin NOT listed here is ungated — every target provides it (arithmetic,
+// the map/array/string runtime, the async readiness helpers).
+//
+// Pinned against native's platforms.gatedBuiltins entry-for-entry by
+// TestSelfHostPlatformsGatesMatchNative.
+pub function gated_builtins(): Gate[] {
+  return [
+    // Process spawning. Granted by the hosted-native profile (see the
+    // note there); the wasm worlds have no process model.
+    Gate { builtin: "subprocess", capability: "subprocess" },
+    // Process supervision (fork/waitpid). Native-only: wasm worlds have
+    // no processes.
+    Gate { builtin: "proc_fork", capability: "proc" },
+    Gate { builtin: "proc_waitpid", capability: "proc" },
+    Gate { builtin: "proc_waitpid_nohang", capability: "proc" },
+    Gate { builtin: "proc_exec", capability: "proc" },
+    Gate { builtin: "proc_exec_as", capability: "proc" },
+    Gate { builtin: "chdir", capability: "cwd" },
+    Gate { builtin: "chroot", capability: "cwd" },
+    Gate { builtin: "signal_mask", capability: "signal" },
+    Gate { builtin: "signal_disposition", capability: "signal" },
+    Gate { builtin: "process_alive", capability: "proc" },
+    Gate { builtin: "signal_send", capability: "proc" },
+    Gate { builtin: "set_process_group", capability: "proc" },
+    // A kernel-enforced ceiling on a process resource. Its own
+    // capability rather than `proc`: that one is the authority to have
+    // processes at all, while this is a property a host can lack while
+    // still having them.
+    Gate { builtin: "rlimit_nofile", capability: "rlimit" },
+    // How this process competes for the CPU. Its own capability for
+    // the same reason `rlimit` is: `proc` is the authority to have
+    // processes at all, while a scheduler knob is a property a host
+    // can lack while still running them. Neither WASI preview has
+    // one, and neither stand-in is honest — answering 0 from
+    // `priority` claims the default nice value was measured, and
+    // letting `set_priority` succeed claims a change that did not
+    // happen.
+    Gate { builtin: "priority", capability: "sched" },
+    Gate { builtin: "set_priority", capability: "sched" },
+    // The filesystem itself — how large it is and what it will accept
+    // as a name — rather than the files on it, which is `fs`. A host
+    // can serve files and have no volume to measure.
+    Gate { builtin: "statfs", capability: "fsinfo" },
+    // One-level bump-arena checkpoint. Both natives rewind the heap
+    // pointer and shadow the freelist heads; wasm's linear-memory
+    // allocator has no room for that below its head table.
+    // `__heap_bump_bytes` stays ungated — reading the cursor works
+    // everywhere, only rewinding it is native.
+    Gate { builtin: "__heap_mark", capability: "arena" },
+    Gate { builtin: "__heap_release_to", capability: "arena" },
+    // Blocking stdin reads.
+    Gate { builtin: "read_line", capability: "stdin" },
+    Gate { builtin: "stdin", capability: "stdin" },
+    // `log` is somewhere to put a line of diagnostics; `stdout` is an
+    // actual stdout stream. The proxy world grants the first and has no
+    // wasi:cli/stdout, which is what puts `write` on the far side of the
+    // line from `print` despite being print-without-the-newline.
+    Gate { builtin: "print", capability: "log" },
+    Gate { builtin: "eprint", capability: "log" },
+    Gate { builtin: "stdout", capability: "stdout" },
+    Gate { builtin: "stderr", capability: "stdout" },
+    Gate { builtin: "write", capability: "stdout" },
+    Gate { builtin: "putchar", capability: "stdout" },
+    // Clocks, and the wakeups driven by them. The pollable constructors
+    // carry the authority; the helpers that WAIT on one do not.
+    Gate { builtin: "now_unix_ms", capability: "now" },
+    Gate { builtin: "now_ns", capability: "now" },
+    Gate { builtin: "monotonic_ns", capability: "now" },
+    Gate { builtin: "sleep_ms", capability: "now" },
+    Gate { builtin: "sleep_ns", capability: "now" },
+    Gate { builtin: "wasm_timer_pollable", capability: "now" },
+    // `timer_fd` is a clock wakeup too, but gated on the FD half rather
+    // than on `now`: it hands back a file descriptor to poll, and that
+    // is what wasm cannot answer. `wasm_timer_pollable` above is the
+    // same wakeup expressed as a wasi:io/poll pollable.
+    Gate { builtin: "timer_fd", capability: "pollfd" },
+    // The ambient invocation environment. argv and envp are adjacent on
+    // the process stack, but they are separate capabilities: wasi-cli
+    // answers both, and a platform could hand a component one without
+    // the other.
+    Gate { builtin: "env", capability: "env" },
+    Gate { builtin: "environ", capability: "env" },
+    Gate { builtin: "args", capability: "args" },
+    // Deploy-time configuration: the environment where there is one,
+    // wasi:config/store on the proxy world.
+    Gate { builtin: "config_get", capability: "config" },
+    // Entropy — a syscall on native, a host import on wasm, never
+    // something the program can compute.
+    Gate { builtin: "random_bytes", capability: "random" },
+    Gate { builtin: "random_i32", capability: "random" },
+    // Sockets.
+    Gate { builtin: "tcp_listen", capability: "tcp" },
+    Gate { builtin: "tcp_accept", capability: "tcp" },
+    Gate { builtin: "tcp_local_port", capability: "tcp" },
+    Gate { builtin: "tcp_connect", capability: "tcp" },
+    Gate { builtin: "tcp_recv", capability: "tcp" },
+    Gate { builtin: "tcp_send", capability: "tcp" },
+    Gate { builtin: "tcp_send_bytes", capability: "tcp" },
+    Gate { builtin: "tcp_close", capability: "tcp" },
+    Gate { builtin: "tcp_pollable", capability: "tcp" },
+    Gate { builtin: "udp_send", capability: "tcp" },
+    Gate { builtin: "udp_send_bytes", capability: "tcp" },
+    Gate { builtin: "tcp_listen_with", capability: "tcp" },
+    Gate { builtin: "tcp_socket_ctl", capability: "tcp" },
+    Gate { builtin: "tcp_sendfile", capability: "tcp" },
+    Gate { builtin: "tcp_send_buf", capability: "tcp" },
+    Gate { builtin: "udp_bind", capability: "tcp" },
+    Gate { builtin: "udp_connect", capability: "tcp" },
+    Gate { builtin: "udp_sendto", capability: "tcp" },
+    Gate { builtin: "udp_sendto_bytes", capability: "tcp" },
+    Gate { builtin: "udp_recvfrom", capability: "tcp" },
+    Gate { builtin: "tcp_connect_with", capability: "tcp" },
+    Gate { builtin: "unix_listen", capability: "unix" },
+    Gate { builtin: "unix_connect", capability: "unix" },
+    Gate { builtin: "reactor_new", capability: "reactor" },
+    Gate { builtin: "reactor_ctl", capability: "reactor" },
+    Gate { builtin: "reactor_wait", capability: "reactor" },
+    Gate { builtin: "tcp_recv_into", capability: "tcp" },
+    // Filesystem.
+    Gate { builtin: "read_file", capability: "fs" },
+    Gate { builtin: "read_file_bytes", capability: "fs" },
+    Gate { builtin: "write_file", capability: "fs" },
+    Gate { builtin: "write_file_bytes", capability: "fs" },
+    Gate { builtin: "open_reader", capability: "fs" },
+    Gate { builtin: "open_writer", capability: "fs" },
+    Gate { builtin: "open_appender", capability: "fs" },
+    Gate { builtin: "open_exclusive", capability: "fs" },
+    Gate { builtin: "open_reader_with", capability: "fs" },
+    Gate { builtin: "open_writer_with", capability: "fs" },
+    Gate { builtin: "stat", capability: "fs" },
+    Gate { builtin: "lstat", capability: "fs" },
+    Gate { builtin: "read_dir", capability: "fs" },
+    Gate { builtin: "read_dir_all", capability: "fs" },
+    Gate { builtin: "remove_file", capability: "fs" },
+    Gate { builtin: "remove_dir_all", capability: "fs" },
+    Gate { builtin: "create_dir_all", capability: "fs" },
+    Gate { builtin: "create_dir", capability: "fs" },
+    Gate { builtin: "remove_dir", capability: "fs" },
+    Gate { builtin: "create_link", capability: "fs" },
+    Gate { builtin: "create_symlink", capability: "fs" },
+    Gate { builtin: "read_link", capability: "fs" },
+    Gate { builtin: "rename", capability: "fs" },
+    Gate { builtin: "set_file_times", capability: "fs" },
+    Gate { builtin: "temp_dir", capability: "fs" },
+    // Setting a file's LENGTH is filesystem reach and not a permission
+    // one: a host can have files, no mode word, and still know how long
+    // each one is. Both previews can do it through a descriptor.
+    Gate { builtin: "truncate", capability: "fs" },
+    // Entries that are neither a file nor a directory: a FIFO, and a
+    // character or block device node. Neither WASI preview has a call
+    // that creates one, and a regular file standing in for a FIFO would
+    // be the wrong answer presented as the right one.
+    Gate { builtin: "mknod", capability: "fsnode" },
+    Gate { builtin: "sync", capability: "fssync" },
+    Gate { builtin: "rename_noreplace", capability: "fsrename" },
+    Gate { builtin: "rename_exchange", capability: "fsrename" },
+    Gate { builtin: "getxattr", capability: "xattr" },
+    Gate { builtin: "getxattr_bytes", capability: "xattr" },
+    Gate { builtin: "lgetxattr", capability: "xattr" },
+    Gate { builtin: "lgetxattr_bytes", capability: "xattr" },
+    Gate { builtin: "setxattr", capability: "xattr" },
+    Gate { builtin: "setxattr_bytes", capability: "xattr" },
+    Gate { builtin: "lsetxattr", capability: "xattr" },
+    Gate { builtin: "lsetxattr_bytes", capability: "xattr" },
+    // How large the terminal on the other end of a descriptor is. A
+    // target with no terminal cannot answer: 0x0 is not "there is no
+    // terminal" but "the terminal is empty", and a caller laying out
+    // columns cannot tell those apart. `isatty` stays core beside it
+    // because "no" IS the truthful answer to its question.
+    Gate { builtin: "window_size", capability: "tty" },
+    Gate { builtin: "termios_get", capability: "tty" },
+    Gate { builtin: "termios_set", capability: "tty" },
+    Gate { builtin: "set_window_size", capability: "tty" },
+    // Who an entry BELONGS to. A host can have files, directories and
+    // permission bits and still have no users to attach them to, which
+    // is what both WASI previews are: preview 1's filestat has no uid
+    // or gid field and the component model's descriptor-stat none
+    // either. Not `userid`, which is the PROCESS's own ids.
+    Gate { builtin: "chown_at", capability: "fsowner" },
+    // Permission bits on a filesystem entry, which is a separate
+    // capability from having a filesystem: a host can offer files and no
+    // mode word to set on them. `access` is the READ of the same
+    // property, so it sits here rather than on `fs`.
+    Gate { builtin: "write_file_exec", capability: "fsmode" },
+    Gate { builtin: "access", capability: "fsmode" },
+    // The umask is the same property from the other side: the mode
+    // bits a creation is allowed to keep. WASI has no creation mask.
+    Gate { builtin: "umask", capability: "fsmode" },
+    // And `chmod` is the WRITE of it on an entry that already exists,
+    // where `write_file_exec` only sets a bit on one it creates.
+    Gate { builtin: "chmod", capability: "fsmode" },
+    Gate { builtin: "chmod_at", capability: "fsmode" },
+    // The process's own identity — the effective pair, the real pair,
+    // and the supplementary group set. Neither WASI preview has a
+    // notion of a user, and there is no accurate constant to answer with:
+    // 0 claims to be root while FileStat's uid/gid are also zero there,
+    // so every file would look like the caller's. An empty group list
+    // is the same fiction one level down.
+    Gate { builtin: "geteuid", capability: "userid" },
+    Gate { builtin: "getegid", capability: "userid" },
+    Gate { builtin: "getuid", capability: "userid" },
+    Gate { builtin: "getgid", capability: "userid" },
+    Gate { builtin: "getgroups", capability: "userid" },
+    Gate { builtin: "setuid", capability: "userid" },
+    Gate { builtin: "setgid", capability: "userid" },
+    Gate { builtin: "setgroups", capability: "userid" },
+    // The host's own name. A kernel answers it; WASI has no host
+    // identity and answers the empty string, which is a fact about a
+    // component rather than a fiction, so wasi-cli grants it where it
+    // refuses `userid`.
+    Gate { builtin: "hostname", capability: "host" },
+    // The MACHINE: the kernel's utsname record (`uname_field`) and how
+    // many processing units the process may use (`cpu_count`). Neither
+    // WASI preview has either, and a guess would name a kernel the
+    // component is not running on, so this is its own capability rather
+    // than a corner of `host`.
+    Gate { builtin: "uname_field", capability: "sysinfo" },
+    Gate { builtin: "cpu_count", capability: "sysinfo" },
+    // The process's working directory. Separate from `fs` for the same
+    // reason: WASI resolves every path against a preopened descriptor
+    // and has no current directory to report.
+    Gate { builtin: "getcwd", capability: "cwd" },
+    // Signal dispositions. A signal is something a HOST delivers to a
+    // process; wasi-cli grants these and answers with a no-op, since a
+    // component is never sent one and doing nothing is the whole truth
+    // about ignoring it. A freestanding target has no process to
+    // deliver to and does not get them at all.
+    Gate { builtin: "signal_ignore", capability: "signal" },
+    Gate { builtin: "signal_default", capability: "signal" },
+    // The C-ABI FFI shims. Enumerated rather than matched with
+    // ircore.is_c_call so this table stays the one place the
+    // classification lives; the checker registers exactly these fifteen.
+    Gate { builtin: "__c_call0", capability: "cabi" },
+    Gate { builtin: "__c_call0_f32", capability: "cabi" },
+    Gate { builtin: "__c_call0_f64", capability: "cabi" },
+    Gate { builtin: "__c_call1", capability: "cabi" },
+    Gate { builtin: "__c_call1_f32", capability: "cabi" },
+    Gate { builtin: "__c_call1_f64", capability: "cabi" },
+    Gate { builtin: "__c_call2", capability: "cabi" },
+    Gate { builtin: "__c_call2_f32", capability: "cabi" },
+    Gate { builtin: "__c_call2_f64", capability: "cabi" },
+    Gate { builtin: "__c_call3", capability: "cabi" },
+    Gate { builtin: "__c_call3_f32", capability: "cabi" },
+    Gate { builtin: "__c_call3_f64", capability: "cabi" },
+    Gate { builtin: "__c_call4", capability: "cabi" },
+    Gate { builtin: "__c_call4_f32", capability: "cabi" },
+    Gate { builtin: "__c_call4_f64", capability: "cabi" },
+    Gate { builtin: "__syscall3", capability: "syscall" },
+    Gate { builtin: "__syscall4", capability: "syscall" },
+    Gate { builtin: "__syscall5", capability: "syscall" },
+    Gate { builtin: "__syscall6", capability: "syscall" },
+  ];
+}
+
+// core_builtins is the other half of the classification: user-callable
+// builtins that need no host, so even a freestanding target provides them.
+// Three groups, each core for its own reason — allocation needs an ALLOCATOR
+// and not an OS; the float bit casts are a register move; the readiness
+// helpers wait on a pollable whose constructor is gated above, so gating the
+// wait too would double-count the same authority.
+//
+// `exit` and `isatty` are the judgement calls: every target can define "stop",
+// and every target can define "is this fd a terminal" — a target with no
+// terminal answers no. Both are core with a target-specific lowering rather
+// than a capability an artifact could be refused for. `target_os` and
+// `target_arch` are string literals by the time anything runs, folded from the
+// two halves of the target's own name.
+pub function core_builtins(): string[] {
+  return [
+    "__outer_mul_f64",
+    "__inner_mul_add_f64",
+    "exit", "isatty", "target_os", "target_arch",
+    // Darwin asks libSystem's getpwuid(3); the rest answer 0, meaning use
+    // the files, which is the truth there (#9815).
+    "__getpwuid_name",
+    "map_new", "cell_new", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
+    "slice_unchecked",
+    "strbuf_reset", "strbuf_append", "strbuf_take",
+    "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64",
+    "buf_len", "buf_take", "buf_take_bytes", "buf_clear", "buf_free",
+    "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
+    "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",
+  ];
+}
+
+// core_builtin reports whether the named builtin needs no host.
+pub function core_builtin(name: string): boolean {
+  return util.has_str(core_builtins(), name);
+}
+
+// gated_capability returns the capability gating a builtin, or "" when it is
+// ungated.
+pub function gated_capability(name: string): string {
+  let gates: Gate[] = gated_builtins();
+  let i: i32 = 0;
+  while (i < gates.len()) {
+    if (gates[i].builtin == name) {
+      return gates[i].capability;
+    }
+    i = i + 1;
+  }
+  return "";
+}
+
+// forbidden_gates lists the gates a target does NOT satisfy — none for the
+// hosted natives, and the process / arena / wasm-inexpressible set for the
+// wasi worlds. That is what keeps the call-site scan a membership test
+// against a short list rather than a scan of the whole registry per call.
+pub function forbidden_gates(target: string): Gate[] {
+  let out: Gate[] = [];
+  let d: Descriptor = for_target(target);
+  if (!d.known) {
+    return out;
+  }
+  let gates: Gate[] = gated_builtins();
+  let i: i32 = 0;
+  while (i < gates.len()) {
+    if (!util.has_str(d.capabilities, gates[i].capability)) {
+      out = out.append(gates[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// ---- enforcement -------------------------------------------------------
+
+// Violation is one gated call the target cannot satisfy. `fn_name` is the
+// function the call was found in and `fn_module` the module it came from —
+// empty for the entry module, since flatten.bundle mangles an imported
+// function to `<module>__<name>` and leaves the entry module's own names bare.
+pub struct Violation {
+  builtin: string,
+  capability: string,
+  target: string,
+  line: i32,
+  col: i32,
+  fn_name: string,
+  fn_module: string,
+}
+
+// enforce scans an ALREADY TREE-SHAKEN module for calls to gated builtins the
+// target does not grant. Every surviving function is part of the artifact, so
+// a flat scan of every body is exactly "what this program can reach" — the
+// same argument native's Enforce makes for not following the call graph.
+//
+// Results are in declaration order, then source order, deduplicated per
+// (function, builtin) so a builtin called in a loop reports once.
+pub function enforce(mod: parser.Module, target: string): Violation[] {
+  let out: Violation[] = [];
+  let forbidden: Gate[] = forbidden_gates(target);
+  if (forbidden.len() == 0) {
+    return out;
+  }
+  let wanted: string[] = [];
+  let wi: i32 = 0;
+  while (wi < forbidden.len()) {
+    wanted = wanted.append(forbidden[wi].builtin);
+    wi = wi + 1;
+  }
+  let want: util.NameIndex = util.name_index(wanted);
+
+  let fi: i32 = 0;
+  while (fi < mod.funcs.len()) {
+    let fd: parser.FuncDecl = mod.funcs[fi];
+    let calls: astwalk.CallSite[] = [];
+    let bi: i32 = 0;
+    while (bi < fd.body.len()) {
+      calls = astwalk.collect_calls_stmt(fd.body[bi], want, calls);
+      bi = bi + 1;
+    }
+    let seen: string[] = [];
+    let ci: i32 = 0;
+    while (ci < calls.len()) {
+      let gi: i32 = 0;
+      while (gi < forbidden.len()) {
+        // `!method`: a gated builtin is a free function, so a
+        // same-named METHOD on a user type (`sb.write(x)`) is a
+        // different callee and not a violation.
+        if (!calls[ci].method && calls[ci].name == forbidden[gi].builtin && !util.has_str(seen, calls[ci].name)) {
+          seen = seen.append(calls[ci].name);
+          out = out.append(Violation {
+            builtin: forbidden[gi].builtin,
+            capability: forbidden[gi].capability,
+            target: target,
+            line: calls[ci].line,
+            col: calls[ci].col,
+            fn_name: util.mangled_name(fd.name),
+            fn_module: util.mangled_module(fd.name),
+          });
+        }
+        gi = gi + 1;
+      }
+      ci = ci + 1;
+    }
+    fi = fi + 1;
+  }
+  return out;
+}
+
+// reach is the other question the same scan answers: not "may this target
+// build it?" but "which host capabilities does this code touch AT ALL?".
+// Mirrors native's platforms.Reach.
+//
+// It takes a target-independent view, so it is the derivation behind the
+// `std/` core-vs-hosted partition — a module whose reach is empty runs
+// anywhere, including freestanding, and one that acquires a host dependency
+// shows up here as a capability it did not have before. That makes it a
+// classification tool rather than a diagnostic: it runs over an UN-shaken
+// module, because the question is what the module's own code can reach, not
+// what one program that imports it happens to call.
+//
+// Capabilities come back sorted and deduplicated.
+pub function reach(mod: parser.Module): string[] {
+  let gates: Gate[] = gated_builtins();
+  let wanted: string[] = [];
+  let wi: i32 = 0;
+  while (wi < gates.len()) {
+    wanted = wanted.append(gates[wi].builtin);
+    wi = wi + 1;
+  }
+  let want: util.NameIndex = util.name_index(wanted);
+
+  let found: string[] = [];
+  let fi: i32 = 0;
+  while (fi < mod.funcs.len()) {
+    let calls: astwalk.CallSite[] = [];
+    let bi: i32 = 0;
+    while (bi < mod.funcs[fi].body.len()) {
+      calls = astwalk.collect_calls_stmt(mod.funcs[fi].body[bi], want, calls);
+      bi = bi + 1;
+    }
+    let ci: i32 = 0;
+    while (ci < calls.len()) {
+      // `!method` for the same reason enforce checks it: a gated
+      // builtin is a free function, so `sb.write(x)` is a different
+      // callee.
+      if (!calls[ci].method) {
+        let cap: string = gated_capability(calls[ci].name);
+        if (cap.len() > 0 && !util.has_str(found, cap)) {
+          found = found.append(cap);
+        }
+      }
+      ci = ci + 1;
+    }
+    fi = fi + 1;
+  }
+  return sorted(found);
+}
+
+// sorted returns `xs` in ascending order. Insertion sort: the list is one
+// capability per gate at worst, so the simple shape is the right one.
+function sorted(xs: string[]): string[] {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    let pos: i32 = 0;
+    while (pos < out.len() && util.str_less(out[pos], xs[i])) {
+      pos = pos + 1;
+    }
+    let next: string[] = [];
+    let j: i32 = 0;
+    while (j < pos) {
+      next = next.append(out[j]);
+      j = j + 1;
+    }
+    next = next.append(xs[i]);
+    while (j < out.len()) {
+      next = next.append(out[j]);
+      j = j + 1;
+    }
+    out = next;
+    i = i + 1;
+  }
+  return out;
+}
+
+// violation_message renders E066's text. It names the capability rather than
+// the builtin first, because the capability is what the user has to change
+// target for; the builtin is the evidence.
+pub function violation_message(v: Violation): string {
+  let where: string = "";
+  if (v.fn_module.len() > 0) {
+    where = " (reached via \"" + v.fn_name + "\" from module \"" + v.fn_module + "\")";
+  }
+  // Every gated capability has at least one target granting it — asserted
+  // in platforms_run.fern, which is what makes an empty provider list a
+  // typo in the gate table rather than a shape the message has to render.
+  let providers: string[] = targets_providing(v.capability);
+  let list: string = "";
+  let i: i32 = 0;
+  while (i < providers.len()) {
+    if (i > 0) {
+      list = list + " ";
+    }
+    list = list + providers[i];
+    i = i + 1;
+  }
+  return "target \"" + v.target + "\" does not provide `" + v.capability + "`, required by `"
+    + v.builtin + "`" + where + "; targets providing it: [" + list + "]";
+}

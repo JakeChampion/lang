@@ -46,7 +46,7 @@ runs:
       uses: actions/cache/restore@v6
       with:
         path: ${{ steps.dir.outputs.dir }}/*.driverbin
-        key: selfhost-drivers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bootstrap/stage0.lock', 'examples/self_host/**', 'internal/stdlib/**') }}
+        key: selfhost-drivers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bootstrap/stage0.lock', 'compiler/**', 'internal/stdlib/**') }}
         restore-keys: |
           selfhost-drivers-v1-${{ runner.os }}-${{ runner.arch }}-
     - name: Restore the stage0-built drivers, and save them when the job ends
@@ -54,7 +54,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ steps.dir.outputs.dir }}/*.driverbin
-        key: selfhost-drivers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bootstrap/stage0.lock', 'examples/self_host/**', 'internal/stdlib/**') }}
+        key: selfhost-drivers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bootstrap/stage0.lock', 'compiler/**', 'internal/stdlib/**') }}
         restore-keys: |
           selfhost-drivers-v1-${{ runner.os }}-${{ runner.arch }}-
     - name: Drop drivers no run has needed for a week

@@ -160,7 +160,7 @@ Rules:
 ## The self-host port
 
 The self-hosted compiler carries its own copy of phases 1 and 2 in
-`examples/self_host/caps.fern` (#6634) — vocabulary, builtin
+`compiler/caps.fern` (#6634) — vocabulary, builtin
 classification, the reachability walk, the report, and E070 — because
 it cannot import Go. `fern.fern` runs the report behind
 `-capabilities` and enforcement on the compile / `-check` / `-interp`

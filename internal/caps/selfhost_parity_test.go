@@ -9,7 +9,7 @@ import (
 )
 
 // The self-host compiler carries its own copy of this package
-// (examples/self_host/caps.fern, #6634) because it cannot import Go. Two
+// (compiler/caps.fern, #6634) because it cannot import Go. Two
 // copies of a classification is exactly the shape CLAUDE.md warns about: a new
 // builtin needs classifying in both capability systems, and the way that goes
 // wrong is one side being updated and the other not — silently, because
@@ -22,10 +22,10 @@ import (
 // to be low enough that it runs on every change to this file.
 //
 // The behaviour on top of the table — reachability, the report, the E070
-// text — is pinned by examples/self_host/caps_run.fern and by the
+// text — is pinned by compiler/caps_run.fern and by the
 // native/self-host differential in internal/e2eselfhost.
 
-const selfHostCapsSrc = "../../examples/self_host/caps.fern"
+const selfHostCapsSrc = "../../compiler/caps.fern"
 
 func readSelfHostCaps(t *testing.T) string {
 	t.Helper()
@@ -189,7 +189,7 @@ func TestSelfHostRegistryFullyClassified(t *testing.T) {
 // contract is measured against.
 func selfHostBuiltinRegistry(t *testing.T) map[string]bool {
 	t.Helper()
-	const parserSrc = "../../examples/self_host/parser.fern"
+	const parserSrc = "../../compiler/parser.fern"
 	b, err := os.ReadFile(parserSrc)
 	if err != nil {
 		t.Fatalf("reading %s: %v", parserSrc, err)

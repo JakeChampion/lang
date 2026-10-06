@@ -25,7 +25,7 @@ func TestSelfHostStreqHelperGap(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
+	leb, err := os.ReadFile("../../compiler/watbin.fern")
 	if err != nil {
 		t.Fatalf("read watbin.fern: %v", err)
 	}

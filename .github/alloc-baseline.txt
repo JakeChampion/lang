@@ -3,7 +3,7 @@
 #
 # FORMAT: metric  value  [tolerance%]. The metric key is
 # <arch>/<subject>.<allocs|frees> — heap events the compiler performed while
-# compiling examples/self_host/checker.fern against internal/stdlib, counted by
+# compiling compiler/checker.fern against internal/stdlib, counted by
 # a FERN_LEAKCHECK-instrumented build (scripts/selfhost-alloc-bench).
 #
 # EXACT FOR A GIVEN CHECKOUT PATH, and that qualifier is the whole subtlety

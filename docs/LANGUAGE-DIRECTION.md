@@ -695,7 +695,7 @@ Deferred to a follow-up:
 > check** (`E063`) backs the contract: returning a `[T]` slice that
 > views function-local storage is now a checker error, in both the
 > native compiler (`internal/checker` `checkSliceEscape`) and the
-> self-hosted checker (`examples/self_host/checker.fern` `slc_walk`).
+> self-hosted checker (`compiler/checker.fern` `slc_walk`).
 
 - **`arena { … }` block shipped.** Sugar for `arena_save() →
   body → arena_restore()` so the bump-allocator cursor snaps
@@ -791,7 +791,7 @@ Deferred to a follow-up:
   (c) returning the owned array (`T[]`) itself, which is a move.
   The rule lives in both compilers — `checkSliceEscape` in
   `internal/checker/checker.go` and `slc_walk` /
-  `slice_escape_diags` in `examples/self_host/checker.fern` —
+  `slice_escape_diags` in `compiler/checker.fern` —
   and the self-host port is held to byte-for-byte code parity
   with the native checker by the differential gate in
   `internal/e2e/self_host_checker_codes_test.go`. `fern explain

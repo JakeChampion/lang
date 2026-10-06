@@ -11,7 +11,7 @@ import (
 )
 
 // TestSelfHostELFSymtab exercises the self-host ELF section-header and
-// .symtab writer (examples/self_host/elf.fern, #6637) — the layer that
+// .symtab writer (compiler/elf.fern, #6637) — the layer that
 // makes a self-host-built binary readable by nm, a debugger and a
 // profiler, which today it is not.
 //

@@ -136,7 +136,7 @@ spans its 16-rounded size, so a block above 2 KiB, where a class rounds to
 three significant bits, could come back from `__alloc` larger than the bytes
 behind it. `read_file` and `read_file_bytes` also free the buffer they
 outgrow. An allocation-heavy loop over structs and arrays holds flat:
-`examples/bench/pmap_insert.fern` holds at 2 MB peak RSS from 1000 to 8000
+`bench/pmap_insert.fern` holds at 2 MB peak RSS from 1000 to 8000
 entries where it was 4 / 8 / 16 / 32 MB before (#8069), the same as the flat
 build.
 
@@ -174,7 +174,7 @@ piece in place, and the same invariant is what lets `__fern_str_dec` free at
 rc == 1 — base `ptr-8`, `len+8` bytes, a class the block always covers. The
 lift hands `__fern_str_append` through unchanged and releases the slice an
 unfused `__fern_str_append_range` borrows. On x86-64
-`examples/bench/string_build.fern` went from 178 ms to 71 ms with the append
+`bench/string_build.fern` went from 178 ms to 71 ms with the append
 and to 27 ms with the free, against the flat backend's 17 ms; arm64ssa got
 the same two helpers the same day, once its producers moved onto `__alloc`.
 

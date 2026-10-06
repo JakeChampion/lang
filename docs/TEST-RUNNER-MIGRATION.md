@@ -37,7 +37,7 @@ self-hosting; ~26% (22 files) likely stays Go forever.
 
 ## A) Already migrated
 
-Fern versions live in `examples/tests/*_migrated_test.fern`
+Fern versions live in `tests/stdlib/*_migrated_test.fern`
 with `TestRunner*MigratedExample` gates. Originals stay
 live until the wider campaign cuts over.
 
@@ -108,7 +108,7 @@ its own module), every case in this category becomes
 
 ## D) Self-host Fern programs
 
-The `examples/self_host/*.fern` files are the Go
+The `compiler/*.fern` files are the Go
 compiler stages (lexer, parser, checker, IR passes,
 codegen) re-implemented in Fern. The Go tests for
 those (`self_host_*_test.go`) are **cross-backend
@@ -254,7 +254,7 @@ get rewritten in Fern, which isn't a stated goal.
 ## G) Test-runner gate itself
 
 `internal/e2e/test_runner_test.go` — the file that
-runs every `examples/tests/*.fern` through `Fern
+runs every `tests/stdlib/*.fern` through `Fern
 -interp` and pins TAP outputs. **Collapses to a shell
 wrapper post-self-host** (`fern test_dir/*.fern` would
 just be the test command).
@@ -283,7 +283,7 @@ hardest:
    ships in `std/compiler/<pass>`. Order: lexer → parser
    → checker → IR-passes → codegen, mirroring the
    self-host stage order in
-   `examples/self_host/`.
+   `compiler/`.
 4. **B) Remaining `interp_script_test.go`**. ~3 cases
    plus `check_test.go` — pure ergonomic improvements
    (subprocess shape stays). Pick up alongside the
@@ -294,7 +294,7 @@ hardest:
 For reference, the Fern assertion surface that's
 already in place — every entry has a Go-suite
 analogue and the migration playbook in
-`examples/tests/string_prelude_migrated_test.fern`
+`tests/stdlib/string_prelude_migrated_test.fern`
 (et al) shows how the shapes line up:
 
 - Numeric: i32 / i64 / u32 / u64 / f32 / f64 eq/neq/

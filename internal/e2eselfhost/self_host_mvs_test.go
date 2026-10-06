@@ -9,7 +9,7 @@ import (
 )
 
 // TestSelfHostMvsRules exercises the self-host's Minimum Version Selection
-// (examples/self_host/mvs.fern, #6640) — the port of native's internal/mvs,
+// (compiler/mvs.fern, #6640) — the port of native's internal/mvs,
 // and the first slice of the package-manager surface.
 //
 // The driver restates each internal/mvs test: the same index, the same

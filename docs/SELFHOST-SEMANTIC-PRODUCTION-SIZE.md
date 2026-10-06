@@ -90,7 +90,7 @@ FERN_REQUIRE_X86_64_TOOLING=1 FERN_WARM_DRIVER="$driver_names" \
   go test ./internal/e2eselfhost -run '^TestSelfHostWarmStockDriver$' -count=1 -v
 ```
 
-For the same-source attribution, copy `examples/self_host/*.fern` into a
+For the same-source attribution, copy `compiler/*.fern` into a
 temporary project with `fullSelfHostProject(t)`. Replace only the body of
 `semlower.target_substitution` in that copy with `return ircore.no_sub();`, then build
 `fern.fern` with `cachedDriverBin(t, "", dir, "fern.fern")` and stat the

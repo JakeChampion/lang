@@ -74,7 +74,7 @@ with tests.
 
 ## How the AST backend does closures (the reference implementation)
 
-References are to `examples/self_host/wasm.fern` unless noted; the
+References are to `compiler/wasm.fern` unless noted; the
 x86-64 mirror is `asm.fern`, arm64 is `asm_arm64.fern`, shared frontend
 `asmcore.fern`.
 

@@ -8,7 +8,7 @@ import (
 	"github.com/jakechampion/lang/internal/x86tbl"
 )
 
-const x86NativeFern = "../../examples/self_host/x86_native.fern"
+const x86NativeFern = "../../compiler/x86_native.fern"
 
 // TestGeneratedFernIsUpToDate is the gate that makes the shared table real. It
 // is not enough to generate the Fern side once: if someone edits either the

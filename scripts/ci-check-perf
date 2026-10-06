@@ -29,7 +29,7 @@
 # recorded: 82% for six days, warned every run.
 #
 # Both escalations, and their independence from the tolerance, are pinned by
-# tools/perf-gate-selftest.mjs, which runs this script as a subprocess and
+# scripts/perf-gate-selftest.mjs, which runs this script as a subprocess and
 # checks real exit statuses. Before it, nothing tested this comparator at all.
 #
 # BOTH DIRECTIONS. A win is reported too. Leaving the baseline high after an
@@ -52,7 +52,7 @@ TOLERANCE="${FERN_PERF_TOLERANCE_PERCENT:-1}"
 # What the job summary calls this run. The comparator is shared between the
 # instruction-count gate and the append-cliff gate, so the heading has to say
 # which one produced the table.
-LABEL="${FERN_PERF_GATE_LABEL:-examples/bench}"
+LABEL="${FERN_PERF_GATE_LABEL:-bench}"
 
 BASELINE="${1:-}"
 REPORT="${2:-}"

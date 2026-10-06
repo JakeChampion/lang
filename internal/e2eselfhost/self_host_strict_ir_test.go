@@ -557,7 +557,7 @@ function main(): i32 {
 	// `.to_string()` on an INLINE wide cast — `(n as i64).to_string()` — beside
 	// the bound form. Both widths: u64 renders 2^64-1 as the full decimal only if
 	// it keeps the UNSIGNED formatter, so losing the width shows up as 20 vs 2.
-	// Real consumers: examples/tests/{i64,u64}_test.fern's test_to_string_wide.
+	// Real consumers: tests/stdlib/{i64,u64}_test.fern's test_to_string_wide.
 	{"wide-cast-to-string", `import "std/i64";
 import "std/u64";
 function main(): i32 {
@@ -573,7 +573,7 @@ function main(): i32 {
 	// inference does not key. Each StmtVar arm recovers element tags from the
 	// INITIALISER — the method arm keys `tuple_ret_type("<Struct>.<m>")` — so a
 	// method on an Option/Result receiver (std/option's `some.unzip()`, the real
-	// consumer in examples/tests/option_combinators_test.fern) recorded nothing
+	// consumer in tests/stdlib/option_combinators_test.fern) recorded nothing
 	// and `sa.0.unwrap_or(0)` dispatched as `i32.unwrap_or`, an unknown symbol.
 	// The annotation names every element, so it now fills the hole — only when
 	// nothing else did, which is what keeps every self-typing binding's tags
@@ -648,7 +648,7 @@ func strictIRDriver(t *testing.T) (string, []string, string) {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	src, err := os.ReadFile("../../compiler/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}

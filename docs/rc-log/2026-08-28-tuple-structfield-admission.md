@@ -92,7 +92,7 @@ kind of change as widening a gate that merely enables.
 ## The instrument trap this sat on
 
 `bin/fern` is the **native Go** compiler. It does not consume
-`examples/self_host/*.fern`, so it is unchanged by any edit to the
+`compiler/*.fern`, so it is unchanged by any edit to the
 self-host sources. Probes run through it measure the wrong compiler and
 agree with each other for that reason — including a byte-comparison that
 read as "this arm never fires" when it was comparing a binary with itself.

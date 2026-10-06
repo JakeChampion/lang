@@ -50,7 +50,7 @@ how the emitters are observed in isolation
 (docs/TOOLCHAIN-SELF-HOSTING.md). For `wasm32-wasi-http` the
 self-host appends `std/wasi_http`, the entry written in Fern over `@import`
 externs, and composes the core against the embedded proxy world
-(`examples/self_host/wit_compose.fern`).
+(`compiler/wit_compose.fern`).
 
 ## Internal networking syscall floor
 
@@ -381,7 +381,7 @@ The native targets exit 125 when the arena runs out (`.Lalloc_oom` in
 `memory.grow` returning -1, and `$__fern_alloc` raises `unreachable` there —
 so the failure is attributable to the allocator, with its caller chain, but
 the process dies as a trap rather than carrying a status
-(`examples/self_host/wasm_ir.fern`'s `$__fern_alloc`).
+(`compiler/wasm_ir.fern`'s `$__fern_alloc`).
 
 Fix plan: call `$__fern_proc_exit` with 125 instead of trapping. The cost is the
 reason it has not been done — the import-free component core (mode 1 of

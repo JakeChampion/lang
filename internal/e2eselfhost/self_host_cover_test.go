@@ -11,7 +11,7 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// `fern -cover` on the self-host (examples/self_host/cover.fern). The report
+// `fern -cover` on the self-host (compiler/cover.fern). The report
 // contract on both Linux targets is internal/e2e/cover_test.go; these pin what
 // it does not reach: the refusals, FERN_COVER=1, the `||` edge, a lambda body,
 // and a `main` with no result.

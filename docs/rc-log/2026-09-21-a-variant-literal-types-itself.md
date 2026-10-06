@@ -5,7 +5,7 @@ from the very argument being typed, so the destination a `Some(9)` literal is
 produced against is `Option[U]`: the right union, with nothing settled in it.
 `literal_union` preferred that destination over the checker's reading whenever
 the two named the same union, `variant` found it not concrete, and the literal
-was refused — taking `examples/tests/option_combinators_test` with it.
+was refused — taking `tests/stdlib/option_combinators_test` with it.
 
 ## The fix
 
@@ -29,7 +29,7 @@ x86-64, `FERN_SANITIZE=1` + `FERN_LEAKCHECK=1`, native x86-64 as the oracle.
 | program | before | after | typed held |
 |---|---|---|---|
 | `s.and(Some(9))` beside `s.and(other)` | 0 of 52 | 52 of 52, 2 instances | 0 B |
-| `examples/tests/option_combinators_test` | 0 of 196 | 196 of 196, 22 instances | — |
+| `tests/stdlib/option_combinators_test` | 0 of 196 | 196 of 196, 22 instances | — |
 
 Both answer what native answers, on all four targets.
 

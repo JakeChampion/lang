@@ -9,7 +9,7 @@ import (
 )
 
 // TestSelfHostIRKindRegistry exercises the self-hosted stack IR's integer
-// op-kind registry (examples/self_host/ir.fern's kind_id / kind_name /
+// op-kind registry (compiler/ir.fern's kind_id / kind_name /
 // kind_count + the int-keyed classifier predicates, issue #4394 lever 2 —
 // the string->int op-kind conversion foundation).
 //
@@ -110,7 +110,7 @@ func TestSelfHostIROpConstructorTags(t *testing.T) {
 		name, id, _ := strings.Cut(line, "=")
 		ids[name] = id
 	}
-	src, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", "ir.fern"))
+	src, err := os.ReadFile(filepath.Join("..", "..", "compiler", "ir.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}

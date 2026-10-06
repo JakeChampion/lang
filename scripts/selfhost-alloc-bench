@@ -51,7 +51,7 @@ REPORT="${1:-/dev/stdout}"
 # The module compiled to produce the numbers. checker.fern is the workload
 # scripts/cliff-bench and docs/LOCAL-DEV-LOOP.md both quote, so keep it unless
 # the baseline is regenerated in the same commit.
-SUBJECT="${FERN_ALLOC_SUBJECT:-examples/self_host/checker.fern}"
+SUBJECT="${FERN_ALLOC_SUBJECT:-compiler/checker.fern}"
 NAME="$(basename "$SUBJECT" .fern)"
 
 case "$(uname -m)" in
@@ -73,7 +73,7 @@ trap 'rm -rf "$work"' EXIT
 # binary, never bin/fern-selfhost, which callers expect to be the plain one.
 echo "selfhost-alloc-bench: building the instrumented self-host compiler" >&2
 FERN_LEAKCHECK=1 ./bin/fern -target "$TARGET" -o "$work/fern-selfhost-lc" \
-  examples/self_host/fern.fern
+  compiler/fern.fern
 chmod +x "$work/fern-selfhost-lc"
 
 # A compile that died still prints a tally, covering only the fraction of the
@@ -121,7 +121,7 @@ if [ "${FERN_ALLOC_PEAK_RSS:-1}" != "0" ]; then
   done
   if [ -n "$cgbase" ] && mkdir -p "$cgbase/fern-alloc-bench.$$" 2>/dev/null; then
     cg="$cgbase/fern-alloc-bench.$$"
-    ./bin/fern -target "$TARGET" -o "$work/fern-selfhost" examples/self_host/fern.fern
+    ./bin/fern -target "$TARGET" -o "$work/fern-selfhost" compiler/fern.fern
     chmod +x "$work/fern-selfhost"
     bash -c 'echo $$ > "$1/cgroup.procs"; shift; exec "$@"' _ "$cg" \
       "$work/fern-selfhost" -target "$TARGET" -emit asm -o /dev/null "$PWD/$SUBJECT" \

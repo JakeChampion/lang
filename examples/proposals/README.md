@@ -5,7 +5,7 @@ Phase 2 of a proposal (`docs/FERN-PROPOSALS.md`) is: draw a line from
 and ship that file with the PR. This is where it lands, as
 `examples/proposals/<name>.fern`.
 
-These are not curated examples — `examples/cli/` and `examples/tests/` are
+These are not curated examples — `examples/cli/` and `tests/stdlib/` are
 where the deliberately-exemplary programs live. A proposal dump is evidence: the
 program that made the defect visible, kept so the next reader can see what a
 user was actually trying to do when the language got in their way.

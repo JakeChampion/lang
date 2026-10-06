@@ -12,7 +12,7 @@ import (
 )
 
 // The arm64-darwin Mach-O family: a Fern program built from
-// examples/self_host/arm64_native.fern assembles AArch64 machine code, wraps it
+// compiler/arm64_native.fern assembles AArch64 machine code, wraps it
 // in an ad-hoc-signed Mach-O with macho.fern, and writes the raw binary to
 // stdout. Every host checks the bytes parse as an arm64 MH_EXECUTE; Apple
 // Silicon also launches the binary and checks its exit code, which is the only

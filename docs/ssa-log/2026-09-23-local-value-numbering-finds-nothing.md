@@ -20,8 +20,8 @@ without the pass, 2026-09-23:
 
 | subject | without | with | saved |
 |---|---|---|---|
-| `examples/self_host/checker.fern` | 479,522 | 479,303 | 219 (0.05%) |
-| `examples/bench`, all 29 programs | 84,055 | 84,041 | 14 |
+| `compiler/checker.fern` | 479,522 | 479,303 | 219 (0.05%) |
+| `bench`, all 29 programs | 84,055 | 84,041 | 14 |
 
 Compile time of `checker.fern` moved inside the noise (12.85 s against
 12.66 s, one run each).

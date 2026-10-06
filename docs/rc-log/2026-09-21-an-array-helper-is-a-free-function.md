@@ -1,6 +1,6 @@
 # 2026-09-21 — an array helper is a free function
 
-`examples/tests/array_combinators_test` produced **0 of its 211 declarations**
+`tests/stdlib/array_combinators_test` produced **0 of its 211 declarations**
 on one call:
 
 ```fern
@@ -46,7 +46,7 @@ x86-64, `FERN_SANITIZE=1` + `FERN_LEAKCHECK=1`.
 
 | program | before | after |
 |---|---|---|
-| `examples/tests/array_combinators_test` | 0 of 211 | **211 of 211**, and 5 of 5 instances |
+| `tests/stdlib/array_combinators_test` | 0 of 211 | **211 of 211**, and 5 of 5 instances |
 
 It passes 24 of 24.
 

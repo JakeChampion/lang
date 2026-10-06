@@ -336,7 +336,7 @@ function __sysv_sum_absorb(s: SysvSum, bs: [u8]): SysvSum {
 // `s.count_byte(b)` is string-only and there is no `[u8]` counterpart.
 //
 // The two must agree byte for byte, and what pins them is
-// examples/tests/hash_checksums_test.fern: it streams the 10,003-byte
+// tests/stdlib/hash_checksums_test.fern: it streams the 10,003-byte
 // non-UTF-8 pattern through BOTH and compares the results.
 // Read the byte count directly from chunk. as_bytes() also answers it without
 // copying, but this string-only kernel already has the source descriptor.

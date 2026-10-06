@@ -1,6 +1,6 @@
 # 2026-09-21 — a chained receiver keeps its instantiation
 
-`examples/tests/ndarray_test` did not compile on the self-host. Not "fell back
+`tests/stdlib/ndarray_test` did not compile on the self-host. Not "fell back
 to the AST lowering" — did not build, on either leg:
 
 ```

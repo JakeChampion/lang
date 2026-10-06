@@ -159,7 +159,7 @@ change.
 ## Reference
 
 - `docs/IR-SELFCOMPILE-OOM-FINDINGS.md` — measurement + breakdown.
-- `examples/self_host/irlower.fern:255` — `(s) emit(op)`.
-- `examples/self_host/irlower.fern:12854` — `lower_func` (seeds state).
+- `compiler/irlower.fern:255` — `(s) emit(op)`.
+- `compiler/irlower.fern:12854` — `lower_func` (seeds state).
 - #3554 — why the union (`OpsBuilder`) route is AST-backend-blocked;
   both plans here are non-union and avoid it.

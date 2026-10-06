@@ -15,7 +15,7 @@ import (
 )
 
 // TestSelfHostArm64DarwinBuilds exercises the self-hosted compiler's
-// arm64-darwin (Mach-O) target — examples/self_host/fern.fern's
+// arm64-darwin (Mach-O) target — compiler/fern.fern's
 // `-target arm64-darwin`. Since the flip (slice 3q) this path is fully
 // in-process: asm_arm64.darwinize emits the GAS text, and arm64_native
 // assembles + links + signs the Mach-O binary directly — no `.s`, no

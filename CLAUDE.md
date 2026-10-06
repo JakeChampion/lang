@@ -155,10 +155,10 @@ one FIFO queue: a PR's lanes run in parallel, PRs wait their turn, and a push
 to a PR cancels its older run the moment it lands. Wait time is queue
 position, not runner scarcity.
 
-**Don't push while your run is in flight.** The cancelled run's work is lost: on
-2026-09-22 runs cancelled by a follow-up push were 28% of all runner time.
-Unless the run is already red, batch the next fixes, review nits included, into
-one push after it reports.
+**Push as soon as a fix is ready.** Do not hold a validated commit back to let
+an in-flight run finish: the push cancels the older run, and that is accepted.
+Fixes you already have in hand, review nits included, go out in one push rather
+than one each.
 
 **One red lane cancels the rest.** When a lane concludes `failure` the rest of
 the run is cancelled to hand the lock to the next PR — so a red PR shows one
@@ -257,7 +257,7 @@ deleted by 2026-10-05; the tracker that governed both (#4451) is closed. What
 Go keeps in `internal/` — the parser, checker and interpreter the oracle needs,
 plus `-fmt`, the LSP and the package and literate tools — accepts bugfixes,
 oracle needs, and what those tools need to read the language. A language
-feature lands in `examples/self_host/` first; the Go front end and interpreter
+feature lands in `compiler/` first; the Go front end and interpreter
 learn it so the differentials can check it, never as a feature of their own.
 The bootstrap's "Go 1.4 rule" now binds the pin: the compiler's own sources may
 use a construct only once a published stage0 can compile it
@@ -395,7 +395,7 @@ it.
   the project migrates to once Go-side `*_test.go` files retire. Programs
   `import "std/test";` and call qualified (`test.test_new`, `test.assert_eq`,
   `test.fail`, …) with the type written `test.TestRunner`; receiver methods
-  (`.it`, `.finish`) stay bare. Examples in `examples/tests/`; the Go-side gate is
+  (`.it`, `.finish`) stay bare. Examples in `tests/stdlib/`; the Go-side gate is
   `internal/e2e/test_runner_test.go`. **When adding an assertion helper, add a
   case to `runner_self_test.fern` covering both the passing and the failing
   path** — the failure-reporting contract (predicate name in the message, actual
@@ -425,8 +425,8 @@ it.
   `internal/caps` gates what a *package* may reach — `docs/PACKAGE-CAPABILITIES-BRIEF.md`.
   **A new builtin usually needs classifying in both**; a completeness test in each
   fails when one is missed. The self-host mirrors both — the target half in
-  `examples/self_host/platforms.fern`, the package half in
-  `examples/self_host/caps.fern` — each pinned entry-for-entry by a parity test
+  `compiler/platforms.fern`, the package half in
+  `compiler/caps.fern` — each pinned entry-for-entry by a parity test
   in the Go package it mirrors, so **a new builtin is now four classifications**.
 
 ## Keeping this file small

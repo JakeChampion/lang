@@ -44,7 +44,7 @@ it.
   loop; `Host.reactor` is stored and never read, and `Host.http` blocks in
   `tcp_recv_deadline` through `fetch.send_public_on`.
 - Both IRs are structured stack machines (`OpBlock` / `OpLoop` / `OpIf` /
-  `OpBr`), not CFGs: `internal/ir` natively, `examples/self_host/ir.fern`
+  `OpBr`), not CFGs: `internal/ir` natively, `compiler/ir.fern`
   below the typed pipeline (`semsource` → `ssasem` → `ssarc` → stack IR).
   Perceus is emitted during lowering, so a pass over the stack IR sees
   `OpRcInc` / `OpRcDec` already in the stream.
@@ -417,7 +417,7 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    writes `Task`, `task_start` / `task_resume` / `task_cancel` and `suspend`
    over them), the runtime in `asmcore.rt_src_task` over a `.bss` state block,
    the classifier and the unwind/rewind pass in
-   `examples/self_host/suspend.fern`, run from `ssarc.lower` before the
+   `compiler/suspend.fern`, run from `ssarc.lower` before the
    peepholes on the rows `semlower` marks. Gate: `TestSelfHostTaskScheduler`
    (a function three calls deep parks twice inside a loop and a branch, driven
    by hand, x86-64 and arm64). The Go compiler and the interp carry
@@ -437,7 +437,7 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    compiler's x86-64 and arm64 and the self-host's x86-64, arm64 and wasm
    all answer the same bytes, and the fixture legs, the leak census and
    the known-divergence files hold them there) and
-   `examples/tests/async_combinators_test.fern` in both the interpreter's
+   `tests/stdlib/async_combinators_test.fern` in both the interpreter's
    runner gate and the self-host stdtest list. The `…Fallback` twins that
    pinned what the Go compiler's blocking fallback answers differently went
    with its compile path (step 6 of `docs/NATIVE-RETIREMENT.md`).

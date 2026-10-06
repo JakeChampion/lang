@@ -1,0 +1,349 @@
+import "std/test";
+import "std/http";
+import "std/stream";
+import "std/utf8" as utf8;
+
+// tests/stdlib/http_request_body_stream_test.fern —
+// `HttpRequest.body` is a `Stream` (docs/PLATFORM-RESEARCH.md
+// Rec §4, the issue-#4414 item).
+//
+// The point of the migration is that a handler no longer has to
+// materialise a whole upload to look at it: it takes
+// `req.body_stream()` and drives std/stream's cursor readers,
+// rebinding the Stream each step. These pin that path against
+// bodies that came off the wire through http_parse_request.
+//
+// They also pin the property the whole-body readers claim: each
+// reads the backing buffer, not the cursor, so `body_string()`
+// answers the same thing however far a separate walk has
+// advanced. A reader that quietly consumed the stream would make
+// the second call in a handler return "" — the failure this
+// distinction exists to prevent.
+
+// `wire(body)` — a POST whose Content-Length frames `body`.
+// `body_text(req)` — the body as text, or what `body_string` refused.
+function body_text(req: HttpRequest): string {
+  match (req.body_string()) {
+    Ok(text) => {
+      return text;
+    },
+    Err(e) => {
+      return "<not utf-8>";
+    }
+  }
+  return "<not utf-8>";
+}
+
+function wire(body: string): string {
+  return "POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: " + body.len().to_string() + "\r\n\r\n" + body;
+}
+
+function parsed(body: string): HttpRequest {
+  match (http.http_parse_request(wire(body))) {
+    Some(req) => {
+      return req;
+    },
+    None => {
+      return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder(), trailers: req_headers_placeholder() };
+    }
+  }
+  return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder(), trailers: req_headers_placeholder() };
+}
+
+function req_headers_placeholder(): HeaderMap {
+  return HeaderMap { names: [], values: [] };
+}
+
+// `scripted(chunks)` — a source answering `chunks` one at a time, then
+// None: a streamed body as std/serve's pull hands it over.
+function scripted(chunks: string[]): BodySource {
+  let at: Cell[i32] = cell_new(0);
+  return BodySource {
+    next: (): Option[u8[]] => {
+      let k: i32 = at.get();
+      if (k >= chunks.len()) {
+        return None;
+      }
+      at.set(k + 1);
+      return Some(chunks[k].bytes());
+    },
+    fault: cell_new(0),
+  };
+}
+
+// `faulting(chunks, status)` — `scripted`, ending in a fault after the
+// last chunk, as a body past its cap or stalled does.
+function faulting(chunks: string[], status: i32): BodySource {
+  let at: Cell[i32] = cell_new(0);
+  let fault: Cell[i32] = cell_new(0);
+  return BodySource {
+    next: (): Option[u8[]] => {
+      let k: i32 = at.get();
+      if (k >= chunks.len()) {
+        fault.set(status);
+        return None;
+      }
+      at.set(k + 1);
+      return Some(chunks[k].bytes());
+    },
+    fault: fault,
+  };
+}
+
+function sourced(src: BodySource, content_length: string): HttpRequest {
+  let h: HeaderMap = HeaderMap { names: [], values: [] };
+  if (content_length.len() > 0) {
+    h = h.set("content-length", content_length);
+  }
+  return HttpRequest { method: "POST", path: "/upload", body: stream.stream_from_source(src), headers: h, trailers: req_headers_placeholder() };
+}
+
+function test_body_stream_carries_the_body(): test.TestOutcome {
+  let (all, rest) = parsed("hello").body_stream().read_all_string();
+  return test.assert_is_some_eq_string(all, "hello");
+}
+
+function test_body_stream_starts_at_the_beginning(): test.TestOutcome {
+  return test.assert_eq(parsed("hello").body_stream().remaining(), 5);
+}
+
+function test_empty_body_is_an_empty_stream(): test.TestOutcome {
+  let s: Stream = parsed("").body_stream();
+  return test.assert_eq(s.len(), 0);
+}
+
+// The upload shape the migration is for: read one line at a time
+// rather than the whole body.
+function test_read_line_walks_the_body(): test.TestOutcome {
+  let s: Stream = parsed("alpha\nbeta\ngamma").body_stream();
+  let seen: string = "";
+  let n: i32 = 0;
+  while (n < 4) {
+    let (line, next) = s.read_line();
+    s = next;
+    match (line) {
+      Some(l) => {
+        seen = seen + "[" + l + "]";
+      },
+      None => {
+        n = 4;
+      }
+    }
+    n = n + 1;
+  }
+  return test.assert_eq(seen, "[alpha][beta][gamma]");
+}
+
+function test_read_n_takes_a_prefix(): test.TestOutcome {
+  let (head, rest) = parsed("hello world").body_stream().read_n(5);
+  return test.assert_eq(string_from_bytes_unchecked(head), "hello");
+}
+
+function test_read_n_leaves_the_remainder(): test.TestOutcome {
+  let (head, rest) = parsed("hello world").body_stream().read_n(5);
+  let (tail, done) = rest.read_all_string();
+  return test.assert_is_some_eq_string(tail, " world");
+}
+
+// The whole-body readers answer for the buffer, not the cursor.
+function test_body_string_ignores_a_partial_walk(): test.TestOutcome {
+  let req: HttpRequest = parsed("hello world");
+  let (head, rest) = req.body_stream().read_n(5);
+  return test.assert_eq(body_text(req), "hello world");
+}
+
+function test_body_len_ignores_a_partial_walk(): test.TestOutcome {
+  let req: HttpRequest = parsed("hello world");
+  let (line, rest) = req.body_stream().read_line();
+  return test.assert_eq(req.body_len(), 11);
+}
+
+function test_body_bytes_matches_body_len(): test.TestOutcome {
+  let req: HttpRequest = parsed("hello");
+  return test.assert_eq(req.body_bytes().len(), req.body_len());
+}
+
+// A request with no body at all still answers every reader.
+function test_bodyless_request_reads_empty(): test.TestOutcome {
+  match (http.http_parse_request("GET / HTTP/1.0\r\n\r\n")) {
+    Some(req) => {
+      return test.assert_eq(body_text(req) + "/" + req.body_len().to_string(), "/0");
+    },
+    None => {
+      return test.fail("well-formed request wrongly rejected");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// The text readers over a stream of bytes that are not UTF-8: the line
+// reads with U+FFFD in place of the bad byte (`read_line` has no arm to
+// refuse into), and `body_string` refuses.
+function test_ill_formed_bytes_read_as_replacement(): test.TestOutcome {
+  let fffd: string = utf8.utf8_encode(65533 as char);
+  let raw: string = string_from_bytes_unchecked([97 as u8, 255 as u8, 10 as u8, 98 as u8]);
+  let req: HttpRequest = parsed(raw);
+  let (line, rest) = req.body_stream().read_line();
+  match (line) {
+    Some(l) => {
+      if (l != "a" + fffd) {
+        return test.fail("read_line: " + l);
+      }
+    },
+    None => {
+      return test.fail("read_line: None");
+    }
+  }
+  let (tail, done) = rest.read_all_string();
+  match (tail) {
+    Some(t) => {
+      if (t != "b") {
+        return test.fail("read_all_string: " + t);
+      }
+    },
+    None => {
+      return test.fail("read_all_string refused the valid remainder");
+    }
+  }
+  match (req.body_string()) {
+    Ok(text) => {
+      return test.fail("body_string accepted ill-formed bytes");
+    },
+    Err(e) => {
+      return test.assert_eq(e.to_response().status, 400);
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_sourced_read_all_joins_the_chunks(): test.TestOutcome {
+  let (all, rest) = stream.stream_from_source(scripted(["ab", "cd", "e"])).read_all_string();
+  return test.assert_is_some_eq_string(all, "abcde");
+}
+
+function test_sourced_read_line_spans_chunks(): test.TestOutcome {
+  let s: Stream = stream.stream_from_source(scripted(["al", "pha\r\nbe", "ta\n", "gam", "ma"]));
+  let seen: string = "";
+  let n: i32 = 0;
+  while (n < 5) {
+    let (line, next) = s.read_line();
+    s = next;
+    match (line) {
+      Some(l) => {
+        seen = seen + "[" + l + "]";
+      },
+      None => {
+        n = 5;
+      }
+    }
+    n = n + 1;
+  }
+  return test.assert_eq(seen, "[alpha][beta][gamma]");
+}
+
+function test_sourced_read_n_spans_chunks(): test.TestOutcome {
+  let (head, rest) = stream.stream_from_source(scripted(["ab", "cd", "e"])).read_n(3);
+  let (tail, done) = rest.read_all_string();
+  return test.assert_eq(string_from_bytes_unchecked(head) + "|" + option_text(tail), "abc|de");
+}
+
+function option_text(o: Option[string]): string {
+  match (o) {
+    Some(s) => {
+      return s;
+    },
+    None => {
+      return "<none>";
+    }
+  }
+  return "<none>";
+}
+
+function test_sourced_read_byte_ends(): test.TestOutcome {
+  let s: Stream = stream.stream_from_source(scripted(["x"]));
+  let (first, s2) = s.read_byte();
+  let (second, s3) = s2.read_byte();
+  let got: string = "";
+  match (first) {
+    Some(b) => {
+      got = got + b.to_string();
+    },
+    None => {
+      got = got + "none";
+    }
+  }
+  match (second) {
+    Some(b) => {
+      got = got + "," + b.to_string();
+    },
+    None => {
+      got = got + ",none";
+    }
+  }
+  return test.assert_eq(got, "120,none");
+}
+
+function test_sourced_body_string_drains(): test.TestOutcome {
+  return test.assert_eq(body_text(sourced(scripted(["hel", "lo"]), "5")), "hello");
+}
+
+function test_sourced_body_len_is_declared(): test.TestOutcome {
+  let declared: i32 = sourced(scripted(["hel", "lo"]), "5").body_len();
+  let chunked: i32 = sourced(scripted(["hel", "lo"]), "").body_len();
+  return test.assert_eq(declared.to_string() + "," + chunked.to_string(), "5,-1");
+}
+
+function test_sourced_fault_is_ended_early(): test.TestOutcome {
+  match (sourced(faulting(["par", "tial"], 413), "99").body_string()) {
+    Ok(text) => {
+      return test.fail("read " + text);
+    },
+    Err(e) => {
+      match (e) {
+        EndedEarly(status) => {
+          return test.assert_eq(status, 413);
+        },
+        _ => {
+          return test.fail("not EndedEarly");
+        }
+      }
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_ended_early_to_response(): test.TestOutcome {
+  let stalled: http.BodyError = EndedEarly(408);
+  let abandoned: http.BodyError = EndedEarly(0 - 2);
+  return test.assert_eq(stalled.to_response().status.to_string() + "," + abandoned.to_response().status.to_string(), "408,500");
+}
+
+function test_in_memory_stream_has_no_fault(): test.TestOutcome {
+  let (all, rest) = parsed("hello").body_stream().read_all();
+  return test.assert_eq(rest.fault(), 0);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("HttpRequest.body as a Stream");
+  r = r.it("body_stream carries the body", test_body_stream_carries_the_body);
+  r = r.it("body_stream starts at the beginning", test_body_stream_starts_at_the_beginning);
+  r = r.it("an empty body is an empty stream", test_empty_body_is_an_empty_stream);
+  r = r.it("read_line walks the body", test_read_line_walks_the_body);
+  r = r.it("read_n takes a prefix", test_read_n_takes_a_prefix);
+  r = r.it("read_n leaves the remainder", test_read_n_leaves_the_remainder);
+  r = r.it("body_string ignores a partial walk", test_body_string_ignores_a_partial_walk);
+  r = r.it("body_len ignores a partial walk", test_body_len_ignores_a_partial_walk);
+  r = r.it("body_bytes matches body_len", test_body_bytes_matches_body_len);
+  r = r.it("a bodyless request reads empty", test_bodyless_request_reads_empty);
+  r = r.it("ill-formed bytes read as U+FFFD", test_ill_formed_bytes_read_as_replacement);
+  r = r.it("a sourced stream reads every chunk", test_sourced_read_all_joins_the_chunks);
+  r = r.it("read_line spans a chunk boundary", test_sourced_read_line_spans_chunks);
+  r = r.it("read_n spans a chunk boundary", test_sourced_read_n_spans_chunks);
+  r = r.it("read_byte reaches the end of a sourced stream", test_sourced_read_byte_ends);
+  r = r.it("body_string drains a sourced body", test_sourced_body_string_drains);
+  r = r.it("body_len is the declared length of a sourced body", test_sourced_body_len_is_declared);
+  r = r.it("a fault is EndedEarly with its status", test_sourced_fault_is_ended_early);
+  r = r.it("EndedEarly answers the fault's status", test_ended_early_to_response);
+  r = r.it("an in-memory stream has no fault", test_in_memory_stream_has_no_fault);
+  return r.finish();
+}

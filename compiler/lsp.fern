@@ -1,0 +1,406 @@
+// compiler/lsp.fern — the wire half of `fern -lsp`, the self-host
+// language server (#6641): JSON-RPC 2.0 messages framed by `Content-Length`
+// headers on stdin and stdout, and the LSP shapes the server answers with.
+// What a message asks for — checking a document, formatting one — is
+// fern.fern's business; this module only reads and writes the protocol, so
+// it needs nothing of the compiler but util.
+//
+// Positions are where the two sides disagree. Fern counts 1-based lines and
+// 1-based UTF-8 byte columns; LSP counts 0-based lines and 0-based UTF-16
+// code units, its default positionEncoding. The two agree only on an ASCII
+// line, so every position crosses through utf16_col, as native's do (#8468).
+
+import "std/json";
+import "./util";
+
+// Input is stdin and whatever has been read from it past the last frame.
+pub struct Input { r: Reader, pending: string }
+
+pub function stdin_input(): Input {
+  return Input { r: stdin(), pending: "" };
+}
+
+// Frame is one read: a message body, or the end of the session — `done`, with
+// `err` saying why when the stream could not be framed rather than closed.
+pub struct Frame { inp: Input, body: string, done: boolean, err: string }
+
+// fill reads one more chunk of input; false at end of input or on a read
+// error, either of which ends the session.
+function fill(inp: Input): (Input, boolean) {
+  match (inp.r.read_chunk_bytes(65536)) {
+    Ok(chunk) => {
+      if (chunk.len() == 0) {
+        return (inp, false);
+      }
+      return (Input { r: inp.r, pending: inp.pending + string_from_bytes_unchecked(chunk) }, true);
+    },
+    Err(_) => {
+      return (inp, false);
+    }
+  }
+  return (inp, false);
+}
+
+// read_frame reads one message. Input that ends between messages, or inside a
+// header block, is a client hanging up; input that ends inside a body it
+// announced is a broken stream.
+pub function read_frame(inp: Input): Frame {
+  let at: i32 = util.index_of_sub(inp.pending, "\r\n\r\n");
+  while (at < 0) {
+    let (more, ok) = fill(inp);
+    inp = more;
+    if (!ok) {
+      return Frame { inp: inp, body: "", done: true, err: "" };
+    }
+    at = util.index_of_sub(inp.pending, "\r\n\r\n");
+  }
+  let n: i32 = content_length(slice_unchecked(inp.pending, 0, at) + "");
+  if (n < 0) {
+    return Frame { inp: inp, body: "", done: true, err: "missing Content-Length header" };
+  }
+  let start: i32 = at + 4;
+  while (inp.pending.len() - start < n) {
+    let (more, ok) = fill(inp);
+    inp = more;
+    if (!ok) {
+      return Frame { inp: inp, body: "", done: true, err: "input ended inside a message" };
+    }
+  }
+  let body: string = slice_unchecked(inp.pending, start, start + n) + "";
+  let rest: string = slice_unchecked(inp.pending, start + n, inp.pending.len()) + "";
+  return Frame { inp: Input { r: inp.r, pending: rest }, body: body, done: false, err: "" };
+}
+
+// content_length is the value of a header block's Content-Length, or -1 when
+// it has none. Header names are case-insensitive; every other header (the
+// spec's Content-Type is the only one) is ignored.
+function content_length(headers: string): i32 {
+  let n: i32 = 0 - 1;
+  let rest: string = headers;
+  while (rest.len() > 0) {
+    let end: i32 = util.index_of_sub(rest, "\r\n");
+    if (end < 0) {
+      end = rest.len();
+    }
+    let line: string = slice_unchecked(rest, 0, end) + "";
+    let colon: i32 = util.index_of_sub(line, ":");
+    if (colon > 0 && lower_ascii(util.trim(slice_unchecked(line, 0, colon) + "")) == "content-length") {
+      let v: string = util.trim(slice_unchecked(line, colon + 1, line.len()) + "");
+      if (util.is_all_digits(v)) {
+        n = util.digits_to_i32(v);
+      }
+    }
+    if (end + 2 >= rest.len()) {
+      return n;
+    }
+    rest = slice_unchecked(rest, end + 2, rest.len()) + "";
+  }
+  return n;
+}
+
+function lower_ascii(s: string): string {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < s.len()) {
+    let b: i32 = s[i] as i32;
+    if (b >= 65 && b <= 90) {
+      b = b + 32;
+    }
+    out = out.append(b as u8);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+// Message is one decoded JSON-RPC message. `id` is a request's id as JSON
+// text, echoed back verbatim in the response, and empty on a notification.
+pub struct Message { method: string, id: string, params: JsonValue }
+
+// parse_message decodes a frame body, or None when it is not JSON or has no
+// method: a message without one is a response, and this server sends no
+// requests to be answered.
+pub function parse_message(body: string): Option[Message] {
+  match (json.json_parse(body)) {
+    Some(v) => {
+      let method: string = get_string(v, "method");
+      if (method.len() == 0) {
+        return None;
+      }
+      let id: string = "";
+      match (json.json_get(v, "id")) {
+        Some(iv) => {
+          id = json.json_encode(iv);
+        },
+        None => {}
+      }
+      return Some(Message { method: method, id: id, params: get_value(v, "params") });
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// get_value is v's member `key`, or null when v has none.
+pub function get_value(v: JsonValue, key: string): JsonValue {
+  match (json.json_get(v, key)) {
+    Some(m) => {
+      return m;
+    },
+    None => {
+      return JNull;
+    }
+  }
+  return JNull;
+}
+
+// get_string is v's string member `key`, or "" when v has none.
+pub function get_string(v: JsonValue, key: string): string {
+  match (json.json_get_string(v, key)) {
+    Some(s) => {
+      return s;
+    },
+    None => {
+      return "";
+    }
+  }
+  return "";
+}
+
+// document_uri is the `textDocument.uri` every document request and
+// notification names.
+pub function document_uri(params: JsonValue): string {
+  return get_string(get_value(params, "textDocument"), "uri");
+}
+
+// changed_text is a didChange's new document text: the last content change,
+// which under full sync is the whole document. None when there is none.
+pub function changed_text(params: JsonValue): Option[string] {
+  match (json.json_get_array(params, "contentChanges")) {
+    Some(cs) => {
+      if (cs.len() == 0) {
+        return None;
+      }
+      return json.json_get_string(cs[cs.len() - 1], "text");
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// send writes one message, framed. Content-Length counts bytes, which is what
+// a Fern string's len() is.
+pub function send(body: string): void {
+  write("Content-Length: " + util.i32_to_string(body.len()) + "\r\n\r\n" + body);
+}
+
+// response answers request `id` with `result`, a JSON value.
+pub function response(id: string, result: string): string {
+  return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":" + result + "}";
+}
+
+// method_not_found answers a request for a method this server does not
+// implement (JSON-RPC's -32601).
+pub function method_not_found(id: string, method: string): string {
+  return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"error\":{\"code\":-32601,\"message\":" + quote("unknown method: " + method) + "}}";
+}
+
+pub function notification(method: string, params: string): string {
+  return "{\"jsonrpc\":\"2.0\",\"method\":" + quote(method) + ",\"params\":" + params + "}";
+}
+
+function quote(s: string): string {
+  return "\"" + json.json_escape(s) + "\"";
+}
+
+// initialize_result advertises what this server does: full-document sync
+// (every didChange carries the whole text), diagnostics, and formatting.
+pub function initialize_result(): string {
+  return "{\"capabilities\":{\"textDocumentSync\":1,\"documentFormattingProvider\":true},\"serverInfo\":{\"name\":\"fern\"}}";
+}
+
+// publish_diagnostics replaces the diagnostics the client shows for `uri`
+// with `diagnostics`, a JSON array.
+pub function publish_diagnostics(uri: string, diagnostics: string): string {
+  return notification("textDocument/publishDiagnostics", "{\"uri\":" + quote(uri) + ",\"diagnostics\":" + diagnostics + "}");
+}
+
+// json_array joins already-encoded JSON values into an array.
+pub function json_array(items: string[]): string {
+  let out: string = "[";
+  let i: i32 = 0;
+  while (i < items.len()) {
+    if (i > 0) {
+      out = out + ",";
+    }
+    out = out + items[i];
+    i = i + 1;
+  }
+  return out + "]";
+}
+
+// diagnostic is one LSP Diagnostic in document `src`, at Fern's 1-based
+// `line` and byte `col`. With no line it covers nothing at the start of the
+// document; otherwise it covers the one character the position names, as
+// native's does when an error carries no width. `code` is sent only when it
+// is a real diagnostic code — the code a client deep-links, so the checker's
+// "type" marker is not one.
+pub function diagnostic(src: string, line: i32, col: i32, code: string, message: string, warning: boolean): string {
+  let r: string = range_json(0, 0, 0, 0);
+  if (line > 0) {
+    let c: i32 = utf16_col(line_text(src, line), col);
+    r = range_json(line - 1, c, line - 1, c + 1);
+  }
+  let severity: string = "1";
+  if (warning) {
+    severity = "2";
+  }
+  let out: string = "{\"range\":" + r + ",\"severity\":" + severity + ",\"source\":\"fern\"";
+  if (util.is_diagnostic_code(code)) {
+    out = out + ",\"code\":" + quote(code);
+  }
+  return out + ",\"message\":" + quote(message) + "}";
+}
+
+function range_json(l0: i32, c0: i32, l1: i32, c1: i32): string {
+  return "{\"start\":" + position_json(l0, c0) + ",\"end\":" + position_json(l1, c1) + "}";
+}
+
+function position_json(line: i32, character: i32): string {
+  return "{\"line\":" + util.i32_to_string(line) + ",\"character\":" + util.i32_to_string(character) + "}";
+}
+
+// whole_document_edit is a TextEdit replacing all of `src` with `text`. The
+// end position is the last line's length in UTF-16 units, since the client
+// replaces exactly that range and the last line may hold non-ASCII.
+pub function whole_document_edit(src: string, text: string): string {
+  let line: i32 = 0;
+  let last: i32 = 0;
+  let i: i32 = 0;
+  while (i < src.len()) {
+    if (src[i] == b'\n') {
+      line = line + 1;
+      last = i + 1;
+    }
+    i = i + 1;
+  }
+  let tail: string = slice_unchecked(src, last, src.len()) + "";
+  return "{\"range\":" + range_json(0, 0, line, utf16_units(tail, tail.len())) + ",\"newText\":" + quote(text) + "}";
+}
+
+// line_text is src's 1-based line n without its line ending, or "" when src
+// has no such line — which makes a stale position convert as ASCII rather
+// than fail.
+pub function line_text(src: string, n: i32): string {
+  let line: i32 = 1;
+  let start: i32 = 0;
+  let i: i32 = 0;
+  while (i < src.len() && line < n) {
+    if (src[i] == b'\n') {
+      line = line + 1;
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  if (line < n) {
+    return "";
+  }
+  let end: i32 = start;
+  while (end < src.len() && src[end] != b'\n') {
+    end = end + 1;
+  }
+  if (end > start && src[end - 1] == b'\r') {
+    end = end - 1;
+  }
+  return slice_unchecked(src, start, end) + "";
+}
+
+// utf16_col converts a 1-based byte column within `line` to the 0-based UTF-16
+// offset LSP counts. A column past the end of the line clamps to the end.
+pub function utf16_col(line: string, col: i32): i32 {
+  if (col <= 1) {
+    return 0;
+  }
+  let b: i32 = col - 1;
+  if (b > line.len()) {
+    b = line.len();
+  }
+  return utf16_units(line, b);
+}
+
+// utf16_units counts the UTF-16 code units in the first `n` bytes of `s`: one
+// per scalar, and a second for one outside the BMP, which is a 4-byte UTF-8
+// sequence. A continuation byte (10xxxxxx) starts no scalar.
+function utf16_units(s: string, n: i32): i32 {
+  let units: i32 = 0;
+  let i: i32 = 0;
+  while (i < n) {
+    let b: i32 = s[i] as i32;
+    if (b < 128 || b >= 192) {
+      units = units + 1;
+    }
+    if (b >= 240) {
+      units = units + 1;
+    }
+    i = i + 1;
+  }
+  return units;
+}
+
+// uri_path is the filesystem path a file:// URI names, percent-decoded, or ""
+// for any other URI (an untitled buffer, the playground's opaque ones) and
+// for one whose escapes do not decode. The authority, if any, is ignored, as
+// it is by native's url.Parse reading.
+pub function uri_path(uri: string): string {
+  let scheme: string = "file://";
+  if (uri.len() <= scheme.len() || slice_unchecked(uri, 0, scheme.len()) != scheme) {
+    return "";
+  }
+  let rest: string = slice_unchecked(uri, scheme.len(), uri.len()) + "";
+  let slash: i32 = util.index_of_sub(rest, "/");
+  if (slash < 0) {
+    return "";
+  }
+  return percent_decode(slice_unchecked(rest, slash, rest.len()) + "");
+}
+
+// percent_decode undoes a URI's %XX escapes, or returns "" when one is
+// malformed.
+function percent_decode(s: string): string {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < s.len()) {
+    if (s[i] != b'%') {
+      out = out.append(s[i]);
+      i = i + 1;
+      continue;
+    }
+    if (i + 2 >= s.len()) {
+      return "";
+    }
+    let hi: i32 = hex_digit(s[i + 1] as i32);
+    let lo: i32 = hex_digit(s[i + 2] as i32);
+    if (hi < 0 || lo < 0) {
+      return "";
+    }
+    out = out.append((hi * 16 + lo) as u8);
+    i = i + 3;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+function hex_digit(b: i32): i32 {
+  if (b >= 48 && b <= 57) {
+    return b - 48;
+  }
+  if (b >= 97 && b <= 102) {
+    return b - 87;
+  }
+  if (b >= 65 && b <= 70) {
+    return b - 55;
+  }
+  return 0 - 1;
+}

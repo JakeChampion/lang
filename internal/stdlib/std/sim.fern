@@ -156,7 +156,7 @@ pub function sweep_seeds(n: i64, prop: (i64) => boolean): i64 {
 impl async.Driver for Sim {
   function poll_ready(self: Sim, toks: i32[], timeout_ms: i32): i32 {
     // poll_ready — the virtual wait, honouring the real `poll`
-    // contract (examples/self_host/asmcore.fern rt_src_poll):
+    // contract (compiler/asmcore.fern rt_src_poll):
     // the index of the first token to become ready, or -1 on
     // timeout / empty set / no waitable token. The clock advances to
     // whichever of (earliest ready-at, now + timeout) comes first —

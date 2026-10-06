@@ -16,7 +16,7 @@ import (
 
 // --- Line coverage, `fern -cover` (#5548) ------------------------------
 //
-// The self-host's `-cover` (examples/self_host/cover.fern) instruments every
+// The self-host's `-cover` (compiler/cover.fern) instruments every
 // executable source line with a counter and dumps the whole table to stderr
 // at BOTH exit seams (main's return and each exit() call):
 //

@@ -110,7 +110,7 @@ function main(): i32 {
 	// them were already sorted before cloning began and none witnessed that
 	// second range. #6077: an unsorted append there reordered emitted functions
 	// run to run, which reached the binary (two hashes over 12 compiles of
-	// examples/tests/set_test.fern) and silently defeats every byte-identity gate.
+	// tests/stdlib/set_test.fern) and silently defeats every byte-identity gate.
 	// Several type args per level, so a stable order has something to be stable
 	// about.
 	"transitive_worklist": `

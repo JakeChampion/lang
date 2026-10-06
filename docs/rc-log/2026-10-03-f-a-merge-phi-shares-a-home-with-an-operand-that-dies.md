@@ -40,7 +40,7 @@ main at e27069257:
 | `ssa.mate_interferes`, self | 70.7 M | 38.8 M |
 | stage-2 driver | 12,355,208 B | 12,338,976 B |
 
-The thirty `examples/bench` programs built `-O` for x86-64 by each
+The thirty `bench` programs built `-O` for x86-64 by each
 stage0-built driver: 2.9078 G Ir in total either way (−0.0001%), with every
 exit status unchanged. The largest moves are `map_string` +0.22% and
 `sort_ints` −0.25%.

@@ -11,7 +11,7 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
-// Two name lists in examples/self_host/checker.fern mirror a native table and
+// Two name lists in compiler/checker.fern mirror a native table and
 // are pinned to it entry for entry here: registered_intrinsics, the `__` names
 // a free function may not take (E006), and fip_builtin_callees' literal, the
 // builtins a `fip` function may call (fipNonAllocBuiltins, #9607). A name
@@ -23,14 +23,14 @@ var quotedNameRE = regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`)
 // declaration of `fn` in the self-host checker.
 func selfHostNameList(t *testing.T, fn string) []string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", "checker.fern"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "compiler", "checker.fern"))
 	if err != nil {
 		t.Fatalf("read self-host checker.fern: %v", err)
 	}
 	src := string(b)
 	at := strings.Index(src, "function "+fn+"(")
 	if at < 0 {
-		t.Fatalf("cannot find %s in examples/self_host/checker.fern, so this test proves nothing", fn)
+		t.Fatalf("cannot find %s in compiler/checker.fern, so this test proves nothing", fn)
 	}
 	open := strings.Index(src[at:], "[\n")
 	if alt := strings.Index(src[at:], "in ["); alt >= 0 && (open < 0 || alt < open) {

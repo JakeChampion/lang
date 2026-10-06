@@ -1,0 +1,162 @@
+import "std/test";
+
+// tests/stdlib/batch7_test.fern — exercises the additions
+// from the seventh test-runner-migration tranche:
+//   - wider-int relational assertions (lt/le/gt/ge on i64,
+//     u32, u64)
+//   - f64_bits / f64_from_bits
+//   - stat() builtin + assert_is_file / _is_dir / _file_size
+//   - assert_json_eq for order-independent JSON comparison
+
+// ---------- wider-int relational ----------
+
+function test_i64_lt(): test.TestOutcome {
+  return test.assert_lt(5000000000 as i64, 9000000000 as i64);
+}
+
+function test_i64_le(): test.TestOutcome {
+  return test.assert_le(5000000000 as i64, 5000000000 as i64);
+}
+
+function test_i64_gt(): test.TestOutcome {
+  return test.assert_gt(9000000000 as i64, 5000000000 as i64);
+}
+
+function test_i64_ge(): test.TestOutcome {
+  return test.assert_ge(5000000000 as i64, 5000000000 as i64);
+}
+
+function test_u32_lt(): test.TestOutcome {
+  return test.assert_lt(1u32, 4294967295u32);
+}
+
+function test_u64_gt(): test.TestOutcome {
+  return test.assert_gt(18446744073709551615u64, 0u64);
+}
+
+function test_i64_lt_failure_message(): test.TestOutcome {
+  // Confirm the failure message names the violation.
+  match (test.assert_lt(10 as i64, 5 as i64)) {
+    Fail(msg) => {
+      if (!msg.contains("expected \"10\"")) {
+        return test.fail("missing actual value: " + msg);
+      }
+      return test.pass();
+    },
+    Pass => {
+      return test.fail("expected lt_i64(10, 5) to fail");
+    }
+  }
+  return test.pass();
+}
+
+// ---------- f64 bits ----------
+
+function test_f64_bits_round_trip(): test.TestOutcome {
+  // 1.0 as f64 = 0x3FF0000000000000 = 4607182418800017408
+  let x: f64 = 1.0;
+  let bits: i64 = f64_bits(x);
+  return test.assert_eq(bits, 4607182418800017408 as i64);
+}
+
+function test_f64_from_bits_round_trips(): test.TestOutcome {
+  let x: f64 = 3.14;
+  let bits: i64 = f64_bits(x);
+  let back: f64 = f64_from_bits(bits);
+  return test.assert_eq_f64_exact(back, x);
+}
+
+// ---------- stat + file-state ----------
+
+function test_stat_workflow(r: test.TestRunner): test.TestRunner {
+  let (dir, rr) = test.must_temp_dir(r, "batch7-stat");
+  if (dir == "") {
+    return rr;
+  }
+
+  let path: string = dir + "/payload.dat";
+  match (write_file(path, "0123456789")) {
+    Ok(_) => {},
+    Err(_) => {
+      return rr.it("write fixture", () => test.fail("write_file failed"));
+    }
+  }
+
+  rr = rr.it("is_file true", () => test.assert_is_file(path));
+  rr = rr.it("is_dir false on file", () => match_invert_to_pass(test.assert_is_dir(path)));
+  rr = rr.it("file_size matches", () => test.assert_file_size(path, 10 as i64));
+
+  rr = rr.it("is_dir true on dir", () => test.assert_is_dir(dir));
+  rr = rr.it("is_file false on dir", () => match_invert_to_pass(test.assert_is_file(dir)));
+
+  return rr;
+}
+
+// Tiny helper: turn a "this should have failed" expectation
+// into a passing case. Used so the failure messages on the
+// negative cases stay in the example file rather than the
+// test harness.
+function match_invert_to_pass(result: test.TestOutcome): test.TestOutcome {
+  match (result) {
+    Fail(_) => {
+      return test.pass();
+    },
+    Pass => {
+      return test.fail("expected the assertion to fail");
+    }
+  }
+  return test.pass();
+}
+
+// ---------- assert_json_eq ----------
+
+function test_json_simple_equal(): test.TestOutcome {
+  return test.assert_json_eq("{\"a\":1}", "{\"a\":1}");
+}
+
+function test_json_key_order_independent(): test.TestOutcome {
+  return test.assert_json_eq(
+    "{\"a\":1,\"b\":2,\"c\":3}",
+    "{\"c\":3,\"a\":1,\"b\":2}",
+  );
+}
+
+function test_json_nested_arrays(): test.TestOutcome {
+  return test.assert_json_eq(
+    "{\"items\":[1,2,{\"x\":\"y\"}]}",
+    "{\"items\":[1,2,{\"x\":\"y\"}]}",
+  );
+}
+
+function test_json_differing_values_fails(): test.TestOutcome {
+  return match_invert_to_pass(test.assert_json_eq("[1,2,3]", "[1,2,4]"));
+}
+
+function test_json_invalid_actual_fails(): test.TestOutcome {
+  return match_invert_to_pass(test.assert_json_eq("{not json", "{}"));
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("batch 7");
+
+  r = r.it("i64 lt", test_i64_lt);
+  r = r.it("i64 le", test_i64_le);
+  r = r.it("i64 gt", test_i64_gt);
+  r = r.it("i64 ge", test_i64_ge);
+  r = r.it("u32 lt", test_u32_lt);
+  r = r.it("u64 gt", test_u64_gt);
+  r = r.it("i64 lt failure message", test_i64_lt_failure_message);
+
+  r = r.it("f64_bits gives expected pattern", test_f64_bits_round_trip);
+  r = r.it("f64_from_bits round trips", test_f64_from_bits_round_trips);
+
+  r = test_stat_workflow(r);
+
+  r = r.it("json simple equal", test_json_simple_equal);
+  r = r.it("json key order independent", test_json_key_order_independent);
+  r = r.it("json nested arrays", test_json_nested_arrays);
+  r = r.it("json differing values fails", test_json_differing_values_fails);
+  r = r.it("json invalid actual fails", test_json_invalid_actual_fails);
+
+  return r.finish();
+}

@@ -74,7 +74,7 @@ and idempotent, so `class(req_new) == class(req_old)` exactly when
 the tier: below 2048 bytes the capacity IS the request, so a compare and a
 branch go; above it — where an 8 KiB accumulator sits — a `bsr` plus seven
 more instructions on x86-64 and a whole `emitFreelistBin` expansion on wasm
-do. `examples/bench/string_build` never leaves the small tier and falls
+do. `bench/string_build` never leaves the small tier and falls
 0.27%, with exactly ten instructions off the `.text` of every program that
 appends.
 

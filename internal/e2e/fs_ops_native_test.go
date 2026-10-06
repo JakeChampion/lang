@@ -6,7 +6,7 @@
 // native lowering on x86-64 (any TAP file touching them failed
 // with `undefined label "stat"` etc.), and the arm64 backend had
 // NONE of the family — even `remove_dir_all`, so on the default
-// target every examples/tests/*.fern failed at link through
+// target every tests/stdlib/*.fern failed at link through
 // TestRunner.finish()'s cleanup loop. The fix emits the whole
 // family as runtime helpers on both native backends
 // (emitRemoveFileRuntime / emitTempDirRuntime /
@@ -121,7 +121,7 @@ func TestX86_64StatMissingIsErr(t *testing.T) {
 }
 
 // The class-level TAP pin: filesystem_ops_test.fern — the
-// examples/tests suite that exercises temp_dir / read_dir /
+// tests/stdlib suite that exercises temp_dir / read_dir /
 // remove_file / remove_dir_all — must compile through the full
 // CLI pipeline (modload + the in-process assembler) with
 // -target x86-64-linux and pass. Before the fix this failed at link
@@ -133,7 +133,7 @@ func TestX86_64FilesystemOpsTapLinksNatively(t *testing.T) {
 	fern := buildFernCLI(t)
 	out := filepath.Join(t.TempDir(), "fsops_tap")
 	if o, err := exec.Command(fern, "-target", "x86-64-linux", "-o", out,
-		"../../examples/tests/filesystem_ops_test.fern").CombinedOutput(); err != nil {
+		"../../tests/stdlib/filesystem_ops_test.fern").CombinedOutput(); err != nil {
 		t.Fatalf("native compile of filesystem_ops_test.fern failed: %v\n%s", err, o)
 	}
 	var cmd *exec.Cmd
@@ -186,7 +186,7 @@ func TestArm64RemoveDirAllNestedTree(t *testing.T) {
 	}
 }
 
-// The main arm64 pin for #5372: an unmodified examples/tests
+// The main arm64 pin for #5372: an unmodified tests/stdlib
 // TAP file must compile on the DEFAULT target through the full
 // CLI pipeline (modload + the in-process arm64 assembler) and
 // pass. std/test's TestRunner.finish() references
@@ -198,7 +198,7 @@ func TestArm64ArithmeticTapLinksNatively(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
 	out := filepath.Join(t.TempDir(), "arith_tap_arm64")
 	if o, err := exec.Command(fern, "-target", "arm64-linux", "-o", out,
-		"../../examples/tests/arithmetic_test.fern").CombinedOutput(); err != nil {
+		"../../tests/stdlib/arithmetic_test.fern").CombinedOutput(); err != nil {
 		t.Fatalf("native arm64 compile of arithmetic_test.fern failed: %v\n%s", err, o)
 	}
 	cmd := runArm64Bin(qemu, out)

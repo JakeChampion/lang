@@ -7,7 +7,7 @@ date, the gate state on that date, and what changed hands.
 
 ## The gate on the day
 
-`make freeze` (`tools/freeze_gate.sh`) at the commit that wired `make
+`make freeze` (`scripts/freeze_gate.sh`) at the commit that wired `make
 distcheck` into CI:
 
 ```
@@ -53,7 +53,7 @@ above is the first run of it.
   native front end) accepts **bugfixes, oracle needs, and what the self-host
   sources require to bootstrap** — the "Go 1.4 rule" of
   `NATIVE-CONVERGENCE.md §1`. A new language feature lands in
-  `examples/self_host/` first, gated by the fixpoints and the differential
+  `compiler/` first, gated by the fixpoints and the differential
   suites; native gets it only if the self-host sources come to use it.
 - The bootstrap pin on every host is the self-built fixed point
   (`bootstrap.yml`'s publish job uploads `build/bootstrap/stage2`).

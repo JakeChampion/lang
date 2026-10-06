@@ -20,9 +20,9 @@ import (
 // copies, and that is where it reads field OFFSETS and the shapes for
 // chained access from:
 //
-//   - examples/self_host/builtins.fern, `struct` declarations for the
+//   - compiler/builtins.fern, `struct` declarations for the
 //     import-driven driver;
-//   - examples/self_host/parser.fern, which appends StructDecl values
+//   - compiler/parser.fern, which appends StructDecl values
 //     to the table for the paths that never read builtins.fern (the
 //     asm_load_run driver, loading from a stdlib root).
 //
@@ -48,8 +48,8 @@ func TestSelfHostBuiltinStructsMatchChecker(t *testing.T) {
 		parse func(*testing.T, string) map[string]string
 		min   int
 	}{
-		{"../../examples/self_host/builtins.fern", parseFernStructDecls, 4},
-		{"../../examples/self_host/parser.fern", parseInjectedStructDecls, 4},
+		{"../../compiler/builtins.fern", parseFernStructDecls, 4},
+		{"../../compiler/parser.fern", parseInjectedStructDecls, 4},
 	} {
 		t.Run(filepath.Base(m.path), func(t *testing.T) {
 			src, err := os.ReadFile(m.path)

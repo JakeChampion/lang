@@ -369,7 +369,7 @@ callgrind instruction counts on a Mac:
 ```
 scripts/devbox bash -c '
   go build -o /tmp/fernbin/fern ./cmd/fern
-  /tmp/fernbin/fern -target arm64-linux -o /tmp/fernbin/fern-selfhost examples/self_host/fern.fern
+  /tmp/fernbin/fern -target arm64-linux -o /tmp/fernbin/fern-selfhost compiler/fern.fern
   FERN_NATIVE_BIN=/tmp/fernbin/fern FERN_SELFHOST_BIN=/tmp/fernbin/fern-selfhost \
     scripts/array-pipeline-baseline /tmp/report.txt'
 ```

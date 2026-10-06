@@ -12,7 +12,7 @@ import "testing"
 //
 // Worse, the two compilers disagreed about WHICH half was which:
 // `function f(a: i32,)` parsed under the self-host compiler and was rejected
-// natively. The self-host mirror lives in `examples/self_host/parser.fern`
+// natively. The self-host mirror lives in `compiler/parser.fern`
 // (`(p: Par) more_elems`); this table and the self-host leg must stay in
 // step, because a difference here decides a program's legality by which
 // compiler reads it.

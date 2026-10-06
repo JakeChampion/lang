@@ -37,7 +37,7 @@ var lowerWithFixpoints = []string{
 // lowered program.
 func lowerSelfHostFixpoints(t *testing.T, exhaustive bool) ([]fixpointResult, [32]byte) {
 	t.Helper()
-	path := filepath.Join("..", "..", "examples", "self_host", "fern.fern")
+	path := filepath.Join("..", "..", "compiler", "fern.fern")
 	prog, _, err := modload.Load(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)

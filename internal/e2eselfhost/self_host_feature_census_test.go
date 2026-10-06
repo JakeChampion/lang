@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 )
 
-// The self-host feature census (#6993). `examples/self_host/*.fern` is validated
+// The self-host feature census (#6993). `compiler/*.fern` is validated
 // largely by compiling itself, so a language feature the self-host's own sources
 // do not use gets no fixpoint coverage at all — the gate can only prove what the
 // code already exercises. That makes "what does the self-host actually use?" a
@@ -160,7 +160,7 @@ type strippedSource struct {
 
 func selfHostStripped(t *testing.T) []strippedSource {
 	t.Helper()
-	paths, err := filepath.Glob(langSrcAbs(t, filepath.Join("examples", "self_host", "*.fern")))
+	paths, err := filepath.Glob(langSrcAbs(t, filepath.Join("compiler", "*.fern")))
 	if err != nil {
 		t.Fatalf("globbing self-host sources: %v", err)
 	}

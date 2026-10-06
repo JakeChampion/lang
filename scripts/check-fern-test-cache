@@ -7,7 +7,7 @@
 # exec'd opened. Two surfaces here are built that way, and both were blind:
 #
 #   the utility     coreutils/<util>.fern, handed to the fern binary by fernBin
-#   the compiler    examples/self_host/fern.fern, handed to it by selfHostCompiler
+#   the compiler    compiler/fern.fern, handed to it by selfHostCompiler
 #
 # Without e2eharness.TrackFernSources on each, a `.fern` edit leaves the cached
 # result standing: `ok … (cached)`, every subtest reported PASS, nothing
@@ -78,4 +78,4 @@ check_surface() {
 }
 
 check_surface "coreutils/true.fern" '^TestTrueParity$' "a utility's own source"
-check_surface "examples/self_host/ircore.fern" '^TestSelfHostCoreutilsParity$/^true$' "the self-hosted compiler"
+check_surface "compiler/ircore.fern" '^TestSelfHostCoreutilsParity$/^true$' "the self-hosted compiler"

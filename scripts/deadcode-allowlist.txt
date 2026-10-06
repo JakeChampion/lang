@@ -1,0 +1,22 @@
+# deadcode allowlist
+# ===================
+# Unreachable functions that the deadcode gate (scripts/deadcode_gate.sh)
+# is allowed to ignore. Keys are "<pkg-dir>:<func-name>". Keep this list
+# SMALL — the default is to delete dead code, not allowlist it. Every
+# entry needs a reason. New unreachable functions that aren't listed
+# here fail CI.
+
+# Part of the interp Value sum-type interface (String() string). The
+# Builtin variant is dispatched through the Value interface; deleting it
+# removes Builtin from the interface's method set.
+internal/interp:Builtin.String
+
+# Exported entry points / building blocks retained on purpose. These are
+# in internal/ so they have no external importers today, but they are the
+# documented/public-shaped surface of their packages and are kept as
+# deliberate API rather than deleted.
+internal/ir:Lower
+internal/fernsmith:New
+internal/fernsmith:NewWithConfig
+internal/wasm/encode:PutBytes
+internal/wasm/component:PutTypeSectionOneInstanceOneFuncNoResultExport

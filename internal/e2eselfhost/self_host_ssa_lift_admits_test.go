@@ -3,7 +3,7 @@ package e2eselfhost
 import "testing"
 
 // TestSelfHostSSALiftAdmitsEveryOp pins the production lift's admission
-// census (examples/self_host/ssa_lift_admits_run.fern): every registered IR
+// census (compiler/ssa_lift_admits_run.fern): every registered IR
 // op kind reaches the register path, as an instruction of the lift's own or
 // through the stack machine's arm for it, except the ones listed here: a
 // kind with a pop count ir.op_pops does not model cannot be bridged. A new

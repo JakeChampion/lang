@@ -1,0 +1,56 @@
+// compiler/wasm_ir_run.fern — the stdin driver for the wasm IR
+// backend (the wasm sibling of asm_ir_run): it emits a program read from stdin
+// over the typed lowering, through the routed entry wasm_run takes. A module
+// the gates decline is an ERROR.
+
+import "./parser";
+import "./rundriver";
+import "./util";
+import "./asmcore";
+import "./wasm_ir";
+import "./semlower";
+
+// main wraps `run` in the shared rc-over-release guard — see
+// util.rc_underflow_guard. Every self-host driver run self-checks its own
+// heap accounting; a corrupted freelist is otherwise silent (#6021).
+function main(): i32 {
+  return util.rc_underflow_guard("wasm_ir_run", run());
+}
+
+function run(): i32 {
+  let mod: parser.Module = rundriver.parse_stdin("wasm_ir_run");
+  if (asmcore.refuse_parse_unknowns([mod])) {
+    return 1;
+  }
+  // Call-arity gate (#4360): shared with wasm_run — an arg-count mismatch
+  // must reject before the emit runs, not miscompile. Checked on a default-filled COPY (the emit input is
+  // untouched; both emit paths fill defaults themselves).
+  let arity_errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+  // Bare-map_new chain gate (native E038/E003 parity) — same
+  // reject-don't-miscompile rationale as the arity gate.
+  arity_errs = util.append_diags(arity_errs, asmcore.check_map_new_chain(mod));
+  // Undefined-callee gate (native E001, #5644): a callee naming nothing
+  // otherwise reaches the emitter's generic call path, which emits a call
+  // against a symbol nothing defines — an opaque load-time `unknown func`
+  // instead of a diagnostic pointing at the source.
+  arity_errs = util.append_diags(arity_errs, asmcore.check_undefined_calls(mod));
+  // Nameless-declaration gate: the permissive parser leaves an empty name
+  // where a keyword was used (`function use()`), and nothing downstream
+  // notices — see asmcore.check_decl_names for what that cost.
+  arity_errs = util.append_diags(arity_errs, asmcore.check_decl_names(mod));
+  if (arity_errs.len() > 0) {
+    eprint(util.format_diags(arity_errs));
+    return 1;
+  }
+  // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317,
+  // the raw/syscall floor #6946) are error endpoints, not deferrals, refused
+  // here before the typed lowering so the message names the builtin.
+  let unsupported: string = wasm_ir.wasm_unsupported_builtin(mod);
+  if (unsupported.len() > 0) {
+    eprint(wasm_ir.wasm_unsupported_message(unsupported));
+    return 1;
+  }
+  let d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
+  write(wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, d.sub));
+  return 0;
+}

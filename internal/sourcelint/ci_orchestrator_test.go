@@ -514,12 +514,12 @@ func TestCILanesAreGrantedWhatTheyRequest(t *testing.T) {
 }
 
 // The `changes` script has no test of its own inside ci.yml, so
-// tools/ci-changes-selftest.mjs executes it against stubbed responses, and
+// scripts/ci-changes-selftest.mjs executes it against stubbed responses, and
 // the lint lane is where that runs. Drop the step and the JS copy of the
 // grammar is unpinned again while the Go copy stays green.
 func TestChangesScriptIsSelfTested(t *testing.T) {
-	if _, err := os.Stat(filepath.Join("..", "..", "tools", "ci-changes-selftest.mjs")); err != nil {
-		t.Fatalf("tools/ci-changes-selftest.mjs is missing: %v", err)
+	if _, err := os.Stat(filepath.Join("..", "..", "scripts", "ci-changes-selftest.mjs")); err != nil {
+		t.Fatalf("scripts/ci-changes-selftest.mjs is missing: %v", err)
 	}
 	mk, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
 	if err != nil {
@@ -535,10 +535,10 @@ func TestChangesScriptIsSelfTested(t *testing.T) {
 	if !runsSelftest {
 		t.Errorf("lint.yml no longer runs `make ci-selftest` (directly or through `make lint-fast`), so nothing executes the `changes` script before it reaches a pull request")
 	}
-	if !strings.Contains(string(mk), "node tools/ci-changes-selftest.mjs") {
-		t.Errorf("Makefile's ci-selftest target no longer runs tools/ci-changes-selftest.mjs")
+	if !strings.Contains(string(mk), "node scripts/ci-changes-selftest.mjs") {
+		t.Errorf("Makefile's ci-selftest target no longer runs scripts/ci-changes-selftest.mjs")
 	}
-	if !strings.Contains(string(mk), "node tools/main-red-selftest.mjs") {
+	if !strings.Contains(string(mk), "node scripts/main-red-selftest.mjs") {
 		t.Error("ci-selftest must exercise main failure reporting across the wrapper transition")
 	}
 }

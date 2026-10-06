@@ -9,7 +9,7 @@ import (
 )
 
 // TestSelfHostEmbedBundleAndSubstitution exercises the self-host's `-embed`
-// asset bundle (examples/self_host/embed.fern, #6643) — the port of native's
+// asset bundle (compiler/embed.fern, #6643) — the port of native's
 // internal/embed plus the asset half of internal/constfold.
 //
 // The driver builds a real directory under temp_dir and walks it, because

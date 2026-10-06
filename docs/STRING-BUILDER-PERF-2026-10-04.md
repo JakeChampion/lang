@@ -24,7 +24,7 @@ the ARM CI measurement. No QEMU timing is used.
 The [raw measurements](benchmarks/builder-gate-2026-10-04/measurement.txt)
 and [function attribution](benchmarks/builder-gate-2026-10-04/attribution.json)
 are retained. To reproduce, build `./cmd/fern` at each stated revision,
-emit `examples/bench/http_hello.fern` for `arm64-linux` and `x86-64-linux`,
+emit `bench/http_hello.fern` for `arm64-linux` and `x86-64-linux`,
 and count assembly lines beginning with whitespace as `scripts/perf-bench`
 does. The [attribution script](benchmarks/builder-gate-2026-10-04/attribute.py)
 groups that same count by `.type`/`.size` function boundaries. Pass it the

@@ -31,7 +31,7 @@ func fnLabels(asm string) []string {
 // the diagnostics side of `capability_violations`, and its result was thrown
 // away; the module handed to codegen was the whole merged import closure. One
 // `import "std/string"` reaches core/int, core/bigint, std/array and
-// std/unicode transitively, so examples/bench/string_count_byte emitted 958
+// std/unicode transitively, so bench/string_count_byte emitted 958
 // functions and 81,463 instructions against the native compiler's 27 and 640 —
 // 127x, on a benchmark both compilers had a checked-in size baseline for.
 //

@@ -1,7 +1,7 @@
 # The per-operator fusion proof
 
 Status: `internal/ir/array_fusion.go` (#9731) and the primary compiler's
-`examples/self_host/semfuse.fern` (#11072) implement the `map`/`filter` stages
+`compiler/semfuse.fern` (#11072) implement the `map`/`filter` stages
 and `fold`/`reduce` sinks below. The primary compiler also implements `scan`
 as a materializing sink. This document states what each operator contributes to a
 fused loop, and why composing those contributions gives the guarantee
@@ -290,7 +290,7 @@ elements. The pass is `internal/ir/array_fusion.go`; `FERN_NO_ARRAY_FUSION=1`
 turns it off, which is how a miscompilation suspected here is ruled out in
 one run rather than by rebuilding the compiler.
 
-The self-host's pass, `examples/self_host/semfuse.fern`, fuses the same
+The self-host's pass, `compiler/semfuse.fern`, fuses the same
 stages and sinks on the typed semantic graphs `semsource` produces, before
 ownership is planned, so every self-host backend gains it and the loop is
 counted like any other body. It takes any scalar element rather than only

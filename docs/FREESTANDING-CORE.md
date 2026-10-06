@@ -683,7 +683,7 @@ Today: **45 of 59 modules are core-safe.** Three results worth knowing:
   needs is a calling convention to hand a JNIEnv method pointer to.
 
 The self-host derives the same partition from its own scan (`platforms.reach`, driven by
-`examples/self_host/platforms_reach_run.fern`), and
+`compiler/platforms_reach_run.fern`), and
 `TestSelfHostStdPartitionAgreesWithNative` requires the two derivations to match module
 for module. That is the differential the partition most needs: the two compilers
 disagreeing here means they disagree about what runs on a machine with no host, and
@@ -706,7 +706,7 @@ names a capability no descriptor grants, which is the typo that would otherwise 
 builtin unreachable everywhere.
 
 The self-host compiler carries its own copy of the classification —
-`examples/self_host/platforms.fern` (#6633), since it cannot import Go — so a new
+`compiler/platforms.fern` (#6633), since it cannot import Go — so a new
 builtin has to be classified there too. `TestSelfHostGatedBuiltinsMatch` /
 `TestSelfHostCoreBuiltinsMatch` in `internal/platforms` read that file as data and fail
 on any entry the two tables disagree about, which is the only way the drift shows up:

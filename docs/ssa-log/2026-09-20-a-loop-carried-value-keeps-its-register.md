@@ -52,7 +52,7 @@ loop so the compare sits at the bottom.
 
 ## Measured
 
-Every `examples/bench` program, x86-64, retired instructions under
+Every `bench` program, x86-64, retired instructions under
 callgrind, before (the immediates entry's "after") and with this change,
 the native register backend for scale; the three map benchmarks left out
 as before (#9608), `sort_strings` and `string_find_byte` reported in

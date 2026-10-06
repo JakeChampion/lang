@@ -47,7 +47,7 @@ func TestMarkWrappersAgreeWithRuntimeNeedDeps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("locate repo root: %v", err)
 	}
-	src, err := os.ReadFile(filepath.Join(root, "examples", "self_host", "asmcore.fern"))
+	src, err := os.ReadFile(filepath.Join(root, "compiler", "asmcore.fern"))
 	if err != nil {
 		t.Fatalf("read asmcore.fern: %v", err)
 	}

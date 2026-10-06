@@ -17,7 +17,7 @@ That buys three things worth more than type information would be:
 - **A broken file still lints.** Type errors and lint findings are usually
   present in the same draft, and a linter that goes quiet exactly when the
   code is at its messiest is a linter nobody runs.
-- **A tree costs one parse per file.** `fern -lint examples/self_host`
+- **A tree costs one parse per file.** `fern -lint compiler`
   reads 94 modules in about a second. A `-check`-shaped linter would resolve
   the whole import graph per entry point.
 - **The desugars have happened, the lowerings have not.** `if let`, `let
@@ -92,7 +92,7 @@ gate stricter, so it rots in the safe direction. Measured 2026-08-27:
 
 | Tree | Ceiling | Total excess |
 |---|---|---|
-| `examples/self_host` | 477 (`lower_call_named`) | 19878 across 1035 functions |
+| `compiler` | 477 (`lower_call_named`) | 19878 across 1035 functions |
 | `internal/stdlib/std` | 68 (`_wb_break`) | 780 across 93 functions |
 
 ### Why summed distance, and not a count

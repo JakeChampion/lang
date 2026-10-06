@@ -13,7 +13,7 @@ because the flip is half-done.
 
 ## arm64-linux: flip
 
-Self-host driver (`examples/self_host/asm_run.fern`), measured on the merged
+Self-host driver (`compiler/asm_run.fern`), measured on the merged
 emitter:
 
 | | size | compile |
@@ -22,7 +22,7 @@ emitter:
 | stack machine (`-backend flat`) | 10,113,457 | 22.9 s |
 
 **13.4% smaller**, and 35% slower to compile. On runtime,
-`docs/ssa-log/2026-09-16-full-sweep.md` has all 28 `examples/bench` programs:
+`docs/ssa-log/2026-09-16-full-sweep.md` has all 28 `bench` programs:
 after the string-reclaim work the SSA build is at or under the stack machine
 on every one of them. The corpus differential runs 348 programs on both
 backends on every change and all 328 that both build agree.

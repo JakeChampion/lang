@@ -12,7 +12,7 @@
 #
 #   stage0   a pinned earlier compiler (bootstrap/stage0.lock), or the binary
 #            named by STAGE0=<path>
-#   stage1   stage0 compiles examples/self_host/fern.fern for this host; it
+#   stage1   stage0 compiles compiler/fern.fern for this host; it
 #            must then compile and run a one-line program and coreutils/tr
 #            (the smoke test), and
 #            is installed as bin/fern-selfhost — the same compiler `make
@@ -36,7 +36,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCK="$ROOT/bootstrap/stage0.lock"
 OUT="$ROOT/build/bootstrap"
-ENTRY="$ROOT/examples/self_host/fern.fern"
+ENTRY="$ROOT/compiler/fern.fern"
 STDLIB="$ROOT/internal/stdlib"
 
 die() { echo "bootstrap: $*" >&2; exit 1; }

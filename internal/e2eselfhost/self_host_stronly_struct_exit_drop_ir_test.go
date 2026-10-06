@@ -78,7 +78,7 @@ function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_byte
 func TestSelfHostStrOnlyStructExitDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	src, err := os.ReadFile("../../compiler/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}

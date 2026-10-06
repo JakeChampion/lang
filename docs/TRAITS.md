@@ -828,7 +828,7 @@ on. Native-only so far; self-host parity is a follow-up.
 
 ## 7a. Self-hosting the trait feature
 
-The self-hosted compiler (`examples/self_host/*.fern`) must compile a
+The self-hosted compiler (`compiler/*.fern`) must compile a
 trait-using `std/test` for the `assert_eq_*` collapse to land without
 regressing the self-host gates. It needs traits in two slices:
 
@@ -934,7 +934,7 @@ regressing the self-host gates. It needs traits in two slices:
   intrinsic / explicitly-impl'd methods). Tested via
   `trait-dyn-object-heterogeneous`, `trait-struct-array-loop-method`,
   `trait-derive-struct-{eq,ord,display-nested}` on x86-64 + arm64, plus
-  `examples/tests/derive_test.fern` through the import-resolving stdtest
+  `tests/stdlib/derive_test.fern` through the import-resolving stdtest
   gate (real `core/cmp`).
 
 - **Self-host slice 6 (shipped): enum methods + enum `@derive`.** Enum
@@ -959,12 +959,12 @@ regressing the self-host gates. It needs traits in two slices:
   (`synth_enum_ord`: variant-declaration order decides cross-variant, the
   payload decides within). Tested via `trait-enum-method`,
   `trait-derive-enum-{display,eq,ord}` on x86-64 + arm64, plus the enum
-  section of `examples/tests/derive_test.fern` through the stdtest gate —
+  section of `tests/stdlib/derive_test.fern` through the stdtest gate —
   so `@derive(Eq, Display, Ord)` reaches full parity for structs AND
   non-generic enums on the native (x86-64 + arm64) self-host backends.
 
 - **Self-host slice 7 (in progress): the wasm backend.** The wasm
-  self-host backend (`examples/self_host/wasm.fern`) dispatches methods
+  self-host backend (`compiler/wasm.fern`) dispatches methods
   STATICALLY by the receiver's known type (`struct_type_of` →
   `$Type__method`), unlike the native backends' runtime shape-compare,
   so the trait fixes there don't port directly. First fix landed: the

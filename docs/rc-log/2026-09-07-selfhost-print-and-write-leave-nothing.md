@@ -1,6 +1,6 @@
 # The self-host's `print` stops building a temp and its `Writer.write` gives the box back (#8410)
 
-*2026-09-07* — `examples/self_host/irlower.fern`, both register backends and
+*2026-09-07* — `compiler/irlower.fern`, both register backends and
 wasm. Two builtins, two independent causes, one measurement: each left exactly
 one block per call **with a string literal argument too**, so the copying-builtin
 credit (#8394) was not what was missing.

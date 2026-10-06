@@ -1,7 +1,7 @@
 # `own` on a string parameter: two releases and none, cancelling (#8804)
 
 `own x: string` is declared, checked and lowered, and no backend counted it
-right. Nothing in `internal/stdlib`, `examples/self_host` or `coreutils`
+right. Nothing in `internal/stdlib`, `compiler` or `coreutils`
 declares one — all 190 `own` params in the tree are arrays or structs — which
 is why it stayed latent. Found opening #8785's call-boundary row.
 

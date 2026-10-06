@@ -31,9 +31,9 @@ import (
 // (`0.1531383769920937332`).
 
 const (
-	selfHostAsmX86   = "../../examples/self_host/asm_ir.fern"
-	selfHostAsmArm64 = "../../examples/self_host/asm_arm64_ir.fern"
-	selfHostWasm     = "../../examples/self_host/wasm_ir.fern"
+	selfHostAsmX86   = "../../compiler/asm_ir.fern"
+	selfHostAsmArm64 = "../../compiler/asm_arm64_ir.fern"
+	selfHostWasm     = "../../compiler/wasm_ir.fern"
 )
 
 func readSelfHost(t *testing.T, path string) string {
@@ -207,7 +207,7 @@ func TestSelfHostWasmTwoOverPiMatches(t *testing.T) {
 
 // TestSelfHostAsmLogTableMatches pins the .Lfc_logtab block both self-host
 // assembly emitters write to LogData, value for value. The block is generated
-// (tools/gen_log_table.py); this catches an emitter whose region was edited
+// (scripts/gen_log_table.py); this catches an emitter whose region was edited
 // by hand or not regenerated.
 func TestSelfHostAsmLogTableMatches(t *testing.T) {
 	want := LogData()

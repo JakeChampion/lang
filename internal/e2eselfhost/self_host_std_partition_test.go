@@ -18,7 +18,7 @@ import (
 // capability reach TWICE — once with native's platforms.Reach over
 // modload.LoadStdlibFlat, once with the self-host's platforms.reach over its
 // own modloader + flatten.bundle — and requires the same answer
-// (examples/self_host/platforms_reach_run.fern, #6633 item 3).
+// (compiler/platforms_reach_run.fern, #6633 item 3).
 //
 // internal/platforms/std_partition_test.go already derives the partition on
 // the native side and checks a checked-in table against it. This is the same

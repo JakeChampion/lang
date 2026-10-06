@@ -4,7 +4,7 @@ import "testing"
 
 // stringEscapeIRCases exercise string-literal C-style escape sequences through
 // the self-host IR path on x86-64 + wasm. Escapes are decoded in the lexer
-// (scan_string in examples/self_host/lexer.fern: \t \n \r \0 \\ \" plus \xNN
+// (scan_string in compiler/lexer.fern: \t \n \r \0 \\ \" plus \xNN
 // hex bytes), so a literal carrying any of them is an ordinary string box and
 // lowers exactly like a plain literal — `.len()`, byte indexing (`s[i] as i32`),
 // and `+` concat all stay on the IR path.

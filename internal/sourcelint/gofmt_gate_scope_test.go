@@ -23,7 +23,7 @@ import (
 // list containing a path that is no longer on disk, where gofmt exits 2 and
 // the gate fails over an in-flight edit state rather than a formatting fault.
 func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
-	gate, err := filepath.Abs(filepath.Join("..", "..", "tools", "gofmt_gate.sh"))
+	gate, err := filepath.Abs(filepath.Join("..", "..", "scripts", "gofmt_gate.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}

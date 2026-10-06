@@ -11,7 +11,7 @@ here.
 
 The drops are in the NATIVE-built `bin/fern-selfhost`, so the fix is
 `internal/ir` (#4451 debt). Direct evidence rather than the symbol census: in
-`bin/fern -target x86-64-linux examples/self_host/fern.fern`,
+`bin/fern -target x86-64-linux compiler/fern.fern`,
 `__fn___method_irlower__LowerState_emit` calls `__fern_alloc` once and ends with
 `__fn___drop_struct_irlower__LowerState(s)`.
 

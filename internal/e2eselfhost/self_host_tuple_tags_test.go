@@ -6,7 +6,7 @@ import (
 )
 
 // TestSelfHostTupleTags pins the self-hosted asmcore tuple type-tag decoders
-// (examples/self_host/asmcore.fern's split_tuple_ret / tuple_ret_tag_at — SH-021
+// (compiler/asmcore.fern's split_tuple_ret / tuple_ret_tag_at — SH-021
 // slice 3, docs/SELF-HOST-AUDIT.md T2). Both map a tuple type STRING to the
 // coarse asmcore Ty of its elements, now via the structured TypeRef
 // (parser.parse_type_ref + ty_from_ref — element idx is args[idx]) instead of the

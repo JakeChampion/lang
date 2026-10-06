@@ -77,12 +77,12 @@ function main(): i32 {
 	// values come from the SAME lambda, so closureCaps has one entry and a
 	// one-element range has no order to get wrong. #6077 needed several
 	// eligible thunks at once — the emitted function order then flipped run
-	// to run and reached the binary (examples/tests/result_assertions_test
+	// to run and reached the binary (tests/stdlib/result_assertions_test
 	// produced six distinct hashes over fifteen compiles).
 	//
 	// Not caught by TestLowerDeterministicOverFixtureCorpus either: that
 	// globs conformance/cases, and the programs that exhibited
-	// this were examples/tests/* — std/test users, which build many
+	// this were tests/stdlib/* — std/test users, which build many
 	// capturing closures. A corpus guard is only as wide as its corpus.
 	"closure_drop_thunks": `
 function mk_a(s: string): () => i32 { return (): i32 => { return s.len(); }; }

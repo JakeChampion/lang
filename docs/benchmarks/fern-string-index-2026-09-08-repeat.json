@@ -7,7 +7,7 @@
   },
   "results": [
     {
-      "source": "examples/bench/string_scan.fern",
+      "source": "bench/string_scan.fern",
       "source_sha256": "ac047c0f249991155468ab1cfe4e0c4da256e7b8e204d23d1af5cd195535e063",
       "compile_samples_seconds": {
         "before": [
@@ -80,7 +80,7 @@
       }
     },
     {
-      "source": "examples/bench/sort_strings.fern",
+      "source": "bench/sort_strings.fern",
       "source_sha256": "0cdca3fd9a14406ea57bf939d95cedd5db1b47c0bf52d7dd9530d6d6ee0410ce",
       "compile_samples_seconds": {
         "before": [
@@ -153,7 +153,7 @@
       }
     },
     {
-      "source": "examples/bench/int_loop.fern",
+      "source": "bench/int_loop.fern",
       "source_sha256": "19d62833427d9f308541d6c4b756ca982313d7aa25c9b04c099cef2313c97b54",
       "compile_samples_seconds": {
         "before": [
@@ -226,7 +226,7 @@
       }
     },
     {
-      "source": "examples/bench/call_overhead.fern",
+      "source": "bench/call_overhead.fern",
       "source_sha256": "e57db814fab9e1a8b441d516e2f24afb847086cacc38a5817ae1ce7bcb65b710",
       "compile_samples_seconds": {
         "before": [
@@ -299,7 +299,7 @@
       }
     },
     {
-      "source": "examples/bench/array_index.fern",
+      "source": "bench/array_index.fern",
       "source_sha256": "7889a9e3edfed3d58e4ae6b112c15ff3739043c70d61e13480655cfd3676f31c",
       "compile_samples_seconds": {
         "before": [
@@ -372,7 +372,7 @@
       }
     },
     {
-      "source": "examples/bench/pmap_insert.fern",
+      "source": "bench/pmap_insert.fern",
       "source_sha256": "6bbfc964517f9196f0de569f269577db77b46f90cfc3f5bceff90fa28865a005",
       "compile_samples_seconds": {
         "before": [
@@ -445,7 +445,7 @@
       }
     },
     {
-      "source": "examples/bench/ascii_scan.fern",
+      "source": "bench/ascii_scan.fern",
       "source_sha256": "fdc2d3ab3d6f290d2e62751d13422f6cc9f524afd8360387d76598b80bd852d9",
       "compile_samples_seconds": {
         "before": [
@@ -518,7 +518,7 @@
       }
     },
     {
-      "source": "examples/bench/tokenize.fern",
+      "source": "bench/tokenize.fern",
       "source_sha256": "25b9c48a4be1cf07ca5471fb2950f1c8f4a4fb685991859df0b5c4efd9253b2c",
       "compile_samples_seconds": {
         "before": [

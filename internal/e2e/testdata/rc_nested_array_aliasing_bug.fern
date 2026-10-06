@@ -36,7 +36,7 @@
 // (bound-let under-reclaim + statement temporaries)". #1771 fixed the
 // i32[][] *leak*; this *use-after-free* on string-bearing nested arrays
 // is still open. The self-hosted literate engine sidesteps it by using
-// a flat Piece[] model (see examples/self_host/literate.fern).
+// a flat Piece[] model (see compiler/literate.fern).
 
 struct BodyLine { text: string, line: i32 }
 struct ChunkDef { name: string, body: BodyLine[] }

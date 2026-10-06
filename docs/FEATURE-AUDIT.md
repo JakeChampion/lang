@@ -12,7 +12,7 @@ Two compilers, each with its own backends, are in scope:
   **interp**reter, **x86-64**, **arm64**, **wasm**. Audited with the
   data-driven fixture harness (`TestFernFixtures`), which runs a program
   across all four and checks stdout + exit code.
-- **Self-hosted** (the Fern-in-Fern compiler under `examples/self_host/`):
+- **Self-hosted** (the Fern-in-Fern compiler under `compiler/`):
   driven by the `self_host_*_test.go` harnesses, which build a driver
   binary (`asm_run.fern` / `asm_ir_run.fern` (which also serves the arm64 /
   arm64-darwin backends via `-target`) / `wasm_ir_run.fern` /
@@ -351,7 +351,7 @@ everywhere and look correct to any test that ran it alone.
 Four classifications as usual (`internal/platforms`, `internal/caps`, and both
 self-host mirrors), all `fs`, plus `parser.builtin_function_names()`.
 
-Its first consumer is `examples/self_host/embed.fern`, which now skips
+Its first consumer is `compiler/embed.fern`, which now skips
 non-regular entries exactly as `internal/embed` does. `internal/embed` gained a
 fix in the same change: `WalkDir` lstats its own root, so `-embed` naming a
 symlink to a directory passed the directory check and then embedded nothing, in
@@ -651,7 +651,7 @@ differential gate,
 
 **The legacy AST→ASM emitters are now reached only by the parallel-owned async
 modules** (`async_concurrent` / `async_runtime`); every other
-`examples/tests/*_test.fern` routes IR.
+`tests/stdlib/*_test.fern` routes IR.
 
 ### 2026-06-29 — chained ops on a BUILTIN map-method call lower correctly (`m.insert(k,v).len()`)
 
@@ -874,7 +874,7 @@ With the cheap builtin-recipe wins landed (env / stat / subprocess) and the arm6
 `.text` wall lifted, a fresh **post-monomorphisation, named-symbol** probe sweep
 (`asm_load_run -ir-probe` patched to lift_lambdas(module_with_builtins(...)) +
 emit the first unknown call/const_func symbol) over every remaining AST-routing
-`examples/tests/*_test.fern` gives the exact blockers. Key result: **no single
+`tests/stdlib/*_test.fern` gives the exact blockers. Key result: **no single
 blocker spans multiple modules** — each is its own module-specific root cause, and
 all are now medium-to-deep (no more one-line recipe flips). `fuzz_corpus` has since
 flipped to IR upstream.
@@ -1195,7 +1195,7 @@ lowering in the two entries below (#3966 slice 1 + #3968 slice 2a) — which fli
 this treeshake fix keeps the auto-discovered concrete helpers reachable; the
 `__arrm_*` slices monomorphise the generic receiver methods.
 
-**Frontier map** (refreshed) — remaining `examples/tests/*_test.fern` routing AST:
+**Frontier map** (refreshed) — remaining `tests/stdlib/*_test.fern` routing AST:
 
 - ~~**Generic array CLOSURE-methods** — `.flat_map` / `.reduce` / `.sort_by`~~ —
   **DONE** (slices 3 + 4, #3976/#3977): the `__arrm_*` free-generic rewrite now
@@ -1366,7 +1366,7 @@ transcribed, arm64 reused from the heap block, wasm ineligible) — the same rec
 as `remove_dir_all`/`temp_dir`/`read_dir`. `filesystem_ops` flips AST → IR;
 gated by `TestSelfHostRemoveFileIR`; fixpoint byte-identical.
 
-**Frontier map** — the remaining `examples/tests/*_test.fern` that route AST,
+**Frontier map** — the remaining `tests/stdlib/*_test.fern` that route AST,
 with the first real (post-monomorphisation) blocker each (from `asm_modload_run
 -ir-probe` + a named-symbol diagnostic). The cheap fs/builtin recipe is now
 exhausted; what's left clusters into a few deeper root causes:
@@ -1741,7 +1741,7 @@ Second watch-list payoff from `#3915`. `std/num` was previously recorded as
 blocked on *two* fronts — the trait-reducer machinery (`sum_with` / `sum` over
 `T: Add (+ Zero)`, `product*` over `T: Mul (+ One)`) and the Iterator-bounded
 forms (`sum_iter` / `product_iter` over `I: iter.Iterator[T]`). New
-`examples/tests/num_reducers_test.fern` (8 assertions over all six, driven on
+`tests/stdlib/num_reducers_test.fern` (8 assertions over all six, driven on
 i32 arrays + `iter.of` / `iter.range`) **passes the differential gate on both
 x86 + arm64** — so the generic-monomorphisation work behind `#3915` closed the
 trait-reducer path as well, not just the Iterator one. Shipped **self-host-gated**
@@ -1847,7 +1847,7 @@ constructs to lower. The probe (`ircore.eligibility_report` /
 
 ### 2026-06-23 — std/io_buffered BytesWriter: pure-Fern std/test coverage (interp-gated) + another RC-drop data point
 
-New `examples/tests/io_buffered_test.fern` covers `std/io_buffered`'s
+New `tests/stdlib/io_buffered_test.fern` covers `std/io_buffered`'s
 `BytesWriter` — a **completely untested module** (0 prior test files): the
 in-memory buffered writer used to build an HTTP response body without per-write
 socket calls (the stated edge-handler use case). 9 tests over the whole surface:
@@ -1901,7 +1901,7 @@ code (no `cmp` / `assert_eq` monomorph involved). The fix lives in the contended
 `irlower` / asm-backend u32 path (parallel-owned, not touched here): truncate
 (`& 0xFFFFFFFF`, or use 32-bit-register ops) after u32 `+` / `-` / `*` / `<<`.
 
-Shipped `examples/tests/u32_arith_test.fern` (10 assertions: wrapping
+Shipped `tests/stdlib/u32_arith_test.fern` (10 assertions: wrapping
 add/sub/mul, shl-overflow-mask, shl-to-bit31, logical-shr, rotr/rotl +
 roundtrip) — **interp-gated** via `TestRunnerU32ArithExamplePasses`, deliberately
 off the differential gate; it flips onto the gate (and unblocks `crypto_test`)
@@ -2016,7 +2016,7 @@ retained-heap-from-receiver-method-traps) for the goal-2 port.
 
 ### 2026-06-23 — std/json parse → typed-get → encode round-trip: pure-Fern std/test coverage (self-host-gated)
 
-New `examples/tests/json_roundtrip_test.fern` drives the **raw** std/json API
+New `tests/stdlib/json_roundtrip_test.fern` drives the **raw** std/json API
 directly — `json_detail_test` / `json_field_eq_test` exercise std/json only
 indirectly through std/test's `assert_json_*` helpers (has_key / eq_field /
 array_len / object_size). Covers `json_parse` (`string` → `Option[JsonValue]`),
@@ -2037,7 +2037,7 @@ variant directly). Gated by `TestRunnerJsonRoundtripExamplePasses` (interp) +
 
 ### 2026-06-23 — std/time ISO + Span arithmetic: pure-Fern std/test coverage (self-host-gated)
 
-New `examples/tests/time_iso_span_test.fern` — the follow-on to
+New `tests/stdlib/time_iso_span_test.fern` — the follow-on to
 `time_calendar_test` (which did the serial-day `Date` core). Covers std/time's
 ISO formatting / parsing and calendar-aware Span arithmetic:
 `(Date).format_iso` (`Date` → `"YYYY-MM-DD"`, zero-padded incl. sub-1000 years),
@@ -2092,7 +2092,7 @@ piece, scoped here rather than rushed.
 
 ### 2026-06-23 — std/time civil-calendar arithmetic: pure-Fern std/test coverage (self-host-gated)
 
-New `examples/tests/time_calendar_test.fern` covers std/time's civil-calendar
+New `tests/stdlib/time_calendar_test.fern` covers std/time's civil-calendar
 arithmetic — a domain `timing_test` (benchmark elapsed-time) does not touch at
 all: `is_leap_year` / `days_in_month` (the Gregorian rules), `date_make` +
 `(Date).is_valid` (construction + validation), `(Date).add_days` (serial-day add
@@ -2112,7 +2112,7 @@ x86 + arm64). Gated by `TestRunnerTimeCalendarExamplePasses` (interp) +
 
 ### 2026-06-23 — std/string replace + split surface: pure-Fern std/test coverage (self-host-gated)
 
-New `examples/tests/string_replace_split_test.fern` covers the std/string
+New `tests/stdlib/string_replace_split_test.fern` covers the std/string
 substitution + splitting surface left out by the four earlier string suites:
 `replace` / `replace_first` / `replace_n` (substring substitution, count-bounded,
 incl. the non-overlapping left-to-right consumption case `"aaa".replace("aa",
@@ -2134,7 +2134,7 @@ predicate, transform, extraction, encoding, and substitution surface.
 
 ### 2026-06-23 — std/string escape + count surface: pure-Fern std/test coverage (self-host-gated)
 
-New `examples/tests/string_escape_count_test.fern` covers the std/string
+New `tests/stdlib/string_escape_count_test.fern` covers the std/string
 escaping / counting / tokenisation / prefix-suffix-set surface left out by the
 three earlier string suites: `escape_html` / `escape_c` / `escape_shell`
 (output-safe encoding — HTML entities, C-string escapes, POSIX-shell quoting),
@@ -2156,7 +2156,7 @@ encoding surface is now migration-covered.)
 
 ### 2026-06-23 — std/string slice + extract surface: pure-Fern std/test coverage (self-host-gated)
 
-New `examples/tests/string_slice_extract_test.fern` covers the std/string
+New `tests/stdlib/string_slice_extract_test.fern` covers the std/string
 substring-extraction + manipulation surface left out by both `strings_test` and
 `string_classify_transform_test`: `before` / `after` / `between` / `split_once`
 (delimiter extraction), `remove_prefix` / `remove_suffix` (affix stripping),
@@ -2177,7 +2177,7 @@ not a codegen issue.)
 
 ### 2026-06-22 — std/string classify + transform surface: pure-Fern std/test coverage (self-host-gated)
 
-New `examples/tests/string_classify_transform_test.fern` covers the std/string
+New `tests/stdlib/string_classify_transform_test.fern` covers the std/string
 surface `strings_test` (find / split / to_lower / to_upper / rfind) leaves out —
 the classification predicates and case/format transforms, all concrete
 `string -> boolean` / `string -> string` / `string -> i32` methods (no generics):
@@ -2199,7 +2199,7 @@ primitives surfaces here. Gated by
 
 ### 2026-06-22 — std/sort comparator + case-insensitive surface: pure-Fern std/test coverage (self-host-gated)
 
-New `examples/tests/sort_by_and_ci_test.fern` covers the half of `std/sort`
+New `tests/stdlib/sort_by_and_ci_test.fern` covers the half of `std/sort`
 that `sort_wider_test` leaves out — the comparator / case-insensitive /
 projection-key functions rather than the monomorphic wider-int sorts:
 `string_cmp` / `string_cmp_ci` (the ordering primitives), `sort_strings_desc`,
@@ -2222,7 +2222,7 @@ the recurring self-host shape it exercises.
 
 ### 2026-06-22 — std/u64: pure-Fern std/test coverage (interp-gated) + the unsigned-through-generic gap
 
-New `examples/tests/u64_test.fern` — pure-Fern, std/test-driven coverage of
+New `tests/stdlib/u64_test.fern` — pure-Fern, std/test-driven coverage of
 `std/u64`'s `min` / `max` / `clamp` / `to_string`, the unsigned-64-bit
 counterpart to the existing `i64_test`. The point of a u64 suite over i64 is the
 wraparound value `(0 as u64) - (1 as u64)` = 2⁶⁴-1, which is negative when
@@ -2340,7 +2340,7 @@ mangling work). The "later step" note is superseded.
 `core/iter`'s combinators had `iter_test` covering sum / count / of / product /
 nth / last / min / max / contains / count_value / fold / any / all / map /
 filter (it's on the self-host differential gate). The remaining adapters were
-uncovered; added `examples/tests/iter_combinators_test.fern` — 8 assertions over
+uncovered; added `tests/stdlib/iter_combinators_test.fern` — 8 assertions over
 `to_array` / `take` / `skip` / `find` / `position` / `position_by` / `count_by`.
 Gated via `TestRunnerIterCombinatorsExamplePasses` (interp).
 
@@ -2413,7 +2413,7 @@ empty-string bug. `std/u32` no longer depends on it (its mask keeps the magnitud
 `std/array`'s higher-order combinators had `array_combinators_test` covering
 `map` / `filter` / `fold` / `any` / `all` / `find` — but `flat_map`, `reduce`
 (→ `Option[T]`), and `sort_by` (comparator closure) were uncovered. Added
-`examples/tests/array_hof_test.fern` — 8 assertions over those three. Gated via
+`tests/stdlib/array_hof_test.fern` — 8 assertions over those three. Gated via
 `TestRunnerArrayHofExamplePasses` (interp).
 
 **Interp-gated, not self-host-gated** — a precise gap finding. The
@@ -2436,7 +2436,7 @@ fixed.
 
 The `std/result` analogue of the `std/option` combinator suite below: the
 existing `result_assertions_test` covers the `std/test` *Result assertion
-helpers*, NOT the combinators. Added `examples/tests/result_combinators_test.fern`
+helpers*, NOT the combinators. Added `tests/stdlib/result_combinators_test.fern`
 — 12 assertions over `is_ok` / `is_err` / `unwrap_or` / `unwrap_or_else` (the
 `(E) => T` error-recovery form) / `map` / `and_then` / `map_err` / `ok` /
 `err` (both → `Option`) / `map_or` / `is_ok_and` / `is_err_and` / `or`, as
@@ -2452,7 +2452,7 @@ through the self-host IR — no AST fallback.
 `std/option`'s combinator vocabulary (#2691) had Go-side coverage and an
 existing `option_and_set_ops_test` — but that suite covers the `std/test`
 *Option assertion helpers* (`assert_is_some_*`), NOT the combinators. Added
-`examples/tests/option_combinators_test.fern` — 14 assertions over the full
+`tests/stdlib/option_combinators_test.fern` — 14 assertions over the full
 combinator surface as ordinary generic methods on `Option[T]`: `is_some` /
 `is_none` / `unwrap_or` / `unwrap_or_else` / `map` / `and_then` / `or_else` /
 `filter` (keep + drop) / `ok_or` / `map_or` (Some + None) / `is_some_and` /
@@ -2470,7 +2470,7 @@ plain receiver-method modules.
 
 `std/crypto`'s SHA-256 + HMAC-SHA256 had Go-side coverage but no
 migration-shaped (pure-Fern, `std/test`-driven) companion. Added
-`examples/tests/crypto_test.fern` — 6 assertions pinning the standard
+`tests/stdlib/crypto_test.fern` — 6 assertions pinning the standard
 known-answer vectors: `sha256_hex` of the empty string / `"abc"` / the classic
 pangram (FIPS 180-4), the 32-byte raw-digest length, and the well-known
 `hmac_sha256_hex("key", pangram)` RFC-shaped vector. Gated via
@@ -2515,7 +2515,7 @@ gate on its own.
 
 `std/uuid` (the RFC 4122 / 9562 generators) had Go-side coverage but no
 migration-shaped (pure-Fern, `std/test`-driven) companion. Added
-`examples/tests/uuid_test.fern` — 9 assertions that check the *structure* of a
+`tests/stdlib/uuid_test.fern` — 9 assertions that check the *structure* of a
 draw rather than its (random) bytes: v4/v7 length 36, the 8-4-4-4-12 hyphen
 positions, the version nibble (`4` / `7` at index 14), the v4 variant nibble
 (`8`/`9`/`a`/`b` at index 19), `string.is_uuid()` shape, and that two v4 draws
@@ -2538,7 +2538,7 @@ Both left for after the respective `irlower.fern` fixes.)
 
 `std/i64` (the wider counterpart to `std/i32`) had Go-side coverage but no
 migration-shaped (pure-Fern, `std/test`-driven) companion. Added
-`examples/tests/i64_test.fern` — 14 assertions: `abs` / `min` / `max` /
+`tests/stdlib/i64_test.fern` — 14 assertions: `abs` / `min` / `max` /
 `clamp` (above-hi + in-range); `pow` (incl. `2^40 = 1099511627776`, past the
 i32 range — exercising true 64-bit arithmetic); `gcd` / `lcm`; `to_string`
 (wide value + negative, via `__int_to_string_u64`); and `is_even` / `is_odd`.
@@ -2553,7 +2553,7 @@ the self-host IR with no AST fallback.
 
 `std/i32`'s deterministic receiver-method helper surface had Go-side coverage
 but no migration-shaped (pure-Fern, `std/test`-driven) companion. Added
-`examples/tests/i32_test.fern` — 19 assertions: `abs` (±) / `signum`; byte
+`tests/stdlib/i32_test.fern` — 19 assertions: `abs` (±) / `signum`; byte
 classification (`is_digit` / `is_alpha` / `hex_value` incl. the `-1` miss /
 `to_lower` / `to_upper`); number-shape helpers (`reverse_digits` incl. the
 sign-preserving negative case, `is_palindrome`, `sum_of_digits`, `factorial`,
@@ -2578,7 +2578,7 @@ patterns lower" holds only for trivial single-atom patterns. Left for after
 `core/int`'s integer-formatting primitives (the layer behind the
 `(n).to_string()` / `to_hex` / `parse_hex_int` method sugar) had Go-side
 coverage but no migration-shaped (pure-Fern, `std/test`-driven) companion.
-Added `examples/tests/int_test.fern` — 19 assertions: `int_to_string` zero /
+Added `tests/stdlib/int_test.fern` — 19 assertions: `int_to_string` zero /
 positive / negative / `INT_MAX` / `INT_MIN` (the unsigned-safe negation path);
 `parse_int_radix` hex / binary / negative-base36 / `+`-sign, and the four
 `None` paths (empty, base out of range, digit ≥ base, sign-without-digits);
@@ -2595,7 +2595,7 @@ the self-host IR — no AST fallback.
 
 `std/csv`'s RFC 4180 single-line surface had Go-side coverage but no
 migration-shaped (pure-Fern, `std/test`-driven) companion. Added
-`examples/tests/csv_test.fern` — 12 assertions: `csv_escape` plain pass-through
+`tests/stdlib/csv_test.fern` — 12 assertions: `csv_escape` plain pass-through
 and quote-wrapping on comma / interior-quote (doubled) / newline; `csv_join`
 plain, field-escaping, and empty; `csv_parse_line` plain split, quoted field
 with embedded comma, `""` → `"` decode, the empty-input single-empty-field
@@ -2611,7 +2611,7 @@ AST fallback.
 
 `std/url`'s RFC 3986 percent-encoding and best-effort URL parsing had Go-side
 coverage but no migration-shaped (pure-Fern, `std/test`-driven) companion. Added
-`examples/tests/url_test.fern` — 10 assertions: `url_encode` unreserved
+`tests/stdlib/url_test.fern` — 10 assertions: `url_encode` unreserved
 pass-through (`aZ9-._~`), reserved escaping (`/?&=` → `%2F%3F%26%3D`, uppercase
 hex) and the space case; `url_decode` lower-case hex acceptance (`%2f` → `/`)
 and the truncated-escape-left-literal edge (`%2` → `%2`); a round-trip; and
@@ -2628,7 +2628,7 @@ fallback), a step beyond the pure byte-buffer encoders.
 
 `std/hex`'s lowercase encode / decode had Go-side coverage but no
 migration-shaped (pure-Fern, `std/test`-driven) companion. Added
-`examples/tests/hex_test.fern` — 10 assertions: round-trip fidelity, empty
+`tests/stdlib/hex_test.fern` — 10 assertions: round-trip fidelity, empty
 input both directions, case-insensitive decode (`4A` and `4a` both → `J`), the
 lenient decode termination (first non-hex char — `41ZZ` → `A` — and odd-length
 tail — `414` → `A` — both stop without raising), and that encode emits lower
@@ -2644,7 +2644,7 @@ no AST fallback.
 
 `std/path`'s POSIX helpers (string-level, no FS interaction) had Go-side
 coverage but no migration-shaped (pure-Fern, `std/test`-driven) companion.
-Added `examples/tests/path_test.fern` — 17 assertions across all four
+Added `tests/stdlib/path_test.fern` — 17 assertions across all four
 functions, covering the tricky edges: `path_join` separator-collapsing
 (`["a/", "/b"]` → `"a/b"`), root preservation (`["/", "etc", "hosts"]` →
 `"/etc/hosts"`), empty-part skipping and join-of-nothing; `path_parent` of a
@@ -2662,7 +2662,7 @@ lowering end-to-end.
 
 `std/math`'s deterministic surface had Go-side coverage but no migration-shaped
 (pure-Fern, `std/test`-driven) companion suite. Added
-`examples/tests/math_test.fern` — 10 assertions over `range` / `range_step`
+`tests/stdlib/math_test.fern` — 10 assertions over `range` / `range_step`
 (half-open i32 ranges, incl. empty + exact-boundary + non-positive-step edges),
 the numeric-width constants (`i32_max`/`i32_min`/`i64_max`) and the `pack_rgb`
 bit-packer (incl. the low-8-bit component masking / wrap). `random_int` is
@@ -3020,7 +3020,7 @@ unaffected (x86-64 emission byte-identical — it ignores the new flag).
 
 Audited the foundational `String literals + escape sequences` row (was ⬜
 across the board). The lexer's `scan_string` decodes the C-style escapes
-`\t \n \r \0 \\ \"` plus `\xNN` hex bytes (`examples/self_host/lexer.fern` —
+`\t \n \r \0 \\ \"` plus `\xNN` hex bytes (`compiler/lexer.fern` —
 `apply_escape`), so a literal carrying any of them is an ordinary string box
 and lowers exactly like a plain literal: `.len()`, byte indexing
 (`s[i] as i32`), and `+` concat all stay on the IR path.
@@ -4538,7 +4538,7 @@ replaced with "Struct field immutability + functional update".
 **Scope change:** the audit now covers the **self-hosted** compiler as a
 first-class dimension alongside native (new **S** column on every table).
 Self-host verification is driven by `self_host_*_test.go` harnesses (build a
-driver binary from `examples/self_host/`, feed it Fern source, assemble + run,
+driver binary from `compiler/`, feed it Fern source, assemble + run,
 check exit code).
 
 **Native arm (all four backends):** new fixture
@@ -4556,7 +4556,7 @@ per-feature programs. 17 features pass on the self-hosted compiler. **Three
 genuine self-host gaps surfaced** (native handles all three on every backend),
 each filed as an issue and held out of the executed table:
 
-- 🐛 **C-style `for (init; cond; step)`** — `examples/self_host/parser.fern`
+- 🐛 **C-style `for (init; cond; step)`** — `compiler/parser.fern`
   has no such `Stmt` node (only the foreach `for VAR in EXPR`); a `for (` is
   misparsed → `StmtUnknown` → the loop var is dereferenced as a pointer →
   **segfault**. Also disables `break` / `continue` *inside* a C-for (they work

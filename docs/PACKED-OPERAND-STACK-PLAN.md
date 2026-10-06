@@ -70,7 +70,7 @@ shape corpus and all of `examples/`. Plus the native fixture
 suite with and without `FERN_NATIVE_ASM=1`, and the differential
 oracle.
 
-Measured on `examples/self_host/fern.fern` for `x86-64-linux`:
+Measured on `compiler/fern.fern` for `x86-64-linux`:
 executable segment 22,206,407 -> 17,692,055 bytes (-20.3%).
 Whole-binary is only -5.0%, because ~79% of that artifact is a
 64 MiB zero-fill `.bss` reservation the linker materialises in

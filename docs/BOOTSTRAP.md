@@ -2,7 +2,7 @@
 
 `make bootstrap` builds the self-host compiler from a clean checkout with no Go
 toolchain and no native backend involved: a pinned earlier compiler (stage0)
-compiles `examples/self_host/fern.fern`, the result compiles and runs a one-line
+compiles `compiler/fern.fern`, the result compiles and runs a one-line
 program and `coreutils/tr`, and is installed as `bin/fern-selfhost` — the same artifact `make
 selfhost-cli` produces via `./bin/fern`. `make distcheck` is the reproducibility
 half: that compiler recompiles its own source, the result does so once more,
@@ -90,7 +90,7 @@ Refresh when:
 - `make bootstrap` fails in `stage1` because the source now uses a construct
   the pinned compiler does not know. The failure message says so.
 - On a cadence, so the pin does not rot: after roughly fifty PRs touching
-  `examples/self_host`, and before a tagged release.
+  `compiler`, and before a tagged release.
 
 How: dispatch `.github/workflows/bootstrap.yml` with `publish` ticked on the
 branch to pin. The job builds a candidate on each host with `make
@@ -154,7 +154,7 @@ which case it saw. A pin at the current commit makes all three identical.
 Both binaries are kept in `build/bootstrap/`. Two shapes:
 
 - **stage3 crashes or exhausts memory.** Build a symbolised stage2:
-  `bin/fern -target x86-64-linux -emit asm examples/self_host/fern.fern` is the
+  `bin/fern -target x86-64-linux -emit asm compiler/fern.fern` is the
   same code as GAS text, and gcc links it with symbols, so gdb names the frame in
   one step where the stripped binary gives an address. Exit codes tell the walls
   apart: 125 is the arena (`LOCAL-DEV-LOOP.md`), 137 the host's RAM, 139 a real

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# perf-bench — measure the examples/bench corpus and write a metrics report.
+# perf-bench — measure the bench corpus and write a metrics report.
 #
 # Usage: perf-bench [REPORT]
 #
@@ -40,7 +40,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REPORT="${1:-/dev/stdout}"
-BENCH_DIR="${FERN_BENCH_DIR:-examples/bench}"
+BENCH_DIR="${FERN_BENCH_DIR:-bench}"
 
 case "$(uname -m)" in
   x86_64)          ARCH=x86_64;  TARGET=x86-64-linux ;;

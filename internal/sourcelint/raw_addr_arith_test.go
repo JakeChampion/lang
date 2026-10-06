@@ -60,7 +60,7 @@ func TestAsmcoreAddressesAvoidI32Arithmetic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("locate repo root: %v", err)
 	}
-	path := filepath.Join(root, "examples", "self_host", "asmcore.fern")
+	path := filepath.Join(root, "compiler", "asmcore.fern")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read asmcore.fern: %v", err)

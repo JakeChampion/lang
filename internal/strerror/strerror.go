@@ -17,7 +17,7 @@
 // The three asm backends emit the table as a compare ladder over
 // `.rodata` literals, wasm as a ladder over data-segment literals, the
 // interpreter reads it directly, and the self-host compiler carries a
-// copy in examples/self_host/asmcore.fern that selfhost_parity_test.go
+// copy in compiler/asmcore.fern that selfhost_parity_test.go
 // pins to this one entry for entry.
 package strerror
 

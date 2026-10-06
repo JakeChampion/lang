@@ -16,7 +16,7 @@ import (
 // Slices 1-3 wrote the passes; nothing ran them outside a test driver, and a
 // test driver is not the compiler, so the module with the most
 // lowering in it, the self-host compiler's own ~1000 functions, went through
-// every build unchecked. examples/self_host/irverifygate.fern closes that: all
+// every build unchecked. compiler/irverifygate.fern closes that: all
 // three backends call it once per function they are about to emit, so any
 // compile run under FERN_IR_VERIFY=1 names the malformed op where it was
 // produced instead of handing it to a backend that turns it into a SIGSEGV or

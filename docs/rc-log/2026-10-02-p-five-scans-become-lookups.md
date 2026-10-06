@@ -3,7 +3,7 @@
 `semsource.contracts`, `checker.redeclares`, `checker.OwnFuncs`,
 `ssaunits.grow_rows_agree`, `ssarc.prune`. Refs #8171. No emitted byte
 changes: the stage0-built compiler before and after emits the fixed older
-tree (`examples/self_host/fern.fern` at 1ae9cad) and `checker.fern` byte for
+tree (`compiler/fern.fern` at 1ae9cad) and `checker.fern` byte for
 byte, and the `selfhost-emit-hashes` sweep is 1,965 rows per compiler with
 0 differing, against main at 5b933cc3.
 

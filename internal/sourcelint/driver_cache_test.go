@@ -104,7 +104,7 @@ func TestDriverBuildingJobsRestoreTheDriverCache(t *testing.T) {
 	}
 	src := string(action)
 	for _, want := range []struct{ needle, why string }{
-		{"hashFiles('bootstrap/stage0.lock', 'examples/self_host/**', 'internal/stdlib/**')",
+		{"hashFiles('bootstrap/stage0.lock', 'compiler/**', 'internal/stdlib/**')",
 			"the harness keys a driver on the stage0 binary, its source closure and the stdlib (driverCompilerKey); the cache key must cover the same inputs"},
 		{"/*.driverbin", "only drivers are carried between runs; the linked test programs (*.bin) are per-test"},
 		{"restore-keys:", "without a prefix fallback a tree with any self-host edit starts from nothing, though most of its drivers' closures did not change"},

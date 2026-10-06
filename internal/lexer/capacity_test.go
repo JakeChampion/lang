@@ -14,7 +14,7 @@ import (
 // the guard is that the corpus as a whole still sits on the far side of the
 // divisor.
 func TestTokenSliceIsSizedForTheCorpusDensity(t *testing.T) {
-	files, err := filepath.Glob(filepath.Join("..", "..", "examples", "self_host", "*.fern"))
+	files, err := filepath.Glob(filepath.Join("..", "..", "compiler", "*.fern"))
 	if err != nil || len(files) == 0 {
 		t.Skipf("no self-host sources to measure: %v", err)
 	}

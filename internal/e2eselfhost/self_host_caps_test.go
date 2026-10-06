@@ -11,7 +11,7 @@ import (
 )
 
 // TestSelfHostCapsRules exercises the self-host's package-capability boundary
-// (examples/self_host/caps.fern, #6634) — the port of native's internal/caps,
+// (compiler/caps.fern, #6634) — the port of native's internal/caps,
 // and the second of the two independent capability systems.
 //
 // The driver asserts each rule in BOTH directions: a package that must be

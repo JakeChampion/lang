@@ -1,0 +1,100 @@
+// compiler/builtins.fern — the compiler's built-in types as a
+// REAL Fern module, instead of the hand-synthesised table in
+// parser.inject_builtin_enums / add_builtin_variant.
+//
+// Historically the self-host compiler synthesised these decls in code: a
+// loop of `add_builtin_variant(structs, "JString", "string", "JsonValue")`
+// calls plus open-coded StructDecl literals for FileStat / ProcessResult /
+// HeaderMap / HttpRequest / HttpResponse. That "synthesise the AST by
+// hand" approach is exactly the `.wants/.needs`-style boilerplate we want
+// to retire: it duplicates, in Go-flavoured Fern, declarations the parser
+// already knows how to read from ordinary source.
+//
+// This file is that same set of types written as plain Fern. The
+// import-driven driver (asm_modload_run.fern) loads it like any other
+// module and merges its decls into the program before codegen. Because
+// `inject_builtin_enums` guards every entry with `struct_declared(...)`,
+// the synthetic table degrades to a no-op once these real decls are
+// present — so this module SUPERSEDES the hand-built table without any
+// change to the legacy bundle path (which simply doesn't load this file
+// and keeps falling back to the synthetic injection).
+//
+// Parsing an `enum` here lowers each variant to a `__ev`-payload struct
+// with `enum_owner` set (parse_enum_decl) — byte-for-byte the shape
+// add_builtin_variant produced — so the emitter's shape-pointer dispatch
+// and field-offset resolution are unchanged.
+//
+// Option / Result are NOT here: Some/None/Ok/Err are special-cased in the
+// emitter, never synthesised as variant structs.
+
+// JsonValue — the std/json document model. `JString(x)` / `match … JObject(m) …`
+// resolve against these variants.
+enum JsonValue {
+  JNull,
+  JBool(boolean),
+  JNumber(string),
+  JString(string),
+  JArray(JsonValue[]),
+  JObject(Map[string, JsonValue]),
+}
+
+// IoError — the error arm of filesystem / io Results.
+enum IoError {
+  NotFound(string),
+  PermissionDenied(string),
+  AlreadyExists(string),
+  InvalidUtf8(string),
+  Interrupted,
+  Unsupported,
+  // Two payloads (path, message), matching native's declaration — the
+  // self-host copy carried one string (#4370).
+  Other(string, string),
+}
+
+// ChunkProducer — the producer a `BodyChunks` carries: asked for chunk 0,
+// 1, 2, … until it answers None. A record rather than the bare function
+// because a closure is released as a struct member and only leaks as an
+// enum payload on the native backends.
+struct ChunkProducer { next: (i32) => Option[u8[]] }
+
+// Body — what an HttpResponse carries (std/http): text or bytes held
+// whole, a Stream drained to the wire, a file the serve loop streams, or
+// chunks the loop pulls from a producer by index until it answers None.
+enum Body {
+  BodyText(string),
+  BodyBytes(u8[]),
+  BodyStream(Stream),
+  BodyFile(string),
+  BodyChunks(ChunkProducer),
+}
+
+// FileStat — returned by stat(path). The emitter resolves
+// is_file/is_dir/size to slot offsets from this layout, and interns the
+// shape pointer as the name "FileStat".
+struct FileStat { is_file: boolean, is_dir: boolean, size: i64, mode: u32, nlink: u32, uid: u32, gid: u32, dev: i64, rdev: i64, ino: i64, blksize: i64, blocks: i64, atime: i64, atime_nsec: i64, mtime: i64, mtime_nsec: i64, ctime: i64, ctime_nsec: i64, btime: i64, btime_nsec: i64 }
+
+// ProcessResult — returned by subprocess(cmd, args, stdin).
+struct ProcessResult { stdout: string, stderr: string, exit_code: i32 }
+
+// std/headers' HeaderMap + std/http's request/response records. The
+// stdlib builds these by record literal without an explicit `struct`
+// decl (so the Go checker keeps treating get_all(...) as a method, not a
+// field); the self-host shape dispatch needs the declaration to resolve
+// field offsets, so it lives here.
+struct HeaderMap { names: string[], values: string[] }
+
+// BodySource — what a lazy Stream pulls from: `next` answers the next
+// chunk, None at the end and on every call after; `fault` is why the
+// stream ended early (an HTTP status, or async.cancelled()), 0 for one
+// that reached its end.
+struct BodySource { next: () => Option[u8[]], fault: Cell[i32] }
+
+// Stream — std/stream's byte-stream value, and the type of
+// HttpRequest.body (docs/PLATFORM-RESEARCH.md Rec §4): a buffer and a
+// cursor, and a source the reads refill the buffer from once it is
+// exhausted, for a body that arrives as it is read.
+struct Stream { data: u8[], pos: i32, source: Option[BodySource] }
+
+struct HttpRequest { method: string, path: string, body: Stream, headers: HeaderMap, trailers: HeaderMap }
+
+struct HttpResponse { status: i32, body: Body, headers: HeaderMap, trailers: HeaderMap }

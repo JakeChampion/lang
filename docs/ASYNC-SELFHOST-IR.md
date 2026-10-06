@@ -5,7 +5,7 @@
 > (`std/async`: `Future[T]` + `gather`/`race`/`with_deadline` +
 > `fetch_future`, real overlapping I/O — see `docs/ASYNC-REDESIGN.md` /
 > `ASYNC-FUTURE-UNIFICATION.md`). This doc is about the remaining gap:
-> the **self-hosted** compiler (`examples/self_host/`) can't yet compile
+> the **self-hosted** compiler (`compiler/`) can't yet compile
 > `std/async` through its IR path (`irlower.fern` → `asm_ir.fern` /
 > `asm_arm64_ir.fern` / `wasm.fern`) — it falls back to, and in fact
 > can't even AST-compile it. This is **goal-1 work** (widen the

@@ -1,0 +1,141 @@
+import "std/test";
+
+// tests/stdlib/float_test.fern — f32 / f64 assertion family.
+//
+// The interp had no float values for most of its lifetime
+// (the native + wasm backends owned floats end-to-end), which
+// blocked unit-testing any property that touched
+// floating-point arithmetic. This file pins the post-Float-
+// support behaviour: tolerance comparisons, exact equality
+// (for bit-pattern round-trips), and NaN handling.
+//
+// The naive `actual == expected` is almost never what you
+// want on floats — `test.assert_eq_f64_near(actual, expected,
+// epsilon)` is the typical entry point. `_exact` is reserved
+// for canonicalisation tests where bit-equal IS the
+// contract (`f32_bits` round-trips, NaN payload preservation).
+
+function test_f64_addition(): test.TestOutcome {
+  return test.assert_eq_f64_near(1.5 + 2.5, 4.0, 0.001);
+}
+
+function test_f64_multiplication(): test.TestOutcome {
+  return test.assert_eq_f64_near(3.7 * 3.7, 13.69, 0.001);
+}
+
+function test_f64_division_by_negative(): test.TestOutcome {
+  return test.assert_eq_f64_near(10.0 / (0.0 - 4.0), 0.0 - 2.5, 0.001);
+}
+
+function test_f32_precision_loss(): test.TestOutcome {
+  // 0.1 + 0.1 + 0.1 in f32 isn't exactly 0.3 — the textbook
+  // FP-precision example. Tolerance must cover it.
+  let f: f32 = 0.1 as f32;
+  let sum: f32 = f + f + f;
+  return test.assert_eq_f32_near(sum, 0.3 as f32, 0.0001 as f32);
+}
+
+function test_f64_exact_equality_on_integral(): test.TestOutcome {
+  // Integer-valued f64s round-trip exactly. `_exact` works
+  // here.
+  return test.assert_eq_f64_exact(2.0 * 21.0, 42.0);
+}
+
+function test_nan_detection(): test.TestOutcome {
+  // 0.0 / 0.0 is the canonical NaN constructor per IEEE-754.
+  let z: f64 = 0.0;
+  let nan: f64 = z / z;
+  return test.assert_is_nan_f64(nan);
+}
+
+function test_nan_compares_unequal_to_itself(): test.TestOutcome {
+  let z: f64 = 0.0;
+  let nan: f64 = z / z;
+  // The textbook NaN property; failure here would mean
+  // either the interp or std/float misclassified NaN.
+  if (nan == nan) {
+    return test.fail("NaN compared equal to itself");
+  }
+  return test.pass();
+}
+
+function test_f32_bits_round_trip(): test.TestOutcome {
+  // 1.0f32 has the IEEE bit pattern 0x3F800000 = 1065353216.
+  // Round-tripping `f32_from_bits(f32_bits(x))` must be a
+  // no-op for every finite, non-NaN value.
+  let x: f32 = 1.0 as f32;
+  let bits: i32 = f32_bits(x);
+  return test.assert_eq(bits, 1065353216);
+}
+
+function test_f32_from_bits_round_trips(): test.TestOutcome {
+  let x: f32 = 3.14 as f32;
+  let bits: i32 = f32_bits(x);
+  let back: f32 = f32_from_bits(bits);
+  return test.assert_eq_f32_near(back, x, 0.000001 as f32);
+}
+
+function test_negative_zero(): test.TestOutcome {
+  // IEEE-754 defines -0.0; it compares equal to +0.0 under
+  // `==` but the bit patterns differ. Our tolerance helpers
+  // pass because the difference is exactly 0.
+  let neg: f64 = 0.0 - 0.0;
+  return test.assert_eq_f64_near(neg, 0.0, 0.0);
+}
+
+function test_inf_handling(): test.TestOutcome {
+  // 1.0 / 0.0 is +Inf per IEEE-754. The diff helper short-
+  // circuits when actual == expected, so two ±Inf values
+  // match without a NaN-yielding subtraction.
+  let inf: f64 = 1.0 / 0.0;
+  let also_inf: f64 = 2.0 / 0.0;
+  return test.assert_eq_f64_near(inf, also_inf, 0.0);
+}
+
+// to_string over the digit-formatting paths: the ordinary i64 path (small
+// integrals + a fraction), the large-integer float-domain formatter
+// __float_int_part (2^63 <= |n| < 1e21, the count-then-fill-backward buffer
+// from #4379), and the scientific-notation branch for |n| >= 1e21 (or the
+// tiny |n| < 1e-4 branch) added in #5538's follow-on (#5536). The scientific
+// mantissa is not yet correctly-rounded shortest — Ryu/Dragon4 is #5536, at
+// which point 1.5e30 will render as "1.5e+30" and this expectation updates.
+function test_to_string_paths(): test.TestOutcome {
+  if (42.0.to_string() != "42") {
+    return test.fail("42.0");
+  }
+  if (1000000.0.to_string() != "1000000") {
+    return test.fail("1e6");
+  }
+  if (3.25.to_string() != "3.25") {
+    return test.fail("3.25");
+  }
+  if ((0.0 - 42.5).to_string() != "-42.5") {
+    return test.fail("-42.5");
+  }
+  if (9223372036854775808.0.to_string() != "9223372036854776000") {
+    return test.fail("2^63");
+  }
+  if (1e20.to_string() != "100000000000000000000") {
+    return test.fail("1e20");
+  }
+  // >= 1e21 now routes to scientific notation (was an unmarked 31-digit
+  // integer). The mantissa is approximate until Ryu/Dragon4 (#5536).
+  return test.assert_eq(1.5e30.to_string(), "1.5e+30");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("floats");
+  r = r.it("f64 addition", test_f64_addition);
+  r = r.it("f64 multiplication", test_f64_multiplication);
+  r = r.it("f64 division by negative", test_f64_division_by_negative);
+  r = r.it("f32 precision loss tolerance", test_f32_precision_loss);
+  r = r.it("f64 exact on integral", test_f64_exact_equality_on_integral);
+  r = r.it("NaN detection", test_nan_detection);
+  r = r.it("NaN compares unequal to itself", test_nan_compares_unequal_to_itself);
+  r = r.it("f32_bits gives expected pattern", test_f32_bits_round_trip);
+  r = r.it("f32_from_bits round trips", test_f32_from_bits_round_trips);
+  r = r.it("negative zero", test_negative_zero);
+  r = r.it("Inf vs Inf", test_inf_handling);
+  r = r.it("to_string digit paths", test_to_string_paths);
+  return r.finish();
+}

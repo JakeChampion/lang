@@ -258,7 +258,7 @@ function main(): i32 {
     let t0: i64 = monotonic_ns();
     // Mixed in, not XORed: `c ^ c` collapses to zero on an even number of
     // rounds, and a checksum that is zero half the time cannot catch a
-    // variant that skipped the work (examples/bench/README.md).
+    // variant that skipped the work (bench/README.md).
     checksum = (checksum * (31 as i64) + dispatch(variant, sel, xs)) % modulus();
     samples = samples.with(r, monotonic_ns() - t0);
     r = r + 1;

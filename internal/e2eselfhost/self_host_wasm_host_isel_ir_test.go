@@ -100,7 +100,7 @@ func TestSelfHostWasmHostIselIR(t *testing.T) {
 // nothing defines, run as a program over watbin.fern itself.
 func TestSelfHostWatbinUndefinedReference(t *testing.T) {
 	cli := newStrictCLI(t)
-	watbin, err := os.ReadFile("../../examples/self_host/watbin.fern")
+	watbin, err := os.ReadFile("../../compiler/watbin.fern")
 	if err != nil {
 		t.Fatal(err)
 	}

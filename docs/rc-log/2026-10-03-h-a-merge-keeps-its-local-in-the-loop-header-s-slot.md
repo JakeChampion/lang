@@ -55,7 +55,7 @@ The compiler each tree builds from itself through the pinned stage0
 `lift_impl`'s slot-to-slot copies fall from 848 to 202. The whole
 compiler's x86-64 text is 2,124 lines shorter.
 
-The thirty `examples/bench` programs: −0.33% in total, with every exit
+The thirty `bench` programs: −0.33% in total, with every exit
 status unchanged. `record_update` is −3.8%, `pvec_with` −2.0% and the two
 UTF-8 ingests −1.2%. The largest regression is `map_string`, +0.2%. The
 merge-cascade reproducer goes from 9 slot-to-slot copies to none.

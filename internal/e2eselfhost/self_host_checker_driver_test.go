@@ -102,7 +102,7 @@ func TestSelfHostCheckerDriverArm64(t *testing.T) {
 		if base == "checker_run.fern" {
 			continue // staged below as main.fern
 		}
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", base))
+		src, err := os.ReadFile(filepath.Join("../../compiler", base))
 		if err != nil {
 			t.Fatalf("read %s: %v", base, err)
 		}
@@ -113,7 +113,7 @@ func TestSelfHostCheckerDriverArm64(t *testing.T) {
 		t.Fatalf("read std/io.fern: %v", err)
 	}
 	files["io.fern"] = string(ioSrc)
-	runSrc, err := os.ReadFile("../../examples/self_host/checker_run.fern")
+	runSrc, err := os.ReadFile("../../compiler/checker_run.fern")
 	if err != nil {
 		t.Fatalf("read checker_run.fern: %v", err)
 	}

@@ -8,7 +8,7 @@ work did find — so nobody re-derives it. The harness that made it decidable is
 `scripts/selfhost-alloc-bench`.
 
 Numbers below are the self-host x86-64 compiler compiling
-`examples/self_host/checker.fern` against `internal/stdlib`, measured
+`compiler/checker.fern` against `internal/stdlib`, measured
 2026-08-26 at `fce242c`.
 
 ## What the premise was
@@ -63,7 +63,7 @@ Interning is 11,734 of the 160,355 allocations removed — **7% of the win, for
 all of the machinery**: a hash-indexed table, a rehash path, and a probe in the
 hot lexer loop. Live bytes at exit moved 0.05%; peak RSS did not move at all.
 The emitted asm was byte-identical at every step. So the table was not kept —
-`examples/self_host/symtab.fern` and its driver are deleted, not parked.
+`compiler/symtab.fern` and its driver are deleted, not parked.
 
 Wall clock is not evidence either way here: three interleaved rounds of the
 same pair disagreed on the sign, exactly as `docs/LOCAL-DEV-LOOP.md` warns.
@@ -138,7 +138,7 @@ working one:
   above are all taken with the *shipped* tree on disk, varying only which
   compiler binary runs; an earlier round that let the subject drift read 250k
   allocations higher for the same baseline binary. A stray `.fern` file left in
-  `examples/self_host/` moves it too.
+  `compiler/` moves it too.
 
 ## Relationship to the native side
 

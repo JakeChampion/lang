@@ -30,7 +30,7 @@ import (
 // which a NEW binding form by definition does not — so this lint reads the
 // two functions instead and pins the set of arms that may rebind at all, in
 // both, from the source.
-const bindStmtArmsPath = "../../examples/self_host/checker.fern"
+const bindStmtArmsPath = "../../compiler/checker.fern"
 
 // scopeBindingForms is the pinned set. A change here is not a lint bug: it
 // means the checker learned a new way for a statement to bind a name, and
