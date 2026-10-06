@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,19 +11,11 @@ import (
 
 func TestServePerIPCapInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	port := freeLoopbackPort(t)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "srv.fern")
-	if err := os.WriteFile(srcPath, []byte(e2eharness.PerIPCapServerSource(port)), 0o644); err != nil {
+	if err := os.WriteFile(srcPath, []byte(e2eharness.PerIPCapServerSource()), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	cmd := exec.Command(bin, "-interp", srcPath)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start interp server: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
-	e2eharness.CheckPerIPCap(t, fmt.Sprintf("127.0.0.1:%d", port))
+	addr, _ := e2eharness.StartInheritedServer(t, exec.Command(bin, "-interp", srcPath))
+	e2eharness.CheckPerIPCap(t, addr)
 }

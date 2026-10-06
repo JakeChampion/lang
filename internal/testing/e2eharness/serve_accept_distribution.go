@@ -16,7 +16,7 @@ import (
 // first request, so every worker's copy of it after the fork carries its
 // own value. The caps are lifted for the measuring client, one host
 // holding thousands of connections.
-func AcceptDistributionServerSource(port, workers int) string {
+func AcceptDistributionServerSource(workers int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/i64";
@@ -24,12 +24,12 @@ import "std/platform";
 function main(): i32 {
     let id: Cell[i64] = cell_new(0 as i64);
     let opts: serve.Config = serve.Config { ...serve.config(), workers: %d, max_connections: 16384, max_connections_per_ip: 0 };
-    return serve.supervise(%d, opts, (req: HttpRequest, plat: platform.Host): HttpResponse => {
+    return serve.supervise(0, opts, (req: HttpRequest, plat: platform.Host): HttpResponse => {
         if (id.get() == (0 as i64)) { id.set(monotonic_ns()); }
         return http.ok(id.get().to_string());
     });
 }
-`, workers, port)
+`, workers)
 }
 
 // MeasureAcceptDistribution holds `held` connections to the server at addr,

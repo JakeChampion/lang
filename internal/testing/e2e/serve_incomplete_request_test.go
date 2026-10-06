@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,18 +14,10 @@ import (
 // request at the end of stream is answered 400.
 func TestServeIncompleteRequestAtEOFInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	port := freeLoopbackPort(t)
 	srcPath := filepath.Join(t.TempDir(), "srv.fern")
-	if err := os.WriteFile(srcPath, []byte(e2eharness.RecvDeadlineServerSource(port)), 0o644); err != nil {
+	if err := os.WriteFile(srcPath, []byte(e2eharness.RecvDeadlineServerSource()), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	cmd := exec.Command(bin, "-interp", srcPath)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start interp server: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
-	e2eharness.CheckIncompleteRequestAtEOF(t, fmt.Sprintf("127.0.0.1:%d", port))
+	addr, _ := e2eharness.StartInheritedServer(t, exec.Command(bin, "-interp", srcPath))
+	e2eharness.CheckIncompleteRequestAtEOF(t, addr)
 }

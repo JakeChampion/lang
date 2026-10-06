@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// StreamBodiesServerSource is a one-worker server on `port` with
+// StreamBodiesServerSource is a one-worker server with
 // `stream_bodies` on (docs/NET-P3-SUSPENSION-PLAN.md §3.9): /sum reads
 // its body a kilobyte at a time through the request's Stream and answers
 // the byte count and sum; /text reads it whole with body_string, so a body
@@ -22,7 +22,7 @@ import (
 // and the minimum data rate 1000 B/s after a 300 ms grace, so the checks
 // below can stall a body into a 408 and push a chunk past the cap into a
 // 413 in well under a second.
-func StreamBodiesServerSource(port int) string {
+func StreamBodiesServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -68,9 +68,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 function main(): i32 {
     let opts: serve.Config = serve.Config { ...serve.config(), workers: 1, stream_bodies: true, min_data_rate: 1000, data_rate_grace: time.duration_millis(300), limits: http.HttpLimits { ...http.http_limits(), body: 4096 } };
-    return serve.supervise(%d, opts, handle);
+    return serve.supervise(0, opts, handle);
 }
-`, port)
+`)
 }
 
 // StreamUploadBytes is the body the overlap check uploads: 3000 bytes,

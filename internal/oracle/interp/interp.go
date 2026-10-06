@@ -1682,6 +1682,7 @@ func New() *Interp {
 	i.Builtins["wasm_timer_pollable"] = &Builtin{Fn: builtinWasmTimerPollable}
 	i.Builtins["wasm_block"] = &Builtin{Fn: builtinWasmBlock}
 	i.Builtins["wasm_poll"] = &Builtin{Fn: builtinWasmPoll}
+	i.inheritListener()
 	return i
 }
 
@@ -1940,6 +1941,25 @@ func negErrno(err error) Value {
 		return Number(-int64(errno))
 	}
 	return Number(-1)
+}
+
+// inheritListener takes descriptor 3 as listener handle 3 when LISTEN_FDS
+// announces one, the convention std/serve's __listener_of reads: the
+// compiled runtimes serve descriptor 3 itself, and here handle 3 names it.
+// Handles allocated afterwards are numbered past it.
+func (i *Interp) inheritListener() {
+	n, err := strconv.Atoi(os.Getenv("LISTEN_FDS"))
+	if err != nil || n < 1 {
+		return
+	}
+	f := os.NewFile(3, "LISTEN_FDS")
+	ln, err := net.FileListener(f)
+	f.Close()
+	if err != nil {
+		return
+	}
+	i.tcpListeners = map[int64]tcpListenerHandle{3: ln}
+	i.tcpNextHandle = 3
 }
 
 func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {

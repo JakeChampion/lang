@@ -1,8 +1,6 @@
 package e2ecompiler
 
 import (
-	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,20 +72,13 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 	})
 }
 
-// startHeldConnectionsServer compiles the server source on a free port
-// with the self-host driver, starts it, and answers its address.
-func startHeldConnectionsServer(t *testing.T, driver, stdlib string, source func(port int) string) string {
+// startHeldConnectionsServer compiles the server source with the
+// self-host driver, starts it, and answers its address.
+func startHeldConnectionsServer(t *testing.T, driver, stdlib string, source func() string) string {
 	t.Helper()
 	dir := t.TempDir()
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("no free TCP port: %v", err)
-	}
-	port := probe.Addr().(*net.TCPAddr).Port
-	probe.Close()
-
 	src := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(src, []byte(source(port)), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(source()), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "held")
@@ -99,10 +90,6 @@ func startHeldConnectionsServer(t *testing.T, driver, stdlib string, source func
 	}
 	e2eharness.RequireCompleteSemanticLowering(t, report)
 
-	cmd := exec.Command(bin)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start server: %v", err)
-	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
-	return fmt.Sprintf("127.0.0.1:%d", port)
+	addr, _ := e2eharness.StartInheritedServer(t, exec.Command(bin))
+	return addr
 }

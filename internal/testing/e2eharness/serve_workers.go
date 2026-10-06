@@ -14,9 +14,9 @@ import (
 	"time"
 )
 
-// WorkersPerCPUServerSource is a supervised server on `port` with the
+// WorkersPerCPUServerSource is a supervised server with the
 // default options, whose worker count is one per processing unit.
-func WorkersPerCPUServerSource(port int) string {
+func WorkersPerCPUServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -24,9 +24,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.supervise(%d, serve.config(), handle);
+    return serve.supervise(0, serve.config(), handle);
 }
-`, port)
+`)
 }
 
 // CheckWorkersPerCPU waits for the supervisor at cmd to have forked one
@@ -63,9 +63,9 @@ func CheckWorkersPerCPU(t *testing.T, cmd *exec.Cmd, addr string) {
 	}
 }
 
-// BurstServerSource is a supervised server on `port` with four workers
+// BurstServerSource is a supervised server with four workers
 // and a 100 ms accept grace, answering everything at once.
-func BurstServerSource(port int) string {
+func BurstServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/time";
@@ -74,9 +74,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.supervise(%d, serve.Config { ...serve.config(), workers: 4, shutdown_grace: time.duration_millis(100 as i64) }, handle);
+    return serve.supervise(0, serve.Config { ...serve.config(), workers: 4, shutdown_grace: time.duration_millis(100 as i64) }, handle);
 }
-`, port)
+`)
 }
 
 // CheckShutdownAfterBurst answers 64 connections in a row over the
@@ -101,9 +101,9 @@ func CheckShutdownAfterBurst(t *testing.T, cmd *exec.Cmd, addr string) {
 	}
 }
 
-// OrphanedWorkersServerSource is a supervised server on `port` with two
+// OrphanedWorkersServerSource is a supervised server with two
 // workers.
-func OrphanedWorkersServerSource(port int) string {
+func OrphanedWorkersServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/time";
@@ -112,9 +112,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.supervise(%d, serve.Config { ...serve.config(), workers: 2, shutdown_grace: time.duration_millis(100 as i64) }, handle);
+    return serve.supervise(0, serve.Config { ...serve.config(), workers: 2, shutdown_grace: time.duration_millis(100 as i64) }, handle);
 }
-`, port)
+`)
 }
 
 // CheckWorkersStopWithSupervisor SIGKILLs the supervisor at cmd while an

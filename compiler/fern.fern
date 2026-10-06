@@ -1118,7 +1118,7 @@ function violation_finding(code: string, msg: string, fn_module: string, line: i
 
 // read_manifest parses `<dir>fern.toml`, or an empty manifest when the entry
 // has none — which is every compiler source, and a program with no packages
-// to govern.
+// to govern. It reads that directory only; governing_manifest walks up.
 function read_manifest(dir_slash: string): fern_toml.Manifest {
   match (read_file(dir_slash + "fern.toml")) {
     Ok(src) => {
@@ -1147,6 +1147,17 @@ function manifest_reqs(man: fern_toml.Manifest): mvs.Req[] {
     i = i + 1;
   }
   return out;
+}
+
+// Governed is the manifest governing a directory — the nearest fern.toml at
+// or above it, as import resolution finds it (modloader.manifest_dir) — and
+// the directory holding it, slash-terminated; with no manifest, an empty one
+// and the directory itself.
+struct Governed { man: fern_toml.Manifest, dir: string }
+
+function governing_manifest(dir_slash: string): Governed {
+  let mdir: string = modloader.manifest_dir(dir_slash);
+  return Governed { man: read_manifest(mdir), dir: mdir };
 }
 
 // find_manifest_dir walks up from `dir` to the first directory holding a
@@ -1899,17 +1910,17 @@ function read_bundle_module(mpath: string, from: string, ipath: string): modload
 // the target has nothing to call in.
 function load_bundle(entry_path: string, entry_mod: parser.Module, root: string, target: string): Bundle {
   let dir: string = util.dir_of(entry_path);
-  // The entry's own manifest, when it has one: it names the dependency
-  // packages, which are both a way to RESOLVE an import the sibling-file and
-  // stdlib-root rules cannot name, and the identity every capability grant
-  // is attached to (caps.fern / #6634).
+  // The manifest governing the entry, when there is one: it names the
+  // dependency packages, which are both a way to RESOLVE an import the
+  // sibling-file and stdlib-root rules cannot name, and the identity every
+  // capability grant is attached to (caps.fern / #6634).
   let dir_slash: string = "";
   if (dir.len() > 0) {
     dir_slash = dir + "/";
   }
-  let man: fern_toml.Manifest = read_manifest(dir_slash);
-  let deps: string[] = fern_toml.dep_names(man);
-  let pkgs: caps.Pkg[] = [root_pkg(man)];
+  let gov: Governed = governing_manifest(dir_slash);
+  let deps: string[] = fern_toml.dep_names(gov.man);
+  let pkgs: caps.Pkg[] = [root_pkg(gov.man)];
   let no_mods: flatten.LoadedModule[] = [];
   let no_files: string[] = [];
   let missing: string = emitforms.http_entry_missing(entry_mod, target);
@@ -1963,9 +1974,8 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
       loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: flatten.module_ident(mpath), mod: m });
       // Attribute and expand against the manifest GOVERNING the importer,
       // which is the entry's only for a direct import.
-      let from_man: fern_toml.Manifest = read_manifest(from);
-      pkgs = add_pkg(pkgs, from_man, from, ipath);
-      q = queue_imports(q, m, shown, mdir, root, fern_toml.dep_names(read_manifest(mdir)));
+      pkgs = add_pkg(pkgs, governing_manifest(from), ipath);
+      q = queue_imports(q, m, shown, mdir, root, fern_toml.dep_names(governing_manifest(mdir).man));
     }
   }
   if (q.unrooted.len() > 0) {
@@ -2833,21 +2843,21 @@ function dep_pkg_name(man: fern_toml.Manifest, dir_slash: string, dep: string): 
 // anything else (the stdlib) gets no entry at all — caps.analyze folds a
 // module with no entry into whichever package calls it.
 //
-// Only the ENTRY manifest is consulted, because that is as far as this
-// driver's loader resolves: a dependency's own dependencies are not reachable
-// from here, so there is no deeper package to attribute.
-function add_pkg(pkgs: caps.Pkg[], man: fern_toml.Manifest, dir_slash: string, import_path: string): caps.Pkg[] {
+// `importer` is the manifest governing the importing module; a dependency's
+// path is relative to its directory.
+function add_pkg(pkgs: caps.Pkg[], importer: Governed, import_path: string): caps.Pkg[] {
   let mod: string = util.module_name(import_path);
   let no_grants: string[] = [];
   if (util.is_local(import_path)) {
     return pkgs.append(caps.Pkg { module: mod, name: pkgs[0].name, root: true, governed: false, grants: no_grants });
   }
+  let man: fern_toml.Manifest = importer.man;
   if (fern_toml.dep_kind(man, mod).len() == 0) {
     return pkgs;
   }
   return pkgs.append(caps.Pkg {
     module: mod,
-    name: dep_pkg_name(man, dir_slash, mod),
+    name: dep_pkg_name(man, importer.dir, mod),
     root: false,
     governed: fern_toml.dep_governed(man, mod),
     grants: fern_toml.dep_caps(man, mod),
