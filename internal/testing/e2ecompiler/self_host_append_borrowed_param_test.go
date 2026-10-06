@@ -49,7 +49,7 @@ var selfHostAppendBorrowedCases = []struct {
 }
 
 // TestSelfHostAppendBorrowedParamX86_64 — the containment through the
-// PRODUCTION x86-64 IR path (asm_ir_run `-ir`).
+// PRODUCTION x86-64 IR path (asm_ir_run).
 func TestSelfHostAppendBorrowedParamX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

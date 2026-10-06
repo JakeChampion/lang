@@ -131,7 +131,7 @@ func TestSelfHostIoErrorIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostIoErrorIRArm64 runs the same cases through the arm64 IR path
-// (asm_ir_run -target arm64-linux -ir), whose runtime helpers live in
+// (asm_ir_run -target arm64-linux), whose runtime helpers live in
 // asm_arm64.fern and carried the same NULL Err/Some payloads (#4624, the
 // arm64 leg of #4370). The read_file/write_file error paths now route through
 // the arm64 __fern_io_error. CI-gated arm64 (qemu).

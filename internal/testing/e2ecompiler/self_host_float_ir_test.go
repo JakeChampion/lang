@@ -24,10 +24,8 @@ import (
 // ties-to-even would diverge; the three #7880 cases pin the classes where the
 // shorter trunc(x+copysign(0.5,x)) identity diverged instead.
 //
-// These cases pin routing to the "ir" path via the pathprobe driver. (The older
-// combined test used `-ir`, which silently skips the gated fast path when the
-// module is not all_eligible, so it never verified the IR path.) `pow` lowers as
-// an fpow fbin rather than an op_funary, so it is covered elsewhere.
+// These cases pin routing to the "ir" path via the pathprobe driver. `pow`
+// lowers as an fpow fbin rather than an op_funary, so it is covered elsewhere.
 //
 // Each case casts its f64 result to i32 and returns a non-negative value kept
 // <= 126 (the wasmtime exit-code truncation gap, cf. #2908), oracle-checked

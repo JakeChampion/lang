@@ -39,7 +39,7 @@ var returnClosureNestedIRCases = []struct {
 }
 
 // TestSelfHostReturnClosureNestedIRX86_64 — the x86-64 fix, through the
-// production driver (asm_ir_run `-ir`).
+// production driver (asm_ir_run).
 func TestSelfHostReturnClosureNestedIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

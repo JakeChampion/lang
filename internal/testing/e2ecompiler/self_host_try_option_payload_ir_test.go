@@ -44,7 +44,7 @@ var tryOptionPayloadIRCases = []struct {
 }
 
 // TestSelfHostTryOptionPayloadIRX86_64 — the x86-64 asmcore checker fix, through
-// the production driver (asm_ir_run `-ir`).
+// the production driver (asm_ir_run).
 func TestSelfHostTryOptionPayloadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

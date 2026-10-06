@@ -117,7 +117,7 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 		"dyn-prim-aliased-str-excluded", 0)
 }
 
-// TestSelfHostDynPrimReclaimWasmIR: the wasm sibling through the -ir
+// TestSelfHostDynPrimReclaimWasmIR: the wasm sibling through the wasm_ir_run
 // driver. The wasm op_dyn_box cell was already rc-headered
 // ($__fern_str_box), so this pins the crediting + sweep on that backend.
 func TestSelfHostDynPrimReclaimWasmIR(t *testing.T) {

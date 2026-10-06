@@ -70,7 +70,7 @@ func TestSelfHostTryOpX86IR(t *testing.T) {
 	}
 	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_pathprobe_run.fern", "pathprobe")
 
-	// asm_ir_run driver: emits asm via the IR path under -ir.
+	// asm_ir_run driver: emits asm via the IR path.
 	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 

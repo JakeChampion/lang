@@ -90,7 +90,7 @@ func TestSelfHostIntToF64WasmIR(t *testing.T) {
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			wat, err := cmd.Output()
 			if err != nil || len(wat) == 0 {
-				t.Fatalf("wasm_ir_run -ir failed: %v (%d bytes)", err, len(wat))
+				t.Fatalf("wasm_ir_run failed: %v (%d bytes)", err, len(wat))
 			}
 			if !strings.Contains(string(wat), tc.opcode) {
 				t.Errorf("emitted WAT does not contain %s — the width/signedness is not reaching the opcode selection", tc.opcode)

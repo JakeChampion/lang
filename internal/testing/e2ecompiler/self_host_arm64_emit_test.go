@@ -484,7 +484,7 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			// is visible inside the closure, matching the interpreter, which
 			// defines the semantics (closureconv.BoxMutatedCaptures, #2896 /
 			// #5301). This expected 5 back when the legacy AST arm64 backend
-			// (this table runs the driver without -ir) still snapshotted at
+			// still snapshotted at
 			// make time; that divergence has since closed, so the legacy path
 			// now agrees with the oracle and the IR path (#5479).
 			"closure-capture-by-reference",

@@ -48,7 +48,7 @@ var passthroughFnValueCases = []struct {
 	{"tuple-elem-passthrough", `function id[T](x: T): T { return x; } function main(): i32 { let p: i32 = 5i32; let t: ((i32) => i32, i32) = (id(((x: i32) => (x + p))), 2i32); return t.0(1i32) & 63i32; }`, 6},
 }
 
-// TestSelfHostPassthroughFnValueIRX86_64 — the x86-64 IR path (asm_ir_run `-ir`).
+// TestSelfHostPassthroughFnValueIRX86_64 — the x86-64 IR path (asm_ir_run).
 func TestSelfHostPassthroughFnValueIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

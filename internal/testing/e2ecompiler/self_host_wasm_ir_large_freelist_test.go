@@ -89,7 +89,7 @@ function main(): i32 {
 		cmd.Stdin = bytes.NewReader([]byte(withPrintInt(src(iters))))
 		wat, err := cmd.Output()
 		if err != nil || len(wat) == 0 {
-			t.Fatalf("%s: wasm_ir_run -ir failed: %v", name, err)
+			t.Fatalf("%s: wasm_ir_run failed: %v", name, err)
 		}
 		// The large tier is emitted as its own helper, so its absence would
 		// otherwise show up only as a number that happens to look fine.

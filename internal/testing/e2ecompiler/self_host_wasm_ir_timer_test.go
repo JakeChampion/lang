@@ -66,7 +66,7 @@ func TestSelfHostWasmIRTimerPollable(t *testing.T) {
 	cmd.Stdin = bytes.NewReader([]byte(src))
 	wat, err := cmd.Output()
 	if err != nil || len(wat) == 0 {
-		t.Fatalf("wasm_ir_run -ir failed: %v", err)
+		t.Fatalf("wasm_ir_run failed: %v", err)
 	}
 
 	// The emitted WAT must carry the two preview2 imports — proof the ops lowered

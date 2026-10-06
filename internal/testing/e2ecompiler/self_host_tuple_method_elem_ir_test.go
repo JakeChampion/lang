@@ -46,7 +46,7 @@ var tupleMethodElemCases = []struct {
 	{"literal-arms-unchanged", `function gen(c: boolean): (i32, i64) { return ((if (c) { 7i32 } else { 6i32 }), 165i64); } function main(): i32 { let t: (i32, i64) = gen(true); return (t.0 + (t.1 as i32)) & 63i32; }`, 44},
 }
 
-// TestSelfHostTupleMethodElemIRX86_64 — the x86-64 IR path (asm_ir_run `-ir`).
+// TestSelfHostTupleMethodElemIRX86_64 — the x86-64 IR path (asm_ir_run).
 func TestSelfHostTupleMethodElemIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

@@ -71,7 +71,7 @@ func TestSelfHostStoreI64IRX86_64(t *testing.T) {
 }
 
 // TestSelfHostStoreI64IRArm64 runs the same witness through the self-host arm64
-// IR path (asm_ir_run -target arm64-linux -ir) under qemu (#4375 item 2). Unlike x86,
+// IR path (asm_ir_run -target arm64-linux) under qemu (#4375 item 2). Unlike x86,
 // the NATIVE arm64 compiler does not implement __store_i64 (it emits an
 // "undefined label __store_i64"), so — like udp_send on arm64 (item 3) — the
 // self-host arm64 IR path is intentionally AHEAD of native here. The oracle is

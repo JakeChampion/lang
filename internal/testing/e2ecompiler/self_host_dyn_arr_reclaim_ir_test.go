@@ -143,7 +143,7 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 		"dyn-arr-returned-dispatch", 0)
 }
 
-// TestSelfHostDynArrReclaimWasmIR: the wasm sibling through the -ir driver.
+// TestSelfHostDynArrReclaimWasmIR: the wasm sibling through the wasm_ir_run driver.
 func TestSelfHostDynArrReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping dyn arr reclaim wasm IR e2e")

@@ -14,7 +14,7 @@ import (
 // `Some` as a captured free variable, misrouted the lambda to the capturing-
 // closure (`$clo`) path, and never hoisted it -> BAIL const_func, dragging the
 // module to AST (#3457: std/option / std/result `.and_then` / `.or_else`). Each
-// case forces the IR path via the -ir driver, asserts the oracle exit code, and
+// case compiles through the asm_ir_run driver, asserts the oracle exit code, and
 // pins that a `$wrap` trampoline (the no-capture lift) was emitted.
 func TestSelfHostOptionLambdaIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

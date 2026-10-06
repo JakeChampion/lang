@@ -100,7 +100,7 @@ var closureEscapeCases = []struct {
 }
 
 // TestSelfHostClosureEscapeIRX86_64 — escaping var-bound closures through the
-// PRODUCTION x86-64 IR path (asm_ir_run `-ir`).
+// PRODUCTION x86-64 IR path (asm_ir_run).
 func TestSelfHostClosureEscapeIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -129,7 +129,7 @@ func TestSelfHostClosureEscapeIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostClosureEscapeIRArm64 — CI-gated arm64 counterpart via the arm64
-// IR path (asm_ir_run `-target arm64-linux -ir`). Shares the fix in the lowering.
+// IR path (asm_ir_run `-target arm64-linux`). Shares the fix in the lowering.
 func TestSelfHostClosureEscapeIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

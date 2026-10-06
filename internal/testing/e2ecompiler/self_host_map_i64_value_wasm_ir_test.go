@@ -16,7 +16,7 @@ import (
 // ($__fern_map_set_w64 / $__fern_map_get_or_w64, map_w64_helpers), selected by the
 // widekind==1 op flag. Before this, any i64/u64-valued map fell back to the legacy
 // AST wasm emitter (module_has_wide_map_val_cached). Each case pipes a single
-// program to the `wasm_ir_run -ir` driver (maps are builtins there), asserts the
+// program to the `wasm_ir_run` driver (maps are builtins there), asserts the
 // WAT reached the wide runtime, then runs under wasmtime and checks the exit code.
 // (f64-valued maps and wide values()/get()/iteration stay deferred — not covered.)
 func TestSelfHostMapI64ValueWasmIR(t *testing.T) {

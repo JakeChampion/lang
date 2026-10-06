@@ -50,7 +50,7 @@ var fnptrArrayRebindCases = []struct {
 }
 
 // TestSelfHostFnptrArrayRebindIRX86_64 — the x86-64 leg, through the production
-// driver (asm_ir_run `-ir`).
+// driver (asm_ir_run).
 func TestSelfHostFnptrArrayRebindIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

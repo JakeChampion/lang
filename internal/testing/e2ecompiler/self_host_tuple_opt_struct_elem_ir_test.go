@@ -233,7 +233,7 @@ func TestSelfHostTupleOptStructElemWasmIR(t *testing.T) {
 // its payload, so its tag comes from the checker's stamped result type — the
 // second gate that carried the same scalar-only payload restriction, and the
 // spelling `Getopt.next`'s callers use. It runs on the module-LOADING compiler
-// rather than the `-ir` driver above, because only that path carries the
+// rather than the stdin drivers above, because only that path carries the
 // stamp; under the driver the element is unclassifiable for want of a type,
 // which is a different gap from this one.
 const tupleOptStructStampedSrc = `struct S { id: i32, v: string }
@@ -295,7 +295,7 @@ func TestSelfHostTupleOptStructElemStampedX86_64(t *testing.T) {
 // CONSTRUCTION tag was missing, so `(c, Some(e))` refused the module while a
 // bare enum element and `let o: Option[E] = Some(e)` both lowered.
 //
-// It is pinned on the module-LOADING compiler rather than the `-ir` driver
+// It is pinned on the module-LOADING compiler rather than the stdin drivers
 // above, and that distinction is the whole test: under the driver these cases
 // pass WITHOUT the fix, because the payload has no stamped type there and
 // elem_type_tag falls to its i32 default instead of naming the enum. Only the

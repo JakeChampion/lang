@@ -333,7 +333,7 @@ func TestSelfHostOuterMutCaptureWasmIR(t *testing.T) {
 }
 
 // TestSelfHostOuterMutCaptureIRArm64 runs the pointer rows and the mixed
-// write case under qemu via `asm_ir_run -ir -target arm64-linux`.
+// write case under qemu via `asm_ir_run -target arm64-linux`.
 func TestSelfHostOuterMutCaptureIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

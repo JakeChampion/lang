@@ -44,7 +44,7 @@ var returnClosureContainerIRCases = []struct {
 }
 
 // TestSelfHostReturnClosureContainerIRX86_64 — the x86-64 fix, through
-// the production driver (asm_ir_run `-ir`).
+// the production driver (asm_ir_run).
 func TestSelfHostReturnClosureContainerIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

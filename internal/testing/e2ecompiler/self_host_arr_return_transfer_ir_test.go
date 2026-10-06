@@ -128,7 +128,7 @@ function main(): i32 { let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] 
 }
 
 // TestSelfHostArrReturnTransferWasmIR: the wasm sibling — same programs
-// through the -ir driver under wasmtime.
+// through the wasm_ir_run driver under wasmtime.
 func TestSelfHostArrReturnTransferWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping arr return-transfer wasm IR e2e")

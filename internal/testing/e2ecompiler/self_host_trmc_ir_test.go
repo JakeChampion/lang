@@ -319,7 +319,7 @@ func countSelfCalls(asm, name string) int {
 	return strings.Count(asm, "call __fn_"+name+"\n") + strings.Count(asm, "call __fn_"+name+".r\n")
 }
 
-// TestSelfHostTrmcWasmIR: the wasm sibling through the -ir driver.
+// TestSelfHostTrmcWasmIR: the wasm sibling through the wasm_ir_run driver.
 func TestSelfHostTrmcWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping TRMC wasm IR e2e")

@@ -108,7 +108,7 @@ func TestSelfHostDeclModifiersIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostDeclModifiersIRWasm runs the same forms through the wasm IR
-// backend (wasm_ir_run -ir), so the stack-machine backend is covered too.
+// backend (wasm_ir_run), so the stack-machine backend is covered too.
 func TestSelfHostDeclModifiersIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host decl-modifier wasm IR e2e")

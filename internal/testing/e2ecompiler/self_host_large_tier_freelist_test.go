@@ -59,7 +59,7 @@ func TestSelfHostLargeTierFreelistX86_64(t *testing.T) {
 	cmd.Stdin = bytes.NewReader([]byte(prog))
 	emitted, err := cmd.Output()
 	if err != nil || len(emitted) == 0 {
-		t.Fatalf("driver -ir failed: %v", err)
+		t.Fatalf("driver failed: %v", err)
 	}
 	asm := string(emitted)
 	for _, sym := range []string{"__fern_large_freelist", "__fern_large_push", ".Lalloc_large"} {

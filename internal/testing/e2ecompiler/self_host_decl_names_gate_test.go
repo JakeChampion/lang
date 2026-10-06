@@ -170,10 +170,9 @@ func TestSelfHostDeclNamesGateNativeX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostDeclNamesGateRawPathsX86_64 covers the driver paths that emit or
-// report without the emitters' checked prologue: asm_ir_run's `-ir` fast path,
-// and the loading drivers' merged, over-budget, per-module, probe and decide
-// paths. Each refuses an untyped parameter, alone or beside a parser sentinel,
+// TestSelfHostDeclNamesGateRawPathsX86_64 covers asm_ir_run, and the driver
+// paths that emit or report without the emitters' checked prologue: the
+// loading drivers' merged, over-budget, per-module, probe and decide paths. Each refuses an untyped parameter, alone or beside a parser sentinel,
 // and a sentinel alone wherever the checker does not report it first.
 func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -189,7 +188,7 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 		{"sentinel", sentinel, "parser-side unknown"},
 		{"sentinel-and-untyped", both, "parser-side unknown"},
 	} {
-		t.Run("asm_ir_run-ir/"+tc.name, func(t *testing.T) {
+		t.Run("asm_ir_run/"+tc.name, func(t *testing.T) {
 			out, stderr, code := runDeclGate(t, runner, irBin, []byte(tc.src))
 			if code == 0 || len(out) != 0 {
 				t.Fatalf("driver exited %d with %d bytes, want a refusal before codegen", code, len(out))
@@ -201,7 +200,7 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	}
 	out, stderr, code := runDeclGate(t, runner, irBin, []byte("function main(): i32 { return 42; }\n"))
 	if code != 0 || len(out) == 0 {
-		t.Fatalf("asm_ir_run -ir exited %d with %d bytes for a legal program\n%s", code, len(out), stderr)
+		t.Fatalf("asm_ir_run exited %d with %d bytes for a legal program\n%s", code, len(out), stderr)
 	}
 
 	if len(runner) != 0 {
@@ -291,11 +290,10 @@ func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 		args []string
 	}{
 		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run"), nil},
-		{"wasm_ir_run-ir", "", nil},
 		{"wasm_runio_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run"), nil},
 		{"wasm_runio_run-decide", "", []string{"-decide"}},
 	}
-	drivers[1].bin, drivers[3].bin = drivers[0].bin, drivers[2].bin
+	drivers[2].bin = drivers[1].bin
 	cases := []struct{ name, src, cause string }{
 		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }\n", "has no type"},
 		{"untyped-trait-requirement", "trait Conv { function conv(self): i32; }\nfunction main(): i32 { return 0; }\n", "has no type"},

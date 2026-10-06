@@ -98,8 +98,8 @@ pub struct EmitState {
   // use_ir: the parallel-path migration's IR opt-in
   // (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3), left on. Nothing routes
   // around it any more — the AST emitters are gone and every backend is
-  // IR-or-error — so the remaining readers (wasm_ir.should_use_ir_core, the
-  // `-ir` drivers) only ever see it set.
+  // IR-or-error — so its remaining readers (wasm_ir.ir_route_ok and
+  // wasm_ir.emit_core_or_error_sub) only ever see it set.
   use_ir: boolean,
   // str_ns: per-module namespace for string-literal `.rodata` labels, for
   // per-module translation-unit emit (#3451 step 3 / #3455). Empty (the

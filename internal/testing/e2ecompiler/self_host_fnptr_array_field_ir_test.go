@@ -56,7 +56,7 @@ var fnptrArrayFieldCases = []struct {
 }
 
 // TestSelfHostFnptrArrayFieldIRX86_64 — the x86-64 leg, through the production
-// driver (asm_ir_run `-ir`).
+// driver (asm_ir_run).
 func TestSelfHostFnptrArrayFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

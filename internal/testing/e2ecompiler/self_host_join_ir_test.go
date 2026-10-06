@@ -11,7 +11,7 @@ import (
 // function the AST path called). Each case is a native-oracle exit-code
 // differential: the native interpreter (which reaches `.join` via std/array's
 // __method_Array_join) is the source of truth, and the self-host-IR-compiled
-// binary must match. The single-program `asm_ir_run -ir` driver resolves no
+// binary must match. The single-program `asm_ir_run` driver resolves no
 // stdlib and treats `.join` as a builtin, so the self-host source omits the
 // import the native oracle needs — the prepended `import "std/array";` is the
 // only difference between the two.

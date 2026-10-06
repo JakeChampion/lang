@@ -89,7 +89,7 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 		"closure-param-capture-balanced", 0)
 }
 
-// TestSelfHostClosureEnvRcWasmIR: the wasm sibling through the -ir driver.
+// TestSelfHostClosureEnvRcWasmIR: the wasm sibling through the wasm_ir_run driver.
 func TestSelfHostClosureEnvRcWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping closure-env RC wasm IR e2e")

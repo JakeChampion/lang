@@ -151,7 +151,7 @@ func TestSelfHostClosureAliasWasmIR(t *testing.T) {
 }
 
 // TestSelfHostClosureAliasIRArm64 runs the repro and the param-alias case
-// under qemu via `asm_ir_run -ir -target arm64-linux`.
+// under qemu via `asm_ir_run -target arm64-linux`.
 func TestSelfHostClosureAliasIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

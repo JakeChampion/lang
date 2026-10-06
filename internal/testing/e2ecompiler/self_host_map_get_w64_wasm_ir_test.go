@@ -15,7 +15,7 @@ import (
 // [tag@0][payload@8] — the same shape opt_make/opt_payload use for an 8-byte
 // payload — so a downstream `match` reads the value full-width. Before this, a wide
 // `.get()` kept the whole module on the legacy AST wasm emitter. Each case pipes a
-// single program to the `wasm_ir_run -ir` driver (maps are builtins there), asserts
+// single program to the `wasm_ir_run` driver (maps are builtins there), asserts
 // the WAT reached $__fern_map_get_w64, then runs under wasmtime.
 func TestSelfHostMapGetW64WasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

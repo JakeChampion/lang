@@ -16,7 +16,7 @@ import (
 // wasm_ir.wasm_helper_symbol to the hand-written $__fern_str_join WAT
 // (wasm.str_join_helper, gated on @uses_arr_str_join). Before this, a join module
 // fell back to the legacy AST wasm emitter. Each case pipes a single program to
-// the `wasm_ir_run -ir` driver (which resolves no stdlib, so `.join` is a builtin
+// the `wasm_ir_run` driver (which resolves no stdlib, so `.join` is a builtin
 // the lowering intercepts), asserts the emitted WAT reached the join helper, then runs
 // it under wasmtime and checks the joined string's length as the exit code.
 func TestSelfHostJoinWasmIR(t *testing.T) {

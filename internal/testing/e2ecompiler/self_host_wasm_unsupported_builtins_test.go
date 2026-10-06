@@ -2,7 +2,6 @@ package e2ecompiler
 
 import (
 	"bytes"
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -31,10 +30,7 @@ import (
 //     instruction selection, which named an IR op nobody wrote (and, before
 //     #6981, emitted the op as a WAT comment the assembler then failed on).
 //
-// Both drivers are exercised. The differential wasm_ir_run driver has rejected
-// subprocess since #4320, but the PRODUCTION wasm_run driver had no such gate
-// at all — so every one of these programs miscompiled through the path users
-// actually take.
+// Both stdin drivers, wasm_ir_run and wasm_run, are exercised.
 func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -42,16 +38,9 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 	irDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 	prodDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	// run feeds src to a driver and returns (exit, stdout, stderr). extraArgs
-	// carries the differential driver's `-ir` flag; wasm_run takes none.
-	run := func(bin, src string, extraArgs ...string) (int, string, string) {
-		argv := append([]string{bin}, extraArgs...)
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(argv[0], argv[1:]...)
-		} else {
-			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), argv...)...)
-		}
+	// run feeds src to a driver and returns (exit, stdout, stderr).
+	run := func(bin, src string) (int, string, string) {
+		cmd := runX86_64Bin(runner, bin)
 		cmd.Stdin = strings.NewReader(src)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
@@ -63,10 +52,9 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 	drivers := []struct {
 		name string
 		bin  string
-		args []string
 	}{
-		{"wasm_ir_run", irDriver, nil},
-		{"wasm_run", prodDriver, nil},
+		{"wasm_ir_run", irDriver},
+		{"wasm_run", prodDriver},
 	}
 	rejected := []struct {
 		name    string
@@ -132,7 +120,7 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 	for _, d := range drivers {
 		for _, tc := range rejected {
 			t.Run(d.name+"/rejects_"+tc.name, func(t *testing.T) {
-				code, out, errOut := run(d.bin, tc.src, d.args...)
+				code, out, errOut := run(d.bin, tc.src)
 				if code == 0 {
 					t.Fatalf("expected non-zero exit for a %s program, got 0 (stdout %d bytes)", tc.name, len(out))
 				}
@@ -147,7 +135,7 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 
 		// The gate must not reject ordinary modules on either driver.
 		t.Run(d.name+"/ordinary_module_still_emits", func(t *testing.T) {
-			code, out, errOut := run(d.bin, `function main(): i32 { return 42; }`+"\n", d.args...)
+			code, out, errOut := run(d.bin, `function main(): i32 { return 42; }`+"\n")
 			if code != 0 {
 				t.Fatalf("ordinary module rejected: exit %d, stderr %q", code, errOut)
 			}

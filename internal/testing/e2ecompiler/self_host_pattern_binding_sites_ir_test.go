@@ -74,7 +74,7 @@ function main(): i32 {
 }
 
 // TestSelfHostPatternBindingSitesX86_64 compiles each program through the
-// self-host x86-64 IR path (asm_ir_run `-ir`) and checks the exit code against
+// self-host x86-64 IR path (asm_ir_run) and checks the exit code against
 // the native interpreter oracle.
 func TestSelfHostPatternBindingSitesX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

@@ -61,7 +61,7 @@ function main(): i32 {
 }
 
 // TestSelfHostOwnReceiverIRX86_64 — own-receiver methods through the
-// PRODUCTION x86-64 IR path (asm_ir_run `-ir`).
+// PRODUCTION x86-64 IR path (asm_ir_run).
 func TestSelfHostOwnReceiverIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

@@ -71,7 +71,7 @@ func TestSelfHostI64MeanReduceIRPathX86_64(t *testing.T) {
 }
 
 // TestSelfHostI64MeanReduceIRWasm runs the same reduction through the wasm IR
-// backend (wasm_ir_run -ir forces the IR path): the i64 accumulation / division
+// backend (wasm_ir_run): the i64 accumulation / division
 // / narrowing must produce the same answer on the stack-machine backend.
 func TestSelfHostI64MeanReduceIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

@@ -57,7 +57,7 @@ var closureArrUniformCases = []struct {
 	{"non-fn-with-beside-fn-array", `function main(): i32 { let xs: i32[] = [1i32, 2i32]; let ys: i32[] = xs.with(0i32, 7i32); let s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; return ((s[0i32](ys[0i32]) + s[1i32](ys[1i32])) & 63i32); }`, 11},
 }
 
-// TestSelfHostClosureArrUniformIRX86_64 — the x86-64 IR path (asm_ir_run `-ir`).
+// TestSelfHostClosureArrUniformIRX86_64 — the x86-64 IR path (asm_ir_run).
 func TestSelfHostClosureArrUniformIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

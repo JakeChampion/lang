@@ -180,7 +180,7 @@ function main(): i32 {
 }
 
 // TestSelfHostFnValueWideSigWasmIR runs the corpus through the self-host wasm
-// IR path (wasm_ir_run `-ir`) and checks each program against the interpreter.
+// IR path (wasm_ir_run) and checks each program against the interpreter.
 func TestSelfHostFnValueWideSigWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host fn-value wide-signature wasm IR e2e")

@@ -89,7 +89,7 @@ func TestSelfHostDynEnumIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostDynEnumIRWasm runs the same cases through the wasm IR backend
-// (wasm_ir_run -ir): the identity is the variant's numeric type id
+// (wasm_ir_run): the identity is the variant's numeric type id
 // (i32.load @0), and the enum arm is an OR-chain over the enum's variants.
 func TestSelfHostDynEnumIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

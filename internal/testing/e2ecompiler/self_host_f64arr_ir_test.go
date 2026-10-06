@@ -33,7 +33,7 @@ func TestSelfHostF64ArrayWasmIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	// runIR pipes src to the driver with `-ir` (IR path for eligible modules),
+	// runIR pipes src to the driver,
 	// runs the emitted WAT under wasmtime, returns the exit code.
 	runIR := func(t *testing.T, src string) int {
 		t.Helper()

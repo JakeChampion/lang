@@ -20,7 +20,7 @@ import (
 // program mixing flat user functions with the emitter's folded heap/RC helpers
 // (array programs) assembles correctly too.
 //
-// Pipeline per case: wasm_ir_run -ir emits flat WAT -> the watbin driver
+// Pipeline per case: wasm_ir_run emits flat WAT -> the watbin driver
 // (wat_to_binary) assembles it to a .wasm -> wasmtime runs it -> assert the
 // exit code matches the program's expected result.
 func TestSelfHostWatbinFlat(t *testing.T) {
@@ -55,14 +55,9 @@ function main(): i32 {
 	asmBin := buildSelfHostBin(t, gcc, dir, "watbin_run.fern", "watbin_run")
 
 	// pipe runs a host binary with stdin, returns stdout.
-	pipe := func(bin string, stdin []byte, args ...string) []byte {
+	pipe := func(bin string, stdin []byte) []byte {
 		t.Helper()
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(bin, args...)
-		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), bin), args...)...)
-		}
+		cmd := runX86_64Bin(runner, bin)
 		cmd.Stdin = bytes.NewReader(stdin)
 		out, err := cmd.Output()
 		if err != nil {

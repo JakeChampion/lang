@@ -37,7 +37,6 @@ function iota(): i32[] { return [10, 20, 30, 40]; }
 
 function main(): i32 { return 0; }
 `
-	// `-ir` forces the IR path, which is the path under test.
 	out, stderr, code := runDriver(t, runner, driverBin, []byte(exporter), false)
 	if code != 0 {
 		t.Fatalf("IR emit failed (exit %d): %s", code, stderr)

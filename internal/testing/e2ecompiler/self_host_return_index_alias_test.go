@@ -83,7 +83,7 @@ function main(): i32 {
 }
 
 // TestSelfHostReturnIndexAliasX86_64 drives the cases through the production
-// x86-64 IR path (asm_ir_run `-ir`).
+// x86-64 IR path (asm_ir_run).
 func TestSelfHostReturnIndexAliasX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

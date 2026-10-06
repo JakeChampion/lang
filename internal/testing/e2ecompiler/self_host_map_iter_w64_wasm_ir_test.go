@@ -15,7 +15,7 @@ import (
 // $__fern_mapiter_value_w64 reads each 8-byte element, with the loop's `v` (bound
 // from it.value()) width-tracked i64 (infer_expr_width) and u64 (expr_is_u64).
 // Before this, iterating a wide map kept the whole module on the legacy AST wasm
-// emitter. Each case pipes a single program to the `wasm_ir_run -ir` driver (maps
+// emitter. Each case pipes a single program to the `wasm_ir_run` driver (maps
 // are builtins there), asserts the WAT reached $__fern_map_iter_w64, then runs
 // under wasmtime. Values are cross-checked against the native interpreter.
 //

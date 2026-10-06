@@ -4044,13 +4044,6 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerRes
 // emit_module_mode_or_error_sub makes the same decision
 // inline because it goes on to emit from that lowering; a driver's `-decide`
 // asks here so the probe cannot drift from the emitter it describes.
-//
-// wasm.emit_module_mode used to spell this decision inline, so nothing else
-// could ask "how would this program route?" — the wasm drivers expose only
-// `-ir`, which FORCES the IR path and therefore bypasses these very gates. That
-// made the wasm side the one backend with no routing probe (the asm side has
-// `-ir-probe` and asm_pathprobe_run), and an emitter-retirement reroute is
-// exactly the change whose risk lives in what the gates DECLINE.
 pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean, sub: ircore.Sub): boolean {
   if (!asmcore.new_state().use_ir) {
     return false;

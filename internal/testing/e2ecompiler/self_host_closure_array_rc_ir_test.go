@@ -280,7 +280,7 @@ func TestSelfHostClosureArrayRcIRX86_64(t *testing.T) {
 	})
 }
 
-// TestSelfHostClosureArrayRcWasmIR: the wasm sibling through the -ir driver.
+// TestSelfHostClosureArrayRcWasmIR: the wasm sibling through the wasm_ir_run driver.
 func TestSelfHostClosureArrayRcWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping closure-array RC wasm IR e2e")

@@ -95,7 +95,7 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 		"dyn-reassigned-excluded", 0)
 }
 
-// TestSelfHostDynStructReclaimWasmIR: the wasm sibling through the -ir driver.
+// TestSelfHostDynStructReclaimWasmIR: the wasm sibling through the wasm_ir_run driver.
 func TestSelfHostDynStructReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping dyn struct reclaim wasm IR e2e")
