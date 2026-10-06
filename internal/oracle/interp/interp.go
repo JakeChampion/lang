@@ -8521,6 +8521,9 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 				return &Enum{EnumName: ed.Name, VariantName: id.Name, Index: idx, Payloads: args}, nil
 			}
 		}
+		if id.Name == "__arr_set_len" && len(c.Args) == 2 {
+			return i.arrSetLen(c.Args[0], args, env)
+		}
 		if b, ok := i.Builtins[id.Name]; ok {
 			return b.Fn(i, args)
 		}
@@ -8549,6 +8552,30 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		return i.callClosure(fv, args)
 	}
 	return nil, fmt.Errorf("interp: not a function: %T", cv)
+}
+
+// arrSetLen is `__arr_set_len(a, n)`: a's length set to n, within the room
+// its allocation has. An interpreter array is a slice value, so the new
+// length reaches the binding the call names rather than the buffer; a copy
+// taken before the call keeps the length it had.
+func (i *Interp) arrSetLen(target ast.Expr, args []Value, env *env) (Value, error) {
+	a, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("__arr_set_len: expected array arg, got %T", args[0])
+	}
+	n, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("__arr_set_len: expected number length, got %T", args[1])
+	}
+	if n < 0 || int(n) > cap(a.E) {
+		return nil, fmt.Errorf("__arr_set_len: length %d outside the array's room %d", int64(n), cap(a.E))
+	}
+	id, ok := target.(*ast.Ident)
+	if !ok {
+		return nil, fmt.Errorf("__arr_set_len: the array must be a variable")
+	}
+	env.set(id.Name, Array{E: a.E[:int(n)], h: a.h})
+	return Void{}, nil
 }
 
 func disownAll(vs []Value) {

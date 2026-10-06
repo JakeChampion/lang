@@ -345,7 +345,7 @@ per request there.)
 | ---: | --- |
 | 1 | `__fern_reactor_wait` built its kernel-facing events scratch, 792 bytes for 64 `epoll_event`s and a header, and freed it per wait (slice 6) |
 | 1 | `__serve_read`'s `(conns, eof)` tuple |
-| 1 | the read's one copy of what it took (`__bytes_range`) |
+| 1 | the read's one copy of what it took (`__bytes_range`) (slice 9) |
 | 3 | the parse: the `Framed` box the loop keeps whole (§5.3's slice 7), and two in `__request_head`, its head record among them. A server calls three parse entry points, so `__request_head` has three callers and stays a function, where the framing probe's one caller has it spliced and read apart |
 | 3 | `__serve_start`: the `Task`, its closure and `run_task`'s `Done`, for a handler that never parks (slice 5) |
 | 1 | `__serve_wire`'s `__Wire` record: the tail and whether the connection persists, which follows from the tail (slice 6) |
@@ -368,9 +368,9 @@ is preferred where it covers a case, since every program gains.
    `__alloc_u8` and written in place, where `scratch.take(n)` and
    `concat` each grew an array by appending. Compaction copies the same
    way, and a buffer whose requests were all answered becomes the shared
-   empty array. 30 to 22. The read's one copy is left, now a per-byte
-   loop over at most one 4 KiB read where the builder pushed in bulk; a
-   read straight into the connection's buffer would remove it.
+   empty array. 30 to 22. The read's one copy was left, a per-byte
+   loop over at most one 4 KiB read where the builder pushed in bulk,
+   until slice 9.
 3. **The reactor fills an events array the loop keeps.** Done:
    `Driver.wait_into` writes a wait's readiness pairs into an array the
    caller passes `own`, so each `.with` writes in place, and a readiness of
@@ -435,4 +435,16 @@ is preferred where it covers a case, since every program gains.
    classifier, so `__serve_produce` and `__serve_ready` return their
    tuples in two words. 6 to 4. Left on the path: the read's copy, and
    the parse's three.
+9. **The read lends the loop's scratch.** Done: a read into an empty
+   buffer lends the loop's one 4 KiB scratch to the connection for the
+   event, shortened to the bytes read with the bytes floor's
+   `__arr_set_len`, so a request that arrives whole and is answered
+   within the event is never copied; what the event leaves unanswered is
+   copied out when the event is done with the connection
+   (`__serve_compact`, and a parked connection's read at once), the
+   shared empty array when nothing is left. The loop stops reading at a
+   short read rather than probing for `-EAGAIN`, which the level-triggered
+   wait makes safe and saves the probe's syscall per request. A second
+   read in one event, which only a request of 4 KiB or more makes, takes
+   the scratch back first. 4 to 3. Left on the path: the parse's three.
 

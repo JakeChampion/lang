@@ -4679,8 +4679,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.StringType{}, usizeT},
 		Result: usizeT,
 	}
-	// `__arr_set_len(a, n)` — shorten a fresh `u8[]` from `__alloc_u8` to
-	// the n bytes a read filled; its capacity is unchanged.
+	// `__arr_set_len(a, n)` — set a `u8[]` from `__alloc_u8` to the n bytes
+	// a read filled, within the room its allocation has; its capacity is
+	// unchanged.
 	c.info.FuncSigs["__arr_set_len"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}},
 		Result: ast.VoidType{},

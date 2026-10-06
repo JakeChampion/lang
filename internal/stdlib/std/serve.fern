@@ -31,9 +31,10 @@
 //      does not. At `max_connections` open the listener is left
 //      unwatched, so further connections wait in the accept queue until
 //      one closes.
-//   2. when it is readable, tcp_recv_into one 4 KiB buffer until -EAGAIN,
-//      appending to the connection's request bytes (at most the parser's
-//      header and body caps unread).
+//   2. when it is readable, tcp_recv_into the loop's one 4 KiB buffer
+//      until a read comes back short, lending the buffer to a connection
+//      with nothing buffered and appending to one with a partial request
+//      (at most the parser's header and body caps unread).
 //   3. http_parse_request_framed — Incomplete ⇒ keep reading (on EOF, 400 and close);
 //      Continue ⇒ send `100 Continue` once (RFC 9110 §10.1.1) and keep
 //      reading; Malformed(status) ⇒ answer with that status (400, 413,
@@ -340,16 +341,18 @@ function __enotsup(): i32 {
   return 95;
 }
 
-// __recv_scratch() — the loop's one read buffer, filled per readable
-// connection and copied out; owned by the loop, never by a request.
+// __recv_room() — how much one read may take: the scratch's room.
+function __recv_room(): i32 {
+  return 4096;
+}
+
+// __recv_scratch() — the loop's one read buffer. A read fills it at its
+// room and shortens it to the bytes read (`__arr_set_len`); the loop lends
+// it to the connection whose empty buffer the read filled, for the event
+// (`__serve_read`), and takes it back once the event is done with the
+// connection (`__serve_compact`).
 function __recv_scratch(): u8[] {
-  let buf: u8[] = [];
-  let i: i32 = 0;
-  while (i < 4096) {
-    buf = buf.append(0 as u8);
-    i = i + 1;
-  }
-  return buf;
+  return __alloc_u8(__recv_room());
 }
 
 // __Conns — the open connections of a serve loop, by position: the
@@ -376,7 +379,7 @@ function __recv_scratch(): u8[] {
 // serialized into and sent from, also one per loop: what it holds between
 // replies is what the event's burst has corked, and it is empty between
 // events.
-struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], tails: __Tail[], last: http.HttpFramed, out: usize }
+struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], tails: __Tail[], last: http.HttpFramed, out: usize, lent: i32 }
 
 // __Tail — what of a response is still to be produced once its head and
 // the bytes pending have gone: nothing; a file the loop reads as the
@@ -617,7 +620,7 @@ function __conns_index(c: __Conns, fd: i32): i32 {
 
 function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32): __Conns {
   let empty: u8[] = [];
-  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), tails: c.tails.append(NoTail), last: c.last, out: c.out };
+  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), tails: c.tails.append(NoTail), last: c.last, out: c.out, lent: c.lent };
 }
 
 // __conns_from_peer(c, peer) — how many open connections the peer holds.
@@ -668,7 +671,7 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
     }
     i = i + 1;
   }
-  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, tails: tails, last: c.last, out: c.out };
+  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, tails: tails, last: c.last, out: c.out, lent: 0 - 1 };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
@@ -734,41 +737,65 @@ function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
 }
 
 // __serve_read(c, at, scratch, opts) — the readable connection at `at`
-// read until nothing is queued: `(conns, done)`, where `done` says the
-// peer is finished (EOF, an error, or the size cap) and what it sent is
-// what the buffer holds. The first bytes of a request start its read
+// read until a read comes back short or nothing is queued: `(conns,
+// done)`, where `done` says the peer is finished (EOF, an error, or the
+// size cap) and what it sent is what the buffer holds. A read into an
+// empty buffer lends the loop's scratch to the connection, shortened to
+// the bytes read, so a request answered within the event is never copied;
+// a second read takes the scratch back first, copying its bytes out, and
+// so does `__serve_compact` once the event is done with the connection.
+// The readiness is level-triggered, so a short read leaves nothing the
+// next wait would not report. The first bytes of a request start its read
 // deadline, replacing the keep-alive idle span an answered connection
 // was waiting under, and the body's clock keeps the deadline no earlier
 // than what the body has delivered buys (`__body_deadline`).
 function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conns, boolean) {
   let buf: u8[] = c.bufs[at];
   let was_idle: boolean = buf.len() == 0;
-  while (true) {
+  let lent: i32 = c.lent;
+  let done: boolean = false;
+  let more: boolean = true;
+  while (more) {
+    if (lent == at) {
+      buf = __bytes_from(buf, 0);
+      lent = 0 - 1;
+    }
+    __arr_set_len(scratch, __recv_room());
     let n: i32 = tcp_recv_into(c.fds[at], scratch);
     if (n == 0 - __eagain()) {
-      let deadline: i64 = c.deadlines[at];
-      if (was_idle && buf.len() > 0) {
-        deadline = monotonic_ns() + opts.recv_deadline.as_nanos();
-      }
-      c = __Conns { ...c, bufs: c.bufs.with(at, buf), deadlines: c.deadlines.with(at, deadline) };
-      return (__body_deadline(c, at, opts, monotonic_ns()), false);
-    }
-    if (n <= 0) {
-      return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
-    }
-    if (buf.len() == 0) {
-      buf = __bytes_range(scratch, 0, n);
+      more = false;
+    } else if (n <= 0) {
+      more = false;
+      done = true;
     } else {
-      buf = buf.concat(__bytes_range(scratch, 0, n));
-    }
-    // A connection holds at most the parser's largest request unread;
-    // past that the peer is treated as finished: what is complete is
-    // answered, then the connection is closed.
-    if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
-      return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
+      __arr_set_len(scratch, n);
+      if (buf.len() == 0) {
+        buf = scratch;
+        lent = at;
+      } else {
+        buf = buf.concat(scratch);
+      }
+      // A connection holds at most the parser's largest request unread;
+      // past that the peer is treated as finished: what is complete is
+      // answered, then the connection is closed.
+      if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
+        more = false;
+        done = true;
+      } else {
+        more = n == __recv_room();
+      }
     }
   }
-  return (c, true);
+  c = __Conns { ...c, bufs: c.bufs.with(at, buf), lent: lent };
+  if (done) {
+    return (c, true);
+  }
+  let deadline: i64 = c.deadlines[at];
+  if (was_idle && buf.len() > 0) {
+    deadline = monotonic_ns() + opts.recv_deadline.as_nanos();
+  }
+  c = __Conns { ...c, deadlines: c.deadlines.with(at, deadline) };
+  return (__body_deadline(c, at, opts, monotonic_ns()), false);
 }
 
 // __bytes_from(buf, from) — buf[from, len) as its own array: the bytes
@@ -836,8 +863,13 @@ function __serve_took(c: __Conns, at: i32, f: http.HttpFramed, opts: Config, eof
 }
 
 // __serve_compact(c, at) — the bytes the event's answered requests
-// occupied dropped, once, when the event is done with the connection.
+// occupied dropped, once, when the event is done with the connection; a
+// connection lent the scratch keeps a copy of what is left, which is the
+// shared empty array once everything read was answered.
 function __serve_compact(c: __Conns, at: i32): __Conns {
+  if (c.lent == at) {
+    return __Conns { ...c, bufs: c.bufs.with(at, __bytes_from(c.bufs[at], c.offs[at])), offs: c.offs.with(at, 0), lent: 0 - 1 };
+  }
   if (c.offs[at] == 0) {
     return c;
   }
@@ -1956,7 +1988,7 @@ function __serve_held_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[]
     return (c, fls);
   }
   let read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
-  c = read.0;
+  c = __serve_compact(read.0, at);
   if (read.1) {
     c = __serve_parked_eof(c, fd);
   }
@@ -2221,7 +2253,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let accepting: boolean = true;
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle());
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], last: http.http_framed_none(), out: buf_new(4096) };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1 };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
@@ -2365,7 +2397,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   let accepting: boolean = true;
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle());
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], last: http.http_framed_none(), out: buf_new(4096) };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1 };
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
   let events: i32[] = async.event_room(64);
