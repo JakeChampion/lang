@@ -619,6 +619,10 @@ pub function task_free[T](t: Task[T]): void {
   __task_free(t.id);
 }
 
+// The trampoline: the compiler's suspend pass knows it by name as the frame a
+// park unwinds to, so it is never spliced into a caller, where its entry
+// call would read as a park of the caller's own.
+@noinline
 function run_task[T](t: Task[T], mode: i32): TaskStatus[T] {
   __task_enter(t.id, mode);
   let v: T = t.entry();
@@ -686,6 +690,7 @@ pub function call_free[A, B, T](c: Call[A, B, T]): void {
 // The trampoline for a `Call`, `run_task` with the call's parts: the
 // suspension classifier knows a trampoline by the `run_task` prefix, so the
 // park unwinds to here and no further.
+@noinline
 function run_task_call[A, B, T](id: i32, f: (A, B) => T, a: A, b: B, mode: i32): TaskStatus[T] {
   __task_enter(id, mode);
   let v: T = f(a, b);

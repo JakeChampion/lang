@@ -346,7 +346,7 @@ per request there.)
 | 1 | `__fern_reactor_wait` built its kernel-facing events scratch, 792 bytes for 64 `epoll_event`s and a header, and freed it per wait (slice 6) |
 | 1 | `__serve_read`'s `(conns, eof)` tuple |
 | 1 | the read's one copy of what it took (`__bytes_range`) (slice 9) |
-| 3 | the parse: the `Framed` box the loop keeps whole (§5.3's slice 7), and two in `__request_head`, its head record among them. A server calls three parse entry points, so `__request_head` has three callers and stays a function, where the framing probe's one caller has it spliced and read apart |
+| 3 | the parse: the `Framed` box the loop keeps whole (§5.3's slice 7), and two in `__request_head` until slice 10: its head record, and the `Length(n)` framing the record carried. A server calls two parse entry points, so `__request_head` had two callers and stayed a function, where the framing probe's one caller has it spliced and read apart |
 | 3 | `__serve_start`: the `Task`, its closure and `run_task`'s `Done`, for a handler that never parks (slice 5) |
 | 1 | `__serve_wire`'s `__Wire` record: the tail and whether the connection persists, which follows from the tail (slice 6) |
 | 3 | `__serve_send_out`'s, `__serve_produce`'s and `__serve_ready`'s `(conns, sent)` and `(conns, more)` tuples: each has several callers, so it is not spliced, and each caller takes the tuple apart at once (slice 6, and slice 8 for the two that may suspend) |
@@ -446,4 +446,26 @@ is preferred where it covers a case, since every program gains.
    wait makes safe and saves the probe's syscall per request. A second
    read in one event, which only a request of 4 KiB or more makes, takes
    the scratch back first. 4 to 3. Left on the path: the parse's three.
+10. **A construction read apart is spliced into its few callers.** Done,
+   by the compiler: a function called from two places whose every return
+   is a construction, one of them a box the pair return keeps (a record,
+   a tuple of other than two, a construction holding another), is spliced
+   into each caller that reads the result apart, once the functions called
+   once have folded (`seminline`'s `shared_spliceable`; a copy made
+   earlier carried a caller past the splice budget before the function
+   called once from it was ready). The copy saves the box at that call;
+   the body stays where a caller keeps the result whole. `__request_head`
+   returns `Ok(head)` to the two entry points a server reaches (an entry
+   point nothing calls is no caller): the `Result` was paired (§5.3's
+   slice 7), the head record it carried was not, and the `Length(n)`
+   framing stored in the record was passed whole to `__framed_body`. Read
+   apart in `http_parse_request_framed_from`, neither is built. A record
+   read by its fields counts as taken apart now (`sempair.reads_apart`),
+   for the pairing's own test as for this one. The task trampolines
+   `run_task` and `run_task_call`, which the suspend pass knows by name,
+   are `@noinline` so the rule never splices them. 3 to 1. Left on the
+   path: the `Framed` box the loop keeps whole. Cost: the self-built
+   compiler grows 4.6% (`.github/selfhost-driver-sizes.txt`, a copy of
+   each body spliced into a second caller) and makes 0.6% fewer
+   allocations compiling itself, in the same wall time.
 
