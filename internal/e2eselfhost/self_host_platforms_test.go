@@ -11,7 +11,7 @@ import (
 )
 
 // TestSelfHostPlatformsCapabilityRules exercises the self-host's target
-// capability boundary (examples/self_host/platforms.fern, #6633) — the port of
+// capability boundary (compiler/platforms.fern, #6633) — the port of
 // native's internal/platforms.
 //
 // The driver asserts each rule in BOTH directions: a program the target may

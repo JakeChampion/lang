@@ -2,7 +2,7 @@
 
 Part of #8920's self-hosted typed-IR ownership migration, the "typed frontend
 import" step of the [cutover plan](SELFHOST-TYPED-OWNERSHIP-CUTOVER.md).
-`examples/self_host/semsource.fern` produces an `ssasem.Func` from a checked
+`compiler/semsource.fern` produces an `ssasem.Func` from a checked
 `parser.FuncDecl` and the checker's function scope. It is the first
 self-hosted producer of the pre-RC representation; until it existed every
 `ssasem` graph was hand-built in a test.
@@ -1171,7 +1171,7 @@ its generic declarations. There is no leaf left, and no refusal of any kind:
 the producer admits every function the compiler has, and neither the unit
 planner nor physical RC refuses anything it admits.
 
-`examples/self_host/semsource_census_run.fern` is the instrument: it loads a
+`compiler/semsource_census_run.fern` is the instrument: it loads a
 module tree the way the production compiler does and counts the stage each
 function reaches, tallying refusals by LEAF — the first refusal in a chain
 that is not a `call target was refused` cascade. That distinction is the whole
@@ -1560,7 +1560,7 @@ feeds `caller_sigs` to the remaining AST callers is below.
 
 ## The production consumer
 
-`examples/self_host/semlower.fern` is where a whole-program emit path asks for
+`compiler/semlower.fern` is where a whole-program emit path asks for
 this pipeline instead of a test driver. It is the only lowering a
 whole-program emit has: a module is produced whole or the compile fails
 (exit 3), and the emit reads the produced bodies (`ircore.gate`). `FERN_SEM_IR_REPORT=1` prints a per-module tally.
@@ -1839,7 +1839,7 @@ same self-host compiler; the only difference is `FERN_SEM_IR`:
 | input | AST-lowered build | semantically lowered build |
 |---|---|---|
 | `manyf.fern` (200 declarations) | 6.9 MB | 43.3 MB |
-| `examples/self_host/lexer.fern` | 134 MB | **11,550 MB** |
+| `compiler/lexer.fern` | 134 MB | **11,550 MB** |
 
 It is not a leak. Under `FERN_LEAKCHECK=1` on `manyf.fern` the semantic build
 **frees more and leaves less live** than the AST one — allocs 196,745 / frees
@@ -2076,7 +2076,7 @@ would not:
 
 On the compiler compiling itself there are none: **8,307 of 8,307
 declarations produce** (2026-09-16, `FERN_SEM_IR=1 FERN_SEM_IR_REPORT=1
-bin/fern-selfhost -target x86-64-linux -o … examples/self_host/fern.fern`),
+bin/fern-selfhost -target x86-64-linux -o … compiler/fern.fern`),
 and the report is the tally line alone. The compiler that comes out compiles
 `lexer.fern`, `parser.fern`, `checker.fern` and the whole tree **byte-identically
 to the AST build**, on x86-64, arm64 and wasm. The table this section held —

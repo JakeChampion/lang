@@ -5,7 +5,7 @@ import (
 )
 
 // TestSelfHostTypeResolveSimple pins the self-hosted checker's three simpler
-// type-name resolvers (examples/self_host/checker.fern's
+// type-name resolvers (compiler/checker.fern's
 // type_from_name_with_structs / _with_struct_names / _with_names_and_unions —
 // docs/SELF-HOST-AUDIT.md T2). All three share the one resolution ladder
 // (type_from_ref_names) with the richest resolver, so they differ from it only

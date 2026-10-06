@@ -2,7 +2,7 @@
 
 `ssaunits.Plan.defs`, `ssaunits.carried_params`, `ssa_lift.KindTable`.
 Refs #8171. No emitted byte changes: the stage0-built compiler before and
-after emits the fixed older tree (`examples/self_host/fern.fern` at 1ae9cad)
+after emits the fixed older tree (`compiler/fern.fern` at 1ae9cad)
 and `checker.fern` byte for byte, and the `selfhost-emit-hashes` sweep is
 1,965 rows per compiler with 0 differing, against #11080's head at
 c416b990 and again, rebased, against main at 189a9417.

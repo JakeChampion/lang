@@ -42,7 +42,7 @@ compilers and the Go one is being retired:
   transform here would mean flattening structured control flow into
   a state machine: hard, and **thrown away when the Go compiler
   retires**.
-- **Self-hosted compiler** (`examples/self_host/`, the future): the
+- **Self-hosted compiler** (`compiler/`, the future): the
   default path goes **AST → asm directly** via the shared
   `asmcore.fern` frontend; there is *no* target-agnostic IR on that
   path (there is an optional SSA layer, `ssa.fern` →
@@ -111,7 +111,7 @@ and the desugar produces (conceptually) one continuation per
 suspension point, each a nested function capturing the live locals,
 seeded into the scheduler — i.e. exactly the `Step` machinery in
 `std/task`, generated rather than hand-written. The Phase-0 test
-file `examples/tests/async_runtime_test.fern` *is* that output,
+file `tests/stdlib/async_runtime_test.fern` *is* that output,
 hand-written, so the desugar's target is proven before the desugar
 exists.
 
@@ -137,7 +137,7 @@ a PR").
   in-memory `Reactor` (token allocation + poll-drain), and a `run`
   driver that multiplexes single-await tasks and proves fan-out
   *overlap* (both tasks suspend before either resumes).
-- `examples/tests/async_runtime_test.fern` — reactor unit tests +
+- `tests/stdlib/async_runtime_test.fern` — reactor unit tests +
   single-task resume + two-task fan-out + immediate-done, wired into
   the `internal/e2e` test-runner gate
   (`TestRunnerAsyncRuntimeExamplePasses`).
@@ -235,7 +235,7 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   fetches driven through `task.run` and `task.select` over real
   sockets, x86-64 + arm64/qemu → exit 42) plus a portable
   `register_fd`/`pending` bookkeeping case in
-  `examples/tests/async_runtime_test.fern`. (`std/reactor` remains as
+  `tests/stdlib/async_runtime_test.fern`. (`std/reactor` remains as
   the generic-`T`, single-purpose native scheduler; `std/task` is now
   the unified one the desugar targets.)
 - **wasm:** `wasi:io/poll.poll(list<pollable>) -> list<u32>` — a
@@ -335,9 +335,9 @@ The user-facing slice. Parser-time desugar, **emitting the Phase-2
 `Step`/scheduler shape**, so no codegen changes.
 
 - Lexer: add `concurrent`, `spawn`, `await` keywords — in
-  `internal/lexer/lexer.go` **and** `examples/self_host/lexer.fern`.
+  `internal/lexer/lexer.go` **and** `compiler/lexer.fern`.
 - Parser: `parseConcurrent` (block), `spawn EXPR`, `await EXPR` — in
-  `internal/parser/parser.go` **and** `examples/self_host/parser.fern`.
+  `internal/parser/parser.go` **and** `compiler/parser.fern`.
   Model on the existing `for..in` and `use <-` desugars, which
   already build synthetic AST (nested functions, rewritten calls) at
   parse time.
@@ -382,7 +382,7 @@ suspending form. Spawn targets follow the runtime protocol
 `(task.Reactor, args…) -> (task.Step, task.Reactor)`. Verified on
 interp / x86-64 / arm64(qemu); compiles on wasm. Tests:
 `internal/parser` (`TestParseConcurrentDesugar` + error cases incl.
-`await` outside a block) and `examples/tests/async_concurrent_test.fern`
+`await` outside a block) and `tests/stdlib/async_concurrent_test.fern`
 (e2e gate `TestRunnerAsyncConcurrentExamplePasses`). Requires `import
 "std/task"`.
 
@@ -403,7 +403,7 @@ protocol leak) and `await` can sit in arbitrary control flow.
   (multiple/nested awaits, awaits in control flow, an early `return` before the
   await, awaits in methods/local/generic functions) are REJECTED with a clear
   error, never miscompiled. Tests: `internal/parser` (`TestParseTaskFunctionDesugar`),
-  `examples/tests/async_task_fn_test.fern` (e2e gate `TestRunnerAsyncTaskFnExamplePasses`,
+  `tests/stdlib/async_task_fn_test.fern` (e2e gate `TestRunnerAsyncTaskFnExamplePasses`,
   → 3 passes via interp; fan-out + pre/post-await).
 - **Slice 2 — DONE (multiple sequential awaits):** the split is now recursive
   (`buildTaskSegment`): each top-level `let NAME = await EXPR;` becomes a
@@ -511,7 +511,7 @@ protocol leak) and `await` can sit in arbitrary control flow.
   CONDITION (only `while`-cond handled), non-i32 carried/await types, and pairing
   with Phase 1/4 so awaited calls do real I/O rather than the in-memory reactor's
   `register(value)`.
-- **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
+- **Self-hosted parser port** (`compiler/parser.fern`) — the
   desugar must be mirrored there before the Go compiler retires.
   Deferred while the self-host SSA-by-default migration is in flight
   (it sits near that work).
@@ -603,7 +603,7 @@ await both — the trigger condition that motivated the whole design
   host-scheduler concern, never baked into the language surface.
 - **Two frontends.** Until the Go compiler retires, every syntax
   change lands in both `internal/{lexer,parser,ast,checker}` and
-  `examples/self_host/{lexer,parser}.fern` (+ `asmcore.fern` for a
+  `compiler/{lexer,parser}.fern` (+ `asmcore.fern` for a
   shared checker rule). The desugar output is plain AST, so codegen
   is untouched in both.
 

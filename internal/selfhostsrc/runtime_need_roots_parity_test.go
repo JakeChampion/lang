@@ -27,12 +27,12 @@ import (
 // nothing and reads the Fern sources as data, which is what makes it cheap enough
 // to run on every change to them.
 var needRootSources = []string{
-	"../../examples/self_host/asm_ir.fern",
-	"../../examples/self_host/asm_arm64_ir.fern",
-	"../../examples/self_host/irtables.fern",
-	"../../examples/self_host/lift.fern",
-	"../../examples/self_host/ircore.fern",
-	"../../examples/self_host/asmcore.fern",
+	"../../compiler/asm_ir.fern",
+	"../../compiler/asm_arm64_ir.fern",
+	"../../compiler/irtables.fern",
+	"../../compiler/lift.fern",
+	"../../compiler/ircore.fern",
+	"../../compiler/asmcore.fern",
 }
 
 // marksNeed matches a root marked with a STRING LITERAL: `s.need("x")`. A root
@@ -47,7 +47,7 @@ var marksNeed = regexp.MustCompile(`\.need\("([a-z0-9_]+)"\)`)
 // be mistaken for a listed row.
 func allRuntimeNeedRootsBody(t *testing.T) string {
 	t.Helper()
-	const path = "../../examples/self_host/ircore.fern"
+	const path = "../../compiler/ircore.fern"
 	src, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)

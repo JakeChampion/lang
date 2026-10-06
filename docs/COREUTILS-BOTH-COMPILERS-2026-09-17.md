@@ -337,7 +337,7 @@ than a patch. #9077.
 
 **4. `join` was a left fold.** `__fern_arr_str_join` built its result with
 `r = r + xs[i]`, O(total²). Now two passes over an exact buffer: 84x at n=500,
-336x at n=2000, and n=100000 went from OOM-killed to 8 ms. No `examples/bench`
+336x at n=2000, and n=100000 went from OOM-killed to 8 ms. No `bench`
 program joins, and none of the seven utilities whose output changed had join as
 its bottleneck — it matters because `std/io.read_all_stdin` collects chunks and
 joins once, so it sits on the path of every utility reading standard input.

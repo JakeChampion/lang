@@ -80,7 +80,7 @@ func TestSelfHostDynArrayParamIR(t *testing.T) {
 func TestSelfHostDynFnTypeParamParsesX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	asmRun, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))
+	asmRun, err := os.ReadFile(filepath.Join("../../compiler", "asm_run.fern"))
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}

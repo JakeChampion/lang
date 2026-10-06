@@ -1,0 +1,170 @@
+import "std/test";
+import "std/string";
+import "std/array";
+import "../../coreutils/lib/resolv" as resolv;
+
+// tests/stdlib/coreutils_resolv_test.fern — coreutils/lib/resolv, the
+// NSS walk gethostid makes over std/dns's two sources: nsswitch's
+// `hosts:` line with its bracketed actions and compiled-in default, and
+// the walk's reaction to each source's status. The files, the resolver
+// configuration and the wire protocol are std/dns's and are covered by
+// tests/stdlib/dns_test.fern.
+//
+// Every expectation is what glibc does with the same input. Two live
+// cases run against this machine's own /etc/hosts.
+function word(o: Option[i32]): i32 {
+  match (o) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return -1;
+    }
+  }
+}
+
+function loopback(): i32 {
+  return 16777343;  // 0x0100007f: 127.0.0.1 as the in_addr word
+}
+
+function test_ipv4_word(): test.TestOutcome {
+  if (resolv.ipv4_word(127, 0, 0, 1) != loopback()) {
+    return test.fail("127.0.0.1 is 0x0100007f: the first octet in the low byte");
+  }
+  return test.assert_eq(resolv.ipv4_word(256 + 10, 0, 0, 0), 10);
+}
+
+function names(ss: resolv.Source[]): string {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < ss.len()) {
+    out = out.append(ss[i].name);
+    i = i + 1;
+  }
+  return out.join(" ");
+}
+
+function test_nsswitch_default(): test.TestOutcome {
+  if (names(resolv.default_sources()) != "files dns") {
+    return test.fail("the compiled-in hosts line is files dns");
+  }
+  if (names(resolv.nsswitch_hosts("passwd: files\n")) != "files dns") {
+    return test.fail("no hosts line means the default");
+  }
+  if (resolv.nsswitch_hosts("hosts:\n").len() != 0) {
+    return test.fail("a present but empty hosts line names no source");
+  }
+  return test.pass();
+}
+
+function test_nsswitch_plain(): test.TestOutcome {
+  let ss: resolv.Source[] = resolv.nsswitch_hosts("# comment\nhosts: files mdns4_minimal dns myhostname\n");
+  if (names(ss) != "files mdns4_minimal dns myhostname") {
+    return test.fail("the sources in order");
+  }
+  if (!ss[0].stops(resolv.success()) || ss[0].stops(resolv.notfound()) || ss[0].stops(resolv.unavail())) {
+    return test.fail("the default actions: success returns, the rest continue");
+  }
+  return test.pass();
+}
+
+function test_nsswitch_actions(): test.TestOutcome {
+  let ss: resolv.Source[] = resolv.nsswitch_hosts("hosts: files [NOTFOUND=return] dns [UNAVAIL=return SUCCESS=continue]\n");
+  if (names(ss) != "files dns") {
+    return test.fail("a bracketed group is not a source");
+  }
+  if (!ss[0].stops(resolv.notfound()) || ss[0].stops(resolv.unavail())) {
+    return test.fail("NOTFOUND=return on files");
+  }
+  if (!ss[1].stops(resolv.unavail()) || ss[1].stops(resolv.success())) {
+    return test.fail("UNAVAIL=return and SUCCESS=continue on dns");
+  }
+  if (!resolv.nsswitch_hosts("hosts: dns [tryagain=RETURN]\n")[0].stops(resolv.unavail())) {
+    return test.fail("TRYAGAIN is UNAVAIL here, and the pair is case-insensitive");
+  }
+  return test.pass();
+}
+
+function test_nsswitch_negated_action(): test.TestOutcome {
+  let ss: resolv.Source[] = resolv.nsswitch_hosts("hosts: mdns4_minimal [!UNAVAIL=return] dns\n");
+  if (!ss[0].stops(resolv.success()) || !ss[0].stops(resolv.notfound()) || ss[0].stops(resolv.unavail())) {
+    return test.fail("!UNAVAIL=return lands on every other status");
+  }
+  return test.pass();
+}
+
+function test_nsswitch_spaced_bracket_and_empty(): test.TestOutcome {
+  let ss: resolv.Source[] = resolv.nsswitch_hosts("hosts: files [ NOTFOUND=return ] dns\n");
+  if (names(ss) != "files dns" || !ss[0].stops(resolv.notfound())) {
+    return test.fail("spaces inside the brackets");
+  }
+  let alone: resolv.Source[] = resolv.nsswitch_hosts("hosts: [NOTFOUND=return] dns\n");
+  if (names(alone) != "dns" || alone[0].stops(resolv.notfound())) {
+    return test.fail("an action with no source before it applies to nothing");
+  }
+  return test.pass();
+}
+
+// The walk over the sources: a source nothing implements is UNAVAIL,
+// which continues by default and returns under [UNAVAIL=return].
+function test_lookup_walk(): test.TestOutcome {
+  if (word(resolv.lookup("localhost", [resolv.source("nosuch"), resolv.source("files")])) != loopback()) {
+    return test.fail("an unimplemented source continues to the next");
+  }
+  let stop: resolv.Source = resolv.Source { ...resolv.source("nosuch"), unavail_return: true };
+  match (resolv.lookup("localhost", [stop, resolv.source("files")])) {
+    Some(_) => {
+      return test.fail("[UNAVAIL=return] ends the walk before files");
+    },
+    None => {}
+  }
+  match (resolv.lookup("localhost", [])) {
+    Some(_) => {
+      return test.fail("no sources, no answer");
+    },
+    None => {}
+  }
+  return test.pass();
+}
+
+// The live cases: this machine's own /etc/hosts. Every system this runs
+// on maps localhost to 127.0.0.1 in its hosts file, and `files` comes
+// before `dns` on every default nsswitch line.
+function test_live_resolve_localhost(): test.TestOutcome {
+  return test.assert_eq(word(resolv.resolve("localhost")), loopback());
+}
+
+function test_live_canon_localhost(): test.TestOutcome {
+  match (resolv.canon_host("localhost")) {
+    Some(n) => {
+      if (!n.eq_ignore_ascii_case("localhost")) {
+        return test.fail("localhost's canonical name is localhost");
+      }
+    },
+    None => {
+      return test.fail("localhost has a canonical name");
+    }
+  }
+  match (resolv.canon_host("127.0.0.1")) {
+    Some(n) => {
+      return test.assert_eq(n, "127.0.0.1");
+    },
+    None => {
+      return test.fail("an address literal is its own canonical name");
+    }
+  }
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("coreutils/lib/resolv");
+  r = r.it("ipv4_word packs the in_addr word", test_ipv4_word);
+  r = r.it("nsswitch: the default is files dns", test_nsswitch_default);
+  r = r.it("nsswitch: a plain hosts line", test_nsswitch_plain);
+  r = r.it("nsswitch: bracketed actions", test_nsswitch_actions);
+  r = r.it("nsswitch: a negated action", test_nsswitch_negated_action);
+  r = r.it("nsswitch: spaced brackets, empty line", test_nsswitch_spaced_bracket_and_empty);
+  r = r.it("the walk over the sources", test_lookup_walk);
+  r = r.it("live: resolve localhost", test_live_resolve_localhost);
+  r = r.it("live: the canonical name of localhost", test_live_canon_localhost);
+  return r.finish();
+}

@@ -139,7 +139,7 @@ func TestSelfHostChecksItsOwnSources(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	gcc, runner := x86_64Tooling(t)
 	driver := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	src, err := filepath.Abs("../../examples/self_host/fern.fern")
+	src, err := filepath.Abs("../../compiler/fern.fern")
 	if err != nil {
 		t.Fatal(err)
 	}

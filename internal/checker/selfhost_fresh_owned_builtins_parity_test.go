@@ -11,7 +11,7 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
-// The self-host's `ow_fresh_builtins` (examples/self_host/checker.fern) derives
+// The self-host's `ow_fresh_builtins` (compiler/checker.fern) derives
 // the fresh-owner set for USER functions from the module it is checking, the
 // same way native's `isOwnedExpr` does. The BUILTIN half it cannot derive:
 // builtins carry no declaration in the module, so the self-host hard-codes the
@@ -23,7 +23,7 @@ import (
 // reject `f(builtin())` at an `own` parameter with an E051 native accepts —
 // a diagnostic that exists in one compiler and not the other.
 func TestSelfHostFreshOwnedBuiltinsMatchChecker(t *testing.T) {
-	fern := parseFernFreshOwnedBuiltins(t, "../../examples/self_host/checker.fern")
+	fern := parseFernFreshOwnedBuiltins(t, "../../compiler/checker.fern")
 	native := nativeFreshOwnedBuiltins(t)
 
 	// Guard the gate itself: an anchor that moved, or a table that stopped
@@ -37,12 +37,12 @@ func TestSelfHostFreshOwnedBuiltinsMatchChecker(t *testing.T) {
 
 	for _, name := range sortedNames(native) {
 		if !fern[name] {
-			t.Errorf("%s has a pointer result and no pointer parameter, so native's isOwnedExpr treats its call as a fresh owner, but ow_fresh_builtins in examples/self_host/checker.fern does not list it: the self-host reports E051 where native accepts", name)
+			t.Errorf("%s has a pointer result and no pointer parameter, so native's isOwnedExpr treats its call as a fresh owner, but ow_fresh_builtins in compiler/checker.fern does not list it: the self-host reports E051 where native accepts", name)
 		}
 	}
 	for _, name := range sortedNames(fern) {
 		if !native[name] {
-			t.Errorf("ow_fresh_builtins in examples/self_host/checker.fern lists %s, but the checker's builtin table gives it no pointer result or a pointer parameter, so native's isOwnedExpr does not treat its call as a fresh owner: the self-host accepts where native reports E051", name)
+			t.Errorf("ow_fresh_builtins in compiler/checker.fern lists %s, but the checker's builtin table gives it no pointer result or a pointer parameter, so native's isOwnedExpr does not treat its call as a fresh owner: the self-host accepts where native reports E051", name)
 		}
 	}
 }

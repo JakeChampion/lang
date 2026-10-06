@@ -2,8 +2,8 @@
 
 The compiler compiling itself had been whole on the register path since
 2026-09-17, and nothing had measured the rest of the tree. A sweep over the
-corpus — the 594 conformance cases, the coreutils, `examples/bench`,
-`examples/cli`, `examples/tests` and `fern.fern` itself, 934 programs of
+corpus — the 594 conformance cases, the coreutils, `bench`,
+`examples/cli`, `tests/stdlib` and `fern.fern` itself, 934 programs of
 which 863 compile (the other 71 are refused before emit, the same 71 both
 ways), 95,072 functions, compiled through `bin/fern-selfhost` with
 `FERN_SSA_REPORT=1` for each native ISA — found the gap and its shape:
@@ -48,7 +48,7 @@ the three kinds (`load`, `store`, `call_closure_direct`) nothing produces.
 
 The refactor moves no byte where nothing was bridged: the compiler before
 and the compiler after emit identical `-emit asm` text for every program of
-`examples/bench`, `examples/tests`, `examples/cli` and the coreutils that had
+`bench`, `tests/stdlib`, `examples/cli` and the coreutils that had
 no declined function, on both ISAs: 231 of the 339 identical on each, the
 one refusal the same both ways. The programs whose text
 moved are exactly the ones that had one — their bridged functions are now

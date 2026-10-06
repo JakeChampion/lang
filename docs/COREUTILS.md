@@ -386,7 +386,7 @@ nobody had changed. The warning is still the prompt to delete the line.
 ### The self-host leg
 
 `TestSelfHostCoreutilsParity` compiles every utility a second time with the
-SELF-HOST compiler (`examples/self_host/fern.fern`) under `FERN_STRICT_IR=1`,
+SELF-HOST compiler (`compiler/fern.fern`) under `FERN_STRICT_IR=1`,
 runs the same corpus against those binaries, and requires them to agree with
 the native build. Comparing against native rather than GNU is deliberate:
 native is already held to GNU by the corpus above, so a failure here says the
@@ -671,7 +671,7 @@ significand, 29 of its 662 cases diverging on aarch64 with nothing on an
 x86-64 host to show it. Two gates cover what the corpus cannot see:
 `internal/coreutils/longdouble_test.go` checks every target's selection
 and FAILS rather than guess when a target it does not know appears, and
-`examples/tests/coreutils_ld_test.fern` drives all three formats
+`tests/stdlib/coreutils_ld_test.fern` drives all three formats
 explicitly on whatever host runs it. A utility that converts in one also
 gets a block of cases holding the invocations whose bytes DIFFER between
 the three formats — printf's and seq's are marked as such — so the leg
@@ -4591,7 +4591,7 @@ groups are the order of work. Each sub-issue names its group.
   four classifications — `internal/checker`, `internal/interp`,
   `internal/caps` (`docs/PACKAGE-CAPABILITIES-BRIEF.md`) and
   `internal/platforms` (`docs/FREESTANDING-CORE.md`) — plus the two
-  self-host MIRRORS, `examples/self_host/caps.fern` and `platforms.fern`.
+  self-host MIRRORS, `compiler/caps.fern` and `platforms.fern`.
   Each of those has a completeness test that fails when one is missed.
 
   It is also, and this is the expensive half, the self-hosted COMPILER:

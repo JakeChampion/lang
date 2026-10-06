@@ -45,7 +45,7 @@ cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
 REPORT="${1:-/dev/stdout}"
-BENCH_DIR="${FERN_BENCH_DIR:-examples/bench}"
+BENCH_DIR="${FERN_BENCH_DIR:-bench}"
 STDLIB="$ROOT/internal/stdlib"
 
 # The self-host CLI needs ABSOLUTE paths: a relative one is unopenable from an
@@ -67,7 +67,7 @@ STDLIB="$ROOT/internal/stdlib"
 # self-host CLI on every run and measured nothing sooner for it.
 go build -o bin/fern ./cmd/fern
 if [ ! -x bin/fern-selfhost ] ||
-   [ -n "$(find examples/self_host cmd internal \
+   [ -n "$(find compiler cmd internal \
        \( -name '*.fern' -o -name '*.go' \) -newer bin/fern-selfhost -print -quit 2>/dev/null)" ]; then
   echo "perf-bench-selfhost: building bin/fern-selfhost (missing or stale)" >&2
   make selfhost-cli >&2

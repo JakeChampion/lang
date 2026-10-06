@@ -5,7 +5,7 @@ observed that Fern already computes the ingredients as "per-function decision
 tables consumed by lowering". Five slices landed it. This entry is what now
 exists, what it measured, and which of the measurements were wrong first.
 
-Every number below is over `examples/self_host/fern.fern` — 6516 functions,
+Every number below is over `compiler/fern.fern` — 6516 functions,
 0 lift failures, 10278 pointer parameters — unless it says otherwise. That
 program is the basis because the conformance corpus re-lowers the stdlib once
 per fixture and counts it every time.

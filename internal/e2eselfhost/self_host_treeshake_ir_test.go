@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The self-host treeshake pass (examples/self_host/treeshake.fern) + stdlib
+// The self-host treeshake pass (compiler/treeshake.fern) + stdlib
 // loading. The self-host loader can resolve `core/…` / `std/…` imports under a
 // stdlib root, but a stdlib-importing program drags in the whole transitive
 // closure, blowing asm_ir's 512-function IR budget so the program is forced
@@ -20,20 +20,20 @@ import (
 // native interpreter), and (c) treeshake never changes behaviour (the AST and
 // IR builds agree).
 
-// copySelfHostTree copies every examples/self_host/*.fern into a fresh temp dir
+// copySelfHostTree copies every compiler/*.fern into a fresh temp dir
 // so the driver (and the asm buildBin writes) stay out of the repo tree.
 func copySelfHostTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	entries, err := os.ReadDir("../../examples/self_host")
+	entries, err := os.ReadDir("../../compiler")
 	if err != nil {
-		t.Fatalf("readdir self_host: %v", err)
+		t.Fatalf("readdir compiler: %v", err)
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".fern") {
 			continue
 		}
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", e.Name()))
+		src, err := os.ReadFile(filepath.Join("../../compiler", e.Name()))
 		if err != nil {
 			t.Fatalf("read %s: %v", e.Name(), err)
 		}

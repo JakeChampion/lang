@@ -38,8 +38,8 @@ control-flow analysis over the flat op stream:
 | `internal/ir/verifyrc.go` | 374 | backward bracket matching, forward reachability that skips sibling arms |
 | `internal/ir/rc_dropguided.go` | 250 | reuse-token flow that "dies at any control-flow join it cannot soundly cross" |
 | `internal/ir/rc_cross_branch.go` | 136 | cross-block reuse pairing |
-| `examples/self_host/irverifyrc.fern` | 416 | the same reachability walk, again, in Fern |
-| `examples/self_host/irverifystack.fern` | 305 | the same stack dataflow, again, in Fern |
+| `compiler/irverifyrc.fern` | 416 | the same reachability walk, again, in Fern |
+| `compiler/irverifystack.fern` | 305 | the same stack dataflow, again, in Fern |
 
 Two of those were written this week (#7783, #7791, #7785). Each contains a
 `matchIfBackwards`, a `skipToMatchingEnd`, or a `reaches()` that exists solely
@@ -344,7 +344,7 @@ Two concrete blockers, and only two:
    is empty. With every string producer allocating through `__alloc`,
    `__fern_str_append` grows a uniquely held accumulator in place on this
    backend (the lift used to rename it to `__str_concat` for both SSA
-   backends), which took `examples/bench/string_build.fern` from 10x the
+   backends), which took `bench/string_build.fern` from 10x the
    flat backend to 4x — the slowdown gate had been passing on that program
    only when the machine was quiet enough to keep the absolute gap under its
    floor — and `__fern_str_dec` frees at rc == 1, which took it to 1.6x.
@@ -401,7 +401,7 @@ Two concrete blockers, and only two:
    flat stretch from 19 to 36 is the `Map` method family and the `Reader`/host
    builtins, which arrive as a block or not at all.
 
-   **`examples/bench` is the cheap corner**, and the one with checked-in
+   **`bench` is the cheap corner**, and the one with checked-in
    baselines (`.github/perf-baseline-selfhost.txt`). Nine of its programs need
    only one or two helpers each — `__fern_arr_push_grow`, `__str_idx`,
    `__str_slice`, `__fern_memchr`, `__fern_ascii_run`, `__fern_count_byte`,

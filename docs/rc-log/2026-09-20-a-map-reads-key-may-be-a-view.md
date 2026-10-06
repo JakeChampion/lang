@@ -67,8 +67,8 @@ typed and AST legs answer identically on every row, and match native.
 
 | program | before | after | typed held | AST held |
 |---|---|---|---|---|
-| `examples/tests/cli_test` | 0 of 239 | 239 of 239 | 0 B | 34,344 B |
-| `examples/tests/path_test` | 0 of 185 | 185 of 185 | 0 B | 4,704 B |
+| `tests/stdlib/cli_test` | 0 of 239 | 239 of 239 | 0 B | 34,344 B |
+| `tests/stdlib/path_test` | 0 of 185 | 185 of 185 | 0 B | 4,704 B |
 | `coreutils/tsort` | 0 of 135 | 135 of 135 | 0 B | 1,464 B |
 
 The AST lowering's figures are #9832's first half, unchanged by this entry.
@@ -83,8 +83,8 @@ The `replace` fault on its own, with the argument a temporary nobody else names
 | self-host, typed lowering, x86-64 | **segmentation fault** | 9, 0 B held |
 | self-host, typed lowering, wasm32 | 9, **25 over-releases** | 9, 0 over-releases |
 
-Corpus census (the conformance cases, coreutils, `examples/bench`,
-`examples/cli`, `examples/tests` and the compiler; 865 seeds), both legs run
+Corpus census (the conformance cases, coreutils, `bench`,
+`examples/cli`, `tests/stdlib` and the compiler; 865 seeds), both legs run
 here with the same script:
 
 | | before | after |

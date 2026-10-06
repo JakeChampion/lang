@@ -1,6 +1,6 @@
 # Measured 2026-09-16: the full sweep, every open slice applied
 
-All 28 `examples/bench` programs, best of five, x86-64 native and arm64 under
+All 28 `bench` programs, best of five, x86-64 native and arm64 under
 qemu. "main" is `8047634`; "all slices" is main plus the five PRs open at the
 time (#9438 `__ssa_bcopy` sized copies, #9439 reciprocal division, #9441
 branch alignment for the JCC erratum, #9442 AVX2 byte kernels, #9443

@@ -39,7 +39,7 @@ func TestSelfHostLinkerAgnosticIRX86_64(t *testing.T) {
 		t.Skip("linker-agnostic gate runs only natively (multi-linker link+run)")
 	}
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	src, err := os.ReadFile("../../compiler/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}

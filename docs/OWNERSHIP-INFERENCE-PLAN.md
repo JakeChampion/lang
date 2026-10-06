@@ -405,7 +405,7 @@ analysis, which is independent, pure, and de-risks the design.
   high-water on wasm), and the self-host escaping-binding cases flipped
   from rejected-leak to freed-box + moved payload.
 
-  **Self-host port — DONE (2026-09-21, #9891).** `examples/self_host/ownership.fern`
+  **Self-host port — DONE (2026-09-21, #9891).** `compiler/ownership.fern`
   answers which parameters a function consumes, `semsource.with_inferred_modes`
   rewrites the contracts from it, and `semlower.inferred_rows` applies it. Slice
   2 and sub-slice 2d had to land TOGETHER there: the blanket form is slower on

@@ -17,7 +17,7 @@ flips several of its recommendations from "buy" to "decline".**
 
 Every architectural change here is paid **twice** — once in the Go compiler
 under `internal/` (30.7k lines of `ir`, 51.4k of `codegen`, 14.7k of
-`checker`) and once in the Fern compiler under `examples/self_host/` (134k
+`checker`) and once in the Fern compiler under `compiler/` (134k
 lines). `NATIVE-CONVERGENCE.md` names that double maintenance as "the
 dominant tax on the project."
 
@@ -31,7 +31,7 @@ Two consequences, and they are the load-bearing conclusions of this doc:
 1. **Architectural investment in `internal/` is depreciating.** A beautiful
    query engine in Go buys IDE latency for a compiler slated to freeze. Any
    idea from the list worth adopting should be evaluated as *"do we want to
-   build this in `examples/self_host/`?"*, because that's where it has to
+   build this in `compiler/`?"*, because that's where it has to
    exist to matter in three years.
 2. **"Rewrite the pipeline" items are priced wrong.** The checklist reads
    like a greenfield design. Here, a from-scratch re-layering costs two
@@ -182,7 +182,7 @@ Symbol interning is NOT on this list: #15/#16 above records it as built,
 measured and declined.
 
 And the meta-point, which outranks all three: **build these in
-`examples/self_host/`, not `internal/`.** Under the convergence policy every
+`compiler/`, not `internal/`.** Under the convergence policy every
 native-only addition is a debt entry against the freeze preconditions
 (#4451), not a free win. The checklist's advice is sound; applying it to the
 Go compiler in 2026 would be spending the architecture budget on the

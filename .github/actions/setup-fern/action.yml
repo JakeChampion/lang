@@ -115,7 +115,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ runner.os == 'macOS' && '~/Library/Caches/fern' || '~/.cache/fern' }}
-        key: fern-launcher-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bootstrap/stage0.lock', 'examples/self_host/*.fern', 'internal/stdlib/**') }}
+        key: fern-launcher-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bootstrap/stage0.lock', 'compiler/*.fern', 'internal/stdlib/**') }}
 
     # Two paths link through `-fuse-ld=lld`: cmd/fern's arm64-darwin
     # cross-link from Linux (clang + lld's Mach-O backend) and

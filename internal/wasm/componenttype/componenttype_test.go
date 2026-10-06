@@ -139,7 +139,7 @@ func TestWorldFernPayloads(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		src, err := os.ReadFile(filepath.Join("..", "..", "..", "examples", "self_host", file))
+		src, err := os.ReadFile(filepath.Join("..", "..", "..", "compiler", file))
 		if err != nil {
 			t.Fatal(err)
 		}

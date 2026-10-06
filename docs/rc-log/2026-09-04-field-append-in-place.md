@@ -142,7 +142,7 @@ the clone form fed it a fresh cap == len buffer that ALWAYS reallocated, and the
 field's own buffer usually has room.
 
 **The one workload that goes the other way.** Emitting the WHOLE compiler as a
-single unit in one process — `-emit asm examples/self_host/fern.fern` — is
+single unit in one process — `-emit asm compiler/fern.fern` — is
 slower and larger, not faster and smaller:
 
 | | wall | peak RSS |

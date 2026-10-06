@@ -16,7 +16,7 @@ import (
 	"unicode/utf8"
 )
 
-// `fern -lsp` is the self-host language server (#6641): examples/self_host/
+// `fern -lsp` is the self-host language server (#6641): compiler/
 // lsp.fern is the wire, fern.fern's check_source the diagnostics, and its
 // format_source the formatting. These tests drive it as an editor does —
 // framed JSON-RPC on stdin, everything read back from stdout once the input

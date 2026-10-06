@@ -723,7 +723,7 @@ func isGeneratedDrop(name string) bool {
 // drops.
 //
 // They exist so the self-host mirror in
-// `examples/self_host/irverifyrc.fern` can be pinned entry-for-entry
+// `compiler/irverifyrc.fern` can be pinned entry-for-entry
 // against this file rather than against a regexp over it.
 func RcReleaseNames() []string {
 	var out []string

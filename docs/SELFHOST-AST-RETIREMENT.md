@@ -558,7 +558,7 @@ figure from 32 to 96 bytes, which identifies the leaked block as **the array**,
 not the container box.
 
 Three shapes isolate the cause, and only one line differs between the first two
-(`examples/probes/loop_construction_move_leak.fern` runs all three; the figures
+(`tests/probes/loop_construction_move_leak.fern` runs all three; the figures
 below are the pre-fix ones, and all three are balanced now):
 
 | shape | result |
@@ -2574,7 +2574,7 @@ tier → leak.
      **And a FOURTH miss, which is the one worth generalising.** CI then failed
      `TestSelfHostStringX86_64`, which builds its input by reading
      `internal/stdlib/std/string.fern` and appending a `main`. Every sweep had
-     hunted file-derived inputs under `examples/self_host/` and never thought to
+     hunted file-derived inputs under `compiler/` and never thought to
      look under `internal/stdlib/`. Enumerated properly, the whole CLASS — a test
      that builds `asm_run` and feeds it a MODULE read from either root — is eight
      tests, of which seven are fine because their module is self-contained
@@ -3248,7 +3248,7 @@ for the token/AST graph essentially does not happen. Anyone picking this up
 should start from these counters, not RSS, and watch the FREED FRACTION rather
 than megabytes.
 
-**And it has a 12-line repro** — `examples/probes/enum_array_element_leak.fern`.
+**And it has a 12-line repro** — `tests/probes/enum_array_element_leak.fern`.
 An array of enum values carrying heap payloads, built and dropped: `allocs=19024
 frees=13024` (68.5% freed, ~3000 blocks leaked per 5000 elements per round). So
 element non-reclamation does NOT need the whole compiler to demonstrate, which
@@ -3482,7 +3482,7 @@ solved" — and it is inherited from the OTHER branch of this same `if`, the
 lines up.)
 
 **A 15-line repro of the leak, with attribution** —
-`examples/probes/destructure_taint_leak.fern`. It carries the identical
+`tests/probes/destructure_taint_leak.fern`. It carries the identical
 eligibility signature (`__destruct` eligible tuple at [0], tainted component at
 [1]) and leaks 1500 of 3500 allocations (48000 bytes live) while exiting 4, the
 same as the interpreter. Attribution is exact: rewriting the sink as
@@ -3598,7 +3598,7 @@ dump-level divergence, which is what `TestSelfHostRcPlanDiff` exists to pin.
 
 The biggest single shape behind "over 80% of every allocation in the lex/parse
 path is never freed" is now pinned to one rule, with a 13-line probe —
-`examples/probes/retained_param_leak.fern`. Passing an owned value to a function
+`tests/probes/retained_param_leak.fern`. Passing an owned value to a function
 that RETAINS it into what it returns leaks **exactly one reference per call**:
 the caller's.
 
@@ -3740,7 +3740,7 @@ projection rule.
 
 **That sequence is now REFUTED — do not build that classifier (2026-07-29).**
 Taking the doc's own advice to check the premise before writing the analysis:
-`examples/probes/lexer_shape_control.fern` is a faithful mimic of
+`tests/probes/lexer_shape_control.fern` is a faithful mimic of
 `lexer.tokenize` carrying every appearance the widening list blamed — a struct
 param threaded by self-reassignment, METHOD RECEIVERS on it (`l.at_end()`,
 `l.peek()`), INDEX reads through its field (`l.src[l.i]`), a field-by-field
@@ -3992,7 +3992,7 @@ The mechanism is a **use-after-free in `__fern_arr_push_grow`'s copy path**,
 which the arm merely EXPOSES. It is not in `sanitize_label`, not in the
 `EmitState` buffer, and not in any of the `asmcore.fern` arrays named above —
 those are `string[]`s built by projection-push, which inc every element and are
-balanced. Distilled to 25 lines in `examples/probes/alias_grow_uaf.fern`
+balanced. Distilled to 25 lines in `tests/probes/alias_grow_uaf.fern`
 (exit 0 native + interp, exit 1 with the arm; an `FERN_RC_FREE_DEBUG=1` build
 traps on `ud2` at the stale holder).
 
@@ -4196,7 +4196,7 @@ allocation can strand a block.
 
 **Gates for that work, in order** (the first two are seconds, and the last two
 are the ones that have historically disagreed):
-`examples/probes/alias_grow_uaf.fern` (exit 0 compiled == interp, x86-64,
+`tests/probes/alias_grow_uaf.fern` (exit 0 compiled == interp, x86-64,
 arm64 and wasm) → `internal/ir` `TestArrayPushProjectionSourceFreeEligible` →
 `MapIntermediateReclaim` on all three backends →
 `TestSelfHostStdTestE2EArm64` (312 s local, REQUIRED) →
@@ -4259,7 +4259,7 @@ measurement, not a design question.
 The measurement the section above called for is done — a taint trace of
 `computeFreeEligible` for `lexer__tokenize` (a temporary `why[name] = rule` map
 threaded through the fixpoint), plus a minimal reproducer that finally
-reproduces (`examples/probes/result_thread_leak.fern` — the FIRST to do so; the
+reproduces (`tests/probes/result_thread_leak.fern` — the FIRST to do so; the
 three earlier mimics all reclaimed 100%). Result:
 
 ```
@@ -4479,7 +4479,7 @@ the ORIGINAL. That check takes one driver rebuild and would have caught this, th
 
 ### The loop-append bug itself
 
-Minimal repro: `examples/probes/loop_append_drop_leak.fern`.
+Minimal repro: `tests/probes/loop_append_drop_leak.fern`.
 
 **Measure this class of bug with `FERN_LEAKCHECK=1`, not RSS.** The native
 backend already has an exact leak detector (#5362 slice 1) that prints
@@ -4707,7 +4707,7 @@ directly, so the two-let sibling (`both[T, U](a: T, b: U): boolean`) is covered
 too.
 
 Safety: a scan of every `function f[…](… : T …): <concrete>` across
-`internal/stdlib` and `examples/self_host` found **zero** matches for both the
+`internal/stdlib` and `compiler` found **zero** matches for both the
 single- and multi-let forms, so the bootstrap monomorphises nothing new — the
 same argument clause (c') rests on. Verified: all three shapes (i64, f64,
 two-var) now route `ir` and return the interpreter's answer on wasm; the 31-case

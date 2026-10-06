@@ -84,7 +84,7 @@ exact — the callee spends exactly the reference bought — which is why this
 lands first.
 
 The emitted-size corpus does not move at all: `scripts/perf-bench-selfhost` over
-`examples/bench`, working tree before vs after, 0 of 84 keys changed on all
+`bench`, working tree before vs after, 0 of 84 keys changed on all
 three targets. No benchmark there carries the shape.
 
 ## What this does NOT fix — #8874

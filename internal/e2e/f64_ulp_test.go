@@ -788,7 +788,7 @@ func TestF64TranscendentalBackendsAgree(t *testing.T) {
 }
 
 // TestF64TranscendentalUlpSelfHostX86_64 holds the SELF-HOSTED x86-64 backend
-// (examples/self_host/asm_ir.fern) to the same bound as the native one, then
+// (compiler/asm_ir.fern) to the same bound as the native one, then
 // pins the two to each other bit for bit.
 //
 // It is the gate the self-host half was missing, and its absence is why that

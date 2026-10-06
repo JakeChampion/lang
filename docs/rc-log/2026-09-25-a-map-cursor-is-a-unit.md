@@ -24,7 +24,7 @@ x86-64, `FERN_LEAKCHECK=1`:
 
 | program | before | after |
 |---|---|---|
-| `examples/tests/json_roundtrip_test` | 192 B live | 3811 / 3811, 0 B |
+| `tests/stdlib/json_roundtrip_test` | 192 B live | 3811 / 3811, 0 B |
 | `conformance/cases/audit_std_json` | 16 B live | 153 / 153, 0 B, stdout matches |
 
 `TestSelfHostMapIterIsReclaimed` covers seven shapes, each run for 8 rounds, on

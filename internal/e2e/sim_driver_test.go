@@ -16,13 +16,13 @@ import (
 // `-interp` — where fd-backed Pending futures never resolve on the
 // real driver — with EXACT virtual-time assertions instead of sleeps.
 
-// `examples/tests/sim_driver_test.fern` is the TAP suite: with_deadline
+// `tests/stdlib/sim_driver_test.fern` is the TAP suite: with_deadline
 // winners/losers at exact virtual times, seed-deterministic race
 // tie-breaks (incl. a 20-seed sweep), gather over out-of-order
 // readiness, and the re-suspending chain shape. Passing → exit 0.
 func TestRunnerSimDriverExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/sim_driver_test.fern")
+	src := langSrcAbs(t, "tests/stdlib/sim_driver_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -37,7 +37,7 @@ func TestRunnerSimDriverExamplePasses(t *testing.T) {
 // simDriverNativeProgram exercises the same virtual-clock contracts as
 // the TAP suite without std/test (whose fs assertion helpers reference
 // `remove_dir_all` and so keep every TAP file interp/self-host-gated —
-// no examples/tests file compiles through the native CLI pipeline
+// no tests/stdlib file compiles through the native CLI pipeline
 // today). Exit 42 iff every check holds.
 const simDriverNativeProgram = `import "std/async";
 import "std/time";

@@ -3,7 +3,7 @@
 # Format: <fixture-name> <#issue> <reason>
 #
 # TestFernFixturesSelfHostWasm lists these rather than skipping them, following
-# tools/deadcode-allowlist.txt: the lane is green with them listed, a NEW
+# scripts/deadcode-allowlist.txt: the lane is green with them listed, a NEW
 # divergence fails, and a listed fixture that starts PASSING also fails — an
 # allowlist nobody prunes is where bugs go to be forgotten.
 #

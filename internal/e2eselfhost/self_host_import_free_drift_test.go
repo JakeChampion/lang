@@ -14,7 +14,7 @@ import (
 
 // Drift gate for the import-free self-host modules.
 //
-// Several modules in examples/self_host carry no `import` statement at all.
+// Several modules in compiler carry no `import` statement at all.
 // That is deliberate and required rather than an accident: several
 // e2eselfhost drivers build a single-module program by CONCATENATING one of
 // these files with a `main()`, which only works while the file pulls in
@@ -44,7 +44,7 @@ import (
 // comments than the three backend copies, while the executable lines are
 // identical). Diverging on a comment is not a bug; diverging on a statement is.
 func TestImportFreeModulesDoNotDrift(t *testing.T) {
-	paths, err := filepath.Glob(langSrcAbs(t, filepath.Join("examples", "self_host", "*.fern")))
+	paths, err := filepath.Glob(langSrcAbs(t, filepath.Join("compiler", "*.fern")))
 	if err != nil {
 		t.Fatalf("glob self-host sources: %v", err)
 	}

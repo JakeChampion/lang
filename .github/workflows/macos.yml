@@ -246,7 +246,7 @@ jobs:
       # `ls_linux_fixture_test.go` are `//go:build linux`, so `TestTouch` does
       # not EXIST on this runner: a `-run` list carrying its name would select
       # nothing for it, silently and with exit 0, and
-      # `tools/testname_gate.sh` cannot refuse that because the gate runs on
+      # `scripts/testname_gate.sh` cannot refuse that because the gate runs on
       # Linux, where the name is real.
       #
       # `^TestSelfHost` — three functions — is what the skip drops. Those

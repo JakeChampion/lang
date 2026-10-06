@@ -67,7 +67,7 @@ already an opaque `i32` at the canonical ABI). Two user-visible goals:
   Byte-identity gate: `TestPutCanonResourceDrop_Bytes` + the compose suite;
   drop-free programs must reproduce today's bytes exactly.
 - **Self-host:** types are type-name strings on `FuncDecl`
-  (`examples/self_host/parser.fern`); `parse_import_attr`,
+  (`compiler/parser.fern`); `parse_import_attr`,
   `import_iface`/`import_wit` fields; printer round-trip gated by the printer
   self-test.
 

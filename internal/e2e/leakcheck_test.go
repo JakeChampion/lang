@@ -245,7 +245,7 @@ func TestArm64LeakCheckExitBuiltinReports(t *testing.T) {
 // here is that routing through the retaining helper costs NOTHING over building
 // the struct in place — equal on x86-64, and better than inline on arm64, whose
 // two-word string ABI never took this taint (it is gated to single-word
-// natives) and whose inline form reclaims less. `examples/probes/retained_param_leak.fern` is
+// natives) and whose inline form reclaims less. `tests/probes/retained_param_leak.fern` is
 // the standalone probe; on `parser.fern` this is worth +90% frees in the lexer.
 const retainedParamSrc = `import "std/i32";
 struct Tk { name: string, line: i32 }
@@ -317,7 +317,7 @@ func TestLeakCheckRetainedParamArm64(t *testing.T) {
 // cluster (never freed) every iteration. It is a COUNTED alias (the bind inc's
 // it and both `l` and `r` deep-drop), so it reclaims; rc_analysis.go un-taints
 // a field read whose source is a struct local. Standalone probe:
-// examples/probes/result_thread_leak.fern. Pinned by a FULL reclaim
+// tests/probes/result_thread_leak.fern. Pinned by a FULL reclaim
 // (allocs == frees, live_bytes == 0) — before the fix this shape freed 200 of
 // 2400 (92% leaked).
 const resultThreadReclaimSrc = `struct Lx { src: string, i: i32 }
@@ -384,7 +384,7 @@ func TestLeakCheckResultThreadReclaimArm64(t *testing.T) {
 // The interprocedural counted-retain fixpoint closes it: the struct cursor
 // param is credited (its uses are projections, counted stores, pure-read method
 // calls, and a returned-borrow), which enables the scalar-arg exemption. Probe:
-// examples/probes/scalar_thread_leak.fern. Pinned by a FULL reclaim — before
+// tests/probes/scalar_thread_leak.fern. Pinned by a FULL reclaim — before
 // the fixpoint this freed 1000 of 3400 (70% leaked).
 const scalarThreadReclaimSrc = `struct Lx { src: string, i: i32, line: i32 }
 struct TId { text: string, line: i32 }

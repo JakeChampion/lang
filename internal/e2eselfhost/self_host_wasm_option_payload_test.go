@@ -6,7 +6,7 @@ import (
 )
 
 // TestSelfHostWasmOptionPayload pins the wasm backend's Option/Result payload
-// extractors (examples/self_host/wasm_ir.fern's parse_option_payload /
+// extractors (compiler/wasm_ir.fern's parse_option_payload /
 // parse_result_err_payload — SH-021, docs/SELF-HOST-AUDIT.md T2). Both now decode
 // an Option[T] / Result[T, E] spelling via the structured TypeRef
 // (parser.parse_type_ref) instead of the magic-byte `Option[` / `Result[` prefix +

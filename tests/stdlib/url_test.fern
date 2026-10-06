@@ -1,0 +1,467 @@
+import "std/test";
+import "std/url" as url;
+import "core/map";
+import "std/utf8" as utf8;
+
+// tests/stdlib/url_test.fern — pure-Fern coverage of std/url's
+// RFC 3986 percent-encoding (url_encode / url_decode) and the
+// best-effort url_parse decomposition. Covers unreserved pass-through,
+// reserved-char escaping, case-insensitive + truncated decode, a
+// round-trip, and url_parse's scheme/host/port/path/query/fragment
+// split (plus the empty-input None) and the RFC 3986 §3.2 authority
+// rules — userinfo at the last '@', bracketed IP-literals, port range,
+// reg-name bytes, and the anchored scheme. The Go-side suite unit-tests
+// the prelude origin; this is the migration-shaped (pure-Fern) companion.
+
+// `resolved(base, reference)` — `url_resolve`'s answer, or "none".
+function resolved(base: string, reference: string): string {
+  match (url.url_resolve(base, reference)) {
+    Some(s) => {
+      return s;
+    },
+    None => {
+      return "none";
+    }
+  }
+  return "none";
+}
+
+// RFC 3986 §5.4.1, against its base.
+function test_resolve_normal(): test.TestOutcome {
+  let base: string = "http://a/b/c/d;p?q";
+  let checks: (string, string)[] = [
+    ("g", "http://a/b/c/g"),
+    ("./g", "http://a/b/c/g"),
+    ("g/", "http://a/b/c/g/"),
+    ("/g", "http://a/g"),
+    ("//g", "http://g"),
+    ("?y", "http://a/b/c/d;p?y"),
+    ("g?y", "http://a/b/c/g?y"),
+    ("#s", "http://a/b/c/d;p?q#s"),
+    ("g#s", "http://a/b/c/g#s"),
+    ("", "http://a/b/c/d;p?q"),
+    ("http://x/y", "http://x/y"),
+  ];
+  for check in checks {
+    let got: string = resolved(base, check.0);
+    if (got != check.1) {
+      return test.fail(check.0 + " resolved to " + got + ", want " + check.1);
+    }
+  }
+  return test.pass();
+}
+
+// RFC 3986 §5.4.1 and §5.4.2: dot segments, and a climb above the root
+// dropped rather than refused.
+function test_resolve_dots(): test.TestOutcome {
+  let base: string = "http://a/b/c/d;p?q";
+  let checks: (string, string)[] = [
+    (".", "http://a/b/c/"),
+    ("./", "http://a/b/c/"),
+    ("..", "http://a/b/"),
+    ("../", "http://a/b/"),
+    ("../g", "http://a/b/g"),
+    ("../..", "http://a/"),
+    ("../../g", "http://a/g"),
+    ("../../../g", "http://a/g"),
+    ("/./g", "http://a/g"),
+    ("/../g", "http://a/g"),
+    ("g/../h", "http://a/b/c/h"),
+    ("g;x=1/./y", "http://a/b/c/g;x=1/y"),
+  ];
+  for check in checks {
+    let got: string = resolved(base, check.0);
+    if (got != check.1) {
+      return test.fail(check.0 + " resolved to " + got + ", want " + check.1);
+    }
+  }
+  return test.pass();
+}
+
+function test_resolve_base_parts(): test.TestOutcome {
+  if (resolved("http://[::1]:8080/a/b?x=1", "../c") != "http://[::1]:8080/c") {
+    return test.fail("an IPv6 base with a port: " + resolved("http://[::1]:8080/a/b?x=1", "../c"));
+  }
+  if (resolved("http://h", "p") != "http://h/p") {
+    return test.fail("an empty base path: " + resolved("http://h", "p"));
+  }
+  return test.assert_eq(resolved("http://h/a?x=1#f", ""), "http://h/a?x=1");
+}
+
+function test_resolve_no_scheme(): test.TestOutcome {
+  return test.assert_eq(resolved("/a/b", "c"), "none");
+}
+
+function test_remove_dot_segments(): test.TestOutcome {
+  if (url.url_remove_dot_segments("/a/b/c/./../../g") != "/a/g") {
+    return test.fail("RFC 3986 §5.2.4 example 1: " + url.url_remove_dot_segments("/a/b/c/./../../g"));
+  }
+  if (url.url_remove_dot_segments("mid/content=5/../6") != "mid/6") {
+    return test.fail("RFC 3986 §5.2.4 example 2: " + url.url_remove_dot_segments("mid/content=5/../6"));
+  }
+  if (url.url_remove_dot_segments("/a//b/") != "/a//b/") {
+    return test.fail("empty segments are kept: " + url.url_remove_dot_segments("/a//b/"));
+  }
+  return test.assert_eq(url.url_remove_dot_segments("/.."), "/");
+}
+
+function test_encode_space(): test.TestOutcome {
+  return test.assert_eq(url.url_encode("a b"), "a%20b");
+}
+
+function test_encode_unreserved(): test.TestOutcome {
+  // A-Z a-z 0-9 and - . _ ~ pass through untouched.
+  return test.assert_eq(url.url_encode("aZ9-._~"), "aZ9-._~");
+}
+
+function test_encode_reserved(): test.TestOutcome {
+  // '/'=%2F '?'=%3F '&'=%26 '='=%3D (uppercase hex).
+  return test.assert_eq(url.url_encode("/?&="), "%2F%3F%26%3D");
+}
+
+function test_decode_space(): test.TestOutcome {
+  return test.assert_eq(url.url_decode("a%20b"), "a b");
+}
+
+function test_decode_lowercase_hex(): test.TestOutcome {
+  // Decode accepts lower-case hex digits.
+  return test.assert_eq(url.url_decode("%2f"), "/");
+}
+
+function test_decode_truncated(): test.TestOutcome {
+  // A truncated escape at end-of-string is left literal.
+  return test.assert_eq(url.url_decode("%2"), "%2");
+}
+
+function test_roundtrip(): test.TestOutcome {
+  return test.assert_eq(url.url_decode(url.url_encode("a b/c?d=e&f")), "a b/c?d=e&f");
+}
+
+function test_parse_full(): test.TestOutcome {
+  match (url.url_parse("http://example.com:8080/path?q=1#frag")) {
+    Some(u) => {
+      return test.assert_true(u.scheme == "http" && u.host == "example.com"
+        && u.port == 8080 && u.path == "/path" && u.query == "q=1"
+        && u.fragment == "frag");
+    },
+    None => {
+      return test.fail("url_parse(full) expected Some");
+    }
+  }
+}
+
+function test_parse_minimal(): test.TestOutcome {
+  match (url.url_parse("https://host.com/")) {
+    Some(u) => {
+      return test.assert_true(u.scheme == "https" && u.host == "host.com"
+        && u.port == 0 && u.path == "/" && u.query == "" && u.fragment == "");
+    },
+    None => {
+      return test.fail("url_parse(minimal) expected Some");
+    }
+  }
+}
+
+function test_parse_empty(): test.TestOutcome {
+  match (url.url_parse("")) {
+    Some(u) => {
+      return test.fail("url_parse(\"\") expected None");
+    },
+    None => {
+      return test.pass();
+    }
+  }
+}
+
+// ---- application/x-www-form-urlencoded (#4384 item 5) ----
+
+// form_decode maps '+' to a space and still handles %-escapes.
+function test_form_decode_plus(): test.TestOutcome {
+  return test.assert_eq(url.form_decode("a+b%20c"), "a b c");
+}
+
+// The RFC-3986 url_decode leaves '+' literal — the contrast that
+// makes form_decode necessary for query/form bodies.
+function test_url_decode_keeps_plus(): test.TestOutcome {
+  return test.assert_eq(url.url_decode("a+b"), "a+b");
+}
+
+// form_encode maps a space to '+' (not %20) and %-escapes the rest.
+function test_form_encode_space(): test.TestOutcome {
+  return test.assert_eq(url.form_encode("a b/c"), "a+b%2Fc");
+}
+
+// form_encode / form_decode round-trip.
+function test_form_roundtrip(): test.TestOutcome {
+  return test.assert_eq(
+    url.form_decode(url.form_encode("hello world & q=1")),
+    "hello world & q=1",
+  );
+}
+
+// query_encode builds a deterministic ordered query string,
+// form-encoding each key/value.
+function test_query_encode(): test.TestOutcome {
+  let pairs: (string, string)[] = [("q", "a b"), ("n", "1")];
+  return test.assert_eq(url.query_encode(pairs), "q=a+b&n=1");
+}
+
+// query_encode edges — locks in the byte-identical output of the
+// two-pass preallocated-buffer rewrite (#4379): several pairs so the
+// `&` separators exercise the growing path, a reserved byte that
+// %-escapes (`&` → %26), multi-byte UTF-8 (é → %C3%A9), and empty
+// keys/values.
+function test_query_encode_edges(): test.TestOutcome {
+  let many: (string, string)[] = [("k1", "v1"), ("k2", "v&2"), ("k3", "café")];
+  let empties: (string, string)[] = [("", ""), ("x", "")];
+  return test.assert_true(
+    url.query_encode(many) == "k1=v1&k2=v%262&k3=caf%C3%A9"
+      && url.query_encode(empties) == "=&x="
+      && url.query_encode([("only", "one value")]) == "only=one+value",
+  );
+}
+
+// query_parse now form-decodes, so a '+' value is a space.
+function test_query_parse_plus(): test.TestOutcome {
+  let m: Map[string, string[]] = url.query_parse("q=a+b");
+  match (m.get("q")) {
+    Some(arr) => {
+      return test.assert_eq(arr[0], "a b");
+    },
+    None => {
+      return test.fail("expected key q");
+    }
+  }
+}
+
+// Single-key query accessors: query_get first-value / None / bare-flag,
+// with form-decoding of both key and value.
+function test_query_get(): test.TestOutcome {
+  match (url.query_get("a=1&b=2", "b")) {
+    Some(v) => {
+      if (v != "2") {
+        return test.fail("b=2");
+      }
+    },
+    None => {
+      return test.fail("expected b");
+    }
+  }
+  // Repeated key → the first value; bare flag → Some("").
+  match (url.query_get("a=1&a=2", "a")) {
+    Some(v) => {
+      if (v != "1") {
+        return test.fail("first a");
+      }
+    },
+    None => {
+      return test.fail("expected a");
+    }
+  }
+  // %20 in key, + in value both decode.
+  match (url.query_get("a%20b=c+d", "a b")) {
+    Some(v) => {
+      return test.assert_eq(v, "c d");
+    },
+    None => {
+      return test.fail("expected decoded key");
+    }
+  }
+}
+
+function test_query_get_missing(): test.TestOutcome {
+  // A missing key and an empty query both yield None.
+  match (url.query_get("a=1", "z")) {
+    Some(v) => {
+      return test.fail("unexpected value");
+    },
+    None => {}
+  }
+  match (url.query_get("", "a")) {
+    Some(v) => {
+      return test.fail("empty query has no keys");
+    },
+    None => {
+      return test.pass();
+    }
+  }
+}
+
+function test_query_has_and_all(): test.TestOutcome {
+  if (!url.query_has("a=1&b=2", "b") || url.query_has("a=1", "z")) {
+    return test.fail("has");
+  }
+  // get_all preserves order across repeated keys.
+  let all: string[] = url.query_get_all("a=1&b=2&a=3", "a");
+  if (all.len() != 2 || all[0] != "1" || all[1] != "3") {
+    return test.fail("get_all order");
+  }
+  return test.assert_eq(url.query_get_all("a=1", "z").len(), 0);
+}
+
+// ---- url_parse authority: RFC 3986 §3.2 (#8469) ----
+
+// `__parse_host_port(s)` — "host|port" for a parse that succeeds,
+// "None" for one that does not. Keeps the authority rows one-liners.
+function __parse_host_port(s: string): string {
+  match (url.url_parse(s)) {
+    Some(u) => {
+      return u.host + "|" + u.port.to_string();
+    },
+    None => {
+      return "None";
+    }
+  }
+}
+
+// Userinfo ends at the LAST '@', not the first: a password may contain
+// one, a host may not. Before #8469 the whole authority went to `host`
+// (or, with a ':' in the userinfo, just the username did).
+function test_parse_userinfo(): test.TestOutcome {
+  if (__parse_host_port("http://user:pw@host:8080/p") != "host|8080") {
+    return test.fail("userinfo not stripped");
+  }
+  return test.assert_eq(__parse_host_port("http://a@b@host/p"), "host|0");
+}
+
+// A bracketed IPv6 literal is one host, and `host` holds the bare
+// address — the brackets are RFC 3986 delimiters, not part of it.
+function test_parse_ipv6(): test.TestOutcome {
+  if (__parse_host_port("http://[::1]:8080/x") != "::1|8080") {
+    return test.fail("[::1]:8080");
+  }
+  if (__parse_host_port("http://[::1]/x") != "::1|0") {
+    return test.fail("[::1]");
+  }
+  return test.assert_eq(
+    __parse_host_port("http://user@[2001:db8::1]:443/x"),
+    "2001:db8::1|443",
+  );
+}
+
+// A malformed IP-literal is None, never a host of "[".
+function test_parse_ipv6_malformed(): test.TestOutcome {
+  if (__parse_host_port("http://[::1/x") != "None") {
+    return test.fail("unterminated");
+  }
+  if (__parse_host_port("http://[]/x") != "None") {
+    return test.fail("empty brackets");
+  }
+  if (__parse_host_port("http://[g::1]/x") != "None") {
+    return test.fail("non-hex byte");
+  }
+  return test.assert_eq(__parse_host_port("http://[::1]junk:80/x"), "None");
+}
+
+// `port = *DIGIT`, capped at 65535. Out of range or non-digit is None —
+// a silent 0 is indistinguishable from "no port given". An EMPTY port is
+// legal and means unspecified.
+function test_parse_port(): test.TestOutcome {
+  if (__parse_host_port("http://host:65535/") != "host|65535") {
+    return test.fail("max port");
+  }
+  if (__parse_host_port("http://host:99999/") != "None") {
+    return test.fail("port overflow");
+  }
+  if (__parse_host_port("http://host:abc/") != "None") {
+    return test.fail("non-digit port");
+  }
+  return test.assert_eq(__parse_host_port("http://host:/p"), "host|0");
+}
+
+// A registered name may not hold a component delimiter, and an empty
+// host is legal (`file:///path`).
+function test_parse_host_shape(): test.TestOutcome {
+  if (__parse_host_port("http://ho[st/x") != "None") {
+    return test.fail("bracket in reg-name");
+  }
+  if (__parse_host_port("http://a%20b.example/x") != "a%20b.example|0") {
+    return test.fail("pct-encoded reg-name");
+  }
+  return test.assert_eq(__parse_host_port("file:///etc/hosts"), "|0");
+}
+
+// The scheme is anchored at offset 0 and must match `ALPHA *( ALPHA /
+// DIGIT / "+" / "-" / "." )`. Scanning the whole string for "://" made
+// a query value carrying a URL into the scheme.
+function test_parse_scheme_anchored(): test.TestOutcome {
+  match (url.url_parse("/redirect?to=http://evil.example")) {
+    Some(u) => {
+      if (u.scheme != "" || u.path != "/redirect"
+        || u.query != "to=http://evil.example") {
+        return test.fail("nested URL leaked into the scheme");
+      }
+    },
+    None => {
+      return test.fail("relative path expected Some");
+    }
+  }
+  match (url.url_parse("ws+x-1.y://h/p")) {
+    Some(u) => {
+      return test.assert_eq(u.scheme, "ws+x-1.y");
+    },
+    None => {
+      return test.fail("valid scheme punctuation expected Some");
+    }
+  }
+}
+
+// An escape that does not spell UTF-8 decodes to U+FFFD, one per
+// ill-formed unit; the bytes themselves are `url_decode_bytes`'s.
+function test_decode_ill_formed_is_replacement(): test.TestOutcome {
+  let fffd: string = utf8.utf8_encode(65533 as char);
+  if (url.url_decode("a%FFb") != "a" + fffd + "b") {
+    return test.fail("url_decode %FF");
+  }
+  if (url.form_decode("a%C3+b") != "a" + fffd + " b") {
+    return test.fail("form_decode %C3");
+  }
+  return test.assert_eq(url.url_decode("%C3%A9"), "é");
+}
+
+function test_decode_bytes_keeps_the_bytes(): test.TestOutcome {
+  let bs: u8[] = url.url_decode_bytes("a%FFb");
+  if (bs.len() != 3 || bs[1] as i32 != 255) {
+    return test.fail("url_decode_bytes");
+  }
+  let fs: u8[] = url.form_decode_bytes("%00+");
+  return test.assert_true(fs.len() == 2 && fs[0] as i32 == 0 && fs[1] as i32 == 32);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/url");
+  r = r.it("encode space", test_encode_space);
+  r = r.it("encode unreserved", test_encode_unreserved);
+  r = r.it("encode reserved", test_encode_reserved);
+  r = r.it("decode space", test_decode_space);
+  r = r.it("decode lowercase hex", test_decode_lowercase_hex);
+  r = r.it("decode truncated escape", test_decode_truncated);
+  r = r.it("round-trip", test_roundtrip);
+  r = r.it("parse full URL", test_parse_full);
+  r = r.it("parse minimal URL", test_parse_minimal);
+  r = r.it("parse empty is None", test_parse_empty);
+  r = r.it("form_decode plus", test_form_decode_plus);
+  r = r.it("url_decode keeps plus", test_url_decode_keeps_plus);
+  r = r.it("form_encode space", test_form_encode_space);
+  r = r.it("form round-trip", test_form_roundtrip);
+  r = r.it("query_encode", test_query_encode);
+  r = r.it("query_encode edges", test_query_encode_edges);
+  r = r.it("query_parse plus", test_query_parse_plus);
+  r = r.it("query_get", test_query_get);
+  r = r.it("query_get missing", test_query_get_missing);
+  r = r.it("query_has + get_all", test_query_has_and_all);
+  r = r.it("parse userinfo", test_parse_userinfo);
+  r = r.it("parse IPv6 literal", test_parse_ipv6);
+  r = r.it("parse IPv6 malformed", test_parse_ipv6_malformed);
+  r = r.it("parse port validation", test_parse_port);
+  r = r.it("parse host shape", test_parse_host_shape);
+  r = r.it("parse scheme anchored", test_parse_scheme_anchored);
+  r = r.it("decode ill-formed is U+FFFD", test_decode_ill_formed_is_replacement);
+  r = r.it("decode_bytes keeps the bytes", test_decode_bytes_keeps_the_bytes);
+  r = r.it("resolve normal references", test_resolve_normal);
+  r = r.it("resolve dot segments", test_resolve_dots);
+  r = r.it("resolve keeps the base query and port", test_resolve_base_parts);
+  r = r.it("resolve refuses a base without a scheme", test_resolve_no_scheme);
+  r = r.it("remove dot segments", test_remove_dot_segments);
+  return r.finish();
+}

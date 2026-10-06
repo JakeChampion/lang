@@ -16,7 +16,7 @@ native staged it.
 
 A throwaway compiler with `semsource.mode` returning `counted_mode()` for every
 reference parameter — no escape analysis, nothing else changed — against
-`examples/bench`, callgrind, x86-64, retired instructions.
+`bench`, callgrind, x86-64, retired instructions.
 
 | | baseline | counted params | |
 | --- | ---: | ---: | ---: |

@@ -125,7 +125,7 @@ self-host compiler included), the stdlib, `conformance/` and `coreutils/`,
 1128 files — and against the 11,810 inline Fern programs in the Go test
 sources, the rule refuses nothing that was accepted before. The blunter rule
 (refuse EVERY store into a boxed pointer capture) refuses 28 of those 1128,
-`examples/self_host/fern.fern` among them, so it would break the bootstrap.
+`compiler/fern.fern` among them, so it would break the bootstrap.
 
 Only a `let`-declared local gets a box, so only a `let` can close a cycle. A
 captured **parameter**, a `let (a, b) = …` destructuring binding and a
@@ -147,7 +147,7 @@ reassignable when captured.
 
 ## Cross-compiler parity
 
-Both the native (Go) checker and the self-host (`examples/self_host/checker.fern`)
+Both the native (Go) checker and the self-host (`compiler/checker.fern`)
 checker must emit `E049` on exactly the same captures. This is pinned by
 the checker-codes differential (`internal/e2eselfhost/self_host_checker_codes_test.go`,
 the `cap-assign-*` cases), which runs both checkers on each program and

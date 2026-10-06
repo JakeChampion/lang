@@ -1,6 +1,6 @@
 # 2026-09-21 — an ascription names a destination
 
-`examples/tests/ndarray_test` produced **0 of its 254 declarations** because of
+`tests/stdlib/ndarray_test` produced **0 of its 254 declarations** because of
 one line:
 
 ```fern
@@ -81,7 +81,7 @@ x86-64, `FERN_SANITIZE=1` + `FERN_LEAKCHECK=1`.
 
 | program | before | after |
 |---|---|---|
-| `examples/tests/ndarray_test` | 0 of 254 | **254 of 254** |
+| `tests/stdlib/ndarray_test` | 0 of 254 | **254 of 254** |
 
 It passes 17 of 17, matching native.
 

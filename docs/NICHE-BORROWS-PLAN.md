@@ -156,7 +156,7 @@ pre-attempt state binding, and only the furthest-failure
 watermark is merged across. Left recursion fails fast via the
 8192-deep PRef bound. Verified on all four backends
 (TestPegModule) + the 18-case TAP suite
-(examples/tests/peg_test.fern, gated by
+(tests/stdlib/peg_test.fern, gated by
 TestRunnerPegExamplePasses).
 Pure-Fern PEG module (Janet/Rebol/Raku convergence), complement
 to `std/regex` (which stays: cheap one-line matches). Scope for
@@ -170,7 +170,7 @@ API sketch: `peg.compile(rules) -> Grammar`,
 `match.capture("name") -> Option[string]`. Bounded: no
 left-recursion support (documented), packrat memoisation deferred
 until a real workload needs it. Tests: std-test-runner suite
-(`examples/tests/peg_test.fern`) + e2e gate mirroring the
+(`tests/stdlib/peg_test.fern`) + e2e gate mirroring the
 test-runner contract; exercise on two real formats (a config
 grammar and HTTP request-line/headers) to keep it honest.
 Doubles as a self-host IR-path workload (closures + enums +

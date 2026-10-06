@@ -14,7 +14,7 @@ This doc surveys how other languages made that transition
 Mes / stage0) and recommends a concrete strategy. Companion
 to `ROADMAP-AND-SELF-HOSTING.md` (which is the *what*),
 `PERFORMANCE-RESEARCH.md` (compile speed), and the
-`examples/self_host/` work-in-progress.
+`compiler/` work-in-progress.
 
 ## Framing — what bootstrap means here
 
@@ -23,7 +23,7 @@ Reaching self-host has three orthogonal axes:
 
 1. **Coverage.** Which compiler-source files are written in
    the target language? Lexer? Parser? Checker? Codegen? All
-   of them? `examples/self_host/` currently covers lexer,
+   of them? `compiler/` currently covers lexer,
    parser, constfold, checker, vm, printer, asm — i.e. the
    majority of the pipeline minus production codegen.
 
@@ -72,7 +72,7 @@ porting effort already underway.
   reference. This is load-bearing for the transition — see
   Rec §6.
 
-- **Pipeline-shape demos compose** (`examples/self_host/
+- **Pipeline-shape demos compose** (`compiler/
   pipeline.fern` glues lexer → parser → constfold → checker
   → vm). The composition tests catch wiring bugs before
   the full self-host is in place.
@@ -441,7 +441,7 @@ specific previous release."
 
 - **The translation-tool approach is *not* what we want.**
   Our Go compiler is already idiomatic Go, not a mechanical
-  translation. Hand-porting (which is what `examples/self_host/`
+  translation. Hand-porting (which is what `compiler/`
   already does) is the right path — the target Fern is
   imperative-flavoured and the Go code's structure
   translates 1:1.
@@ -535,7 +535,7 @@ port; don't take the opportunity to redesign.
 
 **What translates:**
 
-- **The `examples/self_host/` approach is correct.** Each
+- **The `compiler/` approach is correct.** Each
   step mirrors a specific Go source file in the existing
   compiler. The per-step `internal/e2e/self_host_*_test.go`
   tests verify the fern-impl matches the Go-impl on the
@@ -636,7 +636,7 @@ designed with it in mind from the start.
 3. **Port, don't rewrite.** Pony rewrote and paid 18
    months of bug parity. Go *translated* (mechanically),
    then iteratively cleaned up. OCaml has co-evolved
-   forever. The shape of `examples/self_host/` mirroring
+   forever. The shape of `compiler/` mirroring
    the Go-impl structure file-by-file is the right model.
 
 4. **The flip is a single release; the development is
@@ -661,7 +661,7 @@ designed with it in mind from the start.
 
 Ranked by leverage × cost. Several depend on the
 self-host port reaching feature parity first
-(currently in progress per `examples/self_host/`).
+(currently in progress per `compiler/`).
 
 ### 1. Adopt the *two-implementations-forever* posture explicitly
 
@@ -912,7 +912,7 @@ Rec §2 and §4.
   TypeScript-tsgo posture instead.
 
 - **Mechanical translation tools** (Go's `grind`). Our
-  `examples/self_host/` is hand-port-quality Fern code,
+  `compiler/` is hand-port-quality Fern code,
   not mechanically-converted Go. Mechanical translation
   was right for Go (millions of lines of C) and wrong
   for us (~50k Go LOC, already idiomatic).

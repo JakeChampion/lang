@@ -18,7 +18,7 @@ the "OPTSTR:" class, released at exit (or at a loop re-declaration) by
 
 ## Change
 
-All in `examples/self_host/irlower.fern`.
+All in `compiler/irlower.fern`.
 
 - `collect_unmatched_optstr_names` also admits a `Result[<scalar>, string]`
   local whose initialiser builds a fresh box: a direct `Ok(..)` / `Err(..)`, or

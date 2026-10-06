@@ -127,8 +127,8 @@ Backend support:
 | Checker | `checker.checkBlockExpr` (child scope → statements → tail type); no-tail → **E061** unless the statements diverge (`stmtsDiverge`) → `never`; `assignable` / `unifyIfArms` / match-arm unifiers fold `never`; numeric settle / `postSettleType` recurse into `Tail` (`internal/checker/checker.go`) |
 | Interp | `*ast.BlockExpr` arm in `evalExpr` — child env, exec statements, eval tail; a non-normal `r.flow` unwinds as a `controlFlowSignal` that `execStmt` catches (`internal/interp/interp.go`) |
 | Compiled lowering | `*ast.BlockExpr` arm in `(*builder).expr` — lower `Stmts` via `b.stmt`, then `Tail` via `b.expr` as the result; a nil (diverging) `Tail` lowers the statements only, leaving the enclosing store unreachable (`internal/ir/ir.go`) |
-| Self-host parse | `parse_branch_body` + `branch_stmt_start`, wired into `parse_if_chain` and the match-expr arm body (`examples/self_host/parser.fern`) |
-| Self-host lower | `lower_value_tail` — leading statements then the value-producing terminal (`examples/self_host/irlower.fern`) |
+| Self-host parse | `parse_branch_body` + `branch_stmt_start`, wired into `parse_if_chain` and the match-expr arm body (`compiler/parser.fern`) |
+| Self-host lower | `lower_value_tail` — leading statements then the value-producing terminal (`compiler/irlower.fern`) |
 | Other passes | `monomorph`, `closureconv`, `boxcapture`, `modload`, `shadowrename`, `treeshake`, `printer`, `format` each recurse into `Stmts` + `Tail` |
 
 ## Landed (`#4405`)

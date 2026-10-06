@@ -131,7 +131,7 @@ bail site (`FERN_STRICT_IR=1`), not a reason to reintroduce a fallback path.
 **The backends' `emit_*` instruction-selection layers are deliberately
 parallel.** Unifying them is a roadmap decision, not a drive-by. What is
 *shared* — the `Ty` type system, inference, the pre-codegen checker,
-`EmitState` — lives in `examples/self_host/asmcore.fern` and must be edited
+`EmitState` — lives in `compiler/asmcore.fern` and must be edited
 there exactly once.
 
 **New language surface should land self-host-first.** Under

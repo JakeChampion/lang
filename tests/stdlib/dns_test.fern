@@ -1,0 +1,1098 @@
+import "std/test";
+import "std/string";
+import "std/array";
+import "std/net";
+import "std/dns";
+import "std/time";
+
+// tests/stdlib/dns_test.fern — std/dns over fixture files and RFC 1035
+// messages: the wire codec both ways, with compression pointers and the
+// EDNS0 OPT record; the hosts file; resolv.conf's defaults and caps;
+// res_search's candidate order and its reactions to each failure, driven
+// by a scripted nameserver; and the answer section read through a CNAME
+// chain. Two live cases run against this machine's own /etc/hosts.
+//
+// Run:  fern -interp tests/stdlib/dns_test.fern
+
+function bytes(xs: i32[]): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    out = out.append(xs[i] as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function joined(ss: string[]): string {
+  return ss.join(" ");
+}
+
+function ips(xs: net.IpAddr[]): string {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    out = out.append(xs[i].to_string());
+    i = i + 1;
+  }
+  return out.join(" ");
+}
+
+function encoded(m: dns.Message): u8[] {
+  match (dns.encode(m)) {
+    Ok(b) => {
+      return b;
+    },
+    Err(_) => {
+      let none: u8[] = [];
+      return none;
+    }
+  }
+}
+
+function decoded(b: u8[]): Option[dns.Message] {
+  match (dns.decode(b)) {
+    Ok(m) => {
+      return Some(m);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+}
+
+// ---- names on the wire -------------------------------------------------------
+
+function test_encode_name(): test.TestOutcome {
+  match (dns.encode_name("vm.example.com")) {
+    Ok(b) => {
+      if (!b.equal(bytes([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0]))) {
+        return test.fail("labels behind their lengths, then the root");
+      }
+    },
+    Err(_) => {
+      return test.fail("a plain name encodes");
+    }
+  }
+  match (dns.encode_name("example.com.")) {
+    Ok(b) => {
+      if (b.len() != 13) {
+        return test.fail("a trailing dot is the root, not an empty label");
+      }
+    },
+    Err(_) => {
+      return test.fail("a name with a trailing dot encodes");
+    }
+  }
+  match (dns.encode_name("")) {
+    Ok(b) => {
+      if (!b.equal(bytes([0]))) {
+        return test.fail("the root is one zero byte");
+      }
+    },
+    Err(_) => {
+      return test.fail("the root encodes");
+    }
+  }
+  match (dns.encode_name("a..b")) {
+    Ok(_) => {
+      return test.fail("an empty label cannot be encoded");
+    },
+    Err(_) => {}
+  }
+  match (dns.encode_name("x".repeat(64) + ".example")) {
+    Ok(_) => {
+      return test.fail("a label over 63 bytes cannot be encoded");
+    },
+    Err(_) => {}
+  }
+  return test.pass();
+}
+
+function test_query_on_the_wire(): test.TestOutcome {
+  let q: u8[] = encoded(dns.query(4660, "vm.example.com", dns.type_a()));  // 0x1234
+  if (q.len() != 32) {
+    return test.fail("12 header + 20 question bytes");
+  }
+  if (!q.take(12).equal(bytes([18, 52, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0]))) {
+    return test.fail("id 0x1234, RD, one question");
+  }
+  if (!q.drop(12).equal(bytes([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1]))) {
+    return test.fail("labels, then A IN");
+  }
+  if (encoded(dns.query(1, "a..b", dns.type_a())).len() != 0) {
+    return test.fail("an empty label refuses the whole message");
+  }
+  return test.pass();
+}
+
+function test_edns_opt_record(): test.TestOutcome {
+  let q: dns.Message = dns.with_edns(dns.query(1, "vm.example.com", dns.type_aaaa()));
+  let b: u8[] = encoded(q);
+  if (b.len() != 32 + 11) {
+    return test.fail("OPT is the root, a type, a class, a TTL and an empty rdata: 11 bytes");
+  }
+  if (!b.drop(32).equal(bytes([0, 0, 41, 16, 0, 0, 0, 0, 0, 0, 0]))) {
+    return test.fail("OPT at the root, type 41, class 4096, TTL 0, rdlen 0");
+  }
+  if (b[11] != 1u8) {
+    return test.fail("ARCOUNT is one");
+  }
+  match (decoded(b)) {
+    Some(m) => {
+      if (m.additional.len() != 1 || m.additional[0].rtype != dns.type_opt() || m.additional[0].rclass != dns.udp_payload()) {
+        return test.fail("the OPT record decodes into the additional section");
+      }
+      return test.assert_eq(m.questions[0].qtype, dns.type_aaaa());
+    },
+    None => {
+      return test.fail("a query with OPT decodes");
+    }
+  }
+}
+
+// A reply to a query for vm.example.com: a CNAME first, then the A record
+// its name points at, both names compressed back to the question.
+function reply(rcode: i32, id: i32): u8[] {
+  let m: i32[] = [id / 256, id % 256, 129, 128 + rcode, 0, 1, 0, 2, 0, 0, 0, 0];
+  m = m.concat([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1]);
+  m = m.concat([192, 12, 0, 5, 0, 1, 0, 0, 0, 60, 0, 6, 3, 119, 119, 119, 192, 15]);
+  m = m.concat([192, 44, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 93, 184, 216, 34]);
+  return bytes(m);
+}
+
+function test_decode_reply(): test.TestOutcome {
+  match (decoded(reply(0, 4660))) {
+    Some(m) => {
+      if (m.id != 4660 || !m.response || !m.recursion_desired || !m.recursion_available || m.truncated || m.authoritative) {
+        return test.fail("header flags");
+      }
+      if (m.rcode != dns.rcode_ok() || m.opcode != 0) {
+        return test.fail("rcode and opcode");
+      }
+      if (m.questions.len() != 1 || m.questions[0].name != "vm.example.com" || m.questions[0].qtype != dns.type_a()) {
+        return test.fail("the question");
+      }
+      if (m.answers.len() != 2) {
+        return test.fail("two answers");
+      }
+      if (m.answers[0].name != "vm.example.com" || m.answers[0].rtype != dns.type_cname() || m.answers[0].ttl != 60) {
+        return test.fail("the CNAME's owner is the question, through a pointer");
+      }
+      match (m.answers[0].data) {
+        CNAME(target) => {
+          if (target != "www.example.com") {
+            return test.fail("the CNAME target, its tail through a pointer into the question");
+          }
+        },
+        _ => {
+          return test.fail("the first record is a CNAME");
+        }
+      }
+      if (m.answers[1].name != "www.example.com") {
+        return test.fail("the A record's owner is the CNAME's target, through a pointer into the rdata");
+      }
+      match (m.answers[1].data) {
+        A(ip) => {
+          return test.assert_eq(ip.to_string(), "93.184.216.34");
+        },
+        _ => {
+          return test.fail("the second record is an A");
+        }
+      }
+    },
+    None => {
+      return test.fail("the reply decodes");
+    }
+  }
+}
+
+function test_decode_rejects(): test.TestOutcome {
+  match (decoded(bytes([18, 52]))) {
+    Some(_) => {
+      return test.fail("shorter than a header");
+    },
+    None => {}
+  }
+  match (decoded(reply(0, 4660).take(40))) {
+    Some(_) => {
+      return test.fail("a reply cut short");
+    },
+    None => {}
+  }
+  // A pointer to itself, and one forward into the record it sits in.
+  let self_ptr: i32[] = [0, 1, 129, 128, 0, 1, 0, 0, 0, 0, 0, 0, 192, 12, 0, 1, 0, 1];
+  match (decoded(bytes(self_ptr))) {
+    Some(_) => {
+      return test.fail("a pointer to itself");
+    },
+    None => {}
+  }
+  let fwd: i32[] = [0, 1, 129, 128, 0, 1, 0, 0, 0, 0, 0, 0, 192, 14, 0, 1, 0, 1];
+  match (decoded(bytes(fwd))) {
+    Some(_) => {
+      return test.fail("a pointer forward");
+    },
+    None => {}
+  }
+  // A label length past the end of the message.
+  let over: i32[] = [0, 1, 129, 128, 0, 1, 0, 0, 0, 0, 0, 0, 9, 118, 109, 0, 1, 0, 1];
+  match (decoded(bytes(over))) {
+    Some(_) => {
+      return test.fail("a label past the end");
+    },
+    None => {}
+  }
+  // A label whose bytes are not UTF-8: a name is text, so Malformed.
+  let bad_label: i32[] = [0, 1, 129, 128, 0, 1, 0, 0, 0, 0, 0, 0, 2, 255, 109, 0, 0, 1, 0, 1];
+  match (decoded(bytes(bad_label))) {
+    Some(_) => {
+      return test.fail("a label that is not UTF-8");
+    },
+    None => {}
+  }
+  // A query echoed back decodes, but is not a response to anything.
+  match (decoded(encoded(dns.query(7, "vm.example.com", dns.type_a())))) {
+    Some(m) => {
+      if (m.response) {
+        return test.fail("QR clear is not a response");
+      }
+    },
+    None => {
+      return test.fail("a query decodes");
+    }
+  }
+  return test.pass();
+}
+
+function test_round_trip(): test.TestOutcome {
+  let v6: net.IpAddr = net.ipv6_loopback();
+  let q: dns.Question = dns.Question { name: "host.example", qtype: dns.type_aaaa(), qclass: dns.class_in() };
+  let cname: dns.Record = dns.Record { name: "host.example", rtype: dns.type_cname(), rclass: dns.class_in(), ttl: 300, data: CNAME("real.example") };
+  let aaaa: dns.Record = dns.Record { name: "real.example", rtype: dns.type_aaaa(), rclass: dns.class_in(), ttl: 300, data: AAAA(v6) };
+  let txt: dns.Record = dns.Record { name: "real.example", rtype: 16, rclass: dns.class_in(), ttl: 1, data: Raw(bytes([2, 104, 105])) };
+  let ns: dns.Record = dns.Record { name: "example", rtype: dns.type_ptr(), rclass: dns.class_in(), ttl: 7, data: PTR("ns.example") };
+  let m: dns.Message = dns.Message {
+    id: 65535, response: true, opcode: 0, authoritative: true, truncated: true,
+    recursion_desired: false, recursion_available: true, rcode: dns.rcode_name_error(),
+    questions: [q], answers: [cname, aaaa], authority: [ns], additional: [txt],
+  };
+  match (decoded(encoded(m))) {
+    Some(back) => {
+      if (back.id != 65535 || !back.response || !back.authoritative || !back.truncated || back.recursion_desired || !back.recursion_available) {
+        return test.fail("flags survive");
+      }
+      if (back.rcode != dns.rcode_name_error()) {
+        return test.fail("rcode survives");
+      }
+      if (back.answers.len() != 2 || back.authority.len() != 1 || back.additional.len() != 1) {
+        return test.fail("every section");
+      }
+      match (back.answers[1].data) {
+        AAAA(ip) => {
+          if (!ip.eq(v6)) {
+            return test.fail("the AAAA address");
+          }
+        },
+        _ => {
+          return test.fail("an AAAA record");
+        }
+      }
+      match (back.authority[0].data) {
+        PTR(n) => {
+          if (n != "ns.example") {
+            return test.fail("the PTR name");
+          }
+        },
+        _ => {
+          return test.fail("a PTR record");
+        }
+      }
+      match (back.additional[0].data) {
+        Raw(b) => {
+          if (!b.equal(bytes([2, 104, 105])) || back.additional[0].rtype != 16) {
+            return test.fail("an unknown type keeps its bytes");
+          }
+        },
+        _ => {
+          return test.fail("a TXT record is raw");
+        }
+      }
+      return test.assert_eq(encoded(back).len(), encoded(m).len());
+    },
+    None => {
+      return test.fail("the message decodes");
+    }
+  }
+}
+
+// ---- the answer section ----------------------------------------------------------
+
+function test_records_after_cname(): test.TestOutcome {
+  match (decoded(reply(0, 4660))) {
+    Some(m) => {
+      let a: dns.Answer = dns.records_for(m, "VM.EXAMPLE.COM.", dns.type_a());
+      if (a.canonical != "www.example.com") {
+        return test.fail("the chain ends at the A record's owner");
+      }
+      return test.assert_eq(ips(dns.addresses_of(a.records)), "93.184.216.34");
+    },
+    None => {
+      return test.fail("the reply decodes");
+    }
+  }
+}
+
+function test_answer_statuses(): test.TestOutcome {
+  let checks: i32[] = [3, 2, 5, 1];
+  let i: i32 = 0;
+  while (i < checks.len()) {
+    match (decoded(reply(checks[i], 4660))) {
+      Some(m) => {
+        match (dns.answer_records(m, "vm.example.com", dns.type_a())) {
+          Ok(_) => {
+            return test.fail("an error rcode is no answer");
+          },
+          Err(e) => {
+            let want: string = "Name or service not known";
+            if (checks[i] == 2) {
+              want = "Name server failed";
+            } else if (checks[i] == 5) {
+              want = "Name server refused the query";
+            } else if (checks[i] == 1) {
+              want = "Malformed DNS message";
+            }
+            if (e.message() != want) {
+              return test.fail("rcode " + dns.rcode_name(checks[i]) + " reports " + e.message());
+            }
+          }
+        }
+      },
+      None => {
+        return test.fail("the reply decodes");
+      }
+    }
+    i = i + 1;
+  }
+  // NOERROR with an AAAA record only is NoData for an A query.
+  let m: i32[] = [18, 52, 129, 128, 0, 1, 0, 1, 0, 0, 0, 0];
+  m = m.concat([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1]);
+  m = m.concat([192, 12, 0, 28, 0, 1, 0, 0, 0, 60, 0, 16, 32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+  match (decoded(bytes(m))) {
+    Some(only6) => {
+      match (dns.answer_records(only6, "vm.example.com", dns.type_a())) {
+        Ok(_) => {
+          return test.fail("no A record is no answer");
+        },
+        Err(e) => {
+          if (e.message() != "No address associated with hostname") {
+            return test.fail("NOERROR without the record is NoData");
+          }
+        }
+      }
+      match (dns.answer_records(only6, "vm.example.com", dns.type_aaaa())) {
+        Ok(a) => {
+          return test.assert_eq(ips(dns.addresses_of(a.records)), "2001:db8::1");
+        },
+        Err(_) => {
+          return test.fail("the AAAA record answers an AAAA query");
+        }
+      }
+    },
+    None => {
+      return test.fail("the AAAA reply decodes");
+    }
+  }
+}
+
+function test_answers_question(): test.TestOutcome {
+  match (decoded(reply(0, 4660))) {
+    Some(m) => {
+      let q: dns.Question = dns.Question { name: "Vm.Example.Com.", qtype: dns.type_a(), qclass: dns.class_in() };
+      if (!m.answers_question(q)) {
+        return test.fail("the same question, whatever the case and the trailing dot");
+      }
+      let other: dns.Question = dns.Question { name: "vm.example.com", qtype: dns.type_aaaa(), qclass: dns.class_in() };
+      if (m.answers_question(other)) {
+        return test.fail("another type is another question");
+      }
+      return test.pass();
+    },
+    None => {
+      return test.fail("the reply decodes");
+    }
+  }
+}
+
+// ---- /etc/hosts ------------------------------------------------------------------
+
+function hosts_fixture(): string {
+  return "# a hosts file\n127.0.0.1 localhost\n::1 localhost ip6-localhost\n10.0.0.5 Vm.Corp.Example vm  # the machine\n10.0.0.6 vm\nnot-an-address vm\n10.0.0.7\n";
+}
+
+function test_hosts_parse(): test.TestOutcome {
+  let es: dns.HostsEntry[] = dns.parse_hosts(hosts_fixture());
+  if (es.len() != 4) {
+    return test.fail("four lines carry an address and a name");
+  }
+  if (es[1].ip.to_string() != "::1" || es[1].names.len() != 2 || es[1].names[1] != "ip6-localhost") {
+    return test.fail("an IPv6 line, with its aliases");
+  }
+  if (es[2].names.len() != 2 || es[2].names[0] != "Vm.Corp.Example") {
+    return test.fail("the comment is cut, the canonical name kept as written");
+  }
+  return test.pass();
+}
+
+function test_hosts_lookup(): test.TestOutcome {
+  let es: dns.HostsEntry[] = dns.parse_hosts(hosts_fixture());
+  if (ips(dns.hosts_lookup(es, "localhost")) != "127.0.0.1 ::1") {
+    return test.fail("every address of a name, both families, in file order");
+  }
+  if (ips(dns.hosts_lookup(es, "VM")) != "10.0.0.5 10.0.0.6") {
+    return test.fail("an alias, compared caselessly, from every line naming it");
+  }
+  if (ips(dns.hosts_lookup(es, "vm.corp.example")) != "10.0.0.5") {
+    return test.fail("the canonical name");
+  }
+  if (dns.hosts_lookup(es, "nowhere").len() != 0 || dns.hosts_lookup(es, "vm.corp").len() != 0) {
+    return test.fail("a miss is empty, and a name is whole");
+  }
+  return test.pass();
+}
+
+function test_hosts_canonical(): test.TestOutcome {
+  let es: dns.HostsEntry[] = dns.parse_hosts(hosts_fixture());
+  match (dns.hosts_canonical(es, "vm")) {
+    Some(n) => {
+      if (n != "Vm.Corp.Example") {
+        return test.fail("the first line's first name");
+      }
+    },
+    None => {
+      return test.fail("an alias has a canonical name");
+    }
+  }
+  match (dns.hosts_canonical(es, "ip6-localhost")) {
+    Some(n) => {
+      if (n != "localhost") {
+        return test.fail("off an IPv6 line too");
+      }
+    },
+    None => {
+      return test.fail("an alias on an IPv6 line has a canonical name");
+    }
+  }
+  match (dns.hosts_canonical(es, "nowhere")) {
+    Some(_) => {
+      return test.fail("a miss");
+    },
+    None => {}
+  }
+  return test.pass();
+}
+
+// ---- /etc/resolv.conf ----------------------------------------------------------
+
+function resolv_fixture(): string {
+  return "# generated\nnameserver 10.0.0.53 ; primary\nnameserver fe80::1%eth0\nnameserver 2001:db8::53\nnameserver 10.0.0.54\nsearch corp.example lab.example.\noptions ndots:2 timeout:3 attempts:4 rotate edns0\n";
+}
+
+function test_resolv_conf_fixture(): test.TestOutcome {
+  let rc: dns.ResolvConf = dns.parse_resolv_conf(resolv_fixture(), "vm.corp.example");
+  if (rc.nameservers.len() != 3) {
+    return test.fail("three nameservers; the one with a zone is skipped");
+  }
+  if (rc.nameservers[0].to_string() != "10.0.0.53:53" || rc.nameservers[1].to_string() != "[2001:db8::53]:53" || rc.nameservers[2].to_string() != "10.0.0.54:53") {
+    return test.fail("each at port 53, of either family, in file order");
+  }
+  if (joined(rc.search) != "corp.example lab.example") {
+    return test.fail("search list, trailing dot dropped");
+  }
+  if (rc.ndots != 2 || rc.timeout.as_millis() != 3000 as i64 || rc.attempts != 4 || !rc.rotate) {
+    return test.fail("the options line");
+  }
+  return test.pass();
+}
+
+function test_resolv_conf_defaults(): test.TestOutcome {
+  let rc: dns.ResolvConf = dns.parse_resolv_conf("", "vm.corp.example");
+  if (rc.nameservers.len() != 1 || rc.nameservers[0].to_string() != "127.0.0.1:53") {
+    return test.fail("no nameserver means 127.0.0.1");
+  }
+  if (joined(rc.search) != "corp.example") {
+    return test.fail("the search list is the hostname's domain");
+  }
+  if (rc.ndots != 1 || rc.timeout.as_millis() != 5000 as i64 || rc.attempts != 2 || rc.rotate) {
+    return test.fail("ndots 1, 5 s, 2 attempts, no rotation");
+  }
+  let bare: dns.ResolvConf = dns.parse_resolv_conf("", "vm");
+  if (bare.search.len() != 0) {
+    return test.fail("a hostname without a domain gives no search list");
+  }
+  return test.pass();
+}
+
+function test_resolv_conf_caps(): test.TestOutcome {
+  let rc: dns.ResolvConf = dns.parse_resolv_conf("search a.example b.example\ndomain corp.\noptions ndots:99 timeout:99 attempts:99\n", "vm");
+  if (joined(rc.search) != "corp") {
+    return test.fail("the last of domain / search wins");
+  }
+  if (rc.ndots != 15 || rc.timeout.as_millis() != 30000 as i64 || rc.attempts != 5) {
+    return test.fail("ndots caps at 15, timeout at 30 s, attempts at 5");
+  }
+  let low: dns.ResolvConf = dns.parse_resolv_conf("options timeout:0 attempts:0 ndots:x\n", "vm");
+  if (low.timeout.as_millis() != 1000 as i64 || low.attempts != 1 || low.ndots != 1) {
+    return test.fail("timeout and attempts floor at 1; a non-number keeps the default");
+  }
+  let many: dns.ResolvConf = dns.parse_resolv_conf("nameserver 1.1.1.1\nnameserver 2.2.2.2\nnameserver 3.3.3.3\nnameserver 4.4.4.4\n", "vm");
+  if (many.nameservers.len() != 3) {
+    return test.fail("at most three nameservers");
+  }
+  return test.pass();
+}
+
+// ---- the search list ----------------------------------------------------------
+
+function conf_with(search: string[], ndots: i32): dns.ResolvConf {
+  return dns.ResolvConf { ...dns.resolv_defaults("vm"), search: search, ndots: ndots };
+}
+
+function test_search_candidates(): test.TestOutcome {
+  let rc: dns.ResolvConf = conf_with(["a.example", "b.example"], 1);
+  if (joined(dns.search_candidates("vm", rc)) != "vm.a.example vm.b.example vm") {
+    return test.fail("fewer dots than ndots: search first");
+  }
+  if (joined(dns.search_candidates("vm.local", rc)) != "vm.local vm.local.a.example vm.local.b.example") {
+    return test.fail("at least ndots: as-is first");
+  }
+  if (joined(dns.search_candidates("vm.", rc)) != "vm") {
+    return test.fail("a trailing dot is absolute");
+  }
+  if (joined(dns.search_candidates("vm.local", conf_with(["a.example", "b.example"], 2))) != "vm.local.a.example vm.local.b.example vm.local") {
+    return test.fail("ndots 2 sends a one-dot name through the search list first");
+  }
+  if (joined(dns.search_candidates("vm", conf_with([], 1))) != "vm") {
+    return test.fail("no search list");
+  }
+  return test.pass();
+}
+
+// The scripted nameserver the search-walk cases run against: a name
+// answers by what it is called, so a case says what happens by choosing
+// the names in its plan, and the canonical name that comes back says
+// which name produced it.
+function scripted(qname: string): Result[dns.Answer, dns.DnsError] {
+  let none: dns.Record[] = [];
+  if (qname == "ok1" || qname == "ok2") {
+    return Ok(dns.Answer { canonical: qname, records: none });
+  }
+  if (qname == "servfail") {
+    return Err(ServerFailure);
+  }
+  if (qname == "timeout") {
+    return Err(NoReply);
+  }
+  if (qname == "refused") {
+    return Err(Refused);
+  }
+  return Err(NoSuchName);
+}
+
+// `lead` puts the as-is query first (ndots satisfied), `trail` after the
+// suffixes. The two are not the same search with the names reordered:
+// which one it is decides whether there is a retry at all and whose
+// failure is reported.
+function lead(as_is: string, suffixes: string[]): Result[dns.Answer, dns.DnsError] {
+  return dns.search_with(dns.SearchPlan { as_is: as_is, suffixes: suffixes, leads: true }, (q: string): Result[dns.Answer, dns.DnsError] => scripted(q));
+}
+
+function trail(as_is: string, suffixes: string[]): Result[dns.Answer, dns.DnsError] {
+  return dns.search_with(dns.SearchPlan { as_is: as_is, suffixes: suffixes, leads: false }, (q: string): Result[dns.Answer, dns.DnsError] => scripted(q));
+}
+
+// The name that answered, or the failure's message.
+function outcome(r: Result[dns.Answer, dns.DnsError]): string {
+  match (r) {
+    Ok(a) => {
+      return a.canonical;
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+}
+
+function servfail(): string {
+  return "Name server failed";
+}
+
+function noreply(): string {
+  return "Temporary failure in name resolution";
+}
+
+function refused(): string {
+  return "Name server refused the query";
+}
+
+function nosuchname(): string {
+  return "Name or service not known";
+}
+
+function test_search_servfail_continues(): test.TestOutcome {
+  if (outcome(trail("nx", ["servfail", "ok2"])) != "ok2") {
+    return test.fail("a SERVFAIL suffix must not end the search");
+  }
+  if (outcome(trail("nx", ["servfail", "nx2"])) != servfail()) {
+    return test.fail("a recorded SERVFAIL is reported over the misses");
+  }
+  return test.pass();
+}
+
+function test_search_timeout_ends_the_suffixes(): test.TestOutcome {
+  if (outcome(trail("ok1", ["timeout", "ok2"])) != "ok1") {
+    return test.fail("a timeout must end the suffixes and ask the as-is name");
+  }
+  if (outcome(trail("nx", ["timeout", "ok2"])) != nosuchname()) {
+    return test.fail("the trailing as-is name's NXDOMAIN is the answer");
+  }
+  if (outcome(trail("timeout", ["timeout"])) != noreply()) {
+    return test.fail("an as-is name that also times out is the silence");
+  }
+  return test.pass();
+}
+
+function test_search_leading_as_is_has_no_retry(): test.TestOutcome {
+  if (outcome(lead("timeout", ["timeout", "ok2"])) != noreply()) {
+    return test.fail("a leading as-is name must not gain a retry through a suffix");
+  }
+  if (outcome(lead("nx", ["servfail", "nx2"])) != nosuchname()) {
+    return test.fail("the saved as-is failure outranks a recorded SERVFAIL");
+  }
+  if (outcome(lead("timeout", ["nx", "nx2"])) != noreply()) {
+    return test.fail("a timed-out as-is name reports the silence however the suffixes went");
+  }
+  return test.pass();
+}
+
+function test_search_leading_as_is_failure_still_tries_suffixes(): test.TestOutcome {
+  if (outcome(lead("timeout", ["ok2"])) != "ok2") {
+    return test.fail("a timed-out as-is name must not stop the suffixes");
+  }
+  if (outcome(lead("nx", ["ok1"])) != "ok1") {
+    return test.fail("an NXDOMAIN as-is name must not stop the suffixes");
+  }
+  return test.pass();
+}
+
+function test_search_refused_suffix_stops_everything(): test.TestOutcome {
+  if (outcome(trail("ok1", ["refused", "ok2"])) != refused()) {
+    return test.fail("a refused suffix must not fall through to a later name");
+  }
+  if (outcome(lead("refused", ["ok1"])) != "ok1") {
+    return test.fail("a refused as-is query must still try the suffixes");
+  }
+  if (outcome(lead("refused", ["nx"])) != refused()) {
+    return test.fail("a refused as-is query is reported once the suffixes miss");
+  }
+  return test.pass();
+}
+
+function test_search_all_nxdomain(): test.TestOutcome {
+  if (outcome(trail("nx", ["nx2", "nx3"])) != nosuchname()) {
+    return test.fail("every name NXDOMAIN is NoSuchName");
+  }
+  if (outcome(lead("ok1", ["ok2"])) != "ok1") {
+    return test.fail("a leading as-is name that answers wins");
+  }
+  if (outcome(lead("nx", [])) != nosuchname()) {
+    return test.fail("a trailing-dot plan is one query and its failure");
+  }
+  return test.pass();
+}
+
+function test_lookup_records_with_walks_the_plan(): test.TestOutcome {
+  let rc: dns.ResolvConf = conf_with(["servfail", "ok2"], 1);
+  // "nx" has no dot: the suffixes first, so nx.servfail then nx.ok2, then nx.
+  match (dns.lookup_records_with(rc, "nx", dns.type_a(), (q: string): Result[dns.Answer, dns.DnsError] => scripted(suffix_of(q)))) {
+    Ok(a) => {
+      return test.assert_eq(a.canonical, "ok2");
+    },
+    Err(e) => {
+      return test.fail("the second suffix answers: " + e.message());
+    }
+  }
+}
+
+// The scripted names are suffixes here: `nx.ok2` answers as `ok2` does.
+function suffix_of(q: string): string {
+  let dot: i32 = q.index_of(".");
+  if (dot < 0) {
+    return q;
+  }
+  return slice_unchecked(q, dot + 1, q.len()) + "";
+}
+
+// ---- live ---------------------------------------------------------------------
+//
+// Every system this runs on maps localhost to 127.0.0.1 in its hosts
+// file, so these two never leave the machine.
+
+function has_loopback(xs: net.IpAddr[]): boolean {
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    if (xs[i].is_loopback()) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// ---- address ordering (RFC 6724) --------------------------------------------
+// The address `s` names; a test's own typo is a wrong answer, not a crash.
+function addr(s: string): net.IpAddr {
+  match (net.ip_parse(s)) {
+    Some(ip) => {
+      return ip;
+    },
+    None => {
+      return net.ipv4_unspecified();
+    }
+  }
+}
+
+function addrs(ss: string[]): net.IpAddr[] {
+  let out: net.IpAddr[] = [];
+  let i: i32 = 0;
+  while (i < ss.len()) {
+    out = out.append(addr(ss[i]));
+    i = i + 1;
+  }
+  return out;
+}
+
+function sources(ss: string[]): Option[net.IpAddr][] {
+  let out: Option[net.IpAddr][] = [];
+  let i: i32 = 0;
+  while (i < ss.len()) {
+    if (ss[i] == "") {
+      out = out.append(None);
+    } else {
+      out = out.append(Some(addr(ss[i])));
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function shown(ips: net.IpAddr[]): string {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < ips.len()) {
+    out = out.append(ips[i].to_string());
+    i = i + 1;
+  }
+  return out.join(" ");
+}
+
+function policy_is(s: string, precedence: i32, label: i32): boolean {
+  let p: dns.Policy = dns.policy_of(addr(s));
+  return p.precedence == precedence && p.label == label;
+}
+
+function test_policy_table(): test.TestOutcome {
+  if (!policy_is("::1", 50, 0) || !policy_is("2001:db8::1", 40, 1)) {
+    return test.fail("loopback is 50/0, a global address 40/1");
+  }
+  if (!policy_is("192.0.2.1", 35, 4) || !policy_is("::ffff:192.0.2.1", 35, 4)) {
+    return test.fail("an IPv4 address, mapped or not, is 35/4");
+  }
+  if (!policy_is("2002:c000:204::1", 30, 2) || !policy_is("2001::1", 5, 5)) {
+    return test.fail("6to4 is 30/2, Teredo 5/5");
+  }
+  if (!policy_is("fd00::1", 3, 13) || !policy_is("::192.0.2.1", 1, 3)) {
+    return test.fail("a unique local address is 3/13, an IPv4-compatible one 1/3");
+  }
+  if (!policy_is("fec0::1", 1, 11) || !policy_is("3ffe::1", 1, 12)) {
+    return test.fail("site-local is 1/11, 6bone 1/12");
+  }
+  return test.pass();
+}
+
+function scope_is(s: string, scope: i32): boolean {
+  return dns.scope_of(addr(s)) == scope;
+}
+
+function test_scope_of(): test.TestOutcome {
+  if (!scope_is("::1", 2) || !scope_is("fe80::1", 2) || !scope_is("127.0.0.1", 2) || !scope_is("169.254.1.1", 2)) {
+    return test.fail("loopback and link-local addresses of both families are link-local");
+  }
+  if (!scope_is("fec0::1", 5) || !scope_is("ff02::1", 2) || !scope_is("ff05::1", 5)) {
+    return test.fail("site-local is 5, a multicast address its own nibble");
+  }
+  if (!scope_is("2001:db8::1", 14) || !scope_is("8.8.8.8", 14)) {
+    return test.fail("everything else is global");
+  }
+  return test.pass();
+}
+
+function test_common_prefix(): test.TestOutcome {
+  if (dns.common_prefix_len(addr("2001:db8:1::1"), addr("2001:db8:1:ffff::1")) != 48) {
+    return test.fail("the bits in common up to the first that differs");
+  }
+  if (dns.common_prefix_len(addr("2001:db8::1"), addr("2001:db8::2")) != 64) {
+    return test.fail("capped at 64: the interface identifier does not count");
+  }
+  if (dns.common_prefix_len(addr("10.0.0.1"), addr("10.0.0.2")) != 0) {
+    return test.fail("rule 9 reads only IPv6");
+  }
+  return test.pass();
+}
+
+function test_order_rules(): test.TestOutcome {
+  let v6_over_v4: net.IpAddr[] = dns.order_addresses(addrs(["93.184.216.34", "2001:db8::1"]), sources(["10.0.0.1", "2001:db8::2"]));
+  if (shown(v6_over_v4) != "2001:db8::1 93.184.216.34") {
+    return test.fail("rule 6: a global IPv6 address (40) before an IPv4 one (35)");
+  }
+  let loopback_first: net.IpAddr[] = dns.order_addresses(addrs(["2001:db8::1", "::1"]), sources(["2001:db8::2", "::1"]));
+  if (shown(loopback_first) != "::1 2001:db8::1") {
+    return test.fail("rule 6: loopback (50) before a global address");
+  }
+  let label_match: net.IpAddr[] = dns.order_addresses(addrs(["fd00::1", "2001:db8::1"]), sources(["2001:db8::5", "2001:db8::5"]));
+  if (shown(label_match) != "2001:db8::1 fd00::1") {
+    return test.fail("rule 5: the destination whose label matches its source's");
+  }
+  let scope_match: net.IpAddr[] = dns.order_addresses(addrs(["2001:db8::1", "fe80::1"]), sources(["fe80::9", "fe80::9"]));
+  if (shown(scope_match) != "fe80::1 2001:db8::1") {
+    return test.fail("rule 2: the destination whose scope matches its source's");
+  }
+  let longest: net.IpAddr[] = dns.order_addresses(addrs(["2001:db8:2::1", "2001:db8:1::1"]), sources(["2001:db8:1::9", "2001:db8:1::9"]));
+  if (shown(longest) != "2001:db8:1::1 2001:db8:2::1") {
+    return test.fail("rule 9: the longest prefix in common with the source");
+  }
+  return test.pass();
+}
+
+function test_order_unusable_and_stable(): test.TestOutcome {
+  let no_v6_route: net.IpAddr[] = dns.order_addresses(addrs(["2001:db8::1", "93.184.216.34"]), sources(["", "10.0.0.1"]));
+  if (shown(no_v6_route) != "93.184.216.34 2001:db8::1") {
+    return test.fail("rule 1: a destination with no source goes last");
+  }
+  let tied: net.IpAddr[] = dns.order_addresses(addrs(["93.184.216.34", "93.184.216.35", "93.184.216.33"]), sources(["10.0.0.1", "10.0.0.1", "10.0.0.1"]));
+  if (shown(tied) != "93.184.216.34 93.184.216.35 93.184.216.33") {
+    return test.fail("rule 10: what the rules leave tied keeps the server's order");
+  }
+  let none: net.IpAddr[] = dns.order_addresses(addrs([]), sources([]));
+  return test.assert_eq(none.len(), 0);
+}
+
+function answer_of(name: string, data: dns.RData, rtype: i32): Result[dns.Answer, dns.DnsError] {
+  return Ok(dns.Answer { canonical: name, records: [dns.Record { name: name, rtype: rtype, rclass: dns.class_in(), ttl: 60, data: data }] });
+}
+
+function pair_fails_with(a: Result[dns.Answer, dns.DnsError], aaaa: Result[dns.Answer, dns.DnsError], want: dns.DnsError): boolean {
+  match (dns.combine_pair(a, aaaa)) {
+    Ok(_) => {
+      return false;
+    },
+    Err(e) => {
+      return e.message() == want.message();
+    }
+  }
+  return false;
+}
+
+function test_combine_pair(): test.TestOutcome {
+  let a: Result[dns.Answer, dns.DnsError] = answer_of("www.example", A(addr("93.184.216.34")), dns.type_a());
+  let aaaa: Result[dns.Answer, dns.DnsError] = answer_of("www6.example", AAAA(addr("2001:db8::1")), dns.type_aaaa());
+  match (dns.combine_pair(a, aaaa)) {
+    Ok(both) => {
+      if (both.canonical != "www.example" || both.records.len() != 2) {
+        return test.fail("both record types under the A query's canonical name");
+      }
+    },
+    Err(_) => {
+      return test.fail("two answers combine");
+    }
+  }
+  match (dns.combine_pair(Err(NoSuchName), aaaa)) {
+    Ok(only6) => {
+      if (only6.records.len() != 1) {
+        return test.fail("the AAAA answer alone");
+      }
+    },
+    Err(_) => {
+      return test.fail("one answer is an answer");
+    }
+  }
+  if (!pair_fails_with(Err(NoSuchName), Err(NoSuchName), NoSuchName)) {
+    return test.fail("both NXDOMAIN is NXDOMAIN");
+  }
+  if (!pair_fails_with(Err(NoSuchName), Err(NoData), NoData)) {
+    return test.fail("one NXDOMAIN and one empty reply is an empty reply");
+  }
+  if (!pair_fails_with(Err(NoData), Err(NoReply), NoReply) || !pair_fails_with(Err(NoReply), Err(NoSuchName), NoReply)) {
+    return test.fail("a failure that ends the search wins over one that passes a name over");
+  }
+  return test.pass();
+}
+
+// ---- dialing and NAT64 ------------------------------------------------------
+function test_interleave_families(): test.TestOutcome {
+  let v6_leads: net.IpAddr[] = dns.interleave_families(addrs(["2001:db8::1", "2001:db8::2", "93.184.216.34", "2001:db8::3", "93.184.216.35"]));
+  if (shown(v6_leads) != "2001:db8::1 93.184.216.34 2001:db8::2 93.184.216.35 2001:db8::3") {
+    return test.fail("the first address's family leads and the families alternate, each in its own order");
+  }
+  let v4_leads: net.IpAddr[] = dns.interleave_families(addrs(["93.184.216.34", "2001:db8::1", "93.184.216.35"]));
+  if (shown(v4_leads) != "93.184.216.34 2001:db8::1 93.184.216.35") {
+    return test.fail("an IPv4 address first leads with IPv4");
+  }
+  let none: net.IpAddr[] = dns.interleave_families(addrs([]));
+  return test.assert_eq(none.len(), 0);
+}
+
+function test_dial_options(): test.TestOutcome {
+  let o: dns.DialOptions = dns.dial_options();
+  if (o.fallback.as_millis() != 300 as i64 || o.timeout.as_millis() != 10000 as i64) {
+    return test.fail("300 ms between attempts, ten seconds in all");
+  }
+  return test.pass();
+}
+
+function prefix_is(aaaa: string, want: string, bits: i32): boolean {
+  match (dns.nat64_prefix_of(addr(aaaa))) {
+    Some(p) => {
+      match (net.ipv6(p.bytes)) {
+        Some(ip) => {
+          return p.bits == bits && ip.eq(addr(want));
+        },
+        None => {
+          return false;
+        }
+      }
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function test_nat64_prefix_of(): test.TestOutcome {
+  if (!prefix_is("64:ff9b::c000:aa", "64:ff9b::", 96)) {
+    return test.fail("the well-known prefix, 192.0.0.170 in the last four bytes");
+  }
+  if (!prefix_is("2001:db8:1:2:c0:0:ab00:0", "2001:db8:1:2::", 64) || !prefix_is("2001:db8:1:2:c0:0:aa00:0", "2001:db8:1:2::", 64)) {
+    return test.fail("a /64 prefix, the address after byte 8, either well-known address");
+  }
+  if (!prefix_is("2001:db8:c000:aa::", "2001:db8::", 32)) {
+    return test.fail("a /32 prefix, the address in bytes 4 to 7");
+  }
+  if (!prefix_is("2001:db8:1c0:0:aa::", "2001:db8:100::", 40)) {
+    return test.fail("a /40 prefix, the address straddling byte 8");
+  }
+  match (dns.nat64_prefix_of(addr("2001:db8::1"))) {
+    Some(_) => {
+      return test.fail("an address embedding neither well-known address reveals no prefix");
+    },
+    None => {}
+  }
+  match (dns.nat64_prefix_of(addr("192.0.0.170"))) {
+    Some(_) => {
+      return test.fail("an IPv4 address reveals no prefix");
+    },
+    None => {}
+  }
+  return test.pass();
+}
+
+function test_synthesize(): test.TestOutcome {
+  let wk: dns.Nat64Prefix = dns.Nat64Prefix { bytes: addr("64:ff9b::").bytes(), bits: 96 };
+  if (!dns.synthesize(wk, addr("192.0.2.1")).eq(addr("64:ff9b::c000:201"))) {
+    return test.fail("under the well-known prefix the address fills the last four bytes");
+  }
+  let p64: dns.Nat64Prefix = dns.Nat64Prefix { bytes: addr("2001:db8:1:2::").bytes(), bits: 64 };
+  if (!dns.synthesize(p64, addr("192.0.2.1")).eq(addr("2001:db8:1:2:c0:2:100:0"))) {
+    return test.fail("under a /64 prefix byte 8 stays zero and the address follows it");
+  }
+  if (!dns.synthesize(wk, addr("2001:db8::1")).eq(addr("2001:db8::1"))) {
+    return test.fail("an IPv6 address is left as it is");
+  }
+  match (dns.nat64_prefix_of(dns.synthesize(p64, addr("192.0.0.171")))) {
+    Some(back) => {
+      return test.assert_eq(back.bits, 64);
+    },
+    None => {
+      return test.fail("a synthesis of the well-known address reveals its prefix again");
+    }
+  }
+}
+
+function test_live_hosts_file(): test.TestOutcome {
+  if (!has_loopback(dns.hosts_lookup(dns.system_hosts(), "localhost"))) {
+    return test.fail("this machine's /etc/hosts maps localhost to a loopback address");
+  }
+  return test.pass();
+}
+
+function test_live_resolve(): test.TestOutcome {
+  match (dns.resolve("localhost")) {
+    Ok(xs) => {
+      if (!has_loopback(xs)) {
+        return test.fail("localhost resolves to a loopback address");
+      }
+    },
+    Err(e) => {
+      return test.fail("localhost resolves: " + e.message());
+    }
+  }
+  match (dns.resolve("192.0.2.1")) {
+    Ok(xs) => {
+      return test.assert_eq(ips(xs), "192.0.2.1");
+    },
+    Err(e) => {
+      return test.fail("an address literal is itself: " + e.message());
+    }
+  }
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/dns");
+  r = r.it("a name on the wire", test_encode_name);
+  r = r.it("an A query on the wire", test_query_on_the_wire);
+  r = r.it("EDNS0: the OPT record", test_edns_opt_record);
+  r = r.it("a reply with compression pointers decodes", test_decode_reply);
+  r = r.it("what decode refuses", test_decode_rejects);
+  r = r.it("encode then decode is the message", test_round_trip);
+  r = r.it("answer: the records behind a CNAME", test_records_after_cname);
+  r = r.it("answer: the rcodes, and NOERROR without the record", test_answer_statuses);
+  r = r.it("answer: the same question", test_answers_question);
+  r = r.it("hosts: both families, comments, aliases", test_hosts_parse);
+  r = r.it("hosts: every address of a name, caselessly", test_hosts_lookup);
+  r = r.it("hosts: the canonical name of an alias", test_hosts_canonical);
+  r = r.it("resolv.conf: a full file", test_resolv_conf_fixture);
+  r = r.it("resolv.conf: defaults", test_resolv_conf_defaults);
+  r = r.it("resolv.conf: caps, floors and MAXNS", test_resolv_conf_caps);
+  r = r.it("search list order", test_search_candidates);
+  r = r.it("search: a SERVFAIL suffix continues", test_search_servfail_continues);
+  r = r.it("search: a timeout ends the suffixes", test_search_timeout_ends_the_suffixes);
+  r = r.it("search: a leading as-is name has no retry", test_search_leading_as_is_has_no_retry);
+  r = r.it("search: a failed leading as-is still tries the suffixes", test_search_leading_as_is_failure_still_tries_suffixes);
+  r = r.it("search: a refused suffix stops everything", test_search_refused_suffix_stops_everything);
+  r = r.it("search: every name NXDOMAIN", test_search_all_nxdomain);
+  r = r.it("lookup_records_with walks the plan for a name", test_lookup_records_with_walks_the_plan);
+  r = r.it("RFC 6724: the policy table", test_policy_table);
+  r = r.it("RFC 6724: scopes", test_scope_of);
+  r = r.it("RFC 6724: the common prefix", test_common_prefix);
+  r = r.it("RFC 6724: the ordering rules", test_order_rules);
+  r = r.it("RFC 6724: unusable destinations last, ties stable", test_order_unusable_and_stable);
+  r = r.it("the A and AAAA results combined", test_combine_pair);
+  r = r.it("RFC 8305: the families interleaved", test_interleave_families);
+  r = r.it("RFC 8305: the dial options", test_dial_options);
+  r = r.it("NAT64: the prefix an ipv4only.arpa record reveals", test_nat64_prefix_of);
+  r = r.it("NAT64: an IPv4 address under a prefix", test_synthesize);
+  r = r.it("live: this machine's /etc/hosts", test_live_hosts_file);
+  r = r.it("live: resolve localhost and a literal", test_live_resolve);
+  return r.finish();
+}

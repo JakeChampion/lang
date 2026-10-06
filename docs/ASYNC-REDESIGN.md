@@ -44,7 +44,7 @@ of the cost regardless of execution quality:
 - **It must be re-implemented in the self-host parser** to ever retire
   the Go compiler — so it directly taxes goal 1 (full self-host IR) and
   roughly *doubles* in maintenance the day that port starts (today:
-  zero of the 318 lines are mirrored in `examples/self_host/parser.fern`).
+  zero of the 318 lines are mirrored in `compiler/parser.fern`).
 - **It is the feature's most fragile surface** (loops × conditionals ×
   expression-position × break/continue is a large cross-product, each
   cell hand-written).

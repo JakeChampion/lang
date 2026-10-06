@@ -346,7 +346,7 @@ func TestSelfHostEmittingDriversRunDeclGates(t *testing.T) {
 	hasMain := regexp.MustCompile(`(?m)^(pub )?function main\(`)
 	declGate := regexp.MustCompile(`\b(refuse_decl_names|check_decl_names)\(`)
 	sentinelGate := regexp.MustCompile(`\b(refuse_parse_unknowns|parse_unknown_errors_module)\(`)
-	files, err := filepath.Glob(filepath.Join("..", "..", "examples", "self_host", "*.fern"))
+	files, err := filepath.Glob(filepath.Join("..", "..", "compiler", "*.fern"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("globbing the self-host sources: %v (%d files)", err, len(files))
 	}

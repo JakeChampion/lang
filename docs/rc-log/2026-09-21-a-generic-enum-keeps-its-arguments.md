@@ -1,6 +1,6 @@
 # 2026-09-21 — a generic enum keeps its arguments
 
-`examples/tests/sim_driver_test` produced **0 of its 180 declarations**:
+`tests/stdlib/sim_driver_test` produced **0 of its 180 declarations**:
 
 ```
 FERN_SEM_IR: sim____pend__i32$clo0: unresolved result type: declared `async__Future`
@@ -49,7 +49,7 @@ x86-64, `FERN_SANITIZE=1` + `FERN_LEAKCHECK=1`.
 
 | program | before | after |
 |---|---|---|
-| `examples/tests/sim_driver_test` | 0 of 180 | **180 of 180** |
+| `tests/stdlib/sim_driver_test` | 0 of 180 | **180 of 180** |
 
 It passes 8 of 8.
 

@@ -1554,7 +1554,7 @@ A **closed set of primitive effect labels, with subsumption, one effect variable
 and no handlers**:
 
 1. **Labels are declared, not open.** The label set is exactly the platform capability
-   taxonomy already in `internal/platforms` / `examples/self_host/platforms.fern`.
+   taxonomy already in `internal/platforms` / `compiler/platforms.fern`.
    A new builtin already requires four classifications (per `CLAUDE.md`); this makes it
    five, and the completeness tests already exist to catch omissions.
 2. **Default is total/pure and elided.** `fn f(x: int) -> int` means no effects. Follow

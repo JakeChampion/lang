@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostWasmRun exercises the self-hosted wasm emitter
-// (examples/self_host/wasm_ir.fern) end to end. wasm_run.fern reads Fern
+// (compiler/wasm_ir.fern) end to end. wasm_run.fern reads Fern
 // source from stdin, runs it through the self-host lexer + parser +
 // wasm.emit_module, and prints a WASI core module in text format (WAT).
 // For each case the test:

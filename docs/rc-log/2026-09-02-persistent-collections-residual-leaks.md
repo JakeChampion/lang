@@ -15,11 +15,11 @@ at exit; every "after" is 0 except the closure-local row, which stays where it w
 | `s.concat(mk(2))`, 4 rounds (struct temp to a pointer-returning method) | 8 | `paramCountedRetain` refused `other.tail[0]` and `other.get_or(...)` |
 | `a.union(b).len()`, 100 + 100 keys | 45 | none — those were the union nodes |
 | `pvec.with` below the tail, snapshot held | 0 | none — the doc's 326 was stale |
-| `examples/tests/ordmap_test.fern` | 562 | 7 remain, see below |
-| `examples/tests/pvec_test.fern` | 4 | 4 remain, see below |
-| `examples/tests/ordset_test.fern` | 14 | 4 remain: string-keyed nodes, and the lambda `filter` wraps |
-| `examples/tests/pset_test.fern` | 3 | 1 remains: a string-element `filter` |
-| `examples/tests/pmap_test.fern` | 105 | 103 remain: 100 `Coarse { … }` key temps handed to `remove`, 2 string-valued leaves |
+| `tests/stdlib/ordmap_test.fern` | 562 | 7 remain, see below |
+| `tests/stdlib/pvec_test.fern` | 4 | 4 remain, see below |
+| `tests/stdlib/ordset_test.fern` | 14 | 4 remain: string-keyed nodes, and the lambda `filter` wraps |
+| `tests/stdlib/pset_test.fern` | 3 | 1 remains: a string-element `filter` |
+| `tests/stdlib/pmap_test.fern` | 105 | 103 remain: 100 `Coarse { … }` key temps handed to `remove`, 2 string-valued leaves |
 
 ## The rebuild leak, and what the trace does not say
 

@@ -129,7 +129,7 @@ which is the entire reason for choosing Option A.
 
 ## 5. Slice plan
 
-- **Slice 0 — IR data types. DONE.** `examples/self_host/ir.fern`: the
+- **Slice 0 — IR data types. DONE.** `compiler/ir.fern`: the
   `Op` value + constructors for the opcode spine (constants, locals,
   arithmetic/comparison, load/store, alloc, the call forms, structured
   control flow, drop, return) + `render_op`. Type-checks standalone
@@ -192,11 +192,11 @@ Same nets as the existing self-host work, plus IR-specific ones:
 
 - 2026-06-09: decision recorded (Option A). Design + rollout (this doc).
 - 2026-06-09: **Slice 0 — IR data types — DONE.**
-  `examples/self_host/ir.fern`: native-shaped `Op` value (mirrors
+  `compiler/ir.fern`: native-shaped `Op` value (mirrors
   `ir.Op`'s fields, pointer-free / threaded style), string-tagged kinds
   like `ssa.fern`, constructors for the opcode spine + `width_ptr()`
   sentinel + `render_op`. Type-checks standalone (`fern -check
-  examples/self_host/ir.fern`, exit 0); imported by nobody, so the
+  compiler/ir.fern`, exit 0); imported by nobody, so the
   byte-identical self-bootstrap is unaffected. Next: slice 1 (IR
   round-trip Go-side test), then `irlower.fern` skeleton.
 - 2026-06-10: **Slice 1 — `Op[]` round-trip test — DONE (#2590).**
@@ -1525,7 +1525,7 @@ syntax* was missing.
 
 ### Fix (simplest sound slice)
 
-Port the native disambiguator + parser into `examples/self_host/parser.fern`:
+Port the native disambiguator + parser into `compiler/parser.fern`:
 
 - `(Par).punct_at(idx)` / `(Par).ident_at(idx)` — absolute-index token lookahead.
 - `(Par).arrow_lambda_at()` — at a `(`, returns true for `() =>`/`():` or

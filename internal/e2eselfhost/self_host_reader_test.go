@@ -30,7 +30,7 @@ func TestSelfHostReaderX86_64(t *testing.T) {
 
 	// Build the asm_run driver (lexer + parser + asm) as an x86 host
 	// binary: it reads Fern source from stdin and prints x86-64 asm.
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	src, err := os.ReadFile("../../compiler/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestSelfHostReadFileX86_64(t *testing.T) {
 		t.Skip("read_file test runs only natively (argv path)")
 	}
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	src, err := os.ReadFile("../../compiler/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}

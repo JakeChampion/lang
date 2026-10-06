@@ -66,7 +66,7 @@ Reasoning:
    same plumbing the LSP uses.
 
 7. **B (BOOTSTRAP)** seventh — only matters once
-   `examples/self_host/` reaches parity. Less urgent reading.
+   `compiler/` reaches parity. Less urgent reading.
 
 8. **M (MODULE-PACKAGES)** last — strictly post-self-host
    concern. Read when the first non-stdlib third-party

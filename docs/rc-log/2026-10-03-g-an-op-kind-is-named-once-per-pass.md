@@ -3,7 +3,7 @@
 `ssarc.aligned_rc`, `ssabytes.lower_reads`, `ir.licm_header_end` and the
 expiry in `ssa.regalloc_linear`. Refs #8171. No emitted byte changes: the
 stage0-built compiler before and after emits the fixed older tree
-(`examples/self_host/fern.fern` at 1ae9cad, its bindings spelled `let`)
+(`compiler/fern.fern` at 1ae9cad, its bindings spelled `let`)
 and that tree's `checker.fern` byte for byte.
 
 ## What the profile named

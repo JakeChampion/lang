@@ -22,8 +22,8 @@ import (
 // Scope: this one bundle. The arm64 and wasm bundles have no partial-register
 // writes to check, and native x86-64 is frozen (#11347).
 const (
-	x86TranscendentalsPath = "../../examples/self_host/asm_ir.fern"
-	x86AssemblerPath       = "../../examples/self_host/x86_native.fern"
+	x86TranscendentalsPath = "../../compiler/asm_ir.fern"
+	x86AssemblerPath       = "../../compiler/x86_native.fern"
 )
 
 // lowLaneWrites are the assembler's scalar SSE instructions that write an xmm

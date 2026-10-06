@@ -202,11 +202,11 @@ func TestStrSliceUncheckedTrap(t *testing.T) {
 }
 
 // TestRunnerStringSliceSnapExamplePasses gates the pure-Fern runner suite
-// for slice_snap + slice_unchecked, wired like the other examples/tests
+// for slice_snap + slice_unchecked, wired like the other tests/stdlib
 // gates in test_runner_test.go.
 func TestRunnerStringSliceSnapExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/string_slice_snap_test.fern")
+	src := langSrcAbs(t, "tests/stdlib/string_slice_snap_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -223,7 +223,7 @@ func TestRunnerStringSliceSnapExamplePasses(t *testing.T) {
 // split_at / chunks / truncate / ellipsis, #5634).
 func TestRunnerStringSnapHelpersExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/string_snap_helpers_test.fern")
+	src := langSrcAbs(t, "tests/stdlib/string_snap_helpers_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)

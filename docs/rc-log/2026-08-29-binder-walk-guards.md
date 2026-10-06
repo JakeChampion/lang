@@ -89,6 +89,6 @@ an over-release.
 sites do not check parameters at all, and `body_declares_name` cannot: it takes
 `stmts`, not the enclosing `FuncDecl`. A static upper bound over the trees —
 functions whose parameter shadows a same-file module-function name — is 17 in
-`examples/self_host`, 1 in the stdlib and 0 in `conformance/cases`, none of them
+`compiler`, 1 in the stdlib and 0 in `conformance/cases`, none of them
 shown to reach a producer credit. Closing it means threading a param list
 through six signatures, which wants its own diff and a witness first.

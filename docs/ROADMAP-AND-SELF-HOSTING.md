@@ -157,7 +157,7 @@ section below. Updated estimate: ~75% portable.
 
 ### ✅ UPDATE: a convergent self-hosting fixpoint is achieved
 
-The `examples/self_host/` Fern port — lexer + recursive-descent
+The `compiler/` Fern port — lexer + recursive-descent
 parser + x86-64 emitter (`asm.fern`) + module-flattening
 (`flatten.fern`) + a stdin driver — now **compiles its own source
 to a byte-identical compiler**. The bootstrap chain
@@ -193,7 +193,7 @@ and the self-hosted compiler reads its own stdin through the real
 boxes `[tag@0, payload@8]`, tag-discriminated `match` with payload
 binding).
 
-The walls cleared to get here (all in `examples/self_host/`, gated by
+The walls cleared to get here (all in `compiler/`, gated by
 `internal/e2e/self_host_*_test.go`): O(N²) output build → `strbuf`;
 parser non-advance runaways on qualified names
 (`parse_type_name` / `parse_pattern`) and qualified struct literals;
@@ -223,7 +223,7 @@ cross-checked against the Go backend (both x86-64 and arm64):
   element assignment `arr[idx] = val`. Together these compile the real
   `std/hex` and `std/base64` (`TestSelfHostBytesX86_64`).
 
-On top of those, `examples/self_host/asm_load_run.fern` is an
+On top of those, `compiler/asm_load_run.fern` is an
 **import-driven, file-loading driver**: given an entry `.fern` path it
 follows `import "./x"` declarations to sibling files on disk
 (`read_file` + the parser's `Import` list), loads them transitively,
@@ -239,7 +239,7 @@ was retired in #4398 — it was a strict subset of `asm_load_run`.)
 Two things landed on top of the native (x86-64 / arm64-linux) self-host
 since the notes above:
 
-**Unified `fern` CLI** (`examples/self_host/fern.fern`). Where the
+**Unified `fern` CLI** (`compiler/fern.fern`). Where the
 codebase previously had a dozen single-mode `*_run.fern` shims, there is
 now one self-hosted binary that parses argv flags and dispatches —
 `fern [-check | -interp | -fmt] [-target x86-64-linux|arm64|arm64-darwin|wasm]
@@ -249,7 +249,7 @@ It hosts both native emitters (`asm.fern` + `asm_arm64.fern`) plus the
 checker, interpreter, printer, and the wasm emitter, selected at runtime.
 Gated by `internal/e2e/self_host_cli_test.go`.
 
-**A third self-host backend: wasm** (`examples/self_host/wasm.fern`,
+**A third self-host backend: wasm** (`compiler/wasm.fern`,
 driven by `wasm_run.fern` and `fern -target wasm32-wasi`). It emits a WASI core
 module in the text format (WAT) — `_start` calls `proc_exit(main())`, so
 `wasmtime run prog.wat` exits with the program's result. Built up across
@@ -526,7 +526,7 @@ request/response **resource handles** — deferred until the in-progress
 own/borrow resource-handle work lands.
 The core wasi builtins (clock / file / env / random) are now covered.
 
-**Binary-encoder track (started).** Slice 1 landed: `examples/self_host/
+**Binary-encoder track (started).** Slice 1 landed: `compiler/
 leb128.fern` — pure, import-free unsigned/signed LEB128 byte encoders
 (`leb_u32` / `leb_i32` / `leb_i64`) over an `i32[]` byte buffer, the
 variable-length integer encoding every wasm count / size / index /
@@ -536,7 +536,7 @@ concatenates the module with a self-test driver — the module is kept
 import-free precisely so it can be both imported by the future encoder
 and concatenated for the test).
 
-Slice 2 landed: `examples/self_host/wat_lex.fern` — a tokenizer for the
+Slice 2 landed: `compiler/wat_lex.fern` — a tokenizer for the
 folded-S-expr WAT that `emit_module` produces (`(` / `)` / atoms /
 `"…"` strings, whitespace discarded). This fixes the encoder's
 architecture: rather than a second AST→binary backend duplicating
@@ -547,7 +547,7 @@ only does the mechanical text→bytes mapping. Unit-tested end-to-end
 (`TestSelfHostWatLex`, same concatenate-with-driver shape as the LEB128
 test).
 
-Slice 3 landed: `examples/self_host/wat_parse.fern` — a recursive-descent
+Slice 3 landed: `compiler/wat_parse.fern` — a recursive-descent
 S-expr parser turning the token stream into a tree of `SExpr` nodes
 (`kind` list/atom/string + `items` children). Parsing one node returns it
 plus the index just past it (`ParseOne`) so siblings scan cleanly. Building
@@ -557,7 +557,7 @@ indexed struct-array *fields*, then struct-array *params*. Unit-tested
 end-to-end (`TestSelfHostWatParse`, parsing `(module (func $f))` and
 asserting the nested tree).
 
-Slice 4a landed: `examples/self_host/wat_encode.fern` — the byte-emission
+Slice 4a landed: `compiler/wat_encode.fern` — the byte-emission
 primitives the module-walker builds on, over an `i32[]` byte buffer atop
 `leb128.fern`: `wmagic` (the `"\0asm"` + version preamble), `wname` (a
 length-prefixed name), `wsection` (id + LEB byte-length + body), `wvec`
@@ -565,7 +565,7 @@ length-prefixed name), `wsection` (id + LEB byte-length + body), `wvec`
 (`TestSelfHostWatEncode`).
 
 Slice 4b landed — **the self-host now emits runnable binary wasm**, not
-just WAT text. `examples/self_host/wat_emit_bin.fern` walks the parsed
+just WAT text. `compiler/wat_emit_bin.fern` walks the parsed
 `(module …)` tree and emits a binary module: it classifies children into
 the type / import / func / memory / global / export / code / data sections
 (binary order), builds func / local / global symbol tables to resolve
@@ -693,7 +693,7 @@ lift` into a `wasi:cli/run@0.2.0` instance export. A component's binary
 preamble is the wasm magic + `0d 00 01 00` (version 13, layer 1, vs a core
 module's `01 00 00 00`), and an embedded core module is a component
 section (id 1) holding that module's bytes. Slice C1 landed
-`examples/self_host/wat_component.fern` — `component_preamble` +
+`compiler/wat_component.fern` — `component_preamble` +
 `component_wrap(core)`, which embeds the core-module bytes in the
 component envelope; `TestSelfHostWasmComponent` assembles a core module,
 wraps it, and asserts `wasm-tools` validates a `(component (core module
@@ -1163,7 +1163,7 @@ Type-system extension; ~1-2 weeks design + implementation.
    (`internal/native/{x86_64,arm64,elf,macho}`), so the work is a
    port, not an invention. Tracked as the **native-binary track**
    in `SELF-HOST-REMAINING-PLAN.md` (the ELF-64 writer landed first
-   as `examples/self_host/elf.fern`). Only if that proves
+   as `compiler/elf.fern`). Only if that proves
    impractical do we fall back to a thin Go link bootstrap.
 
 2. **No sort / no custom comparators**. Compiler sorts
@@ -1240,7 +1240,7 @@ native path**, and closing it is a *port* of the four Go `internal/native`
 packages into Fern — mirroring exactly how the wasm binary track was
 ported. This is the **native-binary track**, tracked in
 `SELF-HOST-REMAINING-PLAN.md`; the ELF-64 writer landed first as
-`examples/self_host/elf.fern` (`TestSelfHostELF`). The subsections below
+`compiler/elf.fern` (`TestSelfHostELF`). The subsections below
 document the external tools the self-host *currently* shells out to (and
 the `-cc`/`-fuse-ld` paths the Go backend still offers as an option) until
 the port completes.
@@ -1345,7 +1345,7 @@ the wasm self-test harness like the LEB128 / wat_encode slices:
               → [write 0o755 file]        → [runnable binary, no external tool]
 ```
 
-1. **ELF-64 writer** — `examples/self_host/elf.fern` (**landed**,
+1. **ELF-64 writer** — `compiler/elf.fern` (**landed**,
    `TestSelfHostELF`): the container half, mirroring
    `internal/native/elf/elf.go`. x86-64 + arm64 Linux, `R+X` and
    `R+W+X` single-PT_LOAD images.
@@ -1353,7 +1353,7 @@ the wasm self-test harness like the LEB128 / wat_encode slices:
    `internal/native/x86_64/`, incl. the SSE float paths).
 3. **arm64 assembler** — GAS text → AArch64 bytes (mirror
    `internal/native/arm64/asm.go` / `gas.go`).
-4. **Mach-O writer + ad-hoc signature** — `examples/self_host/macho.fern`
+4. **Mach-O writer + ad-hoc signature** — `compiler/macho.fern`
    (**landed**, `TestSelfHostMachO`): the arm64-darwin container half,
    mirroring `internal/native/macho/` incl. `sign.go`. Static, non-PIE
    `__PAGEZERO`/`__TEXT`/`__DATA`/`__LINKEDIT` image with an

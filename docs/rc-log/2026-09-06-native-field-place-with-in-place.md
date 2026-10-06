@@ -17,7 +17,7 @@ statement that spells them, so "textually earlier" would stop meaning "earlier".
 **Flow-insensitivity was under-admitting, uniformly.** The arm required ZERO
 overlapping reads, which is order-independent and strictly stronger than the
 ordered rule, so it could not admit anything ordering forbids. Measured over
-`examples/self_host/fern.fern` (4,883 append sites, 30 copying): of the 22
+`compiler/fern.fern` (4,883 append sites, 30 copying): of the 22
 field-receiver refusals, **21 are a bare read of the root** — a whole-container
 read or a container-binding capture, which the prefix rule does not touch — and
 one is `asmcore.add_string_lit`'s `s.string_lits[i]`, an index read inside the
@@ -102,5 +102,5 @@ rows hold the runtime halves, each falsified by removing one piece:
 `fieldPlaceMutationCopies` builds per-NODE tables, and most functions hold no
 field-place mutation at all. A single `hasFieldPlaceMutation` walk in front of
 it returns early for those — with the three new tables included, native compiles
-`examples/self_host/fern.fern` in 19.7-19.8 s against 20.25-20.33 s before
+`compiler/fern.fern` in 19.7-19.8 s against 20.25-20.33 s before
 (4-core container, `-o /dev/null`, interleaved rounds).

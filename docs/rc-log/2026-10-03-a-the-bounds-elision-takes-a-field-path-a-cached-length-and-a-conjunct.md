@@ -9,7 +9,7 @@ Every `cmp; jae __fern_oob_abort` left in the stage-2 compiler costs
 sites. The parser's elision took one guard: `while (i < xs.len())`
 with `xs` a bare ident, `i` starting at a non-negative literal in the
 statement immediately before the loop. Counting the `while` guards in
-`examples/self_host`:
+`compiler`:
 
 | guard | loops |
 |---|--:|

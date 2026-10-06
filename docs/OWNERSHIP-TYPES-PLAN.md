@@ -40,13 +40,13 @@ Inferred, stored off the type:
   fn → per-param bool, consumed as `paramBorrowable`. Rides `OwnedByDefault`
   (`ast.go:1048`).
 - Self-host `borrowable_params_interproc` / `consume_safe_params_interproc`
-  (`examples/self_host/irlower.fern:18573` / `:18664`) — the same idea as
+  (`compiler/irlower.fern:18573` / `:18664`) — the same idea as
   `string[]` registries computed once per module.
 
 Heuristic stand-ins for owned-vs-view (strings), the fragile surface:
 - `expr_is_fresh_str`, `str_local_binding_is_fresh`, `slot_is_reclaimable_str`,
   the `is_str` slot flag, and the `i >= n_params` "params are borrowed" rule in
-  `examples/self_host/irlower.fern`. These explicitly exclude literals, bare
+  `compiler/irlower.fern`. These explicitly exclude literals, bare
   aliases, slices, and `.trim()` — exactly the cases a `view` type would
   classify by construction. Native strings copy on slice (`__str_slice`), so
   the *view* hazard is a self-host-only phenomenon today.

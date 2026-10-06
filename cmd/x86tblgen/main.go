@@ -10,7 +10,7 @@
 // Mechanism follows cmd/floattablegen and cmd/unicodegen: rewrite between
 // marker comments in place, and keep a test that regenerates and diffs.
 //
-//	go run ./cmd/x86tblgen examples/self_host/x86_native.fern
+//	go run ./cmd/x86tblgen compiler/x86_native.fern
 package main
 
 import (

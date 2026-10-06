@@ -21,7 +21,7 @@ import (
 // `__` intrinsics are TestSelfHostTypesEveryIntrinsicFamily's.
 func TestSelfHostContractsEveryBuiltin(t *testing.T) {
 	read := func(name string) string {
-		b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", name))
+		b, err := os.ReadFile(filepath.Join("..", "..", "compiler", name))
 		if err != nil {
 			t.Fatalf("read self-host %s: %v", name, err)
 		}

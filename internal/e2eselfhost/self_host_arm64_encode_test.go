@@ -11,7 +11,7 @@ import (
 // (encoder + GAS assembler + Mach-O writer), the single source the
 // self-host CLI imports and the e2e self-tests concatenate with a driver.
 func arm64NativeSrc(t *testing.T) string {
-	b, err := os.ReadFile("../../examples/self_host/arm64_native.fern")
+	b, err := os.ReadFile("../../compiler/arm64_native.fern")
 	if err != nil {
 		t.Fatalf("read arm64_native.fern: %v", err)
 	}
@@ -26,7 +26,7 @@ function to_u8(b: i32[]): u8[] { let o: u8[] = []; let i: i32 = 0; while (i < b.
 `
 
 // TestSelfHostArm64Encode exercises the self-hosted AArch64 machine-code
-// encoder (examples/self_host/arm64_encode.fern) — the assembler half of
+// encoder (compiler/arm64_encode.fern) — the assembler half of
 // the arm64-darwin native-binary path (the container half is macho.fern).
 //
 // arm64_encode.fern is import-free, so this test concatenates it with a

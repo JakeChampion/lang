@@ -317,7 +317,7 @@ func parseStatfsOffsets(t *testing.T, fn string) map[string]int64 {
 // closing brace in column 1.
 func fernFunctionBody(t *testing.T, fn string) string {
 	t.Helper()
-	src, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", "asmcore.fern"))
+	src, err := os.ReadFile(filepath.Join("..", "..", "compiler", "asmcore.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}

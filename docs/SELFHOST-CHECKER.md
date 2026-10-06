@@ -10,7 +10,7 @@
 
 ## Why
 
-The self-hosted compiler (`examples/self_host/asm_arm64.fern` and its x86
+The self-hosted compiler (`compiler/asm_arm64.fern` and its x86
 twin `asm.fern`) is a pure code generator: it parses Fern and emits
 assembly with **no type-checking pass**. The production (Go) compiler
 already rejects type errors — e.g. `fern -check` on

@@ -8,7 +8,7 @@ is design-only; no slice here is implemented.
 
 ## The pattern
 
-`BState` (`examples/self_host/ssa.fern:99`) is the SSA builder's working
+`BState` (`compiler/ssa.fern:99`) is the SSA builder's working
 state — blocks, current block, the SSA value-name/value tables, the
 per-function type overlay, the shared signature seed, loop context:
 
@@ -166,7 +166,7 @@ in-place ops), so there is no replaced box to reclaim.
 
 Re-measured on today's main (the numbers above predate the merged
 allocator/RC reclamation arc). Method: build the SSA→asm driver
-(`examples/self_host/ssa_emit_run.fern`) with `cmd/fern -target x86-64-linux`, feed it
+(`compiler/ssa_emit_run.fern`) with `cmd/fern -target x86-64-linux`, feed it
 a real module on stdin, sample peak RSS (`/proc/<pid>/VmHWM`):
 
 | input | lines | peak RSS | exit |

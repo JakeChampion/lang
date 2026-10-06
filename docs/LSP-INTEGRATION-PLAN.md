@@ -14,7 +14,7 @@
 language server on stdin and stdout. It is #6641's first slice: diagnostics and
 formatting, and none of the cursor features yet.
 
-- **The wire** is `examples/self_host/lsp.fern`. It does Content-Length framing
+- **The wire** is `compiler/lsp.fern`. It does Content-Length framing
   over `stdin()`, JSON-RPC through `std/json`, the UTF-16 position conversion
   (#8468) and file:// URIs to paths. It knows nothing of the compiler.
 - **Diagnostics are `-check`'s findings.** `fern.fern`'s `check_source` runs

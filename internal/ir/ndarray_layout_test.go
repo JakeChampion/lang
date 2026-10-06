@@ -268,7 +268,7 @@ function main(): i32 {
 
 // §7's operations each return `from_flat` of a buffer they just filled, so
 // their results are packed and the to_flat after one is free. The program's
-// own assertion is the cross-check: `examples/tests/ndarray_test.fern` asks
+// own assertion is the cross-check: `tests/stdlib/ndarray_test.fern` asks
 // `m.is_packed()` at run time where `m` is the result of a map, and this is
 // the same fact proved before it runs.
 func TestAnAlgebraResultIsPacked(t *testing.T) {
@@ -292,7 +292,7 @@ function main(): i32 {
 }
 
 // A handle from a helper reads what the helper returns, so the spelling a
-// program happens to use stops mattering: `examples/tests/ndarray_test.fern`
+// program happens to use stops mattering: `tests/stdlib/ndarray_test.fern`
 // builds every handle in a `grid()` whose body is one `from_flat`, and its
 // sites now read `packed` exactly as the inline spelling does.
 func TestAHandleFromAHelperTakesTheHelpersLayout(t *testing.T) {

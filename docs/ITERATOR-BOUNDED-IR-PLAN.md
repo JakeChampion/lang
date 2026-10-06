@@ -155,7 +155,7 @@ spells `ArrayIter[T]`. That dangling `T` cascades:
 
 ## Validated fix path (parser side) — eliminates the `[T]` cascade
 
-Three coordinated changes in `examples/self_host/parser.fern`. Built and probed
+Three coordinated changes in `compiler/parser.fern`. Built and probed
 with a post-monomorphisation `-ir-probe` (patch `asm_load_run.fern`'s `-ir-probe`
 to run on `parser.module_with_builtins(merged)` instead of bare `merged`).
 
@@ -219,7 +219,7 @@ just 1+2.
 
 ## How to iterate (reproduce the probe)
 
-1. `go build -o /tmp/fern ./cmd/fern`; copy `examples/self_host/*.fern` to a
+1. `go build -o /tmp/fern ./cmd/fern`; copy `compiler/*.fern` to a
    scratch dir; patch as above.
 2. Build the driver: `/tmp/fern -target x86-64-linux scratch/asm_load_run.fern > d.s`
    then `gcc -nostdlib -static -o alr d.s` (~3 min).

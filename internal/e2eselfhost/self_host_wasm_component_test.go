@@ -37,7 +37,7 @@ func TestSelfHostWasmComponent(t *testing.T) {
 	// Assembler = encoder modules + wat_component + a wrapping driver.
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -152,7 +152,7 @@ func TestSelfHostWasmComponentFull(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -296,7 +296,7 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 	// Component assembler: read a core WAT, emit_binary, component_full.
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -468,7 +468,7 @@ func TestSelfHostWasmComponentFullIO(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -565,7 +565,7 @@ func TestSelfHostWasmComponentStdout(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -709,7 +709,7 @@ func TestSelfHostWasmComponentFullIOFS(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -809,7 +809,7 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -1038,7 +1038,7 @@ func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -1144,7 +1144,7 @@ func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -1297,7 +1297,7 @@ func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -1405,7 +1405,7 @@ func TestSelfHostWasmComponentReadWriteFile(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -1543,7 +1543,7 @@ func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -1639,7 +1639,7 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -1770,7 +1770,7 @@ func TestSelfHostWasmComponentFullIOEnv(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -1867,7 +1867,7 @@ func TestSelfHostWasmComponentEnv(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -1998,7 +1998,7 @@ func TestSelfHostWasmComponentFullIOArgs(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -2095,7 +2095,7 @@ func TestSelfHostWasmComponentArgs(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -2217,7 +2217,7 @@ func TestSelfHostWasmComponentFullIOClock(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -2313,7 +2313,7 @@ func TestSelfHostWasmComponentClock(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -2437,7 +2437,7 @@ func TestSelfHostWasmComponentFullIOClockMono(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -2533,7 +2533,7 @@ func TestSelfHostWasmComponentClockMono(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -2649,7 +2649,7 @@ func TestSelfHostWasmComponentFullIOFSReadEnv(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -2749,7 +2749,7 @@ func TestSelfHostWasmComponentReadEnv(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -2873,7 +2873,7 @@ func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -2977,7 +2977,7 @@ func TestSelfHostWasmComponentReadWriteEnv(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -3101,7 +3101,7 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -3202,7 +3202,7 @@ func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -3322,7 +3322,7 @@ func TestSelfHostWasmComponentFullIOEprint(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -3424,7 +3424,7 @@ func TestSelfHostWasmComponentEprint(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -3557,7 +3557,7 @@ func TestSelfHostWasmComponentFullIOExit(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -3657,7 +3657,7 @@ func TestSelfHostWasmComponentExit(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -3787,7 +3787,7 @@ func TestSelfHostWasmComponentFullIOFSArgsRead(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -3884,7 +3884,7 @@ func TestSelfHostWasmComponentArgsRead(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -4013,7 +4013,7 @@ func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -4117,7 +4117,7 @@ func TestSelfHostWasmComponentArgsReadWrite(t *testing.T) {
 
 	var asmSrc strings.Builder
 	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		b, err := os.ReadFile(filepath.Join("../../compiler", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}

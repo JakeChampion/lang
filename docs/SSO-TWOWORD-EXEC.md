@@ -227,7 +227,7 @@ reader-writer) passes.
 This item was scoped at the Go arm64 and x86-64 code generators, which used
 their own LSB-tagged SSO scheme. They are deleted (#11557). A two-word flip
 on the native ISAs, if it is still wanted, is self-host work in
-`examples/self_host/asm_ir.fern` and `asm_arm64_ir.fern`.
+`compiler/asm_ir.fern` and `asm_arm64_ir.fern`.
 
 Once natives flip, the target-aware splits in the IR collapse
 back to ptrW-agnostic forms:

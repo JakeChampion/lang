@@ -1,5 +1,5 @@
 // Package x86tbl is the single source of truth for the vocabulary of the
-// self-host x86-64 assembler, examples/self_host/x86_native.fern (#7903).
+// self-host x86-64 assembler, compiler/x86_native.fern (#7903).
 //
 // Every assembler defect found so far has been the same shape: not an
 // encoding-logic bug, but a VOCABULARY one, where the assembler fails to reach

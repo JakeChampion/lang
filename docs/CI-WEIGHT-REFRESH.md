@@ -17,7 +17,7 @@ rounded up to whole seconds, with a minimum of one:
 - A test the tree no longer defines gets no row, whether a run measured it or
   the old table declared it; each drop is reported on stderr. The runs always
   predate the tree the table is written for, the file's lookup is exact, and
-  `tools/testname_gate.sh` fails on a name nothing answers to.
+  `scripts/testname_gate.sh` fails on a name nothing answers to.
   `FERN_WEIGHT_TREE` names the tree to scan (the repository by default).
 
 The command writes to stdout and does not edit the repository. The existing

@@ -5,7 +5,7 @@
 > SH-057 miscompile has its own issue [#2850](https://github.com/JakeChampion/lang/issues/2850).
 > This doc stays the detailed reference (file:line, repro, fix sketch).
 
-Audit of the self-hosted Fern compiler under `examples/self_host/` (189,543 lines
+Audit of the self-hosted Fern compiler under `compiler/` (189,543 lines
 of Fern across 94 files), compared where useful against the Go reference in
 `internal/`. The goal is a worklist we can resolve **one item at a time**: every
 finding has a stable ID (`SH-NNN`), a severity, the affected `file:line`, and a
@@ -164,7 +164,7 @@ These each touch many files; fixing the root removes dozens of individual
 findings. Ranked by leverage.
 
 ### T1 — Shared utility module
-- [~] **SH-020 — `examples/self_host/util.fern`** exists, holds **31
+- [~] **SH-020 — `compiler/util.fern`** exists, holds **31
   definitions**, and is imported by **61 of the 91 modules**. The `i32_to_string`
   strand is finished: one canonical copy at `util.fern:21`.
   Current duplication census across the tree: **5,126 function definitions**

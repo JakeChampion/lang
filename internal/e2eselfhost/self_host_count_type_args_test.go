@@ -6,7 +6,7 @@ import (
 )
 
 // TestSelfHostCountTypeArgs pins the checker's generic-arity counter
-// (examples/self_host/checker.fern's count_type_args — SH-021,
+// (compiler/checker.fern's count_type_args — SH-021,
 // docs/SELF-HOST-AUDIT.md T2). It returns how many top-level type args a
 // `Name[A, B, …]` annotation supplies to its head generic, or -1 when the
 // annotation is not a top-level generic instantiation. It now decodes via the

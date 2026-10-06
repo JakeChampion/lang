@@ -6,7 +6,7 @@ import (
 )
 
 // TestSelfHostTyFromRef pins the self-hosted asmcore type-name decode
-// (examples/self_host/asmcore.fern's ty_from_ref / ty_from_name — SH-021 slice 2,
+// (compiler/asmcore.fern's ty_from_ref / ty_from_name — SH-021 slice 2,
 // docs/SELF-HOST-AUDIT.md T2). ty_from_name now maps a type STRING to the coarse
 // asmcore Ty via ty_from_ref(parser.parse_type_ref(name)) — a structured tree
 // pattern-match — replacing the former hand-rolled byte scan.

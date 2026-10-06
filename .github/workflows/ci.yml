@@ -65,7 +65,7 @@ jobs:
           # each allowlist to the packages its lane is built from.
           #
           # test-fernsmith also skips a change that touches only the self-host
-          # compiler (examples/self_host, internal/e2eselfhost): its tests
+          # compiler (compiler, internal/e2eselfhost): its tests
           # never read those trees, and each of its jobs deletes both right
           # after checkout (.github/actions/drop-selfhost-sources) so that
           # stays true. A lane whose tests do read them keeps the doc-only
@@ -84,13 +84,13 @@ jobs:
               "test-e2e-other":        { "paths-ignore": ["docs/**", "*.md"] },
               "test-e2e-differential": { "paths-ignore": ["docs/**", "*.md"] },
               "test-e2e-selfhost":     { "paths-ignore": ["docs/**", "*.md"] },
-              "test-fernsmith":        { "paths-ignore": ["docs/**", "*.md", "examples/self_host/**", "internal/e2eselfhost/**"] },
+              "test-fernsmith":        { "paths-ignore": ["docs/**", "*.md", "compiler/**", "internal/e2eselfhost/**"] },
               "fuzz-diff":             { "paths-ignore": ["docs/**", "*.md"] },
               "examples":              { "paths-ignore": ["docs/**", "*.md"] },
               "perf":                  { "paths-ignore": ["docs/**", "*.md"] },
               "bootstrap": { "paths": [
                 "bootstrap/**",
-                "examples/self_host/**",
+                "compiler/**",
                 "internal/stdlib/**",
                 "coreutils/tr.fern",
                 "coreutils/lib/gnu.fern",
@@ -104,7 +104,10 @@ jobs:
                 "internal/**",
                 "cmd/fern/**",
                 "bootstrap/**",
+                "compiler/**",
                 "examples/**",
+                "tests/**",
+                "bench/**",
                 "coreutils/**",
                 ".github/workflows/macos.yml",
                 ".github/workflows/ci-suite.yml",
@@ -117,7 +120,7 @@ jobs:
               ] },
               "docs-build": { "paths": [
                 "cmd/fern-wasm/**",
-                "examples/self_host/**",
+                "compiler/**",
                 "cmd/ferndoc/**",
                 "web/**",
                 "site/**",
@@ -133,7 +136,7 @@ jobs:
               ] },
               "playground-e2e": { "paths": [
                 "cmd/fern-wasm/**",
-                "examples/self_host/**",
+                "compiler/**",
                 "web/**",
                 "internal/**",
                 "mise.toml",

@@ -28,7 +28,7 @@ x86-64, `FERN_SANITIZE=1` + `FERN_LEAKCHECK=1`, native x86-64 as the oracle.
 | program | before | after | typed held |
 |---|---|---|---|
 | `Option.map` and `Result.map`/`map_err` through unannotated bindings | 0 of 61 | 61 of 61, 5 instances | 0 B |
-| `examples/tests/result_combinators_test` | 0 of 195 | 195 of 195, 22 instances | — |
+| `tests/stdlib/result_combinators_test` | 0 of 195 | 195 of 195, 22 instances | — |
 
 Both answer what native answers, on all four targets.
 
@@ -51,7 +51,7 @@ second.
 
 ## What is still refused
 
-`examples/tests/option_combinators_test` stops one function short, at
+`tests/stdlib/option_combinators_test` stops one function short, at
 `s.and(Some(9))`. `Option.and` is declared `and[U](other: Option[U])`, so `U`
 is bound BY the argument rather than by the receiver: the parameter type is
 still a variable when the literal is produced, and a variant literal with no

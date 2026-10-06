@@ -3,7 +3,7 @@ package e2eselfhost
 import "testing"
 
 // TestSelfHostTypeRef exercises the self-hosted parser's structured type
-// reference (examples/self_host/parser.fern's TypeRef / parse_type_ref /
+// reference (compiler/parser.fern's TypeRef / parse_type_ref /
 // render_type_ref — the SH-021 foundation slice that unblocks #4394 lever 1,
 // replacing the dozen ad-hoc byte-scan type-string decoders with one structured
 // tree the consumers can pattern-match on).

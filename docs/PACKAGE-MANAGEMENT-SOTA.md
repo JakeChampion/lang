@@ -74,7 +74,7 @@ over a version index with a `fern.lock`** (`fern -resolve`;
 longer hypothetical — it is the shipped `internal/mvs`. That is the
 **native** compiler; the **self-hosted** compiler resolves every
 disk-resolvable dependency form and, since #6640, runs MVS itself
-(`examples/self_host/mvs.fern` + `fern -resolve`) — see
+(`compiler/mvs.fern` + `fern -resolve`) — see
 `PACKAGES.md ▸ Native vs self-hosted coverage` for the exact matrix. What
 remains unbuilt: a hosted registry (deliberately — the index file needs no
 service), and the self-host side of `-fetch` / `-vendor` / `-add` /

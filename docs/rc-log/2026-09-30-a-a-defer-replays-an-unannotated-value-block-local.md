@@ -29,6 +29,6 @@ statement list with a `util.NameIndex` lookup per use, linear in the list.
 
 ## Cost
 
-The self-host compiling `examples/self_host/fern.fern` on x86-64, two runs
+The self-host compiling `compiler/fern.fern` on x86-64, two runs
 each on this 4-core container: main 156.1 s and 160.8 s, this change 160.1 s
 and 157.5 s. The difference is within the noise.
