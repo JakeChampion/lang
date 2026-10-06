@@ -828,6 +828,9 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__bsd_sum") {
     return t_i32();
   }
+  if (argc == 2 && name == "__str_hash") {
+    return t_i32();
+  }
   if (argc == 2 && name == "__count_byte") {
     return t_i32();
   }
@@ -1040,6 +1043,9 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
     return ([t_array(t_u8()), t_i32(), t_array(t_u8())], true);
   }
   if (name == "__bsd_sum") {
+    return ([t_string(), t_i32()], true);
+  }
+  if (name == "__str_hash") {
     return ([t_string(), t_i32()], true);
   }
   if (name == "__count_byte") {
@@ -4739,6 +4745,8 @@ function builtin_sigs(): string[] {
     "chmod_at(string, i32, boolean): Result[void, IoError]",
     "chown_at(string, i32, i32, boolean): Result[void, IoError]",
     "chroot(string): Result[void, IoError]",
+    "clock_resolution(): i64",
+    "clock_set(i64, i64): Result[void, IoError]",
     "cpu_count(): i32",
     "create_dir(string, i32): Result[void, IoError]",
     "create_dir_all(string): Result[void, IoError]",
@@ -4806,6 +4814,7 @@ function builtin_sigs(): string[] {
     "remove_file(string): Result[void, IoError]",
     "rename(string, string): Result[void, IoError]",
     "rlimit_nofile(): i64",
+    "set_args(string[]): void",
     "set_file_times(string, i64, i64, i64, i64, i32): Result[void, IoError]",
     "set_priority(i32): Result[void, IoError]",
     "set_process_group(i32, i32): Result[void, IoError]",
@@ -16108,7 +16117,7 @@ function registered_intrinsics(): string[] {
     "__map_hash_seed", "__memchr", "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__pow_f64", "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sin_f64", "__sqrt_f64", "__store_i32", "__store_i64",
-    "__store_ptr", "__store_u8", "__str_bytes", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
+    "__store_ptr", "__store_u8", "__str_bytes", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
   ];
 }
 
@@ -18449,7 +18458,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 // from native's table and fails when the two drift.
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
-    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "environ", "getcwd", "getgroups",
+    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "random_bytes", "read_line", "set_priority",
     "setgid", "setuid",
     "signal_send", "set_process_group", "set_window_size",
@@ -20131,7 +20140,7 @@ function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
   let out: string[] = [];
   for name in [
     "__memchr", "__mismatch_bytes", "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_set_bytes",
-    "__bsd_sum", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
+    "__bsd_sum", "__str_hash", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
     "__ctz64", "__popcount64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns",
   ] {
     let declared: boolean = false;

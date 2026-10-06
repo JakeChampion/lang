@@ -1,7 +1,8 @@
 // Vendored subset of the wasi:clocks@0.2.0 wall-clock interface.
 // `wasi:filesystem/types` references its `datetime` record, and the
-// backend imports `now` for the wall-clock `now()` builtin (the
-// world-driven composer needs the function declared to wire it).
+// backend imports `now` for the wall-clock `now()` builtin and
+// `resolution` for `clock_resolution()` (the world-driven composer needs
+// each function declared to wire it).
 // Source: https://github.com/WebAssembly/wasi-clocks
 package wasi:clocks@0.2.0;
 
@@ -9,4 +10,6 @@ interface wall-clock {
     record datetime { seconds: u64, nanoseconds: u32 }
 
     now: func() -> datetime;
+
+    resolution: func() -> datetime;
 }

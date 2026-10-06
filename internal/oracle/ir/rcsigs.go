@@ -222,6 +222,9 @@ var rcBuiltinSigs = map[string]RcSig{
 	// Reads the rc word. Lowered inline rather than as a call, but
 	// classified so a shadowed spelling that survives is not opaque.
 	"__rc_get": one(0, RcInspect, false),
+	// (argv). The runtime keeps a unit of the array for later args()
+	// calls: the caller keeps its own, and the array gains one.
+	"set_args": one(0, RcRetain, false),
 }
 
 // rcInertBuiltins are the builtins that move no reference count on any
@@ -437,6 +440,9 @@ var rcInertBuiltins = map[string]bool{
 	// worlds, which have no scheduler knob, so they are classified
 	// here under the builtin names.
 	"priority": true, "set_priority": true,
+	// () → the wall clock's resolution, and (sec, nsec) → a Result[void]
+	// saying whether the clock was set. Scalars only, so nothing to move.
+	"clock_resolution": true, "clock_set": true,
 	"geteuid": true, "getegid": true, "hostname": true,
 	"getuid": true, "getgid": true, "__getpwuid_name": true,
 	// `getgroups` has no arguments either, and it is classified here
@@ -518,7 +524,7 @@ var rcInert = map[string]bool{
 	"__fern_environ":               true,
 	"__fern_arr_push_shared_bytes": true,
 	"__fern_arr_push_shared_count": true, "__fern_ascii_run": true,
-	"__fern_rmemchr": true, "__fern_count_byte": true, "__fern_scan_set": true, "__fern_count_runs": true, "__fern_bsd_sum": true,
+	"__fern_rmemchr": true, "__fern_count_byte": true, "__fern_scan_set": true, "__fern_count_runs": true, "__fern_bsd_sum": true, "__fern_str_hash": true,
 	"__fern_scan_set_bytes": true, "__fern_count_runs_bytes": true,
 	"__fern_sum_bytes": true, "__fern_crc32_cksum": true, "__fern_crc32_cksum_array": true,
 	// Reads its f64[] and allocates the scaled copy; moves no count on the

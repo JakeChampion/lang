@@ -1437,14 +1437,21 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// args(): string[] — returns the program's command-line argv as a
 	// length-prefixed string array. The first element is conventionally
 	// the program / module path (matching argv[0] in C and os.Args[0]
-	// in Go). Building the array is one-shot and cached: the first
-	// `args()` call materialises it from libc / WASI; subsequent calls
-	// hand back the same pointer. The bytes are assumed to be UTF-8, not
-	// validated — the `read_dir` position (docs/STRINGS-SOTA.md, D9 and
-	// D10): there is no error arm to refuse into.
+	// in Go). Each call hands back an array of the caller's own. The
+	// bytes are assumed to be UTF-8, not validated — the `read_dir`
+	// position (docs/STRINGS-SOTA.md, D9 and D10): there is no error arm
+	// to refuse into.
 	c.info.FuncSigs["args"] = &ast.FuncType{
 		Params: []ast.Type{},
 		Result: ast.ArrayType{Elem: ast.StringType{}},
+	}
+	// set_args(argv): void — replaces what every later `args()` call
+	// reports, for the rest of the process. A multicall binary that
+	// dispatches on argv[1] shifts argv with it, so the utility it runs
+	// sees its own name as argv[0] (#9694).
+	c.info.FuncSigs["set_args"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.StringType{}}},
+		Result: ast.VoidType{},
 	}
 	// environ(): string[] — the whole environment in the order the
 	// process received it, each entry the raw `NAME=VALUE` bytes.
@@ -1818,6 +1825,17 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// `sum` and continued over s: per byte, rotate the 16 bits right by one
 	// and add the byte, modulo 2^16.
 	c.info.FuncSigs["__bsd_sum"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __str_hash(s, seed) → i32: the seeded hash of s's bytes, a xor and a
+	// multiply per 8-byte little-endian word (compiler/ir.fern's str_hash has
+	// the definition). Word-at-a-time is the point: the compiler's name
+	// index hashes every name it looks up.
+	c.info.FuncSigs["__str_hash"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.StringType{},
 			ast.NumberType{Width: 32, Signed: true},
@@ -2539,6 +2557,32 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	c.info.FuncSigs["now_ns"] = &ast.FuncType{
 		Params: []ast.Type{},
 		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// clock_resolution(): i64 — the granularity of the wall clock
+	// `now_ns` reads, in nanoseconds: clock_getres(CLOCK_REALTIME) on
+	// Linux, preview-1 `clock_res_get(realtime)` on wasm, and the
+	// microsecond tick of the gettimeofday clock on Darwin, which has
+	// no clock_getres syscall. One i64 of nanoseconds like every other
+	// clock builtin. No Result: with a fixed clock id and a buffer the
+	// runtime owns, the call cannot fail.
+	c.info.FuncSigs["clock_resolution"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// clock_set(sec, nsec): Result[void, IoError] — set the system's
+	// wall clock to `sec` seconds plus `nsec` nanoseconds after the
+	// epoch: clock_settime(CLOCK_REALTIME) on Linux, settimeofday on
+	// Darwin (to the microsecond). A Result because the usual answer is
+	// a refusal: without the privilege the kernel says EPERM, which is
+	// what `date -s` reports, and a wasm host, which has no call that
+	// sets its clock, says Unsupported. An `nsec` outside 0..999999999
+	// is EINVAL.
+	c.info.FuncSigs["clock_set"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
 	}
 	// read_line(): Option[string] — read one line from stdin
 	// (including the trailing '\n' if present), returning
@@ -11486,7 +11530,7 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 // clock). verifyFipAllocs (E068) stays the backstop for what they emit.
 var fipNonAllocBuiltins = map[string]bool{
 	"__memchr": true, "__mismatch_bytes": true, "__count_byte_bytes": true, "__sum_bytes_array": true, "__bsd_sum_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
-	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__count_runs": true, "__count_runs_bytes": true,
+	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__str_hash": true, "__count_runs": true, "__count_runs_bytes": true,
 	"__crc32_cksum": true, "__crc32_cksum_array": true,
 	"__clz32": true, "__ctz32": true, "__popcount32": true,
 	"__clz64": true, "__ctz64": true, "__popcount64": true,

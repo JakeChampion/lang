@@ -745,6 +745,54 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.mark_heap();
     return s;
   }
+  if (o.kind_tag == 390) {  // str_hash
+    // operand stack [box, seed] (seed on top) -> ir.op_str_hash's hash of
+    // the string: a xor and a multiply per 8-byte word, the last word
+    // anchored at the end of the string, a string under 8 bytes assembled
+    // into one zero-padded word a byte at a time.
+    //
+    // x0 the data, x3 the length, x2 the hash, x4 the prime, x5 the cursor,
+    // x6 the last word's offset, x1 the seed and then the short word, x7 a
+    // loaded word.
+    let hlo: asmcore.LabelOut = asmcore.fresh_label(s);
+    let h_loop: string = hlo.name;
+    let hlo2: asmcore.LabelOut = asmcore.fresh_label(hlo.state);
+    let h_tail: string = hlo2.name;
+    let hlo3: asmcore.LabelOut = asmcore.fresh_label(hlo2.state);
+    let h_short: string = hlo3.name;
+    let hlo4: asmcore.LabelOut = asmcore.fresh_label(hlo3.state);
+    let h_byte: string = hlo4.name;
+    let hlo5: asmcore.LabelOut = asmcore.fresh_label(hlo4.state);
+    let h_fin: string = hlo5.name;
+    s = hlo5.state;
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    s = s.write("    sxtw x1, w1\n");
+    s = s.write("    movz x2, #0x2325\n    movk x2, #0x8422, lsl #16\n    movk x2, #0x9ce4, lsl #32\n    movk x2, #0xcbf2, lsl #48\n");
+    s = s.write("    eor x2, x2, x1\n    eor x2, x2, x3\n");
+    s = s.write("    movz x4, #0x01b3\n    movk x4, #0x100, lsl #32\n");
+    s = s.write("    mov x5, #0\n");
+    s = s.write("    cmp x3, #8\n    b.lo " + h_short + "\n");
+    s = s.write("    sub x6, x3, #8\n");
+    s = s.write(h_loop + ":\n");
+    s = s.write("    cmp x5, x6\n    b.hi " + h_tail + "\n");
+    s = s.write("    ldr x7, [x0, x5]\n    eor x2, x2, x7\n    mul x2, x2, x4\n");
+    s = s.write("    add x5, x5, #8\n    b " + h_loop + "\n");
+    s = s.write(h_tail + ":\n");
+    s = s.write("    cmp x5, x3\n    b.eq " + h_fin + "\n");
+    s = s.write("    ldr x7, [x0, x6]\n    eor x2, x2, x7\n    mul x2, x2, x4\n    b " + h_fin + "\n");
+    s = s.write(h_short + ":\n");
+    s = s.write("    cbz x3, " + h_fin + "\n");
+    s = s.write("    mov x1, #0\n    mov x5, x3\n");
+    s = s.write(h_byte + ":\n");
+    s = s.write("    sub x5, x5, #1\n    lsl x1, x1, #8\n    ldrb w7, [x0, x5]\n    orr x1, x1, x7\n");
+    s = s.write("    cbnz x5, " + h_byte + "\n");
+    s = s.write("    eor x2, x2, x1\n    mul x2, x2, x4\n");
+    s = s.write(h_fin + ":\n");
+    s = s.write("    lsr x7, x2, #32\n    eor x2, x2, x7\n");
+    s = s.write("    sxtw x2, w2\n    str x2, [sp, #-16]!\n");
+    return s;
+  }
   if (o.kind_tag == 329 || o.kind_tag == 369) {  // bsd_sum / bsd_sum_bytes
     // operand stack [box, sum] (sum on top) -> the BSD checksum continued
     // over the string: per byte a 16-bit rotate right by one and an add.
@@ -4079,6 +4127,17 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    bl __fn___fern_set_priority\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("set_priority");
+  } else if (o.kind_tag == 388) {  // clock_set
+    // [sec][nsec] (nsec on top) -> Result[void, IoError], re-pushed with
+    // param[0] (sec) on top the way signal_send's pair is.
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_clock_set\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+    s = s.need("heap");
+    s = s.need("clock_set");
+  } else if (o.kind_tag == 389) {  // clock_resolution
+    // no args -> the clock's tick in nanoseconds in x0. Nothing is
+    // boxed, so no heap need.
+    s = s.write("    bl __fn___fern_clock_resolution\n    str x0, [sp, #-16]!\n");
+    s = s.need("clock_resolution");
   } else if (o.kind_tag == 272) {  // rlimit_nofile
     // no args -> __fern_rlimit_nofile() -> the soft RLIMIT_NOFILE as a
     // full-width i64 in x0.
@@ -5225,6 +5284,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_getpwuid_name") {
     s = s.need("pwname");
   }
+  if (name == "__fern_set_args") {
+    s = s.need("set_args");
+  }
   // The VIEW-aware string[] element walk (#6544), gated the same way:
   // a binary that never reclaims a builtin string[] must not carry a
   // body whose inner `bl __fn___fern_str_view_free` the negative
@@ -5950,6 +6012,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     "signal_disposition", "access",
     "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
     "fd_stat", "raw_scratch", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
+    "clock_resolution", "clock_set",
   ])) {
     s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size(ctgt, s.has_need("statfs")) + "\n    .section .text\n");
   }
@@ -6396,6 +6459,19 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_lc_report:\n");
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    mov x29, sp\n");
+  if (s.has_need("set_args")) {
+    // The array set_args stored is the runtime's own unit, not a leak:
+    // give it back before counting.
+    s = s.write("    adrp x9, __fern_args_set\n");
+    s = s.write("    add x9, x9, :lo12:__fern_args_set\n");
+    s = s.write("    ldr x0, [x9]\n");
+    s = s.write("    cbz x0, .Llc_args_done\n");
+    s = s.write("    str xzr, [x9]\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_str_arr_free\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write(".Llc_args_done:\n");
+  }
   s = s.write("    adrp x1, .Llc_a\n");
   s = s.write("    add x1, x1, :lo12:.Llc_a\n");
   s = s.write("    mov x2, #18\n");
@@ -8395,6 +8471,34 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     }
     s = s.write("    ret\n");
   }
+  // __fern_set_args(arr@[sp]) -> 0: the arm64 sibling of the x86-64 body.
+  // __fern_args_set holds one retained unit of the array, and the one it
+  // replaces is released through the string[] walk.
+  if (s.has_need("set_args")) {
+    s = s.write("    .bss\n");
+    s = s.write("    .align 3\n");
+    s = s.write("__fern_args_set: .quad 0\n");
+    s = s.write("    .text\n");
+    s = s.write("__fn___fern_set_args:\n");
+    s = s.write("    ldr x0, [sp]\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_rc_inc\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    adrp x9, __fern_args_set\n");
+    s = s.write("    add x9, x9, :lo12:__fern_args_set\n");
+    s = s.write("    ldr x1, [x9]\n");
+    s = s.write("    str x0, [x9]\n");
+    s = s.write("    cbz x1, .Lsetargs_ret\n");
+    s = s.write("    str x1, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_str_arr_free\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write(".Lsetargs_ret:\n");
+    s = s.write("    mov x0, #0\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+  }
   // __fern_str_grow(a@[sp,#16], b@[sp]) -> 1 once b is appended to a in
   // place, else 0 with nothing written: the arm64 sibling of the x86-64
   // body, with the same fused, rc-1 and same-class tests. The leak census sees
@@ -10259,6 +10363,19 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write("__fern_args:\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
+    if (s.has_need("set_args")) {
+      // Once set_args has stored an array, every call answers a retain of it.
+      s = s.write("    adrp x9, __fern_args_set\n");
+      s = s.write("    add x9, x9, :lo12:__fern_args_set\n");
+      s = s.write("    ldr x0, [x9]\n");
+      s = s.write("    cbz x0, .Largs_argv\n");
+      s = s.write("    str x0, [sp, #-16]!\n");
+      s = s.write("    bl __fn___fern_rc_inc\n");
+      s = s.write("    add sp, sp, #16\n");
+      s = s.write("    ldp x29, x30, [sp], #16\n");
+      s = s.write("    ret\n");
+      s = s.write(".Largs_argv:\n");
+    }
     s = s.write("    stp x19, x20, [sp, #-16]!\n");
     s = s.write("    stp x21, x22, [sp, #-16]!\n");
     s = s.write("    adrp x19, __fern_argc\n");
@@ -10689,6 +10806,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("set_priority")) {
       fs_src = fs_src + " " + asmcore.rt_src_set_priority(tgt);
     }
+    if (s.has_need("clock_set")) {
+      fs_src = fs_src + " " + asmcore.rt_src_clock_set(tgt);
+    }
     if (s.has_need("truncate")) {
       fs_src = fs_src + " " + asmcore.rt_src_truncate(tgt);
     }
@@ -10721,9 +10841,6 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     if (s.has_need("umask")) {
       fs_src = fs_src + " " + asmcore.rt_src_umask(tgt);
-    }
-    if (s.has_need("priority")) {
-      fs_src = fs_src + " " + asmcore.rt_src_priority(tgt);
     }
     if (s.has_need("temp_dir")) {
       fs_src = fs_src + " " + asmcore.rt_src_temp_dir(tgt);
@@ -10908,6 +11025,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   if (s.has_need("rlimit_nofile")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile(tgt), s);
+  }
+  if (s.has_need("clock_resolution")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock_resolution(tgt), s);
+  }
+  if (s.has_need("priority")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_priority(tgt), s);
   }
   if (s.has_need("signal_mask")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_mask(tgt), s);
@@ -12089,7 +12212,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
-    "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority",
+    "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority", "clock_set",
   ]);
 }
 

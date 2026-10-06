@@ -6361,6 +6361,9 @@ function value_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowere
   if (ins.str == "args") {
     return Lowered { found: true, r: emit(r, ir.op_args()) };
   }
+  if (ins.str == "set_args") {
+    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_set_args", 1)) };
+  }
   if (ins.str == "putchar") {
     return Lowered { found: true, r: emit(r, ir.op_putchar()) };
   }
@@ -6404,6 +6407,9 @@ function host_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered
   }
   if (ins.str == "now_ns") {
     return Lowered { found: true, r: emit(r, ir.op_now_ns()) };
+  }
+  if (ins.str == "clock_resolution") {
+    return Lowered { found: true, r: emit(r, ir.op_clock_resolution()) };
   }
   if (ins.str == "sleep_ms") {
     return Lowered { found: true, r: emit(r, ir.op_sleep_ms()) };
@@ -6689,6 +6695,9 @@ function os_floor_process_site(own r: irtables.LowerResult, ins: ssa.SInst): Low
   }
   if (ins.str == "set_priority") {
     return Lowered { found: true, r: emit(r, ir.op_set_priority()) };
+  }
+  if (ins.str == "clock_set") {
+    return Lowered { found: true, r: emit(r, ir.op_clock_set()) };
   }
   if (ins.str == "signal_ignore") {
     return Lowered { found: true, r: emit(r, ir.op_signal_ignore()) };
@@ -7070,6 +7079,9 @@ function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   }
   if (ins.str == "__bsd_sum") {
     return Lowered { found: true, r: emit(r, ir.op_bsd_sum()) };
+  }
+  if (ins.str == "__str_hash") {
+    return Lowered { found: true, r: emit(r, ir.op_str_hash()) };
   }
   if (ins.str == "__count_byte") {
     return Lowered { found: true, r: emit(r, ir.op_count_byte()) };

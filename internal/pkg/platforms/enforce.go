@@ -108,9 +108,15 @@ var gatedBuiltins = map[string]string{
 	"now_unix_ms":         "now",
 	"now_ns":              "now",
 	"monotonic_ns":        "now",
+	"clock_resolution":    "now",
 	"sleep_ms":            "now",
 	"sleep_ns":            "now",
 	"wasm_timer_pollable": "now",
+	// Setting the wall clock needs a host with one. The wasm worlds have
+	// a clock and no call that sets it, which is the target having the
+	// thing and not the operation: their clock_set answers Unsupported at
+	// the call, through its Result, rather than being refused here.
+	"clock_set": "now",
 
 	// `timer_fd` is a clock wakeup too, but it is gated on the FD half
 	// rather than on `now`: it hands back a file descriptor to poll,
@@ -127,6 +133,8 @@ var gatedBuiltins = map[string]string{
 	"env":     "env",
 	"environ": "env",
 	"args":    "args",
+	// Replaces what args() reports, so it needs the argv args() reads.
+	"set_args": "args",
 	// Deploy-time configuration: the environment where there is one (the
 	// checker renames the call to env there), wasi:config/store on the
 	// proxy world.

@@ -1068,6 +1068,12 @@ function sysno_x86_64(name: string): string {
   if (name == "clock_gettime") {
     return "228";
   }
+  if (name == "clock_settime") {
+    return "227";
+  }
+  if (name == "clock_getres") {
+    return "229";
+  }
   if (name == "getdents") {
     return "217";
   }
@@ -1355,6 +1361,10 @@ function sysno_arm64_darwin(name: string): string {
   if (name == "gettimeofday") {
     return "116";
   }
+  // The setter is settimeofday for the same reason, with the same timeval.
+  if (name == "settimeofday") {
+    return "122";
+  }
   // getdirentries64, not getdents64. Same first three arguments, plus a
   // 4th out-param the kernel updates with the new directory position —
   // see rt_src_read_dir for why the shared body issues __syscall4 on
@@ -1633,6 +1643,12 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "clock_gettime") {
     return "113";
+  }
+  if (name == "clock_settime") {
+    return "112";
+  }
+  if (name == "clock_getres") {
+    return "114";
   }
   if (name == "getdents") {
     return "61";
@@ -4613,6 +4629,35 @@ pub function rt_src_clock(which: string, t: string): string {
   return "function __fern_now_ns(): i64 { " + clock_read(t, "0") + " return sec * (1000000000 as i64) + sub * (" + subsec_ns(t) + " as i64); }";
 }
 
+// rt_src_clock_resolution backs `clock_resolution()` (syscall-leaf): the tick
+// of the clock rt_src_clock's now_ns reads, in nanoseconds. Linux asks
+// clock_getres(CLOCK_REALTIME), which cannot fail with a fixed clock id and a
+// buffer we own. XNU has no clock_getres syscall, and its wall clock is the
+// microsecond gettimeofday clock_read uses, so the answer there is that tick —
+// the same 1000 ns libSystem's clock_getres gives for CLOCK_REALTIME.
+pub function rt_src_clock_resolution(t: string): string {
+  if (t == "arm64-darwin") {
+    return "function __fern_clock_resolution(): i64 { return " + subsec_ns(t) + " as i64; }";
+  }
+  return "function __fern_clock_resolution(): i64 { let ts: usize = __raw_scratch(16); __syscall3(" + sysno(t, "clock_getres") + ", 0, ts as i64, 0); return __load_i64(ts) * (1000000000 as i64) + __load_i64(__raw_addr(ts, 8)); }";
+}
+
+// rt_src_clock_set backs `clock_set(sec, nsec)` (syscall-leaf) →
+// Result[void, IoError]: clock_settime(CLOCK_REALTIME) with a timespec built
+// in the static scratch buffer, the errno classified by the shared
+// __fern_io_error. XNU has no clock_settime syscall; settimeofday takes the
+// timeval clock_read describes, so the nanoseconds drop to microseconds — and
+// since XNU checks the privilege before the value, a bad `nsec` is refused
+// here first to answer EINVAL as Linux does.
+pub function rt_src_clock_set(t: string): string {
+  let head: string = "function __fern_clock_set(sec: i64, nsec: i64): Result[void, IoError] { ";
+  let tail: string = " if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+  if (t == "arm64-darwin") {
+    return head + "if (nsec < (0 as i64) || nsec >= (1000000000 as i64)) { return Err(__fern_io_error(22, \"\")); } let tv: usize = __raw_scratch(16); __store_i64(tv, sec); __store_i64(__raw_addr(tv, 8), nsec / (1000 as i64)); let rc: i32 = __syscall3(" + sysno(t, "settimeofday") + ", tv as i64, 0, 0) as i32;" + tail;
+  }
+  return head + "let ts: usize = __raw_scratch(16); __store_i64(ts, sec); __store_i64(__raw_addr(ts, 8), nsec); let rc: i32 = __syscall3(" + sysno(t, "clock_settime") + ", 0, ts as i64, 0) as i32;" + tail;
+}
+
 // rt_src_stat backs `stat(path)` (#2649) — the first syscall leaf that returned
 // a user-typed Result[FileStat, IoError]. NUL-terminate the path, describe it
 // into the fixed static scratch buffer, read the record back with __load_i32 /
@@ -7016,6 +7061,8 @@ function builtin_i32_names(): string[] {
     // as isatty's; rlimit_nofile() -> i64, in one like the clocks'.
     "process_alive",
     "rlimit_nofile",
+    // clock_resolution() -> i64 nanoseconds, a clock reading's slot.
+    "clock_resolution",
     // priority() -> this process's nice value, -20..19. An integer
     // slot like the ids'; NEGATIVE, which no other member of this
     // list is, and the slot carries that without truncation.
@@ -7163,6 +7210,8 @@ function builtin_i32_names(): string[] {
     "__count_runs", "__count_runs_bytes",
     // __bsd_sum(s, sum): the BSD checksum continued over s.
     "__bsd_sum",
+    // __str_hash(s, seed): the seeded word-at-a-time hash of s.
+    "__str_hash",
     // __rmemchr(s, byte, from): the index of the LAST `byte` at
     // or before `from`, or -1 (ATLAS-PLATFORM-PLAN §3.3,
     // memchr's nominated sibling). Same i32 shape as __memchr's;
@@ -7327,6 +7376,9 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     return ty_option(ty_unknown());
   }
   if (id.name == "set_priority") {
+    return ty_option(ty_unknown());
+  }
+  if (id.name == "clock_set") {
     return ty_option(ty_unknown());
   }
   if (id.name == "truncate") {
@@ -8104,9 +8156,10 @@ pub function runtime_need_deps(name: string): string[] {
     || name == "str_case" || name == "str_repeat"
     || name == "str_replace"
     || name == "arrarr_free" || name == "strarrarr_free" || name == "optarrarr_free"
-    || name == "poll" || name == "task") {
+    || name == "poll" || name == "task" || name == "set_args") {
     // poll's __fern_poll allocates the transient pollfd[] via __fern_alloc;
-    // the task runtime its records, table and save areas.
+    // the task runtime its records, table and save areas. set_args retains
+    // and releases through the rc helpers the heap bundle carries.
     return heap;
   }
   if (name == "str_trim") {
@@ -10137,6 +10190,8 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_set_process_group", "__fn___fern_rlimit_nofile",
     // and how it competes for the CPU.
     "__fn___fern_priority", "__fn___fern_set_priority",
+    // the wall clock's resolution, and setting it.
+    "__fn___fern_clock_resolution", "__fn___fern_clock_set",
     // random_bytes and random_i32 are Fern on BOTH register backends now
     // (#2649), so only the stack-ABI symbols exist; the register-ABI
     // __fern_random_bytes / __fern_random_i32 are gone.
@@ -10170,6 +10225,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_map_snapshot_col", "__fern_map_snapshot_col_str",
     "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique", "__fn___fern_arr_inc_elems", "__fn___fern_arr_own_elems",
     "__fn___fern_str_own", "__fn___fern_str_grow", "__fn___fern_str_grow_range", "__fn___fern_getpwuid_name",
+    "__fn___fern_set_args",
     "__fn___fern_alloc_reuse",
     "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
     "__fn___fern_i64_to_string", "__fn___fern_u64_to_string",

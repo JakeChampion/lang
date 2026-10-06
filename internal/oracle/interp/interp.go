@@ -692,6 +692,7 @@ func New() *Interp {
 	i.Builtins["__method_Array_len"] = &Builtin{Fn: builtinLen}
 	i.Builtins["__method_slice_len"] = &Builtin{Fn: builtinLen}
 	i.Builtins["args"] = &Builtin{Fn: builtinArgs}
+	i.Builtins["set_args"] = &Builtin{Fn: builtinSetArgs}
 	i.Builtins["env"] = &Builtin{Fn: builtinEnv}
 	i.Builtins["environ"] = &Builtin{Fn: builtinEnviron}
 	i.Builtins["read_file"] = &Builtin{Fn: builtinReadFile}
@@ -1259,6 +1260,22 @@ func New() *Interp {
 		}
 		return Number(sum), nil
 	}}
+	// __str_hash(s, seed): the seeded word-at-a-time hash of s
+	// (compiler/ir.fern's str_hash has the definition).
+	i.Builtins["__str_hash"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("__str_hash: expected 2 args, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__str_hash: expected a string, got %T", args[0])
+		}
+		seed, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__str_hash: expected an integer seed, got %T", args[1])
+		}
+		return Number(int32(StrHash([]byte(string(s)), int32(int64(seed))))), nil
+	}}
 	// __count_runs(s, inside, set): how many runs of set members begin in s;
 	// `inside` nonzero means the byte before s was a member.
 	i.Builtins["__count_runs"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
@@ -1560,6 +1577,8 @@ func New() *Interp {
 	i.Builtins["now_unix_ms"] = &Builtin{Fn: builtinNowUnixMS}
 	i.Builtins["now_ns"] = &Builtin{Fn: builtinNowNS}
 	i.Builtins["monotonic_ns"] = &Builtin{Fn: builtinMonotonicNS}
+	i.Builtins["clock_resolution"] = &Builtin{Fn: builtinClockResolution}
+	i.Builtins["clock_set"] = &Builtin{Fn: builtinClockSet}
 	i.Builtins["sleep_ms"] = &Builtin{Fn: builtinSleepMS}
 	i.Builtins["sleep_ns"] = &Builtin{Fn: builtinSleepNS}
 	i.Builtins["proc_fork"] = &Builtin{Fn: builtinProcFork}
@@ -3404,6 +3423,34 @@ func builtinMonotonicNS(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("monotonic_ns: expected 0 args, got %d", len(args))
 	}
 	return Number(time.Now().UnixNano()), nil
+}
+
+// builtinClockResolution is the granularity of the clock now_ns reads, in
+// nanoseconds — what the compiled backends ask the kernel for.
+func builtinClockResolution(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("clock_resolution: expected 0 args, got %d", len(args))
+	}
+	return Number(hostClockResolution()), nil
+}
+
+// builtinClockSet sets the system's wall clock. Unlike setuid, which the
+// interpreter refuses, this changes nothing about the compiler's own
+// process: it is the same system-wide change a compiled program makes, at
+// the privilege `fern` runs with.
+func builtinClockSet(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("clock_set: expected 2 args, got %d", len(args))
+	}
+	sec, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("clock_set: expected number seconds, got %T", args[0])
+	}
+	nsec, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("clock_set: expected number nanoseconds, got %T", args[1])
+	}
+	return ioResult("", hostClockSet(int64(sec), int64(nsec))), nil
 }
 
 // builtinSleepMS pauses for the given duration (milliseconds).
@@ -5727,6 +5774,27 @@ func builtinArgs(i *Interp, args []Value) (Value, error) {
 		out.E[k] = String(a)
 	}
 	return out, nil
+}
+
+// builtinSetArgs replaces the argv every later args() call reports.
+func builtinSetArgs(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("set_args: expected 1 arg, got %d", len(args))
+	}
+	arr, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("set_args: expected string[] arg, got %T", args[0])
+	}
+	argv := make([]string, len(arr.E))
+	for k, e := range arr.E {
+		s, ok := e.(String)
+		if !ok {
+			return nil, fmt.Errorf("set_args: element %d is %T, not a string", k, e)
+		}
+		argv[k] = string(s)
+	}
+	i.Args = argv
+	return Void{}, nil
 }
 
 func builtinLen(_ *Interp, args []Value) (Value, error) {
@@ -9117,4 +9185,35 @@ func scanSet(name string, b []byte, fromArg, setArg Value) (Value, error) {
 		}
 	}
 	return Number(len(b)), nil
+}
+
+// StrHash is `__str_hash(s, seed)`: FNV-1a's 64-bit basis xor the
+// sign-extended seed xor the length, then per 8-byte little-endian word of s
+// a xor and a multiply by FNV's 64-bit prime; the final partial word is the
+// last 8 bytes, overlapping the word before, or under 8 bytes the bytes
+// zero-padded to a word; the high half folds into the low and the low 32
+// bits are the answer.
+func StrHash(s []byte, seed int32) uint32 {
+	const prime = 1099511628211
+	h := uint64(0xcbf29ce484222325) ^ uint64(int64(seed)) ^ uint64(len(s))
+	word := func(b []byte) uint64 {
+		var w uint64
+		for k := len(b) - 1; k >= 0; k-- {
+			w = w<<8 | uint64(b[k])
+		}
+		return w
+	}
+	i := 0
+	for ; i+8 <= len(s); i += 8 {
+		h = (h ^ word(s[i:i+8])) * prime
+	}
+	if i < len(s) {
+		if len(s) >= 8 {
+			h = (h ^ word(s[len(s)-8:])) * prime
+		} else {
+			h = (h ^ word(s)) * prime
+		}
+	}
+	h ^= h >> 32
+	return uint32(h)
 }

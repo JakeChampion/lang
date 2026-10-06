@@ -7469,6 +7469,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "setuid", params: [t_i64()], modes: [v], result: done },
     ssasem.Contract { name: "setgid", params: [t_i64()], modes: [v], result: done },
     ssasem.Contract { name: "set_priority", params: [t_i32()], modes: [v], result: done },
+    ssasem.Contract { name: "clock_set", params: [t_i64(), t_i64()], modes: [v, v], result: done },
   ];
 }
 
@@ -7802,6 +7803,7 @@ function byte_scan_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__scan_set", params: [t_string(), t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [lent, value, lent], result: t_i32() },
     ssasem.Contract { name: "__scan_set_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [lent, value, lent], result: t_i32() },
     ssasem.Contract { name: "__bsd_sum", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
+    ssasem.Contract { name: "__str_hash", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
     ssasem.Contract { name: "__count_runs", params: [t_string(), t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [lent, value, lent], result: t_i32() },
     ssasem.Contract { name: "__count_runs_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [lent, value, lent], result: t_i32() },
     ssasem.Contract { name: "__count_byte", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
@@ -7892,19 +7894,24 @@ function outcome_contracts(): ssasem.Contract[] {
 }
 
 // The builtins whose result owns nothing: the process arguments and the
-// random buffer are fresh arrays of this function's own, the byte write and
+// random buffer are arrays of this function's own (the arguments a retain of
+// the array `set_args` stored, once one has), the byte write and
 // the two bit reinterprets of the single-precision float are values, the
-// three clocks read a host counter, and the two sleeps hand it one. None of
-// them is handed a reference, so none of them borrows.
+// three clocks read a host counter, and the two sleeps hand it one. Only
+// `set_args` is handed a reference: it borrows the array, and the runtime
+// retains the unit it keeps for later `args()` calls.
 function value_contracts(): ssasem.Contract[] {
   let value: i32[] = [ssaunits.value_mode()];
+  let strs: typeinfo.Type = typeinfo.TypeArray { elem: t_string(), view: false };
   return [
-    ssasem.Contract { name: "args", params: [], modes: [], result: typeinfo.TypeArray { elem: t_string(), view: false } },
+    ssasem.Contract { name: "args", params: [], modes: [], result: strs },
+    ssasem.Contract { name: "set_args", params: [strs], modes: [ssaunits.borrow_mode()], result: t_void() },
     ssasem.Contract { name: "random_bytes", params: [t_i32()], modes: value, result: typeinfo.TypeArray { elem: t_u8(), view: false } },
     ssasem.Contract { name: "random_i32", params: [], modes: [], result: t_i32() },
     ssasem.Contract { name: "now_unix_ms", params: [], modes: [], result: t_i64() },
     ssasem.Contract { name: "now_ns", params: [], modes: [], result: t_i64() },
     ssasem.Contract { name: "monotonic_ns", params: [], modes: [], result: t_i64() },
+    ssasem.Contract { name: "clock_resolution", params: [], modes: [], result: t_i64() },
     ssasem.Contract { name: "sleep_ms", params: [t_i64()], modes: value, result: t_void() },
     ssasem.Contract { name: "sleep_ns", params: [t_i64()], modes: value, result: t_void() },
     ssasem.Contract { name: "putchar", params: [t_i32()], modes: value, result: t_void() },

@@ -300,7 +300,7 @@ pub function need_ops(): string[] {
   return [
     "args", "arr_reserve", "arr_push", "arr_push_f64", "arr_push_i64", "arr_push_owned", "arr_push_owned_i64",
     "arr_push_owned_f64", "env", "environ", "eprint_str", "exit", "fcos", "fexp", "flog",
-    "fpow", "fsin", "monotonic_ns", "now_ns", "now_unix_ms", "poll", "print_str", "putchar",
+    "fpow", "fsin", "monotonic_ns", "now_ns", "now_unix_ms", "clock_resolution", "clock_set", "poll", "print_str", "putchar",
     "random_bytes", "read_chunk", "read_chunk_bytes", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache",
     "fd_dup_onto", "reader_seek", "reader_splice", "fd_flags", "writer_truncate", "read_dir",
     "read_dir_all", "read_file", "read_file_bytes", "read_line",
@@ -348,6 +348,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   }
   if (module_emits_op_cached(cache, "open_reader_with") || module_emits_op_cached(cache, "open_writer_with")) {
     out = out.append("open_with");
+  }
+  if (module_calls_direct(cache, "__fern_set_args")) {
+    out = out.append("@calls_set_args");
   }
   // The allocation count (#9596) puts a global and a tick into the
   // allocator, so the module has to declare it the way it declares any
@@ -501,6 +504,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   }
   if (module_uses_bsd_sum(cache)) {
     out = out.append("@uses_bsd_sum");
+  }
+  if (module_uses_str_hash(cache)) {
+    out = out.append("@uses_str_hash");
   }
   if (module_uses_scale_f64(cache)) {
     out = out.append("@uses_scale_f64");
@@ -934,6 +940,15 @@ pub function module_uses_scan_set(cache: irtables.LowerResult[]): boolean {
     return o.kind_tag == 324;
   }
   return any_op(cache, is_scan_set);
+}
+
+// module_uses_str_hash gates $__fern_str_hash, the seeded string hash. Same
+// shape as module_uses_memchr above.
+pub function module_uses_str_hash(cache: irtables.LowerResult[]): boolean {
+  function is_str_hash(o: ir.Op): boolean {  // str_hash
+    return o.kind_tag == 390;
+  }
+  return any_op(cache, is_str_hash);
 }
 
 // module_uses_bsd_sum gates $__fern_bsd_sum, the BSD checksum. Same shape as
@@ -2314,6 +2329,11 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
       i = i + 1;
       continue;
     }
+    // clock_set's body answers Unsupported and imports nothing.
+    if (n == "clock_set") {
+      i = i + 1;
+      continue;
+    }
     if (io && (n == "print_str" || n == "eprint_str" || n == "putchar"
       || n == "exit")) {
       i = i + 1;
@@ -2328,7 +2348,7 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
     // The preview2-backed builtins: their helper BODIES are the *_p2
     // emitters below, which define the same $__fern_* functions the IR
     // already calls, so admitting them costs only the import + body swap.
-    if (io && (n == "now_ns" || n == "now_unix_ms" || n == "monotonic_ns"
+    if (io && (n == "now_ns" || n == "now_unix_ms" || n == "monotonic_ns" || n == "clock_resolution"
       || n == "random_bytes" || n == "random_i32")) {
       i = i + 1;
       continue;
@@ -2451,6 +2471,19 @@ pub function clock_funcs_p2(has_wall: boolean, has_mono: boolean): string {
     o = o + "    (call $__fern_mono_now))\n";
   }
   return o;
+}
+
+// clock_resolution_func_p2 is the preview2 $__fern_clock_resolution:
+// wall-clock `resolution` writes a datetime record to the return area, the
+// same {seconds: u64, nanoseconds: u32} shape `now` writes.
+pub function clock_resolution_func_p2(): string {
+  let o: string = "  (func $__fern_clock_resolution (result i64)\n";
+  o = o + "    (local $base i32) (local $ra i32) (local $v i64)\n";
+  o = o + p2_return_area("16");
+  o = o + "    (call $__fern_wall_resolution (local.get $ra))\n";
+  o = o + "    (local.set $v (i64.add (i64.mul (i64.load (local.get $ra)) (i64.const 1000000000)) (i64.extend_i32_u (i32.load (i32.add (local.get $ra) (i32.const 8))))))\n";
+  o = o + "    (call $__fern_raw_free (local.get $base) (i32.const 16))\n";
+  return o + "    (local.get $v))\n";
 }
 
 // random_imports_p2 is the preview2 counterpart: wasi:random/random's
@@ -2611,11 +2644,12 @@ pub function args_imports_p2(): string {
 // list entry into a fresh [len][bytes] string block and store its pointer in
 // the same string[] array block ([len][cap][elem-ptrs]) the preview1 helper
 // builds, so every args() call site is unchanged.
-pub function args_func_p2(): string {
+pub function args_func_p2(set_args: boolean): string {
   let o: string = "";
   o = o + "  (func $__fern_args (result i32)\n";
   o = o + "    (local $base i32) (local $ra i32) (local $ptr i32) (local $count i32) (local $arr i32)\n";
   o = o + "    (local $i i32) (local $sp i32) (local $sl i32) (local $blk i32) (local $j i32)\n";
+  o = o + args_set_answer(set_args);
   o = o + p2_return_area("16");
   o = o + "    (call $__fern_get_arguments (local.get $ra))\n";
   o = o + "    (local.set $ptr (i32.load (local.get $ra)))\n";
@@ -3784,6 +3818,9 @@ pub function component_io_imports(needs: string[], stderr: boolean, proxy: boole
   if (needs_wall_clock(needs) || need(needs, "monotonic_ns")) {
     o = o + clock_imports_p2(needs_wall_clock(needs), need(needs, "monotonic_ns"));
   }
+  if (need(needs, "clock_resolution")) {
+    o = o + "  (import \"wasi:clocks/wall-clock@0.2.0\" \"resolution\" (func $__fern_wall_resolution (param i32)))\n";
+  }
   if (need(needs, "args")) {
     o = o + args_imports_p2();
   }
@@ -3932,6 +3969,9 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
   if (needs_wall_clock(needs) || need(needs, "monotonic_ns")) {
     o = o + clock_funcs_p2(needs_wall_clock(needs), need(needs, "monotonic_ns"));
   }
+  if (need(needs, "clock_resolution")) {
+    o = o + clock_resolution_func_p2();
+  }
   if (need(needs, "random_bytes") || need(needs, "random_i32")) {
     o = o + random_func_p2();
   }
@@ -3946,7 +3986,7 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
     o = o + environ_func_p2();
   }
   if (need(needs, "args")) {
-    o = o + args_func_p2();
+    o = o + args_func_p2(need(needs, "@calls_set_args"));
   }
   if (need_read_file(needs) || need_write_file(needs) || need_any(needs, component_fs_needs())) {
     o = o + errno_p2_func();
@@ -5970,7 +6010,7 @@ function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
 // a call to an imported WASI function.
 function is_host_op_kind(tag: i32): boolean {
   return tag == 163 || tag == 164 || tag == 182 || tag == 184
-    || tag == 183 || tag == 209 || tag == 168 || tag == 169 || tag == 233 || tag == 170 || tag == 352
+    || tag == 183 || tag == 389 || tag == 388 || tag == 209 || tag == 168 || tag == 169 || tag == 233 || tag == 170 || tag == 352
     || tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 308 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231
     || tag == 171 || tag == 310 || tag == 172 || tag == 180 || tag == 249 || tag == 166
     || tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264
@@ -6013,6 +6053,14 @@ function emit_host_op_wat(o: ir.Op): string {
   if (o.kind_tag == 183) {  // now_ns
     // 0-arg i64 clock reading -> raw realtime nanoseconds.
     return "    call $__fern_now_ns\n";
+  }
+  if (o.kind_tag == 389) {  // clock_resolution
+    // 0-arg i64 -> the realtime clock's resolution in nanoseconds.
+    return "    call $__fern_clock_resolution\n";
+  }
+  if (o.kind_tag == 388) {  // clock_set
+    // [sec, nsec] -> Result[void, IoError]: always Err(Unsupported).
+    return "    call $__fern_clock_set\n";
   }
   if (o.kind_tag == 168) {  // read_line
     // [fd] -> read one line from it, push a fresh Option[string]. The helper
@@ -7079,6 +7127,11 @@ function emit_str_op_wat(o: ir.Op): string {
     // A call for memchr's reason.
     return "    call $__fern_count_runs\n";
   }
+  if (o.kind_tag == 390) {  // str_hash
+    // stack: s, seed -> the seeded word-at-a-time hash of s. A call for
+    // memchr's reason: the body loops over its own locals.
+    return "    call $__fern_str_hash\n";
+  }
   if (o.kind_tag == 329) {  // bsd_sum
     // stack: s, sum -> the BSD checksum continued over s. A call for
     // memchr's reason.
@@ -7434,11 +7487,12 @@ function io_err_field_off(i: i32): string {
 }
 
 // needs_fd_sync reports whether the module reached any of the per-handle
-// write-back ops, or the two refusals built beside them. Two gates ask it,
-// and neither wants the `need` calls spelled out.
+// write-back ops, or the refusals built beside them. Two gates ask it, and
+// neither wants the `need` calls spelled out.
 function needs_fd_sync(needs: string[]): boolean {
   return need(needs, "fd_fsync") || need(needs, "fd_fdatasync") || need(needs, "fd_syncfs")
-    || need(needs, "fd_drop_cache") || need(needs, "fd_dup_onto") || need(needs, "reader_splice");
+    || need(needs, "fd_drop_cache") || need(needs, "fd_dup_onto") || need(needs, "reader_splice")
+    || need(needs, "clock_set");
 }
 
 // needs_io_error reports whether the module carries any fs op — the gate on
@@ -8324,6 +8378,9 @@ pub function fd_sync_funcs(needs: string[]): string {
   if (need(needs, "fd_drop_cache")) {
     o = o + fd_drop_cache_func();
   }
+  if (need(needs, "clock_set")) {
+    o = o + clock_set_func();
+  }
   if (need(needs, "fd_dup_onto")) {
     o = o + fd_dup_onto_func();
   }
@@ -8424,6 +8481,23 @@ pub function fd_dup_onto_func(): string {
   o = o + "    (i32.store (local.get $path) (i32.const 0))\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+  o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (i32.const 58) (local.get $path)))\n";
+  o = o + "    (local.get $res))\n";
+  return o;
+}
+
+// clock_set_func emits $__fern_clock_set(sec, nsec) -> Result[void, IoError]:
+// always Err(Unsupported). A component reads a wall clock but neither preview
+// has a call that sets one, so ENOTSUP (58) goes through the same errno table
+// as the other refusals here rather than a success that moved nothing.
+pub function clock_set_func(): string {
+  let o: string = "";
+  o = o + "  (func $__fern_clock_set (param $sec i64) (param $nsec i64) (result i32)\n";
+  o = o + "    (local $res i32) (local $path i32)\n";
+  o = o + "    (local.set $path (call $__fern_str_box (i32.const 4)))\n";
+  o = o + "    (i32.store (local.get $path) (i32.const 0))\n";
+  o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+  o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
   o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (i32.const 58) (local.get $path)))\n";
   o = o + "    (local.get $res))\n";
   return o;
@@ -9541,6 +9615,37 @@ pub function bsd_sum_helper(): string {
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $c)))\n";
   o = o + "    (local.get $sum))\n";
+  return o;
+}
+
+// str_hash_helper emits $__fern_str_hash(s, seed) -> ir.op_str_hash's hash of
+// s: a xor and a multiply per 8-byte little-endian word, the last word
+// anchored at the end of the string, a string under 8 bytes assembled into
+// one zero-padded word a byte at a time.
+pub function str_hash_helper(): string {
+  let o: string = "";
+  o = o + "  (func $__fern_str_hash (param $s i32) (param $seed i32) (result i32)\n";
+  o = o + "    (local $len i32) (local $i i32) (local $h i64) (local $w i64) (local $k i32)\n";
+  o = o + "    (local.set $len (i32.load (local.get $s)))\n";
+  o = o + "    (local.set $h (i64.xor (i64.xor (i64.const -3750763034362895579) (i64.extend_i32_s (local.get $seed))) (i64.extend_i32_u (local.get $len))))\n";
+  o = o + "    (block $d (loop $c\n";
+  o = o + "      (br_if $d (i32.gt_s (i32.add (local.get $i) (i32.const 8)) (local.get $len)))\n";
+  o = o + "      (local.set $h (i64.mul (i64.xor (local.get $h) (i64.load (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i)))) (i64.const 1099511628211)))\n";
+  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 8)))\n";
+  o = o + "      (br $c)))\n";
+  o = o + "    (if (i32.lt_s (local.get $i) (local.get $len)) (then\n";
+  o = o + "      (if (i32.ge_s (local.get $len) (i32.const 8)) (then\n";
+  o = o + "        (local.set $w (i64.load (i32.add (i32.add (local.get $s) (i32.const 4)) (i32.sub (local.get $len) (i32.const 8))))))\n";
+  o = o + "      (else\n";
+  o = o + "        (local.set $k (local.get $len))\n";
+  o = o + "        (block $bd (loop $bc\n";
+  o = o + "          (br_if $bd (i32.eqz (local.get $k)))\n";
+  o = o + "          (local.set $k (i32.sub (local.get $k) (i32.const 1)))\n";
+  o = o + "          (local.set $w (i64.or (i64.shl (local.get $w) (i64.const 8)) (i64.extend_i32_u (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $k))))))\n";
+  o = o + "          (br $bc)))))\n";
+  o = o + "      (local.set $h (i64.mul (i64.xor (local.get $h) (local.get $w)) (i64.const 1099511628211)))))\n";
+  o = o + "    (local.set $h (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 32))))\n";
+  o = o + "    (i32.wrap_i64 (local.get $h)))\n";
   return o;
 }
 
@@ -11107,6 +11212,15 @@ pub function clock_funcs(): string {
   return o;
 }
 
+// clock_resolution_func emits $__fern_clock_resolution: clock_res_get on the
+// realtime clock writes its resolution as an 8-byte nanosecond count, read
+// back from the same scratch at addr 16 clock_funcs uses.
+pub function clock_resolution_func(): string {
+  let o: string = "  (func $__fern_clock_resolution (result i64)\n";
+  o = o + "    (drop (call $__fern_clock_res_get (i32.const 0) (i32.const 16)))\n";
+  return o + "    (i64.load (i32.const 16)))\n";
+}
+
 // env_helpers emits the wasi environ imports + $__fern_env(name): the
 // preview-1 two-call environ pattern (sizes_get then get) into bump-heap
 // scratch, a linear scan for a `NAME=` entry, and an Option[string] tag
@@ -11189,11 +11303,12 @@ pub function args_helpers(): string {
   return o;
 }
 
-pub function args_func(): string {
+pub function args_func(set_args: boolean): string {
   let o: string = "";
   o = o + "  (func $__fern_args (result i32)\n";
   o = o + "    (local $argc i32) (local $bufsz i32) (local $ptrs i32) (local $buf i32)\n";
   o = o + "    (local $arr i32) (local $i i32) (local $e i32) (local $len i32) (local $j i32) (local $blk i32)\n";
+  o = o + args_set_answer(set_args);
   o = o + "    (drop (call $__fern_args_sizes_get (i32.const 0) (i32.const 4)))\n";
   o = o + "    (local.set $argc (i32.load (i32.const 0)))\n";
   o = o + "    (local.set $bufsz (i32.load (i32.const 4)))\n";
@@ -11226,6 +11341,31 @@ pub function args_func(): string {
   o = o + "    (call $__fern_raw_free (local.get $ptrs) (i32.mul (local.get $argc) (i32.const 4)))\n";
   o = o + "    (call $__fern_raw_free (local.get $buf) (local.get $bufsz))\n";
   o = o + "    (local.get $arr))\n";
+  return o;
+}
+
+// args_set_answer is the head of either preview's $__fern_args in a module
+// that calls set_args: once an array is stored, every call answers a retain
+// of it.
+function args_set_answer(set_args: boolean): string {
+  if (!set_args) {
+    return "";
+  }
+  return "    (if (global.get $__fern_args_set) (then (return (call $__fern_rc_inc (global.get $__fern_args_set)))))\n";
+}
+
+// set_args_func is $__fern_set_args(arr) -> 0, the wasm sibling of the
+// register backends' helper: $__fern_args_set holds one retained unit of the
+// array, and the one it replaces is released through the string[] walk.
+pub function set_args_func(): string {
+  let o: string = "";
+  o = o + "  (global $__fern_args_set (mut i32) (i32.const 0))\n";
+  o = o + "  (func $__fern_set_args (param $a i32) (result i32)\n";
+  o = o + "    (local $old i32)\n";
+  o = o + "    (local.set $old (global.get $__fern_args_set))\n";
+  o = o + "    (global.set $__fern_args_set (call $__fern_rc_inc (local.get $a)))\n";
+  o = o + "    (if (local.get $old) (then (drop (call $__fern_arr_dec_ptr (local.get $old)))))\n";
+  o = o + "    (i32.const 0))\n";
   return o;
 }
 
@@ -12629,11 +12769,11 @@ function lc_label(text: string): string {
 // shim instead. The line is built in fixed scratch below the data pool (the
 // process is exiting); labels are packed-word stores (lc_label); digits are
 // written backwards by $__fern_lc_wrnum.
-pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean): string {
+pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean, set_args: boolean): string {
   if (!lc) {
     return "";
   }
-  return lc_report_funcs(sanitize) + "  (func $__fern_proc_exit (param $c i32)\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
+  return lc_report_funcs(sanitize, set_args) + "  (func $__fern_proc_exit (param $c i32)\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
 }
 
 // lc_exit_report is the census report a component's exit shim makes before
@@ -12648,17 +12788,17 @@ function lc_exit_report(lc: boolean): string {
 // component_run_entry is `$__fern_lang_run`: main's result mapped to the 0 = ok /
 // 1 = err the canon lift expects, reporting the census on the way out when
 // `report` is set.
-function component_run_entry(report: boolean, sanitize: boolean): string {
+function component_run_entry(report: boolean, sanitize: boolean, set_args: boolean): string {
   if (!report) {
     return "  (func $__fern_lang_run (result i32) (i32.eqz (i32.eqz (call $main))))\n";
   }
-  return lc_report_funcs(sanitize) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
+  return lc_report_funcs(sanitize, set_args) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
 }
 
 // lc_report_funcs is `$__fern_lc_report` and the two writers it calls, for
 // either framing: mode 0 reports from its $__fern_proc_exit, a component from its
 // run entry and its exit shim.
-function lc_report_funcs(sanitize: boolean): string {
+function lc_report_funcs(sanitize: boolean, set_args: boolean): string {
   let o: string = "";
   // $__fern_lc_wr(p, len): one fd_write(2) of [p, p+len).
   o = o + "  (func $__fern_lc_wr (param $p i32) (param $len i32)\n";
@@ -12688,6 +12828,13 @@ function lc_report_funcs(sanitize: boolean): string {
   // The report.
   o = o + "  (func $__fern_lc_report\n";
   o = o + "    (local $b i32) (local $na i64) (local $nf i64) (local $live i64)\n";
+  // The array set_args stored is the runtime's own unit, not a leak: give it
+  // back before counting.
+  if (set_args) {
+    o = o + "    (if (global.get $__fern_args_set) (then\n";
+    o = o + "      (drop (call $__fern_arr_dec_ptr (global.get $__fern_args_set)))\n";
+    o = o + "      (global.set $__fern_args_set (i32.const 0))))\n";
+  }
   // The counts are read before anything is written: a component's $__fern_fd_write
   // shim allocates, and would count its own writes into the line.
   o = o + "    (local.set $na (global.get $__fern_lc_alloc_count))\n";
@@ -13763,6 +13910,9 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (need(needs, "monotonic_ns") || need(needs, "now_unix_ms") || need(needs, "now_ns")) {
     parts = parts.append("  (import \"wasi_snapshot_preview1\" \"clock_time_get\" (func $__fern_clock_time_get (param i32 i64 i32) (result i32)))\n");
   }
+  if (need(needs, "clock_resolution")) {
+    parts = parts.append("  (import \"wasi_snapshot_preview1\" \"clock_res_get\" (func $__fern_clock_res_get (param i32 i32) (result i32)))\n");
+  }
   // args() reads the wasi argv vector — the args_sizes_get / args_get imports
   // must precede the function section.
   if (need(needs, "args")) {
@@ -14205,6 +14355,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count"), lc));
     parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
   }
+  if (need(needs, "@calls_set_args")) {
+    parts = parts.append(set_args_func());
+  }
   // The preview2 shims stand in for the preview1 imports mode 0 supplies, so
   // every $__fern_fd_write / $__fern_proc_exit call site the IR emits links unchanged.
   // Placed after the heap runtime they call into (as the AST path does).
@@ -14330,11 +14483,14 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (mode != 2 && (need(needs, "monotonic_ns") || need(needs, "now_unix_ms") || need(needs, "now_ns"))) {
     parts = parts.append(clock_funcs());
   }
+  if (mode != 2 && need(needs, "clock_resolution")) {
+    parts = parts.append(clock_resolution_func());
+  }
   // $__fern_args builds the argv string[] via the wasi args_get import +
   // the heap runtime (module_allocates pulls the heap in for an args
   // module — op_allocates admits "args"). Emitted when the module reads argv.
   if (mode != 2 && need(needs, "args")) {
-    parts = parts.append(args_func());
+    parts = parts.append(args_func(need(needs, "@calls_set_args")));
   }
   // $__fern_env(name): scan the environ vector for `NAME=`, box an
   // Option[string] (Some(value)/None). Heap-backed (allocates the value +
@@ -14701,6 +14857,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "@uses_bsd_sum")) {
     parts = parts.append(bsd_sum_helper());
   }
+  if (need(needs, "@uses_str_hash")) {
+    parts = parts.append(str_hash_helper());
+  }
   if (need(needs, "@uses_scale_f64")) {
     parts = parts.append(scale_f64_helper());
   }
@@ -14891,7 +15050,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // Census report + the reporting $__fern_proc_exit (#5362). Mode 0 only: the
     // component modes have no preview1 proc_exit to wrap. Empty when the
     // flag is off.
-    parts = parts.append(lc_report_and_exit_wrapper(lc, sw.sanitize));
+    parts = parts.append(lc_report_and_exit_wrapper(lc, sw.sanitize, need(needs, "@calls_set_args")));
     parts = parts.append("  (func $__fern_start (call $__fern_proc_exit (call $main)))\n");
     parts = parts.append(xps);
     // `main` is exported beside `_start` so a host can read its result
@@ -14916,7 +15075,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (lifts_async(mod, mode)) {
     parts = parts.append(async_lift_wrappers(mod));
   }
-  parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize));
+  parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize, need(needs, "@calls_set_args")));
   parts = parts.append("  (export \"_lang_run\" (func $__fern_lang_run)))\n");
   return util.str_join_chunks(parts);
 }
@@ -18291,7 +18450,7 @@ function called_names(mod: parser.Module): Map[string, boolean] {
 //   17 stderr + exit (including assertion failures)
 // HostNeeds is what a program asks of its WASI host, one flag per category
 // the component framings distinguish.
-struct HostNeeds { io: boolean, rd: boolean, wr: boolean, env: boolean, args: boolean, rnd: boolean, clkw: boolean, clkm: boolean, ep: boolean, ex: boolean, net: boolean, fs: boolean, wait: boolean }
+struct HostNeeds { io: boolean, rd: boolean, wr: boolean, env: boolean, args: boolean, rnd: boolean, clkw: boolean, clkm: boolean, clkres: boolean, ep: boolean, ex: boolean, net: boolean, fs: boolean, wait: boolean }
 
 // census_on reports a build whose leak census is on: FERN_LEAKCHECK, or the
 // sanitizer, which implies it (asmcore.with_switches).
@@ -18317,6 +18476,8 @@ function host_needs(mod: parser.Module, census: boolean): HostNeeds {
     rnd: calls.has("random_bytes") || calls.has("random_i32") || calls.has("__map_hash_seed"),
     clkw: calls.has("now_unix_ms") || calls.has("now_ns"),
     clkm: calls.has("monotonic_ns"),
+    // wall-clock's resolution, which no fixed framing imports.
+    clkres: calls.has("clock_resolution"),
     ep: calls.has("eprint") || calls.has("stderr") || census,
     ex: calls.has("exit"),
     net: calls_any(calls, socket_builtins()),
@@ -18377,7 +18538,7 @@ function wait_builtins(): string[] {
 // program's own externs.
 pub function component_needs_host(mod: parser.Module, sw: asmcore.Switches): boolean {
   let n: HostNeeds = host_needs(mod, census_on(sw));
-  return n.io || n.rd || n.wr || n.env || n.args || n.rnd || n.clkw || n.clkm || n.ep || n.ex || n.net || n.fs || n.wait;
+  return n.io || n.rd || n.wr || n.env || n.args || n.rnd || n.clkw || n.clkm || n.clkres || n.ep || n.ex || n.net || n.fs || n.wait;
 }
 
 pub function component_shape(mod: parser.Module, sw: asmcore.Switches): i32 {
@@ -18392,7 +18553,7 @@ pub function component_shape(mod: parser.Module, sw: asmcore.Switches): i32 {
   let clkm: boolean = n.clkm;
   let ep: boolean = n.ep;
   let ex: boolean = n.ex;
-  if (n.net || n.fs || n.wait) {
+  if (n.net || n.fs || n.wait || n.clkres) {
     return 0 - 1;
   }
   // Count distinct non-stdout WASI categories. Single-category programs and
