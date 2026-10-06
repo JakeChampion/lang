@@ -840,6 +840,16 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "btime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
+		// DirEntry — one `read_dir_ino(path)` entry: the base name
+		// and the inode number the directory reader hands back with
+		// it. `ino` is 0 where the platform does not supply one.
+		{
+			Name: "DirEntry",
+			Fields: []ast.Param{
+				{Name: "name", Type: ast.StringType{}},
+				{Name: "ino", Type: ast.NumberType{Width: 64, Signed: true}},
+			},
+		},
 		// FsStat — `statfs(path)` shape: what a FILESYSTEM reports
 		// about itself, where FileStat reports about one entry on it.
 		// The six counts are `statfs(2)`'s, and the two limits are
@@ -2921,6 +2931,25 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
 			ast.ArrayType{Elem: ast.StringType{}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// read_dir_ino(path): Result[DirEntry[], IoError] — read_dir's
+	// list, in the same order and without `.` / `..`, with each
+	// name's inode number from the same directory record, so a walk
+	// that orders or identifies entries by inode needs no stat per
+	// entry.
+	//
+	// `ino` is 0 where the platform's directory reader does not
+	// supply one: wasm32-wasi preview 2, whose directory-entry has
+	// no inode. A caller needing the number there falls back to
+	// `lstat` for those entries. Preview 1's `d_ino` is the host's
+	// identifier for the file, the same one `stat` reports there,
+	// which is not the kernel's inode number.
+	c.info.FuncSigs["read_dir_ino"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.StructType{Name: "DirEntry"}},
 			ast.EnumType{Name: "IoError"},
 		}},
 	}

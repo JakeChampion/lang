@@ -1594,6 +1594,7 @@ func New() *Interp {
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["read_dir_all"] = &Builtin{Fn: builtinReadDirAll}
+	i.Builtins["read_dir_ino"] = &Builtin{Fn: builtinReadDirIno}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
 	i.Builtins["lstat"] = &Builtin{Fn: builtinLstat}
 	i.Builtins["access"] = &Builtin{Fn: builtinAccess}
@@ -3601,33 +3602,65 @@ func builtinReadDirAll(_ *Interp, args []Value) (Value, error) {
 	return readDirLike("read_dir_all", false, args)
 }
 
-// readDirLike is the body both share.
+// builtinReadDirIno is read_dir with each name's inode number from the
+// same directory record, as a DirEntry. `ino` is 0 where the platform's
+// reader supplies none.
+func builtinReadDirIno(_ *Interp, args []Value) (Value, error) {
+	entries, res, err := readDirEntries("read_dir_ino", true, args)
+	if entries == nil {
+		return res, err
+	}
+	out := newArray(len(entries))
+	for i, e := range entries {
+		out.E[i] = &Struct{
+			TypeName: "DirEntry",
+			Fields:   map[string]Value{"name": String(e.name), "ino": Number(int64(e.ino))},
+		}
+	}
+	return resultOk(out), nil
+}
+
+// readDirLike is the body read_dir and read_dir_all share.
 func readDirLike(name string, skipDots bool, args []Value) (Value, error) {
+	entries, res, err := readDirEntries(name, skipDots, args)
+	if entries == nil {
+		return res, err
+	}
+	out := newArray(len(entries))
+	for i, e := range entries {
+		out.E[i] = String(e.name)
+	}
+	return resultOk(out), nil
+}
+
+// dirent is one directory record: the name, and the inode number the
+// reader returned with it, 0 where it returns none.
+type dirent struct {
+	name string
+	ino  uint64
+}
+
+// readDirEntries drains the directory at the path in args. A nil slice
+// means there is no listing, and the Value / error pair is the answer.
+func readDirEntries(name string, skipDots bool, args []Value) ([]dirent, Value, error) {
 	if len(args) != 1 {
-		return nil, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
+		return nil, nil, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
 	}
 	path, ok := args[0].(String)
 	if !ok {
-		return nil, fmt.Errorf("%s: expected string path, got %T", name, args[0])
+		return nil, nil, fmt.Errorf("%s: expected string path, got %T", name, args[0])
 	}
-	names, err := readDirAll(string(path))
+	entries, err := readDirAll(string(path))
 	if err != nil {
-		return resultErr(classifyIoError(string(path), err)), nil
+		return nil, resultErr(classifyIoError(string(path), err)), nil
 	}
-	kept := names
-	if skipDots {
-		kept = kept[:0:0]
-		for _, n := range names {
-			if n != "." && n != ".." {
-				kept = append(kept, n)
-			}
+	kept := []dirent{}
+	for _, e := range entries {
+		if !skipDots || e.name != "." && e.name != ".." {
+			kept = append(kept, e)
 		}
 	}
-	out := newArray(len(kept))
-	for i, n := range kept {
-		out.E[i] = String(n)
-	}
-	return resultOk(out), nil
+	return kept, nil, nil
 }
 
 // builtinStat returns file metadata wrapped in `Result[FileStat,

@@ -206,6 +206,15 @@ refusal would take `read_dir_all` away from every program that only wants the
 names. The e2e probe asserts the equivalence rather than skipping the leg, so
 a host that started reporting them shows up as a failure.
 
+**`read_dir_ino` is plain `fs` too, and answers 0 where the reader has no
+inode.** It is `read_dir` with each entry's `d_ino` (#9317). Preview 1's
+dirent carries one — wasmtime's identifier for the file, the same number its
+`stat` reports, not the kernel's inode — and preview 2's directory-entry
+carries none, so every `ino` there is 0. Zero is the documented "not
+supplied" answer rather than a refusal, for the same reason as `read_dir_all`
+above: the names are still the whole listing, and a caller that needs the
+number falls back to `lstat` for the entries that came back without one.
+
 **`truncate` is plain `fs`, and `mknod` is the one that is not.** Both
 create or change an entry, which is why the pair is worth stating
 together. A LENGTH is not a permission bit: a host can serve files, have

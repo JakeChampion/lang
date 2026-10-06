@@ -40,7 +40,9 @@ func TestSelfHostWasmHostResultsBalanceTheCensus(t *testing.T) {
 	}{
 		{"read_dir", "function main(): i32 {\n" + loop(`    match (read_dir("d")) { Ok(names) => { if (names.len() != 33) { return 1; } }, Err(_) => { return 2; } }`), true},
 		{"read_dir_all", "function main(): i32 {\n" + loop(`    match (read_dir_all("d")) { Ok(names) => { if (names.len() < 33) { return 1; } }, Err(_) => { return 2; } }`), true},
+		{"read_dir_ino", "function main(): i32 {\n" + loop(`    match (read_dir_ino("d")) { Ok(es) => { if (es.len() != 33 || es[0].name.len() == 0) { return 1; } }, Err(_) => { return 2; } }`), true},
 		{"read_dir_missing", "function main(): i32 {\n" + loop(`    match (read_dir("absent")) { Ok(_) => { return 1; }, Err(_) => {} }`), true},
+		{"read_dir_ino_missing", "function main(): i32 {\n" + loop(`    match (read_dir_ino("absent")) { Ok(_) => { return 1; }, Err(_) => {} }`), true},
 		{"env", "function main(): i32 {\n" + loop(`    match (env("FERN_CENSUS_VALUE")) { Some(v) => { if (v != "a value longer than a word") { return 1; } }, None => { return 2; } }
     match (env("FERN_CENSUS_ABSENT")) { Some(_) => { return 3; }, None => {} }
     if (now_ns() <= 0 as i64 || now_unix_ms() <= 0 as i64) { return 4; }`), true},

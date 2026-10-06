@@ -6318,6 +6318,9 @@ function union_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowere
   if (ins.str == "read_dir_all") {
     return Lowered { found: true, r: emit(r, ir.op_read_dir_all()) };
   }
+  if (ins.str == "read_dir_ino") {
+    return Lowered { found: true, r: emit(r, ir.op_read_dir_ino()) };
+  }
   if (ins.str == "stat") {
     return Lowered { found: true, r: emit(r, ir.op_stat()) };
   }

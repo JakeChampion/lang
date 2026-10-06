@@ -4805,6 +4805,7 @@ function builtin_sigs(): string[] {
     "random_i32(): i32",
     "read_dir(string): Result[string[], IoError]",
     "read_dir_all(string): Result[string[], IoError]",
+    "read_dir_ino(string): Result[DirEntry[], IoError]",
     "read_file(string): Result[string, IoError]",
     "read_file_bytes(string): Result[u8[], IoError]",
     "read_line(): Option[string]",

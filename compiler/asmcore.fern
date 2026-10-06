@@ -2267,14 +2267,17 @@ pub function atflag(t: string, name: string): string {
   return "0";
 }
 
-// direntoff gives the byte offsets inside one directory record. d_reclen is at
-// 16 on both, but the name is not: Linux's linux_dirent64 is
+// direntoff gives the byte offsets inside one directory record. d_ino is at 0
+// and d_reclen at 16 on both, but the name is not: Linux's linux_dirent64 is
 // { u64 d_ino; s64 d_off; u16 d_reclen @16; u8 d_type @18; char d_name[] @19 }
 // while XNU's dirent carries a second u16 (d_namlen @18) before d_type, putting
 // the name at 21. Getting this wrong reads a directory of names shifted by two
 // bytes, which is the kind of bug that looks like corruption rather than an
 // offset.
 pub function direntoff(t: string, name: string): string {
+  if (name == "ino") {
+    return "0";
+  }
   if (t == "arm64-darwin") {
     if (name == "name") {
       return "21";
@@ -4517,26 +4520,38 @@ pub function rt_src_read_file_bytes(t: string, packed: boolean): string {
 // Linux value on Darwin means O_NDELAY|O_ASYNC, so the open SUCCEEDS and the
 // first read fails — see oflag.
 pub function rt_src_read_dir(t: string): string {
-  return rt_src_read_dir_like(t, "__fern_read_dir", true);
+  return rt_src_read_dir_like(t, "__fern_read_dir", true, false);
 }
 
 // rt_src_read_dir_all backs `read_dir_all(path)`: the same drain with the
 // "." / ".." records kept, in the order the directory reader reports them.
 pub function rt_src_read_dir_all(t: string): string {
-  return rt_src_read_dir_like(t, "__fern_read_dir_all", false);
+  return rt_src_read_dir_like(t, "__fern_read_dir_all", false, false);
 }
 
-// rt_src_read_dir_like is the source both share. `skip_dots` wraps the
-// per-entry append in the "." / ".." test.
-function rt_src_read_dir_like(t: string, fname: string, skip_dots: boolean): string {
+// rt_src_read_dir_ino backs `read_dir_ino(path)`: read_dir's drain, appending
+// a DirEntry of each name and the d_ino its record carries.
+pub function rt_src_read_dir_ino(t: string): string {
+  return rt_src_read_dir_like(t, "__fern_read_dir_ino", true, true);
+}
+
+// rt_src_read_dir_like is the source all three share. `skip_dots` wraps the
+// per-entry append in the "." / ".." test; `ino` makes each entry a DirEntry.
+function rt_src_read_dir_like(t: string, fname: string, skip_dots: boolean, ino: boolean): string {
   let nameoff: string = direntoff(t, "name");
+  let elem: string = "string";
+  let entry: string = "__raw_string(nbuf, nlen)";
+  if (ino) {
+    elem = "DirEntry";
+    entry = "DirEntry { name: __raw_string(nbuf, nlen), ino: __load_i64(__raw_addr(buf, pos + " + direntoff(t, "ino") + ")) }";
+  }
   let guard_open: string = "";
   let guard_close: string = "";
   if (skip_dots) {
     guard_open = "let skip: i32 = 0; if (nlen == 1) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { skip = 1; } } if (nlen == 2) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { if (__raw_load8(buf, pos + " + nameoff + " + 1) == 46) { skip = 1; } } } if (skip == 0) { ";
     guard_close = "} ";
   }
-  return "function " + fname + "(path: string): Result[string[], IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "rd_directory") + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } let basep: usize = __raw_alloc(8); let names: string[] = []; let done: i32 = 0; while (done == 0) { let buf: usize = __raw_alloc(65536); let n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd as i64, buf as i64, 65536, basep as i64) as i32; if (n <= 0) { done = 1; } else { let pos: i32 = 0; while (pos < n) { let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; let nlen: i32 = 0; while (__raw_load8(buf, pos + " + nameoff + " + nlen) != 0) { nlen = nlen + 1; } " + guard_open + "let nbuf: usize = __raw_alloc(nlen); let k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + " + nameoff + " + k)); k = k + 1; } names = names.append(__raw_string(nbuf, nlen)); " + guard_close + "pos = pos + reclen; } } let buf_own: string = __raw_string(buf, 65536); } let basep_own: string = __raw_string(basep, 8); __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Ok(names); }";
+  return "function " + fname + "(path: string): Result[" + elem + "[], IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "rd_directory") + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } let basep: usize = __raw_alloc(8); let names: " + elem + "[] = []; let done: i32 = 0; while (done == 0) { let buf: usize = __raw_alloc(65536); let n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd as i64, buf as i64, 65536, basep as i64) as i32; if (n <= 0) { done = 1; } else { let pos: i32 = 0; while (pos < n) { let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; let nlen: i32 = 0; while (__raw_load8(buf, pos + " + nameoff + " + nlen) != 0) { nlen = nlen + 1; } " + guard_open + "let nbuf: usize = __raw_alloc(nlen); let k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + " + nameoff + " + k)); k = k + 1; } names = names.append(" + entry + "); " + guard_close + "pos = pos + reclen; } } let buf_own: string = __raw_string(buf, 65536); } let basep_own: string = __raw_string(basep, 8); __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Ok(names); }";
 }
 
 // rt_src_remove_dir_all backs `remove_dir_all(path)` (#2649, the last fs leaf) →
@@ -5587,6 +5602,9 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           }
           if (id.name == "read_dir" || id.name == "read_dir_all") {
             return ty_array_string();
+          }
+          if (id.name == "read_dir_ino") {
+            return ty_array();
           }
           // Arbitrary free / module function returning
           // Option[T] or Result[T, …] — see asm.fern.
@@ -7432,6 +7450,9 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "read_dir" || id.name == "read_dir_all") {
     return ty_result(ty_array_string());
   }
+  if (id.name == "read_dir_ino") {
+    return ty_result(ty_array());
+  }
   if (id.name == "environ") {
     return ty_array_string();
   }
@@ -8246,7 +8267,7 @@ pub function runtime_need_deps(name: string): string[] {
     let d8: string[] = ["heap", "arr_push", "arr_push_owned", "str_concat"];
     return d8;
   }
-  if (name == "read_dir" || name == "read_dir_all") {
+  if (name == "read_dir" || name == "read_dir_all" || name == "read_dir_ino") {
     // __fern_read_dir (#2649) builds the result string[] with .append() — same
     // arr_push / arr_push_owned pairing as str_split. (Its call to __fern_io_error
     // is not a need: io_error is emitted inside the fs bundle alongside read_dir.)
@@ -10162,7 +10183,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_write_file_bytes", "__fn___fern_write_file_bytes_u8",
     "__fn___fern_reader_read_chunk_bytes", "__fn___fern_reader_read_chunk_bytes_u8", "__fn___fern_writer_write_bytes", "__fn___fern_writer_write_bytes_u8", "__fn___fern_writer_write_some_bytes", "__fn___fern_writer_write_some_bytes_u8",
     "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir",
-    "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_remove_file",
+    "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_read_dir_ino", "__fn___fern_remove_file",
     "__fn___fern_create_dir_all",
     "__fn___fern_create_dir", "__fn___fern_remove_dir",
     "__fn___fern_create_link", "__fn___fern_create_symlink",

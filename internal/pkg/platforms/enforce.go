@@ -196,6 +196,7 @@ var gatedBuiltins = map[string]string{
 	"lstat":            "fs",
 	"read_dir":         "fs",
 	"read_dir_all":     "fs",
+	"read_dir_ino":     "fs",
 	"remove_file":      "fs",
 	"remove_dir_all":   "fs",
 	"create_dir_all":   "fs",

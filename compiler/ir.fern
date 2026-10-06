@@ -2123,6 +2123,14 @@ pub function op_read_dir_all(): Op {
   return op0(310);
 }
 
+// `read_dir_ino` is `read_dir` with each name's inode number from the same
+// directory record: Result[DirEntry[], IoError], same order and filter (a VALUE
+// op — one arg consumed, the box left on the stack). Lowers to each backend's
+// __fern_read_dir_ino helper.
+pub function op_read_dir_ino(): Op {
+  return op0(391);
+}
+
 // `env` pops a name string value and looks up that environment variable,
 // pushing a fresh Option[string]: Some(value) when set, None when unset (a
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
@@ -4386,6 +4394,9 @@ function kind_id_len12_r(name: string): i32 {
   if (name == "read_dir_all") {
     return 310;
   }
+  if (name == "read_dir_ino") {
+    return 391;
+  }
   if (name == "reader_close") {
     return 179;
   }
@@ -5721,6 +5732,9 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 391) {
+    return "read_dir_ino";
+  }
   if (id == 390) {
     return "str_hash";
   }
@@ -5944,7 +5958,7 @@ function pops1_io(t: i32): boolean {
     || t == 163 || t == 164 || t == 165 || t == 166  // print_str, eprint_str, putchar, exit
     || t == 169 || t == 233 || t == 171 || t == 172 || t == 173  // read_file, read_file_bytes, read_dir, remove_dir_all, remove_file
     || t == 340  // unix_connect (path)
-    || t == 310  // read_dir_all
+    || t == 310 || t == 391  // read_dir_all, read_dir_ino
     || t == 174 || t == 175 || t == 236 || t == 176 || t == 179 || t == 181  // temp_dir, stat, lstat, env, reader_close, sleep_ms
     || t == 266  // sleep_ns
     || t == 168  // read_line (fd)
@@ -8540,8 +8554,9 @@ pub function op_allocates(tag: i32): boolean {
     return true;
   }
   // read_dir / read_dir_all box a fresh string[] (the arr box + a string
-  // block per entry), so they need the heap runtime.
-  if (tag == 171 || tag == 310) {
+  // block per entry), and read_dir_ino a DirEntry[], so they need the heap
+  // runtime.
+  if (tag == 171 || tag == 310 || tag == 391) {
     return true;
   }
   // env boxes the looked-up value into a fresh string block (+ the Option
