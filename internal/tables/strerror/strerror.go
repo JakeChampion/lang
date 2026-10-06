@@ -1,7 +1,9 @@
 // Package strerror is the one errno table every Fern runtime reports
-// `IoError.Other(path, message)` from: the message is glibc's
+// `IoError.Other(path, message, errno)` from: the message is glibc's
 // strerror text for the errno, on every target, because matching what
-// C programs print is the whole reason the field exists (#8265).
+// C programs print is the whole reason the field exists (#8265), and the
+// errno is the Linux number (Carried) on every target, so one constant
+// in std/errno means the same thing everywhere (#11296).
 //
 // Each entry carries the errno's number on each OS the runtime issues
 // syscalls to. Linux and Darwin number their errnos differently and
@@ -200,6 +202,34 @@ func Text(os string, errno int) string {
 		}
 	}
 	return Unknown(os, errno)
+}
+
+// linuxAlias names, for an errno Linux has no separate number for, the
+// errno glibc defines it as.
+var linuxAlias = map[string]string{
+	"ENOATTR":    "ENODATA",
+	"EOPNOTSUPP": "ENOTSUP",
+}
+
+// Carried is the number `IoError.Other` carries for the errno: its Linux
+// number on every target, an alias resolved to the errno glibc defines it
+// as.
+func (e Entry) Carried() int {
+	if alias, ok := linuxAlias[e.Name]; ok {
+		return Number(Linux, alias)
+	}
+	return e.Linux
+}
+
+// Carried is the number `IoError.Other` carries for os's errno n, or 0 for
+// an errno outside Table.
+func Carried(os string, errno int) int {
+	for _, e := range Table {
+		if n := e.Number(os); n != 0 && n == errno {
+			return e.Carried()
+		}
+	}
+	return 0
 }
 
 // Number is the errno named name on os, or 0 when os has none.

@@ -211,7 +211,7 @@ const failedReadFileSource = `function main(): i32 {
 // errno the target reports: ENOSPC from a kernel or preview 1, EIO from
 // preview 2, whose stream error names none.
 const failedWriteFileSource = `function failed(e: IoError): boolean {
-    match (e) { Other(_, m) => { return m == "No space left on device" || m == "Input/output error"; }, _ => { return false; } }
+    match (e) { Other(_, m, _) => { return m == "No space left on device" || m == "Input/output error"; }, _ => { return false; } }
 }
 function main(): i32 {
     let bs: u8[] = [120 as u8];

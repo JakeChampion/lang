@@ -10261,13 +10261,14 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   structs = add_builtin_variant(structs, "BodyStream", "Stream", "Body");
   structs = add_builtin_variant(structs, "BodyFile", "string", "Body");
   structs = add_builtin_variant(structs, "BodyChunks", "ChunkProducer", "Body");
-  // Other carries TWO payloads (path, message) like native's declaration
-  // (#4370) — open-coded because add_builtin_variant takes one payload.
-  // Field naming matches the user-enum desugar: `__ev`, `__ev1`.
+  // Other carries THREE payloads (path, message, Linux errno) — open-coded
+  // because add_builtin_variant takes one payload. Field naming matches the
+  // user-enum desugar: `__ev`, `__ev1`, `__ev2`.
   if (!name_declared(structs, "Other")) {
     let otf: StructFieldDecl[] = [];
     otf = otf.append(StructFieldDecl { name: "__ev", type_name: "string", fn_ret: "", fn_param_types: "" });
     otf = otf.append(StructFieldDecl { name: "__ev1", type_name: "string", fn_ret: "", fn_param_types: "" });
+    otf = otf.append(StructFieldDecl { name: "__ev2", type_name: "i32", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "Other", fields: otf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "IoError", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // FileStat: the builtin struct returned by stat(path). Injected so

@@ -2905,11 +2905,8 @@ pub function component_fs_shims(needs: string[], stderr: boolean): string {
   if (need_any(needs, ["stat", "lstat"]) || files && need(needs, "fd_stat")) {
     o = o + filestat_func_p2();
   }
-  if (need_read_file(needs) || files) {
-    o = o + is_dir_at_func_p2();
-  }
   if (files) {
-    o = o + path_open_shim();
+    o = o + is_dir_at_func_p2() + path_open_shim();
   }
   if (need_fd_read(needs)) {
     o = o + fd_read_shim(need(needs, "@stdin"));
@@ -4071,6 +4068,11 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
     o = o + build_io_error_p2_func();
   }
   o = o + component_fs_shims(needs, stderr);
+  // Without a file-backed handle the path_open shim is absent, and the
+  // read_file bodies bring the directory check they share with it.
+  if (need_read_file(needs) && !need_open_file(needs)) {
+    o = o + is_dir_at_func_p2();
+  }
   if (need(needs, "read_file")) {
     o = o + readfile_func_p2();
   }
@@ -7598,7 +7600,7 @@ pub function with_strerror_texts(sv: string[]): string[] {
 // box — the wasm sibling of the register backends' __fern_io_error (asm_ir). Maps a small set of WASI
 // preview-1 errnos to the matching IoError variant, carrying the offending path
 // string on the single-string variants; everything else lands in
-// Other(path, strerror(errno)). The variant ids are baked from the module's struct table
+// Other(path, strerror(errno), linux errno) — 0 past the table. The variant ids are baked from the module's struct table
 // (same table the match arms read, so ids agree). errno→variant: ENOENT(44) → NotFound(path), EACCES(2) → PermissionDenied(path),
 // EEXIST(20) → AlreadyExists(path), EINTR(27) → Interrupted, ENOTSUP(58) →
 // Unsupported, EILSEQ(25) → InvalidUtf8(path) (synthetic — no wasi call
@@ -7613,7 +7615,7 @@ pub function build_io_error_func(sv: string[]): string {
   // variants release it. Borrowed callers retain before this call.
   let o: string = "";
   o = o + "  (func $__fern_build_io_error (param $errno i32) (param $path i32) (result i32)\n";
-  o = o + "    (local $r i32) (local $e i32) (local $n i32) (local $t i32)\n";
+  o = o + "    (local $r i32) (local $e i32) (local $n i32) (local $t i32) (local $l i32)\n";
   // ENOENT(44) -> NotFound(path)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 44)) (then\n";
   o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1) + ")))\n";
@@ -7650,7 +7652,8 @@ pub function build_io_error_func(sv: string[]): string {
   o = o + "      (i32.store (local.get $r) (global.get " + tid_global("InvalidUtf8") + "))\n";
   o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0) + ")) (local.get $path))\n";
   o = o + "      (return (local.get $r))))\n";
-  // default -> Other(path, strerror(errno)) (#8265): $e is the pooled
+  // default -> Other(path, strerror(errno), $l) (#8265): $l is the errno's
+  // Linux number, $e the pooled
   // literal for the errno (with_strerror_texts put every text in sv), or a
   // fresh "Unknown error N" block past the table. That block goes through
   // $__fern_str_box like every arm above it, NOT a bare $__fern_alloc: a bare
@@ -7660,11 +7663,12 @@ pub function build_io_error_func(sv: string[]): string {
   // instead.
   let texts: string[] = asmcore.strerror_texts();
   let wasi: i32[] = asmcore.strerror_wasi();
+  let carried: i32[] = asmcore.strerror_carried();
   let ti: i32 = 0;
   while (ti < texts.len()) {
     let en: i32 = wasi[ti];
     if (en != 0 && en != 44 && en != 2 && en != 20 && en != 27 && en != 58 && en != 25) {
-      o = o + "    (if (i32.eq (local.get $errno) (i32.const " + util.i32_to_string(en) + ")) (then (local.set $e (i32.const " + util.i32_to_string(offset_of_value(sv, texts[ti])) + "))))\n";
+      o = o + "    (if (i32.eq (local.get $errno) (i32.const " + util.i32_to_string(en) + ")) (then (local.set $e (i32.const " + util.i32_to_string(offset_of_value(sv, texts[ti])) + ")) (local.set $l (i32.const " + util.i32_to_string(carried[ti]) + "))))\n";
     }
     ti = ti + 1;
   }
@@ -7682,10 +7686,11 @@ pub function build_io_error_func(sv: string[]): string {
   o = o + "      (local.set $n (local.get $errno))\n";
   o = o + "      (block $wd (loop $wl (local.set $t (i32.sub (local.get $t) (i32.const 1))) (i32.store8 (local.get $t) (i32.add (i32.const 48) (i32.rem_u (local.get $n) (i32.const 10)))) (local.set $n (i32.div_u (local.get $n) (i32.const 10))) (br_if $wd (i32.eqz (local.get $n))) (br $wl)))\n";
   o = o + "    ))\n";
-  o = o + "    (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(2) + ")))\n";
+  o = o + "    (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(3) + ")))\n";
   o = o + "    (i32.store (local.get $r) (global.get " + tid_global("Other") + "))\n";
   o = o + "    (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0) + ")) (local.get $path))\n";
   o = o + "    (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(1) + ")) (local.get $e))\n";
+  o = o + "    (i64.store (i32.add (local.get $r) (i32.const " + io_err_field_off(2) + ")) (i64.extend_i32_u (local.get $l)))\n";
   o = o + "    (local.get $r))\n";
   return o;
 }
@@ -12889,7 +12894,7 @@ pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean, set_args
   if (!lc) {
     return "";
   }
-  return lc_report_funcs(sanitize, set_args) + "  (func $__fern_proc_exit (param $c i32)\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
+  return lc_report_funcs(sanitize, set_args, false) + "  (func $__fern_proc_exit (param $c i32)\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
 }
 
 // lc_exit_report is the census report a component's exit shim makes before
@@ -12904,17 +12909,18 @@ function lc_exit_report(lc: boolean): string {
 // component_run_entry is `$__fern_lang_run`: main's result mapped to the 0 = ok /
 // 1 = err the canon lift expects, reporting the census on the way out when
 // `report` is set.
-function component_run_entry(report: boolean, sanitize: boolean, set_args: boolean): string {
+function component_run_entry(report: boolean, sanitize: boolean, set_args: boolean, fdt: boolean): string {
   if (!report) {
     return "  (func $__fern_lang_run (result i32) (i32.eqz (i32.eqz (call $main))))\n";
   }
-  return lc_report_funcs(sanitize, set_args) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
+  return lc_report_funcs(sanitize, set_args, fdt) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
 }
 
 // lc_report_funcs is `$__fern_lc_report` and the two writers it calls, for
 // either framing: mode 0 reports from its $__fern_proc_exit, a component from its
-// run entry and its exit shim.
-function lc_report_funcs(sanitize: boolean, set_args: boolean): string {
+// run entry and its exit shim. `fdt` says the module keeps a component's
+// handle table (fd_table_funcs).
+function lc_report_funcs(sanitize: boolean, set_args: boolean, fdt: boolean): string {
   let o: string = "";
   // $__fern_lc_wr(p, len): one fd_write(2) of [p, p+len).
   o = o + "  (func $__fern_lc_wr (param $p i32) (param $len i32)\n";
@@ -12950,6 +12956,13 @@ function lc_report_funcs(sanitize: boolean, set_args: boolean): string {
     o = o + "    (if (global.get $__fern_args_set) (then\n";
     o = o + "      (drop (call $__fern_arr_dec_ptr (global.get $__fern_args_set)))\n";
     o = o + "      (global.set $__fern_args_set (i32.const 0))))\n";
+  }
+  // So is the handle table. Writing the line below may build a fresh one,
+  // after the counts are read.
+  if (fdt) {
+    o = o + "    (if (global.get $__fern_fdt) (then\n";
+    o = o + "      (call $__fern_raw_free (global.get $__fern_fdt) (i32.shl (global.get $__fern_fdt_cap) (i32.const 5)))\n";
+    o = o + "      (global.set $__fern_fdt (i32.const 0))))\n";
   }
   // The counts are read before anything is written: a component's $__fern_fd_write
   // shim allocates, and would count its own writes into the line.
@@ -15226,7 +15239,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (lifts_async(mod, mode)) {
     parts = parts.append(async_lift_wrappers(mod));
   }
-  parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize, need(needs, "@calls_set_args")));
+  parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize, need(needs, "@calls_set_args"), mode == 2 && need_fd_table(needs)));
   parts = parts.append("  (export \"_lang_run\" (func $__fern_lang_run)))\n");
   return util.str_join_chunks(parts);
 }

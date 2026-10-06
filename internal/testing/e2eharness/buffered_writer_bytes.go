@@ -69,7 +69,7 @@ function main(): i32 {
     }
   }
   // An existing error discards pending bytes but survives each flush.
-  let failed = io.BufWriter { w: stdout(), buf: io.BufBlock { h: buf_new(1) }, cap: 1, err: Some(Other("first", "failure")) };
+  let failed = io.BufWriter { w: stdout(), buf: io.BufBlock { h: buf_new(1) }, cap: 1, err: Some(Other("first", "failure", 0)) };
   failed = failed.write_byte(255);
   failed = failed.write_string("discarded");
   failed = failed.write_bytes(held);
@@ -90,7 +90,7 @@ function main(): i32 {
   buf_free(seed);
   if (failed.buffered() != 0) { return 3; }
   match (failed.error()) {
-    Some(Other(path, message)) => { if (path != "first" || message != "failure") { return 4; } },
+    Some(Other(path, message, _)) => { if (path != "first" || message != "failure") { return 4; } },
     _ => { return 5; }
   }
   return 0;

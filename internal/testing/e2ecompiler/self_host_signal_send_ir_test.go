@@ -39,12 +39,12 @@ const signalSendSelfHostSource = `function main(): i32 {
 
     // 2^22 is one above the largest pid_max Linux accepts, so no process can
     // ever hold it. ESRCH has no named IoError variant, so it arrives as
-    // Other(path, strerror) with an empty path.
+    // Other(path, strerror, errno) with an empty path.
     match (signal_send(4194304, 0)) {
         Ok(_) => { return 2; },
         Err(e) => {
             match (e) {
-                Other(p, msg) => {
+                Other(p, msg, _) => {
                     if (p.len() != 0) { return 3; }
                     if (msg != "No such process") { return 4; }
                 },
@@ -60,7 +60,7 @@ const signalSendSelfHostSource = `function main(): i32 {
         Ok(_) => { return 6; },
         Err(e) => {
             match (e) {
-                Other(p, msg) => {
+                Other(p, msg, _) => {
                     if (msg != "Invalid argument") { return 7; }
                 },
                 _ => { return 8; }

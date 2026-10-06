@@ -55,7 +55,7 @@ const writerErrProg = `function main(): i32 {
             match (w.write("x")) {
                 Some(e) => {
                     match (e) {
-                        Other(p, _) => { if (p.len() == 0) { return 5; } return 6; },
+                        Other(p, _, _) => { if (p.len() == 0) { return 5; } return 6; },
                         _ => { return 7; },
                     }
                 },

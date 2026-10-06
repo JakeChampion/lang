@@ -392,7 +392,7 @@ module's bare `Text` ambiguous, including stdlib source the author cannot edit
 
 The qualified spelling depends on where the enum lives. An enum of the
 referring module and a built-in enum are qualified by the enum (`Kind.Text`,
-`IoError.Other(p, m)`). An imported module's enum is qualified by the MODULE
+`IoError.Other(p, m, n)`). An imported module's enum is qualified by the MODULE
 (`net.Other(3)`, `net.Interrupted`, and `net.Other(n) =>` in a pattern, nested
 or not), the same form the union alternatives already took: `mod.Variant`
 resolves in modload (`qualifiedVariant`) to the variant with the mangled enum

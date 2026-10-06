@@ -31,7 +31,7 @@ func TestSelfHostWasmIoErrorVariantLayout(t *testing.T) {
 	wasmRun := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	// A regular file, so that read_file("reg.txt/nested") fails with an errno
-	// outside the mapped five (ENOTDIR) and lands on the two-field Other arm.
+	// outside the mapped five (ENOTDIR) and lands on the three-field Other arm.
 	if err := os.WriteFile(filepath.Join(dir, "reg.txt"), []byte("the file"), 0o644); err != nil {
 		t.Fatalf("write reg.txt: %v", err)
 	}
@@ -49,7 +49,7 @@ function main(): i32 {
                 InvalidUtf8(p) => { write("utf8"); return 1; },
                 Interrupted => { write("intr"); return 1; },
                 Unsupported => { write("unsup"); return 1; },
-                Other(p, m) => { write("other:"); write(p); write("/msg="); write(m); write(":end"); return 0; }
+                Other(p, m, n) => { write("other:"); write(p); write("/msg="); write(m); if (n == 20) { write("/errno=ENOTDIR"); } write(":end"); return 0; }
             }
         }
     }
@@ -70,10 +70,11 @@ function main(): i32 {
 		want string
 	}{
 		{"notfound", "nope.txt", "notfound:nope.txt"},
-		// Every unmapped errno lands on Other(path, msg): two fields, so it
-		// pins the stride and not just the first field's offset. The message
-		// is strerror's text for the errno (#8265).
-		{"other", "reg.txt/nested", "other:reg.txt/nested/msg=Not a directory:end"},
+		// Every unmapped errno lands on Other(path, msg, errno): three fields, so
+		// it pins the stride and not just the first field's offset. The message
+		// is strerror's text for the errno (#8265), and the errno WASI's 54
+		// translated to Linux's 20 (#11296).
+		{"other", "reg.txt/nested", "other:reg.txt/nested/msg=Not a directory/errno=ENOTDIR:end"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wat := runCapture(t, gcc, runner, wasmRun, []byte(prog(tc.path)))
@@ -132,7 +133,7 @@ func TestSelfHostWasmIoErrorMessageIsRcBoxed(t *testing.T) {
         Ok(s) => { return 0; },
         Err(e) => {
             match (e) {
-                Other(p, m) => { return m.len(); },
+                Other(p, m, _) => { return m.len(); },
                 _ => { return 0; }
             }
         }

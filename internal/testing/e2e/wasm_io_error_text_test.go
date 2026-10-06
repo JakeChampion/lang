@@ -25,7 +25,7 @@ const ioErrorTextProg = `function main(): i32 {
         Ok(_) => { print("read through a file"); return 1; },
         Err(e) => {
             match (e) {
-                Other(p, m) => { print(p + ": " + m); return 0; },
+                Other(p, m, _) => { print(p + ": " + m); return 0; },
                 NotFound(p) => { print("notfound " + p); return 2; },
                 _ => { print("wrong variant"); return 3; }
             }

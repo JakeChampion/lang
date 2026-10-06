@@ -16,7 +16,7 @@ import (
 // do, so the failure only comes at the read.
 const readDirProg = `function msg(e: IoError): string {
     match (e) {
-        Other(_, m) => { return m; },
+        Other(_, m, _) => { return m; },
         _ => { return "another variant"; }
     }
     return "";
