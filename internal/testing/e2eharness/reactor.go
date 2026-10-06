@@ -142,10 +142,15 @@ function main(): i32 {
     if (tcp_recv_into(a, buf) != 0) { return fail(28); }
     // a at its end and a second connection pending at the listener,
     // watched again: two descriptors ready before one wait, reported as
-    // two pairs. Both stay ready, so no host timing is in the way.
+    // two pairs. The connection reaches the listener on the host's time
+    // (Darwin's loopback is asynchronous), so the listener is waited for
+    // alone, with a unwatched, before both are watched for the one wait.
+    if (reactor_ctl(r, 2, a, 0) != 0) { return fail(36); }
     if (reactor_ctl(r, 1, ln, 1) != 0) { return fail(32); }
     let c2: i32 = tcp_connect(16777343, port);
     if (c2 < 0) { return fail(33); }
+    if (expect_ready(r, ln, 1, 2000, 37) != 0) { return 37; }
+    if (reactor_ctl(r, 1, a, 1) != 0) { return fail(38); }
     if (expect_both(r, ln, 1, a, 1, 2000, 34) != 0) { return 34; }
     tcp_close(c2);
     if (reactor_ctl(r, 2, ln, 0) != 0) { return fail(35); }
