@@ -730,8 +730,10 @@ function next_block_id(g: ssa.SFunc): i32 {
   return hi;
 }
 
+// The values array is read last, so the append grows it in place.
 function with_value(f: ssasem.Func, t: typeinfo.Type): ssasem.Func {
-  return ssasem.Func { ...f, values: f.values.append(t), graph: ssa.SFunc { ...f.graph, nvals: f.values.len() + 1 } };
+  let n: i32 = f.values.len() + 1;
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, nvals: n }, values: f.values.append(t) };
 }
 
 function with_block(f: ssasem.Func, bi: i32, b: ssa.SBlock): ssasem.Func {
