@@ -1024,8 +1024,7 @@ to smallest. Status pending unless marked.
   carry a value across the requests of a long-running server:
 
   - a closure-captured `Cell[T]`, limited to the cycle-free
-    element types E057 admits (scalars and `string`) — enough
-    for a counter, not for a table;
+    element types E057 admits: scalars, `string` and owned scalar arrays;
   - `serve.run_with(port, cfg, init, handler)`, which threads a
     caller-owned `S` through the accept loop's own frame: the
     handler returns the state the next request sees, paired with
