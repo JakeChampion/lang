@@ -7,11 +7,11 @@ import "testing"
 // allocated. Each probe runs 100 rounds and prints its result times 1000 plus
 // the heap allocations the rounds made. divmod's one return and scan's two
 // returns joined by a phi allocate nothing once spliced; kept is the same body
-// as divmod under @noinline, so its call remains, but sempair returns its two
-// scalars without a box. clamp
-// returns a scalar through three blocks and allocates nothing either way.
-// span reads two fields of a record parameter into a tuple, and kept_span is
-// the same body under @noinline. pick reads the fields of a record a phi
+// as divmod under @noinline, so the call stays, and its pair returns in two
+// words (sempair) rather than a box. clamp returns a scalar through three
+// blocks and allocates nothing either way. span reads two fields of a record
+// parameter into a tuple, and kept_span is the same body under @noinline,
+// paired the same way. pick reads the fields of a record a phi
 // chooses, which is not a parameter, so it is no leaf; pick_rounds is its only
 // caller, so it is spliced there all the same and its tuple read apart.
 const semInlineProgram = `struct Range { lo: i32, hi: i32 }
