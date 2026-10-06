@@ -16215,14 +16215,14 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
 // enum pass knows `U`, and monomorphize_enum_structs instantiates what it
 // substitutes.
 pub function monomorphize_structs(mod: Module): Module {
-  return ms_module(mod, true);
+  return ms_module(mod);
 }
 
 // monomorphize_enum_structs runs after monomorphize_enums: it clones the
 // generic structs the enum clones name (`A__i32(Box[i32])`), and is a no-op
 // when monomorphize_structs deferred nothing.
 pub function monomorphize_enum_structs(mod: Module): Module {
-  return ms_module(mod, false);
+  return ms_module(mod);
 }
 
 // The generic enums whose variant payloads or method signatures name a
@@ -16231,6 +16231,9 @@ function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {
   let out: string[] = [];
   for sd in mod.structs {
     if (sd.enum_owner.len() == 0 || genum_index(mod.enums, sd.enum_owner) < 0 || str_in(out, sd.enum_owner)) {
+      continue;
+    }
+    if (mod.enums[genum_index(mod.enums, sd.enum_owner)].type_params.len() == 0) {
       continue;
     }
     for f in sd.fields {
@@ -16243,6 +16246,9 @@ function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {
   for fd in mod.funcs {
     let owner: string = strip_struct_base(fd.receiver_type);
     if (fd.receiver_type.len() == 0 || genum_index(mod.enums, owner) < 0 || str_in(out, owner)) {
+      continue;
+    }
+    if (mod.enums[genum_index(mod.enums, owner)].type_params.len() == 0) {
       continue;
     }
     let names: boolean = ms_names_gstruct(fd.ret_type, gstructs) || ms_names_gstruct(fd.ret_fn_ret, gstructs);
@@ -16282,7 +16288,7 @@ function struct_named(structs: StructDecl[], name: string): boolean {
   return false;
 }
 
-function ms_module(mod: Module, defer_enums: boolean): Module {
+function ms_module(mod: Module): Module {
   let gstructs: StructDecl[] = [];
   let gi: i32 = 0;
   while (gi < mod.structs.len()) {
@@ -16294,10 +16300,9 @@ function ms_module(mod: Module, defer_enums: boolean): Module {
   if (gstructs.len() == 0) {
     return Module { ...mod, funcs: drop_bg_templates(mod.funcs) };
   }
-  let deferred: string[] = [];
-  if (defer_enums) {
-    deferred = ms_deferred_enums(mod, gstructs);
-  }
+  // Retained enum templates still need the generic record schemas they name
+  // after enum cloning. Concrete enum clones are processed normally below.
+  let deferred: string[] = ms_deferred_enums(mod, gstructs);
   let keep: boolean = deferred.len() > 0;
 
   let ins: Insts = Insts { inames: [], itypes: [], iargs: [] };

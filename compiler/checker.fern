@@ -12412,7 +12412,7 @@ function vb_settles(body: ast.Stmt[], want: typeinfo.Type, s: Scope): boolean {
 // literal payload read at the destination's payload type as a bare literal is.
 function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   if let ast.ExprCall(c) = e {
-    if (c.args.len() != 1 || ctor_name_taken(c, s)) {
+    if (c.args.len() != 1 || !builtin_ctor_destination(c, want, s)) {
       return false;
     }
     let wa: typeinfo.Type[] = nominal_args(want);
@@ -12420,9 +12420,45 @@ function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boole
     if (at < 0 || at >= wa.len()) {
       return false;
     }
-    return settles_to(c.args[0], wa[at], s);
+    if (settles_to(c.args[0], wa[at], s)) {
+      return true;
+    }
+    // A direct Result construction widens a same-signed integer payload at
+    // the destination. This is a constructor conversion, not covariance of
+    // an already constructed enum, and Option retains its stricter rule.
+    if let typeinfo.TypeUnion(u) = want {
+      if (u.name == "Result") {
+        if let typeinfo.TypeI32(from) = check_expr(c.args[0], s) {
+          if let typeinfo.TypeI32(to) = wa[at] {
+            return !from.is_char && !to.is_char && from.unsigned == to.unsigned
+              && from.width > 0 && from.width < to.width;
+          }
+        }
+      }
+    }
+    return false;
   }
   return false;
+}
+
+// Only a constructor can convert its payload at an enum destination. A
+// same-named method or qualified function returns an already constructed
+// value, and a different enum keeps its own nominal identity.
+function builtin_ctor_destination(c: ast.ExprCall, want: typeinfo.Type, s: Scope): boolean {
+  if (ctor_name_taken(c, s) || !same_nominal(check_expr(c, s), want)) {
+    return false;
+  }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (qual_variant_union(fa, s).len() == 0) {
+      return false;
+    }
+    if let ast.ExprIdent(ns) = fa.obj {
+      if (s.has_sig(ns.name + "." + fa.field)) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 // Which of an Option's or Result's arguments a builtin variant's payload is.

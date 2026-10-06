@@ -9,6 +9,31 @@ import (
 func TestSelfHostPartialEnumInference(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct{ name, source string }{
+		{"direct-result-payload-widening", `
+function signed(n: i32): Result[i64, string] { return Ok(n); }
+function unsigned(n: u8): Result[string, u64] { return Result.Err(n); }
+function main(): i32 {
+  match(signed(0 - 17)) { Ok(n) => { assert(n == -17i64); }, Err(_) => { assert(false); } }
+  match(unsigned(255)) { Ok(_) => { assert(false); }, Err(n) => { assert(n == 255u64); } }
+  return 0;
+}`},
+		{"retained-record-and-enum-dyn-templates", `import "std/i32";
+trait Size { function size(self: Self): i32; }
+struct Box[T] { value: T, tag: string }
+impl[T] Size for Box[T] { function size(self: Self): i32 { return self.tag.len(); } }
+enum Wrapped[T] { Full(Box[T]), Empty }
+impl[T] Size for Wrapped[T] {
+  function size(self: Self): i32 { match(self) { Full(b) => { return b.size(); }, Empty => { return 0; } } }
+}
+function exercise(i: i32): void {
+  let b = Box { value: "payload" + i.to_string(), tag: "tag" + i.to_string() };
+  let wrapped: Wrapped[string] = Full(b);
+  let a: dyn Size = b; let c: dyn Size = wrapped;
+  let n: Wrapped[i32] = Full(Box { value: i, tag: "n" + i.to_string() });
+  let d: dyn Size = n;
+  assert(a.size() == 4); assert(c.size() == 4); assert(d.size() == 2);
+}
+function main(): i32 { for i in 0..8 { exercise(i); } return 0; }`},
 		{"derived-generic-methods", `import "core/cmp";
 @derive(cmp.Display, cmp.Eq)
 enum Opt[T] { Has(T), Nil }

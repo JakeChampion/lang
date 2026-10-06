@@ -6607,12 +6607,16 @@ function dyn_types_in(t: typeinfo.Type, out: typeinfo.Type[]): typeinfo.Type[] {
 // The records, enums and strings a dyn value of type `t` can be holding: every
 // one the module implements each trait of the set for. A scalar's box has no
 // children. A generic declaration's instances are the clones monomorphisation
-// made of it (`W__string`), which replace it.
+// made of it (`W__string`); a retained template is not a concrete instance.
 function dyn_concretes(t: typeinfo.Type, s: State): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   for n in dyn_impl_names(t, s.impls) {
     if (n == "string") {
       out = out.append(t_string());
+    } else if (checker.union_sig(s.scope, n).type_params.len() > 0 || checker.struct_sig(s.scope, n).type_params.len() > 0) {
+      for c in generic_clones(n, s) {
+        out = out.append(c);
+      }
     } else if (record_schema(n, s).name.len() > 0) {
       out = out.append(typeinfo.TypeStruct { name: n, args: [] });
     } else if (union_layout(s, n) == semrecords.layout_variant()) {
@@ -8867,7 +8871,7 @@ pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method
   let out: string[] = [];
   for fd in funcs {
     let n: i32 = fd.receiver_type.len();
-    if (n == 0 || n >= 2 && slice_unchecked(fd.receiver_type, n - 2, n) == "[]") {
+    if (generic_decl(fd) || n == 0 || n >= 2 && slice_unchecked(fd.receiver_type, n - 2, n) == "[]") {
       continue;
     }
     if (!arm_receiver_implements(impls, parser.receiver_base(fd.receiver_type), traits)) {

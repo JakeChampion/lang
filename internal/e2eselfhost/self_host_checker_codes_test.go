@@ -2443,6 +2443,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"partial-result-literal-negative", "function f(): Result[u32, string] { let o = Ok(-3); return o; } function main(): i32 { return 0; }\n", []string{"E047"}},
 		{"partial-result-literal-context", "function f(): Result[i64, string] { let o = Ok(3); return o; } function main(): i32 { return 0; }\n", nil},
 		{"partial-result-literal-width-join", "function main(): i32 { let o = if (true) { Ok(1) } else { Ok(4294967297i64) }; match (o) { Ok(v) => { assert(v == 1i64); }, Err(_) => { return 1; } } return 0; }\n", nil},
+		{"partial-result-foreign-constructor-widening", "enum Other[T] { Ok(T), No } function f(n: i32): Result[i64, string] { return Other.Ok(n); } function main(): i32 { return 0; }\n", []string{"E002"}},
+		{"partial-result-foreign-constructor-literal", "enum Other[T] { Ok(T), No } function f(): Result[i64, string] { return Other.Ok(3); } function main(): i32 { return 0; }\n", []string{"E002"}},
+		{"partial-result-method-widening", "struct Factory {} impl Factory { function Ok(self: Self, n: i32): Result[i32, string] { return Result.Ok(n); } } function f(n: i32): Result[i64, string] { let x = Factory {}; return x.Ok(n); } function main(): i32 { return 0; }\n", []string{"E002"}},
 		{"partial-result-concrete-width-conflict", "function f(): Result[i64, string] { let n: i32 = 3; let o = Ok(n); return o; } function main(): i32 { return 0; }\n", []string{"E002"}},
 		{"partial-result-explicit-width-conflict", "function f(): Result[i64, string] { let o = Ok(3i32); return o; } function main(): i32 { return 0; }\n", []string{"E002"}},
 		{"partial-result-ok-local", "function main(): i32 { let o = Ok(3); match (o) { Ok(v) => { return v + 1; }, Err(e) => { return 0; } } }\n", nil},
@@ -3080,6 +3083,9 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"partial-result-foreign-constructor-widening", `enum Other[T] { Ok(T), No } function f(n: i32): Result[i64, string] { return Other.Ok(n); } function main(): i32 { return 0; }`},
+		{"partial-result-foreign-constructor-literal", `enum Other[T] { Ok(T), No } function f(): Result[i64, string] { return Other.Ok(3); } function main(): i32 { return 0; }`},
+		{"partial-result-method-widening", `struct Factory {} impl Factory { function Ok(self: Self, n: i32): Result[i32, string] { return Result.Ok(n); } } function f(n: i32): Result[i64, string] { let x = Factory {}; return x.Ok(n); } function main(): i32 { return 0; }`},
 		{"partial-result-array-void-exit", `function f(c: boolean): i32 { let g = () => { if(c) { return [Ok(1)]; } return; }; return 0; }`},
 		{"partial-result-tuple-void-exit", `function f(c: boolean): i32 { let g = () => { if(c) { return (Ok(1), 2); } return; }; return 0; }`},
 		{"partial-result-nested-void-exit", `function f(c: boolean): i32 { let g = () => { if(c) { return [(Ok(1), 2)]; } return; }; return 0; }`},
