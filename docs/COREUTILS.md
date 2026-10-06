@@ -1158,8 +1158,8 @@ shows undiluted, at 3.3× and 3.4×.
 | `timeout` | timeout an invalid duration | 0.34 ± 0.50 | 1.17 ± 0.23 | 2.14 ± 0.27 | 3.41× | 6.24× |
 
 Every row wins, and the two-row control says what the implementation costs.
-Fern forks a TIMER CHILD where GNU arms a SIGALRM, because nothing here can
-observe a delivered signal (#9243) — so `timeout 10 /bin/true` pays one extra
+Fern forks a TIMER CHILD where GNU arms a SIGALRM, because no signal here can
+wake a blocked wait — so `timeout 10 /bin/true` pays one extra
 fork and one extra reap, and `timeout 0 /bin/true`, which takes no timer on
 either side, is the same run without it: 1.75 ms against 1.54 ms. Two tenths
 of a millisecond, against a 0.5 ms startup lead that more than covers it.
@@ -3827,11 +3827,25 @@ input flag`, which is itself the divergence:
 - `oflag=append` together with another open-time flag (`oflag=append,sync`)
   opens through `open_appender`, which takes no flags word, so the second
   flag is dropped there — append is the one open-time bit the
-  `open_writer_with` word does not carry;
-- the SIGUSR1 report mid-copy needs a signal a program can OBSERVE, and
-  Fern has only the three disposition calls (`signal_send`,
-  `signal_ignore`, `signal_default`) — nothing that runs or records on
-  delivery (#9243);
+  `open_writer_with` word does not carry.
+
+**The info signal is answered when a read returns, not during it.** SIGUSR1 —
+SIGINFO on Darwin, and nothing under POSIXLY_CORRECT on Linux, as GNU
+chooses — writes the statistics report and the copy carries on (#9243).
+GNU's handler interrupts a blocked read and prints at once; `signal_catch`
+installs its handler SA_RESTART and only raises a flag, which `dd.fern`
+reads on each side of every read and once before the final report. A signal
+that arrives while a read waits on a slow input is therefore reported when
+the read returns, before its record is counted, so the numbers match GNU's
+and only the moment differs. GNU also prints one report per signal where
+arrivals between two looks read as one here. `TestDDInfoSignal` signals both
+over a FIFO and compares stderr with the durations masked.
+
+**SIGINT does not print the statistics.** GNU catches it, reports, and dies
+of it; `dd.fern` leaves it at its default and dies without the report. The
+flag `signal_catch` raises cannot stand in: a catch is SA_RESTART, so a dd
+blocked on a read would not notice ^C until the read returned. That needs a
+signal that interrupts a blocking call, which no builtin provides.
 
 **`expr`'s capture registers follow glibc's own construction, not a branch
 order.** glibc prefers the non-empty branch of an alternation everywhere,
@@ -3964,10 +3978,13 @@ the `ignoring invalid value` warning, so `ls` can pick them up as is.
 **`timeout` cannot forward a signal that arrives at IT.** GNU handles SIGINT,
 SIGQUIT, SIGHUP, SIGTERM and SIGXCPU by passing them on to the command and
 then dying of them, so `kill -INT` on a `timeout` reaches the command it is
-supervising. That needs a signal a program can OBSERVE rather than only
-dispose of, which is #9243 — the same gap `dd`'s SIGUSR1 report waits on.
-Everything else about the utility is here, and nothing in the corpus reaches
-this: it needs a third party signalling the timeout process mid-run.
+supervising. That needs a signal that WAKES a blocked wait: `signal_catch`
+(#9243) only raises a flag, installed SA_RESTART, and timeout spends the run
+inside one `proc_waitpid`, which the kernel restarts and which therefore
+never returns to look at it. dd can poll at its record boundary; timeout has
+no such point. Everything else about the utility is here, and nothing in the
+corpus reaches this: it needs a third party signalling the timeout process
+mid-run.
 
 One smaller residue comes from `proc_waitpid` collapsing a signal death into
 the shell's one number. A command KILLED reports 137 after a timeout where a
@@ -3979,7 +3996,7 @@ somewhere ELSE during the timeout reads as 124 here and 137 there.
 
 **`timeout`'s deadline is a forked child, and that is visible to nothing but
 `ps`.** GNU arms `alarm(2)` and lets the handler interrupt its `wait`; with no
-observable signal (above) the clock is a process instead, and ONE blocking
+signal that wakes a wait (above) the clock is a process instead, and ONE blocking
 `proc_waitpid(-1)` wakes on whichever finishes first — the command or the
 timer. `proc_waitpid_nohang` then says which, because a child already reaped
 answers ECHILD where a live one answers -1. The timer holds no descriptor the
@@ -4557,8 +4574,7 @@ groups are the order of work. Each sub-issue names its group.
   (done, on `w.seek(offset, whence)` — lseek on a Writer, which is what
   writing at an offset without rewriting the file needs; the operand
   families it does NOT have are in the divergences above, each with its
-  own issue, and the biggest of them wants a signal a program can
-  OBSERVE rather than only dispose of, #9243)
+  own issue; the SIGUSR1 report is `signal_catch`, #9243)
   `shred` (done, on that same seek — see the divergences above) `stty` (done, on
   the kernel's own termios words plus `set_window_size` and the four handle
   forms — #9356, #9360, #9363; the two places its `--help` text disagrees with
