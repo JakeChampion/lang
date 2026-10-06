@@ -365,3 +365,4 @@ buf_clear=386
 tcp_send_buf=387
 clock_set=388
 clock_resolution=389
+str_hash=390

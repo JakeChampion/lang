@@ -1260,6 +1260,22 @@ func New() *Interp {
 		}
 		return Number(sum), nil
 	}}
+	// __str_hash(s, seed): the seeded word-at-a-time hash of s
+	// (compiler/ir.fern's str_hash has the definition).
+	i.Builtins["__str_hash"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("__str_hash: expected 2 args, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__str_hash: expected a string, got %T", args[0])
+		}
+		seed, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__str_hash: expected an integer seed, got %T", args[1])
+		}
+		return Number(int32(StrHash([]byte(string(s)), int32(int64(seed))))), nil
+	}}
 	// __count_runs(s, inside, set): how many runs of set members begin in s;
 	// `inside` nonzero means the byte before s was a member.
 	i.Builtins["__count_runs"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
@@ -9170,4 +9186,35 @@ func scanSet(name string, b []byte, fromArg, setArg Value) (Value, error) {
 		}
 	}
 	return Number(len(b)), nil
+}
+
+// StrHash is `__str_hash(s, seed)`: FNV-1a's 64-bit basis xor the
+// sign-extended seed xor the length, then per 8-byte little-endian word of s
+// a xor and a multiply by FNV's 64-bit prime; the final partial word is the
+// last 8 bytes, overlapping the word before, or under 8 bytes the bytes
+// zero-padded to a word; the high half folds into the low and the low 32
+// bits are the answer.
+func StrHash(s []byte, seed int32) uint32 {
+	const prime = 1099511628211
+	h := uint64(0xcbf29ce484222325) ^ uint64(int64(seed)) ^ uint64(len(s))
+	word := func(b []byte) uint64 {
+		var w uint64
+		for k := len(b) - 1; k >= 0; k-- {
+			w = w<<8 | uint64(b[k])
+		}
+		return w
+	}
+	i := 0
+	for ; i+8 <= len(s); i += 8 {
+		h = (h ^ word(s[i:i+8])) * prime
+	}
+	if i < len(s) {
+		if len(s) >= 8 {
+			h = (h ^ word(s[len(s)-8:])) * prime
+		} else {
+			h = (h ^ word(s)) * prime
+		}
+	}
+	h ^= h >> 32
+	return uint32(h)
 }

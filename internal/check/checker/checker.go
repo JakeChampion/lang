@@ -1832,6 +1832,17 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __str_hash(s, seed) → i32: the seeded hash of s's bytes, a xor and a
+	// multiply per 8-byte little-endian word (compiler/ir.fern's str_hash has
+	// the definition). Word-at-a-time is the point: the compiler's name
+	// index hashes every name it looks up.
+	c.info.FuncSigs["__str_hash"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __count_runs(s, inside, set) → i32: how many runs of bytes whose entry
 	// in `set` is nonzero begin in s. `inside` nonzero says the byte before s
 	// was a member, so a run open at s[0] is not counted. A byte past the end
@@ -11520,7 +11531,7 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 // clock). verifyFipAllocs (E068) stays the backstop for what they emit.
 var fipNonAllocBuiltins = map[string]bool{
 	"__memchr": true, "__mismatch_bytes": true, "__count_byte_bytes": true, "__sum_bytes_array": true, "__bsd_sum_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
-	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__count_runs": true, "__count_runs_bytes": true,
+	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__str_hash": true, "__count_runs": true, "__count_runs_bytes": true,
 	"__crc32_cksum": true, "__crc32_cksum_array": true,
 	"__clz32": true, "__ctz32": true, "__popcount32": true,
 	"__clz64": true, "__ctz64": true, "__popcount64": true,

@@ -70,7 +70,7 @@ func TestFipAdmitsNonAllocatingBuiltins(t *testing.T) {
 	for _, call := range []string{
 		`__memchr(s, 44, 0)`, `__memchr_bytes(set, 44, 0)`, `__rmemchr_bytes(set, 44, 0)`, `__mismatch_bytes(set, 0, set, 0, 1)`, `__rmemchr(s, 44, s.len())`, `__ascii_run(s, 0)`,
 		`__count_byte(s, 44)`, `__count_byte_bytes(set, 44)`, `__crc32_cksum_array(0, set)`, `__sum_bytes_array(set)`, `__bsd_sum_bytes(set, 0)`, `__sum_bytes(s)`, `__scan_set(s, 0, set)`, `__scan_set_bytes(set, 0, set)`, `__count_runs_bytes(set, 0, set)`, `__bsd_sum(s, 0)`,
-		`__count_runs(s, 0, set)`, `__crc32_cksum(0, s)`,
+		`__count_runs(s, 0, set)`, `__crc32_cksum(0, s)`, `__str_hash(s, 0)`,
 		`__clz32(x)`, `__ctz32(x)`, `__popcount32(x)`, `__clz64(y)`, `__ctz64(y)`, `__popcount64(y)`,
 		`__ptr_width()`, `(__heap_bump_bytes() as i32)`, `(__heap_alloc_count() as i32)`, `(monotonic_ns() as i32)`,
 	} {
@@ -79,8 +79,8 @@ func TestFipAdmitsNonAllocatingBuiltins(t *testing.T) {
 function main(): i32 { return 0; }`)
 		}
 	}
-	if len(fipNonAllocBuiltins) != 28 {
-		t.Errorf("fipNonAllocBuiltins has %d entries and this test calls 28: add a row for the new one", len(fipNonAllocBuiltins))
+	if len(fipNonAllocBuiltins) != 29 {
+		t.Errorf("fipNonAllocBuiltins has %d entries and this test calls 29: add a row for the new one", len(fipNonAllocBuiltins))
 	}
 }
 

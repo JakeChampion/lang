@@ -6430,6 +6430,52 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(s_done + ":\n");
     return s;
   }
+  if (o.kind_tag == 390) {  // str_hash
+    // operand stack [box, seed] (seed on top) -> ir.op_str_hash's hash of
+    // the string: a xor and a multiply per 8-byte word, the last word
+    // anchored at the end of the string, a string under 8 bytes assembled
+    // into one zero-padded word a byte at a time.
+    //
+    // %rax the data, %r8 the length, %rdx the hash, %r9 the prime, %r10 the
+    // cursor, %r11 the last word's offset, %rcx the seed and then the short
+    // word.
+    let hlo: asmcore.LabelOut = asmcore.fresh_label(s);
+    let h_loop: string = hlo.name;
+    let hlo2: asmcore.LabelOut = asmcore.fresh_label(hlo.state);
+    let h_tail: string = hlo2.name;
+    let hlo3: asmcore.LabelOut = asmcore.fresh_label(hlo2.state);
+    let h_short: string = hlo3.name;
+    let hlo4: asmcore.LabelOut = asmcore.fresh_label(hlo3.state);
+    let h_byte: string = hlo4.name;
+    let hlo5: asmcore.LabelOut = asmcore.fresh_label(hlo4.state);
+    let h_fin: string = hlo5.name;
+    s = hlo5.state;
+    s = s.write("    popq %rcx\n    popq %rax\n");
+    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    s = s.write("    movslq %ecx, %rcx\n");
+    s = s.write("    movabsq $-3750763034362895579, %rdx\n    xorq %rcx, %rdx\n    xorq %r8, %rdx\n");
+    s = s.write("    movabsq $1099511628211, %r9\n    xorq %r10, %r10\n");
+    s = s.write("    cmpq $8, %r8\n    jb " + h_short + "\n");
+    s = s.write("    leaq -8(%r8), %r11\n");
+    s = s.write(h_loop + ":\n");
+    s = s.write("    cmpq %r11, %r10\n    ja " + h_tail + "\n");
+    s = s.write("    xorq (%rax,%r10), %rdx\n    imulq %r9, %rdx\n");
+    s = s.write("    addq $8, %r10\n    jmp " + h_loop + "\n");
+    s = s.write(h_tail + ":\n");
+    s = s.write("    cmpq %r8, %r10\n    je " + h_fin + "\n");
+    s = s.write("    xorq (%rax,%r11), %rdx\n    imulq %r9, %rdx\n    jmp " + h_fin + "\n");
+    s = s.write(h_short + ":\n");
+    s = s.write("    testq %r8, %r8\n    jz " + h_fin + "\n");
+    s = s.write("    xorq %rcx, %rcx\n    movq %r8, %r10\n");
+    s = s.write(h_byte + ":\n");
+    s = s.write("    subq $1, %r10\n    shlq $8, %rcx\n    movzbq (%rax,%r10), %r11\n    orq %r11, %rcx\n");
+    s = s.write("    testq %r10, %r10\n    jnz " + h_byte + "\n");
+    s = s.write("    xorq %rcx, %rdx\n    imulq %r9, %rdx\n");
+    s = s.write(h_fin + ":\n");
+    s = s.write("    movq %rdx, %rcx\n    shrq $32, %rcx\n    xorq %rcx, %rdx\n");
+    s = s.write("    movslq %edx, %rdx\n    pushq %rdx\n");
+    return s;
+  }
   if (o.kind_tag == 329 || o.kind_tag == 369) {  // bsd_sum / bsd_sum_bytes
     // operand stack [box, sum] (sum on top) -> the BSD checksum continued
     // over the string: per byte a 16-bit rotate right by one and an add.
