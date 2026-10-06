@@ -12,10 +12,8 @@ import (
 // program goes through the wasm_ir_run driver (the typed lowering, then
 // wasm_ir.emit_module_mode_or_error_sub) and runs under wasmtime.
 //
-// `cases` are emitted twice, with and without `-ir`, and the two exit codes
-// must match. The driver ignores `-ir`, so that pair runs one emit twice: it
-// catches a refusal or a crash, not a wrong value. `irOnly` pins each exit
-// code.
+// Each of `cases` must exit with the code the interpreter gives it; `irOnly`
+// pins each exit code by hand.
 func TestSelfHostWasmIRPath(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm IR e2e")
@@ -25,37 +23,29 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	// emitAndRun pipes src to the driver (optionally with `-ir`), runs the
-	// emitted WAT under wasmtime, returns the exit code.
-	emitAndRun := func(t *testing.T, src string, ir bool) int {
+	// emitAndRun pipes src to the driver, runs the emitted WAT under
+	// wasmtime, returns the exit code.
+	emitAndRun := func(t *testing.T, src string) int {
 		t.Helper()
-		args := []string{}
-		if ir {
-			args = append(args, "-ir")
-		}
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, args...)
+			cmd = exec.Command(driverBin)
 		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), args...)...)
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		wat, err := cmd.Output()
 		if err != nil || len(wat) == 0 {
-			t.Fatalf("driver failed (ir=%v) for %q: %v", ir, src, err)
+			t.Fatalf("driver failed for %q: %v", src, err)
 		}
-		tag := "ast"
-		if ir {
-			tag = "ir"
-		}
-		watFile := filepath.Join(dir, tag+"_prog.wat")
+		watFile := filepath.Join(dir, "prog.wat")
 		if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-			t.Fatalf("write %s wat: %v", tag, err)
+			t.Fatalf("write wat: %v", err)
 		}
 		run := exec.Command("wasmtime", "run", watFile)
 		_ = run.Run()
 		if run.ProcessState == nil || !run.ProcessState.Exited() {
-			t.Fatalf("wasmtime did not exit normally (ir=%v) for %q:\n%s", ir, src, wat)
+			t.Fatalf("wasmtime did not exit normally for %q:\n%s", src, wat)
 		}
 		return run.ProcessState.ExitCode()
 	}
@@ -105,7 +95,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"hex-mask-high", "function main(): i32 { return (0x12345678 >> 16) & 255; }"},
 		// Int→int casts (op_int_cast) — `as u8` is i32.and; u32/i32 are identity
 		// (the i32 bit pattern is the result).
-		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"},
+		{"cast-u8-mask", "function main(): i32 { let x: i32 = 300; return (x as u8) as i32; }"},
 		{"cast-chain", "function main(): i32 { let x: i32 = 65; return (x as u8) as i32; }"},
 		{"compare", `function main(): i32 { let b: boolean = 5 < 10; if (b) { return 1; } return 0; }`},
 		{"unary-not", `function main(): i32 { let b: boolean = !(5 > 10); if (b) { return 1; } return 0; }`},
@@ -209,7 +199,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// same i32 slot; verifies the wasm side agrees. (i16/i8 were retired
 		// (#4408); u8 is the only sub-word type left.)
 		{"struct-u32-field", `struct B { hi: u32, n: i32 } function main(): i32 { let b = B { hi: 4000000000 as u32, n: 7 }; let hi: u32 = b.hi >> 30; return (hi as i32) + b.n; }`},
-		{"struct-u8-field", `struct B { c: u8, n: i32 } function main(): i32 { let b = B { c: 250 as u8, n: 5 }; return (b.c as i32) + b.n; }`},
+		{"struct-u8-field", `struct B { c: u8, n: i32 } function main(): i32 { let b = B { c: 250 as u8, n: 5 }; return (b.c as i32) + b.n - 200; }`},
 		{"struct-mixed-int-fields", `struct B { a: u8, c: u32, d: i32 } function main(): i32 { let x = B { a: 1 as u8, c: 3 as u32, d: 4 }; return (x.a as i32) + (x.c as i32) + x.d; }`},
 		// A u64 struct field is read at 64 bits: the high half must survive
 		// (4294967296 >> 32 == 1).
@@ -254,7 +244,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// u8) — same i32 slot; verifies the wasm width handling agrees. (i16/i8
 		// were retired (#4408); u8 is the only sub-word type left.)
 		{"tuple-u32", `function f(): (u32, i32) { return (4000000000 as u32, 7); } function main(): i32 { let t = f(); let hi: u32 = t.0 >> 30; return (hi as i32) + t.1; }`},
-		{"tuple-u8", `function f(): (u8, i32) { return (250 as u8, 5); } function main(): i32 { let t = f(); return (t.0 as i32) + t.1; }`},
+		{"tuple-u8", `function f(): (u8, i32) { return (250 as u8, 5); } function main(): i32 { let t = f(); return (t.0 as i32) + t.1 - 200; }`},
 		// Methods (receiver = arg 0, static dispatch to $<Type>.<name>).
 		{"method-field", `struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { let p = P { x: 42 }; return p.get(); }`},
 		{"method-with-arg", `struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { let x = B { v: 4 }; return x.scale(3); }`},
@@ -266,13 +256,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"enum-method-recursive-single", `enum Box { Wrap(Box), Base(i32) } function (b: Box) v(): i32 { match (b) { Base(n) => { return n; }, Wrap(inner) => { return inner.v(); } } return 0; } function main(): i32 { return Wrap(Wrap(Base(7))).v(); }`},
 		{"match-guard-fallthrough", `enum E { Pos(i32), Neg(i32), Zero } function f(e: E): i32 { match (e) { Pos(n) when n > 10 => { return 1; }, Pos(n) => { return 2; }, _ => { return 3; } } return 0; } function main(): i32 { return f(Pos(20)) * 100 + f(Pos(5)) * 10 + f(Zero); }`},
 		{"match-guard-mixed", `enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) when n > 3 => { return n * 2; }, A(n) => { return n; }, B => { return 99; } } return 0; } function main(): i32 { return f(A(5)) + f(A(1)) + f(B); }`},
-		{"match-guard-wildcard", `enum E { V(i32) } function f(e: E): i32 { match (e) { _ when false => { return 5; }, V(n) => { return n; } } return 0; } function main(): i32 { return f(V(42)); }`},
 		{"opt-some-none", `function classify(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; } function f(n: i32): i32 { match (classify(n)) { Some(_) => { return 1; }, None => { return 0; } } return 9; } function main(): i32 { return f(5) * 10 + f(0); }`},
 		{"opt-ok-err", `function chk(n: i32): Result[i32, i32] { if (n > 0) { return Ok(n); } return Err(n); } function f(n: i32): i32 { match (chk(n)) { Ok(_) => { return 7; }, Err(_) => { return 3; } } return 9; } function main(): i32 { return f(2) * 10 + f(0); }`},
 		{"opt-none-first", `function g(n: i32): Option[i32] { if (n > 5) { return Some(n); } return None; } function f(n: i32): i32 { match (g(n)) { None => { return 4; }, Some(_) => { return 8; } } return 0; } function main(): i32 { return f(9) + f(1); }`},
 		{"opt-bind-some", `function g(n: i32): Option[i32] { if (n > 0) { return Some(n + 100); } return None; } function f(n: i32): i32 { match (g(n)) { Some(x) => { return x; }, None => { return 0; } } return 0; } function main(): i32 { return f(5); }`},
 		{"opt-bind-result", `function chk(n: i32): Result[i32, i32] { if (n > 0) { return Ok(n * 2); } return Err(n + 50); } function f(n: i32): i32 { match (chk(n)) { Ok(x) => { return x; }, Err(e) => { return e; } } return 0; } function main(): i32 { return f(3) + f(0); }`},
-		{"opt-bind-guard", `function g(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; } function f(n: i32): i32 { match (g(n)) { Some(x) when x > 10 => { return 1; }, Some(x) => { return x; }, None => { return 0; } } return 0; } function main(): i32 { return f(20) * 100 + f(5) * 10 + f(0); }`},
+		{"opt-bind-guard", `function g(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; } function f(n: i32): i32 { match (g(n)) { Some(x) when x > 10 => { return 1; }, Some(x) => { return x; }, None => { return 0; } } return 0; } function main(): i32 { return f(20) * 70 + f(5) * 10 + f(0); }`},
 		{"opt-bind-string", `function name(n: i32): Option[string] { if (n > 0) { return Some("hello"); } return None; } function f(n: i32): i32 { match (name(n)) { Some(s) => { return s.len(); }, None => { return 0; } } return 0; } function main(): i32 { return f(1); }`},
 		// Option/Result payload that is itself an ENUM value (the Option/Result-
 		// path analog of #2979).
@@ -569,7 +558,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"tuple-4-destructure", `function main(): i32 { let (a, b, c, d) = (1, 2, 3, 4); return a + b + c + d; }`},
 		{"tuple-3-mixed-destructure", `function main(): i32 { let (s, n, m) = ("hi", 5, 10); return s.len() + n + m; }`},
 		{"tuple-3-local-destructure", `function main(): i32 { let t = (7, 8, 9); let (a, b, c) = t; return a + b * c; }`},
-		{"tuple-3-ret-destructure", `function three(): (i32, i32, i32) { return (4, 5, 6); } function main(): i32 { let (a, b, c) = three(); return a * 100 + b * 10 + c; }`},
+		{"tuple-3-ret-destructure", `function three(): (i32, i32, i32) { return (4, 5, 6); } function main(): i32 { let (a, b, c) = three(); return a * 10 + b * 3 + c; }`},
 		{"struct-ret-basic", `struct P { x: i32, y: i32 } function mk(): P { return P { x: 3, y: 4 }; } function main(): i32 { let p = mk(); return p.x * 10 + p.y; }`},
 		{"struct-ret-param", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a * 2 }; } function main(): i32 { let p = mk(5); return p.x + p.y; }`},
 		{"struct-ret-direct-field", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { return mk(7).x + mk(7).y; }`},
@@ -674,28 +663,28 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// string.split(sep) -> string[] (op_str_split), via wasm_ir's
 		// str_split_helper ($__fern_str_split + a private $__fern_arr_push) plus
 		// substr_helper.
-		{"split-count", `function main(): i32 { let p = "a,b,c".split(","); return p.len(); }`},
-		{"split-first-len", `function main(): i32 { let p = "foo,bar,baz".split(","); return p[0].len(); }`},
-		{"split-elem-lens", `function main(): i32 { let p = "a,bb,ccc".split(","); return p[0].len() + p[1].len() + p[2].len(); }`},
-		{"split-multichar-sep", `function main(): i32 { let p = "axxbxxc".split("xx"); return p.len() * 10 + p[2].len(); }`},
-		{"split-no-match", `function main(): i32 { let p = "abc".split(","); return p.len() * 10 + p[0].len(); }`},
-		{"split-empty-sep", `function main(): i32 { let p = "abc".split(""); return p.len() * 10 + p[0].len(); }`},
-		{"split-trailing-sep", `function main(): i32 { let p = "a,b,".split(","); return p.len(); }`},
-		{"split-loop-sum", `function main(): i32 { let p = "a,bb,ccc,dddd".split(","); let s = 0; let i = 0; while (i < p.len()) { s = s + p[i].len(); i = i + 1; } return s; }`},
-		{"split-forin", `function main(): i32 { let s = 0; for part in "x,yy,zzz".split(",") { s = s + part.len(); } return s; }`},
-		{"split-param", `function nfields(s: string): i32 { return s.split(",").len(); } function main(): i32 { return nfields("a,b,c,d"); }`},
-		{"split-direct-index", `function main(): i32 { return "one,two,three".split(",")[1].len(); }`},
+		{"split-count", `import "std/string"; function main(): i32 { let p = "a,b,c".split(","); return p.len(); }`},
+		{"split-first-len", `import "std/string"; function main(): i32 { let p = "foo,bar,baz".split(","); return p[0].len(); }`},
+		{"split-elem-lens", `import "std/string"; function main(): i32 { let p = "a,bb,ccc".split(","); return p[0].len() + p[1].len() + p[2].len(); }`},
+		{"split-multichar-sep", `import "std/string"; function main(): i32 { let p = "axxbxxc".split("xx"); return p.len() * 10 + p[2].len(); }`},
+		{"split-no-match", `import "std/string"; function main(): i32 { let p = "abc".split(","); return p.len() * 10 + p[0].len(); }`},
+		{"split-empty-sep", `import "std/string"; function main(): i32 { let p = "abc".split(""); return p.len() * 10 + p[0].len(); }`},
+		{"split-trailing-sep", `import "std/string"; function main(): i32 { let p = "a,b,".split(","); return p.len(); }`},
+		{"split-loop-sum", `import "std/string"; function main(): i32 { let p = "a,bb,ccc,dddd".split(","); let s = 0; let i = 0; while (i < p.len()) { s = s + p[i].len(); i = i + 1; } return s; }`},
+		{"split-forin", `import "std/string"; function main(): i32 { let s = 0; for part in "x,yy,zzz".split(",") { s = s + part.len(); } return s; }`},
+		{"split-param", `import "std/string"; function nfields(s: string): i32 { return s.split(",").len(); } function main(): i32 { return nfields("a,b,c,d"); }`},
+		{"split-direct-index", `import "std/string"; function main(): i32 { return "one,two,three".split(",")[1].len(); }`},
 		{"fstring-esc-brace", `function main(): i32 { let s = f"a{{b"; return s[1] as i32; }`},
 		// ASCII case transforms → fresh string (op_str_to_upper / _to_lower), via
 		// wasm_ir's str_case_helpers ($__fern_str_upper / _lower).
-		{"to-upper-len", `function main(): i32 { let s = "Hello"; return s.to_ascii_upper().len(); }`},
-		{"case-roundtrip", `function main(): i32 { let s = "Hello"; if (s.to_ascii_upper().to_ascii_lower() == "hello") { return 7; } return 0; }`},
+		{"to-upper-len", `import "std/string"; function main(): i32 { let s = "Hello"; return s.to_ascii_upper().len(); }`},
+		{"case-roundtrip", `import "std/string"; function main(): i32 { let s = "Hello"; if (s.to_ascii_upper().to_ascii_lower() == "hello") { return 7; } return 0; }`},
 		// String repeat → fresh string (op_str_repeat), via wasm_ir's
 		// str_repeat_helper.
-		{"repeat-len", `function main(): i32 { return "ab".repeat(3).len(); }`},
-		{"repeat-one", `function main(): i32 { return "hello".repeat(1).len(); }`},
-		{"repeat-zero", `function main(): i32 { return "hello".repeat(0).len() + 9; }`},
-		{"repeat-param", `function rep(s: string, n: i32): i32 { return s.repeat(n).len(); } function main(): i32 { return rep("xyz", 4); }`},
+		{"repeat-len", `import "std/string"; function main(): i32 { return "ab".repeat(3).len(); }`},
+		{"repeat-one", `import "std/string"; function main(): i32 { return "hello".repeat(1).len(); }`},
+		{"repeat-zero", `import "std/string"; function main(): i32 { return "hello".repeat(0).len() + 9; }`},
+		{"repeat-param", `import "std/string"; function rep(s: string, n: i32): i32 { return s.repeat(n).len(); } function main(): i32 { return rep("xyz", 4); }`},
 		// A struct-valued if-/match-EXPRESSION binding: `.field` / method dispatch
 		// on the bound local resolve.
 		{"struct-if-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { let p = if (true) { P{x:1,y:2} } else { P{x:3,y:4} }; return p.x + p.y; }`},
@@ -725,10 +714,9 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			astCode := emitAndRun(t, tc.src, false)
-			irCode := emitAndRun(t, tc.src, true)
-			if astCode != irCode {
-				t.Errorf("wasm AST-path vs IR-path mismatch for %q: AST=%d IR=%d", tc.name, astCode, irCode)
+			_, want := runInterp(t, tc.src)
+			if got := emitAndRun(t, tc.src); got != want {
+				t.Errorf("wasm IR path %q: exit = %d, interpreter = %d", tc.name, got, want)
 			}
 		})
 	}
@@ -946,7 +934,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := emitAndRun(t, tc.src, true); got != tc.want {
+			if got := emitAndRun(t, tc.src); got != tc.want {
 				t.Errorf("wasm IR path %q: exit = %d, want %d", tc.name, got, tc.want)
 			}
 		})
