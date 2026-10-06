@@ -853,7 +853,10 @@ Zero-config stderr wrappers plus a leveled logger (#2683).
   is the errno the runtimes classify into it (`NotFound` is `ENOENT`,
   `PermissionDenied` `EACCES`, `AlreadyExists` `EEXIST`, `InvalidUtf8`
   `EILSEQ`, `Interrupted` `EINTR`, `Unsupported` `EOPNOTSUPP`). An errno past
-  the runtime's strerror table carries 0.
+  the runtime's strerror table carries 0. `Unsupported` is the target's own
+  refusal of an operation it does not offer; a host that answers ENOTSUP
+  gives `Other(path, "Operation not supported", errno.ENOTSUP)` on every
+  target.
 - `pub const` `EPERM`, `ENOENT`, … `ENOTRECOVERABLE`: one per row of
   `internal/tables/strerror`, in Linux numbering, so `errno.of(e) ==
   errno.ENOTDIR` holds on Darwin and WASI as well. `ENOATTR` is `ENODATA` and
@@ -2841,8 +2844,9 @@ The following types are synthesised by the checker (declared in
 - `Option[T]` — `Some(T)` / `None`
 - `Result[T, E]` — `Ok(T)` / `Err(E)`
 - `IoError` — `NotFound`, `PermissionDenied`, `AlreadyExists`,
-  `InvalidUtf8`, `Interrupted`, `Unsupported`, `Other(path, message,
-  errno)` (`std/errno` names the errno)
+  `InvalidUtf8`, `Interrupted`, `Unsupported` (the target does not offer
+  the operation), `Other(path, message, errno)` (`std/errno` names the
+  errno)
 - `JsonValue` — `JNull`, `JBool`, `JNumber`, `JString`,
   `JArray`, `JObject`
 - `Reader`, `Writer` — stdin / stdout / stderr / file

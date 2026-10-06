@@ -164,7 +164,8 @@ pub const EOPNOTSUPP: i32 = 95;
 
 // `of(e)` — the errno `e` stands for, in Linux numbering. A named variant is
 // the errno every runtime classifies into it; `Unsupported` is an operation
-// the target cannot perform, which a WASI host reports as ENOTSUP.
+// the target does not offer, refused before any host is asked. A host's own
+// ENOTSUP arrives as `Other` carrying it.
 pub function of(e: IoError): i32 {
   match (e) {
     NotFound(_) => {
