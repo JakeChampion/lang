@@ -3494,7 +3494,7 @@ pub function rt_src_tcp_send_buf(t: string): string {
   if (t == "arm64-darwin") {
     flags = "524288";
   }
-  return "function __fern_tcp_send_buf(fd: i32, b: usize, from: i32): i32 { let n: i32 = __raw_load_ptr(b, 1) as i32; if (from < 0 || from >= n) { return 0; } let p: usize = __raw_addr(__raw_load_ptr(b, 0), from); return __syscall6(" + sysno(t, "sendto") + ", fd as i64, p as i64, (n - from) as i64, " + flags + ", 0, 0) as i32; }";
+  return "function __fern_tcp_send_buf(fd: i32, b: usize, from: i32): i32 { let n: i32 = __raw_load_ptr(b, 1) as i32; if (from < 0 || from >= n) { return 0; } let data: usize = __raw_load_ptr(b, 0); let p: usize = __raw_addr(data, from); return __syscall6(" + sysno(t, "sendto") + ", fd as i64, p as i64, (n - from) as i64, " + flags + ", 0, 0) as i32; }";
 }
 
 // rt_src_tcp_recv backs `tcp_recv(fd, max)` (#5714, syscall-leaf) → a fresh
