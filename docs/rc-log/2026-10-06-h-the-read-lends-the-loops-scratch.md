@@ -38,7 +38,12 @@ compacts at once, since its read is the whole event.
 The loop stops reading at a short read rather than reading again for
 `-EAGAIN`: the wait is level-triggered, so bytes a short read leaves are
 reported by the next wait, and the probe's syscall per request goes with
-the copy. A second read in one event, which only a request of the
+the copy. So does the probe's view of the peer's close: a peer that
+half-closes right after its request used to have its end of stream seen
+in the same event, and its response went out with `Connection: close`;
+the end of stream is now the next wait's event, the response says
+`keep-alive`, and the connection closes one wait later, with nothing
+left to read. A second read in one event, which only a request of the
 scratch's size or more makes, takes the scratch back first, copying its
 bytes out, so no read writes into bytes a connection holds.
 

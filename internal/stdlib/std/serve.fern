@@ -378,7 +378,10 @@ function __recv_scratch(): u8[] {
 // idle connection holds none. `out` is the builder every reply is
 // serialized into and sent from, also one per loop: what it holds between
 // replies is what the event's burst has corked, and it is empty between
-// events.
+// events. `lent` is the position of the connection the loop's read
+// scratch is lent to for the current event, -1 between events: only that
+// connection's buffer may be the scratch, and `__serve_compact` hands it
+// back before the event is done with the connection.
 struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], tails: __Tail[], last: http.HttpFramed, out: usize, lent: i32 }
 
 // __Tail — what of a response is still to be produced once its head and

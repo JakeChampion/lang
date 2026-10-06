@@ -433,8 +433,7 @@ is preferred where it covers a case, since every program gains.
    pass now keeps that read in the site's group with the call and its
    store (`suspend.group_end`), and `sempair` no longer asks the
    classifier, so `__serve_produce` and `__serve_ready` return their
-   tuples in two words. 6 to 4. Left on the path: the read's copy, and
-   the parse's three.
+   tuples in two words. 6 to 4.
 9. **The read lends the loop's scratch.** Done: a read into an empty
    buffer lends the loop's one 4 KiB scratch to the connection for the
    event, shortened to the bytes read with the bytes floor's
