@@ -185,7 +185,7 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
   let out: GrowRow[] = [];
   let defs: ssa.SInst[] = p.defs;
   let at: i32[] = ssa.block_positions(f.graph);
-  let seen: boolean[] = bits(f.graph.nvals);
+  let seen: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
@@ -253,7 +253,7 @@ function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SIns
   while (i < ins.args.len()) {
     let v: i32 = ins.args[i];
     if (v >= f.graph.nparams && is_array(f.values[v]) && occurrences(s.drops, v) > 0 && has_row_at(table, tix, ins.str, i, 0 - 1)) {
-      let carried: Carried = carried_params(f, defs, v, bits(f.graph.nvals));
+      let carried: Carried = carried_params(f, defs, v, __alloc_bool(f.graph.nvals));
       for param in carried.params {
         if (!p.owned[param]) {
           out = with_row(out, callee, defs[param].imm, 0 - 1);
@@ -391,16 +391,6 @@ function rejected(why: string): Ledger {
 
 function step(block: i32, point: i32, target: i32): Step {
   return Step { block: block, point: point, target: target, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
-}
-
-function bits(n: i32): boolean[] {
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(false);
-    i = i + 1;
-  }
-  return out;
 }
 
 function successors(b: ssa.SBlock): i32[] {
@@ -733,7 +723,7 @@ function hands_out(kind: i32): boolean {
 // withdrawn from each one with another operand, to a fixpoint, so a loop
 // phi that only ever carries literals keeps the mark.
 function literals(f: ssasem.Func): boolean[] {
-  let out: boolean[] = bits(f.graph.nvals);
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == 5 || ins.kind_tag == 8) {
@@ -766,7 +756,7 @@ function literals(f: ssasem.Func): boolean[] {
 }
 
 function owned_values(f: ssasem.Func, modes: i32[], defs: ssa.SInst[]): boolean[] {
-  let out: boolean[] = bits(f.graph.nvals);
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       let owns: boolean = false;
@@ -1095,7 +1085,7 @@ function definitions(f: ssasem.Func): ssa.SInst[] {
 // the box past the instruction, and a phi is also the only way an earlier
 // iteration's box could still be read when the site runs again.
 function frame_views(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
-  let out: boolean[] = bits(f.graph.nvals);
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.slice()) {
@@ -1159,7 +1149,7 @@ function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
     out = out.append("");
     i = i + 1;
   }
-  let raw: boolean[] = bits(f.graph.nvals);
+  let raw: boolean[] = __alloc_bool(f.graph.nvals);
   for v in raw_reached(f, defs) {
     raw = raw.with(v, true);
   }
@@ -1283,7 +1273,7 @@ function raw_reached(f: ssasem.Func, defs: ssa.SInst[]): i32[] {
       }
     }
   }
-  let seen: boolean[] = bits(f.graph.nvals);
+  let seen: boolean[] = __alloc_bool(f.graph.nvals);
   let out: i32[] = [];
   let at: i32 = 0;
   while (at < work.len()) {
@@ -1856,10 +1846,7 @@ function retainable_element(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean 
 struct Anchored { start: i32[], at: i32[] }
 
 function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
-  let count: i32[] = [];
-  while (count.len() <= nvals) {
-    count = count.append(0);
-  }
+  let count: i32[] = __alloc_i32(nvals + 1);
   // The chains run to the values the analysis saw; a refused analysis has
   // none.
   let known: i32 = a.dependencies.len();
@@ -1885,10 +1872,7 @@ function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
     }
     v = v + 1;
   }
-  let at: i32[] = [];
-  while (at.len() < total) {
-    at = at.append(0);
-  }
+  let at: i32[] = __alloc_i32(total);
   let fill: i32[] = start;
   w = 0;
   while (w < known) {
@@ -1931,14 +1915,15 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchor
   return out;
 }
 
-// An element read that outlives a consuming use of its array takes a unit of
-// its own at the read: retained there, released when it dies, anchored to
-// nothing. As a borrow it kept the array alive past the use, so a `.with` or
-// an append there retained the array instead of moving it and copied the
-// whole buffer (#9849). A read that dies before any such use stays a borrow
-// and costs nothing.
+// An element read still in hand when its array is consumed takes a unit of
+// its own at the read: one that outlives the consuming use, or one handed to
+// that use beside the array (`outliving`). Retained there, released when it
+// dies, anchored to nothing. As a borrow it kept the array alive past the
+// use, so a `.with`, an append or a call there retained the array instead of
+// moving it and copied the whole buffer (#9849). A read that dies before any
+// such use stays a borrow and costs nothing.
 function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): boolean[] {
-  let out: boolean[] = bits(f.graph.nvals);
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   let anchored: Anchored = anchored_to(a, f.graph.nvals);
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
@@ -2047,7 +2032,7 @@ function slot_takeable(f: ssasem.Func, defs: ssa.SInst[], got: typeinfo.Type, ro
   if (!ssasem.reference(got) || !is_union(box)) {
     return false;
   }
-  return !(ssasem.is_view(got) || option_layout(f, box)) || sole_box(f, defs, root, bits(f.graph.nvals));
+  return !(ssasem.is_view(got) || option_layout(f, box)) || sole_box(f, defs, root, __alloc_bool(f.graph.nvals));
 }
 
 // Whether the rest of block bi, after the read at pos, reads `root` other than
@@ -2143,7 +2128,7 @@ function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: 
 // itself still counts, so a take a loop would run again on the same box is
 // refused.
 function named_after(f: ssasem.Func, fl: ssalive.Flow, bi: i32, v: i32, take: ssa.SInst): boolean {
-  let seen: boolean[] = bits(f.graph.blocks.len());
+  let seen: boolean[] = __alloc_bool(f.graph.blocks.len());
   let work: i32[] = [];
   for id in successors(f.graph.blocks[bi]) {
     work = work.append(ssalive.position(fl, id));
@@ -2337,7 +2322,7 @@ function option_layout(f: ssasem.Func, t: typeinfo.Type): boolean {
 struct PayloadTakes { taken: boolean[], crossing: boolean }
 
 function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): PayloadTakes {
-  let out: boolean[] = bits(f.graph.nvals);
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   let crossing: boolean = false;
   let own: boolean[] = owned;
   let grown: boolean = true;
@@ -2644,7 +2629,7 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
 // checked_writes marks, at a `with`'s result, a `with` whose index an element
 // read earlier in the same block already checked against the same receiver.
 function checked_writes(f: ssasem.Func): boolean[] {
-  let out: boolean[] = bits(f.graph.nvals);
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     let i: i32 = 0;
     while (i < b.insts.len()) {
@@ -2675,7 +2660,7 @@ function read_before(b: ssa.SBlock, end: i32, arr: i32, index: i32): boolean {
 // nobody else holds, moved into this one and otherwise only read. A read of an
 // element or the length shares nothing, so the box is still sole-owned.
 function unique_receivers(f: ssasem.Func, defs: ssa.SInst[], steps: Step[]): boolean[] {
-  let out: boolean[] = bits(f.graph.nvals);
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   let held: i32[] = holding_uses(f);
   let at: i32[] = ssa.block_positions(f.graph);
   for st in steps {
@@ -2702,12 +2687,7 @@ function moved_receiver(st: Step, v: i32): boolean {
 // Per value, its uses other than reading an element or the length: the ones
 // that could hand its box to another holder.
 function holding_uses(f: ssasem.Func): i32[] {
-  let n: i32[] = [];
-  let v: i32 = 0;
-  while (v < f.graph.nvals) {
-    n = n.append(0);
-    v = v + 1;
-  }
+  let n: i32[] = __alloc_i32(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       let i: i32 = 0;

@@ -476,14 +476,14 @@
 # the pair-return pass (sempair.fern) to every driver that links semlower,
 # on top of main's growth since the last refresh; the other rows grow 1-3%
 # and stay inside 5%. Number from driver-sizes' report on run 37382764685.
-fern.fern/stage2 11131728
-fern.fern 11772104
-drivers/asm_load_run.fern 9474160
-drivers/asm_modload_run.fern 7746352
-drivers/asm_ir_run.fern 7483136
-drivers/asm_run.fern 6850928
-drivers/wasm_ir_run.fern 6979080
-drivers/wasm_run.fern 6979712
-drivers/wasm_runio_run.fern 6981520
-drivers/asm_pathprobe_run.fern 4684224
-drivers/checker_modload_run.fern 2649656
+fern.fern/stage2 10870720
+fern.fern 10870720
+drivers/asm_load_run.fern 8891104
+drivers/asm_modload_run.fern 7529848
+drivers/asm_ir_run.fern 7258840
+drivers/asm_run.fern 6618024
+drivers/wasm_ir_run.fern 6830984
+drivers/wasm_run.fern 6832856
+drivers/wasm_runio_run.fern 6833040
+drivers/asm_pathprobe_run.fern 4400856
+drivers/checker_modload_run.fern 2529480

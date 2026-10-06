@@ -1262,17 +1262,6 @@ function ident_start_byte(c: u8): boolean {
   return c >= b'A' && c <= b'Z' || c >= b'a' && c <= b'z' || c == b'_';
 }
 
-// bools is `n` copies of `bit`.
-pub function bools(n: i32, bit: boolean): boolean[] {
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(bit);
-    i = i + 1;
-  }
-  return out;
-}
-
 // is_ident reports whether s is spelled as an identifier: a letter or `_`,
 // then letters, digits and `_`.
 pub function is_ident(s: string): boolean {

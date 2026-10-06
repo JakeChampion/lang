@@ -10390,7 +10390,7 @@ pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.LowerResult, r
   if (seen_vals.len() == 0) {
     return DbgVars { at: [], rows: [] };
   }
-  let d: DbgVars = DbgVars { at: util.bools(npos + 1, false), rows: [] };
+  let d: DbgVars = DbgVars { at: __alloc_bool(npos + 1), rows: [] };
   let i: i32 = 0;
   while (i < r.dbg_slots.len()) {
     d = dbg_var(d, fn_label, a, r, i, repl, seen_vals, seen_slots, locs, npos);

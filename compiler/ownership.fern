@@ -461,12 +461,7 @@ function lent_values(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins
 }
 
 function lent_out(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < f.graph.nvals) {
-    out = out.append(false);
-    i = i + 1;
-  }
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.call()) {
@@ -506,12 +501,7 @@ pub function lends(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Inde
 // reader such as `p.toks[p.pos]` keeps `p` lent, and a returned view reads its
 // root without taking a unit at all.
 function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
-  let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < f.graph.nvals) {
-    out = out.append(false);
-    i = i + 1;
-  }
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
   let me: i32 = find(rows, ix, f.graph.name);
   for b in f.graph.blocks {
     for ins in b.insts {
