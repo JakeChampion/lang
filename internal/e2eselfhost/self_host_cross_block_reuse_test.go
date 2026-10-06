@@ -51,6 +51,11 @@ function main(): i32 { return f(); }`, 20, 7},
 		{"record-across-if", `struct P { x: i32, y: i32 }
 function f(n: i32): i32 { let a: P = P { x: n, y: 2 }; let t: i32 = 0; if (a.x > 3) { t = 1; } else { t = 2; } let b: P = P { x: n * 3, y: 4 }; return t + b.x + b.y; }
 function main(): i32 { return f(5) + f(1); }`, 29, 2},
+		// Two carries in one function, `a` to `b` and `b` to `c`: the second
+		// route search runs over the marks the first one left.
+		{"records-across-two-ifs", `struct P { x: i32, y: i32 }
+function f(n: i32): i32 { let a: P = P { x: n, y: 2 }; let t: i32 = 0; if (a.x > 3) { t = 1; } else { t = 2; } let b: P = P { x: n * 3, y: 4 }; if (b.x > 6) { t = t + 10; } else { t = t + 20; } let c: P = P { x: n, y: 5 }; return t + c.x + c.y; }
+function main(): i32 { return f(5) + f(1); }`, 49, 2},
 		// `b` is built in an arm `a`'s block branches into; the path that
 		// skips the arm drops `a` on its way out.
 		{"if-arm-in-loop", `struct P { x: i32, y: i32 }
