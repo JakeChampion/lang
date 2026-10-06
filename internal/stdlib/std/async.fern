@@ -55,8 +55,8 @@ pub enum Future[T] {
 // including the interpreter.
 //
 // The first four are the one-shot waits: `poll_ready(toks, timeout_ms)`
-// returns the index of the first ready token, a hung-up or failed one
-// included, or -1 when none became ready, the contract of the `poll`
+// returns the index of the first ready token, a hung-up, failed or closed
+// one included, or -1 when none became ready, the contract of the `poll`
 // builtin.
 //
 // The rest are the reactor (#9853): a readiness set that outlives one

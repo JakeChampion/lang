@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -14,7 +15,7 @@ import (
 // It marshals a length-prefixed i32[] of fds into a struct pollfd[],
 // requests POLLIN on each, calls the OS poll (x86-64 poll(2) #7;
 // arm64 ppoll(2) #73), and returns the index of the first fd a read
-// would not block on, a hung-up one included (or -1). A regular file is always poll-readable, so a poll over file
+// would not block on, a hung-up or closed one included (or -1). A regular file is always poll-readable, so a poll over file
 // fds is deterministic — no socket timing in the test.
 //
 // (wasm (wasi:io/poll) follows.)
@@ -140,4 +141,59 @@ func TestPollHangupIsReady(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A closed fd polls as POLLNVAL, and an fd the interpreter's epoll set
+// refuses (a regular file) is one a read would not block on either: both
+// count as ready at once rather than as a timeout (#11646).
+func TestPollUnwatchableFdIsReady(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	file := filepath.Join(dir, "probe.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	closed := "function main(): i32 {\n  let fds: i32[] = [1000];\n  return poll(fds, 5000);\n}\n"
+	regular := fmt.Sprintf(`function main(): i32 {
+    match (open_reader("%s")) {
+        Ok(r) => { let fds: i32[] = [-1, r.fd]; return poll(fds, 5000); },
+        Err(e) => { return 99; }
+    }
+}`, file)
+	check := func(t *testing.T, name string, cmd *exec.Cmd, want int) {
+		t.Helper()
+		start := time.Now()
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != want {
+			t.Errorf("%s: exit = %d, want %d", name, code, want)
+		}
+		if d := time.Since(start); d > 4*time.Second {
+			t.Errorf("%s: poll waited %v", name, d)
+		}
+	}
+	src := filepath.Join(dir, "closed.fern")
+	if err := os.WriteFile(src, []byte(closed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, be := range nativeBackends() {
+		be := be
+		t.Run(be.target, func(t *testing.T) {
+			qemu := be.qemu(t)
+			out := filepath.Join(dir, be.target+"_closed.bin")
+			if o, err := exec.Command(bin, "-target", be.target, "-o", out, src).CombinedOutput(); err != nil {
+				t.Fatalf("build failed: %v\n%s", err, o)
+			}
+			check(t, "closed fd", be.run(qemu, out), 0)
+		})
+	}
+	t.Run("interp", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, prog string
+			want       int
+		}{{"closed fd", closed, 0}, {"regular file", regular, 1}} {
+			cmd := exec.Command(bin, "-interp", "-")
+			cmd.Stdin = strings.NewReader(tc.prog)
+			check(t, tc.name, cmd, tc.want)
+		}
+	})
 }
